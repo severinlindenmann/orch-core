@@ -52,6 +52,7 @@ ACTIVITY_TYPES = (
     "addon.request_refused",
     "hub.settings.changed",
     "hub.backup.key_set",
+    "hub.backup.key_confirmed",
     "hub.backup.made",
     "hub.backup.downloaded",
     "hub.backup.restored",

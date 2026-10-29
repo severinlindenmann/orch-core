@@ -1391,12 +1391,15 @@ def extra_lines(intent: Mapping[str, Any], *, full: bool = False) -> list[str]:
             grant = seqquick.grant_line if full else seqquick.grant_note
             return [
                 *([grant(intent["agent"])] if "agent" in intent else []),
+                # P14: which agent, its mode and what follows are technical details (full review), not the plain text
                 *(
-                    [f"Agent: {launch['harness']}; mode: {launch['mode']}; model: {launch.get('model', 'default')}."]
+                    [
+                        f"Agent: {launch['harness']}; mode: {launch['mode']}; model: {launch.get('model', 'default')}.",
+                        "Then: the agent starts on the new ticket.",
+                    ]
                     if full
                     else []
                 ),
-                "Then: the agent starts on the new ticket.",
             ]
         if "agent" not in intent:
             return []

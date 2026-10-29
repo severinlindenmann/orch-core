@@ -31,7 +31,7 @@ import { availableActions, gapOf, gateActionName, blockedApproval, primaryAction
 import { useTicketEdit } from './EditTicket'
 import type { AgentMode } from '@/api/agents'
 import { agentWorking, clearMark, phaseOf, startMark, useMark, type Phase, type ProgressRun } from './progress'
-import { agentName, ago, fmtClock, KeyRef, Mono, Pill, StatusChip, useIsVisibleKey, type HumanAction, type Jump, type Viewer } from './shared'
+import { Ago, agentName, fmtClock, KeyRef, Mono, Pill, StatusChip, useIsVisibleKey, type HumanAction, type Jump, type Viewer } from './shared'
 
 export function CopyButton({ text, label }: { text: string; label: string }) {
   const [done, setDone] = useState(false)
@@ -220,7 +220,7 @@ export function ActionsMenu({ ticket, viewer, sign, jump, start, share, signing 
           </DropdownMenuItem>
         )}
         {av.approve.map((g) => (
-          <DropdownMenuItem key={g} onSelect={() => sign({ kind: 'approve', gate: g })}>
+          <DropdownMenuItem key={g} onSelect={() => sign({ kind: 'approve', gate: g, pressed: false })}>
             <Check />
             Approve {gateActionName(g)}
             {isNext(`approve:${g}`) && <Next />}
@@ -322,7 +322,7 @@ const RESOLUTION: Record<ClosedInfo['resolution'], string> = {
  * A closed ticket reads like any other (host v1.4): this says why and when. `duplicate_of` may name a ticket you cannot
  * open (it would answer "not found"), so it is plain text, never a link and never a title.
  */
-function ClosedNotice({ closed, name }: { closed: ClosedInfo; name: (id: string) => string }) {
+export function ClosedNotice({ closed, name }: { closed: ClosedInfo; name: (id: string) => string }) {
   return (
     <section aria-label="Closed" data-testid="closed-notice" className="space-y-1 rounded-md border border-border bg-surface-2 px-3 py-2 text-[13px] text-text-muted">
       <p>
@@ -334,7 +334,7 @@ function ClosedNotice({ closed, name }: { closed: ClosedInfo; name: (id: string)
           </>
         )}
         {closed.by && ` · by ${name(closed.by)}`}
-        {closed.at && ` · ${ago(closed.at)}`}
+        {closed.at && <> · <Ago at={closed.at} /></>}
       </p>
       {closed.text && <p className="whitespace-pre-wrap text-text">{closed.text}</p>}
     </section>

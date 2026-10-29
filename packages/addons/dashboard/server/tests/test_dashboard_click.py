@@ -1694,8 +1694,7 @@ def test_an_unknown_outcome_ends_only_when_the_host_answer_is_known():
 
 DEPOSIT_LINE = "The secret goes to your orch runner on this machine and is never shown"
 DEPOSIT_RISK = (
-    "Anything that takes over the dashboard can give agents standing authority to act for you on tickets for as long "
-    "as the grant lasts (up to 7 days, the length you choose); you can stop it at any time."
+    "Whoever controls this dashboard could use this access while it lasts. You can stop it any time."
 )
 SECRET = "demo-not-a-real-secret-tail"
 GRANT = "gr_01M4Y46B485AXD4CBEJZ15Z1TV"

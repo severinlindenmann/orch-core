@@ -140,6 +140,31 @@ test("items a restore switched off are listed and each has a Turn on click", () 
   assert.deepEqual(got, [3]);
 });
 
+test("after a reload a pending key shows 'I have saved it' without the words, and a refused confirm is said", async () => {
+  let saved = 0;
+  const c = card(hubSettingsView({ ...BASE, backup: { ...SET, key_pending: true } }, { wordsMayShow: true, wordsSaved: () => saved++ }));
+  assert.ok(c.all().some((n) => n.attrs["data-pending"]));
+  assert.match(c.textContent, /kept until you confirm/);
+  button(c, "I have saved it").listeners.click();
+  assert.equal(saved, 1);
+  assert.ok(!card(hubSettingsView({ ...BASE, backup: SET }, { wordsMayShow: true })).all().some((n) => n.attrs["data-pending"]));
+  const { hubSettingsPage } = await import("../../src/orch_hub/web/pages/hub-settings.js");
+  const notes = []; const shown = [];
+  const d = { pageLoading() {}, refresh: async () => true, state: { user: { is_admin: true } }, loadRail: async () => {}, say: (e) => "Why: " + e,
+    banner: (kind, title, detail) => kind + ":" + title + ":" + detail, home: () => "home", loginView: () => "login", reauthView: () => "reauth",
+    shell: (id, notice, view) => shown.push([notice, view]),
+    api: async (m, p) => {
+      if (p === "/admin/settings") return { status: 200, body: { ...BASE } };
+      if (p === "/admin/backup") return { status: 200, body: { ...SET, key_pending: true } };
+      notes.push(p); return { status: 403, body: { error: "confirm_denied" } };
+    } };
+  await hubSettingsPage(d);
+  const view = shown.at(-1)[1];
+  await button(card(view), "I have saved it").listeners.click();
+  assert.deepEqual(notes, ["/admin/backup/key/confirm"]);
+  assert.match(d.state.notice ?? shown.at(-1)[0] ?? "", /Only the session that made the new words/);
+});
+
 test("a hub without the backup answer shows no Backup card", () => {
   assert.equal(card(hubSettingsView(BASE, {})), undefined);
 });

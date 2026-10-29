@@ -12508,8 +12508,8 @@ Where the code differs from or adds to §12.3, §12.4 and §0.8.6 item 6, the co
   restarts without a new record field; the secret lives only in the `sign` call's frame (never in the approval, the
   durable record, the log or a result). The signer sets `label:"runner"`, `verbs:"agent"` and `runner:true` itself
   (a dashboard `label` or `verbs` is `invalid.input`), so the op is a runner grant with no `ORCH_GRANT` hint; more than 168 hours (the host also applies the workspace setting at prepare) or no dashboard execution is `terminal_only`. The View's
-  `lines` end with the tier-A sentence ("Anything that takes over the dashboard can give agents standing authority to
-  act for you on tickets for as long as the grant lasts (up to 7 days, the length you choose); you can stop it at any time.") and the deposit line. A repeated `sign` answers the settled outcome or
+  `lines` end with the tier-A sentence ("Whoever controls this dashboard could use this access while it lasts. You can
+  stop it any time.") and the deposit line. A repeated `sign` answers the settled outcome or
   asks `grant.deposit_status` once (after a restart the secret is gone: `unknown` unless the host says `confirmed` or
   `rejected`). Any failure of the hand-over after the commit (a host error, a broken or garbled connection) is
   `unknown`, never a failed `sign`.

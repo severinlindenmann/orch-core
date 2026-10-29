@@ -166,7 +166,7 @@ export type ClickAction = HandoffAction | RunnerGrantAction | AgentAccessAction 
 /** Core's constant (orch.click.protocol DEPOSIT_LINE): a deposit View must carry it, or Sign is not offered. */
 export const DEPOSIT_LINE = 'The secret goes to your orch runner on this machine and is never shown'
 /** The owner's risk sentence for the runner grant (D-P2-27), verbatim. */
-export const DEPOSIT_RISK = 'Anything that takes over the dashboard can give agents standing authority to act for you on tickets for as long as the grant lasts (up to 7 days, the length you choose); you can stop it at any time.'
+export const DEPOSIT_RISK = 'Whoever controls this dashboard could use this access while it lasts. You can stop it any time.'
 
 /**
  * A deposit View is shown with a Sign button only when it says so, carries both constants, and is of this workspace.

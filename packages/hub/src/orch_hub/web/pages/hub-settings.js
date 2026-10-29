@@ -21,6 +21,7 @@ const WHY = {
   bad_credentials: "The password or the code was not right. Each code works only once: wait for the next one.",
   insecure_origin: "The 24 words are not shown on this address. Run the command below on the server itself.",
   no_backup_key: "Set up backups first.",
+  confirm_denied: "Only the session that made the new words can confirm them. Make new words again from this session.",
   backup_not_found: "That backup is not on this server any more.",
   backup_failed: "The backup could not be made.",
   wrong_backup_key: "Those words do not open this backup.",
@@ -204,7 +205,7 @@ const PENDING_WORD = { secret_share: "Company secret shared with a workspace", s
 
 /** What a restore on a new server switched off: each one is Off until an admin turns it on again with one click. */
 function pendingList(items, actions) {
-  return h("div", { class: "banner warn", "data-pending": "1" },
+  return h("div", { class: "banner warn", "data-restore-pending": "1" },
     h("b", { text: "Switched off by the restore" }),
     h("p", { class: "small", text: "These were shared before the backup was made. They stay off until you turn each one on again." }),
     h("ul", { class: "list" }, items.map((x) => h("li", { class: "list-row row", "data-pending-id": String(x.id) },
@@ -217,6 +218,12 @@ function backupCard(b, actions) {
   if (actions.words) card.append(wordsPanel(actions.words, actions));
   if (b.restored) card.append(restoredNotice(b.restored, actions));
   if (b.pending?.length) card.append(pendingList(b.pending, actions));
+  if (b.key_pending) {  // after a reload: the words are gone, but the older backups are still waiting for "saved"
+    card.append(h("div", { class: "banner", role: "status", "data-pending": "1" },
+      h("b", { text: "New backup words are not confirmed yet" }),
+      h("p", { class: "small", text: "Backups made with the older words are kept until you confirm that you saved the new words." }),
+      h("button", { type: "button", class: "primary", text: "I have saved it", onclick: () => actions.wordsSaved?.() })));
+  }
   const mayShow = actions.wordsMayShow !== false;
   const cli = h("code", { class: "mono cli-line", text: text(b.cli_line ?? "orch-hub backup-key") });
   if (!b.key_set) {
@@ -286,7 +293,11 @@ export async function hubSettingsPage(d, detected = [], words = null) {
       words,
       wordsMayShow: wordsMayShow(globalThis.location, (r.body.addresses ?? []).filter((a) => a.kind === "private").map((a) => a.web)),
       copy: async (t) => { try { await globalThis.navigator?.clipboard?.writeText(t); return true; } catch { return false; } },
-      wordsSaved: async () => { await d.api("POST", "/admin/backup/key/confirm", {}); await hubSettingsPage(d); },
+      wordsSaved: async () => {
+        const x = await d.api("POST", "/admin/backup/key/confirm", {});
+        if (x.status !== 200) backupNote(x, "");
+        await hubSettingsPage(d);
+      },
       setKey: async (c) => {
         const x = await d.api("POST", "/admin/backup/key", c);
         if (x.status === 200) { d.state.notice = d.banner("ok", "Backups are set up", null); return hubSettingsPage(d, [], x.body.words); }

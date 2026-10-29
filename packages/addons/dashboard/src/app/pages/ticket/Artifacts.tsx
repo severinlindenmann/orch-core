@@ -18,7 +18,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { cn } from '@/lib/utils'
-import { agentName, ago, fmtBytes, Mono, Pill, shortHash, type Jump, type TabProps } from './shared'
+import { agentName, Ago, fmtBytes, Mono, Pill, shortHash, type Jump, type TabProps } from './shared'
 import { addonHairline, addonTile } from '@/addon-ui/addonClasses'
 import { queries } from '@/api/queries'
 import { artifactTextQuery, sameDigest, capText, looksBinary, TEXT_PREVIEW_BYTES } from '@/api/artifactText'
@@ -679,7 +679,7 @@ export function Artifacts({ ticket, viewer, jump, focus }: TabProps & { focus?: 
                 </div>
                 {a.label && <p className="mt-0.5 line-clamp-2 text-[12px] text-text-muted">{a.label}</p>}
                 <p className="mt-1 truncate text-[11px] text-text-faint">
-                  by {viewer.name(a.added_by)} · {ago(a.at)}
+                  by {viewer.name(a.added_by)} · <Ago at={a.at} />
                 </p>
                 <Meta a={a} jump={jump} />
                 <div className="mt-auto pt-2">
@@ -712,7 +712,7 @@ export function Artifacts({ ticket, viewer, jump, focus }: TabProps & { focus?: 
 export function ArtifactFacts({ a, by }: { a: Artifact; /** "Claude Code for Severin" where the page knows more than the ticket's actor label. */ by?: string }) {
   return (
     <p className="text-[11px] text-text-faint">
-      Added by {by ?? (a.added_by === 'host' ? 'orch' : agentName(a.added_by))} · {ago(a.at)} · sha256 {shortHash(a.sha256, 12)}
+      Added by {by ?? (a.added_by === 'host' ? 'orch' : agentName(a.added_by))} · <Ago at={a.at} /> · sha256 {shortHash(a.sha256, 12)}
       {a.ac && ` · proves ${a.ac}`}
       {a.task && ` · from ${a.task}`}
     </p>

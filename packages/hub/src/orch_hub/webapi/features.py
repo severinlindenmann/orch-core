@@ -37,8 +37,8 @@ FEATURES: tuple[Feature, ...] = (
     Feature(mixin=OrgHandlers),  # its routes are listed in api.py (inside the admin block)
     Feature(mixin=SecretHandlers, routes=secret_routes),
     Feature(mixin=SettingsHandlers, routes=settings_routes),
-    Feature(mixin=SpaceHandlers, routes=space_routes),
     Feature(mixin=BackupHandlers, routes=backup_routes, status=BACKUP_STATUS),
+    Feature(mixin=SpaceHandlers, routes=space_routes),
 )
 
 FEATURE_MIXINS: tuple[type, ...] = tuple(f.mixin for f in FEATURES)

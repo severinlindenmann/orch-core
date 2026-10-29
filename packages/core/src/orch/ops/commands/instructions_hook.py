@@ -83,15 +83,31 @@ def _stop(ctx: Context, ws: Any, args: dict[str, Any]) -> Result:
         for v in c.mine():
             if any(not q.answered and q.blocking for q in v.questions):
                 continue  # it waits for the person, on purpose
-            gate = views.open_gate(v)
-            if gate is None:
+            gates = views.open_gates(v)
+            if not gates:
                 continue
-            gaps = [(m, cmd) for m, cmd in views.gap_commands(v, gate) if _ITEM.fullmatch(m)]
+            gate, gaps = gates[0], []
+            for g in gates:
+                gaps = [(m, cmd) for m, cmd in views.gap_commands(v, g) if _ITEM.fullmatch(m)]
+                if gaps:
+                    gate = g
+                    break
             if not gaps:
-                continue
+                if any(views.gate_missing(v, g) for g in gates):
+                    continue  # it lacks only what has no one-line command (an artifact): let the agent stop
+                # run-9 J04: every open gate is complete and waits for the person. Ending the turn here leaves an
+                # idle session that never builds: the agent waits in this session and builds once it is approved.
+                reason = (
+                    f"The {gate} gate of {v.key} is ready and waits for the person's approval. Do not end your turn:"
+                    " run orch wait (again after a timeout). Once it is approved, build the ticket in this session:"
+                    " orch task next."
+                )
+                raw = json.dumps({"decision": "block", "reason": reason})
+                return Result(data={"event": "stop", "head": "", "raw": raw})
             names = ", ".join(m.replace("_", " ") for m, _ in gaps)
             reason = (
-                f"The {gate} gate of {v.key} still lacks: {names}. Fill it in ({gaps[0][1]}; then the rest), then stop."
+                f"The {gate} gate of {v.key} still lacks: {names}. Fill it in ({gaps[0][1]}; then the rest),"
+                " then run orch wait."
             )
             raw = json.dumps({"decision": "block", "reason": reason})
             return Result(data={"event": "stop", "head": "", "raw": raw})

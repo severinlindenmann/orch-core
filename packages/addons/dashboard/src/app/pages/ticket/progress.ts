@@ -93,10 +93,19 @@ export function useMark(ws: string, key: string): Mark | undefined {
   return useSyncExternalStore(subscribe, () => markOf(ws, key))
 }
 
-export function phaseOf(ticket: TicketDocument, o: { needsYou: boolean; mark?: Mark; run?: ProgressRun | null; now: number }): Phase {
+/**
+ * The one "the agent is working" rule (run-9 J04), for the header, the next step, Today and every spinner: an agent
+ * holds a live claim AND is not idle at its prompt. `wait` is the run the host marks idle (Today's `terminal_wait` of
+ * this ticket: its turn ended and it waits). A live process or claim alone never means working.
+ */
+export function agentWorking(ticket: Pick<TicketDocument, 'claim'>, wait?: string | null): boolean {
+  return !!ticket.claim && ticket.claim.live !== false && !wait
+}
+
+export function phaseOf(ticket: TicketDocument, o: { needsYou: boolean; mark?: Mark; run?: ProgressRun | null; now: number; wait?: string | null }): Phase {
   if (ticket.status === 'done' || ticket.status === 'closed') return { kind: 'idle' }
   if (o.needsYou) return { kind: 'needs' }
-  if (ticket.claim && ticket.claim.live !== false) return { kind: 'working' }
+  if (agentWorking(ticket, o.wait)) return { kind: 'working' }
   if (o.mark?.failed) return { kind: 'failed', reason: o.mark.failed.reason, initial: o.mark.failed.initial }
   const runStart = o.run ? Date.parse(o.run.started_at) : NaN
   // A run of this ticket that ended before an agent claimed it, newer than our ask: the start did not work.

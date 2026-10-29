@@ -38,6 +38,7 @@ W2H_OPS: dict[str, str | None] = {
     "switch_redeem": None,
     "rail_get": None,
     "owner_get": None,
+    "hub_where": None,
     "status_put": None,
     "addon_request": None,
     "profile_put": None,

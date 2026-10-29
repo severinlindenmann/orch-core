@@ -589,7 +589,7 @@ def test_migration_from_schema_2_keeps_data_and_adds_the_hub_tables(tmp_path):
     conn.close()
     db.init(path)
     conn = db.connect(path)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 4
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 5
     assert conn.execute("SELECT person_id FROM owners").fetchone()[0] == "p"
     assert conn.execute("SELECT count(*) FROM hub_bindings").fetchone()[0] == 0
     conn.close()
@@ -620,7 +620,7 @@ def test_migration_from_schema_3_adds_the_display_columns_of_the_company_list(tm
     conn = db.connect(path)
     r = conn.execute("SELECT label, by_kind, by_name FROM shares").fetchone()
     assert tuple(r) == ("", "person", None)  # an old row reads with the plain defaults
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 4
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
     # the company list reads the old row as "Shared files" by a person
     from pubsrv import hub_admin_read as R
 
@@ -632,7 +632,7 @@ def test_migration_from_schema_3_adds_the_display_columns_of_the_company_list(tm
     conn = db.connect(path)
     assert [tuple(c) for c in conn.execute("PRAGMA table_info(shares)")] == cols
     assert conn.execute("SELECT count(*) FROM shares").fetchone()[0] == 1
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 4
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
     conn.close()
 
 

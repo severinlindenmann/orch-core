@@ -708,3 +708,88 @@ def test_unbind_revokes_then_drops_values_then_purges(live, human, monkeypatch):
     assert not live.proxy._held_now and not orgsecrets._CACHE  # noqa: SLF001
     assert call(live)[0] == 401
     assert get(w) is None
+
+
+# -- review M1: a mode switch (same hub, binding_seq + 1) does not reset the rollback pins ------------------------
+
+
+@pytest.fixture
+def switched(w, monkeypatch):
+    """After this runs the binding is the same hub with binding_seq + 1 (what hub.connect kind=switch gives)."""
+    real = orgstate._binding  # noqa: SLF001
+    seq = {"add": 0}
+    monkeypatch.setattr(
+        orgstate, "_binding", lambda st: {**real(st), "binding_seq": real(st)["binding_seq"] + seq["add"]}
+    )
+
+    def switch():
+        seq["add"] = 1
+
+    return switch
+
+
+def test_a_switch_keeps_the_pins_so_a_lower_secret_version_is_still_refused(w, switched):
+    w.accept_server()
+    w.org.secrets = [w.entry(version=3)]
+    sec_sync(w)
+    assert get(w) == VALUE
+    switched()
+    w.org.secrets = [w.entry(version=2, value="older-value-2222")]  # the hub serves an older secret after the switch
+    w.accept_server()  # its own sync is the first one of the new binding; the new binding needs its own accept
+    sec_sync(w)
+    assert w.stored() == [] and get(w) is None
+    pins = json.loads((orgstate.org_dir(w.service) / "secret-pins.json").read_text())
+    assert pins["ids"][SID] == 3
+
+
+def test_a_switch_keeps_the_bundle_version_pin(w, switched):
+    w.accept_server()
+    w.org.secrets_version = 4
+    w.org.secrets = [w.entry()]
+    sec_sync(w)
+    pinned = w.org.secrets_version
+    switched()
+    w.org.secrets_version = pinned - 1  # an older bundle than the one pinned before the switch
+    w.accept_server()
+    assert sec_sync(w)["secrets"] == "stale_bundle"
+
+
+# -- review L3: the pin file is bounded and fails closed -----------------------------------------------------------
+
+
+def test_a_bundle_beyond_the_pin_cap_is_refused(w, monkeypatch):
+    monkeypatch.setattr(orgsecrets, "PINS_MAX", 2)
+    w.accept_server()
+    w.org.secrets = [w.entry("vault-key", sid=SID), w.entry("aux-key", sid=SID2)]
+    assert sec_sync(w)["secrets"] == "new"
+    w.org.secrets = [w.entry("vault-key", sid=SID), w.entry("aux-key", sid=SID2), w.entry("third-key", sid="33" * 16)]
+    assert sec_sync(w)["secrets"] == "too_many_secrets"
+    assert get(w) == VALUE  # a refused bundle changes nothing
+
+
+@pytest.mark.parametrize(
+    "bad",
+    ["[]", '{"hub_id": "x", "ids": []}', '{"ids": {"a": "b"}}', '{"ids": {"a": 0}}', '{"ids": {"a": 1}, "bundle": 5}'],
+)
+def test_an_unusable_pin_file_refuses_the_sync_instead_of_reading_as_empty(w, bad):
+    w.accept_server()
+    w.org.secrets = [w.entry()]
+    sec_sync(w)
+    path = orgstate.org_dir(w.service) / "secret-pins.json"
+    path.write_text(bad)
+    os.chmod(path, 0o600)
+    w.org.secrets = [w.entry(version=2)]
+    assert sec_sync(w)["secrets"] == "pins_unusable"
+
+
+def test_an_oversize_pin_file_refuses_the_sync(w):
+    w.accept_server()
+    w.org.secrets = [w.entry()]
+    sec_sync(w)
+    path = orgstate.org_dir(w.service) / "secret-pins.json"
+    doc = json.loads(path.read_text())
+    doc["ids"] = {f"{i:032x}": 1 for i in range(orgsecrets.PINS_MAX + 1)}
+    path.write_text(json.dumps(doc))
+    os.chmod(path, 0o600)
+    w.org.secrets = [w.entry(version=2)]
+    assert sec_sync(w)["secrets"] == "pins_unusable"

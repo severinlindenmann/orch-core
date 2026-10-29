@@ -6,7 +6,7 @@ Files under ``hub/org/`` (0600, host UID, written like the other org files):
 * ``secrets.json``: ``{binding, issued_ms, wraps: [entry]}``. The SEALED wraps (the hub's entries as
   they came) of exactly the secrets named by an accepted, served ``hub_secret`` MCP server. Nothing else is kept.
   Deleted at once when the host is found not isolated.
-* ``secret-pins.json``: ``{binding, bundle: {version, digest}, ids: {secret_id: highest version seen}}``. The rollback
+* ``secret-pins.json``: ``{hub_id, bundle: {version, digest}, ids: {secret_id: highest version seen}}``. The rollback
   pins. They survive a sync and a loss of isolation; only :func:`orgstate.purge` (unbind, leave) drops them.
 
 A value exists in memory only: opened per call or from a cache of at most 60 s that never outlives ``expires_ms`` and
@@ -36,6 +36,13 @@ __all__ = [
 ]
 
 CACHE_TTL_S = 60.0
+PINS_MAX = 1000  # secret ids pinned per hub; a bundle that would go beyond is refused
+
+
+class PinsUnusable(Exception):
+    """``secret-pins.json`` exists but cannot be trusted: the sync refuses (fail closed)."""
+
+
 USAGE_MAX = 50
 _MU = threading.RLock()
 _CACHE: dict[tuple[str, str, int, int], tuple[str, float, int]] = {}  # key -> (value, cached_at, expires_ms)
@@ -100,15 +107,27 @@ def _wraps(service: WorkspaceService, state: Any) -> tuple[list[dict[str, Any]],
 
 
 def _pins(service: WorkspaceService, state: Any) -> dict[str, Any]:
+    """The rollback pins of this HUB (a mode switch keeps the hub and bumps ``binding_seq``: the pins stay; only
+    :func:`orgstate.purge` resets them). A missing file is no pins; a file that is there but unusable (not an object,
+    over :data:`PINS_MAX`, bad entries) raises :class:`PinsUnusable` so the sync refuses instead of reading it as
+    empty."""
     os_ = _orgstate()
+    empty = {"hub_id": str(state.hub_id), "bundle": None, "ids": {}}
+    if not (os_.org_dir(service) / "secret-pins.json").exists():
+        return empty
     doc = os_._read(service, "secret-pins.json")  # noqa: SLF001
-    b = os_._binding(state)  # noqa: SLF001
-    if type(doc) is not dict or doc.get("binding") != b or type(doc.get("ids")) is not dict:
-        return {"binding": b, "bundle": None, "ids": {}}
+    if type(doc) is not dict or type(doc.get("ids")) is not dict or len(doc["ids"]) > PINS_MAX:
+        raise PinsUnusable
     bundle = doc.get("bundle")
-    ok = type(bundle) is dict and type(bundle.get("version")) is int and type(bundle.get("digest")) is str
-    ids = {k: v for k, v in doc["ids"].items() if type(k) is str and type(v) is int}
-    return {"binding": b, "bundle": bundle if ok else None, "ids": ids}
+    if bundle is not None and not (
+        type(bundle) is dict and type(bundle.get("version")) is int and type(bundle.get("digest")) is str
+    ):
+        raise PinsUnusable
+    if any(type(k) is not str or type(v) is not int or v < 1 for k, v in doc["ids"].items()):
+        raise PinsUnusable
+    if doc.get("hub_id") != str(state.hub_id):
+        return empty  # another hub's pins are not this hub's (unbind purges them anyway)
+    return {"hub_id": empty["hub_id"], "bundle": bundle, "ids": dict(doc["ids"])}
 
 
 def drop_all(service: WorkspaceService) -> None:
@@ -191,7 +210,10 @@ def sync_secrets(service: WorkspaceService, state: Any, held: Any, body: Any, no
     if type(body) is str:
         prune(service)
         return body
-    pins = _pins(service, state)
+    try:
+        pins = _pins(service, state)
+    except PinsUnusable:
+        return "pins_unusable"
     try:
         o = orgbundles.verify_org_secrets(
             body["bundle"],
@@ -205,8 +227,10 @@ def sync_secrets(service: WorkspaceService, state: Any, held: Any, body: Any, no
         return exc.code
     except (KeyError, TypeError):
         return "malformed"
-    used = used_names(service)
     ids = dict(pins["ids"])
+    if len(ids | {e["id"]: 0 for e in o["secrets"]}) > PINS_MAX:
+        return "too_many_secrets"
+    used = used_names(service)
     keep: list[dict[str, Any]] = []
     for e in o["secrets"]:
         seen = ids.get(e["id"], 0)
@@ -221,7 +245,7 @@ def sync_secrets(service: WorkspaceService, state: Any, held: Any, body: Any, no
         service,
         "secret-pins.json",
         {
-            "binding": pins["binding"],
+            "hub_id": pins["hub_id"],
             "bundle": {"version": o["version"], "digest": orgbundles.secrets_digest(o)},
             "ids": ids,
         },

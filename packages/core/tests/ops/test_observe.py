@@ -41,6 +41,7 @@ def test_submit_on_a_repo_linked_ticket_works_end_to_end(ws, cli):
 
 
 def test_a_new_commit_is_observed_on_the_next_show_and_old_receipts_stop_counting(ws, cli):
+    ws.plan_gate_off()  # r10-P02: no plan approval in this test; an agent builds only after one
     repo = ws.repo()
     claimed(cli)
     cli("ac", "add", "a")

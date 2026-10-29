@@ -110,7 +110,7 @@ export function summarize(review: Review): { lines: string[]; unknown: boolean; 
   }
   for (const flag of review.flags) {
     if (flag.id === 'custody' || flag.id === 'terminal' || flag.id === 'records' || flag.id === 'trust' || flag.id === 'perms') lines.push(flag.text)
-    else if (flag.id === 'git') continue // shown as the 'Safe copies' row on the card; its detail stays in the fold
+    else if (flag.id === 'git') continue // shown as the 'Work copies' row on the card; its detail stays in the fold
     else if (flag.id !== 'runner' && flag.id !== 'terminals') odd(flag.text) // a flag this page does not know is shown
   }
   if (addons.length) lines.push(`Add-ons: ${addons.join(', ')}`)
@@ -146,7 +146,7 @@ export function reviewFacts(review: Review): Fact[] {
   if (agents !== undefined) facts.push({ icon: '✦', label: 'Agents', value: agents })
   const addons = review.items.filter((i) => i.type === 'addon.granted' && i.id !== 'addon:dashboard').map((i) => i.title)
   if (addons.length) facts.push({ icon: '⊞', label: 'Add-ons', value: addons })
-  if (has('git')) facts.push({ icon: '⧉', label: 'Safe copies', value: 'Each ticket gets its own safe copy of this folder. None of your files are changed, except .gitignore.' })
+  if (has('git')) facts.push({ icon: '⧉', label: 'Work copies', value: 'Each ticket gets its own copy of this folder. Your files are not changed.' })
   if (has('records')) facts.push({ icon: '◷', label: 'History', value: 'Tickets are saved on this computer only' })
   return facts
 }
@@ -943,7 +943,11 @@ export function Setup({ api }: { api: SetupAPI }) {
                   <label className="toggle">
                     <span>
                       <strong>Set it up for me (recommended)</strong>
-                      <small>Each ticket gets its own safe copy. None of your files are changed, except .gitignore.</small>
+                      <small>Each ticket gets its own copy. Your files are not changed.</small>
+                      <details className="info">
+                        <summary>Details</summary>
+                        <small>orch adds two lines to your .gitignore (.orch/ and .orch-work/) so the copies stay out of your project history.</small>
+                      </details>
                     </span>
                     <input
                       type="radio"
@@ -1330,7 +1334,7 @@ export function Setup({ api }: { api: SetupAPI }) {
             )
           )}
           {state?.os === 'darwin' && (
-            <p><small>On a Mac only: your Mac may say “orch added items that run in the background”. That is fine; leave it on.</small></p>
+            <p><small>Your Mac may say “orch added items that run in the background”. That is fine; leave it on.</small></p>
           )}
           <ol className="progress">
             {groupProgress(progress?.steps ?? []).map((s) => (

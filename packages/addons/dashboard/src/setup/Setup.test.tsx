@@ -853,7 +853,7 @@ test('the summary comes from the review core returned, not from the choices on t
   expect(summary).toHaveTextContent('In a terminal, with your passphrase')
 })
 
-test('the git flag is the Safe copies row, no Also row; its signed text and the git words are in Everything you approve', async () => {
+test('the git flag is the Work copies row, no Also row; its signed text and the git words are in Everything you approve', async () => {
   const { api } = withReview({
     flags: [{ id: 'git', text: 'Keep a history of changes in this folder. Your files stay as they are.', detail: 'This runs git init, keeps .orch/ and .orch-work/ out of the repository, and makes one empty first commit.' }],
   })
@@ -864,7 +864,7 @@ test('the git flag is the Safe copies row, no Also row; its signed text and the 
   await check()
   await screen.findByRole('heading', { name: 'Review your setup' })
   const summary = document.querySelector('.review-summary')!
-  expect(summary).toHaveTextContent('Safe copiesEach ticket gets its own safe copy of this folder. None of your files are changed, except .gitignore.')
+  expect(summary).toHaveTextContent('Work copiesEach ticket gets its own copy of this folder. Your files are not changed.')
   expect(summary).not.toHaveTextContent(/Also|git init|\.orch/)
   const fold = document.querySelector('.review-technical') as HTMLDetailsElement
   expect(fold.open).toBe(false)
@@ -1124,7 +1124,11 @@ test('a folder without git offers to make one when Work copies is on, and never 
   await screen.findByRole('heading', { name: 'Set up your workspace' })
   for (let i = 0; i < 2; i++) fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   expect(screen.getByText(/not set up for work copies yet/)).toBeInTheDocument()
-  expect(screen.getByText(/None of your files are changed, except .gitignore/)).toBeInTheDocument()
+  expect(screen.getByText('Each ticket gets its own copy. Your files are not changed.')).toBeInTheDocument()
+  const fold = screen.getByText('Details').closest('details') as HTMLDetailsElement
+  expect(fold.open).toBe(false)
+  expect(fold).toHaveTextContent('.gitignore')
+  expect(screen.getByText('Each ticket gets its own copy. Your files are not changed.').closest('label')!.textContent!.replace(fold.textContent!, '')).not.toMatch(/gitignore/)
   expect(screen.queryByText(/git init/i)).not.toBeInTheDocument()
   expect(screen.getByLabelText(/Set it up for me/)).toBeChecked()
   expect(screen.getByRole('button', { name: 'Continue →' })).toBeEnabled()

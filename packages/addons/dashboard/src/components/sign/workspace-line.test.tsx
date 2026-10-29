@@ -17,9 +17,16 @@ describe('WorkspaceLine folded', () => {
     expect(line.textContent).toContain('ws-a')
     expect(line.textContent).toContain('aaaaaaaa')
   })
-  it('a risk state (always) keeps it in view even when folded', () => {
-    render(<WorkspaceLine workspace={ws} many folded always />)
+  it('a hub join in a risk state keeps it under Details (one click away, r10-P08); an unfolded risk state keeps it in view', () => {
+    const { unmount } = render(<WorkspaceLine workspace={ws} many folded always />)
+    expect(screen.getByTestId('sign-workspace').closest('details')).not.toBeNull()
+    unmount()
+    render(<WorkspaceLine workspace={ws} many always />)
     expect(screen.getByTestId('sign-workspace').closest('details')).toBeNull()
+  })
+  it('folded shows the line under Details even for one workspace', () => {
+    render(<WorkspaceLine workspace={ws} many={false} folded />)
+    expect(screen.getByTestId('sign-workspace').closest('details')!.open).toBe(false)
   })
   it('is not folded by default (other dialogs)', () => {
     render(<WorkspaceLine workspace={ws} many />)

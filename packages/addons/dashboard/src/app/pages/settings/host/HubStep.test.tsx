@@ -48,8 +48,10 @@ afterEach(async () => {
   vi.restoreAllMocks()
 })
 
-function mount(action: Parameters<typeof HubStep>[0]['action'] = JOIN) {
-  return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><TooltipProvider><HubStep ws={WS} action={action} onClose={vi.fn()} /></TooltipProvider></QueryClientProvider>)
+function mount(action: Parameters<typeof HubStep>[0]['action'] = JOIN, list: Array<{ id: string }> = []) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  vi.spyOn(api, 'getWorkspaces').mockResolvedValue(list as never)
+  return render(<QueryClientProvider client={client}><TooltipProvider><HubStep ws={WS} action={action} onClose={vi.fn()} /></TooltipProvider></QueryClientProvider>)
 }
 const input = async () => (await screen.findByTestId('hub-backup-input', {}, T)) as HTMLInputElement
 const signBtn = () => screen.getByRole('button', { name: 'Connect' })
@@ -187,5 +189,19 @@ describe('the sticky sign bar', () => {
     bar.getBoundingClientRect = () => ({ top: 690 }) as DOMRect
     fireEvent.focus(el)
     expect(scroller.scrollTop).toBe(78) // 760 - 690 + 8
+  })
+})
+
+describe('the hub join review names the workspace', () => {
+  const two = [{ id: WS, running: true }, { id: 'w_other', running: true }]
+  it('with several workspaces the workspace line is on the main surface', async () => {
+    mount(JOIN, two as never)
+    await input()
+    await waitFor(() => expect(screen.getByTestId('sign-workspace').closest('details')).toBeNull(), T)
+  })
+  it('with one workspace it is folded under Details', async () => {
+    mount(JOIN, [{ id: WS, running: true }] as never)
+    await input()
+    expect(screen.getByTestId('sign-workspace').closest('details')).not.toBeNull()
   })
 })

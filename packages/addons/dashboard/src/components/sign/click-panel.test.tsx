@@ -375,6 +375,10 @@ describe('C3: one press (a contract-4 View of a request prepared by a trusted pr
     expect(onSign).not.toHaveBeenCalled()
   })
 
+  it('with several workspaces the armed hub join names the workspace on the main surface', () => {
+    armed(v4(), { story: storyOf({ action: 'hub_join', hub_card: {}, hub_id: 'h', mode: 'selective' } as never), manyWorkspaces: true })
+    expect(screen.getByTestId('sign-workspace').closest('details')).toBeNull()
+  })
   it('the workspace prefix, short id and name, and the target, show during the arm for a person with one workspace', () => {
     armed(v4([], { content: { headline: HEADLINE, ticket: { key: 'DEMO-0001', title: '', uid_tail: 'abcd1234', key_note: '' } } }), { manyWorkspaces: false })
     const line = screen.getByTestId('sign-workspace')
@@ -554,5 +558,22 @@ describe('people in the content are named from the View\'s own workspace', () =>
     const row = named('w_other')
     expect(row).toHaveTextContent('Owner: Severin')
     expect(row).not.toHaveTextContent('Impostor')
+  })
+})
+
+describe('r10-P08 hub join workspace line', () => {
+  const join = storyOf({ action: 'hub_join', hub_card: {}, hub_id: 'h', mode: 'selective' } as never)
+  const risky = () => answer({ headline: 'Connect', risk_lines: ['Risk line'] })
+  it.each([['a risk line', risky()], ['no risk line', answer({ headline: 'Connect' })]])('with several workspaces and %s the workspace stays in view', (_n, a) => {
+    mount(a, { story: join, manyWorkspaces: true })
+    expect(screen.getByTestId('sign-workspace').closest('details')).toBeNull()
+  })
+  it('with one workspace and no risk line a hub join folds it under Details', () => {
+    mount(answer({ headline: 'Connect' }), { story: join, manyWorkspaces: false })
+    expect(screen.getByTestId('sign-workspace').closest('details')).not.toBeNull()
+  })
+  it('with one workspace it stays under Details', () => {
+    mount(risky(), { story: join, manyWorkspaces: false })
+    expect(screen.getByTestId('sign-workspace').closest('details')).not.toBeNull()
   })
 })

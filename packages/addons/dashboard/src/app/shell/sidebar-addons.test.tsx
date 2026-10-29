@@ -15,3 +15,14 @@ it.each(['on', 'off', 'attention'] as const)('shows the Worktrees page only when
   if (status === 'on') expect(await nav.findByRole('link', { name: 'Worktrees' })).toBeInTheDocument()
   else expect(nav.queryByRole('link', { name: 'Worktrees' })).not.toBeInTheDocument()
 })
+
+it('shows Schedules as soon as the workspace list says the page is served, with nothing else changing (R14b)', async () => {
+  const { queryClient } = await import('@/production/Shell')
+  await show('/')
+  const nav = within(await screen.findByRole('navigation', { name: 'Main' }))
+  expect(await nav.findByRole('link', { name: /^Today/ })).toBeInTheDocument()
+  expect(nav.queryByRole('link', { name: 'Schedules' })).not.toBeInTheDocument()
+  state.host.workspaces[0].features = [...READS, 'worktrees', 'schedules']
+  await queryClient.invalidateQueries({ queryKey: ['workspaces'] })
+  expect(await nav.findByRole('link', { name: 'Schedules' })).toBeInTheDocument()
+})

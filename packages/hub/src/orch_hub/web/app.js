@@ -1054,7 +1054,7 @@ function openShortcuts() {
 async function openSearch() {
   if (!state.user || document.querySelector('[role="dialog"]')) return;
   const user = state.user;
-  let people = [], index = 0, matches = [];
+  let people = [], shared = [], index = 0, matches = [];
   const results = h("div", { id: "search-results", role: "listbox", "aria-label": "Search results" });
   const input = h("input", { type: "search", placeholder: "Search pages, workspaces, tickets…", "aria-label": "Search everything", role: "combobox", "aria-controls": "search-results", "aria-expanded": "true", "aria-autocomplete": "list" });
   const choose = () => {
@@ -1067,7 +1067,7 @@ async function openSearch() {
   };
   const draw = () => {
     if (state.user !== user) { results.replaceChildren(); return; }
-    matches = filterSearch(searchEntries({ admin: user.is_admin, workspaces: state.rail.rows, items: liveItems.user_id === user.user_id ? liveItems.items : [], people }), input.value);
+    matches = filterSearch(searchEntries({ admin: user.is_admin, workspaces: state.rail.rows, items: liveItems.user_id === user.user_id ? liveItems.items : [], people, shared }), input.value);
     index = Math.max(0, Math.min(index, matches.length - 1));
     results.replaceChildren();
     let group;
@@ -1089,8 +1089,9 @@ async function openSearch() {
   const layer = dialog(h("h1", { text: "Search everything" }), input, results, h("button", { text: "Close", onclick: closeDialog }));
   layer.classList.add("search-layer");
   draw(); input.focus();
-  const [needs, rail, users] = await Promise.all([api("GET", "/me/needs-you"), api("GET", "/rail"), user.is_admin ? api("GET", "/admin/users") : Promise.resolve(null)]);
+  const [needs, rail, users, sharedRes] = await Promise.all([api("GET", "/me/needs-you"), api("GET", "/rail"), user.is_admin ? api("GET", "/admin/users") : Promise.resolve(null), api("GET", "/me/shared")]);
   if (!layer.isConnected || state.user !== user) return;
+  if (sharedRes.status === 200) shared = sharedRes.body.items ?? [];
   liveItems = { user_id: user.user_id, items: needs.status === 200 ? needs.body.items ?? [] : [] };
   if (rail.status === 200) state.rail.rows = railRows(rail.body);
   if (users?.status === 200) people = users.body.users ?? [];
@@ -1130,8 +1131,9 @@ async function workspacePage(route) {
     await loadRail();
     const w = state.rail.rows.find((row) => row.id === route.workspace);
     if (!w) return shell("workspaces", h("h1", { text: "Workspace unavailable" }), h("p", { text: "This workspace is not in your list." }));
-    const needs = await api("GET", "/me/needs-you");
+    const [needs, sharedRes] = await Promise.all([api("GET", "/me/needs-you"), api("GET", "/me/shared?workspace_id=" + encodeURIComponent(w.id))]);
     const items = needs.status === 200 ? needs.body.items.filter((it) => it.workspace_id === w.id) : [];
+    const sharedTickets = sharedRes.status === 200 ? (sharedRes.body.items ?? []).filter((it) => it.workspace_id === w.id) : [];
     if (route.kind === "item" && w.online) {
       const item = items.find((it) => it.key === route.key || it.item_id === route.key);
       if (item) return reviewItem(item);
@@ -1140,9 +1142,18 @@ async function workspacePage(route) {
     shell("workspaces", h("h1", { text: renderText(w.name) + (w.online ? "" : " is " + workspaceStatus(w)) }),
       h("p", { text: w.online ? "Online" : "Hand-offs and approvals wait until this workspace is back." }),
       h("p", { text: needs.status === 200 && w.online ? items.length + " things need you" : w.badge ? w.badge + " things need you. They wait until the workspace is back." : "Waiting items will be shown when the workspace is back." }),
+      sharedTicketsView(sharedTickets),
       w.online ? h("button", { text: "Open workspace", disabled: !w.canOpen, onclick: () => openWorkspace(w) }) : null,
       w.online && !w.canOpen ? h("p", { text: OPEN_FIRST }) : null);
   } finally { finishLoading(); }
+}
+
+// "Shared tickets (n)": read-only rows; the owner sees with whom a ticket is shared, anyone else by whom.
+function sharedTicketsView(list) {
+  if (!list.length) return null;
+  return h("section", { "aria-label": "Shared tickets" }, h("h2", { text: "Shared tickets (" + list.length + ")" }),
+    list.map((it) => h("div", { class: "list-row" }, h("b", { text: renderText(it.title ?? it.key ?? "Ticket") }),
+      h("div", { class: "small muted", text: it.shared_with?.length ? "shared with " + it.shared_with.map(renderText).join(", ") : it.shared_by ? "Shared by " + renderText(it.shared_by) : "Shared" }))));
 }
 
 // Serialize renders so an earlier slow read cannot overwrite the final route.

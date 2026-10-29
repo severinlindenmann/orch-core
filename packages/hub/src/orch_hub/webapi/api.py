@@ -318,6 +318,13 @@ ROUTES: tuple[Route, ...] = (
         "Needs-you items (full: workspace view; selective: shared items)",
     ),
     _r(
+        "GET",
+        "/me/shared",
+        "session",
+        "my_shared",
+        "Tickets shared with me (optionally of one workspace): who shared, and for the owner with whom",
+    ),
+    _r(
         "GET", "/workspaces/{workspace_id}/items/{item_id}", "session", "item", "One ticket, question or needs-you item"
     ),
     _r("GET", "/me/channels", "session", "my_channels", "My registered channels (phone, browser)"),
@@ -572,6 +579,7 @@ SWITCH_HANDLERS = frozenset(
         "my_workspaces",
         "my_handoffs",
         "needs_you",
+        "my_shared",
         "item",
         "switch_ticket",
         "rail",
@@ -1367,6 +1375,35 @@ class WebApi(ChangeHandlers, OrgHandlers):
             if ws["workspace_id"] == workspace_id:
                 return len(self._needs_rows(ws, user_id) or [])
         return 0
+
+    def _h_my_shared(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        """Shared TICKETS of selective workspaces that the CALLER may read, nothing more. ``list_shared`` is the only
+        gate: it answers with the caller's own identity (the owner sees all, anyone else only what a verified, owner-signed
+        audience names them or their team in; hub-admins and role holders get nothing by role). Nothing here widens it;
+        an unknown, full-mode or unbound workspace answers an empty list, like a workspace the caller has no part in."""
+        if self.d.shares is None:
+            raise ApiError("unavailable")
+        only = q.get("workspace_id")
+        if only is not None:
+            _hex32(only)
+        people = {u["user_id"]: P4.render_text(u["name"]) for u in self.d.access.users()}
+        rows: list[dict[str, Any]] = []
+        for ws in sorted(self.d.registry.pins()):
+            if (only is not None and ws != only) or self.d.registry.mode(ws) != "selective":
+                continue
+            owner = self.d.registry.owner_alias(ws)
+            for it in self.d.shares.list_shared(c.user_id, ws):
+                if it["item"]["item_kind"] != "ticket":
+                    continue
+                row = self._shared_row({"workspace_id": ws}, it)
+                row["shared_by"] = people.get(owner)
+                aud = it["item"].get("audience")
+                if owner == c.user_id and type(aud) is dict:  # only the person who shared sees the audience
+                    row["shared_with"] = [people[u] for u in aud.get("users", []) if u in people] + [
+                        "Team: " + P4.render_text(g) for g in aud.get("groups", [])
+                    ]
+                rows.append(row)
+        return 200, {"items": rows}
 
     def _h_needs_you(self, c: Ctx, p: dict, q: dict, b: dict | None):
         items: list[dict[str, Any]] = []

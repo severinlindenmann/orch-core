@@ -174,12 +174,13 @@ export function replaceContent(container, nodes, preserve = true) {
 export const UNDO_DURATION = 5000;
 export const retryDelay = (attempt) => Math.min(15000, 2000 * 2 ** Math.max(0, attempt));
 export const itemKey = (item) => JSON.stringify([item.workspace_id, item.item_id ?? item.key]);
-export function searchEntries({ admin = false, workspaces = [], items = [], people = [] }) {
+export function searchEntries({ admin = false, workspaces = [], items = [], people = [], shared = [] }) {
   const pages = [["Home", "home"], ["Workspaces", "workspaces"], ...(admin ? [["Services", "services"], ["Admin", "admin"]] : [])];
   return [
     ...pages.map(([label, page]) => ({ group: "Pages", label, hash: "#/" + page })),
     ...workspaces.map((w) => ({ group: "Workspaces", label: w.name || w.id, hash: "#/w/" + encodeURIComponent(w.id) })),
     ...items.map((it) => ({ group: "Tickets and items", label: [it.key, it.title ?? it.kind].filter(Boolean).join(" · "), hash: "#/w/" + encodeURIComponent(it.workspace_id) + "/item/" + encodeURIComponent(it.key || it.item_id) })),
+    ...shared.map((it) => ({ group: "Shared tickets", label: [it.key, it.title].filter(Boolean).join(" · ") + (it.shared_by ? " · shared by " + it.shared_by : ""), hash: "#/w/" + encodeURIComponent(it.workspace_id) })),
     ...(admin ? people.map((p) => ({ group: "People", label: p.name || p.user_id, hash: "#/admin" })) : []),
     ...(admin ? [{ group: "Actions", label: "Connect a workspace", hash: "#/admin", action: "connect" }] : []),
   ];

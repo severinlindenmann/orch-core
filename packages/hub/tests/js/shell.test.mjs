@@ -63,7 +63,7 @@ test("offline workspace stays inside the shell and never requests a switch ticke
   let output;
   const context = vm.createContext({ pageLoading() {}, loading: () => () => {}, skeleton: () => ({}), show() {}, state: { rail: { rows: [{ id: ws, name: "Legal", online: false, badge: 3 }] } },
     refresh: async () => true, loadRail: async () => {}, renderText: String,
-    workspaceStatus: () => "offline since yesterday", h: (tag, props) => ({ tag, ...props }),
+    workspaceStatus: () => "offline since yesterday", h: (tag, props, ...kids) => ({ tag, ...props, kids }),
     shell: (active, ...nodes) => { output = { active, nodes }; },
     api: async (method, path) => { calls.push(path); return { status: 200, body: { items: [] } }; } });
   vm.runInContext(source.slice(source.indexOf("async function workspacePage("), source.indexOf("// Serialize renders")), context);
@@ -71,7 +71,7 @@ test("offline workspace stays inside the shell and never requests a switch ticke
   assert.equal(output.active, "workspaces");
   assert.equal(output.nodes[0].text, "Legal is offline since yesterday");
   assert.match(output.nodes[2].text, /3 things need you/);
-  assert.deepEqual(calls, ["/me/needs-you"]);
+  assert.deepEqual(calls, ["/me/needs-you", "/me/shared?workspace_id=" + ws]);
 });
 
 test("sign out clears all person data before the login screen", async () => {
@@ -117,4 +117,21 @@ test("a page module is gated by the shell, not by itself: nobody signed in goes 
   state.user = { is_admin: true };
   await context.pageRender("secret")();
   assert.deepEqual(visits.splice(0), ["refresh", "render:secret", "refresh"]);
+});
+
+test("the workspace page lists shared tickets under the waiting count, for the owner with whom and for others by whom", async () => {
+  const ws = "ab".repeat(16);
+  let output;
+  const shared = [{ workspace_id: ws, title: "Invoice export for Ben", shared_with: ["Ben Test"] }, { workspace_id: ws, title: "Other", shared_by: "Anna Test" }, { workspace_id: "cd".repeat(16), title: "Elsewhere" }];
+  const context = vm.createContext({ pageLoading() {}, loading: () => () => {}, skeleton: () => ({}), show() {}, state: { rail: { rows: [{ id: ws, name: "Anna Test's workspace", online: true, canOpen: true }] } },
+    refresh: async () => true, loadRail: async () => {}, renderText: String, workspaceStatus: () => "", OPEN_FIRST: "", openWorkspace() {},
+    h: (tag, props, ...kids) => ({ tag, ...props, kids: kids.flat() }),
+    shell: (active, ...nodes) => { output = nodes; },
+    api: async (method, path) => ({ status: 200, body: path.startsWith("/me/shared") ? { items: shared } : { items: [] } }) });
+  vm.runInContext(source.slice(source.indexOf("async function workspacePage("), source.indexOf("// Serialize renders")), context);
+  await context.workspacePage({ kind: "workspace", workspace: ws });
+  const section = output.find((n) => n?.tag === "section");
+  assert.equal(section.kids[0].text, "Shared tickets (2)"); // another workspace's ticket is not listed
+  const lines = JSON.stringify(section.kids.slice(1));
+  assert.match(lines, /shared with Ben Test/); assert.match(lines, /Shared by Anna Test/);
 });

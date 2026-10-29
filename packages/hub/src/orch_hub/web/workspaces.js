@@ -4,7 +4,7 @@ import { ago, chip, h, text } from "./ui.js";
 
 const nameOf = (end) => (end && end.name ? text(end.name) : end && end.owner_name ? text(end.owner_name + "'s workspace") : "Another workspace");
 
-const modeName = (w) => w.mode === "full" ? "Everything" : "Only what I choose";
+const modeName = (w) => w.mode === "full" ? "Shares everything" : "Shares only what you choose";
 const personName = (p) => text(typeof p === "string" ? p : p?.name ?? p?.alias ?? p?.user_id ?? "unknown");
 const button = (label, onclick, props = {}) => h("button", { type: "button", text: label, onclick, ...props });
 const small = (value) => h("div", { class: "small muted", text: value });
@@ -36,7 +36,7 @@ export function workspaceDetailsView(w, { roles = null, owner = null, hub, actio
       h("dl", {}, Object.entries(roles.profile).flatMap(([key, value]) => [
         h("dt", { text: key }), h("dd", { text: JSON.stringify(value) })]))) : null,
     h("h3", { text: "Change mode" }),
-    h("p", { text: "To change what this workspace shares, open it and use Settings > Hub. The owner confirms there." }),
+    h("p", { text: "To change what this workspace shares, open it and use Settings > Hub. The workspace owner confirms with one click on their dashboard." }),
     button("Open " + nameOf(w), () => actions.open?.(w), { class: "pri" })].filter(Boolean);
 }
 
@@ -94,6 +94,7 @@ export function workspacesView(data, now = Date.now()) {
   const joined = data.joined ?? [];
   for (const row of joined) connectBox.append(joinedBannerView(row, actions));
   const connect = button("Connect a workspace", async () => {
+    if (data.needsSignIn) return actions.signInToConnect?.(); // a session that came from a workspace: sign in once first
     connect.disabled = true;
     connectBox.textContent = "";
     try {
@@ -117,7 +118,7 @@ export function workspacesView(data, now = Date.now()) {
           n ? small(n + (n === 1 ? " hand-off is" : " hand-offs are") + " waiting for this workspace") : null),
         h("td", {}, statusView(w, now)), h("td", {}, versionView(w, data.hub)), h("td", {}, hostView(w)),
         h("td", {}, h("div", { class: "ws-actions" }, button("Details", () => actions.details?.(w)), button("Open", () => actions.open?.(w)))));
-    })))) : emptyState(data.admin != null ? "workspaces" : "workspaces-member");
+    })))) : emptyState(data.admin != null || data.canConnect ? "workspaces" : "workspaces-member");
   const older = data.workspaces.filter((w) => ["older", "unsupported"].includes(w.version_state));
   const left = (data.admin ?? []).filter((w) => w.status === "unbound");
   const leftView = data.admin != null ? h("details", {}, h("summary", { text: "Show left workspaces (" + left.length + ")" }),
@@ -134,7 +135,7 @@ export function workspacesView(data, now = Date.now()) {
         small(Number.isFinite(w.left_ms) ? "Left " + new Date(w.left_ms).toLocaleDateString() : "Left on an unknown date"), error);
     })) : null;
   return [
-    h("div", { class: "row" }, h("h1", { class: "grow", text: "Workspaces" }), data.admin != null ? connect : null),
+    h("div", { class: "row" }, h("h1", { class: "grow", text: "Workspaces" }), data.admin != null || data.canConnect ? connect : null),
     connectBox,
     older.length ? h("div", { class: "banner warn" }, h("b", { text: older.length + " workspaces run an older orch" }),
       small(older.map(nameOf).join(", ")), data.hub?.min_supported ? small("The hub still works with " + text(data.hub.min_supported) + " and newer.") : null) : null,

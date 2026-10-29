@@ -10,8 +10,9 @@ has no view (only ``{"name", "problem": "too_long"}``), so it can never be pinne
 * :func:`tool_pin`: what the owner turned On for one tool of a company MCP server: sha256 of the view. The proxy serves
   a tool only while the definition upstream still has this pin (Opus host condition 8: a changed tool is Off and
   ``changed`` until the owner clicks again).
-* :data:`CAPABILITY_SHAPE`: a per-run proxy capability (``ocap_`` and 43 url-safe characters, 256 random bits). Log
-  filters replace anything of this shape (condition 4: never logged).
+* :data:`CAPABILITY_SHAPE`: a per-run proxy capability (``ocap_`` and 43 url-safe characters, 256 random bits), with
+  boundaries: used for refusals and exact checks. Log filters substitute the unbounded :data:`CAPABILITY_ANY`
+  (condition 4: never logged).
 * :data:`SERVER_NAME`: a company MCP server name as it appears in an agent's config (``[a-z0-9-]{1,40}``, never
   starting with ``orch``, condition 7).
 """

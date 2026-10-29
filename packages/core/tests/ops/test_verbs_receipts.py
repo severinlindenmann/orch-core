@@ -17,6 +17,13 @@ def ci(ws, verbs, session=SESSION + ".1"):
     return Cli(ws, session=session, ORCH_GRANT=ws.narrow_grant(verbs))
 
 
+@pytest.fixture(autouse=True)
+def _plan_gate_off(ws):
+    """r10-P02: an agent builds only after the plan is approved. These tests are about tasks and receipts, not the
+    plan gate: the workspace turns it off (a signed policy change, as a person would make it)."""
+    ws.plan_gate_off()
+
+
 def test_a_ci_grant_for_task_done_runs_task_done_with_its_receipt(ws, cli):
     claimed(cli)
     cli("task", "add", "t1", "--verify", py("print('ok')"))

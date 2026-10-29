@@ -52,6 +52,7 @@ def test_hostile_text_is_cleaned_and_counted(shared):
 
 
 def test_an_agent_session_and_an_approval_work_on_an_imported_ticket(imported, hws, agent, me):  # noqa: F811
+    hws.plan_gate_off()  # r10-P02: no plan approval before the build in this test
     key = "DEMO-0003"
     assert agent("claim", key).code == 0
     r = agent("task", "start", "T1")

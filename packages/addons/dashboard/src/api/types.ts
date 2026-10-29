@@ -610,6 +610,9 @@ export interface NeedsYouItem {
   text: string
   since: string
   ref?: string // Q2, gate name, ...; for terminal_wait the run id ("Open terminal" opens it)
+  /** terminal_wait only: how the host knows. "wait": the agent is inside `orch wait` (run-10 J04, whatever its terminal
+   *  prints); "hook" / "quiet": its prompt (fallbacks for agents outside orch wait). */
+  source?: 'wait' | 'hook' | 'quiet'
   /** Gate hash an approval item covers (approval items only). */
   hash?: string
   /** Real host only. */

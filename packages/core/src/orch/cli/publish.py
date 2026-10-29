@@ -6,12 +6,15 @@
     orch publish share   STAGED                                a person: sign, then send; the link shows once
     orch publish send    STAGED                                a person: send a copy that is already signed
     orch publish revoke  SHARE [--yes]                          a person: the link stops working at once (asks first)
+    orch publish extend  SHARE --days D                         a person: the link works D more days from now (1..30)
+    orch publish password SHARE                                 a person: a generated password for the link, shown once
     orch publish list    [REF] [--live]                        staged copies and shares (never a link)
     orch publish discard STAGED                                drop a staged copy
 
 An agent (``ORCH_GRANT`` set) may ``prepare``, ``list`` and ``discard`` on its own ticket and nothing else: ``share``,
-``send``, ``revoke``, ``setup`` and ``register`` are refused here (``op.not_allowed``), and the host refuses them again
-(column P only). Every share needs a person's signature over the exact files, server, link kind and days.
+``send``, ``revoke``, ``extend``, ``password``, ``setup`` and ``register`` are refused here (``op.not_allowed``), and
+the host refuses them again (column P only). Every share needs a person's signature over the exact files, server,
+link kind and days.
 
 The link is written to the person's own terminal (``/dev/tty``) and nowhere else: not stdout, not a pipe, not a log.
 This command keeps no copy. Without a terminal ``share`` and ``send`` stop before anything is sent.
@@ -34,7 +37,8 @@ __all__ = ["main"]
 
 _USAGE = (
     "usage: orch publish {setup --server ADDRESS --share ADDRESS | register | prepare REF FILE... [--once [N]] "
-    "[--days D] | share STAGED | send STAGED | revoke SHARE | list [REF] [--live] | discard STAGED} [--json]"
+    "[--days D] | share STAGED | send STAGED | revoke SHARE | extend SHARE --days D | password SHARE | "
+    "list [REF] [--live] | discard STAGED} [--json]"
 )
 _AGENT_OK = frozenset({"prepare", "list", "discard"})
 _PERSON_ONLY_MESSAGE = "a person does this; an agent only prepares (orch publish prepare)"
@@ -52,12 +56,15 @@ def _parser() -> argparse.ArgumentParser:
             raise PubError("invalid.input", f"{message}\n{_USAGE}", 2)
 
     p = Quiet(prog="orch publish", add_help=False)
-    p.add_argument("cmd", choices=("setup", "register", "prepare", "share", "send", "revoke", "list", "discard"))
+    p.add_argument(
+        "cmd",
+        choices=("setup", "register", "prepare", "share", "send", "revoke", "extend", "password", "list", "discard"),
+    )
     p.add_argument("rest", nargs="*")
     p.add_argument("--server")
     p.add_argument("--share", dest="share_addr")
     p.add_argument("--once", nargs="?", const=1, type=int, default=None)
-    p.add_argument("--days", type=int, default=7)
+    p.add_argument("--days", type=int, default=None)
     p.add_argument("--live", action="store_true")
     p.add_argument("--yes", action="store_true")
     p.add_argument("--json", action="store_true")
@@ -251,6 +258,34 @@ def _send(target: Any, staged: str, env: Mapping[str, str], out: TextIO, as_json
     return 0
 
 
+def _password(target: Any, share_id: str, env: Mapping[str, str], out: TextIO, as_json: bool) -> int:
+    """The generated password goes to the person's terminal only, like a link: not stdout, not a pipe, not a log."""
+    from orch.ops import human
+
+    if not _tty_ok():
+        raise PubError(
+            "invalid.input", "no terminal to show the password on: run this in a terminal; nothing was set", 5
+        )
+    got = _call(target, "publish.password", {"share_id": share_id}, env)
+    password = got.pop("password", None)
+    if not isinstance(password, str):
+        raise PubError("internal", "the host sent no password", 1)
+    try:
+        human.show_secret(
+            f"\n  The password (shown once, on this terminal only):\n\n    {password}\n\n"
+            "  Give it to the people you share the link with, by another way than the link.\n"
+            "  It is not kept anywhere. To change it: orch publish password again (a new one replaces this).\n\n"
+        )
+    except Exception:  # noqa: BLE001 - the password is set; say so, never print it anywhere else
+        out.write(f"the password is set but could not be shown; set a new one: orch publish password {share_id}\n")
+        return 1
+    if as_json:
+        out.write(json.dumps({"ok": True, "data": {**got, "password_shown": True}}) + "\n")
+    else:
+        out.write(f"ok publish password {got.get('share_id')}: the password is on your terminal only\n")
+    return 0
+
+
 def _local(iso: Any) -> Any:
     """A server time in this computer's time with the zone (``--json`` keeps the UTC text)."""
     from orch.host.signcontent import local_time
@@ -312,7 +347,7 @@ def main(
             return _register(target, env, out)
         if a.cmd == "prepare":
             ref, files = a.rest[0], a.rest[1:]
-            args: dict[str, Any] = {"ref": ref, "artifacts": files, "days": a.days}
+            args: dict[str, Any] = {"ref": ref, "artifacts": files, "days": 7 if a.days is None else a.days}
             if a.once is not None:
                 args.update(kind="once", views=a.once)
             data = _call(target, "publish.prepare", args, env)
@@ -349,6 +384,14 @@ def main(
                     out.write(f"your signature stays good for an hour: orch publish send {staged}\n")
                     raise
             return _send(target, staged, env, out, as_json)
+        if a.cmd == "extend":
+            got = _call(target, "publish.extend", {"share_id": a.rest[0], "days": a.days}, env)
+            out.write(
+                f"ok publish extended {got.get('share_id')}: the link works until {_local(got.get('expires_at'))}\n"
+            )
+            return 0
+        if a.cmd == "password":
+            return _password(target, a.rest[0], env, out, as_json)
         if a.cmd == "revoke":
             if not a.yes and not review_prompt(
                 f"Revoke share {a.rest[0]}? Its link stops working at once.", verb="continue"
@@ -374,11 +417,14 @@ def main(
 def _check_shape(a: argparse.Namespace) -> None:
     """The counts and values of a command's arguments (no host needed)."""
     want = {"prepare": (2, 10**6), "share": (1, 1), "send": (1, 1), "revoke": (1, 1), "discard": (1, 1),
+            "extend": (1, 1), "password": (1, 1),
             "list": (0, 1), "register": (0, 0), "setup": (0, 0)}[a.cmd]  # fmt: skip
     if not want[0] <= len(a.rest) <= want[1]:
         raise PubError("invalid.input", _USAGE, 2)
     if a.cmd == "setup":
         _check_setup(a)
+    if a.cmd == "extend" and (a.days is None or not 1 <= a.days <= 30):
+        raise PubError("invalid.input", "extend needs --days D with D from 1 to 30\n" + _USAGE, 2)
 
 
 def _check_setup(a: argparse.Namespace) -> None:

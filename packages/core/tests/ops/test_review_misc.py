@@ -16,6 +16,7 @@ def last(r):
 
 
 def test_the_next_hint_of_each_operation(ws, cli):
+    ws.plan_gate_off()  # r10-P02: no plan approval here; these are the hints of the task verbs
     claimed(cli)
     cli("ac", "add", "a")
     assert last(cli("task", "add", "t", "--verify", py("print(1)"), "--proves", "AC1")) == "next: orch task start T1"
@@ -57,11 +58,16 @@ def test_a_hint_never_names_a_command_that_cannot_succeed(ws, cli):
     assert last(cli("show")) == "next: orch task add TEXT"  # requirements wait for a person; the plan lacks a task
     # run-9 J04: every open gate is complete: wait for the approval, then build in this session
     assert last(cli("task", "add", "t")) == "next: orch wait"
+    r = cli("task", "start", "T1")  # r10-P02: the host refuses a build before the plan is approved, and says wait
+    assert r.code == 3 and "plan is not approved" in r.err and r.err.rstrip().endswith("next: orch wait"), r.err
+    ws.human("approve", ws.uid("1"), "requirements")
+    ws.human("approve", ws.uid("1"), "plan")
     assert last(cli("task", "start", "T1")) == "next: orch task done T1"
-    assert last(cli("task", "done", "T1")) == "next: orch wait"  # complete: asking works
+    assert last(cli("task", "done", "T1")) == "next: orch submit"  # both gates approved, the one task done
 
 
 def test_task_done_without_run_says_the_criterion_still_has_no_evidence(ws, cli):
+    ws.plan_gate_off()  # r10-P02: no plan approval here; these are the hints of the task verbs
     claimed(cli)
     cli("ac", "add", "it works")
     cli("task", "add", "do it", "--verify", py("print(1)"), "--proves", "AC1")
@@ -123,7 +129,16 @@ def test_commands_without_a_ref_load_only_the_claimed_tickets(ws, cli, monkeypat
         raise AssertionError("a REF-less command must not load every ticket")
 
     monkeypatch.setattr(Store, "load_all", boom)
-    for argv in (["show"], ["status"], ["task", "list"], ["log", "x"], ["ac", "add", "a"], ["wait", "--timeout", "1"]):
+    cmds = (
+        ["show"],
+        ["status"],
+        ["task", "list"],
+        ["log", "x"],
+        ["ac", "add", "a"],
+        ["ask", "q?"],
+        ["wait", "--timeout", "1"],
+    )
+    for argv in cmds:  # the question keeps the wait waiting (else wait.incomplete)
         assert cli.j(*argv).code == 0, argv
     sub = Cli(ws, session=cli.ws.env()["ORCH_SESSION"] + ".1")
     assert sub.j("show").code == 0  # a subagent finds its parent's claim in the parent's notes

@@ -57,3 +57,14 @@ def test_a_reader_never_gets_signable_on_the_single_item_route_either(w):
     route = f"/workspaces/{WS_SEL}/items/{ids}"
     assert w.call("GET", route, token=w.login(w.ann))[1]["signable"] is True
     assert w.call("GET", route, token=w.login(w.ben))[1].get("signable", False) is False
+
+
+def test_p03_description_and_status_reach_the_reader_only_when_the_content_carries_them(w):
+    item = w.shares.items[(w.ben, WS_SEL)][0]["item"]
+    first = get(w, w.ben)[1]["items"][0]
+    assert "description" not in first  # the owner did not share the description
+    item["content"]["description"] = "Export <b>CSV</b>"
+    item["content"]["status"] = "open"
+    row = get(w, w.ben)[1]["items"][0]
+    assert row["status"] == "open" and "CSV" in row["description"]
+    assert get(w, w.admin)[1] == {"items": []}  # nothing widened

@@ -117,6 +117,7 @@ class _Cap:
         self.expires_at = expires_at
         self.wall_expires_at = wall_expires_at  # the monotonic clock stops in sleep; the wall clock does not
         self.upstreams: dict[str, tuple[Any, str | None]] = {}
+        self.held: dict[str, str] = {}  # server -> the secret value this capability currently holds (condition 10)
         self.pins: dict[str, dict[str, str]] = {}  # server -> latest {tool: pin} (present once listed)
         self.schemas: dict[str, dict[str, Any]] = {}  # server -> {tool: pinned inputSchema}, same moment as pins
         self.inflight: dict[str, int] = {}
@@ -232,8 +233,8 @@ class Proxy:
         self._iso: dict[str, tuple[bool, float]] = {}
         self._runs: dict[str, collections.deque] = {}
         self._usage: dict[tuple[str, str, str, str], int] = {}
-        self._held: set[str] = set()
-        self._filter = _Redact(lambda: list(self._held))
+        self._held_now: tuple[str, ...] = ()  # every value a live capability holds; replaced whole, read without a lock
+        self._filter = _Redact(lambda: self._held_now)
         log.addFilter(self._filter)
 
     # -- capabilities ---------------------------------------------------------------------------------------------
@@ -277,12 +278,18 @@ class Proxy:
             )
         return cap
 
+    def _refresh_held(self) -> None:
+        """Caller holds the lock. The scrub list is exactly the values live capabilities hold now."""
+        self._held_now = tuple({v for c in self._caps.values() for v in c.held.values()})
+
     def _drop(self, key: str) -> None:
         rec = self._caps.pop(key, None)
         if rec is not None:
             for up, _ in rec.upstreams.values():
                 self._close_up(up)
             rec.upstreams.clear()
+            rec.held.clear()
+            self._refresh_held()
 
     @staticmethod
     def _close_up(up: Any) -> None:
@@ -310,12 +317,23 @@ class Proxy:
                 cap = self._caps[key]
                 del cap.servers[name]
                 held = cap.upstreams.pop(name, None)
+                cap.held.pop(name, None)
                 cap.pins.pop(name, None)
                 cap.schemas.pop(name, None)
                 if held is not None:
                     self._close_up(held[0])
                 if not cap.servers:
                     self._drop(key)
+            self._refresh_held()
+
+    def forget_held(self, ws: str) -> None:
+        """Drop the secret values the capabilities of ``ws`` hold (a sync changed or removed a wrap). The capabilities
+        stay; the next call fetches the current value again."""
+        with self._lock:
+            for cap in self._caps.values():
+                if cap.ws == ws:
+                    cap.held.clear()
+            self._refresh_held()
 
     def usage(self) -> dict:
         with self._lock:
@@ -354,7 +372,7 @@ class Proxy:
                 self._drop(key)
             self._iso.clear()
             self._runs.clear()
-            self._held.clear()
+            self._held_now = ()
         self.port = None
         self._pool.shutdown(wait=False, cancel_futures=True)
         log.removeFilter(self._filter)
@@ -517,18 +535,37 @@ class Proxy:
             self._iso[ws] = (value, now)
         return value
 
+    def _hold(self, cap: _Cap, name: str | None, value: str | None) -> None:
+        """Set (a rotation replaces the old value) or drop (``None``) what ``cap`` holds for a server."""
+        with self._lock:
+            if self._caps.get(cap.key) is not cap:
+                return
+            if value is None and name is None:
+                changed = bool(cap.held)
+                cap.held.clear()
+            elif value is None:
+                changed = cap.held.pop(name, None) is not None
+            else:
+                changed = cap.held.get(name) != value
+                cap.held[name] = value
+            if changed:
+                self._refresh_held()
+
     def _credentials(self, cap: _Cap, record: dict) -> tuple[str | None, str | None]:
         if record.get("auth") != "hub_secret":
             return None, None
+        name = record.get("name")
         if not self._isolated_now(cap.ws):
+            self._hold(cap, None, None)  # isolation lost: nothing stays held
             raise _Refuse(403, "forbidden")
         try:
             value = self._secret(cap.ws, record.get("secret"))
         except Exception:
             value = None
         if type(value) is not str or not value:
+            self._hold(cap, name, None)  # gone, expired or rotated away: the old value is dropped too
             raise _Refuse(503, "unavailable")
-        self._held.add(value)
+        self._hold(cap, name, value)
         return value, value
 
     def _count(self, cap: _Cap) -> None:

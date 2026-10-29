@@ -6,6 +6,7 @@
     PUT /v2/hub/bindings/{workspace_id} body: WSK-signed hub.binding or hub.unbound (chosen by o.kind)
     PUT /v2/hub/cards/{workspace_id}    body: {card, pk_pub}: the workspace's v2 card as it reached the hub (card_put);
                                         the only way a workspace is admitted (V3-D36: no direct register)
+    PUT /v2/hub/narrow                  body: HK_op-signed hub.release_narrow: revoke a link / stop an app (11.6, M4)
 
 No transport authentication, by design (V3-D16): every object authenticates itself (a card by its HK_root and op
 cert, a revocation by HK_root, a binding / unbound by the WSK of the workspace card orch-publish itself stores), and
@@ -14,11 +15,12 @@ out. Rate limiting is hardening. Success is `200 {"ok": true}` and an identical 
 is `{"error": code}` with the status of hub_path.STATUS. Nothing but the code is ever returned.
 """
 
+import asyncio
 import json
 import re
 import sqlite3
 
-from . import db, registry
+from . import db, narrow, registry
 from . import hub_admin_read as R
 from . import hub_path as H
 from . import relay_proto as proto
@@ -155,6 +157,7 @@ def _route_ok(path):
 
 
 RELEASES = PREFIX + "releases"
+NARROW = PREFIX + "narrow"
 
 
 def _raw_target(scope):
@@ -182,7 +185,7 @@ def _admin_read(scope, settings):
             conn, hub if re.fullmatch(r"[0-9a-f]{32}", hub) else "0" * 32, now, settings.dev_mode
         )
         res = R.check_admin_read(req, st, now)
-        return R.list_releases(conn, res["workspaces"], now, res["named"])
+        return R.list_published(conn, res["workspaces"], now, res["named"])
     finally:
         conn.close()
 
@@ -196,12 +199,15 @@ async def handle(scope, receive, send, settings):
             return await _send(send, 200, body, head=scope["method"] == "HEAD")
         if path == RELEASES:
             raise Refusal(405, "method_not_allowed")  # GET / HEAD were handled above
-        if not _route_ok(path):
+        if not (_route_ok(path) or path == NARROW):
             raise Refusal(404, "not_found")
         if scope["method"] != "PUT":
             raise Refusal(405, "method_not_allowed")
         raw = await _read(receive, scope)
         obj = _parse(raw)
+        if path == NARROW:
+            body = await asyncio.to_thread(narrow.handle, settings, settings.app_ops.store, obj)
+            return await _send(send, 200, body)
         conn = db.connect(settings.db_path)
         try:
             _apply(conn, path, obj, settings.clock(), settings.dev_mode)

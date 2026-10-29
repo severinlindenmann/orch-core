@@ -88,7 +88,7 @@ def _parser() -> argparse.ArgumentParser:
     ins.add_argument("--workspace", help="only this workspace id")
     ins.add_argument("--json", action="store_true", required=True, help="print JSON (the only format)")
     rl = sub.add_parser(
-        "releases", help="dev: release metadata of the bound full-mode workspaces, read at orch-publish (admin read)"
+        "releases", help="dev: the links and apps of the bound full-mode workspaces, read at orch-publish (admin read)"
     )
     rl.add_argument("--state", help="hub state dir (default: $ORCH_HUB_STATE)")
     rl.add_argument(
@@ -130,8 +130,10 @@ def _parser() -> argparse.ArgumentParser:
     rgs = rg.add_subparsers(dest="cmd", required=True)
     rgs.add_parser("register", help="register or rotate the account by hub card (POST /v2/hubs, unsigned)")
     from .backup.cli import add_parser as add_backup_parser
+    from .backup.cli import add_restore_parser
 
     add_backup_parser(sub)
+    add_restore_parser(sub)
     from .access.cli import add_parsers
 
     add_parsers(sub)
@@ -190,6 +192,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         from .backup.cli import run as run_backup_key
 
         return run_backup_key(args)
+    if args.group == "restore":
+        from .backup.cli import run_restore
+
+        return run_restore(args)
     if args.group == "relay":
         return _relay_register(args)
     if args.group == "releases":
@@ -282,7 +288,7 @@ def _releases(args: argparse.Namespace) -> int:
             if reg.mode(args.workspace) != "full":  # the admin read covers bound full-mode workspaces only (§10.6)
                 print("orch-hub: refused: not_bound", file=sys.stderr)
                 return 1
-        rows = client.releases(args.workspace)
+        rows = client.published(args.workspace)
     except (ValueError, KeysError) as e:
         print(f"orch-hub: refused: {e}", file=sys.stderr)
         return 1
@@ -292,7 +298,7 @@ def _releases(args: argparse.Namespace) -> int:
     finally:
         if reg is not None:
             reg.close()
-    print(dumps({"releases": rows}))
+    print(dumps({"published": rows}))
     return 0
 
 

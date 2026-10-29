@@ -102,7 +102,10 @@ def purge(service: WorkspaceService) -> None:
     folder."""
     import shutil
 
+    from . import orgsecrets
+
     with _MU:
+        orgsecrets.drop_cache(service)  # the opened values go first, then the files (secrets.json and the pins)
         shutil.rmtree(org_dir(service), ignore_errors=True)
 
 
@@ -253,6 +256,10 @@ def show(service: WorkspaceService, kind: str, name: str) -> dict[str, Any]:
         out["needs_isolation"] = "needs a separate agent user: this server's secret cannot be kept from an agent here"
     if kind == "mcp":
         out["tools"] = _tool_rows(service, state, name, item["digest"])
+        if item["auth"] == "hub_secret":
+            from . import orgsecrets
+
+            out["secret_status"] = orgsecrets.secret_status(service, state, item.get("secret"))
     return out
 
 
@@ -294,6 +301,9 @@ def decline(service: WorkspaceService, kind: str, name: str) -> dict[str, Any]:
             _write(service, "accepted.json", {"entries": keep})
         if kind == "mcp":
             _drop_server(service, name)  # a re-accept starts with every tool Off
+            from . import orgsecrets
+
+            orgsecrets.prune(service)  # its company secret (if no other server uses it) is not kept
         return {"kind": kind, "name": name, "status": "off"}
 
 
@@ -478,6 +488,9 @@ def served(service: WorkspaceService) -> dict[str, list[dict[str, Any]]]:
     for kind, key in (("skill", "skills"), ("mcp", "mcp")):
         out[key] = [i for i in offers[kind] if accepts.get((kind, i["name"])) == i["digest"]]
     if out["mcp"] and not isolated(service):
+        from . import orgsecrets
+
+        orgsecrets.drop_cache(service)  # isolation lost: no opened company secret stays in memory
         out["mcp"] = [i for i in out["mcp"] if i["auth"] != "hub_secret"]  # tier A: no credential servers (condition 3)
     return out
 
@@ -486,7 +499,8 @@ def served(service: WorkspaceService) -> dict[str, list[dict[str, Any]]]:
 
 
 def sync_bundles(service: WorkspaceService, bodies: dict[str, Any]) -> dict[str, str]:
-    """Take the two reply bodies of ``org_skills_get`` / ``mcp_servers_get`` (an error string for one the hub refused),
+    """Take the reply bodies of ``org_skills_get`` / ``mcp_servers_get`` (and ``org_secrets_get`` under ``secrets``,
+    only asked for on an isolated host; an error string for one the hub refused),
     verify each against the card and the held bundle (no rollback), store what is new and prune the accepts of
     withdrawn items. Returns ``{kind: "new" | "same" | <refusal code>}``. Nothing is enabled by this."""
     from orch.hubclient.errors import HubRefused
@@ -542,4 +556,9 @@ def sync_bundles(service: WorkspaceService, bodies: dict[str, Any]) -> dict[str,
         keep = [r for r in rows if keeps(r)]
         if len(keep) != len(rows):
             _write(service, "accepted.json", {"entries": keep})
+        from . import orgsecrets
+
+        sec = orgsecrets.sync_secrets(service, state, held, bodies.get("secrets"), _now_ms(service))
+        if sec is not None:
+            result["secrets"] = sec  # tier A: no key at all (nothing was asked, nothing is reported)
     return result

@@ -61,6 +61,7 @@ def test_the_commands_of_a_task_loop_meet_their_budgets(big):
         ["task", "next"],
     ):
         timed(cli, *argv, budget=0.4)
+    assert cli("ask", "Which?").code == 0  # something open for a person: the wait waits (else wait.incomplete)
     timed(cli, "wait", "--timeout", "1", budget=2.0, cpu=False)  # the timeout plus one second
     timed(cli, "list", budget=0.8)
     r = timed(cli, "list", "--status", "open", "--limit", "50", budget=0.8)

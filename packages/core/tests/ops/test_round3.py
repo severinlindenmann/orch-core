@@ -12,6 +12,7 @@ from tests.ops.test_task_ac import claimed, fill_and_approve, py
 
 
 def test_skip_worktree_and_assume_unchanged_files_count_as_a_dirty_tree(ws, cli):
+    ws.plan_gate_off()  # r10-P02: no plan approval in this test; an agent builds only after one
     repo = ws.repo()
     claimed(cli)
     cli("task", "add", "t", "--verify", py("print(1)"))
@@ -42,6 +43,7 @@ def test_a_ref_that_names_no_object_is_reported_not_signed(ws, cli):
 
 def test_malformed_notes_never_crash_and_are_reported(ws, cli):
     claimed(cli)
+    cli("ask", "Which?")  # something open for a person: the wait waits (else wait.incomplete)
     p = next((ws.store_dir / ".state" / "sessions").glob("*.notes.json"))
     doc = json.loads(p.read_text())
     uid = next(iter(doc["tickets"]))

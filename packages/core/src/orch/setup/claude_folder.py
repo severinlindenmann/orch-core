@@ -20,6 +20,7 @@ __all__ = [
     "offered",
     "parent_config",
     "refusal",
+    "refusal_code",
     "trust_folder",
 ]
 
@@ -185,6 +186,18 @@ def refusal(env: Mapping[str, str], root: str | os.PathLike[str], *, allow_paren
     return None
 
 
+def refusal_code(env: Mapping[str, str], root: str | os.PathLike[str], *, allow_parent: bool = False) -> str:
+    """The reason of :func:`refusal` as a fixed code: not_installed, foreign_config, parent_config, not_started (Claude
+    Code has no settings file yet) or other. Only the first and the last-but-one mean Claude Code simply asks once."""
+    if not claude_installed(env):
+        return "not_installed"
+    if foreign_config(root, env, report=True):
+        return "foreign_config"
+    if parent_config(root, env) and not allow_parent:
+        return "parent_config"
+    return "not_started" if config_state(env, root) == "missing" else "other"
+
+
 def offered(env: Mapping[str, str], root: str | os.PathLike[str], *, allow_parent: bool = False) -> bool:
     """Setup offers the trust when claude is installed and the folder itself holds no foreign project config; a
     config above it is offered only as the explicit "trust anyway" (``allow_parent``)."""
@@ -265,7 +278,11 @@ def trust_folder(env: Mapping[str, str], root: str | os.PathLike[str], *, allow_
         try:
             st = os.lstat(cfg)
             doc = json.loads(Path(cfg).read_bytes().decode("utf-8"))
-            projects = doc.get("projects") if isinstance(doc, dict) else None
+            if not isinstance(doc, dict):
+                return False
+            if "projects" not in doc:  # Claude Code has not opened a project yet: it writes the file without the key
+                doc["projects"] = {}
+            projects = doc["projects"]
             if not isinstance(projects, dict):
                 return False
             entry = projects.get(real)

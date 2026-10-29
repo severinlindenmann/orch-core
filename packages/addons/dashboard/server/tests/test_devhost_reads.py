@@ -393,6 +393,11 @@ def test_activity_hides_a_ticket_that_became_invisible_between_pages(rich, stub)
 def test_a_receipt_label_is_passed_through_ticket_get_and_the_log(rich, stub):
     env, ids = rich
     first = ids["First"]
+    # r10-P02: this test is about the receipt label, not the plan gate: the owner turns the plan gate off (signed)
+    from orch.model.types import default_policies
+
+    plan = {**default_policies()["plan"], "applies": "off"}
+    env.store.append(env.person_event(env.owner, "workspace", "policy.changed", gates={"plan": plan}), log="workspace")
     env.tick()
     env.update(
         first,

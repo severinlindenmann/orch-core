@@ -60,6 +60,11 @@ class Services:
         self._last_ok: dict[str, int] = {}
         self._mu = threading.Lock()
 
+    @property
+    def publish_url(self) -> str | None:
+        """Where orch-publish listens (None = not set up): the Published page reads its admin list there."""
+        return self._urls["publish"]
+
     def _check(self, name: str, path: str) -> dict[str, Any]:
         url = self._urls[name]
         out: dict[str, Any] = {"name": name, "url": url, "version": None, "last_ok_ms": None}

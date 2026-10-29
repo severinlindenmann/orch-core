@@ -17,15 +17,26 @@ const versionView = (w, hub) => h("div", {},
     w.version_state === "older" && hub?.version ? chip("update to " + text(hub.version), "warn") :
       w.version_state === "newest" ? chip("newest", "ok") : null);
 
+/** P05: a hub admin also sees the workspaces that are connected but that selective mode keeps out of /me/workspaces. Those
+ * rows come from the admin-only list, are marked private, and carry only name, owner, mode, status and version: no host,
+ * address, grants or roles, and no Open. `admin` is null for everyone else (and when the admin read failed): no change. */
+export function privateRows(mine, admin) {
+  if (!Array.isArray(admin)) return [];
+  const have = new Set((mine ?? []).map((w) => w.workspace_id));
+  return admin.filter((w) => w && w.status === "bound" && !have.has(w.workspace_id)).map((w) => ({
+    workspace_id: w.workspace_id, name: w.name, owner_name: w.owner_name, mode: w.mode, online: w.online ?? w.status === "bound", last_seen_ms: w.last_seen_ms,
+    version: w.version, commit: w.commit, version_state: w.version_state, private: true }));
+}
+
 /** Pure details view; roles is null when the caller cannot read access. */
 export function workspaceDetailsView(w, { roles = null, owner = null, hub, actions = {} } = {}, now = Date.now()) {
   return [h("h2", { text: nameOf(w) }),
     h("dl", { class: "facts" },
       h("dt", { text: "Status" }), h("dd", {}, statusView(w, now)),
       h("dt", { text: "Owner" }), h("dd", { text: personName(roles?.owner ?? owner ?? w.owner_name) }),
-      h("dt", { text: "Runs on" }), h("dd", {}, hostView(w)),
+      w.private ? null : h("dt", { text: "Runs on" }), w.private ? null : h("dd", {}, hostView(w)),
       h("dt", { text: "orch version" }), h("dd", {}, versionView(w, hub)),
-      h("dt", { text: "Mode" }), h("dd", {}, chip(modeName(w)), small(w.mode === "full"
+      h("dt", { text: "Mode" }), h("dd", {}, chip(modeName(w)), small(w.private ? "Private to " + personName(w.owner_name) + ": the hub sees only what they choose to share." : w.mode === "full"
         ? "The hub can read everything and help across workspaces."
         : "The hub sees only what this workspace chooses to share, plus its name."))),
     roles ? h("section", {}, h("h3", { text: "Who has access" }),
@@ -35,9 +46,9 @@ export function workspaceDetailsView(w, { roles = null, owner = null, hub, actio
     roles?.profile ? h("section", {}, h("h3", { text: "Profile (untrusted display data)" }),
       h("dl", {}, Object.entries(roles.profile).flatMap(([key, value]) => [
         h("dt", { text: key }), h("dd", { text: JSON.stringify(value) })]))) : null,
-    h("h3", { text: "Change mode" }),
-    h("p", { text: "To change what this workspace shares, open it and use Settings > Hub. The workspace owner confirms with one click on their dashboard." }),
-    button("Open " + nameOf(w), () => actions.open?.(w), { class: "pri" })].filter(Boolean);
+    w.private ? null : h("h3", { text: "Change mode" }),
+    w.private ? null : h("p", { text: "To change what this workspace shares, open it and use Settings > Hub. The workspace owner confirms with one click on their dashboard." }),
+    w.private ? small("Only " + personName(w.owner_name) + " can open it.") : button("Open " + nameOf(w), () => actions.open?.(w), { class: "pri" })].filter(Boolean);
 }
 
 /** The link is copied unchanged; after Copy the page says what to do next.
@@ -157,17 +168,19 @@ export function workspacesView(data, now = Date.now()) {
   }, { class: "pri" });
   const waitingFor = new Map();
   for (const r of data.handoffs) if (r.status === "waiting" && r.to.workspace_id) waitingFor.set(r.to.workspace_id, (waitingFor.get(r.to.workspace_id) ?? 0) + 1);
-  const list = data.workspaces.length ? h("div", { class: "scroll" }, h("table", { class: "tbl ws-table" },
+  const shown = [...data.workspaces, ...privateRows(data.workspaces, data.admin)];
+  const list = shown.length ? h("div", { class: "scroll" }, h("table", { class: "tbl ws-table" },
     h("thead", {}, h("tr", {}, ["Workspace", "Status", "orch version", "Runs on", "Actions"].map((label) => h("th", { scope: "col", text: label })))),
-    h("tbody", {}, data.workspaces.map((w) => {
+    h("tbody", {}, shown.map((w) => {
       const n = waitingFor.get(w.workspace_id) ?? 0;
       return h("tr", { "data-workspace": w.workspace_id, class: joined.some((j) => j.workspace_id === w.workspace_id) ? "row-new" : "" },
         h("td", {}, h("b", { text: nameOf(w) }), h("div", {}, chip(modeName(w), w.mode === "full" ? "full" : "sel")),
           w.owner_name ? small("Owner: " + text(w.owner_name)) : null,
-          w.mode === "selective" ? small("Personal: only its owner") : null,
+          w.private ? small("Private to " + text(w.owner_name ?? "its owner")) : w.mode === "selective" ? small("Personal: only its owner") : null,
           n ? small(n + (n === 1 ? " hand-off is" : " hand-offs are") + " waiting for this workspace") : null),
-        h("td", {}, statusView(w, now)), h("td", {}, versionView(w, data.hub)), h("td", {}, hostView(w)),
-        h("td", {}, h("div", { class: "ws-actions" }, button("Details", () => actions.details?.(w)), button("Open", () => actions.open?.(w)))));
+        h("td", {}, statusView(w, now)), h("td", {}, versionView(w, data.hub)), h("td", {}, w.private ? small("Not shown") : hostView(w)),
+        h("td", {}, h("div", { class: "ws-actions" }, button("Details", () => actions.details?.(w)),
+          w.private ? small("Only " + text(w.owner_name ?? "its owner") + " can open it") : button("Open", () => actions.open?.(w)))));
     })))) : emptyState(data.admin != null || data.canConnect ? "workspaces" : "workspaces-member");
   const older = data.workspaces.filter((w) => ["older", "unsupported"].includes(w.version_state));
   const left = (data.admin ?? []).filter((w) => w.status === "unbound");

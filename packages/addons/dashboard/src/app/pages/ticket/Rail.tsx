@@ -1,4 +1,5 @@
 import { useId, useState } from 'react'
+import { Link } from '@tanstack/react-router'
 import { CalendarClock, ExternalLink, GitBranch, GitPullRequest, PanelRight } from 'lucide-react'
 import type { TicketDocument } from '@/api/types'
 import { addonActive } from '@/api/addons'
@@ -140,6 +141,7 @@ function Details({ ticket, viewer }: { ticket: TicketDocument; viewer: Viewer })
         {row('Created', <span className="text-text-muted">{fmtExact(ticket.created_at)}</span>)}
         {row('Updated', <span className="text-text-muted" title={fmtExact(ticket.updated_at)}>{ago(ticket.updated_at)}</span>)}
       </dl>
+      <Link to="/ticket/$key" params={{ key: ticket.key }} search={{ tab: 'raw' }} replace data-testid="ticket-technical-link" className="mt-1 inline-block text-[12px] text-text-muted underline underline-offset-4">Technical details</Link>
     </Section>
   )
 }

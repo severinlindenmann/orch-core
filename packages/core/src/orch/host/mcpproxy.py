@@ -156,6 +156,7 @@ class Proxy:
         tool_policy: Callable[[str, str], dict[str, str]],
         isolated: Callable[[str], bool],
         secret: Callable[[str, str], str | None],
+        binding: Callable[[str], int | None],
         on_seen: Callable[[str, str, str, list[dict]], None] | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
@@ -164,6 +165,8 @@ class Proxy:
         self._tool_policy = tool_policy
         self._isolated = isolated
         self._secret = secret
+        self._binding = binding  # ws -> the live binding_seq, None = not bound (checked on every request)
+        self._epoch: dict[str, int] = {}  # per workspace; revoke_workspace bumps it
         self._on_seen = on_seen
         self._clock = clock
         self.port: int | None = None
@@ -183,7 +186,20 @@ class Proxy:
     def _hash(cap: str) -> str:
         return hashlib.sha256(cap.encode()).hexdigest()
 
-    def mint(self, ws: str, binding_seq: int, run: str, servers: list[dict]) -> str:
+    def epoch(self, ws: str) -> int:
+        """Read this BEFORE reading what the capability will rest on (served set, binding); pass it to :meth:`mint`."""
+        with self._lock:
+            return self._epoch.get(ws, 0)
+
+    def _binding_is(self, ws: str, binding_seq: int) -> bool:
+        try:
+            return self._binding(ws) == binding_seq
+        except Exception:
+            return False
+
+    def mint(self, ws: str, binding_seq: int, run: str, servers: list[dict], *, epoch: int | None = None) -> str:
+        """Raises ``ValueError`` when the workspace was revoked since ``epoch`` was read, or when ``binding_seq`` is not
+        the live binding: a revoke racing a mint can never leave a usable capability."""
         if not servers:
             raise ValueError("no servers")
         names: dict[str, str] = {}
@@ -193,6 +209,10 @@ class Proxy:
             names[rec["name"]] = str(rec.get("digest", ""))
         cap = new_capability()
         with self._lock:
+            if epoch is not None and epoch != self._epoch.get(ws, 0):
+                raise ValueError("revoked")
+            if not self._binding_is(ws, binding_seq):
+                raise ValueError("not bound")
             key = self._hash(cap)
             self._caps[key] = _Cap(key, ws, binding_seq, run, names, self._clock() + CAPABILITY_TTL)
         return cap
@@ -222,6 +242,7 @@ class Proxy:
             for key in [k for k, c in self._caps.items() if c.ws == ws]:
                 self._drop(key)
             self._iso.pop(ws, None)
+            self._epoch[ws] = self._epoch.get(ws, 0) + 1
 
     def revoke_server(self, ws: str, name: str) -> None:
         with self._lock:
@@ -358,6 +379,10 @@ class Proxy:
         if not auth.startswith("Bearer ") or len(auth) > 200:
             raise _Refuse(401, "unauthorized")
         key, cap = self._lookup(auth[7:])
+        if not self._binding_is(cap.ws, cap.binding_seq):  # valid only for the live binding, on every request
+            with self._lock:
+                self._drop(key)
+            raise _Refuse(401, "unauthorized")
         if name not in cap.servers:
             raise _Refuse(403, "forbidden")
         record = self._check_served(cap, name)

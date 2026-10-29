@@ -778,7 +778,7 @@ async def _start(call: Call, hub: RunnerHub, data: dict[str, Any]) -> dict[str, 
 
 
 async def _launch(call: Call, hub: RunnerHub, data: dict[str, Any]) -> dict[str, Any]:
-    from . import runners
+    from . import orgmcp, runners
 
     wid, person, run = call.service.workspace_id, data["person"], data["run"]
     launch = data["launch"]
@@ -799,6 +799,22 @@ async def _launch(call: Call, hub: RunnerHub, data: dict[str, Any]) -> dict[str,
     skills = await _company_skills(call, launch["argv"])
     if skills:
         payload["company_skills"] = skills
+    org = await orgmcp.launch_mcp(call, hub, run, launch["argv"])  # a capability: revoked again if the start fails
+    if org:
+        payload["org_mcp"] = org
+    try:
+        return await _spawn(call, hub, data, fields, payload, launch)
+    except BaseException:
+        if org:
+            orgmcp.revoke_run(hub, run)
+        raise
+
+
+async def _spawn(
+    call: Call, hub: RunnerHub, data: dict[str, Any], fields: dict[str, Any], payload: dict[str, Any],
+    launch: dict[str, Any],
+) -> dict[str, Any]:  # fmt: skip
+    wid, run = call.service.workspace_id, data["run"]
     await hub.intent(
         wid, fields, payload, idem=data["idem"], spec=data["spec"], after_request=data.get("after_request")
     )

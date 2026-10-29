@@ -609,6 +609,10 @@ class RunnerHub:
             if rec.get("state") not in LIVE and "ended_ts" not in rec:
                 rec["ended_ts"] = time.time()
             self.store.records[rec["run"]] = rec
+            if rec.get("state") not in LIVE:  # the run is over: its company MCP capability goes (idempotent)
+                from . import orgmcp
+
+                orgmcp.revoke_run(self, rec["run"])
             # an evicted record's ``gone`` takes a fresh rev (a client keeps the higher rev per run, so the record's
             # old rev would be ignored); the saved record takes the next one, so the persisted maximum covers both
             gones = []
@@ -1338,6 +1342,9 @@ class RunnerHub:
         for task in self._checks.values():
             task.cancel()
         self._checks.clear()
+        from . import orgmcp
+
+        orgmcp.shutdown(self)  # host stop: the proxy listener and every capability go
         for sub in list(self.subs.values()):
             self.end_sub(sub, reason)
 

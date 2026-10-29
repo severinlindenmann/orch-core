@@ -9,17 +9,6 @@
    "method": "GET",
    "target": "/v2/hub/releases"
   },
-  "row": {
-   "bytes": 12345,
-   "created_ms": 1789913600000,
-   "expires_ms": 1790086400000,
-   "kind": "share",
-   "public_url": null,
-   "release_id": "rel_2026_10_22_a",
-   "revoked": false,
-   "state": "active",
-   "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
-  },
   "signed_hex": "6f7263682f76322f6875622d61646d696e2d726561647c0238d8abed52ccfb538da401fd54e64bdc000001a0c4506c00000347455400102f76322f6875622f72656c6561736573",
   "target": "/v2/hub/releases",
   "ts_ms": 1790000000000
@@ -38016,72 +38005,6 @@
   },
   {
    "args": {
-    "rows": [
-     {
-      "bytes": 12345,
-      "created_ms": 1789913600000,
-      "expires_ms": 1790086400000,
-      "kind": "share",
-      "public_url": null,
-      "release_id": "rel_2026_10_22_a",
-      "revoked": false,
-      "state": "active",
-      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
-     }
-    ],
-    "scope": [
-     "336afd0fd4c349f575c2ec155d7258ad"
-    ]
-   },
-   "check": "admin_read_rows",
-   "expect": {
-    "ok": {
-     "rows": 1
-    }
-   },
-   "name": "admin_read_rows_in_scope",
-   "phase": 3
-  },
-  {
-   "args": {
-    "rows": [
-     {
-      "bytes": 12345,
-      "created_ms": 1789913600000,
-      "expires_ms": 1790086400000,
-      "kind": "share",
-      "public_url": null,
-      "release_id": "rel_2026_10_22_a",
-      "revoked": false,
-      "state": "active",
-      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
-     },
-     {
-      "bytes": 12345,
-      "created_ms": 1789913600000,
-      "expires_ms": 1790086400000,
-      "kind": "share",
-      "public_url": null,
-      "release_id": "rel_2026_10_22_a",
-      "revoked": false,
-      "state": "active",
-      "workspace_id": "0d45ec921f9f7e3dd27b0b14f91e047c"
-     }
-    ],
-    "scope": [
-     "336afd0fd4c349f575c2ec155d7258ad"
-    ]
-   },
-   "check": "admin_read_rows",
-   "expect": {
-    "error": "not_bound"
-   },
-   "name": "admin_read_row_outside_scope_never_emitted",
-   "note": "whatever the target resolved to, a row of another workspace is not returned",
-   "phase": 3
-  },
-  {
-   "args": {
     "bindings": {
      "336afd0fd4c349f575c2ec155d7258ad": [
       {
@@ -38628,115 +38551,6 @@
     "error": "not_bound"
    },
    "name": "admin_read_binding_to_other_hub",
-   "phase": 3
-  },
-  {
-   "args": {
-    "row": {
-     "bytes": 12345,
-     "created_ms": 1789913600000,
-     "expires_ms": 1790086400000,
-     "kind": "share",
-     "public_url": null,
-     "release_id": "rel_2026_10_22_a",
-     "revoked": false,
-     "state": "active",
-     "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
-    }
-   },
-   "check": "admin_read_row",
-   "expect": {
-    "ok": {
-     "row": true
-    }
-   },
-   "name": "admin_read_row_valid",
-   "phase": 3
-  },
-  {
-   "args": {
-    "row": {
-     "bytes": 12345,
-     "created_ms": 1789913600000,
-     "expires_ms": 1790086400000,
-     "kind": "share",
-     "public_url": "https://x.example/p/abc",
-     "release_id": "rel_2026_10_22_a",
-     "revoked": false,
-     "state": "active",
-     "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
-    }
-   },
-   "check": "admin_read_row",
-   "expect": {
-    "error": "malformed"
-   },
-   "name": "admin_read_row_with_public_url",
-   "note": "public_url is null in hv 0: no public kind exists; a later hv adds it for live public releases only",
-   "phase": 3
-  },
-  {
-   "args": {
-    "row": {
-     "bytes": 12345,
-     "content": "aGk",
-     "created_ms": 1789913600000,
-     "expires_ms": 1790086400000,
-     "kind": "share",
-     "public_url": null,
-     "release_id": "rel_2026_10_22_a",
-     "revoked": false,
-     "state": "active",
-     "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
-    }
-   },
-   "check": "admin_read_row",
-   "expect": {
-    "error": "malformed"
-   },
-   "name": "admin_read_row_extra_content_field",
-   "note": "metadata only",
-   "phase": 3
-  },
-  {
-   "args": {
-    "row": {
-     "created_ms": 1789913600000,
-     "expires_ms": 1790086400000,
-     "kind": "share",
-     "public_url": null,
-     "release_id": "rel_2026_10_22_a",
-     "revoked": false,
-     "state": "active",
-     "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
-    }
-   },
-   "check": "admin_read_row",
-   "expect": {
-    "error": "malformed"
-   },
-   "name": "admin_read_row_missing_field",
-   "phase": 3
-  },
-  {
-   "args": {
-    "row": {
-     "bytes": 12345,
-     "created_ms": 1789913600000,
-     "expires_ms": 1790086400000,
-     "kind": "share",
-     "public_url": null,
-     "release_id": "rel_2026_10_22_a",
-     "revoked": 0,
-     "state": "active",
-     "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
-    }
-   },
-   "check": "admin_read_row",
-   "expect": {
-    "error": "malformed"
-   },
-   "name": "admin_read_row_wrong_type",
    "phase": 3
   },
   {

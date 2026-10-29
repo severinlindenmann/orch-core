@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 import threading
 
+from ..contract.hub import Refused
 from .orgmcp import org_mcp
 from .orgsecrets import org_secrets
 from .orgskills import org_skills
@@ -50,13 +51,18 @@ class OrgCleanup:
 
     def mark(self, workspace_id: str) -> None:
         """Say a drop is owed BEFORE the registry commit that makes it necessary: a crash between the commit and the drop then
-        still leaves the mark (and nothing is served meanwhile). Memory first, disk when it can be written; ``drop`` clears it."""
+        still leaves the mark on disk (and nothing is served meanwhile). If the mark cannot be written this REFUSES
+        (``unavailable``) so the caller aborts before it changes anything: fail closed. ``drop`` clears the mark."""
         with self._lock:
+            had = workspace_id in self._mem
             self._mem.add(workspace_id)
         try:
             self._a._w("INSERT OR IGNORE INTO org_cleanup_pending VALUES (?)", (workspace_id,))
         except AccessError:
-            pass  # the in-memory mark holds for this process
+            if not had:
+                with self._lock:
+                    self._mem.discard(workspace_id)  # nothing changed, so nothing is owed
+            raise Refused("unavailable") from None
 
     def drop(self, workspace_id: str) -> bool:
         """Run all three drops (one failing never skips the others). True when everything is gone; otherwise the workspace

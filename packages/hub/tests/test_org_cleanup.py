@@ -287,3 +287,31 @@ def test_L2_secret_use_is_not_accepted_while_a_drop_is_pending():
     finally:
         h.close()
         a.close()
+
+
+def test_delta2_a_mark_that_cannot_be_written_aborts_the_binding_change(monkeypatch):
+    a = Access(":memory:")
+    h = Hub(access=a)
+    try:
+        c = _joined(h, a)
+        real = Access._w
+
+        def failing(self, sql, args=()):
+            if "org_cleanup_pending" in sql:
+                from orch_hub.access.store import AccessError
+
+                raise AccessError("store_error", "disk")
+            return real(self, sql, args)
+
+        monkeypatch.setattr(Access, "_w", failing)
+        before = h.registry.binding_state(G.WS_A)
+        with pytest.raises(Exception) as e:
+            c.request("binding_put", {"object": G.unbound(seq=2)})
+        assert "unavailable" in str(e.value)
+        assert h.registry.binding_state(G.WS_A) == before  # not unbound: aborted before the commit
+        assert left(a, G.WS_A)["wraps"]  # and nothing was dropped
+        monkeypatch.undo()
+        assert not org_cleanup(a).is_pending(G.WS_A)  # a refused mark leaves nothing owed
+    finally:
+        h.close()
+        a.close()

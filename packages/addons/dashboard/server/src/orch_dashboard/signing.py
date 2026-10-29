@@ -1917,18 +1917,32 @@ def done_error(prepared: dict, row: dict | None = None) -> HostError:
             exit=5,
         )
     signed_at = info.get("submitted_at") or row.get("submitted_at")
-    return HostError(
-        {
-            "code": "intent.done",
-            "message": "This is already done.",
-            "retryable": False,
-            "state": "submitted",
-            "signed_at": signed_at,
-            "op": op,
-            "summary": summary,
-        },
-        exit=5,
-    )
+    error = {
+        "code": "intent.done",
+        "message": "This is already done.",
+        "retryable": False,
+        "state": "submitted",
+        "signed_at": signed_at,
+        "op": op,
+        "summary": summary,
+    }
+    ticket = created_ticket(prepared)
+    if ticket:
+        error["ticket"] = ticket
+    return HostError(error, exit=5)
+
+
+def created_ticket(prepared: dict) -> dict | None:
+    """The ticket a signed request created (key and title), from the host's own committed `ticket.created` event.
+    Plain words for the page: it never shows the raw event JSON."""
+    for ev in (prepared.get("material") or {}).get("review", []):
+        if not isinstance(ev, dict) or ev.get("type") != "ticket.created":
+            continue
+        body = ev.get("payload") if isinstance(ev.get("payload"), dict) else ev
+        key, title = body.get("key"), body.get("title")
+        if isinstance(key, str) and key:
+            return {"key": key, "title": title if isinstance(title, str) else ""}
+    return None
 
 
 def read_done(human, ws: str, rid: str) -> HostError:

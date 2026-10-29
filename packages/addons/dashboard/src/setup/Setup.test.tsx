@@ -821,7 +821,7 @@ test('the git flag is the Safe copies row, no Also row; its signed text and the 
   await check()
   await screen.findByRole('heading', { name: 'Review your setup' })
   const summary = document.querySelector('.review-summary')!
-  expect(summary).toHaveTextContent('Safe copiesEach ticket gets its own safe copy of this folder. None of your files are changed.')
+  expect(summary).toHaveTextContent('Safe copiesEach ticket gets its own safe copy of this folder. None of your files are changed, except .gitignore.')
   expect(summary).not.toHaveTextContent(/Also|git init|\.orch/)
   const fold = document.querySelector('.review-technical') as HTMLDetailsElement
   expect(fold.open).toBe(false)
@@ -1081,7 +1081,7 @@ test('a folder without git offers to make one when Worktrees is on, and never co
   await screen.findByRole('heading', { name: 'Set up your workspace' })
   for (let i = 0; i < 2; i++) fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   expect(screen.getByText(/This folder does not track changes yet/)).toBeInTheDocument()
-  expect(screen.getByText(/None of your files is changed/)).toBeInTheDocument()
+  expect(screen.getByText(/None of your files are changed, except .gitignore/)).toBeInTheDocument()
   expect(screen.queryByText(/git init/i)).not.toBeInTheDocument()
   expect(screen.getByLabelText(/Set it up for me/)).toBeChecked()
   expect(screen.getByRole('button', { name: 'Continue →' })).toBeEnabled()
@@ -1226,4 +1226,23 @@ test('P15: no Recommended badge when One click is not available here', async () 
   await approval()
   expect(screen.queryByText('Recommended')).not.toBeInTheDocument()
   expect(screen.queryByTestId('click-risk')).not.toBeInTheDocument()
+})
+
+test('N2: a repos setting for the setup folder is quiet, any other project path is shown', async () => {
+  const mk = (path: string) => ({
+    items: [{ id: 'settings', type: 'settings.changed', title: 'Workspace settings', lines: [], details: [], volatile: [], fields: { type: 'settings.changed', set: { repos: { proj: { path } } } } }],
+    flags: [{ id: 'git', text: 'Keep a history of changes in this folder. Your files stay as they are.' }],
+  })
+  for (const [path, shown] of [['/demo/orch-run2-a', false], ['/elsewhere/other', true]] as const) {
+    const { api } = withReview(mk(path))
+    render(<Setup api={api} />)
+    await approval()
+    fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+    await screen.findByRole('heading', { name: 'Your recovery words' })
+    await check()
+    await screen.findByRole('heading', { name: 'Review your setup' })
+    const summary = document.querySelector('.review-summary')!
+    expect(summary.textContent?.includes(`Project folder: ${path}`) ?? false).toBe(shown)
+    cleanup()
+  }
 })

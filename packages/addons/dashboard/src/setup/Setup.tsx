@@ -92,9 +92,18 @@ export function summarize(review: Review): { lines: string[]; unknown: boolean; 
     else if (item.type === 'settings.changed' && only('set') && f?.set && typeof f.set === 'object' && !Array.isArray(f.set)) {
       const set = f.set as Record<string, unknown>
       const okHours = !('grant_hours' in set) || typeof set.grant_hours === 'number'
-      // `repos` is the project list the workspace keeps itself: nothing the person decides, so no extra row
-      if (!Object.keys(set).every((k) => k === 'grant_hours' || k === 'repos') || !okHours) odd(item.title)
+      // `repos` is quiet only when it declares exactly the setup folder (made a repository by the git flag); any
+      // other project path is a decision the person must see.
+      const repos = set.repos
+      const repoPaths =
+        repos && typeof repos === 'object' && !Array.isArray(repos)
+          ? Object.values(repos as Record<string, unknown>).map((r) => (r && typeof r === 'object' ? (r as { path?: unknown }).path : undefined))
+          : undefined
+      const hasGit = review.flags.some((fl) => fl.id === 'git')
+      const quietRepo = !!repoPaths && repoPaths.length === 1 && repoPaths[0] === review.workspace?.dir && hasGit
+      if (!Object.keys(set).every((k) => k === 'grant_hours' || k === 'repos') || !okHours || (repos !== undefined && !repoPaths)) odd(item.title)
       else {
+        if (repoPaths && !quietRepo) for (const rp of repoPaths) odd(`Project folder: ${typeof rp === 'string' ? rp : 'unknown'}`)
         if (typeof set.grant_hours === 'number') lines.push(`Agents may work for you for up to ${duration(set.grant_hours)}`)
       }
     } else odd(item.title)
@@ -137,7 +146,7 @@ export function reviewFacts(review: Review): Fact[] {
   if (agents !== undefined) facts.push({ icon: '✦', label: 'Agents', value: agents })
   const addons = review.items.filter((i) => i.type === 'addon.granted' && i.id !== 'addon:dashboard').map((i) => i.title)
   if (addons.length) facts.push({ icon: '⊞', label: 'Add-ons', value: addons })
-  if (has('git')) facts.push({ icon: '⧉', label: 'Safe copies', value: 'Each ticket gets its own safe copy of this folder. None of your files are changed.' })
+  if (has('git')) facts.push({ icon: '⧉', label: 'Safe copies', value: 'Each ticket gets its own safe copy of this folder. None of your files are changed, except .gitignore.' })
   if (has('records')) facts.push({ icon: '◷', label: 'History', value: 'Tickets are saved on this computer only' })
   return facts
 }
@@ -935,7 +944,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                   <label className="toggle">
                     <span>
                       <strong>Set it up for me (recommended)</strong>
-                      <small>Each ticket gets its own safe copy. None of your files is changed.</small>
+                      <small>Each ticket gets its own safe copy. None of your files are changed, except .gitignore.</small>
                     </span>
                     <input
                       type="radio"

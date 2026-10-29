@@ -27,7 +27,7 @@ export function workspaceDetailsView(w, { roles = null, owner = null, hub, actio
       h("dt", { text: "orch version" }), h("dd", {}, versionView(w, hub)),
       h("dt", { text: "Mode" }), h("dd", {}, chip(modeName(w)), small(w.mode === "full"
         ? "The hub can read everything and help across workspaces."
-        : "The hub sees only what this workspace chooses to share."))),
+        : "The hub sees only what this workspace chooses to share, plus its name."))),
     roles ? h("section", {}, h("h3", { text: "Who has access" }),
       h("p", { text: "Owner: " + personName(roles.owner) }),
       roles.groups?.length ? h("ul", {}, roles.groups.map((g) => h("li", {},

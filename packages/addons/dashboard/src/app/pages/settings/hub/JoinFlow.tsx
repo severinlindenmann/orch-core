@@ -88,7 +88,7 @@ function ConnectStage({ ws, info, mode, onClose }: { ws: string; info: HubLinkIn
   const started = useRef(false)
   const done = () => {
     refresh()
-    toast.success(mode === 'full' ? 'Connected. The hub can read everything in this workspace.' : 'Connected. The hub sees only what you choose to share.')
+    toast.success(mode === 'full' ? 'Connected. The hub can read everything in this workspace.' : 'Connected. The hub sees only what you choose to share, plus this workspace\'s name.')
     onClose()
   }
   const failure = (e: unknown) => { setWhy(e instanceof ApiError && e.message ? e.message : 'The hub did not answer.'); setState('failed') }

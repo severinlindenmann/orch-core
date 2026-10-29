@@ -1337,7 +1337,7 @@ def _event(
             "workspace key and is not a member of the "
             "workspace. You can leave at any time (orch hub leave), also while the hub is down."
         )
-        return f"Join hub {hub} in selective mode: the hub sees only what you share"
+        return f"Join hub {hub} in selective mode: the hub sees only what you share, plus this workspace's name"
     if typ == "hub.left":
         _row(out, "hub", ev.get("hub_id"))
         _row(out, "binding", ev.get("binding_seq"))

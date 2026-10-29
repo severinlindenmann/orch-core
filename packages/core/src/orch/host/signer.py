@@ -805,7 +805,7 @@ _PLAIN = {
     "settings.set": "change the workspace settings {set}",
     "people.set": "change the {role} of {ticket}",
     "publish.share": "let the staged copy of files of {ticket} be shared outside this computer",
-    "hub.join": "join hub {hub_id} in {mode} mode: the hub sees only what you share and never gets the workspace key",
+    "hub.join": "join hub {hub_id} in {mode} mode: the hub sees only what you share, plus this workspace's name, and never gets the workspace key",
     "hub.join.full": "join hub {hub_id} in full mode: the hub will be able to read everything in this workspace",
     "hub.mode": "switch hub {hub_id} to {mode} mode: the hub will be able to read everything in this workspace",
     "hub.leave": "leave hub {hub_id} (binding {binding_seq}) and tell it that this workspace is no longer bound",

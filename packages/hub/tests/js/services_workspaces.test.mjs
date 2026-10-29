@@ -360,3 +360,10 @@ test("a full admin whose admin list failed to load still mints a link (no sign-o
   assert.equal(asked, 0);
   assert.equal(minted, 1);
 });
+
+test("one workspace on an older orch is worded in the singular", () => {
+  const out = workspacesView({ workspaces: [workspace(), workspace({ workspace_id: "b", name: "Legal", version_state: "older" })],
+    handoffs: [], hub: { version: "0.3.0", min_supported: "0.1.0" } }, NOW);
+  assert.match(text(out), /1 workspace runs an older orch/);
+  assert.doesNotMatch(text(out), /1 workspaces/);
+});

@@ -27,7 +27,7 @@ test("home groups rows, names their workspace, and shows health", () => {
   ], actions: {} });
   const nodes = out.flatMap((n) => n.all());
   const text = out.map((n) => n.textContent).join(" ");
-  assert.match(text, /1 workspaces online, 1 offline, 2 things need you/);
+  assert.match(text, /1 workspace online, 1 offline, 2 things need you/);
   assert.doesNotMatch(text, /Secret/);
   const groups = nodes.filter((n) => n.className === "workspace-needs");
   assert.equal(groups.length, 1);

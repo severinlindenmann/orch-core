@@ -111,6 +111,6 @@ export function homeView(d) {
   const notice = d.notice?.nodeType ? d.notice : d.notice ? h("div", { class: "banner", role: "status", text: text(d.notice) }) : null;
   const added = newChannelsNotice(d.newChannels, { remove: (c) => d.actions?.removeChannel(c.channel_id), dismiss: () => d.actions?.dismissNew?.() });
   return [h("h1", { text: "Hello, " + text(d.user?.name ?? "you") }), notice, ...added,
-    h("p", { class: "company-summary", text: health.online + " workspaces online, " + health.offline + " offline, " + health.waiting + " things need you" }),
+    h("p", { class: "company-summary", text: health.online + (health.online === 1 ? " workspace" : " workspaces") + " online, " + health.offline + " offline, " + health.waiting + (health.waiting === 1 ? " thing needs you" : " things need you") }),
     h("div", { class: "home-grid" }, needs, h("div", { class: "home-side" }, spaces, signing))].filter(Boolean);
 }

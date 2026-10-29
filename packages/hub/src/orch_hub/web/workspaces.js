@@ -137,7 +137,7 @@ export function workspacesView(data, now = Date.now()) {
   return [
     h("div", { class: "row" }, h("h1", { class: "grow", text: "Workspaces" }), data.admin != null || data.canConnect ? connect : null),
     connectBox,
-    older.length ? h("div", { class: "banner warn" }, h("b", { text: older.length + " workspaces run an older orch" }),
+    older.length ? h("div", { class: "banner warn" }, h("b", { text: older.length === 1 ? "1 workspace runs an older orch" : older.length + " workspaces run an older orch" }),
       small(older.map(nameOf).join(", ")), data.hub?.min_supported ? small("The hub still works with " + text(data.hub.min_supported) + " and newer.") : null) : null,
     h("section", { class: "card", "aria-labelledby": "ws-h" }, h("h2", { id: "ws-h", text: "Connected workspaces" }), list, leftView),
   ].filter(Boolean);

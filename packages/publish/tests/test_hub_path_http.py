@@ -589,9 +589,38 @@ def test_migration_from_schema_2_keeps_data_and_adds_the_hub_tables(tmp_path):
     conn.close()
     db.init(path)
     conn = db.connect(path)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 3
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 4
     assert conn.execute("SELECT person_id FROM owners").fetchone()[0] == "p"
     assert conn.execute("SELECT count(*) FROM hub_bindings").fetchone()[0] == 0
+    conn.close()
+    db.init(path)  # idempotent
+
+
+def test_migration_from_schema_3_adds_the_display_columns_of_the_company_list(tmp_path):
+    path = db.prepare_dir(str(tmp_path / "d"))
+    conn = sqlite3.connect(path)
+    conn.executescript(db.SCHEMA)
+    conn.execute("DROP TABLE views")
+    conn.execute("DROP TABLE share_files")
+    conn.execute("DROP TABLE shares")
+    conn.execute(
+        "CREATE TABLE shares(id TEXT PRIMARY KEY, owner_ws TEXT NOT NULL, ticket TEXT NOT NULL, kind TEXT NOT NULL,"
+        " token_hash TEXT NOT NULL, expires_ms INTEGER NOT NULL, view_limit INTEGER NOT NULL DEFAULT 0,"
+        " views INTEGER NOT NULL DEFAULT 0, state TEXT NOT NULL DEFAULT 'staged', manifest_hash TEXT,"
+        " bytes INTEGER NOT NULL DEFAULT 0, created_ms INTEGER NOT NULL, ended_ms INTEGER)"
+    )
+    conn.execute(
+        "INSERT INTO shares(id, owner_ws, ticket, kind, token_hash, expires_ms, created_ms)"
+        " VALUES ('s','w','T-1','secret','h',1,1)"
+    )
+    conn.execute("PRAGMA user_version=3")
+    conn.commit()
+    conn.close()
+    db.init(path)
+    conn = db.connect(path)
+    r = conn.execute("SELECT label, by_kind, by_name FROM shares").fetchone()
+    assert tuple(r) == ("", "person", None)  # an old row reads with the plain defaults
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 4
     conn.close()
     db.init(path)  # idempotent
 

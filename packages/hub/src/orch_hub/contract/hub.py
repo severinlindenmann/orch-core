@@ -1951,20 +1951,6 @@ def check_hub_publish(req: Mapping[str, Any], st: Mapping[str, Any], *, now_ms: 
 ADMIN_READ_WINDOW_MS = 120_000
 _HEX32 = re.compile(r"[0-9a-f]{32}")
 ADMIN_TARGET_MAX = 2048
-#: The metadata an admin read may return per release, and nothing else (never content or secrets).
-ADMIN_READ_ROW: dict[str, Check] = {
-    "workspace_id": _hex16,
-    "release_id": lambda x: type(x) is str and 0 < len(x) <= 64,
-    "kind": lambda x: type(x) is str and 0 < len(x) <= 32,
-    "state": lambda x: type(x) is str and 0 < len(x) <= 32,
-    "created_ms": _int_min(0),
-    "expires_ms": lambda x: x is None or _int_min(0)(x),
-    "revoked": _bool,
-    "bytes": _int_min(0),
-    "public_url": lambda x: x is None,  # hv 0: orch-publish has no public kind; see protocol.md §10.6
-}
-
-
 ADMIN_READ_PATH = "/v2/hub/releases"
 
 
@@ -1986,18 +1972,6 @@ def parse_admin_target(target: Any) -> str | None:
     if k != "workspace" or not eq or not _HEX32.fullmatch(v):
         raise Refused("malformed")
     return v
-
-
-def check_admin_rows(rows: list[Any], scope: list[str]) -> list[dict[str, Any]]:
-    """Every row the data layer returns is checked against the scope after routing: a row of a workspace outside it
-    is never emitted (``not_bound``), whatever the target resolved to (L2P-5)."""
-    out = []
-    for r in rows:
-        check_admin_read_row(r)
-        if r["workspace_id"] not in scope:
-            raise Refused("not_bound")
-        out.append(r)
-    return out
 
 
 def admin_read_bytes(hub_id_: str, ts_ms: int, method: str, target: str) -> bytes:
@@ -2065,14 +2039,3 @@ def check_admin_read(req: Mapping[str, Any], st: Mapping[str, Any], *, now_ms: i
     if named is not None and named not in scope:
         raise Refused("not_bound")
     return {"hub": hub, "workspaces": scope}
-
-
-def check_admin_read_row(row: Any) -> dict[str, Any]:
-    """The only shape of a release row an admin read returns."""
-    if (
-        type(row) is not dict
-        or set(row) != set(ADMIN_READ_ROW)
-        or not all(ok(row[k]) for k, ok in ADMIN_READ_ROW.items())
-    ):
-        raise Refused("malformed")
-    return row

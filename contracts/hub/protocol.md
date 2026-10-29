@@ -1886,12 +1886,9 @@ contract.) **Selective workspaces are out of scope (L2P-6).** D71: the hub-admin
 card says the hub sees only what it shares; release metadata, including releases made on the direct v2 path that the
 hub never forwarded, stays hidden from it. Only a later, explicit owner opt-in could add them (not specified).
 
-**Response rows carry exactly** `workspace_id`, `release_id`, `kind`, `state`, `created_ms`, `expires_ms`
-(or `null`), `revoked`, `bytes`, `public_url`, which **MUST be `null` in `hv: 0`** (orch-publish has no public kind; a non-null value is a violation, vector `admin_read_row_with_public_url`). A later `hv` may add it for live public releases only, never for a URL that carries a token or grants access; any other field is a
-violation (`check_admin_read_row`, vectors `admin_read_row_*`).
-
-**M4 (#1357).** S1 replaces the release row above by the rows of §11.5 (links and apps); this paragraph and the vectors
-`admin_read_row_*` go with it. Until S1 lands the row above is what orch-publish returns.
+**Response.** `200 {"rows": [...]}`, each row one of the two shapes of §11.5 (links and apps), checked by
+`check_published_rows` at orch-publish and again at the hub. (hv 0 used a release row with a `public_url`; M4 S1 removed
+it and its vectors `admin_read_row_*`.)
 
 ### 10.7 The hub's workspace view: `log_sync` (phase 4, V3-D23)
 
@@ -2558,10 +2555,10 @@ non-string never reaches the KDF. A verifier takes a rate-limit check and a KDF 
 password is not a view, and the password arrives by `POST` to publish's own gate page, never in a query, never logged
 (S3). Vectors `password_record_cases`, `password_verify_cases`.
 
-### 11.5 Admin read rows for links and apps (C1, S1 implements)
+### 11.5 Admin read rows for links and apps (C1)
 
-The rows of the company list replace the §10.6 release row (S1 removes the old row check and its `admin_read_row_*`
-vectors; scope, canonical target, window and signature of §10.6 are unchanged). A row is one of two shapes, told apart by
+The rows of the company list are the answer of §10.6 (`{"rows": [...]}`; scope, canonical target, window and signature of
+§10.6 are unchanged; S1 removed the old release row and its `admin_read_row_*` vectors). A row is one of two shapes, told apart by
 `type`, with **exactly** these members:
 
 ```
@@ -2812,7 +2809,7 @@ link errors travel as `{"error": code}` reply bodies; host-side refusals are loc
 | `hub_joined` | the owner-signed workspace-log event and its ticket-format §5.3 bytes; a One-click (`auth: "convenience"`) join that carries its `owner_proof` (§9.6) |
 | `publish` | a forwarded request: `wsk_signed_hex` (hub-path bytes), `approval_hash_hex`, `hub_signed_hex`, `request_hash` |
 | `link_auth` | challenge, exporter, signed bytes, signature |
-| `audit`, `admin_read` | V3-D4 / F3: a 4-record chain with its events and hashes; the admin read signed bytes, a request and a row |
+| `audit`, `admin_read` | V3-D4 / F3: a 4-record chain with its events and hashes; the admin read signed bytes and a request |
 | `spaces` | V3-D8: the space key per epoch, `sk_commit`, one sealed item (salt, derived key, AAD, plaintext object) and one wrap (ephemeral seed, AAD) |
 | `phase4` | p4: the `log_sync` lines, heads, view key, AAD and one sealed page; a ticket projection `proj_ticket`, a ticket page carrying it and its plaintext bytes (D15b); a prepared context and digest; a relay request and its bytes; the relay routes' request bytes and one sealed push payload (`relay_routes`); the custodial type table; the `space.accept` built from the vector proposal |
 | `share_item_f1` | C3b addendum: a ticket item with an `f1` block and its `item_hash` (§10.2b, §8.6) |

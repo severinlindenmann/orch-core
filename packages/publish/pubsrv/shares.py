@@ -23,6 +23,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 
 from . import db, pathrules, registry
+from . import published as P
 from .auth import WINDOW_MS, Refusal
 
 MAX_FILE = 25 * 1024 * 1024
@@ -38,6 +39,8 @@ _ID = re.compile(registry.ID32)
 _HEX64 = re.compile(r"[0-9a-f]{64}")
 _TICKET = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 _META_KEYS = {"ticket", "kind", "expires_ms", "view_limit", "token_hash", "files"}
+#: display members of the company list (C1): optional, filled by the workspace and shown as asserted text only
+_DISPLAY_KEYS = {"label", "by_kind", "by_name"}
 _FILE_KEYS = {"path", "size", "sha256"}
 
 
@@ -75,7 +78,7 @@ def parse_meta(raw, now_ms):
         m = json.loads(raw.decode("utf-8"), object_pairs_hook=_no_dup_pairs)
     except (UnicodeError, ValueError):
         raise Refusal(400, "malformed") from None
-    if not isinstance(m, dict) or set(m) != _META_KEYS:
+    if not isinstance(m, dict) or not _META_KEYS <= set(m) <= _META_KEYS | _DISPLAY_KEYS:
         raise Refusal(400, "malformed")
     if not (isinstance(m["ticket"], str) and _TICKET.fullmatch(m["ticket"])):
         raise Refusal(400, "bad_ticket")
@@ -91,6 +94,15 @@ def parse_meta(raw, now_ms):
         raise Refusal(400, "bad_expiry")
     if not (isinstance(m["token_hash"], str) and _HEX64.fullmatch(m["token_hash"])):
         raise Refusal(400, "bad_token_hash")
+    m.setdefault("label", m["ticket"])  # a host that names nothing: the list shows the ticket id
+    m.setdefault("by_kind", "person")
+    m.setdefault("by_name", None)
+    if not P.text_ok(m["label"], 80):
+        raise Refusal(400, "bad_label")
+    if m["by_kind"] not in ("person", "agent"):
+        raise Refusal(400, "bad_by")
+    if m["by_name"] is not None and not P.text_ok(m["by_name"], 60):
+        raise Refusal(400, "bad_by")
     files = m["files"]
     if not isinstance(files, list) or not 1 <= len(files) <= pathrules.MAX_FILES:
         raise Refusal(400, "bad_files")
@@ -290,9 +302,10 @@ def op_put_meta(settings, store, ws, wsk, sid, raw):
                 raise Refusal(413, "quota_exceeded")
             conn.execute(
                 "INSERT INTO shares(id, owner_ws, ticket, kind, token_hash, expires_ms, view_limit,"
-                " state, manifest_hash, bytes, created_ms) VALUES (?,?,?,?,?,?,?,'staged',?,?,?)",
+                " state, manifest_hash, bytes, created_ms, label, by_kind, by_name)"
+                " VALUES (?,?,?,?,?,?,?,'staged',?,?,?,?,?,?)",
                 (sid, ws, m["ticket"], m["kind"], m["token_hash"], m["expires_ms"],
-                 m["view_limit"], mh, total, now),
+                 m["view_limit"], mh, total, now, m["label"], m["by_kind"], m["by_name"]),
             )  # fmt: skip
             conn.executemany(
                 "INSERT INTO share_files(share_id, path, size, sha256) VALUES (?,?,?,?)",

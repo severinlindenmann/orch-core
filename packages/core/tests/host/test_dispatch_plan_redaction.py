@@ -166,7 +166,7 @@ def test_the_held_card_and_the_share_plan_digest_are_kept_at_their_paths_only():
 _ROUTES = (
     "reads", "records", "workdirs", "readerops", "phonehints", "terms", "agents", "runnergrants", "runners",
     "transcripts", "worktrees", "publishing", "hubops", "cosmeticops", "shareops", "spaceops", "orgops", "marketops",
-    "peerops",
+    "peerops", "remote",
 )  # fmt: skip
 
 

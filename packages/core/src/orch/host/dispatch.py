@@ -109,6 +109,7 @@ from .publishing import NETWORK_OPS as PUBLISH_NETWORK_OPS
 from .publishing import PUBLISH_CAPS, PUBLISH_OPS
 from .reads import CAPS as READ_CAPS
 from .reads import READ_OPS
+from .remote import REMOTE_OPS, REMOTE_READS
 from .runnergrants import GRANT_OPS
 from .runners import RUN_CAPS, RUN_OPS
 from .shareops import NETWORK_OPS as SHARE_NETWORK_OPS
@@ -256,6 +257,7 @@ def served_ops() -> dict[str, int]:
     out.update(TRANSCRIPT_OPS)  # focus/1: run.transcript
     out.update(PUBLISH_OPS)  # P5: publish.prepare, .send, .revoke, .list, .discard, .register
     out.update(HUB_OPS)  # V3 C2a: hub.connect, hub.unbind, hub.status
+    out.update(REMOTE_OPS)  # R2 #1590: remote.off, .code, .device_remove, .key_rotate, .status, .pending, .sessions
     out.update(PEER_OPS)  # V3 C12: peer.* (ws->ws through the hub)
     out.update(SPACE_OPS)  # V3 C13: space.* (shared spaces through the hub)
     out.update(ORG_OPS)  # M3 H-2: org.* (company skills and MCP servers offered by the hub)
@@ -322,6 +324,8 @@ def op_kind(name: str) -> tuple[OpKind, Phase] | None:
     if name in HUB_OPS:  # V3 C2a: column P only (the op checks the owner role)
         reads = ("hub.status", "hub.handoff", "hub.link", "hub.switch", "hub.directory", "hub.shared")
         return ("person_read", "read") if name in reads else ("person_write", "write")
+    if name in REMOTE_OPS:  # R2 #1590: column P only (the op checks the owner role)
+        return ("person_read", "read") if name in REMOTE_READS else ("person_write", "write")
     if name in PEER_OPS:  # V3 C12: reads for P and G (an agent reads its inbox); writes P only, owner role
         return ("pg_read", "read") if name in PEER_READS else ("person_write", "write")
     if name in COSMETIC_OPS:  # D6: column P only (the op checks the owner role)
@@ -716,6 +720,10 @@ class RegistryBackend:
                 from . import hubops
 
                 result = hubops.serve(call)
+            elif op in REMOTE_OPS:
+                from . import remote
+
+                result = remote.serve(call)
             elif op in COSMETIC_OPS:
                 from . import cosmeticops
 

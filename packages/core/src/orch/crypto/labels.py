@@ -108,6 +108,8 @@ PLANNED_LABELS: dict[str, str] = {
     # R2 (#1590, hub contract 10.2c "The owner proof of a remote step"): the same proof object under its OWN label, so a
     # hub proof never stands in for a remote one or the reverse. Core-only: the hub never sees these proofs.
     "sig_remote_owner_proof": "orch/v2/sig/remote-owner-proof|",
+    # R2 (#1590, hub contract 10.2c "The device list"): the WSK's signature over the remote device list.
+    "sig_remote_devices": "orch/v2/sig/remote-devices|",
     "aad_hub_share": "orch/v2/hub-share-aad|",
     "h_share_item": "orch/v2/hub-share-item|",
 }

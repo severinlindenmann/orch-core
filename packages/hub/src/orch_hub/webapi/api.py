@@ -1397,12 +1397,15 @@ class WebApi(ChangeHandlers, OrgHandlers):
                 if it["item"]["item_kind"] != "ticket":
                     continue
                 row = self._shared_row({"workspace_id": ws}, it, c.user_id)
-                row["shared_by"] = people.get(owner)
                 aud = it["item"].get("audience")
-                if owner == c.user_id and type(aud) is dict:  # only the person who shared sees the audience
-                    row["shared_with"] = [people[u] for u in aud.get("users", []) if u in people] + [
-                        "Team: " + P4.render_text(g) for g in aud.get("groups", [])
+                if owner == c.user_id:  # the person who shared sees the audience ([] = only you), never "shared by me"
+                    users = aud.get("users", []) if type(aud) is dict else []
+                    groups = aud.get("groups", []) if type(aud) is dict else []
+                    row["shared_with"] = [people[u] for u in users if u in people] + [
+                        "Team: " + P4.render_text(g) for g in groups
                     ]
+                else:
+                    row["shared_by"] = people.get(owner)
                 rows.append(row)
         return 200, {"items": rows}
 

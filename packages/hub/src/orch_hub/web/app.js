@@ -437,7 +437,8 @@ async function workspaces(joined = [], known = null) {
       shell("workspaces", workspacesView({ workspaces: rows, handoffs: ho.status === 200 ? ho.body.handoffs ?? [] : [], admin: adminRows, hub, actions, joined, self: state.user.user_id }));
       // Watch for joins while this page is open (3 s, paused while the tab is hidden, stopped by leaving the route).
       clearInterval(workspacesTimer);
-      const seen = known ?? new Set(rows.map((w) => w.workspace_id));
+      // Diff only against a successful first read: a failed one must not make every workspace look newly joined.
+      let seen = known ?? (ws.status === 200 ? new Set(rows.map((w) => w.workspace_id)) : null);
       const mine = ++viewRevision;
       let checking = false;
       workspacesTimer = setInterval(async () => {
@@ -446,6 +447,7 @@ async function workspaces(joined = [], known = null) {
         try {
           const r = await api("GET", "/me/workspaces");
           if (mine !== viewRevision || r.status !== 200) return;
+          if (seen === null) return void (await workspaces([], null)); // the first good read: draw it, nothing is "joined"
           const fresh = newWorkspaces(seen, r.body.workspaces);
           if (!fresh.length) return;
           for (const w of fresh) seen.add(w.workspace_id);
@@ -1153,7 +1155,7 @@ function sharedTicketsView(list) {
   if (!list.length) return null;
   return h("section", { "aria-label": "Shared tickets" }, h("h2", { text: "Shared tickets (" + list.length + ")" }),
     list.map((it) => h("div", { class: "list-row" }, h("b", { text: renderText(it.title ?? it.key ?? "Ticket") }),
-      h("div", { class: "small muted", text: it.shared_with?.length ? "shared with " + it.shared_with.map(renderText).join(", ") : it.shared_by ? "Shared by " + renderText(it.shared_by) : "Shared" }))));
+      h("div", { class: "small muted", text: Array.isArray(it.shared_with) ? (it.shared_with.length ? "Shared with " + it.shared_with.map(renderText).join(", ") : "Only you") : it.shared_by ? "Shared by " + renderText(it.shared_by) : "Shared" }))));
 }
 
 // Serialize renders so an earlier slow read cannot overwrite the final route.

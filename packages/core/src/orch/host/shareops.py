@@ -320,18 +320,10 @@ def _leaves(kind: str, items: list[Any]) -> str:
 
 
 def _names_for(service: WorkspaceService, ids: set[str]) -> dict[str, str]:
-    """Display names for these hub users. The cache is in memory only. Only a COLD cache (after a restart) asks the hub
-    once (``audience_get``, display data, not signed), and a failed ask is not repeated for 5 minutes: a person who is
-    never listed (disabled, past the cap) must not cost a hub call per review, and reads use no network otherwise.
-    Unknown ids fall back to "a person on the hub"."""
-    import time
-
-    if not hasattr(service, "_share_names") and time.monotonic() - getattr(service, "_share_names_tried", -1e9) > 300:
-        service._share_names_tried = time.monotonic()  # noqa: SLF001
-        try:
-            _audience(service)
-        except Exception:  # noqa: BLE001  (names are decoration; the review still works without them)
-            pass
+    """Display names for these hub users, from the in-memory cache only. A review is built on the workspace worker where
+    nothing may touch the network, so it never asks the hub: the cache is filled by ``share.audience`` (the share form
+    loads it before a person can pick anybody). Until then, and for anyone never listed, the caller shows
+    "a person on the hub"."""
     return dict(getattr(service, "_share_names", {}))
 
 

@@ -347,29 +347,15 @@ def test_narrowing_still_goes_through_automatically(served, selective):
     assert selective.opened[-1]["audience"] == {"users": [], "groups": ["team-b"]}
 
 
-def test_names_are_asked_from_the_hub_once_after_a_restart_and_a_failure_is_not_repeated_for_five_minutes(monkeypatch):
+def test_a_review_never_opens_a_hub_link_for_names(monkeypatch):
     from types import SimpleNamespace
 
     from orch.host import shareops
 
-    calls = []
+    def boom(service):
+        raise AssertionError("share.preview must not use the network")
 
-    def fetch(service):
-        calls.append(1)
-        service._share_names = {"a" * 32: "Ben Test"}
-
-    monkeypatch.setattr(shareops, "_audience", fetch)
-    svc = SimpleNamespace()  # a fresh process: no name cache at all
-    assert shareops._names_for(svc, {"a" * 32, "b" * 32}) == {"a" * 32: "Ben Test"}
-    assert shareops._names_for(svc, {"b" * 32}) == {"a" * 32: "Ben Test"}  # "b" is never listed: no second call
-    assert len(calls) == 1
-
-    def down(service):
-        calls.append(2)
-        raise OSError("hub unreachable")
-
-    monkeypatch.setattr(shareops, "_audience", down)
-    cold = SimpleNamespace()
-    assert shareops._names_for(cold, {"a" * 32}) == {}  # the review then says "a person on the hub"
-    shareops._names_for(cold, {"a" * 32})
-    assert calls.count(2) == 1
+    monkeypatch.setattr(shareops, "_audience", boom)
+    monkeypatch.setattr(shareops, "_link", boom)
+    assert shareops._names_for(SimpleNamespace(), {"a" * 32}) == {}  # cold: the review says "a person on the hub"
+    assert shareops._names_for(SimpleNamespace(_share_names={"a" * 32: "Ben"}), {"a" * 32}) == {"a" * 32: "Ben"}

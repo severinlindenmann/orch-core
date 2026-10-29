@@ -133,5 +133,23 @@ test("the workspace page lists shared tickets under the waiting count, for the o
   const section = output.find((n) => n?.tag === "section");
   assert.equal(section.kids[0].text, "Shared tickets (2)"); // another workspace's ticket is not listed
   const lines = JSON.stringify(section.kids.slice(1));
-  assert.match(lines, /shared with Ben Test/); assert.match(lines, /Shared by Anna Test/);
+  assert.match(lines, /Shared with Ben Test/); assert.match(lines, /Shared by Anna Test/);
+});
+
+test("a failed first read of the workspaces never turns the existing ones into joins", async () => {
+  const timers = [], renders = [];
+  const one = { status: 200, body: { workspaces: [{ workspace_id: "a".repeat(32) }] } };
+  const reads = [{ status: 500, body: {} }, one, one, { status: 200, body: { workspaces: [{ workspace_id: "a".repeat(32) }, { workspace_id: "b".repeat(32) }] } }];
+  let n = 0;
+  const context = vm.createContext({ pageLoading() {}, loading: () => () => {}, refresh: async () => true, loadRail: async () => {}, state: { user: { user_id: "u" }, menu: false },
+    api: async (m, path) => path === "/me/workspaces" ? reads[Math.min(n++, 3)] : { status: 200, body: {} },
+    workspacesView: (data) => { renders.push(data); return []; }, shell() {}, closeDialog() {}, openWorkspace() {}, dialog() {}, workspaceDetailsView() {}, h() {}, copyText() {}, pollLive() {},
+    newWorkspaces: (known, rows) => (rows ?? []).filter((w) => !known.has(w.workspace_id)), clearInterval() {}, document: { hidden: false },
+    setInterval: (fn) => { timers.push(fn); return timers.length; }, viewRevision: 0, workspacesTimer: 0 });
+  vm.runInContext(source.slice(source.indexOf("async function workspaces("), source.indexOf("async function copyText")), context);
+  await context.workspaces();                 // first read fails: nothing known yet
+  await timers.at(-1)();                       // first good poll: drawn, not announced as a join
+  assert.equal(renders.at(-1).joined.length, 0);
+  await timers.at(-1)();
+  assert.equal(JSON.stringify(renders.at(-1).joined.map((w) => w.workspace_id)), JSON.stringify(["b".repeat(32)]));
 });

@@ -32,7 +32,9 @@ def test_a_granted_person_sees_who_shared_it_and_the_owner_sees_with_whom(w):
     s, o, _ = get(w, w.ann)
     assert [i["title"] for i in o["items"]] == ["Invoice export for Ben"]  # the needs_you summary is not a ticket
     assert o["items"][0]["workspace_id"] == WS_SEL
-    assert o["items"][0]["shared_with"] == ["ben", "Team: finance"]
+    assert o["items"][0]["shared_with"] == ["ben", "Team: finance"] and "shared_by" not in o["items"][0]
+    w.shares.items[(w.ann, WS_SEL)][0]["item"].pop("audience")
+    assert get(w, w.ann)[1]["items"][0]["shared_with"] == []  # shared with nobody: the page says "Only you"
 
 
 def test_everyone_else_gets_nothing_not_even_an_error(w):

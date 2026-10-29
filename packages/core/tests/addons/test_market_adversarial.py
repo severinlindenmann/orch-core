@@ -136,7 +136,7 @@ def test_l2m2_other_marketplace_cannot_claim_an_official_id():
     when no verified official index is cached (core ships them), so the context names them."""
     f = mk.files_for("github", caps=["git_push", "network"])
     e = mk.entry("github", f, caps=["git_push", "network"])
-    res = install(mk.index(OTHER, [e]), f, "github", official_ids=["github", "landing"])
+    res = install(mk.index(OTHER, [e]), f, "github", official_ids=["github", "merge-queue"])
     assert res == {"refuse": "market.reserved_id"}
 
 

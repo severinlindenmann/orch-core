@@ -136,7 +136,7 @@ const STATUS_TONE: Record<Status, string> = {
 
 /** A done ticket that is still landing (queued, checked or failed) is not shown as Done (core's `landing`). */
 export function statusLabel(status: Status, landing?: TicketLanding): string {
-  if (status === 'done' && landing) return landing.state === 'failed' ? 'Landing failed' : 'Landing'
+  if (status === 'done' && landing) return landing.state === 'failed' ? 'Merge failed' : 'In merge queue'
   return STATUS_LABEL[status]
 }
 

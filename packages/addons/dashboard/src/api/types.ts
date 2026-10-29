@@ -449,7 +449,7 @@ export interface TicketDocument extends TicketDefinition {
   /**
    * Where the ticket is in landing (D53), read by core from the landing records in its own log (`land.*` events by the
    * landing addon), only while that addon is active. A done ticket that is queued, being checked or failed to land is
-   * shown as "Landing" / "Landing failed", never as Done. Absent: not landing (never queued, landed or taken off).
+   * shown as "In merge queue" / "Merge failed", never as Done. Absent: not landing (never queued, landed or taken off).
    */
   landing?: TicketLanding
 }

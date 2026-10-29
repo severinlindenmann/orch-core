@@ -132,7 +132,7 @@ def ctx(**kw: Any) -> dict[str, Any]:
         "git_hosts": ["github.com", "gitlab.com"],
         "seen": {},
         "builtin": ["wiki", "terminals", "dashboard"],
-        "official_ids": ["github", "landing"],
+        "official_ids": ["github", "merge-queue"],
         "moved": [],
         "installed": {},
         "known_keys": {},
@@ -894,7 +894,7 @@ def build() -> None:
     )
 
     # ---- L2M-2: reserved ids
-    for rid in ("github", "landing"):
+    for rid in ("github", "merge-queue"):
         rf = files_for(rid, caps=["network"])
         add(
             f"install_other_marketplace_claims_official_id_{rid}",

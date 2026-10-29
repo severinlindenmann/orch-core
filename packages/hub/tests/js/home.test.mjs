@@ -135,3 +135,8 @@ test("P04: ended lines show in the Shared tickets card (even with nothing shared
   assert.equal(dismissed, "w1:PW-1");
   assert.doesNotMatch(textOf(homeView({ workspaces: ws, items: [], shared: [], ended: [], actions: {} })), /Shared tickets/);
 });
+
+test("P04: the sharer's own rows (no shared_by) never become a stopped-sharing line", () => {
+  const own = { workspace_id: "w1", key: "PW-9", title: "Mine" };
+  assert.deepEqual(sharedEnded([own], []), []);
+});

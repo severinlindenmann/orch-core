@@ -39,4 +39,21 @@ describe('SharedWithYou stays current', () => {
     expect(screen.queryByTestId('shared-ended')).toBeNull()
     expect(screen.getByText('Invoice export')).toBeInTheDocument()
   })
+
+  it('keeps only names per person (no description) and skips the sharer\'s own rows', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const get = vi.spyOn(api, 'getHubShared').mockResolvedValue({ items: [{ ...t('D-7', 'Invoice export'), description: 'secret body' }, { ...t('D-8', 'Mine'), shared_by: '' }] })
+    renderApp('/tickets')
+    await screen.findAllByTestId('shared-row')
+    const stored = Object.entries(sessionStorage).filter(([k]) => k.startsWith('orch.shared.last.'))
+    await waitFor(() => expect(Object.keys(sessionStorage).some((k) => k.startsWith('orch.shared.last.'))).toBe(true))
+    for (const [k] of Object.entries(sessionStorage)) expect(k).toMatch(/:/) // keyed by workspace and person
+    expect(JSON.stringify(Object.values(sessionStorage))).not.toContain('secret body')
+    expect(JSON.stringify(Object.values(sessionStorage))).not.toContain('Mine')
+    get.mockResolvedValue({ items: [] })
+    await act(async () => { await vi.advanceTimersByTimeAsync(15_500) })
+    expect(await screen.findByTestId('shared-ended')).toHaveTextContent('Anna stopped sharing Invoice export')
+    expect(screen.getAllByTestId('shared-ended')).toHaveLength(1) // not "stopped sharing Mine"
+    void stored
+  })
 })

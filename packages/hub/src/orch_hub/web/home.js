@@ -26,8 +26,8 @@ const sharedId = (it) => String(it.workspace_id) + ":" + String(it.key);
 export function sharedEnded(prev, next, ended = []) {
   const now = new Set(next.map(sharedId));
   const have = new Set(ended.map((e) => e.id));
-  const gone = Array.isArray(prev) ? prev.filter((it) => !now.has(sharedId(it)) && !have.has(sharedId(it))) : [];
-  return [...ended, ...gone.map((it) => ({ id: sharedId(it), by: it.shared_by ?? "Someone", title: it.title ?? it.key ?? "a ticket" }))].filter((e) => !now.has(e.id));
+  const gone = Array.isArray(prev) ? prev.filter((it) => it.shared_by && !now.has(sharedId(it)) && !have.has(sharedId(it))) : [];
+  return [...ended, ...gone.map((it) => ({ id: sharedId(it), by: it.shared_by, title: it.title ?? it.key ?? "a ticket" }))].filter((e) => !now.has(e.id));
 }
 
 /** Health and totals use only this person's workspace list. */

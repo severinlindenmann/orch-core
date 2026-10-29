@@ -260,3 +260,10 @@ def test_p05_admin_lists_a_selective_workspace_of_someone_else_but_a_member_cann
     assert w.call("GET", "/admin/workspaces", token=w.login(w.ann))[:2] == (403, {"error": "forbidden_role"})
     s, o, _ = w.call("GET", "/me/workspaces", token=w.login(w.admin))  # unchanged: no role in a selective workspace
     assert s == 200 and ben_ws not in {r["workspace_id"] for r in o["workspaces"]}
+
+
+def test_p05_a_switch_session_of_an_admin_is_refused_on_admin_workspaces(w):
+    ticket_session = w.env.svc.open_session(w.admin)["token"]  # a workspace vouched for it: no password sign-in
+    w.browser_tokens.add(ticket_session)
+    s, o, _ = w.call("GET", "/admin/workspaces", token=ticket_session)
+    assert (s, o["error"]) == (403, "reauth_required")

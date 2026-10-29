@@ -1,15 +1,17 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { useMe } from '@/app/useMe'
 import { hubQueries, type HubSharedTicket } from '@/api/hub'
 import { Raw } from '@/components/sign/visible'
 import { Badge } from '@/components/ui/badge'
 
 /** A ticket that was in the list and is gone from the newest successful read: shown as one quiet line until dismissed. */
+type NameRow = Pick<HubSharedTicket, 'workspace_id' | 'key' | 'title' | 'shared_by'>
 interface Ended { id: string; by: string; title: string }
 
 const idOf = (t: Pick<HubSharedTicket, 'workspace_id' | 'key'>) => `${t.workspace_id}:${t.key}`
 // sessionStorage, not localStorage: a shared computer must not keep ticket titles after the tab closes.
-const store = (ws: string, part: 'ended' | 'last') => `orch.shared.${part}.${ws}`
+const store = (who: string, part: 'ended' | 'last') => `orch.shared.${part}.${who}`
 function load<T>(key: string, fallback: T): T {
   try { const v = sessionStorage.getItem(key); return v ? (JSON.parse(v) as T) : fallback } catch { return fallback }
 }
@@ -25,26 +27,31 @@ function save(key: string, value: unknown) {
 export function SharedWithYou({ ws, limit }: { ws: string; limit?: number }) {
   const shared = useQuery(hubQueries.shared(ws))
   const [all, setAll] = useState(false)
-  const [ended, setEnded] = useState<Ended[]>(() => load<Ended[]>(store(ws, 'ended'), []))
   const last = useRef<HubSharedTicket[] | null>(null)
+  const person = useMe().data?.person
+  const who = person ? `${ws}:${person}` : '' // per workspace AND person: another sign-in on this tab never sees these
+  const [ended, setEnded] = useState<Ended[]>([])
+  useEffect(() => { last.current = null; setEnded(who ? load<Ended[]>(store(who, 'ended'), []) : []) }, [who])
   const everything = shared.data?.items
   useEffect(() => {
-    if (!everything) return // no successful read yet (or never): nothing to compare
-    const prev = last.current ?? load<HubSharedTicket[] | null>(store(ws, 'last'), null)
-    last.current = everything
-    save(store(ws, 'last'), everything)
+    if (!everything || !who) return // no successful read yet, or the person is not known: nothing to compare
+    const prev = last.current ?? load<NameRow[] | null>(store(who, 'last'), null)
+    // only names are kept (never a description), and only tickets someone else shared (the sharer's own rows carry no shared_by)
+    const mine = everything.filter((t) => t.shared_by).map((t): NameRow => ({ workspace_id: t.workspace_id, key: t.key, title: t.title, shared_by: t.shared_by }))
+    last.current = mine
+    save(store(who, 'last'), mine)
     if (!prev) return
-    const now = new Set(everything.map(idOf))
-    const gone = prev.filter((t) => !now.has(idOf(t)))
+    const now = new Set(mine.map(idOf))
+    const gone = prev.filter((t) => t.shared_by && !now.has(idOf(t)))
     if (!gone.length) return
     setEnded((cur) => {
       const have = new Set(cur.map((e) => e.id))
       const next = [...cur, ...gone.filter((t) => !have.has(idOf(t))).map((t) => ({ id: idOf(t), by: t.shared_by, title: t.title }))]
-      save(store(ws, 'ended'), next)
+      save(store(who, 'ended'), next)
       return next
     })
-  }, [everything, ws])
-  const dismiss = (id: string) => setEnded((cur) => { const next = cur.filter((e) => e.id !== id); save(store(ws, 'ended'), next); return next })
+  }, [everything, who])
+  const dismiss = (id: string) => setEnded((cur) => { const next = cur.filter((e) => e.id !== id); save(store(who, 'ended'), next); return next })
   const list = everything ?? []
   // a ticket that is shared again is no longer "ended"
   const notes = ended.filter((e) => !list.some((t) => idOf(t) === e.id))

@@ -560,6 +560,9 @@ def op_password(settings, ws, wsk, sid, raw):
             conn.execute(
                 "UPDATE shares SET pw=? WHERE id=?", (json.dumps(body["pw"], sort_keys=True), sid)
             )
+            conn.execute(
+                "DELETE FROM views WHERE share_id=?", (sid,)
+            )  # open sessions end: they passed without it
             conn.execute("COMMIT")
         except BaseException:
             if conn.in_transaction:

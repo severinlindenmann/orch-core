@@ -430,3 +430,29 @@ def test_password_tries_are_rate_limited_before_the_kdf(tmp_path, monkeypatch):
     ]
     assert codes[:5] == [401] * 5 and codes[5:] == [429] * 3
     assert len(calls) == 5  # the sixth try never reached the KDF
+
+
+def test_adding_a_password_ends_open_view_sessions(ws_env):
+    from fastapi.testclient import TestClient
+
+    from pubsrv.serve import create_share_app
+
+    add_share(ws_env)
+    ws_env.sql(
+        "INSERT OR IGNORE INTO share_files(share_id, path, size, sha256, present) VALUES (?,?,?,?,?)",
+        SHARE,
+        "a.txt",
+        1,
+        "0" * 64,
+        1,
+    )
+    web = TestClient(
+        create_share_app(ws_env.data, clock=lambda: ws_env.now),
+        base_url="http://x",
+        follow_redirects=False,
+    )
+    view = "f" * 32  # add_share opened one view session
+    assert len(ws_env.sql("SELECT * FROM views")) == 1
+    assert post(ws_env, "password", {"pw": record()}).status_code == 200
+    assert ws_env.sql("SELECT * FROM views") == []
+    assert web.get(f"/s/{SHARE}/v/{view}/").status_code in (404, 410)

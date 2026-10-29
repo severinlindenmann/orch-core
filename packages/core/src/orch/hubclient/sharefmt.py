@@ -175,6 +175,7 @@ def check_audience(audience: Any, item_kind: str) -> None:
         or not (audience["users"] or audience["groups"])
         or not all(type(u) is str and _HEX16.fullmatch(u) for u in audience["users"])
         or not all(type(g) is str and _GROUP.fullmatch(g) for g in audience["groups"])
+        or "hub-admin" in audience["groups"]  # N2: never the hub admin group
         or audience["users"] != sorted(set(audience["users"])) or audience["groups"] != sorted(set(audience["groups"]))
     ):  # fmt: skip
         raise HubRefused("malformed")

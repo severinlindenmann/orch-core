@@ -126,3 +126,15 @@ def test_audience_get_is_refused_where_sharing_is_not_possible(shub):
     acc.close()
     h2 = shub()  # no access wired: nothing to list
     refused(h2.join(), "audience_get", {}, "unavailable")
+
+
+def test_the_hub_admin_group_is_never_a_signed_audience():
+    import pytest
+
+    from orch_hub.contract.hub import Refused
+    from orch_hub.contract.phase4 import check_audience
+
+    check_audience({"users": [], "groups": ["team-a"]}, "ticket")
+    for groups in (["hub-admin"], ["hub-admin", "team-a"]):
+        with pytest.raises(Refused):
+            check_audience({"users": [], "groups": groups}, "ticket")

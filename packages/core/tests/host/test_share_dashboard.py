@@ -345,3 +345,23 @@ def test_narrowing_still_goes_through_automatically(served, selective):
     got = ok(rule_op(served, "share.rule_remove", RULE_A))["data"]  # only B matches now: fewer readers, no new ones
     assert got["put"] == 1
     assert selective.opened[-1]["audience"] == {"users": [], "groups": ["team-b"]}
+
+
+def test_names_are_asked_again_from_the_hub_after_a_restart_and_a_failure_only_loses_the_name(monkeypatch):
+    from types import SimpleNamespace
+
+    from orch.host import shareops
+
+    svc = SimpleNamespace()  # a fresh process: no name cache at all
+
+    def fetch(service):
+        service._share_names = {"a" * 32: "Ben Test"}
+
+    monkeypatch.setattr(shareops, "_audience", fetch)
+    assert shareops._names_for(svc, {"a" * 32}) == {"a" * 32: "Ben Test"}
+
+    def down(service):
+        raise OSError("hub unreachable")
+
+    monkeypatch.setattr(shareops, "_audience", down)
+    assert shareops._names_for(SimpleNamespace(), {"a" * 32}) == {}  # the review then says "a person on the hub"

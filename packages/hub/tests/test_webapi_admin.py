@@ -243,3 +243,27 @@ def test_workspace_remove(w):
     assert w.env.acc.grants(WS) == []
     assert w.call("GET", "/admin/workspaces", token=admin)[1]["workspaces"] == []
     assert w.call("DELETE", path, token=admin)[:2] == (404, {"error": "unknown_workspace"})
+
+
+def test_p05_admin_lists_a_selective_workspace_of_someone_else_but_a_member_cannot_and_me_workspaces_still_omits_it(w):
+    ben_ws = "ef" * 16
+    ben = w.env.user("ben")
+    w.reg.add(ben_ws, "selective", owner=ben)
+    s, o, _ = w.call(
+        "GET", "/admin/workspaces", token=w.login(w.admin)
+    )  # the hub admin sees it exists (name, owner, status)
+    assert s == 200 and ben_ws in {r["workspace_id"] for r in o["workspaces"]}
+    assert w.call("GET", "/admin/workspaces", token=w.login(ben))[:2] == (
+        403,
+        {"error": "forbidden_role"},
+    )  # server-side gate
+    assert w.call("GET", "/admin/workspaces", token=w.login(w.ann))[:2] == (403, {"error": "forbidden_role"})
+    s, o, _ = w.call("GET", "/me/workspaces", token=w.login(w.admin))  # unchanged: no role in a selective workspace
+    assert s == 200 and ben_ws not in {r["workspace_id"] for r in o["workspaces"]}
+
+
+def test_p05_a_switch_session_of_an_admin_is_refused_on_admin_workspaces(w):
+    ticket_session = w.env.svc.open_session(w.admin)["token"]  # a workspace vouched for it: no password sign-in
+    w.browser_tokens.add(ticket_session)
+    s, o, _ = w.call("GET", "/admin/workspaces", token=ticket_session)
+    assert (s, o["error"]) == (403, "reauth_required")

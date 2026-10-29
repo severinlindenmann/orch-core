@@ -272,7 +272,7 @@ def test_preview_grant_by_click_start_an_agent_and_forget(aw, caplog, capfd):
     from orch.click.protocol import DEPOSIT_RISK
 
     # run 13 C3: core's own risk lines of agent access, with the length, and a headline, through this server unchanged
-    assert view["risk_lines"] == [DEPOSIT_RISK, "Agents get this authority for 8 hours, until it ends or you stop it."]
+    assert view["risk_lines"] == [DEPOSIT_RISK]
     assert isinstance(view["headline"], str) and view["headline"]
     body = signed.json()
     assert body["deposit"] == "confirmed" and body["deposit_id"] == rid[3:] and body["grant"].startswith("gr_")

@@ -36,9 +36,9 @@ const mount = () => render(<QueryClientProvider client={queryClient}><Shell /></
 it('a server that never answers: after the patience time the skeleton gives way to a message with Try again', async () => {
   vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})))
   mount()
-  expect(screen.getByRole('status', { name: 'Loading session' })).toBeInTheDocument()
+  expect(screen.getByRole('status')).toHaveTextContent('Loading…') // the boot screen, never an empty page
   await act(async () => { await vi.advanceTimersByTimeAsync(START_PATIENCE_MS + 100) })
-  expect(screen.queryByRole('status', { name: 'Loading session' })).not.toBeInTheDocument()
+  expect(screen.queryByText('Loading…')).not.toBeInTheDocument()
   expect(screen.getByRole('alert')).toHaveTextContent('slow to answer')
   expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument()
 })

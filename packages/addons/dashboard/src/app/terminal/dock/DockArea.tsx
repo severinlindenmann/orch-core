@@ -105,7 +105,7 @@ export function DockArea({ children }: { children: ReactNode }) {
   const focus = useRef<'dock' | 'bar' | null>(null)
   // What the dock had selected, per workspace and ticket scope: survives collapse and navigation.
   const memory = useRef<DockMemory>(new Map())
-  // An action opened a session (Worktrees' "Open terminal here"): open the dock on it until the dock selected it.
+  // An action opened a session (Work copies' "Open terminal here"): open the dock on it until the dock selected it.
   const [request, setRequest] = useState<string | null>(null)
   useEffect(() => {
     if (!allowed) return

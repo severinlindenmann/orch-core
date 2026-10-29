@@ -368,7 +368,7 @@ def test_hub_snapshot_status_once_when_delivered_and_retried_when_not(monkeypatc
     assert len(calls) == 2
 
 
-def test_selective_status_sends_no_host_name(monkeypatch):
+def test_selective_status_sends_the_workspace_name_but_no_host_name(monkeypatch):
     from types import SimpleNamespace
 
     import orch.hubclient
@@ -385,9 +385,11 @@ def test_selective_status_sends_no_host_name(monkeypatch):
     monkeypatch.setattr(orch.hubclient, "HubLink", Link)
     monkeypatch.setattr(hubops, "_transport", lambda *args: object())
     monkeypatch.setattr(hubops, "_addr", lambda *args: "unused")
+    monkeypatch.setattr(hubops, "_workspace_name", lambda service: "Anna Test's workspace")
     state = SimpleNamespace(hk_op_pub=crypto.b64u(b"x" * 65), tls_spki="unused", mode="selective", hub_id="one")
     hubops._snapshot_link(SimpleNamespace(workspace_id="ws", clock=lambda: 0), state, b"", None, True)
     assert calls and calls[0]["host"] == "" and calls[0]["version"]
+    assert calls[0]["name"] == "Anna Test's workspace"
 
 
 def test_a_refused_install_is_reported_to_the_bound_hub_with_the_actor(monkeypatch):

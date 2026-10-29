@@ -1,3 +1,4 @@
+import { BootScreen } from './shell/BootScreen'
 import type { QueryClient } from '@tanstack/react-query'
 import { createBrowserHistory, createMemoryHistory, createRootRouteWithContext, createRoute, createRouter, Outlet, redirect, useRouterState } from '@tanstack/react-router'
 import { Shell } from './shell/Shell'
@@ -67,7 +68,7 @@ const serves = (feature: string) => () => {
 export interface RouterContext extends LoaderContext {
   urls: UrlState
 }
-// The shell's data loads before its first paint (nothing to keep on screen yet: the document's own background).
+// The shell's data loads before its first paint; until then the boot screen (logo + Loading…) stays, never a blank page.
 function Root() {
   const path = useRouterState({ select: (s) => s.location.pathname })
   return isBarePage(path) ? <Outlet /> : <Shell />
@@ -76,7 +77,7 @@ const rootRoute = createRootRouteWithContext<RouterContext>()({
   component: Root,
   // The checklist and feedback open before any workspace exists: they ask the host for nothing (no 503s in the console).
   loader: ({ context, location }) => (isBarePage(location.pathname) ? undefined : loadShell(context)),
-  pendingComponent: () => null,
+  pendingComponent: BootScreen,
   pendingMinMs: 0,
 })
 
@@ -159,7 +160,7 @@ const guideRoute = createRoute({
   loader: pageLoader(() => [], [GuidePage.preload, addonNodes]),
   component: GuidePage,
 })
-/** Worktrees of a real host (H11d): the mock keeps its own addon page; a host without `worktree/1` shows a plain note. */
+/** Work copies of a real host (H11d): the mock keeps its own addon page; a host without `worktree/1` shows a plain note. */
 const worktreesRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: 'worktrees',

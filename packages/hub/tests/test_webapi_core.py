@@ -280,9 +280,9 @@ def test_selective_items_carry_chain_f1_and_are_signable_for_the_owner_alias(w):
     w.reg.add(WS_SEL, "selective", owner=w.ann)
     one, two, none = "11" * 16, "22" * 16, "33" * 16
     w.shares.items[(w.ann, WS_SEL)] = [
-        shared_item(one, "ticket", chain=_CHAIN, f1=_f1()),
-        shared_item(two, "ticket", chain=_CHAIN, f1=_f1(("plan",), ("Q1",))),
-        shared_item(none, "ticket", chain=_CHAIN, f1=_f1(())),
+        shared_item(one, "question", chain=_CHAIN, f1=_f1()),
+        shared_item(two, "question", chain=_CHAIN, f1=_f1(("plan",), ("Q1",))),
+        shared_item(none, "question", chain=_CHAIN, f1=_f1(())),
     ]
     ann = w.login(w.ann)
     _, o, _ = w.call("GET", "/me/needs-you", token=ann)
@@ -297,9 +297,9 @@ def test_selective_items_carry_chain_f1_and_are_signable_for_the_owner_alias(w):
 def test_selective_summary_and_item_without_f1_are_never_signable(w):
     w.reg.add(WS_SEL, "selective", owner=w.ann)
     w.shares.items[(w.ann, WS_SEL)] = [
-        shared_item("11" * 16, "needs_you", chain=_CHAIN, f1=_f1()),  # even a summary carrying f1
-        shared_item("22" * 16, "ticket", chain=_CHAIN),  # no f1: the hub cannot build on it
-        shared_item("33" * 16, "ticket", chain={**_CHAIN, "log": "workspace"}, f1=_f1()),
+        shared_item("11" * 16, "needs_you", "A summary", chain=_CHAIN, f1=_f1()),  # even a summary carrying f1
+        shared_item("22" * 16, "question", chain=_CHAIN),  # no f1: the hub cannot build on it
+        shared_item("33" * 16, "question", chain={**_CHAIN, "log": "workspace"}, f1=_f1()),
     ]
     _, o, _ = w.call("GET", "/me/needs-you", token=w.login(w.ann))
     assert [i["signable"] for i in o["items"]] == [False, False, False]
@@ -308,7 +308,7 @@ def test_selective_summary_and_item_without_f1_are_never_signable(w):
 
 def test_selective_chain_f1_only_for_the_owner_alias(w):
     w.reg.add(WS_SEL, "selective", owner=w.ann)
-    w.shares.items[(w.ann, WS_SEL)] = [shared_item("11" * 16, "ticket", chain=_CHAIN, f1=_f1())]
+    w.shares.items[(w.ann, WS_SEL)] = [shared_item("11" * 16, "question", chain=_CHAIN, f1=_f1())]
     bob = w.login(w.env.user("bob"))
     _, o, _ = w.call("GET", "/me/needs-you", token=bob)
     assert o["items"] == []

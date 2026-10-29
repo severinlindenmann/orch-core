@@ -515,7 +515,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
         id: 'V3',
         title: 'Only create, used once',
         text: 'Choose "Create without starting" from the small arrow menu on a new ticket and sign. Open New ticket again.',
-        see: 'The signing box says dialog "Create this ticket?" opens and its button reads "Create ticket". The ticket is created and no agent starts. The first button is unchanged: the menu choice is used once.',
+        see: 'A centred dialog "Create this ticket?" opens, says "No agent starts. You can start one later." and its button reads "Create ticket". The ticket is created and no agent starts. The first button is unchanged: the menu choice is used once.',
       },
       {
         id: 'V4',
@@ -576,7 +576,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
         id: 'W7',
         title: 'New ticket review',
         text: 'Open New ticket, fill title and requirements, press Create.',
-        see: 'The dialog title reads "New ticket KEY: title". Requirements are normal text (not monospace). Details show "Type: Feature" and "Owner: your name" followed by a shortened person id (like "p_fba4d7d53586…"; the full ids are in Technical details), and no "This cancels any existing approval" line. One short sentence "One confirmation signs all N steps...", and exactly one "Technical details" expander with key, signed id, person ids and fingerprint inside.',
+        see: 'The dialog title reads "New ticket KEY: title". Requirements are normal text (not monospace). Details show "Type: Feature" and "Owner: your name" followed by a shortened person id (like "p_fba4d7d53586…"; the full ids are in Technical details), and no "This cancels any existing approval" line. "One confirmation signs all N steps..." is inside Technical details (not in the main text), and exactly one "Technical details" expander with key, signed id, person ids and fingerprint inside.',
       },
       {
         id: 'W8',

@@ -213,7 +213,7 @@ def test_i5_the_review_says_the_start_is_not_signed_and_names_the_grant(human, t
     notes = sequence.build_content(first, verified=True)["notes"]
     joined = "\n".join(notes)
     assert "Not signed: the agent start" in joined
-    assert "Agents may work on any ticket you allow, not only this one, for 8 hours." in joined
+    assert "Agents may work, as you, on any ticket you allow, not only this one, for 8 hours." in joined
     assert "never to the dashboard" not in joined and "mode:" not in joined  # r7-P10: those are technical details
     assert "Typed word" not in joined and "GRANT" not in joined
     assert "Nothing here approves the requirements or the plan" in joined

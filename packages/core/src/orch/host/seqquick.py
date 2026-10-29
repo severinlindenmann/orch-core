@@ -110,7 +110,7 @@ def grant_note(agent: Mapping[str, Any]) -> str:
     when the grant is signed are in :func:`grant_line`, which the technical details carry. No clock."""
     from .signcontent import span
 
-    return f"Agents may work on any ticket you allow, not only this one, for {span(agent['hours'])}."
+    return f"Agents may work, as you, on any ticket you allow, not only this one, for {span(agent['hours'])}."
 
 
 def validate(intent: Any, bad: type[Exception]) -> dict[str, Any]:

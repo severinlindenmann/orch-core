@@ -107,7 +107,8 @@ def grant_line(agent: Mapping[str, Any]) -> str:
 
 def grant_note(agent: Mapping[str, Any]) -> str:
     """The plain sentence for the grant (r7-P10): the reach and the length, nothing more. The route of the secret and
-    when the grant is signed are in :func:`grant_line`, which the technical details carry. No clock."""
+    when the grant is signed are in :func:`grant_line`, which the technical details carry.
+    It holds no clock time, so the signed review is identical whenever it is built."""
     from .signcontent import span
 
     return f"Agents may work, as you, on any ticket you allow, not only this one, for {span(agent['hours'])}."

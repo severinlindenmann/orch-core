@@ -28,7 +28,8 @@ def _private_group_lookup(uid: int, gid: int) -> bool:
     ``users`` looks empty when enumeration is off). Group passwords/``newgrp`` via gshadow are not consulted: a
     private group has no password. The rule applies to files too where a caller uses it (discovery ``config.json``,
     gitsafe ``.git/config``). Any failure to read the account databases (NSS, LDAP, no pwd/grp module) is
-    "not private": the caller then refuses."""
+    "not private": the caller then refuses. The answer is cached for 30 s, so a group change (someone added to the
+    group, a new account with that primary group) can take up to 30 s to be noticed."""
     try:
         me = pwd.getpwuid(uid)
         if me.pw_gid != gid:

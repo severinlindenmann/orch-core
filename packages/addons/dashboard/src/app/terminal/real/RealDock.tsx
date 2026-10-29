@@ -1,4 +1,3 @@
-import { takeTrustedPress } from '@/components/sign/trustedPress'
 // The terminal dock on a real host (M7a): the person's own runs from `run.list` + `run.sub`, a New terminal that opens
 // in one press (the host's preview, then open; a blocked preview or a failure is said), Stop, and one RealTerminal for the selected run. Same frame as the
 // mockup's dock (header, tabs, resize edge). Start agent (M7b) opens core's Start agent dialog when the host serves it
@@ -43,7 +42,7 @@ function agentSummary(r: Run): string {
   return `Agent ended · started ${fmtClock(r.started_at)}`
 }
 
-export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits, autoPreview, request, requestDone }: TerminalDockProps & { /** Dev-only layout preview: open New terminal's preview at once. */ autoPreview?: boolean }) {
+export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits, request, requestDone }: TerminalDockProps) {
   const { workspace } = useWorkspace()
   const ws = workspace?.id
   const ticket = useDockTicket()
@@ -78,8 +77,6 @@ export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits
   // The write attach after Open is one-shot (review M1): once that run's terminal has mounted with it, every later mount
   // (switching tabs and back, a remount) starts read-only. RealTerminal reads `initial` only when it mounts.
   useEffect(() => { if (opened && current?.run === opened) setOpened(null) }, [opened, current?.run])
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { if (autoPreview && ws && takeTrustedPress()) void ask(false) }, [autoPreview, ws])
 
   const resize = (px: number) => setPrefs((p) => ({ ...p, [side]: Math.round(Math.min(dockMax(side, view, area), Math.max(DOCK_LIMITS[side].min, px))) }))
   const ask = (inTicket: boolean) => terminal.ask(inTicket && ticket ? { ticket } : {})

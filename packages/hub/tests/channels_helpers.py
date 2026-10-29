@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import time
+from collections.abc import Callable
 
 from cryptography.hazmat.primitives.asymmetric import ec
 
@@ -38,6 +40,33 @@ def fresh_code(secret: bytes, clock: Clock) -> str:
     while totp_code(secret, (s := clock() // 30_000)) in (totp_code(secret, s - 1), totp_code(secret, s + 1)):
         clock.advance(30_000)
     return totp_code(secret, s)
+
+
+def wall_codes(
+    secret: bytes,
+    steps: tuple[int, ...] = (0,),
+    *,
+    left_s: float = 2.0,
+    now: Callable[[], float] = time.time,
+    sleep: Callable[[float], None] = time.sleep,
+) -> list[str]:
+    """Codes for a hub that runs on the REAL clock: one per offset in ``steps`` from the current 30 s step ``s``.
+
+    Two failure classes are ruled out, so callers never do their own code math:
+    * window crossing: at least ``left_s`` seconds of step ``s`` are left (otherwise wait for the next step), so the hub
+      still sees the step the codes were made for, if the caller uses them within ``left_s``;
+    * neighbour collision (see :func:`fresh_code`): a step is waited out when a code used in it equals the code of a
+      step next to it, so the hub claims exactly the step the code was made for and never spends a later one."""
+    while True:
+        t = now()
+        rest = 30 - t % 30
+        if rest >= left_s:
+            s = int(t) // 30
+            used = [s + o for o in steps]
+            codes = {c: totp_code(secret, c) for c in range(min(used) - 1, max(used) + 2)}
+            if all(codes[c] not in (codes[c - 1], codes[c + 1]) for c in used):
+                return [codes[c] for c in used]
+        sleep(rest + 0.05)
 
 
 class Env:
@@ -101,4 +130,4 @@ def register(env: Env, u: str, signer: KS.ChannelSigner | None = None):
     return signer, env.svc.complete_registration(begun["challenge_id"], prove(signer, begun))
 
 
-__all__ = ["Env", "S", "fresh_code", "hashlib", "new_channel", "prove", "register", "registration_object"]
+__all__ = ["Env", "S", "fresh_code", "hashlib", "new_channel", "prove", "register", "registration_object", "wall_codes"]

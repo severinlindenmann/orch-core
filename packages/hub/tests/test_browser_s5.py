@@ -10,16 +10,14 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
-import time
 from pathlib import Path
 
 import pytest
-from channels_helpers import PW
+from channels_helpers import PW, wall_codes
 from custodial_helpers import LOG, WK
 from test_serve_wired import WS, host_link, hub, hub_real  # noqa: F401  (the wired hub fixtures)
 from view_helpers import OWNER, Host
 
-from orch_hub.channels.service import totp_code
 from orch_hub.contract import vectorgen as G
 
 pytestmark = pytest.mark.slow
@@ -64,9 +62,7 @@ def _s5(hub, register_only=False):  # noqa: F811
             assert "seq" in c.request("log_sync", h.page(log))
 
     # two single-use codes: sign-in takes the previous step, registration the current one (no 30 s wait)
-    while (time.time() % 30) > 15:  # keep the whole run inside one step
-        time.sleep(0.5)
-    step = int(time.time()) // 30
+    code_signin, code_register = wall_codes(hub["secret"], (-1, 0), left_s=15)  # keep the whole run inside one step
     env = {
         **os.environ,
         **({"S5_STOP": "register"} if register_only else {}),
@@ -74,8 +70,8 @@ def _s5(hub, register_only=False):  # noqa: F811
         "HUB_URL": f"http://127.0.0.1:{hub['web'].port}",
         "HUB_USER": hub["user"],
         "HUB_PW": PW,
-        "CODE_SIGNIN": totp_code(hub["secret"], step - 1),
-        "CODE_REGISTER": totp_code(hub["secret"], step),
+        "CODE_SIGNIN": code_signin,
+        "CODE_REGISTER": code_register,
     }
     script = Path(__file__).parent / "js" / "browser_s5.mjs"
     r = subprocess.run([NODE, str(script)], env=env, capture_output=True, text=True, timeout=120, check=False)

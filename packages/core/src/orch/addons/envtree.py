@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from orch.market import MarketError
+from orch.privdir import others_can_write
 
 __all__ = [
     "ADDON_ENV",
@@ -339,7 +340,7 @@ def verify(state: str, ws: str, name: str, digest: str, kind: str) -> Path:
             raise changed("missing") from None
         try:
             info = os.fstat(tfd)
-            if info.st_uid != uid or stat.S_IMODE(info.st_mode) & 0o022:
+            if info.st_uid != uid or others_can_write(info, uid):
                 raise changed("changed")
             stamp = read_stamp(short + ".stamp.json", uid, parent)
             if stamp is None:

@@ -6,9 +6,63 @@ from __future__ import annotations
 import contextlib
 import os
 import stat
+import time
 from pathlib import Path
 
-__all__ = ["make_private_dir", "tighten"]
+from orch.posixmod import posixmod
+
+pwd = posixmod("pwd")
+grp = posixmod("grp")
+
+__all__ = ["make_private_dir", "others_can_write", "tighten"]
+
+_WRITE_OTHER = 0o002
+_WRITE_GROUP = 0o020
+_CACHE_SECONDS = 30.0
+_cache: dict[tuple[int, int], tuple[float, bool]] = {}
+
+
+def _private_group_lookup(uid: int, gid: int) -> bool:
+    """Is ``gid`` a group only ``uid`` belongs to: their primary group, no other account has it as primary group, and
+    the group lists no member but them, and it is named after them (a user-private group; a shared primary group such as
+    ``users`` looks empty when enumeration is off). Group passwords/``newgrp`` via gshadow are not consulted: a
+    private group has no password. The rule applies to files too where a caller uses it (discovery ``config.json``,
+    gitsafe ``.git/config``). Any failure to read the account databases (NSS, LDAP, no pwd/grp module) is
+    "not private": the caller then refuses."""
+    try:
+        me = pwd.getpwuid(uid)
+        if me.pw_gid != gid:
+            return False
+        if any(p.pw_gid == gid and p.pw_uid != uid for p in pwd.getpwall()):
+            return False
+        group = grp.getgrgid(gid)
+        return group.gr_name == me.pw_name and all(m == me.pw_name for m in group.gr_mem)
+    except Exception:  # noqa: BLE001 - fail closed on anything
+        return False
+
+
+def _is_private_group(uid: int, gid: int) -> bool:
+    key = (uid, gid)
+    now = time.monotonic()
+    hit = _cache.get(key)
+    if hit is not None and now - hit[0] < _CACHE_SECONDS:
+        return hit[1]
+    value = _private_group_lookup(uid, gid)
+    _cache[key] = (now, value)
+    return value
+
+
+def others_can_write(st: os.stat_result, uid: int) -> bool:
+    """The ONE answer to "can a principal other than ``uid`` change this person-owned directory?". The other-write bit
+    always counts. The group-write bit counts unless the directory is ``uid``'s own and its group is ``uid``'s private
+    group (stock Ubuntu's 0775 under a 002 umask), which nobody else belongs to. Root-owned paths and key files do not
+    use this: they keep the strict ``0o022`` rule."""
+    mode = stat.S_IMODE(st.st_mode)
+    if mode & _WRITE_OTHER:
+        return True
+    if not mode & _WRITE_GROUP:
+        return False
+    return not (st.st_uid == uid and _is_private_group(uid, st.st_gid))
 
 
 def healable(mode: int) -> bool:

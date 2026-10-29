@@ -40,6 +40,16 @@ def child_env(tmp_path: Path, **extra: str) -> dict[str, str]:
 
 
 @pytest.fixture(autouse=True)
+def _privdir_cache_clear():
+    """The private-group answer is cached for 30 s; no test sees another's."""
+    from orch import privdir
+
+    privdir._cache.clear()
+    yield
+    privdir._cache.clear()
+
+
+@pytest.fixture(autouse=True)
 def _no_plain_review_leak():
     """The one-shot "a plain review was just shown" flag of the passphrase prompt never survives a test (a review
     confirmed in one test and no passphrase asked would shorten the next test's prompt)."""

@@ -193,18 +193,18 @@ function RenameDialog({ ticket, onBusy, onFull, onClose }: { ticket: TicketDocum
   }
   return (
     <Dialog open onOpenChange={(o) => !o && !signing && onClose()}>
-      <DialogContent aria-label={`Rename ${ticket.key}`} className="sm:max-w-lg" onOpenAutoFocus={(e) => { e.preventDefault(); (document.getElementById('rename-title') as HTMLInputElement | null)?.select() }}>
+      <DialogContent aria-label={`Rename ${ticket.key}`} className="sm:max-w-lg" onOpenAutoFocus={(e) => { e.preventDefault(); const f = document.getElementById('rename-title') as HTMLInputElement | null; if (f) { f.focus(); f.setSelectionRange(f.value.length, f.value.length) } }}>
         <DialogHeader>
           <DialogTitle>Rename {ticket.key}</DialogTitle>
-          <DialogDescription>Write the new title, then sign once.</DialogDescription>
+          <DialogDescription>Write the new title, then confirm once.</DialogDescription>
         </DialogHeader>
         <form onSubmit={(e) => { e.preventDefault(); save() }} className="space-y-2">
-          <Input id="rename-title" aria-label="Title" autoFocus value={title} maxLength={MAX_TITLE + 50} onChange={(e) => setTitle(e.target.value)} />
+          <Input id="rename-title" aria-label="Title" autoFocus readOnly={!!signing} value={title} maxLength={MAX_TITLE + 50} onChange={(e) => setTitle(e.target.value)} />
           {problem && <p role="alert" className="text-[13px] text-danger">{problem}</p>}
           <DialogFooter>
-            <Button type="button" variant="ghost" onClick={onFull}>Edit text, checks, repositories and people</Button>
+            <Button type="button" variant="ghost" disabled={!!signing} onClick={onFull}>More fields…</Button>
             <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
-            <Button type="submit" disabled={!!signing}>Save</Button>
+            <Button type="submit" disabled={!!signing}>Rename</Button>
           </DialogFooter>
         </form>
         {signing && ws && (

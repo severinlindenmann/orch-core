@@ -62,7 +62,7 @@ class EpochKeys(Protocol):
 _ENTRY = {"unbound", "addr", "tls_spki", "hk_op_pub", "mode"}
 _OPTIONAL = {
     "outbox", "addr", "tls_spki", "hxk_pub", "sealed", "rotate_after", "card", "revoked_op_certs", "snapshot",
-    "revoked_op_objs", "publish_owed", "addrs", "hub_name",
+    "revoked_op_objs", "publish_owed",
 }  # fmt: skip
 MAX_ADDRS = 4  # M4 (#1461): other addresses of the hub the host has verified (next to ``addr``)
 
@@ -167,7 +167,10 @@ class HubState:
     @classmethod
     def from_json(cls, d: Any) -> HubState:
         """Strict: anything unreadable is ``malformed`` (fail closed)."""
-        keys = {"hub_id", "hk_root_pub", "hk_op_pub", "mode", "binding_seq", "status", "binding", "aliases"}
+        keys = {
+            "hub_id", "hk_root_pub", "hk_op_pub", "mode", "binding_seq", "status", "binding", "aliases",
+            "addrs", "hub_name",
+        }  # fmt: skip
         if type(d) is not dict or set(d) - _OPTIONAL != keys:
             raise HubRefused("malformed")
         ok = (
@@ -183,8 +186,8 @@ class HubState:
             and all(wire.hex16(p) and wire.hex16(u) for p, u in d["aliases"].items())
             and _outbox_ok(d.get("outbox", {}))
             and (d.get("addr") is None or (type(d["addr"]) is str and len(d["addr"]) <= 300))
-            and _addrs_ok(d.get("addrs", []))
-            and (d.get("hub_name") is None or (type(d["hub_name"]) is str and len(d["hub_name"]) <= 60))
+            and _addrs_ok(d["addrs"])
+            and (d["hub_name"] is None or (type(d["hub_name"]) is str and len(d["hub_name"]) <= 60))
             and (d.get("tls_spki") is None or type(d["tls_spki"]) is str)
             and (d.get("hxk_pub") is None or wire.is_pub(d["hxk_pub"]))
             and _sealed_ok(d.get("sealed"))
@@ -212,8 +215,8 @@ class HubState:
             aliases=dict(d["aliases"]),
             outbox=dict(d.get("outbox", {})),
             addr=d.get("addr"),
-            addrs=list(d.get("addrs", [])),
-            hub_name=d.get("hub_name"),
+            addrs=list(d["addrs"]),
+            hub_name=d["hub_name"],
             tls_spki=d.get("tls_spki"),
             hxk_pub=d.get("hxk_pub"),
             sealed=None if d.get("sealed") is None else dict(d["sealed"]),

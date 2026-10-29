@@ -211,6 +211,27 @@ def test_runner_refuses_a_host_socket_of_another_uid(w, rstate):
         connect_pinned(Pin(UID + 1, None, w.h.host.runner_path))
 
 
+@pytest.mark.slow
+def test_a_runner_whose_identity_check_is_slow_still_connects(tmp_path, rstate):
+    """Flake repro (CI 29 Oct, "the runner never got its hello answered"): the host asks who the peer is off the event
+    loop (the service manager in production, a busy thread pool under load). A check slower than the CLI's 2 s welcome
+    deadline made every attempt of the runner time out and reconnect, so it never connected. The runner waits for its
+    welcome as long as the check can take."""
+
+    def slow(cred):
+        time.sleep(2.5)  # longer than the CLI welcome deadline
+        return cred.pid == ME
+
+    w = world(tmp_path, runner_identity=slow)
+    try:
+        enablement.set_enabled(Path(w.lab.state), w.wid, True, UID, terminals=True, text="t")
+        r = Runner(w, rstate)  # asserts the hello is answered
+        r.close()
+    finally:
+        w.h.stop()
+        w.lab.close()
+
+
 def test_main_pid_parsing():
     def fake(out: str, code: int = 0):
         return lambda argv: subprocess.CompletedProcess(argv, code, out, "")

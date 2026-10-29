@@ -809,3 +809,17 @@ def test_a_step_that_hangs_is_killed_and_the_failure_says_what_it_waited_for(mon
     assert "waiting:" in result.out
     if sys.platform == "linux":
         assert "waits in" in result.out and "sleep" in result.out
+
+
+def test_a_failed_step_reports_its_whole_output_not_only_the_first_300_characters() -> None:
+    """#1308: a hung ``useradd`` was reported as "TimeoutExpired after 120 s: [argv]" cut at 300 characters, which cut
+    off the evidence the executor collects (what the hung process waited for). The report keeps the output's end."""
+    f = FakeOsFacts()
+    ex = FakeExec(f)
+    tail = "waiting:\n  pid 4242 waits in do_wait: /usr/sbin/useradd --system orch-agent-sev"
+    hung = "TimeoutExpired after 120 s: " + "x" * 400 + "\n" + tail
+    real_run = ex.run
+    ex.run = lambda argv: RunResult(127, hung) if argv[0] == BIN["useradd"] else real_run(argv)
+    res, _, _ = _go(facts=f, ex=ex)
+    assert not res.ok
+    assert tail in res.report()

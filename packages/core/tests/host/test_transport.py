@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import errno
+import logging
 import os
 import shutil
 import socket
@@ -1084,6 +1085,35 @@ def test_dispatch_precedence_before_rate_limit():
             assert (await read_frame(client))["error"]["code"] == "rate.limited"
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("asynchronous", [True, False])
+def test_an_internal_answer_logs_where_it_came_from_but_never_the_message(asynchronous, caplog):
+    """#1475: a CI "Request handler failed" left no trace. The host log names the exception type and its frames, never
+    its message (which may hold a secret)."""
+
+    def broken(session, frame, request):
+        if not asynchronous:
+            raise ValueError("private details")
+        session.admit(request)
+
+        async def run():
+            raise ValueError("private details")
+
+        return run()
+
+    async def scenario():
+        async with pair_session(callback=broken) as (session, client, _, _):
+            await send_frame(client, HELLO)
+            await read_frame(client)
+            await send_frame(client, req())
+            assert (await read_frame(client))["error"]["code"] == "internal"
+
+    with caplog.at_level(logging.ERROR, logger="orch.host.transport"):
+        asyncio.run(scenario())
+    (line,) = [r.getMessage() for r in caplog.records if "request handler failed" in r.getMessage()]
+    assert "ValueError" in line and "test_transport.py:" in line
+    assert "private details" not in caplog.text
 
 
 @pytest.mark.parametrize("asynchronous", [True, False])

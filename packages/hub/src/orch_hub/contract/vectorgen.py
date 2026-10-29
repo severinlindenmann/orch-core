@@ -585,6 +585,10 @@ def space_wrap(
 DEFAULT_MEMBERS = {1: [WS_A, WS_B], 2: [WS_A, WS_B, WS_C]}
 
 
+#: a valid space.item body (protocol 10.4): ``by`` is REQUIRED, ``restored_from`` optional
+ITEM_BODY = {"name": "notes.md", "size": 5, "data": b64u(b"hello"), "by": "person:" + fake16("person_1")}
+
+
 def space_item_obj(
     ws: str = WS_A,
     item_id: str | None = None,
@@ -603,7 +607,7 @@ def space_item_obj(
         "item_id": item_id or fake16("item_1"),
         "workspace_id": ws,
         "created_ms": NOW - 1000,
-        "body": {"kind": "ticket.summary", "title": "Reconcile March invoices", "status": "open"},
+        "body": ITEM_BODY,
         "dev": True,
         **kw,
     }
@@ -2469,6 +2473,30 @@ def build() -> dict[str, Any]:
         3,
         "the author consented to another member set",
     )
+
+    # the body (protocol 10.4): by is REQUIRED and shaped person|agent:<id>; restored_from is an item id
+    def body_case(name: str, expect: dict[str, Any], note: str, **kw: Any) -> None:
+        body = {k: v for k, v in {**ITEM_BODY, **kw}.items() if v is not None}
+        case(name, "space_item", {**it, "sealed": seal_obj(space_item_obj(body=body))}, expect, 3, note)
+
+    body_case(
+        "space_item_by_agent_ok", {"ok": {"author": WS_A}}, "an agent put: by = agent:<session>", by="agent:s_01J9ZP-x"
+    )
+    body_case(
+        "space_item_restored_from_ok",
+        {"ok": {"author": WS_A}},
+        "a restore names its source item",
+        restored_from=fake16("item_0"),
+    )
+    body_case("space_item_by_missing", {"error": "malformed"}, "no item without by (no legacy path)", by=None)
+    body_case("space_item_by_bad_kind", {"error": "malformed"}, "by is person: or agent:", by="user:abc")
+    body_case("space_item_by_bad_chars", {"error": "malformed"}, "by has a closed alphabet", by="agent:a b")
+    body_case(
+        "space_item_by_too_long", {"error": "malformed"}, "by id is at most 64 characters", by="agent:" + "a" * 65
+    )
+    body_case("space_item_by_not_text", {"error": "malformed"}, "by is text", by=7)
+    body_case("space_item_restored_from_bad", {"error": "malformed"}, "restored_from is an item id", restored_from="x")
+    body_case("space_item_body_extra_key", {"error": "malformed"}, "the body is closed", extra=1)
 
     # consent: the host's put guard and the hub's rule for adding selective workspaces (L2P-2)
     rule = {"space_id": SPACE, "members": sorted([WS_A, WS_B])}

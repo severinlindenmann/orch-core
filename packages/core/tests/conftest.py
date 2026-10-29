@@ -40,17 +40,22 @@ def child_env(tmp_path: Path, **extra: str) -> dict[str, str]:
 
 
 @pytest.fixture(autouse=True)
-def _privdir_group(request, monkeypatch):
+def _privdir_group(request):
     """Is the test user's primary group "private"? By default no: every test sees a SHARED group, so a group-writable
     directory is refused on macOS (staff) and on a Linux CI runner (user-private group) alike. A test that means the
     private-group rule sets its own answer (``monkeypatch.setattr(privdir, "_is_private_group", ...)``), or, to run the
     real lookup against a fake passwd/group database, is marked ``@pytest.mark.real_private_group``."""
     from orch import privdir
 
+    # No ``monkeypatch`` here on purpose: requesting it from a root autouse fixture would create it before every other
+    # fixture and so undo it last, after fixtures (tests/cli ``_declared_only``) that rely on a test's own monkeypatch
+    # being undone first.
+    real = privdir._is_private_group
     privdir._cache.clear()
     if request.node.get_closest_marker("real_private_group") is None:
-        monkeypatch.setattr(privdir, "_is_private_group", lambda uid, gid: False)
+        privdir._is_private_group = lambda uid, gid: False
     yield
+    privdir._is_private_group = real
     privdir._cache.clear()
 
 

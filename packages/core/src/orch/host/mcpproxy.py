@@ -295,8 +295,7 @@ class Proxy:
         with self._lock:
             for key in [k for k, c in self._caps.items() if c.run == run]:
                 self._drop(key)
-            if not any(c.run == run for c in self._caps.values()):  # counters stay while a capability is live
-                self._runs.pop(run, None)
+            self._runs.pop(run, None)
 
     def revoke_workspace(self, ws: str) -> None:
         with self._lock:

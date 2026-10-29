@@ -2366,7 +2366,12 @@ Every signature comes before the nonce store (v2 §12.1). Policy checks of orch-
 is orch-publish's route definition (`access: "public"` of a share or app); F1 fixes the list, and every such request
 needs step 9.
 
-**Direct requests (V3-D36).** There are none. orch-publish refuses a request without `Orch-Hub` and `Orch-Hub-Signature` as
+**Direct requests (V3-D36; amended by M4 S3, #1357).** The only direct requests are the **app routes of §11.4**, and only when
+the operator switched orch-publish's `allow_direct` setting on (off by default; `--allow-direct`): a workspace with no hub
+then publishes an app with a v2 §12.1 request (`WSK` over `orch/v2/publish|`, no `Orch-Hub`), the owner's approval built for
+the direct path (`hub_id` null, §11.4), checked in the order 1, 2, 3, 4, 8, 9 of the table above (no binding, no hub card).
+An approval on a direct route that takes none is `bad_approval`. Share routes never take the direct path. Everything else:
+orch-publish refuses a request without `Orch-Hub` and `Orch-Hub-Signature` as
 `403 hub_required` (half a pair is `400 malformed`), and `POST /v1/ws/{ws}/register` no longer exists: a workspace is
 admitted only through its card (below).
 
@@ -2701,6 +2706,8 @@ group apps (and only those); that is said in the release review text and in §13
 - **Replays.** Snapshots are monotonic (§7); custodial events are bound to workspace, log and type and go through the
   F1 id and generation checks; publish requests through the v2 nonce store; link messages only through the 120 s
   window in V3 (SHORTCUT).
+
+**M4 password apps (§11.4.1).** The 5 tries a minute per app are shared by every visitor, so one address can keep a password app's gate closed (a lock-out, accepted for v1; the per-IP bucket and the KDF slots bound the cost, hardening is #1263).
 
 **M4 reach and DNS (§11.7).** A reach entry is judged by its spelling only. A public-looking name that resolves to a private
 or loopback address (DNS rebinding, a record the owner or an attacker controls) cannot be caught by this contract; the CSP

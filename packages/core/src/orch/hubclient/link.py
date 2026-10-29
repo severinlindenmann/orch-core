@@ -26,6 +26,8 @@ W2H_OPS: dict[str, str | None] = {
     "snapshot_get": None,
     "org_skills_get": None,
     "mcp_servers_get": None,
+    "org_secrets_get": None,
+    "secret_use": None,
     "publish_out": None,
     "route_out": None,
     "audit_ack": None,

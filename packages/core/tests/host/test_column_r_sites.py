@@ -38,6 +38,10 @@ SITES: dict[tuple[str, str], tuple[int, str]] = {
     ("dispatch.py", "RegistryBackend._register"): (3, "unreachable (sub.open is not an R op)"),
     ("dispatch.py", "RegistryBackend.status"): (2, "unreachable (host.status is not an R op); would be N's answer"),
     ("dispatch.py", "RegistryBackend.whoami"): (2, "R gets no runner info (P and G only)"),
+    ("dispatch.py", "RegistryBackend.wait"): (
+        2,
+        "R is not G: a relay's wait records no 'agent waits' (column G with a verified grant only, run-10 J04)",
+    ),
     ("outcomes.py", "principal_of"): (2, "raises for R (the principal is r:<device>, never derived from a uid)"),
     ("reads_ws.py", "_person_reader"): (1, "unreachable (session.list, grant.list are not R ops); refuses R"),
     ("reads_ws.py", "reader_list"): (

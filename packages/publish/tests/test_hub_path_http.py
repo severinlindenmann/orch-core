@@ -577,7 +577,7 @@ def test_op_cert_revocation_stops_the_hub_at_once(env):
     assert (r.status_code, err(r)) == (403, "revoked")
 
 
-@pytest.mark.parametrize("version", [1, 2, 3, 4, 6, 99])
+@pytest.mark.parametrize("version", [1, 2, 3, 4, 5, 99])
 def test_any_other_schema_version_is_refused_with_a_reset_message(tmp_path, version):
     """Nothing is in production: there is no upgrade path, an older or unknown data dir says to delete it."""
     path = db.prepare_dir(str(tmp_path / "d"))
@@ -600,7 +600,7 @@ def test_the_current_schema_opens_again_unchanged(tmp_path):
     db.init(path)
     db.init(path)
     conn = db.connect(path)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 5
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 6
     conn.close()
 
 

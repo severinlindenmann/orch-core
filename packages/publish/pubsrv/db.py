@@ -3,10 +3,11 @@
 import os
 import sqlite3
 
-SCHEMA_VERSION = 5  # 2: workspaces.delegation_json replaces card_seq/card_json (design 2.6b)
+SCHEMA_VERSION = 6  # 2: workspaces.delegation_json replaces card_seq/card_json (design 2.6b)
 # 3: hub path (orch-core #898): hub_bindings, hub_cards, hub_op_revoked, hub_revoked_devices (additive only)
 # 4: apps (M4 #1357 S3): apps, app_versions, app_files, app_views, app_visits (additive only)
 # 5: shares.label / by_kind / by_name, the display columns of the company list
+# 6: hub_narrowings, shares.pw (M4 S2 #1453: hub revoke/stop, link password)
 # Only the current schema exists: any other user_version is refused (nothing is in production, no upgrade path).
 
 
@@ -84,7 +85,8 @@ CREATE TABLE IF NOT EXISTS shares(
   ended_ms INTEGER,
   label TEXT NOT NULL DEFAULT '',
   by_kind TEXT NOT NULL DEFAULT 'person' CHECK(by_kind IN ('person','agent')),
-  by_name TEXT
+  by_name TEXT,
+  pw TEXT  -- the password record (JSON, C5) of a link that has one; never a plain password
 );
 CREATE INDEX IF NOT EXISTS shares_owner ON shares(owner_ws);
 CREATE TABLE IF NOT EXISTS share_files(
@@ -100,6 +102,16 @@ CREATE TABLE IF NOT EXISTS views(
   share_id TEXT NOT NULL REFERENCES shares(id),
   until_ms INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS hub_narrowings(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  target TEXT NOT NULL CHECK(target IN ('share','app')),
+  target_id TEXT NOT NULL,
+  workspace_id TEXT NOT NULL,
+  hub_id TEXT NOT NULL,
+  action TEXT NOT NULL CHECK(action IN ('revoke','stop')),
+  at_ms INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS hub_narrowings_ws ON hub_narrowings(workspace_id, target, target_id);
 CREATE TABLE IF NOT EXISTS apps(
   id TEXT PRIMARY KEY,
   owner_ws TEXT NOT NULL,  -- no FK: tombstones outlive an unbind

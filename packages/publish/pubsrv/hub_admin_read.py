@@ -141,7 +141,7 @@ def _link_row(r, now_ms):
         "by_kind": r["by_kind"],
         "by_name": r["by_name"],
         "views": r["views"],
-        "has_password": False,  # links have no password yet (S2)
+        "has_password": r["pw"] is not None,
     }
 
 
@@ -152,7 +152,7 @@ def list_published(conn, scope, now_ms, workspace=None):
     rows = []
     for ws in wss:
         for r in conn.execute(
-            "SELECT id, owner_ws, ticket, kind, state, created_ms, expires_ms, bytes, views, label, by_kind, by_name"
+            "SELECT id, owner_ws, ticket, kind, state, created_ms, expires_ms, bytes, views, label, by_kind, by_name, pw"
             " FROM shares WHERE owner_ws=? AND state!='staged' ORDER BY created_ms, id",
             (ws,),
         ):

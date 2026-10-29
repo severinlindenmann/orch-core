@@ -7,7 +7,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '@/api/client'
 import { runQueries } from '@/api/runs'
 import { queries } from '@/api/queries'
-import { terminalWaitFor } from '@/app/attention'
+import { agentInWait, terminalWaitFor } from '@/app/attention'
 import { TicketProgress } from './NextStep'
 import { addonActive } from '@/api/addons'
 import { AddonBadge, useAddons, useRunAddonAction } from '@/addon-ui'
@@ -355,14 +355,15 @@ const START_EVENT = 'orch:start-agent'
 function useTicketAgent(ticket: TicketDocument, home: string | undefined) {
   const runs = useQuery({ ...runQueries.list(home ?? ''), enabled: isRealHost() && !!home })
   const today = useQuery({ ...queries.today(home ?? ''), enabled: isRealHost() && !!home })
-  return { run: newestRun(runs.data?.runs, ticket.key), wait: terminalWaitFor(today.data?.needs_you ?? [], ticket.key) }
+  const items = today.data?.needs_you ?? []
+  return { run: newestRun(runs.data?.runs, ticket.key), wait: terminalWaitFor(items, ticket.key), inWait: agentInWait(items, ticket.key) }
 }
 
 /** The stepper and the next-step card, told what the ticket's agent really did (never ran / waiting / ended early). */
 export function TicketProgressLive(p: { ticket: TicketDocument; viewer: Viewer; sign: (a: HumanAction) => void; jump: (j: Jump) => void; signing?: boolean }) {
   const { workspaces } = useWorkspace()
   const home = workspaceOfTicket(p.ticket.key, workspaces)?.id
-  const { run, wait } = useTicketAgent(p.ticket, home)
+  const { run, wait, inWait } = useTicketAgent(p.ticket, home)
   // "Start agent again" asks the header's one start flow (its dialog); this card holds no second dialog and reads
   // `startable` only, so a viewer who cannot start sees no button.
   const edit = useTicketEdit()
@@ -372,7 +373,7 @@ export function TicketProgressLive(p: { ticket: TicketDocument; viewer: Viewer; 
     ? () => window.dispatchEvent(new CustomEvent(START_EVENT, { detail: { ticket: p.ticket.key, mode: 'continue', ...(wait ? { stop: wait } : {}) } }))
     : undefined
   const onEdit = edit ? () => edit() : undefined
-  return <TicketProgress {...p} run={run} wait={wait} onFinish={onFinish} onEdit={onEdit} />
+  return <TicketProgress {...p} run={run} wait={wait} inWait={inWait} onFinish={onFinish} onEdit={onEdit} />
 }
 
 /** The one status pill for the agent's progress, in plain words, in a live region so changes are announced. */

@@ -75,7 +75,7 @@ def risk_text(prefix: str, workspace_id: str, terminals: bool, agent_user: str |
         "",
         CARD_TEXT,
         "",
-        "That includes reading your SSH keys and your orch keys. The dashboard can then start agents, create "
+        "Those keys include your SSH keys and your orch keys. The dashboard can then start agents, create "
         "worktrees" + (" and open terminals" if terminals else "") + " for this workspace, as you.",
         "Nothing on this machine that runs as you is kept out by this switch; it only decides what the dashboard is "
         "allowed to start.",

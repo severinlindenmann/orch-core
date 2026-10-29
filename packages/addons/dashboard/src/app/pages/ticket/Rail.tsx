@@ -88,7 +88,7 @@ export function useSizeMeasure(ticket: TicketDocument): { label: 'Size' | 'Point
 }
 
 /** Size or points, due, blockers, people and times: the ticket's properties (head seq and hash live in Raw). */
-function Details({ ticket, viewer }: { ticket: TicketDocument; viewer: Viewer }) {
+function Details({ ticket, viewer, onNavigate }: { ticket: TicketDocument; viewer: Viewer; onNavigate?: () => void }) {
   const measure = useSizeMeasure(ticket)
   const isVisible = useIsVisibleKey()
   const row = (label: string, value: React.ReactNode) => (
@@ -141,7 +141,7 @@ function Details({ ticket, viewer }: { ticket: TicketDocument; viewer: Viewer })
         {row('Created', <span className="text-text-muted">{fmtExact(ticket.created_at)}</span>)}
         {row('Updated', <span className="text-text-muted" title={fmtExact(ticket.updated_at)}>{ago(ticket.updated_at)}</span>)}
       </dl>
-      <Link to="/ticket/$key" params={{ key: ticket.key }} search={{ tab: 'raw' }} replace data-testid="ticket-technical-link" className="mt-1 inline-block text-[12px] text-text-muted underline underline-offset-4">Technical details</Link>
+      <Link to="/ticket/$key" params={{ key: ticket.key }} search={{ tab: 'raw' }} replace data-testid="ticket-technical-link" onClick={onNavigate} className="mt-1 inline-block text-[12px] text-text-muted underline underline-offset-4">Technical details</Link>
     </Section>
   )
 }
@@ -224,12 +224,12 @@ function AddonPanels({ ticket, viewer }: { ticket: TicketDocument; viewer: Viewe
 }
 
 /** Everything the rail holds: Details, Code, the addon panels (collapsed, at most two open) and inactive addon data. */
-function RailContent({ ticket, viewer }: { ticket: TicketDocument; viewer: Viewer }) {
+function RailContent({ ticket, viewer, onNavigate }: { ticket: TicketDocument; viewer: Viewer; onNavigate?: () => void }) {
   const { workspace } = useWorkspace()
   return (
     <>
       <TicketFollowup ticket={ticket} />
-      <Details ticket={ticket} viewer={viewer} />
+      <Details ticket={ticket} viewer={viewer} onNavigate={onNavigate} />
       <Code ticket={ticket} prs={!addonActive(workspace, GITHUB)} />
       <TicketEstimate ticket={ticket} />
       <TicketWorktree ticket={ticket} />
@@ -304,7 +304,7 @@ export function PropertiesStrip({ ticket, viewer }: { ticket: TicketDocument; vi
             <SheetDescription>Details, code and addon panels for {ticket.key}.</SheetDescription>
           </SheetHeader>
           <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
-            <RailContent ticket={ticket} viewer={viewer} />
+            <RailContent ticket={ticket} viewer={viewer} onNavigate={() => setOpen(false)} />
           </div>
         </SheetContent>
       </Sheet>

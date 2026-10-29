@@ -1213,7 +1213,6 @@ export function Setup({ api }: { api: SetupAPI }) {
                 ))}
                 {review.flags.filter((f) => f.detail).map((f) => (
                   <section className="review-item" key={`detail-${f.id}`}>
-                    <h3>Change history</h3>
                     <p>
                       <Raw>{f.detail ?? ""}</Raw>
                     </p>

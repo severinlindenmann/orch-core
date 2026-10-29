@@ -219,10 +219,13 @@ describe('share rules (A3.3)', () => {
     expect(screen.getByTestId('hub-rule-only-me')).toHaveTextContent('Only me')
     expect(screen.getByTestId('hub-rule-description')).toBeChecked()
     const preview = vi.spyOn(api, 'getHubPreview')
-    await view.user.click((await screen.findByTestId('hub-rule-chips', {}, T)).querySelector('button')!)
+    const picked = (await screen.findByTestId('hub-rule-chips', {}, T)).querySelector('button')!
+    const value = picked.getAttribute('data-testid')!.replace('hub-rule-chip-', '')
+    expect(value).not.toBe('')
+    await view.user.click(picked)
     await view.user.click(screen.getByTestId('hub-rule-description')) // untick: the text stays home
     await view.user.click(await screen.findByTestId('hub-rule-team-finance', {}, T))
-    await waitFor(() => expect(preview).toHaveBeenLastCalledWith(expect.anything(), { add: { kind: 'type', value: expect.any(String), audience: { users: [], groups: ['finance'] }, description: false } }), T)
+    await waitFor(() => expect(preview).toHaveBeenLastCalledWith(expect.anything(), { add: { kind: 'type', value, audience: { users: [], groups: ['finance'] }, description: false } }), T)
     expect(screen.getByTestId('hub-rule-only-me')).toHaveTextContent('not signed')
     vi.restoreAllMocks()
   })

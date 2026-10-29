@@ -320,7 +320,7 @@ def test_a_result_that_lands_after_forget_is_not_kept():
     th = threading.Thread(target=p.check_now, args=("crm", URL))
     th.start()
     assert entered.wait(5)
-    p.forget("crm")  # the server was saved with a new address meanwhile
+    p.clear_status("crm")  # the server was saved with a new address meanwhile
     gate.set()
     th.join(5)
     assert p.status("crm")["status"] == "not_checked"

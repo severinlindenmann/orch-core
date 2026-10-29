@@ -83,13 +83,13 @@ class OrgHandlers:
         if secret is not None and type(secret) is not str:
             raise AccessError("malformed")
         out = org_mcp(self.d.access).put(p["name"], b["url"], b["auth"], secret, b["description"], actor=c.user_id)
-        mcp_probes(self.d.access).forget(p["name"])  # a new address: the old answer is not about it
+        mcp_probes(self.d.access).clear_status(p["name"])  # a new address: the old answer is not about it
         self._record("mcp.saved", actor_id=c.user_id, detail={"server": p["name"]})
         return 200, out
 
     def _h_a_mcp_delete(self, c: Any, p: dict, q: dict, b: dict | None):
         org_mcp(self.d.access).delete(p["name"], actor=c.user_id)
-        mcp_probes(self.d.access).forget(p["name"])
+        mcp_probes(self.d.access).clear_status(p["name"])
         self._record("mcp.removed", actor_id=c.user_id, detail={"server": p["name"]})
         return 200, {"ok": True}
 

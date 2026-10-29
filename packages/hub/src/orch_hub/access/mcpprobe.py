@@ -210,7 +210,7 @@ class McpProbes:
     ) -> None:
         self._now, self._run = now_ms, run
         self._last: dict[str, dict[str, Any]] = {}
-        self._gen: dict[str, int] = {}  # bumped by forget(): an answer that started before it is dropped
+        self._gen: dict[str, int] = {}  # bumped by clear_status(): an answer that started before it is dropped
         self._asked: dict[str, int] = {}  # name -> when a probe last started
         self._lock = threading.Lock()
         self._slots = threading.BoundedSemaphore(MAX_PARALLEL)
@@ -269,7 +269,7 @@ class McpProbes:
         finally:
             self._slots.release()
 
-    def forget(self, name: str) -> None:
+    def clear_status(self, name: str) -> None:
         with self._lock:
             self._gen[name] = self._gen.get(name, 0) + 1
             self._last.pop(name, None)

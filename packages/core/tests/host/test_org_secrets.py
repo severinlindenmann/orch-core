@@ -865,7 +865,7 @@ def test_pins_of_another_hub_are_empty_pins(w):
     assert orgsecrets._pins(w.service, orgstate._state(w.service))["ids"] == {}  # noqa: SLF001
 
 
-# -- review delta LOW 1: the pin file is read without following links, and an unsafe file fails closed -----------------
+# -- review delta LOW 1: the pin file is read without following links ----------
 
 
 def _pins_path(w):
@@ -893,7 +893,7 @@ def test_a_pin_file_with_an_unsafe_mode_fails_closed(w):
     assert sec_sync(w)["secrets"] == "pins_unusable"
 
 
-# -- review delta LOW 2: values are forgotten AFTER the file changed ----------------------------------------------------
+# -- review delta LOW 2: values are forgotten AFTER the file changed ----------
 
 
 def test_the_cache_and_held_values_are_dropped_after_the_files_changed(live, monkeypatch):

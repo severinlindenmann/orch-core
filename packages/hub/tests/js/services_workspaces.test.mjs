@@ -147,10 +147,30 @@ test("connect link is copied unchanged, shows expiry, and Copy says what to do n
   assert.equal(copied, "/join#one-time");
   assert.match(text(out), /Copied ✓/);
   let opened;
-  const withOpen = [connectWorkspaceView({ link: "/join#one-time", expires_ms: NOW + 1800000 }, { openLink: (l) => { opened = l; } })];
+  const withOpen = [connectWorkspaceView({ link: "/join#one-time", expires_ms: NOW + 1800000 }, { openLink: (l) => { opened = l; } }, { selected: "u1", self: "u1" })];
   clickButton(withOpen, "Open link");
   assert.equal(opened, "/join#one-time");
   assert.match(text(out), /Send this link to the workspace owner, or open it on their computer\./);
+});
+
+test("r11 P03: Open link is offered only for the signed-in person's own workspace, Copy for everyone", async () => {
+  const openBtn = (out) => find(out, (n) => n.tag === "button" && n.textContent === "Open link")[0];
+  const L = { link: "/c#x", expires_ms: NOW + 1800000 };
+  assert.equal(openBtn([connectWorkspaceView(L, {}, { selected: "u1", self: "u1" })]).hidden, false);
+  assert.equal(openBtn([connectWorkspaceView(L, {}, { selected: "u2", self: "u1" })]).hidden, true);
+  assert.equal(openBtn([connectWorkspaceView(L, {}, { selected: "u1" })]).hidden, true, "unknown signed-in person: Copy only");
+  const out = workspacesView({ workspaces: [], handoffs: [], admin: [], self: "u1", actions: {
+    people: async () => [{ user_id: "u1", name: "Anna" }, { user_id: "u2", name: "Ben" }],
+    connect: async (owner) => ({ link: "/c#" + owner, expires_ms: NOW + 1800000 }) } }, NOW);
+  await clickButton(out, "Connect a workspace");
+  const select = find(out, (n) => n.tag === "select")[0];
+  select.value = "u2";
+  await select.listeners.change({ target: select });
+  assert.equal(openBtn(out).hidden, true, "Ben's link is not opened in Anna's browser");
+  assert.ok(find(out, (n) => n.tag === "button" && n.textContent === "Copy")[0]);
+  select.value = "u1";
+  await select.listeners.change({ target: select });
+  assert.equal(openBtn(out).hidden, false, "Anna's own link can be opened here");
 });
 
 test("admin empty state connects; left disclosure includes only unbound rows and removes the selected row", async () => {

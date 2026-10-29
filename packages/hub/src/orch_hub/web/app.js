@@ -14,7 +14,7 @@ import { adminView } from "./admin.js";
 import { changesView, checkChange, sentence as changeSentence } from "./changes.js";
 import { totpPanel } from "./totp.js";
 import { inviteView } from "./invite.js";
-import { rememberDashboard } from "./connect.js";
+import { rememberDashboard, rememberName } from "./connect.js";
 import { servicesView } from "./services.js";
 import { handoffsView } from "./handoffs.js";
 import { phonesView } from "./phones.js";
@@ -269,7 +269,9 @@ async function openWorkspace(w) {
   const r = await api("POST", "/switch/ticket", { workspace_id: w.id, return_to: "/", kind: "open" });
   const url = r.status === 200 ? safeUrl(r.body.url) : null;
   if (!url) { state.notice = banner("bad", "Cannot open " + renderText(w.name), say(r.status === 200 ? "malformed" : r.body.error)); return home(); }
-  rememberDashboard(url); // so the /c page can send a connect link to this dashboard next time
+  // r11 P03: remembered for the signed-in person only when this is THEIR workspace (the hub's owner alias is them), so a
+  // connect link minted for them can open it later; opening someone else's workspace never becomes anyone's target.
+  if (state.rail.rows.find((x) => x.id === w.id)?.role === "owner") rememberDashboard(url, state.user?.user_id);
   location.assign(url);
 }
 
@@ -426,6 +428,7 @@ async function workspaces(joined = [], known = null) {
       const [ws, ho, admin] = await Promise.all([api("GET", "/me/workspaces"), api("GET", "/me/handoffs"), canAdmin() ? api("GET", "/admin/workspaces") : Promise.resolve({ status: 0, body: {} })]);
       const adminRows = admin.status === 200 ? admin.body.workspaces ?? [] : null;
       const hub = ws.body?.hub;
+      const peopleNames = new Map();
       const actions = {
         open: (w) => { closeDialog(); return openWorkspace({ id: w.workspace_id, name: w.name ?? "Workspace" }); },
         copy: copyText,
@@ -433,7 +436,9 @@ async function workspaces(joined = [], known = null) {
         signInToConnect: signInToAddWorkspace,
         people: async () => { // the real, active people of this hub (admin-only route); the hub rejects anyone else
           const r = await api("GET", "/admin/users");
-          return r.status === 200 ? (r.body.users ?? []).filter((u) => !u.disabled) : [];
+          const list = r.status === 200 ? (r.body.users ?? []).filter((u) => !u.disabled) : [];
+          for (const u of list) peopleNames.set(u.user_id, u.name);
+          return list;
         },
         invite: async (name) => { // the existing admin invite (name checked by the hub): a one-time sign-in link
           const r = await api("POST", "/admin/invites", { name });
@@ -443,6 +448,7 @@ async function workspaces(joined = [], known = null) {
         connect: async (ownerUser) => {
           const r = await api("POST", "/admin/connect", ownerUser ? { owner_user: ownerUser } : {});
           if (r.status < 200 || r.status >= 300 || typeof r.body.link !== "string" || !Number.isFinite(r.body.expires_ms)) throw new Error("connect failed");
+          if (ownerUser) rememberName(ownerUser, peopleNames.get(ownerUser)); // the /c page says whose workspace (display only)
           return r.body;
         },
         remove: async (w) => {

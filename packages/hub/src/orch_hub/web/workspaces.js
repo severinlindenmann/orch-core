@@ -54,7 +54,7 @@ export function workspaceDetailsView(w, { roles = null, owner = null, hub, actio
 /** The link is copied unchanged; after Copy the page says what to do next.
  * `link` is null until a person is chosen (several people: nothing is preselected). "Someone new..." invites a person
  * (the existing admin invite) and never mints a workspace link. */
-export function connectWorkspaceView(link, actions = {}, { people = [], selected = null } = {}) {
+export function connectWorkspaceView(link, actions = {}, { people = [], selected = null, self = null } = {}) {
   const NEW = "__new__";
   const next = h("p", { class: "small muted", "aria-live": "polite" });
   const NEXT = "Send this link to the workspace owner, or open it on their computer.";
@@ -68,6 +68,10 @@ export function connectWorkspaceView(link, actions = {}, { people = [], selected
     next.textContent = ok ? NEXT : "";
   });
   const openLink = button("Open link", () => actions.openLink?.(current));
+  // r11 P03: "Open link" opens the link in THIS browser, so only for the signed-in person's own workspace; anyone else's
+  // link is copied and opened on their computer (never offered to a dashboard on this one).
+  const showOpen = (owner) => { openLink.hidden = !(self && owner === self); };
+  showOpen(link ? selected : null);
   const until = h("p", { text: link ? "Works once, for 30 minutes (until " + clock(link.expires_ms) + ")" : "" });
   const problem = h("p", { role: "alert" });
   const linkRow = h("div", { class: "ws-link" }, h("div", { class: "row" }, input, copy, openLink), next, until);
@@ -124,7 +128,7 @@ export function connectWorkspaceView(link, actions = {}, { people = [], selected
     select.disabled = true;
     try {
       const made = await actions.connect?.(value);
-      if (made) { current = made.link; input.value = made.link; input.setAttribute("value", made.link); until.textContent = "Works once, for 30 minutes (until " + clock(made.expires_ms) + ")"; next.textContent = ""; copy.textContent = "Copy"; linkRow.hidden = false; }
+      if (made) { showOpen(value); current = made.link; input.value = made.link; input.setAttribute("value", made.link); until.textContent = "Works once, for 30 minutes (until " + clock(made.expires_ms) + ")"; next.textContent = ""; copy.textContent = "Copy"; linkRow.hidden = false; }
     } catch { problem.textContent = "Could not create a link for this person. Please try again."; }
     finally { select.disabled = false; }
   });
@@ -161,7 +165,7 @@ export function workspacesView(data, now = Date.now()) {
       // With several people nothing is preselected and no link exists until one is chosen; alone, the admin is the person.
       const mine = people.length > 1 ? null : people.find((x) => x.user_id === data.self)?.user_id ?? people[0]?.user_id ?? null;
       const first = people.length > 1 ? null : await actions.connect(mine);
-      connectBox.append(connectWorkspaceView(first, actions, { people, selected: mine }));
+      connectBox.append(connectWorkspaceView(first, actions, { people, selected: mine, self: data.self }));
     }
     catch { connectBox.append(h("p", { role: "alert", text: "Could not create a link. Please try again." })); }
     finally { connect.disabled = false; }

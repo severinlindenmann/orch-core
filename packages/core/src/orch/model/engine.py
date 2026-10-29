@@ -30,6 +30,7 @@ from . import (
     identity,
     lifecycle,
     questions,
+    remote,
     schedules_wire,
     source,
     tasks,
@@ -39,6 +40,8 @@ from . import (
 from .codes import Code, Refusal
 from .types import WORKSPACE, Core, InvalidEvent, LogCore, TCore, WsCore, position, ts
 from .verifier import SigContext, Verifier
+
+REMOTE_TYPES = tuple(t for t in authz.ACTOR_RULES if t.startswith("remote."))
 
 CHAIN_CODES = frozenset({Code.CHAIN_BROKEN, Code.CHAIN_BAD_WS_SEQ})
 # Workspace events that change every ticket: those get a copy of all tickets.
@@ -307,6 +310,7 @@ def _workspace_handler(core: Core, lc: LogCore, e: dict[str, Any], ctx: Ctx) -> 
             workspace.hub_owner_proof(ws, e, v, dev=hub_dev_of(core, ctx)) or workspace.hub_left(ws, e, core)
         ),
         "hub.pinned": lambda: workspace.hub_pinned(core, e, v, dev=hub_dev_of(core, ctx)),
+        **dict.fromkeys(REMOTE_TYPES, lambda: remote.remote_apply(ws, e, v, dev=hub_dev_of(core, ctx))),
         "restore": lambda: workspace.restore(core, lc, e, v),
         "invalid.acknowledged": lambda: _ack(ws, lc, e),
         "projection.repaired": lambda: None,

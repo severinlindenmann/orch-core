@@ -340,6 +340,27 @@ def _person_op(prepared: Mapping[str, Any]) -> None:
                 and set(e) - review.ENVELOPE == {"hub_id", "binding_seq", "owner_proof"}
                 and e["owner_proof"] is None  # #1198 C9: the signer fills it after the review
             )
+        elif op == "remote.set":  # R2: one remote.changed on the workspace log, exactly the contract's members
+            from orch.hubclient import wire
+
+            ok = (
+                len(events) == 1
+                and log == "workspace"
+                and e["type"] == "remote.changed"
+                and set(e) - review.ENVELOPE == {*wire.REMOTE_CHANGED_KEYS, "owner_proof"}
+                and e["owner_proof"] is None  # the signer fills it after the review (the remote owner proof)
+            )
+        elif op == "remote.device_confirm":  # R2: one remote.device_added, signed by the confirming owner
+            from orch.hubclient import wire
+
+            ok = (
+                len(events) == 1
+                and log == "workspace"
+                and e["type"] == "remote.device_added"
+                and set(e) - review.ENVELOPE == {*wire.REMOTE_ADDED_KEYS, "owner_proof"}
+                and e["owner_proof"] is None
+                and e.get("person") == e["actor"].get("id")
+            )
         elif op == "device.mark_exposed":  # #1097: one device.exposed, the signer's own device, nothing else
             ok = (
                 len(events) == 1
@@ -812,6 +833,10 @@ _PLAIN = {
     "hub.join.full": "join hub {hub_id} in full mode: the hub will be able to read everything in this workspace",
     "hub.mode": "switch hub {hub_id} to {mode} mode: the hub will be able to read everything in this workspace",
     "hub.leave": "leave hub {hub_id} (binding {binding_seq}) and tell it that this workspace is no longer bound",
+    "remote.set": "turn on remote access ({level}, until {until_ms}): devices you add can use this workspace from afar",
+    "remote.device_confirm": (
+        "add the remote device {name} (fingerprint {fingerprint}) up to {level_cap}, until {expires_ms}"
+    ),
     "device.mark_exposed": "record that your device key {device} was in one-click custody (it only loses authority)",
     "device.remove": "remove the device {device}; it can no longer sign for this workspace",
     "device.rotate": "replace your device key {old} with the new key {device}; the old key stops signing everywhere",
@@ -1239,21 +1264,25 @@ def terminal_owner_proof(
 
     events, facts = prepared["events"], prepared.get("owner_proof")
     if len(events) != 1 or not isinstance(facts, dict) or type(facts.get("dev")) is not bool:
-        _refuse("the hub step carries no dev marker for its owner proof")
+        _refuse("the step carries no dev marker for its owner proof")
+    remote = prepared["op"] in hubproof.REMOTE_OPS
+    label = "sig_remote_owner_proof" if remote else "sig_hub_owner_proof"
     if pk_factory is None:
         from orch.custody.personkey import RecoveryCodeSource as pk_factory  # noqa: N813
     clock = now_ms or (lambda: int(time.time() * 1000))
     issued = clock()
     with pk_factory(
-        labels=("sig_hub_owner_proof",),
+        labels=(label,),
         person_id=bytes.fromhex(person.removeprefix("p_")),
-        action="sign the hub step with your backup key",
+        action="sign the remote access step with your backup key"
+        if remote
+        else "sign the hub step with your backup key",
     ) as pk:
         try:
             return wire.build_owner_proof(
                 workspace_id=workspace_id, pk_pub=pk.pk_pub, op=prepared["op"],
                 payload=hubproof.payload_of(events[0]), request_id=request_id, issued_ms=issued,
-                expires_ms=issued + OWNER_PROOF_LIFE_MS, dev=facts["dev"], sign=pk.signer("sig_hub_owner_proof"),
+                expires_ms=issued + OWNER_PROOF_LIFE_MS, dev=facts["dev"], sign=pk.signer(label),
             )  # fmt: skip
         except HubRefused as exc:
             raise SignerRefused(f"refusing to sign: the owner proof is not well formed ({exc.code})") from None

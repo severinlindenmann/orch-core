@@ -1,0 +1,396 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.orch.dev/v2/event.remote.changed",
+  "title": "remote.changed event",
+  "description": "Remote access R2 (workspace log, owner-signed with the remote owner proof): the owner's policy. Always an 'on'; turning it off is the host's remote.disabled.",
+  "type": "object",
+  "properties": {
+    "v": {
+      "const": 2
+    },
+    "id": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/ulid"
+    },
+    "seq": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/posInt"
+    },
+    "at": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/timestamp"
+    },
+    "type": {
+      "const": "remote.changed"
+    },
+    "actor": {
+      "allOf": [
+        {
+          "type": "object",
+          "description": "Section 5.2. A person, an agent (with a grant, or unattended) or the host. An addon actor is refused in P1 (A5).",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "enum": [
+                "person",
+                "agent",
+                "host"
+              ]
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "kind": {
+                    "const": "person"
+                  }
+                },
+                "required": [
+                  "kind"
+                ]
+              },
+              "then": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "person"
+                  },
+                  "id": {
+                    "$ref": "https://schemas.orch.dev/v2/common#/$defs/personId"
+                  },
+                  "device": {
+                    "$ref": "https://schemas.orch.dev/v2/common#/$defs/deviceId"
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "kind",
+                  "id",
+                  "device"
+                ]
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "kind": {
+                    "const": "agent"
+                  }
+                },
+                "required": [
+                  "kind"
+                ]
+              },
+              "then": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "const": "agent"
+                      },
+                      "id": {
+                        "$ref": "https://schemas.orch.dev/v2/common#/$defs/agentId"
+                      },
+                      "session": {
+                        "$ref": "https://schemas.orch.dev/v2/common#/$defs/sessionId"
+                      },
+                      "for": {
+                        "$ref": "https://schemas.orch.dev/v2/common#/$defs/personId"
+                      },
+                      "grant": {
+                        "$ref": "https://schemas.orch.dev/v2/common#/$defs/grantId"
+                      }
+                    },
+                    "additionalProperties": false,
+                    "required": [
+                      "kind",
+                      "id",
+                      "session",
+                      "for",
+                      "grant"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "const": "agent"
+                      },
+                      "id": {
+                        "$ref": "https://schemas.orch.dev/v2/common#/$defs/agentId"
+                      },
+                      "session": {
+                        "$ref": "https://schemas.orch.dev/v2/common#/$defs/sessionId"
+                      },
+                      "unattended": {
+                        "const": true
+                      }
+                    },
+                    "additionalProperties": false,
+                    "required": [
+                      "kind",
+                      "id",
+                      "session",
+                      "unattended"
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "kind": {
+                    "const": "host"
+                  }
+                },
+                "required": [
+                  "kind"
+                ]
+              },
+              "then": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "host"
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "kind"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "person"
+              ]
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        }
+      ]
+    },
+    "based_on": {
+      "oneOf": [
+        {
+          "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "prev": {
+      "oneOf": [
+        {
+          "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "hash_v": {
+      "const": 1
+    },
+    "ws_seq": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/posInt"
+    },
+    "roster_v": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/nonNegInt"
+    },
+    "auth": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/auth"
+    },
+    "sig": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/sig"
+    },
+    "host_sig": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/sig"
+    },
+    "on": {
+      "const": true
+    },
+    "level": {
+      "enum": [
+        "view",
+        "work",
+        "terminals"
+      ]
+    },
+    "until_ms": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "https://schemas.orch.dev/v2/common#/$defs/posInt"
+        }
+      ]
+    },
+    "premises": {
+      "enum": [
+        "yes",
+        "no"
+      ]
+    },
+    "agents_risk": {
+      "type": "boolean"
+    },
+    "hub_mode": {
+      "enum": [
+        "none",
+        "selective",
+        "full"
+      ]
+    },
+    "owner_proof": {
+      "description": "Remote access R2 (contract 10.2c): the owner proof, signed by the owner's person key PK under the remote label. null in a prepared event; the signer fills it after the review. A recorded event without a valid proof is refused by the model.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "required": [
+            "o",
+            "sig"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "o": {
+              "type": "object"
+            },
+            "sig": {
+              "$ref": "https://schemas.orch.dev/v2/common#/$defs/sig"
+            }
+          }
+        }
+      ]
+    }
+  },
+  "required": [
+    "v",
+    "id",
+    "seq",
+    "at",
+    "type",
+    "actor",
+    "based_on",
+    "prev",
+    "hash_v",
+    "host_sig",
+    "on",
+    "level",
+    "until_ms",
+    "premises",
+    "agents_risk",
+    "hub_mode",
+    "owner_proof"
+  ],
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "actor": {
+            "properties": {
+              "kind": {
+                "const": "person"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          }
+        },
+        "required": [
+          "actor"
+        ]
+      },
+      "then": {
+        "required": [
+          "sig",
+          "auth",
+          "roster_v"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "actor": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "agent",
+                  "host"
+                ]
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          }
+        },
+        "required": [
+          "actor"
+        ]
+      },
+      "then": {
+        "properties": {
+          "sig": {
+            "not": {}
+          },
+          "auth": {
+            "not": {}
+          },
+          "roster_v": {
+            "not": {}
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "seq": {
+            "const": 1
+          }
+        },
+        "required": [
+          "seq"
+        ]
+      },
+      "then": {
+        "properties": {
+          "prev": {
+            "type": "null"
+          },
+          "based_on": {
+            "type": "null"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "prev": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
+          },
+          "based_on": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
+          }
+        }
+      }
+    }
+  ]
+}

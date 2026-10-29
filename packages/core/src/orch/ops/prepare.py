@@ -66,6 +66,9 @@ class Capture:
     #: V3 C2a: ``hub.join``'s facts from the host (:class:`orch.host.hubops.HubFacts`: the host's own clock and whether
     #: this workspace is a dev workspace), never from the request: the hub card is checked against them
     hub: Any = None
+    #: R2 (#1590): ``remote.set`` / ``remote.device_confirm``'s facts from the host (:class:`orch.host.remotefacts.
+    #: RemoteFacts`: clock, dev state, the model's hub mode, isolation, the pending device), never from the request
+    remote: Any = None
     #: #1198 C15: ``device.remove``'s display facts from the host's roster (``{device, holder}``: the member's name),
     #: shown in the review as "per host, not signed"; ``material["removed_device"]``
     removed_device: dict[str, str] | None = None

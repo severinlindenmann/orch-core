@@ -105,6 +105,9 @@ PLANNED_LABELS: dict[str, str] = {
     "sig_device_rotate": "orch/v2/sig/device-rotate|",
     # #1198 C9 (hub contract 9.6): the person key's owner proof of a hub join, mode switch or leave.
     "sig_hub_owner_proof": "orch/v2/sig/hub-owner-proof|",
+    # R2 (#1590, hub contract 10.2c "The owner proof of a remote step"): the same proof object under its OWN label, so a
+    # hub proof never stands in for a remote one or the reverse. Core-only: the hub never sees these proofs.
+    "sig_remote_owner_proof": "orch/v2/sig/remote-owner-proof|",
     "aad_hub_share": "orch/v2/hub-share-aad|",
     "h_share_item": "orch/v2/hub-share-item|",
 }

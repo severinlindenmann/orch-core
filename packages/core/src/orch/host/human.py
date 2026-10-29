@@ -468,6 +468,10 @@ class HumanOps:
             from . import publishing
 
             capture.publish = publishing.facts_for(service, inner, call)
+        if name in ("remote.set", "remote.device_confirm"):  # R2: the host's own facts, never the request's
+            from . import remotefacts
+
+            capture.remote = remotefacts.facts_for(service, inner.get("pending"))
         if name in ("hub.join", "hub.mode"):  # V3 C2a: the host's clock and dev state, never the request's
             from . import hubops
 

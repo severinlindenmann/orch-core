@@ -65,6 +65,15 @@ WORKSPACE_ONLY = {
     "hub.pinned",
     "device.exposed",
     "device.rotated",
+    "remote.changed",
+    "remote.disabled",
+    "remote.code_issued",
+    "remote.code_burned",
+    "remote.device_added",
+    "remote.device_removed",
+    "remote.key_rotated",
+    "remote.session_opened",
+    "remote.session_closed",
 }
 
 
@@ -584,6 +593,47 @@ _SPEC = {
         },
         5,
     ),
+    "remote.changed": (
+        PERSON,
+        {
+            "on": True,
+            "level": "work",
+            "until_ms": 1_760_000_000_000,
+            "premises": "no",
+            "agents_risk": False,
+            "hub_mode": "none",
+            "owner_proof": None,
+        },
+        5,
+    ),
+    "remote.device_added": (
+        PERSON,
+        {
+            "device_id": "rd_" + DID,
+            "name": "Severin's MacBook",
+            "person": "p_" + PID,
+            "presence_kind": "platform",
+            "transport_pub": "3J02PWPii0wd9JGl1e8ylfF2OQt3ZHwobpD22e-Sb2g",
+            "presence_pub": "BM_dyBP9WmXDUz13KE9_OxWamJkWSLgLBQcQLqipmcxXtMqQz7yTIYqposCv27jyI50SgrbdmxV0_M5PHktruNY",
+            "level_cap": "work",
+            "expires_ms": 1_760_000_000_000,
+            "fingerprint": "09f2da73415b22423ee0075a56f2cec02b69bf851471bf17707d6c9345368e3f",
+            "code_id": "rc_" + DID2,
+            "owner_proof": None,
+        },
+        5,
+    ),
+    "remote.disabled": (HOST, {"by": "owner"}, 5),
+    "remote.code_issued": (HOST, {"code_id": "rc_" + DID, "expires_ms": 1_760_000_900_000}, 5),
+    "remote.code_burned": (HOST, {"code_id": "rc_" + DID}, 5),
+    "remote.device_removed": (HOST, {"device_id": "rd_" + DID, "reason": "owner"}, 5),
+    "remote.key_rotated": (HOST, {"wrk_fp": DID}, 5),
+    "remote.session_opened": (
+        HOST,
+        {"stream_id": DID2, "device_id": "rd_" + DID, "person": "p_" + PID, "level": "view"},
+        5,
+    ),
+    "remote.session_closed": (HOST, {"stream_id": DID2, "device_id": "rd_" + DID, "reason": "closed"}, 5),
     "hub.pinned": (
         HOST,
         {

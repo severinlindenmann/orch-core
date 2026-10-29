@@ -1616,6 +1616,7 @@ def test_event_types_match_doc_tables():
 # Names in the doc that look like event types but are not: error codes, ticket.json paths, config paths.
 DOC_NON_EVENTS = {
     "relay.submit",  # an operation (host, §11A), not an event
+    "remote.set", "remote.device_confirm", "remote.owner_proof", "remote.invalid",  # R2: ops, a proof kind, a code
     # §15 (C3b): signed hub objects pinned by hub.pinned, and the model refusal codes
     "hub.card", "hub.op_revoked", "hub.snapshot", "hub.cert_invalid", "hub.unknown_snapshot", "hub.foreign_user",
     "hub.denied", "hub.invalid", "hub.channel_cert", "hub.uk_cert",

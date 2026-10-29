@@ -54,6 +54,7 @@ class Code(StrEnum):
     HUB_UNKNOWN_SNAPSHOT = "hub.unknown_snapshot"
     HUB_FOREIGN_USER = "hub.foreign_user"  # 15.6: a u_ id of another hub
     HUB_DENIED = "hub.denied"  # channel revoked, no role / not granted, not custodial, factor too weak
+    REMOTE_INVALID = "remote.invalid"  # R2 (#1590): a remote.* event the model refuses (detail says why)
     ADDON_UNKNOWN = "addon.unknown"
     ADDON_FIELD_UNKNOWN = "addon.field_unknown"
     ADDON_VALUE_INVALID = "addon.value_invalid"

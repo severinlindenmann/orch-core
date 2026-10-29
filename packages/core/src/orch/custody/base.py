@@ -124,6 +124,7 @@ PERSON_KEY_LABELS: tuple[bytes, ...] = (  # PK: certificates, revocations, deleg
     _p("sig_cert_rejection"),
     _p("sig_device_rotate"),  # #1097: a device rotation, bound to one workspace, old and new device and roster_v
     _p("sig_hub_owner_proof"),  # #1198 C9: the owner proof of a hub join, mode switch or leave (hub contract 9.6)
+    _p("sig_remote_owner_proof"),  # R2: the owner proof of a remote policy change or a device confirmation (10.2c)
 )
 DEVICE_KEY_LABELS: tuple[bytes, ...] = (  # dk_sig: person events and device requests
     _e("sig_ticket_event"),

@@ -219,6 +219,12 @@ keep the union with every label above, every v2 label and core's live tables pre
 | `h_remote_wrk` | `orch/v2/remote-wrk\|` | hash | the `WRK` fingerprint an enrollment code carries | 10.2c |
 | `h_remote_device_fp` | `orch/v2/remote-device-fp\|` | hash | the device fingerprint the owner confirms | 10.2c |
 
+**Core-only label of the remote owner proof (R2, #1590).** `orch/v2/sig/remote-owner-proof|` (`sig_remote_owner_proof`,
+signed by the owner's person key `PK`, §10.2c "The owner proof of a remote step") is a core-internal label like
+`sig_hub_owner_proof`: no hub object carries it and the hub never sees such a proof, so it is not a row of the table above
+and not in `vectors_remote.json`. Core's tests check that it is new, ends in `|` and keeps the union with every label
+above prefix-free.
+
 **The presence key signs under exactly `remote-open|` and `remote-presence|`** (spec §5: the D64 backend kind
 `remote-presence` is never a person signer); `WSK` gains `sig/remote-devices|`. Neither the hub's keys nor `UK` nor a
 channel key ever sign under a `remote-*` label.
@@ -1729,7 +1735,8 @@ presence signature and the other way round (two labels).
 **Enrollment** (spec §5; `kind: "enroll"`). The owner makes a code at the workspace: `code_id` (16 bytes, shown as
 `rc_` + hex), a `secret` of 16 random bytes (128 bits), single use, 15 min, 5 wrong tries burn it, and the fingerprint
 `wrk_fp = SHA-256("orch/v2/remote-wrk|" || WRK_pub)[0:16]`. The code stands for the 48 bytes `code_id ‖ secret ‖
-wrk_fp` (its text form is R2's); it is handed over out of band, never through a hub channel. The device accepts a
+wrk_fp`; its text form is `orch-rc1.<workspace_id>.<b64u(those 48 bytes)>.<b64u(WRK_pub)>` (§16 row 60); it is handed
+over out of band, never through a hub channel. The device accepts a
 `WRK_pub` (from wherever it got it) only if it hashes to `wrk_fp`, then runs the same handshake with the code id in the
 prologue. Its first transport message is
 
@@ -1772,6 +1779,22 @@ exact fields and the rules above (`malformed`), `workspace_id` (`other_workspace
 (`stale_version`, so a removed device cannot come back by rollback). A lookup finds the entry only while
 `now < expires_ms` (`remote.device`). The FIDO2 sign counter is mutable state kept beside the list, not in it.
 Vectors `device_list_*`, `device_lookup_*`.
+
+**The owner proof of a remote step** (R2, #1590; core only, the hub never sees it). The remote policy and the device list
+are folded by the workspace model from two person lines of the workspace log, `remote.changed` and
+`remote.device_added`; every other `remote.*` line (`disabled`, `code_issued`, `code_burned`, `device_removed`,
+`key_rotated`, `session_opened`, `session_closed`) is the host's record and can only reduce power. A person line of this
+kind carries the §9.6 proof object under its own kind `remote.owner_proof` and label `orch/v2/sig/remote-owner-proof|`,
+made by the acting owner's `PK` (the backup key) over the exact event payload without `owner_proof`, bound to the
+workspace, the op (`remote.set` for `remote.changed`, `remote.device_confirm` for `remote.device_added`) and the host
+request, valid for at most 10 minutes, with the dev marker of §2.4. A hub proof never verifies for a remote step and a
+remote proof never for a hub step (kind, label and op set are all different). The model checks it for every such line
+it appends or replays, whatever its `auth` and whoever delivered it, against the roster's `PK` and the host-signed append
+time of the line; there is no place rule (no prior event to follow). No `remote.*` type is custodial (§8.5): a line
+with `auth: "hub"` is `not_custodial`. A full `hub.joined` (a switch to full, a leave and rejoin, another hub) turns
+remote access off in the model whatever the premises answer, and `remote.changed` with `premises: "yes"` while the hub
+mode is `full` is refused. The device fingerprint the owner confirms is `device_fp` below; the device and the owner
+show it as the same six words (§16 row 60).
 
 **What R0 leaves to the steps** (spec §11): the runtime link tables take these ops with their handlers in R2 (host)
 and R4 (hub) (until then `orch_hub.contract.hub.LINK_OPS` does not list them and the live hub answers `unknown_op`);
@@ -3200,6 +3223,8 @@ transport in the action).
 | 56 | Device ids (R0) | `rd_` + 32 hex (codes `rc_`), so no hub `device.excluded` (`d_`) can name a remote device | D93 "touch the devices" |
 | 57 | Device list (R0) | `remote.device_list`, `hv: 0`, a rising `version` (rollback refused), `name` added for the session list, `presence_kind` added; the sign counter kept beside it | spec §5, D91 |
 | 58 | Remote labels (R0) | their own table (like the backup labels), so `vectors_hub.json` stays unchanged | §3 |
+| 59 | Remote owner proof (R2, proposed) | the §9.6 proof object under its own kind `remote.owner_proof` and its own label `orch/v2/sig/remote-owner-proof\|`, ops `remote.set` and `remote.device_confirm`; core only | spec D84, D93; a hub proof can never stand in for a remote one or the reverse |
+| 60 | Remote code text and fingerprint words (R2, proposed) | the code text is `orch-rc1.<workspace_id>.<b64u(code_id raw 16 ‖ secret 16 ‖ wrk_fp 16)>.<b64u(WRK_pub, 32)>`; the owner and the device show `device_fp` as the first 66 bits, six BIP-39 English words of 11 bits each (the all-zero fingerprint is `abandon` six times) | spec §5 "fingerprint", R5 renders and parses the same |
 
 ## 17. Hub backup (M4, #1462; design `m4-settings-design.md` 4.2-4.3 and the Opus conditions 9-17)
 

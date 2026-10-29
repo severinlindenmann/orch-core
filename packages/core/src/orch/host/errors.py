@@ -112,6 +112,13 @@ HOST_CODES: dict[str, tuple[int, bool]] = {
     "hub.rotation_pending": (9, True),
     "hub.state_mismatch": (3, False),
     "hub.not_joined": (3, False),
+    # R2, remote access (#1590; host/hubproof.py, ops/person_ops.py)
+    "remote.proof_invalid": (3, False),
+    "remote.agents_risk": (3, False),
+    "remote.needs_selective": (3, False),
+    "remote.no_pending": (3, False),
+    "remote.full": (3, False),
+    "switch.refused": (3, False),
     # H11c, start agent and the runner grant (§12.4)
     "launch.claimed": (3, False),
     "launch.no_grant": (3, False),
@@ -182,6 +189,9 @@ DETAIL_KEYS: dict[str, dict[str, tuple[str, ...] | str | None]] = {
     "ticket.key_not_next": {"next_key": None},
     # #1198 C9: why the owner proof of a hub step was refused (hub contract 9.6, section 14)
     "hub.proof_invalid": {"reason": ("proof_invalid", "proof_expired", "proof_missing", "dev_mismatch", "dev_refused")},
+    "remote.proof_invalid": {
+        "reason": ("proof_invalid", "proof_expired", "proof_missing", "dev_mismatch", "dev_refused")
+    },
     # H12d-2 (§0.8.6 item 9.9, 9.11): the closed reason and the readers below the level (``devices``: device ids)
     "sign.convenience_unavailable": {  # H12c-e; pair_device is no longer emitted (B10)
         "reason": (

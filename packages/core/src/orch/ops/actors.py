@@ -75,6 +75,15 @@ EVENT_ACTORS: dict[str, frozenset[str]] = {
         "hub.joined": "P",
         "hub.left": "P",
         "hub.pinned": "H",
+        "remote.changed": "P",
+        "remote.device_added": "P",
+        "remote.disabled": "H",
+        "remote.code_issued": "H",
+        "remote.code_burned": "H",
+        "remote.device_removed": "H",
+        "remote.key_rotated": "H",
+        "remote.session_opened": "H",
+        "remote.session_closed": "H",
     }.items()
 }
 

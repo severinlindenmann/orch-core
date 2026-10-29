@@ -97,6 +97,21 @@ EVENT_FIELDS: dict[str, tuple[str, ...]] = {
     "addon.purged": ("name",),
     "hub.joined": ("hub_id", "hk_root_pub", "mode", "binding_seq", "aliases", "owner_proof"),
     "hub.left": ("hub_id", "binding_seq", "owner_proof"),
+    # R2 (#1590): the owner's remote policy and one confirmed remote device, each with the remote owner proof
+    "remote.changed": ("on", "level", "until_ms", "premises", "agents_risk", "hub_mode", "owner_proof"),
+    "remote.device_added": (
+        "device_id",
+        "name",
+        "person",
+        "presence_kind",
+        "transport_pub",
+        "presence_pub",
+        "level_cap",
+        "expires_ms",
+        "fingerprint",
+        "code_id",
+        "owner_proof",
+    ),
 }
 _WORKSPACE_ONLY = frozenset(
     {
@@ -117,6 +132,8 @@ _WORKSPACE_ONLY = frozenset(
         "addon.purged",
         "hub.joined",
         "hub.left",
+        "remote.changed",
+        "remote.device_added",
     }
 )
 _TICKET_ONLY = frozenset(set(EVENT_FIELDS) - _WORKSPACE_ONLY - {"restore", "invalid.acknowledged", "policy.changed"})
@@ -139,6 +156,16 @@ _SIGNED_OBJECT_FIELDS: dict[str, tuple[str, ...]] = {
     "genesis_pin": ("workspace_id", "wsk_pub", "genesis"),
     # #1198 C9 (hub contract 9.6): the owner proof inside a hub.joined / hub.left, every field shown
     "hub.owner_proof": ("workspace_id", "person_id", "op", "payload", "request_id", "issued_ms", "expires_ms", "dev"),
+    "remote.owner_proof": (
+        "workspace_id",
+        "person_id",
+        "op",
+        "payload",
+        "request_id",
+        "issued_ms",
+        "expires_ms",
+        "dev",
+    ),
 }
 _OBJECT_LABEL_KIND = {
     "sig_device_cert": "device_cert",
@@ -255,7 +282,8 @@ def _event_lines(body: Any) -> list[tuple[str, str]]:
         if field not in ev:
             continue
         if field in _EMBEDDED:
-            _object_lines(field, _EMBEDDED[field], ev[field], out)
+            kind = "remote.owner_proof" if field == "owner_proof" and etype.startswith("remote.") else _EMBEDDED[field]
+            _object_lines(field, kind, ev[field], out)
         elif field == "owner" and isinstance(ev[field], dict):
             if set(ev[field]) - {"person", "name", "pk_pub"}:
                 _refuse("owner has unexpected fields")

@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS space_mode (
   PRIMARY KEY (space_id, workspace_id)
 );
 CREATE TABLE IF NOT EXISTS space_archive (space_id TEXT PRIMARY KEY, archived_ms INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS space_meta (space_id TEXT PRIMARY KEY, kind TEXT NOT NULL, purpose TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS space_item_seq ON space_item (space_id, seq);
 CREATE TABLE IF NOT EXISTS space_accept (
   space_id TEXT NOT NULL, workspace_id TEXT NOT NULL, accept TEXT NOT NULL, PRIMARY KEY (space_id, workspace_id)
@@ -105,6 +106,17 @@ class SpaceStore:
             else:
                 self._db.execute("INSERT OR REPLACE INTO space_archive VALUES (?,?)", (space_id, ms))
 
+    # --- what the admin said the space is for (console create, #1443): hub-side, not part of any signed record ---
+
+    def set_meta(self, space_id: str, kind: str, purpose: str) -> None:
+        with self.lock, self._db:
+            self._db.execute("INSERT OR REPLACE INTO space_meta VALUES (?,?,?)", (space_id, kind, purpose))
+
+    def metas(self) -> dict[str, dict[str, str]]:
+        with self.lock:
+            rows = self._db.execute("SELECT space_id, kind, purpose FROM space_meta").fetchall()
+        return {sid: {"type": k, "purpose": p} for sid, k, p in rows}
+
     def exists(self, space_id: str) -> bool:
         with self.lock:
             return self._db.execute("SELECT 1 FROM space WHERE space_id=?", (space_id,)).fetchone() is not None
@@ -160,6 +172,7 @@ class SpaceStore:
                 "space_accept",
                 "space_mode",
                 "space_archive",
+                "space_meta",
             ):
                 self._db.execute(f"DELETE FROM {t} WHERE space_id=?", (space_id,))
 

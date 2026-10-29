@@ -132,9 +132,13 @@ export function SignPopover(p: SignPopoverProps) {
   const canClick = clickReady(here) && (!p.action || clickEligible(p.action))
   const started = useRef(false)
   useLayoutEffect(() => {
-    if (!viaHub && canClick && p.action && !p.children && (!p.controls || (p.action.action === 'new_sequence' && !!p.action.launch)) && !p.hint && !started.current && takeTrustedPress()) {
+    if (!viaHub && canClick && p.action && !p.children && (!p.controls || sequenceStart) && !p.hint && !started.current) {
+      // Run-9 J04: "Create and start" opens straight on the host's review, so ONE press in the sign box signs what is
+      // shown. It prepares only: the "Create and start" click never counts as that press (never armed, Opus r9-build 1).
+      const pressed = takeTrustedPress()
+      if (!pressed && !sequenceStart) return
       started.current = true
-      void click.start(p.action)
+      void click.start(p.action, 0, sequenceStart ? false : pressed)
     }
   })
   useEffect(() => {

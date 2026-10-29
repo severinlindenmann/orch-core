@@ -54,8 +54,9 @@ def test_a_hint_never_names_a_command_that_cannot_succeed(ws, cli):
         assert cli(*argv).code == 0, hint
     cli("section", "set", "plan", "-m", "p")
     cli("section", "set", "decisions", "-m", "d")
-    assert last(cli("show")) == "next: orch show"  # requirements wait for a person: nothing to type
-    assert last(cli("task", "add", "t")) == "next: orch task start T1"
+    assert last(cli("show")) == "next: orch task add TEXT"  # requirements wait for a person; the plan lacks a task
+    # run-9 J04: every open gate is complete: wait for the approval, then build in this session
+    assert last(cli("task", "add", "t")) == "next: orch wait"
     assert last(cli("task", "start", "T1")) == "next: orch task done T1"
     assert last(cli("task", "done", "T1")) == "next: orch wait"  # complete: asking works
 

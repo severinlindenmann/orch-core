@@ -40,6 +40,11 @@ LABELS = {
     "sig_hub_publish_approval": b"orch/v2/sig/hub-publish-approval|",
     "h_hub_id": b"orch/v2/id/hub|",
     "h_hub_publish_request": b"orch/v2/hub-publish-request|",
+    "h_publish_request_direct": b"orch/v2/publish-request|",
+    "h_app_meta": b"orch/v2/app-meta|",
+    "h_app_reach": b"orch/v2/app-reach|",
+    "sig_hub_release_narrow": b"orch/v2/hub-release-narrow|",
+    "sig_hub_app_pass": b"orch/v2/hub-app-pass|",
 }
 
 # HTTP status of every code this module raises (contracts/hub/protocol.md 11.2, 14); anything else is 400.
@@ -66,6 +71,14 @@ STATUS = {
     "reader_downgrade": 409,
     "held_card_invalid": 409,
     "stale_op_cert": 409,
+    "meta_mismatch": 409,
+    "file_mismatch": 409,
+    "not_found": 404,
+    "expired": 401,
+    "pass_too_long": 400,
+    "bad_nonce": 401,
+    "not_company_app": 403,
+    "audience_mismatch": 403,
 }
 
 # Which requests grant public access (11.2: "F1 fixes the list"). Today no route does: shares are `secret`
@@ -216,12 +229,35 @@ FIELDS = {
         "unbound_ms": _int_min(0),
         "dev": _bool,
     },
+    # hub_id is null on the direct (12.1) path; access is what the request grants (M4, protocol 11.4)
     "hub.publish_approval": {
         "workspace_id": _hex16,
-        "hub_id": _hex16,
+        "hub_id": lambda x: x is None or _hex16(x),
         "device_id": _hex16,
         "request_hash": _b64u32,
-        "access": _enum("public"),
+        "access": _enum("public", "password", "company", "group"),
+    },
+    # M4 (protocol 11.6, 11.8): signed by the hub's HK_op; checked in published.py
+    "hub.release_narrow": {
+        "hub_id": _hex16,
+        "workspace_id": _hex16,
+        "target": _enum("share", "app"),
+        "id": _hex16,
+        "action": _enum("revoke", "stop"),
+        "ts_ms": _int_min(0),
+        "nonce": _b64u32,
+    },
+    "hub.app_pass": {
+        "hub_id": _hex16,
+        "workspace_id": _hex16,
+        "app_id": _hex16,
+        "audience": lambda x: (
+            type(x) is str
+            and re.fullmatch(r"company|group:[a-z0-9][a-z0-9_-]{0,39}|ws:[0-9a-f]{32}", x)
+            is not None
+        ),
+        "nonce": _b64u32,
+        "exp_ms": _int_min(1),
     },
 }
 
@@ -605,8 +641,13 @@ def check_hub_publish(req, st, nonces, now_ms, dev_mode):
         raise Refused("replay")
     approval = p["approval"]  # 9
     if approval is None:
-        if req.get("access") == "public":
-            raise Refused("approval_required")
+        from .published import app_route  # late: published imports this module
+
+        route = app_route(method, target.partition("?")[0])
+        if req.get("access") == "public" or (route is not None and route["approval"]):
+            raise Refused(
+                "approval_required"
+            )  # an app commit, rollback or start never goes live unapproved (M4)
         return {"workspace": wsx, "hub": hub, "approved": False}
     verify_approval(
         approval,

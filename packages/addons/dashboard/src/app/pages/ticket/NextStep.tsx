@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
 import { openDockOn } from '@/app/terminal/dock/request'
-import type { ProgressRun } from './progress'
+import { agentWorking, type ProgressRun } from './progress'
 import { availableActions, gapOf, GATE_LABEL, policyText } from './actions'
 import { fmtDay, fmtExact, type HumanAction, type Jump, Mono, presenceLabel, type Viewer } from './shared'
 
@@ -192,7 +192,7 @@ const APPROVE = {
 function NextStepCard({ ticket, viewer, sign, jump, signing = false, run, wait, onFinish, onEdit, openTerminal = openDockOn }: Props) {
   const av = availableActions(ticket, viewer)
   const status = ticket.status as string
-  const working = !!ticket.claim && ticket.claim.live !== false
+  const working = agentWorking(ticket, wait)
   const gate = APPROVE_ORDER.find((g) => av.approve.includes(g))
   if (gate) {
     const c = APPROVE[gate]
@@ -245,6 +245,17 @@ function NextStepCard({ ticket, viewer, sign, jump, signing = false, run, wait, 
             Add it myself
           </Button>
         )}
+      </Card>
+    )
+  }
+  // Run-9 J04: the plan is approved and the agent is idle (its turn ended) or its run ended: one button, the build.
+  if (open && !gap && idle && ticket.gates.plan?.state === 'approved' && onFinish) {
+    // `idle` may come from a quiet terminal only (90 s without output): say "may be waiting", never "stopped" (Opus r9-build 2)
+    return (
+      <Card title="Plan approved" text="The agent may be waiting. If it does not go on by itself, start the build.">
+        <Button size="sm" onClick={onFinish}>
+          Start building
+        </Button>
       </Card>
     )
   }

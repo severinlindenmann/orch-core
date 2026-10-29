@@ -1,5 +1,7 @@
 """FastAPI app + the signed-request middleware (hub protocol section 11, design section 3 I3-I7): every request comes
-through a hub (`Orch-Hub`); a request without one is refused, there is no direct path (V3-D36)."""
+through a hub (`Orch-Hub`); a request without one is refused (V3-D36), with one exception that is off by default: with
+`allow_direct` the APP routes (protocol 11.4) also accept the direct v2 12.1 request, so a workspace with no hub can
+publish an app. Share routes never take the direct path."""
 
 import json
 import re
@@ -7,9 +9,10 @@ import sqlite3
 import time
 
 from fastapi import FastAPI
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 
-from . import __version__, auth, db, hub_admin, hub_path, registry, shares
+from . import __version__, apps, auth, db, hub_admin, hub_path, registry, shares
 from . import relay_proto as proto
 from .auth import Refusal
 
@@ -24,7 +27,9 @@ _HEADERS = {"cache-control": "no-store", "x-content-type-options": "nosniff"}
 class Settings:
     """api_host is the host clients sign (design I6): the configured value, never the Host header."""
 
-    def __init__(self, data_dir, api_host, clock=None, dev_mode=False):
+    def __init__(
+        self, data_dir, api_host, clock=None, dev_mode=False, allow_direct=False, share_origin=None
+    ):
         if not isinstance(api_host, str) or not _HOST.fullmatch(api_host):
             raise ValueError("api_host must be a lower-case host[:port]")
         self.api_host = api_host
@@ -33,6 +38,11 @@ class Settings:
         )  # a dev publish accepts only dev hub objects, a real one only real (2.4)
         self.db_path = db.prepare_dir(data_dir)
         self.clock = clock or (lambda: int(time.time() * 1000))
+        # the direct v2 12.1 path for APP routes only (protocol 11.2 amendment); off unless the operator turns it on
+        self.allow_direct = bool(allow_direct)
+        # the configured address apps are served from (never read from a Host header); a reach entry may not name it
+        self.share_origin = share_origin.rstrip("/").lower() if share_origin else None
+        self.app_ops = None
 
 
 def _json(status, body):
@@ -73,12 +83,14 @@ class _Ctx:
         "cred",
         "hdrs",
         "hub",
+        "info",
         "limit",
         "m",
         "method",
         "now",
         "path",
         "register",
+        "route",
         "row",
         "target",
         "ws_hex",
@@ -95,6 +107,9 @@ class SignedRequestMiddleware:
 
     def __init__(self, app, settings):
         self.app, self.s = app, settings
+        self.limiter = shares._Limiter(
+            settings.clock
+        )  # 60 app writes per minute per workspace (I14)
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
@@ -118,6 +133,8 @@ class SignedRequestMiddleware:
             body = await _read_body(receive, ctx.limit)
             scope["orch_ws"] = self._verify(ctx, body)
             scope["orch_wsk"] = ctx.row["wsk_pub"] if ctx.row is not None else None
+            if ctx.route is not None:
+                return await self._app_op(ctx, body, send)
         except _TooLarge:
             return await _respond(send, Refusal(413, "too_large"))
         except ConnectionError:
@@ -139,6 +156,22 @@ class SignedRequestMiddleware:
             return {"type": "http.request", "body": body, "more_body": False}
 
         await self.app(scope, replay, send)
+
+    async def _app_op(self, c, body, send):
+        """A verified app request. It is routed here, never by the framework's own (decoded) path matching: the route
+        is the one `published.app_route` found in the raw target (protocol 11.4)."""
+        route, args = c.route
+        ops = self.s.app_ops
+        if route["ws"] != c.ws_hex:
+            raise Refusal(403, "wrong_workspace")  # I3
+        if not self.limiter.allow(c.ws_hex):
+            raise Refusal(429, "rate_limited")
+        out = await run_in_threadpool(
+            ops.handle, route["op"], c.ws_hex, c.row["wsk_pub"], route["id"], args, body, c.info
+        )
+        status, headers, raw = _json(200, out)
+        await send({"type": "http.response.start", "status": status, "headers": headers})
+        await send({"type": "http.response.body", "body": raw})
 
     def _admit(self, scope):
         s = self.s
@@ -162,16 +195,24 @@ class SignedRequestMiddleware:
             raise Refusal(400, "malformed") from None
         c.method = scope["method"]
         c.hdrs, c.path = raw_headers, scope["path"]
+        c.info = None
+        # App routes are classified ONLY over the raw target (protocol 11.4); a route is never found by decoding.
+        c.route = apps.route_parts(c.method, c.target)
         # Every request is on the hub path (protocol 11). Without Orch-Hub / Orch-Hub-Signature it is refused: there
-        # is no direct path (V3-D36). Half a hub header pair is ambiguous, so it is malformed.
+        # is no direct path (V3-D36), except the APP routes when the operator turned `allow_direct` on (protocol 11.2,
+        # M4). Half a hub header pair is ambiguous, so it is malformed.
         hub_hdrs = {"orch-hub", "orch-hub-signature"} & set(raw_headers)
+        c.hub = raw_headers.get("orch-hub")
         if not hub_hdrs:
-            raise Refusal(403, "hub_required")
-        if len(hub_hdrs) != 2:
+            if not (s.allow_direct and c.route is not None):
+                raise Refusal(403, "hub_required")
+            c.hub = None
+        elif len(hub_hdrs) != 2:
             raise Refusal(400, "malformed")
-        c.hub = raw_headers["orch-hub"]
         try:  # 1 (hub syntax, approval strictly parsed, ASCII method/host/target) and 2
-            parsed = hub_path.parse_headers(raw_headers, c.method, s.api_host, c.target)
+            parsed = hub_path.parse_headers(
+                raw_headers, c.method, s.api_host, c.target, direct=c.hub is None
+            )
             hub_path.check_window(parsed["ts"], c.now)
         except hub_path.Refused as r:
             raise r.refusal() from None
@@ -188,6 +229,8 @@ class SignedRequestMiddleware:
             raise Refusal(401, "unknown_workspace")  # 3, before any body byte is read
         is_file_put = c.method == "PUT" and _FILE_ROUTE.fullmatch(scope["path"]) is not None
         c.limit = MAX_FILE_BODY if is_file_put else MAX_BODY
+        if c.route is not None and c.route[0]["op"] == "app.file":
+            c.limit = apps.MAX_APP_FILE_BODY
         return c
 
     def _verify(self, c, body):
@@ -199,7 +242,8 @@ class SignedRequestMiddleware:
 
     def _verify_hub(self, c, body, conn):
         """Protocol 11.2 steps 3-9 on the hub path (1-2 ran in `_admit`); policy checks come after, as on the
-        direct path (L2), on freshly read state."""
+        direct path (L2), on freshly read state. With `c.hub` None it is the direct v2 12.1 request of an app
+        route (no hub, no binding)."""
         s = self.s
         try:
             req = {
@@ -211,10 +255,14 @@ class SignedRequestMiddleware:
                 "access": hub_path.request_access(c.method, c.path),
             }
             st = hub_path.load_state(conn, c.ws_hex, c.hub, c.now, s.dev_mode)
-            hub_path.check_hub_publish(req, st, auth.DbNonces(conn), c.now, s.dev_mode)
-            hub_path.still_bound(
-                conn, c.ws_hex, c.hub
-            )  # an unbound since admission refuses this request
+            if c.hub is None:
+                res = hub_path.check_direct_publish(req, st, auth.DbNonces(conn), c.now)
+            else:
+                res = hub_path.check_hub_publish(req, st, auth.DbNonces(conn), c.now, s.dev_mode)
+                hub_path.still_bound(
+                    conn, c.ws_hex, c.hub
+                )  # an unbound since admission refuses this request
+            c.info = res.get("app_approval")
         except hub_path.Refused as r:
             raise r.refusal() from None
         registry.require_binding(conn, c.ws_hex, c.row["wsk_pub"])
@@ -225,8 +273,10 @@ class SignedRequestMiddleware:
         return c.ws_hex
 
 
-def create_app(data_dir, api_host, clock=None, dev_mode=False):
-    settings = Settings(data_dir, api_host, clock, dev_mode)
+def create_app(
+    data_dir, api_host, clock=None, dev_mode=False, allow_direct=False, share_origin=None
+):
+    settings = Settings(data_dir, api_host, clock, dev_mode, allow_direct, share_origin)
     db.init(settings.db_path)
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     app.state.settings = settings
@@ -243,6 +293,7 @@ def create_app(data_dir, api_host, clock=None, dev_mode=False):
         return JSONResponse({"workspace": ws, "status": row["status"]}, 200, _HEADERS)
 
     shares.install(app, settings)
+    settings.app_ops = apps.AppOps(settings, app.state.store)
     app.add_middleware(SignedRequestMiddleware, settings=settings)
     return app
 

@@ -71,7 +71,7 @@ function addressCard(data, actions) {
   }).flat();
   const card = h("div", { class: "card", "data-card": "address" }, h("h2", { text: "Address" }), h("dl", { class: "facts" }, facts));
   if (!data.can_change_addresses) {
-    card.append(h("p", { class: "small muted", text: "This hub only answers on this server. To use another address, install the hub again with that address." }));
+    card.append(h("p", { class: "small muted", text: "Addresses can't be changed on this page. To add or change one, ask the person who installed this hub." }));
     return card;
   }
   const detected = actions.detected ?? [];

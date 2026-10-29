@@ -131,3 +131,25 @@ describe('P10: a short join dialog', () => {
     expect(screen.queryByText('What the hub has already read cannot be taken back.')).toBeNull()
   })
 })
+
+// r9 P13: the hub's /c page opens the workspace with the link in the address fragment; the join dialog is prefilled.
+describe('a connect link in the address fragment', () => {
+  it('opens the join dialog with the hub looked up, without typing, and removes the link from the address', async () => {
+    const view = renderApp('/w/DEMO/settings/hub#connect=' + encodeURIComponent(LINK))
+    expect((screen.queryByTestId('hub-link-hub'))).toBeNull()
+    expect((await screen.findByTestId('hub-link-text', {}, T) as HTMLInputElement).value).toBe(LINK)
+    expect(screen.getByTestId('hub-link-from').textContent).toContain('http://10.0.0.5:8106') // no lookup yet: the target is named
+    await view.user.click(await screen.findByRole('button', { name: 'Look up this hub' }, T))
+    expect((await screen.findByTestId('hub-link-hub', {}, T)).textContent).toContain('Hub')
+    expect(screen.getByTestId('hub-link-origin').textContent).toContain('http://10.0.0.5:8106')
+    await waitFor(() => expect(view.address()).not.toContain('connect'), T)
+    view.unmount()
+  })
+  it('ignores a fragment that is not a connect link: no dialog, nothing prefilled', async () => {
+    const view = renderApp('/w/DEMO/settings/hub#connect=' + encodeURIComponent('javascript:alert(1)'))
+    await screen.findByTestId('hub-connect', {}, T)
+    expect(screen.queryByTestId('hub-link-text')).toBeNull()
+    expect(view.address()).not.toContain('connect')
+    view.unmount()
+  })
+})

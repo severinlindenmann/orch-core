@@ -139,7 +139,7 @@ def manifest_hash(m):
 class Store:
     def __init__(self, data_dir):
         self.root = os.path.abspath(data_dir)
-        for d in ("incoming", "shares"):
+        for d in ("incoming", "shares", "apps"):
             os.makedirs(os.path.join(self.root, d), mode=0o700, exist_ok=True)
 
     def share_dir(self, kind, sid):
@@ -149,17 +149,18 @@ class Store:
     def _open_dir(name, dir_fd=None):
         return os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=dir_fd)
 
-    def make_incoming(self, sid):
-        base = self.share_dir("incoming", sid)
+    def make_incoming(self, sid, kind="incoming"):
+        base = self.share_dir(kind, sid)
         os.makedirs(base, mode=0o700, exist_ok=True)
         for sub in ("files", ".tmp"):
             os.makedirs(os.path.join(base, sub), mode=0o700, exist_ok=True)
 
-    def write_file(self, sid, path, data):
-        """Write one file into incoming/<sid>/files/<path>. Directories are walked and created with
-        O_NOFOLLOW from a dir fd; the bytes go to a fresh O_EXCL temp file and are renamed into place."""
+    def write_file(self, sid, path, data, kind="incoming"):
+        """Write one file into <kind>/<sid>/files/<path> (apps: sid is "<app id>/<version>"). Directories are
+        walked and created with O_NOFOLLOW from a dir fd; the bytes go to a fresh O_EXCL temp file and are
+        renamed into place."""
         parts = path.split("/")
-        base = self._open_dir(self.share_dir("incoming", sid))
+        base = self._open_dir(self.share_dir(kind, sid))
         fds = [base]
         try:
             tmp_dir = self._open_dir(".tmp", base)
@@ -222,6 +223,48 @@ class Store:
         finally:
             for fd in fds:
                 os.close(fd)
+
+    def stat_files(self, kind, sid):
+        """{path: (size, sha256 hex)} of every regular file under <kind>/<sid>/files, recomputed from the bytes on
+        disk (nothing follows a symlink; a symlink or other non-regular entry is listed with size -1 so a caller
+        comparing against a manifest sees it as an extra file). Missing dir: {}."""
+        out = {}
+        top = os.path.join(self.share_dir(kind, sid), "files")
+
+        def walk(fd, prefix):
+            for name in sorted(os.listdir(fd)):
+                st = os.stat(name, dir_fd=fd, follow_symlinks=False)
+                rel = prefix + name
+                if stat.S_ISDIR(st.st_mode):
+                    sub = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+                    try:
+                        walk(sub, rel + "/")
+                    finally:
+                        os.close(sub)
+                elif stat.S_ISREG(st.st_mode):
+                    h = hashlib.sha256()
+                    ffd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=fd)
+                    with os.fdopen(ffd, "rb") as f:
+                        for chunk in iter(lambda: f.read(1 << 20), b""):
+                            h.update(chunk)
+                    out[rel] = (st.st_size, h.hexdigest())
+                else:
+                    out[rel] = (-1, "")
+
+        try:
+            fd = os.open(top, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        except OSError:
+            return {}
+        try:
+            walk(fd, "")
+        finally:
+            os.close(fd)
+        return out
+
+    def remove_tree(self, kind, sid):
+        import shutil
+
+        shutil.rmtree(self.share_dir(kind, sid), ignore_errors=True)
 
     def go_live(self, sid):
         """Move incoming/<sid>/files to shares/<sid>/files with one rename."""

@@ -6,6 +6,7 @@ import { ApiError, type Workspace } from '@/api/types'
 import { trustedPress } from '@/components/sign/trustedPress'
 import { Button } from '@/components/ui/button'
 import { WorkspaceLine } from '@/components/sign/WorkspaceLine'
+import { InfoDrawer } from '@/components/InfoDrawer'
 import { Raw } from '@/components/sign/visible'
 import { toast } from 'sonner'
 import { Details, Flow, caveat } from './shared'
@@ -71,6 +72,12 @@ function stoppedToast(what: string, got: HubReduced) {
   toast.success(`Stopped sharing ${what}`, { description: got.synced ? 'The hub has been asked to delete its copy.' : 'Stopped here. The hub is told as soon as it can be reached.' })
 }
 
+/** "1 other item stays shared." / "3 other items stay shared." / "No other item is shared." */
+function others(n: number): string {
+  if (n <= 0) return 'No other item is shared.'
+  return n === 1 ? '1 other item stays shared.' : `${n} other items stay shared.`
+}
+
 /** "1 item" / "3 items". */
 const items = (n: number) => `${n} ${n === 1 ? 'item' : 'items'}`
 
@@ -86,14 +93,14 @@ export function StopSharing({ ws, workspace, ticket, onClose }: { ws: string; wo
   const n = item ? 1 : 0
   const stop = <StopButton ws={ws} testId="hub-revoke-stop" disabled={!now.data} act={() => api.revokeHubShare(ws, ticket)} onDone={got => { stoppedToast(`“${title ?? ticket}”`, got); onClose() }} />
   return <Flow title="Stop sharing this ticket" onClose={onClose} cancel="Keep sharing" action={stop}>
-    <p data-testid="hub-revoke-ticket">Ticket <Raw>{ticket}</Raw>{title ? <> · <bdi><Raw>{title}</Raw></bdi></> : null}</p>
-    <p>The hub will delete its copy of this ticket&apos;s title, status, labels and deadline. Rules that match it will not share it again.</p>
+    <p data-testid="hub-revoke-ticket">The hub stops showing the ticket “<bdi><Raw>{title ?? ticket}</Raw></bdi>”.{now.data && <> {others(now.data.count - n)}</>}</p>
+    <p>Rules that match it will not share it again.</p>
     <p className="text-text-muted">{caveat}</p>
     <Details testId="hub-revoke-details">
       <ReviewWorkspace workspace={workspace} />
       {now.isPending ? <p role="status">Loading what the hub has…</p> : !now.data ? <p role="alert">Could not load what the hub has.</p> : <div data-testid="hub-revoke-what">
         <p>Stops being shared: {items(n)}.</p>
-        <p>{items(now.data.count)} shared now · {now.data.count - n} after this. Preview from the hub, not signed.</p>
+        <p>{items(now.data.count)} shared now · {now.data.count - n} after this. <InfoDrawer testId="hub-revoke-preview-note">The hub&apos;s own preview.</InfoDrawer></p>
       </div>}
     </Details>
   </Flow>
@@ -110,9 +117,9 @@ export function StopRule({ ws, workspace, rule, after, onClose, onDone, error, o
   const widens = !!after && after.new > 0
   const added = widens && now.data ? after.items.filter(i => !had.has(i.line)) : []
   const stop = widens ? null : <StopButton ws={ws} testId="hub-rule-stop" disabled={!after?.plan} act={() => api.removeHubRule(ws, rule, after!.plan!)} onDone={got => { stoppedToast(ruleName(rule), got); onDone() }} />
-  return <Flow title="Review sharing change" onClose={onClose} cancel="Keep sharing" action={stop}>
+  return <Flow title="Stop sharing" onClose={onClose} cancel="Keep sharing" action={stop}>
     <p>Remove this sharing rule. Items covered by other rules remain shared.</p>
-    <p data-testid="hub-rule-review-rule">Rule: <Raw>{rule.kind}</Raw>{rule.value !== null && <> · <Raw>{rule.value}</Raw></>}</p>
+    <p data-testid="hub-rule-review-rule">What stops: <Raw>{ruleName(rule)}</Raw></p>
     {error ? <div role="alert"><p className="text-danger">{error}</p>{onRetry && <Button data-testid="hub-rule-preview-retry" variant="outline" size="sm" onClick={onRetry}>Try again</Button>}</div>
       : !after || now.isPending ? <p role="status">Loading the preview…</p> : <div data-testid="hub-rule-review-what">
       <p>{after.revoked === 0 ? 'Nothing stops being shared' : `${after.revoked} ${after.revoked === 1 ? 'item stops' : 'items stop'} being shared`}.</p>
@@ -128,7 +135,7 @@ export function StopRule({ ws, workspace, rule, after, onClose, onDone, error, o
     {widens && <p data-testid="hub-rule-widens">This change would also share new items, so it can&apos;t be done here yet.</p>}
     <Details testId="hub-rule-details">
       <ReviewWorkspace workspace={workspace} />
-      {after && <p>{items(after.count)} shared after this. Preview from the hub, not signed.</p>}
+      {after && <p>{items(after.count)} shared after this. <InfoDrawer testId="hub-rule-preview-note">The hub&apos;s own preview.</InfoDrawer></p>}
     </Details>
   </Flow>
 }

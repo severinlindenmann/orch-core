@@ -55,3 +55,11 @@ test("summary and chip share the actionable list, excluding offline and hidden i
   assert.equal(needs.all().find(n => n.className === "chip ").textContent, "3");
   assert.equal(homeSummary(spaces, items, ["a"]).waiting, 0);
 });
+
+test("with a selective workspace the needs card says quietly that only shared items appear; otherwise it does not", () => {
+  const text = (n) => n.flatMap((x) => x.all()).map((x) => x.textContent).join(" ");
+  const sel = homeView({ workspaces: [{ workspace_id: "s", name: "S", mode: "selective", online: true }], items: [], actions: {} });
+  assert.match(text(sel), /Only items you share appear here/);
+  const full = homeView({ workspaces: [{ workspace_id: "f", name: "F", mode: "full", online: true }], items: [], actions: {} });
+  assert.doesNotMatch(text(full), /Only items you share appear here/);
+});

@@ -35,6 +35,7 @@ HEADER_MAX = 16 * 1024
 HEADERS_MAX = 64
 BODY_MAX = 1024 * 1024
 READ_TIMEOUT = 10.0
+HEADER_TIMEOUT = 2.0  # the whole header block, before anyone has proven anything
 RESPONSE_MAX = 4 * 1024 * 1024
 UPSTREAM_TIMEOUT = 30
 CALLS_PER_MINUTE = 60
@@ -414,7 +415,7 @@ class Proxy:
         except ValueError:
             raise _Refuse(403, "forbidden") from None
         try:
-            raw = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), READ_TIMEOUT)
+            raw = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), HEADER_TIMEOUT)
         except TimeoutError:
             raise _Refuse(408, "timeout") from None
         except (asyncio.LimitOverrunError, asyncio.IncompleteReadError):
@@ -579,7 +580,7 @@ class Proxy:
         return msgs
 
     async def _forward(self, key: str, cap: _Cap, name: str, up: Any, message: dict) -> list[dict]:
-        if cap.inflight.get(name, 0) >= INFLIGHT_MAX:
+        if sum(cap.inflight.values()) >= INFLIGHT_MAX:  # across all its servers: one capability cannot fill the pool
             raise _Refuse(429, "too many calls")
         cap.inflight[name] = cap.inflight.get(name, 0) + 1
         try:

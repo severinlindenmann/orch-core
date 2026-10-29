@@ -1151,3 +1151,44 @@ def test_a_binding_to_another_hub_with_the_same_number_kills_the_capability(env)
     with pytest.raises(ValueError):
         env.proxy.mint("w1", 1, "r1", env.records["w1"], hub_id="h1")
     assert env.proxy.mint("w1", 1, "r1", env.records["w1"], hub_id="h2")
+
+
+# -- delta fix N2: slow headers and the pool -------------------------------------------------------------------------
+
+
+def test_the_header_block_must_arrive_within_two_seconds(env, monkeypatch):
+    assert mcpproxy.HEADER_TIMEOUT == 2.0
+    monkeypatch.setattr(mcpproxy, "HEADER_TIMEOUT", 0.3)
+    with socket.create_connection(("127.0.0.1", env.port), timeout=5) as s:
+        s.sendall(b"POST /m/crm HTTP/1.1\r\nHost: x\r\n")  # never finished
+        started = time.monotonic()
+        assert s.recv(4096).startswith(b"HTTP/1.1 408")
+    assert time.monotonic() - started < 2
+
+
+def test_one_capability_has_at_most_four_posts_in_flight_across_its_servers(env):
+    env.records["w1"].append({**env.records["w1"][0], "name": "wiki", "digest": "d2"})
+    release, started = threading.Event(), threading.Semaphore(0)
+
+    def slow(m):
+        started.release()
+        release.wait(10)
+
+    env.up_factory = lambda rec, bearer: FakeUp(on_post=slow)
+    cap = mint(env, names=("crm", "wiki"))
+    results = []
+    threads = [
+        threading.Thread(target=lambda n=n: results.append(rpc(env, cap, "initialize", {}, name=n)[0]))
+        for n in ("crm", "crm", "wiki", "wiki")
+    ]
+    for t in threads:
+        t.start()
+    for _ in range(4):
+        assert started.acquire(timeout=5)
+    try:
+        assert rpc(env, cap, "initialize", {}, name="wiki")[0] == 429  # a fifth, on the other server
+    finally:
+        release.set()
+        for t in threads:
+            t.join(10)
+    assert results == [200] * 4

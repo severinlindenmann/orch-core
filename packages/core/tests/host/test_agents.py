@@ -148,16 +148,18 @@ def test_preview_blocks_in_order_and_has_no_side_effects(w, tmp_path, monkeypatc
         # a Claude Code agent in the ticket's work folder is isolated from the folder's own settings and MCP files
         cl = preview(c, **{**args, "harness": "claude-code"})
         assert cl["cwd"]["kind"] == "workdir"
-        assert cl["argv"][4:11] == [
+        assert cl["argv"][4:13] == [
             "claude",
             "--session-id",
             "@orch-session-id",
             "--setting-sources",
             "user",
             "--strict-mcp-config",
+            "--mcp-config",
+            "@orch-mcp",
             "--append-system-prompt-file",
         ]
-        assert cl["argv"][11] == "@orch-rules"
+        assert cl["argv"][13] == "@orch-rules"
     finally:
         r.close()
 

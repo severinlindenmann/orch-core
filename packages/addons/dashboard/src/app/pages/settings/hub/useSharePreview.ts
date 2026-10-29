@@ -6,6 +6,9 @@ import type { HubPreview, HubRule } from '@/api/hub'
 /** The host's words when a rule reaches more people than one review can show (core `shareops.TOO_MANY`). */
 export const TOO_MANY = 'This rule reaches too many people. Narrow it to share.'
 
+/** What the host's refusal always contains (it may be prefixed by the relay); the page matches this, not the whole sentence. */
+const TOO_MANY_MARK = 'reaches too many people'
+
 export type ShareChange = { add: HubRule; remove?: never } | { remove: HubRule; add?: never }
 
 /**
@@ -25,7 +28,7 @@ export function useSharePreview(ws: string, change: ShareChange | undefined) {
     const timer = setTimeout(() => {
       void api.getHubPreview(ws, JSON.parse(encoded) as ShareChange).then(
         data => { if (alive) setPreview({ key: encoded, data }) },
-        err => { if (alive) setError(err instanceof ApiError && err.message === TOO_MANY ? TOO_MANY : 'Could not preview this rule. Check its value or try again.') },
+        err => { if (alive) setError(err instanceof ApiError && err.message.includes(TOO_MANY_MARK) ? TOO_MANY : 'Could not preview this rule. Check its value or try again.') },
       )
     }, 300)
     return () => { alive = false; clearTimeout(timer) }

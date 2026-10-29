@@ -144,6 +144,18 @@ async function ruleReview() {
   return { dialog, button: within(dialog).getByTestId('hub-rule-stop') }
 }
 
+describe('a review over the host limits', () => {
+  it('says the host\'s plain sentence even when the message carries a prefix', async () => {
+    const user = userEvent.setup()
+    vi.spyOn(api, 'getHubPreview').mockRejectedValue(new ApiError(400, { code: 'invalid.input', message: 'share.preview: This rule reaches too many people. Narrow it to share.', retryable: false }))
+    mount(<ShareRules ws={WS.id} workspace={WS} onBack={() => {}} />)
+    await user.click(await screen.findByTestId('hub-rule-add'))
+    await user.type(screen.getByTestId('hub-rule-value'), 'team')
+    expect(await screen.findByRole('alert')).toHaveTextContent('This rule reaches too many people. Narrow it to share.')
+    expect(screen.getByRole('alert').textContent).not.toMatch(/share\.preview/)
+  })
+})
+
 describe('the shared list', () => {
   it('shows the ticket title, one Stop sharing per ticket, no "Shared ticket 1"', async () => {
     mount(<ShareRules ws={WS.id} workspace={WS} onBack={() => {}} />)

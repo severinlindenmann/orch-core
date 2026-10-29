@@ -132,6 +132,16 @@ def test_preview_passes_one_rule_to_the_host():
     assert link.calls[1] == ("share.preview", {"remove": {"kind": "ticket", "ticket": "PRD-0014"}})
 
 
+def test_the_hosts_too_many_people_refusal_reaches_the_page_in_its_own_words():
+    """A review over the host's hard limits (core shareops.TOO_MANY) is relayed with its code and plain sentence: the
+    page matches the sentence, so the relay must not reword or drop it."""
+    too_many = "This rule reaches too many people. Narrow it to share."
+    link = Link({"share.preview": fail("invalid.input", too_many)})
+    res = client(link).post(f"/api/w/{WS}/hub/share/preview", json={"add": {"kind": "type", "value": "Bug"}})
+    assert res.status_code == 400
+    assert res.json()["error"]["code"] == "invalid.input" and too_many in res.json()["error"]["message"]
+
+
 @pytest.mark.parametrize("body", [
     {"add": {"kind": "type", "value": "x"}, "remove": {"kind": "type", "value": "y"}},
     {"add": {"kind": "type"}}, {"add": {"kind": "needs_you", "value": "x"}},

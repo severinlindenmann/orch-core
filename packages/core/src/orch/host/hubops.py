@@ -442,7 +442,7 @@ def wscard_part(service: WorkspaceService) -> dict[str, Any]:
 class _NoLink:
     """No hub link in this host yet (C5): every send is unreachable."""
 
-    def send(self, message: dict[str, Any]) -> dict[str, Any]:
+    def send_next(self, op: str, build: Any) -> dict[str, Any]:
         raise ConnectionRefusedError("no hub link")
 
 

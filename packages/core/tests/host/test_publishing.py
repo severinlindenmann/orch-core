@@ -32,7 +32,7 @@ from tests.host.test_blobs import add, sha, upload
 from tests.host.test_click import Click, click  # noqa: F401
 from tests.host.test_hub_ops import HUB_ID, connect_args, join_args
 from tests.hub import contract as H
-from tests.hub.fake import sign_with
+from tests.hub.fake import BareLink, sign_with
 from tests.hub.vec import private_key, pub
 
 lab, served, human = human_helpers.lab, human_helpers.served, human_helpers.human
@@ -122,7 +122,7 @@ class FakeServer:
         return 404, b'{"error":"not_found"}'
 
 
-class PublishHub:
+class PublishHub(BareLink):
     """The hub link as the host sees it: takes ``join`` and ``card_put`` (marking the fake server registered, or the
     ``error`` set by a test), forwards ``publish_out`` to :class:`FakeServer` adding the hub's signature, as the
     contract says, and answers every message signed by the vector HK_op."""

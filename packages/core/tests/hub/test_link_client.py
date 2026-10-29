@@ -10,7 +10,6 @@ from typing import Any
 import pytest
 from OpenSSL import SSL
 
-from orch.canon.jcs import dumps as cj
 from orch.crypto import suite
 from orch.crypto.encoding import b64u
 from orch.hubclient.tlslink import client as C
@@ -54,26 +53,28 @@ def open_link(hub: TlsHub, **kw: Any) -> LinkClient:
     return LinkClient.open("127.0.0.1", hub.port, **args)
 
 
-_seq = iter(range(1, 10_000))
+def send(link: LinkClient, op: str = "snapshot_get", body: dict | None = None, **fields: Any) -> dict[str, Any]:
+    """One w2h request numbered by the link and signed over its exporter; ``fields`` override header fields."""
 
+    def build(seq: int, cb: bytes) -> dict[str, Any]:
+        o = {
+            "v": 2,
+            "suite": 2,
+            "kind": "hub.link",
+            "hv": 0,
+            "hub_id": link.hub_id,
+            "workspace_id": link.workspace_id,
+            "dir": "w2h",
+            "seq": seq,
+            "ts_ms": int(time.time() * 1000),
+            "op": op,
+            "re": None,
+            "body": body or {},
+        }
+        o.update(fields)
+        return {"o": o, "sig": b64u(sign(C.link_signed_bytes(C.SIG_LINK, cb, o)))}
 
-def request(link: LinkClient, op: str = "snapshot_get", body: dict | None = None, **fields: Any) -> dict[str, Any]:
-    o = {
-        "v": 2,
-        "suite": 2,
-        "kind": "hub.link",
-        "hv": 0,
-        "hub_id": link.hub_id,
-        "workspace_id": link.workspace_id,
-        "dir": "w2h",
-        "seq": next(_seq),
-        "ts_ms": int(time.time() * 1000),
-        "op": op,
-        "re": None,
-        "body": body or {},
-    }
-    o.update(fields)
-    return {"o": o, "sig": b64u(sign(C.SIG_LINK + cj(o)))}
+    return link.send_next(build)
 
 
 def test_happy_path_auth_and_one_request(make_hub) -> None:
@@ -81,9 +82,9 @@ def test_happy_path_auth_and_one_request(make_hub) -> None:
     with open_link(hub) as link:
         assert hub.auth_verified.wait(3)
         assert "wsk_pub" not in hub.auth_frames[0]
-        reply = link.send(request(link))
+        reply = send(link)
         assert reply["o"]["body"] == {"snapshot": {"stub": 1}}
-        assert link.request("card_put", {"card": {}, "pk_pub": "x"}, sign=sign, seq=99) == {}
+        assert link.call("card_put", {"card": {}, "pk_pub": "x"}) == {}
     assert hub.requests[0]["o"]["op"] == "snapshot_get"
 
 
@@ -204,10 +205,10 @@ def test_bad_replies_are_refused_and_close_the_link(make_hub, kind: str, code: s
     hub = make_hub(on_request=bad_reply(kind))
     link = open_link(hub)
     with pytest.raises(LinkError) as e:
-        link.send(request(link))
+        send(link)
     assert e.value.code == code
     with pytest.raises(LinkClosed):
-        link.send(request(link))
+        send(link)
 
 
 def test_unknown_op_error_reply_keeps_the_link_open(make_hub) -> None:
@@ -222,16 +223,16 @@ def test_unknown_op_error_reply_keeps_the_link_open(make_hub) -> None:
     hub = make_hub(on_request=on_request)
     with open_link(hub) as link:
         with pytest.raises(LinkError) as e:
-            link.request("snapshot_get", {}, sign=sign, seq=1)
+            link.call("snapshot_get", {})
         assert e.value.code == "unknown_op"
-        assert link.request("snapshot_get", {}, sign=sign, seq=2) == {"snapshot": {"stub": 1}}
+        assert link.call("snapshot_get", {}) == {"snapshot": {"stub": 1}}
 
 
 def test_error_op_with_a_success_body_is_refused(make_hub) -> None:
     hub = make_hub(on_request=lambda h, o: h.reply(o, op="error", body={}))
     link = open_link(hub)
     with pytest.raises(LinkError) as e:
-        link.send(request(link))
+        send(link)
     assert e.value.code == "malformed"
 
 
@@ -240,10 +241,10 @@ def test_unsigned_error_frame_after_auth_raises_and_closes(make_hub) -> None:
     hub.on_request = lambda h, o: {"t": "error", "error": "stale_timestamp"}
     link = open_link(hub)
     with pytest.raises(LinkError) as e:
-        link.send(request(link))
+        send(link)
     assert e.value.code == "stale_timestamp"
     with pytest.raises(LinkClosed):
-        link.send(request(link))
+        send(link)
 
 
 def test_oversize_frame_is_refused_from_the_header_alone(make_hub) -> None:
@@ -251,7 +252,7 @@ def test_oversize_frame_is_refused_from_the_header_alone(make_hub) -> None:
     link = open_link(hub)
     started = time.monotonic()
     with pytest.raises(LinkError) as e:
-        link.send(request(link))
+        send(link)
     assert e.value.code == "malformed" and time.monotonic() - started < 2.5
 
 
@@ -260,7 +261,7 @@ def test_zero_length_and_non_object_frames_are_refused(make_hub) -> None:
         hub = make_hub(on_request=lambda h, o, raw=raw: raw)
         link = open_link(hub)
         with pytest.raises(LinkError) as e:
-            link.send(request(link))
+            send(link)
         assert e.value.code == "malformed"
 
 
@@ -268,41 +269,41 @@ def test_read_timeout_closes_the_link(make_hub) -> None:
     hub = make_hub(on_request=lambda h, o: None)
     link = open_link(hub, timeout=0.4)
     with pytest.raises(LinkTimeout):
-        link.send(request(link))
+        send(link)
     with pytest.raises(LinkClosed):
-        link.send(request(link))
+        send(link)
 
 
 def test_ops_outside_the_closed_list_are_never_sent(make_hub) -> None:
     hub = make_hub()
     with open_link(hub) as link:
         with pytest.raises(LinkError) as e:
-            link.send(request(link, "sign_this"))
+            send(link, "sign_this")
         assert e.value.code == "unknown_op"
         with pytest.raises(LinkError) as e:
-            link.send(request(link, "event_deliver"))  # an h2w op
+            send(link, "event_deliver")  # an h2w op
         assert e.value.code == "unknown_op"
         with pytest.raises(LinkError) as e:
-            link.send(request(link, "wk_seal"))  # full mode only
+            send(link, "wk_seal")  # full mode only
         assert e.value.code == "wrong_mode"
         with pytest.raises(LinkError) as e:
-            link.send(request(link, hub_id="33" * 16))
+            send(link, hub_id="33" * 16)
         assert e.value.code == "other_hub"
         with pytest.raises(LinkError) as e:
-            link.send(request(link, workspace_id="33" * 16))
+            send(link, workspace_id="33" * 16)
         assert e.value.code == "other_workspace"
         with pytest.raises(LinkError) as e:
-            link.send(request(link, re=5))
+            send(link, re=5)
         assert e.value.code == "malformed"
         assert hub.requests == []
-        assert link.send(request(link))["o"]["op"] == "snapshot_get"  # and the link still works
+        assert send(link)["o"]["op"] == "snapshot_get"  # and the link still works
 
 
 def test_selective_ops_are_refused_in_full_mode(make_hub) -> None:
     hub = make_hub()
     with open_link(hub, mode="full") as link:
         with pytest.raises(LinkError) as e:
-            link.send(request(link, "share_put", {"item_id": "x", "sealed": "y"}))
+            send(link, "share_put", {"item_id": "x", "sealed": "y"})
         assert e.value.code == "wrong_mode"
 
 
@@ -310,7 +311,7 @@ def test_unhashable_op_is_malformed_not_a_crash(make_hub) -> None:
     hub = make_hub()
     with open_link(hub) as link:
         with pytest.raises(LinkError) as e:
-            link.send(request(link, op=["snapshot_get"]))
+            send(link, op=["snapshot_get"])
         assert e.value.code == "malformed"
         assert hub.requests == []
 
@@ -362,11 +363,11 @@ def _push_event(hub: TlsHub, body: dict, *, key: Any = None, **fields: Any) -> N
 
     o = {
         "v": 2, "suite": 2, "kind": "hub.link", "hv": 0, "hub_id": hub.hub_id, "workspace_id": hub.workspace_id,
-        "dir": "h2w", "seq": 7, "ts_ms": int(time.time() * 1000), "op": "event_deliver", "re": None, "body": body,
+        "dir": "h2w", "seq": hub.next_seq(), "ts_ms": int(time.time() * 1000), "op": "event_deliver", "re": None,
+        "body": body,
     }  # fmt: skip
     o.update(fields)
-    sig = suite.sign(key or hub.hk_op, C.SIG_ROUTE + cj(o))
-    framing.write_frame(hub._conns[-1], {"o": o, "sig": b64u(sig)}, timeout=5)  # noqa: SLF001
+    framing.write_frame(hub._conns[-1], hub.sign_frame(o, key=key), timeout=5)  # noqa: SLF001
 
 
 def test_event_deliver_is_taken_during_a_request_handed_out_once_and_acked_with_its_code(make_hub) -> None:
@@ -381,19 +382,19 @@ def test_event_deliver_is_taken_during_a_request_handed_out_once_and_acked_with_
 
     hub = make_hub(on_request=on_request)
     with open_link(hub) as link:
-        link.request("snapshot_get", {}, sign=sign, seq=1)
+        link.call("snapshot_get", {})
         assert link.next_route_in(0) is None  # an event is not a route_in
         assert link.next_event_deliver(0) == ("workspace", {"type": "x"})
         with pytest.raises(LinkError):  # one outstanding at most
             link.next_event_deliver(0)
     with open_link(hub) as link:
-        link.request("snapshot_get", {}, sign=sign, seq=1)
+        link.call("snapshot_get", {})
         link.next_event_deliver(0)
         link.ack_event_deliver("forbidden_role")
         deadline = time.time() + 3
         while not seen and time.time() < deadline:
             time.sleep(0.02)
-    assert seen and seen[0]["op"] == "event_deliver" and seen[0]["re"] == 7
+    assert seen and seen[0]["op"] == "event_deliver" and seen[0]["re"] == 1  # the first h2w frame of the connection
     assert seen[0]["body"] == {"error": "forbidden_role"}
 
 
@@ -415,7 +416,7 @@ def test_event_deliver_with_a_bad_body_closes_the_link(make_hub, body) -> None:
     hub = make_hub(on_request=on_request)
     with open_link(hub) as link:
         with pytest.raises(LinkError) as e:
-            link.request("snapshot_get", {}, sign=sign, seq=1)
+            link.call("snapshot_get", {})
         assert e.value.code == "malformed"
 
 
@@ -430,7 +431,7 @@ def test_event_deliver_must_be_signed_by_the_hub_op_key_and_fresh(make_hub, fiel
 
     hub = make_hub(on_request=on_request)
     with open_link(hub) as link, pytest.raises(LinkError) as e:
-        link.request("snapshot_get", {}, sign=sign, seq=1)
+        link.call("snapshot_get", {})
     assert e.value.code == code
 
 
@@ -440,14 +441,14 @@ def test_the_h2w_queues_are_bounded_and_a_full_one_closes_the_link_with_queue_fu
     from orch.hubclient.tlslink.client import MAX_QUEUED
 
     def on_request(hub: TlsHub, o: dict):
-        for i in range(MAX_QUEUED + 1):
-            _push_event(hub, {"log": "workspace", "event": {"type": "x"}}, seq=100 + i)
+        for _ in range(MAX_QUEUED + 1):
+            _push_event(hub, {"log": "workspace", "event": {"type": "x"}})
         return hub.reply(o)
 
     hub = make_hub(on_request=on_request)
     with open_link(hub) as link:
         with pytest.raises(LinkError) as e:
-            link.request("snapshot_get", {}, sign=sign, seq=1)
+            link.call("snapshot_get", {})
         assert e.value.code == "queue_full"
         with pytest.raises(LinkClosed):
             link.next_event_deliver(0)
@@ -460,12 +461,12 @@ def test_a_queue_at_its_limit_still_hands_out_every_entry(make_hub) -> None:
         if o["op"] != "snapshot_get":
             return b""  # the host's acks
         for i in range(MAX_QUEUED):
-            _push_event(hub, {"log": "workspace", "event": {"n": i}}, seq=100 + i)
+            _push_event(hub, {"log": "workspace", "event": {"n": i}})
         return hub.reply(o)
 
     hub = make_hub(on_request=on_request)
     with open_link(hub) as link:
-        link.request("snapshot_get", {}, sign=sign, seq=1)
+        link.call("snapshot_get", {})
         got = []
         for _ in range(MAX_QUEUED):
             got.append(link.next_event_deliver(0)[1]["n"])

@@ -863,3 +863,66 @@ def test_pins_of_another_hub_are_empty_pins(w):
     path.write_text(json.dumps(doc))
     os.chmod(path, 0o600)
     assert orgsecrets._pins(w.service, orgstate._state(w.service))["ids"] == {}  # noqa: SLF001
+
+
+# -- review delta LOW 1: the pin file is read without following links, and an unsafe file fails closed -----------------
+
+
+def _pins_path(w):
+    return orgstate.org_dir(w.service) / "secret-pins.json"
+
+
+def test_a_dangling_symlink_for_the_pin_file_fails_closed(w):
+    w.accept_server()
+    w.org.secrets = [w.entry(version=3)]
+    sec_sync(w)
+    path = _pins_path(w)
+    path.unlink()
+    path.symlink_to(path.parent / "nowhere.json")
+    w.org.secrets = [w.entry(version=2, value="older-value-2222")]
+    assert sec_sync(w)["secrets"] == "pins_unusable"
+    assert path.is_symlink()  # nothing replaced it
+
+
+def test_a_pin_file_with_an_unsafe_mode_fails_closed(w):
+    w.accept_server()
+    w.org.secrets = [w.entry(version=3)]
+    sec_sync(w)
+    os.chmod(_pins_path(w), 0o644)
+    w.org.secrets = [w.entry(version=4)]
+    assert sec_sync(w)["secrets"] == "pins_unusable"
+
+
+# -- review delta LOW 2: values are forgotten AFTER the file changed ----------------------------------------------------
+
+
+def test_the_cache_and_held_values_are_dropped_after_the_files_changed(live, monkeypatch):
+    w = live.w
+    seen: list[tuple[str, bool]] = []
+    real_drop, real_forget = orgsecrets.drop_cache, orgsecrets._forget_held  # noqa: SLF001
+    path = orgstate.org_dir(w.service) / "secrets.json"
+
+    def drop(service):
+        seen.append(("drop", path.exists() and VALUE in json.dumps(w.stored())))
+        real_drop(service)
+
+    def forget(service):
+        seen.append(("forget", path.exists() and VALUE in json.dumps(w.stored())))
+        real_forget(service)
+
+    monkeypatch.setattr(orgsecrets, "drop_cache", drop)
+    monkeypatch.setattr(orgsecrets, "_forget_held", forget)
+    old_sealed = w.stored()[0]["sealed"]
+    w.org.secrets = [w.entry(version=2, value="rotated-value-777")]
+    sec_sync(w)  # rotation: the new wrap is on disk before anything is forgotten
+    assert seen and all(w.stored()[0]["sealed"] != old_sealed and not flag for _, flag in seen)
+    seen.clear()
+    w.org.secrets = []
+    sec_sync(w)  # removal: the file is gone before anything is forgotten
+    assert seen and all(not path.exists() for _ in seen)
+    seen2: list[bool] = []
+    monkeypatch.setattr(orgsecrets, "_forget_held", lambda service: seen2.append(path.exists()))
+    w.org.secrets = [w.entry(version=3)]
+    sec_sync(w)
+    ok(req(w.served, "org.decline", {"kind": "mcp", "name": "vault"}))  # prune
+    assert seen2 and not seen2[-1]

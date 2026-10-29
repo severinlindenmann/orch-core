@@ -16,8 +16,11 @@ or returned by an op."""
 from __future__ import annotations
 
 import datetime
+import os
 import threading
 from typing import TYPE_CHECKING, Any
+
+from .errors import HostError
 
 if TYPE_CHECKING:
     from .service import WorkspaceService
@@ -123,9 +126,12 @@ def _pins(service: WorkspaceService, state: Any) -> dict[str, Any]:
     empty."""
     os_ = _orgstate()
     empty = {"hub_id": str(state.hub_id), "bundle": None, "ids": {}}
-    if not (os_.org_dir(service) / "secret-pins.json").exists():
+    if not os.path.lexists(os_.org_dir(service) / "secret-pins.json"):  # a link, even a dangling one, is "there"
         return empty
-    doc = os_._read(service, "secret-pins.json")  # noqa: SLF001
+    try:
+        doc = os_._read(service, "secret-pins.json")  # noqa: SLF001 - O_NOFOLLOW, 0600 host UID, else HostError
+    except HostError:
+        raise PinsUnusable from None
     if type(doc) is not dict or type(doc.get("ids")) is not dict or len(doc["ids"]) > PINS_MAX:
         raise PinsUnusable
     bundle = doc.get("bundle")
@@ -148,11 +154,11 @@ def drop_all(service: WorkspaceService) -> None:
     stay."""
     import contextlib
 
-    drop_cache(service)
-    _forget_held(service)
     with _MU:
         with contextlib.suppress(OSError):
             (_orgstate().org_dir(service) / "secrets.json").unlink()
+    drop_cache(service)  # after the file: a call in between could not re-cache or re-hold the old value
+    _forget_held(service)
 
 
 def used_names(service: WorkspaceService) -> set[str]:
@@ -193,9 +199,9 @@ def prune(service: WorkspaceService) -> None:
             used = used_names(service)
             keep = [r for r in rows if r["name"] in used]
             if len(keep) != len(rows):
+                _write_wraps(service, state, keep, issued)
                 drop_cache(service)
                 _forget_held(service)
-                _write_wraps(service, state, keep, issued)
     except Exception:  # noqa: BLE001 - a missing binding has nothing to prune
         return
 
@@ -265,10 +271,10 @@ def sync_secrets(service: WorkspaceService, state: Any, held: Any, body: Any, no
             "ids": ids,
         },
     )
-    if before != keep:
-        drop_cache(service)
-        _forget_held(service)
     _write_wraps(service, state, keep, o["issued_ms"])
+    if before != keep:
+        drop_cache(service)  # after the files changed, so nothing can re-cache or re-hold the old value
+        _forget_held(service)
     return "new" if fresh else "same"
 
 

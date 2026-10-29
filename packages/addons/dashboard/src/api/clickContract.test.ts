@@ -46,7 +46,8 @@ describe('click contract 4', () => {
     const p = clickProblem(new ApiError(409, { code: 'intent.done', message: 'x', retryable: false, summary: '[{"raw":1}]', ticket: { key: 'DEMO-0007', title: 'Plan the launch' } }))
     expect(p.next).toBe('open')
     expect(p.ticket).toEqual({ key: 'DEMO-0007', title: 'Plan the launch' })
-    expect(p.body).toBe('“Plan the launch” (DEMO-0007) was already created.')
+    expect(p.title).toBe('You already have this ticket')
+    expect(p.body).toBe('“Plan the launch” (DEMO-0007) already exists with this text. Open it, or make another one like it.')
     expect(p.body).not.toContain('raw')
   })
 

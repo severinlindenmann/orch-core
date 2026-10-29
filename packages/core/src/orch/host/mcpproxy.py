@@ -15,16 +15,13 @@ import hmac
 import ipaddress
 import json
 import logging
-import re
 import threading
 import time
 import urllib.parse
 from collections.abc import Callable
 from typing import Any
 
-from orch.hubclient.orgtext import text_ok
-
-from .mcpshared import CAPABILITY_SHAPE, new_capability, server_name_ok, tool_pin
+from .mcpshared import CAPABILITY_SHAPE, new_capability, server_name_ok, tool_pin, tool_view
 
 __all__ = ["Proxy"]
 
@@ -43,10 +40,6 @@ CALLS_PER_CAPABILITY = 2000
 INFLIGHT_MAX = 4
 TOOLS_MAX = 200
 TOOLS_BYTES_MAX = 256 * 1024
-SCHEMA_BYTES_MAX = 16 * 1024
-DESCRIPTION_MAX = 500
-TITLE_MAX = 100
-TOOL_NAME = re.compile(r"[A-Za-z0-9_.-]{1,128}")
 ALLOWED_METHODS = ("initialize", "ping", "tools/list", "tools/call")
 _REASONS = {
     200: "OK",
@@ -123,29 +116,8 @@ def _visible_ascii(text: object, limit: int) -> bool:
     return type(text) is str and 0 < len(text) <= limit and all(0x21 <= ord(c) <= 0x7E for c in text)
 
 
-def _strings_ok(obj: Any, depth: int = 0) -> bool:
-    if depth > 24:
-        return False
-    if type(obj) is str:
-        return text_ok(obj)
-    if isinstance(obj, dict):
-        return all(type(k) is str and text_ok(k) and _strings_ok(v, depth + 1) for k, v in obj.items())
-    if isinstance(obj, list):
-        return all(_strings_ok(v, depth + 1) for v in obj)
-    return True
-
-
 def _dumps(obj: Any) -> str:
     return json.dumps(obj, separators=(",", ":"), ensure_ascii=False)
-
-
-def _view(tool: dict) -> dict:
-    """The entry the agent is shown for one sanitized tool. The pin is computed over exactly this (and nothing is
-    forwarded that is not in it)."""
-    out = {"name": tool["name"], "description": tool["description"], "inputSchema": tool["inputSchema"]}
-    if "title" in tool:
-        out["title"] = tool["title"]
-    return out
 
 
 def _secret_forms(value: str) -> list[str]:
@@ -173,39 +145,6 @@ def _scrub(obj: Any, forms: list[str]) -> Any:
     if isinstance(obj, list):
         return [_scrub(v, forms) for v in obj]
     return obj
-
-
-def _sanitize_tool(tool: Any) -> dict | None:
-    if not isinstance(tool, dict):
-        return None
-    name = tool.get("name")
-    if type(name) is not str or TOOL_NAME.fullmatch(name) is None:
-        return None
-    description = tool.get("description", "")
-    if description is None:
-        description = ""
-    title = tool.get("title")
-    if type(description) is not str or (title is not None and type(title) is not str):
-        return None
-    description = description[:DESCRIPTION_MAX]
-    if not text_ok(description) or (title is not None and not text_ok(title[:TITLE_MAX])):
-        return None
-    schema = tool.get("inputSchema", {"type": "object"})
-    if not isinstance(schema, dict) or not _strings_ok(schema):
-        return None
-    try:
-        if len(_dumps(schema)) > SCHEMA_BYTES_MAX:
-            return None
-    except (TypeError, ValueError):
-        return None
-    for extra in ("outputSchema", "annotations"):
-        value = tool.get(extra)
-        if value is not None and (not isinstance(value, dict) or not _strings_ok(value)):
-            return None
-    out = {"name": name, "description": description, "inputSchema": schema}
-    if title:
-        out["title"] = title[:TITLE_MAX]
-    return out
 
 
 class Proxy:
@@ -626,26 +565,31 @@ class Proxy:
         raw = result.get("tools") if isinstance(result, dict) else None
         if not isinstance(raw, list):
             return None, _rpc_error(rid, -32603, "the company server did not answer")
-        tools: list[dict] = []
+        tools: list[dict] = []  # good tools: the view plus its pin
+        seen_rows: list[dict] = []  # what the owner's page gets: good tools and too_long ones
         seen: set[str] = set()
         size = 0
         for item in raw:
-            if len(tools) >= TOOLS_MAX:
+            if len(seen_rows) >= TOOLS_MAX:
                 break
-            tool = _sanitize_tool(item)
-            if tool is None or tool["name"] in seen:
-                continue
-            tool["pin"] = tool_pin(_view(tool))  # the pin covers exactly what the agent will be shown
-            size += len(_dumps(tool))
+            view, problem = tool_view(item)
+            if view is None or view["name"] in seen:
+                continue  # not a tool, or hidden characters: skipped
+            if problem is None:
+                row = {**view, "pin": tool_pin(view)}  # approved == pinned == forwarded: one view
+            else:
+                row = {"name": view["name"], "problem": problem}
+            size += len(_dumps(row))
             if size > TOOLS_BYTES_MAX:
                 break
-            seen.add(tool["name"])
-            tools.append(tool)
+            seen.add(view["name"])
+            seen_rows.append(row)
+            if problem is None:
+                tools.append(row)
         cap.pins[name] = {t["name"]: t["pin"] for t in tools}
         if self._on_seen is not None:
-            seen_view = [{**_view(t), "pin": t["pin"]} for t in tools]
             try:
-                self._on_seen(cap.ws, name, str(record.get("digest", "")), seen_view)
+                self._on_seen(cap.ws, name, str(record.get("digest", "")), seen_rows)
             except Exception:
                 pass
         return tools, None
@@ -665,7 +609,7 @@ class Proxy:
         shown = []
         for t in tools:
             if policy.get(t["name"]) == t["pin"]:
-                shown.append(_view(t))  # the same entry the pin was computed over
+                shown.append({k: v for k, v in t.items() if k != "pin"})  # the view the pin covers
         return {"jsonrpc": "2.0", "id": rid, "result": {"tools": shown}}
 
     async def _tools_call(self, key: str, cap: _Cap, name: str, up: Any, rid: Any, params: dict) -> dict:

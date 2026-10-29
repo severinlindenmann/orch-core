@@ -9,8 +9,9 @@ Files under ``<state>/hosts/<ws>/hub/org/`` (a 0700 folder, files 0600, host UID
   things stricter (a hand edit fails the signature). The stored bundle's ``version`` is also the pin: a sync
   never takes a
   lower one.
-* ``seen.json``: ``{servers: {name: {hub_id, binding_seq, digest, at, tools: [{name, description, pin}]}}}``. What the
-  proxy last saw in a server's ``tools/list`` (so the owner can look at it). Grants nothing.
+* ``seen.json``: ``{servers: {name: {hub_id, binding_seq, digest, at, tools: [row]}}}``. What the
+  proxy last saw in a server's ``tools/list`` (so the owner can look at it). A row is the whole tool view plus its pin
+  (``mcpshared.tool_view``; nothing is cut) or ``{name, problem: "too_long"}``. Grants nothing.
 * ``tools.json``: ``{entries: [{hub_id, binding_seq, server, server_digest, tool, pin, at, by}]}``: the tools the owner
   turned On, for exactly the pin shown. Written only by ``org.tool`` (and cleared by decline), behind the owner check;
   :func:`tool_policy` ignores an entry of another binding, another server digest or a server that is not served.
@@ -56,11 +57,9 @@ __all__ = [
 KINDS = ("skill", "mcp")
 _ITEMS = {"skill": "skills", "mcp": "servers"}  # the member of the bundle that holds the items
 _MU = threading.RLock()
-_TOOL_NAME = re.compile(r"[A-Za-z0-9_.-]{1,128}")
 _PIN = re.compile(r"sha256:[0-9a-f]{64}")
 _TOOL_KEYS = {"hub_id", "binding_seq", "server", "server_digest", "tool", "pin", "at", "by"}
 MAX_SEEN_TOOLS = 200
-MAX_DESCRIPTION = 500
 _NOTES = {
     "skill": [
         "A company skill is advice from your company hub. It ranks below orch's rules and cannot widen what an"
@@ -331,19 +330,40 @@ def _drop_server(service: WorkspaceService, name: str) -> None:
             _write(service, "seen.json", {"servers": {k: v for k, v in seen.items() if k != name}})
 
 
-def _seen_tools(service: WorkspaceService, state: Any, server: str, digest: str) -> list[dict[str, str]]:
+def _seen_row(t: Any) -> dict[str, Any] | None:
+    """``t`` when it is a consistent seen row: a ``too_long`` stub, or a view that is its own :func:`tool_view` and
+    whose pin is the pin of exactly that view. Else None (what the owner is shown is what is pinned)."""
+    from .mcpshared import TOOL_NAME, tool_pin, tool_view
+
+    if type(t) is not dict:
+        return None
+    if set(t) == {"name", "problem"}:
+        ok = type(t["name"]) is str and TOOL_NAME.fullmatch(t["name"]) is not None and t["problem"] == "too_long"
+        return t if ok else None
+    pin = t.get("pin")
+    if type(pin) is not str or not _PIN.fullmatch(pin):
+        return None
+    body = {k: v for k, v in t.items() if k != "pin"}
+    view, problem = tool_view(body)
+    if view is None or problem is not None or view != body or tool_pin(view) != pin:
+        return None
+    return t
+
+
+def _seen_tools(service: WorkspaceService, state: Any, server: str, digest: str) -> list[dict[str, Any]]:
     """The tools last seen for this server under the current binding and exactly this server digest."""
     rec = _seen_servers(service).get(server)
     if type(rec) is not dict or {k: rec.get(k) for k in ("hub_id", "binding_seq")} != _binding(state):
         return []
     if rec.get("digest") != digest or type(rec.get("tools")) is not list:
         return []
-    return [t for t in rec["tools"] if type(t) is dict and {"name", "description", "pin"} <= set(t)]
+    return [r for r in map(_seen_row, rec["tools"]) if r is not None]
 
 
 def record_seen(service: WorkspaceService, server: str, server_digest: str, tools: list[dict[str, Any]]) -> None:
-    """The proxy saw ``tools/list`` of a server: keep name, description (cut) and pin of each tool so the owner can
-    look at them. Grants nothing. Wrong input (a bad server name, malformed tools) or no hub binding: no effect."""
+    """The proxy saw ``tools/list`` of a server: keep each tool exactly as its view (plus pin), or as a ``too_long``
+    stub, so the owner can look at what is pinned. Grants nothing. Anything inconsistent (a bad server name, a row
+    whose pin is not the pin of its view) or no hub binding: no effect, nothing is cut or repaired."""
     from .mcpshared import server_name_ok
 
     try:
@@ -351,17 +371,9 @@ def record_seen(service: WorkspaceService, server: str, server_digest: str, tool
             return
         rows: list[dict[str, Any]] = []
         for t in tools[:MAX_SEEN_TOOLS]:
-            if type(t) is not dict or type(t.get("name")) is not str or not _TOOL_NAME.fullmatch(t["name"]):
+            row = _seen_row(t)
+            if row is None:
                 return
-            if type(t.get("pin")) is not str or not _PIN.fullmatch(t["pin"]):
-                return
-            desc = t.get("description")
-            if desc is not None and type(desc) is not str:
-                return
-            row = {"name": t["name"], "description": (desc or "")[:MAX_DESCRIPTION], "pin": t["pin"]}
-            title = t.get("title")
-            if type(title) is str and title:
-                row["title"] = title[:100]  # pinned with the rest: the owner sees what the agent sees
             rows.append(row)
         with _MU:
             state = _state(service)
@@ -401,7 +413,7 @@ def tool_policy(service: WorkspaceService, server: str) -> dict[str, str]:
         return {}
 
 
-def _tool_rows(service: WorkspaceService, state: Any, server: str, digest: str) -> list[dict[str, str]]:
+def _tool_rows(service: WorkspaceService, state: Any, server: str, digest: str) -> list[dict[str, Any]]:
     on = tool_policy(service, server)
     b = _binding(state)
     mine = {
@@ -410,16 +422,16 @@ def _tool_rows(service: WorkspaceService, state: Any, server: str, digest: str) 
     }  # fmt: skip
     out = []
     for t in _seen_tools(service, state, server, digest):
+        if t.get("problem") == "too_long":
+            out.append({"name": t["name"], "problem": "too_long", "status": "too_long"})  # never On, no pin
+            continue
         if on.get(t["name"]) == t["pin"]:
             status = "on"
         elif t["name"] in mine:
             status = "changed"  # turned On once for something else: the owner must click again
         else:
             status = "off"
-        row = {"name": t["name"], "description": t["description"], "pin": t["pin"], "status": status}
-        if t.get("title"):
-            row["title"] = t["title"]
-        out.append(row)
+        out.append({**t, "status": status})  # the stored view and pin: what is shown is what is pinned
     return out
 
 
@@ -439,6 +451,8 @@ def set_tool(service: WorkspaceService, server: str, tool: str, on: bool, pin: s
             seen = next((t for t in _seen_tools(service, state, server, rec["digest"]) if t["name"] == tool), None)
             if seen is None:
                 raise HostError("not_found", f"no tool {tool!r} seen on {server!r} yet: let an agent list its tools")
+            if seen.get("problem") == "too_long":
+                raise HostError("invalid.input", f"org: too_long: {tool} is too long to review; it stays off")
             if pin is None or pin != seen["pin"]:
                 raise HostError(
                     "invalid.input",

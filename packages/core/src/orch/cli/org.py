@@ -22,6 +22,7 @@ from collections.abc import Mapping
 from typing import Any, TextIO
 
 from orch.cli.publish import PubError, _call
+from orch.host.mcpshared import plain
 from orch.ops.human import review_prompt
 
 __all__ = ["main"]
@@ -60,16 +61,48 @@ def _target(env: Mapping[str, str]) -> Any:
 
 
 def _describe(shown: dict[str, Any]) -> str:
+    """The text a person decides on. Everything the hub or a server wrote goes through ``plain`` (no escape sequence or
+    control character can redraw the prompt)."""
     item, kind = shown["item"], shown["kind"]
     if kind == "skill":
-        body = f"Company skill {item['name']!r}. This is the full text an agent would read:\n\n{item['text']}\n"
-    else:
-        sign_in = "no sign-in" if item["auth"] == "none" else f"company secret {item['secret']!r}"
         body = (
-            f"Company tool server {item['name']!r}\n  address: {item['url']}\n  sign-in: {sign_in}\n"
-            f"  for: {item['description'] or '(not said)'}\n  every tool starts Off.\n"
+            f"Company skill {plain(item['name'])!r}. This is the full text an agent would read:\n\n"
+            f"{plain(item['text'])}\n"
+        )
+    else:
+        sign_in = "no sign-in" if item["auth"] == "none" else f"company secret {plain(item['secret'])!r}"
+        body = (
+            f"Company tool server {plain(item['name'])!r}\n  address: {plain(item['url'])}\n  sign-in: {sign_in}\n"
+            f"  for: {plain(item['description']) or '(not said)'}\n  every tool starts Off.\n"
         )
     return body + "\n" + "".join(f"- {n}\n" for n in shown["notes"]) + f"  digest {item['digest'][:23]}...\n"
+
+
+def _schema_text(row: dict[str, Any]) -> str:
+    return plain(json.dumps(row["inputSchema"], indent=2, ensure_ascii=False, sort_keys=True))
+
+
+def _tool_text(row: dict[str, Any], server: str) -> str:
+    """What the owner reviews for one tool: the whole pinned view (name, title, description, input schema)."""
+    name = plain(row["name"])
+    if row.get("problem") == "too_long":
+        return f"Tool {name!r} of company server {plain(server)!r} is too long to review; it stays off.\n"
+    lines = [f"Tool {name!r} of company server {plain(server)!r}"]
+    if row.get("title"):
+        lines.append(f"  title: {plain(row['title'])}")
+    lines.append(f"  description: {plain(row['description']) or '(none)'}")
+    lines.append("  input schema (this is pinned too):")
+    lines.extend("    " + ln for ln in _schema_text(row).splitlines())
+    lines.append("  Its results are untrusted text from your company's server.")
+    return "\n".join(lines) + "\n"
+
+
+def _tools_text(shown: dict[str, Any]) -> str:
+    """``show`` for a server: each tool seen, its status and (for a good one) the same review text as ``tool on``."""
+    if shown["kind"] != "mcp" or not shown.get("tools"):
+        return ""
+    server = shown["item"]["name"]
+    return "\ntools seen:\n" + "".join(f"\n[{plain(t['status'])}] " + _tool_text(t, server) for t in shown["tools"])
 
 
 def main(
@@ -116,7 +149,7 @@ def main(
             emit(data, "synced: " + ", ".join(f"{k} {v}" for k, v in data["result"].items()))
         elif a.cmd == "show":
             data = _call(target, "org.show", {"kind": a.rest[0], "name": a.rest[1]}, env)
-            emit(data, _describe(data) + f"status: {data['status']}")
+            emit(data, _describe(data) + _tools_text(data) + f"status: {plain(data['status'])}")
         elif a.cmd == "tool":
             server, tool, want = a.rest
             args: dict[str, Any] = {"server": server, "tool": tool, "on": want == "on"}
@@ -125,10 +158,9 @@ def main(
                 row = next((t for t in shown.get("tools", []) if t["name"] == tool), None)
                 if row is None:
                     raise PubError("not_found", f"no tool {tool!r} seen on {server!r} yet: let an agent list its tools")
-                text = (
-                    f"Tool {tool!r} of company server {server!r}\n  description: {row['description'] or '(none)'}\n"
-                    "  Its results are untrusted text from your company's server.\n"
-                )
+                text = _tool_text(row, server)
+                if row.get("problem") == "too_long":
+                    raise PubError("invalid.input", text.strip())
                 if not review_prompt(text + "Let agents of this workspace use this tool?"):
                     raise PubError("sign.cancelled", "not turned on; nothing changed", 3)
                 args["pin"] = row["pin"]

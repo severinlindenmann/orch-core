@@ -14,7 +14,7 @@ import pytest
 
 from orch.host import mcpproxy
 from orch.host.mcpproxy import Proxy
-from orch.host.mcpshared import tool_pin
+from orch.host.mcpshared import tool_pin, tool_view
 
 SECRET = "s3cr3t/value+with=chars"
 
@@ -76,9 +76,8 @@ def tool(name="echo", description="Echo", schema=None, **kw):
 
 
 def pin_of(t):
-    view = {"name": t["name"], "description": t["description"][:500], "inputSchema": t["inputSchema"]}
-    if t.get("title"):
-        view["title"] = t["title"][:100]
+    view, problem = tool_view(t)
+    assert problem is None
     return tool_pin(view)
 
 
@@ -541,15 +540,13 @@ def test_tool_sanitising(env):
     ]
     env.up_factory = lambda r, b: FakeUp(tools=tools)
     cap = mint(env)
-    long_view = {"name": "long", "description": "d" * 500, "inputSchema": {"type": "object"}, "title": "t" * 100}
-    long_pin = tool_pin(long_view)
-    env.policy[("w1", "crm")] = {"good": pin_of(good), "long": long_pin, "zw": "x"}
+    env.policy[("w1", "crm")] = {"good": pin_of(good), "long": "sha256:" + "0" * 64, "zw": "x"}
     body = lst(env, cap)
-    names = [t["name"] for t in body["result"]["tools"]]
-    assert names == ["good", "long"]
-    long = body["result"]["tools"][1]
-    assert len(long["description"]) == 500 and len(long["title"]) == 100
-    assert [t["name"] for t in env.seen[-1][3]] == ["good", "long"]
+    assert [t["name"] for t in body["result"]["tools"]] == ["good"]  # too long is never forwarded, not even cut
+    rows = {t["name"]: t for t in env.seen[-1][3]}
+    assert list(rows) == ["good", "bigschema", "long"]  # text and shape failures are not even reported
+    assert rows["bigschema"] == {"name": "bigschema", "problem": "too_long"}
+    assert rows["long"] == {"name": "long", "problem": "too_long"}
 
 
 def test_tool_list_caps(env):

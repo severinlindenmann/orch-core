@@ -126,7 +126,7 @@ describe('the form', () => {
     await createOnly(r, sheet)
     expect((await sent()).agent).toBeUndefined()
     expect(await screen.findByTestId('nt-lead')).toHaveTextContent('Creates the ticket. No agent starts.')
-    expect(JSON.parse(localStorage.getItem(`orch.dashboard.new-ticket.agent.p_sev.${WS()}`) ?? '{}').start).not.toBe(false)
+    expect(localStorage.getItem(`orch.dashboard.new-ticket.agent.p_sev.${WS()}`)).toBeNull() // nothing was written
     expect(await startBtn(sheet)).toBeInTheDocument()
     expect(within(sheet).queryByRole('button', { name: 'Create ticket' })).toBeNull()
   })

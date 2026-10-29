@@ -95,6 +95,7 @@ jobs:
         run: |
           npm run dev -- --port 5201 --strictPort --host 127.0.0.1 > dev-server.log 2>&1 &
           for i in $(seq 1 60); do curl -fsS http://127.0.0.1:5201/ >/dev/null && break; sleep 2; done
+          curl -fsS http://127.0.0.1:5201/ >/dev/null || { echo "the dev server did not start"; cat dev-server.log; exit 1; }
           npm run layout:guard -- --shard ${{ matrix.shard }}/8
   python:
     name: dashboard tests

@@ -609,7 +609,8 @@ async function run(send, close) {
             }
             if (!ONLY || ONLY.test('real-host-signing-unsafe')) {
               await go('/__layout/signing-unsafe')
-              await check(config, 'real-host-signing-unsafe', await need([...CARD, ['the prefix with shell characters', '[data-testid="workspace-card-signing"]']]))
+              // the unsafe prefix (X;rm -rf ~) no longer has its own text on the card: this checks the card still lays out with it
+              await check(config, 'real-host-signing-unsafe', await need(CARD))
             }
             if (!ONLY || ONLY.test('real-host-signing-unknown')) {
               await go('/__layout/signing-unknown')

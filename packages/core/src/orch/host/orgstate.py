@@ -349,7 +349,7 @@ def record_seen(service: WorkspaceService, server: str, server_digest: str, tool
     try:
         if not server_name_ok(server) or type(server_digest) is not str or type(tools) is not list:
             return
-        rows: list[dict[str, str]] = []
+        rows: list[dict[str, Any]] = []
         for t in tools[:MAX_SEEN_TOOLS]:
             if type(t) is not dict or type(t.get("name")) is not str or not _TOOL_NAME.fullmatch(t["name"]):
                 return
@@ -358,7 +358,11 @@ def record_seen(service: WorkspaceService, server: str, server_digest: str, tool
             desc = t.get("description")
             if desc is not None and type(desc) is not str:
                 return
-            rows.append({"name": t["name"], "description": (desc or "")[:MAX_DESCRIPTION], "pin": t["pin"]})
+            row = {"name": t["name"], "description": (desc or "")[:MAX_DESCRIPTION], "pin": t["pin"]}
+            title = t.get("title")
+            if type(title) is str and title:
+                row["title"] = title[:100]  # pinned with the rest: the owner sees what the agent sees
+            rows.append(row)
         with _MU:
             state = _state(service)
             seen = _seen_servers(service)
@@ -412,7 +416,10 @@ def _tool_rows(service: WorkspaceService, state: Any, server: str, digest: str) 
             status = "changed"  # turned On once for something else: the owner must click again
         else:
             status = "off"
-        out.append({"name": t["name"], "description": t["description"], "pin": t["pin"], "status": status})
+        row = {"name": t["name"], "description": t["description"], "pin": t["pin"], "status": status}
+        if t.get("title"):
+            row["title"] = t["title"]
+        out.append(row)
     return out
 
 

@@ -46,6 +46,9 @@ WORKFLOWS: dict[str, tuple[str, list[tuple[str, str]]]] = {
             ("section.set", "orch section set decisions --file -"),
             ("task.add", "orch task add 'text' --verify 'one-command, no shell operators' --proves AC1"),
             ("ask", "orch ask 'question' --options a,b --rec a"),
+            # run-9 J04: the session does not end after refining; it waits for the approval, then builds
+            ("wait", "orch wait"),
+            ("task.next", "orch task next"),
         ],
     ),
     "parallel": (

@@ -355,3 +355,43 @@ def test_the_raw_print_rule_is_only_for_the_stop_event(ws):
     out = io.StringIO()
     main(["instructions", "hook", "session-start"], env=ws.env(), stdout=out, stderr=io.StringIO())
     assert not out.getvalue().startswith("{")
+
+
+# ---------------------------------------------- run-9 J04: a complete gate waits for the person, the session stays
+
+
+def _complete_gate(ws) -> str:
+    """Fill everything the open gates lack, so they wait only for the person's approval."""
+    from orch.ops import views
+
+    cli = _claimed(ws)
+    for _ in range(16):
+        hint = views.refine_hint(ws.view("1"))
+        if hint == "orch wait":
+            break
+        args = hint.split()[1:]
+        assert cli(*[("x" if a == "TEXT" else a) for a in args]).code == 0, args
+    v = ws.view("1")
+    assert views.refine_hint(v) == "orch wait"
+    return views.open_gate(v)
+
+
+def test_stop_sends_the_agent_to_orch_wait_while_a_complete_gate_waits_for_the_person(ws):
+    gate = _complete_gate(ws)
+    code, out, err = _stop(ws)
+    assert code == 0 and err == "", err
+    doc = json.loads(out)
+    assert doc["decision"] == "block" and set(doc) == {"decision", "reason"}
+    reason = doc["reason"]
+    assert f"{gate} gate of DEMO-0001" in reason and "orch wait" in reason
+    assert "this session" in reason  # the same session builds after the approval
+    assert "approve?" not in reason
+    assert _stop(ws, active=True) == (0, "", "")  # at most once per stop
+
+
+def test_next_hint_waits_for_the_person_while_a_complete_gate_is_open(ws):
+    from orch.ops import views
+
+    _complete_gate(ws)
+    v = ws.view("1")
+    assert views.next_hint(v, v.claim.session) == "orch wait"

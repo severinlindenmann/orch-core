@@ -138,6 +138,11 @@ def prompt(
         raise HostError("launch.invalid", "mode is not one of refine, work, fix, continue, context")
     from orch.instructions.harness import AGENTS_FILE
 
+    if mode == "refine":  # run-9 J04: the same session builds after the approval; it never stops "only refining"
+        return (
+            f"Run orch status, then refine ticket {key}. When the gates are complete, run orch wait until the person"
+            f" approves; then build the ticket in this session. Follow {instructions or AGENTS_FILE}."
+        )
     return f"Run orch status, then {MODE_TEXT[mode]} ticket {key}. Follow {instructions or AGENTS_FILE}."
 
 

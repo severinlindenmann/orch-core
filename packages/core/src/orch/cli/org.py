@@ -5,6 +5,7 @@
     orch org show skill|mcp NAME        a person: the full text, or the exact address, sign-in and secret name
     orch org accept skill|mcp NAME      a person: turn it on, for exactly what you were shown
     orch org decline skill|mcp NAME     a person: turn it off again
+    orch org tool SERVER TOOL on|off    a person: turn one tool of an accepted company server On or Off
 
 Everything starts Off. ``accept`` shows the item and asks on your terminal; the host accepts only the digest it showed,
 so a changed item needs a new accept. An agent can list and sync, never show, accept or decline. A company skill ranks
@@ -21,15 +22,17 @@ from collections.abc import Mapping
 from typing import Any, TextIO
 
 from orch.cli.publish import PubError, _call
+from orch.host.mcpshared import plain
 from orch.ops.human import review_prompt
 
 __all__ = ["main"]
 
 _USAGE = (
-    "usage: orch org {list | sync | show KIND NAME | accept KIND NAME | decline KIND NAME} [--json]"
+    "usage: orch org {list | sync | show KIND NAME | accept KIND NAME | decline KIND NAME | tool SERVER TOOL on|off}"
+    " [--json]"
     "  (KIND: skill | mcp)"
 )
-_ARGS = {"list": 0, "sync": 0, "show": 2, "accept": 2, "decline": 2}
+_ARGS = {"list": 0, "sync": 0, "show": 2, "accept": 2, "decline": 2, "tool": 3}
 _AGENT_OK = ("list", "sync")
 
 
@@ -58,16 +61,48 @@ def _target(env: Mapping[str, str]) -> Any:
 
 
 def _describe(shown: dict[str, Any]) -> str:
+    """The text a person decides on. Everything the hub or a server wrote goes through ``plain`` (no escape sequence or
+    control character can redraw the prompt)."""
     item, kind = shown["item"], shown["kind"]
     if kind == "skill":
-        body = f"Company skill {item['name']!r}. This is the full text an agent would read:\n\n{item['text']}\n"
-    else:
-        sign_in = "no sign-in" if item["auth"] == "none" else f"company secret {item['secret']!r}"
         body = (
-            f"Company tool server {item['name']!r}\n  address: {item['url']}\n  sign-in: {sign_in}\n"
-            f"  for: {item['description'] or '(not said)'}\n  every tool starts Off.\n"
+            f"Company skill {plain(item['name'])!r}. This is the full text an agent would read:\n\n"
+            f"{plain(item['text'])}\n"
+        )
+    else:
+        sign_in = "no sign-in" if item["auth"] == "none" else f"company secret {plain(item['secret'])!r}"
+        body = (
+            f"Company tool server {plain(item['name'])!r}\n  address: {plain(item['url'])}\n  sign-in: {sign_in}\n"
+            f"  for: {plain(item['description']) or '(not said)'}\n  every tool starts Off.\n"
         )
     return body + "\n" + "".join(f"- {n}\n" for n in shown["notes"]) + f"  digest {item['digest'][:23]}...\n"
+
+
+def _schema_text(row: dict[str, Any]) -> str:
+    return plain(json.dumps(row["inputSchema"], indent=2, ensure_ascii=False, sort_keys=True))
+
+
+def _tool_text(row: dict[str, Any], server: str) -> str:
+    """What the owner reviews for one tool: the whole pinned view (name, title, description, input schema)."""
+    name = plain(row["name"])
+    if row.get("problem") == "too_long":
+        return f"Tool {name!r} of company server {plain(server)!r} is too long to review; it stays off.\n"
+    lines = [f"Tool {name!r} of company server {plain(server)!r}"]
+    if row.get("title"):
+        lines.append(f"  title: {plain(row['title'])}")
+    lines.append(f"  description: {plain(row['description']) or '(none)'}")
+    lines.append("  input schema (this is pinned too):")
+    lines.extend("    " + ln for ln in _schema_text(row).splitlines())
+    lines.append("  Its results are untrusted text from your company's server.")
+    return "\n".join(lines) + "\n"
+
+
+def _tools_text(shown: dict[str, Any]) -> str:
+    """``show`` for a server: each tool seen, its status and (for a good one) the same review text as ``tool on``."""
+    if shown["kind"] != "mcp" or not shown.get("tools"):
+        return ""
+    server = shown["item"]["name"]
+    return "\ntools seen:\n" + "".join(f"\n[{plain(t['status'])}] " + _tool_text(t, server) for t in shown["tools"])
 
 
 def main(
@@ -98,7 +133,9 @@ def main(
         if os.name == "nt":
             raise PubError("unsupported.platform", "orch org needs POSIX filesystem semantics")
         a = _parser().parse_intermixed_args(argv)
-        if len(a.rest) != _ARGS[a.cmd] or (a.rest and a.rest[0] not in ("skill", "mcp")):
+        if len(a.rest) != _ARGS[a.cmd] or (a.cmd != "tool" and a.rest and a.rest[0] not in ("skill", "mcp")):
+            raise PubError("invalid.input", _USAGE, 2)
+        if a.cmd == "tool" and a.rest[2] not in ("on", "off"):
             raise PubError("invalid.input", _USAGE, 2)
         if (env.get("ORCH_GRANT") or env.get("ORCH_SESSION")) and a.cmd not in _AGENT_OK:
             raise PubError("op.not_allowed", "a person does this at their own terminal; an agent lists and syncs")
@@ -112,7 +149,23 @@ def main(
             emit(data, "synced: " + ", ".join(f"{k} {v}" for k, v in data["result"].items()))
         elif a.cmd == "show":
             data = _call(target, "org.show", {"kind": a.rest[0], "name": a.rest[1]}, env)
-            emit(data, _describe(data) + f"status: {data['status']}")
+            emit(data, _describe(data) + _tools_text(data) + f"status: {plain(data['status'])}")
+        elif a.cmd == "tool":
+            server, tool, want = a.rest
+            args: dict[str, Any] = {"server": server, "tool": tool, "on": want == "on"}
+            if want == "on":  # always on the owner's terminal, for exactly the pin that was shown
+                shown = _call(target, "org.show", {"kind": "mcp", "name": server}, env)
+                row = next((t for t in shown.get("tools", []) if t["name"] == tool), None)
+                if row is None:
+                    raise PubError("not_found", f"no tool {tool!r} seen on {server!r} yet: let an agent list its tools")
+                text = _tool_text(row, server)
+                if row.get("problem") == "too_long":
+                    raise PubError("invalid.input", text.strip())
+                if not review_prompt(text + "Let agents of this workspace use this tool?"):
+                    raise PubError("sign.cancelled", "not turned on; nothing changed", 3)
+                args["pin"] = row["pin"]
+            data = _call(target, "org.tool", args, env)
+            emit(data, f"ok {server} {tool} is {want.capitalize()}")
         elif a.cmd == "decline":
             data = _call(target, "org.decline", {"kind": a.rest[0], "name": a.rest[1]}, env)
             emit(data, f"ok {a.rest[1]} is Off")

@@ -38,6 +38,8 @@ def test_codex_and_claude_argv_through_the_login_shell():
         "--setting-sources",
         "user",
         "--strict-mcp-config",
+        "--mcp-config",
+        "@orch-mcp",
         "--append-system-prompt-file",
         "@orch-rules",
         "Run orch status, then refine ticket ORC-7. Follow AGENTS.orch.md.",
@@ -46,11 +48,12 @@ def test_codex_and_claude_argv_through_the_login_shell():
 
 
 def test_only_a_work_folder_agent_ignores_project_settings_and_mcp_files():
-    flags = {"--setting-sources", "--strict-mcp-config", "--append-system-prompt-file"}
+    flags = {"--setting-sources", "--strict-mcp-config", "--mcp-config", "@orch-mcp", "--append-system-prompt-file"}
     argv, _, _ = launch_argv("claude-code", "work", None, "ORC-7", LOGIN, workdir=True)
     head = ["claude", "--session-id", "@orch-session-id", "--setting-sources", "user", "--strict-mcp-config"]
     assert argv[4:10] == head
     assert flags <= set(argv)
+    assert argv[10:14] == ["--mcp-config", "@orch-mcp", "--append-system-prompt-file", "@orch-rules"]
     # a repo, worktree or root launch (workdir False), a person-run harness and codex: Claude Code's normal behaviour
     assert not flags & set(launch_argv("claude-code", "work", None, "ORC-7", LOGIN)[0])
     assert not flags & set(launch_argv("claude-code", None, None, None, LOGIN, workdir=True)[0])

@@ -432,8 +432,8 @@ def test_submit_hint_says_show_when_only_an_artifact_is_missing():
 
     import pytest
 
-    from orch.errors import OrchError
     from orch.ops.commands import submit
+    from orch.ops.errors import OrchError
     from orch.store import StoreError
 
     gate = N(applies=True, approved=False, missing=["artifact:screenshot"])

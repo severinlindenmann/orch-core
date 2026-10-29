@@ -89,17 +89,14 @@ export function AddRuleReview({ ws, workspace, rule, after, onDone, title }: { w
     </div>
     {review.widened.slice(0, SHOWN_WIDENED).map((w, i) => <p key={i} data-testid="hub-add-widened" className="text-warning">Reaches more now: <Raw>{widenedText(w)}</Raw></p>)}
     {review.widened.length > SHOWN_WIDENED && <p data-testid="hub-add-widened-more" className="text-warning">and {review.widened.length - SHOWN_WIDENED} more {review.widened.length - SHOWN_WIDENED === 1 ? 'ticket reaches' : 'tickets reach'} more people</p>}
-    <InfoDrawer testId="hub-add-details"><p data-testid="hub-add-rule">Tickets: <Raw>{rule.kind}</Raw>{rule.value !== null && <> · <Raw>{rule.value}</Raw></>}{rule.value !== null && rule.description ? ' · with description' : ''}</p><WorkspaceLine workspace={{ id: workspace.id, name: workspace.name, prefix: workspace.prefix }} many testId="hub-review-workspace" /><p data-testid="hub-add-hub">Hub: <Raw>{review.hub_id ?? 'unknown'}</Raw></p>{cut && <div data-testid="hub-add-widened-all">{review.widened.map((w, i) => <p key={i}>Reaches more now: <Raw>{widenedText(w, true)}</Raw></p>)}</div>}{after.plan && <p>Plan: <Raw>{after.plan}</Raw></p>}</InfoDrawer>
-    <p data-testid="hub-add-new">{review.new_count} new {review.new_count === 1 ? 'item leaves' : 'items leave'} this computer.</p>
-    {review.leaves.map((t, i) => <p key={i} data-testid="hub-add-leaves">What leaves: <Raw>{t}</Raw></p>)}
-    {review.later_edits && <p data-testid="hub-add-later">{review.later_edits}</p>}
-    {review.new_items.length > 0 && <>
+    <InfoDrawer testId="hub-add-details"><p data-testid="hub-add-rule">Tickets: <Raw>{rule.kind}</Raw>{rule.value !== null && <> · <Raw>{rule.value}</Raw></>}{rule.value !== null && rule.description ? ' · with description' : ''}</p><WorkspaceLine workspace={{ id: workspace.id, name: workspace.name, prefix: workspace.prefix }} many testId="hub-review-workspace" /><p data-testid="hub-add-hub">Hub: <Raw>{review.hub_id ?? 'unknown'}</Raw></p>{cut && <div data-testid="hub-add-widened-all">{review.widened.map((w, i) => <p key={i}>Reaches more now: <Raw>{widenedText(w, true)}</Raw></p>)}</div>}{after.plan && <p>Plan: <Raw>{after.plan}</Raw></p>}<p data-testid="hub-add-new">{review.new_count} new {review.new_count === 1 ? 'item leaves' : 'items leave'} this computer.</p>{review.leaves.map((t, i) => <p key={i} data-testid="hub-add-leaves">What leaves: <Raw>{t}</Raw></p>)}{review.new_items.length > 0 && <>
       <button type="button" className="text-[13px] text-text-muted underline" onClick={() => setList(v => !v)}>{list ? 'Hide list' : 'Show list'}</button>
       {list && <ul className="space-y-1" data-testid="hub-add-list">{review.new_items.slice(0, 20).map((l, i) => <li key={i}><Raw>{l}</Raw></li>)}
         {review.new_count > 20 && <li>and {review.new_count - 20} more</li>}</ul>}
-    </>}
+    </>}</InfoDrawer>
+    {review.later_edits && <p data-testid="hub-add-later">{review.later_edits}</p>}
     <p className="text-warning">{caveat}</p>
-    <Button data-testid="hub-add-go" size="sm" disabled={busy || !after.plan} onClick={go}>{busy ? 'Sharing…' : 'Share these items'}</Button>
+    <Button data-testid="hub-add-go" size="sm" disabled={busy || !after.plan} onClick={go}>{busy ? 'Sharing…' : 'Share'}</Button>
     {error && <p role="alert" className="text-danger">{error}</p>}
   </div>
 }

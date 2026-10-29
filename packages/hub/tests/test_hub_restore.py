@@ -1113,3 +1113,92 @@ def test_M2_the_server_command_refuses_while_a_hub_serves_this_state(w, tmp_path
         holder.kill()
         holder.wait()
     assert _cli(w, f, words=words) == 0  # the lock is gone with the process: the restore runs
+
+
+def _strip_backup(w, data, words, drop_sql):
+    """A backup (re-signed and re-sealed under the real keys) whose access.db had these statements run on it."""
+    opened = B.open_backup(data, words=words, dev_mode=True, live=None)
+    files = dict(opened.files)
+    p = w.tmp / "edit.db"
+    p.write_bytes(files["access.db"])
+    c = sqlite3.connect(p)
+    for sql in drop_sql:
+        c.execute(sql)
+    c.commit()
+    c.close()
+    files["access.db"] = p.read_bytes()
+    h = {**opened.header, "files": SN.file_list(files)}
+    keys = B.derive_keys(words)
+    env = {"o": h, "sig": b64u(w.env.keys.sign_backup_header(h)), "mac": B.header_mac(keys.k_auth, h)}
+    return B.pack_file(env, B.seal_payload(keys.bk_pub, h, SN.tar_files(files)))
+
+
+def test_L5_a_missing_table_or_row_on_either_side_never_loses_a_live_restriction(w):
+    import json as _j
+
+    live_pol = _company_policy(block=("live-bad",), allow=("aa",), ceiling=("pty",), market=False)
+    _put_policy(w, live_pol, version=3)
+    w.env.acc._db.execute("INSERT INTO workspace_addon_allow VALUES (?, '[\"a\"]')", (WS,))
+    words, data = _backup(w)
+    first = True
+    for drops in (
+        ["DROP TABLE market_policy", "DROP TABLE workspace_addon_allow"],  # an old backup without either table
+        ["DELETE FROM market_policy", "DELETE FROM workspace_addon_allow"],  # tables there, rows missing
+    ):
+        old = _strip_backup(w, data, words, drops)
+        _restore(w, old, words, audit=w.env.audit if first else None)
+        first = False
+        pol = _j.loads(_rows(w.state, "access.db", "SELECT policy FROM market_policy")[0][0])
+        assert pol["addons"] == live_pol["addons"] and pol["ceiling"] == live_pol["ceiling"]
+        assert _rows(w.state, "access.db", "SELECT * FROM workspace_addon_allow") == [(WS, '["a"]')]
+        w.env.keys = HubKeys.open(w.state, now_ms=w.clock)
+        w.env.acc = Access(str(w.state / "access.db"), now_ms=w.clock)
+
+
+def test_L5_a_restriction_only_the_backup_has_is_kept_and_an_unreadable_live_policy_fails_closed(w):
+    import json as _j
+
+    _put_policy(w, _company_policy(block=("old-bad",), allow=None, ceiling=("pty",), market=False))
+    w.env.acc._db.execute("INSERT INTO workspace_addon_allow VALUES (?, '[\"a\"]')", (WS,))
+    words, data = _backup(w)
+    w.env.acc._db.execute("DROP TABLE workspace_addon_allow")  # the live hub has neither row nor table
+    _restore(w, data, words)
+    assert _rows(w.state, "access.db", "SELECT * FROM workspace_addon_allow") == [(WS, '["a"]')]
+    assert _j.loads(_rows(w.state, "access.db", "SELECT policy FROM market_policy")[0][0])["addons"]["block"] == [
+        "old-bad"
+    ]
+    w.env.keys = HubKeys.open(w.state, now_ms=w.clock)
+    # a live policy row that cannot be merged: the restore fails and nothing changes
+    c = sqlite3.connect(w.state / "access.db")  # (the restore swapped the file: the old connection is the old inode)
+    c.execute("UPDATE market_policy SET policy='not json'")
+    c.commit()
+    c.close()
+    before = _tree(w.state)
+    with pytest.raises(RS.RestoreError) as e:
+        _restore(w, data, words)
+    assert e.value.code == "restore_failed" and _tree(w.state) == before
+
+
+def test_L5_a_fresh_restore_never_adds_a_market_and_confirm_never_re_adds_official(w, tmp_path):
+    import json as _j
+
+    from orch_hub.backup import guard as GD
+    from orch_hub.contract import market_policy as MP
+
+    full = _company_policy()
+    only_company = {**full, "markets": [m for m in full["markets"] if m["class"] != "official"]}
+    _put_policy(w, only_company)
+    words, data = _backup(w)
+    fresh = tmp_path / "srv" / "d"
+    RS.restore(fresh, data, words, now_ms=lambda: 1_900_000_000_000)
+    pol = _j.loads(_rows(fresh, "access.db", "SELECT policy FROM market_policy")[0][0])
+    assert pol["markets"] == []  # the backup had no official market: none is added
+    acc = Access(str(fresh / "access.db"))
+    try:
+        for i in GD.pending(acc):
+            GD.confirm(acc, i["id"])
+        got = _j.loads(acc._q("SELECT policy FROM market_policy")[0][0])
+        assert got["markets"] == only_company["markets"] and all(m["class"] != "official" for m in got["markets"])
+        assert MP.check_policy(got)
+    finally:
+        acc.close()

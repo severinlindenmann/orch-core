@@ -325,13 +325,28 @@ def _merge_policy(back: dict[str, Any], live: dict[str, Any]) -> dict[str, Any]:
     )
 
 
+def _create_like_live(c: sqlite3.Connection, table: str) -> None:
+    c.execute(c.execute("SELECT sql FROM live.sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()[0])
+
+
 def _merge_restricting(c: sqlite3.Connection) -> None:
-    """In place: the market policy and the per-workspace add-on allow lists are the STRICTER of backup and live."""
-    if _has(c, "live", "market_policy") and _has(c, "main", "market_policy"):
+    """In place: the market policy and the per-workspace add-on allow lists are the STRICTER of backup and live. Only one
+    side has a table or a row: that side is taken as it is (a restriction is never lost because an older backup lacks it).
+    Both sides have it: merged. A live policy that cannot be read or merged RAISES (the restore fails closed)."""
+    for table in ("market_policy", "workspace_addon_allow"):
+        if _has(c, "live", table) and not _has(c, "main", table):
+            _create_like_live(c, table)
+            c.execute(f"INSERT INTO main.{table} SELECT * FROM live.{table}")  # one of two constants
+    if _has(c, "live", "market_policy"):
         b = c.execute("SELECT version, policy FROM main.market_policy WHERE id=1").fetchone()
-        lv = c.execute("SELECT version, policy FROM live.market_policy WHERE id=1").fetchone()
-        if b and lv:
-            pol = _merge_policy(json.loads(b[1]), json.loads(lv[1]))
+        lv = c.execute("SELECT version, policy, hash FROM live.market_policy WHERE id=1").fetchone()
+        if lv is not None and b is None:
+            c.execute("INSERT OR REPLACE INTO main.market_policy SELECT * FROM live.market_policy WHERE id=1")
+        elif lv is not None and b is not None:
+            try:
+                pol = _merge_policy(json.loads(b[1]), json.loads(lv[1]))
+            except MP.PolicyMalformed, ValueError, KeyError, TypeError:
+                raise RuntimeError("market policy cannot be merged") from None
             c.execute(
                 "UPDATE main.market_policy SET version=?, policy=?, hash=? WHERE id=1",
                 (max(b[0], lv[0]) + 1, cj(pol).decode(), MP.policy_hash(pol)),
@@ -360,7 +375,8 @@ def _fresh_addons(c: sqlite3.Connection) -> None:
         row = c.execute("SELECT policy FROM market_policy WHERE id=1").fetchone()
         pol = json.loads(row[0]) if row else None
         if pol is not None and any(m["class"] != "official" for m in pol["markets"]):
-            narrow = MP.check_policy({**pol, "markets": MP.default_policy()["markets"]})
+            official = [m for m in pol["markets"] if m["class"] == "official"]  # never ADD a market the backup lacked
+            narrow = MP.check_policy({**pol, "markets": official})
             c.execute(
                 "INSERT INTO restore_pending(kind,a,label) VALUES ('market_company',?,'Company add-on markets')",
                 (json.dumps(pol["markets"]),),
@@ -445,7 +461,10 @@ def confirm(a: Any, pid: int) -> dict[str, Any]:
             )
         elif kind == "market_company":
             cur = json.loads(db.execute("SELECT policy FROM market_policy WHERE id=1").fetchone()[0])
-            policy = MP.check_policy({**cur, "markets": json.loads(x)})  # only the markets come back; restrictions stay
+            have = {m["url"] for m in cur["markets"]}
+            staged = [m for m in json.loads(x) if m["class"] != "official" and m["url"] not in have]
+            markets = sorted([*cur["markets"], *staged], key=lambda m: m["url"])  # official is never re-added
+            policy = MP.check_policy({**cur, "markets": markets})  # only the markets come back; restrictions stay
             db.execute(
                 "UPDATE market_policy SET version=version+1, policy=?, hash=? WHERE id=1",
                 (cj(policy).decode(), MP.policy_hash(policy)),

@@ -508,7 +508,9 @@ def _restore(
     except BaseException as e:
         if not swapped:
             _rm(new)
-        if isinstance(e, (OSError, sqlite3.Error, KeysError, StateError, CanonError, ValueError, KeyError)):
+        if isinstance(
+            e, (OSError, sqlite3.Error, KeysError, StateError, CanonError, ValueError, KeyError, RuntimeError)
+        ):
             raise RestoreError("restore_failed") from None
         raise
     return {

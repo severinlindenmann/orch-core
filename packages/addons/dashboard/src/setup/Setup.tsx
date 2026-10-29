@@ -109,7 +109,7 @@ export function summarize(review: Review): { lines: string[]; unknown: boolean; 
     } else odd(item.title)
   }
   for (const flag of review.flags) {
-    if (flag.id === 'custody' || flag.id === 'terminal' || flag.id === 'records' || flag.id === 'trust') lines.push(flag.text)
+    if (flag.id === 'custody' || flag.id === 'terminal' || flag.id === 'records' || flag.id === 'trust' || flag.id === 'perms') lines.push(flag.text)
     else if (flag.id === 'git') continue // shown as the 'Safe copies' row on the card; its detail stays in the fold
     else if (flag.id !== 'runner' && flag.id !== 'terminals') odd(flag.text) // a flag this page does not know is shown
   }
@@ -183,6 +183,7 @@ const statusIcon = { todo: '•', doing: '◔', done: '✓', failed: '✕', skip
 /** Roll up display rows only; setup still uses the original server steps. */
 export function groupProgress(steps: Progress['steps']): Progress['steps'] {
   const groups = [
+    { id: 'perms', label: 'Folders made private', ids: ['perms'] },
     { id: 'key', label: 'Your key', ids: ['keys', 'genesis', 'custody'] },
     { id: 'workspace', label: 'Your workspace', ids: ['git', 'settings', 'records', 'trust'] },
     { id: 'services', label: 'Background services', ids: ['register', 'runner', 'runner_grant'] },

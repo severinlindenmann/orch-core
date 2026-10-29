@@ -120,3 +120,11 @@ def test_init_repository_refuses_a_gitignore_that_is_a_link(tmp):
     with pytest.raises(OSError):
         steps.init_repository(tmp.work)
     assert target.read_text() == "x"
+
+
+def test_the_review_names_the_private_folders_and_the_run_makes_them_first(tmp):
+    f, ports, p, rv = run_ok(tmp, AGENT)
+    perms = next(x for x in rv["flags"] if x["id"] == "perms")
+    assert perms["text"].startswith("Folders made private")
+    assert p["steps"][0]["id"] == "perms" and p["steps"][0]["status"] == "done"
+    assert [e[0] for e in ports.log if e[0] in ("privatize", "genesis")] == ["privatize", "genesis"]

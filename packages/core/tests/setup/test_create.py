@@ -86,7 +86,7 @@ def test_terminal_path_signs_in_order_with_one_unlock_and_the_grant_last(tmp):
     assert n.index("runner_hello") < n.index("human.prepare") < n.index("unlock") < n.index("human.submit")
     assert "stage" not in n and "convenience_on" not in n  # terminal path: no conversion
     ids = [s["id"] for s in p["steps"]]
-    assert ids[:4] == ["keys", "genesis", "register", "runner"] and ids[-1] == "runner_grant"
+    assert ids[:5] == ["perms", "keys", "genesis", "register", "runner"] and ids[-1] == "runner_grant"
     assert all(s["status"] == "done" for s in p["steps"])
     assert p["workspace"] == {"id": "0123456789abcdef0123456789abcdef", "prefix": "ANN"}
 
@@ -334,7 +334,7 @@ def test_r9_a_genesis_failure_leaves_nothing_and_a_second_setup_starts_clean(tmp
     f, ports, p, _ = run_ok(tmp, PROFILE, ports=ports)
     assert p["error"]["code"] == "host.unavailable" and p["error"]["finishable"] is False
     assert f.phase == "failed" and p["done"] is False
-    assert [s["status"] for s in p["steps"]][:3] == ["failed", "failed", "failed"]
+    assert [s["status"] for s in p["steps"]][1:4] == ["failed", "failed", "failed"]
     first_code = ports.code_seen
     # a second `orch setup`: a new flow, new secrets, and it works
     ports2 = FakePorts()

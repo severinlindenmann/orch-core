@@ -371,6 +371,8 @@ class SetupFlow:
 
     def _step_ids(self, plan: review_mod.Plan) -> list[str]:
         ids = [] if self.mode == "finish" else ["keys", "genesis", "register"]
+        if any(f["id"] == "perms" for f in plan.flags):
+            ids.insert(0, "perms")
         if any(f["id"] == "git" for f in plan.flags):
             ids.append("git")
         if any(f["id"] == "runner" for f in plan.flags):

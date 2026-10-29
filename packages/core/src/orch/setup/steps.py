@@ -404,6 +404,7 @@ class Ports(Protocol):
     def identity(self, wid: str) -> Identity: ...
     def install_addon(self, root: Path, name: str, raw: bytes) -> None: ...
     def git_init(self, root: Path) -> None: ...
+    def privatize(self, root: Path) -> None: ...  # remove group/other write from our own folders (P08)
     def runner_enable(self, wid: str, prefix: str, terminals: bool) -> None: ...
     def runner_hello(self, wid: str, timeout: float) -> bool: ...
     def runner_refresh(self) -> None: ...
@@ -488,6 +489,7 @@ class Run:
 
 ECHO = {"done": "done:", "failed": "FAILED:", "skipped": "skipped:"}
 STEP_LABELS = {
+    "perms": "Folders made private",
     "keys": "Creating your key",
     "genesis": "Saving your approval",
     "register": "Starting orch in the background",
@@ -579,6 +581,7 @@ class Creator:
             self._tty_confirm()
             self._stop_point()
             self._say("orch setup: working on it; the page shows the same steps")
+            self._perms()
             if self.mode == "new":
                 self._genesis()
                 post_genesis = True
@@ -721,6 +724,15 @@ class Creator:
             self.run.set(s, "done")
         self.wid = g.wid
         self.run.workspace = {"id": g.wid, "prefix": self.profile["prefix"]}
+
+    def _perms(self) -> None:
+        """P08: the review said "Folders made private": remove group/other write from our own folders (best effort)."""
+        if not any(f["id"] == "perms" for f in self.plan.flags):
+            return
+        self.run.set("perms", "doing")
+        with contextlib.suppress(Exception):  # the strict custody check still refuses what stays loose
+            self.ports.privatize(self.root)
+        self.run.set("perms", "done")
 
     def _git(self) -> None:
         """``git init`` of the project folder when the review said so (before the settings that declare it)."""
@@ -1134,6 +1146,25 @@ class RealPorts:
     # -- the runner (D-P2-31)
     def git_init(self, root: Path) -> None:
         init_repository(root)
+
+    def privatize(self, root: Path) -> None:
+        """P08: exact paths only (see orch.privdir.privatize): the folder, its .orch store, the state dir, the orch data
+        dir, and the user's own ~/.config and ~/.local."""
+        from orch import layout as layout_mod
+        from orch import privdir
+
+        home = Path(self.env.get("HOME") or Path.home())
+        privdir.privatize(
+            [
+                root,
+                layout_mod.store_of(root),
+                self.state,
+                home / ".local" / "share" / "orch",
+                home / ".config",
+                home / ".local",
+            ],
+            self.uid,
+        )
 
     def trust_folder(self, root: Path, *, allow_parent: bool = False) -> bool:
         from .claude_folder import trust_folder

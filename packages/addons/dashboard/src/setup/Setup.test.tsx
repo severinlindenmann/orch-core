@@ -1176,6 +1176,12 @@ test('progress groups roll up done and failed steps without changing server step
   expect(groupProgress([])).toEqual([])
 })
 
+test('the private-folders step is its own calm row (P08)', () => {
+  expect(groupProgress([{ id: 'perms', label: 'x', status: 'done' as const }])).toEqual([
+    { id: 'perms', label: 'Folders made private', status: 'done' },
+  ])
+})
+
 test.each([
   [['todo', 'done'], 'done'],
   [['todo', 'skipped'], 'todo'],

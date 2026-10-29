@@ -4,13 +4,16 @@ reached over plain http on an office or public address (the web page refuses to 
 
 from __future__ import annotations
 
+import getpass
 import os
 import sys
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from ..config import dev_of
+from ..contract.hub import Refused
 from ..keys import HubKeys, KeysError, default_state_dir
 from .service import BackupError, BackupService
 
@@ -21,6 +24,89 @@ def add_parser(sub: Any) -> None:
     p.add_argument(
         "--replace", action="store_true", help="replace an existing key (backups under the old key are deleted)"
     )
+
+
+def add_restore_parser(sub: Any) -> None:
+    p = sub.add_parser(
+        "restore",
+        help="restore the hub from a backup file (on a fresh server or over this hub; stop the hub first)",
+    )
+    p.add_argument("file", help="the .orchbak file")
+    p.add_argument("--state", help="hub state dir (default: $ORCH_HUB_STATE)")
+    p.add_argument("--real", action="store_true", help="fresh server only: this is a real hub (dev: false)")
+
+
+def run_restore(
+    args: Any,
+    out: Callable[[str], None] = print,
+    now_ms: Callable[[], int] | None = None,
+    tty: Callable[[], bool] = sys.stdin.isatty,
+    read_words: Callable[[], str] | None = None,
+    confirm: Callable[[str], str] | None = None,
+) -> int:
+    """``orch-hub restore FILE`` (human only, like ``backup-key``): shows which hub the file is of (a fresh server compares
+    its fingerprint), asks for the 24 words WITHOUT echo, then runs the same restore as the console. Every check passes before
+    anything is written. The hub must not be running: start it again afterwards."""
+    if os.environ.get("ORCH_GRANT") or os.environ.get("ORCH_SESSION"):
+        print("orch-hub: refused: this command is for a person, not an agent", file=sys.stderr)
+        return 1
+    if not tty():
+        print(
+            "orch-hub: refused: run this at a terminal (the words are asked here, never read from a pipe)",
+            file=sys.stderr,
+        )
+        return 1
+    from . import restore as RS
+
+    try:
+        state = Path(args.state) if args.state else default_state_dir()
+        data = Path(args.file).read_bytes()
+        info = RS.preview(data, dev_mode=not args.real, state=state, now_ms=now_ms)
+    except (OSError, KeysError) as e:
+        print(f"orch-hub: {getattr(e, 'code', 'cannot read the file')}", file=sys.stderr)
+        return 1
+    except Refused as e:
+        print(f"orch-hub: this file is not a backup this hub can restore ({e.code})", file=sys.stderr)
+        return 1
+    when = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(info["made_ms"] // 1000))
+    out(f"Backup of hub {info['fingerprint']}, made {when}.")
+    if not info["in_place"]:
+        out("This server has no hub yet: check that this is the hub you mean.")
+    else:
+        out("This replaces the hub on this server. Changes made after the backup are lost.")
+    ask = confirm or input
+    if ask("Type yes to continue: ").strip().lower() != "yes":
+        print("orch-hub: nothing restored", file=sys.stderr)
+        return 1
+    words = read_words() if read_words is not None else getpass.getpass("The 24 backup words: ")
+    audit = activity = None
+    keys = None
+    try:
+        if info["in_place"]:
+            from ..activity import ActivityLog
+            from ..audit import open_log
+
+            keys = HubKeys.open(state, prune=False, **({} if now_ms is None else {"now_ms": now_ms}))
+            audit = open_log(state, keys, dev_mode=dev_of(keys), **({} if now_ms is None else {"now_ms": now_ms}))
+            activity = ActivityLog(state / "activity.db") if (state / "activity.db").exists() else None
+        try:
+            got = RS.restore(
+                state, data, words, dev_mode=not args.real, keys=keys, audit=audit, activity=activity, now_ms=now_ms
+            )
+        except RS.RestoreError as e:
+            print(f"orch-hub: restore refused: {e.code}", file=sys.stderr)
+            return 1
+        finally:
+            words = ""
+    finally:
+        if activity is not None:
+            activity.close()
+        if audit is not None:
+            audit.store.close()
+    out("Restored. People other than admins are switched off: turn each one on again in People.")
+    out("Every phone and browser must sign in or pair again. Start the hub now.")
+    out(f"New op_seq {got['op_seq']}.")
+    return 0
 
 
 def run(

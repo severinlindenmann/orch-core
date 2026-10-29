@@ -102,6 +102,36 @@ test("wordsMayShow: this computer, https and this hub's OWN private-network addr
   assert.equal(wordsMayShow(null), false);
 });
 
+test("Restore asks for the words, the password and a code, in plain words, and sends all three", async () => {
+  const sent = [];
+  const c = card(hubSettingsView({ ...BASE, backup: SET }, { wordsMayShow: true, restore: async (n, b) => sent.push([n, b]) }));
+  assert.equal(inputs(c).length, 0);                                              // nothing to type until Restore is clicked
+  button(c, "Restore").listeners.click();
+  assert.match(c.textContent, /Everything changed since then is lost/); assert.match(c.textContent, /switched off/);
+  assert.doesNotMatch(c.textContent, /NetBird|WireGuard|Tailscale|VPN/i);
+  const area = c.all().find((n) => n.tag === "textarea");
+  const [pw, code] = inputs(c);
+  area.value = "a b c"; pw.value = "pw"; code.value = " 111222 ";
+  await button(c, "Restore this backup").listeners.click();
+  assert.deepEqual(sent, [[NAME, { password: "pw", totp: "111222", words: "a b c" }]]);
+  assert.equal(area.value, ""); assert.equal(pw.value, "");                        // nothing is kept in the page
+});
+
+test("on an address that is not private the restore shows the server command instead of a words box", () => {
+  const c = card(hubSettingsView({ ...BASE, backup: SET }, { wordsMayShow: false, restore: async () => {} }));
+  button(c, "Restore").listeners.click();
+  assert.equal(c.all().filter((n) => n.tag === "textarea").length, 0);
+  assert.match(c.textContent, /orch-hub restore FILE/);
+});
+
+test("after a restore the card says what happened and what to check, with a way to dismiss it", () => {
+  let n = 0;
+  const c = card(hubSettingsView({ ...BASE, backup: { ...SET, restored: { made_ms: 1, restored_ms: 2, suspended: 2 } } }, { wordsMayShow: true, dismissRestored: () => n++ }));
+  assert.match(c.textContent, /Restored from the backup of/); assert.match(c.textContent, /Check People and Workspaces/); assert.match(c.textContent, /2 people are switched off/);
+  button(c, "Got it").listeners.click();
+  assert.equal(n, 1);
+});
+
 test("a hub without the backup answer shows no Backup card", () => {
   assert.equal(card(hubSettingsView(BASE, {})), undefined);
 });

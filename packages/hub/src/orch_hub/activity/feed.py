@@ -43,6 +43,7 @@ WORDS = {
     "hub.backup.key_set": "set up the hub backup key",
     "hub.backup.made": "made a hub backup",
     "hub.backup.downloaded": "downloaded a hub backup",
+    "hub.backup.restored": "restored the hub from a backup",
     "connection.allowed": "allowed a connection",
     "connection.denied": "closed a connection",
     "connection.migrated": "carried over a connection",
@@ -63,6 +64,7 @@ AUDIT_WORDS = {
     "market_policy": "add-on rules",
     "hub_settings": "hub name and addresses",
     "hub_backup": "hub backups",
+    "hub_restore": "hub restores",
 }
 
 #: what an approval was about, in words (a verb the table does not know is said generically)

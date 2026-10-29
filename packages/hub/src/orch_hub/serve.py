@@ -25,6 +25,8 @@ from .access.cli import ACCESS_FILE
 from .access.orgcleanup import org_cleanup
 from .activity import ActivityLog
 from .audit import open_log
+from .backup.restore import finish as finish_restore
+from .backup.restore import recover as recover_swap
 from .backup.service import BackupService
 from .changes import Changes
 from .channels import Channels
@@ -192,6 +194,7 @@ def serve(
     gate = FixedInvites(invites)  # a bad invite refuses before any state is opened
     u = urllib.parse.urlsplit(publish_url)
     api_host = api_host or u.netloc
+    recover_swap(state)  # a restore that stopped between its two renames is completed or undone first
     keys = HubKeys.open(state)
     # Opus condition 5: once `orch install` wrote hub-settings.json, the advertised addresses, the console origins and the
     # API origin come from that file ONLY. The start arguments keep the listen sockets; --web-origin / --api-origin are
@@ -448,6 +451,7 @@ def serve(
         )
         if web is not None:
             print(f"orch-hub web port={web.address[1]}", file=out, flush=True)
+        finish_restore(state)  # a good start after a restore: the pre-restore state dir (old keys) goes
         for code in gate.codes():  # protocol §5 invite form: what the workspace owner passes to `orch hub join`
             print(invite_line(keys.hub_id, code), file=out, flush=True)
         stop.wait()

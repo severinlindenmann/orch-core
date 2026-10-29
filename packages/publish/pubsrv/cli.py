@@ -124,6 +124,7 @@ def serve(args):
         args.api_host or args.bind,
         dev_mode=args.dev_mode,
         allow_direct=args.allow_direct,
+        share_origin=args.share_origin,
     )
     # no access log: request lines carry ids, and the no-logging policy applies (design I15)
     uvicorn.run(
@@ -304,6 +305,11 @@ def main(argv=None):
         "--allow-direct",
         action="store_true",
         help="also accept the direct v2 12.1 request on APP routes (a workspace with no hub); off by default",
+    )
+    s.add_argument(
+        "--share-origin",
+        default=None,
+        help="http(s)://HOST[:PORT] apps are served from (the share server's origin); without it apps cannot be uploaded",
     )
     r = sub.add_parser("run", help="no domain: API and share links on ONE address and port")
     r.add_argument("--data", required=True)

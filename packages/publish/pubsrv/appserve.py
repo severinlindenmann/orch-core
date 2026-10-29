@@ -78,10 +78,18 @@ class AppServer:
     # -- responses -----------------------------------------------------------------------------------------
 
     def csp(self, slug, view, reach):
-        return P.csp(f"{self.origin}/a/{slug}/v/{view}/", reach, self.forbidden)
+        """The sandbox CSP of a response. A reach that is no longer allowed (it names publish's own address) is
+        dropped, so a ValueError never turns into a response without the sandbox."""
+        base = f"{self.origin}/a/{slug}/v/{view}/"
+        try:
+            return P.csp(base, list(reach), self.forbidden)
+        except ValueError:
+            return P.csp(base, [], self.forbidden)
 
-    def _checked(self, resp):
+    def _checked(self, resp, cors_null=False):
         for k in resp.extra:
+            if k.lower() == "access-control-allow-origin" and cors_null and resp.extra[k] == "null":
+                continue  # the one exception: a successful file under a live view path (see _file)
             if k.lower() in _NEVER:
                 raise AssertionError("a /a/ response must not carry " + k)
         return resp
@@ -367,8 +375,15 @@ class AppServer:
             extra["content-disposition"] = (
                 f"attachment; filename=\"{S.safe_name(name)}\"; filename*=UTF-8''{quote(name)}"
             )
+        # The view id in the path is the capability, so the opaque sandbox origin (Origin: null) may read the app's
+        # own files (module scripts, fonts, fetch). Only here: never the gate, an error, the landing or /s/.
+        extra["access-control-allow-origin"] = "null"
+        extra["vary"] = "Origin"
         return self._checked(
-            S._Resp(200, b"", ctype, csp=self.csp(slug, view, reach), extra=extra, fd=fd, size=size)
+            S._Resp(
+                200, b"", ctype, csp=self.csp(slug, view, reach), extra=extra, fd=fd, size=size
+            ),
+            cors_null=True,
         )
 
 

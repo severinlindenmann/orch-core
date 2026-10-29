@@ -27,6 +27,9 @@ from .auth import Refusal
 from .shares import MAX_WORKSPACE, _no_dup_pairs, _txn
 
 MAX_APPS = 50  # per workspace (not removed)
+MAX_TOMBSTONES = (
+    500  # removed apps keep their slug for ever; a workspace cannot squat more than this many
+)
 MAX_VERSION_BYTES = 50 * 1024 * 1024
 MAX_STAGED = 3  # open (uncommitted) versions per app
 KEEP_OLD = 4  # committed versions kept next to the live one (rollback)
@@ -40,8 +43,8 @@ def route_parts(method, target):
     """``(route, args)`` for an app route, classified over the raw target by ``published.app_route``, else None.
     ``args`` are the groups after workspace and id: ``(version,)`` for a meta PUT, ``(version, path)`` for a file."""
     route = P.app_route(method, target)
-    if route is None:
-        return None
+    if route is None or not route["op"].startswith("app."):
+        return None  # share.extend / share.password are the share routes (S2), never handled or admitted here
     for m, rx, op, _ in P.APP_ROUTES:
         if m == method and op == route["op"]:
             hit = re.fullmatch(rx, target)
@@ -131,6 +134,9 @@ class AppOps:
             try:
                 app = conn.execute("SELECT * FROM apps WHERE id=?", (app_id,)).fetchone()
                 if app is None:
+                    if self.s.share_origin is None:
+                        # without the configured share origin the reach rule cannot exclude it (and nothing serves)
+                        raise Refusal(503, "apps_not_configured")
                     if conn.execute("SELECT 1 FROM apps WHERE slug=?", (meta["slug"],)).fetchone():
                         raise Refusal(
                             409, "slug_taken"
@@ -140,6 +146,11 @@ class AppOps:
                     ).fetchone()[0]
                     if n >= MAX_APPS:
                         raise Refusal(429, "too_many_apps")
+                    gone_n = conn.execute(
+                        "SELECT COUNT(*) FROM apps WHERE owner_ws=? AND state='removed'", (ws,)
+                    ).fetchone()[0]
+                    if gone_n >= MAX_TOMBSTONES:
+                        raise Refusal(429, "too_many_removed")
                     conn.execute(
                         "INSERT INTO apps(id, owner_ws, slug, name, kind, access, audience, pw, state, live_version,"
                         " created_ms, updated_ms) VALUES (?,?,?,?,?,?,?,NULL,'staged',NULL,?,?)",

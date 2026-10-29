@@ -263,10 +263,19 @@ class ShareServer:
         try:
             resp = await self._route(scope, receive, method)
         except (sqlite3.Error, OSError):
-            resp = page(503, ("Unavailable", "This service is not available right now."))
+            resp = self._fallback(
+                scope, 503, ("Unavailable", "This service is not available right now.")
+            )
         except Exception:  # noqa: BLE001 - fail closed, never echo details
-            resp = page(500, ("Error", "Something went wrong."))
+            resp = self._fallback(scope, 500, ("Error", "Something went wrong."))
         await resp.send(send, head=method == "HEAD")
+
+    def _fallback(self, scope, status, text):
+        """An error page; under /a/ it carries the sandbox CSP like every other /a/ response."""
+        path = scope.get("path") or ""
+        if path == "/a" or path.startswith("/a/"):
+            return self.apps.page(status, text)
+        return page(status, text)
 
     def _ip_ok(self, scope):
         """Cheap bucket before any DB work. Behind a proxy this is the proxy's address, so the

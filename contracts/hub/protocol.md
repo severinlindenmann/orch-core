@@ -2695,6 +2695,8 @@ group apps (and only those); that is said in the release review text and in §13
   F1 id and generation checks; publish requests through the v2 nonce store; link messages only through the 120 s
   window in V3 (SHORTCUT).
 
+**M4 password apps (§11.4.1).** The 5 tries a minute per app are shared by every visitor, so one address can keep a password app's gate closed (a lock-out, accepted for v1; the per-IP bucket and the KDF slots bound the cost, hardening is #1263).
+
 **M4 reach and DNS (§11.7).** A reach entry is judged by its spelling only. A public-looking name that resolves to a private
 or loopback address (DNS rebinding, a record the owner or an attacker controls) cannot be caught by this contract; the CSP
 limits the browser's background requests to the approved names, and the release review tells the owner to approve names, not

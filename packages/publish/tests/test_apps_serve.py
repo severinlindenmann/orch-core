@@ -432,7 +432,14 @@ def test_every_a_response_has_the_sandbox_csp_and_no_cookie(w):
         assert r.headers["x-content-type-options"] == "nosniff", path
         assert r.headers["referrer-policy"] == "no-referrer", path
         assert "set-cookie" not in r.headers, path
-        assert "access-control-allow-origin" not in r.headers, path
+        live_file = (
+            r.status_code == 200
+            and method == "GET"
+            and f"/v/{appserve.ZERO_VIEW}/" not in path
+            and "/v/" in path
+        )
+        assert r.headers.get("access-control-allow-origin") == ("null" if live_file else None), path
+        assert "access-control-allow-credentials" not in r.headers, path
         assert r.headers["cache-control"] == "no-store"
 
 
@@ -617,3 +624,131 @@ def test_unconfigured_apps_dir_migrates_from_schema_3(tmp_path):
 
 def test_kdf_semaphore_is_threadsafe_type():
     assert isinstance(appserve.AppServer.__init__, object) and threading.BoundedSemaphore
+
+
+# --- review fixes (Opus review of S3) ---------------------------------------------------------------------------
+
+
+def test_m1_api_without_a_share_origin_takes_no_apps(w):
+    w.e.app.state.settings.share_origin = None
+    m, _ = make_meta(reach=["https://apps.example.org"])
+    r = w.hub("PUT", f"/v1/ws/{WS_A}/apps/{APP}/versions/1", json.dumps(m).encode())
+    assert (r.status_code, err(r)) == (503, "apps_not_configured")
+
+
+def test_m1_reach_naming_the_share_origin_is_refused_at_meta_put(w):
+    so = "https://apps.example.org"
+    w.e.app.state.settings.share_origin = so
+    m, _ = make_meta(reach=[so])
+    r = w.hub("PUT", f"/v1/ws/{WS_A}/apps/{APP}/versions/1", json.dumps(m).encode())
+    assert (r.status_code, err(r)) == (400, "forbidden_origin")
+
+
+def test_m1_a_csp_error_never_gives_a_response_without_the_sandbox(w):
+    so = "https://apps.example.org"
+    m, f = make_meta(reach=[so])
+    w.publish(m, f)  # accepted: the API was configured with another origin
+    share = create_share_app(w.e.data, clock=lambda: w.e.now, share_origin=so, api_host=HOST)
+    web = TestClient(share, base_url=so, follow_redirects=False)
+    r = web.get(web.get("/a/shop-demo/").headers["location"])
+    assert r.status_code == 200 and r.headers["content-security-policy"].startswith("sandbox ")
+    connect = r.headers["content-security-policy"].split("connect-src ")[1].split(";")[0]
+    assert (
+        len(connect.split()) == 1
+    )  # the reach naming publish itself was dropped, only the base remains
+
+
+def test_m1_serve_takes_a_share_origin(tmp_path, monkeypatch):
+    import uvicorn
+
+    from pubsrv import app as app_mod
+    from pubsrv import cli
+
+    seen = {}
+    real = app_mod.create_app
+
+    def spy(*a, **k):
+        x = real(*a, **k)
+        seen["o"] = x.state.settings.share_origin
+        return x
+
+    monkeypatch.setattr(app_mod, "create_app", spy)
+    monkeypatch.setattr(uvicorn, "run", lambda *a, **k: None)
+    d = str(tmp_path / "d")
+    assert cli.main(["serve", "--data", d, "--share-origin", "https://Apps.Example.org/"]) == 0
+    assert seen["o"] == "https://apps.example.org"
+
+
+def test_m2_share_routes_are_not_app_routes(w):
+    w.e.app.state.settings.allow_direct = True
+    for tail, body in (("extend", b'{"days":3}'), ("password", b"{}")):
+        r = w.direct("POST", f"/v1/ws/{WS_A}/shares/{'c3' * 16}/{tail}", body)
+        assert (r.status_code, err(r)) == (403, "hub_required")
+    from pubsrv import apps
+
+    assert apps.route_parts("POST", f"/v1/ws/{WS_A}/shares/{'c3' * 16}/extend") is None
+    assert apps.route_parts("POST", f"/v1/ws/{WS_A}/apps/{APP}/stop") is not None
+
+
+def test_m3_cors_null_only_on_a_successful_live_view_file(w):
+    m, f = make_meta()
+    w.publish(m, f)
+    url = w.view_url()
+    ok = w.web.get(url + "app.js", headers={"Origin": "null"})
+    assert ok.headers["access-control-allow-origin"] == "null"
+    assert "access-control-allow-credentials" not in ok.headers
+    for path in (
+        url + "missing.js",
+        "/a/shop-demo/",
+        "/a/nope-nope/",
+        f"/a/shop-demo/v/{'f' * 32}/app.js",
+    ):
+        r = w.web.get(path, headers={"Origin": "null"})
+        assert "access-control-allow-origin" not in r.headers, path
+    w.e.now += 31 * 60 * 1000
+    assert "access-control-allow-origin" not in w.web.get(url + "app.js").headers  # ended view
+
+
+def test_m3_gate_and_shares_have_no_cors(w):
+    pw_app(w)
+    r = w.web.post(GATE, data={"p": PW}, headers={"Origin": "null"})
+    assert r.status_code == 200 and "access-control-allow-origin" not in r.headers
+    url = r.text.split("url=")[1].split('"')[0]
+    assert (
+        w.web.get(url).headers["access-control-allow-origin"] == "null"
+    )  # the file under the live view
+    assert "access-control-allow-origin" not in w.web.get("/s/" + "d" * 32).headers
+
+
+def test_l1_errors_under_a_carry_the_sandbox(w, monkeypatch):
+    import sqlite3
+
+    m, f = make_meta()
+    w.publish(m, f)
+    url = w.view_url()
+    for exc, code in ((sqlite3.OperationalError("locked"), 503), (RuntimeError("boom"), 500)):
+
+        def boom(*a, _e=exc, **k):
+            raise _e
+
+        monkeypatch.setattr(appserve.db, "connect", boom)
+        for path in ("/a/shop-demo/", url + "app.js", url):
+            r = w.web.get(path)
+            assert r.status_code == code, path
+            assert r.headers["content-security-policy"].startswith("sandbox allow-scripts"), path
+            assert "set-cookie" not in r.headers and "access-control-allow-origin" not in r.headers
+
+
+def test_l3_removed_slugs_are_capped_per_workspace(w, monkeypatch):
+    from pubsrv import apps
+
+    monkeypatch.setattr(apps, "MAX_TOMBSTONES", 3)
+    t = f"/v1/ws/{WS_A}/apps/"
+    for i in range(3):
+        app = f"{i + 1:032x}"
+        m, _ = make_meta(slug=f"squat-{i:03d}")
+        assert w.hub("PUT", f"{t}{app}/versions/1", json.dumps(m).encode()).status_code == 200
+        assert w.hub("DELETE", f"{t}{app}").status_code == 200
+    m, _ = make_meta(slug="squat-new")
+    r = w.hub("PUT", f"{t}{'9' * 32}/versions/1", json.dumps(m).encode())
+    assert (r.status_code, err(r)) == (429, "too_many_removed")

@@ -614,10 +614,10 @@ def test_the_contract_event_is_closed():
 # --- the server command ------------------------------------------------------------------------------------------------------
 
 
-def _cli(w, *extra, out=None):
+def _cli(w, *extra, out=None, ask=None):
     args = CLI._parser().parse_args(["backup-key", "--state", str(w.state), *extra])
     assert args.group == "backup-key"
-    return BCLI.run(args, out=out or (lambda _l: None), now_ms=w.clock, tty=lambda: True)
+    return BCLI.run(args, out=out or (lambda _l: None), now_ms=w.clock, tty=lambda: True, ask=ask or (lambda _p: ""))
 
 
 def test_the_server_command_prints_the_words_once_and_refuses_a_second_setup(w, capsys, caplog):
@@ -634,7 +634,7 @@ def test_the_server_command_prints_the_words_once_and_refuses_a_second_setup(w, 
     assert "already" in capsys.readouterr().err
     _words_nowhere(w.state, got, (caplog.text.encode(), capsys.readouterr().out.encode()))
     evs = _events(w, "hub_backup")
-    assert [e["change"] for e in evs] == ["key_set"] and evs[0]["actor_user_id"] is None
+    assert [e["change"] for e in evs] == ["key_set", "key_confirmed"] and evs[0]["actor_user_id"] is None
     assert _cli(w, "--replace") == 0
     assert len(BackupService(w.env.keys).list()) == 1  # the old key's backup is gone
 
@@ -715,7 +715,9 @@ def test_the_server_command_refuses_when_its_output_is_not_a_terminal(w, monkeyp
     assert BCLI.run(args, out=lines.append, now_ms=w.clock, tty=lambda: False) == 1
     assert "terminal" in capsys.readouterr().err and lines == []
     assert not (w.state / SN.KEY_FILE).exists() and not (w.state / "backups").exists()
-    assert BCLI.run(args, out=lines.append, now_ms=w.clock, tty=lambda: True) == 0  # the same call at a terminal works
+    assert (
+        BCLI.run(args, out=lines.append, now_ms=w.clock, tty=lambda: True, ask=lambda _p: "") == 0
+    )  # the same call at a terminal works
 
 
 def test_a_plain_http_private_range_address_is_trusted_only_when_it_is_the_settings_private_address(w):
@@ -742,3 +744,74 @@ def test_a_plain_http_private_range_address_is_trusted_only_when_it_is_the_setti
     )
     assert not (w.state / SN.KEY_FILE).exists()
     assert w.call("POST", "/admin/backup/key", good, token=tok, origin=mine, host="100.64.1.2:9000")[0] == 200
+
+
+def test_while_a_new_key_waits_new_backups_never_prune_the_old_key_ones(w):
+    tok, _words1, _n = _first(w)
+    for _ in range(3):
+        tok = _later(w)
+        assert w.call("POST", "/admin/backups", {}, token=tok)[0] == 200
+    tok = _later(w)
+    assert _key(w, tok)[0] == 200  # replaced, not confirmed
+    old = {r["name"] for r in BackupService(w.env.keys).list()} - {
+        r["name"] for r in BackupService(w.env.keys).list()[:1]
+    }
+    assert len(old) == 4
+    for _ in range(9):  # many new-key backups: the old-key ones stay (each key keeps its own 7)
+        tok = _later(w)
+        assert w.call("POST", "/admin/backups", {}, token=tok)[0] == 200
+    names = {r["name"] for r in BackupService(w.env.keys).list()}
+    assert old <= names
+    new_pub = json.loads((w.state / SN.KEY_FILE).read_text())["bk_pub"]
+    mine = [n for n in names if B.unpack_file((w.state / "backups" / n).read_bytes())[0]["o"]["bk_pub"] == new_pub]
+    assert len(mine) == KEEP
+    assert w.call("GET", "/admin/backup", token=tok)[1]["key_pending"] is True
+    assert w.call("POST", "/admin/backup/key/confirm", {}, token=tok)[0] == 403  # a later session is not the one
+
+
+def test_confirming_is_audited_without_secrets_and_a_broken_chain_deletes_nothing(w, monkeypatch):
+    tok, _w1, _n = _first(w)
+    tok = _later(w)
+    _s, o, _ = _key(w, tok)
+    before = {r["name"] for r in BackupService(w.env.keys).list()}
+    real = w.api.d.audit.hub_backup
+
+    def boom(**kw):
+        if kw["change"] == "key_confirmed":
+            raise RuntimeError("chain broken")
+        return real(**kw)
+
+    monkeypatch.setattr(w.api.d.audit, "hub_backup", boom)
+    assert w.call("POST", "/admin/backup/key/confirm", {}, token=tok)[0] == 500
+    assert {r["name"] for r in BackupService(w.env.keys).list()} == before
+    monkeypatch.setattr(w.api.d.audit, "hub_backup", real)
+    assert w.call("POST", "/admin/backup/key/confirm", {}, token=tok)[0] == 200
+    evs = _events(w, "hub_backup")
+    assert [e["change"] for e in evs][-1] == "key_confirmed" and evs[-1]["actor_user_id"] == w.admin
+    assert set(evs[-1]) == {"change", "actor_user_id", "nonce"} and o["words"] not in json.dumps(evs)
+    rows = w.api.d.activity._db.execute("SELECT type FROM event WHERE type='hub.backup.key_confirmed'").fetchall()
+    assert len(rows) == 1
+
+
+def test_the_server_command_waits_for_enter_and_reports_a_refused_confirm(w, capsys, monkeypatch):
+    _first(w)
+
+    # no Enter (end of input): the new key is made, the older backups stay, nothing is lost
+    def eof(_p):
+        raise EOFError
+
+    assert _cli(w, "--replace", ask=eof) == 0
+    assert "not confirmed" in capsys.readouterr().err
+    assert len(BackupService(w.env.keys).list()) == 2
+    # Enter: confirmed, the older one goes
+    asked = []
+    assert _cli(w, "--replace", ask=lambda p: asked.append(p) or "") == 0 and "Enter" in asked[0]
+    assert len(BackupService(w.env.keys).list()) == 1
+
+    # a confirm that is refused is said in plain words, exit 1
+    def denied(self, pending="cli", actor=None):
+        raise BackupError("confirm_denied")
+
+    monkeypatch.setattr(BackupService, "confirm", denied)
+    assert _cli(w, "--replace") == 1
+    assert "could not confirm" in capsys.readouterr().err

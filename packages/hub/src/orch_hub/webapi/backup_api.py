@@ -154,7 +154,7 @@ class BackupHandlers:
         if b not in (None, {}):
             raise _err("malformed")
         try:
-            return 200, {"ok": True, "removed": self._backups().confirm(_session_id(c))}
+            return 200, {"ok": True, "removed": self._backups().confirm(_session_id(c), c.user_id)}
         except BackupError as e:
             raise _err(e.code) from None
 

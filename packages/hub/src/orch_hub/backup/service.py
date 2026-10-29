@@ -180,7 +180,20 @@ class BackupService:
             return None
 
     def _prune(self) -> None:
-        for r in self.list()[self.keep :]:
+        """Keep the newest :attr:`keep`. While a new key waits for its confirmation, the old-key backups are the ones the
+        person can still open, so they are never pruned by new-key backups: each key keeps its own newest ``keep``."""
+        kept = self.list()
+        info = self.key_info()
+        if info is None or info["pending"] is None:
+            doomed = kept[self.keep :]
+        else:
+            doomed, seen = [], {}
+            for r in kept:
+                mine = self._bk_pub_of(r["name"]) == info["bk_pub"]
+                seen[mine] = seen.get(mine, 0) + 1
+                if seen[mine] > self.keep:
+                    doomed.append(r)
+        for r in doomed:
             (self.state / DIR / r["name"]).unlink(missing_ok=True)
 
     def _drop_other_keys(self, bk_pub: bytes) -> None:
@@ -305,7 +318,7 @@ class BackupService:
             self._prune()
             return words, made
 
-    def confirm(self, pending: str = "cli") -> int:
+    def confirm(self, pending: str = "cli", actor: str | None = None) -> int:
         """The person has saved the new words: delete every kept backup under another key and clear the marker. Only the
         one the key was set for (``pending``) may confirm; a second call is a no-op. Returns how many files went."""
         with locked(self.state):
@@ -316,6 +329,11 @@ class BackupService:
                 return 0
             if not hmac.compare_digest(info["pending"].encode(), pending.encode()):
                 raise BackupError("confirm_denied")
+            try:
+                self._note("key_confirmed", actor)  # before anything is deleted: a chain that cannot be written refuses
+            except Exception:  # noqa: BLE001
+                raise BackupError("audit_failed") from None
+            self._activity("hub.backup.key_confirmed", actor)
             before = len(self.list())
             self._drop_other_keys(info["bk_pub"])
             write_atomic(self._key_path(), self._key_files(info["bk_pub"], info["k_auth"], info["set_ms"])[SN.KEY_FILE])

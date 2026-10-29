@@ -38,6 +38,7 @@ WORDS = {
     "addon.request_refused": "turned down an add-on request",
     "hub.settings.changed": "changed the hub's name or addresses",
     "hub.backup.key_set": "set up the hub backup key",
+    "hub.backup.key_confirmed": "confirmed the new hub backup words",
     "hub.backup.made": "made a hub backup",
     "hub.backup.downloaded": "downloaded a hub backup",
     "connection.allowed": "allowed a connection",

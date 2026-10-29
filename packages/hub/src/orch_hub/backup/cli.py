@@ -28,6 +28,7 @@ def run(
     out: Callable[[str], None] = print,
     now_ms: Callable[[], int] | None = None,
     tty: Callable[[], bool] = sys.stdout.isatty,
+    ask: Callable[[str], str] = input,
 ) -> int:
     if os.environ.get("ORCH_GRANT") or os.environ.get("ORCH_SESSION"):  # an agent never gets the words (human only)
         print("orch-hub: refused: this command is for a person, not an agent", file=sys.stderr)
@@ -64,7 +65,15 @@ def run(
         for i in range(0, 24, 6):
             out("  ".join(f"{i + j + 1:>2} {x}" for j, x in enumerate(w[i : i + 6])))
         out(f"\nFirst backup: {made['name']}")
-        svc.confirm("cli")  # the words were printed to this terminal: older backups under another key can go now
+        try:  # older backups under another key go only once the person says the words are saved
+            ask("\nPress Enter once the words are saved (Ctrl-C to keep the older backups for now): ")
+            svc.confirm("cli")
+        except EOFError, KeyboardInterrupt:
+            print("\norch-hub: not confirmed; older backups are kept until you confirm in the console", file=sys.stderr)
+            return 0
+        except BackupError as e:
+            print(f"orch-hub: could not confirm the new words ({e.code}); older backups are kept", file=sys.stderr)
+            return 1
         return 0
     finally:
         activity.close()

@@ -21,6 +21,7 @@ const WHY = {
   bad_credentials: "The password or the code was not right. Each code works only once: wait for the next one.",
   insecure_origin: "The 24 words are not shown on this address. Run the command below on the server itself.",
   no_backup_key: "Set up backups first.",
+  confirm_denied: "Only the session that made the new words can confirm them. Make new words again from this session.",
   backup_not_found: "That backup is not on this server any more.",
   backup_failed: "The backup could not be made.",
 };
@@ -170,6 +171,12 @@ function backupRows(b, actions) {
 function backupCard(b, actions) {
   const card = h("div", { class: "card", "data-card": "backup" }, h("h2", { text: "Backup" }));
   if (actions.words) card.append(wordsPanel(actions.words, actions));
+  else if (b.key_pending) {  // after a reload: the words are gone, but the older backups are still waiting for "saved"
+    card.append(h("div", { class: "banner", role: "status", "data-pending": "1" },
+      h("b", { text: "New backup words are not confirmed yet" }),
+      h("p", { class: "small", text: "Backups made with the older words are kept until you confirm that you saved the new words." }),
+      h("button", { type: "button", class: "primary", text: "I have saved it", onclick: () => actions.wordsSaved?.() })));
+  }
   const mayShow = actions.wordsMayShow !== false;
   const cli = h("code", { class: "mono cli-line", text: text(b.cli_line ?? "orch-hub backup-key") });
   if (!b.key_set) {
@@ -239,7 +246,11 @@ export async function hubSettingsPage(d, detected = [], words = null) {
       words,
       wordsMayShow: wordsMayShow(globalThis.location, (r.body.addresses ?? []).filter((a) => a.kind === "private").map((a) => a.web)),
       copy: async (t) => { try { await globalThis.navigator?.clipboard?.writeText(t); return true; } catch { return false; } },
-      wordsSaved: async () => { await d.api("POST", "/admin/backup/key/confirm", {}); await hubSettingsPage(d); },
+      wordsSaved: async () => {
+        const x = await d.api("POST", "/admin/backup/key/confirm", {});
+        if (x.status !== 200) backupNote(x, "");
+        await hubSettingsPage(d);
+      },
       setKey: async (c) => {
         const x = await d.api("POST", "/admin/backup/key", c);
         if (x.status === 200) { d.state.notice = d.banner("ok", "Backups are set up", null); return hubSettingsPage(d, [], x.body.words); }

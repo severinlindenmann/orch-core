@@ -78,7 +78,7 @@ EVENT_FIELDS: dict[str, dict[str, Any]] = {
     "hub_settings": {"change": _enum("general", "addresses"), "actor_user_id": _hex16},
     # M4 S5 (#1462, cond 23): the hub backup key was set or replaced ("key_set"), a backup was made ("made") or a kept
     # backup was handed out ("downloaded"); hub-wide. Who (None = the schedule or the hub terminal), never a key, word or file.
-    "hub_backup": {"change": _enum("key_set", "made", "downloaded"), "actor_user_id": _opt_hex16},
+    "hub_backup": {"change": _enum("key_set", "key_confirmed", "made", "downloaded"), "actor_user_id": _opt_hex16},
     # p4 (§10.2b): a selective workspace shared, replaced or revoked an item, or the hub purged its items at unbind or a
     # mode switch (scoped to that workspace). Per-change field rules in _share_rule.
     "share": {

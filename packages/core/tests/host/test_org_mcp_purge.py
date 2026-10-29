@@ -134,4 +134,4 @@ def test_a_connect_to_a_hub_revokes_the_old_capability_through_the_real_op(minte
     ok(m.served.client().req("hub.connect", args, idem=True))
     assert proxy.epoch(m.service.workspace_id) > epoch  # ...and the connect bumped it
     with pytest.raises(ValueError):
-        proxy.mint(m.service.workspace_id, 2, "r_2", [{"name": "crm", "digest": "d"}], epoch=epoch)
+        proxy.mint(m.service.workspace_id, 2, "r_2", [{"name": "crm", "digest": "d"}], hub_id="h", epoch=epoch)

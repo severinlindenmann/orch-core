@@ -67,12 +67,13 @@ def proxy_for(hub: RunnerHub, *, _upstream: Callable[[dict, str | None], Any] | 
         s = svc(ws)
         return None if s is None else org_secret(s, name)
 
-    def binding(ws: str) -> int | None:
+    def binding(ws: str) -> tuple[str, int] | None:
         s = svc(ws)
         if s is None:
             return None
         try:
-            return int(orgstate._state(s).binding_seq)  # noqa: SLF001 - HostError (not joined) is "not bound"
+            state = orgstate._state(s)  # noqa: SLF001 - HostError (not joined) is "not bound"
+            return str(state.hub_id), int(state.binding_seq)
         except Exception:  # noqa: BLE001
             return None
 
@@ -100,12 +101,13 @@ def _placeholder_ok(argv: list[str]) -> bool:
     return at > 0 and argv[at - 1] == FLAG
 
 
-def _served_now(service: Any) -> tuple[list[dict], int] | None:
+def _served_now(service: Any) -> tuple[list[dict], str, int] | None:
     try:
         records = list(orgstate.served(service)["mcp"])
         if not records:
             return None
-        return records, int(orgstate._state(service).binding_seq)  # noqa: SLF001
+        state = orgstate._state(service)  # noqa: SLF001
+        return records, str(state.hub_id), int(state.binding_seq)
     except Exception:  # noqa: BLE001 - the agent starts without company servers rather than not at all
         return None
 
@@ -124,7 +126,7 @@ async def launch_mcp(call: Any, hub: RunnerHub, run: str, argv: list[str]) -> di
     got = await asyncio.to_thread(_served_now, service)
     if got is None:
         return None
-    records, seq = got
+    records, hub_id, seq = got
     keep = []
     for rec in records:
         if mcpshared.server_name_ok(rec.get("name")):
@@ -135,7 +137,7 @@ async def launch_mcp(call: Any, hub: RunnerHub, run: str, argv: list[str]) -> di
         return None
     try:
         port = await proxy.start()
-        cap = proxy.mint(service.workspace_id, seq, run, keep, epoch=epoch)
+        cap = proxy.mint(service.workspace_id, seq, run, keep, hub_id=hub_id, epoch=epoch)
     except Exception:  # noqa: BLE001 - also a mint refused by a revoke or a changed binding: no company MCP
         LOG.warning("the company MCP proxy could not mint; the agent starts without it")
         return None

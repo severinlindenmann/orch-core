@@ -121,7 +121,7 @@ def env():
         tool_policy=lambda ws, s: e.policy.get((ws, s), {}),
         isolated=e.iso,
         secret=lambda ws, n: e.secret_value,
-        binding=lambda ws: getattr(e, "bindings", {}).get(ws, 1),
+        binding=lambda ws: getattr(e, "bindings", {}).get(ws, ("h1", 1)),
         on_seen=lambda *a: e.seen.append(a),
         clock=e.clock,
     )
@@ -169,7 +169,7 @@ def rpc(env, cap, method, params=None, rid=1, name="crm", **kw):
 
 def mint(env, ws="w1", run="r1", names=("crm",)):
     recs = [r for r in env.records[ws] if r["name"] in names]
-    return env.proxy.mint(ws, 1, run, recs)
+    return env.proxy.mint(ws, 1, run, recs, hub_id="h1")
 
 
 def turn_on(env, *tools, ws="w1", server="crm"):
@@ -263,11 +263,11 @@ def test_non_loopback_peer_refused():
 
 def test_mint_validation(env):
     with pytest.raises(ValueError):
-        env.proxy.mint("w1", 1, "r1", [])
+        env.proxy.mint("w1", 1, "r1", [], hub_id="h1")
     with pytest.raises(ValueError):
-        env.proxy.mint("w1", 1, "r1", [{"name": "orch-x", "digest": "d"}])
+        env.proxy.mint("w1", 1, "r1", [{"name": "orch-x", "digest": "d"}], hub_id="h1")
     with pytest.raises(ValueError):
-        env.proxy.mint("w1", 1, "r1", [{"name": "Bad Name", "digest": "d"}])
+        env.proxy.mint("w1", 1, "r1", [{"name": "Bad Name", "digest": "d"}], hub_id="h1")
     assert mcpproxy.CAPABILITY_SHAPE.fullmatch(mint(env))
 
 
@@ -848,14 +848,14 @@ def test_close_drops_everything():
         tool_policy=lambda w, s: {},
         isolated=e.iso,
         secret=lambda w, n: None,
-        binding=lambda w: 1,
+        binding=lambda w: ("h1", 1),
         clock=e.clock,
     )
 
     async def go():
         port = await p.start()
         assert await p.start() == port
-        cap = p.mint("w1", 1, "r1", e.records["w1"])
+        cap = p.mint("w1", 1, "r1", e.records["w1"], hub_id="h1")
         up = FakeUp()
         p._caps[p._hash(cap)].upstreams["crm"] = (up, None)
         await p.close()
@@ -888,26 +888,28 @@ def test_a_revoke_between_the_epoch_read_and_the_mint_refuses_the_mint(env):
     epoch = env.proxy.epoch("w1")
     env.proxy.revoke_workspace("w1")  # the unbind lands after the caller read served, before it mints
     with pytest.raises(ValueError):
-        env.proxy.mint("w1", 1, "r1", env.records["w1"], epoch=epoch)
+        env.proxy.mint("w1", 1, "r1", env.records["w1"], hub_id="h1", epoch=epoch)
     assert env.proxy._caps == {}  # noqa: SLF001
-    assert env.proxy.mint("w1", 1, "r1", env.records["w1"], epoch=env.proxy.epoch("w1"))  # a fresh epoch works
+    assert env.proxy.mint(
+        "w1", 1, "r1", env.records["w1"], hub_id="h1", epoch=env.proxy.epoch("w1")
+    )  # a fresh epoch works
 
 
 def test_a_mint_for_a_binding_that_is_not_live_is_refused(env):
-    env.bindings = {"w1": 2}
+    env.bindings = {"w1": ("h1", 2)}
     with pytest.raises(ValueError):
-        env.proxy.mint("w1", 1, "r1", env.records["w1"])
+        env.proxy.mint("w1", 1, "r1", env.records["w1"], hub_id="h1")
     env.bindings = {"w1": None}
     with pytest.raises(ValueError):
-        env.proxy.mint("w1", 1, "r1", env.records["w1"])
+        env.proxy.mint("w1", 1, "r1", env.records["w1"], hub_id="h1")
 
 
 def test_a_changed_binding_makes_the_old_capability_401_and_drops_it(env):
     cap = mint(env)
     assert rpc(env, cap, "ping")[0] == 200
-    env.bindings = {"w1": 2}  # rebound
+    env.bindings = {"w1": ("h1", 2)}  # rebound
     assert rpc(env, cap, "ping")[0] == 401
-    env.bindings = {"w1": 1}  # even a return to the old number does not bring it back
+    env.bindings = {"w1": ("h1", 1)}  # even a return to the old number does not bring it back
     assert rpc(env, cap, "ping")[0] == 401 and env.proxy._caps == {}  # noqa: SLF001
 
 
@@ -916,7 +918,7 @@ def test_an_unbound_workspace_or_a_failing_binding_lookup_is_401(env):
         cap = mint(env)
         env.proxy._binding = lambda ws, v=value: (_ for _ in ()).throw(v) if isinstance(v, Exception) else v  # noqa: SLF001
         assert rpc(env, cap, "ping")[0] == 401
-        env.proxy._binding = lambda ws: 1  # noqa: SLF001
+        env.proxy._binding = lambda ws: ("h1", 1)  # noqa: SLF001
 
 
 # -- review fix 1: the capability is checked again when the request is forwarded ---------------------------------
@@ -943,7 +945,7 @@ def _half_send(env, cap, then):
 @pytest.mark.parametrize("how", ["run", "workspace", "binding"])
 def test_a_revoke_between_headers_and_body_forwards_nothing(env, how):
     cap = mint(env)
-    env.bindings = {"w1": 1}
+    env.bindings = {"w1": ("h1", 1)}
 
     def revoke():
         if how == "run":
@@ -1123,3 +1125,16 @@ def test_capability_expires_on_the_wall_clock_even_if_the_monotonic_one_stood_st
     wall["now"] += 2  # the laptop slept: monotonic did not move
     assert rpc(env, cap, "ping")[0] == 401
     assert not env.proxy._caps
+
+
+# -- review fix 8: the binding is (hub_id, binding_seq); the capability shape is redacted by the host -------------
+
+
+def test_a_binding_to_another_hub_with_the_same_number_kills_the_capability(env):
+    cap = mint(env)
+    assert rpc(env, cap, "ping")[0] == 200
+    env.bindings = {"w1": ("h2", 1)}  # left hub h1, joined h2: the sequence number alone would say yes
+    assert rpc(env, cap, "ping")[0] == 401
+    with pytest.raises(ValueError):
+        env.proxy.mint("w1", 1, "r1", env.records["w1"], hub_id="h1")
+    assert env.proxy.mint("w1", 1, "r1", env.records["w1"], hub_id="h2")

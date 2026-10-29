@@ -100,6 +100,7 @@ class _Cap:
         self,
         key: str,
         ws: str,
+        hub_id: str,
         binding_seq: int,
         run: str,
         servers: dict[str, str],
@@ -108,6 +109,7 @@ class _Cap:
     ) -> None:
         self.key = key
         self.ws = ws
+        self.hub_id = hub_id
         self.binding_seq = binding_seq
         self.run = run
         self.servers = servers
@@ -204,7 +206,7 @@ class Proxy:
         tool_policy: Callable[[str, str], dict[str, str]],
         isolated: Callable[[str], bool],
         secret: Callable[[str, str], str | None],
-        binding: Callable[[str], int | None],
+        binding: Callable[[str], tuple[str, int] | None],
         on_seen: Callable[[str, str, str, list[dict]], None] | None = None,
         clock: Callable[[], float] = time.monotonic,
         wall: Callable[[], float] = time.time,
@@ -214,7 +216,7 @@ class Proxy:
         self._tool_policy = tool_policy
         self._isolated = isolated
         self._secret = secret
-        self._binding = binding  # ws -> the live binding_seq, None = not bound (checked on every request)
+        self._binding = binding  # ws -> the live (hub_id, binding_seq), None = not bound (checked on every request)
         self._epoch: dict[str, int] = {}  # per workspace; revoke_workspace bumps it
         self._on_seen = on_seen
         self._clock = clock
@@ -243,13 +245,15 @@ class Proxy:
         with self._lock:
             return self._epoch.get(ws, 0)
 
-    def _binding_is(self, ws: str, binding_seq: int) -> bool:
+    def _binding_is(self, ws: str, hub_id: str, binding_seq: int) -> bool:
         try:
-            return self._binding(ws) == binding_seq
+            return self._binding(ws) == (hub_id, binding_seq)
         except Exception:
             return False
 
-    def mint(self, ws: str, binding_seq: int, run: str, servers: list[dict], *, epoch: int | None = None) -> str:
+    def mint(
+        self, ws: str, binding_seq: int, run: str, servers: list[dict], *, hub_id: str, epoch: int | None = None
+    ) -> str:
         """Raises ``ValueError`` when the workspace was revoked since ``epoch`` was read, or when ``binding_seq`` is not
         the live binding: a revoke racing a mint can never leave a usable capability."""
         if not servers:
@@ -263,11 +267,11 @@ class Proxy:
         with self._lock:
             if epoch is not None and epoch != self._epoch.get(ws, 0):
                 raise ValueError("revoked")
-            if not self._binding_is(ws, binding_seq):
+            if not self._binding_is(ws, hub_id, binding_seq):
                 raise ValueError("not bound")
             key = self._hash(cap)
             self._caps[key] = _Cap(
-                key, ws, binding_seq, run, names, self._clock() + CAPABILITY_TTL, self._wall() + CAPABILITY_TTL
+                key, ws, hub_id, binding_seq, run, names, self._clock() + CAPABILITY_TTL, self._wall() + CAPABILITY_TTL
             )
         return cap
 
@@ -452,7 +456,9 @@ class Proxy:
         if not auth.startswith("Bearer ") or len(auth) > 200:
             raise _Refuse(401, "unauthorized")
         key, cap = self._lookup(auth[7:])
-        if not self._binding_is(cap.ws, cap.binding_seq):  # valid only for the live binding, on every request
+        if not self._binding_is(
+            cap.ws, cap.hub_id, cap.binding_seq
+        ):  # valid only for the live binding, on every request
             with self._lock:
                 self._drop(key)
             raise _Refuse(401, "unauthorized")
@@ -542,7 +548,7 @@ class Proxy:
 
     def _live(self, cap: _Cap) -> bool:
         """Caller holds the lock. True while this very capability is registered and its binding is still live."""
-        return self._caps.get(cap.key) is cap and self._binding_is(cap.ws, cap.binding_seq)
+        return self._caps.get(cap.key) is cap and self._binding_is(cap.ws, cap.hub_id, cap.binding_seq)
 
     def _up(self, cap: _Cap, name: str, record: dict, bearer: str | None) -> Any:
         with self._lock:

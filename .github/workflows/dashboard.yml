@@ -65,6 +65,38 @@ jobs:
       - run: node --test scripts/layout-startup.check.mjs
       - run: npm run typecheck
       - run: npm run build
+  layout:
+    # the layout guard (#1533): every page on a 13" notebook with the dock open; 24 configurations spread over 8 shards
+    name: layout guard (shard ${{ matrix.shard }}/8)
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true' && needs.changes.outputs.heavy == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+    defaults:
+      run:
+        working-directory: packages/addons/dashboard
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: packages/addons/dashboard/package-lock.json
+      - run: npm ci
+      - name: layout guard
+        env:
+          CHROME_PATH: /usr/bin/google-chrome
+        run: |
+          npm run dev -- --port 5201 --strictPort --host 127.0.0.1 > dev-server.log 2>&1 &
+          for i in $(seq 1 60); do curl -fsS http://127.0.0.1:5201/ >/dev/null && break; sleep 2; done
+          curl -fsS http://127.0.0.1:5201/ >/dev/null || { echo "the dev server did not start"; cat dev-server.log; exit 1; }
+          npm run layout:guard -- --shard ${{ matrix.shard }}/8
   python:
     name: dashboard tests
     needs: changes
@@ -91,7 +123,7 @@ jobs:
     # the one check a ruleset requires: it reports on every PR, also when the jobs above are skipped
     name: dashboard gate
     if: always()
-    needs: [changes, vitest, node, python]
+    needs: [changes, vitest, node, layout, python]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

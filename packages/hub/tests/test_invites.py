@@ -19,14 +19,13 @@ import urllib.error
 import urllib.request
 
 import pytest
-from channels_helpers import new_channel
+from channels_helpers import fresh_code, new_channel
 from custodial_helpers import ACTION
 from webapi_helpers import ORIGIN, WS, Web
 
 from orch_hub.access import AccessError
 from orch_hub.activity import ActivityLog
 from orch_hub.channels import service as CS
-from orch_hub.channels.service import totp_code
 from orch_hub.contract.canon import b64u
 from orch_hub.invites import INVITE_TTL_MS, InviteError, Invites, proof_digest, token_hash
 from orch_hub.webapi import WebServer
@@ -76,17 +75,12 @@ def redeem(w, token, password=NEW_PW, proof=None, **kw):
     return w.call("POST", "/invite/redeem", body, **kw)
 
 
-def code_of(secret_b32: str, clock) -> str:
-    raw = base64.b32decode(secret_b32 + "=" * (-len(secret_b32) % 8))
-    return totp_code(raw, clock() // 30_000)
-
-
 def sign_in_as(w, who, password, secret):
-    w.clock.advance(30_000)
+    raw = base64.b32decode(secret + "=" * (-len(secret) % 8))
     return w.call(
         "POST",
         "/session",
-        {"user_id": who, "password": password, "totp": code_of(secret, w.clock), "client": "browser"},
+        {"user_id": who, "password": password, "totp": fresh_code(raw, w.clock), "client": "browser"},
     )
 
 

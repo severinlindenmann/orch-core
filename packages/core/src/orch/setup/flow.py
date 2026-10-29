@@ -460,7 +460,7 @@ class SetupFlow:
     def _approve(self, body: Any) -> dict[str, Any]:
         if self.phase != "secrets":
             raise SetupError(
-                "setup.phase", "the recovery words can only be acknowledged right after they are shown", 409
+                "setup.phase", "the recovery words are acknowledged right after they are shown", 409
             )
         if self.secrets is None:
             raise SetupError("secrets.not_shown", "show the secrets first", 409)

@@ -37,6 +37,8 @@ __all__ = [
     "PROGRAMS",
     "TERM_HARNESSES",
     "CLAUDE_AGENT_FLAGS",
+    "MCP_FLAG",
+    "MCP_PLACEHOLDER",
     "RULES_FLAG",
     "RULES_PLACEHOLDER",
     "SESSION_FLAG",
@@ -66,6 +68,9 @@ CLAUDE_AGENT_FLAGS = ("--setting-sources", "user", "--strict-mcp-config")
 #: the runner replaces the placeholder with the path of the rules file it writes for the run (orch.runner.rules)
 RULES_FLAG = "--append-system-prompt-file"
 RULES_PLACEHOLDER = "@orch-rules"
+#: the runner replaces this placeholder with the path of the MCP config file it writes (orch.runner.mcpconfig)
+MCP_FLAG = "--mcp-config"
+MCP_PLACEHOLDER = "@orch-mcp"
 #: Claude Code gets a session id the runner derives from the run id: the transcript file is then known
 SESSION_FLAG = "--session-id"
 SESSION_PLACEHOLDER = "@orch-session-id"
@@ -173,10 +178,12 @@ def launch_argv(
         # SessionStart hook) still load. Side effects, checked against Claude Code 2.1.309: the project's and its
         # ancestors' CLAUDE.md files, project skills, commands and subagents, project permission allowlists and every
         # MCP server are not loaded either. So orch's rules arrive as an appended system prompt file that the runner
-        # writes (`@orch-rules`, see orch.runner.rules), and these agents have no MCP servers. Worktree, repo and
+        # writes (`@orch-rules`, see orch.runner.rules). Company MCP servers arrive the same way, as a config file the
+        # runner writes (`@orch-mcp`, see orch.runner.mcpconfig; empty without any); the agent's own project
+        # .mcp.json still never loads. Worktree, repo and
         # workspace-root launches keep Claude Code's normal behaviour (their project config is the person's own) and
         # get no pre-trust, so Claude Code's own prompts stay. After --model, which the runner expects first.
-        rest += [*CLAUDE_AGENT_FLAGS, RULES_FLAG, RULES_PLACEHOLDER]
+        rest += [*CLAUDE_AGENT_FLAGS, MCP_FLAG, MCP_PLACEHOLDER, RULES_FLAG, RULES_PLACEHOLDER]
     text = prompt(mode, key, instructions, task)
     if text is not None:
         rest.append(text)

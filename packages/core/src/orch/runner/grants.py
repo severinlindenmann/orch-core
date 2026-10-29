@@ -23,6 +23,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+from orch.host.mcpshared import CAPABILITY_SHAPE
 from orch.tokenshape import GITHUB_TOKEN_SHAPE
 
 __all__ = ["GrantError", "GrantStore", "RedactFilter"]
@@ -187,6 +188,7 @@ class RedactFilter(logging.Filter):
     def _clean(self, text: str) -> str:
         clean = GRANT_SHAPE.sub("[redacted]", text)
         clean = GITHUB_TOKEN_SHAPE.sub("[redacted]", clean)
+        clean = CAPABILITY_SHAPE.sub("[redacted]", clean)  # a company MCP proxy capability is never logged
         for secret in self.store.secrets():
             clean = clean.replace(secret, "[redacted]")
             tail = secret.partition(".")[2]

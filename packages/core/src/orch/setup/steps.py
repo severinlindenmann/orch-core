@@ -1149,9 +1149,7 @@ class RealPorts:
         from .claude_folder import claude_installed, refusal
 
         if not claude_installed(self.env):  # J01-06: the sign card of the first Claude Code start asks again
-            return (
-                "Claude Code is not installed on this computer yet. Once it is, it asks once to trust this folder."
-            )
+            return "Claude Code is not installed on this computer yet. Once it is, it asks once to trust this folder."
         return refusal(self.env, root, allow_parent=allow_parent) or (
             "Claude Code has not been started on this computer yet, so orch could not answer for you."
         )

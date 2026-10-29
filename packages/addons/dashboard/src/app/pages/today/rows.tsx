@@ -346,15 +346,17 @@ export function NoticeRow({ item, now }: { item: NeedsYouItem; now: string }) {
 export function TerminalWaitRow({ item, ticket, now }: { item: NeedsYouItem; ticket?: TicketDocument; now: string }) {
   // The ticket says what it still lacks: then the row says it too and opens the ticket, where the way on is one click.
   const gap = ticket ? gapOf(ticket) : null
+  // Inside `orch wait` with nothing missing: a decision by someone is due; the ticket shows whose (run-10 J04).
+  const decision = !gap && item.source === 'wait'
   return (
     <RowShell
       testId={`card-terminal_wait:${item.ticket}`}
       icon={<Hourglass className="size-4" aria-label="waiting" />}
-      ask={gap ? `${gap.title}. ${gap.text}` : 'Agent is waiting for you'}
+      ask={gap ? `${gap.title}. ${gap.text}` : decision ? 'Agent is waiting for a decision' : 'Agent is waiting for you'}
       sub={<TicketLine ticket={item.ticket} title={item.title} />}
       age={ageOf(item, now)}
       action={
-        gap ? (
+        gap || decision ? (
           <Button size="sm" asChild>
             <Link to="/ticket/$key" params={{ key: item.ticket }}>
               Open ticket

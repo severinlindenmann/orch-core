@@ -1414,6 +1414,10 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
                 if it["item"]["item_kind"] != "ticket":
                     continue
                 row = self._shared_row({"workspace_id": ws}, it, c.user_id)
+                # the same verified content the caller may already read; the description is there only if the owner shared it
+                for k in ("status", "description"):
+                    if it["item"]["content"].get(k) is not None:
+                        row[k] = P4.render_text(it["item"]["content"][k])
                 aud = it["item"].get("audience")
                 if owner == c.user_id:  # the person who shared sees the audience ([] = only you), never "shared by me"
                     users = aud.get("users", []) if type(aud) is dict else []

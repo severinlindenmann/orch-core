@@ -95,8 +95,10 @@ export function useMark(ws: string, key: string): Mark | undefined {
 
 /**
  * The one "the agent is working" rule (run-9 J04), for the header, the next step, Today and every spinner: an agent
- * holds a live claim AND is not idle at its prompt. `wait` is the run the host marks idle (Today's `terminal_wait` of
- * this ticket: its turn ended and it waits). A live process or claim alone never means working.
+ * holds a live claim AND does not wait. `wait` is the run the host marks waiting (Today's `terminal_wait` of this
+ * ticket). Its first source is the host's own record of the agent inside `orch wait` (run-10 J04: the harness ticks a
+ * timer there, so the terminal is never quiet); a hook marker or a quiet terminal is only the fallback for agents
+ * outside orch wait. A live process or claim alone never means working.
  */
 export function agentWorking(ticket: Pick<TicketDocument, 'claim'>, wait?: string | null): boolean {
   return !!ticket.claim && ticket.claim.live !== false && !wait

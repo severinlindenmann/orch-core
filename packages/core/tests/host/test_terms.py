@@ -630,7 +630,9 @@ def test_a_stale_runner_report_that_arrives_late_never_takes_a_live_attachment_o
         newest = hub._term_seq[run]
         stale = {"run": run, "seq": newest - 1, "atts": [], "lease_gen": 0}  # taken before the attach registered
         assert w.h.run(hub.term_report(hub.session, stale)) == {}
-        assert att in hub.attachments and hub._term_seq[run] == newest
+        # The stale report is ignored: the seq never goes back (a real snapshot from the runner may already have moved
+        # it forward; asserting equality raced with that, seen as "2 == 1" on CI).
+        assert att in hub.attachments and hub._term_seq[run] >= newest
         assert [a["att"] for a in hub.term_state[run]["atts"]] == [att]
         w.restrict(uid, [w.quinn.ref])
         assert drain_end(t) == "not_visible"  # still watched: the revocation reaches it

@@ -411,6 +411,67 @@ def test_scrub_all_forms(env):
         assert f not in text
 
 
+# -- condition 10 (S-3): a held secret value lives and dies with its capability ----------------------------------
+
+
+def held(env):
+    return set(env.proxy._held_now)
+
+
+def test_a_held_value_is_per_capability_and_dropped_with_it(env):
+    a = secret_env(env)
+    b = mint(env, run="r2")
+    assert rpc(env, a, "ping")[0] == 200 and held(env) == {SECRET}
+    assert rpc(env, b, "ping")[0] == 200
+    env.proxy.revoke_run("r1")
+    assert held(env) == {SECRET}  # the other capability still holds it: the scrub keeps working for it
+    env.proxy.revoke_run("r2")
+    assert held(env) == set()
+
+
+def test_a_held_value_is_dropped_when_its_workspace_is_revoked(env):
+    cap = secret_env(env)
+    assert rpc(env, cap, "ping")[0] == 200 and held(env) == {SECRET}
+    env.proxy.revoke_workspace("w1")
+    assert held(env) == set()
+
+
+def test_a_rotated_value_replaces_the_old_one(env):
+    cap = secret_env(env)
+    rpc(env, cap, "ping")
+    env.secret_value = "rotated-value-2"
+    assert rpc(env, cap, "ping")[0] == 200
+    assert held(env) == {"rotated-value-2"}
+
+
+def test_a_value_that_is_gone_or_expired_is_dropped_and_isolation_loss_drops_all(env):
+    cap = secret_env(env)
+    rpc(env, cap, "ping")
+    env.secret_value = None  # expired or removed: the host answers None
+    assert rpc(env, cap, "ping")[0] == 503 and held(env) == set()
+    env.secret_value = SECRET
+    assert rpc(env, cap, "ping")[0] == 200 and held(env) == {SECRET}
+    env.isolated = False
+    env.clock.now += 61
+    assert rpc(env, cap, "ping")[0] == 403 and held(env) == set()
+
+
+def test_a_capability_that_expired_drops_its_value(env):
+    cap = secret_env(env)
+    rpc(env, cap, "ping")
+    env.clock.now += mcpproxy.CAPABILITY_TTL + 1
+    assert rpc(env, cap, "ping")[0] == 401 and held(env) == set()
+
+
+def test_the_scrub_covers_every_value_currently_held(env):
+    cap = secret_env(env)
+    other = mint(env, run="r2")
+    rpc(env, cap, "ping")
+    env.proxy._hold(env.proxy._caps[env.proxy._hash(other)], "crm", "second-value-xyz")
+    out = env.proxy._filter.scrub(f"a {SECRET} b second-value-xyz")
+    assert SECRET not in out and "second-value-xyz" not in out
+
+
 def test_scrub_not_applied_for_none_server(env):
     t = tool("echo")
     turn_on(env, t)
@@ -816,7 +877,7 @@ def test_usage_counts(env):
 
 def test_log_filter_redacts(env, caplog):
     cap = mint(env)
-    env.proxy._held.add("hunter2-secret")
+    env.proxy._hold(next(iter(env.proxy._caps.values())), "crm", "hunter2-secret")
     f = env.proxy._filter
     rec = logging.LogRecord("orch.host.mcpproxy", logging.WARNING, "x", 1, "got %s and hunter2-secret", (cap,), None)
     assert f.filter(rec)

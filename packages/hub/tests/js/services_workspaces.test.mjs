@@ -15,7 +15,7 @@ class Node_ {
 }
 globalThis.document = { createElement: (t) => new Node_(t), createTextNode: (t) => new Node_("#text", t), getElementById: () => null };
 const { servicesView, summary, stateOf } = await import("../../src/orch_hub/web/services.js");
-const { workspacesView, workspaceDetailsView, connectWorkspaceView, newWorkspaces } = await import("../../src/orch_hub/web/workspaces.js");
+const { workspacesView, privateRows, workspaceDetailsView, connectWorkspaceView, newWorkspaces } = await import("../../src/orch_hub/web/workspaces.js");
 const { when, ago } = await import("../../src/orch_hub/web/ui.js");
 
 const NOW = new Date(2026, 9, 27, 12, 0).getTime();
@@ -156,14 +156,13 @@ test("connect link is copied unchanged, shows expiry, and Copy says what to do n
 test("admin empty state connects; left disclosure includes only unbound rows and removes the selected row", async () => {
   const left = workspace({ workspace_id: "left", name: "Old", status: "unbound", left_ms: NOW });
   let removed, connected = 0;
-  const out = workspacesView({ workspaces: [], handoffs: [], admin: [left, workspace({ status: "bound" })], actions: {
+  const out = workspacesView({ workspaces: [], handoffs: [], admin: [left], actions: {
     connect: async () => { connected++; return { link: "/join#fresh", expires_ms: NOW + 1800000 }; },
     remove: async (w) => { removed = w; },
   } }, NOW);
   assert.match(text(out), /No workspaces yet/);
   assert.match(text(out), /Show left workspaces \(1\)/);
   assert.match(text(out), new RegExp("Left " + new Date(NOW).toLocaleDateString().replaceAll("/", "\\/")));
-  assert.doesNotMatch(text(out), /Product/);
   await clickButton(out, "Connect a workspace");
   assert.equal(connected, 1);
   assert.equal(find(out, (n) => n.tag === "input")[0].getAttribute("value"), "/join#fresh");
@@ -432,4 +431,34 @@ test("P04: an invite that fails shows a plain error", async () => {
   find(out, (n) => n.tag === "input" && n.getAttribute("aria-label") === "Their name")[0].value = "Ben";
   await clickButton(out, "Create sign-in link");
   assert.match(text(out), /Could not create a sign-in link\. Please try again\./);
+});
+
+test("P05: a hub admin also sees a connected workspace private to someone else, without Open, roles, host or address; others see only their own", () => {
+  const ben = { workspace_id: "ben", name: "Ben Test's workspace", owner_name: "Ben Test", mode: "selective", status: "bound", host: "ben-mac", address: "10.9.9.9", version: "0.2.0", grants: [{ group: "x" }] };
+  const left = { workspace_id: "old", name: "Left one", status: "unbound" };
+  const mine = [workspace()];
+  const asAdmin = workspacesView({ workspaces: mine, handoffs: [], admin: [{ ...mine[0], status: "bound" }, ben, left] }, NOW);
+  const t = text(asAdmin);
+  assert.match(t, /Ben Test's workspace/);
+  assert.match(t, /Private to Ben Test/);
+  assert.match(t, /Only Ben Test can open it/);
+  assert.doesNotMatch(t, /10\.9\.9\.9|ben-mac/);
+  const rows = find(asAdmin, (n) => n.tag === "tr" && n.getAttribute("data-workspace"));
+  assert.deepEqual(rows.map((r) => r.getAttribute("data-workspace")), [mine[0].workspace_id, "ben"]);
+  assert.equal(find([rows[1]], (n) => n.tag === "button" && n.textContent === "Open").length, 0);
+  assert.equal(find([rows[0]], (n) => n.tag === "button" && n.textContent === "Open").length, 1);
+  const none = workspacesView({ workspaces: mine, handoffs: [], admin: null }, NOW);
+  assert.doesNotMatch(text(none), /Ben Test/);
+  const details = text(workspaceDetailsView(privateRows(mine, [ben])[0], {}, NOW));
+  assert.doesNotMatch(details, /Open Ben|Change mode|Runs on/);
+  assert.match(details, /Only Ben Test can open it/);
+});
+
+test("P05: the Home count includes private workspaces for a hub admin and nobody else", async () => {
+  const { homeView } = await import("../../src/orch_hub/web/home.js");
+  const ws = [{ workspace_id: "a", name: "Anna", online: true, mode: "selective" }];
+  const ben = { workspace_id: "ben", name: "Ben", owner_name: "Ben", mode: "selective", status: "bound" };
+  const line = (d) => homeView({ workspaces: ws, items: [], shared: [], actions: {}, ...d }).flat().map((n) => n.textContent).join("\n").match(/\d+ workspaces? online, \d+ offline/)[0];
+  assert.equal(line({ adminWorkspaces: [ben] }), "2 workspaces online, 0 offline");
+  assert.equal(line({ adminWorkspaces: null }), "1 workspace online, 0 offline");
 });

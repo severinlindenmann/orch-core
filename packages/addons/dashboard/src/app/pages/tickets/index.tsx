@@ -327,6 +327,7 @@ export function TicketsPage() {
         compact={compact}
       />
       {canBulk && picked.length > 0 && <BulkBar keys={picked} onDone={() => setSelected(new Set())} />}
+      {wsId && <SharedWithYou ws={wsId} limit={3} />}
       {meQ.isError ? (
         <LoadFailed what="tickets" onRetry={() => void meQ.refetch()} />
       ) : isPending || !me ? (
@@ -372,7 +373,6 @@ export function TicketsPage() {
           </p>
         </>
       )}
-      {wsId && <SharedWithYou ws={wsId} />}
     </div>
   )
 }

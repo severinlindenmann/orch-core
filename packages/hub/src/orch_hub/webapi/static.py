@@ -44,6 +44,7 @@ FILES: dict[str, tuple[str, str]] = {
     "/invite.js": ("invite.js", _JS),
     "/qr.js": ("qr.js", _JS),
     "/totp.js": ("totp.js", _JS),
+    "/seal.js": ("seal.js", _JS),
 }
 
 #: A page module's file name: the allowlist of the ``pages/`` folder. The folder is read by glob when the site is built; a file

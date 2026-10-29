@@ -681,6 +681,18 @@ test('the prefix is suggested from the workspace name until the person edits it'
   expect(screen.getByRole('button', { name: 'Continue →' })).toBeDisabled()
 })
 
+test('a hand-edited workspace name keeps driving the prefix when the person name changes; the fallback is MW', async () => {
+  const f = fake()
+  render(<Setup api={f.api} />)
+  await screen.findByRole('heading', { name: 'Set up your workspace' })
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  fireEvent.change(screen.getByLabelText(/^Workspace name/), { target: { value: 'Marketing' } })
+  fireEvent.change(screen.getByLabelText('Your name'), { target: { value: 'Zed Zebra' } })
+  expect(screen.getByLabelText(/^Ticket prefix/)).toHaveValue('MARK')
+  fireEvent.change(screen.getByLabelText(/^Workspace name/), { target: { value: '!!!' } })
+  expect(screen.getByLabelText(/^Ticket prefix/)).toHaveValue('MW')
+})
+
 test('the ready list gives every status an icon and a word, never colour alone', async () => {
   const f = fake({ finish: true, running: true })
   render(<Setup api={f.api} />)

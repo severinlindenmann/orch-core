@@ -167,11 +167,11 @@ export function choicesFor(n: number, recoveryWords: string[]): string[] {
 }
 const prefixOk = (p: string) => /^[A-Z][A-Z0-9]{1,7}$/.test(p)
 /** A ticket prefix from a workspace name: first letters, capitals, letters and digits only ("Marketing Department" gives
- * MARK, "Personal Workspace" gives PW); empty or unusable names fall back to PW. */
+ * MARK, "Personal Workspace" gives PW); empty or unusable names fall back to MW (My workspace). */
 export function suggestPrefix(name: string): string {
   const words = name.toUpperCase().match(/[A-Z0-9]+/g) ?? []
   const p = (words.length >= 2 ? words.map((w) => w[0]).join('') : (words[0] ?? '').slice(0, 4)).slice(0, 8)
-  return prefixOk(p) ? p : 'PW'
+  return prefixOk(p) ? p : 'MW'
 }
 /** The default workspace name for a person: "<name>'s workspace", or "My workspace" while no name is typed. */
 export function defaultWorkspaceName(name: string): string {
@@ -841,7 +841,8 @@ export function Setup({ api }: { api: SetupAPI }) {
                     // Until the person edits them, the workspace name and prefix follow "Your name" (Anna Test: "Anna Test's workspace", AT).
                     const patch: Partial<Profile> = { name }
                     if (!workspaceEdited) patch.workspace_name = defaultWorkspaceName(name)
-                    if (!prefixEdited) patch.prefix = name.trim() ? suggestPrefix(name) : 'MW'
+                    // Once the workspace name was edited by hand, the prefix follows that name, not the person's.
+                    if (!prefixEdited) patch.prefix = suggestPrefix(workspaceEdited ? profile.workspace_name : name)
                     update(patch)
                   }}
                 />

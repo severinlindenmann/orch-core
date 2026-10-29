@@ -98,8 +98,9 @@ def test_addrs_are_part_of_the_strict_state_shape(human, served, monkeypatch):
             HubState.from_json({**doc, "addrs": bad})
     with pytest.raises(HubRefused):
         HubState.from_json({**doc, "hub_name": "x" * 61})
-    older = {k: v for k, v in doc.items() if k not in ("addrs", "hub_name")}  # a hub.json written before M4
-    assert HubState.from_json(older).addrs == []
+    for gone in ("addrs", "hub_name"):  # no old shape: a hub.json without them is refused (nothing in production)
+        with pytest.raises(HubRefused):
+            HubState.from_json({k: v for k, v in doc.items() if k != gone})
 
 
 # --- learning from hub_where (cond 1, 2, 4) ----------

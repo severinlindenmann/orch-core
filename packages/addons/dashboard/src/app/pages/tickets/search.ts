@@ -16,6 +16,8 @@ export interface TicketsSearch {
   needs?: (typeof NEEDS)[number]
   label?: string
   sort?: SortKey
+  /** A ticket shared with this workspace, open in the view-only panel: `<workspace_id>:<key>`. Not a filter. */
+  shared?: string
 }
 
 const str = (v: unknown) => (typeof v === 'string' && v ? v : undefined)
@@ -45,9 +47,10 @@ export function validateTicketsSearch(raw: Record<string, unknown>): TicketsSear
     needs: oneOf(NEEDS, raw.needs),
     label: str(raw.label),
     sort: oneOf(SORTS, raw.sort),
+    shared: str(raw.shared),
   }
   return Object.fromEntries(Object.entries(out).filter(([, v]) => v !== undefined)) as TicketsSearch
 }
 
 /** True when any filter (not the sort) is set. */
-export const hasFilters = (s: TicketsSearch) => Object.keys(s).some((k) => k !== 'sort')
+export const hasFilters = (s: TicketsSearch) => Object.keys(s).some((k) => k !== 'sort' && k !== 'shared')

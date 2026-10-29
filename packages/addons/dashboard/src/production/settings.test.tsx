@@ -50,7 +50,8 @@ it('General shows what the host says, marks defaults and lists repositories with
   const repos = screen.getByRole('list', { name: 'Repositories' })
   expect(within(repos).getByText('https://git.example.test/a/code')).toBeInTheDocument()
   expect(within(repos).getByText('/srv/code')).toBeInTheDocument()
-  expect(screen.getByTestId('repo-check-code')).toHaveTextContent('In place, on branch main')
+  expect(screen.getByTestId('repo-check-code')).toHaveTextContent('Ready') // P15: a short status word; branch and path sit under Details
+  expect(within(repos).getByText('In place, on branch main')).toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Add folder' })).toBeInTheDocument() // an owner on a host that serves settings.set
 })
 

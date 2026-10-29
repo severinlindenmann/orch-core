@@ -43,8 +43,11 @@ test("the panel shows the QR first and the key behind Can't scan", () => {
   assert.ok(all.some((n) => n.tag === "svg"));
   const details = all.find((n) => n.tag === "details");
   assert.equal(details.getAttribute("open"), null, "the key is folded while a QR is shown");
-  assert.match(details.textContent, /Can't scan\? Show the key/);
+  assert.match(details.textContent, /Can't scan\? Copy the key instead/);
   assert.equal(all.find((n) => n.attrs.id === "new-totp").textContent, "JBSWY3DPEHPK3PXP");
+  assert.match(details.textContent, /Copy the key/);
+  assert.doesNotMatch(out.textContent, /Type this key/);
+  assert.equal((out.textContent.match(/only once/g) || []).length, 1);
   assert.ok(!out.textContent.match(/user id/i), "no user id: the name signs in");
   assert.ok(!out.textContent.includes("Write these down"));
 });

@@ -429,7 +429,9 @@ async function workspaces(joined = [], known = null) {
       const adminRows = admin.status === 200 ? admin.body.workspaces ?? [] : null;
       const hub = ws.body?.hub;
       const peopleNames = new Map();
+      let pageRev = -1; // r11 P12: the Connect panel's people watch runs only while this drawing of the page is current
       const actions = {
+        alive: () => pageRev === viewRevision,
         open: (w) => { closeDialog(); return openWorkspace({ id: w.workspace_id, name: w.name ?? "Workspace" }); },
         copy: copyText,
         openLink: (link) => { window.open(link, "_blank", "noopener"); },
@@ -471,6 +473,7 @@ async function workspaces(joined = [], known = null) {
       // Diff only against a successful first read: a failed one must not make every workspace look newly joined.
       let seen = known ?? (ws.status === 200 ? new Set(rows.map((w) => w.workspace_id)) : null);
       const mine = ++viewRevision;
+      pageRev = mine;
       let checking = false;
       workspacesTimer = setInterval(async () => {
         if (document.hidden || checking || mine !== viewRevision) return;

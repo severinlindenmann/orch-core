@@ -95,9 +95,44 @@ export function connectWorkspaceView(link, actions = {}, { people = [], selected
     try { ok = !!(await actions.copy?.(inviteLink)); } catch { ok = false; }
     inviteCopy.textContent = ok ? "Copied ✓" : "Could not copy. Select the link to copy it.";
   });
+  const waiting = h("p", { class: "small muted", "aria-live": "polite", text: "" });
   const inviteResult = h("div", {}, h("div", { class: "row" }, inviteInput, inviteCopy),
-    small("Send them the link. They choose a password, then come back here to connect their workspace."));
+    small("Send them the link. They choose a password, then come back here to connect their workspace."), waiting);
   inviteResult.hidden = true;
+  const signedIn = h("div", { class: "banner ok", role: "status" });
+  signedIn.hidden = true;
+  // r11 P12: after a sign-in link, watch the people list (the existing admin read; a person is listed only once they have
+  // redeemed the invite) every 3 s. A new user id is the invited person: select them and make their workspace link.
+  let poll = null;
+  const stopWaiting = () => { if (poll) clearInterval(poll); poll = null; };
+  const startWaiting = (name, knownIds, expiresMs) => {
+    stopWaiting();
+    waiting.textContent = "Waiting for " + text(name) + " to sign in…";
+    let busy = false;
+    poll = setInterval(async () => {
+      if (section.isConnected === false || actions.alive?.() === false) return stopWaiting(); // panel or page left
+      if (globalThis.document?.hidden || busy) return;
+      if (Number.isFinite(expiresMs) && Date.now() >= expiresMs) { stopWaiting(); waiting.textContent = "The link ran out. Create a new one."; return; }
+      busy = true;
+      try {
+        const fresh = await actions.people?.();
+        if (!poll || !Array.isArray(fresh)) return;
+        const arrived = fresh.find((p) => p && typeof p.user_id === "string" && !knownIds.has(p.user_id));
+        if (!arrived) return;
+        stopWaiting();
+        known = fresh.filter((p) => p && typeof p.user_id === "string");
+        fill(arrived.user_id);
+        newBox.hidden = true;
+        waiting.textContent = "";
+        const who = text(arrived.name ?? name);
+        signedIn.textContent = "✓ " + who + " has signed in";
+        signedIn.hidden = false;
+        await choose(arrived.user_id);
+        if (!linkRow.hidden) next.textContent = "Send this link to " + who + ", or open it on their computer.";
+      } catch { /* try again on the next tick */ }
+      finally { busy = false; }
+    }, 3000);
+  };
   const create = button("Create sign-in link", async () => {
     problem.textContent = "";
     const name = (nameInput.value ?? "").trim();
@@ -110,33 +145,40 @@ export function connectWorkspaceView(link, actions = {}, { people = [], selected
       inviteResult.hidden = false;
       nameInput.value = "";
       try { const fresh = await actions.people?.(); if (Array.isArray(fresh)) { known = fresh.filter((p) => p && typeof p.user_id === "string"); fill(NEW); } } catch { /* keep the old list */ }
+      startWaiting(name, new Set(known.map((p) => p.user_id)), made.expires_ms);
     } catch { problem.textContent = "Could not create a sign-in link. Please try again."; }
     finally { create.disabled = false; }
   }, { class: "pri" });
   const newBox = h("div", { class: "ws-new" }, h("label", { for: "ws-new-name", text: "Their name" }),
-    h("div", { class: "row" }, nameInput, create), inviteResult,
-    small("The workspace link appears here once they have signed in and show up in the list."));
+    h("div", { class: "row" }, nameInput, create), inviteResult);
   newBox.hidden = true;
   fill(selected);
-  select.addEventListener("change", async (e) => {
-    problem.textContent = "";
-    const value = e.target.value;
-    const isNew = value === NEW;
-    newBox.hidden = !isNew;
-    linkRow.hidden = true;
-    if (isNew || !value) return;
+  const choose = async (value) => {
     select.disabled = true;
     try {
       const made = await actions.connect?.(value);
       if (made) { showOpen(value); current = made.link; input.value = made.link; input.setAttribute("value", made.link); until.textContent = "Works once, for 30 minutes (until " + clock(made.expires_ms) + ")"; next.textContent = ""; copy.textContent = "Copy"; linkRow.hidden = false; }
     } catch { problem.textContent = "Could not create a link for this person. Please try again."; }
     finally { select.disabled = false; }
+  };
+  select.addEventListener("change", async (e) => {
+    stopWaiting(); // the admin chose by hand: stop watching for the invited person
+    problem.textContent = "";
+    signedIn.hidden = true;
+    const value = e.target.value;
+    const isNew = value === NEW;
+    newBox.hidden = !isNew;
+    linkRow.hidden = true;
+    if (isNew || !value) return;
+    await choose(value);
   });
   const who = h("div", {}, h("label", { for: "ws-owner", text: "Whose workspace is this?" }), select,
     small("You open the hub from it as this person."));
-  return h("section", { class: "card ws-connect", "aria-label": "Connect a workspace" },
+  const section = h("section", { class: "card ws-connect", "aria-label": "Connect a workspace" },
     h("h2", { text: "Connect a workspace" }),
-    who, linkRow, newBox, problem);
+    who, signedIn, linkRow, newBox, problem);
+  section.stopWaiting = stopWaiting;
+  return section;
 }
 
 /** Workspaces in `rows` whose id is not in `known` (a Set of ids). */

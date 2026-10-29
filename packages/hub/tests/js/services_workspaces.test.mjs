@@ -439,6 +439,81 @@ test("P04: Someone new shows a name field, calls invite (not connect), and shows
   assert.equal(find(out, (n) => n.tag === "input" && n.getAttribute("aria-label") === "Sign-in link")[0].getAttribute("value"), "http://hub.test/#invite=tok");
   assert.match(text(out), /come back here to connect their workspace/);
   assert.ok(refreshed >= 2, "the people list is refreshed after the invite");
+  find(out, (n) => n.tag === "section")[0].stopWaiting();
+});
+
+// r11 P12: after a sign-in link the panel waits for the invited person and turns into their workspace link by itself.
+const ANNA_ID = "a".repeat(32), BEN_ID = "c".repeat(32);
+const waitingPanel = (t, { peopleSeq, alive = () => true, expires = NOW + 1800000 } = {}) => {
+  t.mock.timers.enable({ apis: ["setInterval", "Date"], now: NOW });
+  const connected = [];
+  let calls = 0;
+  const out = workspacesView({ workspaces: [], handoffs: [], admin: [], self: ANNA_ID, actions: {
+    alive,
+    people: async () => { calls++; return peopleSeq(calls); },
+    connect: async (who) => { connected.push(who); return { link: "/c#" + who, expires_ms: NOW + 1800000 }; },
+    invite: async () => ({ link: "http://hub.test/#invite=tok", expires_ms: expires }),
+    copy: async () => true,
+  } }, NOW);
+  return { out, connected, calls: () => calls };
+};
+const settle = async () => { for (let i = 0; i < 10; i++) await Promise.resolve(); };
+const startInvite = async (out, name = "Ben") => {
+  await clickButton(out, "Connect a workspace");
+  const select = find(out, (n) => n.tag === "select")[0];
+  select.value = "__new__";
+  await select.listeners.change({ target: select });
+  find(out, (n) => n.tag === "input" && n.getAttribute("aria-label") === "Their name")[0].value = name;
+  await clickButton(out, "Create sign-in link");
+  return select;
+};
+
+test("r11 P12: waiting for the invited person turns into their workspace link", async (t) => {
+  const anna = { user_id: ANNA_ID, name: "Anna" }, other = { user_id: "b".repeat(32), name: "Ben" }, ben = { user_id: BEN_ID, name: "Ben" };
+  const { out, connected, calls } = waitingPanel(t, { peopleSeq: (n) => n <= 3 ? [anna, other] : [anna, other, ben] });
+  const select = await startInvite(out);
+  assert.match(text(out), /Waiting for Ben to sign in…/);
+  assert.doesNotMatch(text(out), /appears here once/);
+  t.mock.timers.tick(3000); await settle();
+  assert.deepEqual(connected, [], "still waiting: nobody new");
+  t.mock.timers.tick(3000); await settle();
+  assert.deepEqual(connected, [BEN_ID], "the NEW Ben by user id, not the other Ben by name");
+  assert.equal(select.value, BEN_ID);
+  assert.match(text(out), /✓ Ben has signed in/);
+  assert.equal(find(out, (n) => n.className === "ws-link")[0].hidden, false);
+  assert.equal(find(out, (n) => n.tag === "input" && n.getAttribute("aria-label") === "Connect link")[0].value, "/c#" + BEN_ID);
+  assert.equal(find(out, (n) => n.tag === "button" && n.textContent === "Open link")[0].hidden, true, "Ben's link is copied, not opened here");
+  const before = calls();
+  t.mock.timers.tick(9000); await settle();
+  assert.equal(calls(), before, "the poll stopped");
+});
+
+test("r11 P12: the poll stops when the admin picks someone by hand or leaves the page, and says when the link ran out", async (t) => {
+  const anna = { user_id: ANNA_ID, name: "Anna" };
+  const a = waitingPanel(t, { peopleSeq: () => [anna] });
+  const select = await startInvite(a.out);
+  select.value = ANNA_ID;
+  await select.listeners.change({ target: select });
+  const n1 = a.calls();
+  t.mock.timers.tick(9000); await settle();
+  assert.equal(a.calls(), n1, "a hand pick stops the watch");
+  t.mock.timers.reset();
+
+  let here = true;
+  const b = waitingPanel(t, { peopleSeq: () => [anna], alive: () => here });
+  await startInvite(b.out);
+  t.mock.timers.tick(3000); await settle();
+  const n2 = b.calls();
+  here = false;
+  t.mock.timers.tick(9000); await settle();
+  assert.equal(b.calls(), n2, "leaving the page stops the watch");
+  t.mock.timers.reset();
+
+  const c = waitingPanel(t, { peopleSeq: () => [anna], expires: NOW + 4000 });
+  await startInvite(c.out);
+  t.mock.timers.tick(6000); await settle();
+  assert.match(text(c.out), /The link ran out\. Create a new one\./);
+  assert.doesNotMatch(text(c.out), /Waiting for Ben/);
 });
 
 test("P04: an invite that fails shows a plain error", async () => {

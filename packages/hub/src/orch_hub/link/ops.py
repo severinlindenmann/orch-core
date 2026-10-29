@@ -579,19 +579,22 @@ def audience_get(c: OpContext) -> dict[str, Any]:
     from ..access.store import ADMIN_GROUP
     from ..contract.phase4 import strip_text
 
-    _require_pin(c)
-    _require_bound(c)
     if c.access is None:
         raise Refused("unavailable")
-    owner = _owner_user(c)
+    with c.registry.lock:  # pin, binding, mode and owner are judged together, on the state as it is now
+        _require_pin(c)
+        _require_bound(c)
+        if c.registry.mode(c.workspace_id) != "selective":
+            raise Refused("wrong_mode")  # sharing readers exist only in selective mode
+        owner = _owner_user(c)
+        users = c.access.users()
+        groups = c.access.groups()
     people = [
         {"user_id": u["user_id"], "name": strip_text(u["name"])[:80]}
-        for u in c.access.users()
+        for u in users
         if not u["disabled"] and u["user_id"] != owner
     ][:200]
-    teams = [{"group": g["name"], "members": len(g["members"])} for g in c.access.groups() if g["name"] != ADMIN_GROUP][
-        :50
-    ]
+    teams = [{"group": g["name"], "members": len(g["members"])} for g in groups if g["name"] != ADMIN_GROUP][:50]
     return {"people": people, "teams": teams}
 
 

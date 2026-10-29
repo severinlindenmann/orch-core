@@ -99,3 +99,30 @@ def test_the_description_travels_with_the_item(shub):
     (row,) = h.svc.list_shared(BEN, G.WS_A)
     assert row["item"]["content"]["description"] == "Line one\nLine two"
     acc.close()
+
+
+# --- audience_get: the people and teams the owner may name (display data only) ------------------------------------------
+
+
+def test_audience_get_lists_names_ids_and_team_counts_only(shub):
+    acc = access()
+    acc.set_disabled(DANA, True)
+    h = shub(access=acc)
+    got = h.join().request("audience_get", {})
+    ids = {p["user_id"] for p in got["people"]}
+    assert BEN in ids and CARL in ids
+    assert OWNER not in ids and DANA not in ids  # not the owner alias, no disabled person
+    assert all(set(p) == {"user_id", "name"} for p in got["people"])
+    assert got["teams"] == [{"group": "team-a", "members": 1}]  # counts, no member list, no hub-admin group
+    acc.close()
+
+
+def test_audience_get_is_refused_where_sharing_is_not_possible(shub):
+    from shares_helpers import refused
+
+    acc = access()
+    h = shub(access=acc)
+    refused(h.join(mode="full"), "audience_get", {}, "wrong_mode")
+    acc.close()
+    h2 = shub()  # no access wired: nothing to list
+    refused(h2.join(), "audience_get", {}, "unavailable")

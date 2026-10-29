@@ -48,7 +48,7 @@ class ShHub(Hub):
             on_change=on_change,
             access=access,
         )
-        super().__init__(registry=reg, shares=self.svc, **kw)
+        super().__init__(registry=reg, shares=self.svc, **({"access": access} if access is not None else {}), **kw)
         self.invites.owner_user = lambda inv: OWNER  # V3-D19: the admin's invite names the owner
         self.joined: dict[str, object] = {}
 

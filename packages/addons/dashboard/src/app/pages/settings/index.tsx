@@ -1,4 +1,5 @@
 import { HubTab } from './hub/HubTab'
+import { CompanyTab } from './company/CompanyTab'
 import { Link } from '@tanstack/react-router'
 import { can, roleOf } from '@/api/permissions'
 import { SettingsSkeleton } from '../skeletons'
@@ -71,6 +72,7 @@ export function SettingsPage({ tab, addon }: { tab?: string; addon?: string }) {
         {tab === 'grants' && <HostGrants workspace={workspace} />}
         {tab === 'devices' && <HostPhone key={workspace.id} workspace={workspace} />}
         {tab === 'hub' && <HubTab key={workspace.id} workspace={workspace} />}
+        {tab === 'company' && <CompanyTab key={workspace.id} workspace={workspace} isOwner={isOwner} />}
       </SettingsFrame>
     )
   }
@@ -81,6 +83,7 @@ export function SettingsPage({ tab, addon }: { tab?: string; addon?: string }) {
     <SettingsFrame current={current} addon={addon} ws={workspace.id}>
       {!isOwner && <p className="rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-text-muted">{ONLY_OWNERS}</p>}
       {current === 'hub' && <HubTab key={workspace.id} workspace={workspace} />}
+      {current === 'company' && <CompanyTab key={workspace.id} workspace={workspace} isOwner={isOwner} />}
       {current === 'general' && <General workspace={workspace} canEdit={isOwner} />}
       {current === 'members' && <Members workspace={workspace} viewer={me.data.person} canEdit={isOwner} />}
       {current === 'gates' && <Gates workspace={workspace} canEdit={isOwner} />}

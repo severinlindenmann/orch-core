@@ -17,7 +17,18 @@ from .labels import LABELS, L
 
 __all__ = ["SEAL_PURPOSES", "open_sealed", "seal", "seal_aad"]
 
-SEAL_PURPOSES = ("wk", "sk", "card", "cert-request", "drop-dek", "ws-envelope", "vault", "space-sk", "hub-share")
+SEAL_PURPOSES = (
+    "wk",
+    "sk",
+    "card",
+    "cert-request",
+    "drop-dek",
+    "ws-envelope",
+    "vault",
+    "space-sk",
+    "hub-share",
+    "org-secret",
+)
 
 
 def seal_aad(purpose: str, object_id: bytes, epoch: int, extra: bytes = b"") -> bytes:

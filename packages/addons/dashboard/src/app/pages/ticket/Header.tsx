@@ -173,6 +173,12 @@ function useShareTicket(ticket: TicketDocument, viewer: Viewer): ShareTicket {
   return { shown, shared, run: () => setOpen(shared ? 'stop' : 'share'), node }
 }
 
+/** A finished ticket, or one nobody has a turn on and with no reason, shows no "Turn:" line (run-11 P06). */
+export function showTurn(ticket: { status: string; turn: { who: string; why: string } }): boolean {
+  if (ticket.status === 'done' || ticket.status === 'closed') return false
+  return ticket.turn.who !== 'nobody' || ticket.turn.why.trim() !== ''
+}
+
 /** " · why it is their turn", or nothing when the host gave no reason (no dangling separator). */
 export function turnReason(why: string): string {
   const text = why.trim()
@@ -402,9 +408,11 @@ function ProgressPill({ phase, start, ticket, viewer, ws }: { phase: Phase; star
       {phase.kind === 'idle' ? (
         <>
           <StatusChip status={ticket.status} landing={ticket.landing} />
-          <span className="text-[13px] text-text-muted">
-            Turn: <span className="text-text">{viewer.name(ticket.turn.who)}</span>{turnReason(ticket.turn.why)}
-          </span>
+          {showTurn(ticket) && (
+            <span className="text-[13px] text-text-muted">
+              Turn: <span className="text-text">{viewer.name(ticket.turn.who)}</span>{turnReason(ticket.turn.why)}
+            </span>
+          )}
         </>
       ) : (
         <span className="sr-only">

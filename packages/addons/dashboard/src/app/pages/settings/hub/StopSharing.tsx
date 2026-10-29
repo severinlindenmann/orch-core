@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
 import type { HubPreview, HubReduced, HubRule } from '@/api/hub'
@@ -65,16 +65,20 @@ export function StopSharing({ ws, workspace, ticket, onClose }: { ws: string; wo
   const [finished, setFinished] = useState(false)
   const now = useSharedNow(ws)
   const item = now.data?.items.find(i => i.kind === 'ticket' && i.line.startsWith(TICKET(ticket)))
-  const title = item?.line.slice(TICKET(ticket).length).trim()
+  const seen = useRef<string>(undefined)  // the title read before the stop: the refreshed list no longer has the ticket
+  const fresh = item?.line.slice(TICKET(ticket).length).trim()
+  if (fresh) seen.current = fresh
+  const title = fresh ?? seen.current
+  const n = item ? 1 : 0
   return <Flow title="Stop sharing this ticket" onClose={onClose} done={finished} cancel="Keep sharing">
     <p data-testid="hub-revoke-ticket">Ticket <Raw>{ticket}</Raw>{title ? <> · <bdi><Raw>{title}</Raw></bdi></> : null}</p>
     <ReviewWorkspace workspace={workspace} />
-    {now.isPending ? <p role="status">Loading what the hub has…</p> : !now.data ? <p role="alert">Could not load what the hub has.</p> : <div data-testid="hub-revoke-what">
-      <p>Stops being shared: this ticket&apos;s title, status, labels and deadline ({item ? 1 : 0} item).</p>
-      <p>{now.data.count} items shared now · {now.data.count - (item ? 1 : 0)} after this. Preview from the hub, not signed.</p>
+    {finished ? null : now.isPending ? <p role="status">Loading what the hub has…</p> : !now.data ? <p role="alert">Could not load what the hub has.</p> : <div data-testid="hub-revoke-what">
+      <p>Stops being shared: this ticket&apos;s title, status, labels and deadline ({n} {n === 1 ? 'item' : 'items'}).</p>
+      <p>{now.data.count} {now.data.count === 1 ? 'item' : 'items'} shared now · {now.data.count - n} after this. Preview from the hub, not signed.</p>
     </div>}
-    <p>The hub is asked to delete its copy. It stays unshared even if a rule matches it, until you share it again.</p>
-    <p className="text-warning">{caveat}</p>
+    {!finished && <p>The hub is asked to delete its copy. It stays unshared even if a rule matches it, until you share it again.</p>}
+    {!finished && <p className="text-warning">{caveat}</p>}
     <StopButton ws={ws} testId="hub-revoke-stop" disabled={!now.data} act={() => api.revokeHubShare(ws, ticket)} onDone={() => setFinished(true)} />
   </Flow>
 }

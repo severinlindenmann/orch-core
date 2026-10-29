@@ -90,6 +90,19 @@ describe('stop sharing one ticket', () => {
     expect(onClose).toHaveBeenCalled()
   })
 
+  it('after the stop the dialog keeps the ticket title and shows only the result, no counts', async () => {
+    trusted()
+    const { dialog, button } = await ticketReview()
+    const title = within(dialog).getByTestId('hub-revoke-ticket').textContent
+    expect(title).toMatch(/DEMO-0043 · /)
+    vi.spyOn(api, 'getHubPreview').mockImplementation(async () => ({ ...NOW, count: 1, items: [NOW.items[1]] })) // the refresh: the ticket is gone
+    fireEvent.click(button)
+    expect(await within(dialog).findByTestId('hub-revoke-stop-done')).toBeTruthy()
+    await waitFor(() => expect(within(dialog).queryByTestId('hub-revoke-what')).toBeNull())
+    expect(within(dialog).getByTestId('hub-revoke-ticket').textContent).toBe(title)
+    expect(dialog.textContent).not.toMatch(/\(0 item\)|shared now/)
+  })
+
   it('says the ticket stays unshared even if a rule matches; never "may share it again"', async () => {
     const { dialog } = await ticketReview()
     expect(dialog.textContent).toContain('It stays unshared even if a rule matches it, until you share it again.')
@@ -210,6 +223,22 @@ describe('stop sharing by a rule', () => {
     expect(button).toBeTruthy()
     expect(within(dialog).queryByTestId('hub-rule-review-new')).toBeNull()
     expect(within(dialog).queryByTestId('hub-rule-widens')).toBeNull()
+  })
+
+  it('adding a rule for nobody but the owner has no empty info icon', async () => {
+    const user = userEvent.setup()
+    vi.spyOn(api, 'getHubPreview').mockImplementation(async () => ({
+      ...NOW, new: 1, plan: 'N'.repeat(43),
+      review: { hub_id: 'ab12cd34ef56ab12', readers: { people: [], teams: [], note: null, info: null }, widened: [], new_count: 1, new_more: 0, new_items: [], leaves: [], later_edits: null },
+    }))
+    mount(<ShareRules ws={WS.id} workspace={WS} onBack={() => {}} />)
+    await user.click(await screen.findByTestId('hub-rule-add'))
+    await user.type(screen.getByTestId('hub-rule-value'), 'team')
+    await waitFor(() => expect(screen.getByTestId('hub-share-review')).toBeEnabled())
+    await user.click(screen.getByTestId('hub-share-review'))
+    const dialog = await screen.findByRole('dialog', { name: 'Review sharing change' })
+    expect(within(dialog).getByTestId('hub-add-readers')).toHaveTextContent('Only you can see it.')
+    expect(within(dialog).queryByTestId('hub-add-readers-info')).toBeNull()
   })
 
   it('adding a rule: the review is the host\'s words, only new items, one trusted press, no terminal, no typed word', async () => {

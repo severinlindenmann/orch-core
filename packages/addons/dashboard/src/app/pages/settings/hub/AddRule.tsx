@@ -81,7 +81,7 @@ export function AddRuleReview({ ws, workspace, rule, after, onDone }: { ws: stri
     <p data-testid="hub-add-sentence">Share {rule.kind === 'ticket' ? null : <>{review.new_count} </>}{ruleWords(rule, review.new_count)} from <Raw>{workspace.name}</Raw> with the hub{rule.value !== null && rule.description ? ', with their descriptions' : ''}.</p>
     <div className="flex items-center gap-1" data-testid="hub-add-readers">
       <p><Raw>{who(review.readers)}</Raw></p>
-      <InfoDrawer testId="hub-add-readers-info"><p>{review.readers.note ?? 'From the hub, not signed.'}</p>{review.readers.info && <p>{review.readers.info}</p>}{readerNames(review.readers).length > SHOWN_NAMES && <p data-testid="hub-add-readers-all">Everyone who will see it: <Raw>{readerNames(review.readers).join(', ')}</Raw></p>}</InfoDrawer>
+      {(readerNames(review.readers).length > 0 || !!review.readers.info) && <InfoDrawer testId="hub-add-readers-info"><p>{review.readers.note ?? 'From the hub, not signed.'}</p>{review.readers.info && <p>{review.readers.info}</p>}{readerNames(review.readers).length > SHOWN_NAMES && <p data-testid="hub-add-readers-all">Everyone who will see it: <Raw>{readerNames(review.readers).join(', ')}</Raw></p>}</InfoDrawer>}
     </div>
     {review.widened.slice(0, SHOWN_WIDENED).map((w, i) => <p key={i} data-testid="hub-add-widened" className="text-warning">Reaches more now: <Raw>{widenedText(w)}</Raw></p>)}
     {review.widened.length > SHOWN_WIDENED && <p data-testid="hub-add-widened-more" className="text-warning">and {review.widened.length - SHOWN_WIDENED} more {review.widened.length - SHOWN_WIDENED === 1 ? 'ticket reaches' : 'tickets reach'} more people</p>}

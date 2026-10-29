@@ -404,6 +404,7 @@ export function Setup({ api }: { api: SetupAPI }) {
   const [step, setStep] = useState(0)
   const [prefixEdited, setPrefixEdited] = useState(false)
   const [workspaceEdited, setWorkspaceEdited] = useState(false)
+  const [showWorkspaceFields, setShowWorkspaceFields] = useState(false)
   const [secrets, setSecrets] = useState<Secrets | null>(null)
   const [review, setReview] = useState<Review>()
   const [run, setRun] = useState<string>()
@@ -820,6 +821,30 @@ export function Setup({ api }: { api: SetupAPI }) {
                   }}
                 />
               </label>
+              {!profile.name.trim() && <small>Type your name to continue.</small>}
+              {!showWorkspaceFields && (
+                <div className="ws-summary">
+                  <span data-testid="ws-summary" aria-live="polite">
+                    {profile.name.trim() ? (
+                      <>
+                        Your workspace: <strong><Inline>{profile.workspace_name}</Inline></strong>{' '}
+                        {[1, 2].map((n) => (
+                          <span className="chip" key={n}>
+                            {profile.prefix.trim() || 'MW'}-{String(n).padStart(4, '0')}
+                          </span>
+                        ))}
+                      </>
+                    ) : (
+                      'Your workspace is named after you.'
+                    )}
+                  </span>
+                  <button type="button" className="link" onClick={() => setShowWorkspaceFields(true)}>
+                    Change
+                  </button>
+                </div>
+              )}
+              {showWorkspaceFields && (
+                <>
               <label>
                 Workspace name
                 <input
@@ -851,6 +876,8 @@ export function Setup({ api }: { api: SetupAPI }) {
                   </span>
                 ))}
               </div>
+                </>
+              )}
               <SetupFooter cancel={cancel}>
                 <button onClick={() => setStep(0)}>Back</button>
                 <button

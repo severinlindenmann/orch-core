@@ -286,6 +286,25 @@
   color: var(--danger);
   background: var(--danger-soft);
 }
+.setup .ws-summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  margin: 8px 0 16px;
+  color: var(--text-muted);
+}
+.setup .ws-summary strong {
+  color: var(--text);
+}
+.setup .ws-summary .link {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--accent, inherit);
+  text-decoration: underline;
+  cursor: pointer;
+}
 .setup .progress-note {
   margin: 8px 0 0;
   padding: 10px 12px;

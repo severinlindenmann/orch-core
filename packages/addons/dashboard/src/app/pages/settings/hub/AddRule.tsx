@@ -50,15 +50,15 @@ function widenedText(w: { line: string; people_added: string[]; teams_added: str
 }
 
 /** "feature tickets", "tickets labelled x", "ticket DEMO-1": the rule in words (the value is drawn verbatim, never reworded). */
-function ruleWords(rule: HubRule, n: number): React.ReactNode {
+function ruleWords(rule: HubRule, n: number, title?: string): React.ReactNode {
   const tickets = n === 1 ? 'ticket' : 'tickets'
   if (rule.kind === 'type') return <><Raw>{rule.value}</Raw> {tickets}</>
   if (rule.kind === 'tag') return <>{tickets} labelled <Raw>{rule.value}</Raw></>
-  if (rule.kind === 'ticket') return <>ticket <Raw>{rule.value}</Raw></>
+  if (rule.kind === 'ticket') return <>ticket <Raw>{rule.value}</Raw>{title ? <> · <bdi><Raw>{title}</Raw></bdi></> : null}</>
   return <Raw>{rule.kind}</Raw>
 }
 
-export function AddRuleReview({ ws, workspace, rule, after, onDone }: { ws: string; workspace: HubWorkspace; rule: HubRule; after: HubPreview | undefined; onDone?: () => void }) {
+export function AddRuleReview({ ws, workspace, rule, after, onDone, title }: { ws: string; workspace: HubWorkspace; rule: HubRule; after: HubPreview | undefined; onDone?: () => void; /** The ticket's title when the rule names one ticket. */ title?: string }) {
   const qc = useQueryClient()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -78,7 +78,7 @@ export function AddRuleReview({ ws, workspace, rule, after, onDone }: { ws: stri
     ).finally(() => setBusy(false))
   }
   return <div className="space-y-2" data-testid="hub-add-review">
-    <p data-testid="hub-add-sentence">Share {rule.kind === 'ticket' ? null : <>{review.new_count} </>}{ruleWords(rule, review.new_count)} from <Raw>{workspace.name}</Raw> with the hub{rule.value !== null && rule.description ? ', with their descriptions' : ''}.</p>
+    <p data-testid="hub-add-sentence">Share {rule.kind === 'ticket' ? null : <>{review.new_count} </>}{ruleWords(rule, review.new_count, title)} from <Raw>{workspace.name}</Raw> with the hub{rule.value !== null && rule.description ? ', with their descriptions' : ''}.</p>
     <div className="flex items-center gap-1" data-testid="hub-add-readers">
       <p><Raw>{who(review.readers)}</Raw></p>
       {(readerNames(review.readers).length > 0 || !!review.readers.info) && <InfoDrawer testId="hub-add-readers-info"><p>{review.readers.note ?? 'From the hub, not signed.'}</p>{review.readers.info && <p>{review.readers.info}</p>}{readerNames(review.readers).length > SHOWN_NAMES && <p data-testid="hub-add-readers-all">Everyone who will see it: <Raw>{readerNames(review.readers).join(', ')}</Raw></p>}</InfoDrawer>}

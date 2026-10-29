@@ -1333,6 +1333,8 @@ def build_selective(action: Any, item: Mapping[str, Any]) -> tuple[str, dict[str
 # --- §10.7 the ticket projection of a full-mode view (D15b) --------------------------------------------------------------
 
 VIEW_PROJ_KEYS = frozenset({"seq", "head", "ws_seq", "ws_head", "status", "roster_v", "gates"})
+#: R14b: optional ``waiting``: the gates the host's own needs rule says wait for a person now (sorted, distinct)
+VIEW_PROJ_WAITING = "waiting"
 
 
 def check_view_proj(proj: Any, *, log: str, seq: int, head: str, line_ws_seq: Any, ws_heads: list[str]) -> None:
@@ -1342,7 +1344,7 @@ def check_view_proj(proj: Any, *, log: str, seq: int, head: str, line_ws_seq: An
     if (
         log == "workspace"
         or type(proj) is not dict
-        or set(proj) != VIEW_PROJ_KEYS
+        or set(proj) - {VIEW_PROJ_WAITING} != VIEW_PROJ_KEYS
         or not _int0(proj["seq"])
         or not _hash(proj["head"])
         or not _int0(proj["ws_seq"])
@@ -1352,6 +1354,14 @@ def check_view_proj(proj: Any, *, log: str, seq: int, head: str, line_ws_seq: An
         or not _int0(proj["roster_v"])
         or type(proj["gates"]) is not dict
         or not all(k in F1_GATES and _f1_gate(k, v) for k, v in proj["gates"].items())
+        or (
+            VIEW_PROJ_WAITING in proj
+            and not (
+                type(proj[VIEW_PROJ_WAITING]) is list
+                and all(type(g) is str and g in F1_GATES for g in proj[VIEW_PROJ_WAITING])
+                and proj[VIEW_PROJ_WAITING] == sorted(set(proj[VIEW_PROJ_WAITING]))
+            )
+        )
     ):
         raise Refused("malformed")
     if proj["seq"] != seq or proj["head"] != head or type(line_ws_seq) is not int or proj["ws_seq"] < line_ws_seq:

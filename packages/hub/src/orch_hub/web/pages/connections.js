@@ -1,5 +1,5 @@
-import { h, text } from "./ui.js";
-import { emptyState, loading } from "./feel.js";
+import { h, text } from "../ui.js";
+import { emptyState, loading } from "../feel.js";
 
 function svg(tag, attrs = {}, ...children) {
   const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
@@ -115,3 +115,6 @@ export async function connectionsPage(d) {
     d.state.notice = null;
   } finally { finish(); }
 }
+
+// The registry entry: the console's router, tabs and file list are built from this one export (no other file names a page).
+export const page = { path: "connections", nav: { label: "Connections", admin: true, after: "phones" }, render: connectionsPage };

@@ -70,6 +70,10 @@ W2H_OPS: dict[str, str | None] = {
     "switch_redeem": None,
     "rail_get": None,
     "owner_get": None,
+    "status_put": None,  # R14b: this list lacked the display ops, so a real link refused them as unknown_op
+    "addon_request": None,
+    "profile_put": None,
+    "directory_get": None,
     "share_put": "selective",
     "share_revoke": "selective",
     "wk_seal": "full",
@@ -98,6 +102,7 @@ _REPLY: dict[str, Callable[[dict[str, Any]], bool]] = {
         set(b) == {"hub", "user_id", "workspaces"} and type(b["hub"]) is dict and type(b["workspaces"]) is list
     ),
     "owner_get": lambda b: set(b) == {"user_id"} and type(b["user_id"]) is str,
+    "directory_get": lambda b: set(b) == {"entries"} and type(b["entries"]) is list,
     "org_skills_get": lambda b: set(b) == {"bundle"} and type(b["bundle"]) is dict,
     "mcp_servers_get": lambda b: set(b) == {"bundle"} and type(b["bundle"]) is dict,
     "log_sync": lambda b: set(b) == {"seq", "head"} and type(b["seq"]) is int and type(b["head"]) is str,

@@ -1,7 +1,7 @@
 // The Company skills page (M3, #1430): instructions a hub admin offers to workspaces. Offering is not enabling: a
 // workspace's owner reads the full text and turns a skill on at their own host. The hub never reaches an agent from here.
-import { emptyState, loading } from "./feel.js";
-import { h, text } from "./ui.js";
+import { emptyState, loading } from "../feel.js";
+import { h, text } from "../ui.js";
 
 const info = (label, body) => h("details", { class: "info" }, h("summary", { "aria-label": label, text: "i" }), h("p", { class: "small muted", text: body }));
 const wsName = (w) => text(w?.name || (w?.workspace_id ? "Workspace " + w.workspace_id.slice(0, 8) : "A workspace"));
@@ -81,3 +81,6 @@ export async function skillsPage(d) {
     d.state.notice = null;
   } finally { finish(); }
 }
+
+// The registry entry: the console's router, tabs and file list are built from this one export (no other file names a page).
+export const page = { path: "skills", nav: { label: "Skills", admin: true, after: "addons" }, render: skillsPage };

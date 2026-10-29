@@ -13,7 +13,7 @@ class Node_ {
   all() { return [this, ...this.children.flatMap((c) => c.all())]; }
 }
 globalThis.document = { createElement: (t) => new Node_(t), createTextNode: (t) => new Node_("#text", t), getElementById: () => null };
-const { addonsView, pickable, alreadyAllowed } = await import("../../src/orch_hub/web/addons.js");
+const { addonsView, pickable, alreadyAllowed } = await import("../../src/orch_hub/web/pages/addons.js");
 const NOW = 1_800_000_000_000;
 const find = (n, pred) => n.all().filter(pred);
 const data = {

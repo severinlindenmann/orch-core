@@ -83,6 +83,10 @@ def test_the_vector_page_with_a_projection_is_reproduced_byte_for_byte():
         lambda p: p["gates"]["code"].pop("source_sha"),
         lambda p: p.update(roster_v=-1),
         lambda p: p.update(ws_seq=0),
+        lambda p: p.update(waiting=["requirements", "plan"]),  # sorted
+        lambda p: p.update(waiting=["plan", "plan"]),  # distinct
+        lambda p: p.update(waiting=["weird"]),
+        lambda p: p.update(waiting="plan"),
     ],
 )
 def test_check_proj_refuses_what_the_hub_would(mut):
@@ -91,6 +95,12 @@ def test_check_proj_refuses_what_the_hub_would(mut):
     with pytest.raises(HubRefused) as e:
         LS.check_proj(p)
     assert e.value.code == "malformed"
+
+
+def test_waiting_is_an_optional_sorted_list_of_gates():
+    for waiting in ([], ["plan"], ["requirements", "verify"]):
+        LS.check_proj({**copy.deepcopy(PROJ), "waiting": waiting})
+    LS.check_proj(copy.deepcopy(PROJ))  # absent: still valid (the hub then falls back to the status rule)
 
 
 def test_a_projection_must_describe_the_last_line_of_a_ticket_page():

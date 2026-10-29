@@ -718,6 +718,9 @@ def _groups_detail(groups: list[str]) -> dict[str, Any]:
     return out
 
 
+_NEED_KINDS = ("needs_you", "question")  # the shared item kinds that are a wait (a shared ticket is not)
+
+
 class WebApi(ChangeHandlers, OrgHandlers):
     def __init__(self, deps: WebDeps) -> None:
         if deps.behind_edge and not deps.trusted_peers:
@@ -1329,6 +1332,42 @@ class WebApi(ChangeHandlers, OrgHandlers):
             }
         )
 
+    def _needs_rows(self, ws: dict[str, Any], user_id: str) -> list[dict[str, Any]] | None:
+        """The ONE definition of "needs you" for one workspace and person (R14b): the home list, its count and the rail
+        badge all come from here, so they cannot differ. One row per thing that waits on the person: a full-mode
+        workspace lists the questions and the gates the host says wait (:mod:`orch_hub.view.needs`); a selective one
+        lists only its shared needs, never a shared ticket (a ticket is not a wait), and a question shared with its
+        summary line counts once. ``None``: the source is not served."""
+        w = ws["workspace_id"]
+        if ws["mode"] == "selective":
+            if self.d.shares is None:
+                return None
+            shared = [it for it in self.d.shares.list_shared(user_id, w) if it["item"]["item_kind"] in _NEED_KINDS]
+            asked = {
+                (it["item"]["content"].get("title"), it["item"]["content"].get("deadline"))
+                for it in shared
+                if it["item"]["item_kind"] == "question"
+            }
+            return [
+                self._shared_row(ws, it)
+                for it in shared
+                if not (
+                    it["item"]["item_kind"] == "needs_you"
+                    and it["item"]["content"].get("type") == "question"
+                    and (it["item"]["content"].get("title"), it["item"]["content"].get("deadline")) in asked
+                )
+            ]
+        if self.d.view is None:
+            return None
+        return [self._view_row(ws, r) for r in self.d.view.needs_you(w, user_id)]
+
+    def needs_count(self, workspace_id: str, user_id: str) -> int:
+        """The rail badge: the length of the home list for that workspace (offline ones too: their items wait)."""
+        for ws in self._workspaces(user_id):
+            if ws["workspace_id"] == workspace_id:
+                return len(self._needs_rows(ws, user_id) or [])
+        return 0
+
     def _h_needs_you(self, c: Ctx, p: dict, q: dict, b: dict | None):
         items: list[dict[str, Any]] = []
         offline, unavailable, queued = [], [], []
@@ -1342,16 +1381,12 @@ class WebApi(ChangeHandlers, OrgHandlers):
                 )
             if not ws["online"]:
                 offline.append(w)
-            elif ws["mode"] == "selective":
-                if self.d.shares is None:
-                    unavailable.append(w)
-                else:
-                    items += [self._shared_row(ws, it) for it in self.d.shares.list_shared(c.user_id, w)]
-            elif self.d.view is None:
+                continue
+            rows = self._needs_rows(ws, c.user_id)
+            if rows is None:
                 unavailable.append(w)
             else:
-                for r in self.d.view.needs_you(w, c.user_id):
-                    items.append(self._view_row(ws, r))
+                items += rows
         return 200, {"items": items, "offline": offline, "unavailable": unavailable, "queued": queued}
 
     @staticmethod

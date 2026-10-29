@@ -425,6 +425,7 @@ def test_d15b_the_hub_holds_the_hosts_own_projection_of_each_ticket(human, serve
     try:
         src = logsyncops.StoreSource(store)
         assert p == src.proj(uid)  # the same values the host would admit with: nothing moved since
+        assert isinstance(p["waiting"], list) and p["waiting"] == sorted(set(p["waiting"]))  # R14b
         assert p["roster_v"] == store.state.workspace.roster_v and p["status"] == store.state.tickets[uid].status
         assert (p["seq"], p["head"]) == (store.log_seq(uid), store.head_at(uid, store.log_seq(uid)))
         assert src.proj("workspace") is None

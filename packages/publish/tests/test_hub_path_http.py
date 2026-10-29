@@ -610,8 +610,8 @@ def test_migration_from_schema_3_adds_the_display_columns_of_the_company_list(tm
         " bytes INTEGER NOT NULL DEFAULT 0, created_ms INTEGER NOT NULL, ended_ms INTEGER)"
     )
     conn.execute(
-        "INSERT INTO shares(id, owner_ws, ticket, kind, token_hash, expires_ms, created_ms)"
-        " VALUES ('s','w','T-1','secret','h',1,1)"
+        "INSERT INTO shares(id, owner_ws, ticket, kind, token_hash, expires_ms, state, created_ms)"
+        " VALUES ('" + "ab" * 16 + "','" + WS_A + "','T-1','secret','h',1,'live',1)"
     )
     conn.execute("PRAGMA user_version=3")
     conn.commit()
@@ -621,8 +621,19 @@ def test_migration_from_schema_3_adds_the_display_columns_of_the_company_list(tm
     r = conn.execute("SELECT label, by_kind, by_name FROM shares").fetchone()
     assert tuple(r) == ("", "person", None)  # an old row reads with the plain defaults
     assert conn.execute("PRAGMA user_version").fetchone()[0] == 4
+    # the company list reads the old row as "Shared files" by a person
+    from pubsrv import hub_admin_read as R
+
+    (row,) = R.list_published(conn, [WS_A], 10**12)["rows"]
+    assert (row["label"], row["by_kind"], row["by_name"]) == ("Shared files", "person", None)
+    cols = [tuple(c) for c in conn.execute("PRAGMA table_info(shares)")]
     conn.close()
-    db.init(path)  # idempotent
+    db.init(path)  # a second init changes nothing
+    conn = db.connect(path)
+    assert [tuple(c) for c in conn.execute("PRAGMA table_info(shares)")] == cols
+    assert conn.execute("SELECT count(*) FROM shares").fetchone()[0] == 1
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 4
+    conn.close()
 
 
 def test_schema_1_is_still_refused(tmp_path):

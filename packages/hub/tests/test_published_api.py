@@ -180,3 +180,33 @@ def test_cached_answer_drops_a_workspace_whose_binding_changed(w):
     w.reg.binding_state = lambda ws: {"status": "bound", "binding": {"mode": "full"}, "binding_seq": seqs.get(ws, 1)}
     _s, o, _ = _stale_after(w, lambda: seqs.update({WS_SEL: 2}))  # left and joined again: the old rows are not shown
     assert [x["label"] for x in o["links"]] == ["Q3 report"]
+
+
+def test_a_workspace_unbound_while_the_publish_call_runs_is_not_shown(w):
+    """The registry is read after the reader returns: the reader unbinds the workspace, then fails."""
+    r = FakeReader([link(), link(id="cd" * 16, workspace_id=WS_SEL, label="Plans")])
+    w.reg.add(WS_SEL, "full", name="Marketing")
+    w.api.d.published = r
+    tok = w.login(w.admin)
+    assert len(get(w, tok)[1]["links"]) == 2
+
+    def unbind_then_fail(workspace=None):
+        w.reg.add(WS_SEL, "full", status="unbound", name="Marketing")
+        raise AdminReadError("unavailable")
+
+    r.published = unbind_then_fail
+    s, o, _ = get(w, tok)
+    assert s == 200 and [x["label"] for x in o["links"]] == ["Q3 report"]
+
+
+def test_a_workspace_unbound_while_the_call_succeeds_is_not_shown(w):
+    w.reg.add(WS_SEL, "full", name="Marketing")
+    r = FakeReader([link(), link(id="cd" * 16, workspace_id=WS_SEL, label="Plans")])
+
+    def unbind_then_answer(workspace=None):
+        w.reg.add(WS_SEL, "full", status="unbound", name="Marketing")
+        return r.rows
+
+    r.published = unbind_then_answer
+    w.api.d.published = r
+    assert [x["label"] for x in get(w)[1]["links"]] == ["Q3 report"]

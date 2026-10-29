@@ -59,6 +59,13 @@ class PublishedHandlers:
 
     def _h_a_published(self, c: Any, p: dict, q: dict, b: dict | None):
         reg = self.d.registry
+        now = int(self.d.now_ms())
+        failed, raw = False, []
+        try:
+            raw = self._published_reader().published()
+        except AdminReadError:
+            failed = True
+        # the registry is read AFTER the (slow) publish call, so a workspace unbound or switched meanwhile is out
         full = [ws for ws in sorted(reg.pins()) if reg.mode(ws) == "full"]
         fallback = owner_fallback_names(reg, self.d.access)
 
@@ -72,14 +79,16 @@ class PublishedHandlers:
             st = reg.binding_state(ws)
             return st.get("binding_seq") if st else None
 
-        now = int(self.d.now_ms())
-        cache = self.d.__dict__.setdefault("_published_cache", {})
-        try:
-            rows = self._published_reader().published()
-            # the hub's own check of scope, after publish's: only rows of workspaces bound in full mode are shown, and
-            # every row has exactly the C1 shape (an answer that fails it is not displayed and not kept)
-            rows = check_published_rows([r for r in rows if type(r) is dict and r.get("workspace_id") in full], full)
-        except AdminReadError, Refused:
+        cache = self.d.__dict__.get("_published_cache", {})
+        rows: list[dict[str, Any]] = []
+        if not failed:
+            try:
+                # the hub's own check of scope, after publish's: only rows of workspaces bound in full mode are shown,
+                # and every row has exactly the C1 shape (an answer that fails it is not displayed and not kept)
+                rows = check_published_rows([r for r in raw if type(r) is dict and r.get("workspace_id") in full], full)
+            except Refused:
+                failed = True
+        if failed:
             if "answer" not in cache:
                 raise _err("unavailable") from None
             # the old answer is filtered by the CURRENT registry again: a workspace that has since left, been unbound or
@@ -126,5 +135,5 @@ class PublishedHandlers:
         links.sort(key=lambda x: (-x["created_ms"], x["id"]))
         apps.sort(key=lambda x: (-x["created_ms"], x["id"]))
         answer = {"links": links, "apps": apps, "hidden": hidden, "stale_ms": None}
-        cache["answer"], cache["at"], cache["seq"] = answer, now, {ws: seq(ws) for ws in full}
+        self.d.__dict__["_published_cache"] = {"answer": answer, "at": now, "seq": {ws: seq(ws) for ws in full}}
         return 200, answer

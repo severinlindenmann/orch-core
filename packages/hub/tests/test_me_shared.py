@@ -27,6 +27,7 @@ def test_a_granted_person_sees_who_shared_it_and_the_owner_sees_with_whom(w):
     s, o, _ = get(w, w.ben, "?workspace_id=" + WS_SEL)
     assert s == 200 and [i["title"] for i in o["items"]] == ["Invoice export for Ben"]
     assert o["items"][0]["shared_by"] == "ann" and "shared_with" not in o["items"][0]
+    assert o["items"][0]["signable"] is False  # H2: a reader never signs
     s, o, _ = get(w, w.ann)
     assert [i["title"] for i in o["items"]] == ["Invoice export for Ben"]  # the needs_you summary is not a ticket
     assert o["items"][0]["workspace_id"] == WS_SEL

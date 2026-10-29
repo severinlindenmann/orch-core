@@ -1397,6 +1397,8 @@ class WebApi(ChangeHandlers, OrgHandlers):
                     continue
                 row = self._shared_row({"workspace_id": ws}, it)
                 row["shared_by"] = people.get(owner)
+                if owner != c.user_id:
+                    row["signable"] = False  # H2: only the owner alias may sign; a reader never gets a sign button
                 aud = it["item"].get("audience")
                 if owner == c.user_id and type(aud) is dict:  # only the person who shared sees the audience
                     row["shared_with"] = [people[u] for u in aud.get("users", []) if u in people] + [

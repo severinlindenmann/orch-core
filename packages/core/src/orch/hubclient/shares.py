@@ -516,12 +516,10 @@ def narrowed(item: ShareItem, grant: Mapping[str, Any]) -> ShareItem:
 
 
 def _confirmed_from_json(raw: Any) -> dict[str, dict[str, Any]] | None:
-    """The stored ``confirmed``: ``None`` (absent), a dict of grants, or the older list of ids (each with the narrowest
-    grant). Anything else is ``malformed`` (the host refuses to guess)."""
+    """The stored ``confirmed``: ``None`` (absent) or a dict of per-id grants. Anything else (the old id list too) is
+    ``malformed`` (fail closed, the host refuses to guess)."""
     if raw is None:
         return None
-    if type(raw) is list and all(type(x) is str for x in raw):
-        return {x: dict(EMPTY_GRANT) for x in raw}
     if type(raw) is not dict:
         raise HubRefused("malformed")
     out: dict[str, dict[str, Any]] = {}

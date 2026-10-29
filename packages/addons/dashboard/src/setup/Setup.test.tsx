@@ -88,6 +88,8 @@ function fake(
     stateError?: boolean
     failure?: boolean
     done?: boolean
+    trust?: 'skipped' | 'done'
+    trustCode?: string
     click?: boolean
     clickOff?: string
     relayUnavailable?: boolean
@@ -162,7 +164,12 @@ function fake(
     if (path === 'create') result = { run_id: 'demo-run' }
     if (path.startsWith('progress'))
       result = {
-        steps: [{ id: 'genesis', label: 'Create workspace', status: options.failure ? 'failed' : options.running ? 'doing' : 'todo' }],
+        steps: [
+          { id: 'genesis', label: 'Create workspace', status: options.failure ? 'failed' : options.running ? 'doing' : 'todo' },
+          ...(options.trust ? [{ id: 'trust', label: 'Letting Claude Code trust this folder', status: options.trust }] : []),
+        ],
+        reasons: options.trust === 'skipped' ? { trust: 'Claude Code has not been started on this computer yet, so orch could not answer for you.' } : {},
+        reason_codes: options.trust === 'skipped' ? { trust: options.trustCode ?? 'not_started' } : {},
         done: !!options.done,
         waiting: options.waiting,
         error: options.failure
@@ -424,6 +431,36 @@ test('a service-worker-controlled page refuses the exchange', async () => {
   }
 })
 
+async function finishFinishMode(f: ReturnType<typeof fake>) {
+  render(<Setup api={f.api} />)
+  await screen.findByRole('heading', { name: 'Finish setting up your workspace' })
+  fireEvent.click(screen.getByLabelText(/Work copies/))
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  await screen.findByRole('heading', { name: 'Review your setup' })
+  fireEvent.click(screen.getByRole('button', { name: 'Finish setup' }))
+  await screen.findByRole('heading', { name: 'Your workspace is ready' })
+}
+
+test('r10-P10: a skipped Claude Code trust step is said on the progress page, with the plain reason behind Why?', async () => {
+  await finishFinishMode(fake({ finish: true, done: true, trust: 'skipped' }))
+  expect(screen.getByText('Claude Code will ask once to trust this folder. Say yes there.')).toBeInTheDocument()
+  expect(screen.getByText('Why?')).toBeInTheDocument()
+  expect(screen.getByText(/has not been started on this computer yet/)).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Open your workspace →' })).toBeEnabled()
+})
+
+test("r10-P10: someone else's Claude Code settings never get the 'say yes' advice", async () => {
+  await finishFinishMode(fake({ finish: true, done: true, trust: 'skipped', trustCode: 'foreign_config' }))
+  expect(screen.queryByText(/Say yes there/)).toBeNull()
+  expect(screen.getByText('Claude Code will ask once about this folder. See why below.')).toBeInTheDocument()
+  expect(screen.getByText('Why?')).toBeInTheDocument()
+})
+
+test('r10-P10: no trust note when the step was done or not asked for', async () => {
+  await finishFinishMode(fake({ finish: true, done: true, trust: 'done' }))
+  expect(screen.queryByText(/Claude Code will ask once to trust this folder/)).toBeNull()
+})
+
 test('successful progress offers the workspace, while finish mode never reveals secrets', async () => {
   const f = fake({ finish: true, done: true })
   render(<Setup api={f.api} />)
@@ -586,6 +623,8 @@ test('finish shows the current values read-only and offers only what is missing,
   await screen.findByRole('heading', { name: 'Finish setting up your workspace' })
   expect(page(container)).toContain('Agents may work for3 days')
   expect(screen.getByText('Already set up')).toBeInTheDocument()
+  // r10-P11: whether agents can start now is the top bar's message only, so setup lists no agent-access row
+  expect(page(container)).not.toMatch(/Agent access for this|Given before|Not given/)
   // the name and the short name are not inputs, the add-on that is on is not a switch
   expect(screen.queryByLabelText('Your name')).toBeNull()
   expect(screen.getAllByRole('switch').map((el) => el.closest('label')?.textContent ?? '')).toEqual([
@@ -613,7 +652,7 @@ test('finish never lists custody or ids; missing items are in words', async () =
   const f = fake({ finish: true })
   const { container } = render(<Setup api={f.api} />)
   await screen.findByRole('heading', { name: 'Finish setting up your workspace' })
-  expect(page(container)).toContain('Agent access for this computer’s runner')
+  expect(page(container)).toContain('Let agents start on this computer now') // the offer stays; the old read-only row is gone (r10-P11)
   expect(page(container)).not.toMatch(/runner_grant|custody|addon:/)
 })
 
@@ -640,6 +679,7 @@ test('the name is not prefilled and the preview follows the typed prefix', async
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   expect(screen.getByLabelText('Your name')).toHaveValue('')
   expect(screen.getByRole('button', { name: 'Continue →' })).toBeDisabled()
+  fireEvent.click(screen.getByRole('button', { name: 'Change' }))
   fireEvent.change(screen.getByLabelText(/^Ticket prefix/), { target: { value: 'RA' } })
   expect(screen.getByLabelText('Ticket number preview')).toHaveTextContent('RA-0001')
   expect(screen.getByLabelText('Ticket number preview')).toHaveTextContent('RA-0003')
@@ -651,6 +691,7 @@ test('the prefix is suggested from the workspace name until the person edits it'
   await screen.findByRole('heading', { name: 'Set up your workspace' })
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   fireEvent.change(screen.getByLabelText('Your name'), { target: { value: 'Ann' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Change' }))
   const prefix = screen.getByLabelText(/^Ticket prefix/)
   fireEvent.change(screen.getByLabelText(/^Workspace name/), { target: { value: 'Other' } })
   fireEvent.change(screen.getByLabelText(/^Workspace name/), { target: { value: 'Personal Workspace' } })
@@ -671,6 +712,7 @@ test('a hand-edited workspace name keeps driving the prefix when the person name
   render(<Setup api={f.api} />)
   await screen.findByRole('heading', { name: 'Set up your workspace' })
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Change' }))
   fireEvent.change(screen.getByLabelText(/^Workspace name/), { target: { value: 'Marketing' } })
   fireEvent.change(screen.getByLabelText('Your name'), { target: { value: 'Zed Zebra' } })
   expect(screen.getByLabelText(/^Ticket prefix/)).toHaveValue('MARK')
@@ -1217,13 +1259,22 @@ test.each([
   expect(groupProgress(statuses.map((status, i) => ({ id: ['keys', 'genesis'][i], label: '', status })))[0].status).toBe(expected)
 })
 
-test('the workspace name and prefix follow "Your name" until edited by hand', async () => {
+test('r10-P13: the workspace name is a stated suggestion, never a field that changes on its own; Change opens it', async () => {
   const f = fake({ suggested: { name: '', workspace_name: 'My workspace', prefix: 'MW' } })
   render(<Setup api={f.api} />)
   await screen.findByRole('heading', { name: 'Set up your workspace' })
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
-  expect(screen.getByLabelText(/^Workspace name/)).toHaveValue('My workspace')
+  // before a name is typed: no field and no "My workspace" anywhere
+  expect(screen.queryByLabelText(/^Workspace name/)).toBeNull()
+  expect(screen.queryByText(/My workspace/)).toBeNull()
+  expect(screen.getByText(/named after you/)).toBeInTheDocument()
   fireEvent.change(screen.getByLabelText('Your name'), { target: { value: 'Anna Test' } })
+  const summary = screen.getByTestId('ws-summary')
+  expect(summary).toHaveAttribute('aria-live', 'polite')
+  expect(summary).toHaveTextContent("Your workspace: Anna Test's workspace")
+  expect(summary).toHaveTextContent('AT-0001')
+  expect(screen.queryByLabelText(/^Workspace name/)).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: 'Change' }))
   expect(screen.getByLabelText(/^Workspace name/)).toHaveValue("Anna Test's workspace")
   expect(screen.getByLabelText(/^Ticket prefix/)).toHaveValue('AT')
   expect(screen.getByLabelText('Ticket number preview')).toHaveTextContent('AT-0001')

@@ -1,11 +1,12 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { useRouter, useRouterState } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { InfoDrawer } from '@/components/InfoDrawer'
 import type { Workspace } from '@/api/types'
 import { hubQueries, hubServed, type HubStatus } from '@/api/hub'
 import { Raw } from '@/components/sign/visible'
 import { Action, Details, Panel, useFullAllowed, useHub, violet } from './shared'
-import { JoinFlow } from './JoinFlow'
+import { JoinFlow, connectFromHash } from './JoinFlow'
 import { FullSwitch } from './FullSwitch'
 import { LeaveFlow } from './LeaveFlow'
 import { ShareRules, AlwaysShared } from './ShareRules'
@@ -17,6 +18,19 @@ export function HubTab({ workspace }: { workspace: Workspace }) {
   const status = useHub(ws)
   const fullAllowed = useFullAllowed(ws)
   const [flow, setFlow] = useState<'join' | 'full' | 'leave' | 'share'>()
+  // P13: the hub's /c page opens Settings > Hub with `#connect=<link>`. Take it once, take it out of the address, and open
+  // the join dialog (standalone only) with the link prefilled.
+  const router = useRouter()
+  const hash = useRouterState({ select: s => s.location.hash })
+  const [incoming] = useState(() => connectFromHash(hash))
+  const [initialLink, setInitialLink] = useState<string>()
+  useEffect(() => {
+    if (/^#?connect=/.test(hash)) router.history.replace(router.history.location.pathname + router.history.location.search)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  const mode = status.data?.mode
+  useEffect(() => {
+    if (incoming && mode === 'standalone') { setInitialLink(incoming); setFlow('join') }
+  }, [incoming, mode])
   if (!hubServed(ws)) return <Panel title="Hub settings unavailable"><p>This host does not serve hub settings yet.</p></Panel>
   if (status.isPending) return <Panel title="Hub"><p role="status">Loading hub settings…</p></Panel>
   if (status.isError) return <Panel title="Hub"><p role="alert">Could not load hub settings.</p><Action id="hub-status-retry" onClick={() => void status.refetch()}>Try again</Action></Panel>
@@ -37,7 +51,7 @@ export function HubTab({ workspace }: { workspace: Workspace }) {
       {hubName && <p className="text-sm font-semibold">Hub <Raw>{hubName}</Raw></p>}
       {s.hub_id && <InfoDrawer testId="hub-status-details"><p className="break-words text-sm">Hub id (from the hub, not signed): <Raw>{s.hub_id}</Raw></p></InfoDrawer>}
     </>}
-    {flow === 'join' && <JoinFlow ws={ws} onClose={() => setFlow(undefined)} />}
+    {flow === 'join' && <JoinFlow ws={ws} initialLink={initialLink} onClose={() => setFlow(undefined)} />}
     {flow === 'full' && <FullSwitch ws={ws} onClose={() => setFlow(undefined)} />}
     {flow === 'leave' && <LeaveFlow ws={ws} onClose={() => setFlow(undefined)} />}
   </div>

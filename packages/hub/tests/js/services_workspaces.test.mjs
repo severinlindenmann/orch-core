@@ -146,7 +146,11 @@ test("connect link is copied unchanged, shows expiry, and Copy says what to do n
   await clickButton(out, "Copy");
   assert.equal(copied, "/join#one-time");
   assert.match(text(out), /Copied ✓/);
-  assert.match(text(out), /Now open your workspace, go to Settings › Hub › Connect a hub, and paste\./);
+  let opened;
+  const withOpen = [connectWorkspaceView({ link: "/join#one-time", expires_ms: NOW + 1800000 }, { openLink: (l) => { opened = l; } })];
+  clickButton(withOpen, "Open link");
+  assert.equal(opened, "/join#one-time");
+  assert.match(text(out), /Send this link to the workspace owner, or open it on their computer\./);
 });
 
 test("admin empty state connects; left disclosure includes only unbound rows and removes the selected row", async () => {

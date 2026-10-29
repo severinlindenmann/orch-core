@@ -46,7 +46,7 @@ export function workspaceDetailsView(w, { roles = null, owner = null, hub, actio
 export function connectWorkspaceView(link, actions = {}, { people = [], selected = null } = {}) {
   const NEW = "__new__";
   const next = h("p", { class: "small muted", "aria-live": "polite" });
-  const NEXT = "Now open your workspace, go to Settings › Hub › Connect a hub, and paste.";
+  const NEXT = "Send this link to the workspace owner, or open it on their computer.";
   const clock = (ms) => { const d = new Date(ms); return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"); };
   const input = h("input", { class: "grow", readonly: true, value: link?.link ?? "", "aria-label": "Connect link" });
   let current = link?.link ?? "";
@@ -56,9 +56,10 @@ export function connectWorkspaceView(link, actions = {}, { people = [], selected
     copy.textContent = ok ? "Copied ✓" : "Could not copy. Select the link to copy it.";
     next.textContent = ok ? NEXT : "";
   });
+  const openLink = button("Open link", () => actions.openLink?.(current));
   const until = h("p", { text: link ? "Works once, for 30 minutes (until " + clock(link.expires_ms) + ")" : "" });
   const problem = h("p", { role: "alert" });
-  const linkRow = h("div", { class: "ws-link" }, h("div", { class: "row" }, input, copy), next, until);
+  const linkRow = h("div", { class: "ws-link" }, h("div", { class: "row" }, input, copy, openLink), next, until);
   linkRow.hidden = !link;
   // Only people the hub knows are offered, and the hub rejects anyone else (the workspace host never picks its owner).
   let known = people.filter((p) => p && typeof p.user_id === "string");

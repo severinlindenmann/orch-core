@@ -15,15 +15,26 @@ import { HubStep } from '../host/HubStep'
 import { Action, Flow, NoOneClick, caveat, useHubRefresh, useOneClick, violet } from './shared'
 import { ModeChoice } from './ModeChoice'
 
-const LINK = /^https?:\/\/\S+\/c#h1\.[0-9a-f]{32}\.[A-Za-z0-9_-]{1,64}(\.[^\s~]+)?(~[0-9a-f]{32})?$/
+export const LINK = /^https?:\/\/\S+\/c#h1\.[0-9a-f]{32}\.[A-Za-z0-9_-]{1,64}(\.[^\s~]+)?(~[0-9a-f]{32})?$/
 
-export function JoinFlow({ ws, onClose }: { ws: string; onClose: () => void }) {
+/** The connect link the hub's /c page put in the address (`#connect=<link>`), or null. Only a full, well-formed connect link
+ *  is returned; anything else in the address is ignored. It prefills the dialog, nothing more: the owner still signs. */
+export function connectFromHash(hash: string): string | null {
+  const m = /^#?connect=([^&]+)$/.exec(hash)
+  if (!m) return null
+  try {
+    const link = decodeURIComponent(m[1]).trim()
+    return LINK.test(link) ? link : null
+  } catch { return null }
+}
+
+export function JoinFlow({ ws, onClose, initialLink }: { ws: string; onClose: () => void; initialLink?: string }) {
   const refreshHub = useHubRefresh(ws)
   // Closing after the signature (waiting, failed or confirmed) reads the hub status again: allowed while paused.
   const leave = () => { refreshHub(); onClose() }
   const oneClick = useOneClick(ws)
   const [failed, setFailed] = useState(false)
-  const [text, setText] = useState('')
+  const [text, setText] = useState(initialLink ?? '')
   const [info, setInfo] = useState<HubLinkInfo | null>(null)
   const [looking, setLooking] = useState(false)
   const [problem, setProblem] = useState('')

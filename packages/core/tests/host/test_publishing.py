@@ -38,6 +38,7 @@ from tests.hub.vec import private_key, pub
 lab, served, human = human_helpers.lab, human_helpers.served, human_helpers.human
 
 SERVER = "http://127.0.0.1:8103"
+SERVER_NOW_MS = 1_800_000_000_000
 SHARE = "http://127.0.0.1:8104"
 ADDON = {
     "name": "publish",
@@ -119,6 +120,13 @@ class FakeServer:
         if method == "DELETE" and len(parts) == 2:
             self.shares[parts[1]]["state"] = "revoked"
             return 200, b'{"result":"revoked"}'
+        if method == "POST" and len(parts) == 3 and parts[2] == "extend" and parts[1] in self.shares:
+            days = json.loads(body)["days"]
+            self.shares[parts[1]]["extended"] = days
+            return 200, json.dumps({"id": parts[1], "expires_ms": SERVER_NOW_MS + days * 86_400_000}).encode()
+        if method == "POST" and len(parts) == 3 and parts[2] == "password" and parts[1] in self.shares:
+            self.shares[parts[1]]["pw"] = json.loads(body)["pw"]
+            return 200, json.dumps({"id": parts[1], "has_password": True}).encode()
         return 404, b'{"error":"not_found"}'
 
 
@@ -641,7 +649,7 @@ def test_the_whole_flow_prepare_sign_send_and_the_link_is_shown_once(w):
     assert rows == [{
         "id": share_id, "ticket": key, "kind": "secret", "state": "live", "expires_at": data["expires_at"],
         "view_limit": 0, "views": 0, "files": ["report.md", "data.csv"], "created_at": rows[0]["created_at"],
-        "server": SERVER,
+        "server": SERVER, "has_password": False,
     }]  # fmt: skip
     assert token not in json.dumps(rows)
 
@@ -839,6 +847,97 @@ def test_an_agent_cannot_revoke(w):
     assert err(res) == "op.not_allowed" and w.server.shares[data["share_id"]]["state"] == "live"
 
 
+# -- extend, password (M4 S2, #1453; Opus conditions 8 and 14) -------------------------------------------------------
+
+
+def test_a_person_extends_a_link_and_the_record_follows_the_server(w):
+    key, data = shared(w, "report.md")
+    res = ok(w.req("publish.extend", {"share_id": data["share_id"], "days": 30}))["data"]
+    assert res["share_id"] == data["share_id"]
+    assert res["expires_at"] == publishing._iso((SERVER_NOW_MS + 30 * 86_400_000) / 1000)
+    assert w.server.shares[data["share_id"]]["extended"] == 30
+    (row,) = ok(w.req("publish.list", {}))["data"]["shares"]
+    assert row["expires_at"] == res["expires_at"] and row["state"] == "live"
+    assert err(w.req("publish.extend", {"share_id": "f" * 32, "days": 3})) == "not_found"
+
+
+def test_extend_is_bounded_to_1_to_30_days_before_anything_is_sent(w):
+    key, data = shared(w, "report.md")
+    sent = len(w.server.requests)
+    for days in (0, 31, -1, 365, "3", True, None):  # (a float cannot even be framed)
+        assert err(w.req("publish.extend", {"share_id": data["share_id"], "days": days})) == "invalid.input", days
+    for bad in ({"share_id": data["share_id"]}, {"days": 3}, {"share_id": data["share_id"], "days": 3, "x": 1}):
+        assert err(w.req("publish.extend", bad)) == "invalid.input"
+    assert len(w.server.requests) == sent
+
+
+def test_an_agent_cannot_extend_or_set_a_password(w):
+    key, data = shared(w, "report.md")
+    sent = len(w.server.requests)
+    for op, args in (
+        ("publish.extend", {"share_id": data["share_id"], "days": 3}),
+        ("publish.password", {"share_id": data["share_id"]}),
+    ):
+        assert err(w.req(op, args, agent=True)) == "op.not_allowed", op
+    assert len(w.server.requests) == sent and "extended" not in w.server.shares[data["share_id"]]
+
+
+def test_extending_needs_what_sharing_needs(w, monkeypatch):
+    key, data = shared(w, "report.md")
+
+    def denied(call, view):
+        raise publishing.HostError("role.denied", "sharing is for the ticket owner, owners and maintainers")
+
+    monkeypatch.setattr(publishing, "_may_share", denied)
+    sent = len(w.server.requests)
+    assert err(w.req("publish.extend", {"share_id": data["share_id"], "days": 3})) == "role.denied"
+    assert len(w.server.requests) == sent
+    ok(
+        w.req("publish.password", {"share_id": data["share_id"]})
+    )  # a password only narrows: any person who sees the ticket
+
+
+def test_a_dead_link_is_not_extended(w):
+    key, data = shared(w, "report.md")
+    ok(w.req("publish.revoke", {"share_id": data["share_id"]}))
+    assert err(w.req("publish.extend", {"share_id": data["share_id"], "days": 3})) == "publish.changed"
+    assert err(w.req("publish.password", {"share_id": data["share_id"]})) == "publish.changed"
+
+
+def test_a_password_is_drawn_by_the_host_sent_as_a_c5_record_and_shown_once(w):
+    import hashlib
+
+    key, data = shared(w, "report.md")
+    res = ok(w.req("publish.password", {"share_id": data["share_id"]}))["data"]
+    pw = res["password"]
+    assert res["shown_once"] is True and re.fullmatch(r"([a-z]{4}-){4}[a-z]{4}", pw)
+    rec = w.server.shares[data["share_id"]]["pw"]
+    assert set(rec) == {"alg", "n", "r", "p", "salt", "dk"}
+    assert (rec["alg"], rec["n"], rec["r"], rec["p"]) == ("scrypt", 32768, 8, 1)
+    pad = lambda x: x + "=" * (-len(x) % 4)  # noqa: E731
+    salt, dk = base64.urlsafe_b64decode(pad(rec["salt"])), base64.urlsafe_b64decode(pad(rec["dk"]))
+    assert (len(salt), len(dk)) == (16, 32)
+    assert hashlib.scrypt(pw.encode(), salt=salt, n=32768, r=8, p=1, dklen=32, maxmem=128 * 32768 * 8 * 2) == dk
+    # the server never saw the plain password, and nothing on disk or in the audit keeps it
+    assert all(pw.encode() not in r["body"] for r in w.server.requests)
+    assert pw.encode() not in w.everything_on_disk()
+    (row,) = ok(w.req("publish.list", {}))["data"]["shares"]
+    assert row["has_password"] is True and "password" not in row
+    # a second call draws a new password and a new salt
+    again = ok(w.req("publish.password", {"share_id": data["share_id"]}))["data"]["password"]
+    assert again != pw and w.server.shares[data["share_id"]]["pw"]["salt"] != rec["salt"]
+
+
+def test_a_password_request_takes_no_password_no_record_and_no_removal(w):
+    key, data = shared(w, "report.md")
+    sid = data["share_id"]
+    for extra in ({"password": "x"}, {"record": {}}, {"pw": None}, {"remove": True}, {"password": None}):
+        assert err(w.req("publish.password", {"share_id": sid, **extra})) == "invalid.input", extra
+    assert "pw" not in w.server.shares[sid]
+    (row,) = ok(w.req("publish.list", {}))["data"]["shares"]
+    assert row["has_password"] is False
+
+
 def test_list_shows_staged_copies_and_shares_but_never_a_link_or_token(w):
     key, data = shared(w, "report.md")
     uid, key2 = w.ticket_with(**{"b.md": b"b"})
@@ -929,6 +1028,7 @@ def test_the_audit_file_names_ids_never_a_link_or_a_token(w):
 def test_the_ops_are_all_declared_and_versioned():
     assert set(PUBLISH_OPS) == {
         "publish.prepare", "publish.send", "publish.revoke", "publish.list", "publish.discard", "publish.register",
+        "publish.extend", "publish.password",
     }  # fmt: skip
     assert all(v == 1 for v in PUBLISH_OPS.values())
     assert sha(b"x").startswith("sha256:") and stored  # the helpers this module shares with the artifact tests

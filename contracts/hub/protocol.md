@@ -2523,6 +2523,13 @@ App operations are classified **only** through `app_route` over the raw request 
 `days`); agents cannot extend (the host answers `op.not_allowed`). **Stop** keeps the files; **remove** deletes files and
 form rows, and the slug stays taken.
 
+**S2 as built (#1453).** `share.extend` also requires the link to be live and the new end to be later than the old one
+(`not_longer`, 400). `share.password` takes only `{"pw": <C5 record>}`: `null`, a string and any record with other parameters
+are `malformed`, because taking a password away widens access and there is no route for it. A link with a password asks for it
+on the open form (`p`, after the token, rate limit and KDF slot first; a wrong password is not a view). The host's
+`publish.extend` is column P (ticket owner, owner or maintainer); the person's signed note over the extension is not built in
+S2. A hub narrowing is recorded at publish (`hub_narrowings`) and the workspace's share list shows `narrowed_by: "hub"`.
+
 **The approval on both paths (Opus condition 2, S0 CHANGE).** Apps publish through the hub **and** on the direct v2 §12.1
 path, so a workspace with no hub can publish a public app and hub-optional holds. The approval of §11.3 is the same
 object on both paths; what differs is one field and one hash:

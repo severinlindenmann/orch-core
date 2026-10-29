@@ -18,7 +18,17 @@ from typing import Any
 
 from .client import PublishClient, PublishError, share_target
 
-__all__ = ["commit", "list_shares", "meta_bytes", "put_file", "put_meta", "revoke", "token_hash"]
+__all__ = [
+    "commit",
+    "extend",
+    "list_shares",
+    "meta_bytes",
+    "put_file",
+    "put_meta",
+    "revoke",
+    "set_password",
+    "token_hash",
+]
 
 
 def token_hash(token: str) -> str:
@@ -58,6 +68,24 @@ def commit(client: PublishClient, workspace_id: str, share_id: str) -> dict[str,
 
 def revoke(client: PublishClient, workspace_id: str, share_id: str) -> dict[str, Any]:
     got = client.request("DELETE", share_target(workspace_id, "shares", share_id)).json()
+    return got if isinstance(got, dict) else {}
+
+
+def extend(client: PublishClient, workspace_id: str, share_id: str, days: int) -> dict[str, Any]:
+    """``POST shares/<id>/extend {days}``: the link ends ``days`` (1..30) from the server's now. Not resent after a lost
+    answer (the second try would be refused as not longer): the caller lists the shares to see what happened."""
+    body = json.dumps({"days": days}, separators=(",", ":")).encode()
+    got = client.request("POST", share_target(workspace_id, "shares", share_id, "extend"), body).json()
+    return got if isinstance(got, dict) else {}
+
+
+def set_password(client: PublishClient, workspace_id: str, share_id: str, record: Mapping[str, Any]) -> dict[str, Any]:
+    """``POST shares/<id>/password {pw: record}``: ``record`` is the host-made C5 record, never a plain password.
+    Setting the same record again is safe, so a lost answer is retried."""
+    body = json.dumps({"pw": dict(record)}, sort_keys=True, separators=(",", ":")).encode()
+    got = client.request(
+        "POST", share_target(workspace_id, "shares", share_id, "password"), body, idempotent=True
+    ).json()
     return got if isinstance(got, dict) else {}
 
 

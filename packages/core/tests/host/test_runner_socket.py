@@ -957,3 +957,22 @@ def test_evicted_runs_publish_gone(w, monkeypatch):
     assert int(gone["id"].split(".")[0]) > sub["rev"]
     newest = max(int(r.get("rev") or 0) for r in w.h.host.runners.store.records.values())
     assert int(gone["id"].split(".")[0]) < newest == w.h.host.runners.store.rev
+
+
+def test_a_hung_service_manager_denies_within_its_own_short_limit(monkeypatch):
+    from orch.host import runners
+
+    seen = {}
+
+    def hang(argv, **kw):
+        seen["timeout"] = kw.get("timeout")
+        raise subprocess.TimeoutExpired(argv, kw.get("timeout"))
+
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    monkeypatch.delenv("ORCH_NO_SERVICE_MANAGER", raising=False)
+    monkeypatch.setattr(runners.subprocess, "run", hang)
+    for platform in ("darwin", "linux"):
+        assert main_pid(os.getuid(), platform=platform) is None  # fail closed
+    assert seen["timeout"] == runners.SYSTEMCTL_SECONDS == 3
+    monkeypatch.setattr(runners.sys, "platform", "linux")
+    assert runners.runner_identity(runners.Credentials(os.getuid(), os.getgid(), os.getpid())) is False

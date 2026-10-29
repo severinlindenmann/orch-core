@@ -130,6 +130,9 @@ export function registerHubRoutes(r: MockRouter) {
 // with a backup key. The key is sealed by the page for real; this mock has no private half and never opens it.
 let oneClickOn = true
 let connectError: string | null = null
+let confirmAfter = 0 // how many refreshes the mock hub needs before it confirms (0: the connect itself confirms)
+let refreshes = 0
+export const setMockConfirmAfter = (n: number) => { confirmAfter = n; refreshes = 0 }
 /** Tests and the dev switch: is One click on in the mock workspace? (Off means the key is back under a passphrase.) */
 export const setMockOneClick = (on: boolean) => {
   oneClickOn = on
@@ -199,7 +202,9 @@ export function registerHubClickRoutes(r: MockRouter) {
     const b = c.body as { invite?: string; hub_card?: string } | null
     if (!b?.hub_card) return fail(400, 'invalid.input', 'Needs an invite and a card.')
     if (connectError) return fail(502, 'hub.unreachable', connectError, undefined, true)
-    return ok({ connected: true, mode: 'selective' })
+    refreshes = 0
+    return ok({ connected: true, mode: 'selective', confirmed: confirmAfter === 0 })
   })
+  r.add('POST', '/api/w/:ws/hub/refresh', () => { refreshes += 1; return ok({ confirmed: refreshes >= confirmAfter }) })
   r.add('POST', '/api/w/:ws/click/state', (_s, c) => ok({ id: (c.body as { request_id?: string } | null)?.request_id ?? '', state: 'prepared' }))
 }

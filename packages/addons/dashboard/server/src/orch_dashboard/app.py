@@ -25,6 +25,7 @@ from . import (
     hub,
     hubapprove,
     market_routes,
+    org_routes,
     passkey_routes,
     phone,
     reads,
@@ -71,6 +72,7 @@ SETTINGS_TABS = (
     "grants",
     "devices",
     "hub",
+    "company",
 )  # HOST_TABS (settings/tabs.ts)
 SPA_ROUTES = (
     "",  # Today
@@ -323,6 +325,7 @@ def create_app(
     stepup_routes.register(app, gateway)
     hubapprove.register(app, gateway)
     hub.register(app, gateway)
+    org_routes.register(app, gateway)
     switch.register(app, gateway, auth)
     trust_routes.register(app, auth, gateway)
     claude_trust_routes.register(app, gateway, auth)

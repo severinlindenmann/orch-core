@@ -20,6 +20,7 @@ import { storyOf } from './story'
 import { takeTrustedPress, trustedPress } from './trustedPress'
 import { HubAddonPanel, HubSettingsPanel } from './HubSignPanel'
 import { hubSettingsSplit, isAddonGrant } from '@/api/hubsign'
+import { ClaudeConsentLine, isOwner, useClaudeConsent, type ClaudeConsent } from './claudeConsent'
 
 /**
  * How a settled signature was made. `unsignedShown` is true only on the one-click path, when the `unsigned` slot was
@@ -72,6 +73,10 @@ export interface SignPopoverProps {
   /** Show the review in place, under the row that asked (an accordion), not as a popover. */
   inline?: boolean
   initialFocus?: () => HTMLElement | null
+  /** This signature starts a Claude Code agent: an owner is asked, in one preselected line, to let it open the ticket's folder without asking. */
+  claudeCode?: boolean
+  /** The caller's own consent state (it showed the line itself or hands it over): this popover then makes none. */
+  consent?: ClaudeConsent
   /** The person asked to approve in the hub instead (an optional extra, A1/FB15): show the hub panel, sign nothing here. */
   forceHub?: boolean
   /** The host's minimum scheduling lead in seconds, for a "too soon" refusal. Default: the schedules list's
@@ -103,14 +108,24 @@ export function SignPopover(p: SignPopoverProps) {
   // The hub is an optional extra path: only when the caller asks for it, and only for what the hub can approve here.
   // An add-on grant goes through the one hub approval route (FB15): the host prepares it for the hub, nothing signs here.
   const viaHub = p.forceHub === true && (isAddonGrant(p.action) || !!hubSettingsSplit(p.action))
+  const consentRef = useRef<ReturnType<typeof useClaudeConsent> | null>(null)
   const click = useClickSign(p.ws, (_phase, state, request) => {
-    if (p.doneToast !== '') toast.success(p.doneToast ?? `${p.title}: signed`)
-    p.onSettled?.('done', state, request, { via: 'click', unsignedShown: unsignedShown.current })
+    const settle = () => {
+      if (p.doneToast !== '') toast.success(p.doneToast ?? `${p.title}: signed`)
+      p.onSettled?.('done', state, request, { via: 'click', unsignedShown: unsignedShown.current })
+    }
+    // P03: the consent is recorded after the signature settled and before the caller starts the agent (a failure never stops the start)
+    const recorded = consentRef.current?.grant()
+    if (recorded) void recorded.then(settle)
+    else settle()
   }, leadS)
   const callbacks = useRef(p)
   callbacks.current = p
   const router = useRouter({ warn: false })
   const me = useMe(p.ws).data
+  const own = useClaudeConsent(p.ws, !p.consent && !!p.claudeCode && !!here && isOwner(here, me?.person))
+  const consent = p.consent ?? own
+  consentRef.current = consent
   const sequenceStart = p.action?.action === 'new_sequence' && !!p.action.launch
   // D2 grant terms come from the signer's conditional sequence, never the proposed browser action.
   const story = sequenceStart ? { signLabel: 'Sign and start agent', steps: [] } : storyOf(p.action, { startsAgent: p.startsAgent, person: me?.person })
@@ -178,6 +193,7 @@ export function SignPopover(p: SignPopoverProps) {
         {dismiss(click.phase === 'failed' && click.prepared && click.problem?.next !== 'check' ? 'Cancel' : 'Close')}
         {(click.phase === 'cancelled' || (click.phase === 'failed' && ['prepare', 'retry', 'again', 'review'].includes(click.problem?.next ?? ''))) && <Button onClick={e => { if (trustedPress(e.nativeEvent) && p.action) void click.again(p.action) }}>Try again</Button>}
       </div>}
+      {(click.phase === 'ready' || click.phase === 'signing') && <ClaudeConsentLine c={consent} />}
       {p.unsigned && click.phase !== 'done' && <div ref={unsignedEl} data-testid="handoff-unsigned">{p.unsigned}</div>}
     </>}
   </SignShell>

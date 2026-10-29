@@ -170,11 +170,20 @@ def test_module_never_names_a_hub_write():
     calls = re.findall(r"\.call\(\s*\"([a-z_.]+)\"", src)
     # connect: C11's one write; addon.list: a read (the join-pause check); member.list: the owner check of the
     # one-click share reductions
-    allowed = {"hub.status", "share.rules", "share.preview", "hub.connect", "hub.link", "addon.list", "member.list"}
+    allowed = {
+        "hub.status",
+        "share.rules",
+        "share.preview",
+        "hub.connect",
+        "hub.refresh",
+        "hub.link",
+        "addon.list",
+        "member.list",
+    }
     assert set(calls) <= allowed
     # the other writes: `reduce` (only the two ops that take sharing away) and `add` (the two click-only ops that
     # share more: a full local session, an owner, a plan this session was shown; see test_hub_share_add)
-    assert src.count("write=True") == 3
+    assert src.count("write=True") == 4
     assert set(re.findall(r"\"(share\.[a-z_]+)\"", src)) == {"share.rules", "share.preview", "share.revoke",
                                                              "share.rule_remove", "share.rule_add",
                                                              "share.sync"}  # fmt: skip
@@ -212,6 +221,15 @@ class Auth:
 
     def login_kind(self, token):
         return self.kind
+
+    def switch_workspace(self, token):
+        return None
+
+    def listener_of(self, token):
+        return "loopback"
+
+    def passkey_session(self, token):
+        return True
 
     def stepup_take(self, token, action, digest):
         return False, None  # no passkey step-up was made
@@ -271,7 +289,7 @@ def connect(c, **over):
 def test_connect_relays_the_invite_and_card_to_the_host_as_one_write():
     link = Link({"hub.connect": {"hub_id": HUB32, "status": "bound", "mode": "selective", "binding_seq": 1}})
     got = connect(connect_client(link))
-    assert got.status_code == 200 and got.json() == {"connected": True, "mode": "selective"}
+    assert got.status_code == 200 and got.json() == {"connected": True, "mode": "selective", "confirmed": False}
     assert link.calls == [
         (
             "hub.connect",
@@ -291,7 +309,7 @@ def test_connect_works_while_the_dashboard_add_on_is_paused_by_the_join():
         }
     )
     got = connect(connect_client(link, gw=PausedGw))
-    assert got.status_code == 200 and got.json() == {"connected": True, "mode": "selective"}
+    assert got.status_code == 200 and got.json() == {"connected": True, "mode": "selective", "confirmed": False}
     assert [c[0] for c in link.calls] == ["addon.list", "hub.connect"]
 
 
@@ -331,3 +349,60 @@ def test_connect_failure_is_the_hosts_own_answer_and_never_says_connected():
     res = connect(connect_client(link))
     assert res.status_code >= 400 and "connected" not in res.text.lower().replace("not connected", "")
     assert res.json()["error"]["code"] == "hub.unreachable"
+
+
+def test_connect_says_confirmed_only_when_the_host_pinned_a_snapshot():
+    for sent, want in ((3, True), (None, False), (0, False), (True, False)):
+        link = Link({"hub.connect": {"mode": "selective", "snapshot_version": sent}})
+        assert connect(connect_client(link)).json()["confirmed"] is want
+
+
+def refresh(c):
+    return c.post(f"/api/w/{WS}/hub/refresh")
+
+
+PAUSED = {"addons": [{"name": "dashboard", "state": "paused", "paused": {"cause": "unverified"}}]}
+
+
+def test_refresh_runs_while_the_add_on_is_paused_and_reports_the_pinned_version():
+    link = Link({"hub.refresh": {"hub_id": HUB32, "changed": True, "snapshot": {"version": 2}}, "addon.list": PAUSED})
+    got = refresh(connect_client(link, gw=PausedGw))
+    assert got.status_code == 200 and got.json() == {"confirmed": True}
+    assert [c[0] for c in link.calls] == ["addon.list", "hub.refresh"] and link.calls[1][2]["write"] is True
+
+
+def test_refresh_says_not_confirmed_when_the_hub_does_not_answer():
+    link = Link({"hub.refresh": fail("hub.unreachable"), "addon.list": PAUSED})
+    got = refresh(connect_client(link, gw=PausedGw))
+    assert got.status_code == 200 and got.json() == {"confirmed": False}
+
+
+def test_refresh_does_not_lift_a_pause_with_another_cause():
+    link = Link(
+        {
+            "hub.refresh": {"snapshot": {"version": 2}},
+            "addon.list": {"addons": [{"name": "dashboard", "state": "disabled"}]},
+        }
+    )
+    got = refresh(connect_client(link, gw=PausedGw))
+    assert got.status_code != 200 and got.json()["error"]["code"] == "addon.disabled"
+    assert not any(c[0] == "hub.refresh" for c in link.calls)
+
+
+def test_refresh_from_a_remote_session_is_refused_before_the_host_is_asked():
+    link = Link({"hub.refresh": {"snapshot": {"version": 2}}, "addon.list": PAUSED})
+    res = refresh(connect_client(link, kind="remote", gw=PausedGw))
+    assert res.status_code == 403 and res.json()["error"]["code"] == "passkey.stepup_required" and link.calls == []
+
+
+def test_refresh_passes_on_a_real_refusal_instead_of_saying_not_confirmed():
+    link = Link({"hub.refresh": fail("role.denied"), "addon.list": PAUSED})
+    got = refresh(connect_client(link, gw=PausedGw))
+    assert got.status_code >= 400 and got.json()["error"]["code"] == "role.denied"
+
+
+def test_refresh_is_refused_for_a_local_session_that_is_not_a_full_one(monkeypatch):
+    link = Link({"hub.refresh": {"snapshot": {"version": 2}}, "addon.list": PAUSED})
+    monkeypatch.setattr(hub, "full_session", lambda auth, token: False)
+    res = refresh(connect_client(link, gw=PausedGw))
+    assert res.status_code in (401, 403) and link.calls == []

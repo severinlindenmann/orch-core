@@ -1,14 +1,28 @@
 import { Check, Info, Loader2 } from 'lucide-react'
 import type { ReactNode } from 'react'
-import { addFirst } from '@/api/gates'
 import type { GateName, GateStatus, TicketDocument } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
+import { openDockOn } from '@/app/terminal/dock/request'
+import type { ProgressRun } from './progress'
 import { availableActions, GATE_LABEL, policyText } from './actions'
 import { fmtDay, fmtExact, type HumanAction, type Jump, Mono, presenceLabel, type Viewer } from './shared'
 
-type Props = { ticket: TicketDocument; viewer: Viewer; sign: (a: HumanAction) => void; jump: (j: Jump) => void; signing?: boolean }
+type Props = {
+  ticket: TicketDocument
+  viewer: Viewer
+  sign: (a: HumanAction) => void
+  jump: (j: Jump) => void
+  signing?: boolean
+  /** The newest agent run of this ticket; without one nothing ran, so nothing "stopped". */
+  run?: ProgressRun | null
+  /** The run id of the ticket's open terminal wait: the agent asks something in its terminal. */
+  wait?: string | null
+  /** "Start agent again" on the stopped card (absent: the card has no button). */
+  onStart?: () => void
+  openTerminal?: (run: string) => void
+}
 type StepId = 'understand' | 'build' | 'check' | 'done'
 type StepState = 'done' | 'current' | 'todo'
 
@@ -173,7 +187,7 @@ const APPROVE = {
 } as const
 
 /** The one thing to do next, in plain words; nothing when there is nothing to do or say. */
-function NextStepCard({ ticket, viewer, sign, jump, signing = false }: Props) {
+function NextStepCard({ ticket, viewer, sign, jump, signing = false, run, wait, onStart, openTerminal = openDockOn }: Props) {
   const av = availableActions(ticket, viewer)
   const status = ticket.status as string
   const working = !!ticket.claim && ticket.claim.live !== false
@@ -212,10 +226,29 @@ function NextStepCard({ ticket, viewer, sign, jump, signing = false }: Props) {
       </Card>
     )
   }
-  // Owner feedback 5/14: the agent ended its run before the requirements or the plan were complete, and nothing said so.
-  if ((status === 'open' || status === 'in_progress' || status === 'in-progress') && !working) {
-    const stuck = (['requirements', 'plan'] as const).find((g) => ticket.gates[g].state !== 'approved' && !!ticket.gates[g].missing?.length)
-    if (stuck) return <Card title="The agent stopped early" text={`${addFirst(ticket.gates[stuck].missing ?? [])} Start the agent again to finish it.`} />
+  // The agent asks something in its terminal: one button to it.
+  if (wait && !finishedOf(ticket)) {
+    return (
+      <Card title="The agent is waiting for you" text="It may be asking you something. Open the terminal to answer.">
+        <Button size="sm" onClick={() => openTerminal(wait)}>
+          Open terminal
+        </Button>
+      </Card>
+    )
+  }
+  // Owner feedback 5/14, run5 P04: only a real run that ended without finishing is "stopped early"; a ticket that never ran says nothing.
+  if ((status === 'open' || status === 'in_progress' || status === 'in-progress') && !working && (run?.state === 'exited' || run?.state === 'lost')) {
+    const stuck = (['requirements', 'plan'] as const).some((g) => ticket.gates[g].state !== 'approved' && !!ticket.gates[g].missing?.length)
+    if (stuck)
+      return (
+        <Card title="The agent stopped early" text="The agent stopped before it finished.">
+          {onStart && (
+            <Button size="sm" onClick={onStart}>
+              Start agent again
+            </Button>
+          )}
+        </Card>
+      )
   }
   if (working && !finishedOf(ticket)) {
     return (
@@ -229,11 +262,11 @@ function NextStepCard({ ticket, viewer, sign, jump, signing = false }: Props) {
 }
 
 /** Where the ticket is (four plain steps) and the one next step for the person looking at it. */
-export function TicketProgress({ ticket, viewer, sign, jump, signing = false }: Props) {
+export function TicketProgress({ ticket, viewer, sign, jump, signing = false, run, wait, onStart, openTerminal }: Props) {
   return (
     <div className="min-w-0 space-y-2">
       <Stepper ticket={ticket} />
-      <NextStepCard ticket={ticket} viewer={viewer} sign={sign} jump={jump} signing={signing} />
+      <NextStepCard ticket={ticket} viewer={viewer} sign={sign} jump={jump} signing={signing} run={run} wait={wait} onStart={onStart} openTerminal={openTerminal} />
     </div>
   )
 }

@@ -58,3 +58,19 @@ test("the page check mirrors the hub rules: https only, no key in the address, a
   assert.match(serverProblem("crm", "https://x.example.com/?key=1", "none", null), /key never goes/);
   assert.match(serverProblem("crm", "https://x.example.com", "hub_secret", ""), /company secret/);
 });
+
+test("each server shows one plain status word and a Check now button (#1439)", async () => {
+  const { statusWord } = await import("../../src/orch_hub/web/pages/mcp.js");
+  assert.equal(statusWord({ status: "reachable" }), "Reachable");
+  assert.equal(statusWord({ status: "needs_sign_in" }), "Needs sign-in");
+  assert.equal(statusWord({ status: "failing", detail: "<b>upstream</b>" }), "Not reachable");
+  assert.equal(statusWord({ status: "weird" }), "Not checked yet");
+  assert.equal(statusWord(undefined), "Not checked yet");
+  const calls = [];
+  const view = mcpView({ ...data, servers: [{ ...data.servers[0], status: { status: "needs_sign_in", checked_ms: 5, detail: "sign_in" } }] }, { check: (n) => calls.push(n) });
+  const st = find(view, (n) => n.attrs["data-status"])[0];
+  assert.equal(st.textContent, "Needs sign-in");
+  clickText(view, "Check now");
+  assert.deepEqual(calls, ["crm"]);
+  assert.equal(find(mcpView(data), (n) => n.attrs["data-status"])[0].textContent, "Not checked yet");
+});

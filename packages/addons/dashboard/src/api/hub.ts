@@ -95,7 +95,10 @@ export interface HubConnectRequest { idem: string; invite?: string; hub_card: st
 /** `POST /hub/link` (run-9 feedback 6): the host read the connect link (fetched the hub card, checked it against the
  * link's hub id). `hub_card` is the card as text, to hand back to the join; nothing is signed or kept by this read. */
 export interface HubLinkInfo { hub_id: string; name: string; code: string; endpoint: string | null; owner_user?: string | null; dev: boolean; hub_card: string }
-export interface HubConnected { connected: true; mode: HubMode | null }
+/** `confirmed`: the hub's first settings snapshot is pinned, so the add-ons are no longer paused. False: joined, the hub
+ * has not answered yet; `POST /hub/refresh` asks again. */
+export interface HubConnected { connected: true; mode: HubMode | null; confirmed: boolean }
+export interface HubRefreshed { confirmed: boolean }
 
 /** Does this host serve the hub reads (and so the pages)? The mock lists every feature. */
 export const hubServed = (ws: string | undefined): boolean => hasFeature('hub', ws)

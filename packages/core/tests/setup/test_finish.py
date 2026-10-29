@@ -278,6 +278,70 @@ def test_unreadable_facts_refuse_the_launch(tmp):
     assert fx  # module imported
 
 
+def test_finish_click_on_a_one_click_workspace_needs_no_terminal_check(tmp):
+    box = [mkfacts(addons=frozenset({"dashboard"}), grant_hours_set=True, convenience=True)]
+    f = finish_flow(tmp, FakePorts(), box)
+    f.dispatch(
+        "POST",
+        "profile",
+        {},
+        {**PROF, "method": "click", "addons": ["dashboard"], "agent_grant": False, "agent_hours": 8},
+    )
+    rv = f.dispatch("POST", "review", {}, {})[1]
+    assert rv["tty_confirm"] is False and rv["fingerprint"] is None
+    assert "custody" not in [fl["id"] for fl in rv["flags"]]
+
+
+def test_finish_click_on_a_terminal_custody_workspace_keeps_the_custody_item_without_a_check(tmp):
+    box = [mkfacts(addons=frozenset({"dashboard"}), grant_hours_set=True)]
+    f = finish_flow(tmp, FakePorts(), box)
+    f.dispatch(
+        "POST",
+        "profile",
+        {},
+        {**PROF, "method": "click", "addons": ["dashboard"], "agent_grant": False, "agent_hours": 8},
+    )
+    rv = f.dispatch("POST", "review", {}, {})[1]
+    assert "custody" in [fl["id"] for fl in rv["flags"]]
+    assert rv["tty_confirm"] is False and rv["fingerprint"] is None
+
+
+def test_finish_terminal_method_keeps_the_terminal_check(tmp):
+    box = [mkfacts(addons=frozenset({"dashboard"}), grant_hours_set=True)]
+    f = finish_flow(tmp, FakePorts(), box)
+    f.dispatch(
+        "POST",
+        "profile",
+        {},
+        {**PROF, "method": "terminal", "addons": ["dashboard"], "agent_grant": False, "agent_hours": 8},
+    )
+    rv = f.dispatch("POST", "review", {}, {})[1]
+    assert rv["tty_confirm"] is True and len(rv["fingerprint"]) == 3
+
+
+def test_finish_click_conversion_without_a_terminal_fails_with_tty_unavailable(tmp):
+    ports = FakePorts(FakeTerminal([]))
+
+    def no_tty(prompt):
+        raise OSError("no tty")
+
+    ports.terminal.ask_secret = no_tty
+    box = [mkfacts(addons=frozenset({"dashboard"}), grant_hours_set=True)]
+    f = finish_flow(tmp, ports, box)
+    f.dispatch(
+        "POST",
+        "profile",
+        {},
+        {**PROF, "method": "click", "addons": ["dashboard"], "agent_grant": False, "agent_hours": 8},
+    )
+    rv = f.dispatch("POST", "review", {}, {})[1]
+    ports.expect(f.review.plan)
+    out = f.dispatch("POST", "create", {}, {"review_id": rv["review_id"], "digest": rv["digest"]})[1]
+    f.thread.join(10)
+    p = progress(f, out["run_id"])
+    assert p["done"] is False and p["error"]["code"] == "tty.unavailable"
+
+
 def test_finish_moves_a_passphrase_key_to_one_click_by_asking_the_passphrase_on_the_terminal(tmp):
     """Regression (found by the real e2e): Finish with a pending conversion has no generated passphrase in memory; it
     used to die on an assert. The person types it on the terminal (echo off); a failure never shows it back."""

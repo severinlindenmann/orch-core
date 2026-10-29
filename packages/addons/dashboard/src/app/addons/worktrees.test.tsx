@@ -155,7 +155,7 @@ describe('worktrees ticket panel', () => {
     vi.stubGlobal('innerWidth', 1440)
     const { user } = renderApp('/ticket/DEMO-0043', { viewer: 'p_sev', setup })
     const panel = await screen.findByRole('complementary', { name: 'Ticket details' }, T)
-    await openTicketPanel(user, 'Worktrees')
+    await openTicketPanel(user, 'Work copies')
     expect(await within(panel).findByText('wt/DEMO-0043-energy-dbt', {}, T)).toBeInTheDocument()
     await user.selectOptions(within(panel).getByLabelText(/^Repository/), 'acme-energy/ingest')
     await user.click(within(panel).getByRole('button', { name: 'Add worktree for this ticket' }))

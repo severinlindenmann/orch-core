@@ -639,7 +639,7 @@ export function Setup({ api }: { api: SetupAPI }) {
       drop()
     }
   }, [api])
-  // Worktrees need a git repository: a new workspace in a folder without git offers to make one (nothing is committed)
+  // Work copies need a git repository: a new workspace in a folder without git offers to make one (nothing is committed)
   const offersTrust = state?.mode === 'new' && state.claude?.available === true
   const parentConfig = state?.claude?.parent_config ?? ''
   const offersGit = state?.mode === 'new' && state.git?.repo === false && profile.addons.includes('worktrees')
@@ -928,7 +928,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                           addons: e.target.checked
                             ? [...profile.addons, a.id]
                             : profile.addons.filter((id) => id !== a.id),
-                          // ticking Worktrees again asks the git question again
+                          // ticking Work copies again asks the git question again
                           ...(a.id === 'worktrees' ? { git_init: undefined } : {}),
                         })
                       }

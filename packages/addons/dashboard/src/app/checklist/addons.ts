@@ -13,12 +13,12 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
         id: 'H1',
         title: 'Look at the list',
         text: 'Open Settings, then Add-ons.',
-        see: 'A list of 9 add-ons: Dashboard (Always on), Start agents, Terminals, Worktrees, Quick tasks (Always on), Publish, Usage, Estimate and File Explorer, each with one plain line and On or Off.',
+        see: 'A list of 9 add-ons: Dashboard (Always on), Start agents, Terminals, Work copies, Quick tasks (Always on), Publish, Usage, Estimate and File Explorer, each with one plain line and On or Off.',
       },
       {
         id: 'H2',
         title: 'Switch an add-on on',
-        text: 'Find an add-on you left off during setup (for example Worktrees) and switch it on.',
+        text: 'Find an add-on you left off during setup (for example Work copies) and switch it on.',
         see: 'The same review and sign step as other settings. You type the word shown on screen (the add-on name, a ~ and the end of the workspace id), and the review says what the add-on may do. After signing the switch shows On.',
       },
       {
@@ -92,15 +92,15 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
   },
   {
     id: 'J',
-    title: 'Worktrees',
-    where: 'Browser; the Worktrees page',
+    title: 'Work copies',
+    where: 'Browser; the Work copies page',
     intro:
-      'A worktree is a ticket\'s own folder, so agents on different tickets do not disturb each other. Needs the Worktrees add-on on, dashboard execution turned on, and a ticket linked to a repo with a branch (see E1).',
+      'A worktree is a ticket\'s own folder, so agents on different tickets do not disturb each other. Needs the Work copies add-on on, dashboard execution turned on, and a ticket linked to a repo with a branch (see E1).',
     steps: [
       {
         id: 'J1',
-        title: 'The Worktrees page',
-        text: 'Click "Worktrees" in the left menu.',
+        title: 'The Work copies page',
+        text: 'Click "Work copies" in the left menu.',
         see: 'A list of tickets that have their own folder (or "No ticket has its own worktree yet"). Folder and branch only behind "Technical details". Times in your local time.',
       },
       {
@@ -113,12 +113,12 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
         id: 'J3',
         title: 'Create a worktree',
         text: 'Press "Add worktree", then "Create worktree".',
-        see: 'The box says "Ready, no unsaved changes" and the ticket appears on the Worktrees page. A refusal is one plain sentence (for example runner off, or no branch yet).',
+        see: 'The box says "Ready, no unsaved changes" and the ticket appears on the Work copies page. A refusal is one plain sentence (for example runner off, or no branch yet).',
       },
       {
         id: 'J4',
         title: 'Remove with unsaved changes',
-        text: 'Change a file in that folder ("Technical details" shows where), reload the Worktrees page, press Remove and confirm.',
+        text: 'Change a file in that folder ("Technical details" shows where), reload the Work copies page, press Remove and confirm.',
         see: '"1 changed file" first, then a refusal saying the changes are not saved in git. Nothing is deleted.',
       },
       {
@@ -238,7 +238,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
         id: 'M3',
         title: 'Start an agent with a worktree',
         text: 'On the ticket press "Add worktree" (as in J3), then "Start agent": pick the harness and mode Work, Start.',
-        see: 'A run appears and a terminal opens. The agent works in the ticket\'s own folder (the worktree), not in the shared copy, and the Worktrees page lists the ticket.',
+        see: 'A run appears and a terminal opens. The agent works in the ticket\'s own folder (the worktree), not in the shared copy, and the Work copies page lists the ticket.',
       },
       {
         id: 'M4',
@@ -612,7 +612,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
       {
         id: 'W13',
         title: 'Plain reviews',
-        text: 'On the Add-ons page: turn on Terminals (or Worktrees) and read the review. Then create a new ticket and read its review.',
+        text: 'On the Add-ons page: turn on Terminals (or Work copies) and read the review. Then create a new ticket and read its review.',
         see: 'The review starts "Turn on Terminals: it says it will open terminals on this computer, as you", then the version. No digest, no "fields: {}" (the package digest and raw capabilities are under Technical details). A new ticket says "owner: your name" and never a long raw p_ id.',
       },
       {
@@ -711,7 +711,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
         id: 'Y3',
         title: 'Sign the link',
         text: 'Press "Review and sign", then Approve, then the button again after a second. Open the ticket again.',
-        see: 'ONE review with a line "repository NAME: not linked -> linked, branch BRANCH", no raw JSON, one signature. Afterwards the right-hand column shows the branch and repository under "Code" (and the Worktree box if Worktrees is on). No agent access was needed.',
+        see: 'ONE review with a line "repository NAME: not linked -> linked, branch BRANCH", no raw JSON, one signature. Afterwards the right-hand column shows the branch and repository under "Code" (and the Worktree box if Work copies is on). No agent access was needed.',
       },
       {
         id: 'Y4',
@@ -735,7 +735,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
         id: 'Y7',
         title: 'An acceptance check you did not add',
         text: 'New ticket: type an acceptance check in the box without pressing Add, then Create. Then open the Guide.',
-        see: 'The review lists the check. The Guide has pages Repositories, Worktrees and one page "Shares and Publish".',
+        see: 'The review lists the check. The Guide has pages Repositories, Work copies and one page "Shares and Publish".',
       },
       {
         id: 'Y8',
@@ -765,7 +765,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
       {
         id: 'Z1',
         title: 'Setup in a folder without git',
-        text: 'In a NEW empty folder (no git), run `orch setup`. Leave Worktrees ticked and continue to the add-on step.',
+        text: 'In a NEW empty folder (no git), run `orch setup`. Leave Work copies ticked and continue to the add-on step.',
         see: 'A box "This folder does not track changes yet." with two choices; "Set it up for me (recommended)" is already chosen and Continue is active. Finish with it. The folder then has `.git` and a `.gitignore` with `.orch/` and `.orch-work/`; `git status` shows your own files as untracked and nothing committed.',
       },
       {
@@ -912,7 +912,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
       {
         id: 'S12',
         title: 'A plain add-on',
-        text: 'Switch Worktrees (or another plain add-on) on or off.',
+        text: 'Switch Work copies (or another plain add-on) on or off.',
         see: 'The toggle still opens the normal small review.',
       },
       {

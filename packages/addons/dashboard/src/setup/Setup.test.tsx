@@ -21,7 +21,7 @@ const state: SetupState = {
     },
     {
       id: 'worktrees',
-      title: 'Worktrees',
+      title: 'Work copies',
       desc: 'Separate working copies',
       required: false,
       default: false,
@@ -362,7 +362,7 @@ test('finish skips secrets; progress exposes failure and Finish setup later', as
   const f = fake({ finish: true, failure: true })
   render(<Setup api={f.api} />)
   await screen.findByRole('heading', { name: 'Finish setting up your workspace' })
-  fireEvent.click(screen.getByLabelText(/Worktrees/))
+  fireEvent.click(screen.getByLabelText(/Work copies/))
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Review your setup' })
   expect(f.calls.some((c) => c.path.startsWith('secrets/'))).toBe(false)
@@ -443,7 +443,7 @@ test('successful progress offers the workspace, while finish mode never reveals 
   const f = fake({ finish: true, done: true })
   render(<Setup api={f.api} />)
   await screen.findByRole('heading', { name: 'Finish setting up your workspace' })
-  fireEvent.click(screen.getByLabelText(/Worktrees/))
+  fireEvent.click(screen.getByLabelText(/Work copies/))
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Review your setup' })
   fireEvent.click(screen.getByRole('button', { name: 'Finish setup' }))
@@ -604,12 +604,12 @@ test('finish shows the current values read-only and offers only what is missing,
   // the name and the short name are not inputs, the add-on that is on is not a switch
   expect(screen.queryByLabelText('Your name')).toBeNull()
   expect(screen.getAllByRole('switch').map((el) => el.closest('label')?.textContent ?? '')).toEqual([
-    expect.stringContaining('Worktrees'),
+    expect.stringContaining('Work copies'),
     expect.stringContaining('Let agents start on this computer now'),
     expect.stringContaining('Approve with one click'),
   ])
   expect(screen.getByRole('button', { name: 'Continue →' })).toBeDisabled()
-  fireEvent.click(screen.getByLabelText(/Worktrees/))
+  fireEvent.click(screen.getByLabelText(/Work copies/))
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Review your setup' })
   expect(f.calls.find((c) => c.path === 'profile')?.body).toMatchObject({
@@ -697,7 +697,7 @@ test('the ready list gives every status an icon and a word, never colour alone',
   const f = fake({ finish: true, running: true })
   render(<Setup api={f.api} />)
   await screen.findByRole('heading', { name: 'Finish setting up your workspace' })
-  fireEvent.click(screen.getByLabelText(/Worktrees/))
+  fireEvent.click(screen.getByLabelText(/Work copies/))
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Review your setup' })
   fireEvent.click(screen.getByRole('button', { name: 'Finish setup' }))
@@ -769,7 +769,7 @@ test('the progress words are shown, and the unfinished items are named in words'
   }
   const { container } = render(<Setup api={new SetupAPI('tok', fetcher)} />)
   await screen.findByRole('heading', { name: 'Finish setting up your workspace' })
-  fireEvent.click(screen.getByLabelText(/Worktrees/))
+  fireEvent.click(screen.getByLabelText(/Work copies/))
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Review your setup' })
   fireEvent.click(screen.getByRole('button', { name: 'Finish setup' }))
@@ -1053,7 +1053,7 @@ test('U1: a new setup starts with the main add-ons and agent access ticked, all 
   render(<Setup api={f.api} />)
   await screen.findByRole('heading', { name: 'Set up your workspace' })
   for (let i = 0; i < 2; i++) fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
-  const sw = screen.getByRole('switch', { name: /Worktrees/ })
+  const sw = screen.getByRole('switch', { name: /Work copies/ })
   expect(sw).toBeChecked()
   expect(sw).toBeEnabled()
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
@@ -1087,7 +1087,7 @@ test.each([
   expect(f.calls.find((c) => c.path === 'profile')?.body).toMatchObject({ agent_grant: false, agent_hours: 8 })
 })
 
-test('a folder without git offers to make one when Worktrees is on, and never commits anything', async () => {
+test('a folder without git offers to make one when Work copies is on, and never commits anything', async () => {
   const f = fake({ defaults: true, noGit: true })
   render(<Setup api={f.api} />)
   await screen.findByRole('heading', { name: 'Set up your workspace' })

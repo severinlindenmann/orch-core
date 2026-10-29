@@ -56,7 +56,7 @@ export interface Profile {
   agent_hours: number
   agent_grant: boolean
   relay: boolean
-  /** Make the folder a git repository (only with Worktrees, only where there is none). */
+  /** Make the folder a git repository (only with Work copies, only where there is none). */
   git_init?: boolean
   /** Keep a records history (own git repository, saved on this computer automatically; never pushed). New workspaces only. */
   records?: boolean

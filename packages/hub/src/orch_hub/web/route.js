@@ -10,7 +10,7 @@ export function parseRoute(hash) {
   if (m) return { kind: "invite", token: m[1] };
   m = /^#t=([A-Za-z0-9._-]{8,128})$/.exec(value);
   if (m) return { kind: "ticket", token: m[1] };
-  m = /^#\/(home|approvals|workspaces|services|admin|activity|account|handoffs|phones)$/.exec(value);
+  m = /^#\/(home|approvals|workspaces|services|admin|activity|account|handoffs|phones|register)$/.exec(value);
   if (m) return { kind: m[1] };
   m = /^#\/([a-z][a-z0-9-]{0,31})$/.exec(value);
   if (m && pagePaths.has(m[1])) return { kind: m[1] };

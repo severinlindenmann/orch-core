@@ -20,7 +20,7 @@ IT1, IT2, IT3 = G.fake16("it1"), G.fake16("it2"), G.fake16("it3")
 
 
 class ShHub(Hub):
-    def __init__(self, store_path: str = ":memory:", registry=None, **kw):
+    def __init__(self, store_path: str = ":memory:", registry=None, access=None, **kw):
         self.share_store = ShareStore(store_path)
         reg = registry or Registry()
         self.events: list[dict] = []
@@ -46,8 +46,9 @@ class ShHub(Hub):
             dev_mode=True,
             now_ms=lambda: NOW,
             on_change=on_change,
+            access=access,
         )
-        super().__init__(registry=reg, shares=self.svc, **kw)
+        super().__init__(registry=reg, shares=self.svc, **({"access": access} if access is not None else {}), **kw)
         self.invites.owner_user = lambda inv: OWNER  # V3-D19: the admin's invite names the owner
         self.joined: dict[str, object] = {}
 

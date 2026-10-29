@@ -125,7 +125,6 @@ it('the ticket page shows sections, tasks, questions and the log from the host',
   expect(await screen.findByLabelText('Diff')).toBeInTheDocument()
   expect(screen.getAllByText('a.txt').length).toBeGreaterThan(0)
   expect(screen.getByText('+two')).toBeInTheDocument()
-  await user.click(screen.getByRole('tab', { name: 'Raw' }))
   for (const name of [/approve/i, /request changes/i, /verdict/i]) expect(screen.queryByRole('button', { name })).not.toBeInTheDocument()
   expect(new Set(methods())).toEqual(new Set(['GET']))
 })

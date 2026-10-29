@@ -147,6 +147,8 @@ export function createApi(transport: Transport) {
     /** V3 A7: the hub pages' reads (the server signs nothing here). */
     getHubStatus: (ws: string) => call<import('./hub').HubStatus>('GET', `/api/w/${ws}/hub`),
     getHubShare: (ws: string) => call<import('./hub').HubShare>('GET', `/api/w/${ws}/hub/share`),
+    getHubShared: (ws: string) => call<{ items: import('./hub').HubSharedTicket[] }>('GET', `/api/w/${ws}/hub/shared`),
+    getHubAudience: (ws: string) => call<import('./hub').HubAudienceList>('GET', `/api/w/${ws}/hub/share/audience`),
     getHubPreview: (ws: string, body: { add?: import('./hub').HubRule; remove?: import('./hub').HubRule }) =>
       call<import('./hub').HubPreview>('POST', `/api/w/${ws}/hub/share/preview`, body),
     revokeHubShare: (ws: string, ref: string) => call<import('./hub').HubReduced>('POST', `/api/w/${ws}/hub/share/revoke`, { ref }),

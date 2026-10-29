@@ -74,6 +74,9 @@ class FakeRegistry:
     def display_name(self, ws):
         return self.ws[ws]["name"] or None
 
+    def own_name(self, ws):
+        return self.ws[ws].get("own_name")
+
 
 class FakeShares:
     def __init__(self) -> None:

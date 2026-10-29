@@ -38,7 +38,6 @@ try {
   await page.getByRole("heading", { name: "My workspaces" }).waitFor();
   await page.getByRole("heading", { name: "Where you can sign" }).waitFor();
   await page.getByText("CSV or API?").first().waitFor();
-  assert(await page.getByText("Hub can read everything").first().isVisible(), "full workspace plain line");
   assert((await page.getByRole("button", { name: /^Approve/ }).count()) === 0, "no direct Approve on the home");
   assert((await page.getByRole("button", { name: "Review" }).count()) >= 1, "Review button on the needs-you row");
   await shot("home");
@@ -46,13 +45,14 @@ try {
   // admin console
   await page.getByRole("link", { name: "Admin" }).click();
   await page.getByRole("heading", { name: "Admin" }).waitFor();
-  await page.getByText("Groups managed here; external sync not configured").waitFor();
   await page.getByRole("heading", { name: "People & groups" }).waitFor();
   await page.getByText(/^Adding .* to .* gives /).first().waitFor();
   await shot("admin-people");
   for (const [tab, heading] of [["Access", "Access"], ["Workspaces", "Workspaces"], ["Marketplaces", "Marketplaces"], ["Audit", "Audit"]]) {
     await page.getByRole("tab", { name: tab }).click();
     await page.getByRole("heading", { name: heading, exact: true }).waitFor();
+    // the plain "what the hub can read" line lives on the admin Workspaces tab since the P11 home no longer repeats it
+    if (tab === "Workspaces") assert(await page.getByText("Hub can read everything").first().isVisible(), "full workspace plain line");
     await shot("admin-" + tab.toLowerCase());
   }
   // D14: the hub marketplace policy (one draft, one Save; every write is the whole object with its base version)

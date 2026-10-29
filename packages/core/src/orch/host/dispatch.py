@@ -110,7 +110,7 @@ from .reads import READ_OPS
 from .runnergrants import GRANT_OPS
 from .runners import RUN_CAPS, RUN_OPS
 from .shareops import NETWORK_OPS as SHARE_NETWORK_OPS
-from .shareops import SHARE_OPS, SHARE_READS
+from .shareops import SHARE_NET_READS, SHARE_OPS, SHARE_READS
 from .spaceops import NETWORK_OPS as SPACE_NETWORK_OPS
 from .spaceops import SPACE_OPS, SPACE_READS
 from .terms import TERM_CAPS, TERM_OPS
@@ -306,14 +306,14 @@ def op_kind(name: str) -> tuple[OpKind, Phase] | None:
             return ("pg_read", "read")
         return ("pg_write", "write") if name in ("publish.prepare", "publish.discard") else ("person_write", "write")
     if name in HUB_OPS:  # V3 C2a: column P only (the op checks the owner role)
-        reads = ("hub.status", "hub.handoff", "hub.link", "hub.switch", "hub.directory")
+        reads = ("hub.status", "hub.handoff", "hub.link", "hub.switch", "hub.directory", "hub.shared")
         return ("person_read", "read") if name in reads else ("person_write", "write")
     if name in PEER_OPS:  # V3 C12: reads for P and G (an agent reads its inbox); writes P only, owner role
         return ("pg_read", "read") if name in PEER_READS else ("person_write", "write")
     if name in COSMETIC_OPS:  # D6: column P only (the op checks the owner role)
         return ("person_write", "write")
     if name in SHARE_OPS:  # V3 C6: column P only (the op checks the owner role)
-        return ("person_read", "read") if name in SHARE_READS else ("person_write", "write")
+        return ("person_read", "read") if name in SHARE_READS | SHARE_NET_READS else ("person_write", "write")
     if name in SPACE_OPS:  # V3 C13: list and get for P and G (untrusted data), the rest P only (owner role)
         return ("pg_read", "read") if name in SPACE_READS else ("person_write", "write")
     if name in ORG_OPS:  # M3 H-2: offers P and G (names only); show, accept, decline P only (owner); sync P and G

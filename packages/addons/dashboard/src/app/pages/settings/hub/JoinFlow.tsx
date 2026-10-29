@@ -18,7 +18,6 @@ const LINK = /^https?:\/\/\S+\/c#h1\.[0-9a-f]{32}\.[A-Za-z0-9_-]{1,64}(\.[^\s~]+
 
 export function JoinFlow({ ws, onClose }: { ws: string; onClose: () => void }) {
   const oneClick = useOneClick(ws)
-  const refresh = useHubRefresh(ws)
   const [failed, setFailed] = useState(false)
   const [text, setText] = useState('')
   const [info, setInfo] = useState<HubLinkInfo | null>(null)
@@ -65,33 +64,44 @@ export function JoinFlow({ ws, onClose }: { ws: string; onClose: () => void }) {
       <p className="text-warning">{caveat}</p></>}
       {oneClick !== 'on'
         ? <NoOneClick state={oneClick} what="Connecting" />
-        : <HubStep key={link + mode} ws={ws} action={{ action: 'hub_join', hub_card: info.hub_card, hub_id: info.hub_id, mode, ...(info.owner_user ? { owner_user: info.owner_user } : {}) }} onClose={onClose} onFailedChange={setFailed} onChanged={() => { refresh(); setSigned(true) }} />}
+        : <HubStep key={link + mode} ws={ws} action={{ action: 'hub_join', hub_card: info.hub_card, hub_id: info.hub_id, mode, ...(info.owner_user ? { owner_user: info.owner_user } : {}) }} onClose={onClose} onFailedChange={setFailed} onChanged={() => setSigned(true)} />}
     </>}
     {(!info || oneClick !== 'on') && <div className="flex justify-end"><Action id="hub-join-cancel" onClick={onClose}>Cancel</Action></div>}
   </Flow>
 }
 
-/** The signed join is on the log; now the host tells the hub. "Connected" only when that worked, then the dialog closes. */
+/** The signed join is on the log; now the host tells the hub. The dialog says "Connected" and closes only once the hub
+ *  has confirmed its first settings (until then the host keeps every add-on paused, and the page behind would fail), so
+ *  nothing on the page is read before that. A hub that is slow gets plain words and one "Check again". */
 function ConnectStage({ ws, info, mode, onClose }: { ws: string; info: HubLinkInfo; mode: 'selective' | 'full'; onClose: () => void }) {
   const refresh = useHubRefresh(ws)
-  const [state, setState] = useState<'idle' | 'working' | 'failed'>('idle')
+  const [state, setState] = useState<'idle' | 'working' | 'waiting' | 'failed'>('idle')
   const [why, setWhy] = useState('')
   const started = useRef(false)
+  const done = () => {
+    refresh()
+    toast.success(mode === 'full' ? 'Connected. The hub can read everything in this workspace.' : 'Connected. The hub sees only what you choose to share.')
+    onClose()
+  }
+  const failure = (e: unknown) => { setWhy(e instanceof ApiError && e.message ? e.message : 'The hub did not answer.'); setState('failed') }
   const run = () => {
     setState('working'); setWhy('')
     api.connectHub(ws, { idem: newIdem(), invite: info.code, hub_card: info.hub_card, ...(info.endpoint ? { addr: info.endpoint } : {}) }).then(
-      () => {
-        // Done is the page behind: it now says Connected. Nothing is left to press, so the dialog closes itself.
-        refresh()
-        toast.success(mode === 'full' ? 'Connected. The hub can read everything in this workspace.' : 'Connected. The hub sees only what you choose to share.')
-        onClose()
-      },
-      e => { setWhy(e instanceof ApiError && e.message ? e.code + ': ' + e.message : 'The hub did not answer.'); setState('failed') },
+      got => { if (got.confirmed === true) done(); else setState('waiting') },
+      failure,
     )
+  }
+  const check = () => {
+    setState('working'); setWhy('')
+    api.refreshHub(ws).then(got => { if (got.confirmed === true) done(); else setState('waiting') }, failure)
   }
   useEffect(() => { if (!started.current) { started.current = true; run() } }, []) // eslint-disable-line react-hooks/exhaustive-deps
   return <div className="space-y-3" data-testid="hub-connect-stage">
-    {(state === 'idle' || state === 'working') && <p role="status">Signed. Telling the hub…</p>}
+    {(state === 'idle' || state === 'working') && <p role="status">Signed. Telling the hub… and waiting for it to confirm.</p>}
+    {state === 'waiting' && <div role="status" className="space-y-2" data-testid="hub-connect-waiting">
+      <p>Connected, but the hub has not confirmed yet. Your workspace is paused for a moment and nothing is lost.</p>
+      <div className="flex flex-wrap gap-2"><Action id="hub-connect-close" onClick={onClose}>Close</Action><Action id="hub-connect-check" onClick={check}>Check again</Action></div>
+    </div>}
     {state === 'failed' && <div role="alert" className="space-y-2" data-testid="hub-connect-failed">
       <p className="text-danger">Couldn't connect. Try again.</p>
       <InfoDrawer><p><Raw>{why}</Raw></p></InfoDrawer>

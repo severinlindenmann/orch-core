@@ -13,7 +13,7 @@ import subprocess
 import pytest
 
 from orch.host.launch import launch_argv
-from orch.runner import rules
+from orch.runner import mcpconfig, rules
 from orch.runner.config import RunnerConfig
 
 pytestmark = [
@@ -52,8 +52,11 @@ def test_a_work_folder_launch_gets_the_rules_and_ignores_the_folders_hooks_and_m
     root, work, hook, mcp = planted(tmp_path)
     argv, _, _ = launch_argv("claude-code", "work", None, "K-1", LOGIN, workdir=True)
     flags = argv[5:-1]  # after "claude", before the prompt
-    assert flags[:3] == ["--setting-sources", "user", "--strict-mcp-config"]
-    flags = rules.prepare(tmp_path / "state", "r_01J0000000000000000000000E", flags, {"ORCH_WORKSPACE": str(root)})
+    at = flags.index("--setting-sources")
+    assert flags[at : at + 5] == ["--setting-sources", "user", "--strict-mcp-config", "--mcp-config", "@orch-mcp"]
+    env, run = {"ORCH_WORKSPACE": str(root)}, "r_01J0000000000000000000000E"
+    flags = mcpconfig.prepare(tmp_path / "state", run, flags, env, None)  # an empty company MCP config
+    flags = rules.prepare(tmp_path / "state", run, flags, env)
     out = ask(flags, work)
     assert CODEWORD in out
     assert not hook.exists() and not mcp.exists()

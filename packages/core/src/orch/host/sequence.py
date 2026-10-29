@@ -1342,7 +1342,7 @@ def technical_lines(intent: Mapping[str, Any]) -> list[str]:
     ]
 
 
-def extra_lines(intent: Mapping[str, Any], now: float | None = None) -> list[str]:
+def extra_lines(intent: Mapping[str, Any]) -> list[str]:
     """The steps that are not events of the plain review, in words (the plain view and the full review show them):
     the two gate approvals, which bind the content shown, and the grant, honestly about its reach (Opus change 5).
     A new ticket with an agent part: the grant sentence, and that the start itself is NOT signed (U4, I5)."""
@@ -1352,14 +1352,14 @@ def extra_lines(intent: Mapping[str, Any], now: float | None = None) -> list[str
         if "launch" in intent:
             launch = intent["launch"]
             return [
-                *([seqquick.grant_line(intent["agent"], now)] if "agent" in intent else []),
+                *([seqquick.grant_line(intent["agent"])] if "agent" in intent else []),
                 f"Agent: {launch['harness']}; mode: {launch['mode']}; model: {launch.get('model', 'default')}.",
-                "Then: start an agent on the new ticket.",
+                "Then: the agent starts on the new ticket.",
             ]
         if "agent" not in intent:
             return []
         return [
-            seqquick.grant_line(intent["agent"], now),
+            seqquick.grant_line(intent["agent"]),
             "Not signed: the agent start. After the ticket exists, the dashboard may start an agent that uses this "
             "access; that start is not part of this confirmation. Nothing here approves the requirements or the plan.",
         ]
@@ -1370,7 +1370,7 @@ def extra_lines(intent: Mapping[str, Any], now: float | None = None) -> list[str
         "The task still ends with your own verdict: nothing closes it for you.",
     ]
     if intent["agent"] is not None:
-        out.append(seqquick.grant_line(intent["agent"], now))
+        out.append(seqquick.grant_line(intent["agent"]))
     return out
 
 

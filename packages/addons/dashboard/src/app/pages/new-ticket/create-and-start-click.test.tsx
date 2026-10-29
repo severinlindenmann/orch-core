@@ -10,6 +10,7 @@ import { routingApi } from '@/api/modelRouting'
 import { ApiError, type TicketDocument } from '@/api/types'
 import { clearMark, markOf, phaseOf } from '@/app/pages/ticket/progress'
 import * as gesture from '@/components/sign/trustedPress'
+import { EXECUTION_SHORT } from '@/app/terminal/real/executionLine'
 import { renderApp } from '@/test/renderApp'
 
 vi.mock('@/api/features', async (orig) => ({ ...(await orig<typeof import('@/api/features')>()), handoffMode: () => true }))
@@ -82,6 +83,20 @@ async function signed(beforeSign?: (dialog: HTMLElement) => void) {
 }
 
 describe('the real click path', () => {
+  it('Create without starting: the real sign box says what happens and names the button after the choice', async () => {
+    const r = renderApp('/board')
+    await waitFor(() => expect(screen.getByTestId('topbar-title')).not.toHaveTextContent(/^$/), T)
+    await r.user.click(await screen.findByRole('button', { name: /New ticket/ }, T))
+    const sheet = await screen.findByRole('dialog', { name: 'New ticket' }, T)
+    await r.user.type(await within(sheet).findByLabelText('Title', {}, T), 'Export CSV')
+    await r.user.type(within(sheet).getByLabelText(/^What should be true/), 'Empty months export a header row')
+    await r.user.click(await within(sheet).findByRole('button', { name: 'More ways to create' }, T))
+    await r.user.click(await screen.findByRole('menuitem', { name: 'Create without starting' }, T))
+    const dialog = (await screen.findAllByRole('dialog', {}, T)).find((d) => d.hasAttribute('data-handoff-dialog'))!
+    expect(await within(dialog).findByText('Creates the ticket. No agent starts.', {}, T)).toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: 'Sign and create ticket' })).toBeInTheDocument()
+  })
+
   it('stopped at the agent access: the ticket exists, no second ticket can be made, nothing starts, the failure is marked', async () => {
     s.sign.mockRejectedValue(new ApiError(409, { code: 'human.click_refused', message: 'the host refused the grant. 4 of 5 signatures landed; the ticket DEMO-0044 stays a draft.', retryable: false, reason: 'stopped' }))
     s.state.mockResolvedValue({ id: REQ, state: 'bound', key: 'DEMO-0044', progress: { done: 4, of: 5, last: 'grant' } })
@@ -124,7 +139,12 @@ describe('the real click path', () => {
       env: ['TERM'], grant: { id: GRANT, until: new Date(Date.now() + 86_400_000).toISOString(), scope: 'workable' }, blocked: null, warnings: [],
     })
     s.start.mockResolvedValue({ run: { run: 'r_01M4Y46B485AXD4CBEJZ15Z1TV' } as never })
-    const { r } = await signed((dialog) => expect(within(dialog).getByTestId('not-signed-notice')).toBeInTheDocument()) // the review shows the notice in full
+    const { r } = await signed((dialog) => {
+      const notice = within(dialog).getByTestId('not-signed-notice') // the review shows the notice
+      expect(within(notice).getByTestId('not-signed-execution-line')).toHaveTextContent(EXECUTION_SHORT)
+      expect(notice).toHaveTextContent('Signing means you know this.')
+      expect(EXECUTION_SHORT).toMatch(/as you/); expect(EXECUTION_SHORT).toMatch(/this computer/); expect(EXECUTION_SHORT).toMatch(/run commands and open your files and keys/)
+    })
     expect(notices).toHaveBeenCalled()
     await waitFor(() => expect(s.start).toHaveBeenCalledTimes(1), T)
     expect(s.start.mock.calls[0][1]).toBe(REQ)

@@ -51,6 +51,10 @@ READONLY_REFUSED = (
     "/shares/register",
     "/hub/share/rule-add",
     "/hub/share/sync",
+    "/org/accept",
+    "/org/decline",
+    "/org/sync",
+    "/org/tool",
 )
 
 

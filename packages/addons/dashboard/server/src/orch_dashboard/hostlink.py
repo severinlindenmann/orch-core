@@ -135,6 +135,14 @@ OPS = {
         # the two share writes that only take sharing away: one click as the session's person, owner only (hub.py)
         "share.revoke",
         "share.rule_remove",
+        # M3 H-5 company skills and tools: the owner's tab. org.offers and org.show are reads; the rest are owner
+        # clicks (org_routes.py).
+        "org.offers",
+        "org.show",
+        "org.accept",
+        "org.decline",
+        "org.sync",
+        "org.tool",
         # V3 A10 (design-g3 4.2): the Add-ons page. Reads: market.list, market.installed. Person writes (owner role, the
         # host refuses an agent): stage, unstage, uninstall, refresh. Every install is a terminal hand-off.
         *MARKET_OPS,

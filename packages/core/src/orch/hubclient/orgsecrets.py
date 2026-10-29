@@ -29,6 +29,7 @@ __all__ = [
     "seal_org_secret",
     "value_problem",
     "wrap_aad_extra",
+    "wrap_inputs",
 ]
 
 PURPOSE = "org-secret"
@@ -89,9 +90,7 @@ def wrap_aad_extra(hub_id: str, workspace_id: str, wxk_version: int, expires_ms:
     )
 
 
-def _seal(
-    eph: EllipticCurvePrivateKey | None,
-    wxk_pub: bytes,
+def wrap_inputs(
     hub_id: str,
     workspace_id: str,
     secret_id: str,
@@ -100,17 +99,17 @@ def _seal(
     expires_ms: int,
     name: str,
     value: str,
-    check_value: bool,
-) -> bytes:
+    check_value: bool = True,
+) -> tuple[bytes, str, bytes, int, bytes, bytes]:
+    """The seal inputs ``(rcpt, purpose, obj, version, pt, extra)`` for one wrap (no randomness).
+
+    ``check_value=False`` lets tests build a sealed bad value."""
     if check_value and value_problem(value) is not None:
         raise OrgSecretRefused("value")
     extra = wrap_aad_extra(hub_id, workspace_id, wxk_version, expires_ms, name)
     rcpt, obj = _id16(workspace_id), _id16(secret_id)
     _uint(version, 32)
-    pt = value.encode("utf-8")
-    if eph is None:
-        return sealing.seal(wxk_pub, rcpt, PURPOSE, obj, version, pt, extra)
-    return sealing._seal_with_ephemeral(eph, wxk_pub, rcpt, PURPOSE, obj, version, pt, extra)
+    return rcpt, PURPOSE, obj, version, value.encode("utf-8"), extra
 
 
 def seal_org_secret(
@@ -125,31 +124,11 @@ def seal_org_secret(
     value: str,
 ) -> bytes:
     """Seal ``value`` to ``wxk_pub`` (fresh ephemeral key). Refuses a value that fails :func:`value_problem`."""
+    inputs = wrap_inputs(hub_id, workspace_id, secret_id, version, wxk_version, expires_ms, name, value)
     try:
-        return _seal(
-            None, wxk_pub, hub_id, workspace_id, secret_id, version, wxk_version, expires_ms, name, value, True
-        )
+        return sealing.seal(wxk_pub, *inputs)
     except suite.CryptoError:
         raise OrgSecretRefused("malformed") from None
-
-
-def _seal_with_ephemeral(
-    eph: EllipticCurvePrivateKey,
-    wxk_pub: bytes,
-    hub_id: str,
-    workspace_id: str,
-    secret_id: str,
-    version: int,
-    wxk_version: int,
-    expires_ms: int,
-    name: str,
-    value: str,
-    check_value: bool = True,
-) -> bytes:
-    """Test seam for the vectors (fixed ephemeral; ``check_value=False`` builds a sealed bad value). Tests only."""
-    return _seal(
-        eph, wxk_pub, hub_id, workspace_id, secret_id, version, wxk_version, expires_ms, name, value, check_value
-    )
 
 
 def open_org_secret(

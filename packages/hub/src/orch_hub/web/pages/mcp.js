@@ -18,6 +18,9 @@ export function serverProblem(name, url, auth, secret) {
   return null;
 }
 
+const STATUS_WORD = { reachable: "Reachable", needs_sign_in: "Needs sign-in", failing: "Not reachable", not_checked: "Not checked yet" };
+export const statusWord = (st) => STATUS_WORD[st?.status] ?? STATUS_WORD.not_checked;
+
 export function mcpView(data, actions = {}) {
   const workspaces = data.workspaces ?? [];
   const form = (s, isNew) => {
@@ -50,8 +53,11 @@ export function mcpView(data, actions = {}) {
       if (!sure) { sure = true; remove.textContent = "Sure? Remove it"; return; }
       actions.remove?.(s);
     } });
+    const word = statusWord(s.status);
+    const check = h("button", { type: "button", class: "check", text: "Check now", onclick: () => { check.disabled = true; actions.check?.(s.name); } });
     return h("article", { class: "card mcp", "data-server": s.name },
       h("div", { class: "row" }, h("h3", { class: "grow", text: s.name }), remove),
+      h("div", { class: "row" }, h("span", { class: "status small", "data-status": s.status?.status ?? "not_checked", text: word }), check),
       form(s, false),
       h("p", { class: "small muted", text: "Saving changes the server, so each workspace owner has to accept it again." }),
       h("h4", { text: "Offer to" }),
@@ -66,7 +72,7 @@ export function mcpView(data, actions = {}) {
     h("section", { class: "card" }, h("h3", { text: "New server" }), form(null, true)));
 }
 
-export async function mcpPage(d) {
+export async function mcpPage(d, retried = false) {
   const finish = loading();
   d.pageLoading("mcp");
   try {
@@ -80,9 +86,12 @@ export async function mcpPage(d) {
     const say = (ok, x) => { d.state.notice = x.status === 200 ? d.banner("ok", ok, null) : d.banner("bad", "Not changed", d.say(x.body.error ?? "unavailable")); };
     const save = async (name, body) => { say("Saved", await d.api("PUT", "/admin/mcp-servers/" + name, body)); await mcpPage(d); };
     const remove = async (s) => { say("Removed", await d.api("DELETE", "/admin/mcp-servers/" + s.name)); await mcpPage(d); };
+    const check = async (name) => { const x = await d.api("POST", "/admin/mcp-servers/" + name + "/check"); if (x.status !== 200) say("", x); await mcpPage(d); };
     const offer = async (name, workspaces) => { say("Saved", await d.api("PUT", "/admin/mcp-servers/" + name + "/offers", { workspaces })); await mcpPage(d); };
-    d.shell("mcp", d.state.notice, mcpView({ ...r.body, workspaces: withNames(r.body.workspaces, d.state.rail?.rows ?? []) }, { save, remove, offer }));
+    d.shell("mcp", d.state.notice, mcpView({ ...r.body, workspaces: withNames(r.body.workspaces, d.state.rail?.rows ?? []) }, { save, remove, offer, check }));
     d.state.notice = null;
+    // The hub checks stale servers in the background when this page opens; ask once more shortly for the answer.
+    if (!retried && (r.body.servers ?? []).some((x) => x.status?.status === "not_checked")) setTimeout(() => mcpPage(d, true), 4000);
   } finally { finish(); }
 }
 

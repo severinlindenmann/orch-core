@@ -49,7 +49,7 @@ from orch.host import frames
 from orch.host._socket import recv
 from orch.host.client import Pin, handshake_pinned
 
-from . import rules, transcript, transcript_children, transcript_sources
+from . import mcpconfig, rules, transcript, transcript_children, transcript_sources
 from .config import ConfigError, RunnerConfig
 from .grants import GrantError, GrantStore
 from .supervise import SpawnError, SpawnSpec, Supervisor
@@ -192,6 +192,16 @@ def _company_skills(raw: Any) -> tuple[dict[str, str], ...]:
     return tuple(dict(x) for x in raw)
 
 
+def _org_mcp(raw: Any) -> dict[str, Any] | None:
+    """The ``org_mcp`` of a spawn: absent is none; anything not acceptable refuses the spawn."""
+    if raw is None:
+        return None
+    bad = mcpconfig.problem(raw)
+    if bad is not None:
+        raise SpawnError("invalid.input", f"spawn: org_mcp is not acceptable ({bad})")
+    return {"port": raw["port"], "capability": raw["capability"], "servers": list(raw["servers"])}
+
+
 def spawn_spec(args: Mapping[str, Any], own: Mapping[str, str], config: RunnerConfig, grants: GrantStore) -> SpawnSpec:
     """A ``spawn`` command as the :class:`SpawnSpec` the supervisor starts: the registry argv, the environment
     (allow-list, ``pass_env``, host-chosen fixed values) and, for an agent, ``ORCH_GRANT`` from the grant store and
@@ -232,7 +242,7 @@ def spawn_spec(args: Mapping[str, Any], own: Mapping[str, str], config: RunnerCo
     return SpawnSpec(
         str(args.get("run")), str(args.get("workspace_id")), str(kind), argv, env, dict(args.get("cwd") or {}),
         int(args.get("cols") or 120), int(args.get("rows") or 40), trusted,
-        _company_skills(args.get("company_skills")),
+        _company_skills(args.get("company_skills")), _org_mcp(args.get("org_mcp")),
     )  # fmt: skip
 
 
@@ -543,6 +553,9 @@ class HostLink:
             spec = dataclasses.replace(
                 spec, argv=rules.prepare(self._rules_base(), spec.run, spec.argv, spec.env, spec.company_skills)
             )
+            spec = dataclasses.replace(
+                spec, argv=mcpconfig.prepare(self._rules_base(), spec.run, spec.argv, spec.env, spec.org_mcp)
+            )
             spec = dataclasses.replace(spec, argv=transcript.prepare(spec.run, spec.argv))
             if spec.trusted is not None:
                 self._trusted[spec.run] = spec.trusted
@@ -630,6 +643,7 @@ class HostLink:
         """The run is over: its rules file goes, and its Claude Code trust is checked again (somebody may have put
         settings or a tracked file in the folder meanwhile)."""
         rules.remove(self._rules_base(), run)
+        mcpconfig.remove(self._rules_base(), run)
         got = self._trusted.pop(run, None)
         if got is not None:
             from .claude_trust import refresh

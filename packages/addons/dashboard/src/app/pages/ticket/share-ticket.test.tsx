@@ -20,9 +20,9 @@ async function openMenu(scenario: HubScenario, opts: { viewer?: string; ticket?:
 }
 
 describe('the ticket Actions menu and sharing', () => {
-  it('offers "Share with the hub…" to the owner in share-some mode', async () => {
+  it('offers "Share with the hub" to the owner in share-some mode', async () => {
     await openMenu('selective')
-    expect(await screen.findByRole('menuitem', { name: 'Share with the hub…' }, T)).toBeTruthy()
+    expect(await screen.findByRole('menuitem', { name: 'Share with the hub' }, T)).toBeTruthy()
   })
 
   it.each(['standalone', 'full'] as const)('offers nothing in %s mode', async scenario => {
@@ -62,7 +62,7 @@ describe('the ticket Actions menu and sharing', () => {
     const ok = vi.spyOn(toast, 'success')
     const preview = vi.spyOn(api, 'getHubPreview')
     const view = await openMenu('selective')
-    await view.user.click(await screen.findByRole('menuitem', { name: 'Share with the hub…' }, T))
+    await view.user.click(await screen.findByRole('menuitem', { name: 'Share with the hub' }, T))
     const dialog = await screen.findByRole('dialog', { name: 'Share this ticket with the hub' }, T)
     expect(within(dialog).queryByRole('textbox')).toBeNull()
     const go = await within(dialog).findByTestId('hub-add-go', {}, T)
@@ -83,16 +83,16 @@ describe('the ticket Actions menu and sharing', () => {
     vi.spyOn(gesture, 'trustedPress').mockReturnValue(false)
     const add = vi.spyOn(api, 'addHubRule')
     const view = await openMenu('selective')
-    await view.user.click(await screen.findByRole('menuitem', { name: 'Share with the hub…' }, T))
+    await view.user.click(await screen.findByRole('menuitem', { name: 'Share with the hub' }, T))
     const go = await screen.findByTestId('hub-add-go', {}, T)
     await waitFor(() => expect(go).toBeEnabled(), T)
     fireEvent.click(go)
     expect(add).not.toHaveBeenCalled()
   })
 
-  it('says "Stop sharing this ticket" when the hub already has it, and opens the stop review', async () => {
+  it('says "Stop sharing" when the hub already has it, and opens the stop review', async () => {
     const view = await openMenu('selective', { ticket: 'DEMO-0043' }) // the mock hub already has DEMO-0043
-    await view.user.click(await screen.findByRole('menuitem', { name: 'Stop sharing this ticket' }, T))
+    await view.user.click(await screen.findByRole('menuitem', { name: 'Stop sharing' }, T))
     expect(await screen.findByRole('dialog', { name: 'Stop sharing this ticket' }, T)).toBeTruthy()
   })
 })

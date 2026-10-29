@@ -14,6 +14,7 @@ import { adminView } from "./admin.js";
 import { changesView, checkChange, sentence as changeSentence } from "./changes.js";
 import { totpPanel } from "./totp.js";
 import { inviteView } from "./invite.js";
+import { rememberDashboard } from "./connect.js";
 import { servicesView } from "./services.js";
 import { handoffsView } from "./handoffs.js";
 import { phonesView } from "./phones.js";
@@ -268,6 +269,7 @@ async function openWorkspace(w) {
   const r = await api("POST", "/switch/ticket", { workspace_id: w.id, return_to: "/", kind: "open" });
   const url = r.status === 200 ? safeUrl(r.body.url) : null;
   if (!url) { state.notice = banner("bad", "Cannot open " + renderText(w.name), say(r.status === 200 ? "malformed" : r.body.error)); return home(); }
+  rememberDashboard(url); // so the /c page can send a connect link to this dashboard next time
   location.assign(url);
 }
 
@@ -427,10 +429,16 @@ async function workspaces(joined = [], known = null) {
       const actions = {
         open: (w) => { closeDialog(); return openWorkspace({ id: w.workspace_id, name: w.name ?? "Workspace" }); },
         copy: copyText,
+        openLink: (link) => { window.open(link, "_blank", "noopener"); },
         signInToConnect: signInToAddWorkspace,
         people: async () => { // the real, active people of this hub (admin-only route); the hub rejects anyone else
           const r = await api("GET", "/admin/users");
           return r.status === 200 ? (r.body.users ?? []).filter((u) => !u.disabled) : [];
+        },
+        invite: async (name) => { // the existing admin invite (name checked by the hub): a one-time sign-in link
+          const r = await api("POST", "/admin/invites", { name });
+          if (r.status !== 200 || typeof r.body.link !== "string") throw new Error("invite failed");
+          return r.body;
         },
         connect: async (ownerUser) => {
           const r = await api("POST", "/admin/connect", ownerUser ? { owner_user: ownerUser } : {});
@@ -638,7 +646,7 @@ async function home() {
     state.menu = false;
     await loadRail();
     const user = state.user;
-    const [ws, needs] = await Promise.all([api("GET", "/me/workspaces"), api("GET", "/me/needs-you")]);
+    const [ws, needs, sharedRes] = await Promise.all([api("GET", "/me/workspaces"), api("GET", "/me/needs-you"), api("GET", "/me/shared")]);
     if (!user || state.user !== user) return;
     const mine = state.me && state.channels.find((c) => c.channel_id === state.me.channelId && c.status === "active");
     const workspaces = ws.status === 200 ? ws.body.workspaces : [];
@@ -649,6 +657,7 @@ async function home() {
       items: needs.status === 200 ? needs.body.items : [],
       offline: needs.status === 200 ? needs.body.offline : [],
       workspaces,
+      shared: sharedRes.status === 200 ? sharedRes.body.items ?? [] : [],
       channels: state.channels.map((c) => ({ ...c, status: c.status + (state.me?.channelId === c.channel_id ? " (this browser)" : "") })),
       newChannels: state.newChannels,
       thisBrowser: state.user.needs_sign_in ? { state: "from_workspace" } : mine ? { state: "active", label: state.me.label } : dead ? { state: "dead", label: state.me?.label } : { state: "unregistered" },

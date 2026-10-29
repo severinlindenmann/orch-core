@@ -105,7 +105,7 @@ function mockPreview(body: { add?: HubRule; remove?: HubRule } | null): HubPrevi
   const review = {
     hub_id: 'ab12cd34ef56ab12', readers: { people: names, teams: aud?.groups ?? [], note: 'from the hub, not signed', info: null }, widened: [],
     new_count: added, new_more: 0, new_items: fresh,
-    leaves: added ? [withText ? "the ticket's title, status, labels, deadline and description; no comments or files" : "the ticket's title, status, labels and deadline; no description, comments or files"] : [],
+    leaves: added ? [withText ? "the ticket's title, status, labels, deadline and description (summary, context and requirements); no plan, comments or files" : "the ticket's title, status, labels and deadline; no description, comments or files"] : [],
     later_edits: 'Later edits to these tickets are shared too, until you stop sharing them.',
   }
   return { count: items.length, new: added, revoked: removed, more: 0, items, rules: [], plan: 'P'.repeat(42) + String(items.length % 10), review }

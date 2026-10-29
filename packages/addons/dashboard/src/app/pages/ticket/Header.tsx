@@ -175,7 +175,7 @@ function useShareTicket(ticket: TicketDocument, viewer: Viewer): ShareTicket {
 
 /** A finished ticket, or one nobody has a turn on and with no reason, shows no "Turn:" line (run-11 P06). */
 export function showTurn(ticket: { status: string; turn: { who: string; why: string } }): boolean {
-  if (ticket.status === 'done' || ticket.status === 'closed') return false
+  if (ticket.status === 'done' || ticket.status === 'closed' || ticket.status === 'cancelled') return false
   return ticket.turn.who !== 'nobody' || ticket.turn.why.trim() !== ''
 }
 

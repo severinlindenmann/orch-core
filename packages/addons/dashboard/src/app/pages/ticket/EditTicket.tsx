@@ -199,10 +199,10 @@ function RenameDialog({ ticket, onBusy, onFull, onClose }: { ticket: TicketDocum
           <DialogDescription>Write the new title, then confirm once.</DialogDescription>
         </DialogHeader>
         <form onSubmit={(e) => { e.preventDefault(); save() }} className="space-y-2">
-          <Input id="rename-title" aria-label="Title" autoFocus value={title} maxLength={MAX_TITLE + 50} onChange={(e) => setTitle(e.target.value)} />
+          <Input id="rename-title" aria-label="Title" autoFocus readOnly={!!signing} value={title} maxLength={MAX_TITLE + 50} onChange={(e) => setTitle(e.target.value)} />
           {problem && <p role="alert" className="text-[13px] text-danger">{problem}</p>}
           <DialogFooter>
-            <Button type="button" variant="ghost" onClick={onFull}>More fields…</Button>
+            <Button type="button" variant="ghost" disabled={!!signing} onClick={onFull}>More fields…</Button>
             <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
             <Button type="submit" disabled={!!signing}>Rename</Button>
           </DialogFooter>

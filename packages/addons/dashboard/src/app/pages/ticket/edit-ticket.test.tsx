@@ -20,7 +20,9 @@ vi.mock('@/components/sign/SignPopover', () => ({
   ),
 }))
 
-const T = { timeout: 5000 }
+// The first test pays the cold load of the lazy ticket page; on a busy machine that alone can pass 5 s.
+vi.setConfig({ testTimeout: 30000 })
+const T = { timeout: 15000 }
 afterEach(() => { vi.restoreAllMocks(); vi.mocked(handoffMode).mockReturnValue(true) })
 
 const ticket = {

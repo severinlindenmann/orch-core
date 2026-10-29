@@ -123,7 +123,7 @@ test("the page asks the admin route, sends non-admins home and shows an error in
   const calls = []; const shown = [];
   assert.equal(await hubSettingsPage(dev({ is_admin: false }, async () => { throw new Error("no call"); })), "home");
   await hubSettingsPage(dev({ is_admin: true }, async (m, p) => { calls.push([m, p]); return { status: 200, body: DEMO }; }, { shown }));
-  assert.deepEqual(calls, [["GET", "/admin/settings"]]);
+  assert.deepEqual(calls, [["GET", "/admin/settings"], ["GET", "/admin/backup"]]);   // M4 S5: the Backup card has its own read
   assert.equal(shown[0][0], "hub-settings"); assert.match(shown[0][1], /Hub name/);
   await hubSettingsPage(dev({ is_admin: true }, async () => ({ status: 500, body: { error: "unavailable" } }), { shown }));
   assert.match(shown[1][1], /Cannot read the settings\. Why: unavailable/);

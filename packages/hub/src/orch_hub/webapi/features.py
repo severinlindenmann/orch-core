@@ -16,6 +16,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from .backup_api import STATUS as BACKUP_STATUS
+from .backup_api import BackupHandlers, backup_routes
 from .changes_api import ChangeHandlers
 from .org_api import OrgHandlers
 from .secrets_api import SecretHandlers, secret_routes
@@ -34,6 +36,7 @@ FEATURES: tuple[Feature, ...] = (
     Feature(mixin=OrgHandlers),  # its routes are listed in api.py (inside the admin block)
     Feature(mixin=SecretHandlers, routes=secret_routes),
     Feature(mixin=SettingsHandlers, routes=settings_routes),
+    Feature(mixin=BackupHandlers, routes=backup_routes, status=BACKUP_STATUS),
 )
 
 FEATURE_MIXINS: tuple[type, ...] = tuple(f.mixin for f in FEATURES)

@@ -571,6 +571,30 @@ def directory_get(c: OpContext) -> dict[str, Any]:
     return {"entries": entries}
 
 
+def audience_get(c: OpContext) -> dict[str, Any]:
+    """P02: the people and teams of this hub that the owner of the calling workspace may name as readers of a shared
+    ticket (contract 10.2b ``audience``). Display data for the host's form: names are cleaned text and are never
+    signed; only the ids go into the signed audience. The owner alias itself and the hub-admin group are not offered
+    (a hub role grants nothing in a selective workspace); disabled people are not offered. No argument."""
+    from ..access.store import ADMIN_GROUP
+    from ..contract.phase4 import strip_text
+
+    _require_pin(c)
+    _require_bound(c)
+    if c.access is None:
+        raise Refused("unavailable")
+    owner = _owner_user(c)
+    people = [
+        {"user_id": u["user_id"], "name": strip_text(u["name"])[:80]}
+        for u in c.access.users()
+        if not u["disabled"] and u["user_id"] != owner
+    ][:200]
+    teams = [{"group": g["name"], "members": len(g["members"])} for g in c.access.groups() if g["name"] != ADMIN_GROUP][
+        :50
+    ]
+    return {"people": people, "teams": teams}
+
+
 def status_put(c: OpContext) -> dict[str, Any]:
     if c.registry.pin(c.workspace_id) is None:
         raise Refused("unknown_workspace")
@@ -647,6 +671,7 @@ HANDLERS: dict[str, Callable[[OpContext], dict[str, Any]]] = {
     "mcp_servers_get": mcp_servers_get,
     "profile_put": profile_put,
     "directory_get": directory_get,
+    "audience_get": audience_get,
 }
 
 __all__ = ["HANDLERS", "OpContext"]

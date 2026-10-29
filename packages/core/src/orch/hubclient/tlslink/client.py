@@ -74,6 +74,7 @@ W2H_OPS: dict[str, str | None] = {
     "addon_request": None,
     "profile_put": None,
     "directory_get": None,
+    "audience_get": None,
     "share_put": "selective",
     "share_revoke": "selective",
     "wk_seal": "full",
@@ -102,6 +103,7 @@ _REPLY: dict[str, Callable[[dict[str, Any]], bool]] = {
         set(b) == {"hub", "user_id", "workspaces"} and type(b["hub"]) is dict and type(b["workspaces"]) is list
     ),
     "owner_get": lambda b: set(b) == {"user_id"} and type(b["user_id"]) is str,
+    "audience_get": lambda b: set(b) == {"people", "teams"} and type(b["people"]) is list and type(b["teams"]) is list,
     "directory_get": lambda b: set(b) == {"entries"} and type(b["entries"]) is list,
     "org_skills_get": lambda b: set(b) == {"bundle"} and type(b["bundle"]) is dict,
     "mcp_servers_get": lambda b: set(b) == {"bundle"} and type(b["bundle"]) is dict,

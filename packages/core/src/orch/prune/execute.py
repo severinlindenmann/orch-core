@@ -332,11 +332,23 @@ def _worktree(ctx: Ctx, fence: Fence, it: Item) -> None:
 
 
 def _claude(res: Result, fence: Fence, it: Item) -> None:
-    """Take orch's trust entries out of Claude Code's ``.claude.json``. Claude Code may be running and writing the file:
-    it is re-checked right before the replace; changed, it is read again once, then the step stops."""
+    """Take orch's trust entries out of Claude Code's ``.claude.json``: the three trust keys of each ticket work folder,
+    and the ONE key setup set on each workspace root (``hasTrustDialogAccepted``); nothing else of any entry, no other
+    project. Same rules as the runner's writer: Claude Code's ``<file>.lock`` is taken first (never stolen), the file is
+    re-checked right before the replace (changed: read again once, then the step stops), and a file that holds nothing
+    but an empty ``projects`` after the removal (what orch made when Claude Code had not run yet) is removed."""
+    from orch.runner.claude_trust import _locked
+
     cfg = fence.check(it.data["cfg"])
     if os.path.islink(cfg) or not os.path.isfile(cfg):
         return
+    with _locked(cfg) as got:
+        if not got:
+            raise PruneError(f"{cfg} is in use by Claude Code: close it and run `orch host prune` again")
+        _claude_locked(res, cfg, it)
+
+
+def _claude_locked(res: Result, cfg: Path, it: Item) -> None:
     for _ in (1, 2):
         st = os.lstat(cfg)
         try:
@@ -348,11 +360,13 @@ def _claude(res: Result, fence: Fence, it: Item) -> None:
         if not isinstance(projects, dict):
             return
         changed = False
-        for key in it.data["keys"]:
+        for key, names in [(k, TRUST_KEYS) for k in it.data["keys"]] + [
+            (k, TRUST_KEYS[:1]) for k in it.data.get("roots", ())
+        ]:
             entry = projects.get(key)
             if not isinstance(entry, dict):
                 continue
-            for tk in TRUST_KEYS:
+            for tk in names:
                 if tk in entry:
                     del entry[tk]
                     changed = True
@@ -361,7 +375,13 @@ def _claude(res: Result, fence: Fence, it: Item) -> None:
         if not changed:
             return
         try:
-            _write_atomic(cfg, json.dumps(doc, indent=2) + "\n", expect=(st.st_mtime_ns, st.st_size))
+            if doc == {"projects": {}} or doc == {}:  # nothing of the person's left: orch made this file
+                now = os.lstat(cfg)
+                if (now.st_mtime_ns, now.st_size) != (st.st_mtime_ns, st.st_size):
+                    raise Changed()
+                os.unlink(cfg)
+            else:
+                _write_atomic(cfg, json.dumps(doc, indent=2) + "\n", expect=(st.st_mtime_ns, st.st_size))
             return
         except Changed:
             continue

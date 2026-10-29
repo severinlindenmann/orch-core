@@ -1020,10 +1020,11 @@ def test_scrub_base64_at_every_alignment(alignment, enc):
     assert out.count("[redacted]") == 1
 
 
-def test_scrub_never_redacts_short_forms():
+def test_scrub_always_scrubs_the_exact_value_but_never_short_derived_forms():
     forms = mcpproxy._secret_forms("abc")
-    assert forms is None
-    assert mcpproxy._scrub("abc abc", forms) == "abc abc"
+    assert mcpproxy._scrub("abc abc", forms) == "[redacted] [redacted]"
+    assert mcpproxy._scrub("YWJj 616263 %61bc", forms) == "YWJj 616263 %61bc"  # derived forms under 8 are left alone
+    assert mcpproxy._secret_forms("") is None
     forms = mcpproxy._secret_forms("abcdefgh")
     assert mcpproxy._scrub("ab abcdefgh", forms) == "ab [redacted]"
 

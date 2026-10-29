@@ -136,7 +136,7 @@ def _dumps(obj: Any) -> str:
     return json.dumps(obj, separators=(",", ":"), ensure_ascii=False)
 
 
-SCRUB_MIN = 8  # a form shorter than this is never redacted (it would mangle ordinary output)
+SCRUB_MIN = 8  # a derived form shorter than this is never redacted (the exact value always is)
 _PERCENT = re.compile(r"%([0-9A-Fa-f]{2})")
 
 
@@ -165,8 +165,9 @@ def _secret_forms(value: str) -> re.Pattern | None:
         urllib.parse.quote(value, safe=""),
         urllib.parse.quote_plus(value),
     }
-    parts = []
-    for form in sorted((f for f in plain if len(f) >= SCRUB_MIN), key=len, reverse=True):
+    plain.discard(value)
+    parts = [re.escape(value)] if value else []  # the exact value is always scrubbed, whatever its length
+    for form in sorted((f for f in plain if len(f) >= SCRUB_MIN and f != value), key=len, reverse=True):
         parts.append(re.escape(form))
     for form in sorted((f for f in percent if len(f) >= SCRUB_MIN and "%" in f), key=len, reverse=True):
         pieces = _PERCENT.split(form)  # literal, hex, literal, hex, ...

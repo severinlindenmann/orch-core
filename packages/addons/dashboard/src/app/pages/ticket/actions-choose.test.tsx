@@ -8,7 +8,7 @@ afterEach(() => vi.restoreAllMocks())
 
 // Run 8, V2: on a real host the Actions menu offers the same dialog in choose mode next to Start agent.
 const viewer = { person: 'p_sev', role: 'owner' as const, members: [{ person: 'p_sev', name: 'Severin', role: 'owner' as const }], name: (id: string | null | undefined) => (id === 'p_sev' ? 'Severin' : String(id)), ready: true }
-const start = (over: Partial<StartAgent> = {}): StartAgent => ({ shown: true, reason: null, startable: true, run: vi.fn(), choose: vi.fn(), node: null, ...over })
+const start = (over: Partial<StartAgent> = {}): StartAgent => ({ shown: true, reason: null, startable: true, canStart: true, run: vi.fn(), runWith: vi.fn(), choose: vi.fn(), node: null, ...over })
 const open = async (s: StartAgent) => {
   const ticket = structuredClone(mockStore.ticket('DEMO-0043')!)
   render(<ActionsMenu ticket={ticket} viewer={viewer as never} sign={vi.fn()} jump={vi.fn()} start={s} />)

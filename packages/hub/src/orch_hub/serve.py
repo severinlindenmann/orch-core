@@ -43,6 +43,7 @@ from .relay import PushNotifier, RelayClient, RelayError
 from .relay.client import Transport
 from .router import AccessAuthz, RouteQueue, Router
 from .services import Services
+from .settings import SETTINGS_FILE
 from .shares import ShareService, ShareStore, hxk_handle
 from .spaces import SpaceService, SpaceStore
 from .switch import SwitchService
@@ -223,6 +224,7 @@ def serve(
         hxk=hxk_handle(keys.hxk_pub, keys.hxk_exchange),
         dev_mode=cfg.dev,
         on_change=audit.share_change,
+        access=access,  # a signed audience (P02) is resolved against current group membership
     )
     views = build_view_services(state, wk_seals=wk_seals, registry=registry, access=access)
     channels = Channels(keys, access, state / CHANNELS_FILE, audit=audit, dev_mode=cfg.dev)
@@ -293,6 +295,7 @@ def serve(
                 link_endpoint=lambda: f"{host}:{server.address[1]}",
                 push=notifier,
                 setup_token_file=state / SETUP_TOKEN_FILE,
+                settings_file=state / SETTINGS_FILE,
                 switch=switch,
                 services=Services(
                     relay_url=cfg.relay_url,

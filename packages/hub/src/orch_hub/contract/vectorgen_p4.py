@@ -1900,6 +1900,43 @@ def build_p4(
         {"error": "malformed"},
         "no selective workspace-log types",
     )
+    # ---- P02: the optional ticket `description` and the signed `audience` (§10.2b)
+    U1, U2 = "1" * 32, "2" * 32
+    aud = {"users": [U1, U2], "groups": ["team-a"]}
+    shr(
+        "share_item_with_audience_and_description",
+        share_body(share_item(item_kind="ticket", content={**tk, "description": "Line one\nLine two"}, audience=aud)),
+        okv(share_item(item_kind="ticket", content={**tk, "description": "Line one\nLine two"}, audience=aud)),
+        "additive: a ticket item may carry its description and the audience that may read it at the hub",
+    )
+    for nm, kw, why in (
+        ("audience_on_needs_you", {"audience": aud}, "only a ticket item has an audience"),
+        (
+            "audience_empty",
+            {"item_kind": "ticket", "content": tk, "audience": {"users": [], "groups": []}},
+            "one entry",
+        ),
+        (
+            "audience_unsorted",
+            {"item_kind": "ticket", "content": tk, "audience": {"users": [U2, U1], "groups": []}},
+            "",
+        ),
+        (
+            "audience_bad_group",
+            {"item_kind": "ticket", "content": tk, "audience": {"users": [], "groups": ["Team A"]}},
+            "",
+        ),
+        ("audience_bad_user", {"item_kind": "ticket", "content": tk, "audience": {"users": ["zz"], "groups": []}}, ""),
+        ("audience_extra_key", {"item_kind": "ticket", "content": tk, "audience": {**aud, "roles": []}}, "exact keys"),
+        ("description_on_question", {"item_kind": "question", "content": {**qn, "description": "x"}}, "ticket only"),
+        (
+            "description_control_char",
+            {"item_kind": "ticket", "content": {**tk, "description": "a\u0007b"}},
+            "text rule",
+        ),
+        ("description_empty", {"item_kind": "ticket", "content": {**tk, "description": ""}}, "1..4000 bytes"),
+    ):
+        shr(f"share_item_{nm}", share_body(share_item(**kw)), {"error": "malformed"}, why)
 
     def sel(name: str, action: dict[str, Any], expect: dict[str, Any], note: str = "", item: Any = None) -> None:
         case(name, "selective_build", {"item": item or it_f1, "action": action}, expect, 4, note)

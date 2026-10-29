@@ -122,6 +122,7 @@ def test_the_ops_are_declared():
     assert shareops.SHARE_READS == {"share.rules", "share.preview"}
     assert set(shareops.SHARE_OPS) == {
         "share.rules", "share.preview", "share.rule_add", "share.rule_remove", "share.revoke", "share.sync",
+        "share.audience",
     }  # fmt: skip
 
 

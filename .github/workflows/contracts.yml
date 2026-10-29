@@ -37,12 +37,12 @@ jobs:
             tests: >-
               tests/canon tests/wsproto tests/crypto tests/hub tests/publish tests/identity/test_reader_kat.py
               tests/market/test_policy_vectors.py tests/addons/test_market_vectors.py tests/model/test_f1_vectors_policy_questions.py
-              tests/store/test_f1_vectors_store.py tests/store/test_f1_checkpoint_vectors.py
+              tests/store/test_f1_vectors_store.py tests/store/test_f1_checkpoint_vectors.py tests/test_org_secrets_vectors.py
           - package: hub
             # producer of vectors_hub*.json (test_vectors, test_hub_policy_vectors); consumer of core's F1 vectors and origin_http
             tests: >-
               tests/test_vectors.py tests/test_hub_policy_vectors.py tests/test_origin_http_vectors.py tests/test_core_crosscheck.py
-              tests/test_question_spec.py tests/test_webapi_core.py
+              tests/test_question_spec.py tests/test_webapi_core.py tests/test_org_secrets_vectors.py
           - package: relay
             tests: tests/test_origin_http_vectors.py tests/test_proto.py tests/test_push_vectors.py tests/test_hub_accounts_vectors.py
           - package: publish
@@ -77,7 +77,7 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24'
-      - run: node --test packages/hub/tests/js/question.test.mjs packages/hub/tests/js/cj.test.mjs packages/hub/tests/js/render.test.mjs
+      - run: node --test packages/hub/tests/js/question.test.mjs packages/hub/tests/js/cj.test.mjs packages/hub/tests/js/render.test.mjs packages/hub/tests/js/seal.test.mjs
   gate:
     name: contracts gate
     if: always()

@@ -9,7 +9,7 @@ import { routingApi, type RoutingChoices } from '@/api/modelRouting'
 import { agentsApi, LOGIN_NOTICE, type AgentPreview, type Runner } from '@/api/agents'
 import { api } from '@/api/client'
 import { ARM_MS, CLICK_RISK, DEPOSIT_LINE, DEPOSIT_RISK, type ClickViewAnswer } from '@/api/click'
-import { mergeRunItems, type Run, type RunList } from '@/api/runs'
+import { mergeRunItems, runsApi, type Run, type RunList } from '@/api/runs'
 import { ApiError } from '@/api/types'
 import { nowMs } from '@/lib/time'
 import { TooltipProvider } from '@/components/ui/tooltip'
@@ -238,6 +238,21 @@ describe('start', () => {
     expect(a[2]).toBe('f'.repeat(64))
     expect(a[3]).toMatch(/^a_[0-7][0-9A-HJKMNP-TV-Z]{25}$/)
     expect(b[3]).toBe(a[3])
+  })
+
+  it('stopFirst: the idle run is stopped only when Start is pressed, before the start; cancelling leaves it alone', async () => {
+    const stop = vi.spyOn(runsApi, 'stop').mockResolvedValue({ state: 'exited', cleanup: 'complete' } as never)
+    const order: string[] = []
+    stop.mockImplementation(async () => { order.push('stop'); return { state: 'exited', cleanup: 'complete' } as never })
+    s.start.mockImplementation(async () => { order.push('start'); return { run } })
+    const { onStarted, onClose } = mount(vi.fn(), vi.fn(), { initial: { mode: 'continue', stopFirst: 'r_idle' } })
+    await screen.findByTestId('agent-preview', {}, T)
+    expect(stop).not.toHaveBeenCalled() // the dialog is open; nothing stopped yet
+    expect(onClose).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByTestId('agent-start'))
+    await waitFor(() => expect(onStarted).toHaveBeenCalledWith(run), T)
+    expect(stop).toHaveBeenCalledWith(WS, 'r_idle')
+    expect(order).toEqual(['stop', 'start'])
   })
 
   it('a changed choice must be previewed again before Start', async () => {

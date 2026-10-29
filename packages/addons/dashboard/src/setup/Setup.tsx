@@ -262,8 +262,6 @@ function FinishChoices({
         <dd>{hoursText(current.agent_hours)}</dd>
         <dt>Agent execution on this computer</dt>
         <dd>{yesNo(current.runner.enabled)}</dd>
-        <dt>Agent access for this computer’s runner</dt>
-        <dd>{current.runner_grant ? 'Given before' : 'Not given'}</dd>
         <dt>You approve with</dt>
         <dd>{current.method === 'click' ? 'One click on this computer' : 'Terminal'}</dd>
       </dl>
@@ -404,6 +402,7 @@ export function Setup({ api }: { api: SetupAPI }) {
   const [step, setStep] = useState(0)
   const [prefixEdited, setPrefixEdited] = useState(false)
   const [workspaceEdited, setWorkspaceEdited] = useState(false)
+  const [showWorkspaceFields, setShowWorkspaceFields] = useState(false)
   const [secrets, setSecrets] = useState<Secrets | null>(null)
   const [review, setReview] = useState<Review>()
   const [run, setRun] = useState<string>()
@@ -820,6 +819,30 @@ export function Setup({ api }: { api: SetupAPI }) {
                   }}
                 />
               </label>
+              {!profile.name.trim() && <small>Type your name to continue.</small>}
+              {!showWorkspaceFields && (
+                <div className="ws-summary">
+                  <span data-testid="ws-summary" aria-live="polite">
+                    {profile.name.trim() ? (
+                      <>
+                        Your workspace: <strong><Inline>{profile.workspace_name}</Inline></strong>{' '}
+                        {[1, 2].map((n) => (
+                          <span className="chip" key={n}>
+                            {profile.prefix.trim() || 'MW'}-{String(n).padStart(4, '0')}
+                          </span>
+                        ))}
+                      </>
+                    ) : (
+                      'Your workspace is named after you.'
+                    )}
+                  </span>
+                  <button type="button" className="link" onClick={() => setShowWorkspaceFields(true)}>
+                    Change
+                  </button>
+                </div>
+              )}
+              {showWorkspaceFields && (
+                <>
               <label>
                 Workspace name
                 <input
@@ -851,6 +874,8 @@ export function Setup({ api }: { api: SetupAPI }) {
                   </span>
                 ))}
               </div>
+                </>
+              )}
               <SetupFooter cancel={cancel}>
                 <button onClick={() => setStep(0)}>Back</button>
                 <button
@@ -1317,6 +1342,21 @@ export function Setup({ api }: { api: SetupAPI }) {
               </li>
             ))}
           </ol>
+          {progress?.steps.some((s) => s.id === 'trust' && s.status === 'skipped') && (
+            <div className="progress-note" role="note">
+              {progress.reason_codes?.trust === 'not_installed' || progress.reason_codes?.trust === 'not_started'
+                ? 'Claude Code will ask once to trust this folder. Say yes there.'
+                : 'Claude Code will ask once about this folder. See why below.'}
+              {progress.reasons?.trust && (
+                <details>
+                  <summary>Why?</summary>
+                  <p>
+                    <Inline>{progress.reasons.trust}</Inline>
+                  </p>
+                </details>
+              )}
+            </div>
+          )}
           {progress?.error && (
             <>
               <p role="alert" className="warning">

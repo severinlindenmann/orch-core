@@ -226,7 +226,7 @@ function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil
   const danger = !!story?.danger
   return (
     <section ref={setBox} data-testid="click-panel" aria-label="Review before signing" className="space-y-3">
-      <WorkspaceLine workspace={view.workspace} many={manyWorkspaces} always={auto || risk.length > 0} folded={!!story?.foldWorkspace && !(manyWorkspaces && risk.length > 0)} target={view.content?.ticket?.key} />
+      <WorkspaceLine workspace={view.workspace} many={manyWorkspaces} always={auto || risk.length > 0} folded={!!story?.foldWorkspace && !manyWorkspaces} target={view.content?.ticket?.key} />
       {view.content && <SignContent content={view.content} ws={view.workspace?.id} technical={technical} compact={story?.compact} quick={story?.quick} />}
       {/* authority stays in the default view, never folded: the scope, the agent access length, what happens next */}
       {story?.scope && <p data-testid="sign-scope" className="text-[13px] text-text">{story.scope}</p>}

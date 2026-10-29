@@ -5,6 +5,9 @@
 import { KeyRound, Loader2 } from 'lucide-react'
 import { InfoDrawer } from '@/components/InfoDrawer'
 import { useEffect, useRef, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { queries } from '@/api/queries'
+import { useWorkspace } from '@/app/workspace'
 import { backupViewOk, plainHubViewOk, type HubJoinAction, type HubLeaveAction, type HubModeFullAction } from '@/api/click'
 import { ApiError } from '@/api/types'
 import { seal } from '@/api/sealed'
@@ -39,6 +42,10 @@ function clearOfSignBar(block: HTMLElement | null) {
 export function HubStep({ ws, action, onClose, onChanged, onFailedChange, doneText }: HubStepProps) {
   // A join is only the first half: the host keeps the workspace's add-ons paused until the hub confirms, and reading the
   // pages behind the dialog before that is refused (409). JoinFlow reads them once, after "Connected".
+  // The review names the workspace for a person with several (same count as SignPopover): union of the context and the list.
+  const { workspaces } = useWorkspace()
+  const known = useQuery(queries.workspaces())
+  const many = new Set([...workspaces, ...(known.data ?? [])].map(w => w.id)).size > 1
   const click = useClickSign(ws, undefined, undefined, { refetchOnDone: action.action !== 'hub_join' })
   const field = useRef<HTMLInputElement>(null)
   const box = useRef<HTMLDivElement>(null)
@@ -118,6 +125,7 @@ export function HubStep({ ws, action, onClose, onChanged, onFailedChange, doneTe
         {agentsEnd && <p>Agent access on this computer ends.</p>}
         <ClickSignPanel
           ws={ws}
+          manyWorkspaces={many}
           story={{ ...storyOf(action)!, steps: [] }}
           answer={presented!}
           problem={click.problem}

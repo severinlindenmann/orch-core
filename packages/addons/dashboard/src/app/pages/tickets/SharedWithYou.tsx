@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { hubQueries } from '@/api/hub'
 import { Raw } from '@/components/sign/visible'
@@ -6,10 +7,12 @@ import { Badge } from '@/components/ui/badge'
 /** Tickets other workspaces shared with this owner through the hub: read-only rows, "Shared by Anna". They are the other
  * person's tickets (not in this workspace's log), so there is nothing to open or change here. Shows nothing when the
  * workspace has no hub, the hub is away or nothing is shared (a quiet list, never an error). */
-export function SharedWithYou({ ws }: { ws: string }) {
+export function SharedWithYou({ ws, limit }: { ws: string; limit?: number }) {
   const shared = useQuery(hubQueries.shared(ws))
-  const items = shared.data?.items ?? []
-  if (!items.length) return null
+  const [all, setAll] = useState(false)
+  const everything = shared.data?.items ?? []
+  if (!everything.length) return null
+  const items = limit && !all ? everything.slice(0, limit) : everything
   return <section className="space-y-1" data-testid="shared-with-you" aria-label="Shared with you">
     <h2 className="text-[13px] font-medium text-text-muted">Shared with you</h2>
     <ul className="divide-y divide-border rounded border border-border">
@@ -20,5 +23,6 @@ export function SharedWithYou({ ws }: { ws: string }) {
         <p className="text-[12px] text-text-faint">{t.status.replaceAll('_', ' ')}{t.deadline ? ` · due ${t.deadline}` : ''} · read only</p>
       </li>)}
     </ul>
+    {limit && everything.length > limit && !all && <button type="button" className="text-[12px] text-text-muted underline" onClick={() => setAll(true)}>Show all {everything.length}</button>}
   </section>
 }

@@ -63,3 +63,22 @@ test("app.js: after /setup the page offers Open the hub (afterLogin), not a seco
   assert.ok(!/Write these down|Continue to sign in|loginView\(\)/.test(setup));
   assert.match(setup, /totpPanel\(r\.body\.totp_uri/);
 });
+
+test("the key has a Copy button where the clipboard exists, and none where it does not", async () => {
+  const old = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  let written;
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: { clipboard: { writeText: async (v) => { written = v; } } } });
+  try {
+    const out = totpPanel(URI, "JBSWY3DPEHPK3PXP");
+    const copy = out.all().find((n) => n.tag === "button" && n.textContent === "Copy");
+    assert.ok(copy, "Copy next to the key");
+    await copy.listeners.click();
+    assert.equal(written, "JBSWY3DPEHPK3PXP");
+    assert.equal(copy.textContent, "Copied ✓");
+    assert.equal(out.all().find((n) => n.attrs.id === "new-totp").textContent, "JBSWY3DPEHPK3PXP", "the key is still shown as text");
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: {} });
+    assert.ok(!totpPanel(URI, "K").all().some((n) => n.tag === "button"), "no clipboard: no button, the key stays selectable");
+  } finally {
+    if (old) Object.defineProperty(globalThis, "navigator", old); else delete globalThis.navigator;
+  }
+});

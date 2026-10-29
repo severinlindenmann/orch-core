@@ -25,6 +25,7 @@ from .access.cli import ACCESS_FILE
 from .access.orgcleanup import org_cleanup
 from .activity import ActivityLog
 from .audit import open_log
+from .backup.hubop import hold_serve_lock
 from .backup.restore import finish as finish_restore
 from .backup.restore import recover as recover_swap
 from .backup.service import BackupService
@@ -196,6 +197,7 @@ def serve(
     api_host = api_host or u.netloc
     recover_swap(state)  # a restore that stopped between its two renames is completed or undone first
     keys = HubKeys.open(state)
+    hold_serve_lock(state)  # an offline `orch-hub restore` refuses while this process lives
     # Opus condition 5: once `orch install` wrote hub-settings.json, the advertised addresses, the console origins and the
     # API origin come from that file ONLY. The start arguments keep the listen sockets; --web-origin / --api-origin are
     # ignored (a restart must not bring an old value back).

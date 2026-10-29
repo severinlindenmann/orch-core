@@ -953,7 +953,7 @@ def test_L5_the_server_command_names_the_admins_it_prints_links_for(w, tmp_path)
 def test_M1_writes_during_a_console_restore_are_refused_not_lost(w, monkeypatch):
     erin = w.env.user("erin")
     w.env.acc.add_member("team", erin)
-    words, data = _backup(w)
+    words, _data = _backup(w)
     name = next((w.state / "backups").iterdir()).name
     tok = w.login(w.admin)
     other = w.login(w.carol)
@@ -983,7 +983,7 @@ def test_M1_writes_during_a_console_restore_are_refused_not_lost(w, monkeypatch)
 
 
 def test_M1_a_failed_console_restore_lifts_the_fence(w):
-    words, data = _backup(w)
+    _backup(w)
     name = next((w.state / "backups").iterdir()).name
     tok = w.login(w.admin)
     from orch_hub.backup.hubop import FENCE
@@ -1002,3 +1002,30 @@ def test_M1_the_link_server_refuses_every_op_while_the_fence_is_set():
 
     FENCE.set()
     assert Probe()._run("ab" * 16, b"", {"op": "status_put", "body": {}}, 1) == {"error": "restore_busy"}
+
+
+def test_M2_the_server_command_refuses_while_a_hub_serves_this_state(w, tmp_path, capsys):
+    words, data = _backup(w)
+    f = tmp_path / "x.orchbak"
+    f.write_bytes(data)
+    before = _tree(w.state)
+    import subprocess
+    import sys
+
+    holder = subprocess.Popen(  # another process: what `serve` is
+        [
+            sys.executable,
+            "-c",
+            "import sys,time;from pathlib import Path;from orch_hub.backup.hubop import hold_serve_lock as h;h(Path(sys.argv[1]));print('x',flush=True);time.sleep(60)",
+            str(w.state),
+        ],
+        stdout=subprocess.PIPE,
+    )
+    holder.stdout.readline()
+    try:
+        assert _cli(w, f, words=words) == 1
+        assert "hub is running" in capsys.readouterr().err and _tree(w.state) == before
+    finally:
+        holder.kill()
+        holder.wait()
+    assert _cli(w, f, words=words) == 0  # the lock is gone with the process: the restore runs

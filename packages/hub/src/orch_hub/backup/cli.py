@@ -57,6 +57,7 @@ def run_restore(
         )
         return 1
     from . import restore as RS
+    from .hubop import HubOpBusy, ensure_not_running
 
     try:
         state = Path(args.state) if args.state else default_state_dir()
@@ -68,6 +69,15 @@ def run_restore(
     except Refused as e:
         print(f"orch-hub: this file is not a backup this hub can restore ({e.code})", file=sys.stderr)
         return 1
+    if info["in_place"]:
+        try:
+            ensure_not_running(state)  # an offline restore never runs under a serving hub
+        except HubOpBusy:
+            print(
+                "orch-hub: refused: the hub is running on this state; stop it first (or restore from the console)",
+                file=sys.stderr,
+            )
+            return 1
     when = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(info["made_ms"] // 1000))
     out(f"Backup of hub {info['fingerprint']}, made {when}.")
     if not info["in_place"]:

@@ -420,5 +420,7 @@ def test_review_passes_readers_and_widened_in_closed_fields():
     ).json()["review"]
     assert got["readers"] == {"people": ["Ben"], "teams": ["sales"], "note": "from the hub, not signed",
                               "info": "Team membership is managed by the hub admin."}  # fmt: skip
-    assert got["widened"] == [{"line": "ticket PRD-0001: Old", "people_added": ["Ana"], "teams_added": [], "description_added": True}]
+    assert got["widened"] == [
+        {"line": "ticket PRD-0001: Old", "people_added": ["Ana"], "teams_added": [], "description_added": True}
+    ]
     assert "audience" not in got and "secret" not in str(got)

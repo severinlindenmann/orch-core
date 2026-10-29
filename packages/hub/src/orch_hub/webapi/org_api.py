@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..access import AccessError
+from ..access.mcpprobe import mcp_probes
 from ..access.orgmcp import org_mcp
 from ..access.orgskills import org_skills
 from ..contract.org_bundles import SKILL_TEXT_MAX
@@ -60,7 +61,21 @@ class OrgHandlers:
                 continue
             card = (reg.card(ws) or {}).get("name")
             workspaces.append({"workspace_id": ws, "name": card if type(card) is str and card else None})
-        return 200, {"servers": org_mcp(self.d.access).list(), "workspaces": workspaces}
+        servers = org_mcp(self.d.access).list()
+        probes = mcp_probes(self.d.access)
+        probes.refresh_stale(servers)  # in the background; the page asks again a moment later
+        for s in servers:
+            s["status"] = probes.status(s["name"], s["url"])
+        return 200, {"servers": servers, "workspaces": workspaces}
+
+    def _h_a_mcp_check(self, c: Any, p: dict, q: dict, b: dict | None):
+        """The "Check now" button: the hub asks the stored address once (no credential), at most once per 30 s per server."""
+        store = org_mcp(self.d.access)
+        server = next((s for s in store.list() if s["name"] == p["name"]), None)
+        if server is None:
+            raise AccessError("unknown_server")
+        out = mcp_probes(self.d.access).check_now(server["name"], server["url"])
+        return 200, out
 
     def _h_a_mcp_put(self, c: Any, p: dict, q: dict, b: dict | None):
         b = _need(b, url=str, auth=str, description=str)
@@ -68,11 +83,13 @@ class OrgHandlers:
         if secret is not None and type(secret) is not str:
             raise AccessError("malformed")
         out = org_mcp(self.d.access).put(p["name"], b["url"], b["auth"], secret, b["description"], actor=c.user_id)
+        mcp_probes(self.d.access).clear_status(p["name"])  # a new address: the old answer is not about it
         self._record("mcp.saved", actor_id=c.user_id, detail={"server": p["name"]})
         return 200, out
 
     def _h_a_mcp_delete(self, c: Any, p: dict, q: dict, b: dict | None):
         org_mcp(self.d.access).delete(p["name"], actor=c.user_id)
+        mcp_probes(self.d.access).clear_status(p["name"])
         self._record("mcp.removed", actor_id=c.user_id, detail={"server": p["name"]})
         return 200, {"ok": True}
 

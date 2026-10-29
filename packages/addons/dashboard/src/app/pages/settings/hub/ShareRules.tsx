@@ -5,7 +5,7 @@ import { hubQueries, type HubAudience, type HubRule, type HubShare } from '@/api
 import { queries } from '@/api/queries'
 import { Raw } from '@/components/sign/visible'
 import { Badge } from '@/components/ui/badge'
-import { Action, Field, Flow, Panel } from './shared'
+import { Action, Details, Field, Flow, Panel } from './shared'
 import { AddRuleReview } from './AddRule'
 import { AudiencePicker } from './AudiencePicker'
 import { useSharePreview, type ShareChange } from './useSharePreview'
@@ -26,7 +26,7 @@ export function AlwaysShared({ share }: { share: HubShare }) {
     {(['needs_you', 'questions'] as const).map(kind => <div key={kind} className="flex flex-wrap items-center justify-between gap-2">
       <p>{kind === 'needs_you' ? 'Needs-you notes' : 'Questions'} · {share.rules.find(r => r.kind === kind)?.count ?? 0}</p><Badge variant="outline">Always shared</Badge>
     </div>)}
-    <p className="text-xs text-text-muted">Counts from the hub, not signed. Notes include type, one-line title and deadline. Questions include the full question.</p>
+    <Details testId="hub-always-details"><p>Counts from the hub, not signed. Notes include type, one-line title and deadline. Questions include the full question.</p></Details>
   </div>
 }
 /** One plain-words line per rule: what it matches and how many tickets that is now. */
@@ -60,7 +60,7 @@ export function ShareRules({ ws, workspace, onBack }: { ws: string; workspace: H
     {share.isPending ? <p role="status">Loading sharing rules…</p> : share.isError ? <><p role="alert">Could not load sharing rules.</p><Action id="hub-share-retry" onClick={() => void share.refetch()}>Try again</Action></> : !share.data.available ? <p data-testid="hub-share-unavailable">Sharing settings are not available on this host yet. Update orch to choose what the hub sees.</p> : <>
       <Panel title="Notes for the hub and your phone"><AlwaysShared share={share.data} /></Panel>
       <Panel title="Shared with the hub">
-        <p className="text-text-muted">New matching tickets are shared too. Counts come from the hub, not signed.</p>
+        <p className="text-text-muted">New matching tickets are shared too.</p><Details testId="hub-rules-details"><p>Counts come from the hub, not signed.</p></Details>
         {share.data.rules.filter(r => r.kind !== 'needs_you' && r.kind !== 'questions').map((r, i) => <div key={r.kind + ':' + r.value} className="flex flex-wrap items-center justify-between gap-3 border-t border-border py-3">
           <div className="min-w-0"><p>{ruleLine(r, titleOf)}</p>
             <p className="text-xs text-text-muted">{r.readers ? `Readable by ${r.readers} ${r.readers === 1 ? 'person or team' : 'people and teams'} besides you` : 'Only you'}{r.description ? ' · description included' : ''}</p>

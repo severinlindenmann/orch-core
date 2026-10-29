@@ -51,10 +51,12 @@ describe('the Hub tab has a different page for each mode', () => {
     expect(screen.getByTestId('hub-full-switch')).toBeTruthy() // one click, also with One click on
   })
 
-  it('full: says the hub reads everything and labels the hub numbers "from the hub, not signed"', async () => {
+  it('full: says the hub reads everything and keeps "from the hub, not signed" behind Details', async () => {
     hubPage('full')
     expect(await screen.findByText('The hub can read everything in this workspace', {}, T)).toBeTruthy()
-    expect(screen.getByText('from the hub, not signed')).toBeTruthy()
+    expect(screen.queryByText(/not signed/)).toBeNull()
+    fireEvent.click(screen.getByTestId('hub-access-details'))
+    expect(screen.getByText('From the hub, not signed.')).toBeTruthy()
     expect(screen.getByText('8 people')).toBeTruthy()
     expect(screen.queryByTestId('hub-full-switch')).toBeNull() // already full: the only way back is leave and join again
     expect(screen.getByText(/Leave this hub, then rejoin/)).toBeTruthy()

@@ -11,7 +11,7 @@ on a check kind they do not handle and on a missing required case.
 
 Expected values of the refusal cases are written here by hand; the positive outputs (bytes, hashes) come from the
 reference, whose Noise was checked once against an independent implementation (the ``noiseprotocol`` package; see
-the PR) and is checked again by core's independent port on every run.
+the PR) and is checked again by core's second hand-written port on every run.
 """
 
 from __future__ import annotations
@@ -435,6 +435,18 @@ def open_cases() -> None:
         b(assertion=ctap2_assert("presence_b", msg_b, flags=0x45)),
         err("malformed"),
     )
+    for nm, fl in (
+        ("extension_data_flag", 0x85),
+        ("backup_eligible", 0x0D),
+        ("backup_state", 0x15),
+    ):
+        case(
+            "open",
+            f"open_ctap2_{nm}",
+            b(assertion=ctap2_assert("presence_b", msg_b, flags=fl)),
+            err("malformed" if nm.startswith("ext") else "factor_too_weak"),
+            "ED refused; BE/BS: a presence key stays on one device (synced passkeys refused)",
+        )
     case(
         "open",
         "open_ctap2_over_raw_bytes",
@@ -574,6 +586,18 @@ def presence_cases() -> None:
         ),
         err("factor_too_weak"),
     )
+    for nm, fl in (("backup_eligible", 0x0D), ("backup_state", 0x15)):
+        case(
+            "presence",
+            f"presence_ctap2_{nm}",
+            a(
+                entry=ENTRY_B,
+                handshake_hash_hex=HH_B.hex(),
+                held=7,
+                assertion=ctap2_assert("presence_b", msg_b, flags=fl, count=8),
+            ),
+            err("factor_too_weak"),
+        )
 
 
 def enroll_cases() -> None:
@@ -799,13 +823,25 @@ def device_list_cases() -> None:
         case("device_list", f"device_list_{nm}", a(signed_list(o)), err("malformed"))
     case("device_list", "device_list_wrong_suite", a(signed_list(list_o([ENTRY_A], suite=3))), err("wrong_suite"))
     case("device_list", "device_list_hv_1", a(signed_list(list_o([ENTRY_A], hv=1))), err("malformed"))
-    many = [entry("rd_" + f"{i:032x}", f"d{i}", "dev_a_s", "presence_a", "platform", "view") for i in range(65)]
+    many = [
+        entry(
+            "rd_" + f"{i:032x}",
+            f"d{i}",
+            "dev_a_s",
+            "presence_a",
+            "platform",
+            "view",
+            transport_pub=b64u(R.x25519_pub(seed(f"many/x/{i}"))),
+            presence_pub=b64u(S.public_bytes(S.key_from_seed(seed(f"many/p/{i}")))),
+        )
+        for i in range(R.DEVICES_MAX + 1)
+    ]
     case(
         "device_list",
         "device_list_65_devices",
-        a({"o": list_o(many), "sig": LIST["sig"]}),
-        err("bad_signature"),
-        "signature first; the 64-entry cap is a field check",
+        a(signed_list(list_o(many))),
+        err("malformed"),
+        "correctly signed, sorted, distinct keys: only the 64-entry cap refuses it",
     )
     # lookups
     for nm, dev, now, want in (
@@ -1120,6 +1156,9 @@ REQUIRED = [
     "open_replayed_into_other_workspace",
     "open_replayed_for_other_device",
     "open_ctap2_up_only",
+    "open_ctap2_extension_data_flag",
+    "open_ctap2_backup_eligible",
+    "open_ctap2_backup_state",
     "open_ctap2_counter_decreased",
     "open_fido2_device_with_p256_form",
     "presence_replayed_into_other_stream",

@@ -83,7 +83,7 @@ BYTE_BUDGET = {"life": 1 << 30, "per_min": 64 << 20}
 LEVELS = ("view", "work", "terminals")
 PRESENCE_KINDS = {"platform": 1, "fido2": 2}
 CTAP2_RP_ID = b"orch-remote"
-CTAP2_UP, CTAP2_UV, CTAP2_AT, CTAP2_ED = 0x01, 0x04, 0x40, 0x80
+CTAP2_UP, CTAP2_UV, CTAP2_BE, CTAP2_BS, CTAP2_AT, CTAP2_ED = 0x01, 0x04, 0x08, 0x10, 0x40, 0x80
 CODES = ("remote.off", "remote.device", "remote.busy", "remote.no_code", "remote.version")
 CLOSE_REASONS = (
     "closed",  # either side ended it normally (End, sign-out)
@@ -423,7 +423,7 @@ def verify_assertion(presence_pub: bytes, presence_kind: str, msg: bytes, assert
       signs ``msg`` itself (ECDSA P-256/SHA-256, raw ``r || s``).
     - ``{"form": "ctap2", "auth_data", "sig"}``: a FIDO2 credential through plain CTAP2 ``getAssertion`` with
       ``rpId = "orch-remote"`` and ``clientDataHash = SHA-256(msg)``; ``auth_data`` is exactly 37 bytes (rpIdHash,
-      flags, counter, no extensions); the signature is over ``auth_data || SHA-256(msg)``; UP and UV must be set; a
+      flags, counter, no extensions); the signature is over ``auth_data || SHA-256(msg)``; UP and UV must be set and BE/BS clear; a
       counter that is not above a held non-zero counter is a replay.
 
     The form must be the device's ``presence_kind`` (``factor_mismatch``): a FIDO2 device cannot downgrade to a bare
@@ -452,6 +452,8 @@ def verify_assertion(presence_pub: bytes, presence_kind: str, msg: bytes, assert
         raise Refused("malformed")
     if flags & (CTAP2_UP | CTAP2_UV) != CTAP2_UP | CTAP2_UV:
         raise Refused("factor_too_weak")  # a touch without user verification is not enough (spec §5)
+    if flags & (CTAP2_BE | CTAP2_BS):
+        raise Refused("factor_too_weak")  # a presence key stays on one device: synced passkeys are refused
     if (held_count > 0 or count > 0) and count <= held_count:
         raise Refused("replay")
     return count

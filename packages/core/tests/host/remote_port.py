@@ -252,8 +252,8 @@ def assertion_ok(pub_b64: str, kind: str, msg: bytes, a: Any, held: int) -> int:
     flags, count = auth[32], int.from_bytes(auth[33:], "big")
     if flags & 0xC0:
         raise no()
-    if flags & 0x05 != 0x05:
-        raise no("factor_too_weak")
+    if flags & 0x05 != 0x05 or flags & 0x18:
+        raise no("factor_too_weak")  # UP+UV needed; BE/BS (synced passkey) refused
     if (held or count) and count <= held:
         raise no("replay")
     return count

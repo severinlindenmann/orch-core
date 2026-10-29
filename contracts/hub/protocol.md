@@ -972,7 +972,10 @@ type, `malformed` for a listed type with a remote field). Vectors: `vectors_remo
 checked as a channel action (`check_action`) and as a delivered event (the host's role table, then its exact-payload
 check); hub and core also assert on their own closed tables that no `remote.`, `run.`, `agent.`, `terminal.`, `task.`,
 `claim.taken`, `grant.issued`, `device.added`, `device.revoked` or `keys.` type is listed. Host conformance owed by R2/R3
-(core tests): `remote_handoff_never_releases_hub_grant`, `hub_policy_or_device_change_refused`.
+(core tests): `remote_handoff_never_releases_hub_grant`, `remote_handoff_never_answers_addon_requested`,
+`hub_policy_or_device_change_refused`.
+
+A hand-off prepared from a `remote-device` session is never a live `addon.grant` hand-off (it never answers an `addon.requested`).
 
 ### 8.6 Selective custodial events (C3b addendum; D9 hub, C6 core)
 
@@ -1702,7 +1705,8 @@ else `factor_mismatch`):
   `rpId = "orch-remote"` and `clientDataHash = SHA-256(bytes)`; `auth_data` is exactly 37 bytes (`rpIdHash ‖ flags ‖
   signCount`, big-endian, no extensions); `sig` (raw `r || s`) is over `auth_data ‖ SHA-256(bytes)`. Order: signature
   and `rpIdHash` (`bad_signature`), AT/ED flags set (`malformed`), UP **and** UV set (`factor_too_weak`: a touch
-  without user verification is not enough), then the counter: when the held counter or the new one is non-zero, the
+  without user verification is not enough; so is BE 0x08 or BS 0x10 set: a presence key must stay on one device, so
+  synced or backup-eligible passkeys are refused), then the counter: when the held counter or the new one is non-zero, the
   new one must be greater (`replay`); the host records it.
 - A key file has no form (`malformed`). Whether a `platform` key really lives in hardware is not provable without
   attestation; the remote client (R5) refuses to make one in software, and attestation is a hardening item.
@@ -3074,8 +3078,8 @@ w2h; the gate while off; every "no custodial type can" item). The hub replays ev
 (`tests/test_remote_vectors.py`, which also rebuilds the file byte for byte); **orch-core replays every case** with an
 independent test-side port (`tests/host/test_remote_vectors.py`, `tests/host/remote_port.py`) and the custodial cases
 against its real `check_custodial_role` and `check_custodial_payload`; R2–R5 replay them against the real paths. The
-Noise of the reference was checked against the independent `noiseprotocol` package (both directions, byte-equal
-messages, handshake hash and transport) when R0 was written; core's port checks it again on every run. Relay, publish
+Noise of the reference was cross-checked once against the `noiseprotocol` package (both directions, byte-equal
+messages, handshake hash and transport) when R0 was written; core's port is a second hand-written implementation and replays the transcripts on every run. Relay, publish
 and mobile do not read these shapes (the relay and the public passthrough see TLS only).
 
 ## 16. Decided here, and open points for L2

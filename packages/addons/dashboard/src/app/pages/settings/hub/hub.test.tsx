@@ -154,7 +154,7 @@ describe('stopping sharing one ticket', () => {
     await view.user.click(await screen.findByTestId('hub-choose-share', {}, T))
     await view.user.click(within(await screen.findByTestId('hub-ticket-list', {}, T)).getByTestId('hub-ticket-revoke-0'))
     const dialog = await screen.findByRole('dialog', { name: 'Stop sharing this ticket' }, T)
-    expect(within(dialog).getByText(/asked to delete its copy/)).toBeTruthy()
+    expect(within(dialog).getByText(/will delete its copy/)).toBeTruthy()
     expect(within(dialog).getByText(/cannot be taken back/)).toBeTruthy()
     expect(within(dialog).getByTestId('hub-revoke-ticket')).toHaveTextContent('DEMO-0043 · Export report as PDF')
     await view.user.click(within(dialog).getByTestId('hub-revoke-details'))

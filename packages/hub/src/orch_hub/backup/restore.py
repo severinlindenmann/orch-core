@@ -456,11 +456,22 @@ def _restore(
         gap = max(0, now - h["made_ms"])
         # (3) the audit line and the history line first (they go into the live logs, which are then copied), then the live hub
         # is fenced, then the swap. The notice is the last file: it marks the staged copy as whole (see recover).
-        if audit is not None:
-            try:
-                audit.hub_restore(backup_made_ms=h["made_ms"], gap_ms=gap, op_seq=floor["op_seq"], actor_user_id=actor)
-            except Exception:  # noqa: BLE001  # nothing is restored without its audit line
-                raise RestoreError("audit_failed") from None
+        own_audit = None
+        try:
+            if not in_place:  # a fresh server has no live chain: the staged one (from the backup) gets the line, signed by the new op key
+                from ..audit import open_log
+
+                own_audit = audit = open_log(new, staged, dev_mode=dev_mode, now_ms=now_ms)
+            if audit is not None:
+                try:
+                    audit.hub_restore(
+                        backup_made_ms=h["made_ms"], gap_ms=gap, op_seq=floor["op_seq"], actor_user_id=actor
+                    )
+                except Exception:  # noqa: BLE001  # nothing is restored without its audit line
+                    raise RestoreError("audit_failed") from None
+        finally:
+            if own_audit is not None:
+                own_audit.store.close()
         if activity is not None:
             with contextlib.suppress(Exception):  # a failed history line does not stop a restore
                 activity.record("hub.backup.restored", actor_kind="person" if actor else "hub", actor_id=actor)

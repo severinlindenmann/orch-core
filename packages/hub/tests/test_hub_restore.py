@@ -869,3 +869,19 @@ def test_L4_recover_gives_the_kept_backups_back_when_the_crash_came_after_they_m
     os.rename(state, old)
     RS.recover(state)
     assert sorted(p.name for p in (state / "backups").iterdir()) == kept and not new.exists() and not old.exists()
+
+
+def test_L1_a_fresh_server_restore_is_audited_too(w, tmp_path):
+    words, data = _backup(w)
+    fresh = tmp_path / "srv" / "d"
+    got = RS.restore(fresh, data, words, now_ms=lambda: 1_900_000_000_000)
+    from orch_hub.audit import AuditStore
+
+    st = AuditStore(str(fresh / "audit.db"))
+    try:
+        recs = [(r["o"], e) for _, r, e in st.after(0, 1000)]
+    finally:
+        st.close()
+    last, ev = recs[-1]
+    assert last["type"] == "hub_restore" and ev["op_seq"] == got["op_seq"] and ev["actor_user_id"] is None
+    assert ev["backup_made_ms"] == got["made_ms"] and ev["gap_ms"] == got["gap_ms"]

@@ -132,9 +132,10 @@ def test_the_first_request_is_one_review_of_every_step(human, tmp_path):
     assert not any(n.startswith(("This cancels", "An add-on field")) for n in content["notes"])
     assert content["fields_title"] == "Details" and content["ticket"]["new"] is True
     assert not any("signatures" in n for n in content["notes"])
-    assert any("4 steps" in n for n in content["notes"])
+    assert not any("steps" in n for n in content["notes"])  # r7-P10: the step count is in the technical review
     text = signer.render(first, lambda w: ("ws", "ORCH"))
     assert "Line two" in text and "4 signatures, ONE confirmation" in text
+    assert "One confirmation signs all 4 steps" in text
     assert text.count("--- event ") == 4
 
 

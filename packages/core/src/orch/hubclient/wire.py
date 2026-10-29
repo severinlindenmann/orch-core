@@ -217,7 +217,7 @@ _FIELDS: dict[str, dict[str, Callable[[Any], bool]]] = {
         "item_id": hex16,
         "workspace_id": hex16,
         "created_ms": _int_min(0),
-        "body": lambda x: type(x) is dict,
+        "body": lambda x: space_item_body_ok(x),
         "dev": lambda x: type(x) is bool,
     },
     "space.accept": {
@@ -267,6 +267,32 @@ def _signature(signed: Mapping[str, Any], label: bytes, pub: bytes) -> None:
         raise HubRefused("malformed") from None
     if not _suite.verify(pub, sig, msg):
         raise HubRefused("bad_signature")
+
+
+_BY = re.compile(r"^(person|agent):[A-Za-z0-9_-]{1,64}$")
+
+
+def space_item_body_ok(b: Any) -> bool:
+    """The body of a ``space.item`` (protocol 10.4): ``{name, size, data, by}`` and optionally ``restored_from``. ``by``
+    is who the writing host says acted (``person:<id>`` | ``agent:<grant id>``); it is REQUIRED, there is no item
+    without it. The hub cannot verify it."""
+    if type(b) is not dict or not {"name", "size", "data", "by"} <= set(b) <= {
+        "name",
+        "size",
+        "data",
+        "by",
+        "restored_from",
+    }:
+        return False
+    return (
+        type(b["name"]) is str
+        and type(b["size"]) is int
+        and b["size"] >= 0
+        and type(b["data"]) is str
+        and type(b["by"]) is str
+        and _BY.fullmatch(b["by"]) is not None
+        and ("restored_from" not in b or hex16(b["restored_from"]))
+    )
 
 
 def _fields(o: Mapping[str, Any], kind: str) -> None:

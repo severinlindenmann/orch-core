@@ -1,6 +1,7 @@
 // Run-11 #12/#13: the Services and Workspaces pages, against a tiny DOM stub.
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 class Node_ {
   constructor(tag, text) { this.tag = tag; this.nodeType = tag === "#text" ? 3 : 1; this.children = []; this.attrs = {}; this._text = text ?? ""; this.className = ""; this.listeners = {}; }
@@ -93,8 +94,8 @@ test("workspace table shows modes, status, versions, hosts, warnings without a h
   assert.match(t, /2 workspaces run an older orch/);
   assert.match(t, /Legal, Archive/);
   assert.match(t, /The hub still works with 0.1.0 and newer\./);
-  assert.match(t, /Everything/);
-  assert.match(t, /Only what I choose/);
+  assert.match(t, /Shares everything/);
+  assert.match(t, /Shares only what you choose/);
   assert.match(t, /Personal: only its owner/);
   assert.match(t, /Offline.*since 2 min ago/);
   assert.match(t, /0.2.0 · abcdef1/);
@@ -123,8 +124,8 @@ test("details show access only when allowed and send mode changes to the workspa
   const hidden = workspaceDetailsView(w, { roles: null, owner: "Anna" }, NOW);
   assert.doesNotMatch(text(hidden), /Who has access/);
   assert.match(text(hidden), /OwnerAnna/);
-  assert.match(text(hidden), /Only what I choose/);
-  assert.match(text(hidden), /To change what this workspace shares, open it and use Settings > Hub. The owner confirms there./);
+  assert.match(text(hidden), /Shares only what you choose/);
+  assert.match(text(hidden), /To change what this workspace shares, open it and use Settings > Hub. The workspace owner confirms with one click on their dashboard./);
   const out = workspaceDetailsView(w, { roles: { owner: "Anna", groups: [{ group: "Design", role: "edit", members: ["Lee", "Sam"] }] },
     actions: { open: (row) => { opened = row; } } }, NOW);
   assert.match(text(out), /Who has accessOwner: AnnaDesign · editLee, Sam/);
@@ -329,4 +330,40 @@ test("workspaces are named after their owner and connect asks whose workspace it
   await select.listeners.change({ target: select });
   assert.deepEqual(sent, ["u1", "u2"]);
   assert.equal(find(out, (n) => n.tag === "input")[0].value, "/c#u2");
+});
+
+test("a workspace-session admin still sees Connect a workspace; the click asks for one sign-in and mints nothing", async () => {
+  let asked = 0, minted = 0;
+  const out = workspacesView({ workspaces: [], handoffs: [], admin: null, canConnect: true, needsSignIn: true,
+    actions: { signInToConnect: () => { asked++; }, connect: async () => { minted++; return {}; } } }, NOW);
+  assert.match(text(out), /Connect a workspace/);
+  assert.match(text(out), /No workspaces yet/);
+  await clickButton(out, "Connect a workspace");
+  assert.equal(asked, 1);
+  assert.equal(minted, 0);
+  const member = workspacesView({ workspaces: [], handoffs: [], admin: null, actions: {} }, NOW);
+  assert.doesNotMatch(text(member), /Connect a workspace/);
+});
+
+test("the return route after sign-in is a short same-origin hash only", () => {
+  const source = readFileSync(new URL("../../src/orch_hub/web/app.js", import.meta.url), "utf8");
+  const re = new RegExp(source.match(/const SAFE_RETURN = \/(.*)\/i;/)[1], "i");
+  assert.ok(re.test("#/workspaces"));
+  for (const bad of ["https://evil.test/", "//evil.test", "#//evil.test", "javascript:alert(1)", "#/a?x=1", "#/" + "a".repeat(60), "workspaces"]) assert.ok(!re.test(bad), bad);
+});
+
+test("a full admin whose admin list failed to load still mints a link (no sign-out)", async () => {
+  let asked = 0, minted = 0;
+  const out = workspacesView({ workspaces: [], handoffs: [], admin: null, canConnect: true, needsSignIn: false,
+    actions: { signInToConnect: () => { asked++; }, people: async () => [], connect: async () => { minted++; return { link: "/j", expires_ms: NOW + 1000 }; } } }, NOW);
+  await clickButton(out, "Connect a workspace");
+  assert.equal(asked, 0);
+  assert.equal(minted, 1);
+});
+
+test("one workspace on an older orch is worded in the singular", () => {
+  const out = workspacesView({ workspaces: [workspace(), workspace({ workspace_id: "b", name: "Legal", version_state: "older" })],
+    handoffs: [], hub: { version: "0.3.0", min_supported: "0.1.0" } }, NOW);
+  assert.match(text(out), /1 workspace runs an older orch/);
+  assert.doesNotMatch(text(out), /1 workspaces/);
 });

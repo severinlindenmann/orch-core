@@ -42,7 +42,7 @@ export function storyOf(action: ClickAction | null | undefined, ctx: StoryContex
       const hours = action.action === 'new_sequence' ? action.agent?.hours : undefined
       if (hours) return agentCreate(hours)
       if (ctx.startsAgent) return { signLabel: 'Sign and create ticket', steps: ['You sign.', 'The ticket is created.', 'An agent starts, with the access you already gave, and writes the requirements and a plan.', 'It stops and waits: nothing is built until you approve the plan.'] }
-      return { signLabel: 'Sign and create ticket', steps: ['You sign.', 'The ticket is created.', 'Nothing starts yet: an agent starts only when you press Start agent.'] }
+      return { signLabel: 'Create ticket', steps: ['You sign.', 'The ticket is created.', 'Nothing starts yet: an agent starts only when you press Start agent.'] }
     }
     case 'quick_start': {
       const hours = action.agent?.hours

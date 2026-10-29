@@ -27,7 +27,7 @@ test("home groups rows, names their workspace, and shows health", () => {
   ], actions: {} });
   const nodes = out.flatMap((n) => n.all());
   const text = out.map((n) => n.textContent).join(" ");
-  assert.match(text, /1 workspaces online, 1 offline, 2 things need you/);
+  assert.match(text, /1 workspace online, 1 offline, 2 things need you/);
   assert.doesNotMatch(text, /Secret/);
   const groups = nodes.filter((n) => n.className === "workspace-needs");
   assert.equal(groups.length, 1);
@@ -85,4 +85,14 @@ test("the first-run home carries a root marker and gives way once a workspace or
   assert.equal(firstRunOutgrown([], [{ key: "k" }]), true);
   const src = (await import("node:fs")).readFileSync(new URL("../../src/orch_hub/web/app.js", import.meta.url), "utf8");
   assert.match(src, /querySelector\("\.first-run-root"\) && firstRunOutgrown\(/);
+});
+
+test("P03: a nameless workspace uses its owner's name; a workspace session explains why signing is not set up", () => {
+  const out = homeView({ user: { name: "Anna" }, workspaces: [{ workspace_id: "a", owner_name: "Ben", online: true }], items: [], channels: [],
+    thisBrowser: { state: "from_workspace" }, actions: { register() {} } });
+  const t = out.map((n) => n.textContent ?? "").join(" ");
+  assert.match(t, /Ben's workspace/);
+  assert.doesNotMatch(t, /A workspace\b|not registered/i);
+  assert.match(t, /You came here from a workspace/);
+  assert.doesNotMatch(t, /Register this browser/);
 });

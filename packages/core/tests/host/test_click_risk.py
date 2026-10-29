@@ -70,13 +70,13 @@ GRANT = {"type": "grant.issued", "label": "runner", "verbs": "agent", "hours": 8
             "grant",
             [GRANT],
             {"deposit": True},
-            [protocol.DEPOSIT_RISK, length("8 hours"), "Agents can run as you for 8 hours"],
+            [protocol.DEPOSIT_RISK],
         ),
         (
             "grant",
             [{**GRANT, "hours": 48}],
             {"deposit": True},
-            [protocol.DEPOSIT_RISK, length("2 days"), "Agents can run as you for 48 hours"],
+            [protocol.DEPOSIT_RISK],
         ),
         (
             "grant",

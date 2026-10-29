@@ -105,7 +105,7 @@ function mockPreview(body: { add?: HubRule; remove?: HubRule } | null): HubPrevi
   const review = {
     hub_id: 'ab12cd34ef56ab12', readers: { people: names, teams: aud?.groups ?? [], note: 'from the hub, not signed', info: null }, widened: [],
     new_count: added, new_more: 0, new_items: fresh,
-    leaves: added ? [withText ? "the ticket's title, status, labels, deadline and description; no comments or files" : "the ticket's title, status, labels and deadline; no description, comments or files"] : [],
+    leaves: added ? [withText ? "the ticket's title, status, labels, deadline and description (summary, context and requirements); no plan, comments or files" : "the ticket's title, status, labels and deadline; no description, comments or files"] : [],
     later_edits: 'Later edits to these tickets are shared too, until you stop sharing them.',
   }
   return { count: items.length, new: added, revoked: removed, more: 0, items, rules: [], plan: 'P'.repeat(42) + String(items.length % 10), review }
@@ -172,7 +172,7 @@ function mockView(ws: string, id: string): ClickViewAnswer | null {
     view_digest: 'sha256:' + '1'.repeat(64),
     view: {
       risk: CLICK_RISK, op: r.op, workspace: { id: ws, name: 'billing', prefix: 'DEMO' }, fingerprint: '0123456789ab',
-      lines: [join ? `join hub ${r.hubId} in ${r.full ? 'full' : 'selective'} mode: ${r.full ? 'the hub will be able to read everything in this workspace' : 'the hub sees only what you share and never gets the workspace key'}` : `leave hub ${r.hubId} and tell it that this workspace is no longer bound`, '', BACKUP_KEY_LINE],
+      lines: [join ? `join hub ${r.hubId} in ${r.full ? 'full' : 'selective'} mode: ${r.full ? 'the hub will be able to read everything in this workspace' : 'the hub sees only what you share, plus this workspace\'s name, and never gets the workspace key'}` : `leave hub ${r.hubId} and tell it that this workspace is no longer bound`, '', BACKUP_KEY_LINE],
       checks: [], confirm: { kind: 'click' }, expires_at: new Date(Date.now() + 600_000).toISOString(), auth: 'convenience', device: 'd_' + 'a'.repeat(32), artifacts: null,
       ...(keptKey() ? {} : { seal: { v: 1, alg: 'P256-HKDF-SHA256-A256GCM', pk: SIGNER_PK, purposes: ['hub.backup_key'] }, backup_key_line: BACKUP_KEY_LINE }),
     },

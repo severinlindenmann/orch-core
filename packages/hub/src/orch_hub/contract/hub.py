@@ -19,6 +19,7 @@ from .canon import CanonError, b64u, cj, loads_strict, unb64u, unhex
 from .labels import EVENT_TYPE, L, custodial_label
 from .market_policy import valid_policy
 from .org_bundles import valid_org_mcp, valid_org_skills
+from .org_secrets import valid_org_secrets
 
 HV = 0  # hub contract version (H0)
 CONTRACT_NAME = "orch.hub/0"
@@ -78,6 +79,31 @@ def device_id(dk_sig_pub: bytes) -> str:
 Check = Callable[[Any], bool]
 
 
+_BY = re.compile(r"^(person|agent):[A-Za-z0-9_-]{1,64}$")
+
+
+def space_item_body_ok(b: Any) -> bool:
+    """Mirror of orch.hubclient.wire.space_item_body_ok: ``{name, size, data, by}``, ``by`` required, optional
+    ``restored_from`` (an item id)."""
+    if type(b) is not dict or not {"name", "size", "data", "by"} <= set(b) <= {
+        "name",
+        "size",
+        "data",
+        "by",
+        "restored_from",
+    }:
+        return False
+    return (
+        type(b["name"]) is str
+        and type(b["size"]) is int
+        and b["size"] >= 0
+        and type(b["data"]) is str
+        and type(b["by"]) is str
+        and _BY.fullmatch(b["by"]) is not None
+        and ("restored_from" not in b or _hex16(b["restored_from"]))
+    )
+
+
 def _hex16(x: Any) -> bool:
     try:
         unhex(x, 16)
@@ -118,6 +144,19 @@ def _b64u_any(x: Any) -> bool:
 
 def _int_min(lo: int) -> Check:
     return lambda x: type(x) is int and x >= lo
+
+
+def _utc_day(x: Any) -> bool:
+    """A calendar day as ``YYYY-MM-DD`` (UTC), a real date."""
+    import datetime
+
+    if type(x) is not str or re.fullmatch(r"\d{4}-\d{2}-\d{2}", x) is None:
+        return False
+    try:
+        datetime.date.fromisoformat(x)
+    except ValueError:
+        return False
+    return True
 
 
 def _enum(*vals: Any) -> Check:
@@ -215,6 +254,15 @@ FIELDS: dict[str, dict[str, Check]] = {
         "servers": valid_org_mcp,
         "dev": _bool,
     },
+    "hub.org_secrets": {  # M3 (#1431): company secrets sealed (in the admin's browser) to one workspace's key
+        "hub_id": _hex16,
+        "op_cert_id": _hex16,
+        "workspace_id": _hex16,
+        "version": _int_min(1),
+        "issued_ms": _int_min(0),
+        "secrets": valid_org_secrets,
+        "dev": _bool,
+    },
     "hub.binding": {
         "workspace_id": _hex16,
         "wsk_pub": _pub,
@@ -290,7 +338,7 @@ FIELDS: dict[str, dict[str, Check]] = {
         "item_id": _hex16,
         "workspace_id": _hex16,
         "created_ms": _int_min(0),
-        "body": lambda x: type(x) is dict,
+        "body": lambda x: space_item_body_ok(x),
         "dev": _bool,
     },
     # p4 (§6.3): what a new channel key signs to prove possession at registration (signed by that key)
@@ -405,6 +453,7 @@ LABEL_OF_KIND = {
     "hub.snapshot": "sig_hub_snapshot",
     "hub.org_skills": "sig_hub_org_skills",
     "hub.mcp_servers": "sig_hub_mcp_servers",
+    "hub.org_secrets": "sig_hub_org_secrets",
     "hub.binding": "sig_hub_binding",
     "hub.unbound": "sig_hub_unbound",
     "hub.publish_approval": "sig_hub_publish_approval",
@@ -705,6 +754,19 @@ def verify_org_mcp(
 ) -> dict[str, Any]:
     """The same rules for ``hub.mcp_servers`` (M3 #1435): remote servers only, offered, never enabled."""
     return _verify_bundle("hub.mcp_servers", signed, held, workspace_id, dev_mode, pinned, revoked_op_certs)
+
+
+def verify_org_secrets(
+    signed: Any,
+    held: Mapping[str, Any],
+    *,
+    workspace_id: str,
+    dev_mode: bool,
+    pinned: Mapping[str, Any] | None,
+    revoked_op_certs: frozenset[str] = frozenset(),
+) -> dict[str, Any]:
+    """The same rules for ``hub.org_secrets`` (M3 #1431): the wraps of ONE workspace; the hub cannot open them."""
+    return _verify_bundle("hub.org_secrets", signed, held, workspace_id, dev_mode, pinned, revoked_op_certs)
 
 
 # --- UK: the custodial event ----------------------------------------------------------------------------------------
@@ -1422,8 +1484,19 @@ PROFILE_FIELDS: dict[str, Check] = {
 LINK_OPTIONAL: dict[str, frozenset[str]] = {"join": frozenset({"alias_users"}), "directory_get": frozenset({"query"})}
 LINK_OPS: dict[str, tuple[str, str | None, dict[str, Check]]] = {
     "snapshot_get": ("w2h", None, {}),
+    "hub_where": (
+        "w2h",
+        None,
+        {},
+    ),  # M4 (#1461, protocol 10.9): the addresses the hub advertises and its name (unsigned)
     "mcp_servers_get": ("w2h", None, {}),  # M3 (#1435): the signed hub.mcp_servers of the link's workspace
     "org_skills_get": ("w2h", None, {}),  # M3 (#1430): the signed hub.org_skills of the link's workspace
+    "org_secrets_get": ("w2h", None, {}),  # M3 (#1431): the signed hub.org_secrets of the link's workspace
+    "secret_use": (  # M3 (#1433): counts only: how often a secret was used on one UTC day ("YYYY-MM-DD"), bounded
+        "w2h",
+        None,
+        {"secret_id": _hex16, "day": _utc_day, "n": _int_min(0)},
+    ),
     "event_deliver": ("h2w", None, {"log": lambda x: type(x) is str, "event": lambda x: type(x) is dict}),
     "route_out": ("w2h", None, {"envelope": _b64u_any}),
     "route_in": ("h2w", None, {"envelope": _b64u_any}),

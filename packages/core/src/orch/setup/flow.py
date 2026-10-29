@@ -171,6 +171,7 @@ class SetupFlow:
         relay = self.e.relay()
         assert self.root is not None or not self.dir
         from . import facts
+        from .osfacts import _platform
 
         sug = (
             facts.suggest(dict(self.e.env), Path(self.dir))
@@ -205,6 +206,7 @@ class SetupFlow:
             "suggested": sug,
             "addons": [a.view() for a in self.addons.values()],
             "methods": list(METHODS),
+            "os": _platform(),  # the machine running setup: the page words things only for the OS they are true on
             "click_available": bool(click_ok),
             "click_reason": click_reason,
             "click_risk": CONVENIENCE_RISK,

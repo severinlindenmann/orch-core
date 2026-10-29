@@ -37,7 +37,9 @@ function clearOfSignBar(block: HTMLElement | null) {
 }
 
 export function HubStep({ ws, action, onClose, onChanged, onFailedChange, doneText }: HubStepProps) {
-  const click = useClickSign(ws)
+  // A join is only the first half: the host keeps the workspace's add-ons paused until the hub confirms, and reading the
+  // pages behind the dialog before that is refused (409). JoinFlow reads them once, after "Connected".
+  const click = useClickSign(ws, undefined, undefined, { refetchOnDone: action.action !== 'hub_join' })
   const field = useRef<HTMLInputElement>(null)
   const box = useRef<HTMLDivElement>(null)
   const started = useRef(false)

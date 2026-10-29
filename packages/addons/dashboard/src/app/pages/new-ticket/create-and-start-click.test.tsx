@@ -93,8 +93,11 @@ describe('the real click path', () => {
     await r.user.click(await within(sheet).findByRole('button', { name: 'More ways to create' }, T))
     await r.user.click(await screen.findByRole('menuitem', { name: 'Create without starting' }, T))
     const dialog = (await screen.findAllByRole('dialog', {}, T)).find((d) => d.hasAttribute('data-handoff-dialog'))!
-    expect(await within(dialog).findByText('Creates the ticket. No agent starts.', {}, T)).toBeInTheDocument()
-    expect(within(dialog).getByRole('button', { name: 'Sign and create ticket' })).toBeInTheDocument()
+    expect(await within(dialog).findByText('No agent starts. You can start one later.', {}, T)).toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: 'Create ticket' })).toBeInTheDocument()
+    // P09: the signing step is a centred dialog, not a small popover in the corner
+    expect(dialog.hasAttribute('data-sign-popover')).toBe(false)
+    expect(dialog.hasAttribute('data-sign-sheet')).toBe(true)
   })
 
   it('stopped at the agent access: the ticket exists, no second ticket can be made, nothing starts, the failure is marked', async () => {
@@ -210,7 +213,7 @@ it.each([null, 14, 15, 16])('one review with %s minutes access: only a grant nee
     } })
   }
   shown.view.op = needsGrant ? 'grant' : 'new'
-  shown.view.risk_lines = needsGrant ? [DEPOSIT_RISK, 'Agents can run as you for 8 hours'] : []
+  shown.view.risk_lines = needsGrant ? [DEPOSIT_RISK] : []
   vi.mocked(api.viewClick).mockResolvedValue(shown)
   s.sign.mockResolvedValue({ state: 'submitted', duplicate: false, key: 'DEMO-0044', deposit: 'confirmed' })
   s.start.mockResolvedValue({ run: { run: 'r_test' } as never })
@@ -226,7 +229,7 @@ it.each([null, 14, 15, 16])('one review with %s minutes access: only a grant nee
   expect(action).toMatchObject({ action: 'new_sequence', launch: { harness: expect.any(String), mode: expect.any(String) } })
   if (needsGrant) {
     expect(action).toHaveProperty('agent.hours', 168) // the workspace's access setting (#1555), here 168 h; the mocked signer's line below is its own
-    expect(panel).toHaveTextContent('Agents can run as you for 8 hours')
+    expect(panel).toHaveTextContent('standing authority')
     const button = screen.getByRole('button', { name: 'Sign and start agent' })
     expect(screen.queryByTestId('sign-arm-status')).not.toBeInTheDocument()
     expect(button).toBeDisabled()

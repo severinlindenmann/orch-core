@@ -1,4 +1,4 @@
-// Worktrees on a real host (H11d, host contract 12.7): one git worktree per ticket and repository. The list is
+// Work copies on a real host (H11d, host contract 12.7): one git worktree per ticket and repository. The list is
 // `worktree.list` (what the host's reader sees in each folder now); adding and removing are the host's own writes.
 import { useQuery } from '@tanstack/react-query'
 import { InfoDrawer } from '@/components/InfoDrawer'
@@ -60,7 +60,7 @@ function Row({ w, canRemove, onRemove, onTerminal }: { w: Worktree; canRemove: b
 }
 
 export function WorktreesPage() {
-  usePageHeader('Worktrees')
+  usePageHeader('Work copies')
   const { workspace } = useWorkspace()
   const ws = workspace?.id
   const terminal = useOpenTerminal(ws ?? '')
@@ -73,7 +73,7 @@ export function WorktreesPage() {
   if (!served || (list.data && !list.data.available)) {
     return (
       <div className="max-w-2xl space-y-2">
-        <h1 className="text-xl font-semibold tracking-tight">Worktrees</h1>
+        <h1 className="text-xl font-semibold tracking-tight">Work copies</h1>
         <p data-testid="worktrees-unavailable" className="text-[13px] text-text-muted">
           This host does not serve worktrees, so there is nothing to list here.
         </p>
@@ -86,7 +86,7 @@ export function WorktreesPage() {
   return (
     <div className="w-full max-w-4xl space-y-4">
       <div className="flex flex-wrap items-center gap-2">
-        <h1 className="text-xl font-semibold tracking-tight">Worktrees</h1>
+        <h1 className="text-xl font-semibold tracking-tight">Work copies</h1>
         {mayChange && (
           <Button size="sm" className="ml-auto" onClick={() => setAdding(true)}>
             Add worktree
@@ -105,7 +105,7 @@ export function WorktreesPage() {
           No ticket has its own worktree yet. Agents get one when they start work on a ticket, or you can add one.
         </p>
       ) : (
-        <ul aria-label="Worktrees" className="divide-y divide-border rounded-lg border border-border bg-surface px-3">
+        <ul aria-label="Work copies" className="divide-y divide-border rounded-lg border border-border bg-surface px-3">
           {rows.map((w) => (
             <Row key={`${w.ticket}/${w.repo}`} w={w} canRemove={mayChange} onRemove={() => setRemoving(w)} onTerminal={w.ticket && w.repo && STATE_TEXT[w.state].usable && mayChange && hasFeature('terminals_page', ws) ? () => void terminal.ask({ ticket: w.ticket!, cwd: { kind: 'worktree', repo: w.repo!, ticket: w.ticket! } }) : undefined} />
           ))}

@@ -23,6 +23,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from orch.privdir import others_can_write
+
 __all__ = [
     "CONFIG_SCHEMA",
     "KEYS_FILE",
@@ -184,7 +186,7 @@ def legacy_refusal_at(project: str | os.PathLike[str]) -> str:
 
 def is_private(st: os.stat_result) -> bool:
     """Owned by the current user and writable by no one else."""
-    return st.st_uid == os.getuid() and not st.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+    return st.st_uid == os.getuid() and not others_can_write(st, os.getuid())
 
 
 def check_single_store(*, legacy: bool, new: bool) -> None:

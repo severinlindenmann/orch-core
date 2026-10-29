@@ -95,7 +95,7 @@ export const SCENARIOS: TourScenario[] = [
     { title: 'Wiki', detail: 'Open a page, edit it, link it to a ticket.', go: { path: '/addon/wiki/pages' } },
     { title: 'Terminals', detail: 'Run `orch status`, `git log`, arrow-up history; an agent mirror is read-only.', go: { path: '/addon/terminals/sessions' } },
     { title: 'Estimate', detail: 'Estimate a card in its ticket panel; the Board column shows the sum.', go: { path: '/board' } },
-    { title: 'Worktrees', detail: 'Add a worktree, Remove is refused on a dirty one, Open terminal here.', go: { path: '/addon/worktrees/worktrees', dataset: 'busy' } },
+    { title: 'Work copies', detail: 'Add a work copy, Remove is refused on a dirty one, Open terminal here.', go: { path: '/addon/worktrees/worktrees', dataset: 'busy' } },
     { title: 'Quick tasks', detail: 'Add, close with proof, make a ticket, the outgrew decision.', go: { path: '/addon/quick/quick', dataset: 'busy' } },
     { title: 'Records', detail: 'Record changes, push twice (rejected: pull first), pull, push.', go: { path: '/addon/records/records', dataset: 'busy' } },
     { title: 'Activity', detail: 'Filters and Show older.', go: { path: '/addon/activity/activity', dataset: 'busy' } },
@@ -141,7 +141,7 @@ export const SCENARIOS: TourScenario[] = [
     { title: 'Schedules', detail: 'Schedules | Runs; the finding above the tabs.', go: { path: '/addon/schedules/schedules', dataset: 'busy' } },
     { title: 'AI Factory', detail: 'The folded “n permits waiting · Review” row above the tabs; expand it to answer.', go: { path: '/addon/factory/factory', dataset: 'busy' } },
     { title: 'Quick tasks', detail: 'Active | Completed.', go: { path: '/addon/quick/quick', dataset: 'busy' } },
-    { title: 'Worktrees', detail: 'Filters, then Add worktree.', go: { path: '/addon/worktrees/worktrees', dataset: 'busy' } },
+    { title: 'Work copies', detail: 'Filters, then Add work copy.', go: { path: '/addon/worktrees/worktrees', dataset: 'busy' } },
   ]),
   S(13, 'Widgets', 'Every widget type, and widgets inside tickets.', [
     { title: 'Widgets gallery', detail: 'Core types and templates, each with its source.', go: { path: '/addon/widgets/widgets' } },

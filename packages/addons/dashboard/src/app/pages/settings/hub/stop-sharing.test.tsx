@@ -7,8 +7,10 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import { api } from '@/api/client'
 import { ApiError } from '@/api/types'
-import type { HubPreview, HubRule } from '@/api/hub'
+import type { HubPreview, HubRule, HubShare } from '@/api/hub'
+type HubShareRow = HubShare['rules'][number]
 import * as gesture from '@/components/sign/trustedPress'
+import { toast } from 'sonner'
 import { ShareRules } from './ShareRules'
 import { StopSharing } from './StopSharing'
 
@@ -43,21 +45,30 @@ const trusted = () => vi.spyOn(gesture, 'trustedPress').mockReturnValue(true)
 async function ticketReview() {
   mount(<StopSharing ws={WS.id} workspace={WS} ticket="DEMO-0043" onClose={() => {}} />)
   const dialog = await screen.findByRole('dialog', { name: 'Stop sharing this ticket' })
-  await within(dialog).findByTestId('hub-revoke-what')
+  await waitFor(() => expect(within(dialog).getByTestId('hub-revoke-ticket')).toHaveTextContent('Export report as PDF'))
   return { dialog, button: within(dialog).getByTestId('hub-revoke-stop') }
 }
 
 describe('stop sharing one ticket', () => {
-  it('the review shows the ticket, what stops, the workspace prefix and short id, and the caveat; nothing to type', async () => {
+  it('the review is one sentence and the caveat; counts, workspace and "not signed" are behind Details', async () => {
     const { dialog } = await ticketReview()
     expect(within(dialog).getByTestId('hub-revoke-ticket')).toHaveTextContent('Ticket DEMO-0043 · Export report as PDF')
-    expect(within(dialog).getByTestId('hub-revoke-what')).toHaveTextContent('(1 item)')
-    expect(within(dialog).getByTestId('hub-revoke-what')).toHaveTextContent('2 items shared now · 1 after this')
-    const line = within(dialog).getByTestId('hub-review-workspace')
-    expect(line).toHaveTextContent('Workspace DEMO · 5555abcd · billing')
     expect(within(dialog).getByText(/cannot be taken back/)).toBeTruthy()
+    expect(dialog.textContent).not.toMatch(/shared now|not signed|Workspace DEMO/)
     expect(within(dialog).queryByRole('textbox')).toBeNull()
     expect(dialog.textContent).not.toMatch(/orch |terminal|backup key|type the/i)
+    fireEvent.click(within(dialog).getByTestId('hub-revoke-details'))
+    expect(within(dialog).getByTestId('hub-revoke-what')).toHaveTextContent('Stops being shared: 1 item.')
+    expect(within(dialog).getByTestId('hub-revoke-what')).toHaveTextContent('2 items shared now · 1 after this')
+    expect(within(dialog).getByTestId('hub-review-workspace')).toHaveTextContent('Workspace DEMO · 5555abcd · billing')
+  })
+
+  it('a single item reads "1 item", never "1 items"', async () => {
+    vi.spyOn(api, 'getHubPreview').mockImplementation(async () => ({ ...NOW, count: 1, items: [NOW.items[0]] }))
+    const { dialog } = await ticketReview()
+    fireEvent.click(within(dialog).getByTestId('hub-revoke-details'))
+    expect(within(dialog).getByTestId('hub-revoke-what')).toHaveTextContent('1 item shared now · 0 after this')
+    expect(dialog.textContent).not.toMatch(/1 items/)
   })
 
   it('the confirm button is disabled until the preview has loaded', async () => {
@@ -70,42 +81,39 @@ describe('stop sharing one ticket', () => {
     await waitFor(() => expect(within(dialog).getByTestId('hub-revoke-stop')).toBeEnabled())
   })
 
-  it('one trusted click stops sharing once; the footer then says Done and closes the dialog', async () => {
+  it('one trusted click stops sharing once, closes the dialog and says "Stopped sharing" with the title', async () => {
     trusted()
+    const ok = vi.spyOn(toast, 'success')
     const onClose = vi.fn()
     mount(<StopSharing ws={WS.id} workspace={WS} ticket="DEMO-0043" onClose={onClose} />)
     const dialog = await screen.findByRole('dialog', { name: 'Stop sharing this ticket' })
     const button = await within(dialog).findByTestId('hub-revoke-stop')
     await waitFor(() => expect(button).toBeEnabled())
+    await waitFor(() => expect(within(dialog).getByTestId('hub-revoke-ticket')).toHaveTextContent('Export report as PDF'))
     expect(within(dialog).getByTestId('hub-flow-cancel')).toHaveTextContent('Keep sharing')
-    fireEvent.click(button)
-    fireEvent.click(button)
-    expect(revoke).toHaveBeenCalledTimes(1)
-    expect(revoke).toHaveBeenCalledWith(WS.id, 'DEMO-0043')
-    expect(await within(dialog).findByTestId('hub-revoke-stop-done')).toHaveTextContent('Stopped.')
-    expect(within(dialog).queryByTestId('hub-revoke-stop')).toBeNull()
-    const done = within(dialog).getByTestId('hub-flow-cancel')
-    expect(done).toHaveTextContent('Done')
-    fireEvent.click(done)
-    expect(onClose).toHaveBeenCalled()
-  })
-
-  it('after the stop the dialog keeps the ticket title and shows only the result, no counts', async () => {
-    trusted()
-    const { dialog, button } = await ticketReview()
-    const title = within(dialog).getByTestId('hub-revoke-ticket').textContent
-    expect(title).toMatch(/DEMO-0043 · /)
     vi.spyOn(api, 'getHubPreview').mockImplementation(async () => ({ ...NOW, count: 1, items: [NOW.items[1]] })) // the refresh: the ticket is gone
     fireEvent.click(button)
-    expect(await within(dialog).findByTestId('hub-revoke-stop-done')).toBeTruthy()
-    await waitFor(() => expect(within(dialog).queryByTestId('hub-revoke-what')).toBeNull())
-    expect(within(dialog).getByTestId('hub-revoke-ticket').textContent).toBe(title)
-    expect(dialog.textContent).not.toMatch(/\(0 item\)|shared now/)
+    fireEvent.click(button)
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1))
+    expect(revoke).toHaveBeenCalledTimes(1)
+    expect(revoke).toHaveBeenCalledWith(WS.id, 'DEMO-0043')
+    expect(ok).toHaveBeenCalledWith('Stopped sharing “Export report as PDF”', { description: 'The hub has been asked to delete its copy.' })
+  })
+
+  it('when the hub could not be told the message says so', async () => {
+    trusted()
+    revoke.mockResolvedValue({ synced: false, pending: null, revoked: 1 })
+    const ok = vi.spyOn(toast, 'success')
+    const { button } = await ticketReview()
+    await waitFor(() => expect(button).toBeEnabled())
+    fireEvent.click(button)
+    await waitFor(() => expect(ok).toHaveBeenCalled())
+    expect(ok.mock.calls[0][1]).toEqual({ description: 'Stopped here. The hub is told as soon as it can be reached.' })
   })
 
   it('says the ticket stays unshared even if a rule matches; never "may share it again"', async () => {
     const { dialog } = await ticketReview()
-    expect(dialog.textContent).toContain('It stays unshared even if a rule matches it, until you share it again.')
+    expect(dialog.textContent).toContain('Rules that match it will not share it again.')
     expect(dialog.textContent).not.toMatch(/may share it again/)
   })
 
@@ -124,6 +132,7 @@ describe('stop sharing one ticket', () => {
     await waitFor(() => expect(button).toBeEnabled())
     fireEvent.click(button)
     expect(await within(dialog).findByRole('alert')).toHaveTextContent('Sign in fully on this computer to stop sharing.')
+    expect(within(dialog).getByTestId('hub-revoke-stop')).toBeEnabled() // the dialog stays open to try again
   })
 })
 
@@ -135,6 +144,18 @@ async function ruleReview() {
   await within(dialog).findByTestId('hub-rule-review-what')
   return { dialog, button: within(dialog).getByTestId('hub-rule-stop') }
 }
+
+describe('a review over the host limits', () => {
+  it('says the host\'s plain sentence even when the message carries a prefix', async () => {
+    const user = userEvent.setup()
+    vi.spyOn(api, 'getHubPreview').mockRejectedValue(new ApiError(400, { code: 'invalid.input', message: 'share.preview: This rule reaches too many people. Narrow it to share.', retryable: false }))
+    mount(<ShareRules ws={WS.id} workspace={WS} onBack={() => {}} />)
+    await user.click(await screen.findByTestId('hub-rule-add'))
+    await user.type(screen.getByTestId('hub-rule-value'), 'team')
+    expect(await screen.findByRole('alert')).toHaveTextContent('This rule reaches too many people. Narrow it to share.')
+    expect(screen.getByRole('alert').textContent).not.toMatch(/share\.preview/)
+  })
+})
 
 describe('the shared list', () => {
   it('shows the ticket title, one Stop sharing per ticket, no "Shared ticket 1"', async () => {
@@ -165,24 +186,26 @@ describe('stop sharing by a rule', () => {
     const { dialog } = await ruleReview()
     expect(within(dialog).getByTestId('hub-rule-review-rule')).toHaveTextContent('Rule: type · feature')
     const what = within(dialog).getByTestId('hub-rule-review-what')
-    expect(what).toHaveTextContent('1 no longer shared · 1 items shared after this')
+    expect(what).toHaveTextContent('1 item stops being shared.')
     expect(what).toHaveTextContent('ticket DEMO-0043: Export report as PDF')
     expect(what).not.toHaveTextContent('DEMO-0045')
+    fireEvent.click(within(dialog).getByTestId('hub-rule-details'))
     expect(within(dialog).getByTestId('hub-review-workspace')).toHaveTextContent('Workspace DEMO · 5555abcd · billing')
+    expect(dialog.textContent).toContain('1 item shared after this. Preview from the hub, not signed.')
     expect(within(dialog).getByText(/cannot be taken back/)).toBeTruthy()
     expect(dialog.textContent).not.toMatch(/orch |terminal|One click is not ready/i)
   })
 
-  it('one trusted click removes the rule once, bound to the plan that was shown, and the footer says Done', async () => {
+  it('one trusted click removes the rule once, bound to the plan that was shown; the dialog closes with a message', async () => {
     trusted()
-    const { dialog, button } = await ruleReview()
+    const ok = vi.spyOn(toast, 'success')
+    const { button } = await ruleReview()
     await waitFor(() => expect(button).toBeEnabled())
-    expect(within(dialog).getByTestId('hub-flow-cancel')).toHaveTextContent('Keep sharing')
     fireEvent.click(button)
-    await within(dialog).findByTestId('hub-rule-stop-done')
-    expect(within(dialog).getByTestId('hub-flow-cancel')).toHaveTextContent('Done')
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Review sharing change' })).toBeNull())
     expect(removeRule).toHaveBeenCalledTimes(1)
     expect(removeRule).toHaveBeenCalledWith(WS.id, RULE, 'C'.repeat(43))
+    expect(ok).toHaveBeenCalledWith('Stopped sharing feature tickets', { description: 'The hub has been asked to delete its copy.' })
   })
 
   it('the confirm is disabled until the preview plan exists; a synthetic click removes nothing', async () => {
@@ -244,6 +267,7 @@ describe('stop sharing by a rule', () => {
   it('adding a rule: the review is the host\'s words, only new items, one trusted press, no terminal, no typed word', async () => {
     const user = userEvent.setup()
     const add = vi.spyOn(api, 'addHubRule').mockResolvedValue({ synced: true, pending: null, put: 1 })
+    const ok = vi.spyOn(toast, 'success')
     vi.spyOn(api, 'getHubPreview').mockImplementation(async () => ({
       ...NOW, new: 1, plan: 'N'.repeat(43),
       review: { hub_id: 'ab12cd34ef56ab12', readers: { people: ['Ben Test'], teams: [], note: 'from the hub, not signed', info: 'Team membership is managed by the hub admin.' }, widened: [{ line: 'ticket DEMO-0001: Old', people_added: ['Ana'], teams_added: [], description_added: false }], new_count: 1, new_more: 0,
@@ -280,8 +304,9 @@ describe('stop sharing by a rule', () => {
     press.mockReturnValue(true)
     fireEvent.click(within(dialog).getByTestId('hub-add-go'))
     await waitFor(() => expect(add).toHaveBeenCalledWith(WS.id, { kind: 'type', value: 'team', audience: { users: ['b'.repeat(32)], groups: [] }, description: true }, 'N'.repeat(43)))
-    expect(await within(dialog).findByTestId('hub-add-done')).toHaveTextContent('Shared.')
-    expect(within(dialog).getByTestId('hub-flow-cancel')).toHaveTextContent('Done')
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Review sharing change' })).toBeNull())
+    expect(ok).toHaveBeenCalledWith('Shared 1 item with the hub.', { description: undefined })
+    expect(screen.queryByTestId('hub-rule-value')).toBeNull() // the form is reset
   })
 
   it('a long review shows the first names and "and N more", the whole list behind the i, and nothing is cut', async () => {
@@ -334,5 +359,48 @@ describe('stop sharing by a rule', () => {
     const dialog = await screen.findByRole('dialog', { name: 'Review sharing change' })
     expect(within(dialog).getByTestId('hub-add-unsupported')).toBeTruthy()
     expect(within(dialog).queryByTestId('hub-add-go')).toBeNull()
+  })
+})
+
+describe('run 9 (J03): a one-ticket rule shared with its description', () => {
+  const STORED: HubRule = { kind: 'ticket', value: 'PW-0001', audience: { users: ['a'.repeat(32)], groups: [] }, description: true }
+  const ROW = { kind: 'ticket' as const, value: 'PW-0001', count: 1, describes: 'the ticket', readers: 1, audience: STORED.audience, description: true }
+  const share = (rules: HubShareRow[]) => vi.spyOn(api, 'getHubShare').mockResolvedValue({ available: true, shared: 1, refused: [], tickets: ['PW-0001'], tickets_complete: true, rules })
+  beforeEach(() => {
+    share([ROW])
+    vi.spyOn(api, 'listTickets').mockResolvedValue([{ key: 'PW-0001', title: 'Invoice export for Ben', type: 'feature', labels: ['billing'] }] as unknown as Awaited<ReturnType<typeof api.listTickets>>)
+  })
+
+  it('keeps the ticket row when a kind or label rule shares the ticket too', async () => {
+    for (const other of [{ kind: 'type' as const, value: 'feature' }, { kind: 'tag' as const, value: 'billing' }]) {
+      share([ROW, { ...other, count: 1, describes: 'x' }])
+      mount(<ShareRules ws={WS.id} workspace={WS} onBack={() => {}} />)
+      const list = await screen.findByTestId('hub-ticket-list')
+      expect(within(list).getAllByRole('listitem')).toHaveLength(1)
+      cleanup()
+    }
+  })
+
+  it('a row whose readers could not be read back cannot be stopped (never sent as a bare rule)', async () => {
+    share([{ ...ROW, audience: null, removable: false }])
+    mount(<ShareRules ws={WS.id} workspace={WS} onBack={() => {}} />)
+    expect(await screen.findByTestId('hub-rule-remove-0')).toBeDisabled()
+    expect(screen.getByTestId('hub-rule-unreadable-0')).toHaveTextContent('Could not read who sees this rule')
+    expect(removeRule).not.toHaveBeenCalled()
+    expect(within(await screen.findByTestId('hub-ticket-list')).getByTestId('hub-ticket-revoke-0')).toBeEnabled()  // the ticket stays stoppable
+  })
+
+  it('is listed once, and Stop sharing previews and removes the rule exactly as stored', async () => {
+    trusted()
+    const { dialog, button } = await ruleReview()
+    expect(screen.queryByTestId('hub-ticket-list')).toBeNull()
+    expect(screen.getAllByRole('button', { name: 'Stop sharing' })).toHaveLength(1)
+    expect(api.getHubPreview).toHaveBeenCalledWith(WS.id, { remove: STORED })
+    await waitFor(() => expect(button).toBeEnabled())
+    const ok = vi.spyOn(toast, 'success')
+    fireEvent.click(button)
+    await waitFor(() => expect(removeRule).toHaveBeenCalledWith(WS.id, STORED, 'C'.repeat(43)))
+    await waitFor(() => expect(ok).toHaveBeenCalled())  // r7-P08: the dialog closes with a "Stopped sharing" toast
+    void dialog
   })
 })

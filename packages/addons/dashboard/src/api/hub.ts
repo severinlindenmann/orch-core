@@ -30,9 +30,19 @@ export interface HubStatus {
   hub_card?: string | null
 }
 
+/** Who besides the owner may read the shared tickets on the hub: hub user ids and team names. */
+export interface HubAudience { users: string[]; groups: string[] }
+
 export type HubRule =
   | { kind: 'needs_you' | 'questions'; value: null }
-  | { kind: 'type' | 'tag' | 'ticket'; value: string }
+  | { kind: 'type' | 'tag' | 'ticket'; value: string; audience?: HubAudience; description?: boolean }
+
+/** `GET /api/w/<ws>/hub/share/audience`: the hub's people and teams to choose from. From the hub, not signed. */
+export interface HubAudienceList {
+  people: { user_id: string; name: string }[]
+  teams: { group: string; members: number }[]
+  note: string
+}
 
 export interface HubRuleRow {
   kind: HubRule['kind']
@@ -40,6 +50,10 @@ export interface HubRuleRow {
   /** Items the rule matches now. */
   count: number
   describes: string | null
+  /** People and teams besides you who can read what the rule shares (0: only you). */
+  readers?: number
+  /** The ticket description is shared too. */
+  description?: boolean
 }
 
 /** `GET /api/w/<ws>/hub/share`. */
@@ -71,8 +85,10 @@ export interface HubPreview {
 /** From the host's `share.preview`: every word of the review of an adding change; the page adds none. */
 export interface HubShareReview {
   hub_id: string | null
-  audience: { read: number; edit: number; admin: number } | null
-  audience_note: string | null
+  /** Who can read the new items on the hub, by name (from the hub, not signed). */
+  readers: { people: string[]; teams: string[]; note: string | null }
+  /** Items already shared that this change makes reach more people or carry their description. */
+  widened: { line: string; people_added: string[]; teams_added: string[]; description_added: boolean }[]
   new_count: number
   new_more: number
   new_items: string[]
@@ -102,6 +118,7 @@ export const hubServed = (ws: string | undefined): boolean => hasFeature('hub', 
 
 export const hubQueries = {
   status: (ws: string) => queryOptions({ queryKey: ['hub', ws, 'status'], queryFn: () => api.getHubStatus(ws), staleTime: 15_000, retry: false }),
+  audience: (ws: string) => queryOptions({ queryKey: ['hub', ws, 'audience'], queryFn: () => api.getHubAudience(ws), staleTime: 60_000, retry: false }),
   share: (ws: string) => queryOptions({ queryKey: ['hub', ws, 'share'], queryFn: () => api.getHubShare(ws), retry: false }),
 }
 

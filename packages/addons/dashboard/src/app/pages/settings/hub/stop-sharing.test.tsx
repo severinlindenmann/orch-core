@@ -187,17 +187,19 @@ describe('stop sharing by a rule', () => {
     const add = vi.spyOn(api, 'addHubRule').mockResolvedValue({ synced: true, pending: null, put: 1 })
     vi.spyOn(api, 'getHubPreview').mockImplementation(async () => ({
       ...NOW, new: 1, plan: 'N'.repeat(43),
-      review: { hub_id: 'ab12cd34ef56ab12', audience: { read: 3, edit: 1, admin: 1 }, audience_note: 'from the hub, not signed', new_count: 1, new_more: 0,
+      review: { hub_id: 'ab12cd34ef56ab12', readers: { people: ['Ben Test'], teams: [], note: 'from the hub, not signed' }, widened: [], new_count: 1, new_more: 0,
         new_items: ['ticket DEMO-0050: Later public note'], leaves: ['the ticket title, status, labels and deadline'],
         later_edits: 'Later edits to these tickets are shared too, until you stop sharing them.' },
     }))
     mount(<ShareRules ws={WS.id} workspace={WS} onBack={() => {}} />)
     await user.click(await screen.findByTestId('hub-rule-add'))
     await user.type(screen.getByTestId('hub-rule-value'), 'team')
+    await user.click(await screen.findByTestId('hub-rule-person-' + 'b'.repeat(32))) // Ben Test, from the hub
+    expect(screen.getByTestId('hub-rule-description')).toBeChecked() // the description goes along unless unticked
     await waitFor(() => expect(screen.getByTestId('hub-share-review')).toBeEnabled())
     await user.click(screen.getByTestId('hub-share-review'))
     const dialog = await screen.findByRole('dialog', { name: 'Review sharing change' })
-    expect(within(dialog).getByTestId('hub-add-audience')).toHaveTextContent('3 read, 1 edit, 1 admin (from the hub, not signed)')
+    expect(within(dialog).getByTestId('hub-add-audience')).toHaveTextContent('Can read it on the hub: Ben Test (from the hub, not signed)')
     expect(within(dialog).getByTestId('hub-add-new')).toHaveTextContent('1 new item leaves')
     expect(within(dialog).getByTestId('hub-add-later')).toHaveTextContent('Later edits to these tickets are shared too')
     expect(within(dialog).queryByTestId('hub-add-list')).toBeNull() // the list is behind one small click
@@ -211,7 +213,7 @@ describe('stop sharing by a rule', () => {
     expect(add).not.toHaveBeenCalled()
     press.mockReturnValue(true)
     fireEvent.click(within(dialog).getByTestId('hub-add-go'))
-    await waitFor(() => expect(add).toHaveBeenCalledWith(WS.id, { kind: 'type', value: 'team' }, 'N'.repeat(43)))
+    await waitFor(() => expect(add).toHaveBeenCalledWith(WS.id, { kind: 'type', value: 'team', audience: { users: ['b'.repeat(32)], groups: [] }, description: true }, 'N'.repeat(43)))
     expect(await within(dialog).findByTestId('hub-add-done')).toHaveTextContent('Shared.')
   })
 

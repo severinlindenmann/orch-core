@@ -7,6 +7,7 @@ import { trustedPress } from '@/components/sign/trustedPress'
 import { WorkspaceLine } from '@/components/sign/WorkspaceLine'
 import { Raw } from '@/components/sign/visible'
 import { Button } from '@/components/ui/button'
+import { InfoDrawer } from '@/components/InfoDrawer'
 import { caveat } from './shared'
 import type { HubWorkspace } from './StopSharing'
 
@@ -22,6 +23,13 @@ function refusal(e: unknown): string {
   if (code === 'host.busy') return 'Too many sharing changes. Wait a minute, then try again.'
   if (code === 'invalid.input') return 'What would be shared changed meanwhile. Close this and look again.'
   return 'Could not share. Try again.'
+}
+
+/** "Ben Test and team finance can read it" / "Only you": names from the hub, not signed (the host words the list). */
+function who(r: { people: string[]; teams: string[]; note: string | null }): React.ReactNode {
+  const names = [...r.people, ...r.teams.map(t => 'team ' + t)]
+  if (!names.length) return 'Only you can read it.'
+  return <>Can read it on the hub: <Raw>{names.join(', ')}</Raw>{r.note ? ` (${r.note})` : ''}</>
 }
 
 export function AddRuleReview({ ws, workspace, rule, after }: { ws: string; workspace: HubWorkspace; rule: HubRule; after: HubPreview | undefined }) {
@@ -43,12 +51,11 @@ export function AddRuleReview({ ws, workspace, rule, after }: { ws: string; work
     ).finally(() => setBusy(false))
   }
   return <div className="space-y-2" data-testid="hub-add-review">
-    <p data-testid="hub-add-rule">Rule: <Raw>{rule.kind}</Raw>{rule.value !== null && <> · <Raw>{rule.value}</Raw></>}</p>
+    <p data-testid="hub-add-rule">Tickets: <Raw>{rule.kind}</Raw>{rule.value !== null && <> · <Raw>{rule.value}</Raw></>}{rule.value !== null && rule.description ? ' · with description' : ''}</p>
     <WorkspaceLine workspace={{ id: workspace.id, name: workspace.name, prefix: workspace.prefix }} many testId="hub-review-workspace" />
-    <p data-testid="hub-add-hub">Hub: <Raw>{review.hub_id ?? 'unknown'}</Raw></p>
-    {review.audience && <p data-testid="hub-add-audience">
-      Who can see it there: {review.audience.read} read, {review.audience.edit} edit, {review.audience.admin} admin{review.audience_note ? ` (${review.audience_note})` : ''}
-    </p>}
+    <p data-testid="hub-add-audience">{who(review.readers)}</p>
+    {review.widened.map((w, i) => <p key={i} data-testid="hub-add-widened" className="text-warning">Reaches more now: <Raw>{w.line.replace(/^ticket [^:]+:\s*/, '')}</Raw>{w.people_added.length + w.teams_added.length > 0 && <> · adds <Raw>{[...w.people_added, ...w.teams_added.map(t => 'team ' + t)].join(', ')}</Raw></>}{w.description_added && ' · now with its description'}</p>)}
+    <InfoDrawer testId="hub-add-details"><p data-testid="hub-add-hub">Hub: <Raw>{review.hub_id ?? 'unknown'}</Raw></p>{after.plan && <p>Plan: <Raw>{after.plan}</Raw></p>}</InfoDrawer>
     <p data-testid="hub-add-new">{review.new_count} new {review.new_count === 1 ? 'item leaves' : 'items leave'} this computer.</p>
     {review.leaves.map((t, i) => <p key={i} data-testid="hub-add-leaves">What leaves: <Raw>{t}</Raw></p>)}
     {review.later_edits && <p data-testid="hub-add-later">{review.later_edits}</p>}

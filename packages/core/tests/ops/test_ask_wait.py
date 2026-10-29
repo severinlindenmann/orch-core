@@ -141,7 +141,14 @@ def test_wait_does_not_return_old_decisions(ws, cli):
     q = asked(ws, cli)
     ws.sign("1", "question.answered", question="Q1", hash=q.hash, option="a")
     assert cli("wait", "--timeout", "1").first.endswith("answered cursor=4")
-    assert cli("wait", "--timeout", "1").first.endswith("timeout cursor=4")  # the cursor moved past it
+    fill_requirements(cli)  # nothing open for a person otherwise: the wait would refuse (wait.incomplete)
+    assert " timeout cursor=" in cli("wait", "--timeout", "1").first  # the cursor moved past it
+
+
+def fill_requirements(cli):
+    for name in ("context", "requirements", "out_of_scope"):
+        cli("section", "set", name, "-m", name)
+    cli("ac", "add", "it works")
 
 
 def make_ready(ws, cli):
@@ -249,3 +256,39 @@ def test_wait_never_returns_its_own_events(ws, cli, n):
     asked(ws, cli)
     cli("log", "my own note")
     assert cli("wait", "--timeout", "1").first.endswith("timeout cursor=4")
+
+
+# ----------------------------------------------------------------------------- run-10 J04: wait on an unfinished gate
+
+
+def test_wait_on_a_gate_that_lacks_items_refuses_at_once_with_what_to_fill(ws, cli):
+    claimed(cli)
+    cli("section", "set", "context", "-m", "ctx")
+    cli("section", "set", "requirements", "-m", "req")
+    cli("ac", "add", "it works")
+    t = time.monotonic()
+    r = cli.j("wait", "--timeout", "30")
+    assert (r.code, r.err_code) == (5, "wait.incomplete") and time.monotonic() - t < 5
+    msg = r.doc["error"]["message"]
+    assert "missing: out_of_scope" in msg and "orch section set out_of_scope -m TEXT" in msg and "then wait" in msg
+    assert r.doc["error"]["hint"].startswith("orch section set out_of_scope -m TEXT")
+    cli("section", "set", "out_of_scope", "-m", "nothing")
+    r = cli.j("wait", "--timeout", "1")  # complete: it waits for the person's approval
+    assert r.code == 0 and r.data["kind"] == "timeout", r.doc
+
+
+def test_wait_with_an_open_question_still_waits_although_a_gate_lacks_items(ws, cli):
+    asked(ws, cli)
+    assert cli.j("wait", "--timeout", "1").data["kind"] == "timeout"
+
+
+def test_wait_hands_over_a_pending_decision_before_any_refusal(ws, cli):
+    claimed(cli)
+    cli("section", "set", "context", "-m", "c")
+    cli("show", "1")
+    ws.store = ws.other()
+    g = ws.store.ticket(ws.uid("1")).gates["requirements"]
+    ws.sign("1", "gate.changes_requested", gate="requirements", gate_gen=g.gen, hash=g.hash,
+            policy_hash=g.policy_hash, text="more")  # fmt: skip
+    r = cli("wait", "--timeout", "5")
+    assert r.code == 3 and "changes_requested" in r.first

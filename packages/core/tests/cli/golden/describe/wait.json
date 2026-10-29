@@ -67,6 +67,16 @@
         ]
       },
       {
+        "code": "wait.incomplete",
+        "exit": 5,
+        "retryable": false,
+        "hint": "fill what is missing, then orch wait",
+        "fix": [
+          "orch",
+          "show"
+        ]
+      },
+      {
         "code": "wait.timeout",
         "exit": 7,
         "retryable": true,

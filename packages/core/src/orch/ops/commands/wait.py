@@ -4,12 +4,13 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from orch.model.claims import in_family
 from orch.ops._dsl import REF_PATTERN, B, I, S, err, operation
 from orch.ops.base import Context, Result
 from orch.ops.decisions import decision
 from orch.ops.errors import OrchError
 from orch.ops.runtime import Call
-from orch.ops.views import fence
+from orch.ops.views import fence, gap_commands, open_gates, open_questions
 
 POLL = (0.1, 0.25, 0.5, 1.0)  # seconds between looks at the log, growing
 
@@ -23,6 +24,37 @@ HINT = {
 }
 
 
+def unfinished(c: Call, view: Any) -> OrchError | None:
+    """Run-10 J04: the refusal for a wait nobody can answer. The caller's session holds the claim, nothing else is
+    open for a person (no open blocking question, not testing/done/closed) and the first open gate still lacks items:
+    the person cannot approve anything (the plan is approved after the requirements), so the wait would never end.
+    The message names each missing item and the command that fills it (views.gap_commands); an artifact has no
+    one-line command: ``orch show``."""
+    session = getattr(c.ctx, "session", None)
+    if view.status in ("testing", "done", "closed") or any(q.blocking for q in open_questions(view)):
+        return None
+    if view.claim is None or not session or not in_family(session, view.claim.session):
+        return None
+    gates = open_gates(view)
+    if not gates or not view.gates[gates[0]].missing:
+        return None  # the first open gate is complete: the person can approve it (the plan only after requirements)
+    parts: list[str] = []
+    first: str | None = None
+    for g in gates:
+        cmds = dict(gap_commands(view, g))
+        for m in view.gates[g].missing:
+            if m in cmds:
+                parts.append(f"{m} - fill it ({cmds[m]})")
+                first = first or cmds[m]
+            else:
+                parts.append(f"{m} - add it (orch show)")
+    if not parts:
+        return None
+    hint = f"{first or 'orch show'}, then orch wait"
+    msg = f"missing: {'; '.join(parts)}, then wait: a person can approve only a complete {view.key}"
+    return OrchError("wait.incomplete", msg, hint=hint)
+
+
 class Parked(Exception):  # noqa: N818 - a signal, not an error
     """Host mode: no decision yet; the host parks the request on its bus and calls again (``Step``)."""
 
@@ -34,6 +66,7 @@ class Step:
 
     after: int | None = None
     log: str | None = None
+    key: str | None = None  # the ticket key (the host's "agent waits" record matches a run by it)
     expired: bool = False
     notes: list[str] = field(default_factory=list)  # the first look's observe notes, for the answer
 
@@ -46,6 +79,7 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     c = Call.of(ctx, "wait")
     view = c.resolve(args.get("ref"), live_only=False)  # a done ticket ended the claim, not the wait
     step: Step | None = getattr(ctx, "wait_step", None)
+    first_look = step is None or step.after is None  # hosted: only the first look may refuse
     if step is None or step.after is None:  # hosted: the first look only (git reader work), as P1 does once per call
         problems: list[str] = []
         c.ctx.caps.git.observe(c.store, view.uid, problems)
@@ -63,7 +97,7 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
             c.notes.update(view.uid, now=c.now, first_decided=start)
         after = start if note["decided"] is None else note["decided"]
     if step is not None:
-        step.after, step.log = after, view.uid
+        step.after, step.log, step.key = after, view.uid, view.key
     deadline = time.monotonic() + args.get("timeout", 540)
     pause = iter(POLL)
     wait = POLL[0]
@@ -78,6 +112,11 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
             data = {**fields, "cursor": e["seq"], "next": hints[0]}
             lines = notes_ + (fence(fields["text"], "decision text") if fields.get("text") else [])
             return Result(data=data, key=view.key, seq=e["seq"], cursor=e["seq"], hints=hints, lines=lines, exit=code)
+        if first_look:  # no decision to hand over: refuse a wait on a gate that lacks items (nobody can approve it)
+            first_look = False
+            refused = unfinished(c, view)
+            if refused is not None:
+                raise refused
         if step is not None:  # hosted: never sleep on the worker thread; the host wakes us on the next entry
             if not step.expired:
                 raise Parked
@@ -109,6 +148,6 @@ OP = operation(
     pre=("ticket_exists", "ticket_visible"),
     text="ok {key} {kind} cursor={cursor}\nnext: {next}",
     output_ref="https://schemas.orch.dev/v2/wait-result",
-    errors=(err("wait.timeout"), err("not_found"), err("ambiguous_ref")),
+    errors=(err("wait.timeout"), err("wait.incomplete"), err("not_found"), err("ambiguous_ref")),
     handler=handle,
 )

@@ -495,6 +495,16 @@ _SPECS = [
         "The arguments parse but do not match the operation's input schema.",
     ),
     _e(
+        "wait.incomplete",
+        5,
+        False,
+        "the gate still lacks items: nobody can approve it yet",
+        "fill what is missing, then orch wait",
+        ["orch", "show"],
+        "orch wait on a ticket whose open gate (requirements or plan) still lacks items, with nothing else open for a "
+        "person: the wait could never end. The message names each missing item and the command that fills it.",
+    ),
+    _e(
         "ac.evidence_missing",
         5,
         False,

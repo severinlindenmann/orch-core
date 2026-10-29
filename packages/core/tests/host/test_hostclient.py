@@ -355,6 +355,9 @@ def test_wait_is_one_request_parked_on_the_host_bus(lab):
         c = hcli(lab)
         c("new", "A")
         c("claim", "1")
+        r = c.j("wait", "--timeout", "30")  # run-10 J04: nothing a person can approve yet: refused at once
+        assert (r.code, r.err_code) == (5, "wait.incomplete") and "missing: context" in r.doc["error"]["message"]
+        c("ask", "Which?")  # something open for a person: the wait waits (else wait.incomplete)
         r = c.j("wait", "--timeout", "1")
         assert r.code == 0 and r.data["kind"] == "timeout"
         r = c.j("wait", "--timeout", "1", "--strict-timeout")

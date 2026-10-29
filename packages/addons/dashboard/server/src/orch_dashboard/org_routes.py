@@ -118,14 +118,16 @@ def _schema_text(v) -> str | None:
     return _block(text, MAX_SCHEMA)
 
 
-def _tools(raw) -> list[dict]:
-    """Each tool as the host pins it. `too_long`: name and status only (no pin, nothing to switch on)."""
+def _tools(raw) -> tuple[list[dict], int]:
+    """Each tool as the host pins it, and how many could not be listed at all. `too_long`: name and status only (no
+    pin, nothing to switch on)."""
     out = []
-    for t in (raw if isinstance(raw, list) else [])[:200]:
-        if not isinstance(t, dict):
-            continue
-        name = _str(t.get("name"), 128)
+    rows = raw if isinstance(raw, list) else []
+    dropped = max(0, len(rows) - 200)
+    for t in rows[:200]:
+        name = _str(t.get("name"), 128) if isinstance(t, dict) else None
         if not name or t.get("status") not in TOOL_STATUSES:
+            dropped += 1
             continue
         if t["status"] == "too_long":
             out.append({"name": name, "title": None, "description": None, "input_schema": None, "pin": "",
@@ -133,6 +135,7 @@ def _tools(raw) -> list[dict]:
             continue
         pin = _str(t.get("pin"), 200)
         if not pin:
+            dropped += 1
             continue
         desc, title = t.get("description"), t.get("title")
         shown_title = _str(title, 200) if title is not None else None
@@ -151,7 +154,7 @@ def _tools(raw) -> list[dict]:
             "pin": pin,
             "status": t["status"],
         })  # fmt: skip
-    return out
+    return out, dropped
 
 
 def item_view(raw) -> dict:
@@ -167,12 +170,23 @@ def item_view(raw) -> dict:
         view |= {"text": text, "text_hidden": text is None}
     else:
         secret = item.get("secret")
+        auth = item.get("auth") if item.get("auth") in AUTHS else "none"
+        url = _str(item.get("url"), 200)
+        shown_secret = secret if isinstance(secret, str) and NAME.fullmatch(secret) else None
+        desc = item.get("description")
+        shown_desc = _str(desc, 200)
+        tools, dropped = _tools(raw.get("tools"))
         view |= {
-            "url": _str(item.get("url"), 200),
-            "auth": item.get("auth") if item.get("auth") in AUTHS else "none",
-            "secret": secret if isinstance(secret, str) and NAME.fullmatch(secret) else None,
-            "description": _str(item.get("description"), 200),
-            "tools": _tools(raw.get("tools")),
+            "url": url,
+            "auth": auth,
+            "secret": shown_secret,
+            "description": shown_desc,
+            "tools": tools,
+            # approved view == pinned view: a field that cannot be shown means the item cannot be turned on
+            "fields_hidden": url is None
+            or (bool(desc) and shown_desc is None)
+            or (auth == "hub_secret" and shown_secret is None),
+            "hidden_tools": dropped,
         }
     notes = [n for n in (_str(n, 400) for n in (raw.get("notes") if isinstance(raw.get("notes"), list) else [])) if n]
     iso = raw.get("needs_isolation")

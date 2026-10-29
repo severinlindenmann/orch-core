@@ -26,7 +26,7 @@ describe('the Company tab', () => {
     expect(screen.getByText('Company tools (MCP servers)')).toBeTruthy()
     expect(screen.getByTestId('company-status-style-guide').textContent).toBe('Off')
     expect(screen.getByTestId('company-status-support-tone').textContent).toBe('Changed — look again')
-    expect(screen.getByTestId('company-on-style-guide').textContent).toBe('Turn on')
+    expect(screen.getByTestId('company-on-style-guide').textContent).toBe('Review and turn on')
     expect(screen.getByTestId('company-sync').textContent).toBe('Get the latest from your hub')
   })
 
@@ -124,7 +124,8 @@ describe('the Company tab', () => {
     expect((await within(sheet).findByTestId('company-auth', {}, T)).textContent).toBe('Company secret: billing-key')
     expect(within(sheet).getByTestId('company-needs-isolation')).toBeTruthy()
     expect(within(sheet).queryByTestId('company-accept')).toBeNull()
-    expect(within(sheet).getByTestId('company-limits').textContent).toMatch(/separate agent user/)
+    expect(within(sheet).getByTestId('company-needs-isolation').textContent).toMatch(/separate agent user/)
+    expect(within(sheet).getByTestId('company-limits').textContent).not.toMatch(/separate agent user/) // said once
   })
 
   it('Get the latest asks the hub, and says plainly when the hub is out of reach', async () => {
@@ -158,10 +159,24 @@ describe('the Company tab', () => {
   })
 })
 
+describe('a server with details that cannot be shown', () => {
+  it('has no Turn on, says why, and counts the tools that could not be listed', async () => {
+    const shown: OrgShown = { kind: 'mcp', status: 'off', notes: [], untrusted: true, needs_isolation: null,
+      item: { kind: 'mcp', name: 'crm', digest: 'sha256:' + 'c'.repeat(64), url: null, auth: 'none', secret: null, description: null, tools: [], fields_hidden: true, hidden_tools: 2 } }
+    vi.spyOn(api, 'getOrgItem').mockResolvedValue(shown)
+    page()
+    const sheet = await openRow('crm')
+    expect((await within(sheet).findByTestId('company-fields-hidden', {}, T)).textContent).toBe('Some details cannot be shown, so it cannot be turned on.')
+    expect(within(sheet).getByTestId('company-hidden-tools').textContent).toBe('2 tools could not be shown (they stay off).')
+    expect(within(sheet).queryByTestId('company-accept')).toBeNull()
+  })
+})
+
 describe('plain()', () => {
   it('drops C0/C1 controls but keeps newline', async () => {
     const { plain } = await import('@/api/org')
     expect(plain('a\x1b[2Jb\nc\x07\x85d\x7f')).toBe('a[2Jb\ncd')
     expect(plain(null)).toBe('')
+    expect(plain('a\u202eb\u200bc\u2028d')).toBe('abcd') // bidi, zero-width, line separator
   })
 })

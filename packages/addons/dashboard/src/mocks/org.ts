@@ -70,7 +70,7 @@ export function mockOrgShown(kind: OrgKind, name: string): OrgShown | null {
   const tools: OrgTool[] = (TOOLS[name] ?? []).map((t) => t.tooLong
     ? { name: t.name, description: null, pin: '', status: 'too_long' as const }
     : { name: t.name, title: t.title ?? null, description: t.description, input_schema: t.schema ? JSON.stringify(t.schema, null, 2) : null, pin: t.pin, status: toolsOn.get(`${name}/${t.name}`) === t.pin ? ('on' as const) : ('off' as const) })
-  const item: OrgServerItem = { kind: 'mcp', name: s.name, digest: s.digest, url: s.url, auth: s.auth, secret: s.secret, description: s.description, tools }
+  const item: OrgServerItem = { kind: 'mcp', name: s.name, digest: s.digest, url: s.url, auth: s.auth, secret: s.secret, description: s.description, tools, fields_hidden: false, hidden_tools: 0 }
   const status = statusOf(kind, name, s.digest, s.auth)
   const needs = s.auth === 'hub_secret' ? 'needs a separate agent user: this server\'s secret cannot be kept from an agent here' : null
   return { kind, status, item, notes: NOTES.mcp, untrusted: true, needs_isolation: needs }

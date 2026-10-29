@@ -209,7 +209,32 @@ def test_a_tool_that_cannot_be_shown_whole_cannot_be_switched_on():
 
     pin = "sha256:" + "a" * 64
     good = {"name": "t", "description": "ok", "inputSchema": {"type": "object"}, "pin": pin, "status": "off"}
-    assert _tools([good])[0]["pin"] == pin
+    assert _tools([good])[0][0]["pin"] == pin
     for bad in ({"description": "a\u200bb"}, {"title": "x\u202e"}, {"inputSchema": None}):
-        row = _tools([{**good, **bad}])[0]
+        row = _tools([{**good, **bad}])[0][0]
         assert row["status"] == "too_long" and row["pin"] == ""
+
+
+def test_a_field_that_cannot_be_shown_marks_the_server_and_dropped_tools_are_counted():
+    item = {
+        "name": "crm",
+        "url": "https://crm.example.com/mcp",
+        "auth": "none",
+        "secret": None,
+        "description": "CRM",
+        "digest": D2,
+    }
+    tools = [
+        {"name": "ok", "description": "d", "inputSchema": {}, "pin": "p", "status": "off"},
+        {"name": "nopin", "status": "off"},
+        {"status": "on"},
+    ]
+
+    def view(**over):
+        return item_view({"kind": "mcp", "status": "off", "item": item | over, "tools": tools})["item"]
+
+    assert view()["fields_hidden"] is False and view()["hidden_tools"] == 2
+    assert view(url="https://crm.exam\u202eple.com/mcp")["fields_hidden"] is True
+    assert view(description="a\u202eb")["fields_hidden"] is True
+    assert view(auth="hub_secret", secret=None)["fields_hidden"] is True
+    assert view(auth="hub_secret", secret="crm-key")["fields_hidden"] is False

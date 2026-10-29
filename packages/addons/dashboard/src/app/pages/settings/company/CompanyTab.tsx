@@ -20,7 +20,7 @@ function Row({ kind, row, busy, onOpen, onOff }: { kind: OrgKind; row: OrgRow; b
     </button>
     {isOn
       ? <Action id={`company-off-${row.name}`} disabled={busy} onClick={onOff}>Turn off</Action>
-      : <Action id={`company-on-${row.name}`} onClick={onOpen}>Turn on</Action>}
+      : <Action id={`company-on-${row.name}`} onClick={onOpen}>Review and turn on</Action>}
   </li>
 }
 

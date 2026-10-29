@@ -25,7 +25,7 @@ const LIMITS: Record<OrgKind, { when?: (s: OrgShown) => boolean; match: RegExp; 
 }
 
 function limitLines(s: OrgShown): string[] {
-  const own = LIMITS[s.kind].filter((l) => (l.when ? l.when(s) : true) && !s.notes.some((n) => l.match.test(n))).map((l) => l.text)
+  const own = LIMITS[s.kind].filter((l) => (l.when ? l.when(s) : true) && !(s.needs_isolation && l.match.test('separate agent user')) && !s.notes.some((n) => l.match.test(n))).map((l) => l.text)
   return [...s.notes.map(plain), ...own]
 }
 
@@ -123,7 +123,7 @@ export function ItemSheet({ ws, kind, name, onClose }: { ws: string; kind: OrgKi
   }
 
   const item = s?.item
-  const hidden = item?.kind === 'skill' && item.text_hidden
+  const hidden = item?.kind === 'skill' ? item.text_hidden : !!item?.fields_hidden
   const canOn = !!s && !!digest && !s.needs_isolation && !hidden && (s.status === 'off' || s.status === 'changed')
   const canOff = !!s && s.status !== 'off'
   return <Dialog open onOpenChange={(o) => !o && onClose()}>
@@ -140,7 +140,11 @@ export function ItemSheet({ ws, kind, name, onClose }: { ws: string; kind: OrgKi
             ? hidden
               ? <p role="alert" data-testid="company-text-hidden">This text has characters that cannot be shown, so it cannot be turned on.</p>
               : <pre className="max-h-72 overflow-auto rounded-md border border-border bg-surface-2 p-3 text-[13px] whitespace-pre-wrap break-words" data-testid="company-skill-text">{plain(item.text)}</pre>
-            : <ServerDetails item={item} tools={item.tools} serverOn={s.status === 'on'} busy={busy} onTool={setTool} />}
+            : <>
+              {hidden && <p role="alert" className="text-warning" data-testid="company-fields-hidden">Some details cannot be shown, so it cannot be turned on.</p>}
+              {!!item.hidden_tools && <p className="text-warning" data-testid="company-hidden-tools">{item.hidden_tools} {item.hidden_tools === 1 ? 'tool' : 'tools'} could not be shown (they stay off).</p>}
+              <ServerDetails item={item} tools={item.tools} serverOn={s.status === 'on'} busy={busy} onTool={setTool} />
+            </>}
           <div className="space-y-1" data-testid="company-limits">
             <h3 className="font-medium">Good to know</h3>
             <ul className="list-disc space-y-1 pl-5">{limitLines(s).map((l) => <li key={l}>{l}</li>)}</ul>

@@ -15,13 +15,17 @@ export interface OrgOffers { available: boolean; hub_id: string | null; skills: 
 /** One tool as the host pins it. `too_long`: too long to review, so no pin and no On switch. `input_schema` is pretty-printed JSON text. */
 export interface OrgTool { name: string; title?: string | null; description: string | null; input_schema?: string | null; pin: string; status: 'on' | 'off' | 'changed' | 'too_long' }
 
-/** Server-controlled text drawn as plain text: C0/C1 control characters (U+0000-U+001F except newline, U+007F-U+009F) are removed first. */
-export const plain = (s: string | null | undefined): string => (s ?? '').replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/g, '')
+/** Server-controlled text drawn as plain text: C0/C1 control characters (U+0000-U+001F except newline, U+007F-U+009F) and format, line and paragraph separators (bidi, zero-width) are removed first. */
+export const plain = (s: string | null | undefined): string => (s ?? '').replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]|\p{Cf}|\p{Zl}|\p{Zp}/gu, '')
 
 export interface OrgSkillItem { kind: 'skill'; name: string | null; digest: string | null; text: string | null; text_hidden: boolean }
 export interface OrgServerItem {
   kind: 'mcp'; name: string | null; digest: string | null; url: string | null; auth: 'none' | 'hub_secret'
   secret: string | null; description: string | null; tools: OrgTool[]
+  /** A field of the server cannot be shown (hidden characters): it cannot be turned on. */
+  fields_hidden?: boolean
+  /** Tools the host listed that could not be shown at all (they stay off). */
+  hidden_tools?: number
 }
 
 /** `GET /api/w/<ws>/org/item`: what the host shows the owner before a click. `item.digest` is what Turn on sends back. */

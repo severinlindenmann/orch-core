@@ -119,7 +119,12 @@ def serve(args):
         return 2
     # --api-host is what clients sign (it may be a public name when a proxy sits in front); it
     # defaults to the bind address
-    app = create_app(args.data, args.api_host or args.bind, dev_mode=args.dev_mode)
+    app = create_app(
+        args.data,
+        args.api_host or args.bind,
+        dev_mode=args.dev_mode,
+        allow_direct=args.allow_direct,
+    )
     # no access log: request lines carry ids, and the no-logging policy applies (design I15)
     uvicorn.run(
         app,
@@ -131,17 +136,19 @@ def serve(args):
     return 0
 
 
-def combined_app(data_dir, api_host, dev_mode=False):
+def combined_app(data_dir, api_host, dev_mode=False, allow_direct=False, share_origin=None):
     """No-domain mode: one ASGI app on one port. `/s/...` is the share server (path-based links), every other path
-    is the signed API. With a domain the two stay on separate origins (`serve` + `share`)."""
+    is the signed API; `/a/...` serves apps. With a domain the two stay on separate origins (`serve` + `share`)."""
     from .app import create_app
     from .serve import create_share_app
 
-    api = create_app(data_dir, api_host, dev_mode=dev_mode)
-    share = create_share_app(data_dir)
+    api = create_app(
+        data_dir, api_host, dev_mode=dev_mode, allow_direct=allow_direct, share_origin=share_origin
+    )
+    share = create_share_app(data_dir, share_origin=share_origin, api_host=api_host)
 
     async def app(scope, receive, send):
-        if scope["type"] == "http" and (scope.get("path") or "").startswith("/s/"):
+        if scope["type"] == "http" and (scope.get("path") or "").startswith(("/s/", "/a/")):
             return await share(scope, receive, send)
         return await api(scope, receive, send)
 
@@ -163,11 +170,20 @@ def run_cmd(args):
         print("--public-origin must be http(s)://HOST[:PORT] with no path", file=sys.stderr)
         return 2
     try:
-        app = combined_app(args.data, u.netloc.lower(), dev_mode=args.dev_mode)
+        app = combined_app(
+            args.data,
+            u.netloc.lower(),
+            dev_mode=args.dev_mode,
+            allow_direct=args.allow_direct,
+            share_origin=f"{u.scheme}://{u.netloc}".lower(),
+        )
     except ValueError as e:
         print(e, file=sys.stderr)
         return 2
-    print(f"orch-publish: listening on {args.listen}; links open at {origin}/s/<id>", flush=True)
+    print(
+        f"orch-publish: listening on {args.listen}; links open at {origin}/s/<id>, apps at {origin}/a/<slug>/",
+        flush=True,
+    )
     _uvicorn_server(app, host.strip("[]"), int(port)).run()
     return 0
 
@@ -208,7 +224,7 @@ def share(args):
     except ValueError as e:
         print(e, file=sys.stderr)
         return 2
-    _uvicorn_server(create_share_app(args.data), host, port).run()
+    _uvicorn_server(create_share_app(args.data, share_origin=args.share_origin), host, port).run()
     return 0
 
 
@@ -251,8 +267,14 @@ def dev(args, ready=None):
             )
     finally:
         conn.close()
-    api = _uvicorn_server(create_app(args.data, args.api), a_host, a_port)
-    web = _uvicorn_server(create_share_app(args.data), s_host, s_port)
+    api = _uvicorn_server(
+        create_app(args.data, args.api, share_origin=f"http://{args.share}"), a_host, a_port
+    )
+    web = _uvicorn_server(
+        create_share_app(args.data, share_origin=f"http://{args.share}", api_host=args.api),
+        s_host,
+        s_port,
+    )
     t = threading.Thread(target=web.run, daemon=True)
     t.start()
     print(f"orch-publish dev: api http://{args.api}  share http://{args.share}", flush=True)
@@ -278,6 +300,11 @@ def main(argv=None):
         action="store_true",
         help="dev instance: accepts only dev hub objects (dev: true) and refuses real ones",
     )
+    s.add_argument(
+        "--allow-direct",
+        action="store_true",
+        help="also accept the direct v2 12.1 request on APP routes (a workspace with no hub); off by default",
+    )
     r = sub.add_parser("run", help="no domain: API and share links on ONE address and port")
     r.add_argument("--data", required=True)
     r.add_argument("--listen", required=True, help="ADDRESS:PORT to bind, e.g. 100.64.0.5:8102")
@@ -289,9 +316,19 @@ def main(argv=None):
     r.add_argument(
         "--dev-mode", action="store_true", help="dev instance: accepts only dev hub objects"
     )
+    r.add_argument(
+        "--allow-direct",
+        action="store_true",
+        help="also accept the direct v2 12.1 request on APP routes (a workspace with no hub); off by default",
+    )
     w2 = sub.add_parser("share", help="run the share server (public origin) on loopback")
     w2.add_argument("--data", required=True)
     w2.add_argument("--share-host", default="127.0.0.1:8104")
+    w2.add_argument(
+        "--share-origin",
+        default=None,
+        help="http(s)://HOST[:PORT] people open apps at (without it /a/ answers 404)",
+    )
     d = sub.add_parser("dev", help="run API and share server on loopback for local testing")
     d.add_argument("--data", required=True)
     d.add_argument("--api", default="127.0.0.1:8103")

@@ -2354,7 +2354,12 @@ Every signature comes before the nonce store (v2 §12.1). Policy checks of orch-
 is orch-publish's route definition (`access: "public"` of a share or app); F1 fixes the list, and every such request
 needs step 9.
 
-**Direct requests (V3-D36).** There are none. orch-publish refuses a request without `Orch-Hub` and `Orch-Hub-Signature` as
+**Direct requests (V3-D36; amended by M4 S3, #1357).** The only direct requests are the **app routes of §11.4**, and only when
+the operator switched orch-publish's `allow_direct` setting on (off by default; `--allow-direct`): a workspace with no hub
+then publishes an app with a v2 §12.1 request (`WSK` over `orch/v2/publish|`, no `Orch-Hub`), the owner's approval built for
+the direct path (`hub_id` null, §11.4), checked in the order 1, 2, 3, 4, 8, 9 of the table above (no binding, no hub card).
+An approval on a direct route that takes none is `bad_approval`. Share routes never take the direct path. Everything else:
+orch-publish refuses a request without `Orch-Hub` and `Orch-Hub-Signature` as
 `403 hub_required` (half a pair is `400 malformed`), and `POST /v1/ws/{ws}/register` no longer exists: a workspace is
 admitted only through its card (below).
 

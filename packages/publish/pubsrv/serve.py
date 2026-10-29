@@ -227,7 +227,7 @@ def not_found():
 
 
 class ShareServer:
-    def __init__(self, data_dir, clock=None):
+    def __init__(self, data_dir, clock=None, share_origin=None, api_host=None):
         self.db_path = db.prepare_dir(data_dir)
         self.shares_dir = os.path.realpath(os.path.join(data_dir, "shares"))
         self.clock = clock or _now
@@ -235,6 +235,17 @@ class ShareServer:
         self._lock = threading.Lock()
         self._ips = {}  # ip -> (tokens, last monotonic time)
         db.init(self.db_path)
+        from .appserve import AppServer  # late: it imports this module
+
+        # apps are served from the CONFIGURED origin (never a Host header); without one every /a/ answer is a 404
+        self.apps = AppServer(
+            self.db_path,
+            os.path.join(os.path.realpath(data_dir), "apps"),
+            self.clock,
+            share_origin,
+            api_host,
+            self._ip_ok,
+        )
 
     # -- ASGI -----------------------------------------------------------------------------------
 
@@ -280,6 +291,14 @@ class ShareServer:
             path = scope["raw_path"].decode("ascii").split("?", 1)[0]
         except (KeyError, AttributeError, UnicodeError):
             return not_found()
+        is_app = path == "/a" or path.startswith("/a/")
+        # a service worker script must never be registered from /a/ or /s/ (Opus condition 6)
+        if any(k == b"service-worker" for k, _ in scope.get("headers", ())):
+            if is_app:
+                return self.apps.page(403, ("Not allowed", "This request is not allowed."))
+            return page(403, ("Not allowed", "This request is not allowed."))
+        if is_app:
+            return await self.apps.route(scope, receive, method, path)
         if method not in ("GET", "HEAD", "POST"):
             return page(
                 405,
@@ -463,7 +482,7 @@ class ShareServer:
             os.close(fd)
             return not_found()
         ext = os.path.splitext(rel)[1].lower()
-        extra = {"access-control-allow-origin": "*"}
+        extra = {}  # never an Access-Control-Allow-Origin (not "*", not "null"): files do not answer other origins
         if ext in INLINE_TYPES:
             ctype = INLINE_TYPES[ext]
         else:
@@ -512,5 +531,5 @@ class ShareServer:
         return page(200, ("Shared files", ""), body=f"<h1>Shared files</h1><ul>{items}</ul>")
 
 
-def create_share_app(data_dir, clock=None):
-    return ShareServer(data_dir, clock)
+def create_share_app(data_dir, clock=None, share_origin=None, api_host=None):
+    return ShareServer(data_dir, clock, share_origin, api_host)

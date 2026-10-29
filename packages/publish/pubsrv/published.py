@@ -549,7 +549,7 @@ def check_app_approval(
     """Step 9 for an app request on either path. ``req`` = {method, host, target (path + query), body (bytes), ws (hex),
     ts_ms, nonce (bytes), hub (hex, or None on the direct path)}. A commit, a rollback and a start ALWAYS need the
     owner's approval, whatever the access (``approval_required``); the approval must name this exact request and
-    grant exactly the body's ``access``. Returns {op, app_id, access, audience, approved_by_person}."""
+    grant exactly the body's ``access``. Returns {op, app_id, access, audience, approved_by_person, device_id, body}."""
     route = app_route(req["method"], req["target"].partition("?")[0])
     if route is None or not route["approval"] or req["target"] != req["target"].partition("?")[0]:
         raise H.Refused("malformed")
@@ -593,6 +593,7 @@ def check_app_approval(
         "audience": body["audience"],
         "approved_by_person": proto.identifier("person", proto.unb64u(approval["pk_pub"], 65)),
         "device_id": o["device_id"],
+        "body": body,  # the one parsed body: the caller runs check_release on exactly this (M4 S3)
     }
 
 

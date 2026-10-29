@@ -43,9 +43,13 @@ def refusal(code, status):
     )
 
 
+#: Finish starts the dashboard service and mints its login (core bounds that well below this): a longer read timeout
+FINISH_TIMEOUT = 45
+
+
 class SetupConnection(http.client.HTTPConnection):
-    def __init__(self, path):
-        super().__init__("localhost", timeout=15)
+    def __init__(self, path, timeout=15):
+        super().__init__("localhost", timeout=timeout)
         self.path = Path(path)
 
     def connect(self):
@@ -119,8 +123,8 @@ class SetupProxy:
             finally:
                 os.close(fd)
 
-    def open(self, method, target, headers, body):
-        conn = SetupConnection(self.path)
+    def open(self, method, target, headers, body, timeout=15):
+        conn = SetupConnection(self.path, timeout=timeout)
         try:
             conn.request(method, target, body=body, headers=headers)
             reply = conn.getresponse()
@@ -198,7 +202,12 @@ def register(app, auth, proxy, port):
                 if key in request.headers
             }
             conn, reply = await asyncio.to_thread(
-                proxy.open, request.method, "/api/setup/" + route + ("?" + query if query else ""), headers, body
+                proxy.open,
+                request.method,
+                "/api/setup/" + route + ("?" + query if query else ""),
+                headers,
+                body,
+                FINISH_TIMEOUT if route == "finish" else 15,
             )
         except Exception:
             if conn:

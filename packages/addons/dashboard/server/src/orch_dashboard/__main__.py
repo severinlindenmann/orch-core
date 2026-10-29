@@ -41,6 +41,9 @@ from .policy import REMOTE, remote_policy
 GRACE = 3
 #: seconds `restart` waits for the old server to free its control socket
 RESTART_WAIT = 10.0
+# A stop while a setup page is bound waits for the setup to end (r11-P01), at most this long (core's idle is 10 min).
+SETUP_HOLD = 660.0
+SETUP_POLL = 0.2
 AGENT_ENV = ("ORCH_GRANT", "ORCH_SESSION")
 # Seconds before the code's expiry after which the launcher writes no redirect file (and removes one it just wrote):
 # covers the gap between the server's monotonic timer and the wall clock both sides read.
@@ -570,17 +573,37 @@ def _serve(directory, lock_fd=None, port=None, listen=None):
                         conn.sendall(encode({"release": release}))
                     elif req == {"command": "stop"}:
                         conn.sendall(encode({"ok": True}))
-                        server.should_exit = True
-                        if net_server is not None:
-                            net_server.should_exit = True
-                        if front_server is not None:
-                            front_server.should_exit = True
                         # Free the control socket now, not after the shutdown: until then a launcher would connect
                         # to a server that no longer answers (and time out) instead of starting a new one.
                         retire()
+                        if setup_bound():
+                            # r11-P01: setup's Finish starts the dashboard service, which stops this server while it
+                            # still serves the setup page (and that very request): serve the page until setup ends.
+                            threading.Thread(target=exit_after_setup, daemon=True).start()
+                        else:
+                            exit_now()
                         break
                 except Exception:
                     pass  # never log the launch payload
+
+    setup_sock = state_dir() / "setup" / "setup.sock"
+
+    def setup_bound():
+        """A setup page is bound here and its setup process still runs."""
+        return auth.has_setup() and setup_sock.exists()
+
+    def exit_now():
+        server.should_exit = True
+        if net_server is not None:
+            net_server.should_exit = True
+        if front_server is not None:
+            front_server.should_exit = True
+
+    def exit_after_setup():
+        deadline = time.monotonic() + SETUP_HOLD
+        while not server.should_exit and setup_bound() and time.monotonic() < deadline:
+            time.sleep(SETUP_POLL)
+        exit_now()
 
     def retire():
         """Close the control socket and remove its path if it is still ours (a new server may have bound it). Once."""

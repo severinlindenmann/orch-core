@@ -153,3 +153,47 @@ def test_restart_gives_up_when_the_old_server_keeps_the_socket(state, monkeypatc
     monkeypatch.setattr("sys.argv", ["orch-dashboard", "restart"])
     assert cli.main() == 1
     assert "did not stop in time" in capsys.readouterr().err and calls == []
+
+
+# -- r11-P01: a stop during setup keeps the setup page served until setup ends ---------------------------------------
+
+
+def test_a_stop_while_a_setup_page_is_bound_frees_ctl_now_and_exits_when_setup_ends(state, slow_server, monkeypatch):
+    """setup's Finish starts the dashboard service, which stops this (launcher) server while it still serves the setup
+    page and that very Finish request: ctl.sock goes at once (the service can start), the page keeps working until the
+    setup binding ends (a failed Finish can be tried again), then the server exits."""
+    from orch_dashboard.auth import Auth
+
+    bound = {"on": True}
+    monkeypatch.setattr(Auth, "has_setup", lambda self: bound["on"])
+    (state / "setup").mkdir(mode=0o700)
+    (state / "setup" / "setup.sock").touch()
+    monkeypatch.setattr(cli, "SETUP_POLL", 0.02)
+    thread, ctl = start(state)
+    assert cli.control(ctl, "stop") == {"ok": True}
+    t0 = time.monotonic()
+    while ctl.exists() and time.monotonic() - t0 < 1:
+        time.sleep(0.02)
+    assert not ctl.exists()  # the service can take over at once
+    time.sleep(0.3)
+    assert thread.is_alive() and not slow_server.is_set()  # still serving the setup page
+    bound["on"] = False  # Finish answered 200 (or setup was cancelled): the binding ends
+    thread.join(timeout=SLOW_SHUTDOWN + 5)
+    assert slow_server.is_set() and not thread.is_alive()
+
+
+def test_a_stop_during_setup_exits_once_the_setup_process_is_gone(state, slow_server, monkeypatch):
+    from orch_dashboard.auth import Auth
+
+    monkeypatch.setattr(Auth, "has_setup", lambda self: True)  # the binding was never cleared (setup crashed)
+    (state / "setup").mkdir(mode=0o700)
+    sock = state / "setup" / "setup.sock"
+    sock.touch()
+    monkeypatch.setattr(cli, "SETUP_POLL", 0.02)
+    thread, ctl = start(state)
+    cli.control(ctl, "stop")
+    time.sleep(0.3)
+    assert thread.is_alive()
+    sock.unlink()
+    thread.join(timeout=SLOW_SHUTDOWN + 5)
+    assert not thread.is_alive()

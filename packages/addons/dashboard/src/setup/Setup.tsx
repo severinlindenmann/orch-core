@@ -33,6 +33,7 @@ export function reasonOf(e: unknown): string {
 export function plainReason(code: string): string {
   if (code === 'session.required' || code === 'session.expired') return 'This page has lost its link to orch. This happens after a reload or when the session ran out.'
   if (code === 'setup.ended') return 'This setup was already finished or stopped.'
+  if (code === 'setup.dashboard_unavailable') return 'The page could not start the dashboard on this computer. Nothing was lost.'
   if (code === 'setup.token' || code === 'setup.unavailable') return 'The link to your terminal could not be used.'
   if (code.startsWith('client:') || code.startsWith('http.')) return 'The page could not reach orch on this computer.'
   return 'Setup could not go on.'
@@ -41,10 +42,12 @@ export function plainReason(code: string): string {
 export function clickOffText(_code: string): string {
   return 'One click is not available on this computer; you approve in your terminal.'
 }
-function Reason({ reason }: { reason: string }) {
+/** Finish could not open the dashboard (r11-P01): the workspace is ready, the page keeps working, Try again. */
+const openFailedCopy = 'The dashboard did not open yet. Your workspace is safe. Press “Try again” to open it.'
+function Reason({ reason, plain }: { reason: string; plain?: string }) {
   return (
     <>
-      <small>{plainReason(reason)}</small>
+      <small>{plain ?? plainReason(reason)}</small>
       <details className="reason">
         <summary>Technical details</summary>
         <small>Reason: {reason}</small>
@@ -413,6 +416,7 @@ export function Setup({ api }: { api: SetupAPI }) {
   const [ended, setEnded] = useState(false)
   const [notice, setNotice] = useState('')
   const [reason, setReason] = useState('')
+  const [openFailed, setOpenFailed] = useState(false) // Finish answered but the dashboard did not open: "Try again"
   // "No agent access" is a choice of its own (B11 finding 21); it keeps the workspace default time and no runner grant.
   const [access, setAccess] = useState<'none' | number>('none')
   const chooseAccess = (a: 'none' | number) => {
@@ -438,8 +442,10 @@ export function Setup({ api }: { api: SetupAPI }) {
     lock.current = true
     setBusy(true)
     setError('')
+    const opening = fn === finish
     try {
       await fn()
+      if (opening) setOpenFailed(false)
     } catch (e) {
       const code = e instanceof SetupError ? e.code : 'setup.unavailable'
       if (!(e instanceof SetupError) || code !== 'invalid.input') setReason(report(e))
@@ -458,6 +464,10 @@ export function Setup({ api }: { api: SetupAPI }) {
         setEnded(true)
         api.forget()
         setError(expiredCopy)
+      } else if (opening) {
+        // The workspace is ready; only the way into the dashboard failed. Never send the person to a terminal here.
+        setOpenFailed(true)
+        setError(openFailedCopy)
       } else
         setError(
           code === 'invalid.input'
@@ -770,7 +780,9 @@ export function Setup({ api }: { api: SetupAPI }) {
           {error}
         </p>
       )}
-      {error && reason && <Reason reason={reason} />}
+      {error && reason && (
+        <Reason reason={reason} plain={openFailed ? plainReason('setup.dashboard_unavailable') : undefined} />
+      )}
       {state?.error && (
         <p role="alert" className="warning">
           <Raw>{state.error.message}</Raw> Check your terminal, then run <code>orch setup</code> in this folder to resume.
@@ -1409,7 +1421,7 @@ export function Setup({ api }: { api: SetupAPI }) {
           )}
           {progress?.done && !progress.error && (
             <button className="primary open-workspace" disabled={busy} onClick={() => void act(finish)}>
-              Open your workspace →
+              {openFailed ? 'Try again' : 'Open your workspace →'}
             </button>
           )}
         </section>

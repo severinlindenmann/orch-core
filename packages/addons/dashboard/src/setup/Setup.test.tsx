@@ -1344,3 +1344,39 @@ test('N2: a repos setting for the setup folder is quiet, any other project path 
     cleanup()
   }
 })
+
+test('r11-P01: a Finish that cannot open the dashboard says so in plain words and Try again opens it', async () => {
+  const f = fake({ finish: true, done: true })
+  const orig = f.fetcher.getMockImplementation()!
+  let finishes = 0
+  f.fetcher.mockImplementation(async (u, i) => {
+    if (String(u).endsWith('/finish')) {
+      finishes += 1
+      if (finishes === 1)
+        return new Response(JSON.stringify({ error: { code: 'setup.dashboard_unavailable', message: 'x', retry: true } }), { status: 503 })
+      if (finishes === 2) return new Response('Internal Server Error', { status: 500 })
+    }
+    return orig(u, i)
+  })
+  const { container } = render(<Setup api={f.api} />)
+  await screen.findByRole('heading', { name: 'Finish setting up your workspace' })
+  fireEvent.click(screen.getByLabelText(/Work copies/))
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  await screen.findByRole('heading', { name: 'Review your setup' })
+  fireEvent.click(screen.getByRole('button', { name: 'Finish setup' }))
+  await screen.findByRole('heading', { name: 'Your workspace is ready' })
+  const assign = vi.fn()
+  vi.stubGlobal('location', { origin: location.origin, assign })
+  vi.spyOn(console, 'error').mockImplementation(() => {})
+  for (let n = 0; n < 2; n++) {
+    fireEvent.click(screen.getByRole('button', { name: n === 0 ? 'Open your workspace →' : 'Try again' }))
+    await screen.findByText('The dashboard did not open yet. Your workspace is safe. Press “Try again” to open it.')
+    const text = page(container)
+    expect(text).not.toMatch(/terminal/i)
+    expect(screen.getByRole('alert').textContent).not.toMatch(/http|500/)
+    expect(text).toContain('The page could not start the dashboard on this computer. Nothing was lost.')
+  }
+  fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
+  await waitFor(() => expect(assign).toHaveBeenCalledWith('/'))
+  expect(finishes).toBe(3)
+})

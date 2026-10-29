@@ -128,10 +128,12 @@ def is_excluded(path: str) -> bool:
 
 def check_file_list(files: Any) -> list[dict[str, Any]]:
     """The header's ``files``: 1-512 entries ``{path, size, sha256}`` (exact keys), paths valid, not excluded, strictly
-    ascending (so unique), none a directory of another, the required files present, each size and the sum ≤ 200 MiB."""
+    ascending (so unique), none a directory of another and none equal to another when case-folded, the required files present, each size and the sum ≤ 200 MiB."""
     if type(files) is not list or not 1 <= len(files) <= MAX_FILES:
         raise _invalid("files")
     total, prev = 0, ""
+    dirs: set[str] = set()  # every directory prefix of the paths so far
+    names: set[str] = set()  # the case-folded paths so far
     for f in files:
         if type(f) is not dict or set(f) != {"path", "size", "sha256"}:
             raise _invalid("files")
@@ -144,8 +146,13 @@ def check_file_list(files: Any) -> list[dict[str, Any]]:
             raise _invalid("files_size")
         if p <= prev:
             raise _invalid("files_order")
-        if prev and p.startswith(prev + "/"):
+        folded = p.casefold()
+        segs = folded.split("/")
+        prefixes = {"/".join(segs[:i]) for i in range(1, len(segs))}
+        if folded in names or folded in dirs or not prefixes.isdisjoint(names):
             raise _invalid("files_order")
+        names.add(folded)
+        dirs |= prefixes
         prev = p
         total += size
     if total > MAX_TOTAL:

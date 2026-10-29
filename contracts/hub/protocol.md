@@ -2708,7 +2708,9 @@ Steps 1-6 need no words, so a restore can show the fingerprint and refuse the wr
 
 `files` is 1 to 512 entries, strictly ascending by `path` (so unique), exactly the keys `path`, `size`, `sha256`
 (lower-case hex). A path is relative, `/`-separated, 1 to 8 segments of `[A-Za-z0-9][A-Za-z0-9._-]{0,63}`, at most 200
-characters (so never absolute, never empty, never `.` or `..`, never a backslash); no path is a directory of another;
+characters (so never absolute, never empty, never `.` or `..`, never a backslash); no path is a directory of another (not just its
+sorted neighbour: `keys`, `keys-x`, `keys/a` is refused) and no two paths are equal when case-folded (`HK_ROOT.key` next to
+`hk_root.key`), both `files_order`;
 `size` ≤ 200 MiB and the sum ≤ 200 MiB (also the upload limit). `hk_root.key`, `hxk.key` and `meta.json` must be listed.
 The list contains every key file, `meta.json`, `op/<current>/`, `revoked/`, `tls.key`, `hub-settings.json` and a
 consistent copy (SQLite backup API) of every store, and **never**: `setup-token`; `route-queue.db` (and its `-wal`,

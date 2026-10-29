@@ -166,6 +166,20 @@ async def execute(call: Call, planned: dict[str, Any]) -> dict[str, Any]:
     return await asyncio.to_thread(_sync, call.service)
 
 
+def _report_use(service: WorkspaceService, link: Any) -> None:
+    """Counts only (``secret_use {secret_id, day, n}``). Best effort: a refusal or a broken link puts the counts
+    back and never blocks or fails the sync."""
+    from . import orgsecrets
+
+    rows = orgsecrets.take_usage(service)
+    for i, row in enumerate(rows):
+        try:
+            link.call("secret_use", row)
+        except Exception:  # noqa: BLE001
+            orgsecrets.restore_usage(service, rows[i:])
+            return
+
+
 def _sync(service: WorkspaceService) -> dict[str, Any]:
     from orch.hubclient.errors import HubRefused
     from orch.hubclient.tlslink.client import LinkClosed, LinkError, LinkTimeout
@@ -174,14 +188,19 @@ def _sync(service: WorkspaceService) -> dict[str, Any]:
     from .workspace import ok_result
 
     bodies: dict[str, Any] = {}
+    ops = [("skill", "org_skills_get"), ("mcp", "mcp_servers_get")]
+    if orgstate.isolated(service):
+        ops.append(("secrets", "org_secrets_get"))  # tier B only: tier A never asks for a wrap (condition 11)
     try:
-        link = peerops._open_link(service)  # noqa: SLF001 - mode-agnostic, one short link for the two requests
+        link = peerops._open_link(service)  # noqa: SLF001 - mode-agnostic, one short link for the requests
         try:
-            for kind, op in (("skill", "org_skills_get"), ("mcp", "mcp_servers_get")):
+            for kind, op in ops:
                 try:
                     bodies[kind] = link.call(op, {})
                 except (LinkError, HubRefused) as exc:
                     bodies[kind] = exc.code  # a refusal (an older hub: unknown_op) is the result of that kind
+            if "secrets" in bodies:
+                _report_use(service, link)
         finally:
             link.close()
     except (OSError, LinkClosed, LinkTimeout):

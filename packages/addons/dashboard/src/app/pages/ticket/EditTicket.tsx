@@ -167,7 +167,7 @@ export function TicketEditProvider({ ticket, viewer, children }: { ticket: Ticke
   const allowed = canEditTicket(ticket, viewer.role, !!ws && handoffMode(ws.id))
   return <EditContext.Provider value={allowed ? (focus) => setOpen({ focus }) : null}>
     {children}
-    {open && open.focus?.kind === 'title' && !open.full && <RenameDialog key={`rename-${keySeq.current}`} ticket={ticket} onFull={() => setOpen({ focus: { kind: 'title' }, full: true })} onClose={() => setOpen(null)} />}
+    {open && open.focus?.kind === 'title' && !open.full && <RenameDialog key={`rename-${keySeq.current}`} ticket={ticket} onBusy={setBusy} onFull={() => setOpen({ focus: { kind: 'title' }, full: true })} onClose={() => setOpen(null)} />}
     {open && !(open.focus?.kind === 'title' && !open.full) && <EditDialog key={keySeq.current} ticket={ticket} viewer={viewer} focus={open.focus} onBusy={setBusy} onClose={() => setOpen(null)} />}
   </EditContext.Provider>
 }
@@ -176,13 +176,14 @@ export function TicketEditProvider({ ticket, viewer, children }: { ticket: Ticke
  * Renaming is one line, not the long form (r10-P09): the new title, Save, then the one signing review (the same
  * `edit_sequence` with only the title). The review opens by itself (prepare only, never armed): Sign is the person's own press.
  */
-function RenameDialog({ ticket, onFull, onClose }: { ticket: TicketDocument; onFull: () => void; onClose: () => void }) {
+function RenameDialog({ ticket, onBusy, onFull, onClose }: { ticket: TicketDocument; onBusy: (busy: boolean) => void; onFull: () => void; onClose: () => void }) {
   const qc = useQueryClient()
   const workspaces = useQuery(queries.workspaces())
   const ws = workspaceOfTicket(ticket.key, workspaces.data ?? [])
   const [title, setTitle] = useState(ticket.title ?? '')
   const [problem, setProblem] = useState<string | null>(null)
   const [signing, setSigning] = useState<Edit | null>(null)
+  useEffect(() => { onBusy(signing !== null) }, [signing, onBusy])
   const save = () => {
     const built = buildEdit(ticket, { title, sections: {}, criteria: {}, added: [], people: { owner: ticket.people.owner, assignees: [...ticket.people.assignees], reviewers: [...ticket.people.reviewers] } }, false)
     if ('problem' in built) return setProblem(built.problem)

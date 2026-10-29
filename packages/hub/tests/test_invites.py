@@ -978,7 +978,8 @@ def test_a_join_redeem_signs_the_new_person_in_once_but_a_recovery_does_not(w):
     s, o, h = redeem(w, tok)
     assert s == 200 and o["kind"] == "join"
     cookie = h["Set-Cookie"]
-    assert "HttpOnly" in cookie and "SameSite=Strict" in cookie
+    assert "HttpOnly" in cookie and "SameSite=Strict" in cookie and "Max-Age=" in cookie
+    assert ("Secure" in cookie) == w.api.d.secure_cookies
     info = w.api.d.channels.session_info(cookie.split(";")[0].split("=", 1)[1])
     assert info["user_id"] == o["user_id"] and info["via"] == "invite"
     assert not w.env.acc.is_hub_admin(o["user_id"])  # signed in as that person only

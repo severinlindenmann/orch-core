@@ -343,6 +343,7 @@ const click = {
     call<import('./hub').HubAdded>(`${w(ws)}/hub/share/rule-add`, 'POST', { rule, expect }),
   syncHubShare: (ws: string, expect: string) => call<import('./hub').HubAdded>(`${w(ws)}/hub/share/sync`, 'POST', { expect }),
   getHubLink: (ws: string, link: string) => call<import('./hub').HubLinkInfo>(`${w(ws)}/hub/link`, 'POST', { link }),
+  refreshHub: (ws: string) => call<import('./hub').HubRefreshed>(`${w(ws)}/hub/refresh`, 'POST', {}),
   connectHub: (ws: string, body: import('./hub').HubConnectRequest) => call<import('./hub').HubConnected>(`${w(ws)}/hub/connect`, 'POST', body),
   cancelClick: (ws: string, requestId: string) => call<{ id: string; state: string }>(`${w(ws)}/click/cancel`, 'POST', { request_id: requestId }),
   // How I approve (B6): the person's own default way to sign, and whether a phone is paired. Both were missing here, so

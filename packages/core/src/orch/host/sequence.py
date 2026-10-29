@@ -1354,7 +1354,7 @@ def extra_lines(intent: Mapping[str, Any], now: float | None = None) -> list[str
             return [
                 *([seqquick.grant_line(intent["agent"], now)] if "agent" in intent else []),
                 f"Agent: {launch['harness']}; mode: {launch['mode']}; model: {launch.get('model', 'default')}.",
-                "Then: start an agent on the new ticket.",
+                "Then: the agent starts on the new ticket.",
             ]
         if "agent" not in intent:
             return []

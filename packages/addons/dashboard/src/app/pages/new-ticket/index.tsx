@@ -393,7 +393,8 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
   const submitting = useRef(false)
   // E-7: a criterion typed in the box but not added with "Add" is added when the ticket is submitted, never dropped.
   const flushAc = useRef<(() => string) | null>(null)
-  const submit = async (another: boolean, wantStart = false, anchor: HTMLElement | null = null) => {
+  // remember: the main button (and Cmd+Enter) keep the choice as the default; a menu item is used once (P09).
+  const submit = async (another: boolean, wantStart = false, anchor: HTMLElement | null = null, remember = true) => {
     if (submitting.current) return
     const extra = flushAc.current?.() ?? ''
     const full = extra ? { ...draft, acceptance: [...draft.acceptance, extra] } : draft
@@ -413,7 +414,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
       // so a grant that lapsed since the form was drawn falls back to "Only create" and not to a form error.
       const startPossibleNow = plan.available && !(!fresh && accessTooMany(full, me.person, plan.hours))
       const startNow = wantStart && startPossibleNow && !another
-      if (startPossibleNow) plan.setPref({ start: wantStart })
+      if (startPossibleNow && remember) plan.setPref({ start: wantStart })
       const withAccess = startNow && !fresh
       const made = handoffNewTicket(full, me.person, withAccess ? plan.hours : null)
       if ('problem' in made) return setServerError(made.problem)
@@ -660,7 +661,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
-                    <DropdownMenuItem onSelect={() => void submit(false, !startFirst, secondaryRef.current)}>{startFirst ? 'Create without starting' : 'Create and start'}</DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => void submit(false, !startFirst, secondaryRef.current, false)}>{startFirst ? 'Create without starting' : 'Create and start'}</DropdownMenuItem>
                     <DropdownMenuItem onSelect={() => setPickAgent(true)}>Choose agent…</DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
@@ -683,6 +684,8 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
             return 'problem' in again ? handoffNew.action : { ...again.action, launch: handoffNew.action.action === 'new_sequence' ? handoffNew.action.launch : undefined }
           })()}
           startsAgent={!!handoffNew.start}
+          lead={handoffNew.start ? undefined : <p className="text-[13px] text-text-muted" data-testid="nt-lead">Creates the ticket. No agent starts.</p>}
+          claudeCode={handoffNew.start?.reviewed.choice.harness === 'claude-code'}
           summary={<div className="space-y-1 text-[13px]" data-testid="nt-summary"><p><span className="text-text-muted">Title </span><Inline>{handoffNew.draft.title.trim()}</Inline></p>{handoffNew.draft.sections.requirements?.trim() && <p className="line-clamp-3 whitespace-pre-line"><span className="text-text-muted">Should be true </span><Inline>{handoffNew.draft.sections.requirements.trim()}</Inline></p>}</div>}
           anchor={handoffNew.anchor}
           controls={handoffNew.start?.withAccess ? <AccessSelect hours={plan.hours} onHours={plan.setHours} lengths={plan.lengths} prefix={workspace.prefix} agentName={harnessName(handoffNew.start.reviewed.choice.harness)} /> : undefined}

@@ -282,7 +282,8 @@ def plan(
     exec_addon = any(
         info[a].needs_runner or info[a].needs_terminals for a in profile["addons"] if info[a].kind == "addon"
     )
-    tty = facts is not None or runner_grant is not None or exec_addon
+    # One click (method click) has no terminal check: the risk notice and the Create click are the consent (P01)
+    tty = profile["method"] != "click" and (facts is not None or runner_grant is not None or exec_addon)
     p = Plan(items, flags, runner_grant, risk, tty, _canon_profile(profile, directory))
     if facts is None:
         p.workspace = _workspace(profile, directory)

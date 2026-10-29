@@ -75,3 +75,14 @@ test("first-run home shows only the connect card", () => {
   assert.match(t2, /Where you can sign/);
   assert.doesNotMatch(t2, /Connect your first workspace/);
 });
+
+test("the first-run home carries a root marker and gives way once a workspace or item exists", async () => {
+  const { firstRunOutgrown } = await import("../../src/orch_hub/web/home.js");
+  const out = homeView({ user: { name: "Anna" }, workspaces: [], items: [], channels: [], actions: {} });
+  assert.ok(out.flatMap((n) => n.all()).some((n) => (n.className || "").split(" ").includes("first-run-root")));
+  assert.equal(firstRunOutgrown([], []), false);
+  assert.equal(firstRunOutgrown([{ id: "a" }], []), true);
+  assert.equal(firstRunOutgrown([], [{ key: "k" }]), true);
+  const src = (await import("node:fs")).readFileSync(new URL("../../src/orch_hub/web/app.js", import.meta.url), "utf8");
+  assert.match(src, /querySelector\("\.first-run-root"\) && firstRunOutgrown\(/);
+});

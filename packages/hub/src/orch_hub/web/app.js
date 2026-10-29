@@ -7,7 +7,7 @@ import { ChannelError, deleteChannel, generateKey, loadChannel, saveChannel, sig
 import { inboxView, reviewMeaning, signedMeaning } from "./inbox.js";
 import { parseRoute, registerPages } from "./route.js";
 import { PAGES } from "./pages.js";
-import { homeView, workspaceStatus } from "./home.js";
+import { firstRunOutgrown, homeView, workspaceStatus } from "./home.js";
 import { activityView } from "./activity.js";
 import { accountFromWorkspaceView, accountView } from "./account.js";
 import { adminView } from "./admin.js";
@@ -1032,6 +1032,10 @@ async function pollLive() {
     if (frame?.isConnected) {
       reconcileRows(frame.querySelector(".rail"), railView());
       railSnapshot = JSON.stringify(state.rail);
+    }
+    if (frame?.isConnected && parseRoute(location.hash).kind === "home" && frame.querySelector(".first-run-root") && firstRunOutgrown(state.rail.rows, liveItems.items)) {
+      void home(); // the first workspace connected while this page was open: draw the full home
+      return;
     }
     const current = frame?.isConnected && parseRoute(location.hash).kind === "home" ? frame.querySelector(".needs-you") : null;
     if (current && homeData?.user_id === user.user_id) {

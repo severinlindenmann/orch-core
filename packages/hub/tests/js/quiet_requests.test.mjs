@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import vm from "node:vm";
 
 const source = readFileSync(new URL("../../src/orch_hub/web/app.js", import.meta.url), "utf8");
+// app.js is a browser entry with no exports: run the slice from `const canAdmin` up to `function pageLoading(` in a vm.
 const body = source.slice(source.indexOf("const canAdmin"), source.indexOf("function pageLoading("));
 
 function run(session) {

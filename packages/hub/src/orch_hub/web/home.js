@@ -53,6 +53,9 @@ export function homeView(d) {
   const workspaceName = (id) => shortName(byId.get(id), id);
   const needs = h("section", { class: "card needs-you", "aria-labelledby": "needs-heading" },
     h("div", { class: "section-head row" }, h("h2", { id: "needs-heading", class: "grow", text: "Needs you" }), chip(String(items.length))),
+    workspaces.some((w) => w.mode === "selective") ? h("p", { class: "small muted only-shared" }, "Only items you share appear here ",
+      h("details", { class: "info" }, h("summary", { "aria-label": "More about what appears here", text: "i" }),
+        h("p", { class: "small muted", text: "A workspace you joined with Only what I choose sends the hub just what you share. Other questions are still waiting in that workspace, so its own count can be higher." }))) : null,
     items.length ? workspaces.filter((w) => items.some((it) => it.workspace_id === w.workspace_id)).map((w) => h("section", { class: "workspace-needs", "data-live-key": w.workspace_id },
       h("h3", { text: workspaceName(w.workspace_id) }),
       items.filter((it) => it.workspace_id === w.workspace_id).map((it) => h("article", { class: "list-row row", "data-live-key": itemKey(it) },

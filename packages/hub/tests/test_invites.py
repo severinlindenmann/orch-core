@@ -969,3 +969,19 @@ def test_a_person_in_33_groups_can_still_be_disabled(w):
     assert w.env.acc.groups_of(w.ann) == []
     rec = next(e for e in w.api.d.activity.list(limit=50) if e["type"] == "user.disabled")
     assert len(rec["detail"]["groups_removed"]) == 32 and rec["detail"]["count"] == 34  # 33 + team
+
+
+def test_a_join_redeem_signs_the_new_person_in_once_but_a_recovery_does_not(w):
+    """r10-P09: the join link proved the person and they chose the password in this request: one browser cookie (via
+    'invite'). A recovery link signs nobody in: the new password and code are used at the sign-in step."""
+    tok = invite_join(w)
+    s, o, h = redeem(w, tok)
+    assert s == 200 and o["kind"] == "join"
+    cookie = h["Set-Cookie"]
+    assert "HttpOnly" in cookie and "SameSite=Strict" in cookie and "Max-Age=" in cookie
+    assert ("Secure" in cookie) == w.api.d.secure_cookies
+    info = w.api.d.channels.session_info(cookie.split(";")[0].split("=", 1)[1])
+    assert info["user_id"] == o["user_id"] and info["via"] == "invite"
+    assert not w.env.acc.is_hub_admin(o["user_id"])  # signed in as that person only
+    s2, o2, h2 = redeem(w, issue(w, w.ann, recovery=True))
+    assert s2 == 200 and o2["recovery"] is True and "Set-Cookie" not in h2

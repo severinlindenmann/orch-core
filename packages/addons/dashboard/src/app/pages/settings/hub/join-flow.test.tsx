@@ -113,7 +113,7 @@ describe('P10: a short join dialog', () => {
     expect(document.activeElement).toBe(await screen.findByTestId('hub-link-text', {}, T))
     view.unmount()
   })
-  it('shows one mode box, the choice only after "Choose another option", and the caveat only for Everything', async () => {
+  it('shows one mode box, the choice only after "Change", and the caveat only for Everything', async () => {
     const view = await open()
     fireEvent.change(await screen.findByTestId('hub-link-text', {}, T), { target: { value: LINK } })
     const box = await screen.findByTestId('hub-mode-box', {}, T)

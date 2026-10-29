@@ -556,3 +556,16 @@ describe('people in the content are named from the View\'s own workspace', () =>
     expect(row).not.toHaveTextContent('Impostor')
   })
 })
+
+describe('r10-P08 hub join workspace line', () => {
+  const join = storyOf({ action: 'hub_join', hub_card: {}, hub_id: 'h', mode: 'selective' } as never)
+  const risky = () => answer({ headline: 'Connect', risk_lines: ['Risk line'] })
+  it('with several workspaces and a risk line the workspace stays in view', () => {
+    mount(risky(), { story: join, manyWorkspaces: true })
+    expect(screen.getByTestId('sign-workspace').closest('details')).toBeNull()
+  })
+  it('with one workspace it stays under Details', () => {
+    mount(risky(), { story: join, manyWorkspaces: false })
+    expect(screen.getByTestId('sign-workspace').closest('details')).not.toBeNull()
+  })
+})

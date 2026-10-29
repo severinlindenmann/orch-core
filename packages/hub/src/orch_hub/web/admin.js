@@ -224,7 +224,7 @@ export function adminView(d) {
         h("section", { class: "card" }, h("h3", { text: "Add to group" }),
           form("Add to group", [field("Person", person), field("Group", group)], "PUT", () => "/admin/groups/" + enc(group.value) + "/members/" + enc(person.value), () => undefined), preview)),
       h("section", { class: "card" }, h("h3", { text: "People" }), data.users.length ? data.users.map((u) => h("article", { class: "list-row row" },
-        h("div", { class: "grow" }, h("b", { text: txt(u.name) }), p(txt(u.user_id)),
+        h("div", { class: "grow" }, h("b", { text: txt(u.name) }), data.users.filter((o) => o.name === u.name).length > 1 ? h("details", { class: "info" }, h("summary", { "aria-label": "More about " + txt(u.name), text: "i" }), p(txt(u.user_id))) : null,
           h("div", { class: "row" }, u.disabled ? chip("Disabled", "warn") : null, data.groups.filter((g) => g.members.includes(u.user_id)).map((g) => chip(txt(g.name)))),
           p(deviceCount(u) + " · " + (data.channels.filter((c) => c.user_id === u.user_id).map((c) => txt(c.label || c.kind) + " · " + txt(c.status)).join(", ") || "No approval device set up"))),
         personControls(u))) : p("No people yet.")),

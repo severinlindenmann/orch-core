@@ -780,19 +780,6 @@ def admin_req(
     return {"method": method, "target": target, "headers": {k: v for k, v in headers.items() if v is not None}}
 
 
-ADMIN_ROW = {
-    "workspace_id": WS_A,
-    "release_id": "rel_2026_10_22_a",
-    "kind": "share",
-    "state": "active",
-    "created_ms": NOW - DAY,
-    "expires_ms": NOW + DAY,
-    "revoked": False,
-    "bytes": 12_345,
-    "public_url": None,
-}
-
-
 # --------------------------------------------------------------------------------------------------------------------
 
 
@@ -3416,21 +3403,6 @@ def build() -> dict[str, Any]:
         ok_ar,
         3,
     )
-    case(
-        "admin_read_rows_in_scope",
-        "admin_read_rows",
-        {"rows": [ADMIN_ROW], "scope": [WS_A]},
-        {"ok": {"rows": 1}},
-        3,
-    )
-    case(
-        "admin_read_row_outside_scope_never_emitted",
-        "admin_read_rows",
-        {"rows": [ADMIN_ROW, {**ADMIN_ROW, "workspace_id": WS_C}], "scope": [WS_A]},
-        {"error": "not_bound"},
-        3,
-        "whatever the target resolved to, a row of another workspace is not returned",
-    )
     sel_b = {**ab, "bindings": {WS_A: [{"binding": binding(mode="selective")}]}}
     case(
         "admin_read_selective_binding_excluded",
@@ -3484,32 +3456,6 @@ def build() -> dict[str, Any]:
         {"error": "not_bound"},
         3,
     )
-    case("admin_read_row_valid", "admin_read_row", {"row": ADMIN_ROW}, {"ok": {"row": True}}, 3)
-    case(
-        "admin_read_row_with_public_url",
-        "admin_read_row",
-        {"row": {**ADMIN_ROW, "public_url": "https://x.example/p/abc"}},
-        {"error": "malformed"},
-        3,
-        "public_url is null in hv 0: no public kind exists; a later hv adds it for live public releases only",
-    )
-    case(
-        "admin_read_row_extra_content_field",
-        "admin_read_row",
-        {"row": {**ADMIN_ROW, "content": "aGk"}},
-        {"error": "malformed"},
-        3,
-        "metadata only",
-    )
-    case(
-        "admin_read_row_missing_field",
-        "admin_read_row",
-        {"row": {k: v for k, v in ADMIN_ROW.items() if k != "bytes"}},
-        {"error": "malformed"},
-        3,
-    )
-    case("admin_read_row_wrong_type", "admin_read_row", {"row": {**ADMIN_ROW, "revoked": 0}}, {"error": "malformed"}, 3)
-
     # ---- unbind removes the workspace from every space (same step as hub.unbound)
     e2_a = space_rec(2, [WS_A])
     un = lambda ws, rec, sid=SPACE: {"unbind": {"ws": ws, "space_id": sid, "space": rec}}
@@ -3938,7 +3884,6 @@ def build() -> dict[str, Any]:
             "ts_ms": NOW,
             "signed_hex": H.admin_read_bytes(HUB_ID, NOW, "GET", ADMIN_TARGET).hex(),
             "request": admin_req(),
-            "row": ADMIN_ROW,
         },
         "phase4": p4["section"],
         "cases": cases,

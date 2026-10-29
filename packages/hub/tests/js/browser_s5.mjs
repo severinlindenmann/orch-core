@@ -52,7 +52,7 @@ try {
   await page.fill("#pw2", HUB_PW);
   await page.fill("#code2", CODE_SIGNIN); // the code that signed us in must be refused
   await page.getByRole("button", { name: "Register this browser" }).click();
-  await page.getByText("Browser not registered").waitFor();
+  await page.getByText("This browser has no signing key yet").waitFor();
   await page.fill("#pw2", HUB_PW);
   await page.fill("#code2", CODE_REGISTER);
   await shot("register");

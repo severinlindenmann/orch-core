@@ -651,7 +651,7 @@ async function home() {
       workspaces,
       channels: state.channels.map((c) => ({ ...c, status: c.status + (state.me?.channelId === c.channel_id ? " (this browser)" : "") })),
       newChannels: state.newChannels,
-      thisBrowser: mine ? { state: "active", label: state.me.label } : dead ? { state: "dead", label: state.me?.label } : { state: "unregistered" },
+      thisBrowser: state.user.needs_sign_in ? { state: "from_workspace" } : mine ? { state: "active", label: state.me.label } : dead ? { state: "dead", label: state.me?.label } : { state: "unregistered" },
       notice: state.notice,
       actions: { review: (it) => navigate("#/w/" + it.workspace_id + "/item/" + encodeURIComponent(it.key || it.item_id)), open: (id) => navigate("#/w/" + id), connect: () => navigate("#/workspaces"), register: () => registerView(), removeChannel, forgetLocal, dismissNew },
     };

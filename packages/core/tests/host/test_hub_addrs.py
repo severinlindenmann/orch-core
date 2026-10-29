@@ -48,6 +48,7 @@ class Probe:
 
 @pytest.fixture
 def probe(monkeypatch):
+    hubaddr.clear()
     p = Probe()
     monkeypatch.setattr(hubaddr, "PROBE", p)
     return p
@@ -244,13 +245,18 @@ def test_the_real_handshake_probe_needs_the_held_pin():
     hub = TlsHub(wsk_pub=suite.public_bytes(wsk)).start()
     try:
         addr = f"127.0.0.1:{hub.port}"
-        assert hubaddr.handshake_ok(addr, hub.spki) is True
+        assert hubaddr.handshake_ok(addr, hub.spki, allow_loopback=True) is True
         other = TlsHub(wsk_pub=suite.public_bytes(wsk)).start()
         try:
-            assert hubaddr.handshake_ok(addr, other.spki) is False  # another certificate than the pin
+            assert (
+                hubaddr.handshake_ok(addr, other.spki, allow_loopback=True) is False
+            )  # another certificate than the pin
         finally:
             other.close()
-        assert hubaddr.handshake_ok(addr, None) is False and hubaddr.handshake_ok("127.0.0.1:1", hub.spki) is False
+        assert (
+            hubaddr.handshake_ok(addr, None) is False
+            and hubaddr.handshake_ok("127.0.0.1:1", hub.spki, allow_loopback=True) is False
+        )
         assert hubaddr.handshake_ok("not an address", hub.spki) is False
     finally:
         hub.close()
@@ -334,3 +340,76 @@ def test_an_agent_cannot_move_the_hub_address(human, served, monkeypatch, probe,
 
 def test_moving_without_a_hub_is_refused(human, served, probe, card_served):
     assert err(move(served)) == "hub.not_joined"
+
+
+# --- the probe policy: a hub must not aim this computer at internal hosts -----------------------------------------
+
+
+@pytest.mark.parametrize(
+    "ip",
+    ["169.254.169.254", "169.254.1.1", "fe80::1", "fd00:ec2::254", "224.0.0.1", "ff02::1", "0.0.0.0", "::",
+     "255.255.255.255", "::ffff:169.254.169.254", "127.0.0.1", "::1"],
+)  # fmt: skip
+def test_the_policy_refuses_internal_targets(ip):
+    assert hubaddr.ip_allowed(ip, allow_loopback=False) is False
+
+
+@pytest.mark.parametrize("ip", ["10.0.0.5", "192.168.1.20", "172.16.3.4", "100.64.0.9", "203.0.113.7", "fd12::5"])
+def test_the_policy_allows_lan_and_private_network_addresses(ip):
+    assert hubaddr.ip_allowed(ip, allow_loopback=False) is True
+
+
+def test_loopback_is_allowed_only_next_to_a_loopback_current_address():
+    assert hubaddr.ip_allowed("127.0.0.1", allow_loopback=True) is True
+    assert hubaddr.ip_allowed("169.254.169.254", allow_loopback=True) is False  # never, whatever the current address
+
+
+def test_a_hub_cannot_make_the_host_probe_metadata_link_local_or_loopback(human, served, monkeypatch, probe):
+    hub = bound(served, human, monkeypatch, addr="10.0.0.1:8105")  # a non-loopback address in use
+    hub.where_answer = where("169.254.169.254:80", "[fe80::1]:8105", "127.0.0.1:8105", "10.0.0.7:8105")
+    probe.live = {"169.254.169.254:80", "fe80::1:8105", "127.0.0.1:8105", "10.0.0.7:8105"}
+    refresh(served)
+    assert probe.calls == [("10.0.0.7:8105", PIN)]  # the forbidden ones never reached the dial
+    assert _state(served).addrs == ["10.0.0.7:8105"]
+
+
+def test_loopback_from_the_hub_is_probed_when_the_current_address_is_loopback(human, served, monkeypatch, probe):
+    hub = bound(served, human, monkeypatch, addr="127.0.0.1:9")
+    hub.where_answer = where("127.0.0.1:8105")
+    probe.live = {"127.0.0.1:8105"}
+    refresh(served)
+    assert _state(served).addrs == ["127.0.0.1:8105"]
+
+
+def test_a_name_is_resolved_once_and_the_checked_ip_is_the_one_dialled(monkeypatch, probe):
+    answers = iter(["10.0.0.7", "169.254.169.254"])  # a second lookup would give the metadata address
+    monkeypatch.setattr(hubaddr.socket, "getaddrinfo", lambda *a, **k: [(0, 0, 0, "", (next(answers), 0))])
+    probe.live = {"10.0.0.7:8105"}
+    assert hubaddr.handshake_ok("hub.example:8105", PIN) is True
+    assert probe.calls == [("10.0.0.7:8105", PIN)]  # the IP, not the name
+    monkeypatch.setattr(hubaddr.socket, "getaddrinfo", lambda *a, **k: [(0, 0, 0, "", ("169.254.169.254", 0))])
+    assert hubaddr.handshake_ok("evil.example:8105", PIN) is False and len(probe.calls) == 1  # refused before dialling
+
+
+def test_a_failed_address_is_not_tried_again_within_an_hour_and_the_hub_learns_nothing(
+    human, served, monkeypatch, probe
+):
+    hub = bound(served, human, monkeypatch)
+    hub.where_answer = where("10.9.9.9:8105")
+    refresh(served)
+    assert len(probe.calls) == 1
+    seen = len(hub.calls)
+    refresh(served)
+    assert len(probe.calls) == 1  # backed off: not dialled again
+    ops = [op for _, op, _ in hub.calls[seen:]]
+    assert set(ops) <= {
+        "snapshot_get",
+        "hub_where",
+        "status_put",
+        "profile_put",
+        "error",
+    }  # "error": ops this fake lacks
+    real = hubaddr.time.monotonic
+    monkeypatch.setattr(hubaddr.time, "monotonic", lambda: real() + 3601)
+    refresh(served)
+    assert len(probe.calls) == 2  # the hour is over

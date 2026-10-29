@@ -15,7 +15,11 @@ is not used, the card is not replaced)."""
 
 from __future__ import annotations
 
+import ipaddress
 import logging
+import socket
+import threading
+import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
@@ -32,9 +36,76 @@ MAX_PROBES = 4  # per refresh
 _LOG = logging.getLogger("orch.host.hubaddr")
 
 
-def handshake_ok(addr: str, spki: str | None) -> bool:
-    """True when a TLS handshake at ``addr`` (any address, loopback and LAN included) presents the held pin ``spki``.
-    Nothing is sent over the connection and it is closed at once. No pin, no handshake."""
+FAIL_BACKOFF_S = 3600.0  # an address that failed is not tried again for an hour
+_FAILED: dict[tuple[str, str], float] = {}
+_MU = threading.Lock()
+_METADATA = (ipaddress.ip_address("fd00:ec2::254"),)
+
+
+def clear() -> None:
+    """Forget the failed-address memory (tests)."""
+    with _MU:
+        _FAILED.clear()
+
+
+def _ips(host: str) -> list[str]:
+    """Resolve ``host`` ONCE (an IP literal needs no lookup). The lookup is bounded: a resolver cannot be interrupted,
+    so it runs in a helper thread that is abandoned on timeout."""
+    try:
+        ipaddress.ip_address(host)
+        return [host]
+    except ValueError:
+        pass
+    out: list[list[str]] = []
+
+    def work() -> None:
+        try:
+            out.append([i[4][0] for i in socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)])
+        except OSError:
+            out.append([])
+
+    t = threading.Thread(target=work, daemon=True)
+    t.start()
+    t.join(PROBE_TIMEOUT_S)
+    return out[0] if out else []
+
+
+def ip_allowed(ip: str, *, allow_loopback: bool) -> bool:
+    """The probe policy. A hub (or a link) must not make this computer touch internal services it has no business
+    with: link-local (cloud metadata lives there), multicast, unspecified, broadcast and the IPv6 metadata address are
+    never probed; loopback only when the address in use is loopback too. LAN and private-network addresses are fine
+    (the pin decides who answers, and the owner needs no domain)."""
+    try:
+        a = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    if isinstance(a, ipaddress.IPv6Address) and a.ipv4_mapped is not None:
+        a = a.ipv4_mapped
+    if a.is_unspecified or a.is_multicast or a.is_link_local or a in _METADATA:
+        return False
+    if isinstance(a, ipaddress.IPv4Address) and a == ipaddress.IPv4Address("255.255.255.255"):
+        return False
+    return allow_loopback or not a.is_loopback
+
+
+def is_loopback(addr: str | None) -> bool:
+    """Whether every IP the address resolves to is loopback (the address in use decides what a hub may point at)."""
+    from orch.hubclient.errors import HubRefused
+    from orch.hubclient.tlsadapter import parse_addr
+
+    if not addr:
+        return False
+    try:
+        ips = _ips(parse_addr(addr)[0])
+    except HubRefused:
+        return False
+    return bool(ips) and all(ipaddress.ip_address(i).is_loopback for i in ips)
+
+
+def handshake_ok(addr: str, spki: str | None, *, allow_loopback: bool = False) -> bool:
+    """True when a TLS handshake AT ``addr`` presents the held pin ``spki``. The name is resolved once, the IP checked
+    against :func:`ip_allowed`, and that exact IP is dialled. Nothing is sent over the connection and it is closed at
+    once. No pin, no handshake. Nothing about the outcome is ever reported to the hub."""
     from orch.hubclient.errors import HubRefused
     from orch.hubclient.tlsadapter import parse_addr
     from orch.hubclient.tlslink import tls
@@ -45,14 +116,41 @@ def handshake_ok(addr: str, spki: str | None) -> bool:
         host, port = parse_addr(addr)
     except HubRefused:
         return False
+    ips = _ips(host)
+    if not ips or not all(ip_allowed(i, allow_loopback=allow_loopback) for i in ips):
+        return False  # one forbidden answer refuses the name: the lookup is not trusted to pick
+    ip = ips[0]
     try:
         if PROBE is not None:
-            PROBE(host, port, spki)
+            PROBE(ip, port, spki)
         else:
-            tls.connect_pinned(host, port, spki, timeout=PROBE_TIMEOUT_S).close()
+            tls.connect_pinned(ip, port, spki, timeout=PROBE_TIMEOUT_S).close()
     except Exception:  # noqa: BLE001 - refused, timed out, wrong certificate: all the same answer, "not verified"
         return False
     return True
+
+
+def _probe_new(scope: str, state: Any, links: list[str]) -> list[str]:
+    """Probe ``links`` (at most :data:`MAX_PROBES` real attempts) and return the ones that passed. A link the policy
+    refuses is not an attempt; one that failed within the backoff is skipped without a dial."""
+    allow_lo = is_loopback(state.addr)
+    now = time.monotonic()
+    passed: list[str] = []
+    tried = 0
+    for link in links:
+        if tried >= MAX_PROBES:
+            break
+        with _MU:
+            at = _FAILED.get((scope, link))
+        if at is not None and now - at < FAIL_BACKOFF_S:
+            continue
+        tried += 1
+        if handshake_ok(link, state.tls_spki, allow_loopback=allow_lo):
+            passed.append(link)
+        else:
+            with _MU:
+                _FAILED[(scope, link)] = time.monotonic()
+    return passed
 
 
 def known(state: Any) -> list[str]:
@@ -72,8 +170,8 @@ def learn(service: WorkspaceService, state: Any, hub_link: Any) -> bool:
         _LOG.info("hub_where not used (%s)", getattr(exc, "code", type(exc).__name__))
         return False
     have = set(known(state))
-    fresh = [e["link"] for e in answer["addresses"] if e["link"] not in have][:MAX_PROBES]
-    passed = [a for a in fresh if handshake_ok(a, state.tls_spki)]
+    fresh = [e["link"] for e in answer["addresses"] if e["link"] not in have]
+    passed = _probe_new(f"{service.workspace_id}:{state.hub_id}", state, fresh)
     return _store(service, state, passed, [e["link"] for e in answer["addresses"]], answer["name"])
 
 
@@ -133,7 +231,7 @@ def move(call: Call, link_text: str, *, now_ms: int, dev: bool) -> dict[str, Any
         raise other
     new = link.endpoint
     assert new is not None
-    if new not in known(state) and not handshake_ok(new, state.tls_spki):
+    if new not in known(state) and not handshake_ok(new, state.tls_spki, allow_loopback=is_loopback(state.addr)):
         raise HostError(
             "hub.unreachable",
             "no hub answers at that address with the certificate this workspace trusts; nothing was changed",

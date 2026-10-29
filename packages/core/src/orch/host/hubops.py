@@ -480,7 +480,7 @@ def _more_addrs(state: Any, dev: bool) -> list[str]:
     (``ORCH_HUB_ADDR``) names the one address to use and nothing else."""
     if state is None or (dev and os.environ.get("ORCH_HUB_ADDR")):
         return []
-    return list(state.addrs)
+    return list(getattr(state, "addrs", []))
 
 
 def hub_role(service: WorkspaceService, user_id: str) -> str | None:

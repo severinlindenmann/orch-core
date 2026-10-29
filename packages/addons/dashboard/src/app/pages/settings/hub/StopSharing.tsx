@@ -73,7 +73,7 @@ export function StopSharing({ ws, workspace, ticket, onClose }: { ws: string; wo
       <p>Stops being shared: this ticket&apos;s title, status, labels and deadline ({item ? 1 : 0} item).</p>
       <p>{now.data.count} items shared now · {now.data.count - (item ? 1 : 0)} after this. Preview from the hub, not signed.</p>
     </div>}
-    <p>The hub is asked to delete its copy. It stays unshared even if a rule matches it, until you share this ticket by name again.</p>
+    <p>The hub is asked to delete its copy. It stays unshared even if a rule matches it, until you share it again.</p>
     <p className="text-warning">{caveat}</p>
     <StopButton ws={ws} testId="hub-revoke-stop" disabled={!now.data} act={() => api.revokeHubShare(ws, ticket)} onDone={() => setFinished(true)} />
   </Flow>

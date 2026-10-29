@@ -2,7 +2,7 @@
 // General and Address are editable (one Save per card, plain clicks, no typed confirm word). The page signs nothing: the
 // hub checks every value again, writes it to its settings file and records the change in its audit log.
 import { loading } from "../feel.js";
-import { chip, h, text } from "../ui.js";
+import { chip, h, text, when } from "../ui.js";
 
 // The words for an address kind (owner rule: never a product name for the private network).
 const KINDS = [
@@ -18,6 +18,11 @@ const WHY = {
   malformed: "Check the values: a name is 1 to 60 characters, and an address must be one of this server's own.",
   phone_address_locked: "The first address is the one phones pair with. It cannot be changed here.",
   unavailable: "This hub cannot do that now.",
+  bad_credentials: "The password or the code was not right. Each code works only once: wait for the next one.",
+  insecure_origin: "The 24 words are not shown on this address. Run the command below on the server itself.",
+  no_backup_key: "Set up backups first.",
+  backup_not_found: "That backup is not on this server any more.",
+  backup_failed: "The backup could not be made.",
 };
 
 const row = (label, note, on) => h("div", { class: "list-row row" },
@@ -102,6 +107,93 @@ function addressCard(data, actions) {
   return card;
 }
 
+
+// --- Backup (M4 S5, #1462): the backup key (24 words, shown once), a backup now, the kept files, a download -----------------
+
+const STEP_UP = "Type your password and a new 6-digit code from your authenticator app. Each code works only once.";
+const NO_WORDS_HERE = "For safety the 24 words are not shown on this address, because it is not private. Run this on the server itself:";
+const NAMES = new RegExp("^hub-[0-9a-f]{8}-\\d{8}T\\d{6}Z\\.orchbak$");
+
+/** Is the console opened where the 24 words may be shown: this computer, https, or this hub's own private-network (VPN)
+ *  address (`privateWebs` = the web addresses of kind private from the settings; not the whole 100.64/10 range)? */
+export function wordsMayShow(loc = globalThis.location, privateWebs = []) {
+  if (!loc) return false;
+  if (loc.protocol === "https:") return true;
+  if (loc.protocol !== "http:") return false;
+  const host = String(loc.hostname ?? "").replace(/^\[|\]$/g, "");
+  if (host === "localhost" || host === "::1" || /^127\.\d+\.\d+\.\d+$/.test(host)) return true;
+  const origin = loc.origin ?? (loc.protocol + "//" + (loc.host ?? ""));
+  return privateWebs.includes(origin);
+}
+
+/** Password + code, then one button. `onSubmit({password, totp})` resolves nothing; the page re-renders afterwards. */
+function stepUpForm(id, label, onSubmit) {
+  const pw = h("input", { id: id + "-pw", type: "password", autocomplete: "current-password", "aria-label": "Password" });
+  const code = h("input", { id: id + "-totp", inputmode: "numeric", autocomplete: "one-time-code", maxlength: "6", "aria-label": "6-digit code" });
+  const go = h("button", { type: "button", class: "primary", text: label, onclick: async () => {
+    const body = { password: pw.value ?? "", totp: String(code.value ?? "").trim() };
+    pw.value = ""; code.value = "";
+    await onSubmit(body);
+  } });
+  return h("div", { class: "stepup", "data-stepup": id },
+    h("p", { class: "small muted", text: STEP_UP }),
+    h("div", { class: "field" }, h("label", { for: id + "-pw", text: "Password" }), pw),
+    h("div", { class: "field" }, h("label", { for: id + "-totp", text: "6-digit code" }), code), go);
+}
+
+/** The 24 words as a numbered grid. Shown once; "I have saved it" clears them. */
+function wordsPanel(words, actions) {
+  const list = String(words).split(" ");
+  const grid = h("ol", { class: "words mono" }, list.map((w) => h("li", { text: w })));
+  const copy = h("button", { type: "button", text: "Copy", onclick: async () => {
+    let ok = false;
+    try { ok = !!(await actions.copy?.(list.join(" "))); } catch { ok = false; }
+    copy.textContent = ok ? "Copied" : "Select and copy";
+  } });
+  return h("div", { class: "banner ok", role: "status", "data-words": "1" },
+    h("b", { text: "Write these 24 words down" }),
+    h("p", { class: "small", text: "They are shown only now. Keep them somewhere safe, away from this server. Without them a backup cannot be opened, and nobody can get them back for you." }),
+    grid, h("div", { class: "row" }, copy, h("button", { type: "button", class: "primary", text: "I have saved it", onclick: () => actions.wordsSaved?.() })));
+}
+
+function backupRows(b, actions) {
+  if (!b.backups.length) return h("p", { class: "small muted", text: "No backup yet." });
+  return h("ul", { class: "list backups" }, b.backups.filter((x) => NAMES.test(String(x.name))).map((x) => {
+    const row = h("li", { class: "list-row row", "data-backup": x.name },
+      h("div", { class: "grow" }, h("b", { text: text(when(x.made_ms)) }), h("div", { class: "small muted", text: Math.max(1, Math.round(x.size / 1024)) + " KB" })));
+    const slot = h("div", { class: "stepup-slot" });
+    row.append(h("button", { type: "button", text: "Download", onclick: () => slot.replaceChildren(stepUpForm("dl-" + x.name.slice(4, 12), "Download", (c) => actions.download?.(x.name, c))) }));
+    return h("div", {}, row, slot);
+  }));
+}
+
+function backupCard(b, actions) {
+  const card = h("div", { class: "card", "data-card": "backup" }, h("h2", { text: "Backup" }));
+  if (actions.words) card.append(wordsPanel(actions.words, actions));
+  const mayShow = actions.wordsMayShow !== false;
+  const cli = h("code", { class: "mono cli-line", text: text(b.cli_line ?? "orch-hub backup-key") });
+  if (!b.key_set) {
+    card.append(h("p", { class: "muted", text: "A backup keeps your people, keys and settings safe. It is sealed with a key that only the 24 backup words open. Every workspace keeps working without the hub, with or without a backup." }));
+    if (mayShow) card.append(h("div", { class: "setup" }, stepUpForm("bk-key", "Set up backups", (c) => actions.setKey?.(c))));
+    else card.append(h("p", { class: "small muted", text: NO_WORDS_HERE }), cli);
+    return card;
+  }
+  card.append(
+    h("p", { class: "small muted", text: "A backup is made every day. The " + text(b.keep) + " newest are kept on this server. The files are sealed: only the 24 words open them." }),
+    backupRows(b, actions),
+    h("div", { class: "row" }, h("button", { type: "button", class: "primary", text: "Back up now", onclick: () => actions.makeBackup?.() })),
+    h("p", { class: "small muted", text: "To keep a copy in another place, download a file and store it away from this server." }));
+  const more = h("div", { class: "replace" });
+  if (mayShow) {
+    const open = h("button", { type: "button", text: "Replace the backup key", onclick: () => {
+      more.replaceChildren(h("p", { class: "small muted", text: "New words make a new backup. Backups made with the old words are deleted once you have saved the new words." }), stepUpForm("bk-new", "Make new words", (c) => actions.setKey?.(c)));
+    } });
+    more.append(open);
+  } else more.append(h("p", { class: "small muted", text: NO_WORDS_HERE }), h("code", { class: "mono cli-line", text: text(b.cli_line ?? "orch-hub backup-key") + " --replace" }));
+  card.append(more);
+  return card;
+}
+
 export function hubSettingsView(data, actions = {}) {
   if (!data.configured) {
     return h("div", { class: "hub-settings" }, h("h1", { text: "Hub settings" }),
@@ -112,6 +204,7 @@ export function hubSettingsView(data, actions = {}) {
     h("p", { class: "lead muted", text: "How this hub is reached and how people sign in." }),
     generalCard({ ...data, name: text(data.name || "Hub"), company: text(data.company || "") }, actions),
     addressCard(data, actions),
+    data.backup ? backupCard(data.backup, actions) : null,
     h("div", { class: "card", "data-card": "sign-in" }, h("h2", { text: "Sign-in" }),
       (data.sign_in ?? []).map((m) => row(m.label, m.on ? m.note : null, m.on))));
 }
@@ -126,7 +219,7 @@ async function comesBack(d) {
   return false;
 }
 
-export async function hubSettingsPage(d, detected = []) {
+export async function hubSettingsPage(d, detected = [], words = null) {
   const finish = loading();
   d.pageLoading("hub-settings");
   try {
@@ -137,9 +230,34 @@ export async function hubSettingsPage(d, detected = []) {
     const r = await d.api("GET", "/admin/settings");
     if (r.status === 403 && r.body.error === "reauth_required") return d.reauthView();
     if (r.status !== 200) return d.shell("hub-settings", h("h1", { text: "Hub settings" }), h("p", { role: "alert", text: "Cannot read the settings. " + d.say(r.body.error) }));
+    const bk = await d.api("GET", "/admin/backup");
+    if (bk.status === 200) r.body.backup = bk.body;
     const say = (ok, x) => { d.state.notice = x.status < 300 ? d.banner("ok", ok, null) : d.banner("bad", "Not changed", WHY[x.body.error] ?? d.say(x.body.error ?? "unavailable")); };
+    const backupNote = (x, ok) => { d.state.notice = x.status < 300 ? d.banner("ok", ok, null) : d.banner("bad", "Not done", WHY[x.body.error] ?? d.say(x.body.error ?? "unavailable")); };
     const actions = {
       detected,
+      words,
+      wordsMayShow: wordsMayShow(globalThis.location, (r.body.addresses ?? []).filter((a) => a.kind === "private").map((a) => a.web)),
+      copy: async (t) => { try { await globalThis.navigator?.clipboard?.writeText(t); return true; } catch { return false; } },
+      wordsSaved: async () => { await d.api("POST", "/admin/backup/key/confirm", {}); await hubSettingsPage(d); },
+      setKey: async (c) => {
+        const x = await d.api("POST", "/admin/backup/key", c);
+        if (x.status === 200) { d.state.notice = d.banner("ok", "Backups are set up", null); return hubSettingsPage(d, [], x.body.words); }
+        backupNote(x, ""); return hubSettingsPage(d);
+      },
+      makeBackup: async () => { backupNote(await d.api("POST", "/admin/backups", {}), "Backup made"); await hubSettingsPage(d); },
+      download: async (name, c) => {
+        const x = await d.api("POST", "/admin/backups/download", { name, ...c });
+        if (x.status !== 200) { backupNote(x, ""); return hubSettingsPage(d); }
+        try {
+          const bin = atob(String(x.body.data).replace(/-/g, "+").replace(/_/g, "/"));
+          const bytes = Uint8Array.from(bin, (ch) => ch.charCodeAt(0));
+          const a = h("a", { href: URL.createObjectURL(new Blob([bytes], { type: "application/octet-stream" })), download: x.body.name });
+          a.click?.();
+          backupNote({ status: 200 }, "Backup downloaded");
+        } catch { backupNote({ status: 500, body: { error: "unavailable" } }, ""); }
+        await hubSettingsPage(d);
+      },
       saveGeneral: async (body) => { say("Saved", await d.api("PUT", "/admin/settings/general", body)); await hubSettingsPage(d); },
       loadDetected: async () => { const x = await d.api("GET", "/admin/settings/addresses/detected"); if (x.status === 200) await hubSettingsPage(d, x.body.addresses ?? []); },
       saveAddresses: async (body) => {

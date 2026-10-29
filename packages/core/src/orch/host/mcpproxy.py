@@ -139,6 +139,15 @@ def _dumps(obj: Any) -> str:
     return json.dumps(obj, separators=(",", ":"), ensure_ascii=False)
 
 
+def _view(tool: dict) -> dict:
+    """The entry the agent is shown for one sanitized tool. The pin is computed over exactly this (and nothing is
+    forwarded that is not in it)."""
+    out = {"name": tool["name"], "description": tool["description"], "inputSchema": tool["inputSchema"]}
+    if "title" in tool:
+        out["title"] = tool["title"]
+    return out
+
+
 def _secret_forms(value: str) -> list[str]:
     raw = value.encode()
     forms = {value, urllib.parse.quote(value, safe="")}
@@ -626,7 +635,7 @@ class Proxy:
             tool = _sanitize_tool(item)
             if tool is None or tool["name"] in seen:
                 continue
-            tool["pin"] = tool_pin(tool["name"], tool["description"], tool["inputSchema"])
+            tool["pin"] = tool_pin(_view(tool))  # the pin covers exactly what the agent will be shown
             size += len(_dumps(tool))
             if size > TOOLS_BYTES_MAX:
                 break
@@ -634,10 +643,7 @@ class Proxy:
             tools.append(tool)
         cap.pins[name] = {t["name"]: t["pin"] for t in tools}
         if self._on_seen is not None:
-            seen_view = [
-                {"name": t["name"], "description": t["description"], "inputSchema": t["inputSchema"], "pin": t["pin"]}
-                for t in tools
-            ]
+            seen_view = [{**_view(t), "pin": t["pin"]} for t in tools]
             try:
                 self._on_seen(cap.ws, name, str(record.get("digest", "")), seen_view)
             except Exception:
@@ -659,10 +665,7 @@ class Proxy:
         shown = []
         for t in tools:
             if policy.get(t["name"]) == t["pin"]:
-                entry = {"name": t["name"], "description": t["description"], "inputSchema": t["inputSchema"]}
-                if "title" in t:
-                    entry["title"] = t["title"]
-                shown.append(entry)
+                shown.append(_view(t))  # the same entry the pin was computed over
         return {"jsonrpc": "2.0", "id": rid, "result": {"tools": shown}}
 
     async def _tools_call(self, key: str, cap: _Cap, name: str, up: Any, rid: Any, params: dict) -> dict:

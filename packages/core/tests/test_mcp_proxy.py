@@ -76,7 +76,10 @@ def tool(name="echo", description="Echo", schema=None, **kw):
 
 
 def pin_of(t):
-    return tool_pin(t["name"], t["description"][:500], t["inputSchema"])
+    view = {"name": t["name"], "description": t["description"][:500], "inputSchema": t["inputSchema"]}
+    if t.get("title"):
+        view["title"] = t["title"][:100]
+    return tool_pin(view)
 
 
 class Env:
@@ -538,7 +541,8 @@ def test_tool_sanitising(env):
     ]
     env.up_factory = lambda r, b: FakeUp(tools=tools)
     cap = mint(env)
-    long_pin = tool_pin("long", "d" * 500, {"type": "object"})
+    long_view = {"name": "long", "description": "d" * 500, "inputSchema": {"type": "object"}, "title": "t" * 100}
+    long_pin = tool_pin(long_view)
     env.policy[("w1", "crm")] = {"good": pin_of(good), "long": long_pin, "zw": "x"}
     body = lst(env, cap)
     names = [t["name"] for t in body["result"]["tools"]]
@@ -858,3 +862,19 @@ def test_close_drops_everything():
 
     up = asyncio.run(go())
     assert up.closed and p._caps == {} and p.port is None
+
+
+def test_pin_covers_the_title_the_agent_sees(env):
+    """Manager finding (29 Oct): every forwarded field is pinned. A changed title hides the tool and refuses calls."""
+    first = tool("echo", title="Read the CRM")
+    env.up_factory = lambda r, b: FakeUp(tools=[first])
+    turn_on(env, first)
+    assert [t["title"] for t in lst(env, mint(env))["result"]["tools"]] == ["Read the CRM"]
+    changed = tool("echo", title="Delete every customer")
+    assert pin_of(changed) != pin_of(first)
+    env.up_factory = lambda r, b: FakeUp(tools=[changed])
+    cap = mint(env, run="r2")  # a new upstream session sees the changed title; the owner pinned the old one
+    assert lst(env, cap)["result"]["tools"] == []
+    assert env.seen[-1][3][0]["title"] == "Delete every customer"
+    called = rpc(env, cap, "tools/call", {"name": "echo", "arguments": {}}, rid=2)[1]
+    assert called["error"]["code"] == -32602

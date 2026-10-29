@@ -13,6 +13,7 @@ import base64
 import hashlib
 import hmac
 import html
+import json
 import os
 import re
 import secrets
@@ -25,6 +26,7 @@ from collections import deque
 from urllib.parse import parse_qs, quote
 
 from . import db
+from . import published as P
 
 ID32 = r"[0-9a-f]{32}"
 TOKEN = re.compile(r"[A-Za-z0-9_-]{43}")  # base64url of the host's 32 random bytes
@@ -118,13 +120,18 @@ _LANDING_BODY = (
     "<h1>Files were shared with you</h1>"
     '<form id="f" method="post" action="@ACTION@" hidden>'
     '<input type="hidden" name="t" value="">'
-    "<p>Nothing has been opened yet.</p>"
+    "<p>Nothing has been opened yet.</p>@PW@"
     '<button type="submit">Open shared files</button>'
     '<p class="s">Opening these files may count as one view. If this link allows only one view, '
     "you may not be able to reopen it.</p></form>"
     '<p id="x" hidden>This address is incomplete. Open the original link again, using the whole link '
     "you were given, including the part after the # sign.</p>"
     f"<script>{_SCRIPT}</script>"
+)
+_PW_FIELD = '<p><label>Password <input type="password" name="p" autocomplete="off" required maxlength="256"></label></p>'
+WRONG_PW = (
+    "Wrong password",
+    "That password did not work. Use your link again and check the password.",
 )
 ASK = " Ask the person who sent it for a new link."
 NOT_FOUND = ("Not found", "Nothing is shared at this address.")
@@ -381,6 +388,10 @@ class ShareServer:
         if why:
             return gone(why)
         body = _LANDING_BODY.replace("@ACTION@", f"/s/{share_id}/open")
+        if row["pw"] is not None:  # a second factor on top of the token (M4 C5)
+            body = body.replace("@PW@", _PW_FIELD)
+        else:
+            body = body.replace("@PW@", "")
         return page(200, ("Open shared files", ""), body=body, csp=LANDING_CSP)
 
     def _rate_ok(self, share_id, now):
@@ -417,6 +428,12 @@ class ShareServer:
                 return not_found()
             if not self._rate_ok(share_id, now):
                 return page(429, TOO_MANY, extra={"retry-after": "60"})
+            if (
+                row["pw"] is not None
+            ):  # the password, after the token and BEFORE a view is counted (cond. 8, 9)
+                bad = self._check_password(row, form, now)
+                if bad is not None:
+                    return bad
             view = secrets.token_hex(16)
             conn.execute("BEGIN IMMEDIATE")
             try:
@@ -442,6 +459,22 @@ class ShareServer:
         finally:
             conn.close()
         return _Resp(303, b"", extra={"location": f"/s/{share_id}/v/{view}/"})
+
+    def _check_password(self, share_id_row, form, now):
+        """None when the password opens the link, else the refusal page. Rate check and a KDF slot come BEFORE the
+        KDF; a wrong password is not a view (nothing is counted)."""
+        if not self.apps._try_ok("s:" + share_id_row["id"], now):
+            return page(429, TOO_MANY, extra={"retry-after": "60"})
+        given = (form.get("p") or [""])[0]
+        if not given or len(given.encode("utf-8", "replace")) > P.PW_INPUT_MAX:
+            return page(401, WRONG_PW)
+        if not self.apps._kdf.acquire(blocking=False):
+            return page(503, ("Busy", "Try again in a moment."), extra={"retry-after": "5"})
+        try:
+            ok = P.password_ok(json.loads(share_id_row["pw"]), given)
+        finally:
+            self.apps._kdf.release()
+        return None if ok else page(401, WRONG_PW)
 
     # -- files ----------------------------------------------------------------------------------
 

@@ -85,3 +85,23 @@ test("the mockup's demo data renders as the mockup's four rows", async () => {
   assert.deepEqual(find(view, (n) => n.attrs["data-link"]).map((r) => r.children[0].children[0].textContent),
     ["hello.txt", "Release notes 2.4 (page)", "Contract draft v3.pdf", "Logo pack.zip"]);
 });
+
+test("S2: with an act function the hub offers Revoke link and Stop app only, one click each; widening is words, not a button", () => {
+  const calls = [];
+  const act = (path, done) => calls.push([path, done]);
+  const app = { id: "d".repeat(32), workspace: "Marketing", kind: "page", state: "running", app_name: "Release notes", by_name: "Anna", by_kind: "person", access: "company", version: 3, visits_30d: 4, updated_ms: NOW };
+  const stopped = { ...app, id: "e".repeat(32), state: "stopped" };
+  const view = publishedView(data({ apps: [app, stopped] }), { now: NOW, act });
+  assert.deepEqual(find(view, (n) => n.tag === "button").map((b) => b.attrs["data-pubtab"] ?? b.attrs["data-stop"]), ["apps", "links", "d".repeat(32)]);
+  find(view, (n) => n.attrs["data-stop"])[0].listeners.click();
+  assert.equal(calls[0][0], "apps/" + "d".repeat(32) + "/stop");
+  assert.match(view.textContent, /approve in Marketing/);
+  find(view, (n) => n.attrs["data-pubtab"] === "links")[0].listeners.click();
+  const revoke = find(view, (n) => n.tag === "button" && n.attrs["data-revoke"]);
+  assert.deepEqual(revoke.map((b) => b.attrs["data-revoke"][0]), ["a", "b"]); // live links only, not the expired one
+  revoke[0].listeners.click();
+  assert.equal(calls[1][0], "links/" + "a".repeat(32) + "/revoke");
+  assert.match(view.textContent, /Extend or add a password: approve in Product/);
+  const labels = find(view, (n) => n.tag === "button").map((b) => b.textContent);
+  assert.ok(labels.every((l) => !/extend|password|start|roll back|change/i.test(l.replace(/Shared files|Apps & pages/g, ""))), labels.join("|"));
+});

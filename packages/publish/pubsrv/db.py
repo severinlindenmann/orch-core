@@ -100,6 +100,16 @@ CREATE TABLE IF NOT EXISTS views(
   share_id TEXT NOT NULL REFERENCES shares(id),
   until_ms INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS hub_narrowings(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  target TEXT NOT NULL CHECK(target IN ('share','app')),
+  target_id TEXT NOT NULL,
+  workspace_id TEXT NOT NULL,
+  hub_id TEXT NOT NULL,
+  action TEXT NOT NULL CHECK(action IN ('revoke','stop')),
+  at_ms INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS hub_narrowings_ws ON hub_narrowings(workspace_id, target, target_id);
 CREATE TABLE IF NOT EXISTS apps(
   id TEXT PRIMARY KEY,
   owner_ws TEXT NOT NULL,  -- no FK: tombstones outlive an unbind
@@ -188,6 +198,7 @@ _SHARE_COLUMNS = (
     ("label", "TEXT NOT NULL DEFAULT ''"),
     ("by_kind", "TEXT NOT NULL DEFAULT 'person' CHECK(by_kind IN ('person','agent'))"),
     ("by_name", "TEXT"),
+    ("pw", "TEXT"),  # the password record (JSON, C5) of a link that has one; never a plain password
 )
 
 

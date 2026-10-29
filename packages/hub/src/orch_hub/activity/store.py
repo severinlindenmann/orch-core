@@ -51,6 +51,8 @@ ACTIVITY_TYPES = (
     "addon.request_approved",
     "addon.request_refused",
     "hub.settings.changed",
+    "link.revoked",
+    "app.stopped",
 )
 # Only structured references, never request bodies, credentials, or free-form notes.
 DETAIL_FIELDS = frozenset(
@@ -73,6 +75,8 @@ DETAIL_FIELDS = frozenset(
         "server",
         "setting",  # which hub setting changed ("general" or "addresses"), never its value
         "secret",
+        "link",  # a shared link id (32 hex)
+        "app",  # an app id (32 hex)
     }
 )
 REASON_MAX_BYTES = 800  # 200 characters of UTF-8

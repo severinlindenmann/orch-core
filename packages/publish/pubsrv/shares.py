@@ -22,7 +22,7 @@ from fastapi import APIRouter, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 
-from . import db, pathrules, registry
+from . import db, narrow, pathrules, registry
 from . import published as P
 from .auth import WINDOW_MS, Refusal
 
@@ -503,7 +503,74 @@ def op_revoke(settings, store, ws, wsk, sid):
         conn.close()
 
 
-def _view(row, now):
+def _json_body(raw):
+    """A small strict JSON object body (no duplicate keys)."""
+    try:
+        m = json.loads(raw.decode("utf-8"), object_pairs_hook=_no_dup_pairs)
+    except (UnicodeError, ValueError):
+        raise Refusal(400, "malformed") from None
+    if not isinstance(m, dict):
+        raise Refusal(400, "malformed")
+    return m
+
+
+def op_extend(settings, ws, wsk, sid, raw):
+    """``POST /shares/{id}/extend {days}`` (M4 C4, condition 14): a live link ends ``days`` (1..30) from NOW and never
+    earlier than it already did. The person's signed note is checked at the host; here only the bounds."""
+    body = _json_body(raw)
+    problem = P.extend_problem(body)
+    if problem is not None:
+        raise Refusal(400, problem)
+    conn = db.connect(settings.db_path)
+    try:
+        _txn(conn, ws, wsk)
+        try:
+            row = owned_share(conn, ws, sid)
+            now = settings.clock()
+            if row["state"] != "live" or row["expires_ms"] <= now:
+                _gone(row)
+            new = P.extend_expiry(now, body)
+            if new <= row["expires_ms"]:
+                raise Refusal(400, "not_longer")
+            conn.execute("UPDATE shares SET expires_ms=? WHERE id=?", (new, sid))
+            conn.execute("COMMIT")
+        except BaseException:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
+        return {"id": sid, "expires_ms": new, "result": "extended"}
+    finally:
+        conn.close()
+
+
+def op_password(settings, ws, wsk, sid, raw):
+    """``POST /shares/{id}/password {pw}`` (M4 C4/C5, condition 8): ``pw`` must be a valid C5 record made by the host
+    (scrypt n=32768 r=8 p=1). Never null: taking a password away widens access, so there is no route for it (the
+    owner shares again instead). Publish never sees the plain password."""
+    body = _json_body(raw)
+    if set(body) != {"pw"} or P.password_record_problem(body["pw"]) is not None:
+        raise Refusal(400, "malformed")
+    conn = db.connect(settings.db_path)
+    try:
+        _txn(conn, ws, wsk)
+        try:
+            row = owned_share(conn, ws, sid)
+            if row["state"] != "live" or row["expires_ms"] <= settings.clock():
+                _gone(row)
+            conn.execute(
+                "UPDATE shares SET pw=? WHERE id=?", (json.dumps(body["pw"], sort_keys=True), sid)
+            )
+            conn.execute("COMMIT")
+        except BaseException:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
+        return {"id": sid, "has_password": True}
+    finally:
+        conn.close()
+
+
+def _view(row, now, narrowed=False):
     state = row["state"]
     if state == "live" and row["expires_ms"] <= now:
         state = "expired"
@@ -517,6 +584,9 @@ def _view(row, now):
         "views": row["views"],
         "bytes": row["bytes"],
         "created_ms": row["created_ms"],
+        "has_password": row["pw"] is not None,
+        # a hub admin revoked this link (M4 C2): the workspace sees who narrowed it, in its own list
+        "narrowed_by": "hub" if narrowed else None,
     }
 
 
@@ -527,7 +597,11 @@ def op_list(settings, ws):
             "SELECT * FROM shares WHERE owner_ws=? ORDER BY created_ms, id", (ws,)
         ).fetchall()
         now = settings.clock()
-        return {"shares": [_view(r, now) for r in rows]}
+        return {
+            "shares": [
+                _view(r, now, narrow.narrowed_by_hub(conn, ws, "share", r["id"])) for r in rows
+            ]
+        }
     finally:
         conn.close()
 
@@ -538,7 +612,7 @@ def op_get(settings, ws, sid):
         row = owned_share(conn, ws, sid)
         if row["state"] in ("revoked", "expired"):
             _gone(row)
-        out = _view(row, settings.clock())
+        out = _view(row, settings.clock(), narrow.narrowed_by_hub(conn, ws, "share", sid))
         out["files"] = [
             {"path": f["path"], "size": f["size"], "present": bool(f["present"])}
             for f in conn.execute(
@@ -620,6 +694,16 @@ def install(app, settings):
     @router.post("/shares/{sid}/commit")
     async def commit(sid: str, request: Request):
         return await guarded(request, lambda ws, wsk: op_commit(settings, store, ws, wsk, sid))
+
+    @router.post("/shares/{sid}/extend")
+    async def extend(sid: str, request: Request):
+        raw = await request.body()
+        return await guarded(request, lambda ws, wsk: op_extend(settings, ws, wsk, sid, raw))
+
+    @router.post("/shares/{sid}/password")
+    async def password(sid: str, request: Request):
+        raw = await request.body()
+        return await guarded(request, lambda ws, wsk: op_password(settings, ws, wsk, sid, raw))
 
     @router.delete("/shares/{sid}")
     async def revoke(sid: str, request: Request):

@@ -58,7 +58,7 @@ DAY_MS = 86_400_000
 _HEX32 = re.compile(r"[0-9a-f]{32}")
 
 # slugs (Opus condition 11): a slug is never freed, and these names are routes of the app server
-SLUG = re.compile(r"[a-z0-9-]{3,40}")
+SLUG = re.compile(r"[a-z0-9][a-z0-9-]{1,38}[a-z0-9]")
 RESERVED_SLUGS = frozenset({"s", "a", "v", "api", "pass", "rows", "v1", "v2"})
 
 
@@ -69,7 +69,10 @@ def slug_problem(slug: Any) -> str | None:
 
 
 # reach origins (C7, Opus condition 10)
-LOCAL_SUFFIXES = (".localhost", ".local", ".internal", ".lan", ".home", ".corp", ".intranet", ".private")
+LOCAL_SUFFIXES = (
+    ".localhost", ".local", ".internal", ".lan", ".home", ".corp", ".intranet", ".private",
+    ".home.arpa", ".test", ".invalid", ".example", ".onion", ".alt",
+)  # fmt: skip
 REACH_MAX = 8
 ORIGIN_MAX = 120
 _HOST_LABEL = re.compile(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?")
@@ -238,6 +241,8 @@ def files_problem(files: Any) -> str | None:
         if type(f["sha256"]) is not str or _HEX64.fullmatch(f["sha256"]) is None:
             return "files"
     paths = [f["path"] for f in files]
+    if len({p.casefold() for p in paths}) != len(paths):
+        return "files_order"  # two paths equal ignoring case would be one file on a case-insensitive disk
     if not all(a < b for a, b in itertools.pairwise(paths)):
         return "files_order"
     return None if "index.html" in paths else "no_index"

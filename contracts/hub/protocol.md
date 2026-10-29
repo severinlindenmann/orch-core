@@ -2384,7 +2384,7 @@ anything that widens exposure.
 
 **Slugs (C7 neighbour, condition 11).** An app lives at `/a/<slug>/`. `slug` matches `[a-z0-9-]{3,40}` (`slug`) and is not
 `s`, `a`, `v`, `api`, `pass`, `rows`, `v1`, `v2` (`reserved_slug`; the one- and two-letter names are already too short, the
-list still names them so a later change of the length cannot free them). A slug is never freed after the app is removed.
+list still names them so a later change of the length cannot free them). A slug starts and ends with a letter or digit (`[a-z0-9][a-z0-9-]{1,38}[a-z0-9]`). A slug is never freed after the app is removed.
 
 **The version meta.** A version is uploaded in two steps that serve nothing by themselves: `PUT
 /v1/ws/{ws}/apps/{id}/versions/{n}` (the meta, signed by `WSK` like every request) and `PUT .../versions/{n}/files/{path}`
@@ -2396,7 +2396,7 @@ meta = {slug, name (1..60, one line, text rule §8.5), kind: page|app|form, acce
 audience: null for public and password; "company" for company; "group:<hub group>" or "ws:<workspace_id>" for group
 pw:       the password record (§11.4.1) for access "password", null otherwise
 reach:    strictly sorted, duplicate-free canonical origins (§11.7), at most 8, none of them the hub's or publish's own host
-files:    sorted by path (strictly), 1..500, relative paths of segments [A-Za-z0-9_~+@-][A-Za-z0-9._~+@-]* (so no .., no
+files:    sorted by path (strictly), no two equal ignoring case (`files_order`), 1..500, relative paths of segments [A-Za-z0-9_~+@-][A-Za-z0-9._~+@-]* (so no .., no
           dot-file, no empty segment, no backslash), size 0..50 000 000, and `index.html` is present
 ```
 
@@ -2534,7 +2534,7 @@ lower case, ASCII, no path (not even `/`), query, fragment or userinfo, the defa
 `javascript:`, `blob:`, `ws:` and a bare host (`https_only`); `user@` (`userinfo`); a path, query, fragment or backslash
 (`path`); an IP literal in any spelling, `127.0.0.1`, `127.1`, `0x7f.0.0.1`, `2130706433`, `[::1]` (`ip_literal`: a last label
 that starts with a digit is never a name); `localhost`, a one-word host or a name under `.local`, `.internal`, `.lan`, `.home`,
-`.corp`, `.intranet`, `.private`, `.localhost` (`not_remote`); a host equal to the host of the hub or of orch-publish itself,
+`.corp`, `.intranet`, `.private`, `.localhost`, `.home.arpa`, `.test`, `.invalid`, `.example`, `.onion`, `.alt` (`not_remote`); a host equal to the host of the hub or of orch-publish itself,
 **whatever the port** (cookies do not separate ports: `forbidden_origin`); anything else not in canonical form (`origin`).
 A list is strictly sorted with no duplicates (`reach_order`) and has at most 8 entries (`reach`). The workspace's own
 `settings.publish.app_reach` must also contain every entry (S4); the owner approves the list per version (it is inside
@@ -2620,6 +2620,11 @@ group apps (and only those); that is said in the release review text and in §13
 - **Replays.** Snapshots are monotonic (§7); custodial events are bound to workspace, log and type and go through the
   F1 id and generation checks; publish requests through the v2 nonce store; link messages only through the 120 s
   window in V3 (SHORTCUT).
+
+**M4 reach and DNS (§11.7).** A reach entry is judged by its spelling only. A public-looking name that resolves to a private
+or loopback address (DNS rebinding, a record the owner or an attacker controls) cannot be caught by this contract; the CSP
+limits the browser's background requests to the approved names, and the release review tells the owner to approve names, not
+addresses. Publish and the hub never resolve a reach name.
 
 ## 14. Refusal codes
 
@@ -2751,7 +2756,7 @@ must equal `page_ticket_with_proj` byte for byte) and the hub runs `proj_build`;
 **`vectors_published.json`** (M4, #1357 S0; `make_vectors_published.py`): the sections `slug_cases`, `origin_cases`, `reach_cases`,
 `csp_cases`, `password_record_cases`, `password_verify_cases`, `meta_cases`, `meta_hash_cases`, `commit_cases`, `route_cases`,
 `extend_cases`, `row_cases`, `row_scope_cases`, `approval_cases` (both paths), `narrow_cases` and `pass_cases`, with `required`
-naming the cases an implementation must not lose. orch-hub, orch-publish and orch-core each replay every section.
+naming the cases an implementation must not lose. orch-hub and orch-publish replay every section; orch-core replays twelve and skips four with reasons: `row_cases` and `row_scope_cases` (rows are made by orch-publish and read by the hub console), `narrow_cases` and `pass_cases` (verified by orch-publish), and for `approval_cases` it checks only what the host computes (the request pre-check and the `request_hash`).
 
 ## 16. Decided here, and open points for L2
 

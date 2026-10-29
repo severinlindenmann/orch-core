@@ -94,6 +94,10 @@ def slug_cases() -> list[dict[str, Any]]:
         ("maximum length 40", "a" * 40, None),
         ("digits and hyphens", "2026-q4-plan", None),
         ("two characters", "ab", "slug"),
+        ("leading hyphen", "-abc", "slug"),
+        ("trailing hyphen", "abc-", "slug"),
+        ("only hyphens", "---", "slug"),
+        ("hyphen inside", "a-c", None),
         ("forty-one characters", "a" * 41, "slug"),
         ("upper case", "Team-faq", "slug"),
         ("underscore", "team_faq", "slug"),
@@ -117,7 +121,7 @@ def origin_cases() -> list[dict[str, Any]]:
     rows = [
         ("plain https origin", "https://api.example.com", None),
         ("with a port", "https://api.example.com:8443", None),
-        ("a punycode name", "https://xn--bcher-kva.example", None),
+        ("a punycode name", "https://xn--bcher-kva.example.net", None),
         ("a number inside a name", "https://api2.example.com", None),
         ("http", "http://api.example.com", "https_only"),
         ("a bare host", "api.example.com", "https_only"),
@@ -152,6 +156,12 @@ def origin_cases() -> list[dict[str, Any]]:
         ("suffix .home", "https://router.home", "not_remote"),
         ("suffix .corp", "https://crm.corp", "not_remote"),
         ("subdomain of localhost", "https://app.localhost", "not_remote"),
+        ("suffix .home.arpa", "https://nas.home.arpa", "not_remote"),
+        ("suffix .test", "https://api.test", "not_remote"),
+        ("suffix .invalid", "https://api.invalid", "not_remote"),
+        ("suffix .example", "https://api.example", "not_remote"),
+        ("suffix .onion", "https://abc.onion", "not_remote"),
+        ("suffix .alt", "https://api.alt", "not_remote"),
         ("upper case", "https://API.example.com", "origin"),
         ("the default port spelled out", "https://api.example.com:443", "origin"),
         ("port zero", "https://api.example.com:0", "origin"),
@@ -323,6 +333,7 @@ def meta_cases() -> list[dict[str, Any]]:
         ("a dot file", meta(files=[file_of(".env", b"x"), FILES[0], FILES[1]]), "files"),
         ("a backslash path", meta(files=[FILES[0], file_of("a\\b", b"x"), FILES[1]]), "files"),
         ("an empty segment", meta(files=[file_of("a//b", b"x"), FILES[0], FILES[1]]), "files"),
+        ("two paths equal ignoring case", meta(files=[file_of("Index.html", b"x"), *FILES]), "files_order"),
         ("a bad sha256", meta(files=[{**FILES[0], "sha256": "AB" * 32}, FILES[1]]), "files"),
         ("a negative size", meta(files=[{**FILES[0], "size": -1}, FILES[1]]), "files"),
         ("a file member too many", meta(files=[{**FILES[0], "mode": 511}, FILES[1]]), "files"),
@@ -378,7 +389,7 @@ def commit_cases() -> list[dict[str, Any]]:
         case(
             "commit_reach_widened_after_approval",
             body(),
-            meta(reach=["https://api.example.com", "https://evil.example"]),
+            meta(reach=["https://api.example.com", "https://evil.example.net"]),
             STORED,
             "meta_mismatch",
         ),
@@ -711,7 +722,7 @@ def approval_cases() -> list[dict[str, Any]]:
     add("app_commit_group", rg, approval_for(rg, access="group"), ok(bg))
     add("approval_for_public_used_for_group", rg, approval_for(rg, access="public"), {"error": "bad_approval"})
     # the owner approved reach A; the commit that arrives names reach B (same everything else)
-    bad_reach = P.release_body("commit", APP, 1, meta(reach=["https://api.example.com", "https://evil.example"]))
+    bad_reach = P.release_body("commit", APP, 1, meta(reach=["https://api.example.com", "https://evil.example.net"]))
     add(
         "approval_mismatched_reach_hash",
         req_of("commit", bad_reach),
@@ -722,6 +733,13 @@ def approval_cases() -> list[dict[str, Any]]:
         "approval_other_manifest",
         req_of("commit", P.release_body("commit", APP, 1, meta(label="swapped files"))),
         approval_for(rc, access="company"),
+        {"error": "bad_approval"},
+    )
+    other_aud = P.release_body("commit", APP, 1, meta(access="group", audience="group:sales"))
+    add(
+        "approval_other_audience",
+        req_of("commit", other_aud),
+        approval_for(rg, access="group"),
         {"error": "bad_approval"},
     )
     add(

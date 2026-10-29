@@ -842,7 +842,7 @@
     "now_ms": 1790000000000,
     "owner_person_id": "4cfef66f1dc7bee794e9d949f2a216c3",
     "request": {
-     "body_hex": "7b22616363657373223a22636f6d70616e79222c226170705f6964223a226236343866343834396530363664613935336562616437313436326166636663222c2261756469656e6365223a22636f6d70616e79222c226d6574615f68617368223a22316e4769543661645869654e7277317430325a7941615058685241624f306a707a523865775574675f7834222c226f70223a22636f6d6d6974222c2272656163685f68617368223a225561735a544167675347315436436a4e414174634f622d58447a7a7a523836546e70526d463065704d5755222c2276657273696f6e223a317d",
+     "body_hex": "7b22616363657373223a22636f6d70616e79222c226170705f6964223a226236343866343834396530363664613935336562616437313436326166636663222c2261756469656e6365223a22636f6d70616e79222c226d6574615f68617368223a224d5a64724d4771465a6451674d684b667352576145764b43373858466c714c49716c3239506b6654747649222c226f70223a22636f6d6d6974222c2272656163685f68617368223a2230304259524d5a566f54365444523436637332433669534443664446386f41304c53537a57396463355f49222c2276657273696f6e223a317d",
      "host": "pub.dev.severin.io",
      "hub": "38d8abed52ccfb538da401fd54e64bdc",
      "method": "POST",
@@ -913,6 +913,62 @@
     "error": "bad_approval"
    },
    "name": "approval_other_manifest"
+  },
+  {
+   "args": {
+    "approval": {
+     "device_cert": {
+      "o": {
+       "created_ms": 1789136000000,
+       "device_id": "0c7a9ef2f15e03801d557cd8a9c060ee",
+       "dk_kx_pub": "BAi9Pp7GI1yH-C0S0JEJhfNCVb0BA8WgP8_5gC0GZCZqab8VuFY7VYFo0pdOmW2Hl_XS-GMLLSm1FQI4l-Iw8QE",
+       "dk_sig_pub": "BO3JB2uPFN00X5wLaVIkvVHW7GCQTIStmV1uQVBkIIHiv5_498g3AbodXIywNC-1xESTQTbfQFC3RXDlFtVNfWA",
+       "expires_ms": null,
+       "kind": "device_cert",
+       "label_sealed": "0EJeI-TFuaxhZULJAYin2cMlCINNl8xbdD2NOknNATY",
+       "person_id": "4cfef66f1dc7bee794e9d949f2a216c3",
+       "scopes_max": [
+        "look",
+        "decide",
+        "operate"
+       ],
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "0HMDPeS-m9AQFx0JjUfh3hsuBfjR_4cyjGxf5wutNHqj6vywSgekKDdZ3_BtshVugDlSF7aIEbPU5C9c7NXbtg"
+     },
+     "o": {
+      "access": "group",
+      "device_id": "0c7a9ef2f15e03801d557cd8a9c060ee",
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "kind": "hub.publish_approval",
+      "request_hash": "XJOFZQIV7m6nUy7oQsVdLyhPyleJ6wUWE3YtThz-5QM",
+      "suite": 2,
+      "v": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "pk_pub": "BJv3zcHlC-le4GhQzbxJgBfwlLEKYXGRLdt9Spgr7WfxGFHVDAVwfHZvjm_KgqQWRevGqMC7tqGt2e3v4c7Z9gY",
+     "sig": "IrplPvZxqC7iLKkNBtHICuxvLzGhBHDVQ_8WqmAKMCKoJTm0khQO6S4H9BRdNtovuQ-0L0-jex_1Wt37IWmE1Q"
+    },
+    "now_ms": 1790000000000,
+    "owner_person_id": "4cfef66f1dc7bee794e9d949f2a216c3",
+    "request": {
+     "body_hex": "7b22616363657373223a2267726f7570222c226170705f6964223a226236343866343834396530363664613935336562616437313436326166636663222c2261756469656e6365223a2267726f75703a73616c6573222c226d6574615f68617368223a22625f72566c6b6c6b436d657664715363387a754469344e65587732425a5a494964576d6641726a6b6c7859222c226f70223a22636f6d6d6974222c2272656163685f68617368223a226f3675636b4e5334485a564f6f444e5f6e63796d474b55757478464259727a386341583778747171777951222c2276657273696f6e223a317d",
+     "host": "pub.dev.severin.io",
+     "hub": "38d8abed52ccfb538da401fd54e64bdc",
+     "method": "POST",
+     "nonce_hex": "c989e30474ac55b97416eb21bc42f183",
+     "target": "/v1/ws/336afd0fd4c349f575c2ec155d7258ad/apps/b648f4849e066da953ebad71462afcfc/commit",
+     "ts_ms": 1790000000000,
+     "ws": "336afd0fd4c349f575c2ec155d7258ad"
+    },
+    "revoked_devices": []
+   },
+   "expect": {
+    "error": "bad_approval"
+   },
+   "name": "approval_other_audience"
   },
   {
    "args": {
@@ -2247,7 +2303,7 @@
     "pw": null,
     "reach": [
      "https://api.example.com",
-     "https://evil.example"
+     "https://evil.example.net"
     ],
     "slug": "team-faq",
     "ticket": "01J9ZP0000000000000000TKT1"
@@ -4838,6 +4894,44 @@
     "ticket": "01J9ZP0000000000000000TKT1"
    },
    "name": "an empty segment"
+  },
+  {
+   "expect": "files_order",
+   "forbidden": [
+    "https://hub.example.com",
+    "https://publish.example.com:8443"
+   ],
+   "meta": {
+    "access": "company",
+    "audience": "company",
+    "files": [
+     {
+      "path": "Index.html",
+      "sha256": "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881",
+      "size": 1
+     },
+     {
+      "path": "app.js",
+      "sha256": "0a286891c11c056e1ab5bfc25bf5d6b2f5b06d38eac10944f678fd8a2e70c393",
+      "size": 14
+     },
+     {
+      "path": "index.html",
+      "sha256": "2497f435b6a890efe341076fbf5833c6ef7eb3181938ed04e69663ae790c9436",
+      "size": 40
+     }
+    ],
+    "kind": "app",
+    "label": "Team FAQ, first version",
+    "name": "Team FAQ",
+    "pw": null,
+    "reach": [
+     "https://api.example.com"
+    ],
+    "slug": "team-faq",
+    "ticket": "01J9ZP0000000000000000TKT1"
+   },
+   "name": "two paths equal ignoring case"
   },
   {
    "expect": "files",
@@ -9275,7 +9369,7 @@
     "https://publish.example.com:8443"
    ],
    "name": "a punycode name",
-   "origin": "https://xn--bcher-kva.example"
+   "origin": "https://xn--bcher-kva.example.net"
   },
   {
    "expect": null,
@@ -9582,6 +9676,60 @@
    ],
    "name": "subdomain of localhost",
    "origin": "https://app.localhost"
+  },
+  {
+   "expect": "not_remote",
+   "forbidden": [
+    "https://hub.example.com",
+    "https://publish.example.com:8443"
+   ],
+   "name": "suffix .home.arpa",
+   "origin": "https://nas.home.arpa"
+  },
+  {
+   "expect": "not_remote",
+   "forbidden": [
+    "https://hub.example.com",
+    "https://publish.example.com:8443"
+   ],
+   "name": "suffix .test",
+   "origin": "https://api.test"
+  },
+  {
+   "expect": "not_remote",
+   "forbidden": [
+    "https://hub.example.com",
+    "https://publish.example.com:8443"
+   ],
+   "name": "suffix .invalid",
+   "origin": "https://api.invalid"
+  },
+  {
+   "expect": "not_remote",
+   "forbidden": [
+    "https://hub.example.com",
+    "https://publish.example.com:8443"
+   ],
+   "name": "suffix .example",
+   "origin": "https://api.example"
+  },
+  {
+   "expect": "not_remote",
+   "forbidden": [
+    "https://hub.example.com",
+    "https://publish.example.com:8443"
+   ],
+   "name": "suffix .onion",
+   "origin": "https://abc.onion"
+  },
+  {
+   "expect": "not_remote",
+   "forbidden": [
+    "https://hub.example.com",
+    "https://publish.example.com:8443"
+   ],
+   "name": "suffix .alt",
+   "origin": "https://api.alt"
   },
   {
    "expect": "origin",
@@ -15184,6 +15332,26 @@
    "expect": "slug",
    "name": "two characters",
    "slug": "ab"
+  },
+  {
+   "expect": "slug",
+   "name": "leading hyphen",
+   "slug": "-abc"
+  },
+  {
+   "expect": "slug",
+   "name": "trailing hyphen",
+   "slug": "abc-"
+  },
+  {
+   "expect": "slug",
+   "name": "only hyphens",
+   "slug": "---"
+  },
+  {
+   "expect": null,
+   "name": "hyphen inside",
+   "slug": "a-c"
   },
   {
    "expect": "slug",

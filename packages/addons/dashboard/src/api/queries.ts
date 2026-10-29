@@ -53,7 +53,9 @@ export const queries = {
   ticketsClosed: (ws: string, params: ListTicketsParams) =>
     queryOptions({ queryKey: ['tickets', ws, 'closed', params], queryFn: () => api.listTickets(ws, { ...params, status: ['closed'] }) }),
   /** One ticket, keyed by its workspace (the id a real host knows it by) and its key. */
-  ticket: (ws: string, key: string) => queryOptions({ queryKey: ['ticket', ws, key], queryFn: () => api.getTicket(key, ws), retry: false }),
+  ticket: (ws: string, key: string) => queryOptions({ queryKey: ['ticket', ws, key], queryFn: () => api.getTicket(key, ws), retry: false,
+      // Safety net next to the live stream: while an agent holds the ticket, a plan it wrote is read again every 30 s (P12).
+      refetchInterval: (q) => (q.state.data?.claim && q.state.data.claim.live !== false ? 30_000 : false), refetchOnWindowFocus: true }),
   connections: (ws: string) => queryOptions({ queryKey: ['connections', ws], queryFn: () => api.getConnections(ws) }),
   skills: (ws: string) => queryOptions({ queryKey: ['skills', ws], queryFn: () => api.getSkills(ws) }),
   /** Reduced workspace settings of a real host (M4). */

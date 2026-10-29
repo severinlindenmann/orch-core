@@ -18,7 +18,7 @@ import { cn } from '@/lib/utils'
 import { CardFields, People, ProgressBar, type BoardPeople } from '../board/TicketCard'
 import { PriorityMarker, TypeIcon } from '../board/lib'
 import { isCollapsed, NO_EPIC, progressLabel, type EpicGroups } from '../board/grouping'
-import { agentName, ago, statusLabel } from '../ticket/shared'
+import { Ago, agentName, statusLabel } from '../ticket/shared'
 import type { SortKey } from './search'
 
 export interface AddonColumn {
@@ -223,7 +223,7 @@ export function TicketsTable({
           </TableCell>
         )}
         <TableCell className="truncate px-1.5 py-1.5 font-mono text-[11px] text-text-faint" title={t.updated_at}>
-          {ago(t.updated_at)}
+          <Ago at={t.updated_at} />
         </TableCell>
         {showHub && <TableCell className="px-1.5 py-1.5">{hubMark(t.key)}</TableCell>}
         {hasAddon && show('addon') && (

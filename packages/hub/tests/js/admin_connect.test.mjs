@@ -105,3 +105,16 @@ test("Access grants overview says 'only you' just for the viewer's own personal 
   assert.match(t, /Personal · only you/);
   assert.match(t, /Personal · only the owner/);
 });
+
+test("People rows show the name, not the long id; only two same-named people get the id inside a closed fold (r10-P07)", async () => {
+  const hex = (c) => c.repeat(32);
+  const b = { ...bodies, users: { users: [{ user_id: hex("a"), name: "Anna" }, { user_id: hex("b"), name: "Ben" }, { user_id: hex("c"), name: "Ben" }] } };
+  const d = { self: hex("a"), say: (c) => c, api: async (m, path) => ({ status: 200, body: b[path.replace("/admin/", "").split("?")[0]] }) };
+  const [, , , panels] = adminView(d);
+  for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
+  const t = panels.textContent;
+  assert.equal(t.includes(hex("a")), false);
+  assert.equal(t.includes(hex("b")), true);
+  assert.equal(t.includes(hex("c")), true);
+  assert.equal(panels.querySelectorAll("details.info").length >= 2, true);
+});

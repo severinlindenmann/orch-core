@@ -14,6 +14,8 @@ test("empty states explain the next step without technical errors", () => {
   assert.doesNotMatch(emptyWords("workspaces")[1] + emptyWords("workspaces-member")[1], /Mission Control/);
   assert.match(emptyWords("services")[1], /check again/);
   assert.deepEqual(emptyWords("search"), ["Nothing found", "Try another name or a shorter search."]);
+  assert.doesNotMatch(emptyWords("spaces")[1], /orch-hub|command line|terminal/i);
+  assert.match(emptyWords("spaces")[1], /New shared space/);
   assert.equal(emptyWords("unknown").length, 2);
 });
 test("quick loads cancel the delayed bar; overlapping loads keep it visible", () => {

@@ -3,7 +3,16 @@
 
 from __future__ import annotations
 
+import pytest
+
 from orch.cli import parser
+
+
+@pytest.fixture(autouse=True)
+def _plan_gate_off(ws):
+    """r10-P02: an agent builds only after the plan is approved. These tests are about tasks and receipts, not the
+    plan gate: the workspace turns it off (a signed policy change, as a person would make it)."""
+    ws.plan_gate_off()
 
 
 def test_a_direct_mode_run_receipt_is_labelled_attested_by_the_agent(ws, cli):

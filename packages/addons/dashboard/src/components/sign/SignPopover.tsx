@@ -50,6 +50,8 @@ export interface SignPopoverProps {
   children?: ReactNode
   /** The caller read `trustedPress(e.nativeEvent)` in its own click/keydown handler: true opens the host's review at once, false keeps the idle box. Absent: the ambient press flag decides (legacy). A remount without it prepares nothing. */
   autoStart?: boolean
+  /** Open straight on the host's review whatever carried the opening click (a menu item, a keyboard activation): prepare only, never armed, so Sign is still the person's own press (r10-P09). Use it only where the person's own explicit action opened this popover. */
+  prepareOnOpen?: boolean
   /** With `autoStart`: the opening press also starts the 1 s arm (one click signs after the countdown). Never for a review with risk lines (they need their own press). */
   armOnStart?: boolean
   /** Choices that are part of what is signed (agent access length): shown above the review in every state but signing. A change of `action` needs a new key on this component, which prepares again. */
@@ -145,9 +147,9 @@ export function SignPopover(p: SignPopoverProps) {
       // P06: an explicit `autoStart` (read in the caller's own handler) replaces the ambient flag, which is consumed either way.
       const ambient = takeTrustedPress()
       const open = p.autoStart ?? ambient
-      if (!open && !sequenceStart) return
+      if (!open && !sequenceStart && !p.prepareOnOpen) return
       started.current = true
-      const arm = p.autoStart === undefined ? ambient : open && p.armOnStart === true
+      const arm = !open ? false : p.autoStart === undefined ? ambient : p.armOnStart === true
       void click.start(p.action, 0, sequenceStart ? false : arm)
     }
   })
@@ -198,13 +200,14 @@ export function SignPopover(p: SignPopoverProps) {
     {!canClick && click.phase === 'idle' ? <><p>One click is not ready on this computer.</p>{router && <Link to="/settings/$tab" params={{ tab: 'general' }} onClick={() => void close()}>Turn on One click</Link>}<div className="flex justify-end">{dismiss('Close')}</div></> : <>
       {click.phase === 'idle' && <>{p.children}{p.hint && <p>{p.hint}</p>}<div className="flex flex-wrap justify-end gap-2">{dismiss('Cancel')}<Button disabled={!p.action || !!p.hint} onClick={e => { if (trustedPress(e.nativeEvent) && p.action) void click.start(p.action) }}>{p.confirmLabel ?? story?.signLabel ?? p.title}</Button></div></>}
       {['preparing', 'viewing'].includes(click.phase) && <p role="status">Reading the review…</p>}
-      {(click.phase === 'ready' || click.phase === 'signing') && click.view && <ClickSignPanel ws={p.ws} answer={click.view} problem={click.problem} signing={click.phase === 'signing'} onSign={() => void click.sign()} onCancel={() => void close()} onDisarm={() => void click.cancel()} pressed={click.fresh} waitUntil={waitUntil} story={story} label={p.confirmLabel} manyWorkspaces={many} />}
+      {(click.phase === 'ready' || click.phase === 'signing') && click.view && <ClickSignPanel ws={p.ws} answer={click.view} problem={click.problem} signing={click.phase === 'signing'} extra={click.prepared?.repeat ? <p data-testid="click-repeat-note" className="text-[13px] font-medium text-text">This makes another ticket like one already signed.</p> : undefined} onSign={() => void click.sign()} onCancel={() => void close()} onDisarm={() => void click.cancel()} pressed={click.fresh} waitUntil={waitUntil} story={story} label={p.confirmLabel} manyWorkspaces={many} />}
       {click.phase === 'settling' && <p role="status">The outcome is not certain yet. Do not sign again. {click.settleNote}</p>}
       {click.phase === 'failed' && click.problem && (click.problem.next === 'unavailable' ? <><p>{click.problem.body || click.problem.title}</p>{p.ws && click.problem.devices && <RefusalDevices ws={p.ws} ids={click.problem.devices} />}</> : <ClickProblemBox problem={click.problem} ws={p.ws} />)}
       {click.phase === 'cancelled' && <p role="status">Nothing was signed.</p>}
       {['cancelled', 'failed', 'settling'].includes(click.phase) && <div className="flex flex-wrap justify-end gap-2">
         {/* An ended or unsettled attempt can always be left: Cancel withdraws a request still open, Close just closes. */}
         {dismiss(click.phase === 'failed' && click.prepared && click.problem?.next !== 'check' ? 'Cancel' : 'Close')}
+        {click.phase === 'failed' && click.problem?.ticket && router && <Link to="/ticket/$key" params={{ key: click.problem.ticket.key }} onClick={() => void close()} data-testid="open-existing-ticket" className="inline-flex h-9 items-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground hover:bg-primary/90">Open it</Link>}
         {(click.phase === 'cancelled' || (click.phase === 'failed' && ['prepare', 'retry', 'again', 'review'].includes(click.problem?.next ?? ''))) && <Button onClick={e => { if (trustedPress(e.nativeEvent) && p.action) void click.again(p.action) }}>Try again</Button>}
       </div>}
       {(click.phase === 'ready' || click.phase === 'signing') && <ClaudeConsentLine c={consent} />}

@@ -54,7 +54,7 @@ export function NotSignedBlock({ plan, notice = false }: { plan: Pick<StartPlan,
         Then {harnessName(choice.harness)} starts on it.
       </p>
       {notice && (
-        <div role="note" data-testid="not-signed-notice" className="mt-2 space-y-1 rounded-md border border-warning/40 bg-warning-soft px-3 py-2 text-xs leading-5 text-warning">
+        <div role="note" data-testid="not-signed-notice" className="mt-1 text-[13px] leading-5 text-text">
           {/* The short version of the line the Start agent dialog shows in full (and acknowledges as `start_agent`). */}
           <p data-testid="not-signed-execution-line">{EXECUTION_SHORT} Signing means you know this.</p>
         </div>

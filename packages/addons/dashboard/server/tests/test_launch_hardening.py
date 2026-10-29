@@ -80,7 +80,7 @@ def test_python_dash_m_refuses_as_well(tmp_path):
 
 def _launch(tmp_path, monkeypatch, opens=True):
     """One open_dashboard run against an in-process Auth; every argv the launcher hands out is recorded."""
-    auth = Auth(directory=tmp_path / "dashboard")
+    auth = Auth(clock=lambda: time.time(), directory=tmp_path / "dashboard")  # looked up per call: a test may freeze it
     timers = []
 
     class Timer:
@@ -436,6 +436,9 @@ def test_print_url_tunnel_code_lives_5_minutes_and_stays_single_use():
 
 
 def _print_url_run(tmp_path, monkeypatch, capsys, environ, tunnel=False):
+    # One frozen instant for the issue and the print: the server stores a whole-second expiry, so on the wall clock a
+    # code issued at x.95 and printed at x+1.0 honestly says "29 s" (CI flake 29 Oct, "expires in 30 s" not in out).
+    monkeypatch.setattr(time, "time", lambda: 1000.5)
     kinds = []
     for name in ("SSH_CONNECTION", "DISPLAY", "WAYLAND_DISPLAY"):
         monkeypatch.delenv(name, raising=False)

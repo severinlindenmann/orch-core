@@ -780,7 +780,7 @@ def generation_scenarios() -> list[dict[str, Any]]:
     s = _new(
         "raise_tasks", "task.done, task.reopened and task.skipped raise verify; a receipt enters the verify gate hash"
     )
-    s.ready()
+    fill_and_approve(s)  # r10-P02: an agent starts and finishes tasks only after the plan is approved
     s.claim()
     s.row([])
     s.task("started")

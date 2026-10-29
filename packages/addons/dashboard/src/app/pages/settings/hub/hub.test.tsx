@@ -212,14 +212,14 @@ describe('share rules (A3.3)', () => {
     expect(screen.getAllByText(/cannot be taken back/).length).toBeGreaterThan(0)
   })
 
-  it('the form asks who should see it (hub people and teams, Only me by default) and ticks the description', async () => {
+  it('the form asks who should see it (hub people and teams, nobody ticked by default) and ticks the description', async () => {
     const view = hubPage('selective')
     await view.user.click(await screen.findByTestId('hub-choose-share', {}, T))
     await view.user.click(await screen.findByTestId('hub-rule-add', {}, T))
     expect(await screen.findByText('Who should see it?', {}, T)).toBeTruthy()
     expect(await screen.findByText('Ben Test', {}, T)).toBeTruthy()
     expect(screen.getByText(/Team:/)).toBeTruthy()
-    expect(screen.getByTestId('hub-rule-only-me')).toHaveTextContent('Only me')
+    expect(screen.getByTestId('hub-rule-only-me')).toHaveTextContent('Nobody else sees it until you pick someone.')
     expect(screen.getByTestId('hub-rule-description')).toBeChecked()
     const preview = vi.spyOn(api, 'getHubPreview')
     const picked = (await screen.findByTestId('hub-rule-chips', {}, T)).querySelector('button')!

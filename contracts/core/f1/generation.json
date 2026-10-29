@@ -3150,7 +3150,7 @@
   {
    "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
    "name": "raise_tasks",
-   "now": "2026-10-10T10:03:20Z",
+   "now": "2026-10-10T10:03:40Z",
    "pins": "task.done, task.reopened and task.skipped raise verify; a receipt enters the verify gate hash",
    "steps": [
     {
@@ -3532,110 +3532,145 @@
      "after": {
       "tickets": {
        "01J9ZK4Q7M3R8T2V6X0B5N1C9D": {
-        "approved": [],
-        "counting": {},
-        "gens": [
-         1,
-         1,
-         1,
-         0
+        "approved": [
+         "requirements"
         ],
-        "hash": {
-         "code": "sha256:25f859df9810ca480956e8678ca486b14c18e9c6804c5495d1138f4fdb962f28",
-         "plan": "sha256:6a22624764a85bd0a65d8fed8e27e84a87a0e71bddc794b732e02431e1f7f359",
-         "requirements": "sha256:53246d04e816156745e82b09dba4caf35bc415372d114b6e9155f11e165bcca0",
-         "verify": "sha256:3cac9532cbdfab91aeb632968c8045049400e15b1b7ea457c5b1cc7b8b7da8e8"
+        "counting": {
+         "requirements": [
+          "p_75bf75a3bb50b0c4ac02f8a757b90e23"
+         ]
         },
-        "status": "in_progress"
-       }
-      }
-     },
-     "event": {
-      "actor": {
-       "for": "p_75bf75a3bb50b0c4ac02f8a757b90e23",
-       "grant": "gr_01J9ZK00000000000000000G01",
-       "id": "claude-code",
-       "kind": "agent",
-       "session": "s_01J9ZK00000000000000000S01"
-      },
-      "at": "2026-10-10T10:01:20Z",
-      "based_on": "sha256:2d462461ac800bacf07f5aa7a65f59bfff7b501665d8c59a44047072efc937a8",
-      "hash_v": 1,
-      "host_sig": "VPI0lfVrMGz27vek_ekYPQQ-Q_P-vLAhNNcKalJkIR0t3IDGMgQwFjH6amC1dF8Of68kBy3suNQdiHaIUjnOuA",
-      "id": "01J9ZK00000000000000000008",
-      "prev": "sha256:2d462461ac800bacf07f5aa7a65f59bfff7b501665d8c59a44047072efc937a8",
-      "seq": 3,
-      "type": "claim.taken",
-      "v": 2,
-      "ws_seq": 5
-     },
-     "expect": "ok",
-     "log": "01J9ZK4Q7M3R8T2V6X0B5N1C9D",
-     "raised": []
-    },
-    {
-     "after": {
-      "tickets": {
-       "01J9ZK4Q7M3R8T2V6X0B5N1C9D": {
-        "approved": [],
-        "counting": {},
         "gens": [
          1,
-         1,
-         1,
-         0
-        ],
-        "hash": {
-         "code": "sha256:25f859df9810ca480956e8678ca486b14c18e9c6804c5495d1138f4fdb962f28",
-         "plan": "sha256:6a22624764a85bd0a65d8fed8e27e84a87a0e71bddc794b732e02431e1f7f359",
-         "requirements": "sha256:53246d04e816156745e82b09dba4caf35bc415372d114b6e9155f11e165bcca0",
-         "verify": "sha256:3cac9532cbdfab91aeb632968c8045049400e15b1b7ea457c5b1cc7b8b7da8e8"
-        },
-        "status": "in_progress"
-       }
-      }
-     },
-     "event": {
-      "actor": {
-       "for": "p_75bf75a3bb50b0c4ac02f8a757b90e23",
-       "grant": "gr_01J9ZK00000000000000000G01",
-       "id": "claude-code",
-       "kind": "agent",
-       "session": "s_01J9ZK00000000000000000S01"
-      },
-      "at": "2026-10-10T10:01:30Z",
-      "based_on": "sha256:effbc71a30a4bc3af0b702fcfbf0fb64b71858514806aa2442cd206309b5ed44",
-      "hash_v": 1,
-      "host_sig": "bkQc8E304q4RF6yakl5OdVm5FqlXjrdd5Aw06PSs1pzPspt3W-nZYVRdwlzzKzabMZQxah0_kA-W2F0zgSV7ZQ",
-      "id": "01J9ZK00000000000000000009",
-      "prev": "sha256:effbc71a30a4bc3af0b702fcfbf0fb64b71858514806aa2442cd206309b5ed44",
-      "seq": 4,
-      "task": "T1",
-      "type": "task.started",
-      "v": 2,
-      "ws_seq": 5
-     },
-     "expect": "ok",
-     "log": "01J9ZK4Q7M3R8T2V6X0B5N1C9D",
-     "raised": []
-    },
-    {
-     "after": {
-      "tickets": {
-       "01J9ZK4Q7M3R8T2V6X0B5N1C9D": {
-        "approved": [],
-        "counting": {},
-        "gens": [
-         1,
-         1,
+         2,
          2,
          0
         ],
         "hash": {
-         "code": "sha256:7f26560f123820b4447556548e83e7ebe04d0687eccef4b9f71f70c170badfe8",
-         "plan": "sha256:6a22624764a85bd0a65d8fed8e27e84a87a0e71bddc794b732e02431e1f7f359",
+         "code": "sha256:5909a8a9d306a94676f9a9aa69b0104da6671f27e877aab63a858df6598eb2be",
+         "plan": "sha256:8d836095baf6fa082d68a2f463129ee5ce3d393066d2e93f70e85f9a2bf3a69d",
          "requirements": "sha256:53246d04e816156745e82b09dba4caf35bc415372d114b6e9155f11e165bcca0",
-         "verify": "sha256:3cac9532cbdfab91aeb632968c8045049400e15b1b7ea457c5b1cc7b8b7da8e8"
+         "verify": "sha256:6a92e4417144b6148d4b9861e246287179f6f4b1e6fe7fc64235da625a55ace9"
+        },
+        "status": "open"
+       }
+      }
+     },
+     "event": {
+      "actor": {
+       "device": "d_c65032f21d43401cc223b05723c1e5b4",
+       "id": "p_75bf75a3bb50b0c4ac02f8a757b90e23",
+       "kind": "person"
+      },
+      "at": "2026-10-10T10:01:20Z",
+      "auth": "passphrase",
+      "based_on": "sha256:2d462461ac800bacf07f5aa7a65f59bfff7b501665d8c59a44047072efc937a8",
+      "gate": "requirements",
+      "gate_gen": 1,
+      "hash": "sha256:53246d04e816156745e82b09dba4caf35bc415372d114b6e9155f11e165bcca0",
+      "hash_v": 1,
+      "host_sig": "Q19JxAvYyR8HU9q-Ji3rZEC00ygmH5lDmPXNcMYW5oWlmCJY0jvKHdFtZ1Z9Qk1VJOfgS7Y1kFRaJ8Kvrhq37A",
+      "id": "01J9ZK00000000000000000008",
+      "policy_hash": "sha256:75636825033eb1bba249144cbe360196337f2a6fc5d55643ccbe32e5ee625d1e",
+      "prev": "sha256:2d462461ac800bacf07f5aa7a65f59bfff7b501665d8c59a44047072efc937a8",
+      "roster_v": 3,
+      "seq": 3,
+      "sig": "ei2ufCFfOIJay2GNQz28Tr-HZyKPsdGNGT_QncXAe9k8HSm7OfIFCBcg3JK4nv9lJanNI7typcN7ka2_5jCL5Q",
+      "type": "gate.approved",
+      "v": 2,
+      "ws_seq": 5
+     },
+     "expect": "ok",
+     "log": "01J9ZK4Q7M3R8T2V6X0B5N1C9D",
+     "note": "sev approves requirements"
+    },
+    {
+     "after": {
+      "tickets": {
+       "01J9ZK4Q7M3R8T2V6X0B5N1C9D": {
+        "approved": [
+         "requirements",
+         "plan"
+        ],
+        "counting": {
+         "plan": [
+          "p_75bf75a3bb50b0c4ac02f8a757b90e23"
+         ],
+         "requirements": [
+          "p_75bf75a3bb50b0c4ac02f8a757b90e23"
+         ]
+        },
+        "gens": [
+         1,
+         2,
+         3,
+         0
+        ],
+        "hash": {
+         "code": "sha256:1c7857c3cddbc73bf36ab533169590d5d7c40911b261284e665395d92f94ca1a",
+         "plan": "sha256:8d836095baf6fa082d68a2f463129ee5ce3d393066d2e93f70e85f9a2bf3a69d",
+         "requirements": "sha256:53246d04e816156745e82b09dba4caf35bc415372d114b6e9155f11e165bcca0",
+         "verify": "sha256:941df672588e986623ce9b70146c6af5c24984ad5891b1e116dafe47a4cc8904"
+        },
+        "status": "open"
+       }
+      }
+     },
+     "event": {
+      "actor": {
+       "device": "d_c65032f21d43401cc223b05723c1e5b4",
+       "id": "p_75bf75a3bb50b0c4ac02f8a757b90e23",
+       "kind": "person"
+      },
+      "at": "2026-10-10T10:01:30Z",
+      "auth": "passphrase",
+      "based_on": "sha256:46b16915623de122e8009275f38dc7710f0c8112864672286aa578f2a0137abb",
+      "gate": "plan",
+      "gate_gen": 2,
+      "hash": "sha256:8d836095baf6fa082d68a2f463129ee5ce3d393066d2e93f70e85f9a2bf3a69d",
+      "hash_v": 1,
+      "host_sig": "7v0hblDlScuK6cuygl7AF8igRDiuu2C68gcVorLFIYuetViUth1f-9UxDECp5GK4S-f6qZX_dmaBGDA-ktR2Ug",
+      "id": "01J9ZK00000000000000000009",
+      "policy_hash": "sha256:212655864035ab722ea698a7d0d528df5e1b6172699597fd10d42dea7afec615",
+      "prev": "sha256:46b16915623de122e8009275f38dc7710f0c8112864672286aa578f2a0137abb",
+      "roster_v": 3,
+      "seq": 4,
+      "sig": "tdqsGC33MrzQkliqUNpnKslyKImN5qjUBOQCSlTxptCLbWOLUWw5tWEpfcU-c9hmLq4stLLpAhddBFPiz6qPvQ",
+      "type": "gate.approved",
+      "v": 2,
+      "ws_seq": 5
+     },
+     "expect": "ok",
+     "log": "01J9ZK4Q7M3R8T2V6X0B5N1C9D",
+     "note": "sev approves plan"
+    },
+    {
+     "after": {
+      "tickets": {
+       "01J9ZK4Q7M3R8T2V6X0B5N1C9D": {
+        "approved": [
+         "requirements",
+         "plan"
+        ],
+        "counting": {
+         "plan": [
+          "p_75bf75a3bb50b0c4ac02f8a757b90e23"
+         ],
+         "requirements": [
+          "p_75bf75a3bb50b0c4ac02f8a757b90e23"
+         ]
+        },
+        "gens": [
+         1,
+         2,
+         3,
+         0
+        ],
+        "hash": {
+         "code": "sha256:1c7857c3cddbc73bf36ab533169590d5d7c40911b261284e665395d92f94ca1a",
+         "plan": "sha256:8d836095baf6fa082d68a2f463129ee5ce3d393066d2e93f70e85f9a2bf3a69d",
+         "requirements": "sha256:53246d04e816156745e82b09dba4caf35bc415372d114b6e9155f11e165bcca0",
+         "verify": "sha256:941df672588e986623ce9b70146c6af5c24984ad5891b1e116dafe47a4cc8904"
         },
         "status": "in_progress"
        }
@@ -3650,40 +3685,47 @@
        "session": "s_01J9ZK00000000000000000S01"
       },
       "at": "2026-10-10T10:01:40Z",
-      "based_on": "sha256:b74ea608c9b9a7ccb8035f272ab802a00505a13d301b67116c3396373387ca55",
+      "based_on": "sha256:e0aea18a9e4c35f5103c99b9eb278a830c660b5f2e640ecb6198c25e0bdf1627",
       "hash_v": 1,
-      "host_sig": "Z10olwhVFfKYD0x8CuAgLeSu1QbPMTnpycZVPaPNeBGsx4qVHjnAGjNBHBwprQwHP0kIfDQMVr6FDOYqBAwsqQ",
+      "host_sig": "7GSV_nDemTVNGBQAjxEW-IOanHLK7rTD95zzzrgTJhGUp0tFXoZu2zvqT63wrWgWes9lam6f1HDIABOgP1VMSQ",
       "id": "01J9ZK0000000000000000000A",
-      "prev": "sha256:b74ea608c9b9a7ccb8035f272ab802a00505a13d301b67116c3396373387ca55",
+      "prev": "sha256:e0aea18a9e4c35f5103c99b9eb278a830c660b5f2e640ecb6198c25e0bdf1627",
       "seq": 5,
-      "task": "T1",
-      "type": "task.done",
+      "type": "claim.taken",
       "v": 2,
       "ws_seq": 5
      },
      "expect": "ok",
      "log": "01J9ZK4Q7M3R8T2V6X0B5N1C9D",
-     "raised": [
-      "verify"
-     ]
+     "raised": []
     },
     {
      "after": {
       "tickets": {
        "01J9ZK4Q7M3R8T2V6X0B5N1C9D": {
-        "approved": [],
-        "counting": {},
+        "approved": [
+         "requirements",
+         "plan"
+        ],
+        "counting": {
+         "plan": [
+          "p_75bf75a3bb50b0c4ac02f8a757b90e23"
+         ],
+         "requirements": [
+          "p_75bf75a3bb50b0c4ac02f8a757b90e23"
+         ]
+        },
         "gens": [
          1,
-         1,
+         2,
          3,
          0
         ],
         "hash": {
-         "code": "sha256:a1d9e1f96f6a693e086f12fe4448a52c91b0bda713c38a054ed9cc03549d86f5",
-         "plan": "sha256:6a22624764a85bd0a65d8fed8e27e84a87a0e71bddc794b732e02431e1f7f359",
+         "code": "sha256:1c7857c3cddbc73bf36ab533169590d5d7c40911b261284e665395d92f94ca1a",
+         "plan": "sha256:8d836095baf6fa082d68a2f463129ee5ce3d393066d2e93f70e85f9a2bf3a69d",
          "requirements": "sha256:53246d04e816156745e82b09dba4caf35bc415372d114b6e9155f11e165bcca0",
-         "verify": "sha256:3cac9532cbdfab91aeb632968c8045049400e15b1b7ea457c5b1cc7b8b7da8e8"
+         "verify": "sha256:941df672588e986623ce9b70146c6af5c24984ad5891b1e116dafe47a4cc8904"
         },
         "status": "in_progress"
        }
@@ -3698,40 +3740,48 @@
        "session": "s_01J9ZK00000000000000000S01"
       },
       "at": "2026-10-10T10:01:50Z",
-      "based_on": "sha256:d0c811c05d5960d9fb2998a3d2f952c02c13a2d7ca76e83d3dfb9db66426adc0",
+      "based_on": "sha256:a6badbeb43b47532cd89f11f4f21fd0d5763160cc43d008789953492c4444bd5",
       "hash_v": 1,
-      "host_sig": "o9ZgNq9zGjxXEL_m0wXxLQKglKF4SvzGDeIhHbqUeZbiBwiRp7Wm0ZggardskP_CjLZD1V6oj9dYdl9TalvtaA",
+      "host_sig": "hSK7c4MUQawr6-xfS2m8h5LSxXWMsmEBCBhymJfiAhw6RRgiXgvaQ0JQWZKVK0JsNqm2JTlRhWfabIpxDalF_A",
       "id": "01J9ZK0000000000000000000B",
-      "prev": "sha256:d0c811c05d5960d9fb2998a3d2f952c02c13a2d7ca76e83d3dfb9db66426adc0",
+      "prev": "sha256:a6badbeb43b47532cd89f11f4f21fd0d5763160cc43d008789953492c4444bd5",
       "seq": 6,
       "task": "T1",
-      "type": "task.reopened",
+      "type": "task.started",
       "v": 2,
       "ws_seq": 5
      },
      "expect": "ok",
      "log": "01J9ZK4Q7M3R8T2V6X0B5N1C9D",
-     "raised": [
-      "verify"
-     ]
+     "raised": []
     },
     {
      "after": {
       "tickets": {
        "01J9ZK4Q7M3R8T2V6X0B5N1C9D": {
-        "approved": [],
-        "counting": {},
+        "approved": [
+         "requirements",
+         "plan"
+        ],
+        "counting": {
+         "plan": [
+          "p_75bf75a3bb50b0c4ac02f8a757b90e23"
+         ],
+         "requirements": [
+          "p_75bf75a3bb50b0c4ac02f8a757b90e23"
+         ]
+        },
         "gens": [
          1,
-         1,
+         2,
          4,
          0
         ],
         "hash": {
-         "code": "sha256:6342ec05f5b2c1d6205ed6f8c85210c50438179a897e3413a4d19f2e6862478a",
-         "plan": "sha256:6a22624764a85bd0a65d8fed8e27e84a87a0e71bddc794b732e02431e1f7f359",
+         "code": "sha256:2ba23e9896875d09cb498022f6690de8de4f42d166afadba1793d948e6e6bb44",
+         "plan": "sha256:8d836095baf6fa082d68a2f463129ee5ce3d393066d2e93f70e85f9a2bf3a69d",
          "requirements": "sha256:53246d04e816156745e82b09dba4caf35bc415372d114b6e9155f11e165bcca0",
-         "verify": "sha256:03f050a11633918b7915748118b4178cf49427749e7a7bc1bf09448968517147"
+         "verify": "sha256:941df672588e986623ce9b70146c6af5c24984ad5891b1e116dafe47a4cc8904"
         },
         "status": "in_progress"
        }
@@ -3746,18 +3796,11 @@
        "session": "s_01J9ZK00000000000000000S01"
       },
       "at": "2026-10-10T10:02:00Z",
-      "based_on": "sha256:5be61b568ca58f7144e40c1ff2d3cc5d3e93eef46061367a3e4d37180ec4dfd6",
+      "based_on": "sha256:57d02a6c4291cc8470292662645eae2237dc688947c66de3dc1b4f3394223a08",
       "hash_v": 1,
-      "host_sig": "YXgvNXTyjQ-MUEAYCPKXBSWcxb6L9U5C7TjzSF2c6XFs_mTIFJTjCZt4AdqJwc7iyavEZhNZmnWSMHjaksrwxA",
+      "host_sig": "12DFt9McDrDjKvB2JbfBXgQJ6Psee23WWjYbWFAB8mUBcpyis91OJ_tkFVFY1OhHHvfhYqmfM22CDZnZ7x1Thw",
       "id": "01J9ZK0000000000000000000C",
-      "prev": "sha256:5be61b568ca58f7144e40c1ff2d3cc5d3e93eef46061367a3e4d37180ec4dfd6",
-      "receipt": {
-       "cmd": "echo ok",
-       "commit": null,
-       "exit": 0,
-       "ms": 5,
-       "repo": null
-      },
+      "prev": "sha256:57d02a6c4291cc8470292662645eae2237dc688947c66de3dc1b4f3394223a08",
       "seq": 7,
       "task": "T1",
       "type": "task.done",
@@ -3766,7 +3809,6 @@
      },
      "expect": "ok",
      "log": "01J9ZK4Q7M3R8T2V6X0B5N1C9D",
-     "note": "done with a receipt: it is in G.receipts",
      "raised": [
       "verify"
      ]
@@ -3775,19 +3817,29 @@
      "after": {
       "tickets": {
        "01J9ZK4Q7M3R8T2V6X0B5N1C9D": {
-        "approved": [],
-        "counting": {},
+        "approved": [
+         "requirements",
+         "plan"
+        ],
+        "counting": {
+         "plan": [
+          "p_75bf75a3bb50b0c4ac02f8a757b90e23"
+         ],
+         "requirements": [
+          "p_75bf75a3bb50b0c4ac02f8a757b90e23"
+         ]
+        },
         "gens": [
          1,
-         1,
+         2,
          5,
          0
         ],
         "hash": {
-         "code": "sha256:baa4038f16d3a0adca0b5a3baf9b713963c90a927cb670b081e8813f7ca9b041",
-         "plan": "sha256:6a22624764a85bd0a65d8fed8e27e84a87a0e71bddc794b732e02431e1f7f359",
+         "code": "sha256:e084ce9511593b16335df49b46a6f47846e42afcfd2464b3faf18257999f3692",
+         "plan": "sha256:8d836095baf6fa082d68a2f463129ee5ce3d393066d2e93f70e85f9a2bf3a69d",
          "requirements": "sha256:53246d04e816156745e82b09dba4caf35bc415372d114b6e9155f11e165bcca0",
-         "verify": "sha256:3cac9532cbdfab91aeb632968c8045049400e15b1b7ea457c5b1cc7b8b7da8e8"
+         "verify": "sha256:941df672588e986623ce9b70146c6af5c24984ad5891b1e116dafe47a4cc8904"
         },
         "status": "in_progress"
        }
@@ -3802,11 +3854,11 @@
        "session": "s_01J9ZK00000000000000000S01"
       },
       "at": "2026-10-10T10:02:10Z",
-      "based_on": "sha256:06703f86e0aa62265fdf14210620bd717ac1e3c6060a59333ce78f95c07737a5",
+      "based_on": "sha256:06e850ccb1c8db4ea784bd9a4ea53d181ffd139b700e5bd5f1ff43130cb60bf6",
       "hash_v": 1,
-      "host_sig": "cUOmO4Nec5MEUCULJNswVg3q4uVm2oZxGb3XbuxuCPzMy3W_otsRJBVG6gGN-TD4cbIEdyUQ3GgLa3w9jjYLrg",
+      "host_sig": "grVled9-n5QiKPoUahfqMxiQdkzidMHMmEITwdhW_wNvOcjQkZfaYVFw29CjWgOujtRt8I1zNdDlxQrruRJi-A",
       "id": "01J9ZK0000000000000000000D",
-      "prev": "sha256:06703f86e0aa62265fdf14210620bd717ac1e3c6060a59333ce78f95c07737a5",
+      "prev": "sha256:06e850ccb1c8db4ea784bd9a4ea53d181ffd139b700e5bd5f1ff43130cb60bf6",
       "seq": 8,
       "task": "T1",
       "type": "task.reopened",
@@ -3823,19 +3875,29 @@
      "after": {
       "tickets": {
        "01J9ZK4Q7M3R8T2V6X0B5N1C9D": {
-        "approved": [],
-        "counting": {},
+        "approved": [
+         "requirements",
+         "plan"
+        ],
+        "counting": {
+         "plan": [
+          "p_75bf75a3bb50b0c4ac02f8a757b90e23"
+         ],
+         "requirements": [
+          "p_75bf75a3bb50b0c4ac02f8a757b90e23"
+         ]
+        },
         "gens": [
          1,
-         1,
+         2,
          6,
          0
         ],
         "hash": {
-         "code": "sha256:1bceff485432c0fdc1822f5547821134fe08ceaacfb51291634fb8b4ab6ec344",
-         "plan": "sha256:6a22624764a85bd0a65d8fed8e27e84a87a0e71bddc794b732e02431e1f7f359",
+         "code": "sha256:7dcbbb4834da90dc935345f9e0c273cd36adfcfed6102cf505f957dd4e8c0f1c",
+         "plan": "sha256:8d836095baf6fa082d68a2f463129ee5ce3d393066d2e93f70e85f9a2bf3a69d",
          "requirements": "sha256:53246d04e816156745e82b09dba4caf35bc415372d114b6e9155f11e165bcca0",
-         "verify": "sha256:3cac9532cbdfab91aeb632968c8045049400e15b1b7ea457c5b1cc7b8b7da8e8"
+         "verify": "sha256:494546a995a52acf558b7812d1a6ef3f5f755850924c052f5ecd2d4ced1c42e8"
         },
         "status": "in_progress"
        }
@@ -3850,13 +3912,137 @@
        "session": "s_01J9ZK00000000000000000S01"
       },
       "at": "2026-10-10T10:02:20Z",
-      "based_on": "sha256:bc324c6f18057e790f25eef7e2136343f50af6bc5845ee474299b9265f3bdfe3",
+      "based_on": "sha256:ba869cd5e41b75628e6bc48a858a83a67a794828dab9c4949734936eed6f9a24",
       "hash_v": 1,
-      "host_sig": "RGmkpKe2SGMHkn2J7KMtUrpzLNgdij_V6L41JoHOSOIdLaP2ojzfv5MZqxtOlOkxgnKSMKmRGbaAg4YLGofjMA",
+      "host_sig": "9ErAN-YD2fGluDon6UX1_kd04Lf2sYieDioM3KfZ1UdHKUmxoDveQJ5oB0P4vsSwQmz-AY_GJqEYTM546C8Jug",
       "id": "01J9ZK0000000000000000000E",
-      "prev": "sha256:bc324c6f18057e790f25eef7e2136343f50af6bc5845ee474299b9265f3bdfe3",
-      "reason": "not needed",
+      "prev": "sha256:ba869cd5e41b75628e6bc48a858a83a67a794828dab9c4949734936eed6f9a24",
+      "receipt": {
+       "cmd": "echo ok",
+       "commit": null,
+       "exit": 0,
+       "ms": 5,
+       "repo": null
+      },
       "seq": 9,
+      "task": "T1",
+      "type": "task.done",
+      "v": 2,
+      "ws_seq": 5
+     },
+     "expect": "ok",
+     "log": "01J9ZK4Q7M3R8T2V6X0B5N1C9D",
+     "note": "done with a receipt: it is in G.receipts",
+     "raised": [
+      "verify"
+     ]
+    },
+    {
+     "after": {
+      "tickets": {
+       "01J9ZK4Q7M3R8T2V6X0B5N1C9D": {
+        "approved": [
+         "requirements",
+         "plan"
+        ],
+        "counting": {
+         "plan": [
+          "p_75bf75a3bb50b0c4ac02f8a757b90e23"
+         ],
+         "requirements": [
+          "p_75bf75a3bb50b0c4ac02f8a757b90e23"
+         ]
+        },
+        "gens": [
+         1,
+         2,
+         7,
+         0
+        ],
+        "hash": {
+         "code": "sha256:406a8b58b6e2e18bdde131a64d09bbadcff32f53457d4ce2b943f342ab357837",
+         "plan": "sha256:8d836095baf6fa082d68a2f463129ee5ce3d393066d2e93f70e85f9a2bf3a69d",
+         "requirements": "sha256:53246d04e816156745e82b09dba4caf35bc415372d114b6e9155f11e165bcca0",
+         "verify": "sha256:941df672588e986623ce9b70146c6af5c24984ad5891b1e116dafe47a4cc8904"
+        },
+        "status": "in_progress"
+       }
+      }
+     },
+     "event": {
+      "actor": {
+       "for": "p_75bf75a3bb50b0c4ac02f8a757b90e23",
+       "grant": "gr_01J9ZK00000000000000000G01",
+       "id": "claude-code",
+       "kind": "agent",
+       "session": "s_01J9ZK00000000000000000S01"
+      },
+      "at": "2026-10-10T10:02:30Z",
+      "based_on": "sha256:8f2581cad661f59be24957c9b3e2116ef0b7516e76a0015a07753fe9833777f5",
+      "hash_v": 1,
+      "host_sig": "hbhl77UKh6KlTihfrT1d8wagU2yk5ZtfyPU4igdJC0cPHnnchE1vJ06ivdvgKGrIy2ZdIJCplxVpHR9xIXdrsw",
+      "id": "01J9ZK0000000000000000000F",
+      "prev": "sha256:8f2581cad661f59be24957c9b3e2116ef0b7516e76a0015a07753fe9833777f5",
+      "seq": 10,
+      "task": "T1",
+      "type": "task.reopened",
+      "v": 2,
+      "ws_seq": 5
+     },
+     "expect": "ok",
+     "log": "01J9ZK4Q7M3R8T2V6X0B5N1C9D",
+     "raised": [
+      "verify"
+     ]
+    },
+    {
+     "after": {
+      "tickets": {
+       "01J9ZK4Q7M3R8T2V6X0B5N1C9D": {
+        "approved": [
+         "requirements",
+         "plan"
+        ],
+        "counting": {
+         "plan": [
+          "p_75bf75a3bb50b0c4ac02f8a757b90e23"
+         ],
+         "requirements": [
+          "p_75bf75a3bb50b0c4ac02f8a757b90e23"
+         ]
+        },
+        "gens": [
+         1,
+         2,
+         8,
+         0
+        ],
+        "hash": {
+         "code": "sha256:e8afa811357581179f06c6ef792dc2e8b4d863051fee06af3752fc6c9d5aa57a",
+         "plan": "sha256:8d836095baf6fa082d68a2f463129ee5ce3d393066d2e93f70e85f9a2bf3a69d",
+         "requirements": "sha256:53246d04e816156745e82b09dba4caf35bc415372d114b6e9155f11e165bcca0",
+         "verify": "sha256:941df672588e986623ce9b70146c6af5c24984ad5891b1e116dafe47a4cc8904"
+        },
+        "status": "in_progress"
+       }
+      }
+     },
+     "event": {
+      "actor": {
+       "for": "p_75bf75a3bb50b0c4ac02f8a757b90e23",
+       "grant": "gr_01J9ZK00000000000000000G01",
+       "id": "claude-code",
+       "kind": "agent",
+       "session": "s_01J9ZK00000000000000000S01"
+      },
+      "at": "2026-10-10T10:02:40Z",
+      "based_on": "sha256:c5617d9299b29b59fdec8b8ea9761243ca5308f9f9a92c156dd0ce14e04d24de",
+      "hash_v": 1,
+      "host_sig": "ZspmjxyMTigZVIRBKXibJXl7tEXmTMy2nz1-kaEu8Q9LsSy2PlJlal7HKg_q997Mpo-VTaJuPopml4PPxnYmJg",
+      "id": "01J9ZK0000000000000000000G",
+      "prev": "sha256:c5617d9299b29b59fdec8b8ea9761243ca5308f9f9a92c156dd0ce14e04d24de",
+      "reason": "not needed",
+      "seq": 11,
       "task": "T1",
       "type": "task.skipped",
       "v": 2,

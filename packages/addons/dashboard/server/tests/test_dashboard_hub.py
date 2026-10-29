@@ -406,3 +406,19 @@ def test_refresh_is_refused_for_a_local_session_that_is_not_a_full_one(monkeypat
     monkeypatch.setattr(hub, "full_session", lambda auth, token: False)
     res = refresh(connect_client(link, gw=PausedGw))
     assert res.status_code in (401, 403) and link.calls == []
+
+
+def test_review_passes_readers_and_widened_in_closed_fields():
+    review = {
+        "hub_id": "ab12cd34ef56ab12", "audience": {"read": 9}, "new": {"count": 1, "more": 0, "items": [{"line": "ticket PRD-0012: A"}]},
+        "readers": {"people": ["Ben", 5], "teams": ["sales"], "note": "from the hub, not signed", "info": "Team membership is managed by the hub admin.", "x": 1},
+        "widened": [{"line": "ticket PRD-0001: Old", "people_added": ["Ana"], "teams_added": [], "description_added": True, "secret": "s"}],
+        "leaves": [], "later_edits": "later",
+    }  # fmt: skip
+    got = client(Link({"share.preview": {**PREVIEW, "review": review}})).post(
+        f"/api/w/{WS}/hub/share/preview", json={"add": {"kind": "type", "value": "Bug"}}
+    ).json()["review"]
+    assert got["readers"] == {"people": ["Ben"], "teams": ["sales"], "note": "from the hub, not signed",
+                              "info": "Team membership is managed by the hub admin."}  # fmt: skip
+    assert got["widened"] == [{"line": "ticket PRD-0001: Old", "people_added": ["Ana"], "teams_added": [], "description_added": True}]
+    assert "audience" not in got and "secret" not in str(got)

@@ -91,7 +91,7 @@ describe('stop sharing one ticket', () => {
 
   it('says the ticket stays unshared even if a rule matches; never "may share it again"', async () => {
     const { dialog } = await ticketReview()
-    expect(dialog.textContent).toContain('It stays unshared even if a rule matches it, until you share this ticket by name again.')
+    expect(dialog.textContent).toContain('It stays unshared even if a rule matches it, until you share it again.')
     expect(dialog.textContent).not.toMatch(/may share it again/)
   })
 
@@ -217,7 +217,7 @@ describe('stop sharing by a rule', () => {
     const add = vi.spyOn(api, 'addHubRule').mockResolvedValue({ synced: true, pending: null, put: 1 })
     vi.spyOn(api, 'getHubPreview').mockImplementation(async () => ({
       ...NOW, new: 1, plan: 'N'.repeat(43),
-      review: { hub_id: 'ab12cd34ef56ab12', audience: { read: 3, edit: 1, admin: 1 }, audience_note: 'from the hub, not signed', new_count: 1, new_more: 0,
+      review: { hub_id: 'ab12cd34ef56ab12', readers: { people: ['Ben'], teams: [], note: 'from the hub, not signed', info: null }, widened: [{ line: 'ticket DEMO-0001: Old', people_added: ['Ana'], teams_added: [], description_added: false }], new_count: 1, new_more: 0,
         new_items: ['ticket DEMO-0050: Later public note'], leaves: ['the ticket title, status, labels and deadline'],
         later_edits: 'Later edits to these tickets are shared too, until you stop sharing them.' },
     }))
@@ -227,7 +227,13 @@ describe('stop sharing by a rule', () => {
     await waitFor(() => expect(screen.getByTestId('hub-share-review')).toBeEnabled())
     await user.click(screen.getByTestId('hub-share-review'))
     const dialog = await screen.findByRole('dialog', { name: 'Review sharing change' })
-    expect(within(dialog).getByTestId('hub-add-audience')).toHaveTextContent('3 read, 1 edit, 1 admin (from the hub, not signed)')
+    expect(within(dialog).getByTestId('hub-add-readers')).toHaveTextContent('Who will see it: Ben')
+    const wide = within(dialog).getByTestId('hub-add-widened')
+    expect(wide).toHaveTextContent('Also shared more widely: one ticket.')
+    expect(wide.textContent).not.toContain('Ana')
+    await user.click(within(wide).getByTestId('hub-add-widened-info'))
+    expect(await screen.findByText(/DEMO-0001: Old/)).toBeTruthy()
+    await user.keyboard('{Escape}')
     expect(within(dialog).getByTestId('hub-add-new')).toHaveTextContent('1 new item leaves')
     expect(within(dialog).getByTestId('hub-add-later')).toHaveTextContent('Later edits to these tickets are shared too')
     expect(within(dialog).queryByTestId('hub-add-list')).toBeNull() // the list is behind one small click
@@ -250,7 +256,7 @@ describe('stop sharing by a rule', () => {
     const user = userEvent.setup()
     vi.spyOn(api, 'getHubPreview').mockImplementation(async () => ({
       ...NOW, new: 1, plan: 'N'.repeat(43),
-      review: { hub_id: 'ab12', audience: null, audience_note: null, new_count: 1, new_more: 0, new_items: [], leaves: [], later_edits: null,
+      review: { hub_id: 'ab12', new_count: 1, new_more: 0, new_items: [], leaves: [], later_edits: null,
         readers: { people: ['Ben'], teams: ['sales'], note: 'from the hub, not signed', info: 'Team membership is managed by the hub admin.' } },
     }))
     mount(<ShareRules ws={WS.id} workspace={WS} onBack={() => {}} />)

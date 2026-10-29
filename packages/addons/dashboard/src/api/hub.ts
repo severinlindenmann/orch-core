@@ -71,10 +71,10 @@ export interface HubPreview {
 /** From the host's `share.preview`: every word of the review of an adding change; the page adds none. */
 export interface HubShareReview {
   hub_id: string | null
-  audience: { read: number; edit: number; admin: number } | null
-  audience_note: string | null
   /** Who can read at the hub, by name (from the hub, not signed); `info` is shown behind the small i. */
-  readers?: { people: string[]; teams: string[]; note?: string; info?: string | null } | null
+  readers?: { people: string[]; teams: string[]; note?: string | null; info?: string | null } | null
+  /** Already-shared items this change would show to more people, or share with their description. */
+  widened?: { line: string; people_added: string[]; teams_added: string[]; description_added: boolean }[]
   new_count: number
   new_more: number
   new_items: string[]

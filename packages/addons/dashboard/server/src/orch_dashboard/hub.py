@@ -62,6 +62,7 @@ ROLES = ("read", "edit", "admin")
 HUB_ID = re.compile(r"^[0-9a-f]{8,64}$")
 TICKET_KEY = re.compile(r"^[A-Za-z][A-Za-z0-9]{0,15}-[0-9]{1,9}$")
 TICKET_LINE = re.compile(r"^ticket ([A-Za-z][A-Za-z0-9]{0,15}-[0-9]{1,9}): ")
+MAX_READERS = 50  # names or widened items shown in one review
 MAX_TICKETS = 100  # share.preview lists at most 100 rows; more means the list is not complete
 log = logging.getLogger("orch_dashboard.security")
 
@@ -286,6 +287,44 @@ def share_view(rules, preview) -> dict:
     }
 
 
+def _names(value) -> list[str]:
+    """Names the host listed (people or teams), cleaned and capped; anything else is dropped."""
+    out = []
+    for x in (value if isinstance(value, list) else [])[:MAX_READERS]:
+        name = display(x) if isinstance(x, str) else None
+        if name:
+            out.append(name[:80])
+    return out
+
+
+def _readers_view(raw) -> dict | None:
+    """Who else can read the new items at the hub, by name (from the hub, not signed)."""
+    if not isinstance(raw, dict):
+        return None
+    note, info = raw.get("note"), raw.get("info")
+    return {
+        "people": _names(raw.get("people")),
+        "teams": _names(raw.get("teams")),
+        "note": display(note)[:80] if isinstance(note, str) else None,
+        "info": display(info)[:200] if isinstance(info, str) else None,
+    }
+
+
+def _widened_view(raw) -> list[dict]:
+    """Already-shared items this change would make reach more people or carry their description."""
+    out = []
+    for w in (raw if isinstance(raw, list) else [])[:MAX_READERS]:
+        line = display(w.get("line")) if isinstance(w, dict) and isinstance(w.get("line"), str) else None
+        if line:
+            out.append({
+                "line": line[:300],
+                "people_added": _names(w.get("people_added")),
+                "teams_added": _names(w.get("teams_added")),
+                "description_added": w.get("description_added") is True,
+            })
+    return out
+
+
 def _review_view(raw) -> dict | None:
     """The host's review of an adding change, closed fields only; the page shows these words and adds none."""
     if not isinstance(raw, dict):
@@ -296,12 +335,11 @@ def _review_view(raw) -> dict | None:
         line = display(r.get("line")) if isinstance(r, dict) else None
         if line is not None:
             rows.append(line[:300])
-    aud = raw.get("audience") if isinstance(raw.get("audience"), dict) else None
     hub_id = raw.get("hub_id")
     return {
         "hub_id": hub_id if isinstance(hub_id, str) and HUB_ID.fullmatch(hub_id) else None,
-        "audience": {r: _int(aud.get(r)) or 0 for r in ROLES} if aud else None,
-        "audience_note": display(raw.get("audience_note"))[:80] if isinstance(raw.get("audience_note"), str) else None,
+        "readers": _readers_view(raw.get("readers")),
+        "widened": _widened_view(raw.get("widened")),
         "new_count": _int(new.get("count")) or 0,
         "new_more": _int(new.get("more")) or 0,
         "new_items": rows,

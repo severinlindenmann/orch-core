@@ -90,7 +90,7 @@ function mockPreview(body: { add?: HubRule; remove?: HubRule } | null): HubPrevi
   items = items.filter((i) => !withdrawn.has(i.line.replace(/^ticket ([^:]+):.*$/, '$1')))
   const fresh = items.slice(base.length + 1).map((i) => i.line)
   const review = {
-    hub_id: 'ab12cd34ef56ab12', audience: { read: 3, edit: 1, admin: 1 }, audience_note: 'from the hub, not signed',
+    hub_id: 'ab12cd34ef56ab12', readers: { people: ['Ben'], teams: [], note: 'from the hub, not signed', info: null }, widened: [],
     new_count: added, new_more: 0, new_items: fresh, leaves: added ? ["the ticket's title, status, labels and deadline; no description, comments or files"] : [],
     later_edits: 'Later edits to these tickets are shared too, until you stop sharing them.',
   }

@@ -22,6 +22,9 @@ lab, served, human = human_helpers.lab, human_helpers.served, human_helpers.huma
 #: a GitHub token shape inside base64url, as random key material can read
 TOKEN = "ghu_B1gu5c9sd_4KWWXuk5Pd7lUGe1lG3UrKHT"
 KEY = "BLNQlSn037s5HRV4xz7itvEYFP5EdCGu_Rwrhfg7XOfJUfN" + TOKEN + "-Q"
+HASH = "Ab" + TOKEN + "xyA"  # 43 characters: base64url of 32 bytes, as a random hash or ticket reads
+R = "[redacted]"
+SIG = "QQ" + TOKEN + "Bc" * 22 + "BA"  # 86 characters: base64url of 64 bytes
 
 #: one op per second-phase family: (op, the module serving the worker phase, the second phase's module and function)
 FAMILIES = [
@@ -91,3 +94,38 @@ def test_plain_copies_views_and_keeps_every_string():
     src = MappingProxyType({"a": (KEY, MappingProxyType({"b": [TOKEN]}))})
     out = dispatch.plain(src)
     assert out == {"a": [KEY, {"b": [TOKEN]}]} and type(out) is dict and type(out["a"][1]) is dict
+
+
+# --- answers the client reuses: their exact-shape key fields are returned as they are (review F1, F2) ---------------
+
+CARD = {
+    "o": {"hk_root_pub": KEY, "hxk_pub": KEY, "tls_spki_sha256": HASH, "relay_url": None, "note": f"x {TOKEN}"},
+    "op_cert": {"o": {"hk_op_pub": KEY}, "sig": SIG},
+    "sig": SIG,
+}
+
+
+def test_the_hub_link_answer_card_comes_back_byte_for_byte(served, monkeypatch):
+    """The CLI and the dashboard send the card of ``hub.link`` back in ``hub.connect``: a redacted key would make every
+    join by link to that hub fail. Only the exact-shape key fields are kept; any other text is still redacted."""
+    from orch.hubclient import connectlink
+
+    got = {"hub_id": "h", "hub_card": CARD, "code": "c", "endpoint": "e", "name": f"n {TOKEN}", "dev": False}
+    monkeypatch.setattr(connectlink, "resolve", lambda text, now_ms, dev_mode: got)
+    res = ok(served.client().req("hub.link", {"link": "orch://hub/whatever-link"}))["data"]
+    want = {**CARD, "o": {**CARD["o"], "note": "x [redacted]"}}
+    assert res["hub_card"] == want and res["name"] == "n [redacted]"
+
+
+def test_a_kept_path_with_free_text_or_a_secret_is_still_redacted():
+    from orch.host.auth import Redactor
+
+    r = Redactor("gr_0" + "A" * 25 + "." + "B" * 43, "hub.link")
+    assert r.obj({"data": {"hub_card": {"o": {"hxk_pub": f"free text {TOKEN}"}}}}) == {
+        "data": {"hub_card": {"o": {"hxk_pub": "free text [redacted]"}}}
+    }
+    grant_shaped = "gr_0" + "A" * 25 + "." + "B" * 43
+    assert r.obj({"data": {"data": grant_shaped}}) == {"data": {"data": "[redacted]"}}  # not a kept op's path
+    assert Redactor(None, "space.get").obj({"data": {"data": "gr_0" + "A" * 25 + "." + "B" * 43}}) == {
+        "data": {"data": "[redacted]"}  # the grant shape and the presented secret are never kept
+    }

@@ -250,10 +250,6 @@ KEY_FIELDS: tuple[tuple[str, tuple[str, ...], str], ...] = (
 KEY_FILE_ARGS: dict[str, dict[str, str]] = {"member.add": {"reader_decl": "reader_decl", "cert": "device_cert"}}
 
 
-def _is_signature(value: Any) -> bool:
-    return is_key_value(value, "sig")
-
-
 def _blank_at(node: Any, path: tuple[str, ...], sigs: list[str], kind: str = "sig") -> Any:
     """``node`` with the exact-shape key value at ``path`` blanked (appended to ``sigs``); the rest unchanged. Only
     real dicts and lists are followed, and only a ``str`` of the exact shape of ``kind`` is taken out."""
@@ -350,11 +346,23 @@ def secret_in_request(frame: Mapping[str, Any]) -> bool:
 # --- redaction --------------------------------------------------------------------------------------------------------
 
 
-#: op -> result paths (``*`` is any list index) whose exact-shape signature the read side returns as stored (#832): a
-#: stored declaration's ``sig`` in ``reader.list`` is re-verified by clients, so it must not be replaced by chance.
-READ_SIGNATURE_PATHS: dict[str, tuple[tuple[str, ...], ...]] = {
-    "reader.list": (("data", "readers", "*", "decl", "sig"),),
+#: op -> (answer path, key kind) whose exact-shape value is returned as it is, the GitHub-token shape not applied (#832,
+#: #1641): values a client re-verifies or sends back, all random base64url, so about one in 10^3..10^4 holds a
+#: token-shaped run by chance. ``*`` is any list index. The kinds are those of :data:`orch.tokenshape.KEY_BYTES`, plus
+#: ``link``: an ``https`` share link whose ``#t=`` fragment is a 32-byte token (only the fragment is kept; the rest of
+#: the link is redacted like any text). The grant shape, the capability shape, key blocks and the presented secret are
+#: applied to every value, kept or not; free text is never listed.
+_CARD = (
+    (("o", "hk_root_pub"), "pub"), (("o", "hxk_pub"), "pub"), (("o", "tls_spki_sha256"), "hash"),
+    (("op_cert", "o", "hk_op_pub"), "pub"), (("op_cert", "sig"), "sig"), (("sig",), "sig"),
+)  # fmt: skip
+ANSWER_KEY_PATHS: dict[str, tuple[tuple[tuple[str, ...], str], ...]] = {
+    "reader.list": ((("data", "readers", "*", "decl", "sig"), "sig"),),  # re-verified by clients (#832)
+    # the hub card of a link and the held card: the CLI and the dashboard send it back in hub.connect / hub.mode
+    "hub.link": tuple((("data", "hub_card", *p), k) for p, k in _CARD),
+    "hub.status": tuple((("data", "hub_card", *p), k) for p, k in _CARD),
 }
+_LINK = re.compile(r"(https://[^\s#]*)#t=([A-Za-z0-9_-]{43})")
 
 
 class Redactor:
@@ -362,8 +370,8 @@ class Redactor:
     dropped, plus the shapes that are never returned whatever the request."""
 
     def __init__(self, grant: Any = None, op: str | None = None) -> None:
-        #: the result paths of ``op`` whose exact-shape signature is returned as stored (#832), else none
-        self.keep = READ_SIGNATURE_PATHS.get(op or "", ())
+        #: the answer paths of ``op`` whose exact-shape value is returned as it is (:data:`ANSWER_KEY_PATHS`)
+        self.keep = ANSWER_KEY_PATHS.get(op or "", ())
         secrets = []
         if isinstance(grant, str) and grant:
             secrets.append(grant)
@@ -373,8 +381,8 @@ class Redactor:
         self.secrets = sorted(secrets, key=len, reverse=True)
 
     def text(self, text: str, *, signature: bool = False) -> str:
-        """``text`` redacted. ``signature``: the value is a stored signature (see :meth:`_kept`): only the GitHub
-        token shape is not applied to it; the secrets, grant shape and key blocks always are."""
+        """``text`` redacted. ``signature``: the value is a kept key value (see :meth:`_kind`): only the GitHub token
+        shape is not applied to it; the secrets, grant shape, capability shape and key blocks always are."""
         for secret in self.secrets:
             text = text.replace(secret, REDACTED)
         text = GRANT_SHAPE.sub(REDACTED, text)
@@ -383,20 +391,29 @@ class Redactor:
             text = GITHUB_TOKEN_SHAPE.sub(REDACTED, text)
         return _PEM.sub(REDACTED, text)
 
-    def _kept(self, path: tuple[str | int, ...], value: str) -> bool:
-        """Is ``value`` at ``path`` a signature this op returns as stored: exact path (``*`` matches a list index
-        only, never a mapping key), and canonical base64url of exactly 64 bytes?"""
-
-        def at(pattern: tuple[str, ...]) -> bool:
-            return len(pattern) == len(path) and all(
+    def _kind(self, path: tuple[str | int, ...]) -> str | None:
+        """The key kind listed for this exact answer path (``*`` matches a list index only, never a mapping key)."""
+        for pattern, kind in self.keep:
+            if len(pattern) == len(path) and all(
                 type(b) is int if a == "*" else (type(b) is str and a == b) for a, b in zip(pattern, path, strict=True)
-            )
+            ):
+                return kind
+        return None
 
-        return any(at(p) for p in self.keep) and _is_signature(value)
+    def _value(self, path: tuple[str | int, ...], value: str) -> str:
+        kind = self._kind(path) if self.keep else None
+        if kind == "link":
+            m = _LINK.fullmatch(value)
+            if m is not None and is_key_value(m.group(2), "hash"):
+                head = self.text(m.group(1))
+                token = self.text(m.group(2), signature=True)
+                return f"{head}#t={token}"
+            return self.text(value)
+        return self.text(value, signature=kind is not None and is_key_value(value, kind))
 
     def obj(self, value: Any, _path: tuple[str | int, ...] = ()) -> Any:
         if isinstance(value, str):
-            return self.text(value, signature=bool(self.keep) and self._kept(_path, value))
+            return self._value(_path, value)
         if isinstance(value, list | tuple):
             return [self.obj(v, (*_path, i)) for i, v in enumerate(value)]
         if isinstance(value, Mapping):

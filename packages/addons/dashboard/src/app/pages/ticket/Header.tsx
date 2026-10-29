@@ -288,7 +288,10 @@ function newestRun(runs: ReadonlyArray<{ ticket?: string | null; kind?: string; 
   return newest as ProgressRun | null
 }
 
-/** The newest agent run of this ticket and the run id its agent waits in a terminal on (Today's terminal_wait), polled. */
+const START_EVENT = 'orch:start-agent'
+
+/** The newest agent run of this ticket and the run id its agent waits in a terminal on (Today's terminal_wait), polled.
+ *  Real host only: in the mock both are absent, so mock mode never shows the stopped or waiting cards. */
 function useTicketAgent(ticket: TicketDocument, home: string | undefined) {
   const runs = useQuery({ ...runQueries.list(home ?? ''), enabled: isRealHost() && !!home })
   const today = useQuery({ ...queries.today(home ?? ''), enabled: isRealHost() && !!home })
@@ -300,13 +303,8 @@ export function TicketProgressLive(p: { ticket: TicketDocument; viewer: Viewer; 
   const { workspaces } = useWorkspace()
   const home = workspaceOfTicket(p.ticket.key, workspaces)?.id
   const { run, wait } = useTicketAgent(p.ticket, home)
-  const start = useStartAgent(p.ticket, p.viewer)
-  return (
-    <>
-      <TicketProgress {...p} run={run} wait={wait} onStart={start.startable ? start.run : undefined} />
-      {start.node}
-    </>
-  )
+  // "Start agent again" asks the header's one start flow (its dialog); this card holds no second dialog.
+  return <TicketProgress {...p} run={run} wait={wait} onStart={() => window.dispatchEvent(new CustomEvent(START_EVENT, { detail: p.ticket.key }))} />
 }
 
 /** The one status pill for the agent's progress, in plain words, in a live region so changes are announced. */
@@ -389,6 +387,13 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
     enabled: ticket.type === 'epic' && !!home,
   })
   const start = useStartAgent(ticket, viewer)
+  const startRun = start.startable ? start.run : undefined
+  useEffect(() => {
+    if (!startRun) return
+    const on = (e: Event) => (e as CustomEvent<string>).detail === ticket.key && startRun()
+    window.addEventListener(START_EVENT, on)
+    return () => window.removeEventListener(START_EVENT, on)
+  }, [startRun, ticket.key])
   const av = availableActions(ticket, viewer)
   const { run, wait } = useTicketAgent(ticket, home)
   const needsYou = av.answer.length > 0 || av.approve.length > 0 || !!av.verdict || !!wait

@@ -43,12 +43,13 @@ function asStored(r: HubShare['rules'][number]): HubRule {
 }
 type Fact = { key: string; type: string; labels: string[] }
 /** Shared tickets that keep their own row: a ticket is left out only when its one-ticket rule is the ONLY rule that
- *  shares it (that rule's row is then its one Stop sharing). A type or label rule that also shares it, or a ticket
- *  whose kind and labels are not known here, keeps the row. */
+ *  shares it (that rule's row is then its one Stop sharing). A type or label rule that also shares it, a ticket
+ *  whose kind and labels are not known here, or a rule row that cannot be stopped keeps the row. */
 function unruled(share: HubShare, facts: Fact[] | undefined): string[] {
   const rules = share.rules
   return share.tickets.filter(key => {
-    if (!rules.some(r => r.kind === 'ticket' && r.value === key)) return true
+    // a one-ticket rule whose Stop sharing is off (readers not readable) leaves the ticket's own row stoppable
+    if (!rules.some(r => r.kind === 'ticket' && r.value === key && r.removable !== false)) return true
     const t = facts?.find(f => f.key === key)
     return !t || rules.some(r => (r.kind === 'type' && r.value === t.type) || (r.kind === 'tag' && r.value !== null && t.labels.includes(r.value)))
   })

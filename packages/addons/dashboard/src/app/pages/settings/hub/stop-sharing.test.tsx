@@ -363,6 +363,7 @@ describe('run 9 (J03): a one-ticket rule shared with its description', () => {
     expect(await screen.findByTestId('hub-rule-remove-0')).toBeDisabled()
     expect(screen.getByTestId('hub-rule-unreadable-0')).toHaveTextContent('Could not read who sees this rule')
     expect(removeRule).not.toHaveBeenCalled()
+    expect(within(await screen.findByTestId('hub-ticket-list')).getByTestId('hub-ticket-revoke-0')).toBeEnabled()  // the ticket stays stoppable
   })
 
   it('is listed once, and Stop sharing previews and removes the rule exactly as stored', async () => {

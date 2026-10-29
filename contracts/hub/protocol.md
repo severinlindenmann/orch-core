@@ -2425,6 +2425,8 @@ stored is `file_mismatch` too. The meta and file `PUT`s alone serve nothing. The
 (`reserved_slug`, `slug`, `name`, `kind`, `access`, `audience`, `password`, `files`, `files_order`, `no_index`, `label`,
 `ticket`, and the reach codes of §11.7).
 
+App operations are classified **only** through `app_route` over the raw request target; a router that decodes or normalises the path before classifying could skip the approval check, so S1 and S3 must route that way.
+
 **Routes and who needs what.** The routes of orch-publish for this contract, and whether the owner's approval is required:
 
 | Route | `op` | Approval |

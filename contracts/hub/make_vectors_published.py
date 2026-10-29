@@ -240,6 +240,8 @@ def csp_cases() -> list[dict[str, Any]]:
         ("csp_root_base", "http://203.0.113.7:8081/", [], {"error": "base"}),
         ("csp_dotdot_base", "http://203.0.113.7:8081/a/../", [], {"error": "base"}),
         ("csp_bad_port", "http://203.0.113.7:99999/a/team-faq/v/" + "ab" * 16 + "/", [], {"error": "base"}),
+        ("csp_port_leading_zero", "http://203.0.113.7:08081/a/team-faq/v/" + "ab" * 16 + "/", [], {"error": "base"}),
+        ("csp_slug_leading_hyphen", "http://203.0.113.7:8081/a/-faq/v/" + "ab" * 16 + "/", [], {"error": "base"}),
         ("csp_port_zero", "http://203.0.113.7:0/a/team-faq/v/" + "ab" * 16 + "/", [], {"error": "base"}),
         ("csp_hub_origin_in_reach", BASE, ["https://hub.example.com"], {"error": "forbidden_origin"}),
         ("csp_publish_origin_in_reach", BASE, ["https://publish.example.com:8443"], {"error": "forbidden_origin"}),

@@ -3464,6 +3464,30 @@
    "reach": []
   },
   {
+   "base": "http://203.0.113.7:08081/a/team-faq/v/abababababababababababababababab/",
+   "expect": {
+    "error": "base"
+   },
+   "forbidden": [
+    "https://hub.example.com",
+    "https://publish.example.com:8443"
+   ],
+   "name": "csp_port_leading_zero",
+   "reach": []
+  },
+  {
+   "base": "http://203.0.113.7:8081/a/-faq/v/abababababababababababababababab/",
+   "expect": {
+    "error": "base"
+   },
+   "forbidden": [
+    "https://hub.example.com",
+    "https://publish.example.com:8443"
+   ],
+   "name": "csp_slug_leading_hyphen",
+   "reach": []
+  },
+  {
    "base": "http://203.0.113.7:0/a/team-faq/v/abababababababababababababababab/",
    "expect": {
     "error": "base"

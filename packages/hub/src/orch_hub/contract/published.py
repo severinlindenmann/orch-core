@@ -127,10 +127,12 @@ def reach_problem(reach: Any, forbidden: Any = ()) -> str | None:
     return None if all(a < b for a, b in itertools.pairwise(reach)) else "reach_order"
 
 
-_BASE = re.compile(r"https?://(\[[0-9a-f:]{2,39}\]|[a-z0-9.-]{1,253})(:[0-9]{1,5})?/a/[a-z0-9-]{3,40}/v/[0-9a-f]{32}/")
+_BASE = re.compile(
+    r"https?://(\[[0-9a-f:]{2,39}\]|[a-z0-9.-]{1,253})(:[1-9][0-9]{0,4})?/a/[a-z0-9][a-z0-9-]{1,38}[a-z0-9]/v/[0-9a-f]{32}/"
+)
 
 
-def csp(base: Any, reach: Any, forbidden: Any = ()) -> str:
+def csp(base: Any, reach: Any, forbidden: Any) -> str:
     """The Content-Security-Policy of one app view (C7). ``base`` is the configured share origin plus the view path,
     never read from a Host header: exactly ``scheme://host[:port]/a/<slug>/v/<view id>/`` (no dot segments,
     port 1..65535). ``reach`` is the approved origin list, ``forbidden`` as in reach_problem. Raises ValueError."""
@@ -148,7 +150,7 @@ def csp(base: Any, reach: Any, forbidden: Any = ()) -> str:
     )
 
 
-def csp_outcome(base: Any, reach: Any, forbidden: Any = ()) -> dict[str, Any]:
+def csp_outcome(base: Any, reach: Any, forbidden: Any) -> dict[str, Any]:
     try:
         return {"ok": csp(base, reach, forbidden)}
     except ValueError as e:

@@ -1,7 +1,8 @@
-"""The hub's side of the admin read (protocol.md §10.6, F3): ``GET /v2/hub/releases[?workspace=<id>]`` at orch-publish,
-signed with ``HK_op`` under ``orch/v2/hub-admin-read|`` (``OpSigner.admin_read``: the signer builds the bytes itself and
-signs GET or HEAD only). Release METADATA only; the answer is checked row by row with the contract before it is returned
-(exact fields, ``public_url`` null in hv 0, and, when a workspace was asked for, only that workspace's rows).
+"""The hub's side of the admin read (protocol.md §10.6 and §11.5, F3, #1452): ``GET /v2/hub/releases[?workspace=<id>]``
+at orch-publish, signed with ``HK_op`` under ``orch/v2/hub-admin-read|`` (``OpSigner.admin_read``: the signer builds the
+bytes itself and signs GET or HEAD only). The company list of links and apps (display METADATA only); the answer is
+checked row by row with the C1 contract before it is returned (exact fields per row type, no token, hash, password
+record, path, content or URL, and, when a workspace was asked for, only that workspace's rows).
 
 No nonce store (deliberate, §10.6): the request is idempotent metadata inside a 120 s window.
 """
@@ -16,6 +17,7 @@ from collections.abc import Callable
 from typing import Any
 
 from ..contract import hub as H
+from ..contract import published as PUB
 from ..contract.canon import b64u
 from ..contract.hub import Refused
 from ..contract.keystore import OpSigner
@@ -30,7 +32,7 @@ CODES = frozenset({"malformed", "stale_timestamp", "unknown_hub", "bad_hub_signa
 
 class AdminReadError(Exception):
     """A refusal with a stable ``code``: one of :data:`CODES`, ``unavailable`` (network, status, unreadable answer) or
-    ``bad_answer`` (the answer broke the contract: extra field, wrong workspace, non-null ``public_url``)."""
+    ``bad_answer`` (the answer broke the contract: an extra field, a wrong type, another workspace)."""
 
     def __init__(self, code: str) -> None:
         super().__init__(code)
@@ -58,8 +60,8 @@ class AdminReadClient:
             raise AdminReadError("malformed")
         return f"{H.ADMIN_READ_PATH}?workspace={workspace}"
 
-    def releases(self, workspace: str | None = None) -> list[dict[str, Any]]:
-        """Release metadata rows of the workspaces bound to this hub in full mode (all, or just ``workspace``)."""
+    def published(self, workspace: str | None = None) -> list[dict[str, Any]]:
+        """The link and app rows (C1) of the workspaces bound to this hub in full mode (all, or just ``workspace``)."""
         target = self.target(workspace)
         ts = self._now()
         try:
@@ -86,12 +88,12 @@ class AdminReadClient:
         if resp.status != 200:
             c = obj.get("error") if isinstance(obj, dict) and set(obj) == {"error"} else None
             raise AdminReadError(c if isinstance(c, str) and c in CODES else "unavailable")
-        if not isinstance(obj, dict) or set(obj) != {"releases"} or type(obj["releases"]) is not list:
+        if not isinstance(obj, dict) or set(obj) != {"rows"} or type(obj["rows"]) is not list:
             raise AdminReadError("bad_answer")
-        rows = obj["releases"]
+        rows = obj["rows"]
         try:
             for r in rows:
-                H.check_admin_read_row(r)
+                PUB.check_published_row(r)
                 if workspace is not None and r["workspace_id"] != workspace:
                     raise Refused("not_bound")
         except Refused:

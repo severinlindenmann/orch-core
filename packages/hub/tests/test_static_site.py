@@ -38,6 +38,7 @@ def test_every_allow_listed_file_is_served_with_the_hard_headers(w):
     assert set(FILES) == {
         "/",
         "/c",
+        "/favicon.svg",
         "/app.css",
         "/app.js",
         "/channel.js",
@@ -153,6 +154,14 @@ def test_static_files_pass_the_same_host_check_as_the_api(w):
 def test_head_is_allowed_and_a_query_string_does_not_widen_the_set(w):
     assert get(w, "/", method="HEAD")[0] == 200
     assert get(w, "/app.js?v=1")[0] == 200
+
+
+def test_the_tab_icon_is_served_and_linked_and_favicon_ico_stays_unknown(w):
+    s, h, body = get(w, "/favicon.svg")
+    assert s == 200 and h["Content-Type"] == "image/svg+xml" and h["Content-Security-Policy"] == CSP and b"<script" not in body
+    for page in ("index.html", "connect.html"):
+        assert '<link rel="icon" href="/favicon.svg" type="image/svg+xml">' in (WEB_DIR / page).read_text()
+    assert get(w, "/favicon.ico")[0] == 404
 
 
 def test_the_web_dir_holds_exactly_the_served_files_and_the_lint_roots():

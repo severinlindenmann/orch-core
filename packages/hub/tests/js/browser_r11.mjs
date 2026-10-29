@@ -30,7 +30,7 @@ try {
   await page.fill("#pw", HUB_PW);
   await page.fill("#code", CODE_SIGNIN);
   await page.getByRole("button", { name: "Sign in" }).click();
-  await page.getByRole("heading", { name: "Needs you" }).waitFor();
+  await page.getByRole("heading", { name: "Connect your first workspace" }).waitFor(); // a new hub: Home shows only the next step (P11)
 
   await page.locator(".side").getByRole("link", { name: "Approvals" }).click();
   await page.getByRole("heading", { name: "Approvals" }).waitFor();

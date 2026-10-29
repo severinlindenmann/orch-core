@@ -365,6 +365,7 @@ def test_the_server_setting_is_signed_by_the_owner_and_shown_in_words(bare, huma
     rows = {r["field"]: r["after"] for r in content["fields_changed"]}
     assert rows == {"Publish: files are sent to": SERVER, "Publish: links open at": SHARE}
     assert any("Only a person can change it" in n for n in content["notes"])
+    assert any("Files are sent to: this computer. Links open at: this computer." in n for n in content["notes"])
     signed = human.sign(prepared)
     ok(human.submit_res(prepared["request"]["id"], signed.events))
     listing = ok(bare.req("publish.list", {}))["data"]
@@ -1069,3 +1070,43 @@ def test_a_server_that_forgot_the_workspace_drops_the_cached_registration(w):
     assert "orch publish register" in res["error"]["message"]
     assert not (w.base() / "registered.json").exists()
     ok(w.send(staged))  # allowed again: the copy goes, registering first
+
+
+def test_the_hosts_settings_handler_checks_both_origins_whoever_asks(bare, human):
+    """Condition C1: the host calls ``wire.check_origin`` itself (the shape pattern alone lets these through)."""
+    bare.addon()
+    for server, share in (
+        ("https://a..example", SHARE),  # doubled dot: the pattern accepts it, check_origin does not
+        (SERVER, "https://share.example:99999"),  # a port above 65535
+    ):
+        res = human.prepare_res("settings.set", {"set": {"publish": {"server": server, "share": share}}})
+        assert not res["ok"] and res["error"]["code"] == "invalid.input", (server, share)
+    good = human.prepare_res("settings.set", {"set": {"publish": {"server": SERVER, "share": SHARE}}})
+    assert good["ok"]
+
+
+def test_register_is_the_owners_act_three_a_minute_and_never_an_agents(w):
+    assert err(w.req("publish.register", {}, agent=True)) in ("op.not_allowed", "human_only")
+    for _ in range(3):
+        ok(w.req("publish.register", {}))
+    assert err(w.req("publish.register", {})) == "rate.limited"
+
+
+def test_a_member_who_is_not_an_owner_cannot_register(tmp_path):
+    from tests.host.live_helpers import world
+
+    wd = world(tmp_path, map_to="quinn")
+    try:
+        assert err(wd.client().req("publish.register", {}, idem=True)) == "role.denied"
+    finally:
+        wd.close()
+        wd.lab.close()
+
+
+def test_the_review_tags_each_address_in_plain_words():
+    from orch.host.signcontent import _reach
+
+    assert _reach("http://127.0.0.1:8103") == "this computer" and _reach("http://localhost") == "this computer"
+    assert _reach("http://192.168.1.5:8103") == "office network" and _reach("http://100.64.0.9") == "office network"
+    assert _reach("http://172.16.0.1") == "office network" and _reach("http://172.32.0.1") == "public address"
+    assert _reach("https://files.example.org:8443") == "public address"

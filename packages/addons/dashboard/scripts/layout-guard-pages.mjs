@@ -1,5 +1,5 @@
 // The real-host pages the layout guard draws from fixtures (`/__layout/<scenario>`, src/dev/layoutPreview.tsx). The guard enters
-// that block when `--only` matches any of these names, so `--only pair` or `--only terminal` finds its pages.
+// that block when `--only` matches any of these names, so `--only terminal` finds its pages.
 export const REAL_HOST_PAGES = [
   'real-host-quick', 'real-host-quick-many', 'real-host-quick-normal-ticket', 'real-host-quick-add',
   'real-host-records', 'real-host-records-hidden-url', 'real-host-records-first-commit', 'real-host-records-push-failed',
@@ -7,8 +7,6 @@ export const REAL_HOST_PAGES = [
   'real-host-runner-on', 'real-host-runner-off', 'real-host-addons', 'real-host-agent-model', 'real-host-addons-publish', 'real-host-addons-publish-open', 'real-host-addons-publish-unset',
   'real-host-terminal-dock', 'real-host-terminal-preview', 'real-host-terminal-readonly', 'real-host-terminal-take',
   'real-host-terminal-exited', 'real-host-terminal-stop',
-  'real-host-pair-unavailable', 'real-host-pair-unavailable-click', 'real-host-pair-blocked-convenience', 'real-host-pair-offer', 'real-host-pair-pending',
-  'real-host-pair-cert', 'real-host-pair-failed', 'real-host-pair-devices', 'real-host-pair-link', 'real-host-pair-remove-command',
   'real-host-readers-devices', 'real-host-convenience-refusals',
   'real-host-signing-on', 'real-host-signing-off', 'real-host-signing-terminal-on', 'real-host-signing-unsafe', 'real-host-signing-unknown',
   'real-host-dev-badge', 'real-host-dev-badge-long', 'real-host-dev-alarms', 'real-host-dev-refused', 'real-host-signing-dev-host',

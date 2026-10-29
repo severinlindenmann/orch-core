@@ -1,10 +1,10 @@
 // The Shared spaces page (M3, #1443 #1444 #1447): spaces the hub hosts, who may only read, archive. The page signs nothing:
 // the hub does what its service already did; creating a space and its history come in a later slice.
-import { emptyState, loading } from "./feel.js";
-import { chip, h, text, when } from "./ui.js";
+import { emptyState, loading } from "../feel.js";
+import { chip, h, text, when, withNames } from "../ui.js";
 
 const info = (label, body) => h("details", { class: "info" }, h("summary", { "aria-label": label, text: "i" }), h("p", { class: "small muted", text: body }));
-const nameOf = (w) => text(w?.name || (w?.workspace_id ? "Workspace " + w.workspace_id.slice(0, 8) : "A workspace"));
+const nameOf = (w) => text(w?.name || "A workspace");
 
 export function spacesView(data, actions = {}, now = Date.now()) {
   const all = data.spaces ?? [];
@@ -59,7 +59,10 @@ export async function spacesPage(d) {
     const say = (ok, bad, x) => { d.state.notice = x.status === 200 ? d.banner("ok", ok, null) : d.banner("bad", "Not changed", d.say(x.body.error ?? bad)); };
     const setMode = async (s, m, mode) => { say("Saved", "unavailable", await d.api("PUT", "/admin/spaces/" + s.space_id + "/members/" + m.workspace_id + "/mode", { mode })); await spacesPage(d); };
     const archive = async (s, archived) => { say(archived ? "Archived" : "Brought back", "unavailable", await d.api("POST", "/admin/spaces/" + s.space_id + "/archive", { archived })); await spacesPage(d); };
-    d.shell("spaces", d.state.notice, spacesView(r.body, { setMode, archive }));
+    d.shell("spaces", d.state.notice, spacesView({ ...r.body, spaces: (r.body.spaces ?? []).map((s) => ({ ...s, members: withNames(s.members, d.state.rail?.rows ?? []) })) }, { setMode, archive }));
     d.state.notice = null;
   } finally { finish(); }
 }
+
+// The registry entry: the console's router, tabs and file list are built from this one export (no other file names a page).
+export const page = { path: "spaces", nav: { label: "Spaces", admin: true, after: "mcp" }, render: spacesPage };

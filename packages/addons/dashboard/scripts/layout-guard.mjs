@@ -538,15 +538,6 @@ async function run(send, close) {
               ['real-host-addons-publish-unset', 'addons-publish-unset', [['the publish row', '[data-testid="addon-publish"]']]],
               ['real-host-agent-blocked', 'agent-blocked', [['the runner-off line', '[data-testid="agent-runner-off"]'], ['the enable command', '[data-testid="runner-enable-command"]']]],
               ['real-host-agent-grant', 'agent-grant', [['the access length', '[data-testid="agent-access"]'], ['the sign-and-start button', '[data-testid="agent-start"]']]],
-              // Pair a phone (proposed pair/1): Settings → Devices from the fixture pairing api.
-              ['real-host-pair-unavailable', 'pair-unavailable', [['the not-available line', '[data-testid="pair-unavailable"]']]],
-              ['real-host-pair-unavailable-click', 'pair-unavailable-click', [['the not-available line', '[data-testid="pair-unavailable"]']]],
-              ['real-host-pair-blocked-convenience', 'pair-blocked-convenience', [['the convenience explanation', '[data-testid="pair-blocked-convenience"]']]],
-              ['real-host-pair-offer', 'pair-offer', [['the warnings', '[data-testid="pair-warnings"]'], ['the device list', '[data-testid="device-row"]']]],
-              ['real-host-pair-pending', 'pair-pending', [['the code entry', '#pair-sas'], ['the label', '[data-testid="pair-label"]']]],
-              ['real-host-pair-cert', 'pair-cert', [['the add line', '[data-testid="pair-add-line"]'], ['the primary command', '[data-testid="pair-primary-command"]']]],
-              ['real-host-pair-failed', 'pair-failed', [['the remove-the-device line', '[data-testid="pair-needs-remove"]']]],
-              ['real-host-pair-devices', 'pair-devices', [['the device list', '[data-testid="device-row"]']]],
               // Core H12d-2: reader levels on Settings → Devices, and every click-to-sign refusal sentence.
               ['real-host-readers-devices', 'readers-devices', [['the reader rows', '[data-testid="reader-row"]'], ['a device below the level', '[data-testid="reader-row"][data-below="true"]'], ['the required level', '[data-testid="readers-required"]']]],
               ['real-host-convenience-refusals', 'convenience-refusals', [['the refusals', '[data-testid="refusal-gallery"] [data-testid="click-problem"]'], ['the devices by label', '[data-testid="refusal-devices"]'], ['readers_old', '[data-testid="signer-readers-old"]']]],
@@ -608,27 +599,12 @@ async function run(send, close) {
               await settle()
               await check(config, 'real-host-signing-unknown', sent ? await need([...CARD, ['the result-unknown line', '[data-testid="signing-error"]']]) : ['the One click form did not open or send'])
             }
-            // Pair a phone: Create pairing link, then Show QR and link: the QR, Copy link and the typed fallback at 720 px.
-            if (!ONLY || ONLY.test('real-host-pair-link')) {
-              await go('/__layout/pair-offer')
-              const created = (await present('[data-testid="pair-before"]')) && (await clickText('button', /^Create pairing link$/))
-              const shown = created && (await present('[data-testid="pair-waiting"]')) && (await clickText('button', /^Show QR and link$/))
-              await settle()
-              await check(config, 'real-host-pair-link', shown ? await need([['the QR', '[data-testid="pair-qr"]'], ['the typed fallback', '[data-testid="pair-fallback"]']]) : ['Create pairing link or Show QR and link is missing'])
-            }
             // Drop: the Delete confirmation open at 720 px.
             if (!ONLY || ONLY.test('real-host-drop-delete')) {
               await go('/__layout/drop-list')
               const opened = (await present('[data-testid="drop-row"]')) && (await clickText('button', /^Delete$/))
               await settle()
               await check(config, 'real-host-drop-delete', opened ? await need([['the confirmation', '[data-testid="drop-confirm"]']]) : ['the Delete button is missing'])
-            }
-            // Removal is CLI only: the "Remove this device" disclosure open with its command.
-            if (!ONLY || ONLY.test('real-host-pair-remove-command')) {
-              await go('/__layout/pair-devices')
-              const opened = (await present('[data-testid="device-row"]')) && (await clickText('summary', /^Remove this device$/))
-              await settle()
-              await check(config, 'real-host-pair-remove-command', opened ? await need([['the remove command', '[data-testid="device-remove-command"]']]) : ['the Remove this device disclosure is missing'])
             }
             // The "Make a normal ticket" hand-off, opened from the row menu.
             if (!ONLY || ONLY.test('real-host-quick-normal-ticket')) {

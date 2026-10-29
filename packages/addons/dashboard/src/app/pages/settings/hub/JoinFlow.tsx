@@ -3,6 +3,7 @@
 // with the backup key: the hub always requires the owner's proof), and the host tells the hub (hub.connect, with the
 // link's code and address). Both modes use this review and one-click flow.
 import { useEffect, useRef, useState } from 'react'
+import { toast } from 'sonner'
 import { InfoDrawer } from '@/components/InfoDrawer'
 import { api } from '@/api/client'
 import { ApiError } from '@/api/types'
@@ -70,22 +71,26 @@ export function JoinFlow({ ws, onClose }: { ws: string; onClose: () => void }) {
   </Flow>
 }
 
-/** The signed join is on the log; now the host tells the hub. "Connected" only when that worked. */
+/** The signed join is on the log; now the host tells the hub. "Connected" only when that worked, then the dialog closes. */
 function ConnectStage({ ws, info, mode, onClose }: { ws: string; info: HubLinkInfo; mode: 'selective' | 'full'; onClose: () => void }) {
   const refresh = useHubRefresh(ws)
-  const [state, setState] = useState<'idle' | 'working' | 'done' | 'failed'>('idle')
+  const [state, setState] = useState<'idle' | 'working' | 'failed'>('idle')
   const [why, setWhy] = useState('')
   const started = useRef(false)
   const run = () => {
     setState('working'); setWhy('')
     api.connectHub(ws, { idem: newIdem(), invite: info.code, hub_card: info.hub_card, ...(info.endpoint ? { addr: info.endpoint } : {}) }).then(
-      () => { setState('done'); refresh() },
+      () => {
+        // Done is the page behind: it now says Connected. Nothing is left to press, so the dialog closes itself.
+        refresh()
+        toast.success(mode === 'full' ? 'Connected. The hub can read everything in this workspace.' : 'Connected. The hub sees only what you choose to share.')
+        onClose()
+      },
       e => { setWhy(e instanceof ApiError && e.message ? e.code + ': ' + e.message : 'The hub did not answer.'); setState('failed') },
     )
   }
   useEffect(() => { if (!started.current) { started.current = true; run() } }, []) // eslint-disable-line react-hooks/exhaustive-deps
   return <div className="space-y-3" data-testid="hub-connect-stage">
-    {state === 'done' && <><p role="status" data-testid="hub-connected">Connected. {mode === 'full' ? 'The hub can read everything in this workspace.' : 'The hub sees only what you choose to share, plus notes that need your attention and full questions.'}</p><div className="flex justify-end"><Action id="hub-connect-close" onClick={onClose}>Close</Action></div></>}
     {(state === 'idle' || state === 'working') && <p role="status">Signed. Telling the hub…</p>}
     {state === 'failed' && <div role="alert" className="space-y-2" data-testid="hub-connect-failed">
       <p className="text-danger">Couldn't connect. Try again.</p>

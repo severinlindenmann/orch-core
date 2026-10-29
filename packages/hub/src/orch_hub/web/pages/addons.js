@@ -1,10 +1,10 @@
 // The Add-ons page (M3, #1448-#1450): which add-ons each workspace may install, and the requests waiting for a decision.
 // The hub only RESTRICTS: allowing an add-on here never installs it; the workspace owner still decides, in the workspace.
-import { emptyState, loading } from "./feel.js";
-import { chip, h, text, when } from "./ui.js";
+import { emptyState, loading } from "../feel.js";
+import { chip, h, text, when, withNames } from "../ui.js";
 
 const info = (label, body) => h("details", { class: "info" }, h("summary", { "aria-label": label, text: "i" }), h("p", { class: "small muted", text: body }));
-const nameOf = (w) => text(w?.name || (w?.workspace_id ? "Workspace " + w.workspace_id.slice(0, 8) : "A workspace"));
+const nameOf = (w) => text(w?.name || "A workspace");
 
 /** The add-ons one workspace can be offered: what the common list names (when it is a list), what the workspace already has
  *  and what it asked for, minus the never-allowed ones. The hub has no catalogue, so with no common list this is only what
@@ -86,7 +86,10 @@ export async function addonsPage(d) {
       d.state.notice = x.status === 200 ? d.banner("ok", same ? "Already allowed" : approve ? "Allowed" : "Turned down", same ? "Nothing needed changing. The owner can choose to install it in the workspace." : approve ? "The owner can now choose to install it in the workspace." : null) : d.banner("bad", "Not changed", d.say(x.body.error));
       await reload();
     };
-    d.shell("addons", d.state.notice, addonsView(r.body, { save, decide }));
+    d.shell("addons", d.state.notice, addonsView({ ...r.body, workspaces: withNames(r.body.workspaces, d.state.rail?.rows ?? []), requests: (r.body.requests ?? []).map((q) => ({ ...q, workspace_name: withNames([{ workspace_id: q.workspace_id, name: q.workspace_name }], d.state.rail?.rows ?? [])[0].name })) }, { save, decide }));
     d.state.notice = null;
   } finally { finish(); }
 }
+
+// The registry entry: the console's router, tabs and file list are built from this one export (no other file names a page).
+export const page = { path: "addons", nav: { label: "Add-ons", admin: true, after: "services" }, render: addonsPage };

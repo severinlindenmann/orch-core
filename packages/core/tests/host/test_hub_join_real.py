@@ -120,7 +120,8 @@ def test_join_and_leave_over_the_real_tls_link(human, served, tls_hub):
     got = ok(served.client().req("hub.connect", args, idem=True))["data"]
     assert got["status"] == "bound" and got["hub_id"] == tls_hub.hub_id
     assert tls_hub.auth_verified.is_set() and "wsk_pub" in tls_hub.auth_frames[0]  # the first link of a join
-    assert [r["o"]["op"] for r in tls_hub.requests] == ["join", "snapshot_get"]  # then the first snapshot
+    ops = [r["o"]["op"] for r in tls_hub.requests]
+    assert ops[0] == "join" and ops[-1] == "snapshot_get" and "status_put" in ops  # R14b: the status lands too
     body = tls_hub.requests[0]["o"]["body"]
     assert body["binding"]["o"]["mode"] == "selective" and body["card"]["o"]["workspace_id"] == served.wid
     status = ok(served.client().req("hub.status", {}, idem=False))["data"]
@@ -315,7 +316,7 @@ def test_an_equal_card_with_other_content_does_not_overwrite_the_disk(human, ser
 
 
 @pytest.mark.parametrize("fail", [False, True])
-def test_hub_snapshot_status_once_per_service_and_hub(monkeypatch, fail):
+def test_hub_snapshot_status_once_when_delivered_and_retried_when_not(monkeypatch, fail):
     from types import SimpleNamespace
 
     import orch
@@ -339,17 +340,32 @@ def test_hub_snapshot_status_once_per_service_and_hub(monkeypatch, fail):
     import socket
 
     monkeypatch.setattr(socket, "gethostname", lambda: "h" * 100)
+    monkeypatch.setattr(hubops, "_workspace_name", lambda service: "Acme")
     state = SimpleNamespace(hk_op_pub=crypto.b64u(b"x" * 65), tls_spki="unused", mode="full", hub_id="one")
     service = SimpleNamespace(workspace_id="ws", clock=lambda: 0)
     for _ in range(2):
         assert hubops._snapshot_link(service, state, b"", None, True)[1] is transport
-    assert calls == [("status_put", {"version": orch.__version__, "commit": "", "host": "h" * 80})]
+    body = {"version": orch.__version__, "commit": "", "host": "h" * 80, "name": "Acme"}
+    # delivered: once; a failure (logged, never raised) is retried on the next link use
+    assert calls == [("status_put", body)] * (2 if fail else 1)
+    if not fail:
+        monkeypatch.setattr(hubops, "_workspace_name", lambda service: "Renamed")
+        hubops._snapshot_link(service, state, b"", None, True)  # a changed name is sent again
+        assert calls[-1] == ("status_put", {**body, "name": "Renamed"}) and len(calls) == 2
+        monkeypatch.setattr(hubops, "_workspace_name", lambda service: "Acme")
+        calls.clear()
+        service.__dict__.pop("_hub_status_sent")  # a (re)connect clears the mark
+        hubops._snapshot_link(service, state, b"", None, True)
+        assert len(calls) == 1
+        calls.clear()
+    else:
+        calls.clear()
     state.hub_id = "two"
     hubops._snapshot_link(service, state, b"", None, True)
-    assert len(calls) == 2
+    assert len(calls) == 1
     service = SimpleNamespace(workspace_id="ws", clock=lambda: 0)
     hubops._snapshot_link(service, state, b"", None, True)
-    assert len(calls) == 3
+    assert len(calls) == 2
 
 
 def test_selective_status_sends_no_host_name(monkeypatch):

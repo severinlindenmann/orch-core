@@ -14,7 +14,7 @@ class Node_ {
   all() { return [this, ...this.children.flatMap((c) => c.all())]; }
 }
 globalThis.document = { createElement: (t) => new Node_(t), createTextNode: (t) => new Node_("#text", t), getElementById: () => null };
-const { spacesView } = await import("../../src/orch_hub/web/spaces.js");
+const { spacesView } = await import("../../src/orch_hub/web/pages/spaces.js");
 const NOW = 1_800_000_000_000;
 const find = (n, pred) => n.all().filter(pred);
 const data = { spaces: [

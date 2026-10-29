@@ -12,6 +12,7 @@ and no pattern anywhere.
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import json
 import os
 import shutil
@@ -108,13 +109,36 @@ def build_steps(inv: Inventory, delete_folders: set[Path], skip_workspaces: set[
             steps.append(Item("workspace", "folder", "the whole workspace folder", str(ws.root), ws.files, ws.size))
         else:
             steps += [i for i in ws.items if i.kind not in ("worktree", "note")]
-    steps += [i for i in inv.items if i.kind in ("claude-trust", "plugin", "keychain")]
+    for i in inv.items:
+        if i.kind == "claude-trust":
+            i = _trust_without(i, skip_workspaces)  # noqa: PLW2901 - a kept workspace keeps its trust entries
+            if i is None:
+                continue
+        if i.kind in ("claude-trust", "plugin", "keychain"):
+            steps.append(i)
     steps += [i for i in inv.items if i.kind == "tree"]
     steps += [Item("", "rmdirs", "empty folders orch made")]
     if any(i.kind == "os" for i in inv.items):
         steps.append(Item("", "os-batch", "accounts and system files"))
     steps += [i for i in inv.items if i.kind == "tool"]
     return steps
+
+
+def _trust_without(item: Item, kept: set[Path] | frozenset[Path]) -> Item | None:
+    """The trust step for the workspaces actually pruned: entries of a workspace the person chose to keep (its root and
+    its ticket work folders, in either spelling) stay in ``~/.claude.json``. None when nothing is left to remove."""
+    if not kept:
+        return item
+    spellings = {s for r in kept for s in (os.fspath(r), os.path.realpath(r))}
+
+    def mine(key: str) -> bool:
+        return key in spellings or any(key.startswith(f"{s}/") for s in spellings)
+
+    keys = [k for k in item.data["keys"] if not mine(k)]
+    roots = [k for k in item.data.get("roots", ()) if not mine(k)]
+    if not keys and not roots:
+        return None
+    return dataclasses.replace(item, data={**item.data, "keys": keys, "roots": roots})
 
 
 #: steps whose failure stops the run: everything after them (deleting files a running service holds, deleting state
@@ -332,11 +356,26 @@ def _worktree(ctx: Ctx, fence: Fence, it: Item) -> None:
 
 
 def _claude(res: Result, fence: Fence, it: Item) -> None:
-    """Take orch's trust entries out of Claude Code's ``.claude.json``. Claude Code may be running and writing the file:
-    it is re-checked right before the replace; changed, it is read again once, then the step stops."""
+    """Take orch's trust entries out of Claude Code's ``.claude.json``: the three trust keys of each ticket work folder,
+    and the ONE key setup set on each workspace root (``hasTrustDialogAccepted``); nothing else of any entry, no other
+    project. Same rules as the runner's writer: Claude Code's ``<file>.lock`` is taken first (never stolen), the file is
+    re-checked right before the replace (changed: read again once, then the step stops), and a file that holds nothing
+    but an empty ``projects`` after the removal (what orch made when Claude Code had not run yet) is removed."""
+    from orch.runner.claude_trust import _locked
+
     cfg = fence.check(it.data["cfg"])
     if os.path.islink(cfg) or not os.path.isfile(cfg):
         return
+    with _locked(cfg) as got:
+        if not got:
+            raise PruneError(
+                f"Claude Code (or a stale lock) holds {cfg}: close Claude Code and run `orch host prune` again. "
+                f"If Claude Code is not running, remove the folder {cfg}.lock"
+            )
+        _claude_locked(res, cfg, it)
+
+
+def _claude_locked(res: Result, cfg: Path, it: Item) -> None:
     for _ in (1, 2):
         st = os.lstat(cfg)
         try:
@@ -348,11 +387,13 @@ def _claude(res: Result, fence: Fence, it: Item) -> None:
         if not isinstance(projects, dict):
             return
         changed = False
-        for key in it.data["keys"]:
+        for key, names in [(k, TRUST_KEYS) for k in it.data["keys"]] + [
+            (k, TRUST_KEYS[:1]) for k in it.data.get("roots", ())
+        ]:
             entry = projects.get(key)
             if not isinstance(entry, dict):
                 continue
-            for tk in TRUST_KEYS:
+            for tk in names:
                 if tk in entry:
                     del entry[tk]
                     changed = True
@@ -361,7 +402,13 @@ def _claude(res: Result, fence: Fence, it: Item) -> None:
         if not changed:
             return
         try:
-            _write_atomic(cfg, json.dumps(doc, indent=2) + "\n", expect=(st.st_mtime_ns, st.st_size))
+            if doc == {"projects": {}} or doc == {}:  # nothing of the person's left: orch made this file
+                now = os.lstat(cfg)
+                if (now.st_mtime_ns, now.st_size) != (st.st_mtime_ns, st.st_size):
+                    raise Changed()
+                os.unlink(cfg)
+            else:
+                _write_atomic(cfg, json.dumps(doc, indent=2) + "\n", expect=(st.st_mtime_ns, st.st_size))
             return
         except Changed:
             continue

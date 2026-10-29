@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createLoadingController, emptyWords, focusIndex, skeletonPlan, PROGRESS_DELAY, TOAST_DURATION } from "../../src/orch_hub/web/feel.js";
+import { busyButton, createLoadingController, emptyWords, focusIndex, skeletonPlan, PROGRESS_DELAY, TOAST_DURATION } from "../../src/orch_hub/web/feel.js";
 
 test("skeletons follow the page's column structure", () => {
   assert.deepEqual(skeletonPlan("home"), { grid: "home-grid", sections: [4, 2, 2] });
@@ -163,4 +163,14 @@ test("background replacement preserves fields, expanded forms, focus and selecti
     replaceContent(container, [routeField], false);
     assert.equal(routeField.value, "new route");
   } finally { globalThis.document = previous; }
+});
+
+test("a second press on a busy button does nothing and returns undefined, so a caller can tell it from a success (null)", async () => {
+  const attrs = {};
+  const button = { disabled: false, getAttribute: (k) => attrs[k] ?? null, setAttribute: (k, v) => { attrs[k] = v; }, removeAttribute: (k) => { delete attrs[k]; } };
+  let release;
+  const first = busyButton(button, () => new Promise((ok) => { release = () => ok(null); }));
+  assert.equal(await busyButton(button, async () => null), undefined);
+  release();
+  assert.equal(await first, null);
 });

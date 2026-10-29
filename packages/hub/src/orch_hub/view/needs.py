@@ -131,7 +131,10 @@ class StoreViewReader:
     def _decision_rows(
         self, ws: str, log: str, t: PR.Ticket, lines: list[dict[str, Any]], me: set[str], roster_v: int, keys: Keyring
     ) -> list[tuple[dict[str, Any], dict[str, Any]]]:
-        """Gate and verdict rows of one visible ticket from its held projection P (D15b-3)."""
+        """Gate and verdict rows of one visible ticket from its held projection P (D15b-3). Only gates that can be waiting
+        for a person now, as the workspace counts them (``model.needs.gate_waiting``): requirements and plan before work
+        starts, code and verify in testing. A passed or not-yet-due gate is not "needs you" (run-14 finding: the hub
+        said 10 where Mission Control said 1)."""
         proj = self._svc.proj(ws, log, keys)
         heads = self._svc.store.heads(ws, log)
         if proj is None or proj.get("seq") != len(heads) or proj.get("head") != heads[-1]:
@@ -145,13 +148,22 @@ class StoreViewReader:
             and (e.get("actor") or {}).get("id") in me
         }
         rows = []
+        waiting = proj.get("waiting")  # R14b: the host's own needs rule (what Mission Control counts); old host: absent
         for gate, g in sorted(proj["gates"].items()):
-            if gate == "verify":
+            if waiting is not None:
+                if gate not in waiting:
+                    continue
+                kind = "verdict" if gate == "verify" else "gate"
+            elif gate == "verify":
                 if proj["status"] != "testing":
                     continue
                 kind = "verdict"
             elif proj["status"] in ("done", "closed"):
                 continue
+            elif gate in ("requirements", "plan") and proj["status"] not in ("backlog", "open"):
+                continue  # work has begun: those gates were passed (the hub only sees P, not the policy counts)
+            elif gate not in ("requirements", "plan") and proj["status"] != "testing":
+                continue  # code (and any later gate) waits for a decision only while the ticket is in testing
             else:
                 kind = "gate"
             if (gate, g["hash"]) in mine:

@@ -14,7 +14,8 @@ class Node_ {
   all() { return [this, ...this.children.flatMap((c) => c.all())]; }
 }
 globalThis.document = { createElement: (t) => new Node_(t), createTextNode: (t) => new Node_("#text", t), getElementById: () => null };
-const { skillsView, skillProblem } = await import("../../src/orch_hub/web/skills.js");
+const { skillsView, skillProblem } = await import("../../src/orch_hub/web/pages/skills.js");
+const { wsLabel, withNames } = await import("../../src/orch_hub/web/ui.js");
 const find = (n, pred) => n.all().filter(pred);
 const data = {
   max_chars: 2400,
@@ -29,7 +30,7 @@ test("a skill shows its text as text, offer boxes reflect who has it, and the pa
   assert.equal(find(view, (n) => n.tag === "b" && n.textContent === "INV").length, 0); // text, never markup
   const boxes = find(view, (n) => n.tag === "input" && n.attrs["data-ws"]);
   assert.deepEqual(boxes.map((b) => b.checked), [true, false]);
-  assert.match(view.textContent, /Workspace bbbbbbbb/);
+  assert.match(view.textContent, /A workspace/);
   boxes[1].checked = true;
   find(view, (n) => n.tag === "button" && n.textContent === "Save who gets it")[0].listeners.click();
   assert.deepEqual(calls[0], ["offer", "invoices", ["a".repeat(32), "b".repeat(32)]]);
@@ -58,4 +59,13 @@ test("the page check mirrors the hub rules", () => {
   assert.match(skillProblem("invoices", "  "), /Write what/);
   assert.match(skillProblem("invoices", "x".repeat(2401)), /under 2400/);
   assert.match(skillProblem("invoices", "---\nx"), /plain text/);
+});
+
+test("an offer target is named like the rail names it, with a friendly fallback and never an id", () => {
+  const id = "dcac275f" + "0".repeat(24);
+  assert.equal(wsLabel({ workspace_id: id }, []), "A workspace");
+  assert.equal(wsLabel({ workspace_id: id, name: null }, [{ id, name: "dcac275f" }]), "A workspace");
+  assert.equal(wsLabel({ workspace_id: id }, [{ id, name: "Personal Workspace" }]), "Personal Workspace");
+  assert.equal(wsLabel({ workspace_id: id, name: "Own" }, [{ id, name: "Rail" }]), "Own");
+  assert.equal(withNames([{ workspace_id: id }], [])[0].name, "A workspace");
 });

@@ -50,6 +50,7 @@ try {
   await page.fill("#code2", CODE_REGISTER);
   await shot("register");
   await page.getByRole("button", { name: "Register this browser" }).click();
+  await page.getByText("This browser is ready").waitFor({ timeout: 3000 }); // the success banner is shown, not just the card below it
   await page.getByText("This browser holds a signing key for you").waitFor();
 
   // the key is non-extractable and in IndexedDB
@@ -76,7 +77,7 @@ try {
   await sign.waitFor();
   await page.getByText("Review your answer").waitFor();
   const sentence = await page.locator("#dlg .sentence").innerText();
-  assert(/I answer question Q1 on ticket .* with .csv/.test(sentence), "sentence: " + sentence);
+  assert(/answer question Q1 on ticket .* with .CSV/.test(sentence), "sentence: " + sentence);
   await shot("sign-prompt");
   await shot("sign-prompt", 390);
   assert(await sign.isDisabled(), "Sign must be disabled right after render");

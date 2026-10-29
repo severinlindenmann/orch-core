@@ -506,3 +506,20 @@ def test_a_transient_error_keeps_the_last_known_addon_state():
     off = Known([{"name": "publish", "state": "disabled"}])
     assert Gateway.addon_on(off, "publish") is False
     assert Gateway.addon_on(down, "publish") is False
+
+
+def test_a_switch_session_cannot_register_and_the_route_takes_no_address(client, auth, stub, host):
+    from orch_dashboard.policy import LOOPBACK
+
+    switch = auth.open_switch(LOOPBACK, stub.ws)["token"]
+    res = client.post(url(stub, "/shares/register"), json={"idem": IDEM}, headers=hdr(switch))
+    assert res.status_code == 403 and res.json()["error"]["code"] == "session.readonly"
+    assert not [c for c in host.calls if c[0] == "publish.register"]
+
+
+def test_publish_addresses_are_checked_like_the_host_does(token):
+    from pydantic import ValidationError
+
+    for server, share in (("https://a..example", "https://b.example"), ("https://a.example:99999", "https://b.example")):
+        with pytest.raises(ValidationError):
+            handoff.PublishSetup(action="publish_setup", server=server, share=share)

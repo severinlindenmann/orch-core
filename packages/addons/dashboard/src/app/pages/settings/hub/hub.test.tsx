@@ -204,8 +204,9 @@ describe('share rules (A3.3)', () => {
     await type(view, 'hub-rule-value', 'team')
     await waitFor(() => expect(screen.getByText(/1 now visible/)).toBeTruthy(), T)
     await view.user.click(screen.getByTestId('hub-share-review'))
-    expect(await screen.findByText('Adding a sharing rule is not available in the dashboard yet.', {}, T)).toBeTruthy()
-    expect(screen.getByText(/Add this sharing rule\./)).toBeTruthy()
+    expect(await screen.findByTestId('hub-add-review', {}, T)).toBeTruthy()
+    expect(screen.getByTestId('hub-add-later')).toHaveTextContent('Later edits')
+    expect(screen.getByTestId('hub-add-go')).toBeTruthy()
     expect(screen.queryByTestId('hub-command')).toBeNull()
     expect(screen.getAllByText(/cannot be taken back/).length).toBeGreaterThan(0)
   })
@@ -218,7 +219,7 @@ describe('share rules (A3.3)', () => {
     await view.user.click(await screen.findByTestId('hub-share-review', {}, T).then((b) => { return b }))
     await waitFor(() => expect((screen.getByTestId('hub-share-review') as HTMLButtonElement).disabled).toBe(false), T)
     await view.user.click(screen.getByTestId('hub-share-review'))
-    expect(await screen.findByText('Adding a sharing rule is not available in the dashboard yet.', {}, T)).toBeTruthy()
+    expect(await screen.findByTestId('hub-add-review', {}, T)).toBeTruthy()
     expect(screen.queryByTestId('hub-command')).toBeNull()
     for (const code of document.querySelectorAll('code')) expect(code.textContent).not.toContain('orch hub')
   })
@@ -307,14 +308,13 @@ describe('by click (#1198 C11)', () => {
     expect(screen.queryByText(/Review it here/)).toBeNull()
     expect(screen.queryByTestId('hub-card-text')).toBeNull() // no card file, no separate invite, no mode step
     await sign('Sign and join the hub')
-    expect(await screen.findByTestId('hub-connected', {}, T)).toHaveTextContent(/Connected/)
+    expect(await screen.findByText('Connected · Hub sees only what you share', {}, T)).toBeTruthy() // the page behind says it
+    expect(screen.queryByRole('dialog')).toBeNull() // and the dialog closed by itself: nothing left to press
     expect(seal).toHaveBeenCalledTimes(1)
     expect(seal.mock.calls[0][1]).toBe(WORDS)
     expect(connectHub).toHaveBeenCalledTimes(1) // the host tells the hub right after the signed join, with the link's code
     expect(connectHub.mock.calls[0][1]).toMatchObject({ invite: '7QK2M9XD', addr: '10.0.0.5:8105', idem: expect.stringMatching(/^a_[0-7][0-9A-HJKMNP-TV-Z]{25}$/) })
     expect(screen.queryByTestId('hub-command')).toBeNull() // no terminal command anywhere in this path
-    await view.user.click(screen.getByTestId('hub-connect-close'))
-    expect(await screen.findByText('Connected · Hub sees only what you share', {}, T)).toBeTruthy()
   })
 
   it('with the person key kept the join is one click and asks for no backup key, also in full mode', async () => {
@@ -329,7 +329,8 @@ describe('by click (#1198 C11)', () => {
     trustedPresses() // the armed Sign signs only on a trusted press (fireEvent is untrusted)
     fireEvent.pointerDown(btn)
     fireEvent.click(btn)
-    expect(await screen.findByTestId('hub-connected', {}, T)).toHaveTextContent(/read everything/)
+    expect(await screen.findByText('The hub can read everything in this workspace', {}, T)).toBeTruthy()
+    expect(screen.queryByRole('dialog')).toBeNull()
     setMockVault(false)
   })
 
@@ -360,10 +361,11 @@ describe('by click (#1198 C11)', () => {
     expect((await screen.findByTestId('info-drawer-content', {}, T)).textContent).toMatch(/The invite was not accepted\./)
     await view.user.keyboard('{Escape}')
     await waitFor(() => expect(screen.queryByTestId('info-drawer-content')).toBeNull(), T)
-    expect(screen.queryByText(/^Connected\./)).toBeNull()
+    expect(within(screen.getByRole('dialog')).queryByText(/^Connected\./)).toBeNull()
     setMockConnectError(null)
     await view.user.click(screen.getByTestId('hub-connect-retry'))
-    expect(await screen.findByTestId('hub-connected', {}, T)).toHaveTextContent(/Connected/)
+    expect(await screen.findByText('Connected · Hub sees only what you share', {}, T)).toBeTruthy()
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 
   it('leaves: the consequences, then one click with the backup key', async () => {

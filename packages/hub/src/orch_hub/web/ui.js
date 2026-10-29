@@ -13,6 +13,15 @@ export function h(tag, props = {}, ...kids) {
   return el;
 }
 export const text = (v) => renderText(String(v ?? ""));
+/** A workspace's display name for the admin pages: its own name, else the name the rail holds, else "A workspace" (never an id). */
+export const wsLabel = (w, rows = []) => {
+  const id = w?.workspace_id;
+  const own = typeof w?.name === "string" && w.name ? w.name : null;
+  const row = rows.find((r) => r.id === id);
+  const railName = row && row.name && row.name !== String(id).slice(0, 8) ? row.name : null;
+  return own || railName || "A workspace";
+};
+export const withNames = (list, rows = []) => (Array.isArray(list) ? list.map((w) => ({ ...w, name: wsLabel(w, rows) })) : list);
 export const chip = (label, kind = "") => h("span", { class: "chip " + kind, text: label });
 export const dot = (kind) => h("span", { class: "dot " + kind, "aria-hidden": "true" });
 

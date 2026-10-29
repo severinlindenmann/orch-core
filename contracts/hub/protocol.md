@@ -1342,7 +1342,7 @@ unknown `op` is `unknown_op`.
 | `rail_get` | w2h | both | `{"origin"}` | `{"hub": {name, origin, network_origin}, "user_id", "workspaces": [{workspace_id, name, role, online, badge, origin, current}]}` (hub one-app) |
 | `profile_put` | w2h | both | `{listed, tags, description, handles, not_handled, accepts, contact, languages, hours}` | `{}` |
 | `directory_get` | w2h | both | `{query?: string}` | `{entries: [...]}` (at most 50) |
-| `status_put` | w2h | both | `{"version", "commit", "host"}` | `{}` |
+| `status_put` | w2h | both | `{"version", "commit", "host", "name"}` | `{}` |
 | `addon_request` | w2h | both | `{"name", "version", "actor"}` | `{}` (M3 #1450) |
 | `owner_get` | w2h | both | `{}` | `{"user_id"}`: the hub user this hub names as the owner of the calling workspace (V3-D19 owner alias; FB15 §8.8b) |
 | `log_sync` | w2h | full | `{"epoch", "log", "from_seq", "count", "head", "reset", "sealed": b64u}` | `{"seq", "head"}` (p4, §10.7) |
@@ -1372,7 +1372,7 @@ Selective mode does not imply listing or bypass routing authorization.
 
 `status_put` reports display-only workspace metadata over its authenticated WSK link, once per host process/hub.
 Its exact body has a version matching `[0-9A-Za-z.+-]+` (at most 32 characters), a hex commit (at most 40,
-possibly empty), and a host string (at most 80); bad shapes are `malformed`, unknown pins `unknown_workspace`.
+possibly empty), a host string (at most 80) and the workspace display name `name` (at most 80, from `config.json`); a selective-mode workspace sends `host` and `name` empty and the hub stores them empty (the hub console then shows a friendly fallback, never an id); bad shapes are `malformed`, unknown pins `unknown_workspace`.
 The hub sanitizes these fields and records its own last-seen clock and socket peer address. These values never
 influence authorization, routing, signing or mode, and are not written to the workspace log.
 
@@ -1868,7 +1868,10 @@ P = {"seq", "head",          the ticket log's last line in this page (int ≥ 1,
      "ws_seq", "ws_head",    the workspace-log position P was computed at (int ≥ 1, hash)
      "status",               the ticket's status there (status list, §10.2b)
      "roster_v",             int ≥ 0
-     "gates": {<gate>: {"gen", "hash", "policy_hash", "source_sha"?}}}   exactly the §10.2b f1 gate entries
+     "gates": {<gate>: {"gen", "hash", "policy_hash", "source_sha"?}},  exactly the §10.2b f1 gate entries
+     "waiting"?}             optional (R14b): sorted, distinct gate names the host's own needs rule says wait for a
+                             person now. When present the hub lists a gate decision only for these (the same count as
+                             the workspace's Mission Control); when absent it falls back to the status rule.
 ```
 
 The host computes `P` with the same code it admits custodial events with (core: the C6b `f1` values plus the status),

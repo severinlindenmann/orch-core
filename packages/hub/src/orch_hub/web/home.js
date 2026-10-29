@@ -49,10 +49,13 @@ export function homeView(d) {
   const mode = (it) => it.mode ?? byId.get(it.workspace_id)?.mode;
   const summary = (it) => it.summary_only || (!it.signable && mode(it) === "selective");
   const items = health.items;
-  const shortName = (w, id) => text(w?.name ?? "Workspace " + String(id).slice(0, 8));
+  const shortName = (w, id) => text(w?.name || "A workspace");
   const workspaceName = (id) => shortName(byId.get(id), id);
   const needs = h("section", { class: "card needs-you", "aria-labelledby": "needs-heading" },
     h("div", { class: "section-head row" }, h("h2", { id: "needs-heading", class: "grow", text: "Needs you" }), chip(String(items.length))),
+    workspaces.some((w) => w.mode === "selective") ? h("p", { class: "small muted only-shared" }, "Only items you share appear here ",
+      h("details", { class: "info" }, h("summary", { "aria-label": "More about what appears here", text: "i" }),
+        h("p", { class: "small muted", text: "A workspace you joined with Only what I choose sends the hub just what you share. Other questions are still waiting in that workspace, so its own count can be higher." }))) : null,
     items.length ? workspaces.filter((w) => items.some((it) => it.workspace_id === w.workspace_id)).map((w) => h("section", { class: "workspace-needs", "data-live-key": w.workspace_id },
       h("h3", { text: workspaceName(w.workspace_id) }),
       items.filter((it) => it.workspace_id === w.workspace_id).map((it) => h("article", { class: "list-row row", "data-live-key": itemKey(it) },

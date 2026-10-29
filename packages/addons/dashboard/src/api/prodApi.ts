@@ -158,6 +158,7 @@ function workspace(s: ServerWorkspace): Workspace {
     members: s.members,
     gates: {} as Workspace['gates'],
     addons: viewAddons(s.features),
+    features: [...s.features],
     counts: {},
     needs_you: s.needs_you ?? 0,
     ...(s.host_state === 'ok' ? {} : { host_state: s.host_state }),
@@ -337,6 +338,10 @@ const click = {
   revokeHubShare: (ws: string, ref: string) => call<import('./hub').HubReduced>(`${w(ws)}/hub/share/revoke`, 'POST', { ref }),
   removeHubRule: (ws: string, rule: import('./hub').HubRule, expect: string) =>
     call<import('./hub').HubReduced>(`${w(ws)}/hub/share/rule-remove`, 'POST', { rule, expect }),
+  /** Share more (owner, full local session, a plan this session was shown): a plain click, no signature. */
+  addHubRule: (ws: string, rule: import('./hub').HubRule, expect: string) =>
+    call<import('./hub').HubAdded>(`${w(ws)}/hub/share/rule-add`, 'POST', { rule, expect }),
+  syncHubShare: (ws: string, expect: string) => call<import('./hub').HubAdded>(`${w(ws)}/hub/share/sync`, 'POST', { expect }),
   getHubLink: (ws: string, link: string) => call<import('./hub').HubLinkInfo>(`${w(ws)}/hub/link`, 'POST', { link }),
   connectHub: (ws: string, body: import('./hub').HubConnectRequest) => call<import('./hub').HubConnected>(`${w(ws)}/hub/connect`, 'POST', body),
   cancelClick: (ws: string, requestId: string) => call<{ id: string; state: string }>(`${w(ws)}/click/cancel`, 'POST', { request_id: requestId }),

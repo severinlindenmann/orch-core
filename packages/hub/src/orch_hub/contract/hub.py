@@ -1459,6 +1459,7 @@ LINK_OPS: dict[str, tuple[str, str | None, dict[str, Check]]] = {
             "version": lambda x: type(x) is str and len(x) <= 32 and re.fullmatch(r"[0-9A-Za-z.+-]+", x) is not None,
             "commit": lambda x: type(x) is str and len(x) <= 40 and re.fullmatch(r"[0-9a-fA-F]*", x) is not None,
             "host": lambda x: type(x) is str and len(x) <= 80,
+            "name": lambda x: type(x) is str and len(x) <= 80,  # the workspace's display name; kept in full mode only
         },
     ),
     # M3 (#1450): a host tells the hub an add-on install was refused by the policy; display data, never an authority

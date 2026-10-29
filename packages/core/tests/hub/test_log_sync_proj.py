@@ -83,6 +83,10 @@ def test_the_vector_page_with_a_projection_is_reproduced_byte_for_byte():
         lambda p: p["gates"]["code"].pop("source_sha"),
         lambda p: p.update(roster_v=-1),
         lambda p: p.update(ws_seq=0),
+        lambda p: p.update(waiting=["requirements", "plan"]),  # sorted
+        lambda p: p.update(waiting=["plan", "plan"]),  # distinct
+        lambda p: p.update(waiting=["weird"]),
+        lambda p: p.update(waiting="plan"),
     ],
 )
 def test_check_proj_refuses_what_the_hub_would(mut):
@@ -91,6 +95,43 @@ def test_check_proj_refuses_what_the_hub_would(mut):
     with pytest.raises(HubRefused) as e:
         LS.check_proj(p)
     assert e.value.code == "malformed"
+
+
+def test_waiting_is_an_optional_sorted_list_of_gates():
+    for waiting in ([], ["plan"], ["requirements", "verify"]):
+        LS.check_proj({**copy.deepcopy(PROJ), "waiting": waiting})
+    LS.check_proj(copy.deepcopy(PROJ))  # absent: still valid (the hub then falls back to the status rule)
+
+
+@pytest.mark.parametrize(
+    ("name", "valid"),
+    [
+        ("log_sync_proj_waiting", True),
+        ("log_sync_proj_waiting_unsorted", False),
+        ("log_sync_proj_waiting_duplicate", False),
+        ("log_sync_proj_waiting_unknown_gate", False),
+    ],
+)
+def test_the_waiting_vectors_replay_in_core(name, valid):
+    """R14b: the contract's `waiting` cases: the sealed page's projection is opened with the vector's view key and
+    judged by core's own check (the hub replays the same cases on its side)."""
+    import json
+
+    case = next(c for c in V["cases"] if c["name"] == name)
+    page = case["args"]["pages"][-1]
+    k = bytes.fromhex(P4["view_key_e1_hex"])
+    aad = LS.page_aad(case["args"]["workspace_id"], page["epoch"], page["log"], page["from_seq"], page["count"],
+                      page["head"], page["reset"])  # fmt: skip
+    doc = json.loads(S.salted_open(k, b"orch/v2/hub-view-msg", aad, unb64u(page["sealed"])))
+    assert "waiting" in doc["proj"]
+    if valid:
+        LS.check_proj(doc["proj"])
+        assert case["expect"]["ok"]["proj"][page["log"]] == doc["proj"]
+    else:
+        assert case["expect"] == {"error": "malformed"}
+        with pytest.raises(HubRefused) as e:
+            LS.check_proj(doc["proj"])
+        assert e.value.code == "malformed"
 
 
 def test_a_projection_must_describe_the_last_line_of_a_ticket_page():

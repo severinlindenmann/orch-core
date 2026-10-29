@@ -20,6 +20,13 @@ session's person, below). `hub.join`, `hub.mode`, `hub.leave`,
                              The host rate-limits it and writes the security-log line. Idempotent like the host op.
 * `POST /hub/share/rule-remove` `share.rule_remove {rule, expect}`: stop sharing by a rule, bound to the `plan` of the
                              preview the owner was shown (as the CLI does). Same rules as the revoke.
+* `POST /hub/share/rule-add` `share.rule_add {rule, expect}` and `POST /hub/share/sync` `share.sync {expect}`: the
+                             changes that make NEW items leave the workspace. Click-only host ops (no signed event):
+                             full LOCAL session only (a switch, remote or read-only session is `session.readonly`),
+                             owner as the session's person, and `expect` must be the plan of a preview THIS session
+                             fetched here (a changed plan means the review is shown again, never an auto-confirm). The
+                             host re-checks the owner role and plan under its lock, refuses agents (column P), allows
+                             five a minute per workspace and writes the security-log line.
 * `POST /hub/connect`        #1198 C11: the second half of a join by click. After the signed `hub.join` is on the log,
                              the host's `hub.connect {invite, hub_card}` tells the hub (the hub checks the invite).
                              The host does the work and the checks; this route only relays, for a dashboard opened on
@@ -30,6 +37,8 @@ Host text is display-only: hidden characters are withheld, never repaired.
 
 from __future__ import annotations
 
+import collections
+import contextlib
 import json
 import logging
 import re
@@ -155,6 +164,32 @@ class RuleRemoveBody(BaseModel):
     expect: Plan
 
 
+class RuleAddBody(BaseModel):
+    """One rule to add, and the `plan` of the `share.preview {add: rule}` the owner was shown."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    rule: Rule
+    expect: Plan
+
+
+class SyncBody(BaseModel):
+    """Confirm the shown selection (`share.preview {}`, or the one of a rule already added) and send it."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    expect: Plan
+
+
+def add_view(raw) -> dict:
+    """Of a `share.rule_add` / `share.sync` answer only the closed fields."""
+    raw = raw if isinstance(raw, dict) else {}
+    pending = raw.get("pending")
+    return {
+        "synced": raw.get("synced") is True,
+        "pending": pending if isinstance(pending, str) and re.fullmatch(r"[a-z_]{1,40}", pending) else None,
+        "put": _int(raw.get("put")) or 0,
+    }
+
+
 def reduce_view(raw) -> dict:
     """Of a `share.revoke` / `share.rule_remove` answer only the closed fields."""
     raw = raw if isinstance(raw, dict) else {}
@@ -251,6 +286,34 @@ def share_view(rules, preview) -> dict:
     }
 
 
+def _review_view(raw) -> dict | None:
+    """The host's review of an adding change, closed fields only; the page shows these words and adds none."""
+    if not isinstance(raw, dict):
+        return None
+    new = raw.get("new") if isinstance(raw.get("new"), dict) else {}
+    rows = []
+    for r in (new.get("items") if isinstance(new.get("items"), list) else [])[:MAX_TICKETS]:
+        line = display(r.get("line")) if isinstance(r, dict) else None
+        if line is not None:
+            rows.append(line[:300])
+    aud = raw.get("audience") if isinstance(raw.get("audience"), dict) else None
+    hub_id = raw.get("hub_id")
+    return {
+        "hub_id": hub_id if isinstance(hub_id, str) and HUB_ID.fullmatch(hub_id) else None,
+        "audience": {r: _int(aud.get(r)) or 0 for r in ROLES} if aud else None,
+        "audience_note": display(raw.get("audience_note"))[:80] if isinstance(raw.get("audience_note"), str) else None,
+        "new_count": _int(new.get("count")) or 0,
+        "new_more": _int(new.get("more")) or 0,
+        "new_items": rows,
+        "leaves": [
+            display(x.get("text"))[:200]
+            for x in (raw.get("leaves") if isinstance(raw.get("leaves"), list) else [])[:5]
+            if isinstance(x, dict) and isinstance(x.get("text"), str)
+        ],
+        "later_edits": display(raw.get("later_edits"))[:200] if isinstance(raw.get("later_edits"), str) else None,
+    }
+
+
 def preview_view(raw) -> dict:
     raw = raw if isinstance(raw, dict) else {}
     items = []
@@ -268,10 +331,17 @@ def preview_view(raw) -> dict:
         "rules": [t[:300] for t in (raw.get("rules") or []) if isinstance(t, str) and not hidden(t)][:50],
         # the digest of exactly this selection: a rule removal sends it back as `expect` (the host refuses another)
         "plan": raw["plan"] if isinstance(raw.get("plan"), str) and PLAN.fullmatch(raw["plan"]) else None,
+        "review": _review_view(raw.get("review")),
     }
 
 
+SEEN_TOKENS = 200  # sessions whose shown plans are remembered
+SEEN_PLANS = 20  # plans remembered per session
+
+
 def register(app: FastAPI, gateway: Gateway):
+    shown: dict[str, collections.deque] = {}  # session token -> (workspace, plan) of the previews it was shown
+
     def link_for(ws: str, *ops: str, paused_ok: bool = False):
         # paused_ok: after the signed `hub.join` the host pauses every add-on (this one too) until the hub snapshot is
         # pinned; the connect that pins it must still go through (e2e-4). The host checks who may call it.
@@ -311,12 +381,18 @@ def register(app: FastAPI, gateway: Gateway):
             raise
 
     @app.post("/api/w/{ws}/hub/share/preview")
-    def hub_share_preview(body: PreviewBody, ws: str = Depends(reads.workspace)):
+    def hub_share_preview(body: PreviewBody, request: Request, ws: str = Depends(reads.workspace)):
         args = {k: v.host() for k, v in (("add", body.add), ("remove", body.remove)) if v is not None}
         link = gateway.enabled(ws)
         if not link.supports("share.preview", "hub/1"):
             raise fail("op.unsupported", "This host cannot preview sharing yet.", exit=1)
-        return preview_view(link.call("share.preview", args))
+        view = preview_view(link.call("share.preview", args))
+        if view["plan"]:
+            seen = shown.setdefault(request.state.token, collections.deque(maxlen=SEEN_PLANS))
+            seen.append((ws, view["plan"]))
+            while len(shown) > SEEN_TOKENS:
+                shown.pop(next(iter(shown)))
+        return view
 
     def owner_link(ws: str, request: Request, what: str):
         """The cosmetic precedent (`cosmetic_routes`): a full session, and the SESSION's person holds the role owner
@@ -346,6 +422,33 @@ def register(app: FastAPI, gateway: Gateway):
     def hub_share_rule_remove(body: RuleRemoveBody, request: Request, ws: str = Depends(reads.workspace)):
         args = {"rule": body.rule.host(), "expect": body.expect}
         return reduce(ws, request, "share.rule_remove", args, body.rule.kind)
+
+    def adding_link(ws: str, request: Request, expect: str):
+        """Adding sharing: a full LOCAL session (never a switch, a remote or a read-only one), the session's person an
+        owner, and `expect` is the plan of a preview this session was shown. The host checks all of it again."""
+        token = request.state.token
+        auth = app.state.auth
+        if not (full_session(auth, token) and auth.login_kind(token) == "local"):
+            raise refused("Sign in on this computer to share more.")
+        if (ws, expect) not in shown.get(token, ()):
+            raise fail("invalid.input", "What would be shared changed meanwhile. Look at it again.", exit=1)
+        return owner_link(ws, request, "share more")
+
+    def add(ws: str, request: Request, op: str, args: dict) -> dict:
+        link, person = adding_link(ws, request, args["expect"])
+        got = add_view(link.call(op, args, write=True, idem=new_idem()))
+        with contextlib.suppress(KeyError, ValueError):  # one shown plan, one confirmation
+            shown[request.state.token].remove((ws, args["expect"]))
+        log.warning("sharing added from the dashboard: %s by %s (%d sent)", op, person, got["put"])
+        return got
+
+    @app.post("/api/w/{ws}/hub/share/rule-add")
+    def hub_share_rule_add(body: RuleAddBody, request: Request, ws: str = Depends(reads.workspace)):
+        return add(ws, request, "share.rule_add", {"rule": body.rule.host(), "expect": body.expect})
+
+    @app.post("/api/w/{ws}/hub/share/sync")
+    def hub_share_sync(body: SyncBody, request: Request, ws: str = Depends(reads.workspace)):
+        return add(ws, request, "share.sync", {"expect": body.expect})
 
     @app.post("/api/w/{ws}/hub/link")
     def hub_link(body: LinkBody, ws: str = Depends(reads.workspace)):

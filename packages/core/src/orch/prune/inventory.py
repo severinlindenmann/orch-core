@@ -3,7 +3,8 @@
 Sources, all of them recorded by orch itself: the install record (``<state>/install/install.json``), the host registry
 (``<state>/host/workspaces.json``), the per-workspace pins (``<state>/hosts/<id>/git-pins.json``), the unit files orch
 writes (named by the constants of the modules that write them), the state and release folders, Claude Code's
-``.claude.json`` (only the entries the runner wrote for ticket work folders) and, on Linux, the accounts of
+``.claude.json`` (only the entries the runner wrote for ticket work folders, and the one trust key setup set on a
+workspace root) and, on Linux, the accounts of
 :mod:`orch.setup.osusers`. A folder that is not recorded is never listed for removal.
 """
 
@@ -682,15 +683,22 @@ def _claude_trust(ctx: Ctx, inv: Inventory) -> None:
         for k in projects
         if isinstance(k, str) and any(k.startswith(f"{ws.root}/{WORK_DIR}/") for ws in inv.workspaces)
     )
-    if mine:
+    # setup's folder trust (#1563): the workspace root itself, only the one key it set; never another project
+    spellings = {s for ws in inv.workspaces for s in (os.fspath(ws.root), os.path.realpath(ws.root))}
+    roots = sorted(
+        k
+        for k in projects
+        if k in spellings and isinstance(projects[k], dict) and "hasTrustDialogAccepted" in projects[k]
+    )
+    if mine or roots:
         inv.roots.append(cfg)
         inv.items.append(
             Item(
                 G_CLAUDE,
                 "claude-trust",
-                f"trust entries orch added for {len(mine)} ticket work folders",
+                f"trust entries orch added for {len(mine) + len(roots)} workspace and ticket work folders",
                 os.fspath(cfg),
-                data={"cfg": os.fspath(cfg), "keys": mine},
+                data={"cfg": os.fspath(cfg), "keys": mine, "roots": roots},
             )
         )
 

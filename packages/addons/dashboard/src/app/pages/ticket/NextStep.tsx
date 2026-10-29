@@ -204,7 +204,7 @@ function NextStepCard({ ticket, viewer, sign, jump, signing = false, run, wait, 
     return (
       <Card title="Ready for your approval" text="Read the requirements and the plan, then approve both with one signature.">
         <Button size="sm" disabled={signing} onClick={(e) => sign({ kind: 'approve_both', pressed: trustedPress(e.nativeEvent) })}>
-          Approve and start building
+          Approve requirements and plan
         </Button>
         <Button size="sm" variant="outline" disabled={signing} onClick={() => sign({ kind: 'request_changes', gate: 'requirements' })}>
           Change something

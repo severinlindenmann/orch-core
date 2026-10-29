@@ -45,7 +45,7 @@ __all__ = [
 
 KIND = "approve_gates"
 GATES = ("requirements", "plan")
-_KEYS = {"v", "kind", "ticket", "ticket_type", "title", "head", "acceptance", "requirements", "plan"}
+_KEYS = {"v", "kind", "ticket", "ticket_type", "size", "title", "head", "acceptance", "requirements", "plan"}
 _SID = re.compile(r"^[a-z][a-z0-9_.-]{0,63}$")
 _AC = re.compile(r"^AC[1-9][0-9]*$")
 _TASK = re.compile(r"^T[1-9][0-9]*$")
@@ -82,6 +82,9 @@ def validate(intent: Any, bad: type[Exception]) -> dict[str, Any]:
     if not isinstance(head, str) or not sq._HASH.fullmatch(head):
         raise bad("head is the hash of the log head that was reviewed")
     title = sq._one_line(intent["title"], "the title", 200)
+    size = intent["size"]
+    if size is not None and size not in sq._SIZES:
+        raise bad("size is null or one of xs, s, m, l, xl")
 
     def one(value: Any, what: str, limit: int) -> str:
         if not isinstance(value, str) or not 1 <= len(value) <= limit:
@@ -162,6 +165,7 @@ def validate(intent: Any, bad: type[Exception]) -> dict[str, Any]:
         "kind": KIND,
         "ticket": {"key": ticket["key"], "uid": ticket["uid"]},
         "ticket_type": intent["ticket_type"],
+        "size": size,
         "title": title,
         "head": head,
         "acceptance": ac_out,
@@ -196,6 +200,7 @@ def intent_of_ticket(data: Mapping[str, Any], inputs: Mapping[str, Mapping[str, 
         "kind": KIND,
         "ticket": {"key": doc.get("key"), "uid": doc.get("uid")},
         "ticket_type": doc.get("type"),
+        "size": (req_in.get("fields") or {}).get("size"),
         "title": doc.get("title"),
         "head": head.get("head"),
         "acceptance": copy.deepcopy((req_in.get("fields") or {}).get("acceptance")),
@@ -218,6 +223,41 @@ def _texts(intent: Mapping[str, Any], gate: str) -> dict[str, str]:
     return dict(intent[gate]["sections"])
 
 
+def content_ok(
+    intent: Mapping[str, Any], gate: str, inp: Mapping[str, Any], *, uid: str, workspace_id: Any = None
+) -> bool:
+    """Is the gate input ``inp`` (all of it but ``prior``) exactly what the intent says? EVERYTHING the gate hash binds
+    that the View does not show must be empty, so a host cannot add an artifact, an add-on field or package, or change
+    the size: ``artifacts``, ``fields.addons`` and ``addon_packages`` are ``{}``, ``size`` is the intent's."""
+    want_texts = _texts(intent, gate)
+    fields = inp.get("fields")
+    expect = {
+        "uid": uid,
+        "gate": gate,
+        "schema": "orch.ticket/2",
+        "hash_v": 1,
+        "sections": {sid: canon.section_hash(text) for sid, text in want_texts.items()},
+        "tasks": copy.deepcopy(intent["plan"]["tasks"]) if gate == "plan" else [],
+        "receipts": {},
+        "source_sha": [],
+        "artifacts": {},
+        "addon_packages": {},
+    }
+    if workspace_id is not None:
+        expect["workspace_id"] = workspace_id
+    for key, value in expect.items():
+        if key not in inp or canon.dumps(inp[key]) != canon.dumps(value):
+            return False
+    return (
+        isinstance(fields, Mapping)
+        and canon.dumps(fields.get("acceptance")) == canon.dumps(intent["acceptance"])
+        and fields.get("ticket_type") == intent["ticket_type"]
+        and fields.get("size") == intent["size"]
+        and fields.get("addons") == {}
+        and fields.get("links") is None
+    )
+
+
 def check_gate(
     intent: Mapping[str, Any],
     k: int,
@@ -234,31 +274,9 @@ def check_gate(
     inp, texts = material.get("input"), material.get("texts")
     if material.get("kind") != "gate" or material.get("gate") != gate or not isinstance(inp, Mapping):
         raise stop()
-    want_texts = _texts(intent, gate)
-    sections = {sid: canon.section_hash(text) for sid, text in want_texts.items()}
-    fields = inp.get("fields")
-    expect = {
-        "workspace_id": prepared.get("workspace_id"),
-        "uid": uid,
-        "gate": gate,
-        "schema": "orch.ticket/2",
-        "hash_v": 1,
-        "sections": sections,
-        "tasks": copy.deepcopy(intent["plan"]["tasks"]) if gate == "plan" else [],
-        "receipts": {},
-        "source_sha": [],
-    }
-    for key, value in expect.items():
-        if key not in inp or canon.dumps(inp[key]) != canon.dumps(value):
-            raise stop()
-    if (
-        not isinstance(fields, Mapping)
-        or canon.dumps(fields.get("acceptance")) != canon.dumps(intent["acceptance"])
-        or fields.get("ticket_type") != intent["ticket_type"]
-        or fields.get("links") is not None
-    ):
+    if not content_ok(intent, gate, inp, uid=uid, workspace_id=prepared.get("workspace_id")):
         raise stop()
-    if not isinstance(texts, Mapping) or canon.dumps(dict(texts)) != canon.dumps(want_texts):
+    if not isinstance(texts, Mapping) or canon.dumps(dict(texts)) != canon.dumps(_texts(intent, gate)):
         raise stop()
     prior = inp.get("prior")
     if gate == "requirements":
@@ -296,6 +314,17 @@ def host_check_first(
             raise err("invalid.input", f"the {gate} is approved already or not complete; approve the steps one by one")
         if person not in g.eligible:
             raise err("gate.not_eligible", f"you may not decide the {gate}; approve the steps one by one")
+    from orch.store.render import thaw
+
+    for gate in GATES:
+        inp = thaw(view.gates[gate].input) if view.gates[gate].input is not None else None
+        if inp is not None and (
+            inp.get("artifacts") or (inp.get("fields") or {}).get("addons") or inp.get("addon_packages")
+        ):
+            raise err("invalid.input", f"the {gate} binds files or add-on fields; approve the steps one by one")
+        # L1: a gate that changed after the review is refused before anything is signed (its prior is the host's)
+        if inp is None or not content_ok(intent, gate, inp, uid=t["uid"]):
+            raise err("human.request_mismatch", "the ticket changed while signing, review again")
     req = view.gates["requirements"]
     if req.needed != 1 or req.counting:
         raise err("invalid.input", "the requirements need more than your approval; approve the steps one by one")

@@ -55,7 +55,7 @@ export function storyOf(action: ClickAction | null | undefined, ctx: StoryContex
       }
     }
     case 'approve_both':
-      return { signLabel: 'Sign and start building', steps: ['You sign.', 'The requirements and the plan are locked as shown.', 'The agent may start building.'] }
+      return { signLabel: 'Sign requirements and plan', steps: ['You sign.', 'The requirements and the plan are locked as shown.', 'An agent that waits for this approval may start building.'] }
     case 'approve':
       if (action.gate === 'requirements') return { signLabel: 'Sign requirements', scope: 'This signs the requirements only, not the plan.', steps: ['You sign.', 'The requirements are locked as shown.', 'The plan still needs your approval, separately.'] }
       if (action.gate === 'plan') return { signLabel: 'Sign and start building', steps: ['You sign.', 'The agent may start building the plan shown here.', 'You review the result and give the final verdict.'] }

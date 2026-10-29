@@ -207,6 +207,113 @@ def test_a_plan_text_other_than_the_reviewed_one_is_refused(human, tmp_path):
     _tamper(human, tmp_path, swap)
 
 
+def _lie(human, tmp_path, step, mutate):
+    """A lying host changes what a gate binds that the View never shows, then recomputes the hash, the review, the
+    digest and the fingerprint so that every host-side consistency check passes. The signer's own check (NOT skipped)
+    and the sequence's content check must still refuse before anything is signed at that step."""
+    from orch.host import review as rv
+
+    key = ready(human, tmp_path)
+    rig = rig_for(human, tmp_path, key)
+    first = rig.first()
+    real = rig.prepare
+    signed = []
+
+    def lie(got):
+        inp = got["material"]["input"]
+        mutate(inp)
+        got["events"][0]["hash"] = canon.gate_hash(inp)
+        got["material"]["review"] = [rv.of(e, got["material"]) for e in got["events"]]
+        got["review_digest"] = rv.review_digest(got["material"])
+        got["fingerprint"] = rv.fingerprint(got["review_digest"], got["events"], got["op"])
+        return got
+
+    def prepare(op, args, meta):
+        got = copy.deepcopy(real(op, args, meta))
+        return lie(got) if args.get("gate") == step else got
+
+    rig.port.prepare = prepare
+    sign = rig.port.sign
+    rig.port.sign = lambda p: (signed.append(p["events"][0]["gate"]), sign(p))[1]
+    return rig, first, signed
+
+
+_ART = {"spec": {"kind": "report", "digest": "sha256:" + "a" * 64, "ac": None, "task": None}}
+
+
+@pytest.mark.parametrize("step", ["requirements", "plan"])
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda i: i["artifacts"].update(_ART),
+        lambda i: i["fields"].update(size="xl"),
+        lambda i: i["fields"].update(addons={"x": {"y": 1}}),
+        lambda i: i.update(addon_packages={"x": "sha256:" + "b" * 64}),
+    ],
+    ids=["artifact", "size", "addon-field", "addon-package"],
+)
+def test_m1_a_lying_host_cannot_add_what_the_view_never_shows(human, tmp_path, step, mutate):
+    rig, first, signed = _lie(human, tmp_path, step, mutate)
+    if step == "requirements":
+        # step 0 is the request the person confirmed: it is checked by signer.check (sequence content check) at once
+        with pytest.raises(Exception):  # noqa: B017,PT011 - SignerRefused or Aborted: nothing may be signed
+            human.check(lie_first(rig, first, mutate))
+        return
+    with pytest.raises(Aborted):
+        rig.driver().run(first)
+    assert signed == ["requirements"]  # the plan was never signed
+
+
+def lie_first(rig, first, mutate):
+    import copy as _c
+
+    from orch.host import review as rv
+
+    got = _c.deepcopy(first)
+    inp = got["material"]["input"]
+    mutate(inp)
+    got["events"][0]["hash"] = canon.gate_hash(inp)
+    got["material"]["review"] = [rv.of(e, got["material"]) for e in got["events"]]
+    got["review_digest"] = rv.review_digest(got["material"])
+    got["fingerprint"] = rv.fingerprint(got["review_digest"], got["events"], got["op"])
+    return got
+
+
+def test_m1_the_size_is_in_the_intent_and_in_the_view(human, tmp_path):
+    key = ready(human, tmp_path)
+    assert gates_intent(human, key)["size"] is None
+    rig = rig_for(human, tmp_path, key, size="m")  # the person reviewed size m, the host's gates say none: refused (L1)
+    res = human.c.req(
+        "human.prepare",
+        {
+            "op": "approve",
+            "args": {"ref": key, "gate": "requirements"},
+            "signer": human.signer,
+            "sequence": rig.meta0(),
+        },
+    )
+    assert err(res) == "human.request_mismatch"
+
+
+def test_l2_the_step_one_failure_says_the_requirements_are_approved_and_the_plan_waits(click, served, human, tmp_path):  # noqa: F811
+    key = ready(human, tmp_path)
+    _, p = click_prepare(click, gates_intent(human, key))
+    v = click.view(p["request_id"])
+    click.mono.t += 2
+    state = {}
+
+    def tamper(op, args, res):
+        if op == "human.submit" and "n" not in state:  # after step 0 landed, somebody else writes
+            state["n"] = 1
+            human.agent("log", {"ref": key, "message": "foreign"})
+        return res
+
+    click.tamper = tamper
+    with pytest.raises(Exception) as e:  # noqa: PT011
+        click.sign(p["request_id"], v["view_digest"])
+    assert "The requirements are approved; the plan waits for you." in str(e.value)
+
+
 def test_the_digest_is_stable_and_binds_both_texts(human, tmp_path):
     key = ready(human, tmp_path)
     one = sequence.validate_intent(gates_intent(human, key))
@@ -235,18 +342,36 @@ def test_one_click_signs_both_approvals_and_the_headline_is_the_signers_own(clic
 # --- pure units: the policy rule (B) and the closed intent ------------------------------------------------------
 
 
-def _gate(**kw):
+_UID = "0" * 26
+_AC = [{"id": "AC1", "text": "a"}]
+_TASKS = [{"id": "T1", "text": "t", "verify": None, "proves": ["AC1"]}]
+_INTENT = {
+    "v": 1, "kind": "approve_gates", "ticket": {"key": "DEMO-0001", "uid": _UID}, "ticket_type": "chore", "size": None,
+    "title": "T", "head": "sha256:" + "0" * 64, "acceptance": _AC,
+    "requirements": {"sections": {"requirements": "r"}},
+    "plan": {"sections": {"plan": "p"}, "tasks": _TASKS},
+}  # fmt: skip
+
+
+def _input(gate, text, **over):
+    inp = {
+        "workspace_id": "w", "uid": _UID, "gate": gate, "schema": "orch.ticket/2", "hash_v": 1,
+        "sections": {gate: canon.section_hash(text)}, "tasks": _TASKS if gate == "plan" else [],
+        "fields": {"ticket_type": "chore", "size": None, "acceptance": _AC, "links": None, "addons": {}},
+        "addon_packages": {}, "artifacts": {}, "receipts": {}, "source_sha": [], "prior": {},
+    }  # fmt: skip
+    return {**inp, **over}
+
+
+def _gate(gate="requirements", text="r", **kw):
     base = dict(applies=True, blocked=False, hash="sha256:" + "1" * 64, approved=False, missing=(), eligible=("p",),
-                needed=1, counting=())  # fmt: skip
+                needed=1, counting=(), input=_input(gate, text))  # fmt: skip
     return SimpleNamespace(**{**base, **kw})
 
 
-def _store(req=None, plan=None, uid="U" * 26):
-    gates = {"requirements": req or _gate(), "plan": plan or _gate()}
+def _store(req=None, plan=None, uid=_UID):
+    gates = {"requirements": req or _gate(), "plan": plan or _gate("plan", "p")}
     return SimpleNamespace(ticket=lambda key: SimpleNamespace(uid=uid, gates=gates))
-
-
-_INTENT = {"ticket": {"key": "DEMO-0001", "uid": "U" * 26}}
 
 
 def _refused(store, person="p"):
@@ -281,6 +406,20 @@ def test_refused_when_the_person_may_not_decide_the_plan_or_it_is_approved():
     _refused(_store(plan=_gate(approved=True)))
 
 
+def test_refused_when_a_gate_binds_an_artifact_or_an_addon_field():
+    art = {"spec": {"kind": "report", "digest": "sha256:" + "a" * 64, "ac": None, "task": None}}
+    _refused(_store(plan=_gate("plan", "p", input=_input("plan", "p", artifacts=art))))
+    fields = {"ticket_type": "chore", "size": None, "acceptance": _AC, "links": None, "addons": {"x": {"y": 1}}}
+    _refused(_store(req=_gate(input=_input("requirements", "r", fields=fields))))
+
+
+def test_l1_a_plan_or_requirement_changed_after_the_review_is_refused_before_step_zero():
+    _refused(_store(plan=_gate("plan", "p changed", input=_input("plan", "p changed"))))
+    _refused(_store(req=_gate(input=_input("requirements", "r changed"))))
+    changed = {"ticket_type": "chore", "size": "xl", "acceptance": _AC, "links": None, "addons": {}}
+    _refused(_store(plan=_gate("plan", "p", input=_input("plan", "p", fields=changed))))
+
+
 def test_a_ticket_with_another_uid_is_refused():
     _refused(_store(uid="V" * 26))
 
@@ -295,16 +434,12 @@ def test_a_ticket_with_another_uid_is_refused():
         lambda i: i["requirements"]["sections"].update(Bad="x"),
         lambda i: i["acceptance"].append(dict(i["acceptance"][0])),
         lambda i: i.update(head="nope"),
+        lambda i: i.update(size="xxl"),
         lambda i: i["plan"]["sections"].update(plan="x\r\ny"),
     ],
 )
 def test_the_intent_is_closed(mutate):
-    i = {
-        "v": 1, "kind": "approve_gates", "ticket": {"key": "DEMO-0001", "uid": "0" * 26}, "ticket_type": "chore",
-        "title": "T", "head": "sha256:" + "0" * 64, "acceptance": [{"id": "AC1", "text": "a"}],
-        "requirements": {"sections": {"requirements": "r"}},
-        "plan": {"sections": {"plan": "p"}, "tasks": [{"id": "T1", "text": "t", "verify": None, "proves": ["AC1"]}]},
-    }  # fmt: skip
+    i = copy.deepcopy(_INTENT)
     assert sequence.validate_intent(copy.deepcopy(i))["kind"] == "approve_gates"
     mutate(i)
     with pytest.raises(SequenceInvalid):

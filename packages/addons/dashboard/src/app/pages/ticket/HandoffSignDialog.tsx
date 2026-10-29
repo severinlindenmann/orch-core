@@ -96,7 +96,7 @@ export function HandoffSignDialog({
       request = { action: 'approve', key: ticket.key, gate: action.gate }
       break
     case 'approve_both':
-      confirmLabel = 'Approve and start building'
+      confirmLabel = 'Approve requirements and plan'
       request = { action: 'approve_both', key: ticket.key, head_seq: ticket.head.seq }
       break
     case 'request_changes':

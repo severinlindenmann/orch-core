@@ -362,7 +362,7 @@ it('both written and open: one "Ready for your approval" card whose button signs
   const card = screen.getByTestId('next-step')
   expect(card).toHaveTextContent('Ready for your approval')
   const user = userEvent.setup()
-  await user.click(within(card).getByRole('button', { name: 'Approve and start building' }))
+  await user.click(within(card).getByRole('button', { name: 'Approve requirements and plan' }))
   expect(sign).toHaveBeenLastCalledWith({ kind: 'approve_both', pressed: false }) // a synthetic click is no press: nothing is signed by it
   await user.click(within(card).getByRole('button', { name: 'Change something' }))
   expect(sign).toHaveBeenLastCalledWith({ kind: 'request_changes', gate: 'requirements' })
@@ -384,7 +384,7 @@ it.each([
   mutate(doc)
   show(doc)
   expect(screen.queryByTestId('next-step')?.textContent ?? '').not.toContain('Ready for your approval')
-  expect(screen.queryByRole('button', { name: 'Approve and start building' })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Approve requirements and plan' })).toBeNull()
   setFeatures(null)
 })
 
@@ -393,5 +393,5 @@ it('without a real host (the mockup) there is no combined card', async () => {
   const doc = await both()
   setFeatures(null)
   show(doc)
-  expect(screen.queryByRole('button', { name: 'Approve and start building' })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Approve requirements and plan' })).toBeNull()
 })

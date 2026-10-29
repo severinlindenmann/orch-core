@@ -21,7 +21,7 @@ def _gate(gate, sections, tasks):
             "gate": gate,
             "sections": {sid: canon.section_hash(t) for sid, t in sections.items()},
             "tasks": tasks,
-            "fields": {"acceptance": AC, "ticket_type": "chore"},
+            "fields": {"acceptance": AC, "ticket_type": "chore", "size": "s"},
         }
     }
 
@@ -53,6 +53,7 @@ def made(reads, **kw):
 
 def test_the_intent_carries_both_full_texts_and_two_approve_steps(reads):
     intent = made(reads)
+    assert intent["size"] == "s"  # the size is part of the reviewed intent
     assert intent["kind"] == "approve_gates" and intent["head"] == "sha256:" + "a" * 64
     assert intent["requirements"]["sections"]["requirements"] == REQ and intent["plan"]["sections"]["plan"] == PLAN
     assert [(s["op"], s["args"]) for s in sequence.steps(intent)] == [

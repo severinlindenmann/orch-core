@@ -134,8 +134,8 @@ def next_hint(view: Any, session: str | None = None) -> str:
     if any(q.blocking for q in open_questions(view)):
         return "orch wait"
     t = next_task(view, session)
-    if t is not None and t.state != "started" and open_gate(view) is not None:
-        return refine_hint(view) or "orch show"  # run-9 J04: refine, then wait for the approval; build after it
+    if t is not None and t.state != "started" and refine_hint(view) == "orch wait":
+        return "orch wait"  # run-9 J04: every open gate is complete; wait for the approval, then build in this session
     if t is not None:
         if t.state == "started":
             verify = next((x["verify"] for x in view.fields["tasks"] if x["id"] == t.id), None)

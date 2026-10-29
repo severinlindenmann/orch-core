@@ -60,6 +60,7 @@ TABLE: dict[str, str] = {
     "status.transition": "transition.refused",
     "gate.status": "transition.refused",
     "task.state": "transition.refused",
+    "task.plan_open": "transition.refused",  # r10-P02: an agent builds only after the plan is approved
     "ticket.state": "transition.refused",
     "claim.exists": "claim.held",
     "claim.not_holder": "claim.held",

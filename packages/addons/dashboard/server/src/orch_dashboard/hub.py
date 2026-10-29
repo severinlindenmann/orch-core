@@ -562,8 +562,14 @@ def register(app: FastAPI, gateway: Gateway):
 
     @app.get("/api/w/{ws}/hub/shared")
     def hub_shared(ws: str = Depends(reads.workspace)):
-        """Tickets other workspaces shared with this workspace's owner through the hub (read-only; owners only)."""
-        return shared_view(link_for(ws, "hub.shared").call("hub.shared"))
+        """Tickets other workspaces shared with this workspace's owner through the hub (read-only; owners only).
+        No hub: nothing shared, not an error (any other error, hub.unreachable included, still surfaces)."""
+        try:
+            return shared_view(link_for(ws, "hub.shared").call("hub.shared"))
+        except HostError as exc:
+            if exc.error["code"] in ("hub.not_joined", "hub.state_mismatch"):
+                return shared_view({})
+            raise
 
     @app.get("/api/w/{ws}/hub/share/audience")
     def hub_share_audience(ws: str = Depends(reads.workspace)):

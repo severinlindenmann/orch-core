@@ -712,6 +712,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
           controls={handoffNew.start?.withAccess ? <AccessSelect hours={plan.hours} onHours={plan.setHours} lengths={plan.lengths} prefix={workspace.prefix} agentName={harnessName(handoffNew.start.reviewed.choice.harness)} /> : undefined}
           doneToast={handoffNew.start ? '' : 'Ticket created'}
           onSigning={setSigning}
+          onOpenExisting={ticketExists} // the same text is saved there: leaving for it must not ask to discard the draft
           unsigned={handoffNew.start ? <NotSignedBlock plan={handoffNew.start.view} coreSaysSo={handoffNew.start.withAccess} notice={handoffNew.start.notice} /> : undefined}
           onClose={() => {
             // The ticket landed but its agent access did not: say so, and offer the Start agent dialog (which has the access card).

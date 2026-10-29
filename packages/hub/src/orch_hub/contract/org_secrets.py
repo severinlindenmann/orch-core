@@ -29,6 +29,10 @@ EXPIRY_MAX_MS = 366 * 24 * 3600 * 1000
 NAME = re.compile(r"[a-z][a-z0-9-]{0,39}")
 _VALUE = re.compile(r"[\x20-\x7e]+")
 _HEX16 = re.compile(r"[0-9a-f]{32}")
+SECRETS_MAX = 50
+#: a sealed wrap: eph_pub(65) + GCM(value 8..4096 bytes) + tag(16)
+SEALED_MIN = S.PUB_LEN + VALUE_MIN + 16
+SEALED_MAX = S.PUB_LEN + VALUE_MAX + 16
 
 
 class OrgSecretRefused(ValueError):
@@ -185,3 +189,36 @@ def open_org_secret(
     if value_problem(value) is not None:
         raise OrgSecretRefused("value")
     return value
+
+
+def sealed_shape_ok(sealed: object) -> bool:
+    """The hub cannot open a wrap; it checks only the bytes' length and that they start with a valid ephemeral point."""
+    return type(sealed) is bytes and SEALED_MIN <= len(sealed) <= SEALED_MAX and S.valid_public_key(sealed[: S.PUB_LEN])
+
+
+def valid_org_secrets(x: object) -> bool:
+    """The ``secrets`` member of ``hub.org_secrets``: sorted by name, each ``{id, name, version, expires_ms, wxk_version,
+    sealed}`` and nothing else. ``sealed`` is base64url of the wrap."""
+    from .canon import CanonError, unb64u
+
+    if type(x) is not list or len(x) > SECRETS_MAX:
+        return False
+    names = []
+    for e in x:
+        if type(e) is not dict or set(e) != {"id", "name", "version", "expires_ms", "wxk_version", "sealed"}:
+            return False
+        if type(e["id"]) is not str or _HEX16.fullmatch(e["id"]) is None:
+            return False
+        if type(e["name"]) is not str or NAME.fullmatch(e["name"]) is None:
+            return False
+        for k, bits in (("version", 32), ("wxk_version", 32), ("expires_ms", 64)):
+            v = e[k]
+            if type(v) is not int or not (1 if k != "expires_ms" else 0) <= v < 2**bits:
+                return False
+        try:
+            if not sealed_shape_ok(unb64u(e["sealed"])):
+                return False
+        except CanonError:
+            return False
+        names.append(e["name"])
+    return names == sorted(set(names))

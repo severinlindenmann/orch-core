@@ -95,6 +95,9 @@ class Invites:
         try:
             self._db = open_private_db(str(path), check_same_thread=False, isolation_level=None)
             self._db.executescript(_SCHEMA)
+            if "redeemed_user" not in {r[1] for r in self._db.execute("PRAGMA table_info(invites)")}:
+                # r11 P12b: a store made before the column (hub.dev, the run hubs); redeem() writes it in its transaction
+                self._db.execute("ALTER TABLE invites ADD COLUMN redeemed_user TEXT")
         except PrivateFileError as e:
             raise InviteError("store_error") from e
         except (sqlite3.Error, OSError) as e:

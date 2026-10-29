@@ -104,9 +104,9 @@ export function connectWorkspaceView(link, actions = {}, { people = [], selected
   // r11 P12/P12b: after a sign-in link, ask the hub every 3 s about THAT link (GET /admin/invites/<id>, only the admin
   // who made it may read it). "joined" names exactly the person who used it: select them and make their workspace link.
   // Anything else that ends the wait (ended, expiry, no valid user id) asks the admin to pick: the panel never guesses.
-  const pick = h("div", { class: "ws-pick" }, h("h3", { text: "Pick the person" }), small("Choose who signed in with your link"));
+  const pick = h("div", { class: "ws-pick" }, h("h3", { text: "Pick the person" }), small("Choose who signed in with your link."));
   pick.hidden = true;
-  let poll = null;
+  let poll = null, lastPoll = null, picked = 0; // picked counts hand picks; lastPoll is the newest watch started
   const stopWaiting = () => { if (poll) clearInterval(poll); poll = null; };
   const askToPick = async () => {
     stopWaiting();
@@ -122,7 +122,7 @@ export function connectWorkspaceView(link, actions = {}, { people = [], selected
     if (typeof inviteId !== "string" || !inviteId) return; // no id to ask about: the admin picks by hand later
     waiting.textContent = "Waiting for " + text(name) + " to sign in…";
     let busy = false;
-    poll = setInterval(async () => {
+    poll = lastPoll = setInterval(async () => {
       if (section.isConnected === false || actions.alive?.() === false) return stopWaiting(); // panel or page left
       if (globalThis.document?.hidden || busy) return;
       if (Number.isFinite(expiresMs) && Date.now() >= expiresMs) return void (await askToPick());
@@ -131,8 +131,12 @@ export function connectWorkspaceView(link, actions = {}, { people = [], selected
         const st = await actions.inviteStatus?.(inviteId);
         if (!poll || !st || st.state === "waiting") return;
         if (st.state !== "joined" || typeof st.user_id !== "string" || !st.user_id) return void (await askToPick());
+        const mine = poll;
         stopWaiting();
+        const pickedBefore = picked;
+        const handPicked = () => picked !== pickedBefore || mine !== lastPoll;
         const fresh = await actions.people?.();
+        if (handPicked()) return; // the admin picked someone by hand (or a new link started) while the list loaded
         if (Array.isArray(fresh)) known = fresh.filter((p) => p && typeof p.user_id === "string");
         if (!known.some((p) => p.user_id === st.user_id)) return void (await askToPick());
         fill(st.user_id);
@@ -177,6 +181,7 @@ export function connectWorkspaceView(link, actions = {}, { people = [], selected
   };
   select.addEventListener("change", async (e) => {
     stopWaiting(); // the admin chose by hand: stop watching for the invited person
+    picked++;
     problem.textContent = "";
     signedIn.hidden = true;
     pick.hidden = true;

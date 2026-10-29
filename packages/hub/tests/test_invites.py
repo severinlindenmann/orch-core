@@ -1034,3 +1034,33 @@ def test_invite_status_voided_or_expired_is_ended_with_no_user(w):
     iid2, _ = _made(w, "cleo")
     w.clock.advance(INVITE_TTL_MS + 1)
     assert _status(w, iid2) == (200, {"state": "ended"})
+
+
+def test_invite_status_on_a_store_made_before_the_redeemed_user_column(w, tmp_path):
+    import sqlite3
+
+    path = tmp_path / "old" / "invites.db"
+    path.parent.mkdir(mode=0o700)
+    db = sqlite3.connect(path)
+    db.executescript(
+        "CREATE TABLE invites (id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE, kind TEXT NOT NULL CHECK (kind IN "
+        "('join','reset','recovery')), for_user TEXT, name TEXT, created_by TEXT NOT NULL, created_ms INTEGER NOT NULL, "
+        "expires_ms INTEGER NOT NULL, used_ms INTEGER);"
+    )
+    db.close()
+    os.chmod(path, 0o600)
+    old = w.api.d.user_invites
+    w.api.d.user_invites = Invites(str(path), now_ms=w.clock)  # opening adds the column
+    try:
+        iid, tok = _made(w, "ben")
+        s, got, _ = redeem(w, tok)
+        assert s == 200, got
+        assert redeem(w, tok)[:2] == BAD  # the claim was committed: the link is used
+        assert _status(w, iid) == (200, {"state": "joined", "user_id": got["user_id"], "name": "ben"})
+        reset = issue(w, w.ann)
+        s, o, _ = redeem(w, reset)
+        assert s == 200, o
+        assert redeem(w, reset)[:2] == BAD
+    finally:
+        w.api.d.user_invites.close()
+        w.api.d.user_invites = old

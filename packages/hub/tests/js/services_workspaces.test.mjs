@@ -515,6 +515,22 @@ test("r11 P12b: on link expiry, an ended link or a status without a user, the pa
   }
 });
 
+test("r11 P12b: a hand pick while the people list is loading wins; the invited person is not chosen", async (t) => {
+  let release;
+  const p = waitingPanel(t, {
+    peopleSeq: (n) => n <= 2 ? [anna, old] : new Promise((r) => { release = () => r([anna, old, ben]); }),
+    statusSeq: () => ({ state: "joined", user_id: BEN_ID, name: "Ben" }) });
+  const select = await startInvite(p.out);
+  t.mock.timers.tick(3000); await settle();
+  assert.ok(release, "the people list is loading");
+  select.value = old.user_id;
+  await select.listeners.change({ target: select });
+  release(); await settle();
+  assert.deepEqual(p.connected, [old.user_id], "only the hand pick is connected");
+  assert.equal(select.value, old.user_id);
+  assert.doesNotMatch(text(p.out), /Ben has signed in/);
+});
+
 test("r11 P12: the poll stops when the admin picks someone by hand or leaves the page", async (t) => {
   const a = waitingPanel(t, { peopleSeq: () => [anna, old], statusSeq: () => ({ state: "waiting" }) });
   const select = await startInvite(a.out);

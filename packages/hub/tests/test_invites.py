@@ -255,7 +255,7 @@ def test_post_admin_users_is_gone_delete_stays(w):
 def test_join_makes_a_usable_account_and_the_admin_never_sees_a_secret(w):
     atok = w.login(w.admin)
     s, made, _ = w.call("POST", "/admin/invites", {"name": "  dora "}, token=atok)
-    assert s == 200 and set(made) == {"link", "expires_ms"}
+    assert s == 200 and set(made) == {"link", "expires_ms", "invite_id"}
     assert made["link"].startswith(ORIGIN + "/#invite=") and made["expires_ms"] == w.clock() + INVITE_TTL_MS
     tok = token_of(made["link"])
     # no session needed to look at it; the name is the admin's choice (trimmed)
@@ -985,3 +985,52 @@ def test_a_join_redeem_signs_the_new_person_in_once_but_a_recovery_does_not(w):
     assert not w.env.acc.is_hub_admin(o["user_id"])  # signed in as that person only
     s2, o2, h2 = redeem(w, issue(w, w.ann, recovery=True))
     assert s2 == 200 and o2["recovery"] is True and "Set-Cookie" not in h2
+
+
+# r11 P12b: the Connect panel asks about ITS link, never "the first new person".
+def _made(w, name, token=None):
+    s, o, _ = w.call("POST", "/admin/invites", {"name": name}, token=token or w.login(w.admin))
+    assert s == 200, o
+    return o["invite_id"], token_of(o["link"])
+
+
+def _status(w, iid, token=None):
+    return w.call("GET", f"/admin/invites/{iid}", token=token or w.login(w.admin))[:2]
+
+
+def test_invite_status_two_interleaved_redeems_each_report_their_own_user(w):
+    ben_id, ben_tok = _made(w, "ben")
+    cleo_id, cleo_tok = _made(w, "cleo")
+    assert _status(w, ben_id) == (200, {"state": "waiting"}) and _status(w, cleo_id) == (200, {"state": "waiting"})
+    cleo = redeem(w, cleo_tok)[1]["user_id"]  # the OTHER person signs in first
+    assert _status(w, ben_id) == (200, {"state": "waiting"})
+    ben = redeem(w, ben_tok)[1]["user_id"]
+    assert _status(w, ben_id) == (200, {"state": "joined", "user_id": ben, "name": "ben"})
+    assert _status(w, cleo_id) == (200, {"state": "joined", "user_id": cleo, "name": "cleo"})
+    row = w.api.d.user_invites._db.execute("SELECT redeemed_user FROM invites WHERE id=?", (ben_id,)).fetchone()
+    assert row == (ben,)
+
+
+def test_invite_status_is_only_for_the_admin_who_made_it_and_no_oracle(w):
+    mine, _ = _made(w, "ben")
+    assert w.call("GET", f"/admin/invites/{mine}", token=w.login(w.ann))[0] in (401, 403)  # not an admin
+    w.env.acc.add_member("hub-admin", w.ann)
+    theirs, _ = _made(w, "dora", token=w.login(w.ann))
+    nf = (404, {"error": "unknown_invite"})
+    assert _status(w, theirs) == nf  # another admin's link
+    assert _status(w, "0" * 16) == nf  # missing
+    assert _status(w, "not-hex") == nf  # malformed
+    assert _status(w, mine, token=w.login(w.ann)) == nf
+    reset_id = w.call("POST", f"/admin/users/{w.ann}/reset", {}, token=w.login(w.admin))[1].get("invite_id")
+    if reset_id:  # a reset link is not a join link
+        assert _status(w, reset_id) == nf
+
+
+def test_invite_status_voided_or_expired_is_ended_with_no_user(w):
+    iid, tok = _made(w, "ben")
+    w.api.d.user_invites._db.execute("UPDATE invites SET used_ms=1 WHERE id=?", (iid,))  # voided, never redeemed
+    assert _status(w, iid) == (200, {"state": "ended"})
+    assert redeem(w, tok)[:2] == BAD
+    iid2, _ = _made(w, "cleo")
+    w.clock.advance(INVITE_TTL_MS + 1)
+    assert _status(w, iid2) == (200, {"state": "ended"})

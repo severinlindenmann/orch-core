@@ -447,6 +447,11 @@ async function workspaces(joined = [], known = null) {
           if (r.status !== 200 || typeof r.body.link !== "string") throw new Error("invite failed");
           return r.body;
         },
+        inviteStatus: async (inviteId) => { // r11 P12b: has the person used THIS sign-in link (only its maker may ask)
+          const r = await api("GET", "/admin/invites/" + encodeURIComponent(inviteId));
+          if (r.status === 404) return { state: "ended" }; // gone, or not ours: stop and let the admin pick
+          return r.status === 200 && r.body && typeof r.body.state === "string" ? r.body : null; // a hiccup: ask again
+        },
         connect: async (ownerUser) => {
           const r = await api("POST", "/admin/connect", ownerUser ? { owner_user: ownerUser } : {});
           if (r.status < 200 || r.status >= 300 || typeof r.body.link !== "string" || !Number.isFinite(r.body.expires_ms)) throw new Error("connect failed");

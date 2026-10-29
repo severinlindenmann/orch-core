@@ -25,7 +25,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TypeVar
+from typing import Any, TypeVar
 
 from ..contract.canon import CanonError, b64u, unb64u
 from ..fsutil import PrivateFileError, open_private_db
@@ -50,7 +50,8 @@ CREATE TABLE IF NOT EXISTS invites (
   created_by TEXT NOT NULL,
   created_ms INTEGER NOT NULL,
   expires_ms INTEGER NOT NULL,
-  used_ms INTEGER
+  used_ms INTEGER,
+  redeemed_user TEXT
 );
 CREATE INDEX IF NOT EXISTS invites_for_user ON invites(for_user);
 """
@@ -204,6 +205,9 @@ class Invites:
                     if cur.rowcount != 1:
                         raise InviteError()
                     out = apply(self._row_any(h))
+                    uid = out.get("user_id") if isinstance(out, dict) else None
+                    if type(uid) is str and uid:  # r11 P12b: who redeemed it, in the claim's own transaction
+                        self._db.execute("UPDATE invites SET redeemed_user=? WHERE token_hash=?", (uid, h))
                     self._db.execute("COMMIT")
                 except BaseException:
                     self._db.execute("ROLLBACK")
@@ -212,6 +216,27 @@ class Invites:
                 return out
         except sqlite3.Error as e:
             raise InviteError("store_error") from e
+
+    def status(self, invite_id: object, created_by: str) -> dict[str, Any] | None:
+        """r11 P12b: the state of one JOIN link, for the admin who made it only: ``{"state": "waiting"}``, ``{"state":
+        "joined", "user_id": ...}`` or ``{"state": "ended"}`` (expired, or voided without a redeem). None for a missing id,
+        another creator's link or another kind, so a caller cannot tell those apart."""
+        if type(invite_id) is not str or not re.fullmatch(r"[0-9a-f]{16}", invite_id):
+            return None
+        try:
+            with self._lock:
+                r = self._db.execute(
+                    "SELECT kind, created_by, expires_ms, used_ms, redeemed_user FROM invites WHERE id=?", (invite_id,)
+                ).fetchone()
+        except sqlite3.Error as e:
+            raise InviteError("store_error") from e
+        if r is None or r[0] != "join" or r[1] != created_by:
+            return None
+        if r[4]:
+            return {"state": "joined", "user_id": r[4]}
+        if r[3] is None and r[2] > self._now():
+            return {"state": "waiting"}
+        return {"state": "ended"}
 
     def _row_any(self, h: str) -> Invite:
         r = self._db.execute(

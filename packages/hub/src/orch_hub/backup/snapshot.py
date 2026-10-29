@@ -23,8 +23,7 @@ from ..contract import backup as B
 
 #: files the backup writes from the key material it is given, never from the disk
 KEY_FILE = "backup-key.json"
-AUTH_FILE = "backup-auth.key"
-GENERATED = frozenset({KEY_FILE, AUTH_FILE})
+GENERATED = frozenset({KEY_FILE})
 
 #: ``store -> statements`` run on the COPY. A table that does not exist is skipped (older stores).
 STRIP: dict[str, tuple[tuple[str, str], ...]] = {

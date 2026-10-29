@@ -168,11 +168,10 @@ def test_the_words_are_shown_once_with_no_store_and_are_nowhere_else(w, caplog):
     words = o["words"]
     assert W.check_words(words) == words and set(o) == {"words", "backup"}
     info = json.loads((w.state / SN.KEY_FILE).read_text())  # only bk_pub + K_auth are stored, 0600
-    assert set(info) == {"v", "bk_pub", "set_ms"} and (w.state / SN.KEY_FILE).stat().st_mode & 0o777 == 0o600
-    assert (w.state / SN.AUTH_FILE).stat().st_mode & 0o777 == 0o600
+    assert set(info) == {"v", "bk_pub", "k_auth", "set_ms"} and (w.state / SN.KEY_FILE).stat().st_mode & 0o777 == 0o600
     keys = B.derive_keys(words)
     assert info["bk_pub"] == b64u(keys.bk_pub)
-    assert (w.state / SN.AUTH_FILE).read_text().strip() == b64u(keys.k_auth)
+    assert info["k_auth"] == b64u(keys.k_auth)
     s, st, _ = w.call("GET", "/admin/backup", token=tok)  # the status route never repeats them
     assert s == 200 and st["key_set"] is True and words not in json.dumps(st)
     s, mk, _ = w.call("POST", "/admin/backups", {}, token=tok)
@@ -210,7 +209,7 @@ def test_a_plain_http_office_address_gets_a_refusal_and_nothing_is_made(w):
     kw = {"token": tok, "origin": OFFICE, "host": "192.168.1.5:9000"}
     good = w.creds(w.admin)
     assert w.call("POST", "/admin/backup/key", good, **kw)[:2] == (403, {"error": "insecure_origin"})
-    assert not (w.state / SN.KEY_FILE).exists() and not (w.state / SN.AUTH_FILE).exists()
+    assert not (w.state / SN.KEY_FILE).exists()
     assert not (w.state / "backups").exists() and "hub_backup" not in _types(w)
     s, st, _ = w.call("GET", "/admin/backup", **kw)  # the same console still reads the status and the command to run
     assert s == 200 and st["cli_line"] == "orch-hub backup-key" and st["key_set"] is False
@@ -239,12 +238,11 @@ def test_the_backup_is_signed_by_the_root_maced_and_opens_with_the_words(w):
         "meta.json",
         "tls.key",
         SN.KEY_FILE,
-        SN.AUTH_FILE,
         "channels.db",
         "access.db",
     ):
         assert need in got.files, need
-    assert got.files[SN.AUTH_FILE].decode().strip() == b64u(B.derive_keys(words).k_auth)  # the sealed K_auth file
+    assert json.loads(got.files[SN.KEY_FILE])["k_auth"] == b64u(B.derive_keys(words).k_auth)  # the sealed K_auth
     assert any(p.startswith("op/") for p in got.files) and any(p.startswith("uk/") for p in got.files)
     with pytest.raises(B.Refused) as e:  # wrong words: not this backup's key
         B.open_backup(data, words=W.generate_words(), dev_mode=True, live=None)
@@ -395,13 +393,13 @@ def test_replacing_the_key_makes_a_new_backup_then_deletes_those_under_the_old_k
     w.clock.advance(5000)  # later backups use the new key
     mk = w.call("POST", "/admin/backups", {}, token=tok)[1]["backup"]["name"]
     assert B.open_backup((w.state / "backups" / mk).read_bytes(), words=words2, dev_mode=True, live=None)
-    assert (w.state / SN.AUTH_FILE).read_text().strip() == b64u(B.derive_keys(words2).k_auth)
+    assert json.loads((w.state / SN.KEY_FILE).read_text())["k_auth"] == b64u(B.derive_keys(words2).k_auth)
     assert [e["change"] for e in _events(w, "hub_backup")].count("key_set") == 2
 
 
 def test_a_failed_key_setup_puts_everything_back(w, monkeypatch):
     tok, _words1, _n1 = _first(w)
-    before = {p: (w.state / p).read_bytes() for p in (SN.KEY_FILE, SN.AUTH_FILE)}
+    before = {p: (w.state / p).read_bytes() for p in (SN.KEY_FILE,)}
     names = {r["name"] for r in BackupService(w.env.keys).list()}
 
     def boom(**kw):
@@ -412,11 +410,11 @@ def test_a_failed_key_setup_puts_everything_back(w, monkeypatch):
     assert _key(w, tok)[0] == 500
     assert {p: (w.state / p).read_bytes() for p in before} == before  # the old key is still the key
     assert {r["name"] for r in BackupService(w.env.keys).list()} == names  # no stray backup under the lost new key
-    for p in (SN.KEY_FILE, SN.AUTH_FILE):  # a first setup that fails leaves no key at all
+    for p in (SN.KEY_FILE,):  # a first setup that fails leaves no key at all
         (w.state / p).unlink()
     with pytest.raises(RuntimeError):
         BackupService(w.env.keys, audit=w.api.d.audit).set_key(None)
-    assert not (w.state / SN.KEY_FILE).exists() and not (w.state / SN.AUTH_FILE).exists()
+    assert not (w.state / SN.KEY_FILE).exists()
 
 
 # --- make, keep, schedule --------------------------------------------------------------------------------------------------
@@ -583,3 +581,59 @@ def test_the_server_command_prints_the_words_once_and_refuses_a_second_setup(w, 
     assert [e["change"] for e in evs] == ["key_set"] and evs[0]["actor_user_id"] is None
     assert _cli(w, "--replace") == 0
     assert len(BackupService(w.env.keys).list()) == 1  # the old key's backup is gone
+
+
+# --- M1 (review): the server command and the hub process share one lock and one key file ---------------------------------
+
+_CHILD = """
+import sys
+from pathlib import Path
+from orch_hub.backup.service import BackupService
+from orch_hub.keys import HubKeys
+state = Path(sys.argv[1])
+keys = HubKeys.open(state, now_ms=lambda: 1_800_000_000_000)
+svc = BackupService(keys, now_ms=lambda: 1_800_000_000_000)
+for _ in range(int(sys.argv[2])):
+    words, _made = svc.set_key(None)
+    if hasattr(svc, "confirm"):
+        svc.confirm("cli")
+    print(words, flush=True)
+"""
+
+
+def test_the_server_command_and_the_hub_make_backups_at_once_and_every_kept_file_opens_with_the_last_words(w, tmp_path):
+    import subprocess
+    import sys
+
+    _first(w)
+    svc = BackupService(w.env.keys, now_ms=w.clock)
+    child = subprocess.Popen(
+        [sys.executable, "-c", _CHILD, str(w.state), "3"], stdout=subprocess.PIPE, text=True, env={**os.environ}
+    )
+    made = 0
+    while child.poll() is None:
+        svc.make(None)  # the hub's own backups while the command replaces the key
+        made += 1
+    out, _ = child.communicate()
+    assert child.returncode == 0 and made >= 1
+    last = out.strip().splitlines()[-1]
+    svc.make(None)
+    kept = svc.list()
+    assert kept
+    bk_pub = b64u(B.derive_keys(last).bk_pub)
+    for r in kept:  # every kept file belongs to the last key
+        env, _sealed = B.unpack_file((w.state / "backups" / r["name"]).read_bytes())
+        assert env["o"]["bk_pub"] == bk_pub, r["name"]
+    newest = (w.state / "backups" / kept[0]["name"]).read_bytes()
+    assert B.open_backup(newest, words=last, dev_mode=True, live=None)  # and the MAC matches the stored K_auth
+    assert (w.state / SN.KEY_FILE).stat().st_mode & 0o777 == 0o600
+    assert not (w.state / "backups.lock").read_bytes()  # the lock file is only a lock
+
+
+def test_the_key_is_one_file_and_the_lock_file_never_travels(w):
+    _tok, words, name = _first(w)
+    info = json.loads((w.state / SN.KEY_FILE).read_text())
+    assert set(info) == {"v", "bk_pub", "k_auth", "set_ms"} and info["k_auth"] == b64u(B.derive_keys(words).k_auth)
+    assert not any(p.name.startswith("backup-auth") for p in w.state.iterdir())
+    got = B.open_backup((w.state / "backups" / name).read_bytes(), words=words, dev_mode=True, live=None)
+    assert SN.KEY_FILE in got.files and "backups.lock" not in got.files

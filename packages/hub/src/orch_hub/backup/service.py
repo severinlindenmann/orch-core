@@ -9,6 +9,8 @@ A backup is signed by ``HK_root`` (the root signer only), MACed with ``K_auth``,
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import gc
 import json
 import os
@@ -32,6 +34,35 @@ DAY_MS = 86_400_000
 RETRY_MS = 3_600_000  # a failed scheduled backup is tried again after an hour, not at every tick
 NAME = re.compile(r"hub-([0-9a-f]{8})-(\d{8}T\d{6}Z)\.orchbak")
 _LOCK = threading.RLock()  # one backup action at a time in this process (the web routes and the schedule)
+LOCK_FILE = "backups.lock"  # flock()ed by every action, so the server command and the hub process never interleave
+_depth = 0  # how many actions of this process hold the file lock (guarded by _LOCK)
+
+
+@contextlib.contextmanager
+def locked(state: Path):
+    """The process lock plus an exclusive ``flock`` on ``<state>/backups.lock`` (0600; its content is never read, and the
+    contract excludes ``*.lock`` from every backup). Re-entrant inside one process (``tick`` calls ``make``)."""
+    global _depth
+    with _LOCK:
+        if _depth:
+            _depth += 1
+            try:
+                yield
+            finally:
+                _depth -= 1
+            return
+        fd = os.open(Path(state) / LOCK_FILE, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            _depth = 1
+            try:
+                yield
+            finally:
+                _depth = 0
+        finally:
+            os.close(fd)  # closing releases the flock
+
+
 CLI_LINE = "orch-hub backup-key"
 
 
@@ -76,9 +107,6 @@ class BackupService:
     def _key_path(self) -> Path:
         return self.state / SN.KEY_FILE
 
-    def _auth_path(self) -> Path:
-        return self.state / SN.AUTH_FILE
-
     def key_info(self) -> dict[str, Any] | None:
         """``{"bk_pub": bytes, "set_ms": int}`` of the backup key, None when none is set up. A damaged file raises."""
         try:
@@ -91,28 +119,25 @@ class BackupService:
             d = json.loads(raw)
             if (
                 type(d) is not dict
-                or set(d) != {"v", "bk_pub", "set_ms"}
+                or set(d) != {"v", "bk_pub", "k_auth", "set_ms"}
                 or d["v"] != 1
                 or type(d["set_ms"]) is not int
             ):
                 raise ValueError
-            return {"bk_pub": unb64u(d["bk_pub"], 65), "set_ms": d["set_ms"]}
+            return {"bk_pub": unb64u(d["bk_pub"], 65), "k_auth": unb64u(d["k_auth"], 32), "set_ms": d["set_ms"]}
         except ValueError, CanonError, TypeError:
             raise BackupError("bad_key_file") from None
 
     def _key_files(self, bk_pub: bytes, k_auth: bytes, set_ms: int) -> dict[str, bytes]:
-        meta = json.dumps({"v": 1, "bk_pub": b64u(bk_pub), "set_ms": set_ms}, sort_keys=True).encode() + b"\n"
-        return {SN.KEY_FILE: meta, SN.AUTH_FILE: (b64u(k_auth) + "\n").encode()}
+        """The ONE key file (``bk_pub`` and ``K_auth`` together, so a reader never sees a new half next to an old one)."""
+        doc = {"v": 1, "bk_pub": b64u(bk_pub), "k_auth": b64u(k_auth), "set_ms": set_ms}
+        return {SN.KEY_FILE: json.dumps(doc, sort_keys=True).encode() + b"\n"}
 
     def _material(self) -> tuple[bytes, bytes, int]:
         info = self.key_info()
         if info is None:
             raise BackupError("no_backup_key")
-        try:
-            k_auth = unb64u(read_file(self._auth_path()).decode().strip(), 32)
-        except StateError, CanonError, UnicodeDecodeError:
-            raise BackupError("bad_key_file") from None
-        return info["bk_pub"], k_auth, info["set_ms"]
+        return info["bk_pub"], info["k_auth"], info["set_ms"]
 
     # --- the dir -------------------------------------------------------------------------------------------------------
 
@@ -215,7 +240,7 @@ class BackupService:
     def make(self, actor: str | None = None) -> dict[str, Any]:
         """A backup now under the current key; kept files beyond :attr:`keep` are deleted (oldest first). Audited: if the
         chain cannot be written the file is removed again and the call refuses (no unaudited backup)."""
-        with _LOCK:
+        with locked(self.state):
             bk_pub, k_auth, set_ms = self._material()
             got = self._write(bk_pub, k_auth, set_ms)
             try:
@@ -231,14 +256,14 @@ class BackupService:
         """Set up or replace the backup key. Returns ``(words, new backup)``; the words are shown once by the caller and
         stored nowhere. Order: derive, store the new key files, make a backup under the new key, audit, THEN delete every
         kept backup under another key (cond 10). Any failure puts the old key files back and removes the new backup."""
-        with _LOCK:
+        with locked(self.state):
             words = generate_words()
             keys = B.derive_keys(check_words(words))
             bk_pub, k_auth = keys.bk_pub, keys.k_auth
             del keys
             gc.collect()
             old = {}
-            for p in (self._key_path(), self._auth_path()):
+            for p in (self._key_path(),):
                 try:
                     old[p] = read_file(p)
                 except StateError:
@@ -247,7 +272,6 @@ class BackupService:
             new_files = self._key_files(bk_pub, k_auth, set_ms)
             made: dict[str, Any] | None = None
             try:
-                write_atomic(self._auth_path(), new_files[SN.AUTH_FILE])
                 write_atomic(self._key_path(), new_files[SN.KEY_FILE])
                 made = self._write(bk_pub, k_auth, set_ms)
                 self._note("key_set", actor)
@@ -272,7 +296,7 @@ class BackupService:
         """A kept backup's bytes (the sealed file; nothing in it is readable without the words). Audited first."""
         if type(name) is not str or NAME.fullmatch(name) is None:
             raise BackupError("not_found")
-        with _LOCK:
+        with locked(self.state):
             path = self.state / DIR / name
             if not path.is_file() or path.is_symlink():
                 raise BackupError("not_found")
@@ -286,7 +310,7 @@ class BackupService:
     def tick(self) -> dict[str, Any] | None:
         """The daily schedule, called from the hub's own tick: a backup when a key is set and the newest kept backup is a
         day old (or there is none). A failure is retried after an hour."""
-        with _LOCK:
+        with locked(self.state):
             now = self._now()
             try:
                 if self.key_info() is None:

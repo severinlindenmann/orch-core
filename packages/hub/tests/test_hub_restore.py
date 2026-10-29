@@ -637,3 +637,142 @@ def test_recover_completes_or_undoes_an_interrupted_swap(w, tmp_path):
     assert not new.exists()
     RS.finish(state)  # nothing to finish
     assert data and words
+
+
+# --- the one rule: a restore never widens and never revives (review of 29 Oct) -----------------------------------------------------
+
+
+def _org(w):
+    """Company secrets, a skill and an MCP server offered to workspaces, in the live access store."""
+    from orch_hub.access.orgmcp import org_mcp
+    from orch_hub.access.orgsecrets import org_secrets
+    from orch_hub.access.orgskills import org_skills
+
+    org_secrets(w.env.acc), org_skills(w.env.acc), org_mcp(w.env.acc)
+    db = w.env.acc._db
+    db.execute("INSERT INTO org_secrets VALUES ('s1','api key',1,9999999999999,'chosen',?,1,NULL)", (w.admin,))
+    db.execute("INSERT INTO org_secrets VALUES ('s2','wide',1,9999999999999,'all',?,1,NULL)", (w.admin,))
+    db.execute("INSERT INTO org_secret_shares VALUES ('s1', ?)", (WS,))
+    db.execute("INSERT INTO org_secret_wraps VALUES ('s1',1,?,1,x'00')", (WS,))
+    db.execute("INSERT INTO org_skill VALUES ('sk','text',1,1)")
+    db.execute("INSERT INTO org_skill_offer VALUES ('sk', ?)", (WS,))
+    db.execute("INSERT INTO org_mcp VALUES ('m','https://x.example','none',NULL,'d',1,1)")
+    db.execute("INSERT INTO org_mcp_offer VALUES ('m', ?)", (WS,))
+
+
+def _rows(state, db, sql):
+    c = sqlite3.connect(state / db)
+    try:
+        return c.execute(sql).fetchall()
+    finally:
+        c.close()
+
+
+def test_a_withdrawn_share_offer_or_grant_is_not_back_after_an_in_place_restore(w):
+    _org(w)
+    words, data = _backup(w)
+    db = w.env.acc._db
+    db.execute("DELETE FROM org_secret_shares")  # withdrawn after the backup
+    db.execute("UPDATE org_secrets SET removed_ms=5 WHERE id='s2'")
+    db.execute("DELETE FROM org_skill_offer")
+    db.execute("DELETE FROM org_mcp_offer")
+    w.env.acc.revoke(WS, "team", actor=w.admin)  # a grant taken away
+    w.env.acc.remove_member("team", w.ann, actor=w.admin)
+    _restore(w, data, words)
+    q = lambda sql: _rows(w.state, "access.db", sql)
+    assert q("SELECT * FROM org_secret_shares") == [] and q("SELECT * FROM org_skill_offer") == []
+    assert q("SELECT * FROM org_mcp_offer") == [] and q("SELECT removed_ms FROM org_secrets WHERE id='s2'") == [(5,)]
+    assert q("SELECT * FROM grants") == [] and q("SELECT user_id FROM members WHERE grp='team'") == [(w.dave,)]
+    # and what is live now stays live, nothing is dropped that the live hub still has
+    assert q("SELECT id FROM org_secrets ORDER BY id") == [("s1",), ("s2",)] and q("SELECT name FROM org_skill") == [
+        ("sk",)
+    ]
+
+
+def test_a_narrowed_role_and_a_live_only_grant_do_not_come_back_wider(w):
+    words, data = _backup(w)  # team has "edit" on WS in the backup
+    w.env.acc.grant(WS, "team", "read", actor=w.admin)  # narrowed live
+    _restore(w, data, words)
+    assert _rows(w.state, "access.db", f"SELECT role FROM grants WHERE workspace_id='{WS}'") == [("read",)]
+
+
+def test_an_old_password_and_code_are_dead_after_an_in_place_restore(w):
+    words, data = _backup(w)
+    old = _rows(w.state, "channels.db", f"SELECT pw_hash, totp_secret FROM credentials WHERE user_id='{w.admin}'")
+    w.env.svc.set_password(w.admin, "a brand new password!")  # changed after the backup
+    new = _rows(w.state, "channels.db", f"SELECT pw_hash, totp_secret FROM credentials WHERE user_id='{w.admin}'")
+    assert new != old
+    _restore(w, data, words)
+    got = _rows(w.state, "channels.db", f"SELECT pw_hash, totp_secret FROM credentials WHERE user_id='{w.admin}'")
+    assert got == new and got != old
+
+
+def test_live_stores_of_connections_and_so_on_are_taken_from_the_live_hub(w):
+    words, data = _backup(w)
+    w.connections.allow("ab" * 16, "cd" * 16, actor=w.admin) if hasattr(w.connections, "allow") else None
+    live = _rows(w.state, "connections.db", "SELECT * FROM connection")
+    _restore(w, data, words)
+    assert _rows(w.state, "connections.db", "SELECT * FROM connection") == live
+
+
+def test_a_fresh_server_switches_shares_and_offers_off_until_an_admin_confirms_and_admins_must_recover(w, tmp_path):
+    _org(w)
+    words, data = _backup(w)
+    fresh = tmp_path / "srv" / "d"
+    got = RS.restore(fresh, data, words, now_ms=lambda: 1_900_000_000_000)
+    q = lambda sql: _rows(fresh, "access.db", sql)
+    assert (
+        q("SELECT * FROM org_secret_shares") == []
+        and q("SELECT * FROM org_skill_offer") == []
+        and q("SELECT * FROM org_mcp_offer") == []
+    )
+    assert q("SELECT shared FROM org_secrets WHERE id='s2'") == [("chosen",)]
+    kinds = sorted(k for (k,) in q("SELECT kind FROM restore_pending"))
+    assert kinds == ["mcp_offer", "secret_all", "secret_share", "skill_offer"]
+    # admins: the old password and code are dead until a one-time link is used; the link is returned once
+    assert set(got["recovery"]) == {w.admin, w.carol} and all(len(t) > 20 for t in got["recovery"].values())
+    assert sorted(u for (u,) in q("SELECT user_id FROM users WHERE must_recover=1 AND disabled_ms IS NULL")) == sorted(
+        [w.admin, w.carol]
+    )
+    assert _rows(fresh, "invites.db", "SELECT COUNT(*) FROM invites WHERE kind='recovery' AND used_ms IS NULL") == [
+        (2,)
+    ]
+    # the confirm path: one click turns one item back on
+    from orch_hub.backup import guard as GD
+
+    acc = Access(str(fresh / "access.db"))
+    try:
+        items = GD.pending(acc)
+        assert len(items) == 4 and {i["label"] for i in items} == {"api key", "wide", "sk", "m"}
+        for i in items:
+            GD.confirm(acc, i["id"])
+        assert GD.pending(acc) == []
+        assert acc._q("SELECT shared FROM org_secrets WHERE id='s2'") == [("all",)]
+        assert acc._q("SELECT * FROM org_secret_shares") == [("s1", WS)] and acc._q(
+            "SELECT * FROM org_skill_offer"
+        ) == [("sk", WS)]
+        with pytest.raises(KeyError):
+            GD.confirm(acc, 999)
+    finally:
+        acc.close()
+
+
+def test_the_pending_routes_list_and_confirm_for_admins_only(w):
+    _org(w)
+    words, data = _backup(w)
+    fresh = w.tmp / "f" / "d"
+    RS.restore(fresh, data, words, now_ms=lambda: 1_900_000_000_000)
+    acc = Access(str(fresh / "access.db"))
+    w.api.d.access = acc
+    try:
+        assert w.call("GET", "/admin/backup/restore/pending")[0] == 401
+        assert w.call("GET", "/admin/backup/restore/pending", token=w.login(w.ann))[0] == 403
+        tok = w.login(w.admin)
+        s, o, _ = w.call("GET", "/admin/backup/restore/pending", token=tok)
+        assert s == 200 and len(o["pending"]) == 4
+        pid = o["pending"][0]["id"]
+        assert w.call("POST", "/admin/backup/restore/pending/confirm", {"id": "x"}, token=tok)[0] == 400
+        assert w.call("POST", "/admin/backup/restore/pending/confirm", {"id": pid}, token=tok)[0] == 200
+        assert w.call("POST", "/admin/backup/restore/pending/confirm", {"id": pid}, token=tok)[0] == 404
+    finally:
+        acc.close()

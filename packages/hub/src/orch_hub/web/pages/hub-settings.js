@@ -200,10 +200,23 @@ function restoredNotice(n, actions) {
     h("div", { class: "row" }, h("button", { type: "button", text: "Got it", onclick: () => actions.dismissRestored?.() })));
 }
 
+const PENDING_WORD = { secret_share: "Company secret shared with a workspace", secret_all: "Company secret shared with all workspaces", skill_offer: "Company skill offered to a workspace", mcp_offer: "Company server offered to a workspace" };
+
+/** What a restore on a new server switched off: each one is Off until an admin turns it on again with one click. */
+function pendingList(items, actions) {
+  return h("div", { class: "banner warn", "data-pending": "1" },
+    h("b", { text: "Switched off by the restore" }),
+    h("p", { class: "small", text: "These were shared before the backup was made. They stay off until you turn each one on again." }),
+    h("ul", { class: "list" }, items.map((x) => h("li", { class: "list-row row", "data-pending-id": String(x.id) },
+      h("div", { class: "grow" }, h("b", { text: text(x.label) }), h("div", { class: "small muted", text: text(PENDING_WORD[x.kind] ?? "Shared item") })),
+      h("button", { type: "button", text: "Turn on", onclick: () => actions.confirmPending?.(x.id) })))));
+}
+
 function backupCard(b, actions) {
   const card = h("div", { class: "card", "data-card": "backup" }, h("h2", { text: "Backup" }));
   if (actions.words) card.append(wordsPanel(actions.words, actions));
   if (b.restored) card.append(restoredNotice(b.restored, actions));
+  if (b.pending?.length) card.append(pendingList(b.pending, actions));
   const mayShow = actions.wordsMayShow !== false;
   const cli = h("code", { class: "mono cli-line", text: text(b.cli_line ?? "orch-hub backup-key") });
   if (!b.key_set) {
@@ -284,6 +297,7 @@ export async function hubSettingsPage(d, detected = [], words = null) {
         if (x.status === 202) { d.state.notice = d.banner("ok", "Restored. The hub is restarting: sign in again.", null); await comesBack(d); return d.refresh().then(() => hubSettingsPage(d)); }
         backupNote(x, "Restored"); await hubSettingsPage(d);
       },
+      confirmPending: async (id) => { backupNote(await d.api("POST", "/admin/backup/restore/pending/confirm", { id }), "Turned on"); await hubSettingsPage(d); },
       dismissRestored: async () => { await d.api("POST", "/admin/backup/restored/dismiss", {}); await hubSettingsPage(d); },
       makeBackup: async () => { backupNote(await d.api("POST", "/admin/backups", {}), "Backup made"); await hubSettingsPage(d); },
       download: async (name, c) => {

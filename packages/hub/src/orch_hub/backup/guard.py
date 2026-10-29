@@ -1,0 +1,249 @@
+"""The one rule of a restore: it never widens and never revives (M4 S6, review of 29 Oct).
+
+A backup is old. Anything an admin took away after it (a withdrawn secret share, a skill or MCP offer, a grant, a group
+member, a workspace binding, a connection, a space member, an old password) must not come back with it. Every table that a
+restore takes from a backup goes through :func:`never_widen`, which has two modes:
+
+* **in place** (a live hub exists): the result is a subset of the live hub. Tables that hold permissions or withdrawals are
+  taken from the LIVE store (:data:`LIVE_TABLES` inside ``access.db``; whole stores in ``restore.LIVE_WHOLE``); grants and
+  group members are intersected with the live rows (a role is the live role); every surviving person gets the LIVE
+  password and TOTP row, never the backup's.
+* **fresh server** (nothing live to compare): what could widen is switched off until an admin confirms it again. Every org
+  secret share, every "shared with all" flag, every skill and MCP offer is moved into ``restore_pending`` (the console lists
+  them; one plain click turns each back on), and every admin must recover the account with a one-time link (the old password
+  and TOTP stay dead, ``must_recover``).
+
+Checked tables (what the rule does to each): see :data:`POLICY`."""
+
+from __future__ import annotations
+
+import contextlib
+import sqlite3
+from pathlib import Path
+from typing import Any
+
+from ..invites import Invites
+
+ADMIN_GROUP = "hub-admin"
+#: access.db tables taken from the live store as they are (in place): withdrawals, offers, allow lists, policies
+LIVE_TABLES = (
+    "org_secrets",
+    "org_secret_shares",
+    "org_secret_wraps",
+    "org_secret_use",
+    "org_skill",
+    "org_skill_offer",
+    "org_mcp",
+    "org_mcp_offer",
+    "org_cleanup_pending",
+    "workspace_addon_allow",
+    "addon_request",
+    "market_policy",
+)
+#: table -> what a restore does with it (the sweep the review asked for)
+POLICY = {
+    "access.users": "live removals deleted, live disabled kept, all other non-admins suspended (restore.py)",
+    "access.groups/members/grants": "in place: only rows the live hub still has, role = the live role; fresh: non-admins "
+    "lose every group when an admin enables them (api enable)",
+    "access.revoked_channels": "union with live",
+    "access.org_*, workspace_addon_allow, addon_request, market_policy": "in place: the live rows; fresh: shares and "
+    "offers pending",
+    "access.snapshots/bundles": "versions lifted above the floor (version_floor)",
+    "channels.credentials": "in place: the live row of every surviving person; fresh: admins must recover",
+    "channels.channels/sessions/pairing/...": "all revoked / emptied",
+    "invites.db": "unused invites are never in a backup (S5); fresh: one recovery link per admin",
+    "registry.db, connections.db, shares.db, spaces.db, changes.db, wk-seal.db, workspace-view.db": "in place: the live "
+    "store; fresh: the backup's (the only source; residual, hardening #1263)",
+    "audit.db, activity.db, backup key file, hub-settings.json, tls.key": "live (appended to / kept)",
+}
+PENDING_SCHEMA = (
+    "CREATE TABLE IF NOT EXISTS restore_pending (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, "
+    "a TEXT NOT NULL, b TEXT NOT NULL DEFAULT '', label TEXT NOT NULL DEFAULT '')"
+)
+KINDS = ("secret_share", "secret_all", "skill_offer", "mcp_offer")
+
+
+def _connect(path: Path, live: Path | None) -> sqlite3.Connection:
+    c = sqlite3.connect(path.resolve().as_uri(), uri=True, isolation_level=None, timeout=15)
+    c.execute("PRAGMA foreign_keys=OFF")  # the order below is ours; the live rows are consistent with each other
+    if live is not None:
+        c.execute("ATTACH DATABASE ? AS live", (f"{live.resolve().as_uri()}?mode=ro",))
+    return c
+
+
+def _has(c: sqlite3.Connection, schema: str, table: str) -> bool:
+    return bool(c.execute(f"SELECT 1 FROM {schema}.sqlite_master WHERE type='table' AND name=?", (table,)).fetchone())
+
+
+def _take(c: sqlite3.Connection, table: str) -> None:
+    """``table`` of the staged store becomes the live table (same rows, same columns)."""
+    if not _has(c, "live", table):
+        if _has(c, "main", table):
+            c.execute(f"DELETE FROM main.{table}")  # the name is one of the constants above
+        return
+    if not _has(c, "main", table):
+        c.execute(c.execute("SELECT sql FROM live.sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()[0])
+    c.execute(f"DELETE FROM main.{table}")
+    c.execute(f"INSERT INTO main.{table} SELECT * FROM live.{table}")
+
+
+def _in_place_access(new: Path, live: Path) -> None:
+    c = _connect(new / "access.db", live / "access.db")
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        for t in LIVE_TABLES:
+            _take(c, t)
+        c.execute(
+            "DELETE FROM main.members WHERE NOT EXISTS (SELECT 1 FROM live.members l "
+            "WHERE l.grp=main.members.grp AND l.user_id=main.members.user_id)"
+        )
+        c.execute(
+            "DELETE FROM main.grants WHERE NOT EXISTS (SELECT 1 FROM live.grants l "
+            "WHERE l.workspace_id=main.grants.workspace_id AND l.grp=main.grants.grp)"
+        )
+        c.execute(
+            "UPDATE main.grants SET role=(SELECT l.role FROM live.grants l WHERE l.workspace_id=main.grants.workspace_id "
+            "AND l.grp=main.grants.grp)"
+        )
+        c.execute(
+            "DELETE FROM main.groups WHERE name<>? AND name NOT IN (SELECT name FROM live.groups)", (ADMIN_GROUP,)
+        )
+        c.execute("COMMIT")
+    except BaseException:
+        with contextlib.suppress(sqlite3.Error):
+            c.execute("ROLLBACK")
+        raise
+    finally:
+        c.close()
+
+
+def _in_place_credentials(new: Path, live: Path, survivors: set[str]) -> None:
+    c = _connect(new / "channels.db", live / "channels.db")
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        c.execute("DELETE FROM main.credentials")
+        for u in sorted(survivors):
+            c.execute("INSERT INTO main.credentials SELECT * FROM live.credentials WHERE user_id=?", (u,))
+        c.execute("COMMIT")
+    except BaseException:
+        with contextlib.suppress(sqlite3.Error):
+            c.execute("ROLLBACK")
+        raise
+    finally:
+        c.close()
+
+
+def _survivors(new: Path) -> set[str]:
+    c = sqlite3.connect(new / "access.db")
+    try:
+        return {u for (u,) in c.execute("SELECT user_id FROM users")}
+    finally:
+        c.close()
+
+
+def _fresh_access(new: Path) -> None:
+    """Fresh server: shares and offers go to ``restore_pending``; every admin must recover the account."""
+    c = _connect(new / "access.db", None)
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        c.execute(PENDING_SCHEMA)
+        c.execute("DELETE FROM restore_pending")
+        names = (
+            {i: n for i, n in c.execute("SELECT id, name FROM org_secrets WHERE removed_ms IS NULL")}
+            if _has(c, "main", "org_secrets")
+            else {}
+        )
+        if names:
+            for sid, ws in c.execute("SELECT secret_id, workspace_id FROM org_secret_shares").fetchall():
+                if sid in names:
+                    c.execute(
+                        "INSERT INTO restore_pending(kind,a,b,label) VALUES ('secret_share',?,?,?)",
+                        (sid, ws, names[sid]),
+                    )
+            for (sid,) in c.execute("SELECT id FROM org_secrets WHERE removed_ms IS NULL AND shared='all'").fetchall():
+                c.execute("INSERT INTO restore_pending(kind,a,label) VALUES ('secret_all',?,?)", (sid, names[sid]))
+            c.execute("UPDATE org_secrets SET shared='chosen' WHERE shared='all'")
+            c.execute("DELETE FROM org_secret_shares")
+        for table, kind in (("org_skill_offer", "skill_offer"), ("org_mcp_offer", "mcp_offer")):
+            if _has(c, "main", table):
+                for name, ws in c.execute(f"SELECT name, workspace_id FROM {table}").fetchall():
+                    c.execute("INSERT INTO restore_pending(kind,a,b,label) VALUES (?,?,?,?)", (kind, name, ws, name))
+                c.execute(f"DELETE FROM {table}")
+        c.execute(
+            "UPDATE users SET must_recover=1 WHERE user_id IN (SELECT user_id FROM members WHERE grp=?)",
+            (ADMIN_GROUP,),
+        )
+        c.execute("COMMIT")
+    except BaseException:
+        with contextlib.suppress(sqlite3.Error):
+            c.execute("ROLLBACK")
+        raise
+    finally:
+        c.close()
+
+
+def recovery_links(new: Path, admins: frozenset[str], now_ms: Any) -> dict[str, str]:
+    """One recovery invite per admin in the staged invites store: ``{admin_id: token}``. The tokens are returned to the
+    caller once (the server command prints them); the store keeps only hashes."""
+    inv = Invites(new / "invites.db", now_ms=now_ms)
+    try:
+        return {u: inv.create("recovery", created_by=u, for_user=u)[0] for u in sorted(admins)}
+    finally:
+        inv.close()
+
+
+def never_widen(new: Path, live: Path | None) -> None:
+    """Apply the rule to the access store (in place: ``live`` = the live state dir). Credentials and the fresh-server
+    recovery are separate steps because they need the surviving people / the admins."""
+    if live is not None:
+        _in_place_access(new, live)
+    else:
+        _fresh_access(new)
+
+
+def credentials(new: Path, live: Path | None) -> None:
+    """In place: the LIVE password / TOTP row of every surviving person (an old password stays dead)."""
+    if live is not None:
+        _in_place_credentials(new, live, _survivors(new))
+
+
+# --- the confirm path (console) ------------------------------------------------------------------------------------------------
+
+
+def pending(a: Any) -> list[dict[str, Any]]:
+    """What a restore switched off, for the console: ``[{id, kind, label, workspace_id}]``."""
+    if not a._q("SELECT 1 FROM sqlite_master WHERE type='table' AND name='restore_pending'"):
+        return []
+    return [
+        {"id": i, "kind": k, "label": lb, "workspace_id": b or None}
+        for i, k, b, lb in a._q("SELECT id, kind, b, label FROM restore_pending ORDER BY id")
+    ]
+
+
+def confirm(a: Any, pid: int) -> dict[str, Any]:
+    """An admin turns one switched-off item back on. Returns the row; ``KeyError`` if there is none."""
+    with a.tx() as db:
+        row = db.execute("SELECT id, kind, a, b, label FROM restore_pending WHERE id=?", (pid,)).fetchone()
+        if row is None:
+            raise KeyError(pid)
+        _i, kind, x, y, label = row
+        if kind == "secret_share":
+            db.execute(
+                "INSERT OR IGNORE INTO org_secret_shares SELECT ?,? WHERE EXISTS "
+                "(SELECT 1 FROM org_secrets WHERE id=? AND removed_ms IS NULL)",
+                (x, y, x),
+            )
+        elif kind == "secret_all":
+            db.execute("UPDATE org_secrets SET shared='all' WHERE id=? AND removed_ms IS NULL", (x,))
+        elif kind == "skill_offer":
+            db.execute(
+                "INSERT OR IGNORE INTO org_skill_offer SELECT ?,? WHERE EXISTS (SELECT 1 FROM org_skill WHERE name=?)",
+                (x, y, x),
+            )
+        elif kind == "mcp_offer":
+            db.execute(
+                "INSERT OR IGNORE INTO org_mcp_offer SELECT ?,? WHERE EXISTS (SELECT 1 FROM org_mcp WHERE name=?)",
+                (x, y, x),
+            )
+        db.execute("DELETE FROM restore_pending WHERE id=?", (pid,))
+    return {"id": pid, "kind": kind, "label": label}

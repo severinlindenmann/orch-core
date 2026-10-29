@@ -103,6 +103,10 @@ def run_restore(
             activity.close()
         if audit is not None:
             audit.store.close()
+    for admin, token in sorted(got.get("recovery", {}).items()):
+        out(f"Admin {admin}: set a new password at  <your hub address>/#invite={token}  (shown only now)")
+    if got.get("recovery"):
+        out("Passwords and codes of the backup are switched off on a new server: each admin uses the link above once.")
     out("Restored. People other than admins are switched off: turn each one on again in People.")
     out("Every phone and browser must sign in or pair again. Start the hub now.")
     out(f"New op_seq {got['op_seq']}.")

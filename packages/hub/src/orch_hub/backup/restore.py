@@ -36,6 +36,7 @@ from ..contract.canon import CanonError, b64u, cj
 from ..contract.hub import Refused
 from ..keys import HubKeys, KeysError
 from ..keys.fsutil import FILE_MODE, StateError, check_dir, fsync_dir, make_dir, read_file
+from . import guard as G
 from . import snapshot as SN
 from .hubop import HubOpBusy, hub_op
 from .words import WordsError, check_words
@@ -46,7 +47,12 @@ KEEP_LIVE = frozenset({SN.KEY_FILE})
 #: kept from the live hub when restoring in place: logs are appended to, never rolled back (cond 15); the addresses and the
 #: TLS key belong to this server as it is now
 LOGS = frozenset({"audit.db", "activity.db"})
-LIVE_IN_PLACE = LOGS | {"hub-settings.json", "tls.key"}
+#: stores that hold withdrawals and permissions: in place the LIVE store is the truth, a backup's copy would revive what an
+#: admin took away since (guard.py)
+LIVE_WHOLE = frozenset(
+    {"registry.db", "connections.db", "shares.db", "spaces.db", "changes.db", "wk-seal.db", "workspace-view.db"}
+)
+LIVE_IN_PLACE = LOGS | LIVE_WHOLE | {"hub-settings.json", "tls.key"}
 #: carried over by name (not in any backup)
 CARRY_FILES = ("setup-token",)
 CARRY_DIRS = ("backups",)
@@ -178,7 +184,7 @@ def _stage(new: Path, files: dict[str, bytes], state: Path, in_place: bool) -> N
         for rel in (KEEP_LIVE | LIVE_IN_PLACE) - LOGS:
             src = state / rel
             if src.is_file() and not src.is_symlink():
-                _put(new, rel, read_file(src))
+                _put(new, rel, SN.copy_db(src)[0] if rel.endswith(".db") else read_file(src))
     for sub in ("uk", "op", "revoked"):
         if not (new / sub).exists():
             make_dir(new / sub)
@@ -418,6 +424,9 @@ def _restore(
         meta = _meta(new, live)
         _write_meta(new, meta)
         admins, removed = _merge_people(new, state if in_place else None, now)
+        G.never_widen(new, state if in_place else None)  # one rule for every table: never widen, never revive
+        G.credentials(new, state if in_place else None)
+        recovery = G.recovery_links(new, admins, now_ms) if not in_place else {}
         channels_revoked = _revoke_channels(new, state if in_place else None, removed, actor, now)
         _lift_versions(new, floor["snapshot_seq"])
         for u in removed:
@@ -485,6 +494,7 @@ def _restore(
         "in_place": in_place,
         "suspended": notice["suspended"],
         "channels_revoked": channels_revoked,
+        "recovery": recovery,  # fresh server only: {admin_id: one-time recovery token}, shown once by the caller
         **floor,
     }
 

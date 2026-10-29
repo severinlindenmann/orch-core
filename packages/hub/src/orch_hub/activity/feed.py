@@ -44,6 +44,7 @@ WORDS = {
     "hub.backup.made": "made a hub backup",
     "hub.backup.downloaded": "downloaded a hub backup",
     "hub.backup.restored": "restored the hub from a backup",
+    "hub.restore.confirmed": "turned a shared item back on after a restore",
     "connection.allowed": "allowed a connection",
     "connection.denied": "closed a connection",
     "connection.migrated": "carried over a connection",

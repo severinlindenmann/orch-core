@@ -3064,6 +3064,8 @@ revoked live before the restore; `revoked/` and the access removals of the live 
 The clock is in milliseconds (the contract function only takes the larger of two integers): seconds would fall below a live
 counter that earlier in-place restores had already pushed up by thousands. 1.9e12 is far below 2^53.
 
+**Never widen, never revive (M4 S6).** In place the result is a subset of the live hub: the org secrets, shares, wraps, skill and MCP offers, add-on allow lists and market policy of `access.db`, and the registry, connections, shares, spaces, changes, wk-seal and workspace-view stores, are the LIVE ones; grants and group members are intersected with the live rows (the role is the live role); every surviving person keeps the LIVE password and TOTP. On a fresh server every org secret share, "shared with all" flag and skill or MCP offer is switched off into `restore_pending` until an admin turns it on again, and every admin must use a one-time recovery link.
+
 **What the hub does (M4 S6).** Every check of §17.5 and the floor pass before anything is written. The listed files are written
 under `<state>.new` (0700/0600), then made safe: people removed or disabled in the live hub stay removed or disabled, a
 hub-admin demoted live is not one again, live channel revocations are added, every other non-admin is suspended (disabled; an

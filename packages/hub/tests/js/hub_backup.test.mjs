@@ -132,6 +132,14 @@ test("after a restore the card says what happened and what to check, with a way 
   assert.equal(n, 1);
 });
 
+test("items a restore switched off are listed and each has a Turn on click", () => {
+  const got = [];
+  const c = card(hubSettingsView({ ...BASE, backup: { ...SET, pending: [{ id: 3, kind: "secret_share", label: "api key", workspace_id: "ab" }] } }, { wordsMayShow: true, confirmPending: (i) => got.push(i) }));
+  assert.match(c.textContent, /Switched off by the restore/); assert.match(c.textContent, /api key/);
+  button(c, "Turn on").listeners.click();
+  assert.deepEqual(got, [3]);
+});
+
 test("a hub without the backup answer shows no Backup card", () => {
   assert.equal(card(hubSettingsView(BASE, {})), undefined);
 });

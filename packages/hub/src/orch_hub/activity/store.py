@@ -55,6 +55,7 @@ ACTIVITY_TYPES = (
     "hub.backup.made",
     "hub.backup.downloaded",
     "hub.backup.restored",
+    "hub.restore.confirmed",
 )
 # Only structured references, never request bodies, credentials, or free-form notes.
 DETAIL_FIELDS = frozenset(

@@ -14,6 +14,7 @@ import ipaddress
 import urllib.parse
 from typing import Any
 
+from ..backup import guard as GD
 from ..backup import restore as RS
 from ..backup.service import CLI_LINE, KEEP, MANUAL_GAP_MS, NAME, BackupError, BackupService
 from ..contract import backup as B
@@ -68,6 +69,20 @@ def backup_routes(r: Any) -> tuple[Any, ...]:
             "admin",
             "a_backup_restore",
             "Restore the hub from a kept backup: password + code + the 24 words in the request (audited; the hub restarts)",
+        ),
+        r(
+            "GET",
+            "/admin/backup/restore/pending",
+            "admin",
+            "a_backup_pending",
+            "Shares and offers a restore on a new server switched off, waiting for an admin to turn them on again",
+        ),
+        r(
+            "POST",
+            "/admin/backup/restore/pending/confirm",
+            "admin",
+            "a_backup_pending_confirm",
+            "Turn one switched-off share or offer back on (plain click)",
         ),
         r(
             "POST",
@@ -156,6 +171,7 @@ class BackupHandlers:
             "cli_line": CLI_LINE,
             "restore_cli_line": RS.CLI_LINE,
             "restored": RS.notice(self.d.keys.state),
+            "pending": GD.pending(self.d.access),
         }
 
     def _h_a_backup_key(self, c: Any, p: dict, q: dict, b: dict | None):
@@ -243,3 +259,20 @@ class BackupHandlers:
             raise _err("malformed")
         RS.dismiss_notice(self.d.keys.state)
         return 200, {"ok": True}
+
+    def _h_a_backup_pending(self, c: Any, p: dict, q: dict, b: dict | None):
+        return 200, {"pending": GD.pending(self.d.access)}
+
+    def _h_a_backup_pending_confirm(self, c: Any, p: dict, q: dict, b: dict | None):
+        if b is None or set(b) != {"id"} or type(b["id"]) is not int:
+            raise _err("malformed")
+        try:
+            got = GD.confirm(self.d.access, b["id"])
+        except KeyError:
+            raise _err("backup_not_found") from None
+        if self.d.activity is not None:
+            try:
+                self.d.activity.record("hub.restore.confirmed", actor_kind="person", actor_id=c.user_id)
+            except Exception:  # noqa: BLE001, S110  # done; a failed history line is not an error
+                pass
+        return 200, {"ok": True, "kind": got["kind"]}

@@ -101,7 +101,9 @@ def org(human, served, keystore):  # noqa: F811
 
 
 def req(served, op, args=None, **kw):
-    return served.client().req(op, args or {}, idem=True if op in ("org.accept", "org.decline") else None, **kw)
+    return served.client().req(
+        op, args or {}, idem=True if op in ("org.accept", "org.decline", "org.tool") else None, **kw
+    )
 
 
 def agent(served, op, args=None):
@@ -124,7 +126,7 @@ def sync(served):
 
 
 def test_the_ops_are_declared():
-    assert set(orgops.ORG_OPS) == {"org.offers", "org.show", "org.accept", "org.decline", "org.sync"}
+    assert set(orgops.ORG_OPS) == {"org.offers", "org.show", "org.accept", "org.decline", "org.tool", "org.sync"}
     assert orgops.ORG_READS == {"org.offers"} and orgops.NETWORK_OPS == {"org.sync"}
 
 
@@ -375,3 +377,174 @@ def test_purge_removes_everything_and_nothing_is_served_after(served, org):
     orgstate.purge(svc(served))  # nothing there: no error
     assert sync(served)["skill"] == "new"  # a fresh pin: the hub's current version
     assert rows(req(served, "org.offers"))["invoices"]["status"] == "off"  # and nothing accepted
+
+
+# -- per-tool On/Off of company MCP servers (H-4, conditions 1, 6, 8) ----
+
+PIN_A = "sha256:" + "a" * 64
+PIN_B = "sha256:" + "b" * 64
+
+
+def tools_of(*pins):
+    return [{"name": n, "description": f"does {n}", "inputSchema": {}, "pin": p} for n, p in pins]
+
+
+def accept_mcp(served, org, name="crm", **kw):
+    srv = org.server(name, **kw)
+    org.servers = [s for s in org.servers if s["name"] != name] + [srv]
+    sync(served)
+    ok(req(served, "org.accept", {"kind": "mcp", "name": name, "digest": srv["digest"]}))
+    return srv
+
+
+def tool_op(served, tool, on, pin=None, server="crm", **kw):
+    args = {"server": server, "tool": tool, "on": on, **({"pin": pin} if pin else {})}
+    return req(served, "org.tool", args, **kw)
+
+
+def test_an_agent_can_never_set_a_tool(served, org):
+    accept_mcp(served, org)
+    orgstate.record_seen(svc(served), "crm", org.servers[0]["digest"], tools_of(("find", PIN_A)))
+    assert err(tool_op(served, "find", True, PIN_A, grant=served.grant, session=SESSION)) == "op.not_allowed"
+    assert orgstate.tool_policy(svc(served), "crm") == {}
+
+
+def test_on_needs_the_pin_and_the_pin_must_be_the_one_seen(served, org):
+    srv = accept_mcp(served, org)
+    orgstate.record_seen(svc(served), "crm", srv["digest"], tools_of(("find", PIN_A)))
+    assert err(tool_op(served, "find", True)) == "invalid.input"
+    res = tool_op(served, "find", True, PIN_B)
+    assert err(res) == "invalid.input" and "changed" in res["error"]["message"]
+    assert orgstate.tool_policy(svc(served), "crm") == {}
+    assert ok(tool_op(served, "find", True, PIN_A))["data"] == {"server": "crm", "tool": "find", "status": "on"}
+    assert orgstate.tool_policy(svc(served), "crm") == {"find": PIN_A}
+    assert stat.S_IMODE(os.stat(orgstate.org_dir(svc(served)) / "tools.json").st_mode) == 0o600
+    assert err(tool_op(served, "ghost", True, PIN_A)) == "not_found"
+    assert err(tool_op(served, "find", True, "sha256:xyz")) == "invalid.input"
+
+
+def test_a_server_that_is_not_accepted_has_no_tools_to_set(served, org):
+    org.servers = [org.server("crm")]
+    sync(served)
+    orgstate.record_seen(svc(served), "crm", org.servers[0]["digest"], tools_of(("find", PIN_A)))
+    assert err(tool_op(served, "find", True, PIN_A)) == "not_found"
+    assert err(tool_op(served, "find", False)) == "not_found"
+    assert err(tool_op(served, "find", True, PIN_A, server="nope")) == "not_found"
+
+
+def test_off_always_works_and_removes_the_entry(served, org):
+    srv = accept_mcp(served, org)
+    orgstate.record_seen(svc(served), "crm", srv["digest"], tools_of(("find", PIN_A), ("edit", PIN_B)))
+    ok(tool_op(served, "find", True, PIN_A))
+    ok(tool_op(served, "edit", True, PIN_B))
+    assert ok(tool_op(served, "find", False))["data"]["status"] == "off"
+    assert orgstate.tool_policy(svc(served), "crm") == {"edit": PIN_B}
+    assert ok(tool_op(served, "find", False))["data"]["status"] == "off"  # again: still fine
+
+
+def test_tool_policy_follows_the_binding_and_the_server_digest(served, org):
+    srv = accept_mcp(served, org)
+    orgstate.record_seen(svc(served), "crm", srv["digest"], tools_of(("find", PIN_A)))
+    ok(tool_op(served, "find", True, PIN_A))
+    assert orgstate.tool_policy(svc(served), "crm") == {"find": PIN_A}
+    org.servers = [org.server("crm", url="https://tools.example.com/other")]  # the hub changes the server
+    org.versions["mcp"] = 2
+    sync(served)
+    assert orgstate.tool_policy(svc(served), "crm") == {}  # not served any more: changed
+    assert orgstate.tool_policy(svc(served), "ghost") == {}
+    shown = ok(req(served, "org.show", {"kind": "mcp", "name": "crm"}))["data"]
+    assert shown["status"] == "changed" and shown["tools"] == []  # the old listing is not shown for a new server
+
+
+def test_decline_clears_the_tools_and_what_was_seen(served, org):
+    srv = accept_mcp(served, org)
+    orgstate.record_seen(svc(served), "crm", srv["digest"], tools_of(("find", PIN_A)))
+    ok(tool_op(served, "find", True, PIN_A))
+    ok(req(served, "org.decline", {"kind": "mcp", "name": "crm"}))
+    d = orgstate.org_dir(svc(served))
+    assert json.loads((d / "tools.json").read_text())["entries"] == []
+    assert "crm" not in json.loads((d / "seen.json").read_text())["servers"]
+    ok(req(served, "org.accept", {"kind": "mcp", "name": "crm", "digest": srv["digest"]}))  # accepted again
+    assert orgstate.tool_policy(svc(served), "crm") == {}
+
+
+def test_a_withdrawn_and_reoffered_server_starts_with_every_tool_off(served, org):
+    srv = accept_mcp(served, org)
+    orgstate.record_seen(svc(served), "crm", srv["digest"], tools_of(("find", PIN_A)))
+    ok(tool_op(served, "find", True, PIN_A))
+    org.servers = []
+    org.versions["mcp"] = 2
+    sync(served)
+    org.servers = [srv]
+    org.versions["mcp"] = 3
+    sync(served)
+    ok(req(served, "org.accept", {"kind": "mcp", "name": "crm", "digest": srv["digest"]}))
+    assert orgstate.tool_policy(svc(served), "crm") == {}
+
+
+def test_show_lists_the_tools_with_their_status(served, org):
+    srv = accept_mcp(served, org)
+    orgstate.record_seen(svc(served), "crm", srv["digest"], tools_of(("find", PIN_A), ("edit", PIN_B), ("drop", PIN_A)))
+    assert ok(req(served, "org.show", {"kind": "mcp", "name": "crm"}))["data"]["tools"][0]["status"] == "off"
+    ok(tool_op(served, "find", True, PIN_A))
+    ok(tool_op(served, "edit", True, PIN_B))
+    orgstate.record_seen(svc(served), "crm", srv["digest"], tools_of(("find", PIN_A), ("edit", PIN_A), ("drop", PIN_A)))
+    got = {t["name"]: t for t in ok(req(served, "org.show", {"kind": "mcp", "name": "crm"}))["data"]["tools"]}
+    assert {n: t["status"] for n, t in got.items()} == {"find": "on", "edit": "changed", "drop": "off"}
+    assert got["find"]["description"] == "does find" and got["find"]["pin"] == PIN_A
+    assert "tools" not in ok(req(served, "org.show", {"kind": "mcp", "name": "crm"}))["data"]["item"]
+
+
+def test_hand_edited_tool_entries_are_ignored(served, org):
+    from orch.store.fsio import write_atomic
+
+    srv = accept_mcp(served, org)
+    s = svc(served)
+    state = orgstate._state(s)  # noqa: SLF001
+    good = {"hub_id": state.hub_id, "binding_seq": state.binding_seq, "server": "crm", "server_digest": srv["digest"],
+            "tool": "find", "pin": PIN_A, "at": 1, "by": "x"}  # fmt: skip
+    d = orgstate.org_dir(s)
+
+    def put(*rows):
+        write_atomic(d / "tools.json", json.dumps({"entries": list(rows)}).encode(), mode=0o600)
+
+    put({**good, "binding_seq": state.binding_seq + 1})
+    assert orgstate.tool_policy(s, "crm") == {}
+    put({**good, "server_digest": "sha256:" + "9" * 64})
+    assert orgstate.tool_policy(s, "crm") == {}
+    put({**good, "hub_id": "00" * 16})
+    assert orgstate.tool_policy(s, "crm") == {}
+    put({**good, "server": "other"})
+    assert orgstate.tool_policy(s, "crm") == {}
+    put({**good, "extra": 1})
+    assert orgstate.tool_policy(s, "crm") == {}
+    put({**good, "pin": "nope"})
+    assert orgstate.tool_policy(s, "crm") == {}
+    put(good)  # sanity: the same row, well formed, counts
+    assert orgstate.tool_policy(s, "crm") == {"find": PIN_A}
+    ok(req(served, "org.decline", {"kind": "mcp", "name": "crm"}))
+    put(good)  # not accepted any more: nothing
+    assert orgstate.tool_policy(s, "crm") == {}
+
+
+def test_record_seen_keeps_little_and_ignores_bad_input(served, org):
+    srv = accept_mcp(served, org)
+    s = svc(served)
+    many = tools_of(*[(f"t{i}", PIN_A) for i in range(250)])
+    many[0]["description"] = "x" * 900
+    orgstate.record_seen(s, "crm", srv["digest"], many)
+    rec = json.loads((orgstate.org_dir(s) / "seen.json").read_text())["servers"]["crm"]
+    assert len(rec["tools"]) == 200 and len(rec["tools"][0]["description"]) == 500
+    assert set(rec["tools"][0]) == {"name", "description", "pin"} and rec["digest"] == srv["digest"]
+    orgstate.record_seen(s, "Bad Name", srv["digest"], many[:1])
+    orgstate.record_seen(s, "orch-x", srv["digest"], many[:1])
+    orgstate.record_seen(s, "crm", srv["digest"], [{"name": "a b", "pin": PIN_A}])
+    orgstate.record_seen(s, "crm", srv["digest"], "nope")
+    orgstate.record_seen(s, "crm", srv["digest"], [{"name": "ok", "description": "d", "pin": "bad"}])
+    after = json.loads((orgstate.org_dir(s) / "seen.json").read_text())["servers"]
+    assert list(after) == ["crm"] and len(after["crm"]["tools"]) == 200  # all ignored
+
+
+def test_record_seen_without_a_binding_does_nothing(served):
+    orgstate.record_seen(svc(served), "crm", "sha256:" + "1" * 64, tools_of(("find", PIN_A)))  # no hub: no error
+    assert not (orgstate.org_dir(svc(served)) / "seen.json").exists()

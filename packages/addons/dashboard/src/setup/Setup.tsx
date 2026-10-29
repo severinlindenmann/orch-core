@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import {
   SetupAPI,
@@ -19,7 +19,7 @@ const clickMeaningCopy =
   'Anything running as you on this computer, including your agents, could approve for you. Choose a passphrase if the computer is shared.'
 const terminalStepCopy = "One step needs your terminal: you'll press Enter once."
 const voidCopy =
-  'If setup stops before your workspace is created, these words will no longer work. Start setup again to get new ones.'
+  'If setup stops before it finishes, you get new words next time.'
 const expiredCopy =
   'This session has ended. In your terminal, press Enter to open a fresh setup link (or run orch setup again). It starts a new session with new recovery words.'
 /** A short, secret-free cause for the "session ended" copy: the API code, or `client: Name: message`. */
@@ -109,7 +109,7 @@ export function summarize(review: Review): { lines: string[]; unknown: boolean; 
     } else odd(item.title)
   }
   for (const flag of review.flags) {
-    if (flag.id === 'custody' || flag.id === 'terminal' || flag.id === 'records' || flag.id === 'trust') lines.push(flag.text)
+    if (flag.id === 'custody' || flag.id === 'terminal' || flag.id === 'records' || flag.id === 'trust' || flag.id === 'perms') lines.push(flag.text)
     else if (flag.id === 'git') continue // shown as the 'Safe copies' row on the card; its detail stays in the fold
     else if (flag.id !== 'runner' && flag.id !== 'terminals') odd(flag.text) // a flag this page does not know is shown
   }
@@ -150,21 +150,6 @@ export function reviewFacts(review: Review): Fact[] {
   if (has('records')) facts.push({ icon: '◷', label: 'History', value: 'Tickets are saved on this computer only' })
   return facts
 }
-/** The four buttons of one word check: the right word and three other distinct words of the same list, shuffled. */
-export function choicesFor(n: number, recoveryWords: string[]): string[] {
-  const right = recoveryWords[n - 1]
-  const others = [...new Set(recoveryWords.filter((w) => w !== right))]
-  for (let i = others.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1))
-    ;[others[i], others[j]] = [others[j], others[i]]
-  }
-  const all = [right, ...others.slice(0, 3)]
-  for (let i = all.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1))
-    ;[all[i], all[j]] = [all[j], all[i]]
-  }
-  return all
-}
 const prefixOk = (p: string) => /^[A-Z][A-Z0-9]{1,7}$/.test(p)
 /** A ticket prefix from a workspace name: first letters, capitals, letters and digits only ("Marketing Department" gives
  * MARK, "Personal Workspace" gives PW); empty or unusable names fall back to MW (My workspace). */
@@ -183,9 +168,10 @@ const statusIcon = { todo: '•', doing: '◔', done: '✓', failed: '✕', skip
 /** Roll up display rows only; setup still uses the original server steps. */
 export function groupProgress(steps: Progress['steps']): Progress['steps'] {
   const groups = [
+    { id: 'perms', label: 'Folders made private', ids: ['perms'] },
     { id: 'key', label: 'Your key', ids: ['keys', 'genesis', 'custody'] },
     { id: 'workspace', label: 'Your workspace', ids: ['git', 'settings', 'records', 'trust'] },
-    { id: 'services', label: 'Background services', ids: ['register', 'runner', 'runner_grant'] },
+    { id: 'services', label: 'Starting orch', ids: ['register', 'runner', 'runner_grant'] },
     { id: 'addons', label: 'Add-ons', ids: [] },
     { id: 'approval', label: 'Approval', ids: ['flags'] },
   ]
@@ -220,7 +206,7 @@ function Words({ words }: { words: string[] | null }) {
   )
 }
 const pausedCopy = 'The setup in your terminal has ended. Run orch setup again to start a new session with new recovery words.'
-const steps = ['Welcome', 'You', 'What agents can do', 'Approval', 'Check words', 'Review']
+const steps = ['Welcome', 'You', 'What agents can do', 'Approval', 'Recovery words', 'Review']
 /** Finish setup has two screens: what exists and what to add, then the review. */
 const finishSteps = ['Your workspace', 'Review']
 /** Hours a person can choose, in words. */
@@ -419,12 +405,6 @@ export function Setup({ api }: { api: SetupAPI }) {
   const [prefixEdited, setPrefixEdited] = useState(false)
   const [workspaceEdited, setWorkspaceEdited] = useState(false)
   const [secrets, setSecrets] = useState<Secrets | null>(null)
-  const [words, setWords] = useState<Record<string, string>>({})
-  // The word check is a tap: the choices are made once per set of words and stay while the page re-renders.
-  const choices = useMemo(
-    () => Object.fromEntries((secrets?.check_positions ?? []).map((n) => [n, choicesFor(n, secrets?.recovery_words ?? [])])),
-    [secrets],
-  )
   const [review, setReview] = useState<Review>()
   const [run, setRun] = useState<string>()
   const [progress, setProgress] = useState<Progress>()
@@ -432,7 +412,6 @@ export function Setup({ api }: { api: SetupAPI }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [ended, setEnded] = useState(false)
-  const [saved, setSaved] = useState(false)
   const [notice, setNotice] = useState('')
   const [reason, setReason] = useState('')
   // "No agent access" is a choice of its own (B11 finding 21); it keeps the workspace default time and no runner grant.
@@ -451,12 +430,9 @@ export function Setup({ api }: { api: SetupAPI }) {
     if (secretRef.current) {
       secretRef.current.passphrase = null
       secretRef.current.recovery_words.fill('')
-      secretRef.current.check_positions.length = 0
       secretRef.current = null
     }
     setSecrets(null)
-    setWords({})
-    setSaved(false)
   }
   async function act(fn: () => Promise<void>) {
     if (lock.current) return
@@ -662,30 +638,23 @@ export function Setup({ api }: { api: SetupAPI }) {
     }
   }
   async function confirm() {
-    const result = await api.call<{ ok: boolean; attempts_left?: number }>('secrets/confirm', { words })
-    // A wrong attempt keeps the entries that were right and clears only the wrong ones (the words are on this page
-    // anyway). A right one, or the end of the session, clears everything.
-    const typedWords = { ...words }
-    const keep: Record<string, string> = {}
-    if (!result.ok && result.attempts_left !== 0 && secretRef.current)
-      for (const [pos, w] of Object.entries(typedWords))
-        if (w.trim().toLowerCase() === secretRef.current.recovery_words[Number(pos) - 1]) keep[pos] = w
-    Object.keys(words).forEach((key) => {
-      words[key] = ''
-    })
-    setWords(keep)
-    if (result.ok) {
-      confirmed.current = true
-      drop()
-      await getReview()
-    } else if (result.attempts_left === 0) {
-      drop()
-      setEnded(true)
-      api.forget()
-      setError(expiredCopy)
-    } else setError(
-        `That was not the right word. Look at the highlighted number in the list. ${result.attempts_left} ${result.attempts_left === 1 ? 'try' : 'tries'} left.`,
-      )
+    await api.call<{ ok: boolean }>('secrets/confirm', { acknowledged: true })
+    confirmed.current = true
+    drop()
+    await getReview()
+  }
+  /** "Save as file": the words already on this page become a text file in the browser. Nothing is sent anywhere. */
+  function saveRecovery() {
+    const text = `orch recovery words\n\n${secrets!.recovery_words.map((w, i) => `${i + 1}. ${w}`).join('\n')}\n\nKeep this file somewhere safe. Only you should have it.\n`
+    const url = URL.createObjectURL(new Blob([text], { type: 'text/plain' }))
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'orch-recovery-words.txt'
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 0)
+    setNotice('Recovery words saved as a file. Keep it somewhere safe.')
   }
   async function copyRecovery() {
     try {
@@ -694,7 +663,7 @@ export function Setup({ api }: { api: SetupAPI }) {
       // Do not retain the secret in a timer closure, or read unrelated clipboard contents.
       setTimeout(clearClipboard, 60_000)
     } catch {
-      setNotice('Copy is unavailable. Write down the recovery words or print them.')
+      setNotice('Copy is unavailable. Save the recovery words as a file or print them.')
     }
   }
   async function finish() {
@@ -720,9 +689,11 @@ export function Setup({ api }: { api: SetupAPI }) {
     !!review &&
     ((profile.method !== 'click' && (state?.mode === 'finish' || !!review.runner_grant) && !review.tty_confirm) ||
       (review.tty_confirm && review.fingerprint?.length !== 3))
-  const approvalCount = review ? review.items.length + (review.workspace ? 1 : 0) : 0
   const summary = review ? summarize(review) : { lines: [], unknown: false, odd: [] as string[] }
+  const cancelHint =
+    step === 0 ? (state?.mode === 'finish' ? 'Your workspace keeps working. Finish this any time.' : 'Nothing is set up yet. Come back any time.') : ''
   const cancel = !ended && !run && state && !state.complete && (
+    <span className="cancel-wrap">
     <button
       className="cancel"
       disabled={busy}
@@ -737,6 +708,8 @@ export function Setup({ api }: { api: SetupAPI }) {
     >
       Finish setup later
     </button>
+    {cancelHint && <small className="cancel-hint">{cancelHint}</small>}
+    </span>
   )
   const next = (n: number) => (
     <button className="primary" onClick={() => setStep(n)}>
@@ -937,10 +910,10 @@ export function Setup({ api }: { api: SetupAPI }) {
                   ),
                 )}
               {offersGit && (
-                <div className="note" role="group" aria-label="Safe copies">
+                <div className="note" role="group" aria-label="Work copies">
                   <p>
-                    <strong>This folder does not track changes yet.</strong> Agents need that to work on several
-                    tickets at once.
+                    <strong>Your project folder is not set up for work copies yet.</strong> Agents work best when
+                    each ticket gets its own copy. We can do it for you; your files stay as they are.
                   </p>
                   <label className="toggle">
                     <span>
@@ -1115,7 +1088,7 @@ export function Setup({ api }: { api: SetupAPI }) {
           )}
           {step === 4 && (
             <>
-              <p>Keep these somewhere safe. Only you should have them.</p>
+              <p>These 24 words are the only way back if you lose access. Keep them somewhere safe.</p>
               {secrets ? (
                 <>
                   {secrets.passphrase && (
@@ -1129,46 +1102,22 @@ export function Setup({ api }: { api: SetupAPI }) {
                     <h2>Recovery words</h2>
                     <ol className="recovery">
                       {secrets.recovery_words.map((word, i) => (
-                        <li key={i} className={secrets.check_positions.includes(i + 1) ? 'check' : undefined}>
+                        <li key={i}>
                           <span>{i + 1}</span> {word}
                         </li>
                       ))}
                     </ol>
                   </section>
                   <div className="segments">
-                    <button onClick={() => void copyRecovery()}>Copy recovery words</button>
-                    <button onClick={() => window.print()}>Print recovery words</button>
+                    <button onClick={() => void copyRecovery()}>Copy</button>
+                    <button onClick={saveRecovery}>Save as file</button>
+                    <button onClick={() => window.print()}>Print</button>
                   </div>
                   <p role="status">{notice}</p>
                   <p className="warning">{voidCopy}</p>
-                  <label>
-                    <input type="checkbox" checked={saved} onChange={(e) => setSaved(e.target.checked)} /> I saved my
-                    recovery words
-                  </label>
-                  {secrets.check_positions.map((n) => (
-                    <div key={n} className="word-check" role="group" aria-label={`Word ${n}`}>
-                      <h2>Tap word {n} to confirm</h2>
-                      <div className="word-choices">
-                        {(choices[n] ?? []).map((w) => (
-                          <button
-                            key={w}
-                            type="button"
-                            aria-pressed={words[String(n)] === w}
-                            onClick={() => setWords({ ...words, [String(n)]: w })}
-                          >
-                            {w}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
                   <SetupFooter cancel={cancel}>
-                    <button
-                      className="primary"
-                      disabled={!saved || secrets.check_positions.some((n) => !words[String(n)]?.trim())}
-                      onClick={() => void act(confirm)}
-                    >
-                      Confirm saved words →
+                    <button className="primary" onClick={() => void act(confirm)}>
+                      I saved my words — continue →
                     </button>
                   </SetupFooter>
                 </>
@@ -1237,7 +1186,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                 </div>
               )}
               <details className="review-technical">
-                <summary>Everything you approve ({approvalCount} items)</summary>
+                <summary>Details</summary>
                 <p>Times and IDs are filled in when you sign.</p>
                 {review.workspace && (
                   <section className="review-item">
@@ -1309,9 +1258,6 @@ export function Setup({ api }: { api: SetupAPI }) {
               {terminalReviewMissing && (
                 <p role="alert">Terminal confirmation is missing. Return to your terminal to restart setup.</p>
               )}
-              <p>
-                {state.mode === 'finish' ? 'Finish setup' : 'Create workspace'} approves the {approvalCount} items in the list above.
-              </p>
               <SetupFooter cancel={cancel}>
                 <button
                   className="primary"
@@ -1359,7 +1305,7 @@ export function Setup({ api }: { api: SetupAPI }) {
             )
           )}
           {state?.os === 'darwin' && (
-            <p><small>Your Mac may say 'Background Items Added' for orch. That's expected. Leave it on.</small></p>
+            <p><small>On a Mac only: your Mac may say “orch added items that run in the background”. That is fine; leave it on.</small></p>
           )}
           <ol className="progress">
             {groupProgress(progress?.steps ?? []).map((s) => (

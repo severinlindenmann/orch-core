@@ -9,7 +9,7 @@ const state = {
   suggested: { name: 'Demo', prefix: 'TST', method: 'click', agent_hours: 72, agent_grant: true },
   addons: [
     { id: 'dashboard', title: 'Dashboard', desc: 'Browser', required: true, default: true, kind: 'addon', capabilities: [] },
-    { id: 'worktrees', title: 'Work copies', desc: 'One work folder per ticket', required: false, default: true, kind: 'addon', capabilities: [] },
+    { id: 'worktrees', title: 'Work copies', desc: 'Each ticket gets its own copy of your project, so agents do not overwrite each other.', required: false, default: true, kind: 'addon', capabilities: [] },
     { id: 'quick', title: 'Quick tasks', desc: 'Small one-off tasks', required: false, default: true, kind: 'flag', capabilities: [] },
   ],
   methods: ['terminal', 'click'], click_available: true, click_reason: '',
@@ -35,12 +35,12 @@ const fetcher = async (url: RequestInfo | URL, init?: RequestInit) => {
   const body = init?.body ? JSON.parse(String(init.body)) : undefined
   let r: unknown = { ok: true }
   if (path === 'state') r = state
-  if (path === 'secrets/reveal') r = { passphrase: null, recovery_words: Array.from({ length: 24 }, (_, i) => `word-${i + 1}`), check_positions: [17] }
+  if (path === 'secrets/reveal') r = { passphrase: null, recovery_words: Array.from({ length: 24 }, (_, i) => `word-${i + 1}`) }
   if (path === 'secrets/confirm') r = { ok: true }
   if (path === 'review') r = review
   if (path === 'create') r = { run_id: 'x' }
   if (path.startsWith('progress')) {
-    const ids = [['keys','Creating your key'],['genesis','Saving your approval'],['register','Starting orch in the background'],['git','Making the folder a git repository'],['runner','Letting the dashboard run agents'],['settings','Saving the workspace settings'],['addon:quick','Quick tasks'],['flags','Turning on one-click approval'],['runner_grant','Letting agents start on this computer'],['custody','Storing your key for one-click approval']]
+    const ids = [['keys','Creating your key'],['genesis','Saving your approval'],['register','Starting orch in the background'],['git','Preparing work copies'],['runner','Letting the dashboard run agents'],['settings','Saving the workspace settings'],['addon:quick','Quick tasks'],['flags','Turning on one-click approval'],['runner_grant','Letting agents start on this computer'],['custody','Storing your key for one-click approval']]
     r = { done: true, error: null, retry: [], waiting: null, steps: ids.map(([id,label]) => ({ id, label, status: 'done' })) }
   }
   void body

@@ -24,7 +24,6 @@ import base64
 import contextlib
 import json
 import re
-import secrets as _secrets
 import threading
 import time
 import urllib.parse
@@ -40,7 +39,6 @@ from . import review as review_mod
 from .protocol import SetupError
 
 __all__ = [
-    "CONFIRM_ATTEMPTS",
     "Creator",
     "Genesis",
     "Ports",
@@ -50,7 +48,6 @@ __all__ = [
     "set_no_core_dumps",
 ]
 
-CONFIRM_ATTEMPTS = 5
 CODE_WORDS = 24
 #: what the person types on the setup terminal once the page shows the same three words (R3)
 
@@ -65,9 +62,6 @@ def tty_confirm_text(words: str) -> str:
         "Check the page. If they match, press Enter to sign; any other key cancels and nothing is created.\n"
         "========================================================\n"
     )
-
-
-CHECKS = 1
 
 
 def batch_labels() -> tuple[bytes, ...]:
@@ -96,7 +90,7 @@ def _wipe(buf: bytearray) -> None:
 class Secrets:
     """The device passphrase and the recovery code of ONE session, generated in this process, held in bytearrays and
     wiped when the session ends. ``reveal`` works once (a second call is ``secrets.shown``, 410); ``confirm`` checks
-    one word in core; five wrong tries end the session and the next session draws new secrets.
+    the person's acknowledgement (no word comes back to the server).
 
     Python cannot promise that no copy of a ``str`` survives (the custody API takes ``str``); the copies made by
     :meth:`passphrase` and :meth:`code` are as short-lived as the caller makes them. No secret is ever in a log, an
@@ -110,10 +104,8 @@ class Secrets:
         self.show_passphrase = show_passphrase
         self._pass = bytearray(generate_passphrase().encode("ascii"))
         self._code = bytearray(generate_recovery_code().encode("ascii"))
-        self.positions = sorted(_secrets.SystemRandom().sample(range(1, CODE_WORDS + 1), CHECKS))
         self.shown = False
         self.confirmed = False
-        self.attempts_left = CONFIRM_ATTEMPTS
         self.dead = False
 
     # -- the browser's two calls
@@ -128,32 +120,20 @@ class Secrets:
             return {
                 "passphrase": bytes(self._pass).decode("ascii") if self.show_passphrase else None,
                 "recovery_words": words,
-                "check_positions": list(self.positions),
             }
 
-    def confirm(self, given: Any) -> dict[str, Any]:
+    def confirm(self, acknowledged: Any) -> dict[str, Any]:
+        """The person pressed "I saved my recovery words". No word is sent back or compared (owner decision, run 9):
+        the gate is "shown once, then acknowledged"."""
         with self._lock:
             if self.dead:
                 raise SetupError("secrets.gone", "these secrets are gone; start the setup again", 410)
             if not self.shown:
                 raise SetupError("secrets.not_shown", "show the secrets first", 409)
-            if self.confirmed:
-                return {"ok": True}
-            if not isinstance(given, dict) or set(given) != {str(p) for p in self.positions}:
-                raise SetupError("invalid.input", "words are the asked positions", field="words")
-            words = bytes(self._code).decode("ascii").split()
-            ok = True
-            for p in self.positions:  # every asked position is compared, whatever the first said
-                w = given[str(p)]
-                ok &= isinstance(w, str) and w.strip().lower() == words[p - 1]
-            del words
-            if ok:
-                self.confirmed = True
-                return {"ok": True}
-            self.attempts_left -= 1
-            if self.attempts_left <= 0:
-                self._wipe()
-            return {"ok": False, "attempts_left": self.attempts_left}
+            if acknowledged is not True:
+                raise SetupError("invalid.input", "confirm takes acknowledged: true", field="acknowledged")
+            self.confirmed = True
+            return {"ok": True}
 
     # -- the create step's
     def passphrase(self) -> str:
@@ -184,10 +164,6 @@ class Secrets:
     def wipe(self) -> None:
         with self._lock:
             self._wipe()
-
-    @property
-    def exhausted(self) -> bool:
-        return self.dead and self.attempts_left <= 0
 
     def __repr__(self) -> str:  # never the secrets
         return "Secrets(<redacted>)"
@@ -404,6 +380,7 @@ class Ports(Protocol):
     def identity(self, wid: str) -> Identity: ...
     def install_addon(self, root: Path, name: str, raw: bytes) -> None: ...
     def git_init(self, root: Path) -> None: ...
+    def privatize(self, root: Path) -> None: ...  # remove group/other write from our own folders (P08)
     def runner_enable(self, wid: str, prefix: str, terminals: bool) -> None: ...
     def runner_hello(self, wid: str, timeout: float) -> bool: ...
     def runner_refresh(self) -> None: ...
@@ -488,10 +465,11 @@ class Run:
 
 ECHO = {"done": "done:", "failed": "FAILED:", "skipped": "skipped:"}
 STEP_LABELS = {
+    "perms": "Folders made private",
     "keys": "Creating your key",
     "genesis": "Saving your approval",
     "register": "Starting orch in the background",
-    "git": "Making the folder a git repository",
+    "git": "Preparing work copies",
     "runner": "Letting the dashboard run agents",
     "settings": "Saving the workspace settings",
     "flags": "Turning on one-click approval",
@@ -579,6 +557,7 @@ class Creator:
             self._tty_confirm()
             self._stop_point()
             self._say("orch setup: working on it; the page shows the same steps")
+            self._perms()
             if self.mode == "new":
                 self._genesis()
                 post_genesis = True
@@ -721,6 +700,15 @@ class Creator:
             self.run.set(s, "done")
         self.wid = g.wid
         self.run.workspace = {"id": g.wid, "prefix": self.profile["prefix"]}
+
+    def _perms(self) -> None:
+        """P08: the review said "Folders made private": remove group/other write from our own folders (best effort)."""
+        if not any(f["id"] == "perms" for f in self.plan.flags):
+            return
+        self.run.set("perms", "doing")
+        with contextlib.suppress(Exception):  # the strict custody check still refuses what stays loose
+            self.ports.privatize(self.root)
+        self.run.set("perms", "done")
 
     def _git(self) -> None:
         """``git init`` of the project folder when the review said so (before the settings that declare it)."""
@@ -1041,10 +1029,11 @@ def _as_setup_error(e: Exception) -> SetupError:
 
 
 def sign_line(requests: str, one_click: bool) -> str:
-    """The terminal's line before the signature: "with one passphrase" only when the person chose a passphrase (a
-    one-click setup is converted to the one-click key right after, so it names none)."""
-    tail = "" if one_click else ", with one passphrase"
-    return f"\norch setup will sign {requests or 'the'} item(s) you read on the setup page{tail}.\n"
+    """The terminal's line before the signature: no item count (the page and the terminal can no longer disagree) and
+    "with one passphrase" only when the person chose a passphrase (a one-click setup names none)."""
+    if one_click:
+        return "\norch setup is creating your workspace.\n"
+    return "\norch setup is creating your workspace. It signs what you read on the setup page, with one passphrase.\n"
 
 
 class RealPorts:
@@ -1134,6 +1123,14 @@ class RealPorts:
     # -- the runner (D-P2-31)
     def git_init(self, root: Path) -> None:
         init_repository(root)
+
+    def privatize(self, root: Path) -> None:
+        """P08: exactly the paths the review named (see orch.privdir.setup_paths / privatize)."""
+        from orch import layout as layout_mod
+        from orch import privdir
+
+        home = Path(self.env.get("HOME") or Path.home())
+        privdir.privatize(privdir.setup_paths(root, layout_mod.store_of(root), self.state, home), self.uid)
 
     def trust_folder(self, root: Path, *, allow_parent: bool = False) -> bool:
         from .claude_folder import trust_folder

@@ -68,7 +68,6 @@ export interface Profile {
 export interface Secrets {
   passphrase: string | null
   recovery_words: string[]
-  check_positions: number[]
 }
 export interface Review {
   review_id: string

@@ -285,6 +285,10 @@ def test_dns_lookups_are_capped_so_stuck_resolvers_cannot_pile_up(monkeypatch):
     import orch_hub.access.mcpprobe as M
 
     monkeypatch.setattr(M, "TIMEOUT_S", 0.05)
+    for _ in range(100):  # lookups left over from earlier tests must be done
+        if M._lookups._value == 8:
+            break
+        time.sleep(0.05)
     gate = threading.Event()
     started = []
 

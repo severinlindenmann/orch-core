@@ -60,26 +60,64 @@ it('a run that is starting or running shows no banner', async () => {
   }
 })
 
-it('a run that ended without finishing: says so and offers only Start agent again', async () => {
-  const onStart = vi.fn()
-  render(<TicketProgress ticket={await noSections()} viewer={viewer as never} sign={vi.fn()} jump={() => {}} run={run('exited')} onStart={onStart} />)
+it('a run that ended with the plan unfinished: says what is missing and offers the two ways on', async () => {
+  const onFinish = vi.fn()
+  const onEdit = vi.fn()
+  render(<TicketProgress ticket={await noSections()} viewer={viewer as never} sign={vi.fn()} jump={() => {}} run={run('exited')} onFinish={onFinish} onEdit={onEdit} />)
   const card = screen.getByTestId('next-step')
-  expect(card).toHaveTextContent('The agent stopped early')
-  expect(card).toHaveTextContent('The agent stopped before it finished.')
-  expect(card).not.toHaveTextContent('Add Context')
+  expect(card).toHaveTextContent('The requirements are not finished yet')
+  expect(card).toHaveTextContent('Still missing: a short background and what is not included.')
+  expect(card).not.toHaveTextContent('stopped early')
   const buttons = within(card).getAllByRole('button')
-  expect(buttons.map((b) => b.textContent)).toEqual(['Start agent again'])
-  await userEvent.setup().click(buttons[0])
-  expect(onStart).toHaveBeenCalledOnce()
+  expect(buttons.map((b) => b.textContent)).toEqual(['Ask the agent to finish', 'Add it myself'])
+  const user = userEvent.setup()
+  await user.click(buttons[0])
+  expect(onFinish).toHaveBeenCalledOnce()
+  await user.click(buttons[1])
+  expect(onEdit).toHaveBeenCalledOnce()
 })
 
-it('a terminal wait for the ticket: the waiting card with Open terminal, even over an exited run', async () => {
+it('the card shows no button the viewer cannot use', async () => {
+  render(<TicketProgress ticket={await noSections()} viewer={viewer as never} sign={vi.fn()} jump={() => {}} run={run('exited')} />)
+  expect(within(screen.getByTestId('next-step')).queryAllByRole('button')).toHaveLength(0)
+})
+
+it('a terminal wait on an unfinished plan: the not-finished card, not Open terminal', async () => {
+  const doc = await demo()
+  doc.status = 'open'
+  doc.claim = null
+  doc.gates.requirements.state = 'approved'
+  doc.gates.plan = { ...doc.gates.plan, state: 'pending', approvals: [], missing: ['context', 'acceptance'] }
+  render(<TicketProgress ticket={doc} viewer={viewer as never} sign={vi.fn()} jump={() => {}} run={run('running')} wait="run_7" onFinish={vi.fn()} onEdit={vi.fn()} openTerminal={vi.fn()} />)
+  const card = screen.getByTestId('next-step')
+  expect(card).toHaveTextContent('The plan is not finished yet')
+  expect(card).toHaveTextContent('Still missing: a short background and one check that proves it works')
+  expect(screen.queryByRole('button', { name: 'Open terminal' })).toBeNull()
+  expect(screen.queryByText(/Agent is working/)).toBeNull()
+})
+
+it('once the gap is filled the Plan ready card takes its place', async () => {
+  const doc = await demo()
+  doc.status = 'open'
+  doc.claim = null
+  doc.gates.requirements.state = 'approved'
+  doc.gates.plan = { ...doc.gates.plan, state: 'pending', approvals: [], missing: ['context'] }
+  const view = render(<TicketProgress ticket={doc} viewer={viewer as never} sign={vi.fn()} jump={() => {}} wait="run_7" onFinish={vi.fn()} />)
+  expect(screen.getByTestId('next-step')).toHaveTextContent('The plan is not finished yet')
+  view.rerender(<TicketProgress ticket={{ ...doc, gates: { ...doc.gates, plan: { ...doc.gates.plan, missing: [] } } }} viewer={viewer as never} sign={vi.fn()} jump={() => {}} wait="run_7" onFinish={vi.fn()} />)
+  expect(screen.getByTestId('next-step')).toHaveTextContent('Plan ready')
+  expect(screen.getByRole('button', { name: 'Approve plan' })).toBeInTheDocument()
+})
+
+it('a terminal wait for the ticket with nothing missing: the idle card with Open terminal', async () => {
   const onOpen = vi.fn()
-  render(<TicketProgress ticket={await noSections()} viewer={viewer as never} sign={vi.fn()} jump={() => {}} run={run('running')} wait="run_7" openTerminal={onOpen} />)
+  const doc = await demo()
+  doc.status = 'open'
+  doc.claim = null
+  render(<TicketProgress ticket={doc} viewer={viewer as never} sign={vi.fn()} jump={() => {}} run={run('running')} wait="run_7" openTerminal={onOpen} />)
   const card = screen.getByTestId('next-step')
   expect(card).toHaveTextContent('The agent is waiting for you')
-  expect(card).toHaveTextContent('It may be asking you something. Open the terminal to answer.')
-  expect(card).not.toHaveTextContent('stopped')
+  expect(card).toHaveTextContent('The agent is idle. Open it to see why.')
   await userEvent.setup().click(within(card).getByRole('button', { name: 'Open terminal' }))
   expect(onOpen).toHaveBeenCalledWith('run_7')
 })

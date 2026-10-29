@@ -9,7 +9,7 @@ vi.mock('@/app/workspace', () => ({ useWorkspace: () => ({ workspaces: [{ id: 'w
 vi.mock('@/app/useMe', () => ({ useMe: () => ({ data: { person: 'p_test' } }) }))
 vi.mock('@tanstack/react-router', () => ({ useRouter: () => null, Link: () => null }))
 
-// B11 (#14): a gate.incomplete refusal reads "Add Context, Out of scope and one acceptance check first.", never the raw
+// B11 (#14): a gate.incomplete refusal reads "Add a short background, what is not included and one check that proves it works first.", never the raw
 // code, and a CLI pointer ("orch describe approve") is not shown on the page.
 afterEach(() => { cleanup(); vi.restoreAllMocks() })
 
@@ -26,7 +26,7 @@ it('says what an incomplete gate lacks in words and never shows orch describe', 
     </QueryClientProvider>,
   )
   fireEvent.click(screen.getByRole('button', { name: 'Sign requirements' }))
-  expect(await screen.findByText('Add Context, Out of scope and one acceptance check first.', {}, { timeout: 5000 })).toBeInTheDocument()
+  expect(await screen.findByText('Add a short background, what is not included and one check that proves it works first.', {}, { timeout: 5000 })).toBeInTheDocument()
   expect(prepare).toHaveBeenCalledTimes(1)
   expect(document.body).not.toHaveTextContent('orch describe')
   expect(document.body).not.toHaveTextContent('gate.incomplete')

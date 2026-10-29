@@ -89,7 +89,7 @@ export interface Review {
     placeholder_details?: number[]
   }[]
   runner_grant: { hours: number; scope: string; holder: string } | null
-  flags: { id: string; text: string }[]
+  flags: { id: string; text: string; detail?: string }[]
   risk: { text: string; once: boolean } | null
   tty_confirm: boolean
 }

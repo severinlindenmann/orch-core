@@ -14,7 +14,7 @@ class Node_ {
 }
 globalThis.document = { createElement: (t) => new Node_(t), createTextNode: (t) => new Node_("#text", t), getElementById: () => null };
 const { servicesView, summary, stateOf } = await import("../../src/orch_hub/web/services.js");
-const { workspacesView, workspaceDetailsView, connectWorkspaceView } = await import("../../src/orch_hub/web/workspaces.js");
+const { workspacesView, workspaceDetailsView, connectWorkspaceView, newWorkspaces } = await import("../../src/orch_hub/web/workspaces.js");
 const { when, ago } = await import("../../src/orch_hub/web/ui.js");
 
 const NOW = new Date(2026, 9, 27, 12, 0).getTime();
@@ -133,20 +133,19 @@ test("details show access only when allowed and send mode changes to the workspa
   assert.equal(find(out, (n) => n.tag === "button").length, 1);
 });
 
-test("connect link keeps the suggestion out of the copied link and shows expiry", async () => {
+test("connect link is copied unchanged, shows expiry, and Copy says what to do next", async () => {
   let copied;
   const out = [connectWorkspaceView({ link: "/join#one-time", expires_ms: NOW + 1800000 }, { copy: async (s) => { copied = s; return true; } })];
   assert.match(text(out), /Works once, for 30 minutes \(until 12:30\)/);
-  assert.match(text(out), /Suggested: Only what I choose\./);
+  assert.doesNotMatch(text(out), /Suggested|Everything|Mission Control/);
+  assert.doesNotMatch(text(out), /Now open your workspace/, "the next step shows after Copy");
   const input = find(out, (n) => n.tag === "input")[0];
   assert.equal(input.getAttribute("readonly"), "");
   assert.equal(input.getAttribute("value"), "/join#one-time");
-  clickButton(out, "Everything");
-  assert.match(text(out), /Suggested: Everything. The workspace owner confirms the mode with one click in Mission Control./);
-  assert.deepEqual(find(out, (n) => n.getAttribute("aria-pressed") !== null).map((n) => n.getAttribute("aria-pressed")), ["false", "true"]);
   await clickButton(out, "Copy");
   assert.equal(copied, "/join#one-time");
-  assert.match(text(out), /Copied/);
+  assert.match(text(out), /Copied ✓/);
+  assert.match(text(out), /Now open your workspace, go to Settings › Hub › Connect a hub, and paste\./);
 });
 
 test("admin empty state connects; left disclosure includes only unbound rows and removes the selected row", async () => {
@@ -286,4 +285,48 @@ test("services refresh every 15 seconds, pause while hidden, and stop after navi
   release();
   await pending;
   assert.equal(timers.size, 0);
+});
+
+test("a workspace that joined replaces the empty state and the used link with a green message", async () => {
+  const w = workspace({ name: "Anna's workspace" });
+  const opened = [];
+  const out = workspacesView({ workspaces: [w], handoffs: [], admin: [w], joined: [w], actions: { open: (x) => opened.push(x.workspace_id) } }, NOW);
+  const t = text(out);
+  assert.doesNotMatch(t, /No workspaces yet/);
+  const banner = find(out, (n) => n.attrs?.role === "status" || n.getAttribute?.("role") === "status")[0];
+  assert.match(banner.textContent, /Anna's workspace joined/);
+  assert.match(banner.textContent, /It is online now/);
+  clickButton(out, "Open Anna's workspace");
+  assert.deepEqual(opened, [w.workspace_id]);
+});
+
+test("only workspaces that were not on screen count as joined", () => {
+  const known = new Set(["a", "b"]);
+  assert.deepEqual(newWorkspaces(known, [{ workspace_id: "a" }, { workspace_id: "c" }, {}]).map((x) => x.workspace_id), ["c"]);
+  assert.deepEqual(newWorkspaces(known, undefined), []);
+});
+
+test("the admin empty state points to the Connect button; a member is told to ask the admin", () => {
+  assert.match(text(workspacesView({ handoffs: [], workspaces: [], admin: [] })), /Press .Connect a workspace./);
+  assert.match(text(workspacesView({ handoffs: [], workspaces: [], admin: null })), /Ask your hub admin/);
+});
+
+test("workspaces are named after their owner and connect asks whose workspace it is", async () => {
+  const a = workspace({ name: null, owner_name: "Ben Test" }), b = workspace({ workspace_id: "b".repeat(32), name: null, owner_name: "Anna Test" });
+  const sent = [];
+  const out = workspacesView({ workspaces: [a, b], handoffs: [], admin: [], self: "u1", actions: {
+    people: async () => [{ user_id: "u1", name: "Anna Test" }, { user_id: "u2", name: "Ben Test" }],
+    connect: async (owner) => { sent.push(owner); return { link: "/c#" + owner, expires_ms: NOW + 1800000 }; } } }, NOW);
+  const t = text(out);
+  assert.match(t, /Ben Test's workspace/); assert.match(t, /Owner: Ben Test/); assert.match(t, /Anna Test's workspace/);
+  assert.doesNotMatch(t, /Another workspace/);
+  await clickButton(out, "Connect a workspace");
+  assert.deepEqual(sent, ["u1"]); // the signed-in person is preselected
+  assert.match(text(out), /Whose workspace is this\?/);
+  const select = find(out, (n) => n.tag === "select")[0];
+  assert.deepEqual(find([select], (n) => n.tag === "option").map((o) => o.textContent), ["Anna Test", "Ben Test"]);
+  select.value = "u2";
+  await select.listeners.change({ target: select });
+  assert.deepEqual(sent, ["u1", "u2"]);
+  assert.equal(find(out, (n) => n.tag === "input")[0].value, "/c#u2");
 });

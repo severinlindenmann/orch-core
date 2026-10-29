@@ -6,22 +6,26 @@ import type { ClickViewAnswer } from '@/api/click'
 import { uuid8 } from '@/api/workspaces'
 import { Raw } from './visible'
 
-export function WorkspaceLine({ workspace, many, always = false, target, testId = 'sign-workspace' }: {
+export function WorkspaceLine({ workspace, many, always = false, folded = false, target, testId = 'sign-workspace' }: {
   workspace: ClickViewAnswer['view']['workspace'] | undefined
   /** The person has more than one workspace. */
   many: boolean
   /** The arm or the risk state: shown whatever the number of workspaces. */
   always?: boolean
+  /** Under a small "Details" instead of on the main surface (only when not `always`: a risk state keeps it in view). */
+  folded?: boolean
   /** What the View acts on (its ticket key), from the View only. */
   target?: string | null
   testId?: string
 }) {
   if ((!many && !always) || !workspace?.id || !workspace.prefix) return null
-  return (
+  const line = (
     <p data-testid={testId} className="text-[12px] text-text-muted">
       Workspace <Raw>{workspace.prefix}</Raw> · <span className="font-mono" data-ws-id>{uuid8(workspace.id)}</span>
       {workspace.name && <> · <bdi><Raw>{workspace.name}</Raw></bdi></>}
       {target && <> · <span data-testid={`${testId}-target`}><Raw>{target}</Raw></span></>}
     </p>
   )
+  if (!folded || always) return line
+  return <details data-testid={`${testId}-fold`} className="text-[12px] text-text-muted"><summary className="cursor-pointer">Details</summary>{line}</details>
 }

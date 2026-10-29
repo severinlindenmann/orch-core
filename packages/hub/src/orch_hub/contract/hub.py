@@ -1515,6 +1515,8 @@ LINK_OPS: dict[str, tuple[str, str | None, dict[str, Check]]] = {
             "actor": lambda x: x in ("person", "agent"),  # who asked at the host (the host knows; shown, never trusted)
         },
     ),
+    "shared_get": ("w2h", None, {}),  # P02: the shared tickets readable by the calling workspace's owner (display data)
+    "audience_get": ("w2h", None, {}),  # P02: the hub people and teams the owner may name as readers of a shared ticket
     "owner_get": ("w2h", None, {}),  # FB15: the hub user the hub names as the workspace owner (no argument)
     # p4 (§10.7): the hub's WK_e-sealed view of one workspace log; full mode only (selective: the hub holds no WK_e)
     "log_sync": (

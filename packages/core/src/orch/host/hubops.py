@@ -58,10 +58,20 @@ __all__ = [
 HUB_OPS: dict[str, int] = {
     "hub.connect": 1, "hub.link": 1, "hub.unbind": 1, "hub.status": 1, "hub.refresh": 1, "hub.handoff": 1,
     "hub.profile": 1, "hub.directory": 1, "hub.shared": 1,
-    "hub.history": 1, "keys.rotate": 1, "hub.switch": 1,
+    "hub.history": 1, "keys.rotate": 1, "hub.switch": 1, "hub.address": 1,
 }  # fmt: skip
 NETWORK_OPS = frozenset(
-    {"hub.connect", "hub.link", "hub.unbind", "hub.refresh", "hub.switch", "hub.directory", "hub.profile", "hub.shared"}
+    {
+        "hub.connect",
+        "hub.link",
+        "hub.unbind",
+        "hub.refresh",
+        "hub.switch",
+        "hub.directory",
+        "hub.profile",
+        "hub.shared",
+        "hub.address",
+    }
 )
 HUB_CAPS = ["hub/1"]
 _MU = threading.Lock()
@@ -109,6 +119,12 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
     },
     "hub.shared": {"type": "object", "properties": {}, "additionalProperties": False},
     "hub.link": {  # run-9 feedback 6: a read; fetch the hub card named by a connect link and check it against the link
+        "type": "object",
+        "properties": {"link": {"type": "string", "minLength": 8, "maxLength": 1024}},
+        "required": ["link"],
+        "additionalProperties": False,
+    },
+    "hub.address": {  # M4 #1461: move to the address a connect link of the SAME hub names (a person; no invite used)
         "type": "object",
         "properties": {"link": {"type": "string", "minLength": 8, "maxLength": 1024}},
         "required": ["link"],
@@ -437,13 +453,23 @@ def _transport(service: WorkspaceService, hub_id: str, link: dict[str, Any] | No
         return TRANSPORT(service, hub_id)
     if not link or not link.get("addr") or not link.get("spki"):
         return _NoLink()
-    from orch.hubclient.tlsadapter import TlsTransport
+    from orch.hubclient.tlsadapter import FailoverTransport, TlsTransport
 
-    return TlsTransport(
-        addr=link["addr"], tls_spki_sha256=link["spki"], hub_id=hub_id, workspace_id=service.workspace_id,
-        hk_op_pub=link["hk_op"], wsk_pub=link["wsk_pub"], sign=link["sign"], mode=link.get("mode", "selective"),
-        now_ms=lambda: int(service.clock() * 1000), timeout=float(link.get("timeout", 10.0)),
-    )  # fmt: skip
+    from . import hubaddr
+
+    check = hubaddr.dial_resolver(link["addr"])  # every dial: resolve once, policy, connect to that IP
+
+    def to(addr: str) -> TlsTransport:
+        return TlsTransport(
+            addr=addr, resolve=check, tls_spki_sha256=link["spki"], hub_id=hub_id, workspace_id=service.workspace_id,
+            hk_op_pub=link["hk_op"], wsk_pub=link["wsk_pub"], sign=link["sign"], mode=link.get("mode", "selective"),
+            now_ms=lambda: int(service.clock() * 1000), timeout=float(link.get("timeout", 10.0)),
+        )  # fmt: skip
+
+    extra = [a for a in link.get("addrs") or [] if a != link["addr"]]
+    if not extra:
+        return to(link["addr"])
+    return FailoverTransport([to(a) for a in (link["addr"], *extra)])  # current first, then verified ones
 
 
 def _addr(args: dict[str, Any], state: Any, dev: bool) -> str | None:
@@ -451,6 +477,14 @@ def _addr(args: dict[str, Any], state: Any, dev: bool) -> str | None:
     else the one kept in ``hub.json``. The address is not signed and not trusted: the card's TLS pin decides."""
     env = os.environ.get("ORCH_HUB_ADDR") if dev else None
     return env or args.get("addr") or (None if state is None else state.addr)
+
+
+def _more_addrs(state: Any, dev: bool) -> list[str]:
+    """The other addresses of the hub the host verified (M4 #1461), dialled after :func:`_addr`. A dev override
+    (``ORCH_HUB_ADDR``) names the one address to use and nothing else."""
+    if state is None or (dev and os.environ.get("ORCH_HUB_ADDR")):
+        return []
+    return list(getattr(state, "addrs", []))
 
 
 def hub_role(service: WorkspaceService, user_id: str) -> str | None:
@@ -807,6 +841,8 @@ def serve(call: Call) -> dict[str, Any]:
         return out
     if op == "hub.link":
         return {"plan": {"op": "hub.link", "link": args["link"], "dev": workspace_dev(service)}}
+    if op == "hub.address":
+        return {"plan": {"op": op, "link": args["link"], "dev": workspace_dev(service)}}
     model = dict(service.store.state.workspace.hub)
     state = _load_state(service)
     if op == "hub.profile":
@@ -873,6 +909,9 @@ def serve(call: Call) -> dict[str, Any]:
                 "reachable": up,
                 **hublinkprobe.peer_view(service),  # peer_outbox, link_error
                 "log_sync": _log_sync_status(service),
+                "addrs": [] if state is None else [a for a in [state.addr, *state.addrs] if a],
+                # what the hub says of itself (hub_where): its own words, a hint; never part of a workspace's own text
+                "hub_says": None if state is None or not state.hub_name else {"name": state.hub_name, "from": "hub"},
                 "unbound_pending": state is not None and bool(state.outbox),
                 "owed": [] if state is None else sorted(state.outbox),
             }
@@ -962,6 +1001,10 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
             )
         except HubRefused as exc:
             raise _refused(exc.code) from None
+    if plan["op"] == "hub.address":
+        from . import hubaddr
+
+        return ok_result(hubaddr.move(call, plan["link"], now_ms=int(service.clock() * 1000), dev=plan["dev"]))
     if plan["op"] == "hub.profile":
         pushed = False
         try:
@@ -1192,8 +1235,8 @@ def _snapshot_link(
     from orch.hubclient import HubLink
 
     hk_op = unb64u(state.hk_op_pub, 65)
-    link = {"addr": _addr({}, state, dev), "spki": state.tls_spki, "hk_op": hk_op, "wsk_pub": wsk_pub, "sign": sign,
-            "mode": state.mode}  # fmt: skip
+    link = {"addr": _addr({}, state, dev), "addrs": _more_addrs(state, dev), "spki": state.tls_spki, "hk_op": hk_op,
+            "wsk_pub": wsk_pub, "sign": sign, "mode": state.mode}  # fmt: skip
     if timeout is not None:
         link["timeout"] = timeout  # seconds per socket step (the TLS link's own default is 10)
     transport = _transport(service, state.hub_id, link)
@@ -1229,13 +1272,19 @@ def _refresh(
     if plan.get("hub_card") is not None:  # a rotated card first: the link below dials its pin and trusts its op key
         adopted = snapshot.adopt_card(state, plan["hub_card"], now_ms=now(), dev_mode=plan["dev"])
     hub_link, transport = _snapshot_link(service, state, wsk_pub, sign, plan["dev"])
+    from . import hubaddr
+
+    where = None
     try:
         changed = snapshot.refresh(
             state=state, link=hub_link, workspace_id=service.workspace_id, dev_mode=plan["dev"], now_ms=now,
             save=lambda fetched: _save_snapshot(service, fetched), card_adopted=adopted,
         )  # fmt: skip
+        where = hubaddr.fetch_where(hub_link)  # M4: only the question is asked inside the session
     finally:
         getattr(transport, "close", lambda: None)()
+    if where is not None:  # probes run after the link is closed and off this thread: no timing for the hub to read
+        hubaddr.apply_in_background(service, state, where)
     view = snapshot.pinned_view(_load_state(service))  # what is on disk now, not the copy this call started from
     _audit(call, "hub.snapshot", hub_id=state.hub_id, version=(view or {}).get("version"), changed=changed)
     return {"hub_id": state.hub_id, "changed": changed, "snapshot": view}

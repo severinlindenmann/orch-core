@@ -13,13 +13,13 @@ from orch.setup.flow import SetupFlow
 from orch.setup.protocol import SetupError
 
 from .conftest import PROFILE, make_env, post
-from .test_secrets import reveal, words_for
+from .test_secrets import reveal
 
 
 def to_review(flow, profile):
     post(flow, "profile", profile)
-    r = reveal(flow)
-    post(flow, "secrets/confirm", {"words": words_for(r)})
+    reveal(flow)
+    post(flow, "secrets/confirm", {"acknowledged": True})
     return post(flow, "review")[1]
 
 

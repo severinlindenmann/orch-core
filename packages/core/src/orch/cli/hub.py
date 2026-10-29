@@ -47,7 +47,7 @@ _USAGE = (
     "| join INVITE --hub-card FILE [--hub-id HEX32] [--hub-addr HOST:PORT] [--mode selective|full] "
     "[--owner-user-id HEX32] | mode full --hub-card FILE [--hub-addr HOST:PORT] | leave "
     "| connect [INVITE] --hub-card FILE [--hub-addr HOST:PORT] | unbind "
-    "| directory [--query Q] | status [--refresh [--hub-card FILE]] | share rule list "
+    "| address --link LINK | directory [--query Q] | status [--refresh [--hub-card FILE]] | share rule list "
     "| share rule add|remove RULE | share revoke REF "
     "| share sync} [--json]"
 )
@@ -62,7 +62,19 @@ def _parser() -> argparse.ArgumentParser:
     p = Quiet(prog="orch hub", add_help=False)
     p.add_argument(
         "cmd",
-        choices=("join", "mode", "leave", "connect", "unbind", "status", "share", "rotate", "history", "directory"),
+        choices=(
+            "join",
+            "mode",
+            "leave",
+            "connect",
+            "unbind",
+            "status",
+            "share",
+            "rotate",
+            "history",
+            "directory",
+            "address",
+        ),
     )
     p.add_argument("--query")
     p.add_argument("--tag")
@@ -128,7 +140,12 @@ def _check_shape(a: argparse.Namespace) -> None:
         "status": 0,
         "rotate": 0,
         "history": 0,
+        "address": 0,
     }[a.cmd]
+    if a.cmd == "address":  # M4: move to the address a connect link of the SAME hub names (no card file, no invite)
+        if a.link is None or a.rest or a.hub_card or a.hub_id or a.hub_addr or a.refresh:
+            raise PubError("invalid.input", "orch hub address --link LINK", 2)
+        return
     if a.link is not None:  # the link carries the hub id, the code and the address: no INVITE, no card file
         if a.cmd != "join" or a.rest or a.hub_card or a.hub_id or a.hub_addr:
             raise PubError("invalid.input", "--link belongs to: orch hub join --link LINK [--mode selective|full]", 2)
@@ -328,6 +345,10 @@ def main(
         a.card_obj = None
         _check_shape(a)
         target = _target(env)
+        if a.cmd == "address":
+            got = _call(target, "hub.address", {"link": a.link}, env)
+            _emit(out, as_json, got, f"ok this workspace now dials the hub at {clean_line(str(got.get('addr')))}")
+            return 0
         if a.link is not None:  # one host op reads the link: the card is fetched and matched to the link's hub id
             got = _call(target, "hub.link", {"link": a.link}, env)
             a.card_obj, a.hub_id, a.rest = got["hub_card"], got["hub_id"], [got["code"]]

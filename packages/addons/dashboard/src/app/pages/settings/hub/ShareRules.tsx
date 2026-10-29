@@ -109,7 +109,7 @@ export function ShareRules({ ws, workspace, onBack }: { ws: string; workspace: H
         {!change ? <p>Choose a rule to preview a change.</p> : error ? <div role="alert"><p className="text-danger">{error}</p><Action id="hub-preview-retry" onClick={() => retryPreview()}>Try again</Action></div> : !current ? <p role="status">Updating preview…</p> : <>
           <p>{current.count} items after saving</p>
           <div className="flex flex-wrap gap-2"><Badge className="bg-warning-soft text-warning">{current.new} now visible</Badge><Badge className="bg-success-soft text-success">{current.revoked} no longer shared</Badge></div>
-          <p>Preview from the hub, not signed.</p>
+          <InfoDrawer testId="hub-preview-note">The hub&apos;s own preview.</InfoDrawer>
           <ul className="space-y-1">{current.items.map((item, i) => <li key={i}><Raw>{item.kind === 'ticket' ? item.line.replace(/^ticket [^:]+:\s*/, '') : item.line}</Raw></li>)}</ul>
           <InfoDrawer testId="hub-preview-details">{current.items.map((item, i) => <p key={i}><Raw>{item.line}</Raw></p>)}{current.rules.map((rule, i) => <p key={i}><Raw>{rule}</Raw></p>)}</InfoDrawer>
           {current.more > 0 && <p>and {current.more} more</p>}

@@ -22,6 +22,7 @@ from .changes_api import ChangeHandlers
 from .org_api import OrgHandlers
 from .secrets_api import SecretHandlers, secret_routes
 from .settings_api import SettingsHandlers, settings_routes
+from .spaces_api import SpaceHandlers, space_routes
 
 
 @dataclass(frozen=True)
@@ -37,6 +38,7 @@ FEATURES: tuple[Feature, ...] = (
     Feature(mixin=SecretHandlers, routes=secret_routes),
     Feature(mixin=SettingsHandlers, routes=settings_routes),
     Feature(mixin=BackupHandlers, routes=backup_routes, status=BACKUP_STATUS),
+    Feature(mixin=SpaceHandlers, routes=space_routes),
 )
 
 FEATURE_MIXINS: tuple[type, ...] = tuple(f.mixin for f in FEATURES)

@@ -87,11 +87,11 @@ test("Address: Save sends the phone address first, the chosen ones after it, and
     { kind: "private", host: "100.71.188.237" }, { kind: "office", host: "10.1.1.4" }] }]);
 });
 
-test("Address: a hub that only answers on this server shows the install line instead of a picker", () => {
+test("Address: a hub that only answers on this server says plainly who to ask instead of showing a picker", () => {
   const view = hubSettingsView({ ...DEMO, can_change_addresses: false });
   const a = card(view, "address");
   assert.deepEqual(byTag(a, "button"), []); assert.deepEqual(byTag(a, "select"), []);
-  assert.match(a.textContent, /install the hub again with that address/);
+  assert.match(a.textContent, /Addresses can't be changed on this page\. To add or change one, ask the person who installed this hub\./);
 });
 
 test("addressBody and hostOf: the phone address is kept as it is, blanks are dropped, IPv6 loses its brackets", () => {

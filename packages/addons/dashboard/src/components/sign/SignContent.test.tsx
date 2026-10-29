@@ -221,7 +221,7 @@ it('leads with the plain summary and still shows every signed line in full, labe
   expect(within(summary).getByText('The link works for 7 days from the moment it is made.')).toBeVisible()
   const exact = screen.getByTestId('sign-exact')
   expect(exact).not.toHaveAttribute('open') // run-9 feedback: closed by default, still in the DOM
-  expect(within(exact).getByText('Show exactly what is signed')).toBeVisible()
+  expect(within(exact).getByText('What you sign')).toBeVisible()
   // every signed line, untruncated, inside the exact area
   for (const line of SHARE_TEXT.split('\n')) expect(exact.textContent).toContain(line)
   expect(summary.compareDocumentPosition(exact) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()

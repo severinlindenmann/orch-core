@@ -249,9 +249,14 @@ def test_p05_admin_lists_a_selective_workspace_of_someone_else_but_a_member_cann
     ben_ws = "ef" * 16
     ben = w.env.user("ben")
     w.reg.add(ben_ws, "selective", owner=ben)
-    s, o, _ = w.call("GET", "/admin/workspaces", token=w.login(w.admin))  # the hub admin sees it exists (name, owner, status)
+    s, o, _ = w.call(
+        "GET", "/admin/workspaces", token=w.login(w.admin)
+    )  # the hub admin sees it exists (name, owner, status)
     assert s == 200 and ben_ws in {r["workspace_id"] for r in o["workspaces"]}
-    assert w.call("GET", "/admin/workspaces", token=w.login(ben))[:2] == (403, {"error": "forbidden_role"})  # server-side gate
+    assert w.call("GET", "/admin/workspaces", token=w.login(ben))[:2] == (
+        403,
+        {"error": "forbidden_role"},
+    )  # server-side gate
     assert w.call("GET", "/admin/workspaces", token=w.login(w.ann))[:2] == (403, {"error": "forbidden_role"})
     s, o, _ = w.call("GET", "/me/workspaces", token=w.login(w.admin))  # unchanged: no role in a selective workspace
     assert s == 200 and ben_ws not in {r["workspace_id"] for r in o["workspaces"]}

@@ -61,6 +61,16 @@ it('a host that is still starting (503 twice) opens the app by itself, no code s
   expect(calls).toBe(3)
 })
 
+it('a first answer that takes 8 s still opens the app, no failure screen', async () => {
+  vi.stubGlobal('fetch', vi.fn((url: string) => String(url) === '/api/session'
+    ? new Promise((res) => setTimeout(() => res(Response.json({ features: [], workspaces: {} })), 8_000))
+    : Promise.resolve(Response.json([]))))
+  mount()
+  await act(async () => { await vi.advanceTimersByTimeAsync(8_100) })
+  expect(await screen.findByRole('navigation', { name: 'Main' })).toBeInTheDocument()
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+})
+
 it('a host that never starts: after the retry window the plain failure screen with Try again; the code only under Details', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => refuse()))
   const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
@@ -85,6 +95,17 @@ it('Try again asks the server again, and a late answer opens the app', async () 
   up = true
   await user.click(screen.getByRole('button', { name: 'Try again' }))
   expect(await screen.findByRole('navigation', { name: 'Main' })).toBeInTheDocument()
+})
+
+it('Try again restarts the window: a 503 after it is retried, not an immediate failure', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => refuse()))
+  const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+  mount()
+  await act(async () => { await vi.advanceTimersByTimeAsync(SESSION_RETRY_WINDOW_MS + 10_000) })
+  await user.click(screen.getByRole('button', { name: 'Try again' }))
+  await act(async () => { await vi.advanceTimersByTimeAsync(3_000) })
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  expect(screen.getByRole('status')).toHaveTextContent('Getting your workspace ready…')
 })
 
 it('an error that is not "starting" (not found) shows the failure screen at once', async () => {

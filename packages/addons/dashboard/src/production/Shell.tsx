@@ -71,7 +71,7 @@ function App() {
   const slow = useElapsed(!router && !features.error, START_PATIENCE_MS)
   const again = () => { since.current = Date.now(); void queryClient.cancelQueries({ queryKey: ['session'] }).then(() => features.refetch()) }
   if (features.error && !checklistOnly) return <Notice title="The workspace did not start" text="It may still be starting. Try again in a moment." detail={features.error.message} code={(features.error as { code?: string }).code} onAgain={again} />
-  if (!router && (slow || features.failureCount > 0)) return <Notice title="Getting your workspace ready…" text="This takes a few seconds the first time. The page opens by itself." waiting code={(features.failureReason as { code?: string } | null)?.code} />
+  if (!router && (slow || features.failureCount > 0)) return <Notice title="Getting your workspace ready…" text="This takes a few seconds the first time. The page opens by itself." waiting />
   if (!router) return <BootScreen />
   return <RouterProvider router={router} />
 }

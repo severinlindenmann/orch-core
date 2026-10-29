@@ -8,6 +8,7 @@ import json
 import logging
 import socket
 import threading
+import time
 import urllib.parse
 
 import pytest
@@ -915,3 +916,52 @@ def test_an_unbound_workspace_or_a_failing_binding_lookup_is_401(env):
         env.proxy._binding = lambda ws, v=value: (_ for _ in ()).throw(v) if isinstance(v, Exception) else v  # noqa: SLF001
         assert rpc(env, cap, "ping")[0] == 401
         env.proxy._binding = lambda ws: 1  # noqa: SLF001
+
+
+# -- review fix 1: the capability is checked again when the request is forwarded ---------------------------------
+
+
+def _half_send(env, cap, then):
+    """Send the headers, run ``then()``, send the body: returns (status, body)."""
+    body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}).encode()
+    head = (
+        f"POST /m/crm HTTP/1.1\r\nHost: 127.0.0.1:{env.port}\r\nAuthorization: Bearer {cap}\r\n"
+        f"Content-Length: {len(body)}\r\n\r\n"
+    )
+    with socket.create_connection(("127.0.0.1", env.port), timeout=5) as s:
+        s.sendall(head.encode())
+        time.sleep(0.2)
+        then()
+        s.sendall(body)
+        blob = b""
+        while chunk := s.recv(65536):
+            blob += chunk
+    return int(blob.split(b" ")[1])
+
+
+@pytest.mark.parametrize("how", ["run", "workspace", "binding"])
+def test_a_revoke_between_headers_and_body_forwards_nothing(env, how):
+    cap = mint(env)
+    env.bindings = {"w1": 1}
+
+    def revoke():
+        if how == "run":
+            env.proxy.revoke_run("r1")
+        elif how == "workspace":
+            env.proxy.revoke_workspace("w1")
+        else:
+            env.bindings = {"w1": None}
+
+    assert _half_send(env, cap, revoke) == 401
+    assert all(not up.posts for up in env.ups)
+    assert rpc(env, cap, "ping")[0] == 401
+
+
+def test_up_refuses_a_dropped_capability(env):
+    cap = mint(env)
+    obj = next(iter(env.proxy._caps.values()))
+    env.proxy.revoke_run("r1")
+    assert cap
+    with pytest.raises(mcpproxy._Refuse):
+        env.proxy._up(obj, "crm", env.records["w1"][0], None)
+    assert not env.ups

@@ -235,7 +235,8 @@ class Proxy:
         with self._lock:
             for key in [k for k, c in self._caps.items() if c.run == run]:
                 self._drop(key)
-            self._runs.pop(run, None)
+            if not any(c.run == run for c in self._caps.values()):  # counters stay while a capability is live
+                self._runs.pop(run, None)
 
     def revoke_workspace(self, ws: str) -> None:
         with self._lock:
@@ -386,7 +387,6 @@ class Proxy:
         if name not in cap.servers:
             raise _Refuse(403, "forbidden")
         record = self._check_served(cap, name)
-        bearer, secret_value = self._credentials(cap, record)
         length = headers.get("content-length")
         if length is None:
             raise _Refuse(411, "length required")
@@ -400,6 +400,11 @@ class Proxy:
             raise _Refuse(408, "timeout") from None
         except asyncio.IncompleteReadError:
             raise _Refuse(400, "bad request") from None
+        with self._lock:
+            if not self._live(cap):
+                self._drop(key)
+                raise _Refuse(401, "unauthorized")
+        bearer, secret_value = self._credentials(cap, record)  # after the body: nothing waits between check and use
         status, payload = await self._rpc(key, cap, name, record, bearer, body)
         if payload is not None and secret_value:
             payload = _scrub(payload, _secret_forms(secret_value))
@@ -462,16 +467,31 @@ class Proxy:
 
     # -- JSON-RPC -------------------------------------------------------------------------------------------------
 
+    def _live(self, cap: _Cap) -> bool:
+        """Caller holds the lock. True while this very capability is registered and its binding is still live."""
+        return self._caps.get(cap.key) is cap and self._binding_is(cap.ws, cap.binding_seq)
+
     def _up(self, cap: _Cap, name: str, record: dict, bearer: str | None) -> Any:
-        held = cap.upstreams.get(name)
-        if held is not None and held[1] == bearer:
-            return held[0]
-        if held is not None:
-            self._close_up(held[0])
-            cap.pins.pop(name, None)
-        up = self._upstream(record, bearer)
-        cap.upstreams[name] = (up, bearer)
-        return up
+        with self._lock:
+            if self._caps.get(cap.key) is not cap:
+                raise _Refuse(401, "unauthorized")
+            held = cap.upstreams.get(name)
+            if held is not None and held[1] == bearer:
+                return held[0]
+            if held is not None:
+                self._close_up(held[0])
+                cap.pins.pop(name, None)
+            up = self._upstream(record, bearer)
+            cap.upstreams[name] = (up, bearer)
+            return up
+
+    def _post(self, cap: _Cap, up: Any, message: dict) -> Any:
+        """Runs in the worker thread: the capability is checked again immediately before the post."""
+        with self._lock:
+            if not self._live(cap):
+                self._drop(cap.key)
+                raise _Refuse(401, "unauthorized")
+        return up.post(message, timeout=UPSTREAM_TIMEOUT)
 
     async def _forward(self, key: str, cap: _Cap, name: str, up: Any, message: dict) -> list[dict]:
         self._count(cap)
@@ -479,7 +499,9 @@ class Proxy:
             raise _Refuse(429, "too many calls")
         cap.inflight[name] = cap.inflight.get(name, 0) + 1
         try:
-            msgs = await asyncio.to_thread(up.post, message, timeout=UPSTREAM_TIMEOUT)
+            msgs = await asyncio.to_thread(self._post, cap, up, message)
+        except _Refuse:
+            raise
         except Exception:
             log.warning("company server %s did not answer", name)
             return []

@@ -117,6 +117,27 @@ def test_the_hub_link_answer_card_comes_back_byte_for_byte(served, monkeypatch):
     assert res["hub_card"] == want and res["name"] == "n [redacted]"
 
 
+@pytest.mark.parametrize(
+    ("op", "first", "second", "fn", "answer", "want"),
+    [
+        ("space.get", "spaceops", "spaceops", "execute", {"data": KEY, "name": TOKEN}, {"data": KEY, "name": R}),
+        ("term.attach", "terms", "terms", "complete", {"ticket": HASH, "note": TOKEN}, {"ticket": HASH, "note": R}),
+        (
+            "publish.send", "publishing", "publishing", "execute",
+            {"link": f"https://p.example/s/{TOKEN}#t={HASH}"}, {"link": f"https://p.example/s/[redacted]#t={HASH}"},
+        ),
+    ],
+)  # fmt: skip
+def test_a_reused_random_field_of_a_second_phase_answer_is_kept(
+    served, monkeypatch, op, first, second, fn, answer, want
+):
+    async def run(call, planned):
+        return ok_result(answer)
+
+    _patch(monkeypatch, first, second, fn, {"plan": {}}, run)
+    assert ok(served.client().req(op, {}, idem=_idem(op)))["data"] == want
+
+
 def test_a_kept_path_with_free_text_or_a_secret_is_still_redacted():
     from orch.host.auth import Redactor
 
@@ -129,3 +150,12 @@ def test_a_kept_path_with_free_text_or_a_secret_is_still_redacted():
     assert Redactor(None, "space.get").obj({"data": {"data": "gr_0" + "A" * 25 + "." + "B" * 43}}) == {
         "data": {"data": "[redacted]"}  # the grant shape and the presented secret are never kept
     }
+
+
+def test_the_held_card_and_the_share_plan_digest_are_kept_at_their_paths_only():
+    from orch.host.auth import Redactor
+
+    card = Redactor(None, "hub.status").obj({"data": {"hub_card": CARD, "other": KEY}})["data"]
+    assert card["hub_card"]["o"]["hxk_pub"] == KEY and card["hub_card"]["sig"] == SIG and card["other"] != KEY
+    plan = Redactor(None, "share.preview").obj({"data": {"plan": HASH, "items": [HASH]}})["data"]
+    assert plan == {"plan": HASH, "items": [Redactor().text(HASH)]} and "[redacted]" in plan["items"][0]

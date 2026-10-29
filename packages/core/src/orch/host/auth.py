@@ -361,6 +361,10 @@ ANSWER_KEY_PATHS: dict[str, tuple[tuple[tuple[str, ...], str], ...]] = {
     # the hub card of a link and the held card: the CLI and the dashboard send it back in hub.connect / hub.mode
     "hub.link": tuple((("data", "hub_card", *p), k) for p, k in _CARD),
     "hub.status": tuple((("data", "hub_card", *p), k) for p, k in _CARD),
+    "share.preview": ((("data", "plan"), "hash"),),  # the plan digest, sent back as ``expect``
+    "space.get": ((("data", "data"), "data"),),  # the item's file bytes (redacting base64 cannot find a token anyway)
+    "term.attach": ((("data", "ticket"), "hash"),),  # the single-use attach capability, presented to the runner
+    "publish.send": ((("data", "link"), "link"),),  # shown once: the link's token is its only copy
 }
 _LINK = re.compile(r"(https://[^\s#]*)#t=([A-Za-z0-9_-]{43})")
 

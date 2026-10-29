@@ -317,6 +317,11 @@ class _Cut(Exception):
     """A readers or widened list that cannot be shown whole: missing, malformed, over its cap or with a dropped row."""
 
 
+# The hard limits of a review (the host refuses above them, in plain words): below them the whole list is passed on, a
+# longer one is a cut review and no review at all.
+MAX_PEOPLE, MAX_TEAMS, MAX_WIDENED = 500, 200, 200
+
+
 def _names(raw, n: int) -> list[str]:
     if not isinstance(raw, list) or len(raw) > n:
         raise _Cut
@@ -335,8 +340,8 @@ def _readers_view(raw) -> dict:
         raise _Cut
     note, info = raw.get("note"), raw.get("info")
     return {
-        "people": _names(raw.get("people"), 64),
-        "teams": _names(raw.get("teams"), 32),
+        "people": _names(raw.get("people"), MAX_PEOPLE),
+        "teams": _names(raw.get("teams"), MAX_TEAMS),
         "note": display(note)[:80] if isinstance(note, str) else None,
         "info": display(info)[:200] if isinstance(info, str) else None,
     }
@@ -344,7 +349,7 @@ def _readers_view(raw) -> dict:
 
 def _widened_view(raw) -> list[dict]:
     """Items already shared that this change makes reach more people or carry their description, never a cut list."""
-    if not isinstance(raw, list) or len(raw) > 20:
+    if not isinstance(raw, list) or len(raw) > MAX_WIDENED:
         raise _Cut
     out = []
     for w in raw:
@@ -353,8 +358,8 @@ def _widened_view(raw) -> list[dict]:
             raise _Cut
         out.append({
             "line": line[:300],
-            "people_added": _names(w.get("people_added"), 32),
-            "teams_added": _names(w.get("teams_added"), 16),
+            "people_added": _names(w.get("people_added"), MAX_PEOPLE),
+            "teams_added": _names(w.get("teams_added"), MAX_TEAMS),
             "description_added": w.get("description_added") is True,
         })  # fmt: skip
     return out

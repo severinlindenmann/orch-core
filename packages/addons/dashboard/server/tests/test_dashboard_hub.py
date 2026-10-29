@@ -504,7 +504,7 @@ def test_review_passes_readers_with_info_and_widened():
     [
         {
             "widened": [{"line": "ticket PRD-1: T", "people_added": [], "teams_added": [], "description_added": False}]
-            * 21
+            * 201
         },
         {
             "widened": [
@@ -516,7 +516,7 @@ def test_review_passes_readers_with_info_and_widened():
         {"widened": [{"line": "ticket PRD-1: T", "people_added": ["Ana", 7], "teams_added": []}]},
         {"widened": None},
         {"widened": "x"},
-        {"readers": {"people": [f"P{i}" for i in range(65)], "teams": []}},
+        {"readers": {"people": [f"P{i}" for i in range(501)], "teams": []}},
         {"readers": {"people": ["Ben", 5], "teams": []}},
         {"readers": {"people": ["Ben"]}},
         {"readers": None},
@@ -524,6 +524,14 @@ def test_review_passes_readers_with_info_and_widened():
 )
 def test_a_cut_or_malformed_readers_or_widened_list_means_no_review(over):
     assert _review_of(**over) is None
+
+
+def test_a_long_review_below_the_hard_limits_is_passed_on_whole():
+    row = {"line": "ticket PRD-1: T", "people_added": [f"A{i}" for i in range(500)], "teams_added": [],
+           "description_added": False}  # fmt: skip
+    got = _review_of(readers={"people": [f"P{i}" for i in range(500)], "teams": [], "note": "n"}, widened=[row] * 200)
+    assert len(got["readers"]["people"]) == 500 and len(got["widened"]) == 200
+    assert len(got["widened"][0]["people_added"]) == 500
 
 
 def test_a_review_without_readers_or_widened_keys_means_no_review():

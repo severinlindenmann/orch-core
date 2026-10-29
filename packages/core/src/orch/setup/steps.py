@@ -67,7 +67,7 @@ def tty_confirm_text(words: str) -> str:
     )
 
 
-CHECKS = 3
+CHECKS = 1
 
 
 def batch_labels() -> tuple[bytes, ...]:
@@ -96,7 +96,7 @@ def _wipe(buf: bytearray) -> None:
 class Secrets:
     """The device passphrase and the recovery code of ONE session, generated in this process, held in bytearrays and
     wiped when the session ends. ``reveal`` works once (a second call is ``secrets.shown``, 410); ``confirm`` checks
-    three words in core; five wrong tries end the session and the next session draws new secrets.
+    one word in core; five wrong tries end the session and the next session draws new secrets.
 
     Python cannot promise that no copy of a ``str`` survives (the custody API takes ``str``); the copies made by
     :meth:`passphrase` and :meth:`code` are as short-lived as the caller makes them. No secret is ever in a log, an
@@ -140,10 +140,10 @@ class Secrets:
             if self.confirmed:
                 return {"ok": True}
             if not isinstance(given, dict) or set(given) != {str(p) for p in self.positions}:
-                raise SetupError("invalid.input", "words are the three asked positions", field="words")
+                raise SetupError("invalid.input", "words are the asked positions", field="words")
             words = bytes(self._code).decode("ascii").split()
             ok = True
-            for p in self.positions:  # all three are compared, whatever the first said
+            for p in self.positions:  # every asked position is compared, whatever the first said
                 w = given[str(p)]
                 ok &= isinstance(w, str) and w.strip().lower() == words[p - 1]
             del words
@@ -1133,10 +1133,15 @@ class RealPorts:
 
     def trust_why(self, root: Path, *, allow_parent: bool = False) -> str:
         """Why the trust step was skipped, in plain words (shown on the page and in the setup log)."""
-        from .claude_folder import refusal
+        from .claude_folder import claude_installed, refusal
 
+        if not claude_installed(self.env):  # J01-06: the sign card of the first Claude Code start asks again
+            return (
+                "Claude Code is not installed on this computer yet. Install it any time: starting a Claude Code agent "
+                "asks again, and no terminal question is needed."
+            )
         return refusal(self.env, root, allow_parent=allow_parent) or (
-            "Claude Code is not set up yet (never started here): start it once, then turn this on in Settings."
+            "Claude Code is not set up yet (never started here): starting an agent asks again, in the sign card."
         )
 
     def records_setup(self, wid: str, root: Path) -> None:

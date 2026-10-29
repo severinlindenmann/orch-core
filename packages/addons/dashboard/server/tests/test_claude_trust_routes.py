@@ -83,7 +83,29 @@ def test_get_shape(tmp_path, monkeypatch):
         "offered": True,
         "why_not": "",
         "parent_config": "",
+        "agent_needs_consent": False,  # the consent is already there
+        "agent_why_not": "",
     }
+
+
+def test_get_asks_for_the_agent_consent_only_when_it_is_missing_and_possible(tmp_path, monkeypatch):
+    monkeypatch.setattr(claude_trust, "_consented", lambda root: False)
+    monkeypatch.setattr(claude_folder, "config_state", lambda *a, **k: "missing")
+    monkeypatch.setattr(claude_folder, "offered", lambda *a, **k: True)
+    monkeypatch.setattr(claude_folder, "parent_config", lambda *a, **k: "")
+    seen = []
+
+    def refusal(env, root, allow_parent=False):
+        seen.append(allow_parent)
+        return None
+
+    monkeypatch.setattr(claude_folder, "refusal", refusal)
+    body = build(tmp_path).get("/api/w/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/claude-trust").json()
+    assert body["agent_needs_consent"] is True and body["agent_why_not"] == ""
+    assert False in seen  # the card never offers "trust anyway": checked without allow_parent
+    monkeypatch.setattr(claude_folder, "refusal", lambda *a, allow_parent=False, **k: "Found /x/.claude in this folder")
+    body = build(tmp_path).get("/api/w/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/claude-trust").json()
+    assert body["agent_needs_consent"] is False and "Found" in body["agent_why_not"]
 
 
 def test_consent_without_claudes_settings_file_is_not_on(tmp_path, monkeypatch):
@@ -114,6 +136,16 @@ def test_post_creates_the_file_when_claude_has_not_run_yet(tmp_path, monkeypatch
     monkeypatch.setattr(claude_folder, "trust_folder", lambda env, project, allow_parent: made.append(1) or True)
     res = build(tmp_path).post("/api/w/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/claude-trust", json={"allow_parent": False})
     assert res.status_code == 200 and made == [1]
+
+
+def test_post_with_the_config_still_missing_records_the_consent_and_answers_on(tmp_path, monkeypatch):
+    """P03: trust_folder could not make ~/.claude.json (the runner makes it at the first pretrust): the consent is
+    recorded, so the answer is on:true and no "not set up yet" refusal."""
+    monkeypatch.setattr(claude_folder, "grant_consent", lambda env, project, allow_parent: None)
+    monkeypatch.setattr(claude_folder, "config_state", lambda *a, **k: "missing")
+    monkeypatch.setattr(claude_folder, "trust_folder", lambda env, project, allow_parent: False)
+    res = build(tmp_path).post("/api/w/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/claude-trust", json={"allow_parent": False})
+    assert res.status_code == 200 and res.json() == {"on": True}
 
 
 def test_post_grants(tmp_path, monkeypatch):

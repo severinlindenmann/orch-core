@@ -20,8 +20,7 @@ import { Changes, HAS_CHANGES } from './Changes'
 import { hasFeature, isRealHost } from '@/api/features'
 import { diffstat } from '@/api/gates'
 import { GateNotes } from './Gates'
-import { TicketProgress } from './NextStep'
-import { TicketHeader } from './Header'
+import { TicketHeader, TicketProgressLive } from './Header'
 import { FollowupBanner, FollowupLine } from '../schedules/FollowupStrip'
 import { History } from './History'
 import { Overview } from './Overview'
@@ -204,7 +203,7 @@ export function TicketPage({ ticketKey }: { ticketKey: string }) {
       <TicketHeader ticket={ticket} viewer={viewer} sign={setSigning} jump={jump} signing={signPending} />
       <FollowupBanner ticket={ticket} />
       {!wide && <FollowupLine ticket={ticket} />}
-      <TicketProgress ticket={ticket} viewer={viewer} sign={setSigning} jump={jump} signing={signPending} />
+      <TicketProgressLive ticket={ticket} viewer={viewer} sign={setSigning} jump={jump} signing={signPending} />
       <GateNotes ticket={ticket} viewer={viewer} />
       {!wide && <PropertiesStrip ticket={ticket} viewer={viewer} />}
 

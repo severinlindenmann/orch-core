@@ -135,6 +135,16 @@
   border-color: var(--brand);
   font-weight: 600;
 }
+.setup a.primary {
+  display: inline-block;
+  padding: 9px 14px;
+  border: 1px solid var(--brand);
+  background: var(--brand);
+  color: var(--on-brand);
+  border-radius: 8px;
+  font-weight: 600;
+  text-decoration: none;
+}
 .setup button:disabled {
   opacity: 0.5;
   cursor: default;

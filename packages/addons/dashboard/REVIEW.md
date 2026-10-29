@@ -646,7 +646,7 @@ B10 phone approvals (phase 1): on a host with phone/1, pair a phone and allow Ph
 
 Open through `orch setup` after the parallel core branch is integrated. `/setup#launch=<single-use code>` uses the setup process, not mock workspace storage. A normal dashboard launch token is intentionally refused. In development, `/setup` uses the same API; tests provide an in-process fetch fake and a real private Unix socket contract fake.
 
-Review Welcome → You → Agents may → Approval → Secret words → Review, then progress and Done. Check One click disables relay with its reason, recovery words form a numbered four-column/six-row grid, Print includes only recovery words, and confirmed words disappear. Check three-day runner access is one plain click and needs the matching terminal fingerprint. Existing workspaces say “Finish setup” and skip secret screens. Failures show per-step status and a “Finish setup later” path.
+Review Welcome → You → Agents may → Approval → Secret words → Review, then progress and Done. Check One click disables relay with its reason, recovery words form a numbered four-column/six-row grid, Print includes only recovery words, and confirmed words disappear. Check three-day runner access is one plain click; the terminal fingerprint is checked only with Terminal approval (One click has no terminal check). Existing workspaces say “Finish setup” and skip secret screens. Failures show per-step status and a “Finish setup later” path.
 
 ### B9 core-aligned setup (2026-10-16)
 

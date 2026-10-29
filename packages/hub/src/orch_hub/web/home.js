@@ -1,6 +1,7 @@
 import { emptyState, itemKey } from "./feel.js";
 import { renderText } from "./render.js";
 import { newChannelsNotice } from "./phones.js";
+import { privateRows } from "./workspaces.js";
 
 function h(tag, props = {}, ...kids) {
   const el = document.createElement(tag);
@@ -70,6 +71,9 @@ function firstRunHome(d) {
 export function homeView(d) {
   if (!(d.workspaces ?? []).length && !(d.channels ?? []).length && !(d.items ?? []).length) return firstRunHome(d);
   const health = homeSummary(d.workspaces ?? [], d.items ?? [], d.offline ?? []);
+  // P05: a hub admin's count also includes connected workspaces that are private to someone else (the card below stays own only)
+  const hidden = privateRows(d.workspaces ?? [], d.adminWorkspaces);
+  const counted = { ...health, online: health.online + hidden.filter((w) => w.online).length, offline: health.offline + hidden.filter((w) => !w.online).length };
   const workspaces = health.rows;
   const byId = new Map(workspaces.map((w) => [w.workspace_id, w]));
   const offline = new Set(d.offline ?? []);
@@ -134,6 +138,6 @@ export function homeView(d) {
   const notice = d.notice?.nodeType ? d.notice : d.notice ? h("div", { class: "banner", role: "status", text: text(d.notice) }) : null;
   const added = newChannelsNotice(d.newChannels, { remove: (c) => d.actions?.removeChannel(c.channel_id), dismiss: () => d.actions?.dismissNew?.() });
   return [h("h1", { text: "Hello, " + text(d.user?.name ?? "you") }), notice, ...added,
-    h("p", { class: "company-summary", text: health.online + (health.online === 1 ? " workspace" : " workspaces") + " online, " + health.offline + " offline, " + health.waiting + (health.waiting === 1 ? " thing needs you" : " things need you") }),
+    h("p", { class: "company-summary", text: counted.online + (counted.online === 1 ? " workspace" : " workspaces") + " online, " + counted.offline + " offline, " + health.waiting + (health.waiting === 1 ? " thing needs you" : " things need you") }),
     h("div", { class: "home-grid" }, needs, h("div", { class: "home-side" }, sharedCard, spaces, signing))].filter(Boolean);
 }

@@ -646,7 +646,7 @@ async function home() {
     state.menu = false;
     await loadRail();
     const user = state.user;
-    const [ws, needs, sharedRes] = await Promise.all([api("GET", "/me/workspaces"), api("GET", "/me/needs-you"), api("GET", "/me/shared")]);
+    const [ws, needs, sharedRes, adminRes] = await Promise.all([api("GET", "/me/workspaces"), api("GET", "/me/needs-you"), api("GET", "/me/shared"), canAdmin() ? api("GET", "/admin/workspaces") : Promise.resolve({ status: 0, body: {} })]);
     if (!user || state.user !== user) return;
     const mine = state.me && state.channels.find((c) => c.channel_id === state.me.channelId && c.status === "active");
     const workspaces = ws.status === 200 ? ws.body.workspaces : [];
@@ -660,6 +660,7 @@ async function home() {
       items: needs.status === 200 ? needs.body.items : [],
       offline: needs.status === 200 ? needs.body.offline : [],
       workspaces,
+      adminWorkspaces: adminRes.status === 200 ? adminRes.body.workspaces ?? [] : null,
       shared,
       ended,
       channels: state.channels.map((c) => ({ ...c, status: c.status + (state.me?.channelId === c.channel_id ? " (this browser)" : "") })),

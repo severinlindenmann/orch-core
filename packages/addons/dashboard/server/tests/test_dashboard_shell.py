@@ -60,6 +60,7 @@ def test_closed_route_allowlist():
         "/auth/switch",
         "/auth/switch/challenge",
         "/api/w/{ws}/hub/connect",
+        "/api/w/{ws}/hub/refresh",
         "/api/w/{ws}/click/prepare",
         "/api/w/{ws}/click/view",
         "/api/w/{ws}/click/state",
@@ -294,6 +295,36 @@ def test_disabled_dashboard(client, token, stub, p1):
     headers = {"Authorization": f"Bearer {token}"}
     assert client.get("/api/workspaces", headers=headers).json()[0]["host_state"] == "addon.disabled"
     assert client.get(f"/api/w/{stub.ws}/tickets", headers=headers).status_code == 409
+
+
+def test_a_dashboard_paused_by_a_fresh_join_is_reported_as_paused(client, token, stub, p1, gateway, monkeypatch):
+    p1.store.append(p1.person_event(p1.owner, "workspace", "addon.disabled", name="dashboard"), log="workspace")
+    headers = {"Authorization": f"Bearer {token}"}
+    monkeypatch.setattr(type(gateway), "paused_unverified", lambda self, ws: True)
+    assert client.get("/api/workspaces", headers=headers).json()[0]["host_state"] == "addon.paused"
+    assert client.get(f"/api/w/{stub.ws}/tickets", headers=headers).status_code == 409  # still closed, only the words
+
+
+@pytest.mark.parametrize(
+    "row,want",
+    [
+        ({"name": "dashboard", "state": "paused", "paused": {"cause": "unverified"}}, True),
+        ({"name": "dashboard", "state": "paused", "paused": {"cause": "policy"}}, False),
+        ({"name": "dashboard", "state": "disabled"}, False),
+    ],
+)
+def test_paused_unverified_only_for_the_join_pause(row, want):
+    from orch_dashboard.gateway import Gateway
+
+    class Link:
+        def call(self, op):
+            return {"addons": [row]}
+
+    class G:
+        def link(self, ws):
+            return Link()
+
+    assert Gateway.paused_unverified(G(), "W") is want
 
 
 def test_a_plain_text_fix_passes_but_a_structured_one_does_not():

@@ -53,7 +53,7 @@ from .cosmetic_routes import full_session, refused
 from .errors import HostError, fail
 from .gateway import Gateway
 from .market_routes import new_idem
-from .stepup import refuse_step_up
+from .stepup import LOCAL, refuse_step_up, stepup_required
 from .terminals import Idem
 from .text import hidden
 
@@ -335,6 +335,12 @@ def preview_view(raw) -> dict:
     }
 
 
+def _confirmed(got) -> bool:
+    """The hub's first snapshot is pinned (the host answers its version); without one the add-on stays paused."""
+    v = got.get("snapshot_version") if isinstance(got, dict) else None
+    return type(v) is int and v >= 1
+
+
 SEEN_TOKENS = 200  # sessions whose shown plans are remembered
 SEEN_PLANS = 20  # plans remembered per session
 
@@ -491,4 +497,20 @@ def register(app: FastAPI, gateway: Gateway):
         args = {"hub_card": card} | ({"invite": invite} if invite else {}) | ({"addr": body.addr} if body.addr else {})
         got = link.call("hub.connect", args, write=True, idem=body.idem)
         mode = got.get("mode") if isinstance(got, dict) else None
-        return {"connected": True, "mode": mode if mode in MODES else None}
+        return {"connected": True, "mode": mode if mode in MODES else None, "confirmed": _confirmed(got)}
+
+    @app.post("/api/w/{ws}/hub/refresh")
+    def hub_refresh(request: Request, ws: str = Depends(reads.workspace)):
+        """Ask the host for the hub's first (or newest) snapshot again, for a join the hub had not confirmed yet (the
+        add-on stays paused until it is pinned). Same gate as connect: a session that was not opened on this computer
+        is refused; nothing here weakens the pause, the host lifts it only when a verified snapshot is pinned."""
+        if app.state.auth.login_kind(request.state.token) != LOCAL:
+            raise stepup_required("checking with your hub")
+        link = link_for(ws, "hub.refresh", paused_ok=True)
+        try:
+            got = link.call("hub.refresh", {}, write=True, idem=new_idem())
+        except HostError as exc:
+            if exc.error.get("code") in ("hub.not_joined", "not_found", "peer.denied", "addon.disabled"):
+                raise
+            return {"confirmed": False}  # the hub did not answer (yet): the page says so and offers the same button
+        return {"confirmed": _confirmed({"snapshot_version": ((got or {}).get("snapshot") or {}).get("version")})}

@@ -76,8 +76,6 @@ SKIPPED_CHECKS = {
     "audit_ack": "hub audit chain (D4): hub side",
     "ws_card_admission": "hub side (workspace card admission at card_put, protocol 9.5): the hub checks the card",
     "admin_read": "hub admin reads (D3/D4): hub side",
-    "admin_read_row": "hub admin reads (D3/D4): hub side",
-    "admin_read_rows": "hub admin reads (D3/D4): hub side",
     # the hub contract moved ahead of core (orch-core#1036): not replayed yet
     "visible": "core#1036: the host should replay these through model/visibility.can_see",
     "user_hub": "core#1036: hub-side user/hub checks, not replayed by core yet",

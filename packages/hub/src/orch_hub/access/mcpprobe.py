@@ -166,7 +166,11 @@ def _run(url: str, resolve: Callable, connect: Callable) -> tuple[str, str]:
     if not _lookups.acquire(blocking=False):
         raise _Fail("busy")  # too many lookups are stuck already; do not start another thread
     t = threading.Thread(target=_counted, args=(look,), daemon=True)
-    t.start()
+    try:
+        t.start()
+    except BaseException:
+        _lookups.release()  # the thread never ran, so its finally never gives the slot back
+        raise
     t.join(TIMEOUT_S)
     if t.is_alive():
         raise _Fail("timeout")

@@ -343,3 +343,24 @@ def test_an_ipv6_literal_host_is_bracketed_in_the_host_header():
         "https://[2001:4860::1]:8443/", _resolve=lambda h, p: [h], _connect=lambda i, p, h, t: FakeConn(http(200), sent)
     )
     assert b"Host: [2001:4860::1]:8443\r\n" in sent[0]
+
+
+def test_a_lookup_thread_that_cannot_start_gives_its_slot_back(monkeypatch):
+    """Opus delta: if the thread cannot start, the slot is released (else 8 failures would wedge every probe)."""
+    import orch_hub.access.mcpprobe as M
+
+    for _ in range(100):  # lookups left over from earlier tests must be done
+        if M._lookups._value == 8:
+            break
+        time.sleep(0.05)
+    before = M._lookups._value
+
+    def boom(self):
+        raise RuntimeError("can't start new thread")
+
+    monkeypatch.setattr(M.threading.Thread, "start", boom)
+    try:
+        probe(URL, _resolve=lambda h, p: [PUB], _connect=None)  # type: ignore[arg-type]
+    except RuntimeError:
+        pass
+    assert M._lookups._value == before

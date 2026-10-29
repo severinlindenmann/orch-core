@@ -156,6 +156,7 @@ export function createApi(transport: Transport) {
       call<import('./hub').HubAdded>('POST', `/api/w/${ws}/hub/share/rule-add`, { rule, expect }),
     syncHubShare: (ws: string, expect: string) => call<import('./hub').HubAdded>('POST', `/api/w/${ws}/hub/share/sync`, { expect }),
     getHubLink: (ws: string, link: string) => call<import('./hub').HubLinkInfo>('POST', `/api/w/${ws}/hub/link`, { link }),
+    refreshHub: (ws: string) => call<import('./hub').HubRefreshed>('POST', `/api/w/${ws}/hub/refresh`, {}),
     connectHub: (ws: string, body: import('./hub').HubConnectRequest) => call<import('./hub').HubConnected>('POST', `/api/w/${ws}/hub/connect`, body),
     cancelClick: (ws: string, requestId: string) => call<{ id: string; state: string }>('POST', `/api/w/${ws}/click/cancel`, { request_id: requestId }),
     clickStatus: (ws: string) => call<ClickCard>('GET', `/api/w/${ws}/click/status`),

@@ -42,7 +42,7 @@ export function readPref(key: string): AgentPref {
     return base
   }
 }
-function writePref(key: string, p: AgentPref) {
+export function writePref(key: string, p: AgentPref) {
   try {
     localStorage.setItem(key, JSON.stringify(p))
   } catch { /* storage unavailable: the choice is just not remembered */ }

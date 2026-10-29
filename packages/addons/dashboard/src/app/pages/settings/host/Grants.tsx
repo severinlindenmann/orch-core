@@ -20,6 +20,7 @@ import { RunnerGrantCard } from '@/app/terminal/real/StartAgentDialog'
 import { Mono } from '../../ticket/shared'
 import { OwnerNote } from '../OwnerNote'
 import { GrantReveal } from './GrantReveal'
+import { agentPrefKey, readPref, writePref } from '../../new-ticket/useStartPlan'
 import { useViewerPerson, useViewerRole } from './useViewerRole'
 
 /** " (given 9 Oct 11:36)" for the access a follow-up grant came from, when that access is listed; nothing when it is not. */
@@ -123,6 +124,18 @@ function GiveToolAccess({ workspace, onChanged }: { workspace: Workspace; onChan
   )
 }
 
+/** The default of the New ticket button: start an agent or only create (P09). The same per-person, per-workspace choice the form keeps. */
+export function StartDefault({ ws, person }: { ws: string; person: string }) {
+  const key = agentPrefKey(person, ws)
+  const [on, setOn] = useState(() => readPref(key).start)
+  return (
+    <div className="flex items-center gap-2 text-[13px]">
+      <Switch id="start-default" checked={on} onCheckedChange={(v) => { setOn(v); writePref(key, { ...readPref(key), start: v }) }} />
+      <Label htmlFor="start-default" className="font-normal">Start an agent when I create a ticket</Label>
+    </div>
+  )
+}
+
 /** Agent access as the host gives it to this person: an owner sees everyone's, anyone else their own. Stopping is one step: a reason (optional) and one sign button. */
 export function HostGrants({ workspace }: { workspace: Workspace }) {
   const [ended, setEnded] = useState(false)
@@ -150,6 +163,7 @@ export function HostGrants({ workspace }: { workspace: Workspace }) {
       <p className="text-[13px] text-text-muted">
         {role === 'owner' ? 'Who has let agents work in this workspace, and until when.' : 'The access you have given to your agents.'}
       </p>
+      {viewer && hasFeature('agent_start', workspace.id) && <StartDefault ws={workspace.id} person={viewer} />}
       {!grants.data ? (
         <p className="text-[13px] text-text-muted">Reading the agent access…</p>
       ) : (

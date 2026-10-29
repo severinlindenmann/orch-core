@@ -2,7 +2,7 @@ import { FocusButton } from '../focus/FocusButton'
 import { can } from '@/api/permissions'
 import { Link } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
-import { Bot, Check, ChevronDown, CircleHelp, Copy, Loader2, Lock, Share2, Tag, Timer } from 'lucide-react'
+import { Bot, Check, ChevronDown, CircleHelp, Copy, Loader2, Lock, Pencil, Share2, Tag, Timer } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '@/api/client'
 import { runQueries } from '@/api/runs'
@@ -473,6 +473,7 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
     return () => window.removeEventListener(START_EVENT, on)
   }, [ticket.key])
   const av = availableActions(ticket, viewer)
+  const edit = useTicketEdit()
   const { run, wait } = useTicketAgent(ticket, home)
   const needsYou = av.answer.length > 0 || av.approve.length > 0 || !!av.verdict || !!wait
   const mark = useMark(home ?? '', ticket.key)
@@ -512,7 +513,14 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
         )}
       </div>
       <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start">
-        <h1 className="min-w-0 flex-1 text-xl font-semibold leading-tight tracking-tight text-text">{ticket.title}</h1>
+        <h1 className="min-w-0 flex-1 text-xl font-semibold leading-tight tracking-tight text-text">
+          {edit ? (
+            <button type="button" onClick={() => edit({ kind: 'title' })} aria-label={`Change the title: ${ticket.title}`} title="Change the title" className="group inline-flex max-w-full items-baseline gap-2 rounded-sm text-left outline-none hover:text-brand focus-visible:ring-2 focus-visible:ring-ring">
+              <span className="min-w-0">{ticket.title}</span>
+              <Pencil aria-hidden className="size-3.5 shrink-0 opacity-0 transition-opacity group-hover:opacity-70 group-focus-visible:opacity-70" />
+            </button>
+          ) : ticket.title}
+        </h1>
         <div className="flex flex-wrap items-center gap-2 sm:shrink-0">
           <FocusButton ticket={ticket.key} />
           <PrimaryButton ticket={ticket} viewer={viewer} jump={jump} start={start} signing={signing} phase={phase} idle={!!wait || !!gapOf(ticket)} />

@@ -465,6 +465,7 @@ class EditTicket(Action):
     key: Key
     head_seq: Annotated[int, Field(ge=1)]
     sections: dict[SectionId, SectionText] = Field(default_factory=dict, max_length=10)
+    title: Annotated[str, StringConstraints(min_length=1, max_length=200)] | None = None  # r7-P07: the new title
     acceptance: EditAcceptance | None = None
     tasks: EditTasks | None = None
     people: dict[PeopleRole, PeopleChange] | None = None
@@ -501,6 +502,10 @@ class EditTicket(Action):
             }
             if intent["ticket"]["key"] != self.key:
                 raise sequence.SequenceInvalid("the host answered for another ticket")
+            if self.title is not None:
+                title = normalize_text(self.title, one_line=True)
+                if title != doc.get("title"):  # core refuses a title that does not differ; here "unchanged" is no edit
+                    intent["title"] = {"was": doc.get("title"), "text": title}
             if self.acceptance is not None and (self.acceptance.edit or self.acceptance.add):
                 a = self.acceptance
                 was = [{"id": x["id"], "text": x["text"]} for x in doc.get("acceptance") or []]

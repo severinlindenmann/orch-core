@@ -16,9 +16,9 @@ import './setup.css'
 const clickRiskCopy = 'Faster, less safe: anything using this computer as you, including your agents, could approve for you. Choose this only on your own computer.'
 const terminalStepCopy = "One step needs your terminal: you'll press Enter once."
 const voidCopy =
-  'If setup fails before your workspace is created, these secret words and recovery code will no longer work. Run orch setup again to get new ones.'
+  'If setup stops before your workspace is created, these words will no longer work. Start setup again to get new ones.'
 const expiredCopy =
-  'This session has ended. In your terminal, press Enter to open a fresh setup link (or run orch setup again). It starts a new session with new secret words and a new recovery code.'
+  'This session has ended. In your terminal, press Enter to open a fresh setup link (or run orch setup again). It starts a new session with new recovery words.'
 /** A short, secret-free cause for the "session ended" copy: the API code, or `client: Name: message`. */
 export function reasonOf(e: unknown): string {
   if (e instanceof SetupError) return e.code
@@ -89,7 +89,8 @@ export function summarize(review: Review): { lines: string[]; unknown: boolean; 
     else if (item.type === 'settings.changed' && only('set') && f?.set && typeof f.set === 'object' && !Array.isArray(f.set)) {
       const set = f.set as Record<string, unknown>
       const okHours = !('grant_hours' in set) || typeof set.grant_hours === 'number'
-      if (!Object.keys(set).every((k) => k === 'grant_hours') || !okHours) odd(item.title)
+      // `repos` is the project list the workspace keeps itself: nothing the person decides, so no extra row
+      if (!Object.keys(set).every((k) => k === 'grant_hours' || k === 'repos') || !okHours) odd(item.title)
       else {
         if (typeof set.grant_hours === 'number') lines.push(`Agents may work for you for up to ${duration(set.grant_hours)}`)
       }
@@ -97,6 +98,7 @@ export function summarize(review: Review): { lines: string[]; unknown: boolean; 
   }
   for (const flag of review.flags) {
     if (flag.id === 'custody' || flag.id === 'terminal' || flag.id === 'records' || flag.id === 'trust') lines.push(flag.text)
+    else if (flag.id === 'git') continue // shown as the 'Safe copies' row on the card; its detail stays in the fold
     else if (flag.id !== 'runner' && flag.id !== 'terminals') odd(flag.text) // a flag this page does not know is shown
   }
   if (addons.length) lines.push(`Add-ons: ${addons.join(', ')}`)
@@ -132,6 +134,7 @@ export function reviewFacts(review: Review): Fact[] {
   if (agents !== undefined) facts.push({ icon: '✦', label: 'Agents', value: agents })
   const addons = review.items.filter((i) => i.type === 'addon.granted' && i.id !== 'addon:dashboard').map((i) => i.title)
   if (addons.length) facts.push({ icon: '⊞', label: 'Add-ons', value: addons })
+  if (has('git')) facts.push({ icon: '⧉', label: 'Safe copies', value: 'Each ticket gets its own safe copy of this folder. None of your files are changed.' })
   if (has('records')) facts.push({ icon: '◷', label: 'History', value: 'Tickets are saved on this computer only' })
   return facts
 }
@@ -189,7 +192,7 @@ function Words({ words }: { words: string[] | null }) {
     </span>
   )
 }
-const pausedCopy = 'The setup in your terminal has ended. Run orch setup again to start a new session with new secret words.'
+const pausedCopy = 'The setup in your terminal has ended. Run orch setup again to start a new session with new recovery words.'
 const steps = ['Welcome', 'You', 'What agents can do', 'Approval', 'Check words', 'Review']
 /** Finish setup has two screens: what exists and what to add, then the review. */
 const finishSteps = ['Your workspace', 'Review']
@@ -367,7 +370,7 @@ export function ConfirmWords({ words }: { words: string[] | null }) {
       <small className="words-wait">Waiting for you in the setup window…</small>
       <details>
         <summary>Are the words different?</summary>
-        <p>Do not press Enter. Close the setup window, then run orch setup again to start over with new words.</p>
+        <p>Do not press Enter. Close the setup window, then run orch setup again to start over with new recovery words.</p>
       </details>
     </section>
   )
@@ -653,11 +656,11 @@ export function Setup({ api }: { api: SetupAPI }) {
   async function copyRecovery() {
     try {
       await navigator.clipboard.writeText(secrets!.recovery_words.join(' '))
-      setNotice('Recovery code copied. We will try to clear your clipboard in 60 seconds.')
+      setNotice('Recovery words copied. We will try to clear your clipboard in 60 seconds.')
       // Do not retain the secret in a timer closure, or read unrelated clipboard contents.
       setTimeout(clearClipboard, 60_000)
     } catch {
-      setNotice('Copy is unavailable. Write down the recovery code or print it.')
+      setNotice('Copy is unavailable. Write down the recovery words or print them.')
     }
   }
   async function finish() {
@@ -729,7 +732,7 @@ export function Setup({ api }: { api: SetupAPI }) {
             'You',
             'What may agents do here?',
             'How do you want to approve things?',
-            'Your secret words',
+            'Your recovery words',
             'Review your setup',
           ][step]
   return (
@@ -899,7 +902,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                   ),
                 )}
               {offersGit && (
-                <div className="note" role="group" aria-label="Git repository">
+                <div className="note" role="group" aria-label="Safe copies">
                   <p>
                     <strong>This folder does not track changes yet.</strong> Agents need that to work on several
                     tickets at once.
@@ -1082,7 +1085,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                     </section>
                   )}
                   <section className="recovery-print">
-                    <h2>Recovery code</h2>
+                    <h2>Recovery words</h2>
                     <ol className="recovery">
                       {secrets.recovery_words.map((word, i) => (
                         <li key={i}>
@@ -1092,14 +1095,14 @@ export function Setup({ api }: { api: SetupAPI }) {
                     </ol>
                   </section>
                   <div className="segments">
-                    <button onClick={() => void copyRecovery()}>Copy recovery code</button>
-                    <button onClick={() => window.print()}>Print recovery code</button>
+                    <button onClick={() => void copyRecovery()}>Copy recovery words</button>
+                    <button onClick={() => window.print()}>Print recovery words</button>
                   </div>
                   <p role="status">{notice}</p>
                   <p className="warning">{voidCopy}</p>
                   <label>
                     <input type="checkbox" checked={saved} onChange={(e) => setSaved(e.target.checked)} /> I saved my
-                    secret words and recovery code
+                    recovery words
                   </label>
                   <h2>One quick check</h2>
                   <div className="word-check">
@@ -1228,6 +1231,11 @@ export function Setup({ api }: { api: SetupAPI }) {
                 ))}
                 {review.flags.filter((f) => f.detail).map((f) => (
                   <section className="review-item" key={`detail-${f.id}`}>
+                    {f.id === 'git' && (
+                      <p>
+                        <Raw>{f.text}</Raw>
+                      </p>
+                    )}
                     <p>
                       <Raw>{f.detail ?? ""}</Raw>
                     </p>
@@ -1405,7 +1413,7 @@ export async function mount(session: Promise<SetupAPI> = bootstrapSetup()) {
           <summary>Need to set up again?</summary>
           <p>
             In your terminal, press Enter for a fresh link, or run <code>orch setup</code>. It starts a new session with
-            new secret words and a new recovery code.
+            new recovery words.
           </p>
         </details>
         <Reason reason={reason} />

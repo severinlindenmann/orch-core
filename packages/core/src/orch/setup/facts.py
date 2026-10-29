@@ -86,7 +86,7 @@ def catalog(manifest: Callable[[str], bytes] | None = None, *, optional: bool = 
         ),
         "terminals": ("Terminals", "Open a terminal on this computer from the dashboard. It runs as you.", True, True),
         "worktrees": (
-            "Worktrees",
+            "Work copies",
             "Each ticket gets its own copy of your project folder, so agents do not overwrite each other.",
             True,
             False,
@@ -124,7 +124,8 @@ def catalog(manifest: Callable[[str], bytes] | None = None, *, optional: bool = 
         ),
         "quick": (
             "Quick tasks",
-            "Small one-off tasks that skip the usual steps. Off: nobody (you, the CLI or agents) can make new ones.",
+            "Small one-off tasks that skip the usual steps. "
+            "Turn off to stop anyone, agents included, from making new ones.",
             False,
             False,
         ),

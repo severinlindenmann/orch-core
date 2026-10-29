@@ -1045,8 +1045,12 @@ class WebApi(ChangeHandlers, OrgHandlers):
             self.d.access.add_member(ADMIN_GROUP, uid)
             self.d.channels.set_password(uid, b["password"])
             t = self.d.channels.new_totp(uid)
+            s = self.d.channels.open_setup_session(uid)  # before the token is consumed: a failure leaves it usable
             f.unlink(missing_ok=True)  # single use
-        return 200, {"user_id": uid, "totp_secret": t["secret"], "totp_uri": t["uri"]}
+        ttl = max(0, (s["expires_ms"] - self.d.now_ms()) // 1000)
+        attrs = f"{self._cookie_name}={s['token']}; Path=/; HttpOnly; SameSite=Strict; Max-Age={ttl}"
+        cookie = [("Set-Cookie", attrs + ("; Secure" if self.d.secure_cookies else ""))]
+        return 200, {"user_id": uid, "totp_secret": t["secret"], "totp_uri": t["uri"]}, cookie
 
     def _h_hub_card(self, c: Ctx, p: dict, q: dict, b: dict | None):
         """Public: the held card and the ``hub.api_origin`` that names this hub's own API origin (§6.4, L2B-1)."""

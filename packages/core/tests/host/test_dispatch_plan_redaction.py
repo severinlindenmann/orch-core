@@ -159,3 +159,37 @@ def test_the_held_card_and_the_share_plan_digest_are_kept_at_their_paths_only():
     assert card["hub_card"]["o"]["hxk_pub"] == KEY and card["hub_card"]["sig"] == SIG and card["other"] != KEY
     plan = Redactor(None, "share.preview").obj({"data": {"plan": HASH, "items": [HASH]}})["data"]
     assert plan == {"plan": HASH, "items": [Redactor().text(HASH)]} and "[redacted]" in plan["items"][0]
+
+
+# --- one table (review F3): every op outside SECOND_PHASE is answered by its worker phase, redacted -------------------
+
+_ROUTES = (
+    "reads", "records", "workdirs", "readerops", "phonehints", "terms", "agents", "runnergrants", "runners",
+    "transcripts", "worktrees", "publishing", "hubops", "cosmeticops", "shareops", "spaceops", "orgops", "marketops",
+    "peerops",
+)  # fmt: skip
+
+
+def test_every_op_outside_the_table_has_its_worker_answer_redacted(served, monkeypatch):
+    """Whatever route an op takes on the worker, an answer that looks like a plan is redacted unless the op is in
+    ``SECOND_PHASE``: a two-phase op cannot be added anywhere but in the one table."""
+    from orch.host.human import HumanOps
+
+    answer = ok_result({"plan": {"x": TOKEN}})
+    for name in _ROUTES:
+        monkeypatch.setattr(importlib.import_module(f"orch.host.{name}"), "serve", lambda call: answer)
+    for meth in ("_host_op", "_file_op", "_registry"):
+        monkeypatch.setattr(dispatch.RegistryBackend, meth, lambda self, call, *a: answer)
+    monkeypatch.setattr(HumanOps, "serve", lambda self, call, redactor: answer)
+    reached, refused, client = [], {}, served.client()
+    # sub.close: after the (redacted) worker answer, run() closes the subscription named in args, which {} lacks
+    for op in sorted(set(dispatch.served_ops()) - dispatch.TWO_PHASE_OPS - dispatch.WAIT_OPS - {"sub.close"}):
+        res = client.req(op, {}, idem=_idem(op))
+        if res.get("ok"):
+            assert res["result"]["data"] == {"plan": {"x": "[redacted]"}}, op
+            reached.append(op)
+        else:
+            assert TOKEN not in str(res), op
+            refused[op] = res["error"]["code"]
+    assert len(reached) >= 80, refused  # most ops reach the worker as the owner
+    assert set(refused.values()) <= {"human_only", "op.not_allowed", "grant.required"}, refused  # refused before it

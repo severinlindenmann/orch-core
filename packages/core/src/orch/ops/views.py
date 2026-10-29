@@ -71,6 +71,32 @@ def gap_commands(view: Any, gate: str) -> list[tuple[str, str]]:
     return out
 
 
+def gate_missing(view: Any, gate: str) -> bool:
+    """Does an approval of ``gate`` still lack anything (an artifact included)? ``False``: it waits for the person."""
+    return bool(view.gates[gate].missing)
+
+
+def open_gates(view: Any) -> list[str]:
+    """Every gate of ``requirements`` and ``plan`` that applies and is not approved, in order."""
+    return [g for g in ("requirements", "plan") if view.gates[g].applies and not view.gates[g].approved]
+
+
+def refine_hint(view: Any) -> str | None:
+    """While a gate is open: the command that fills the first gap of any open gate, else ``orch wait`` (every open gate
+    is complete and waits for the person, who approves it in the dashboard; the same session builds afterwards, run-9
+    J04). ``None`` when no gate is open. A gap that is only an artifact has no command: ``orch show``."""
+    gates = open_gates(view)
+    if not gates:
+        return None
+    for g in gates:
+        hint = fill_hint(view, g)
+        if hint:
+            return hint
+    if any(gate_missing(view, g) for g in gates):
+        return "orch show"  # it lacks only what has no one-line command (an artifact): nothing to wait for yet
+    return "orch wait"
+
+
 def fill_hint(view: Any, gate: str) -> str | None:
     """The command that supplies the first thing an approval of ``gate`` still lacks, or ``None`` when it lacks nothing
     (or lacks only an artifact, which has no one-line command)."""
@@ -110,6 +136,8 @@ def next_hint(view: Any, session: str | None = None) -> str:
     if any(q.blocking for q in open_questions(view)):
         return "orch wait"
     t = next_task(view, session)
+    if t is not None and t.state != "started" and refine_hint(view) == "orch wait":
+        return "orch wait"  # run-9 J04: every open gate is complete; wait for the approval, then build in this session
     if t is not None:
         if t.state == "started":
             verify = next((x["verify"] for x in view.fields["tasks"] if x["id"] == t.id), None)
@@ -120,7 +148,7 @@ def next_hint(view: Any, session: str | None = None) -> str:
         if g is None:
             return "orch submit"
         # an incomplete gate cannot be approved yet; a complete one is approved by the person in Approvals: no question
-        return fill_hint(view, g) or "orch wait"
+        return fill_hint(view, g) or ("orch show" if gate_missing(view, g) else "orch wait")
     g = open_gate(view)
     if (
         g is not None
@@ -129,7 +157,7 @@ def next_hint(view: Any, session: str | None = None) -> str:
         and session
         and in_family(session, view.claim.session)
     ):
-        return fill_hint(view, g) or "orch show"
+        return refine_hint(view) or "orch show"
     return "orch show"
 
 

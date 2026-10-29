@@ -468,6 +468,8 @@ def publish_request(
     hub: str = HUB_ID,
     nonce: bytes = NONCE,
     wsk_signs_approval: Any = "same",
+    target: str = PUB_TARGET,
+    method: str = "PUT",
 ) -> dict[str, Any]:
     """A hub-path request. ``wsk_signs_approval`` is the approval the host's WSK signature commits to ("same" = the
     one attached); a different value models a hub that attached or swapped an approval after the host signed."""
@@ -475,7 +477,7 @@ def publish_request(
     if appr == "default":
         appr = approval(body=body, nonce=nonce, ts=ts)
     committed = appr if wsk_signs_approval == "same" else wsk_signs_approval
-    pbytes = H.hub_path_signed_bytes(ws, ts, nonce, "PUT", PUB_HOST, PUB_TARGET, body, hub, committed)
+    pbytes = H.hub_path_signed_bytes(ws, ts, nonce, method, PUB_HOST, target, body, hub, committed)
     headers = {
         "Orch-Workspace": WS_A,
         "Orch-Ts": str(ts),
@@ -487,9 +489,9 @@ def publish_request(
     if appr is not None:
         headers["Orch-Owner-Approval"] = b64u(cj(appr))
     return {
-        "method": "PUT",
+        "method": method,
         "host": PUB_HOST,
-        "target": PUB_TARGET,
+        "target": target,
         "headers": headers,
         "body_hex": body.hex(),
         "access": access,
@@ -3552,6 +3554,24 @@ def build() -> dict[str, Any]:
     pb = {**base, "workspace_id": WS_A, "cards": cards, "hub_card": c, "bindings": {WS_A: [{"binding": b1}]}}
     ok_pub = {"ok": {"workspace": WS_A, "hub": HUB_ID, "approved": True}}
     case("publish_public_with_approval", "publish", {**pb, "request": publish_request()}, ok_pub, 2)
+    app_target = f"/v1/ws/{WS_A}/apps/{fake16('app_1')}/commit"
+    app_body = b'{"op":"commit"}'
+    case(
+        "app_commit_through_legacy_check_without_approval",
+        "publish",
+        {**pb, "request": publish_request(appr=None, access=None, body=app_body, target=app_target, method="POST")},
+        {"error": "approval_required"},
+        2,
+        "M4 S0 review M2: an app commit/rollback/start route needs the approval whatever the access",
+    )
+    case(
+        "publish_approval_without_hub_id_on_the_hub_path",
+        "publish",
+        {**pb, "request": publish_request(appr=approval(hub_id=None))},
+        {"error": "other_hub"},
+        2,
+        "M4: a direct-path approval (hub_id null) never verifies through a hub",
+    )
     case(
         "publish_secret_without_approval",
         "publish",

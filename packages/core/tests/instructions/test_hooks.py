@@ -355,3 +355,98 @@ def test_the_raw_print_rule_is_only_for_the_stop_event(ws):
     out = io.StringIO()
     main(["instructions", "hook", "session-start"], env=ws.env(), stdout=out, stderr=io.StringIO())
     assert not out.getvalue().startswith("{")
+
+
+# ---------------------------------------------- run-9 J04: a complete gate waits for the person, the session stays
+
+
+def _complete_gate(ws) -> str:
+    """Fill everything the open gates lack, so they wait only for the person's approval."""
+    from orch.ops import views
+
+    cli = _claimed(ws)
+    for _ in range(16):
+        hint = views.refine_hint(ws.view("1"))
+        if hint == "orch wait":
+            break
+        args = hint.split()[1:]
+        assert cli(*[("x" if a == "TEXT" else a) for a in args]).code == 0, args
+    v = ws.view("1")
+    assert views.refine_hint(v) == "orch wait"
+    return views.open_gate(v)
+
+
+def test_stop_sends_the_agent_to_orch_wait_while_a_complete_gate_waits_for_the_person(ws):
+    gate = _complete_gate(ws)
+    code, out, err = _stop(ws)
+    assert code == 0 and err == "", err
+    doc = json.loads(out)
+    assert doc["decision"] == "block" and set(doc) == {"decision", "reason"}
+    reason = doc["reason"]
+    assert f"{gate} gate of DEMO-0001" in reason and "orch wait" in reason
+    assert "this session" in reason  # the same session builds after the approval
+    assert "approve?" not in reason
+    assert _stop(ws, active=True) == (0, "", "")  # at most once per stop
+
+
+def test_next_hint_waits_for_the_person_while_a_complete_gate_is_open(ws):
+    from orch.ops import views
+
+    _complete_gate(ws)
+    v = ws.view("1")
+    assert views.next_hint(v, v.claim.session) == "orch wait"
+
+
+def test_refine_hint_says_show_not_wait_when_only_an_artifact_is_missing(monkeypatch):
+    # Opus r9-build 3: an artifact-only gap has no one-line command and is not ready for approval: no "orch wait"
+    from types import SimpleNamespace as N
+
+    from orch.ops import views
+
+    gate = N(applies=True, approved=False, missing=["artifact:screenshot"])
+    view = N(gates={"requirements": N(applies=True, approved=True, missing=[]), "plan": gate})
+    assert views.refine_hint(view) == "orch show"
+    gate.missing = []
+    assert views.refine_hint(view) == "orch wait"
+
+
+def test_next_hint_says_show_when_all_tasks_are_done_and_only_an_artifact_is_missing():
+    from types import SimpleNamespace as N
+
+    from orch.ops import views
+
+    gate = N(applies=True, approved=False, missing=["artifact:screenshot"])
+    view = N(
+        status="started",
+        questions=[],
+        tasks=[N(id="t1", state="done", leased_by=None)],
+        gates={"requirements": N(applies=True, approved=True, missing=[]), "plan": gate},
+    )
+    assert views.next_hint(view, "s1") == "orch show"
+    gate.missing = []
+    assert views.next_hint(view, "s1") == "orch wait"
+
+
+def test_submit_hint_says_show_when_only_an_artifact_is_missing():
+    from types import SimpleNamespace as N
+
+    import pytest
+
+    from orch.ops.commands import submit
+    from orch.ops.errors import OrchError
+    from orch.store import StoreError
+
+    gate = N(applies=True, approved=False, missing=["artifact:screenshot"])
+    view = N(status="started", gates={"requirements": N(applies=True, approved=True, missing=[]), "plan": gate})
+
+    def add(_ev):
+        raise StoreError("submit.incomplete", "plan not approved")
+
+    p = N(add=add, last_view=view)
+    with pytest.raises(OrchError) as e:
+        submit.build(None, p, {})
+    assert e.value.hint == "orch show"
+    gate.missing = []
+    with pytest.raises(OrchError) as e:
+        submit.build(None, p, {})
+    assert e.value.hint == "orch wait"

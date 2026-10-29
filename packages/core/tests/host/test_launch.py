@@ -13,6 +13,11 @@ from orch.runner.config import ConfigError, RunnerConfig, parse, read_config
 
 LOGIN = RunnerConfig()
 
+REFINE = (
+    "Run orch status, then refine ticket ORC-7. When the gates are complete, run orch wait until the person approves;"
+    " then build the ticket in this session. Follow AGENTS.orch.md."
+)
+
 
 def test_codex_and_claude_argv_through_the_login_shell():
     argv, login, program = launch_argv("codex", "work", None, "ORC-7", LOGIN)
@@ -26,7 +31,7 @@ def test_codex_and_claude_argv_through_the_login_shell():
         "opus",
         "--session-id",
         "@orch-session-id",
-        "Run orch status, then refine ticket ORC-7. Follow AGENTS.orch.md.",
+        REFINE,
     ]
     argv, _, _ = launch_argv("claude-code", "refine", "opus", "ORC-7", LOGIN, workdir=True)
     assert argv[4:] == [
@@ -42,7 +47,7 @@ def test_codex_and_claude_argv_through_the_login_shell():
         "@orch-mcp",
         "--append-system-prompt-file",
         "@orch-rules",
-        "Run orch status, then refine ticket ORC-7. Follow AGENTS.orch.md.",
+        REFINE,
     ]
     assert LOGIN_EXEC == 'exec "$0" "$@"'
 
@@ -195,3 +200,13 @@ def test_delegate_false_adds_one_equals_flag_before_the_prompt_for_claude_only()
     assert not any(
         a.startswith("--disallowedTools") for a in launch_argv("codex", "work", None, "ORC-7", LOGIN, delegate=False)[0]
     )
+
+
+def test_the_refine_prompt_keeps_the_session_for_the_build():
+    # run-9 J04: "refine ticket X" read as "this session is only for refining"; the agent stopped before the approval
+    from orch.host.launch import prompt
+
+    text = prompt("refine", "ORC-7")
+    assert text.startswith("Run orch status, then refine ticket ORC-7.")
+    assert "orch wait" in text and "build" in text and "this session" in text
+    assert text.endswith("Follow AGENTS.orch.md.")

@@ -96,3 +96,21 @@ test("P03: a nameless workspace uses its owner's name; a workspace session expla
   assert.match(t, /You came here from a workspace/);
   assert.doesNotMatch(t, /Register this browser/);
 });
+
+test("P07: Shared tickets card lists tickets shared with me with workspace and who shared; hidden when none", () => {
+  const ws = [{ workspace_id: "w1", name: "Product", online: true, mode: "selective" }];
+  const textOf = (out) => out.flat().map((n) => n.textContent).join("\n");
+  const none = homeView({ workspaces: ws, items: [], shared: [], actions: {} });
+  assert.doesNotMatch(textOf(none), /Shared tickets/);
+  let opened;
+  const out = homeView({ workspaces: ws, items: [], actions: { open: (id) => { opened = id; } },
+    shared: [{ workspace_id: "w1", key: "PW-1", title: "Invoice CSV export", shared_by: "Anna" }] });
+  const t = textOf(out);
+  assert.match(t, /Shared tickets \(1\)/);
+  assert.match(t, /Invoice CSV export/);
+  assert.match(t, /Product · shared by Anna/);
+  const all = (n) => [n, ...n.children.flatMap(all)];
+  const open = out.flatMap(all).filter((n) => n.tag === "button" && n.textContent === "Open" && n.listeners.click);
+  open[0].listeners.click();
+  assert.equal(opened, "w1");
+});

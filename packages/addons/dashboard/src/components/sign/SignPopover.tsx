@@ -1,11 +1,12 @@
 import type { Workspace } from '@/api/types'
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { Children, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useRouter } from '@tanstack/react-router'
 import { toast } from 'sonner'
 import { api } from '@/api/client'
 import { queries } from '@/api/queries'
 import type { HandoffAction, HandoffRequest, HandoffState } from '@/api/handoff'
+import { ReviewShown } from './AccessSelect'
 import { clickEligible, clickReady, DEPOSIT_RISK } from '@/api/click'
 import { scheduleKey, type ScheduleList } from '@/api/schedules'
 import { useWorkspace } from '@/app/workspace'
@@ -47,6 +48,10 @@ export interface SignPopoverProps {
   hint?: string | null
   /** The form, before the request exists. */
   children?: ReactNode
+  /** The caller read `trustedPress(e.nativeEvent)` in its own click/keydown handler: true opens the host's review at once, false keeps the idle box. Absent: the ambient press flag decides (legacy). A remount without it prepares nothing. */
+  autoStart?: boolean
+  /** With `autoStart`: the opening press also starts the 1 s arm (one click signs after the countdown). Never for a review with risk lines (they need their own press). */
+  armOnStart?: boolean
   /** Choices that are part of what is signed (agent access length): shown above the review in every state but signing. A change of `action` needs a new key on this component, which prepares again. */
   controls?: ReactNode
   /** A plain-words summary above the review, in every state but signing. Unlike `controls` it never holds back the preparation. */
@@ -131,10 +136,19 @@ export function SignPopover(p: SignPopoverProps) {
   const story = sequenceStart ? { signLabel: 'Sign and start agent', steps: [] } : storyOf(p.action, { startsAgent: p.startsAgent, person: me?.person })
   const canClick = clickReady(here) && (!p.action || clickEligible(p.action))
   const started = useRef(false)
+  // A form is real children only: an array of `false` (approve) is none.
+  const hasForm = Children.toArray(p.children).length > 0
   useLayoutEffect(() => {
-    if (!viaHub && canClick && p.action && !p.children && (!p.controls || (p.action.action === 'new_sequence' && !!p.action.launch)) && !p.hint && !started.current && takeTrustedPress()) {
+    if (!viaHub && canClick && p.action && !hasForm && (!p.controls || sequenceStart) && !p.hint && !started.current) {
+      // Run-9 J04: "Create and start" opens straight on the host's review, so ONE press in the sign box signs what is
+      // shown. It prepares only: the "Create and start" click never counts as that press (never armed, Opus r9-build 1).
+      // P06: an explicit `autoStart` (read in the caller's own handler) replaces the ambient flag, which is consumed either way.
+      const ambient = takeTrustedPress()
+      const open = p.autoStart ?? ambient
+      if (!open && !sequenceStart) return
       started.current = true
-      void click.start(p.action)
+      const arm = p.autoStart === undefined ? ambient : open && p.armOnStart === true
+      void click.start(p.action, 0, sequenceStart ? false : arm)
     }
   })
   useEffect(() => {
@@ -179,7 +193,7 @@ export function SignPopover(p: SignPopoverProps) {
     </SignShell>
   }
   return <SignShell inline={p.inline} anchor={anchor} open={!folded} onDismiss={() => void close()} title={<SignerHeadline view={click.view?.view ?? {}} fallback={<Inline>{p.title}</Inline>} />} showClose onOpenAutoFocus={e => { e.preventDefault(); (p.initialFocus?.() ?? cancelRef.current)?.focus() }}>
-    {(!sequenceStart || !click.view || click.view.view.risk_lines?.includes(DEPOSIT_RISK)) && p.controls}{p.lead}{!click.view && p.summary}
+    {(!sequenceStart || !click.view || click.view.view.risk_lines?.includes(DEPOSIT_RISK)) && <ReviewShown.Provider value={!!click.view}>{p.controls}</ReviewShown.Provider>}{p.lead}{!click.view && p.summary}
     {/* The switch is read before the press; a request already open keeps its review (the signer refuses it if the switch moved). */}
     {!canClick && click.phase === 'idle' ? <><p>One click is not ready on this computer.</p>{router && <Link to="/settings/$tab" params={{ tab: 'general' }} onClick={() => void close()}>Turn on One click</Link>}<div className="flex justify-end">{dismiss('Close')}</div></> : <>
       {click.phase === 'idle' && <>{p.children}{p.hint && <p>{p.hint}</p>}<div className="flex flex-wrap justify-end gap-2">{dismiss('Cancel')}<Button disabled={!p.action || !!p.hint} onClick={e => { if (trustedPress(e.nativeEvent) && p.action) void click.start(p.action) }}>{p.confirmLabel ?? story?.signLabel ?? p.title}</Button></div></>}

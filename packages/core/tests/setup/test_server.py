@@ -414,7 +414,6 @@ def test_the_page_coming_back_clears_the_notice(srv):
 
 def test_relink_refuses_old_token_and_gives_new_words(srv):
     from .conftest import PROFILE
-    from .test_secrets import words_for
 
     path, old, _ = claimed(srv)
     api = lambda m, r, b=None, t=old: call(path, m, "/api/setup/" + r, b, token=t)  # noqa: E731
@@ -439,7 +438,7 @@ def test_relink_refuses_old_token_and_gives_new_words(srv):
     assert new("POST", "profile", PROFILE)[0] == 200
     again = new("POST", "secrets/reveal", {})[1]
     assert again["recovery_words"] != shown["recovery_words"]  # NEW words, never the old ones
-    assert words_for(again)  # and the new page can go on
+    assert again["recovery_words"]  # and the new page can go on
 
 
 def test_relink_never_replaces_a_run_in_progress(srv):

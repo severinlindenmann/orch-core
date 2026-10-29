@@ -18,7 +18,6 @@ from orch.setup.protocol import SetupError
 from .conftest import PROFILE, make_env
 from .fakes import FakePorts
 from .helpers import call
-from .test_secrets import words_for
 
 
 @pytest.fixture(autouse=True)
@@ -132,7 +131,7 @@ def test_the_whole_command_over_the_socket(tmp):
             api = lambda m, r, b=None: call(sock, m, "/api/setup/" + r, b, token=tok)  # noqa: E731
             assert api("POST", "profile", {**PROFILE, "addons": ["dashboard", "quick"]})[0] == 200
             st, rev, _ = api("POST", "secrets/reveal", {})
-            assert api("POST", "secrets/confirm", {"words": words_for(rev)})[1] == {"ok": True}
+            assert api("POST", "secrets/confirm", {"acknowledged": True})[1] == {"ok": True}
             assert api("POST", "secrets/reveal", {})[0] in (409, 410)
             st, rv, h = api("POST", "review", {})
             ports.expect(wait_flow().review.plan)
@@ -193,8 +192,8 @@ def test_ctrl_c_before_the_run_starts_stops_between_steps(tmp):
     f.dispatch("POST", "profile", {}, {**PROFILE, "addons": ["dashboard"]})
     from .test_secrets import reveal
 
-    r = reveal(f)
-    f.dispatch("POST", "secrets/confirm", {}, {"words": words_for(r)})
+    reveal(f)
+    f.dispatch("POST", "secrets/confirm", {}, {"acknowledged": True})
     rv = f.dispatch("POST", "review", {}, {})[1]
     ports.expect(f.review.plan)
     f.cancel_run()

@@ -717,7 +717,7 @@ describe('sheet risk notice', () => {
     const d = await screen.findByTestId('grant-risk-details')
     expect(d).toHaveTextContent('Runs as you on this computer')
     expect(d).not.toHaveAttribute('open')
-    expect(d).toHaveTextContent('standing authority')
+    expect(d).toHaveTextContent('could use this access while it lasts')
   })
   it('acknowledged: quiet line only; unreadable answer: full notice (fail closed)', async () => {
     s.notices.mockResolvedValue({ acknowledged: { grant: true } })

@@ -506,8 +506,7 @@ def _walk(ws, post, get, fail, thread, box, pty_run, rules, fp, problems, deadli
     }  # fmt: skip
     post(api + "profile", profile, token)
     secrets = post(api + "secrets/reveal", None, token)
-    words = {str(p): secrets["recovery_words"][p - 1] for p in secrets["check_positions"]}
-    if not post(api + "secrets/confirm", {"words": words}, token).get("ok"):
+    if not post(api + "secrets/confirm", {"acknowledged": True}, token).get("ok"):
         raise fail("the recovery words were refused")
     ws.passphrase = secrets["passphrase"]
     ws.recovery_code = " ".join(

@@ -23,6 +23,7 @@ from . import relay_proto as proto
 from .auth import WINDOW_MS, Refusal
 
 SUITE_ID = 2
+LABEL_DIRECT = b"orch/v2/publish|"  # sig_publish, v2 12.1
 HV = 0
 CLOCK_SKEW_MS = 300_000
 MODES = ("selective", "full")
@@ -40,6 +41,11 @@ LABELS = {
     "sig_hub_publish_approval": b"orch/v2/sig/hub-publish-approval|",
     "h_hub_id": b"orch/v2/id/hub|",
     "h_hub_publish_request": b"orch/v2/hub-publish-request|",
+    "h_publish_request_direct": b"orch/v2/publish-request|",
+    "h_app_meta": b"orch/v2/app-meta|",
+    "h_app_reach": b"orch/v2/app-reach|",
+    "sig_hub_release_narrow": b"orch/v2/hub-release-narrow|",
+    "sig_hub_app_pass": b"orch/v2/hub-app-pass|",
 }
 
 # HTTP status of every code this module raises (contracts/hub/protocol.md 11.2, 14); anything else is 400.
@@ -66,6 +72,14 @@ STATUS = {
     "reader_downgrade": 409,
     "held_card_invalid": 409,
     "stale_op_cert": 409,
+    "meta_mismatch": 409,
+    "file_mismatch": 409,
+    "not_found": 404,
+    "expired": 401,
+    "pass_too_long": 400,
+    "bad_nonce": 401,
+    "not_company_app": 403,
+    "audience_mismatch": 403,
 }
 
 # Which requests grant public access (11.2: "F1 fixes the list"). Today no route does: shares are `secret`
@@ -216,12 +230,35 @@ FIELDS = {
         "unbound_ms": _int_min(0),
         "dev": _bool,
     },
+    # hub_id is null on the direct (12.1) path; access is what the request grants (M4, protocol 11.4)
     "hub.publish_approval": {
         "workspace_id": _hex16,
-        "hub_id": _hex16,
+        "hub_id": lambda x: x is None or _hex16(x),
         "device_id": _hex16,
         "request_hash": _b64u32,
-        "access": _enum("public"),
+        "access": _enum("public", "password", "company", "group"),
+    },
+    # M4 (protocol 11.6, 11.8): signed by the hub's HK_op; checked in published.py
+    "hub.release_narrow": {
+        "hub_id": _hex16,
+        "workspace_id": _hex16,
+        "target": _enum("share", "app"),
+        "id": _hex16,
+        "action": _enum("revoke", "stop"),
+        "ts_ms": _int_min(0),
+        "nonce": _b64u32,
+    },
+    "hub.app_pass": {
+        "hub_id": _hex16,
+        "workspace_id": _hex16,
+        "app_id": _hex16,
+        "audience": lambda x: (
+            type(x) is str
+            and re.fullmatch(r"company|group:[a-z0-9][a-z0-9_-]{0,39}|ws:[0-9a-f]{32}", x)
+            is not None
+        ),
+        "nonce": _b64u32,
+        "exp_ms": _int_min(1),
     },
 }
 
@@ -429,6 +466,11 @@ def hub_path_signed_bytes(ws, ts_ms, nonce, method, host, target, body, hub_hex,
     )
 
 
+def direct_signed_bytes(ws, ts_ms, nonce, method, host, target, body):
+    """What WSK signs on the direct v2 12.1 path (no hub, and the approval header is not covered)."""
+    return LABEL_DIRECT + _request_fields(ws, ts_ms, nonce, method, host, target, body)
+
+
 def hub_publish_bytes(hub_hex, wsk_bytes):
     """What HK_op signs when forwarding: the exact hub-path WSK bytes, by hash, bound to the hub."""
     return (
@@ -445,22 +487,26 @@ def publish_request_hash(ws, ts_ms, nonce, method, host, target, body, hub_hex):
     )
 
 
-def parse_headers(headers, method, host, target):
-    """11.2 step 1. `headers` maps lower-case names to str. Returns a dict of the parsed fields."""
+def parse_headers(headers, method, host, target, direct=False):
+    """11.2 step 1. `headers` maps lower-case names to str. Returns a dict of the parsed fields. `direct` (M4, the v2
+    12.1 path of protocol 11.4): no `Orch-Hub` / `Orch-Hub-Signature`; `hub` and `hsig` are None."""
     try:
         h = {str(k).lower(): v for k, v in headers.items()}
         ts_s = h["orch-ts"]
         if not isinstance(ts_s, str) or not _TS.fullmatch(ts_s):
             raise ValueError("ts")
-        hub = h["orch-hub"]
-        proto.unhex(hub, 16)
+        hub = hsig = None
+        if not direct:
+            hub = h["orch-hub"]
+            proto.unhex(hub, 16)
+            hsig = proto.unb64u(h["orch-hub-signature"], 64)
         out = {
             "ws": proto.unhex(h["orch-workspace"], 16),
             "ts": int(ts_s),
             "nonce": proto.unhex(h["orch-nonce"], 16),
             "wsig": proto.unb64u(h["orch-signature"], 64),
             "hub": hub,
-            "hsig": proto.unb64u(h["orch-hub-signature"], 64),
+            "hsig": hsig,
             "approval": None,
         }
         if "orch-owner-approval" in h:
@@ -604,6 +650,27 @@ def check_hub_publish(req, st, nonces, now_ms, dev_mode):
     if not nonces.record(wsx, p["nonce"].hex(), now_ms):  # 8
         raise Refused("replay")
     approval = p["approval"]  # 9
+    from .published import app_route, check_app_approval  # late: published imports this module
+
+    route = app_route(method, target.partition("?")[0])
+    if route is not None and route["approval"]:
+        if approval is None:
+            raise Refused(
+                "approval_required"
+            )  # before the body is read (vector app_commit_through_legacy_check)
+        # an app commit, rollback or start never goes live unapproved (M4); one parse of the body serves both this
+        # check and the release check (the caller reads info["body"])
+        info = check_app_approval(
+            {
+                "method": method, "host": host, "target": target, "body": body, "ws": wsx,
+                "ts_ms": p["ts"], "nonce": p["nonce"], "hub": hub,
+            },
+            approval,
+            owner_person_id=card["owner_person_id"],
+            now_ms=now_ms,
+            revoked_devices=st.revoked_devices,
+        )  # fmt: skip
+        return {"workspace": wsx, "hub": hub, "approved": True, "app_approval": info}
     if approval is None:
         if req.get("access") == "public":
             raise Refused("approval_required")
@@ -619,6 +686,51 @@ def check_hub_publish(req, st, nonces, now_ms, dev_mode):
         st.revoked_devices,
     )
     return {"workspace": wsx, "hub": hub, "approved": True}
+
+
+def check_direct_publish(req, st, nonces, now_ms):
+    """The same request on the direct v2 12.1 path (M4, protocol 11.4): no hub, no binding. Steps 1-4 and 8 of 11.2
+    with the 12.1 signed bytes (label `orch/v2/publish|`), then step 9 with `hub_id` null. Only app routes reach it
+    (the caller decides); an approval on a route that takes none is `bad_approval`. Returns {workspace, hub: None,
+    approved, app_approval?}."""
+    method, host, target, body = req["method"], req["host"], req["target"], req["body"]
+    if type(body) is not bytes:
+        raise Refused("malformed")
+    p = parse_headers(req["headers"], method, host, target, direct=True)  # 1
+    check_window(p["ts"], now_ms)  # 2
+    ws, wsx = p["ws"], p["ws"].hex()
+    card = st.cards.get(wsx)  # 3
+    if card is None:
+        raise Refused("unknown_workspace")
+    wsk = proto.unb64u(card["wsk_pub"], 65)
+    signed = direct_signed_bytes(ws, p["ts"], p["nonce"], method, host, target, body)
+    if not proto.SUITE.verify(wsk, p["wsig"], signed):
+        raise Refused("bad_signature")  # 4
+    if not nonces.record(wsx, p["nonce"].hex(), now_ms):  # 8
+        raise Refused("replay")
+    from .published import app_route, check_app_approval
+
+    route = app_route(method, target.partition("?")[0])
+    approval = p["approval"]  # 9
+    if route is not None and route["approval"]:
+        if approval is None:
+            raise Refused(
+                "approval_required"
+            )  # before the body is read (vector app_commit_through_legacy_check)
+        info = check_app_approval(
+            {
+                "method": method, "host": host, "target": target, "body": body, "ws": wsx,
+                "ts_ms": p["ts"], "nonce": p["nonce"], "hub": None,
+            },
+            approval,
+            owner_person_id=card["owner_person_id"],
+            now_ms=now_ms,
+            revoked_devices=st.revoked_devices,
+        )  # fmt: skip
+        return {"workspace": wsx, "hub": None, "approved": True, "app_approval": info}
+    if approval is not None:
+        raise Refused("bad_approval")
+    return {"workspace": wsx, "hub": None, "approved": False}
 
 
 # --- SQLite store -----------------------------------------------------------------------------------------------

@@ -7,6 +7,7 @@ import contextlib
 import os
 import stat
 import time
+from collections.abc import Iterable
 from pathlib import Path
 
 from orch.posixmod import posixmod
@@ -14,7 +15,7 @@ from orch.posixmod import posixmod
 pwd = posixmod("pwd")
 grp = posixmod("grp")
 
-__all__ = ["make_private_dir", "others_can_write", "tighten"]
+__all__ = ["make_private_dir", "others_can_write", "privatize", "setup_paths", "tighten"]
 
 _WRITE_OTHER = 0o002
 _WRITE_GROUP = 0o020
@@ -110,3 +111,43 @@ def make_private_dir(path: str | os.PathLike[str]) -> Path:
             os.chmod(d, 0o700)  # umask-proof (the mkdir mode is masked)
     tighten(p)
     return p
+
+
+def privatize(paths: Iterable[str | os.PathLike[str]], uid: int) -> list[Path]:
+    """Setup-only repair: remove group/other WRITE from each of these exact directories, only where ``uid`` owns it.
+
+    Each path is opened ``O_DIRECTORY|O_NOFOLLOW`` and judged on the descriptor (a link, a file, a directory of root or
+    of another user is skipped and left for the strict custody check to refuse). Only the 0o022 bits are removed, never
+    added; nothing is created, nothing below or above the path is touched, ACLs are not changed. Returns the changed
+    directories. A failure on one path never stops the others."""
+    changed: list[Path] = []
+    for raw in paths:
+        path = Path(raw)
+        try:
+            fd = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0))
+        except OSError:
+            continue  # missing, a link, not a directory, no access
+        try:
+            st = os.fstat(fd)
+            mode = stat.S_IMODE(st.st_mode)
+            if stat.S_ISDIR(st.st_mode) and st.st_uid == uid and mode & 0o022:
+                os.fchmod(fd, mode & ~0o022)
+                changed.append(path)
+        except OSError:
+            pass
+        finally:
+            os.close(fd)
+    return changed
+
+
+def setup_paths(root: Path, store: Path, state: Path, home: Path) -> list[Path]:
+    """The ONE list of directories setup makes private: shown in the signed review and changed by the run."""
+    return [root, store, state, home / ".local" / "share" / "orch", home / ".config", home / ".local"]
+
+
+def shown(path: Path, home: Path) -> str:
+    """A path in words for the review: under the home folder as ``~/...``."""
+    try:
+        return "~/" + path.relative_to(home).as_posix()
+    except ValueError:
+        return str(path)

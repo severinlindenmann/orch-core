@@ -121,7 +121,9 @@ class BackupService:
             d = json.loads(raw)
             if (
                 type(d) is not dict
-                or not {"v", "bk_pub", "k_auth", "set_ms"} <= set(d) <= {"v", "bk_pub", "k_auth", "set_ms", "pending"}
+                or not {"v", "bk_pub", "k_auth", "set_ms"}
+                <= set(d)
+                <= {"v", "bk_pub", "k_auth", "set_ms", "pending", "confirmed_bk_pub"}
                 or type(d.get("pending", "")) is not str
                 or d["v"] != 1
                 or type(d["set_ms"]) is not int
@@ -132,16 +134,26 @@ class BackupService:
                 "k_auth": unb64u(d["k_auth"], 32),
                 "set_ms": d["set_ms"],
                 "pending": d.get("pending") or None,
+                "confirmed_bk_pub": unb64u(d["confirmed_bk_pub"], 65) if d.get("confirmed_bk_pub") else None,
             }
         except ValueError, CanonError, TypeError:
             raise BackupError("bad_key_file") from None
 
-    def _key_files(self, bk_pub: bytes, k_auth: bytes, set_ms: int, pending: str | None = None) -> dict[str, bytes]:
+    def _key_files(
+        self,
+        bk_pub: bytes,
+        k_auth: bytes,
+        set_ms: int,
+        pending: str | None = None,
+        confirmed_bk_pub: bytes | None = None,
+    ) -> dict[str, bytes]:
         """The ONE key file (``bk_pub`` and ``K_auth`` together, so a reader never sees a new half next to an old one).
         ``pending`` (who must still confirm the new words) is written to the live file only, never into a backup."""
         doc = {"v": 1, "bk_pub": b64u(bk_pub), "k_auth": b64u(k_auth), "set_ms": set_ms}
         if pending:
             doc["pending"] = pending
+            if confirmed_bk_pub:  # the last key whose words the person confirmed: its backups are kept meanwhile
+                doc["confirmed_bk_pub"] = b64u(confirmed_bk_pub)
         return {SN.KEY_FILE: json.dumps(doc, sort_keys=True).encode() + b"\n"}
 
     def _material(self) -> tuple[bytes, bytes, int]:
@@ -180,8 +192,9 @@ class BackupService:
             return None
 
     def _prune(self) -> None:
-        """Keep the newest :attr:`keep`. While a new key waits for its confirmation, the old-key backups are the ones the
-        person can still open, so they are never pruned by new-key backups: each key keeps its own newest ``keep``."""
+        """Keep the newest :attr:`keep`. While a new key waits for its confirmation the backups of the last CONFIRMED key
+        are the ones the person can still open: each of the current and the confirmed key keeps its own newest ``keep``
+        (cap 2 x keep) and backups under any other key (an abandoned, never confirmed one) go."""
         kept = self.list()
         info = self.key_info()
         if info is None or info["pending"] is None:
@@ -189,9 +202,13 @@ class BackupService:
         else:
             doomed, seen = [], {}
             for r in kept:
-                mine = self._bk_pub_of(r["name"]) == info["bk_pub"]
-                seen[mine] = seen.get(mine, 0) + 1
-                if seen[mine] > self.keep:
+                pub = self._bk_pub_of(r["name"])
+                who = "new" if pub == info["bk_pub"] else "old" if pub == info["confirmed_bk_pub"] else None
+                if who is None:
+                    doomed.append(r)
+                    continue
+                seen[who] = seen.get(who, 0) + 1
+                if seen[who] > self.keep:
                     doomed.append(r)
         for r in doomed:
             (self.state / DIR / r["name"]).unlink(missing_ok=True)
@@ -298,7 +315,12 @@ class BackupService:
                 except StateError:
                     old[p] = None
             set_ms = self._now()
-            new_files = self._key_files(bk_pub, k_auth, set_ms, pending)
+            try:
+                prev = self.key_info()
+            except BackupError:
+                prev = None
+            confirmed = None if prev is None else (prev["confirmed_bk_pub"] if prev["pending"] else prev["bk_pub"])
+            new_files = self._key_files(bk_pub, k_auth, set_ms, pending, confirmed)
             made: dict[str, Any] | None = None
             try:
                 write_atomic(self._key_path(), new_files[SN.KEY_FILE])

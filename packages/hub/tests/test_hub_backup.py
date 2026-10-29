@@ -58,10 +58,12 @@ def _later(w):
     return w.login(w.admin)
 
 
-def _first(w, tok=None):
+def _first(w, tok=None, confirm=False):
     tok = tok or w.login(w.admin)
     s, o, _ = _key(w, tok)
     assert s == 200, o
+    if confirm:  # the person saved the words
+        assert w.call("POST", "/admin/backup/key/confirm", {}, token=tok)[0] == 200
     return tok, o["words"], o["backup"]["name"]
 
 
@@ -383,7 +385,7 @@ def test_a_symlink_in_the_state_dir_refuses_the_backup_and_odd_names_are_skipped
 
 
 def test_replacing_the_key_makes_a_new_backup_and_the_old_ones_go_only_after_the_words_are_confirmed(w):
-    tok, words1, n1 = _first(w)
+    tok, words1, n1 = _first(w, confirm=True)
     w.clock.advance(11 * 60_000)
     assert w.call("POST", "/admin/backups", {}, token=tok)[0] == 200
     old = {r["name"] for r in w.call("GET", "/admin/backup", token=tok)[1]["backups"]}
@@ -426,13 +428,16 @@ def test_confirm_needs_an_admin_session_and_a_key_and_a_pending_replacement_surv
     tok = w.login(w.admin)
     assert w.call("POST", "/admin/backup/key/confirm", {}, token=tok)[:2] == (409, {"error": "no_backup_key"})
     assert w.call("POST", "/admin/backup/key/confirm", {}, token=w.login(w.ann))[0] == 403
-    _first(w, tok)
+    _first(w, tok, confirm=True)
     w.clock.advance(5000)
     _key(w, tok)
     w.clock.advance(5000)
     s, o, _ = _key(w, tok)  # replaced twice without confirming: the confirm drops everything not under the last key
     assert s == 200
-    assert w.call("POST", "/admin/backup/key/confirm", {}, token=tok)[1] == {"ok": True, "removed": 2}
+    assert w.call("POST", "/admin/backup/key/confirm", {}, token=tok)[1] == {
+        "ok": True,
+        "removed": 1,
+    }  # K1's went with K2
     assert [r["name"] for r in BackupService(w.env.keys).list()] == [o["backup"]["name"]]
     assert "pending" not in (w.state / SN.KEY_FILE).read_text()
     got = B.open_backup(
@@ -747,7 +752,7 @@ def test_a_plain_http_private_range_address_is_trusted_only_when_it_is_the_setti
 
 
 def test_while_a_new_key_waits_new_backups_never_prune_the_old_key_ones(w):
-    tok, _words1, _n = _first(w)
+    tok, _words1, _n = _first(w, confirm=True)
     for _ in range(3):
         tok = _later(w)
         assert w.call("POST", "/admin/backups", {}, token=tok)[0] == 200
@@ -794,7 +799,7 @@ def test_confirming_is_audited_without_secrets_and_a_broken_chain_deletes_nothin
 
 
 def test_the_server_command_waits_for_enter_and_reports_a_refused_confirm(w, capsys, monkeypatch):
-    _first(w)
+    _first(w, confirm=True)
 
     # no Enter (end of input): the new key is made, the older backups stay, nothing is lost
     def eof(_p):

@@ -540,3 +540,28 @@ def test_a_review_without_readers_or_widened_keys_means_no_review():
         f"/api/w/{WS}/hub/share/preview", json={"add": {"kind": "needs_you"}}
     )
     assert got.json()["review"] is None
+
+
+def test_a_rule_row_carries_its_readers_and_description_so_stop_sharing_sends_the_rule_core_has():
+    """Run 9 (J03): core matches a rule removal exactly; the row had only a readers COUNT, so the page sent
+    `{kind, value}` for a rule stored with `description: true` and core answered not_found (HTTP 404). The row carries
+    the reader ids and the flag, and that row, sent back, reaches the host as the stored rule."""
+    aud = {"users": ["a" * 32], "groups": ["team-a"]}
+    stored = {"kind": "ticket", "ticket": "PW-0001", "audience": aud, "description": True}
+    rules = {"rules": [{**stored, "count": 1, "describes": "the ticket"}], "shared": 1, "refused_items": []}
+    link = Link({"share.rules": rules, "share.preview": PREVIEW})
+    (row,) = client(link).get(f"/api/w/{WS}/hub/share").json()["rules"]
+    assert row["audience"] == aud and row["readers"] == 2 and row["description"] is True
+    sent = {k: row[k] for k in ("kind", "value", "audience", "description")}  # what ShareRules.tsx sends back
+    assert hub.Rule.model_validate(sent).host() == stored  # the remove route's body -> core's stored form
+
+
+BAD_AUDIENCES = [{"users": ["nope"], "groups": []}, {"users": "x"}, {"users": ["a" * 32] * 33, "groups": []}]
+
+
+@pytest.mark.parametrize("aud", BAD_AUDIENCES)
+def test_a_malformed_audience_in_a_rule_row_is_left_out_so_a_removal_fails_closed(aud):
+    rules = {"rules": [{"kind": "tag", "tag": "public", "audience": aud, "count": 0}], "shared": 0}
+    link = Link({"share.rules": rules, "share.preview": PREVIEW})
+    (row,) = client(link).get(f"/api/w/{WS}/hub/share").json()["rules"]
+    assert row["audience"] is None

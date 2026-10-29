@@ -336,3 +336,25 @@ describe('stop sharing by a rule', () => {
     expect(within(dialog).queryByTestId('hub-add-go')).toBeNull()
   })
 })
+
+describe('run 9 (J03): a one-ticket rule shared with its description', () => {
+  const STORED: HubRule = { kind: 'ticket', value: 'PW-0001', audience: { users: ['a'.repeat(32)], groups: [] }, description: true }
+  beforeEach(() => {
+    vi.spyOn(api, 'getHubShare').mockResolvedValue({
+      available: true, shared: 1, refused: [], tickets: ['PW-0001'], tickets_complete: true,
+      rules: [{ kind: 'ticket', value: 'PW-0001', count: 1, describes: 'the ticket', readers: 1, audience: STORED.audience, description: true }],
+    })
+  })
+
+  it('is listed once, and Stop sharing previews and removes the rule exactly as stored', async () => {
+    trusted()
+    const { dialog, button } = await ruleReview()
+    expect(screen.queryByTestId('hub-ticket-list')).toBeNull()
+    expect(screen.getAllByRole('button', { name: 'Stop sharing' })).toHaveLength(1)
+    expect(api.getHubPreview).toHaveBeenCalledWith(WS.id, { remove: STORED })
+    await waitFor(() => expect(button).toBeEnabled())
+    fireEvent.click(button)
+    await within(dialog).findByTestId('hub-rule-stop-done')
+    expect(removeRule).toHaveBeenCalledWith(WS.id, STORED, 'C'.repeat(43))
+  })
+})

@@ -45,7 +45,7 @@ import re
 from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, Request
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError, model_validator
 
 from . import reads
 from .adapters.addons import display
@@ -276,8 +276,19 @@ def _rule_row(raw) -> dict | None:
         "count": _int(raw.get("count")) or 0,
         "describes": display(raw.get("describes")),
         "readers": (len(aud.get("users") or []) + len(aud.get("groups") or [])) if aud else 0,
+        # the reader ids as core stores them: Stop sharing sends the rule back exactly (core matches a removal
+        # exactly); a malformed or over-long list is left out, so that removal is refused, never another rule's
+        "audience": _audience_ids(aud) if aud else None,
         "description": raw.get("description") is True,
     }
+
+
+def _audience_ids(aud: dict) -> dict | None:
+    try:
+        ok = Audience.model_validate(aud)
+    except ValidationError:
+        return None
+    return {"users": list(ok.users), "groups": list(ok.groups)}
 
 
 def _refused(raw) -> list[dict]:

@@ -387,6 +387,7 @@ def _done_events(lab, key):
 
 
 def test_task_done_run_runs_the_command_here_and_sends_a_labelled_receipt(lab):
+    lab.ws.plan_gate_off()  # r10-P02: no plan approval in this test; it is about the receipt
     served = hosted(lab)
     try:
         c = hcli(lab)
@@ -409,6 +410,7 @@ def test_task_done_run_runs_the_command_here_and_sends_a_labelled_receipt(lab):
 
 
 def test_task_done_run_text_says_who_attests_and_a_failing_command_sends_nothing(lab):
+    lab.ws.plan_gate_off()  # r10-P02: no plan approval in this test; it is about the receipt
     served = hosted(lab)
     try:
         c = hcli(lab)
@@ -428,6 +430,7 @@ def test_task_done_run_text_says_who_attests_and_a_failing_command_sends_nothing
 
 
 def test_task_done_never_forwards_run_and_dry_run_runs_nothing(lab):
+    lab.ws.plan_gate_off()  # r10-P02: no plan approval in this test; it is about the receipt
     served = hosted(lab)
     try:
         c = hcli(lab)
@@ -460,6 +463,7 @@ def test_task_done_never_forwards_run_and_dry_run_runs_nothing(lab):
 
 
 def test_task_done_run_on_a_ticket_with_a_linked_repo_names_the_repo_and_its_commit(lab, monkeypatch):
+    lab.ws.plan_gate_off()  # r10-P02: no plan approval in this test; it is about the receipt
     store = lab.ws.other()
     lab.ws.store = store
     try:
@@ -683,6 +687,7 @@ def test_a_host_answer_for_another_task_or_ticket_runs_nothing(lab, monkeypatch)
 
 
 def test_the_task_done_goes_to_the_ticket_the_command_was_read_from(lab, monkeypatch):
+    lab.ws.plan_gate_off()  # r10-P02: no plan approval in this test; it is about the receipt
     served = hosted(lab)
     try:
         c = _setup(lab)

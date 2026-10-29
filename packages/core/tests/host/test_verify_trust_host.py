@@ -30,6 +30,21 @@ def lab(tmp_path):
         value.close()
 
 
+PLAN_GATE_ON = {
+    "test_an_approved_plan_and_the_callers_own_command_run_in_host_mode",
+    "test_the_host_refuses_a_receipt_for_a_foreign_unapproved_command",
+    "test_the_host_refuses_a_receipt_after_the_plan_moved",
+}
+
+
+@pytest.fixture(autouse=True)
+def _plan_gate_off(lab, request):
+    """r10-P02: an agent builds only after the plan is approved. Tests of the verify-trust rule without a plan
+    approval turn the plan gate off (a signed workspace policy change, as a person would make it)."""
+    if request.function.__name__ not in PLAN_GATE_ON:
+        lab.ws.plan_gate_off()
+
+
 def bob_of(lab):
     return hcli(lab, session=BOB_SESSION, ORCH_GRANT=second_person(lab.ws))
 
@@ -126,7 +141,10 @@ def test_an_approved_plan_and_the_callers_own_command_run_in_host_mode(lab, tmp_
         r = c.j("task", "done", "T1", "--run")
         assert r.code == 0, r.out
         assert foreign.exists()
-        assert c("task", "add", "mine", "--verify", touch(own)).code == 0  # plan generation moves: own rule only
+        assert c("task", "add", "mine", "--verify", touch(own)).code == 0  # plan generation moves
+        r = c.j("task", "start", "T2")  # r10-P02: the host refuses a build while the plan is open again
+        assert (r.code, r.err_code) == (3, "transition.refused") and "plan is not approved" in r.out, r.out
+        approve(served, lab.ws.uid("1"), "plan")
         assert c("task", "start", "T2").code == 0
         assert c.j("task", "done", "T2", "--run").code == 0
         assert own.exists() and len(done_events(lab)) == 2
@@ -161,7 +179,7 @@ def test_the_host_refuses_a_receipt_for_a_foreign_unapproved_command(lab, tmp_pa
         assert bob("release").code == 0
         c, g, key = served.client(), served.grant, "DEMO-0001"
         ok(c.req("claim", {"ref": key}, grant=g, session=SESSION, idem=True))
-        ok(c.req("task.start", {"task": f"{key}/T1"}, grant=g, session=SESSION, idem=True))
+        # no task start: the plan is not approved (r10-P02); the host checks the receipt's command first
         assert err(send(c, g, key, cmd)) == "verify.unapproved"
         assert done_events(lab) == []
         # approved at the current generation: taken
@@ -188,7 +206,7 @@ def test_the_host_refuses_a_receipt_after_the_plan_moved(lab, tmp_path):
         assert bob("release").code == 0
         c, g, key = served.client(), served.grant, "DEMO-0001"
         ok(c.req("claim", {"ref": key}, grant=g, session=SESSION, idem=True))
-        ok(c.req("task.start", {"task": f"{key}/T1"}, grant=g, session=SESSION, idem=True))
+        # no task start: the task change re-opened the plan (r10-P02); the host checks the receipt's command first
         assert err(send(c, g, key, cmd)) == "verify.unapproved"
         assert done_events(lab) == []
     finally:

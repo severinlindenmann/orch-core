@@ -304,6 +304,16 @@
 .setup .review-facts dd small {
   color: var(--text-muted);
 }
+.setup .cancel-wrap {
+  display: block;
+}
+.setup .cancel-hint {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-faint);
+  text-decoration: none;
+}
 .setup .cancel {
   padding: 9px 0;
   border: 0;

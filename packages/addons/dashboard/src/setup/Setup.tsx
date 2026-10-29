@@ -171,7 +171,7 @@ export function groupProgress(steps: Progress['steps']): Progress['steps'] {
     { id: 'perms', label: 'Folders made private', ids: ['perms'] },
     { id: 'key', label: 'Your key', ids: ['keys', 'genesis', 'custody'] },
     { id: 'workspace', label: 'Your workspace', ids: ['git', 'settings', 'records', 'trust'] },
-    { id: 'services', label: 'Background services', ids: ['register', 'runner', 'runner_grant'] },
+    { id: 'services', label: 'Starting orch', ids: ['register', 'runner', 'runner_grant'] },
     { id: 'addons', label: 'Add-ons', ids: [] },
     { id: 'approval', label: 'Approval', ids: ['flags'] },
   ]
@@ -689,9 +689,11 @@ export function Setup({ api }: { api: SetupAPI }) {
     !!review &&
     ((profile.method !== 'click' && (state?.mode === 'finish' || !!review.runner_grant) && !review.tty_confirm) ||
       (review.tty_confirm && review.fingerprint?.length !== 3))
-  const approvalCount = review ? review.items.length + (review.workspace ? 1 : 0) : 0
   const summary = review ? summarize(review) : { lines: [], unknown: false, odd: [] as string[] }
+  const cancelHint =
+    step === 0 ? (state?.mode === 'finish' ? 'Your workspace keeps working. Finish this any time.' : 'Nothing is set up yet. Come back any time.') : ''
   const cancel = !ended && !run && state && !state.complete && (
+    <span className="cancel-wrap">
     <button
       className="cancel"
       disabled={busy}
@@ -706,6 +708,8 @@ export function Setup({ api }: { api: SetupAPI }) {
     >
       Finish setup later
     </button>
+    {cancelHint && <small className="cancel-hint">{cancelHint}</small>}
+    </span>
   )
   const next = (n: number) => (
     <button className="primary" onClick={() => setStep(n)}>
@@ -897,7 +901,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                           addons: e.target.checked
                             ? [...profile.addons, a.id]
                             : profile.addons.filter((id) => id !== a.id),
-                          // ticking Work copies again asks the git question again
+                          // ticking Separate copies again asks the git question again
                           ...(a.id === 'worktrees' ? { git_init: undefined } : {}),
                         })
                       }
@@ -906,10 +910,10 @@ export function Setup({ api }: { api: SetupAPI }) {
                   ),
                 )}
               {offersGit && (
-                <div className="note" role="group" aria-label="Safe copies">
+                <div className="note" role="group" aria-label="Separate copies">
                   <p>
-                    <strong>This folder does not track changes yet.</strong> Agents need that to work on several
-                    tickets at once.
+                    <strong>Your project folder is not set up for separate copies yet.</strong> Agents work best when
+                    each ticket gets its own copy. We can do it for you; your files stay as they are.
                   </p>
                   <label className="toggle">
                     <span>
@@ -1182,7 +1186,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                 </div>
               )}
               <details className="review-technical">
-                <summary>Everything you approve ({approvalCount} items)</summary>
+                <summary>Details</summary>
                 <p>Times and IDs are filled in when you sign.</p>
                 {review.workspace && (
                   <section className="review-item">
@@ -1254,9 +1258,6 @@ export function Setup({ api }: { api: SetupAPI }) {
               {terminalReviewMissing && (
                 <p role="alert">Terminal confirmation is missing. Return to your terminal to restart setup.</p>
               )}
-              <p>
-                {state.mode === 'finish' ? 'Finish setup' : 'Create workspace'} approves the {approvalCount} items in the list above.
-              </p>
               <SetupFooter cancel={cancel}>
                 <button
                   className="primary"
@@ -1304,7 +1305,7 @@ export function Setup({ api }: { api: SetupAPI }) {
             )
           )}
           {state?.os === 'darwin' && (
-            <p><small>Your Mac may say 'Background Items Added' for orch. That's expected. Leave it on.</small></p>
+            <p><small>On a Mac only: your Mac may say “orch added items that run in the background”. That is fine; leave it on.</small></p>
           )}
           <ol className="progress">
             {groupProgress(progress?.steps ?? []).map((s) => (

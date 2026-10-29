@@ -322,7 +322,7 @@ test('long runner access is one plain click after the review; digest and fingerp
   expect(screen.getByText(/Return to the terminal window where you started orch setup/)).toBeInTheDocument()
   expect(screen.getByText(/Check the terminal shows/)).toHaveTextContent('demo not real. If it does, press Enter there.')
   // everything signed stays inspectable, collapsed in one disclosure
-  expect(screen.getByText(/^Everything you approve \(/).closest('details')).not.toHaveAttribute('open')
+  expect(screen.getByText('Details').closest('details')).not.toHaveAttribute('open')
   expect(screen.getByText("this machine's runner, never shown")).toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Create workspace' })).toBeEnabled()
   expect(screen.queryByLabelText(/Type/)).toBeNull()
@@ -856,7 +856,7 @@ test('a review item of a kind this page does not know is named in the summary an
   await check()
   await screen.findByRole('heading', { name: 'Review your setup' })
   expect(document.querySelector('.review-summary')).toHaveTextContent('Something new to sign')
-  expect(screen.getByText(/^Everything you approve \(/).closest('details')).not.toHaveAttribute('open')
+  expect(screen.getByText('Details').closest('details')).not.toHaveAttribute('open')
   expect(screen.getByText('Do the new thing')).toBeInTheDocument()
 })
 
@@ -915,7 +915,7 @@ test('an unrecognised flag is shown in the summary and the details stay closed',
   await check()
   await screen.findByRole('heading', { name: 'Review your setup' })
   expect(document.querySelector('.review-summary')).toHaveTextContent('Something else happens too.')
-  expect(screen.getByText(/^Everything you approve \(/).closest('details')).not.toHaveAttribute('open')
+  expect(screen.getByText('Details').closest('details')).not.toHaveAttribute('open')
 })
 
 test('the runner line comes from the signed grant item, not from review.runner_grant', async () => {
@@ -951,7 +951,7 @@ test.each([
   await check()
   await screen.findByRole('heading', { name: 'Review your setup' })
   expect(document.querySelector('.review-summary')).toHaveTextContent('Odd item')
-  expect(screen.getByText(/^Everything you approve \(/).closest('details')).not.toHaveAttribute('open')
+  expect(screen.getByText('Details').closest('details')).not.toHaveAttribute('open')
 })
 
 test('finish offers no runner grant when the workspace agent time is below the shortest choice', async () => {
@@ -1081,7 +1081,7 @@ test('a folder without git offers to make one when Work copies is on, and never 
   render(<Setup api={f.api} />)
   await screen.findByRole('heading', { name: 'Set up your workspace' })
   for (let i = 0; i < 2; i++) fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
-  expect(screen.getByText(/This folder does not track changes yet/)).toBeInTheDocument()
+  expect(screen.getByText(/not set up for separate copies yet/)).toBeInTheDocument()
   expect(screen.getByText(/None of your files are changed, except .gitignore/)).toBeInTheDocument()
   expect(screen.queryByText(/git init/i)).not.toBeInTheDocument()
   expect(screen.getByLabelText(/Set it up for me/)).toBeChecked()
@@ -1098,7 +1098,7 @@ test('choosing to continue without worktrees drops them and asks no git question
   await screen.findByRole('heading', { name: 'Set up your workspace' })
   for (let i = 0; i < 2; i++) fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   fireEvent.click(screen.getByLabelText(/Skip this/))
-  expect(screen.queryByText(/This folder does not track changes yet/)).not.toBeInTheDocument()
+  expect(screen.queryByText(/not set up for separate copies yet/)).not.toBeInTheDocument()
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Your recovery words' })
@@ -1154,7 +1154,7 @@ test('progress groups roll up done and failed steps without changing server step
   expect(groupProgress(steps)).toEqual([
     { id: 'key', label: 'Your key', status: 'done' },
     { id: 'workspace', label: 'Your workspace', status: 'done' },
-    { id: 'services', label: 'Background services', status: 'failed' },
+    { id: 'services', label: 'Starting orch', status: 'failed' },
     { id: 'addons', label: 'Add-ons', status: 'done' },
     { id: 'approval', label: 'Approval', status: 'done' },
   ])
@@ -1167,6 +1167,44 @@ test('the private-folders step is its own calm row (P08)', () => {
   expect(groupProgress([{ id: 'perms', label: 'x', status: 'done' as const }])).toEqual([
     { id: 'perms', label: 'Folders made private', status: 'done' },
   ])
+})
+
+test('P10: the review has no approval-count sentence, the fold is Details, and the progress says Starting orch', async () => {
+  const f = fake({ done: true })
+  const { container } = render(<Setup api={f.api} />)
+  await reveal()
+  await check()
+  await screen.findByRole('heading', { name: 'Review your setup' })
+  expect(page(container)).not.toMatch(/items in the list above|\d+ items/)
+  expect(screen.getByText('Details').tagName).toBe('SUMMARY')
+  expect(screen.queryByText(/Everything you approve/)).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }))
+  await screen.findByRole('heading', { name: 'Your workspace is ready' })
+  expect(page(container)).not.toContain('Background services')
+})
+
+test('P10: the permissions page says Separate copies, not Worktrees or the CLI', async () => {
+  render(<Setup api={fake().api} />)
+  await approval()
+  expect(page(document.body as HTMLElement)).not.toMatch(/worktree|the CLI/i)
+})
+
+test('P17: the Welcome page says what Finish setup later does; later pages do not repeat it', async () => {
+  render(<Setup api={fake().api} />)
+  await screen.findByRole('heading', { name: 'Set up your workspace' })
+  expect(screen.getByText('Nothing is set up yet. Come back any time.')).toHaveClass('cancel-hint')
+  expect(screen.getByRole('button', { name: 'Finish setup later' })).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  await screen.findByRole('heading', { name: 'You' })
+  expect(screen.queryByText(/Come back any time/)).toBeNull()
+  expect(screen.getByRole('button', { name: 'Finish setup later' })).toBeInTheDocument()
+})
+
+test('P17: in finish mode the hint says the workspace keeps working', async () => {
+  render(<Setup api={fake({ finish: true }).api} />)
+  await screen.findByRole('heading', { name: 'Finish setting up your workspace' })
+  expect(screen.getByText('Your workspace keeps working. Finish this any time.')).toBeVisible()
+  expect(screen.queryByText(/Nothing is set up yet/)).toBeNull()
 })
 
 test.each([
@@ -1222,7 +1260,7 @@ test.each([
   await screen.findByRole('heading', { name: 'Review your setup' })
   fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }))
   await screen.findByRole('heading', { name: 'Your workspace is ready' })
-  expect(Boolean(screen.queryByText(/Background Items Added/))).toBe(shown)
+  expect(Boolean(screen.queryByText(/orch added items that run in the background/))).toBe(shown)
 })
 
 test('P15: no Recommended badge when One click is not available here', async () => {

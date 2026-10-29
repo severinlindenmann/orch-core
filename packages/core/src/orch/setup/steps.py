@@ -469,7 +469,7 @@ STEP_LABELS = {
     "keys": "Creating your key",
     "genesis": "Saving your approval",
     "register": "Starting orch in the background",
-    "git": "Making the folder a git repository",
+    "git": "Preparing separate copies",
     "runner": "Letting the dashboard run agents",
     "settings": "Saving the workspace settings",
     "flags": "Turning on one-click approval",
@@ -1029,10 +1029,11 @@ def _as_setup_error(e: Exception) -> SetupError:
 
 
 def sign_line(requests: str, one_click: bool) -> str:
-    """The terminal's line before the signature: "with one passphrase" only when the person chose a passphrase (a
-    one-click setup is converted to the one-click key right after, so it names none)."""
-    tail = "" if one_click else ", with one passphrase"
-    return f"\norch setup will sign {requests or 'the'} item(s) you read on the setup page{tail}.\n"
+    """The terminal's line before the signature: no item count (the page and the terminal can no longer disagree) and
+    "with one passphrase" only when the person chose a passphrase (a one-click setup names none)."""
+    if one_click:
+        return "\norch setup is creating your workspace.\n"
+    return "\norch setup is creating your workspace. It signs what you read on the setup page, with one passphrase.\n"
 
 
 class RealPorts:

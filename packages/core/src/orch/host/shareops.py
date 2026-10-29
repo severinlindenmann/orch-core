@@ -319,20 +319,34 @@ def _leaves(kind: str, items: list[Any]) -> str:
     return LEAVES[kind]
 
 
+def _names_for(service: WorkspaceService, ids: set[str]) -> dict[str, str]:
+    """Display names for these hub users. The cache is in memory only: after a restart a miss re-asks the hub
+    (``audience_get``, display data, not signed); if that fails the caller falls back to "a person on the hub"."""
+    names = dict(getattr(service, "_share_names", {}))
+    if ids - set(names):
+        try:
+            _audience(service)
+        except Exception:  # noqa: BLE001  (names are decoration; the review still works without them)
+            pass
+        names = dict(getattr(service, "_share_names", {}))
+    return names
+
+
 def _readers(service: WorkspaceService, items: list[Any]) -> dict[str, Any]:
     """Who can read these items at the hub besides the owner, by NAME (from the hub, not signed): the people and teams
     their audiences name. A person whose name the host does not know is "a person on the hub", never an id alone."""
-    names = getattr(service, "_share_names", {})
     users: set[str] = set()
     groups: set[str] = set()
     for i in items:
         if i.audience:
             users |= set(i.audience["users"])
             groups |= set(i.audience["groups"])
+    names = _names_for(service, users)
     return {
         "people": sorted(clean_line(names.get(u) or "a person on the hub") for u in users),
         "teams": sorted(groups),
         "note": "from the hub, not signed",
+        "info": "Team membership is managed by the hub admin." if groups else None,  # shown behind the small "i"
     }
 
 
@@ -341,7 +355,7 @@ def _widened(service: WorkspaceService, st: Any, items: list[Any]) -> list[dict[
     added, in names. An automatic pass never does this; only the owner's confirmation can."""
     from orch.hubclient import shares as S
 
-    names = getattr(service, "_share_names", {})
+    names = _names_for(service, {u for i in items if i.audience for u in i.audience["users"]})
     known = {lg: dict(S.EMPTY_GRANT) for lg in st.sent} if st.confirmed is None else st.confirmed
     out = []
     for i in items:

@@ -830,6 +830,7 @@ def check_audience(a: Any, item_kind: str) -> None:
         or len(a["users"]) > 32 or len(a["groups"]) > 16 or not (a["users"] or a["groups"])
         or not all(_hex16(u) for u in a["users"])
         or not all(type(g) is str and _GROUP_NAME.fullmatch(g) is not None for g in a["groups"])
+        or "hub-admin" in a["groups"]  # N2: the hub admin group is never an audience (admins read nothing by role)
         or a["users"] != sorted(set(a["users"])) or a["groups"] != sorted(set(a["groups"]))
     ):  # fmt: skip
         raise Refused("malformed")

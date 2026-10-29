@@ -35,6 +35,7 @@ def test_the_signed_item_carries_the_audience_and_the_description():
     [
         {"users": [], "groups": []}, {"users": [U2, U1], "groups": []}, {"users": [], "groups": ["Team A"]},
         {"users": ["zz"], "groups": []}, {**AUD, "roles": []}, {"users": [U1, U1], "groups": []},
+        {"users": [], "groups": ["hub-admin"]}, {"users": [U1], "groups": ["hub-admin", "team-a"]},
     ],
 )  # fmt: skip
 def test_a_bad_audience_is_refused_before_signing(aud):
@@ -118,9 +119,7 @@ def test_the_confirmed_grant_is_stored_and_an_unreadable_one_is_refused():
     grant = {"users": [U1], "groups": [], "description": False}
     st = SH.ShareState.from_json({**base, "confirmed": {"ticket:x": grant}})
     assert st.to_json()["confirmed"] == {"ticket:x": grant}
-    old = SH.ShareState.from_json({**base, "confirmed": ["ticket:x"]})  # an id list: the narrowest grant
-    assert old.confirmed == {"ticket:x": SH.EMPTY_GRANT}
-    for bad in ({"ticket:x": {**grant, "extra": 1}}, {"ticket:x": {**grant, "description": "yes"}},
+    for bad in (["ticket:x"], {"ticket:x": {**grant, "extra": 1}}, {"ticket:x": {**grant, "description": "yes"}},
                 {"ticket:x": {"users": ["no"], "groups": [], "description": False}}, "x", 3):  # fmt: skip
         with pytest.raises(HubRefused):
             SH.ShareState.from_json({**base, "confirmed": bad})

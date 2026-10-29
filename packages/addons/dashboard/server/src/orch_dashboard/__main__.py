@@ -41,9 +41,9 @@ from .policy import REMOTE, remote_policy
 GRACE = 3
 #: seconds `restart` waits for the old server to free its control socket
 RESTART_WAIT = 10.0
-# A stop while a setup page is bound waits for the setup to end (r11-P01), at most this long (core's idle is 10 min).
-SETUP_HOLD = 660.0
-SETUP_POLL = 0.2
+# A stop while a setup page is bound keeps the loopback page up until the setup ends (r11-P01), at most this long.
+SETUP_HOLD = 180.0
+SETUP_POLL = 0.5
 AGENT_ENV = ("ORCH_GRANT", "ORCH_SESSION")
 # Seconds before the code's expiry after which the launcher writes no redirect file (and removes one it just wrote):
 # covers the gap between the server's monotonic timer and the wall clock both sides read.
@@ -578,7 +578,9 @@ def _serve(directory, lock_fd=None, port=None, listen=None):
                         retire()
                         if setup_bound():
                             # r11-P01: setup's Finish starts the dashboard service, which stops this server while it
-                            # still serves the setup page (and that very request): serve the page until setup ends.
+                            # still serves the setup page (and that very request): only the loopback server keeps
+                            # serving, until setup ends; the network and front listeners stop now (r11-P01b).
+                            exit_remote()
                             threading.Thread(target=exit_after_setup, daemon=True).start()
                         else:
                             exit_now()
@@ -589,15 +591,19 @@ def _serve(directory, lock_fd=None, port=None, listen=None):
     setup_sock = state_dir() / "setup" / "setup.sock"
 
     def setup_bound():
-        """A setup page is bound here and its setup process still runs."""
-        return auth.has_setup() and setup_sock.exists()
+        """A setup page is bound here and its setup process still answers on its socket (a real connect: a stale
+        file, a socket nobody listens on or a slow one count as gone). Fail closed: any doubt ends the hold."""
+        return auth.has_setup() and setup_alive(setup_sock)
 
-    def exit_now():
-        server.should_exit = True
+    def exit_remote():
         if net_server is not None:
             net_server.should_exit = True
         if front_server is not None:
             front_server.should_exit = True
+
+    def exit_now():
+        server.should_exit = True
+        exit_remote()
 
     def exit_after_setup():
         deadline = time.monotonic() + SETUP_HOLD
@@ -656,6 +662,20 @@ def _serve(directory, lock_fd=None, port=None, listen=None):
             net_thread.join(timeout=GRACE + 2)
         if net_listener is not None:
             net_listener.close()
+
+
+def setup_alive(path, timeout=0.5):
+    """The setup process listens on ``path``: an AF_UNIX connect, closed at once. Missing, refused, not a socket,
+    timeout -> False."""
+    try:
+        if not stat.S_ISSOCK(path.lstat().st_mode):
+            return False
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+            sock.settimeout(timeout)
+            sock.connect(str(path))
+        return True
+    except OSError:
+        return False
 
 
 def safe_path(value):

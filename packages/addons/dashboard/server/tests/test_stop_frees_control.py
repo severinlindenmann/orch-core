@@ -155,26 +155,60 @@ def test_restart_gives_up_when_the_old_server_keeps_the_socket(state, monkeypatc
     assert "did not stop in time" in capsys.readouterr().err and calls == []
 
 
-# -- r11-P01: a stop during setup keeps the setup page served until setup ends ---------------------------------------
+# -- r11-P01/P01b: a stop during setup keeps only the loopback setup page served, until setup ends ---------------------
+# ctl.sock is retired at once even then: a new server's startup (stale_socket) refuses with "dashboard already running"
+# while anything accepts on ctl.sock: the service that Finish starts would exit and the http.500 would come back.
 
 
-def test_a_stop_while_a_setup_page_is_bound_frees_ctl_now_and_exits_when_setup_ends(state, slow_server, monkeypatch):
-    """setup's Finish starts the dashboard service, which stops this (launcher) server while it still serves the setup
-    page and that very Finish request: ctl.sock goes at once (the service can start), the page keeps working until the
-    setup binding ends (a failed Finish can be tried again), then the server exits."""
+@pytest.fixture
+def setup_sock(state):
+    """A live setup process: a listening unix socket at <state>/setup/setup.sock."""
+    (state / "setup").mkdir(mode=0o700)
+    path = state / "setup" / "setup.sock"
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.bind(str(path))
+    sock.listen(64)
+    stop = threading.Event()
+
+    def drain():  # accept and drop, like a setup server that sees no request
+        sock.settimeout(0.1)
+        while not stop.is_set():
+            with __import__("contextlib").suppress(OSError):
+                sock.accept()[0].close()
+
+    threading.Thread(target=drain, daemon=True).start()
+    yield path, sock
+    stop.set()
+    sock.close()
+
+
+@pytest.fixture
+def bound(monkeypatch):
     from orch_dashboard.auth import Auth
 
-    bound = {"on": True}
-    monkeypatch.setattr(Auth, "has_setup", lambda self: bound["on"])
-    (state / "setup").mkdir(mode=0o700)
-    (state / "setup" / "setup.sock").touch()
+    flag = {"on": True}
+    monkeypatch.setattr(Auth, "has_setup", lambda self: flag["on"])
     monkeypatch.setattr(cli, "SETUP_POLL", 0.02)
-    thread, ctl = start(state)
-    assert cli.control(ctl, "stop") == {"ok": True}
+    return flag
+
+
+def gone(ctl):
     t0 = time.monotonic()
     while ctl.exists() and time.monotonic() - t0 < 1:
         time.sleep(0.02)
-    assert not ctl.exists()  # the service can take over at once
+    return not ctl.exists()
+
+
+def test_a_stop_while_a_setup_page_is_bound_frees_ctl_now_and_exits_when_setup_ends(
+    state, slow_server, setup_sock, bound
+):
+    """setup's Finish starts the dashboard service, which stops this (launcher) server while it still serves the setup
+    page and that very Finish request: ctl.sock goes at once and a new server's startup check does not see a running
+    dashboard (the service can start); the page keeps working until the setup binding ends, then the server exits."""
+    thread, ctl = start(state)
+    assert cli.control(ctl, "stop") == {"ok": True}
+    assert gone(ctl)
+    cli.stale_socket(ctl)  # the service's startup check: no "dashboard already running"
     time.sleep(0.3)
     assert thread.is_alive() and not slow_server.is_set()  # still serving the setup page
     bound["on"] = False  # Finish answered 200 (or setup was cancelled): the binding ends
@@ -182,18 +216,82 @@ def test_a_stop_while_a_setup_page_is_bound_frees_ctl_now_and_exits_when_setup_e
     assert slow_server.is_set() and not thread.is_alive()
 
 
-def test_a_stop_during_setup_exits_once_the_setup_process_is_gone(state, slow_server, monkeypatch):
-    from orch_dashboard.auth import Auth
-
-    monkeypatch.setattr(Auth, "has_setup", lambda self: True)  # the binding was never cleared (setup crashed)
-    (state / "setup").mkdir(mode=0o700)
-    sock = state / "setup" / "setup.sock"
-    sock.touch()
-    monkeypatch.setattr(cli, "SETUP_POLL", 0.02)
+def test_a_stop_during_setup_exits_once_the_setup_process_is_gone(state, slow_server, setup_sock, bound):
     thread, ctl = start(state)
     cli.control(ctl, "stop")
     time.sleep(0.3)
     assert thread.is_alive()
-    sock.unlink()
+    path, sock = setup_sock
+    sock.close()  # the setup process ended (Ctrl-C): the binding is never cleared, the socket stops answering
+    thread.join(timeout=SLOW_SHUTDOWN + 5)
+    assert not thread.is_alive()
+
+
+@pytest.mark.parametrize("kind", ["file", "unlistened"])
+def test_a_stale_setup_socket_never_holds_a_stop(state, slow_server, bound, kind):
+    """r11-P01b: a plain file or a socket nobody listens on is not a running setup: the stop exits at once."""
+    (state / "setup").mkdir(mode=0o700)
+    path = state / "setup" / "setup.sock"
+    keep = None
+    if kind == "file":
+        path.touch()
+    else:
+        keep = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        keep.bind(str(path))  # bound, never listening: connect is refused
+    try:
+        assert not cli.setup_alive(path)
+        thread, ctl = start(state)
+        t0 = time.monotonic()
+        cli.control(ctl, "stop")
+        thread.join(timeout=SLOW_SHUTDOWN + 5)
+        assert not thread.is_alive() and time.monotonic() - t0 < SLOW_SHUTDOWN + 1.5
+    finally:
+        if keep is not None:
+            keep.close()
+
+
+def test_the_hold_ends_by_itself_at_the_deadline(state, slow_server, setup_sock, bound, monkeypatch):
+    assert 0 < cli.SETUP_HOLD <= 300  # a few minutes at most
+    monkeypatch.setattr(cli, "SETUP_HOLD", 0.4)
+    thread, ctl = start(state)
+    cli.control(ctl, "stop")
+    time.sleep(0.2)
+    assert thread.is_alive()
+    thread.join(timeout=SLOW_SHUTDOWN + 5)
+    assert not thread.is_alive()
+
+
+def test_during_the_hold_the_network_listener_stops_at_once(state, setup_sock, bound, monkeypatch):
+    """r11-P01b: only the loopback server (the setup page) stays during the hold; the network listener stops now."""
+    exited = []
+
+    def run(self, sockets=None):
+        while not self.should_exit:
+            time.sleep(0.02)
+        exited.append(sockets[0].family)
+
+    monkeypatch.setattr(uvicorn.Server, "run", run)
+    probe = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+    try:
+        probe.bind(("::1", 0))
+    except OSError:
+        pytest.skip("no IPv6 loopback here")
+    port = probe.getsockname()[1]
+    probe.close()
+    thread = threading.Thread(target=cli.serve, kwargs={"port": port, "listen": "::1"}, daemon=True)
+    thread.start()
+    ctl = state / "dashboard" / "ctl.sock"
+    for _ in range(200):
+        try:
+            cli.control(ctl, "hello")
+            break
+        except OSError:
+            time.sleep(0.02)
+    cli.control(ctl, "stop")
+    t0 = time.monotonic()
+    while socket.AF_INET6 not in exited and time.monotonic() - t0 < 2:
+        time.sleep(0.02)
+    assert exited == [socket.AF_INET6] and thread.is_alive()  # network gone, loopback still serving
+    bound["on"] = False
     thread.join(timeout=SLOW_SHUTDOWN + 5)
     assert not thread.is_alive()

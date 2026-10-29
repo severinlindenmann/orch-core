@@ -111,3 +111,25 @@ def SO_HXK():
     from .vec import pub
 
     return pub("hxk")
+
+
+def test_the_confirmed_grant_is_stored_and_an_unreadable_one_is_refused():
+    base = {"rules": [{"kind": "needs_you"}], "sent": {}, "withdrawn": []}
+    grant = {"users": [U1], "groups": [], "description": False}
+    st = SH.ShareState.from_json({**base, "confirmed": {"ticket:x": grant}})
+    assert st.to_json()["confirmed"] == {"ticket:x": grant}
+    old = SH.ShareState.from_json({**base, "confirmed": ["ticket:x"]})  # an id list: the narrowest grant
+    assert old.confirmed == {"ticket:x": SH.EMPTY_GRANT}
+    for bad in ({"ticket:x": {**grant, "extra": 1}}, {"ticket:x": {**grant, "description": "yes"}},
+                {"ticket:x": {"users": ["no"], "groups": [], "description": False}}, "x", 3):  # fmt: skip
+        with pytest.raises(HubRefused):
+            SH.ShareState.from_json({**base, "confirmed": bad})
+
+
+def test_narrowed_never_widens():
+    item = only([{"kind": "tag", "tag": "public", "audience": AUD, "description": True}])
+    cut = SH.narrowed(item, {"users": [U1], "groups": [], "description": False})
+    assert cut.audience == {"users": [U1], "groups": []} and "description" not in cut.payload
+    assert SH.narrowed(item, SH.grant_of(item)) is item
+    none = SH.narrowed(item, SH.EMPTY_GRANT)
+    assert none.audience is None and none.digest != item.digest

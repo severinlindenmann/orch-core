@@ -32,7 +32,7 @@ import copy
 import hashlib
 import os
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Protocol
 
 from orch.canon.text import clean, clean_line
@@ -478,6 +478,64 @@ def plan_of(items: Iterable[ShareItem]) -> str:
     return b64u(h.digest())
 
 
+EMPTY_GRANT: dict[str, Any] = {"users": [], "groups": [], "description": False}
+
+
+def grant_of(item: ShareItem) -> dict[str, Any]:
+    """What confirming ``item`` grants: its readers besides the owner and whether its description leaves."""
+    aud = item.audience or {"users": [], "groups": []}
+    return {"users": list(aud["users"]), "groups": list(aud["groups"]), "description": "description" in item.payload}
+
+
+def narrowed(item: ShareItem, grant: Mapping[str, Any]) -> ShareItem:
+    """``item`` cut back to ``grant``: readers not in the grant dropped, the description dropped when it was not
+    confirmed. The same item when nothing exceeds the grant. Never widens."""
+    aud = item.audience or {"users": [], "groups": []}
+    users = [u for u in aud["users"] if u in grant["users"]]
+    groups = [g for g in aud["groups"] if g in grant["groups"]]
+    keep_desc = bool(grant["description"])
+    if (
+        len(users) == len(aud["users"])
+        and len(groups) == len(aud["groups"])
+        and (keep_desc or "description" not in item.payload)
+    ):
+        return item
+    payload = {k: v for k, v in item.payload.items() if k != "description" or keep_desc}
+    audience = {"users": users, "groups": groups} if users or groups else None
+    raw = decision_raw(item.f1)
+    extra: dict[str, Any] = ({"decision_data": raw} if raw else {}) | ({"audience": audience} if audience else {})
+    shown = b64u(suite.sha256(wire.cj({"payload": payload, **extra} if extra else payload)))
+    digest = (
+        shown
+        if item.f1 is None
+        else b64u(
+            suite.sha256(wire.cj({"payload": payload, "f1": item.f1} | ({"audience": audience} if audience else {})))
+        )
+    )
+    return replace(item, payload=payload, digest=digest, shown=shown, audience=audience)
+
+
+def _confirmed_from_json(raw: Any) -> dict[str, dict[str, Any]] | None:
+    """The stored ``confirmed``: ``None`` (absent), a dict of grants, or the older list of ids (each with the narrowest
+    grant). Anything else is ``malformed`` (the host refuses to guess)."""
+    if raw is None:
+        return None
+    if type(raw) is list and all(type(x) is str for x in raw):
+        return {x: dict(EMPTY_GRANT) for x in raw}
+    if type(raw) is not dict:
+        raise HubRefused("malformed")
+    out: dict[str, dict[str, Any]] = {}
+    for lg, g in raw.items():
+        if type(lg) is not str or type(g) is not dict or set(g) != {"users", "groups", "description"}:
+            raise HubRefused("malformed")
+        if type(g["description"]) is not bool:
+            raise HubRefused("malformed")
+        aud = normalize_audience({"users": g["users"], "groups": g["groups"]})
+        out[lg] = {"users": (aud or {}).get("users", []), "groups": (aud or {}).get("groups", []),
+                   "description": g["description"]}  # fmt: skip
+    return out
+
+
 _STATE_KEYS = frozenset({"rules", "sent", "withdrawn", "refused", "confirmed"})
 
 
@@ -497,9 +555,11 @@ class ShareState:
     sent: dict[str, dict[str, Any]] = field(default_factory=dict)
     withdrawn: list[str] = field(default_factory=list)
     refused: dict[str, dict[str, str]] = field(default_factory=dict)
-    #: logical ids of the selection the owner last confirmed (a rule change, ``share.sync``, ``share.revoke``): the
-    #: only items an automatic pass may send or update. ``None``: a state from before this field: its ``sent`` items.
-    confirmed: list[str] | None = None
+    #: the selection the owner last confirmed (a rule change, ``share.sync``, ``share.revoke``): logical id -> the
+    #: grant confirmed for it (:func:`grant_of`: who may read it, and whether its description leaves). These are the
+    #: only items an automatic pass may send or update, and only within that grant. ``None``: a state from before this
+    #: field: its ``sent`` items, with the narrowest grant (no readers, no description).
+    confirmed: dict[str, dict[str, Any]] | None = None
 
     def confirm(self, selected: Iterable[ShareItem], expect: str) -> None:
         """The owner confirmed this selection: remember it for the automatic passes.
@@ -510,7 +570,7 @@ class ShareState:
         items = [i for i in selected if i.logical not in self.withdrawn]
         if not isinstance(expect, str) or plan_of(items) != expect:
             raise HubRefused("plan_changed")
-        self.confirmed = sorted({i.logical for i in items})
+        self.confirmed = {i.logical: grant_of(i) for i in items}
 
     def auto_wanted(self, selected: Iterable[ShareItem]) -> list[ShareItem]:
         """What an automatic pass may send: the confirmed items that still match, with their CURRENT content.
@@ -520,11 +580,21 @@ class ShareState:
         here, so :func:`sync` withdraws it). A ticket, question or need that starts matching AFTER the confirmation
         is not in the confirmed set and is never sent by a pass: it waits for the owner's next confirm (what was shown
         is what is sent, C6-2). The confirmed set also shrinks to what still matches, so an item that left and comes
-        back needs a new confirm. An agent changing tickets therefore cannot widen what the hub sees."""
-        known = set(self.sent) if self.confirmed is None else set(self.confirmed)
-        out = [i for i in selected if i.logical in known]
-        self.confirmed = sorted(i.logical for i in out)
+        back needs a new confirm. An agent changing tickets therefore cannot widen what the hub sees.
+
+        The grant is part of what was confirmed (P02): an item whose audience has grown, or that newly carries its
+        description, is held back to the confirmed grant (:func:`narrowed`: the readers it had, no description it did
+        not have); :meth:`widened` lists it for the owner's next review. Only :meth:`confirm` widens."""
+        known = {lg: dict(EMPTY_GRANT) for lg in self.sent} if self.confirmed is None else self.confirmed
+        out = [narrowed(i, known[i.logical]) for i in selected if i.logical in known]
+        self.confirmed = {i.logical: grant_of(i) for i in out}
         return out
+
+    def widened(self, selected: Iterable[ShareItem]) -> list[ShareItem]:
+        """The items already confirmed or sent whose current form reaches more people, or carries more text, than the
+        owner confirmed: they wait for the owner's confirmation (an automatic pass keeps them narrow)."""
+        known = {lg: dict(EMPTY_GRANT) for lg in self.sent} if self.confirmed is None else self.confirmed
+        return [i for i in selected if i.logical in known and narrowed(i, known[i.logical]) != i]
 
     def refused_items(self) -> list[dict[str, Any]]:
         """What the owner is told about refused items: ``{"item", "code", "stale"}``, sorted by logical id.
@@ -540,7 +610,7 @@ class ShareState:
             "sent": self.sent,
             "withdrawn": sorted(self.withdrawn),
             "refused": self.refused,
-        } | ({} if self.confirmed is None else {"confirmed": sorted(self.confirmed)})
+        } | ({} if self.confirmed is None else {"confirmed": dict(sorted(self.confirmed.items()))})
 
     @classmethod
     def from_json(cls, d: Any) -> ShareState:
@@ -579,9 +649,7 @@ class ShareState:
             ):  # fmt: skip
                 raise HubRefused("malformed")
             refused[lg] = {"code": r["code"], "line": r["line"]}
-        confirmed = d.get("confirmed")
-        if confirmed is not None and (type(confirmed) is not list or any(type(x) is not str for x in confirmed)):
-            raise HubRefused("malformed")
+        confirmed = _confirmed_from_json(d.get("confirmed"))
         return cls(rules=rules, sent=sent, withdrawn=list(d["withdrawn"]), refused=refused, confirmed=confirmed)
 
     def add_rule(self, rule: Mapping[str, Any]) -> bool:

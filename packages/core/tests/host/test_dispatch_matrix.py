@@ -252,7 +252,9 @@ def test_every_served_op_in_every_row_of_the_effective_column_table():
         elif op in COSMETIC_OPS:  # D6: column P only (owner role)
             assert kind == ("person_write", "write")
         elif op in SHARE_OPS:  # V3 C6: column P only (owner role)
-            assert kind == (("person_read", "read") if op in SHARE_READS else ("person_write", "write"))
+            assert kind == (
+                ("person_read", "read") if op in SHARE_READS | {"share.audience"} else ("person_write", "write")
+            )
         elif op in MARKET_OPS:  # V3 G2: P and G; the op refuses an agent's add and --commit itself
             assert kind == (("pg_read", "read") if op in MARKET_READS else ("pg_write", "write"))
         elif op in ORG_OPS:  # M3 H-2: offers P and G, sync P and G, show P only, accept and decline P only (owner)

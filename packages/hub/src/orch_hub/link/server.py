@@ -85,6 +85,7 @@ class LinkServer:
         views: Any = None,
         shares: Any = None,
         switch: Any = None,
+        where: Callable[[], dict[str, Any]] | None = None,
         deliveries: Any = None,
         host: str = "127.0.0.1",
         port: int = 0,
@@ -112,6 +113,7 @@ class LinkServer:
         self._views = views
         self._shares = shares
         self._switch = switch
+        self._where = where
         self._deliveries = deliveries  # custodial.DeliveryQueue: event_deliver out, its replies in (§8.7)
         self._retry_at = float("-inf")
         self._dev, self._now = dev_mode, now_ms
@@ -464,6 +466,7 @@ class LinkServer:
                 views=self._views,
                 shares=self._shares,
                 switch=self._switch,
+                where=self._where,
                 same_computer=same,
             )
             return handler(ctx)

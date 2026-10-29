@@ -120,6 +120,7 @@ class OpContext:
     views: ViewService | None = None  # D15's log_sync receiver; None: the op is `unavailable`
     shares: Any = None  # orch_hub.shares.ShareService; None = share ops not served (unknown_op)
     switch: Any = None  # orch_hub.switch.SwitchService; None = switch/rail ops not served (unknown_op)
+    where: Callable[[], dict[str, Any]] | None = None  # settings.where_answer: the advertised addresses and the name
     same_computer: bool = False  # the link's socket shows the peer is on this computer (never a peer-sent claim)
 
 
@@ -365,6 +366,18 @@ def _fetched(c: OpContext, bundle: dict[str, Any]) -> dict[str, Any]:
         _require_bound(c)
         _require_not_pending(c)
     return bundle
+
+
+def hub_where(c: OpContext) -> dict[str, Any]:
+    """M4 (#1461, protocol 10.9): where this hub can be reached (1 to 4 link addresses) and its display name. Only a bound
+    workspace is answered. Unsigned: a hint under the TLS pin the host already holds, so the reply carries nothing a
+    peer could not learn from the connect link, and it is built from ``hub-settings.json`` only (no request member)."""
+    with c.registry.lock:
+        _require_pin(c)
+        _require_bound(c)
+    if c.where is None:
+        raise Refused("unavailable")
+    return c.where()
 
 
 def org_skills_get(c: OpContext) -> dict[str, Any]:
@@ -763,6 +776,7 @@ HANDLERS: dict[str, Callable[[OpContext], dict[str, Any]]] = {
     "card_put": card_put,
     "binding_put": binding_put,
     "snapshot_get": snapshot_get,
+    "hub_where": hub_where,
     "publish_out": publish_out,
     "route_out": route_out,
     "audit_get": audit_get,

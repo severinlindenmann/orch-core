@@ -153,6 +153,11 @@ class AuditLog:
             },
         )
 
+    def hub_settings(self, *, change: str, actor_user_id: str) -> dict[str, Any]:
+        """An admin changed the hub's name/company (``general``) or its advertised addresses (``addresses``): which one and
+        who, never the value (M4, #1461). Written before the change is saved; a failure here refuses the change."""
+        return self.append("hub_settings", {"change": change, "actor_user_id": actor_user_id})
+
     # --- the link ops --------------------------------------------------------------------------------------------
 
     def get(self, ws: str, body: dict[str, Any]) -> dict[str, Any]:

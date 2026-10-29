@@ -1331,4 +1331,34 @@ def test_r14b_the_file_is_left_when_claude_code_holds_its_lock(m):
         assert m.go("--workspaces", "keep") == 1  # the step is skipped with what to do by hand, the rest is removed
     finally:
         CT.time.monotonic = real
-    assert "in use by Claude Code" in m.out.getvalue() and str(m.ws) in cfg.read_text() and lock.is_dir()
+    assert (
+        "close Claude Code" in m.out.getvalue()
+        and "stale lock" in m.out.getvalue()
+        and str(m.ws) in cfg.read_text()
+        and lock.is_dir()
+    )
+
+
+def test_r14b_a_workspace_the_person_kept_keeps_its_trust_entries(m):
+    cfg = m.home / ".claude.json"
+    root, work = str(m.ws), str(m.ws / ".orch-work" / "PW-0001")
+    cfg.write_text(
+        json.dumps({"projects": {root: {"hasTrustDialogAccepted": True}, work: {"hasTrustDialogAccepted": True}}})
+    )
+    assert m.prune("--yes") == 0  # no terminal: the workspace is kept untouched
+    assert (m.ws / ".orch").exists()
+    assert json.loads(cfg.read_text())["projects"] == {
+        root: {"hasTrustDialogAccepted": True},
+        work: {"hasTrustDialogAccepted": True},
+    }
+
+
+def test_r14b_a_pruned_workspace_loses_its_trust_entries_a_kept_one_does_not(m):
+    cfg = m.home / ".claude.json"
+    other = str(m.home / "other")
+    cfg.write_text(
+        json.dumps({"projects": {str(m.ws): {"hasTrustDialogAccepted": True}, other: {"hasTrustDialogAccepted": True}}})
+    )
+    m.answers = ["y"]
+    assert m.prune("--yes", interactive=True) == 0
+    assert json.loads(cfg.read_text())["projects"] == {other: {"hasTrustDialogAccepted": True}}

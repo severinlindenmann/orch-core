@@ -94,7 +94,7 @@ export function workspacesView(data, now = Date.now()) {
   const joined = data.joined ?? [];
   for (const row of joined) connectBox.append(joinedBannerView(row, actions));
   const connect = button("Connect a workspace", async () => {
-    if (data.admin == null) return actions.signInToConnect?.(); // a session that came from a workspace: sign in once first
+    if (data.needsSignIn) return actions.signInToConnect?.(); // a session that came from a workspace: sign in once first
     connect.disabled = true;
     connectBox.textContent = "";
     try {

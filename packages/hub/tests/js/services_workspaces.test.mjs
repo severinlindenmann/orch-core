@@ -334,7 +334,7 @@ test("workspaces are named after their owner and connect asks whose workspace it
 
 test("a workspace-session admin still sees Connect a workspace; the click asks for one sign-in and mints nothing", async () => {
   let asked = 0, minted = 0;
-  const out = workspacesView({ workspaces: [], handoffs: [], admin: null, canConnect: true,
+  const out = workspacesView({ workspaces: [], handoffs: [], admin: null, canConnect: true, needsSignIn: true,
     actions: { signInToConnect: () => { asked++; }, connect: async () => { minted++; return {}; } } }, NOW);
   assert.match(text(out), /Connect a workspace/);
   assert.match(text(out), /No workspaces yet/);
@@ -350,4 +350,13 @@ test("the return route after sign-in is a short same-origin hash only", () => {
   const re = new RegExp(source.match(/const SAFE_RETURN = \/(.*)\/i;/)[1], "i");
   assert.ok(re.test("#/workspaces"));
   for (const bad of ["https://evil.test/", "//evil.test", "#//evil.test", "javascript:alert(1)", "#/a?x=1", "#/" + "a".repeat(60), "workspaces"]) assert.ok(!re.test(bad), bad);
+});
+
+test("a full admin whose admin list failed to load still mints a link (no sign-out)", async () => {
+  let asked = 0, minted = 0;
+  const out = workspacesView({ workspaces: [], handoffs: [], admin: null, canConnect: true, needsSignIn: false,
+    actions: { signInToConnect: () => { asked++; }, people: async () => [], connect: async () => { minted++; return { link: "/j", expires_ms: NOW + 1000 }; } } }, NOW);
+  await clickButton(out, "Connect a workspace");
+  assert.equal(asked, 0);
+  assert.equal(minted, 1);
 });

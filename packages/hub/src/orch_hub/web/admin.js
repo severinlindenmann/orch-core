@@ -267,7 +267,7 @@ export function adminView(d) {
     const role = select(["read", "edit", "admin"].map((r) => [r, roleName(r)]));
     return [h("h2", { text: "Access" }), personReachView(d, data.users), p("Groups give access to workspaces that share everything. Workspaces that share only what their owner chooses stay with their owner. Hub administrators manage every workspace that shares everything."),
       table(["Group", ...data.workspaces.map((w) => workspaceName(w.workspace_id)), "Members"], data.groups.map((g) => [txt(g.name),
-        ...data.workspaces.map((w) => w.mode === "selective" ? "Personal · only you" : g.name === "hub-admin" ? "Admin" : roleName(data.grants.find((x) => x.workspace_id === w.workspace_id && x.group === g.name)?.role ?? "No access")),
+        ...data.workspaces.map((w) => w.mode === "selective" ? (w.owner_alias === d.self ? "Personal · only you" : "Personal · only the owner") : g.name === "hub-admin" ? "Admin" : roleName(data.grants.find((x) => x.workspace_id === w.workspace_id && x.group === g.name)?.role ?? "No access")),
         String(g.members.length)]), "Grants overview"),
       h("section", { class: "card" }, h("h3", { text: "Grant access" }),
         form("Grant access", [field("Workspace", workspace), field("Group", group), field("Permission", role)], "PUT", "/admin/grants",

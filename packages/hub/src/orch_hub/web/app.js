@@ -451,7 +451,7 @@ async function workspaces(joined = [], known = null) {
       };
       const rows = ws.status === 200 ? ws.body.workspaces ?? [] : [];
       shell("workspaces", workspacesView({ workspaces: rows, handoffs: ho.status === 200 ? ho.body.handoffs ?? [] : [], admin: adminRows, hub, actions, joined, self: state.user.user_id,
-        canConnect: !!state.user.is_admin }));
+        canConnect: !!state.user.is_admin, needsSignIn: !!state.user.needs_sign_in }));
       // Watch for joins while this page is open (3 s, paused while the tab is hidden, stopped by leaving the route).
       clearInterval(workspacesTimer);
       // Diff only against a successful first read: a failed one must not make every workspace look newly joined.

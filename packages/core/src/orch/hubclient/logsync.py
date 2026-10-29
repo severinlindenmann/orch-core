@@ -104,7 +104,13 @@ def event_head(event: dict[str, Any]) -> str:
 
 
 _P_KEYS = {"seq", "head", "ws_seq", "ws_head", "status", "roster_v", "gates"}
+#: R14b: the gates the host's own needs rule says wait for a person now (sorted, a subset of F1_GATES); optional
+_P_WAITING = "waiting"
 _HEADRX = re.compile(r"sha256:[0-9a-f]{64}")
+
+
+def _waiting_ok(x: Any) -> bool:
+    return type(x) is list and all(type(g) is str and g in sharefmt.F1_GATES for g in x) and x == sorted(set(x))
 
 
 def check_proj(proj: Any) -> None:
@@ -118,10 +124,11 @@ def check_proj(proj: Any) -> None:
         return type(x) is str and _HEADRX.fullmatch(x) is not None
 
     if not (
-        type(proj) is dict and set(proj) == _P_KEYS and _pos(proj["seq"]) and _pos(proj["ws_seq"])
+        type(proj) is dict and set(proj) - {_P_WAITING} == _P_KEYS and _pos(proj["seq"]) and _pos(proj["ws_seq"])
         and _head(proj["head"]) and _head(proj["ws_head"]) and proj["status"] in sharefmt.STATUSES
         and type(proj["roster_v"]) is int and proj["roster_v"] >= 0 and type(proj["gates"]) is dict
         and all(sharefmt.f1_gate_ok(k, v) for k, v in proj["gates"].items())
+        and (_P_WAITING not in proj or _waiting_ok(proj[_P_WAITING]))
     ):  # fmt: skip
         raise HubRefused("malformed")
 

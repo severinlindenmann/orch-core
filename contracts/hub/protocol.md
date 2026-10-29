@@ -1868,7 +1868,10 @@ P = {"seq", "head",          the ticket log's last line in this page (int ≥ 1,
      "ws_seq", "ws_head",    the workspace-log position P was computed at (int ≥ 1, hash)
      "status",               the ticket's status there (status list, §10.2b)
      "roster_v",             int ≥ 0
-     "gates": {<gate>: {"gen", "hash", "policy_hash", "source_sha"?}}}   exactly the §10.2b f1 gate entries
+     "gates": {<gate>: {"gen", "hash", "policy_hash", "source_sha"?}},  exactly the §10.2b f1 gate entries
+     "waiting"?}             optional (R14b): sorted, distinct gate names the host's own needs rule says wait for a
+                             person now. When present the hub lists a gate decision only for these (the same count as
+                             the workspace's Mission Control); when absent it falls back to the status rule.
 ```
 
 The host computes `P` with the same code it admits custodial events with (core: the C6b `f1` values plus the status),

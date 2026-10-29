@@ -86,7 +86,7 @@ def _gate_entry_ok(name: str, g: Any) -> bool:
 
 def _proj_shape_ok(p: Any) -> bool:
     return (
-        type(p) is dict and set(p) == {"seq", "head", "ws_seq", "ws_head", "status", "roster_v", "gates"}
+        type(p) is dict and set(p) - {"waiting"} == {"seq", "head", "ws_seq", "ws_head", "status", "roster_v", "gates"}
         and _int(p["seq"], 1) and _int(p["ws_seq"], 1) and _int(p["roster_v"], 0)
         and type(p["head"]) is str and HEAD.fullmatch(p["head"]) and type(p["ws_head"]) is str
         and HEAD.fullmatch(p["ws_head"]) and p["status"] in STATUSES and type(p["gates"]) is dict

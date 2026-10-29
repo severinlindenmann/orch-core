@@ -308,6 +308,7 @@ def serve(
                 secure_cookies=cfg.behind_edge,  # plain http on loopback (dev) cannot carry a Secure cookie
             )
         )
+        switch.badge = api.needs_count  # R14b: the rail badge is the home list's own count
         switch.set_hub_origin(lambda: api.d.api_origin or cfg.resolved_api_origin())  # the dev server learns it late
         web = WebServer.from_listen(
             api, cfg.web_listen, bind_all=bind_all

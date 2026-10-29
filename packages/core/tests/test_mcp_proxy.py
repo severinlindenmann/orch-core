@@ -1045,3 +1045,66 @@ def test_call_arguments_against_the_pinned_schema(env, arguments, ok):
         assert st == 200 and "result" in body and len(posts) == 1
     else:
         assert body["error"] == {"code": -32602, "message": "invalid params"} and not posts
+
+
+# -- review fix 5: an agent cannot slow the host ---------------------------------------------------------------------
+
+
+def test_connection_cap_answers_503_beyond_32(env):
+    socks = []
+    try:
+        for _ in range(mcpproxy.CONNECTIONS_MAX):
+            socks.append(socket.create_connection(("127.0.0.1", env.port), timeout=5))
+        time.sleep(0.3)
+        extra = socket.create_connection(("127.0.0.1", env.port), timeout=5)
+        socks.append(extra)
+        assert extra.recv(4096).startswith(b"HTTP/1.1 503")
+    finally:
+        for s in socks:
+            s.close()
+    time.sleep(0.3)
+    assert rpc(env, mint(env), "ping")[0] == 200  # slots are freed again
+
+
+def test_a_request_counts_before_the_served_check(env):
+    cap = mint(env)
+
+    def boom(ws):
+        raise RuntimeError("down")
+
+    env.proxy._served = boom
+    codes = [rpc(env, cap, "ping", rid=i)[0] for i in range(mcpproxy.CALLS_PER_MINUTE + 1)]
+    assert codes[:3] == [503, 503, 503] and codes[-1] == 429
+
+
+def test_served_and_policy_are_asked_once_per_request(env):
+    t = tool("echo")
+    turn_on(env, t)
+    env.up_factory = lambda rec, bearer: FakeUp(tools=[t])
+    cap = mint(env)
+    calls = {"served": 0, "policy": 0}
+    served, policy = env.proxy._served, env.proxy._tool_policy
+
+    def count_served(ws):
+        calls["served"] += 1
+        return served(ws)
+
+    def count_policy(ws, s):
+        calls["policy"] += 1
+        return policy(ws, s)
+
+    env.proxy._served, env.proxy._tool_policy = count_served, count_policy
+    assert rpc(env, cap, "tools/call", {"name": "echo", "arguments": {}})[0] == 200
+    assert calls == {"served": 1, "policy": 1}
+
+
+def test_upstream_posts_run_in_the_proxys_own_bounded_pool(env):
+    names = []
+    env.up_factory = lambda rec, bearer: FakeUp(on_post=lambda m: names.append(threading.current_thread().name))
+    cap = mint(env)
+    assert rpc(env, cap, "initialize", {})[0] == 200
+    assert names and all(n.startswith("orch-mcp") for n in names)
+    assert env.proxy._pool._max_workers == 8
+    pool = env.proxy._pool
+    asyncio.run(env.proxy.close())
+    assert pool._shutdown

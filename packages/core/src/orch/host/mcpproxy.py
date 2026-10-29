@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import collections
+import concurrent.futures
 import hashlib
 import hmac
 import ipaddress
@@ -39,6 +40,8 @@ UPSTREAM_TIMEOUT = 30
 CALLS_PER_MINUTE = 60
 CALLS_PER_CAPABILITY = 2000
 INFLIGHT_MAX = 4
+CONNECTIONS_MAX = 32
+POOL_WORKERS = 8
 TOOLS_MAX = 200
 TOOLS_BYTES_MAX = 256 * 1024
 ALLOWED_METHODS = ("initialize", "ping", "tools/list", "tools/call")
@@ -209,6 +212,8 @@ class Proxy:
         self.port: int | None = None
         self._server: asyncio.base_events.Server | None = None
         self._lock = threading.RLock()
+        self._conns = 0  # open connections (event loop thread only)
+        self._pool = concurrent.futures.ThreadPoolExecutor(max_workers=POOL_WORKERS, thread_name_prefix="orch-mcp")
         self._caps: dict[str, _Cap] = {}
         self._iso: dict[str, tuple[bool, float]] = {}
         self._runs: dict[str, collections.deque] = {}
@@ -334,6 +339,7 @@ class Proxy:
             self._runs.clear()
             self._held.clear()
         self.port = None
+        self._pool.shutdown(wait=False, cancel_futures=True)
         log.removeFilter(self._filter)
 
     # -- HTTP -----------------------------------------------------------------------------------------------------
@@ -353,6 +359,22 @@ class Proxy:
             pass
 
     async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        if self._conns >= CONNECTIONS_MAX:
+            try:
+                await self._send(writer, 503, {"error": "busy"})
+            finally:
+                try:
+                    writer.close()
+                except Exception:
+                    pass
+            return
+        self._conns += 1
+        try:
+            await self._handle_one(reader, writer)
+        finally:
+            self._conns -= 1
+
+    async def _handle_one(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
             status, payload = await self._serve(reader, writer)
         except _Refuse as exc:
@@ -424,6 +446,7 @@ class Proxy:
             raise _Refuse(401, "unauthorized")
         if name not in cap.servers:
             raise _Refuse(403, "forbidden")
+        self._count(cap)  # the request counts before anything else is asked or decided
         record = self._check_served(cap, name)
         length = headers.get("content-length")
         if length is None:
@@ -533,12 +556,11 @@ class Proxy:
         return up.post(message, timeout=UPSTREAM_TIMEOUT)
 
     async def _forward(self, key: str, cap: _Cap, name: str, up: Any, message: dict) -> list[dict]:
-        self._count(cap)
         if cap.inflight.get(name, 0) >= INFLIGHT_MAX:
             raise _Refuse(429, "too many calls")
         cap.inflight[name] = cap.inflight.get(name, 0) + 1
         try:
-            msgs = await asyncio.to_thread(self._post, cap, up, message)
+            msgs = await asyncio.get_running_loop().run_in_executor(self._pool, self._post, cap, up, message)
         except _Refuse:
             raise
         except Exception:
@@ -582,6 +604,7 @@ class Proxy:
         if not isinstance(msg, dict) or msg.get("jsonrpc") != "2.0" or type(msg.get("method")) is not str:
             return 200, _rpc_error(None, -32600, "invalid request")
         method = msg["method"]
+        memo: dict = {}  # per request: the policy is asked once
         params = msg.get("params")
         if params is not None and not isinstance(params, dict):
             return 200, _rpc_error(msg.get("id"), -32602, "invalid params")
@@ -602,8 +625,8 @@ class Proxy:
         if method == "initialize":
             return 200, await self._initialize(key, cap, name, up, rid, params)
         if method == "tools/list":
-            return 200, await self._tools_list(key, cap, name, record, up, rid)
-        return 200, await self._tools_call(key, cap, name, up, rid, params)
+            return 200, await self._tools_list(key, cap, name, record, up, rid, memo)
+        return 200, await self._tools_call(key, cap, name, up, rid, params, memo)
 
     async def _initialize(self, key: str, cap: _Cap, name: str, up: Any, rid: Any, params: dict) -> dict:
         asked = params.get("protocolVersion")
@@ -681,30 +704,37 @@ class Proxy:
                 pass
         return tools, None
 
-    def _policy(self, cap: _Cap, name: str) -> dict[str, str]:
+    def _policy(self, cap: _Cap, name: str, memo: dict) -> dict[str, str]:
+        """The tool policy, asked at most once per request (``memo`` is the request's)."""
+        if "policy" in memo:
+            return memo["policy"]
+        memo["policy"] = self._policy_now(cap, name)
+        return memo["policy"]
+
+    def _policy_now(self, cap: _Cap, name: str) -> dict[str, str]:
         try:
             policy = self._tool_policy(cap.ws, name)
         except Exception:
             return {}
         return policy if isinstance(policy, dict) else {}
 
-    async def _tools_list(self, key: str, cap: _Cap, name: str, record: dict, up: Any, rid: Any) -> dict:
+    async def _tools_list(self, key: str, cap: _Cap, name: str, record: dict, up: Any, rid: Any, memo: dict) -> dict:
         tools, error = await self._fetch_tools(key, cap, name, record, up, rid)
         if error is not None or tools is None:
             return error or _rpc_error(rid, -32603, "the company server did not answer")
-        policy = self._policy(cap, name)
+        policy = self._policy(cap, name, memo)
         shown = []
         for t in tools:
             if policy.get(t["name"]) == t["pin"]:
                 shown.append({k: v for k, v in t.items() if k != "pin"})  # the view the pin covers
         return {"jsonrpc": "2.0", "id": rid, "result": {"tools": shown}}
 
-    async def _tools_call(self, key: str, cap: _Cap, name: str, up: Any, rid: Any, params: dict) -> dict:
+    async def _tools_call(self, key: str, cap: _Cap, name: str, up: Any, rid: Any, params: dict, memo: dict) -> dict:
         tool = params.get("name")
         off = _rpc_error(rid, -32602, "this tool is off")
         if type(tool) is not str:
             return _rpc_error(rid, -32602, "invalid params")
-        if tool not in self._policy(cap, name):
+        if tool not in self._policy(cap, name, memo):
             return off
         if name not in cap.pins:
             cap.list_n += 1
@@ -714,7 +744,7 @@ class Proxy:
             if error is not None:
                 return _rpc_error(rid, -32603, "the company server did not answer")
         pin = cap.pins.get(name, {}).get(tool)
-        if pin is None or self._policy(cap, name).get(tool) != pin:
+        if pin is None or self._policy(cap, name, memo).get(tool) != pin:
             return off
         day = time.strftime("%Y-%m-%d", time.gmtime())
         with self._lock:

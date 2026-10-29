@@ -45,7 +45,7 @@ import re
 from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, Request
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError, model_validator
 
 from . import reads
 from .adapters.addons import display
@@ -270,14 +270,28 @@ def _rule_row(raw) -> dict | None:
     if kind in ("type", "tag", "ticket") and value is None:
         return None
     aud = raw.get("audience") if isinstance(raw.get("audience"), dict) else {}
+    ids = _audience_ids(aud) if aud else None
     return {
         "kind": kind,
         "value": value,
         "count": _int(raw.get("count")) or 0,
         "describes": display(raw.get("describes")),
         "readers": (len(aud.get("users") or []) + len(aud.get("groups") or [])) if aud else 0,
+        # the reader ids as core stores them: Stop sharing sends the rule back exactly (core matches a removal
+        # exactly). A present but malformed or over-long list (or a non-object) is no form the page could send back:
+        # the row is not removable here, so a bare rule of the same kind and value is never removed in its place
+        "audience": ids,
+        "removable": ids is not None or ("audience" not in raw),
         "description": raw.get("description") is True,
     }
+
+
+def _audience_ids(aud: dict) -> dict | None:
+    try:
+        ok = Audience.model_validate(aud)
+    except ValidationError:
+        return None
+    return {"users": list(ok.users), "groups": list(ok.groups)}
 
 
 def _refused(raw) -> list[dict]:

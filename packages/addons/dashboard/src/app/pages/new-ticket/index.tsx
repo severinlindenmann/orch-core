@@ -661,7 +661,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
-                    <DropdownMenuItem onSelect={() => void submit(false, !startFirst, secondaryRef.current, false)}>{startFirst ? 'Create without starting' : 'Create and start'}</DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => void submit(false, !startFirst, startFirst ? null : secondaryRef.current, false)}>{startFirst ? 'Create without starting' : 'Create and start'}</DropdownMenuItem>
                     <DropdownMenuItem onSelect={() => setPickAgent(true)}>Choose agent…</DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
@@ -675,7 +675,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
       {handoffNew && (
         <SignPopover
           key={`${handoffNew.n}-${handoffNew.start?.withAccess ? plan.hours : 0}`}
-          title="New ticket"
+          title={handoffNew.start ? 'New ticket' : 'Create this ticket?'}
           ws={workspace.id}
           action={(() => {
             // The access length is chosen in the review; the action follows it (a refusal for size keeps the one that was prepared).
@@ -684,7 +684,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
             return 'problem' in again ? handoffNew.action : { ...again.action, launch: handoffNew.action.action === 'new_sequence' ? handoffNew.action.launch : undefined }
           })()}
           startsAgent={!!handoffNew.start}
-          lead={handoffNew.start ? undefined : <p className="text-[13px] text-text-muted" data-testid="nt-lead">Creates the ticket. No agent starts.</p>}
+          lead={handoffNew.start ? undefined : <p className="text-[13px] text-text-muted" data-testid="nt-lead">No agent starts. You can start one later.</p>}
           claudeCode={handoffNew.start?.reviewed.choice.harness === 'claude-code'}
           summary={<div className="space-y-1 text-[13px]" data-testid="nt-summary"><p><span className="text-text-muted">Title </span><Inline>{handoffNew.draft.title.trim()}</Inline></p>{handoffNew.draft.sections.requirements?.trim() && <p className="line-clamp-3 whitespace-pre-line"><span className="text-text-muted">Should be true </span><Inline>{handoffNew.draft.sections.requirements.trim()}</Inline></p>}</div>}
           anchor={handoffNew.anchor}

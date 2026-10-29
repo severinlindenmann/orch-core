@@ -242,7 +242,13 @@ def _connect(target: Any, env: Mapping[str, str], a: argparse.Namespace, out: Te
     if got.get("mode") == "full":
         _emit(out, a.json, got, f"ok hub joined {got.get('hub_id')} ({_FULL_WORDS}; workspace key sealed to it)")
     else:
-        _emit(out, a.json, got, f"ok hub joined {got.get('hub_id')} (selective: the hub sees only what you share)")
+        _emit(
+            out,
+            a.json,
+            got,
+            f"ok hub joined {got.get('hub_id')} "
+            "(selective: the hub sees only what you share, plus this workspace's name)",
+        )
     return 0
 
 

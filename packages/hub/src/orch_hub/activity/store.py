@@ -68,8 +68,8 @@ DETAIL_FIELDS = frozenset(
         "direct",
         "skill",
         "server",
-        "secret",
         "setting",  # which hub setting changed ("general" or "addresses"), never its value
+        "secret",
     }
 )
 REASON_MAX_BYTES = 800  # 200 characters of UTF-8

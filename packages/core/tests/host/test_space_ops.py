@@ -55,10 +55,10 @@ class SpaceHub:
         return self._signed("hub.space_wrap", SP.SIG_SPACE_WRAP, workspace_id=self.me, wxk_version=1,
                             sealed=crypto.b64u(blob))  # fmt: skip
 
-    def peer_item(self, name: str, data: bytes, created_ms: int = 5) -> None:
+    def peer_item(self, name: str, data: bytes, created_ms: int = 5, by: str = "person:p_peer") -> None:
         item_id, signed = SP.build_item(
             hub_id=self.hub.hub_id, space_id=self.space_id, epoch=self.epoch, members=self.members,
-            workspace_id=PEER_WS, body={"name": name, "size": len(data), "data": crypto.b64u(data)},
+            workspace_id=PEER_WS, body={"name": name, "size": len(data), "data": crypto.b64u(data), "by": by},
             created_ms=created_ms, dev=True, sign=lambda m: suite.sign(priv("wsk_b.sig"), m),
         )  # fmt: skip
         sealed = SP.seal_item(self.sk, self.space_id, self.epoch, item_id, signed)
@@ -150,12 +150,15 @@ def pin_peer(served):
 def test_the_ops_are_declared():
     from orch.host import spaceops
 
-    assert spaceops.SPACE_READS == {"space.list", "space.get"}
+    assert spaceops.SPACE_READS == {"space.list", "space.get", "space.history"}
     assert set(spaceops.SPACE_OPS) == {
         "space.list",
         "space.get",
+        "space.history",
         "space.share",
+        "space.agents",
         "space.put",
+        "space.restore",
         "space.revoke",
         "space.accept",
     }
@@ -175,9 +178,9 @@ def test_list_share_put_and_get_in_both_modes(served, request, mode):
     res = req(served, "space.put", put_args)
     assert err(res) == "invalid.input" and "not approved" in res["error"]["message"] and sh.puts == []
     # the owner approves exactly what they were shown; a different list is refused and stores nothing
-    bad = req(served, "space.share", {"space_id": sh.space_id, "members": [served.wid]})
+    bad = req(served, "space.share", {"space_id": sh.space_id, "members": [served.wid], "understood": True})
     assert err(bad) == "invalid.input" and "not the one you approved" in bad["error"]["message"]
-    ok(req(served, "space.share", {"space_id": sh.space_id, "members": sh.members}))
+    ok(req(served, "space.share", {"space_id": sh.space_id, "members": sh.members, "understood": True}))
     got = ok(req(served, "space.put", put_args))["data"]
     assert got["epoch"] == 1 and len(sh.puts) == 1
     sent = sh.puts[0]  # what the hub received opens with SK_e and is signed by OUR wsk
@@ -200,7 +203,7 @@ def test_an_author_without_a_pin_is_refused_and_counted(served, full):
 
 
 def test_a_grown_member_set_stops_the_put_before_anything_is_sent(served, full):
-    ok(req(served, "space.share", {"space_id": full.space_id, "members": full.members}))
+    ok(req(served, "space.share", {"space_id": full.space_id, "members": full.members, "understood": True}))
     full.members = sorted([*full.members, "cc" * 16])
     full.epoch = 2
     res = req(served, "space.put", {"space_id": full.space_id, "name": "n", "data": crypto.b64u(b"1")})
@@ -238,18 +241,18 @@ def test_accept_refuses_what_is_not_the_transition_of_adding_this_workspace(serv
 
 
 def test_an_oversize_file_is_refused_before_anything_is_signed(served, full):
-    ok(req(served, "space.share", {"space_id": full.space_id, "members": full.members}))
+    ok(req(served, "space.share", {"space_id": full.space_id, "members": full.members, "understood": True}))
     big = crypto.b64u(b"x" * (190 * 1024 + 1))
     res = req(served, "space.put", {"space_id": full.space_id, "name": "big", "data": big})
     assert err(res) == "invalid.input" and "too large" in res["error"]["message"] and full.puts == []
 
 
-def test_an_agent_reads_but_never_shares_puts_revokes_or_accepts(served, full):
+def test_an_agent_never_shares_switches_revokes_or_accepts(served, full):
     assert ok(req(served, "space.list", grant=served.grant, session=SESSION))["data"]["spaces"]
     sid = full.space_id
     for op, args in (
-        ("space.share", {"space_id": sid, "members": full.members}),
-        ("space.put", {"space_id": sid, "name": "n", "data": crypto.b64u(b"1")}),
+        ("space.share", {"space_id": sid, "members": full.members, "understood": True}),
+        ("space.agents", {"space_id": sid, "on": True}),
         ("space.revoke", {"space_id": sid, "item_id": "ab" * 16}),
         ("space.accept", {"space_id": sid, "epoch": 2, "prev_members": [], "members": full.members}),
     ):
@@ -259,7 +262,7 @@ def test_an_agent_reads_but_never_shares_puts_revokes_or_accepts(served, full):
 
 def test_names_are_per_author_and_the_hubs_seq_decides_nothing(served, full):
     pin_peer(served)
-    ok(req(served, "space.share", {"space_id": full.space_id, "members": full.members}))
+    ok(req(served, "space.share", {"space_id": full.space_id, "members": full.members, "understood": True}))
     ok(req(served, "space.put", {"space_id": full.space_id, "name": "plan.md", "data": crypto.b64u(b"mine")}))
     # the put went to the hub; play the hub storing it, then the peer shadows the name with its own file
     sent = full.puts[0]

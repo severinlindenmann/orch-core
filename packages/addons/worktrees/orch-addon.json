@@ -2,7 +2,7 @@
   "schema": "orch.addon/2",
   "name": "worktrees",
   "version": "0.1.0",
-  "title": "Worktrees",
+  "title": "Work copies",
   "entry": {"cmd": ["orch-worktrees", "serve"]},
   "capabilities": []
 }

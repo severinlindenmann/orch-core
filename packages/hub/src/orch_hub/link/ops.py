@@ -360,14 +360,6 @@ def snapshot_get(c: OpContext) -> dict[str, Any]:
     return {"snapshot": c.snapshots.snapshot(c.workspace_id, mode)}
 
 
-def _fetched(c: OpContext, bundle: dict[str, Any]) -> dict[str, Any]:
-    """The gates were checked before the fetch; a leave or a drop that began meanwhile must not hand out the bundle."""
-    with c.registry.lock:
-        _require_bound(c)
-        _require_not_pending(c)
-    return bundle
-
-
 def hub_where(c: OpContext) -> dict[str, Any]:
     """M4 (#1461, protocol 10.9): where this hub can be reached (1 to 4 link addresses) and its display name. Only a bound
     workspace is answered. Unsigned: a hint under the TLS pin the host already holds, so the reply carries nothing a
@@ -378,6 +370,14 @@ def hub_where(c: OpContext) -> dict[str, Any]:
     if c.where is None:
         raise Refused("unavailable")
     return c.where()
+
+
+def _fetched(c: OpContext, bundle: dict[str, Any]) -> dict[str, Any]:
+    """The gates were checked before the fetch; a leave or a drop that began meanwhile must not hand out the bundle."""
+    with c.registry.lock:
+        _require_bound(c)
+        _require_not_pending(c)
+    return bundle
 
 
 def org_skills_get(c: OpContext) -> dict[str, Any]:

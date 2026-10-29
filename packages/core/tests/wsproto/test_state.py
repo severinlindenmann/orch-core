@@ -396,6 +396,23 @@ def test_macos_tmp_and_tmpdir_prefixes_are_refused():
         assert not os.path.exists(os.path.realpath(path))
 
 
+def test_an_ancestor_group_writable_by_the_users_private_group_passes(tmp_path, monkeypatch):
+    from orch import privdir
+
+    monkeypatch.setattr(privdir, "_is_private_group", lambda uid, gid: True)
+    parent = tmp_path / "ubuntu"
+    parent.mkdir()
+    parent.chmod(0o775)
+    try:
+        with StateDir(parent / "relay"):
+            pass
+        parent.chmod(0o777)  # world-writable never passes
+        with pytest.raises(StateError, match="writable by another principal"):
+            StateDir(parent / "relay2")
+    finally:
+        parent.chmod(0o700)
+
+
 @pytest.mark.parametrize("mode", [0o777, 0o770, 0o757, 0o722, 0o1777])
 def test_a_too_open_ancestor_is_refused(tmp_path, mode):
     """Group or other write on an ancestor owned by this user (a sticky bit only helps a root-owned one, like /tmp)."""

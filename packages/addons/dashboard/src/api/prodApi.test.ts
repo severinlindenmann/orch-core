@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { api } from './prodApi'
+import { api, onWorkspaceNotReady } from './prodApi'
 import { ApiError } from './types'
 import board from '@/test/fixtures/server-m2/board-page.json'
 import ticket from '@/test/fixtures/server-m2/ticket.json'
@@ -160,4 +160,26 @@ it('reads the add-on packages the server serves, and refuses add-on actions it d
   vi.stubGlobal('fetch', vi.fn())
   await expect(api.runAddonAction(ws, 'wiki', 'delete')).rejects.toMatchObject({ code: 'op.unsupported' })
   expect(fetch).not.toHaveBeenCalled()
+})
+
+it('a workspace read refused with addon.disabled tells the listener once and still throws, without a retry', async () => {
+  const fetcher = vi.fn(async () => Response.json({ ok: false, error: { code: 'addon.disabled', message: 'x', retryable: false } }, { status: 409 }))
+  vi.stubGlobal('fetch', fetcher)
+  const heard = vi.fn()
+  const off = onWorkspaceNotReady(heard)
+  const [a, b] = await Promise.allSettled([api.listBoard(ws), api.listBoard(ws)])
+  off()
+  expect(a.status).toBe('rejected')
+  expect(b.status).toBe('rejected')
+  expect(heard).toHaveBeenCalledTimes(1) // two parallel reads, one refresh
+  expect(fetcher).toHaveBeenCalledTimes(2)
+})
+
+it('other refusals do not touch the workspace list', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ ok: false, error: { code: 'not_found', message: 'x', retryable: false } }, { status: 404 })))
+  const heard = vi.fn()
+  const off = onWorkspaceNotReady(heard)
+  await api.listBoard(ws).catch(() => undefined)
+  off()
+  expect(heard).not.toHaveBeenCalled()
 })

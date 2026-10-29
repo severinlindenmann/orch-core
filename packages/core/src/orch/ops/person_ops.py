@@ -547,7 +547,8 @@ DEVICE_REMOVE = operation(
 HUB_JOIN = operation(
     "hub.join",
     "Human only",
-    "Join a hub. Selective: the hub sees only what you share and never gets the workspace key. Full: the hub is a "
+    "Join a hub. Selective: the hub sees only what you share, plus this workspace's name, and never gets the "
+    "workspace key. Full: the hub is a "
     "member and can read everything in the workspace.",
     who="human",
     props={

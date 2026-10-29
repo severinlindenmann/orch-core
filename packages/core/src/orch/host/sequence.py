@@ -242,10 +242,10 @@ def _validate_edit(intent: Mapping[str, Any]) -> dict[str, Any]:
     from orch.schema import SECTIONS_BY_TYPE
 
     base = {"v", "kind", "ticket", "ticket_type", "head", "sections"}
-    if not base <= set(intent) <= base | {"acceptance", "tasks", "people", "links", "images"}:
+    if not base <= set(intent) <= base | {"title", "acceptance", "tasks", "people", "links", "images"}:
         raise SequenceInvalid(
-            "an edit has exactly v, kind, ticket, ticket_type, head, sections, acceptance, tasks, links, images "
-            "and people"
+            "an edit has exactly v, kind, ticket, ticket_type, head, sections, title, acceptance, tasks, links, "
+            "images and people"
         )
     if intent["v"] != VERSION:
         raise SequenceInvalid("this signer does not know that sequence")
@@ -292,6 +292,8 @@ def _validate_edit(intent: Mapping[str, Any]) -> dict[str, Any]:
         "head": head,
         "sections": out_sections,
     }
+    if "title" in intent:
+        out["title"] = _edit_title(intent["title"])
     if "acceptance" in intent:
         out["acceptance"] = _edit_acceptance(intent["acceptance"])
     if "tasks" in intent:
@@ -307,6 +309,19 @@ def _validate_edit(intent: Mapping[str, Any]) -> dict[str, Any]:
     if not steps(out):
         raise SequenceInvalid("nothing changes")
     return out
+
+
+def _edit_title(value: Any) -> dict[str, str]:
+    """A new title for the ticket: the title the person reviewed (``was``, bound by the event's base_rev) and the new
+    one, both one line of 1 to 200 characters, and different."""
+    if not isinstance(value, Mapping) or set(value) != {"was", "text"}:
+        raise SequenceInvalid("title is {was, text}")
+    was, text = value["was"], value["text"]
+    _one_line(was, "the current title", 200)
+    _one_line(text, "the title", 200)
+    if text == was:
+        raise SequenceInvalid("the title is the one it replaces")
+    return {"was": was, "text": text}
 
 
 def _edit_acceptance(value: Any) -> dict[str, Any]:
@@ -697,7 +712,11 @@ def steps(intent: Mapping[str, Any]) -> list[dict[str, Any]]:
 
             out.append(seqquick.grant_step(intent["agent"]))
         return out
-    # EDIT: pasted screenshots, sections, acceptance, tasks, links, then people (owner last)
+    # EDIT: the title, pasted screenshots, sections, acceptance, tasks, links, then people (owner last)
+    if "title" in intent:
+        out.append(
+            {"op": "set", "args": {"pairs": [f"title={intent['title']['text']}"]}, "kind": "title", "ref": True}
+        )
     out.extend(_image_steps(intent))
     for sid in sorted(intent["sections"], key=SECTION_ORDER.index):
         out.append(
@@ -822,6 +841,12 @@ def expected_payload(intent: Mapping[str, Any], k: int, person: str) -> dict[str
             "label": img["alt"],
             "sha256": img["sha256"],
             "bytes": img["bytes"],
+        }
+    if step["kind"] == "title":
+        return {
+            "type": "ticket.updated",
+            "base_rev": {"ticket.title": canon.value_hash(intent["title"]["was"])},
+            "set": {"ticket.title": intent["title"]["text"]},
         }
     if step["kind"] == "links":
         return {
@@ -1200,9 +1225,13 @@ def expand(prepared: Mapping[str, Any]) -> dict[str, Any]:
                 new_material[key] = copy.deepcopy(material[key])
     if intent["kind"] == ADDON and material.get("before"):
         new_material["before"] = copy.deepcopy(material["before"])  # the host's current settings (unsigned, labelled)
-    if intent["kind"] == EDIT and "links" in intent:
-        # the links the person reviewed: bound by the base_rev of the links event (the hash of exactly this value)
-        new_material["before"] = {"ticket.links": copy.deepcopy(intent["links"]["was"])}
+    if intent["kind"] == EDIT and ("links" in intent or "title" in intent):
+        # what the person reviewed: bound by the base_rev of that event (the hash of exactly this value)
+        new_material["before"] = {}
+        if "title" in intent:
+            new_material["before"]["ticket.title"] = intent["title"]["was"]
+        if "links" in intent:
+            new_material["before"]["ticket.links"] = copy.deepcopy(intent["links"]["was"])
     from orch.host import review
 
     new_material["review"] = [review.of(e, new_material) for e in events]
@@ -1252,8 +1281,10 @@ def build_content(prepared: Mapping[str, Any], *, verified: bool) -> dict[str, A
         content.setdefault("notes", []).extend(extra_lines(intent))
     elif intent["kind"] == EDIT:
         content["headline"] = f"Edit {key}"
-        content["subline"] = "its text, acceptance checks, tasks, repositories and people, as shown below"
+        content["subline"] = "its title, text, acceptance checks, tasks, repositories and people, as shown below"
         notes = content.setdefault("notes", [])
+        if "title" in intent:
+            notes.append(f"Title: {signcontent.one(intent['title']['was'])} -> {signcontent.one(intent['title']['text'])}")
         if intent["sections"]:
             names = ", ".join(signcontent.one(sid.replace("_", " ").capitalize()) for sid in intent["sections"])
             notes.append(f"Replaces the whole current text of: {names}.")
@@ -1462,6 +1493,8 @@ def intent_lines(intent: Mapping[str, Any], clean: Callable[[Any], str]) -> list
         return lines
     if intent["kind"] == EDIT:
         lines = [f"edit: {clean(one(intent['ticket']['key']))}", f"type: {clean(intent['ticket_type'])}"]
+        if "title" in intent:
+            lines.append(f"title: {clean(one(intent['title']['was']))} -> {clean(one(intent['title']['text']))}")
         for sid in sorted(intent["sections"], key=SECTION_ORDER.index):
             lines.append(f"section {clean(sid)} (replaces the current text):")
             lines += ["| " + clean(line) for line in intent["sections"][sid]["text"].split("\n")]

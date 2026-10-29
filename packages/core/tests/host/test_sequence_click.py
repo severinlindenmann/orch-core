@@ -187,6 +187,84 @@ def test_an_edit_sequence_is_signed_by_one_click_when_it_changes_no_people(click
     assert got["doc"]["sections"]["summary"] == "A better line." and got["doc"]["acceptance"][0]["text"] == "It opens"
 
 
+def _title_edit(click, served, title_was, title_text, **extra):
+    from orch import canon
+
+    made_p = prepare(click)[1]
+    v = click.view(made_p["request_id"])
+    click.mono.t += 2
+    key = click.sign(made_p["request_id"], v["view_digest"])["result"]["key"]
+    data = ok(served.client().req("ticket.get", {"ref": key}))["data"]
+    assert data["doc"]["title"] == "Add a sequence"
+    intent = {
+        "v": 1,
+        "kind": "edit_ticket",
+        "ticket": {"key": key, "uid": data["doc"]["uid"]},
+        "ticket_type": "feature",
+        "head": data["doc"]["head"]["head"],
+        "sections": {"summary": {"was": canon.section_hash("One line."), "text": "A better line."}},
+        "title": {"was": title_was, "text": title_text},
+        **extra,
+    }
+    return key, intent
+
+
+def test_r7_p07_an_edit_with_a_title_signs_a_set_title_step_and_the_review_shows_old_and_new(click, served, human):
+    key, intent = _title_edit(click, served, "Add a sequence", "Add a better sequence")
+    before = click.signatures
+    _, p = prepare(click, intent)
+    v = click.view(p["request_id"])
+    rows = "\n".join(v["view"]["lines"])
+    assert "Add a sequence" in rows and "Add a better sequence" in rows
+    click.mono.t += 2
+    click.sign(p["request_id"], v["view_digest"])
+    assert click.signatures == before + 2  # the title, then the section
+    got = ok(served.client().req("ticket.get", {"ref": key}))["data"]["doc"]
+    assert got["title"] == "Add a better sequence" and got["sections"]["summary"] == "A better line."
+
+
+def test_r7_p07_a_title_edit_alone_is_a_sequence_and_a_stale_old_title_is_refused(click, served, human):
+    from orch.host import sequence
+
+    key, intent = _title_edit(click, served, "Add a sequence", "Only the title")
+    intent["sections"] = {}
+    ok_intent = sequence.validate_intent(intent)
+    assert [s["args"]["pairs"] for s in sequence.steps(ok_intent)] == [["title=Only the title"]]
+    _, p = prepare(click, intent)
+    v = click.view(p["request_id"])
+    click.mono.t += 2
+    click.sign(p["request_id"], v["view_digest"])
+    assert ok(served.client().req("ticket.get", {"ref": key}))["data"]["doc"]["title"] == "Only the title"
+    # a title edit made against a title the ticket no longer has (head is current, `was` is not): nothing is signed
+    head = ok(served.client().req("ticket.get", {"ref": key}))["data"]["doc"]["head"]["head"]
+    stale = {**intent, "head": head, "title": {"was": "Add a sequence", "text": "Another"}}
+    signed = click.signatures
+    with pytest.raises(Exception, match="ticket changed"):
+        _, p = prepare(click, stale)
+        v = click.view(p["request_id"])
+        click.mono.t += 2
+        click.sign(p["request_id"], v["view_digest"])
+    assert click.signatures == signed
+    assert ok(served.client().req("ticket.get", {"ref": key}))["data"]["doc"]["title"] == "Only the title"
+
+
+@pytest.mark.parametrize("text", ["", "two\nlines", "x" * 201, "bell\x07", "Add a sequence"])
+def test_r7_p07_the_title_is_one_line_1_to_200_and_different(text):
+    from orch.host import sequence
+
+    intent = {
+        "v": 1,
+        "kind": "edit_ticket",
+        "ticket": {"key": "PW-0001", "uid": "01" + "A" * 24},
+        "ticket_type": "feature",
+        "head": "sha256:" + "0" * 64,
+        "sections": {},
+        "title": {"was": "Add a sequence", "text": text},
+    }
+    with pytest.raises(sequence.SequenceInvalid):
+        sequence.validate_intent(intent)
+
+
 def test_1070_a_new_ticket_with_a_reviewer_is_one_click_and_lists_the_person(click, served, human):
     """#1070: assignees/reviewers on a NEW ticket (the creator stays owner) sign by click, no typed word; the View
     still lists the person with role and full id."""

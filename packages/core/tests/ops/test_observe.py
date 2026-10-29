@@ -67,6 +67,7 @@ def test_wait_observes_too_and_a_missing_branch_or_repo_is_skipped(ws, cli):
     cli("show")
     assert "branch.pushed" not in types(ws)
     cli("set", "1", LINKS)
+    cli("ask", "Which?")  # something open for a person: the wait waits (else wait.incomplete)
     assert cli("wait", "--timeout", "1").code == 0
     assert "branch.pushed" in types(ws)
 

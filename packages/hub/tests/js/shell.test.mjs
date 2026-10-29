@@ -153,3 +153,26 @@ test("a failed first read of the workspaces never turns the existing ones into j
   await timers.at(-1)();
   assert.equal(JSON.stringify(renders.at(-1).joined.map((w) => w.workspace_id)), JSON.stringify(["b".repeat(32)]));
 });
+
+test("P03: a shared ticket opens read only with title, description and who shared it; a vanished one says sharing ended", async () => {
+  const ws = "ab".repeat(16);
+  for (const [items, status] of [[[{ workspace_id: ws, key: "PW-1", title: "Invoice export", shared_by: "Anna", status: "open", description: "CSV please" }], 200], [[], 200], [[], 503]]) {
+    let output;
+    const context = vm.createContext({ pageLoading() {}, loading: () => () => {}, refresh: async () => true, loadRail: async () => {}, renderText: String, navigate() {},
+      h: (tag, props, ...kids) => ({ tag, ...props, kids }), shell: (active, ...nodes) => { output = nodes.filter(Boolean); },
+      api: async (method, path) => ({ status, body: { items } }) });
+    vm.runInContext(source.slice(source.indexOf("async function sharedTicketPage("), source.indexOf("async function workspacePage(")), context);
+    await context.sharedTicketPage({ kind: "shared", workspace: ws, key: "PW-1" });
+    const texts = output.map((n) => n.text);
+    if (items.length) {
+      assert.equal(texts[0], "Invoice export");
+      assert.match(texts[1], /Shared by Anna · open · read only/);
+      assert.ok(texts.includes("CSV please"));
+      assert.equal(output.at(-1).text, "Back");
+    } else if (status === 200) {
+      assert.equal(texts[0], "Sharing ended");
+      assert.match(texts[1], /stopped sharing/);
+      assert.equal(output.at(-1).text, "Back to Home");
+    } else assert.match(texts[1], /could not be loaded/);
+  }
+});

@@ -18,6 +18,17 @@ describe('Tickets page', () => {
     vi.restoreAllMocks()
   })
 
+  it('P03: the shared section sits above the tickets table', async () => {
+    vi.spyOn(api, 'getHubShared').mockResolvedValue({
+      items: [{ workspace_id: 'a'.repeat(32), key: 'DEMO-0007', title: 'Invoice export for Ben', shared_by: 'Anna', status: 'open', type: 'feature', deadline: null, description: null }],
+    })
+    renderApp('/tickets')
+    const box = await screen.findByTestId('shared-with-you')
+    const table = await screen.findByRole('table', { name: 'Tickets' })
+    expect(box.compareDocumentPosition(table) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    vi.restoreAllMocks()
+  })
+
   it('lists the workspace tickets in a table', async () => {
     renderApp('/tickets')
     const table = await screen.findByRole('table', { name: 'Tickets' })

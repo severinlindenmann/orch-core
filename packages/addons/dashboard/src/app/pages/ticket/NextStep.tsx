@@ -22,6 +22,8 @@ type Props = {
   run?: ProgressRun | null
   /** The run id of the ticket's open terminal wait: the agent asks something in its terminal. */
   wait?: string | null
+  /** The host saw the agent inside `orch wait` (run-10 J04): it waits for a decision, not at its prompt. */
+  inWait?: boolean
   /** "Ask the agent to finish" on the not-finished card (absent: the viewer may not start an agent, no button). */
   onFinish?: () => void
   /** "Add it myself": opens the edit sheet (absent: the viewer may not edit, no button). */
@@ -192,7 +194,7 @@ const APPROVE = {
 } as const
 
 /** The one thing to do next, in plain words; nothing when there is nothing to do or say. */
-function NextStepCard({ ticket, viewer, sign, jump, signing = false, run, wait, onFinish, onEdit, openTerminal = openDockOn }: Props) {
+function NextStepCard({ ticket, viewer, sign, jump, signing = false, run, wait, inWait = false, onFinish, onEdit, openTerminal = openDockOn }: Props) {
   const av = availableActions(ticket, viewer)
   const status = ticket.status as string
   const working = agentWorking(ticket, wait)
@@ -263,6 +265,10 @@ function NextStepCard({ ticket, viewer, sign, jump, signing = false, run, wait, 
       </Card>
     )
   }
+  // The agent waits in `orch wait` and nothing is missing: someone else's decision is due (not this viewer's).
+  if (wait && inWait && !finishedOf(ticket)) {
+    return <Card title="Waiting for a decision" text="The agent goes on when someone approves or answers." />
+  }
   // The agent asks something in its terminal and no gap is known: one button to it.
   if (wait && !finishedOf(ticket)) {
     return (
@@ -285,11 +291,11 @@ function NextStepCard({ ticket, viewer, sign, jump, signing = false, run, wait, 
 }
 
 /** Where the ticket is (four plain steps) and the one next step for the person looking at it. */
-export function TicketProgress({ ticket, viewer, sign, jump, signing = false, run, wait, onFinish, onEdit, openTerminal }: Props) {
+export function TicketProgress({ ticket, viewer, sign, jump, signing = false, run, wait, inWait, onFinish, onEdit, openTerminal }: Props) {
   return (
     <div className="min-w-0 space-y-2">
       <Stepper ticket={ticket} />
-      <NextStepCard ticket={ticket} viewer={viewer} sign={sign} jump={jump} signing={signing} run={run} wait={wait} onFinish={onFinish} onEdit={onEdit} openTerminal={openTerminal} />
+      <NextStepCard ticket={ticket} viewer={viewer} sign={sign} jump={jump} signing={signing} run={run} wait={wait} inWait={inWait} onFinish={onFinish} onEdit={onEdit} openTerminal={openTerminal} />
     </div>
   )
 }

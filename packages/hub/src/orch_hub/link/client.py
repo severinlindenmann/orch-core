@@ -106,7 +106,7 @@ class LinkClient:
             "body": body,
             **override,
         }
-        return self._wsk.sign_object(o)
+        return self._wsk.sign_link(o, self._c.exporter())
 
     def send_raw(self, obj: dict[str, Any]) -> None:
         framing.write_frame(self._c, obj, timeout=self._t)
@@ -125,6 +125,7 @@ class LinkClient:
                 mode=self.mode,
                 pub=self._hk_op,
                 now_ms=self._now(),
+                exporter=self._c.exporter(),
             )
         except H.Refused as e:
             raise LinkError(e.code) from None
@@ -176,7 +177,7 @@ class LinkClient:
             "re": o["seq"],
             "body": {} if error is None else {"error": error},
         }
-        self.send_raw(self._wsk.sign_object(reply))
+        self.send_raw(self._wsk.sign_link(reply, self._c.exporter()))
 
     def close(self) -> None:
         self._c.close()

@@ -1597,14 +1597,40 @@ def link_label(direction: str) -> bytes:
     return L["sig_hub_link"] if direction == "w2h" else L["sig_hub_route"]
 
 
+def link_signed_bytes(direction: str, exporter: bytes, o: Mapping[str, Any]) -> bytes:
+    """What a ``hub.link`` message signature covers (§10.2, R1): ``label || exporter || cj(o)``. ``exporter`` is this
+    connection's 32-byte TLS exporter (§10.1); it is never sent, so a message is valid on one connection only. The
+    fixed-length prefix makes the input parse one way."""
+    if type(exporter) is not bytes or len(exporter) != 32:
+        raise Refused("malformed")
+    try:
+        return link_label(direction) + exporter + cj(o)
+    except CanonError:
+        raise Refused("malformed") from None
+
+
 def verify_link(
-    signed: Any, *, direction: str, hub_id_: str, workspace_id: str, mode: str, pub: bytes, now_ms: int
+    signed: Any,
+    *,
+    direction: str,
+    hub_id_: str,
+    workspace_id: str,
+    mode: str,
+    pub: bytes,
+    now_ms: int,
+    exporter: bytes,
 ) -> dict[str, Any]:
-    """``pub`` is WSK for w2h (checked by the hub) and the card's HK_op for h2w (checked by the host). Requests are
-    messages with ``re: null`` in the op's request direction; a reply has ``re`` = the request's ``seq`` and the other
-    direction, and its body is either the op's reply body or ``{"error": code}`` (not validated in H0)."""
+    """``pub`` is WSK for w2h (checked by the hub) and the card's HK_op for h2w (checked by the host); ``exporter`` is
+    the TLS exporter of the connection the message arrived on. Requests are messages with ``re: null`` in the op's
+    request direction; a reply has ``re`` = the request's ``seq`` and the other direction, and its body is either the
+    op's reply body or ``{"error": code}`` (not validated in H0). The ``seq`` counter is the caller's (§10.2 step 7)."""
     o = _envelope(signed, "hub.link")
-    _signature(signed, link_label(direction), pub)
+    try:
+        sig = unb64u(signed["sig"], S.SIG_LEN)
+    except CanonError:
+        raise Refused("malformed") from None
+    if not S.verify(pub, sig, link_signed_bytes(direction, exporter, o)):
+        raise Refused("bad_signature")
     _fields(o, "hub.link")
     if o["dir"] != direction:
         raise Refused("malformed")

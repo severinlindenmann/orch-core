@@ -285,7 +285,9 @@ def _gate(gate: dict[str, Any] | None, ext: bool, decisions_source: list[dict] |
         out["missing"] = [str(m) for m in gate["missing"]]
     if gate.get("eligible") is not None:
         out["eligible"] = list(gate["eligible"])
-    if gate.get("single_only") is True:  # the gate binds files or add-on fields: one signature cannot approve both gates
+    if (
+        gate.get("single_only") is True
+    ):  # the gate binds files or add-on fields: one signature cannot approve both gates
         out["single_only"] = True
     if decisions_source:
         out["source_sha"] = ", ".join(s["sha"][:12] for s in decisions_source)

@@ -816,6 +816,9 @@ class HumanOps:
                 material["sequence"] = {
                     "digest": seq["digest"], "of": seq["of"], "intent": copy.deepcopy(seq["intent"]),
                 }  # fmt: skip
+                if seq["intent"].get("kind") == "approve_gates" and view.gates.get("plan") is not None:
+                    # the plan rule, so the review says who approves it (per host, not signed)
+                    material["sequence"]["plan_policy"] = _canon.canonical_policy(thaw(view.gates["plan"].policy))
             return material
         if len(events) == 1 and types[0] == "question.answered":
             qid = events[0]["question"]

@@ -3,10 +3,11 @@
 import os
 import sqlite3
 
-SCHEMA_VERSION = 4  # 2: workspaces.delegation_json replaces card_seq/card_json (design 2.6b)
+SCHEMA_VERSION = 5  # 2: workspaces.delegation_json replaces card_seq/card_json (design 2.6b)
 # 3: hub path (orch-core #898): hub_bindings, hub_cards, hub_op_revoked, hub_revoked_devices (additive only)
 # 4: apps (M4 #1357 S3): apps, app_versions, app_files, app_views, app_visits (additive only)
-MIGRATABLE_FROM = (2, 3)
+# 5: shares.label / by_kind / by_name, the display columns of the company list (additive: ALTER TABLE below)
+MIGRATABLE_FROM = (2, 3, 4)
 
 
 class SchemaError(Exception):
@@ -80,7 +81,10 @@ CREATE TABLE IF NOT EXISTS shares(
   manifest_hash TEXT,
   bytes INTEGER NOT NULL DEFAULT 0,
   created_ms INTEGER NOT NULL,
-  ended_ms INTEGER
+  ended_ms INTEGER,
+  label TEXT NOT NULL DEFAULT '',
+  by_kind TEXT NOT NULL DEFAULT 'person' CHECK(by_kind IN ('person','agent')),
+  by_name TEXT
 );
 CREATE INDEX IF NOT EXISTS shares_owner ON shares(owner_ws);
 CREATE TABLE IF NOT EXISTS share_files(
@@ -180,18 +184,29 @@ def connect(path):
     return conn
 
 
+_SHARE_COLUMNS = (
+    ("label", "TEXT NOT NULL DEFAULT ''"),
+    ("by_kind", "TEXT NOT NULL DEFAULT 'person' CHECK(by_kind IN ('person','agent'))"),
+    ("by_name", "TEXT"),
+)
+
+
 def init(path):
     conn = connect(path)
     try:
         have = conn.execute("PRAGMA user_version").fetchone()[0]
         has_tables = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table'").fetchone()
-        # versions 2 and 3 -> 4 only add tables (CREATE IF NOT EXISTS below), so it migrates in place
+        # versions 2, 3 and 4 -> 5 only add tables or columns (CREATE IF NOT EXISTS / ALTER below), in place
         if (has_tables and have not in (SCHEMA_VERSION, *MIGRATABLE_FROM)) or have > SCHEMA_VERSION:
             raise SchemaError(
                 "this data dir was made by an older orch-publish (dev only, no upgrade path): "
                 "stop the server and delete the data dir, then start again"
             )
         conn.executescript(SCHEMA)
+        have_cols = {r["name"] for r in conn.execute("PRAGMA table_info(shares)")}
+        for col, ddl in _SHARE_COLUMNS:  # an older data dir: the display columns are added in place
+            if col not in have_cols:
+                conn.execute(f"ALTER TABLE shares ADD COLUMN {col} {ddl}")
         conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
     finally:
         conn.close()

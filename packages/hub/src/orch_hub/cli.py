@@ -88,7 +88,7 @@ def _parser() -> argparse.ArgumentParser:
     ins.add_argument("--workspace", help="only this workspace id")
     ins.add_argument("--json", action="store_true", required=True, help="print JSON (the only format)")
     rl = sub.add_parser(
-        "releases", help="dev: release metadata of the bound full-mode workspaces, read at orch-publish (admin read)"
+        "releases", help="dev: the links and apps of the bound full-mode workspaces, read at orch-publish (admin read)"
     )
     rl.add_argument("--state", help="hub state dir (default: $ORCH_HUB_STATE)")
     rl.add_argument(
@@ -275,7 +275,7 @@ def _releases(args: argparse.Namespace) -> int:
             if reg.mode(args.workspace) != "full":  # the admin read covers bound full-mode workspaces only (§10.6)
                 print("orch-hub: refused: not_bound", file=sys.stderr)
                 return 1
-        rows = client.releases(args.workspace)
+        rows = client.published(args.workspace)
     except (ValueError, KeysError) as e:
         print(f"orch-hub: refused: {e}", file=sys.stderr)
         return 1
@@ -285,7 +285,7 @@ def _releases(args: argparse.Namespace) -> int:
     finally:
         if reg is not None:
             reg.close()
-    print(dumps({"releases": rows}))
+    print(dumps({"published": rows}))
     return 0
 
 

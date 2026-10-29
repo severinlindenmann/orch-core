@@ -182,7 +182,7 @@ def _admin_read(scope, settings):
             conn, hub if re.fullmatch(r"[0-9a-f]{32}", hub) else "0" * 32, now, settings.dev_mode
         )
         res = R.check_admin_read(req, st, now)
-        return R.list_releases(conn, res["workspaces"], now, res["named"])
+        return R.list_published(conn, res["workspaces"], now, res["named"])
     finally:
         conn.close()
 

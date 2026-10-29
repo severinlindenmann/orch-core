@@ -46,6 +46,7 @@ from ..access import Access, AccessError
 from ..access.orgcleanup import org_cleanup
 from ..access.store import ADMIN_GROUP, check_name
 from ..activity.feed import feed as activity_feed
+from ..backup.hubop import FENCE as RESTORE_FENCE
 from ..changes import ChangeError
 from ..channels import Channels
 from ..channels.cli import pair_link
@@ -843,6 +844,8 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
             raise ApiError("unknown_op")
         if self._hosts and headers.get("host", "") not in self._hosts:
             raise ApiError("not_allowed")
+        if method != "GET" and RESTORE_FENCE.is_set():
+            raise ApiError("restore_busy")  # a restore is swapping the state dir: no write may land in the old one
         cookie_token = self._cookie(headers.get("cookie", ""), self._cookie_name)
         auth = headers.get("authorization", "")
         bearer = auth[7:].strip() if auth[:7].lower() == "bearer " else ""

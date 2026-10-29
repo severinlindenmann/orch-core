@@ -4,3 +4,11 @@
 .prod-login p { color: var(--text-muted); }
 .prod-retry { border: 1px solid var(--border); background: var(--surface-2); color: var(--text); border-radius: 6px; padding: 8px 14px; cursor: pointer; }
 .prod-retry:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+
+.prod-wait { display: flex; align-items: center; gap: 12px; }
+.prod-spin { flex: none; width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--border); border-top-color: var(--brand); animation: prod-spin 0.9s linear infinite; }
+@keyframes prod-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .prod-spin { animation: none; } }
+.prod-details { justify-self: start; border: 0; background: none; padding: 0; color: var(--text-muted); font-size: 13px; text-decoration: underline; cursor: pointer; }
+.prod-details:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.prod-code { font-size: 13px; }

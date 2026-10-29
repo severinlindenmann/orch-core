@@ -18,7 +18,22 @@ from orch_hub.link import Registry
 from orch_hub.publish import AdminReadClient, AdminReadError
 
 NOW = G.NOW
-ROW = G.ADMIN_ROW
+ROW = {
+    "workspace_id": G.WS_A,
+    "id": "ab" * 16,
+    "type": "link",
+    "kind": "secret",
+    "state": "live",
+    "created_ms": NOW - 1000,
+    "expires_ms": NOW + 86_400_000,
+    "bytes": 12_345,
+    "label": "Q3 report",
+    "ticket": None,
+    "by_kind": "person",
+    "by_name": "Ana",
+    "views": 3,
+    "has_password": False,
+}
 
 
 def state_of(mode="full", extra_ws=()):
@@ -52,7 +67,7 @@ class FakePublish:
                     return self._send({"error": e.code}, 401 if e.code != "not_bound" else 403)
                 if outer.override is not None:
                     return self._send(*outer.override)
-                self._send({"releases": [x for x in outer.rows if x["workspace_id"] in r["workspaces"]]})
+                self._send({"rows": [x for x in outer.rows if x["workspace_id"] in r["workspaces"]]})
 
             def _send(self, obj, status=200):
                 data = json.dumps(obj).encode()
@@ -90,7 +105,7 @@ def client(url, **kw):
 
 def test_signed_request_passes_the_contract_check_and_returns_the_rows(fake):
     f = fake(st=state_of())
-    assert client(f.url).releases() == [ROW]
+    assert client(f.url).published() == [ROW]
     (req,) = f.seen
     assert req["method"] == "GET" and req["target"] == "/v2/hub/releases"
     assert set(req["headers"]) >= {"Orch-Hub", "Orch-Hub-Ts", "Orch-Hub-Signature"}
@@ -98,15 +113,15 @@ def test_signed_request_passes_the_contract_check_and_returns_the_rows(fake):
 
 def test_one_workspace(fake):
     f = fake(st=state_of())
-    assert client(f.url).releases(G.WS_A) == [ROW]
+    assert client(f.url).published(G.WS_A) == [ROW]
     assert f.seen[0]["target"] == f"/v2/hub/releases?workspace={G.WS_A}"
 
 
 def test_a_selective_workspace_is_out_of_scope_at_the_server(fake):
     f = fake(st=state_of(mode="selective"))
-    assert client(f.url).releases() == []
+    assert client(f.url).published() == []
     with pytest.raises(AdminReadError) as e:
-        client(f.url).releases(G.WS_A)
+        client(f.url).published(G.WS_A)
     assert e.value.code == "not_bound"
 
 
@@ -114,22 +129,22 @@ def test_a_selective_workspace_is_out_of_scope_at_the_server(fake):
 def test_a_workspace_that_is_not_canonical_never_leaves_the_hub(fake, ws):
     f = fake(st=state_of())
     with pytest.raises(AdminReadError) as e:
-        client(f.url).releases(ws)
+        client(f.url).published(ws)
     assert e.value.code == "malformed" and f.seen == []
 
 
 def test_server_refusals_surface_as_their_code(fake):
     f = fake(st=state_of(), clock=lambda: NOW + 500_000)
     with pytest.raises(AdminReadError) as e:
-        client(f.url).releases()
+        client(f.url).published()
     assert e.value.code == "stale_timestamp"
     f2 = fake(st={**state_of(), "revoked_op_certs": [G.OP_CERT_ID]})
     with pytest.raises(AdminReadError) as e:
-        client(f2.url).releases()
+        client(f2.url).published()
     assert e.value.code == "unknown_hub"
     f3 = fake(st={**state_of(), "hub_cards": {}})
     with pytest.raises(AdminReadError) as e:
-        client(f3.url).releases()
+        client(f3.url).published()
     assert e.value.code == "unknown_hub"
 
 
@@ -137,18 +152,20 @@ def test_a_wrong_signer_is_refused_by_the_server(fake):
     f = fake(st=state_of())
     c = AdminReadClient(f.url, KS.OpSigner(G.K.priv["hk_op_rogue"]), G.HUB_ID, now_ms=lambda: NOW)
     with pytest.raises(AdminReadError) as e:
-        c.releases()
+        c.published()
     assert e.value.code == "bad_hub_signature"
 
 
 @pytest.mark.parametrize(
     "override",
     [
-        ({"releases": [{**ROW, "content": "aGk"}]}, 200),  # an extra field: not metadata
-        ({"releases": [{**ROW, "public_url": "https://x.example/p/t"}]}, 200),  # hv 0: null only
-        ({"releases": [{**ROW, "workspace_id": G.WS_C}]}, 200),  # another workspace than asked
-        ({"releases": ROW}, 200),
-        ({"releases": [], "x": 1}, 200),
+        ({"rows": [{**ROW, "content": "aGk"}]}, 200),  # an extra field: not metadata
+        ({"rows": [{**ROW, "token_hash": "ab" * 32}]}, 200),  # a hash must never ride along
+        ({"rows": [{**ROW, "has_password": "no"}]}, 200),  # a bool, not a record
+        ({"rows": [{**ROW, "type": "release"}]}, 200),  # an unknown shape
+        ({"rows": [{**ROW, "workspace_id": G.WS_C}]}, 200),  # another workspace than asked
+        ({"rows": ROW}, 200),
+        ({"rows": [], "x": 1}, 200),
         ([1], 200),
         ("not an object", 200),
     ],
@@ -156,7 +173,7 @@ def test_a_wrong_signer_is_refused_by_the_server(fake):
 def test_an_answer_that_breaks_the_contract_is_refused(fake, override):
     f = fake(st=state_of(), override=override)
     with pytest.raises(AdminReadError) as e:
-        client(f.url).releases(G.WS_A)
+        client(f.url).published(G.WS_A)
     assert e.value.code == "bad_answer"
 
 
@@ -166,13 +183,13 @@ def test_an_answer_that_breaks_the_contract_is_refused(fake, override):
 def test_other_answers_are_unavailable(fake, override):
     f = fake(st=state_of(), override=override)
     with pytest.raises(AdminReadError) as e:
-        client(f.url).releases()
+        client(f.url).published()
     assert e.value.code == "unavailable"
 
 
 def test_no_server_is_unavailable():
     with pytest.raises(AdminReadError) as e:
-        client("http://127.0.0.1:1", timeout_s=1).releases()
+        client("http://127.0.0.1:1", timeout_s=1).published()
     assert e.value.code == "unavailable"
 
 
@@ -226,7 +243,7 @@ def test_cli_prints_the_rows(hub_state, fake, capsys):
     rc = cli.main(["releases", "--state", str(st), "--publish-url", f.url, "--json"])
     out = capsys.readouterr()
     assert rc == 0, out.err
-    assert json.loads(out.out) == {"releases": [ROW]}
+    assert json.loads(out.out) == {"published": [ROW]}
 
 
 def test_cli_refuses_a_workspace_that_is_not_full_mode_bound(hub_state, fake, capsys):

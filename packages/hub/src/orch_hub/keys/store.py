@@ -324,6 +324,11 @@ class HubKeys:
     def revocations(self) -> list[dict[str, Any]]:
         return [self._read_obj(self.state / "revoked" / f"{c}.json") for c in sorted(self.revoked_op_certs())]
 
+    def sign_backup_header(self, header: dict[str, Any]) -> bytes:
+        """``HK_root`` over a ``hub.backup`` header (protocol §17.1); refuses anything else."""
+        assert self._root is not None
+        return self._root.sign_backup_header(header)
+
     @property
     def op_signer(self) -> KS.OpSigner:
         """The typed HK_op signer (link server: h2w messages; snapshots; publish transport). Refuses once revoked."""

@@ -58,7 +58,8 @@ and a write that commits consumes the blobs it used (also when the answer is a r
 them.
 
 **Redaction** (D-P2-10). Every result is passed through the request's :class:`~orch.host.auth.Redactor` before it is
-stored or sent, and so is every error.
+stored or sent, and so is every error. Only what leaves the host: the worker's internal answer of a
+op of :data:`SECOND_PHASE` (a plan the second phase verifies, signs or sends) is never redacted, its final answer is.
 
 **Visibility** (F6): :class:`Viewer` holds the hooks the later reads use (``ticket.query``, ``needs``,
 ``session.list``, ``diff``, ``artifact.get``, ``sub.open``: H6a, H6b, H3b1, H4a2). The registry reads already filter
@@ -71,10 +72,11 @@ import asyncio
 import base64
 import binascii
 import contextlib
+import importlib
 import logging
 import time
 import traceback
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -148,6 +150,18 @@ NOT_SERVED: dict[str, str] = {
     "import.v1": "import v1 runs in direct mode before registration (D-P2-9)",
 }
 PERSON_READS = frozenset({"doctor", "instructions.sync"})
+
+
+def plain(value: Any) -> Any:
+    """A plan as the second phase gets it: a deep copy into plain dicts and lists (the worker's read-only views of
+    the store, ``mappingproxy`` and tuples, must not be read from another thread), every string and key unchanged."""
+    if isinstance(value, Mapping):
+        return {str(k): plain(v) for k, v in value.items()}
+    if isinstance(value, list | tuple):
+        return [plain(v) for v in value]
+    return value
+
+
 #: registry reads for P and G: the session-start hook runs in the agent's own session (column G, a verified grant), so
 #: it must not be a person-only read (run 6, #1067: ``instructions.hook is not allowed here`` at every agent start)
 #: Column N (an agent with no verified grant) is excluded on purpose: the hook shows the person, claim and unread
@@ -496,58 +510,12 @@ class RegistryBackend:
                     "outcome.unknown", f"{op} did not finish in time; ask outcome.get with its idem"
                 ) from None
             raise HostError("timeout", f"{op} did not finish within {timeout_ms} ms") from None
-        if op in GIT_OPS or op in QUICK_OPS:
-            return await self._git_read(call, result)
-        if op == "sub.open":
-            return self._register(call, result)
-        if op == "run.sub":
-            return await self._register_runs(call, result)
-        if op in TERM_OPS or op == "run.stop":
-            return await terms.complete(call, result)
-        if op in TRANSCRIPT_OPS:  # focus/1: the runner reads the transcript
-            from . import transcripts
-
-            return await transcripts.complete(call, result)
-        if op in AGENT_OPS:  # H11c: the launch intent, the worktree, the spawn
-            from . import agents
-
-            return await agents.complete(call, result)
-        if op in GRANT_OPS:  # H11c: the runner grant table and the runner, on the event loop
-            from . import runnergrants
-
-            return await runnergrants.complete(call, result)
-        if op in WORKTREE_OPS and op not in ("worktree.list", "worktree.diff"):  # H11d: runner git, then registration
-            from . import worktrees
-
-            return await worktrees.execute(call, result)
-        if op in PUBLISH_NETWORK_OPS or op == "publish.list":  # P5: the server calls, off the workspace worker
-            from . import publishing
-
-            return await publishing.execute(call, result)
-        if op in HUB_NETWORK_OPS:  # V3 C2a: the hub link, off the workspace worker
-            from . import hubops
-
-            return await hubops.execute(call, result)
-        if op in SHARE_NETWORK_OPS:  # V3 C6: the hub link, off the workspace worker
-            from . import shareops
-
-            return await shareops.execute(call, result)
-        if op in MARKET_NETWORK_OPS:  # V3 G2: DNS and git, off the workspace worker, no lock held
-            from . import marketops
-
-            return await marketops.execute(call, result)
-        if op in SPACE_NETWORK_OPS:  # V3 C13: the hub link, off the workspace worker
-            from . import spaceops
-
-            return await spaceops.execute(call, result)
-        if op in ORG_NETWORK_OPS:  # M3 H-2: the hub link (org.sync), off the workspace worker
-            from . import orgops
-
-            return await orgops.execute(call, result)
-        if op in PEER_NETWORK_OPS:  # V3 C12: peer.send / peer.reply, the hub link off the worker
-            from . import peerops
-
-            return await peerops.execute(call, result)
+        if op in SECOND_PHASE:  # the worker handed over its plan unredacted: redact what the second phase ANSWERS
+            redactor = Redactor((call.frame.get("auth") or {}).get("grant"), op)
+            try:
+                return redactor.obj(await SECOND_PHASE[op](self, call, result))
+            except HostError as exc:
+                raise redactor.error(exc) from None
         if op == "sub.close":
             bus = call.service.bus
             closed = bus is not None and bus.close(call.session, call.frame["args"]["sub"])
@@ -778,6 +746,8 @@ class RegistryBackend:
                 result = self.human.serve(call, redactor)
             else:
                 result = self._registry(call, redactor, step)
+            if op in TWO_PHASE_OPS:
+                return plain(result)  # internal: run() redacts the second phase's answer, never the data it acts on
             return redactor.obj(result)
         except HostError as exc:
             raise redactor.error(exc) from None
@@ -1117,3 +1087,51 @@ class RegistryBackend:
         if ctx.session and operation.is_write and not ctx.dry_run:
             records.succeeded_write(ctx.session)
         return result_dict(res)
+
+
+# -- the second phases -------------------------------------------------------------------------------------------------
+
+SecondPhase = Callable[[RegistryBackend, "Call", Any], Awaitable[dict[str, Any]]]
+
+
+def _in(module: str, fn: str) -> SecondPhase:
+    """``orch.host.<module>.<fn>(call, worker_answer)``, looked up at call time (a lazy import; a test may patch it)."""
+
+    def run(backend: RegistryBackend, call: Call, result: Any) -> Awaitable[dict[str, Any]]:
+        return getattr(importlib.import_module(f"orch.host.{module}"), fn)(call, result)
+
+    return run
+
+
+async def _sub_open(backend: RegistryBackend, call: Call, result: Any) -> dict[str, Any]:
+    return backend._register(call, result)  # noqa: SLF001
+
+
+def _ops(*groups: Iterable[str], but: Iterable[str] = ()) -> list[str]:
+    return sorted({op for g in groups for op in g} - set(but))
+
+
+#: THE list of two-phase ops (review F3): op -> its second phase, on the event loop, given the worker's answer. That
+#: answer is internal (a plan, a checked launch, a pending read): :meth:`RegistryBackend.serve` hands it over as
+#: :func:`plain` data, never redacted, because a random base64url key, signature or payload in it can look like a token
+#: and would be rewritten before it is verified, signed or sent. :meth:`RegistryBackend.run` redacts the second phase's
+#: answer and error instead. Every other op's worker answer is the answer, and is redacted there.
+SECOND_PHASE: dict[str, SecondPhase] = {
+    **dict.fromkeys(_ops(GIT_OPS, QUICK_OPS), lambda b, call, r: b._git_read(call, r)),  # noqa: SLF001
+    "sub.open": _sub_open,
+    "run.sub": lambda b, call, r: b._register_runs(call, r),  # noqa: SLF001
+    **dict.fromkeys(_ops(TERM_OPS, {"run.stop"}), _in("terms", "complete")),
+    **dict.fromkeys(_ops(TRANSCRIPT_OPS), _in("transcripts", "complete")),  # focus/1: the runner reads the transcript
+    **dict.fromkeys(_ops(AGENT_OPS), _in("agents", "complete")),  # H11c: the launch intent, the worktree, the spawn
+    **dict.fromkeys(_ops(GRANT_OPS), _in("runnergrants", "complete")),  # H11c: the runner grant table
+    # H11d: runner git, then registration
+    **dict.fromkeys(_ops(WORKTREE_OPS, but={"worktree.list", "worktree.diff"}), _in("worktrees", "execute")),
+    **dict.fromkeys(_ops(PUBLISH_NETWORK_OPS, {"publish.list"}), _in("publishing", "execute")),  # P5: server calls
+    **dict.fromkeys(_ops(HUB_NETWORK_OPS), _in("hubops", "execute")),  # V3 C2a: the hub link, off the worker
+    **dict.fromkeys(_ops(SHARE_NETWORK_OPS), _in("shareops", "execute")),  # V3 C6
+    **dict.fromkeys(_ops(MARKET_NETWORK_OPS), _in("marketops", "execute")),  # V3 G2: DNS and git, no lock held
+    **dict.fromkeys(_ops(SPACE_NETWORK_OPS), _in("spaceops", "execute")),  # V3 C13
+    **dict.fromkeys(_ops(ORG_NETWORK_OPS), _in("orgops", "execute")),  # M3 H-2: org.sync
+    **dict.fromkeys(_ops(PEER_NETWORK_OPS), _in("peerops", "execute")),  # V3 C12: peer.send / peer.reply
+}
+TWO_PHASE_OPS = frozenset(SECOND_PHASE)

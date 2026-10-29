@@ -7,7 +7,7 @@ import { ChannelError, deleteChannel, generateKey, loadChannel, saveChannel, sig
 import { inboxView, reviewMeaning, signedMeaning } from "./inbox.js";
 import { parseRoute, registerPages } from "./route.js";
 import { PAGES } from "./pages.js";
-import { firstRunOutgrown, homeView, workspaceStatus } from "./home.js";
+import { firstRunOutgrown, homeView, sharedEnded, workspaceStatus } from "./home.js";
 import { activityView } from "./activity.js";
 import { accountFromWorkspaceView, accountView } from "./account.js";
 import { adminView } from "./admin.js";
@@ -646,23 +646,28 @@ async function home() {
     state.menu = false;
     await loadRail();
     const user = state.user;
-    const [ws, needs, sharedRes] = await Promise.all([api("GET", "/me/workspaces"), api("GET", "/me/needs-you"), api("GET", "/me/shared")]);
+    const [ws, needs, sharedRes, adminRes] = await Promise.all([api("GET", "/me/workspaces"), api("GET", "/me/needs-you"), api("GET", "/me/shared"), canAdmin() ? api("GET", "/admin/workspaces") : Promise.resolve({ status: 0, body: {} })]);
     if (!user || state.user !== user) return;
     const mine = state.me && state.channels.find((c) => c.channel_id === state.me.channelId && c.status === "active");
     const workspaces = ws.status === 200 ? ws.body.workspaces : [];
     const dead = !mine && (state.me || state.channels.some((c) => c.status === "active" && c.kind === "browser"));
+    const shared = sharedRes.status === 200 ? sharedRes.body.items ?? [] : [];
+    // P04: per person, in this browser; diffed only after a successful read, dropped on sign out (clearSession)
+    const ended = sharedRes.status === 200 ? trackShared(user.user_id, shared) : loadEnded(user.user_id);
     homeData = {
       user_id: user.user_id,
       user: state.user,
       items: needs.status === 200 ? needs.body.items : [],
       offline: needs.status === 200 ? needs.body.offline : [],
       workspaces,
-      shared: sharedRes.status === 200 ? sharedRes.body.items ?? [] : [],
+      adminWorkspaces: adminRes.status === 200 ? adminRes.body.workspaces ?? [] : null,
+      shared,
+      ended,
       channels: state.channels.map((c) => ({ ...c, status: c.status + (state.me?.channelId === c.channel_id ? " (this browser)" : "") })),
       newChannels: state.newChannels,
       thisBrowser: state.user.needs_sign_in ? { state: "from_workspace" } : mine ? { state: "active", label: state.me.label } : dead ? { state: "dead", label: state.me?.label } : { state: "unregistered" },
       notice: state.notice,
-      actions: { review: (it) => navigate("#/w/" + it.workspace_id + "/item/" + encodeURIComponent(it.key || it.item_id)), open: (id) => navigate("#/w/" + id), connect: () => navigate("#/workspaces"), register: () => registerView(), removeChannel, forgetLocal, dismissNew },
+      actions: { review: (it) => navigate("#/w/" + it.workspace_id + "/item/" + encodeURIComponent(it.key || it.item_id)), open: (id) => navigate("#/w/" + id), dismissEnded: (id) => { dismissEnded(user.user_id, id); void home(); }, openShared: (it) => navigate("#/shared/" + it.workspace_id + "/" + encodeURIComponent(it.key)), connect: () => navigate("#/workspaces"), register: () => registerView(), removeChannel, forgetLocal, dismissNew },
     };
     liveItems = { user_id: user.user_id, items: homeData.items };
     shell("home", homeView(homeData), workspaces.some((w) => w.can_start) ? advancedForm(workspaces) : null);
@@ -698,7 +703,21 @@ function clearSession() {
   state.adminPage = null;
   state.notice = null;
   state.menu = false;
+  forgetSharedMemory();
 }
+
+// P04: what the last good /me/shared read held, and the "stopped sharing" lines not yet dismissed, per person. In memory only
+// (the console keeps nothing in web storage): gone on reload and on sign out. Diffed only after a successful read, so an
+// unreachable hub never produces a false "stopped sharing".
+const sharedMemory = new Map();
+function loadEnded(uid) { return sharedMemory.get(uid)?.ended ?? []; }
+function trackShared(uid, items) {
+  const ended = sharedEnded(sharedMemory.get(uid)?.last ?? null, items, loadEnded(uid));
+  sharedMemory.set(uid, { last: items.map((it) => ({ workspace_id: it.workspace_id, key: it.key, title: it.title, shared_by: it.shared_by })), ended });
+  return ended;
+}
+function dismissEnded(uid, id) { const m = sharedMemory.get(uid); if (m) m.ended = m.ended.filter((e) => e.id !== id); }
+function forgetSharedMemory() { sharedMemory.clear(); }
 
 async function signOut() {
   await api("DELETE", "/session");
@@ -1065,6 +1084,16 @@ async function pollLive() {
       void home(); // the first workspace connected while this page was open: draw the full home
       return;
     }
+    // P04: the hub Home's Shared tickets card follows the same list; a change (or an ended share) redraws Home once
+    if (frame?.isConnected && parseRoute(location.hash).kind === "home" && homeData?.user_id === user.user_id) {
+      const sharedNow = await api("GET", "/me/shared");
+      if (user !== state.user) return;
+      if (sharedNow.status === 200 && Array.isArray(sharedNow.body.items)) {
+        const before = JSON.stringify(homeData.shared) + JSON.stringify(homeData.ended);
+        const ended = trackShared(user.user_id, sharedNow.body.items);
+        if (before !== JSON.stringify(sharedNow.body.items) + JSON.stringify(ended)) { void home(); return; }
+      }
+    }
     const current = frame?.isConnected && parseRoute(location.hash).kind === "home" ? frame.querySelector(".needs-you") : null;
     if (current && homeData?.user_id === user.user_id) {
       homeData.items = liveItems.items;
@@ -1167,6 +1196,26 @@ function navigate(hash) {
   location.hash = hash;
 }
 
+// A ticket shared with me, read only. Everything comes from GET /me/shared (caller-scoped): the page shows nothing the
+// list does not already give this person. A ticket that is no longer in the list means the sharing ended.
+async function sharedTicketPage(route) {
+  const finishLoading = loading();
+  pageLoading("home");
+  try {
+    if (!(await refresh())) return loginView();
+    await loadRail();
+    const res = await api("GET", "/me/shared");
+    const it = res.status === 200 ? (res.body.items ?? []).find((x) => x.workspace_id === route.workspace && x.key === route.key) : null;
+    const back = h("button", { text: it ? "Back" : "Back to Home", onclick: () => navigate("#/home") });
+    if (res.status !== 200) return shell("home", h("h1", { text: "Shared ticket" }), h("p", { text: "This ticket could not be loaded right now. Try again in a moment." }), back);
+    if (!it) return shell("home", h("h1", { text: "Sharing ended" }), h("p", { text: "The owner stopped sharing this ticket." }), back);
+    shell("home", h("h1", { text: renderText(it.title ?? it.key) }),
+      h("p", { class: "small muted", text: [it.shared_by ? "Shared by " + renderText(it.shared_by) : "Shared with you", it.status ? renderText(it.status) : null, "read only"].filter(Boolean).join(" · ") }),
+      it.deadline ? h("p", { class: "small muted", text: "Due " + renderText(it.deadline) }) : null,
+      it.description ? h("p", { class: "prewrap", text: renderText(it.description) }) : null, back);
+  } finally { finishLoading(); }
+}
+
 async function workspacePage(route) {
   const finishLoading = loading();
   pageLoading("workspaces", "workspace");
@@ -1233,6 +1282,7 @@ async function renderRoute() {
       else if (route.kind === "access") await accessView(route.workspace, route.key);
       else if (route.kind === "addon") await addonView(route.workspace, route.key);
       else if (route.kind === "settings") await settingsView(route.workspace, route.key);
+      else if (route.kind === "shared") await sharedTicketPage(route);
       else if (route.workspace) await workspacePage(route);
       else await ({ home, approvals, workspaces, services, admin, activity, account, handoffs, phones, register: registerRoute }[route.kind] ?? pageRender(route.kind) ?? home)();
     }

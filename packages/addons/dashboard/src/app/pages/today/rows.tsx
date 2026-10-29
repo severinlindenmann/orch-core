@@ -9,6 +9,7 @@ import { toast } from 'sonner'
 import { api } from '@/api/client'
 import { diffstat } from '@/api/gates'
 import { ApiError, type AddonDecision, type GateName, type NeedsYouItem, type TicketDocument } from '@/api/types'
+import { gapOf } from '@/app/pages/ticket/actions'
 import { AddonBadge } from '@/addon-ui'
 import { addonEdge } from '@/addon-ui/addonClasses'
 import { ErrorAlert } from '@/addon-ui/ErrorAlert'
@@ -342,18 +343,28 @@ export function NoticeRow({ item, now }: { item: NeedsYouItem; now: string }) {
 /** The host thinks the agent waits for the person (hook or quiet session). Orch cannot read what it printed, so the
  *  row says it in plain words (never the host's "check its terminal", run-13 A10) and the only action opens the
  *  agent; it goes away when the agent moves on. */
-export function TerminalWaitRow({ item, now }: { item: NeedsYouItem; now: string }) {
+export function TerminalWaitRow({ item, ticket, now }: { item: NeedsYouItem; ticket?: TicketDocument; now: string }) {
+  // The ticket says what it still lacks: then the row says it too and opens the ticket, where the way on is one click.
+  const gap = ticket ? gapOf(ticket) : null
   return (
     <RowShell
       testId={`card-terminal_wait:${item.ticket}`}
       icon={<Hourglass className="size-4" aria-label="waiting" />}
-      ask="Agent is waiting for you"
+      ask={gap ? `${gap.title}. ${gap.text}` : 'Agent is waiting for you'}
       sub={<TicketLine ticket={item.ticket} title={item.title} />}
       age={ageOf(item, now)}
       action={
-        <Button size="sm" onClick={() => item.ref && openDockOn(item.ref)}>
-          Open agent
-        </Button>
+        gap ? (
+          <Button size="sm" asChild>
+            <Link to="/ticket/$key" params={{ key: item.ticket }}>
+              Open ticket
+            </Link>
+          </Button>
+        ) : (
+          <Button size="sm" onClick={() => item.ref && openDockOn(item.ref)}>
+            Open agent
+          </Button>
+        )
       }
     />
   )

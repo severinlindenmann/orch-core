@@ -114,7 +114,7 @@ describe('G4 empty approvals and content', () => {
   it('the artifact drawer returns focus to the card that opened it on Escape', async () => {
     const { user } = renderApp('/ticket/DEMO-0041')
     await screen.findByRole('heading', { level: 1, name: /billing reconciliation/ }, T)
-    await user.click(screen.getByRole('tab', { name: /Artifacts/ }))
+    await user.click(screen.getByRole('tab', { name: /Results/ }))
     const open = await screen.findByRole('button', { name: 'Preview reconcile-pass.log' }, T)
     await user.click(open)
     const sheet = await screen.findByRole('dialog', {}, T)
@@ -127,7 +127,7 @@ describe('G4 empty approvals and content', () => {
   it('an HTML artifact opens as a sandboxed preview with a View source toggle', async () => {
     const { user } = renderApp('/ticket/DEMO-0041')
     await screen.findByRole('heading', { level: 1, name: /billing reconciliation/ }, T)
-    await user.click(screen.getByRole('tab', { name: /Artifacts/ }))
+    await user.click(screen.getByRole('tab', { name: /Results/ }))
     await user.click(await screen.findByRole('button', { name: 'Preview reconciliation-demo.html' }, T))
     const sheet = await screen.findByRole('dialog', {}, T)
     await waitFor(() => expect(sheet.querySelector('iframe')).toBeTruthy(), T)
@@ -258,7 +258,7 @@ describe('G4 artifact drawer stays closed to stale state', () => {
   it('switching artifacts resets wrap and source', async () => {
     const { user } = renderApp('/ticket/DEMO-0041')
     await screen.findByRole('heading', { level: 1, name: /billing reconciliation/ }, T)
-    await user.click(screen.getByRole('tab', { name: /Artifacts/ }))
+    await user.click(screen.getByRole('tab', { name: /Results/ }))
     const log = await screen.findByRole('button', { name: 'Preview reconcile-pass.log' }, T)
     await user.click(log)
     let sheet = await screen.findByRole('dialog', {}, T)

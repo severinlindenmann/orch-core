@@ -789,7 +789,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
       {
         id: 'Z5',
         title: 'Delete the work folder',
-        text: 'On the ticket page press "Delete work folder", read the question, confirm.',
+        text: 'On the ticket page press "Delete working files", read the question, confirm.',
         see: 'The question says it cannot be undone and that artifacts stay. Afterwards the line is gone and `.orch-work/KEY/` is gone; your other project files, other tickets\' folders and the ticket\'s artifacts are untouched.',
       },
       {

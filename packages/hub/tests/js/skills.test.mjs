@@ -67,5 +67,6 @@ test("an offer target is named like the rail names it, with a friendly fallback 
   assert.equal(wsLabel({ workspace_id: id, name: null }, [{ id, name: "dcac275f" }]), "A workspace");
   assert.equal(wsLabel({ workspace_id: id }, [{ id, name: "Personal Workspace" }]), "Personal Workspace");
   assert.equal(wsLabel({ workspace_id: id, name: "Own" }, [{ id, name: "Rail" }]), "Own");
+  assert.equal(wsLabel({ workspace_id: id, owner_name: "Ben Test" }, []), "Ben Test's workspace");
   assert.equal(withNames([{ workspace_id: id }], [])[0].name, "A workspace");
 });

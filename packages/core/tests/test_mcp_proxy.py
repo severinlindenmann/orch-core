@@ -16,7 +16,7 @@ import pytest
 
 from orch.host import mcpproxy
 from orch.host.mcpproxy import Proxy
-from orch.host.mcpshared import tool_pin, tool_view
+from orch.host.mcpshared import CAPABILITY_SHAPE, tool_pin, tool_view
 
 SECRET = "s3cr3t/value+with=chars"
 
@@ -268,7 +268,7 @@ def test_mint_validation(env):
         env.proxy.mint("w1", 1, "r1", [{"name": "orch-x", "digest": "d"}], hub_id="h1")
     with pytest.raises(ValueError):
         env.proxy.mint("w1", 1, "r1", [{"name": "Bad Name", "digest": "d"}], hub_id="h1")
-    assert mcpproxy.CAPABILITY_SHAPE.fullmatch(mint(env))
+    assert CAPABILITY_SHAPE.fullmatch(mint(env))
 
 
 def test_revoke_run_and_closes_upstream(env):
@@ -960,6 +960,19 @@ def test_a_revoke_between_headers_and_body_forwards_nothing(env, how):
     assert rpc(env, cap, "ping")[0] == 401
 
 
+def test_a_server_revoked_between_headers_and_body_forwards_nothing_and_keeps_no_upstream(env):
+    env.records["w1"].append({**env.records["w1"][0], "name": "wiki", "digest": "d2"})
+    cap = mint(env, names=("crm", "wiki"))
+    assert _half_send(env, cap, lambda: env.proxy.revoke_server("w1", "crm")) == 403
+    assert all(not up.posts for up in env.ups)
+    obj = next(iter(env.proxy._caps.values()))
+    assert "crm" not in obj.upstreams
+    assert rpc(env, cap, "ping")[0] == 403 and rpc(env, cap, "ping", name="wiki")[0] == 200
+    with pytest.raises(mcpproxy._Refuse):
+        env.proxy._up(obj, "crm", env.records["w1"][0], None)
+    assert "crm" not in obj.upstreams
+
+
 def test_up_refuses_a_dropped_capability(env):
     cap = mint(env)
     obj = next(iter(env.proxy._caps.values()))
@@ -1007,10 +1020,11 @@ def test_scrub_base64_at_every_alignment(alignment, enc):
     assert out.count("[redacted]") == 1
 
 
-def test_scrub_never_redacts_short_forms():
+def test_scrub_always_scrubs_the_exact_value_but_never_short_derived_forms():
     forms = mcpproxy._secret_forms("abc")
-    assert forms is None
-    assert mcpproxy._scrub("abc abc", forms) == "abc abc"
+    assert mcpproxy._scrub("abc abc", forms) == "[redacted] [redacted]"
+    assert mcpproxy._scrub("YWJj 616263 %61bc", forms) == "YWJj 616263 %61bc"  # derived forms under 8 are left alone
+    assert mcpproxy._secret_forms("") is None
     forms = mcpproxy._secret_forms("abcdefgh")
     assert mcpproxy._scrub("ab abcdefgh", forms) == "ab [redacted]"
 
@@ -1138,3 +1152,85 @@ def test_a_binding_to_another_hub_with_the_same_number_kills_the_capability(env)
     with pytest.raises(ValueError):
         env.proxy.mint("w1", 1, "r1", env.records["w1"], hub_id="h1")
     assert env.proxy.mint("w1", 1, "r1", env.records["w1"], hub_id="h2")
+
+
+# -- delta fix N2: slow headers and the pool -------------------------------------------------------------------------
+
+
+def test_the_header_block_must_arrive_within_two_seconds(env, monkeypatch):
+    assert mcpproxy.HEADER_TIMEOUT == 2.0
+    monkeypatch.setattr(mcpproxy, "HEADER_TIMEOUT", 0.3)
+    with socket.create_connection(("127.0.0.1", env.port), timeout=5) as s:
+        s.sendall(b"POST /m/crm HTTP/1.1\r\nHost: x\r\n")  # never finished
+        started = time.monotonic()
+        assert s.recv(4096).startswith(b"HTTP/1.1 408")
+    assert time.monotonic() - started < 2
+
+
+def test_one_capability_has_at_most_four_posts_in_flight_across_its_servers(env):
+    env.records["w1"].append({**env.records["w1"][0], "name": "wiki", "digest": "d2"})
+    release, started = threading.Event(), threading.Semaphore(0)
+
+    def slow(m):
+        started.release()
+        release.wait(10)
+
+    env.up_factory = lambda rec, bearer: FakeUp(on_post=slow)
+    cap = mint(env, names=("crm", "wiki"))
+    results = []
+    threads = [
+        threading.Thread(target=lambda n=n: results.append(rpc(env, cap, "initialize", {}, name=n)[0]))
+        for n in ("crm", "crm", "wiki", "wiki")
+    ]
+    for t in threads:
+        t.start()
+    for _ in range(4):
+        assert started.acquire(timeout=5)
+    try:
+        assert rpc(env, cap, "initialize", {}, name="wiki")[0] == 429  # a fifth, on the other server
+    finally:
+        release.set()
+        for t in threads:
+            t.join(10)
+    assert results == [200] * 4
+
+
+# -- delta fix N3: the capability shape has boundaries ---------------------------------------------------------------
+
+
+def test_capability_shape_has_boundaries():
+    from orch.host.mcpshared import CAPABILITY_SHAPE, new_capability
+
+    real = new_capability()
+    assert CAPABILITY_SHAPE.search(f"token={real}, next").group(0) == real
+    assert CAPABILITY_SHAPE.search("n" + real) is None  # "nocap_..."
+    assert CAPABILITY_SHAPE.search("nocap_" + "a" * 60) is None
+    assert CAPABILITY_SHAPE.search("ocap_" + "a" * 44) is None
+
+
+@pytest.mark.parametrize("how", ["server", "binding", "run"])
+def test_a_revoke_during_the_upstream_post_discards_the_answer(env, how):
+    """Opus delta 2 (F1): a revoke that lands while the upstream post is in flight returns 401/403, never the answer."""
+    gate, started = threading.Event(), threading.Event()
+
+    def slow(msg):
+        if msg.get("method") == "initialize":
+            started.set()
+            gate.wait(5)
+
+    env.up_factory = lambda r, b: FakeUp(on_post=slow)
+    cap = mint(env)
+    out = []
+    t = threading.Thread(target=lambda: out.append(rpc(env, cap, "initialize", {})))
+    t.start()
+    assert started.wait(5)
+    if how == "server":
+        env.proxy.revoke_server("w1", "crm")
+    elif how == "binding":
+        env.bindings = {"w1": ("h1", 2)}
+    else:
+        env.proxy.revoke_run("r1")
+    gate.set()
+    t.join(5)
+    assert out[0][0] in (401, 403)
+    assert "protocolVersion" not in json.dumps(out[0][1])

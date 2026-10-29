@@ -36,16 +36,52 @@ it('a plan the viewer may approve: one card with Approve plan and Change somethi
   expect(screen.getByTestId('step-understand')).toHaveAttribute('data-state', 'current')
 })
 
-it('the agent stopped early: says what to add first and to start the agent again, with no button', async () => {
+const run = (state: 'starting' | 'running' | 'exited' | 'lost') => ({ state, started_at: '2026-10-29T08:00:00Z' })
+const noSections = async () => {
   const doc = await demo()
   doc.status = 'open'
   doc.claim = null
   doc.gates.requirements = { ...doc.gates.requirements, state: 'pending', approvals: [], missing: ['context', 'out_of_scope'] }
-  show(doc)
+  return doc
+}
+const showWith = (doc: TicketDocument, o: { run?: ReturnType<typeof run> | null; wait?: string | null }) =>
+  render(<TicketProgress ticket={structuredClone(doc)} viewer={viewer as never} sign={vi.fn()} jump={() => {}} run={o.run} wait={o.wait} />)
+
+it('a ticket that never ran shows no banner, however empty its sections are', async () => {
+  showWith(await noSections(), { run: null })
+  expect(screen.queryByTestId('next-step')).toBeNull()
+})
+
+it('a run that is starting or running shows no banner', async () => {
+  for (const state of ['starting', 'running'] as const) {
+    const view = showWith(await noSections(), { run: run(state) })
+    expect(screen.queryByTestId('next-step')).toBeNull()
+    view.unmount()
+  }
+})
+
+it('a run that ended without finishing: says so and offers only Start agent again', async () => {
+  const onStart = vi.fn()
+  render(<TicketProgress ticket={await noSections()} viewer={viewer as never} sign={vi.fn()} jump={() => {}} run={run('exited')} onStart={onStart} />)
   const card = screen.getByTestId('next-step')
   expect(card).toHaveTextContent('The agent stopped early')
-  expect(card).toHaveTextContent('Add Context and Out of scope first. Start the agent again to finish it.')
-  expect(within(card).queryAllByRole('button')).toHaveLength(0)
+  expect(card).toHaveTextContent('The agent stopped before it finished.')
+  expect(card).not.toHaveTextContent('Add Context')
+  const buttons = within(card).getAllByRole('button')
+  expect(buttons.map((b) => b.textContent)).toEqual(['Start agent again'])
+  await userEvent.setup().click(buttons[0])
+  expect(onStart).toHaveBeenCalledOnce()
+})
+
+it('a terminal wait for the ticket: the waiting card with Open terminal, even over an exited run', async () => {
+  const onOpen = vi.fn()
+  render(<TicketProgress ticket={await noSections()} viewer={viewer as never} sign={vi.fn()} jump={() => {}} run={run('running')} wait="run_7" openTerminal={onOpen} />)
+  const card = screen.getByTestId('next-step')
+  expect(card).toHaveTextContent('The agent is waiting for you')
+  expect(card).toHaveTextContent('It may be asking you something. Open the terminal to answer.')
+  expect(card).not.toHaveTextContent('stopped')
+  await userEvent.setup().click(within(card).getByRole('button', { name: 'Open terminal' }))
+  expect(onOpen).toHaveBeenCalledWith('run_7')
 })
 
 it('the stepper: done steps, the first open one is current, the rest still to do', async () => {

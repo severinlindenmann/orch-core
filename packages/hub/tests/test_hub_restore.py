@@ -35,6 +35,15 @@ from orch_hub.settings import SettingsError  # noqa: F401  (the fixture state ha
 WS = "ab" * 16
 
 
+@pytest.fixture(autouse=True)
+def _fence_clear():
+    from orch_hub.backup.hubop import FENCE
+
+    FENCE.clear()
+    yield
+    FENCE.clear()
+
+
 @pytest.fixture
 def w(tmp_path):
     x = Web(tmp_path)
@@ -939,3 +948,57 @@ def test_L5_the_server_command_names_the_admins_it_prints_links_for(w, tmp_path)
     )
     text = "\n".join(out)
     assert rc == 0 and "admin (" in text and "carol (" in text and "#invite=" in text
+
+
+def test_M1_writes_during_a_console_restore_are_refused_not_lost(w, monkeypatch):
+    erin = w.env.user("erin")
+    w.env.acc.add_member("team", erin)
+    words, data = _backup(w)
+    name = next((w.state / "backups").iterdir()).name
+    tok = w.login(w.admin)
+    other = w.login(w.carol)
+    seen = []
+    real = RS._revoke_channels
+
+    def hook(*a, **k):  # a concurrent admin removes erin while the restore runs
+        seen.append(w.call("DELETE", f"/admin/users/{erin}", token=other)[:2])
+        seen.append(w.call("POST", "/admin/backups", {}, token=other)[:2])
+        seen.append(w.call("GET", "/admin/backup", token=other)[0])  # reads still work
+        return real(*a, **k)
+
+    monkeypatch.setattr(RS, "_revoke_channels", hook)
+    s, o, _ = _route(w, tok, words, name)
+    assert s == 200, o
+    assert (
+        seen[0] == (409, {"error": "restore_busy"}) and seen[1] == (409, {"error": "restore_busy"}) and seen[2] == 200
+    )
+    from orch_hub.backup.hubop import FENCE
+
+    assert not FENCE.is_set()  # no restart hook in the test hub: the fence is lifted again
+    acc = Access(str(w.state / "access.db"))
+    try:
+        assert acc.has_user(erin)  # the removal was refused, not lost: erin is still there (suspended)
+    finally:
+        acc.close()
+
+
+def test_M1_a_failed_console_restore_lifts_the_fence(w):
+    words, data = _backup(w)
+    name = next((w.state / "backups").iterdir()).name
+    tok = w.login(w.admin)
+    from orch_hub.backup.hubop import FENCE
+
+    assert _route(w, tok, generate_words(), name)[0] == 403
+    assert not FENCE.is_set()
+
+
+def test_M1_the_link_server_refuses_every_op_while_the_fence_is_set():
+    from orch_hub.backup.hubop import FENCE
+    from orch_hub.link.server import LinkServer
+
+    class Probe(LinkServer):
+        def __init__(self):  # only _run is under test
+            pass
+
+    FENCE.set()
+    assert Probe()._run("ab" * 16, b"", {"op": "status_put", "body": {}}, 1) == {"error": "restore_busy"}

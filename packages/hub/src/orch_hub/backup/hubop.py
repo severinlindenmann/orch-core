@@ -8,10 +8,15 @@ from __future__ import annotations
 import contextlib
 import fcntl
 import os
+import threading
 from collections.abc import Iterator
 from pathlib import Path
 
 KINDS = ("restore", "update", "remove")
+#: Set by a console restore for its whole run (and left set once it succeeded: the hub restarts). While it is set the web
+#: pipeline refuses every mutating route and the link server every op with ``restore_busy``, so no write lands in a state
+#: dir that is about to be swapped away. Reads keep working. Cleared only when the restore failed.
+FENCE = threading.Event()
 
 
 class HubOpBusy(Exception):

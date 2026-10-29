@@ -16,6 +16,7 @@ from typing import Any
 
 from ..backup import guard as GD
 from ..backup import restore as RS
+from ..backup.hubop import FENCE
 from ..backup.service import CLI_LINE, KEEP, MANUAL_GAP_MS, NAME, BackupError, BackupService
 from ..contract import backup as B
 from ..contract.canon import b64u
@@ -233,6 +234,8 @@ class BackupHandlers:
         except OSError:
             raise _err("backup_not_found") from None
         ctl = self.d.settings_ctl
+        restarting = bool(ctl is not None and ctl.restart is not None)
+        FENCE.set()  # from here no other write may land (the pipeline and the link server refuse)
         try:
             got = RS.restore(
                 keys.state,
@@ -248,7 +251,8 @@ class BackupHandlers:
             raise _err(e.code) from None
         finally:
             words = b = None  # the words go nowhere else
-        restarting = bool(ctl is not None and ctl.restart is not None)
+            if not (restarting and "got" in locals()):
+                FENCE.clear()  # failed, or nothing restarts: the hub goes on as it is
         if restarting:
             ctl.restart()
         out = {k: got[k] for k in ("made_ms", "gap_ms", "suspended")}

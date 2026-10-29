@@ -227,8 +227,14 @@ def csp_cases() -> list[dict[str, Any]]:
         ("a base with a quote", "http://203.0.113.7:8081/a/'x'/", [], {"error": "base"}),
         ("a base with a space", "http://203.0.113.7:8081/a/x y/", [], {"error": "base"}),
         ("a base that is not a string", None, [], {"error": "base"}),
+        ("csp_root_base", "http://203.0.113.7:8081/", [], {"error": "base"}),
+        ("csp_dotdot_base", "http://203.0.113.7:8081/a/../", [], {"error": "base"}),
+        ("csp_bad_port", "http://203.0.113.7:99999/a/team-faq/v/" + "ab" * 16 + "/", [], {"error": "base"}),
+        ("csp_port_zero", "http://203.0.113.7:0/a/team-faq/v/" + "ab" * 16 + "/", [], {"error": "base"}),
+        ("csp_hub_origin_in_reach", BASE, ["https://hub.example.com"], {"error": "forbidden_origin"}),
+        ("csp_publish_origin_in_reach", BASE, ["https://publish.example.com:8443"], {"error": "forbidden_origin"}),
     ]
-    return [{"name": n, "base": b_, "reach": r, "expect": e} for n, b_, r, e in rows]
+    return [{"name": n, "base": b_, "reach": r, "forbidden": FORBIDDEN, "expect": e} for n, b_, r, e in rows]
 
 
 def password_record_cases() -> list[dict[str, Any]]:

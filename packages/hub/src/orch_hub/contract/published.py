@@ -124,16 +124,17 @@ def reach_problem(reach: Any, forbidden: Any = ()) -> str | None:
     return None if all(a < b for a, b in itertools.pairwise(reach)) else "reach_order"
 
 
-_BASE = re.compile(r"https?://(\[[0-9a-f:]{2,39}\]|[a-z0-9.-]{1,253})(:[0-9]{1,5})?(/[A-Za-z0-9._~-]+)*/")
+_BASE = re.compile(r"https?://(\[[0-9a-f:]{2,39}\]|[a-z0-9.-]{1,253})(:[0-9]{1,5})?/a/[a-z0-9-]{3,40}/v/[0-9a-f]{32}/")
 
 
-def csp(base: Any, reach: Any) -> str:
+def csp(base: Any, reach: Any, forbidden: Any = ()) -> str:
     """The Content-Security-Policy of one app view (C7). ``base`` is the configured share origin plus the view path
-    (``http://203.0.113.7:8081/a/my-app/v/<view id>/``), never read from a Host header; it must end in ``/`` and
-    contains nothing that could end a CSP source. ``reach`` is the version's approved origin list. Raises ValueError."""
-    if type(base) is not str or _BASE.fullmatch(base) is None:
+    (``http://203.0.113.7:8081/a/my-app/v/<view id>/``), never read from a Host header; it is exactly
+    ``scheme://host[:port]/a/<slug>/v/<view id>/`` (no dot segments, port 1..65535). ``forbidden`` as in reach_problem. ``reach`` is the version's approved origin list. Raises ValueError."""
+    m = _BASE.fullmatch(base) if type(base) is str else None
+    if m is None or (m.group(2) is not None and not 1 <= int(m.group(2)[1:]) <= 65535):
         raise ValueError("base")
-    bad = reach_problem(reach)
+    bad = reach_problem(reach, forbidden)
     if bad is not None:
         raise ValueError(bad)
     connect = " ".join([base, *reach])
@@ -144,9 +145,9 @@ def csp(base: Any, reach: Any) -> str:
     )
 
 
-def csp_outcome(base: Any, reach: Any) -> dict[str, Any]:
+def csp_outcome(base: Any, reach: Any, forbidden: Any = ()) -> dict[str, Any]:
     try:
-        return {"ok": csp(base, reach)}
+        return {"ok": csp(base, reach, forbidden)}
     except ValueError as e:
         return {"error": str(e)}
 

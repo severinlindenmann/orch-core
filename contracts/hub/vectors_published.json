@@ -3165,6 +3165,10 @@
    "expect": {
     "ok": "sandbox allow-scripts allow-forms allow-popups allow-downloads; default-src 'none'; script-src http://203.0.113.7:8081/a/team-faq/v/abababababababababababababababab/ 'unsafe-inline'; style-src http://203.0.113.7:8081/a/team-faq/v/abababababababababababababababab/ 'unsafe-inline'; img-src http://203.0.113.7:8081/a/team-faq/v/abababababababababababababababab/; font-src http://203.0.113.7:8081/a/team-faq/v/abababababababababababababababab/; connect-src http://203.0.113.7:8081/a/team-faq/v/abababababababababababababababab/; form-action http://203.0.113.7:8081/a/team-faq/v/abababababababababababababababab/; base-uri 'none'; frame-ancestors 'none'"
    },
+   "forbidden": [
+    "https://hub.example.com",
+    "https://publish.example.com:8443"
+   ],
    "name": "empty reach: the app reaches only itself",
    "reach": []
   },
@@ -3173,6 +3177,10 @@
    "expect": {
     "ok": "sandbox allow-scripts allow-forms allow-popups allow-downloads; default-src 'none'; script-src http://203.0.113.7:8081/a/team-faq/v/abababababababababababababababab/ 'unsafe-inline'; style-src http://203.0.113.7:8081/a/team-faq/v/abababababababababababababababab/ 'unsafe-inline'; img-src http://203.0.113.7:8081/a/team-faq/v/abababababababababababababababab/; font-src http://203.0.113.7:8081/a/team-faq/v/abababababababababababababababab/; connect-src http://203.0.113.7:8081/a/team-faq/v/abababababababababababababababab/ https://api.example.com; form-action http://203.0.113.7:8081/a/team-faq/v/abababababababababababababababab/; base-uri 'none'; frame-ancestors 'none'"
    },
+   "forbidden": [
+    "https://hub.example.com",
+    "https://publish.example.com:8443"
+   ],
    "name": "one https origin",
    "reach": [
     "https://api.example.com"
@@ -3183,6 +3191,10 @@
    "expect": {
     "ok": "sandbox allow-scripts allow-forms allow-popups allow-downloads; default-src 'none'; script-src http://203.0.113.7:8081/a/team-faq/v/abababababababababababababababab/ 'unsafe-inline'; style-src http://203.0.113.7:8081/a/team-faq/v/abababababababababababababababab/ 'unsafe-inline'; img-src http://203.0.113.7:8081/a/team-faq/v/abababababababababababababababab/; font-src http://203.0.113.7:8081/a/team-faq/v/abababababababababababababababab/; connect-src http://203.0.113.7:8081/a/team-faq/v/abababababababababababababababab/ https://api.example.com https://cdn.example.com:8443; form-action http://203.0.113.7:8081/a/team-faq/v/abababababababababababababababab/; base-uri 'none'; frame-ancestors 'none'"
    },
+   "forbidden": [
+    "https://hub.example.com",
+    "https://publish.example.com:8443"
+   ],
    "name": "two origins",
    "reach": [
     "https://api.example.com",
@@ -3194,6 +3206,10 @@
    "expect": {
     "ok": "sandbox allow-scripts allow-forms allow-popups allow-downloads; default-src 'none'; script-src https://apps.example.com/a/team-faq/v/cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd/ 'unsafe-inline'; style-src https://apps.example.com/a/team-faq/v/cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd/ 'unsafe-inline'; img-src https://apps.example.com/a/team-faq/v/cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd/; font-src https://apps.example.com/a/team-faq/v/cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd/; connect-src https://apps.example.com/a/team-faq/v/cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd/; form-action https://apps.example.com/a/team-faq/v/cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd/; base-uri 'none'; frame-ancestors 'none'"
    },
+   "forbidden": [
+    "https://hub.example.com",
+    "https://publish.example.com:8443"
+   ],
    "name": "an https share origin with a domain",
    "reach": []
   },
@@ -3202,6 +3218,10 @@
    "expect": {
     "error": "wildcard"
    },
+   "forbidden": [
+    "https://hub.example.com",
+    "https://publish.example.com:8443"
+   ],
    "name": "a wildcard",
    "reach": [
     "*"
@@ -3212,6 +3232,10 @@
    "expect": {
     "error": "path"
    },
+   "forbidden": [
+    "https://hub.example.com",
+    "https://publish.example.com:8443"
+   ],
    "name": "a path",
    "reach": [
     "https://api.example.com/v1"
@@ -3222,6 +3246,10 @@
    "expect": {
     "error": "https_only"
    },
+   "forbidden": [
+    "https://hub.example.com",
+    "https://publish.example.com:8443"
+   ],
    "name": "data:",
    "reach": [
     "data:"
@@ -3232,6 +3260,10 @@
    "expect": {
     "error": "https_only"
    },
+   "forbidden": [
+    "https://hub.example.com",
+    "https://publish.example.com:8443"
+   ],
    "name": "javascript:",
    "reach": [
     "javascript:alert(1)"
@@ -3242,6 +3274,10 @@
    "expect": {
     "error": "userinfo"
    },
+   "forbidden": [
+    "https://hub.example.com",
+    "https://publish.example.com:8443"
+   ],
    "name": "userinfo",
    "reach": [
     "https://u:p@api.example.com"
@@ -3252,6 +3288,10 @@
    "expect": {
     "error": "ip_literal"
    },
+   "forbidden": [
+    "https://hub.example.com",
+    "https://publish.example.com:8443"
+   ],
    "name": "a loopback address",
    "reach": [
     "https://127.0.0.1"
@@ -3262,6 +3302,10 @@
    "expect": {
     "error": "origin"
    },
+   "forbidden": [
+    "https://hub.example.com",
+    "https://publish.example.com:8443"
+   ],
    "name": "a source that would end the directive",
    "reach": [
     "https://a.example.com; script-src *"
@@ -3272,6 +3316,10 @@
    "expect": {
     "error": "base"
    },
+   "forbidden": [
+    "https://hub.example.com",
+    "https://publish.example.com:8443"
+   ],
    "name": "a base that would end the directive",
    "reach": []
   },
@@ -3280,6 +3328,10 @@
    "expect": {
     "error": "base"
    },
+   "forbidden": [
+    "https://hub.example.com",
+    "https://publish.example.com:8443"
+   ],
    "name": "a base without the closing slash",
    "reach": []
   },
@@ -3288,6 +3340,10 @@
    "expect": {
     "error": "base"
    },
+   "forbidden": [
+    "https://hub.example.com",
+    "https://publish.example.com:8443"
+   ],
    "name": "a base with a quote",
    "reach": []
   },
@@ -3296,6 +3352,10 @@
    "expect": {
     "error": "base"
    },
+   "forbidden": [
+    "https://hub.example.com",
+    "https://publish.example.com:8443"
+   ],
    "name": "a base with a space",
    "reach": []
   },
@@ -3304,8 +3364,88 @@
    "expect": {
     "error": "base"
    },
+   "forbidden": [
+    "https://hub.example.com",
+    "https://publish.example.com:8443"
+   ],
    "name": "a base that is not a string",
    "reach": []
+  },
+  {
+   "base": "http://203.0.113.7:8081/",
+   "expect": {
+    "error": "base"
+   },
+   "forbidden": [
+    "https://hub.example.com",
+    "https://publish.example.com:8443"
+   ],
+   "name": "csp_root_base",
+   "reach": []
+  },
+  {
+   "base": "http://203.0.113.7:8081/a/../",
+   "expect": {
+    "error": "base"
+   },
+   "forbidden": [
+    "https://hub.example.com",
+    "https://publish.example.com:8443"
+   ],
+   "name": "csp_dotdot_base",
+   "reach": []
+  },
+  {
+   "base": "http://203.0.113.7:99999/a/team-faq/v/abababababababababababababababab/",
+   "expect": {
+    "error": "base"
+   },
+   "forbidden": [
+    "https://hub.example.com",
+    "https://publish.example.com:8443"
+   ],
+   "name": "csp_bad_port",
+   "reach": []
+  },
+  {
+   "base": "http://203.0.113.7:0/a/team-faq/v/abababababababababababababababab/",
+   "expect": {
+    "error": "base"
+   },
+   "forbidden": [
+    "https://hub.example.com",
+    "https://publish.example.com:8443"
+   ],
+   "name": "csp_port_zero",
+   "reach": []
+  },
+  {
+   "base": "http://203.0.113.7:8081/a/team-faq/v/abababababababababababababababab/",
+   "expect": {
+    "error": "forbidden_origin"
+   },
+   "forbidden": [
+    "https://hub.example.com",
+    "https://publish.example.com:8443"
+   ],
+   "name": "csp_hub_origin_in_reach",
+   "reach": [
+    "https://hub.example.com"
+   ]
+  },
+  {
+   "base": "http://203.0.113.7:8081/a/team-faq/v/abababababababababababababababab/",
+   "expect": {
+    "error": "forbidden_origin"
+   },
+   "forbidden": [
+    "https://hub.example.com",
+    "https://publish.example.com:8443"
+   ],
+   "name": "csp_publish_origin_in_reach",
+   "reach": [
+    "https://publish.example.com:8443"
+   ]
   }
  ],
  "doc": "Published, shared links and apps (M4 #1357 S0): replay every section with your own copy of the rules",

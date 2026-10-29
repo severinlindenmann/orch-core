@@ -71,7 +71,7 @@ def test_reach(c) -> None:
 
 @pytest.mark.parametrize("c", VEC["csp_cases"], ids=ids("csp_cases"))
 def test_csp(c) -> None:
-    assert P.csp_outcome(c["base"], c["reach"]) == c["expect"]
+    assert P.csp_outcome(c["base"], c["reach"], c["forbidden"]) == c["expect"]
 
 
 @pytest.mark.parametrize("c", VEC["password_record_cases"], ids=ids("password_record_cases"))

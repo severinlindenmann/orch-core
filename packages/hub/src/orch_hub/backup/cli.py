@@ -4,6 +4,7 @@ reached over plain http on an office or public address (the web page refuses to 
 
 from __future__ import annotations
 
+import contextlib
 import getpass
 import os
 import sys
@@ -57,7 +58,7 @@ def run_restore(
         )
         return 1
     from . import restore as RS
-    from .hubop import HubOpBusy, ensure_not_running
+    from .hubop import HubOpBusy, hold_serve_lock
 
     try:
         state = Path(args.state) if args.state else default_state_dir()
@@ -69,15 +70,33 @@ def run_restore(
     except Refused as e:
         print(f"orch-hub: this file is not a backup this hub can restore ({e.code})", file=sys.stderr)
         return 1
-    if info["in_place"]:
-        try:
-            ensure_not_running(state)  # an offline restore never runs under a serving hub
-        except HubOpBusy:
-            print(
-                "orch-hub: refused: the hub is running on this state; stop it first (or restore from the console)",
-                file=sys.stderr,
-            )
-            return 1
+    # Held from here until the restore returns (fresh restores too): a hub started during the prompts would serve state
+    # that is about to be replaced, and its recover_swap would race the swap.
+    state.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        lock_fd = hold_serve_lock(state)
+    except HubOpBusy:
+        print(
+            "orch-hub: refused: the hub is running on this state; stop it first (or restore from the console)",
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        return _confirm_and_restore(args, state, data, info, RS, confirm, read_words, out, now_ms)
+    finally:
+        _release_serve_lock(state, lock_fd)
+
+
+def _release_serve_lock(state: Path, fd: int) -> None:
+    from .hubop import _HELD, _serve_lock_path
+
+    _HELD.pop(str(_serve_lock_path(state)), None)
+    with contextlib.suppress(OSError):
+        os.close(fd)
+
+
+def _confirm_and_restore(args, state, data, info, RS, confirm, read_words, out, now_ms) -> int:
+    """The prompts and the restore itself, run while ``run_restore`` holds the serve lock."""
     when = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(info["made_ms"] // 1000))
     out(f"Backup of hub {info['fingerprint']}, made {when}.")
     if not info["in_place"]:

@@ -1202,3 +1202,101 @@ def test_L5_a_fresh_restore_never_adds_a_market_and_confirm_never_re_adds_offici
         assert MP.check_policy(got)
     finally:
         acc.close()
+
+
+_HOLD = "import sys,time;from pathlib import Path;from orch_hub.backup.hubop import hold_serve_lock as h;h(Path(sys.argv[1]));print('x',flush=True);time.sleep(60)"
+_TRY = (
+    "import sys;from pathlib import Path;from orch_hub.backup.hubop import hold_serve_lock as h\n"
+    "try:\n    h(Path(sys.argv[1]));print('got')\n"
+    "except Exception as e:\n    print('refused', getattr(e, 'code', ''))\n"
+)
+
+
+def _try_lock(state) -> str:
+    import subprocess
+    import sys
+
+    return subprocess.run([sys.executable, "-c", _TRY, str(state)], check=False, capture_output=True, text=True).stdout
+
+
+@pytest.mark.parametrize("fresh", [False, True])
+def test_S6_M1_the_serve_lock_is_held_while_the_server_command_asks_its_questions(w, tmp_path, fresh):
+
+    words, data = _backup(w)
+    f = tmp_path / "x.orchbak"
+    f.write_bytes(data)
+    state = tmp_path / "fresh" / "d" if fresh else w.state
+    seen: list[str] = []
+
+    def confirm(_p):  # a hub starting now (another process) must be refused
+        seen.append(_try_lock(state))
+        return "yes"
+
+    args = CLI._parser().parse_args(["restore", str(f), "--state", str(state)])
+    rc = BCLI.run_restore(
+        args, out=[].append, now_ms=w.clock, tty=lambda: True, read_words=lambda: words, confirm=confirm
+    )
+    assert seen == ["refused hub_running\n"]
+    assert rc == 0
+    after = _try_lock(state)
+    assert after == "got\n"  # released when the command returned
+
+
+def test_S6_M1_serve_refuses_before_recover_swap_touches_a_staged_copy(tmp_path):
+    import subprocess
+    import sys
+
+    from orch_hub import serve as SV
+
+    state = tmp_path / "hub"
+    HubKeys.init(state)
+    staged = tmp_path / "hub.new"
+    staged.mkdir()
+    (staged / "marker").write_text("x")
+    holder = subprocess.Popen([sys.executable, "-c", _HOLD, str(state)], stdout=subprocess.PIPE)
+    holder.stdout.readline()
+    try:
+        with pytest.raises(HubOpBusy) as e:
+            SV.serve(state, "127.0.0.1:0", "http://127.0.0.1:9", [], web_listen="127.0.0.1:0", out=io.StringIO())
+        assert e.value.code == "hub_running"
+        assert (staged / "marker").read_text() == "x"  # recover_swap never ran
+    finally:
+        holder.kill()
+        holder.wait()
+
+
+def test_S6_L2_the_background_tick_writes_nothing_while_the_restore_fence_is_set(tmp_path, monkeypatch):
+    import threading
+    import time
+
+    from orch_hub import serve as SV
+    from orch_hub.backup.hubop import FENCE
+
+    state = tmp_path / "hub"
+    HubKeys.init(state)
+    ticks: list[int] = []
+    monkeypatch.setattr(BackupService, "tick", lambda self, *a, **k: ticks.append(1))
+    waits: list[float | None] = []
+
+    class Stop(threading.Event):
+        def wait(self, timeout=None):
+            if timeout == 30:
+                waits.append(timeout)
+                return False if len(waits) <= 2 else super().wait(0.05)
+            return super().wait(timeout)
+
+    stop, out = Stop(), io.StringIO()
+    FENCE.set()
+    t = threading.Thread(
+        target=lambda: SV.serve(
+            state, "127.0.0.1:0", "http://127.0.0.1:9", [], web_listen="127.0.0.1:0", stop=stop, out=out
+        ),
+        daemon=True,
+    )
+    t.start()
+    end = time.monotonic() + 15
+    while len(waits) < 3 and time.monotonic() < end:
+        time.sleep(0.05)
+    stop.set()
+    t.join(15)
+    assert len(waits) >= 3 and ticks == []  # two full iterations ran with the fence set: no tick

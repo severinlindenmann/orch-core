@@ -26,6 +26,20 @@ class Clock:
         self.t += ms
 
 
+def fresh_code(secret: bytes, clock: Clock) -> str:
+    """Advance ``clock`` to the next 30 s step whose code the hub WILL accept, and return that code.
+
+    The verifier accepts steps ``s-1, s, s+1`` and claims the HIGHEST matching one (replay protection: a code string,
+    once used, is never accepted again). When two adjacent steps share a 6-digit code (about 1 in 10^6 per pair, the
+    secret is random) a code typed at step ``p`` claims ``p+1``, so a naive "advance 30 s" helper then offers a step that
+    is already spent and the sign-in fails ``bad_credentials`` (the CI flake in test_phones_pairing). So skip any step
+    whose code equals a neighbour's: then the match is exactly ``s``, later than anything a call at ``s-1`` could claim."""
+    clock.advance(30_000)
+    while totp_code(secret, (s := clock() // 30_000)) in (totp_code(secret, s - 1), totp_code(secret, s + 1)):
+        clock.advance(30_000)
+    return totp_code(secret, s)
+
+
 class Env:
     def __init__(self, tmp_path):
         self.clock = Clock()
@@ -56,9 +70,8 @@ class Env:
         return totp_code(self.secrets[u], self.clock() // 30_000 + offset)
 
     def next_code(self, u: str) -> str:
-        """A fresh code: the next 30 s step (codes are single use)."""
-        self.clock.advance(30_000)
-        return self.code(u)
+        """A fresh code: the next 30 s step the hub accepts (codes are single use; see :func:`fresh_code`)."""
+        return fresh_code(self.secrets[u], self.clock)
 
     def sign_in(self, u: str) -> str:
         return self.svc.sign_in(u, PW, self.next_code(u))["token"]
@@ -88,4 +101,4 @@ def register(env: Env, u: str, signer: KS.ChannelSigner | None = None):
     return signer, env.svc.complete_registration(begun["challenge_id"], prove(signer, begun))
 
 
-__all__ = ["Env", "S", "hashlib", "new_channel", "prove", "register", "registration_object"]
+__all__ = ["Env", "S", "fresh_code", "hashlib", "new_channel", "prove", "register", "registration_object"]

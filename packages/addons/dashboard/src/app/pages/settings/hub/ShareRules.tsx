@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { InfoDrawer } from '@/components/InfoDrawer'
 import { api } from '@/api/client'
+import { ApiError } from '@/api/types'
 import { hubQueries, type HubAudience, type HubRule, type HubPreview, type HubShare } from '@/api/hub'
 import { queries } from '@/api/queries'
 import { Raw } from '@/components/sign/visible'
@@ -35,6 +36,9 @@ function ruleLine(r: HubShare['rules'][number], titleOf: (key: string) => string
   const what = r.kind === 'type' ? `All tickets of type ${r.value}` : `All tickets tagged ${r.value}`
   return `${what} · ${r.count ? `${r.count} ${r.count === 1 ? 'ticket' : 'tickets'}` : 'none yet, future matches shared'}`
 }
+/** The host's words when a rule reaches more people than one review can show (core `shareops.TOO_MANY`). */
+const TOO_MANY = 'This rule reaches too many people. Narrow it to share.'
+
 export function ShareRules({ ws, workspace, onBack }: { ws: string; workspace: HubWorkspace; onBack: () => void }) {
   const share = useQuery(hubQueries.share(ws))
   const [adding, setAdding] = useState(false)
@@ -67,7 +71,7 @@ export function ShareRules({ ws, workspace, onBack }: { ws: string; workspace: H
     const timer = setTimeout(() => {
       void api.getHubPreview(ws, JSON.parse(encoded) as Change).then(
         data => { if (alive) setPreview({ key: encoded, data }) },
-        () => { if (alive) setError('Could not preview this rule. Check its value or try again.') },
+        err => { if (alive) setError(err instanceof ApiError && err.message === TOO_MANY ? TOO_MANY : 'Could not preview this rule. Check its value or try again.') },
       )
     }, 300)
     return () => { alive = false; clearTimeout(timer) }

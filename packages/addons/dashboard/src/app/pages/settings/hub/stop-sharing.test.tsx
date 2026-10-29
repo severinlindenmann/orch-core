@@ -6,6 +6,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import { api } from '@/api/client'
+import { ApiError } from '@/api/types'
 import type { HubPreview, HubRule } from '@/api/hub'
 import * as gesture from '@/components/sign/trustedPress'
 import { ShareRules } from './ShareRules'
@@ -105,7 +106,6 @@ describe('stop sharing one ticket', () => {
 
   it('a refusal is said plainly', async () => {
     trusted()
-    const { ApiError } = await import('@/api/types')
     revoke.mockRejectedValue(new ApiError(403, { code: 'session.readonly', message: 'x', retryable: false }))
     const { dialog, button } = await ticketReview()
     await waitFor(() => expect(button).toBeEnabled())
@@ -253,6 +253,46 @@ describe('stop sharing by a rule', () => {
     await waitFor(() => expect(add).toHaveBeenCalledWith(WS.id, { kind: 'type', value: 'team', audience: { users: ['b'.repeat(32)], groups: [] }, description: true }, 'N'.repeat(43)))
     expect(await within(dialog).findByTestId('hub-add-done')).toHaveTextContent('Shared.')
     expect(within(dialog).getByTestId('hub-flow-cancel')).toHaveTextContent('Done')
+  })
+
+  it('a long review shows the first names and "and N more", the whole list behind the i, and nothing is cut', async () => {
+    const user = userEvent.setup()
+    const people = Array.from({ length: 12 }, (_, i) => 'Person ' + String(i + 1).padStart(2, '0'))
+    const row = (n: number) => ({ line: `ticket DEMO-00${n}: Old ${n}`, people_added: people, teams_added: ['finance'], description_added: false })
+    vi.spyOn(api, 'getHubPreview').mockImplementation(async () => ({
+      ...NOW, new: 1, plan: 'N'.repeat(43),
+      review: { hub_id: 'ab12cd34ef56ab12', readers: { people, teams: ['finance'], note: 'from the hub, not signed', info: null }, widened: [1, 2, 3, 4, 5].map(row), new_count: 1, new_more: 0,
+        new_items: ['ticket DEMO-0050: Later public note'], leaves: [], later_edits: null },
+    }))
+    mount(<ShareRules ws={WS.id} workspace={WS} onBack={() => {}} />)
+    await user.click(await screen.findByTestId('hub-rule-add'))
+    await user.type(screen.getByTestId('hub-rule-value'), 'team')
+    await waitFor(() => expect(screen.getByTestId('hub-share-review')).toBeEnabled())
+    await user.click(screen.getByTestId('hub-share-review'))
+    const dialog = await screen.findByRole('dialog', { name: 'Review sharing change' })
+    expect(within(dialog).getByTestId('hub-add-readers')).toHaveTextContent('Who will see it: Person 01, Person 02, Person 03, Person 04, Person 05 and 8 more')
+    expect(within(dialog).getAllByTestId('hub-add-widened')).toHaveLength(3)
+    expect(within(dialog).getByTestId('hub-add-widened-more')).toHaveTextContent('and 2 more tickets reach more people')
+    expect(within(dialog).getAllByTestId('hub-add-widened')[0]).toHaveTextContent('adds Person 01, Person 02, Person 03, Person 04, Person 05 and 8 more')
+    await user.click(within(dialog).getByTestId('hub-add-readers-info'))
+    expect(await screen.findByTestId('hub-add-readers-all')).toHaveTextContent('Person 12, team finance')
+    await user.keyboard('{Escape}')
+    await user.click(within(dialog).getByTestId('hub-add-details'))
+    const all = await screen.findByTestId('hub-add-widened-all')
+    expect(all.querySelectorAll('p')).toHaveLength(5)
+    expect(all.textContent).toContain('Old 5')
+    expect(all.textContent).toContain('Person 12')
+  })
+
+  it('a rule that reaches too many people shows the host\'s words and cannot be reviewed', async () => {
+    const user = userEvent.setup()
+    const tooMany = 'This rule reaches too many people. Narrow it to share.'
+    vi.spyOn(api, 'getHubPreview').mockRejectedValue(new ApiError(422, { code: 'invalid.input', message: tooMany, retryable: false }))
+    mount(<ShareRules ws={WS.id} workspace={WS} onBack={() => {}} />)
+    await user.click(await screen.findByTestId('hub-rule-add'))
+    await user.type(screen.getByTestId('hub-rule-value'), 'team')
+    expect(await screen.findByText(tooMany)).toBeTruthy()
+    expect(screen.getByTestId('hub-share-review')).toBeDisabled()
   })
 
   it('an older host without the review says so and offers no button', async () => {

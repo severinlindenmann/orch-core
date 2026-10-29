@@ -89,6 +89,7 @@ function fake(
     failure?: boolean
     done?: boolean
     trust?: 'skipped' | 'done'
+    trustCode?: string
     click?: boolean
     clickOff?: string
     relayUnavailable?: boolean
@@ -168,6 +169,7 @@ function fake(
           ...(options.trust ? [{ id: 'trust', label: 'Letting Claude Code trust this folder', status: options.trust }] : []),
         ],
         reasons: options.trust === 'skipped' ? { trust: 'Claude Code has not been started on this computer yet, so orch could not answer for you.' } : {},
+        reason_codes: options.trust === 'skipped' ? { trust: options.trustCode ?? 'not_started' } : {},
         done: !!options.done,
         waiting: options.waiting,
         error: options.failure
@@ -445,6 +447,13 @@ test('r10-P10: a skipped Claude Code trust step is said on the progress page, wi
   expect(screen.getByText('Why?')).toBeInTheDocument()
   expect(screen.getByText(/has not been started on this computer yet/)).toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Open your workspace →' })).toBeEnabled()
+})
+
+test("r10-P10: someone else's Claude Code settings never get the 'say yes' advice", async () => {
+  await finishFinishMode(fake({ finish: true, done: true, trust: 'skipped', trustCode: 'foreign_config' }))
+  expect(screen.queryByText(/Say yes there/)).toBeNull()
+  expect(screen.getByText('Claude Code will ask once about this folder. See why below.')).toBeInTheDocument()
+  expect(screen.getByText('Why?')).toBeInTheDocument()
 })
 
 test('r10-P10: no trust note when the step was done or not asked for', async () => {

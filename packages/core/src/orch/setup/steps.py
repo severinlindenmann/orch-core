@@ -415,6 +415,7 @@ class Run:
         self.error: dict[str, Any] | None = None
         self.retry: list[str] = []
         self.reasons: dict[str, str] = {}
+        self.reason_codes: dict[str, str] = {}  # fixed codes next to the words (the page decides its advice from these)
         self.workspace: dict[str, str] | None = None
         self.waiting_tty = False
         #: called with one plain line when a step ends (the setup terminal prints it; B11 finding 25)
@@ -458,6 +459,7 @@ class Run:
                 "error": self.error,
                 "retry": list(self.retry),
                 "reasons": dict(self.reasons),
+                "reason_codes": dict(self.reason_codes),
                 "workspace": self.workspace,
                 "waiting": "waiting for terminal" if self.waiting_tty else None,
             }
@@ -740,6 +742,14 @@ class Creator:
                 why = self.ports.trust_why(self.root, allow_parent=bool(self.profile.get("trust_parent")))
             if why:
                 self.run.explain("trust", why)
+            code = "other"
+            with contextlib.suppress(Exception):
+                code = str(
+                    getattr(self.ports, "trust_code", lambda *_a, **_k: "other")(
+                        self.root, allow_parent=bool(self.profile.get("trust_parent"))
+                    )
+                )
+            self.run.reason_codes["trust"] = code
         self.run.set("trust", "skipped" if ok is False else "done")
 
     def _records(self) -> None:
@@ -1150,9 +1160,19 @@ class RealPorts:
 
         if not claude_installed(self.env):  # J01-06: the sign card of the first Claude Code start asks again
             return "Claude Code is not installed on this computer yet. Once it is, it asks once to trust this folder."
+        from .claude_folder import config_state
+
         return refusal(self.env, root, allow_parent=allow_parent) or (
             "Claude Code has not been started on this computer yet, so orch could not answer for you."
+            if config_state(self.env, root) == "missing"
+            else "Claude Code's settings file could not be changed safely, so orch could not answer for you."
         )
+
+    def trust_code(self, root: Path, *, allow_parent: bool = False) -> str:
+        """Why it was skipped as a fixed code: only not_installed / not_started mean "Claude Code asks once, say yes"."""
+        from .claude_folder import refusal_code
+
+        return refusal_code(self.env, root, allow_parent=allow_parent)
 
     def records_setup(self, wid: str, root: Path) -> None:
         """``orch records init`` and ``orch records auto on`` (no ``--push``): the records tool's own code, with the

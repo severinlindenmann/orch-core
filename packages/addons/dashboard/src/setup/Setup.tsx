@@ -1344,7 +1344,9 @@ export function Setup({ api }: { api: SetupAPI }) {
           </ol>
           {progress?.steps.some((s) => s.id === 'trust' && s.status === 'skipped') && (
             <div className="progress-note" role="note">
-              Claude Code will ask once to trust this folder. Say yes there.
+              {progress.reason_codes?.trust === 'not_installed' || progress.reason_codes?.trust === 'not_started'
+                ? 'Claude Code will ask once to trust this folder. Say yes there.'
+                : 'Claude Code will ask once about this folder. See why below.'}
               {progress.reasons?.trust && (
                 <details>
                   <summary>Why?</summary>

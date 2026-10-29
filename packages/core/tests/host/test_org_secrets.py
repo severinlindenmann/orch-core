@@ -793,3 +793,38 @@ def test_an_oversize_pin_file_refuses_the_sync(w):
     os.chmod(path, 0o600)
     w.org.secrets = [w.entry(version=2)]
     assert sec_sync(w)["secrets"] == "pins_unusable"
+
+
+# -- review L2: held values go at the sync, not at the next call -----------------------------------------------------
+
+
+def test_a_rotation_or_removal_at_sync_empties_the_held_values_at_once(live):
+    w = live.w
+    assert call(live)[0] == 200 and live.proxy._held_now == (VALUE,)  # noqa: SLF001
+    w.org.secrets = [w.entry(version=2, value="rotated-value-777")]
+    sec_sync(w)
+    assert live.proxy._held_now == ()  # noqa: SLF001 - no further call was needed
+    assert call(live)[0] == 200 and live.proxy._held_now == ("rotated-value-777",)  # noqa: SLF001
+    w.org.secrets = []
+    sec_sync(w)
+    assert live.proxy._held_now == ()  # noqa: SLF001
+    assert len(live.proxy._caps) == 1  # the capability itself lives on
+
+
+def test_an_expiry_found_at_sync_and_a_decline_empty_the_held_values(live):
+    w = live.w
+    w.org.secrets = [w.entry(version=2, expires=w.now() + 5000)]
+    sec_sync(w)
+    call(live)
+    assert live.proxy._held_now  # noqa: SLF001
+    w.advance(6000)
+    w.org.secrets = [w.entry(version=3, expires=w.now() + 5000)]
+    w.org.secrets = []
+    sec_sync(w)
+    assert live.proxy._held_now == ()  # noqa: SLF001
+    w.org.secrets = [w.entry(version=4)]
+    sec_sync(w)
+    call(live)
+    assert live.proxy._held_now  # noqa: SLF001
+    ok(req(w.served, "org.decline", {"kind": "mcp", "name": "vault"}))
+    assert live.proxy._held_now == ()  # noqa: SLF001

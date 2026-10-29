@@ -65,6 +65,16 @@ def drop_cache(service: WorkspaceService) -> None:
             del _CACHE[key]
 
 
+def _forget_held(service: WorkspaceService) -> None:
+    """Also tell the proxy to forget the values its capabilities hold for this workspace (best effort)."""
+    try:
+        proxy = getattr(service.runners, "org_mcp", None)
+        if proxy is not None:
+            proxy.forget_held(service.workspace_id)
+    except Exception:  # noqa: BLE001
+        return
+
+
 def take_usage(service: WorkspaceService) -> list[dict[str, Any]]:
     """The counts to report (``secret_use {secret_id, day, n}``), at most :data:`USAGE_MAX`; they leave the memory."""
     with _MU:
@@ -136,6 +146,7 @@ def drop_all(service: WorkspaceService) -> None:
     import contextlib
 
     drop_cache(service)
+    _forget_held(service)
     with _MU:
         with contextlib.suppress(OSError):
             (_orgstate().org_dir(service) / "secrets.json").unlink()
@@ -180,6 +191,7 @@ def prune(service: WorkspaceService) -> None:
             keep = [r for r in rows if r["name"] in used]
             if len(keep) != len(rows):
                 drop_cache(service)
+                _forget_held(service)
                 _write_wraps(service, state, keep, issued)
     except Exception:  # noqa: BLE001 - a missing binding has nothing to prune
         return
@@ -252,6 +264,7 @@ def sync_secrets(service: WorkspaceService, state: Any, held: Any, body: Any, no
     )
     if before != keep:
         drop_cache(service)
+        _forget_held(service)
     _write_wraps(service, state, keep, o["issued_ms"])
     return "new" if fresh else "same"
 

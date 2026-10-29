@@ -326,6 +326,15 @@ class Proxy:
                     self._drop(key)
             self._refresh_held()
 
+    def forget_held(self, ws: str) -> None:
+        """Drop the secret values the capabilities of ``ws`` hold (a sync changed or removed a wrap). The capabilities
+        stay; the next call fetches the current value again."""
+        with self._lock:
+            for cap in self._caps.values():
+                if cap.ws == ws:
+                    cap.held.clear()
+            self._refresh_held()
+
     def usage(self) -> dict:
         with self._lock:
             return dict(self._usage)

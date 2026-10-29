@@ -131,8 +131,8 @@ _BASE = re.compile(r"https?://(\[[0-9a-f:]{2,39}\]|[a-z0-9.-]{1,253})(:[0-9]{1,5
 
 
 def csp(base: Any, reach: Any, forbidden: Any = ()) -> str:
-    """The Content-Security-Policy of one app view (C7). ``base`` is the configured share origin plus the view path, never
-    read from a Host header: exactly ``scheme://host[:port]/a/<slug>/v/<view id>/`` (no dot segments, port 1..65535).
+    """The Content-Security-Policy of one app view (C7). ``base`` is the configured share origin plus the view path,
+    never read from a Host header: exactly ``scheme://host[:port]/a/<slug>/v/<view id>/`` (no dot segments, port 1..65535).
     ``reach`` is the version's approved origin list, ``forbidden`` as in reach_problem. Raises ValueError."""
     m = _BASE.fullmatch(base) if type(base) is str else None
     if m is None or (m.group(2) is not None and not 1 <= int(m.group(2)[1:]) <= 65535):

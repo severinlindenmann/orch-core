@@ -7,7 +7,7 @@ here needs a hub.
   rules and package digest `package_sha256` (ticket-format §8.1, `orch.addons.package`), the owner-signed
   `addon.granted` event (ticket-format §5.4.2), the out-of-process runner that re-checks "digest equals grant" on every
   run, and the staged update and grant design of [addon-platform.md](../design/addon-platform.md) §4.
-- **Decisions this implements** (owner, 22 Oct 2026): 1. GitHub and Landing leave the built-in set for the official
+- **Decisions this implements** (owner, 22 Oct 2026): 1. GitHub and Merge queue leave the built-in set for the official
   marketplace. 2. A marketplace is a plain git repo with a `marketplace.json`; there is no hosted registry. 3.
   Dependencies are allowed from v1, as lockfiles with pinned hashes, inside the digest, installed at grant time. 4.
   Community marketplaces only after per-add-on OS-user isolation (#287). 5. With a hub, only hub-allowed marketplaces.
@@ -17,7 +17,7 @@ here needs a hub.
   tests `tests/addons/test_market_vectors.py`. Where the checker and this document disagree, this document wins.
 - **Concept draft** (screens, not binding): [`docs/vision/marketplace/index.html`](../vision/marketplace/index.html).
 - **Not in this task:** any product code. `orch market`, `orch addon install/update` (G2, G3), lockfile install (G4),
-  author tools (G5), the move of GitHub and Landing (G6), core enforcement of the hub policy (G7). Words "MUST" and
+  author tools (G5), the move of GitHub and Merge queue (G6), core enforcement of the hub policy (G7). Words "MUST" and
   "MUST NOT" are requirements on those tasks.
 
 ## 1. The three shelves
@@ -25,7 +25,7 @@ here needs a hub.
 | Shelf | What is on it | Where the bytes come from | Gate |
 |---|---|---|---|
 | **Built in** | Tech-agnostic add-ons only: dashboard, start agent, terminals, worktrees, wiki, widgets, schedules, explorer, usage, estimate, model routing, quick tasks, activity, publish | the orch-core wheel (`orch.addons.manifests`); no download | the existing owner-signed `addon.granted` |
-| **Official marketplace** `orch-marketplace` | orch-maintained, tool-specific add-ons: GitHub, Landing, later Jira, Slack, … | a git repo, preinstalled as a known marketplace | the marketplace gate (§5) |
+| **Official marketplace** `orch-marketplace` | orch-maintained, tool-specific add-ons: GitHub, Merge queue, later Jira, Slack, … | a git repo, preinstalled as a known marketplace | the marketplace gate (§5) |
 | **Other marketplaces** | Any git repo with a `marketplace.json`, or a single add-on repo (a direct source) | a git repo the owner added | the marketplace gate (§5), refused until #287 (§10) |
 
 Rule of thumb: an add-on that needs only orch itself (tickets, agents, the workspace folder) is built in. One that talks
@@ -39,7 +39,7 @@ one (`market.reserved_id`). The reserved set is **shipped in the core release** 
 release time) and only *added to* by a verified official index (§3.1). So the rule holds offline, on a first run, and
 whatever the official repo or an unverified copy of its index says: with no usable official index the shipped set is
 used, never an empty one (fail closed). The other direction holds too: an official entry may carry a built-in id only
-if core lists that id as *moved to the marketplace* (G6 moves `github` and `landing`); otherwise it is
+if core lists that id as *moved to the marketplace* (G6 moves `github` and `merge-queue`); otherwise it is
 `market.reserved_id`, so the official shelf can never install a second package under the name of a built-in.
 
 ## 2. Vocabulary

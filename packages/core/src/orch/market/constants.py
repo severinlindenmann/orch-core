@@ -23,9 +23,9 @@ AGENT_MIN_INTERVAL = 300
 MAX_INDEX_BYTES = 1 << 20
 
 #: Ids reserved for the official marketplace (a non-official marketplace cannot claim them, spec 5 step 6). A constant
-#: of this release (G6, addon-api 1.1): ``github`` and ``landing`` are reserved ahead of their packages;
+#: of this release (G6, addon-api 1.1): ``github`` and ``merge-queue`` are reserved ahead of their packages;
 #: ``model-routing`` ships first.
-OFFICIAL_IDS: tuple[str, ...] = ("github", "landing", "model-routing")
+OFFICIAL_IDS: tuple[str, ...] = ("github", "merge-queue", "model-routing")
 #: Built-in ids that moved to the official marketplace (G6): only the official marketplace may list these.
 MOVED_IDS: tuple[str, ...] = ()
 #: A staged package is kept this long before the review is signed (design G3 section 2).

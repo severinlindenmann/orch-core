@@ -69,11 +69,11 @@ export function Details({ children, testId }: { children: ReactNode; testId?: st
     {open && <div className="space-y-2 text-text-muted">{children}</div>}
   </div>
 }
-/** `done`: the action succeeded, the footer button becomes the primary 'Done'. `cancel`: the footer label before that. `action`: the confirm button, next to Cancel. */
-export function Flow({ title, onClose, children, finish = 'terminal', done = false, cancel, action }: { title: string; onClose: () => void; children: ReactNode; finish?: 'terminal' | 'here'; done?: boolean; cancel?: string; action?: ReactNode }) {
+/** `cancel`: the footer label before that. `action`: the confirm button, next to Cancel. */
+export function Flow({ title, onClose, children, finish = 'terminal', cancel, action }: { title: string; onClose: () => void; children: ReactNode; finish?: 'terminal' | 'here'; cancel?: string; action?: ReactNode }) {
   return <Dialog open onOpenChange={open => !open && onClose()}><DialogContent showCloseButton={false} className="data-[state=open]:animate-none data-[state=closed]:animate-none max-h-[85vh] overflow-y-auto sm:max-w-2xl">
     <DialogTitle>{title}</DialogTitle><DialogDescription className="sr-only">Review the hub change before confirming.</DialogDescription>
     <div className="min-w-0 space-y-4 text-sm break-words">{children}</div>
-    {finish === 'terminal' && <div className="flex flex-wrap items-center justify-end gap-2"><Action id="hub-flow-cancel" variant={done ? 'default' : 'outline'} onClick={onClose}>{done ? 'Done' : cancel ?? 'Cancel'}</Action>{action}</div>}
+    {finish === 'terminal' && <div className="flex flex-wrap items-center justify-end gap-2"><Action id="hub-flow-cancel" variant="outline" onClick={onClose}>{cancel ?? 'Cancel'}</Action>{action}</div>}
   </DialogContent></Dialog>
 }

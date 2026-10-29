@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { api } from '@/api/client'
-import { hubQueries, type HubAdded, type HubPreview, type HubRule, type HubStatus } from '@/api/hub'
+import type { HubPreview, HubRule } from '@/api/hub'
 import { ApiError } from '@/api/types'
 import { trustedPress } from '@/components/sign/trustedPress'
 import { WorkspaceLine } from '@/components/sign/WorkspaceLine'
@@ -13,7 +13,7 @@ import { caveat } from './shared'
 import type { HubWorkspace } from './StopSharing'
 
 // Sharing MORE is a plain click, no signature and no typed word: a click-only host op (owner, full local session, the
-// plan of the preview this session was shown). The review's facts come from the host's preview (readers, widened items, counts, what leaves); the page adds only labels (the ticket title, the hub name from the cached status, the workspace name)
+// plan of the preview this session was shown). The review's facts come from the host's preview (readers, widened items, counts, what leaves); the page adds only labels (the ticket title, the workspace name)
 // (`review`): which hub, who can read there, only the NEW items, what leaves per item, and that later edits follow.
 // The list of items stays behind one small click. A changed plan shows the review again; nothing is auto-confirmed.
 
@@ -63,7 +63,6 @@ export function AddRuleReview({ ws, workspace, rule, after, onDone, title }: { w
   const qc = useQueryClient()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const [done, setDone] = useState<HubAdded>()
   const [list, setList] = useState(false)
   const review = after?.review
   const cut = !!review && (review.widened.length > SHOWN_WIDENED || review.widened.some(w => w.people_added.length + w.teams_added.length > SHOWN_NAMES))
@@ -75,12 +74,9 @@ export function AddRuleReview({ ws, workspace, rule, after, onDone, title }: { w
     setError('')
     api.addHubRule(ws, rule, after.plan).then(
       got => {
-        // Read the cached status (no request): older hosts give no hub name, and then the message names no hub.
-        const st = qc.getQueryData<HubStatus & { name?: string; hub_name?: string }>(hubQueries.status(ws).queryKey)
-        const hub = st?.hub_name ?? st?.name
         const what = rule.kind === 'ticket' && title ? `“${title}”` : `${review.new_count} ${review.new_count === 1 ? 'item' : 'items'}`
-        toast.success(`Shared ${what}${hub ? ` with ${hub}` : ' with the hub'}.`, { description: got.synced ? undefined : 'Saved here. It is sent when the hub is back.' })
-        setDone(got); onDone?.(); void qc.invalidateQueries({ queryKey: ['hub', ws] })
+        toast.success(`Shared ${what} with the hub.`, { description: got.synced ? undefined : 'Saved here. It is sent when the hub is back.' })
+        onDone?.(); void qc.invalidateQueries({ queryKey: ['hub', ws] })
       },
       err => setError(refusal(err)),
     ).finally(() => setBusy(false))
@@ -103,9 +99,7 @@ export function AddRuleReview({ ws, workspace, rule, after, onDone, title }: { w
         {review.new_count > 20 && <li>and {review.new_count - 20} more</li>}</ul>}
     </>}
     <p className="text-warning">{caveat}</p>
-    {done
-      ? <p role="status" data-testid="hub-add-done">{done.synced ? 'Shared.' : 'Saved here. It is sent when the hub is back.'}</p>
-      : <Button data-testid="hub-add-go" size="sm" disabled={busy || !after.plan} onClick={go}>{busy ? 'Sharing…' : 'Share these items'}</Button>}
+    <Button data-testid="hub-add-go" size="sm" disabled={busy || !after.plan} onClick={go}>{busy ? 'Sharing…' : 'Share these items'}</Button>
     {error && <p role="alert" className="text-danger">{error}</p>}
   </div>
 }

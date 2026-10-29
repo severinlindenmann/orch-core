@@ -1,10 +1,9 @@
 import { useState } from 'react'
-import { Flow } from '../settings/hub/shared'
+import { Action, Flow } from '../settings/hub/shared'
 import { AddRuleReview } from '../settings/hub/AddRule'
 import { AudiencePicker } from '../settings/hub/AudiencePicker'
 import { useSharePreview } from '../settings/hub/useSharePreview'
 import type { HubWorkspace } from '../settings/hub/StopSharing'
-import { Action } from '../settings/hub/shared'
 import type { HubAudience, HubRule } from '@/api/hub'
 
 /**

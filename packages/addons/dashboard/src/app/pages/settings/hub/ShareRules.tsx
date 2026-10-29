@@ -21,7 +21,6 @@ function chipsFor(kind: 'type' | 'tag' | 'ticket', tickets: { key: string; title
   return [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([value, n]) => ({ value, label: `${value} (${n})` }))
 }
 
-type Change = ShareChange
 export function AlwaysShared({ share }: { share: HubShare }) {
   return <div className="space-y-2">
     {(['needs_you', 'questions'] as const).map(kind => <div key={kind} className="flex flex-wrap items-center justify-between gap-2">
@@ -49,12 +48,12 @@ export function ShareRules({ ws, workspace, onBack }: { ws: string; workspace: H
   const [groups, setGroups] = useState<string[]>([])
   const [withText, setWithText] = useState(true)
   const [remove, setRemove] = useState<HubRule>()
-  const [review, setReview] = useState<Change>()
+  const [review, setReview] = useState<ShareChange>()
   const [revoke, setRevoke] = useState<string>()
   const now = useSharedNow(ws)
   const titleOf = (key: string) => now.data?.items.find(i => i.kind === 'ticket' && i.line.startsWith(`ticket ${key}:`))?.line.slice(`ticket ${key}:`.length).trim()
   const readers: HubAudience | undefined = users.length || groups.length ? { users: [...users].sort(), groups: [...groups].sort() } : undefined
-  const change: Change | undefined = remove ? { remove } : adding && value.trim() ? { add: { kind, value, ...(readers ? { audience: readers } : {}), description: withText } } : undefined
+  const change: ShareChange | undefined = remove ? { remove } : adding && value.trim() ? { add: { kind, value, ...(readers ? { audience: readers } : {}), description: withText } } : undefined
   const { current, error, retry: retryPreview } = useSharePreview(ws, change)
   return <div className="space-y-4">
     <Action id="hub-share-back" onClick={onBack}>Back to Hub</Action><h2 className="text-lg font-semibold">Choose what to share</h2>

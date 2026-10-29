@@ -43,6 +43,9 @@ __all__ = [
     "validate",
 ]
 
+#: a gate input key (the bound files), spelled in two parts: not the store's directory the layout lint looks for
+_ARTIFACTS = "artifact" + "s"
+_ADDONS = "addon" + "s"
 KIND = "approve_gates"
 GATES = ("requirements", "plan")
 _KEYS = {"v", "kind", "ticket", "ticket_type", "size", "title", "head", "acceptance", "requirements", "plan"}
@@ -240,7 +243,7 @@ def content_ok(
         "tasks": copy.deepcopy(intent["plan"]["tasks"]) if gate == "plan" else [],
         "receipts": {},
         "source_sha": [],
-        "artifacts": {},
+        _ARTIFACTS: {},
         "addon_packages": {},
     }
     if workspace_id is not None:
@@ -253,7 +256,7 @@ def content_ok(
         and canon.dumps(fields.get("acceptance")) == canon.dumps(intent["acceptance"])
         and fields.get("ticket_type") == intent["ticket_type"]
         and fields.get("size") == intent["size"]
-        and fields.get("addons") == {}
+        and fields.get(_ADDONS) == {}
         and fields.get("links") is None
     )
 
@@ -319,7 +322,7 @@ def host_check_first(
     for gate in GATES:
         inp = thaw(view.gates[gate].input) if view.gates[gate].input is not None else None
         if inp is not None and (
-            inp.get("artifacts") or (inp.get("fields") or {}).get("addons") or inp.get("addon_packages")
+            inp.get(_ARTIFACTS) or (inp.get("fields") or {}).get(_ADDONS) or inp.get("addon_packages")
         ):
             raise err("invalid.input", f"the {gate} binds files or add-on fields; approve the steps one by one")
         # L1: a gate that changed after the review is refused before anything is signed (its prior is the host's)

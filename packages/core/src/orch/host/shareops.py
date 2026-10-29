@@ -327,6 +327,11 @@ def _names_for(service: WorkspaceService, ids: set[str]) -> dict[str, str]:
     return dict(getattr(service, "_share_names", {}))
 
 
+# Caps of what one review carries: the dashboard server refuses a longer list (fail closed), so the host sends the first
+# ones plus the TOTAL, and the page says "and N more".
+READERS_PEOPLE_CAP, READERS_TEAMS_CAP, WIDENED_CAP, ADDED_PEOPLE_CAP, ADDED_TEAMS_CAP = 64, 32, 20, 32, 16
+
+
 def _readers(service: WorkspaceService, items: list[Any]) -> dict[str, Any]:
     """Who can read these items at the hub besides the owner, by NAME (from the hub, not signed): the people and teams
     their audiences name. A person whose name the host does not know is "a person on the hub", never an id alone."""
@@ -337,9 +342,13 @@ def _readers(service: WorkspaceService, items: list[Any]) -> dict[str, Any]:
             users |= set(i.audience["users"])
             groups |= set(i.audience["groups"])
     names = _names_for(service, users)
+    people = sorted(clean_line(names.get(u) or "a person on the hub") for u in users)
+    teams = sorted(groups)
     return {
-        "people": sorted(clean_line(names.get(u) or "a person on the hub") for u in users),
-        "teams": sorted(groups),
+        "people": people[:READERS_PEOPLE_CAP],
+        "people_total": len(people),
+        "teams": teams[:READERS_TEAMS_CAP],
+        "teams_total": len(teams),
         "note": "from the hub, not signed",
         "info": "Team membership is managed by the hub admin." if groups else None,  # shown behind the small "i"
     }
@@ -353,15 +362,17 @@ def _widened(service: WorkspaceService, st: Any, items: list[Any]) -> list[dict[
     names = _names_for(service, {u for i in items if i.audience for u in i.audience["users"]})
     known = {lg: dict(S.EMPTY_GRANT) for lg in st.sent} if st.confirmed is None else st.confirmed
     out = []
-    for i in items:
+    for i in items[:WIDENED_CAP]:
         g = known[i.logical]
         aud = i.audience or {"users": [], "groups": []}
+        people = sorted(clean_line(names.get(u) or "a person on the hub") for u in aud["users"] if u not in g["users"])
+        teams = sorted(x for x in aud["groups"] if x not in g["groups"])
         out.append({
             "line": i.line(),
-            "people_added": sorted(
-                clean_line(names.get(u) or "a person on the hub") for u in aud["users"] if u not in g["users"]
-            ),
-            "teams_added": sorted(x for x in aud["groups"] if x not in g["groups"]),
+            "people_added": people[:ADDED_PEOPLE_CAP],
+            "people_added_total": len(people),
+            "teams_added": teams[:ADDED_TEAMS_CAP],
+            "teams_added_total": len(teams),
             "description_added": "description" in i.payload and not g["description"],
         })  # fmt: skip
     return out
@@ -378,13 +389,14 @@ def _review(service: WorkspaceService, want: list[Any], had: set[str], st: Any =
         pass
     new = [i for i in want if i.logical not in had]
     wide = st.widened(want) if st is not None else []
-    widened = _widened(service, st, wide) if wide else []
+    widened = _widened(service, st, wide) if wide else []  # the first WIDENED_CAP; "widened_total" says how many
     leaving = new + wide
     kinds = sorted({i.kind for i in leaving})
     return {
         "hub_id": getattr(state, "hub_id", None),
         "readers": _readers(service, leaving),
         "widened": widened,
+        "widened_total": len(wide),
         "new": _rows(new),
         "leaves": [{"kind": k, "text": _leaves(k, leaving)} for k in kinds if k in LEAVES],
         "later_edits": LATER_EDITS,

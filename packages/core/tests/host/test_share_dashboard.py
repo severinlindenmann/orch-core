@@ -359,3 +359,42 @@ def test_a_review_never_opens_a_hub_link_for_names(monkeypatch):
     monkeypatch.setattr(shareops, "_link", boom)
     assert shareops._names_for(SimpleNamespace(), {"a" * 32}) == {}  # cold: the review says "a person on the hub"
     assert shareops._names_for(SimpleNamespace(_share_names={"a" * 32: "Ben"}), {"a" * 32}) == {"a" * 32: "Ben"}
+
+
+# --- a long review is capped, with the totals beside it (the dashboard refuses an over-long list) ------------------------
+
+
+def _item(logical, users=(), groups=(), description=False):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        logical=logical, kind="ticket", audience={"users": list(users), "groups": list(groups)},
+        payload={"description": "x"} if description else {}, line=lambda: f"line {logical}",
+    )  # fmt: skip
+
+
+def test_a_long_reader_list_is_capped_and_carries_its_total():
+    from types import SimpleNamespace
+
+    service = SimpleNamespace(_share_names={})
+    users = [f"{n:032x}" for n in range(shareops.READERS_PEOPLE_CAP + 36)]
+    groups = [f"team-{n:03d}" for n in range(shareops.READERS_TEAMS_CAP + 8)]
+    got = shareops._readers(service, [_item("a", users, groups)])
+    assert len(got["people"]) == shareops.READERS_PEOPLE_CAP and got["people_total"] == len(users)
+    assert len(got["teams"]) == shareops.READERS_TEAMS_CAP and got["teams_total"] == len(groups)
+    short = shareops._readers(service, [_item("a", users[:2], ["team-x"])])
+    assert (short["people_total"], short["teams_total"]) == (2, 1) and len(short["people"]) == 2
+
+
+def test_a_widened_list_is_capped_and_each_row_carries_its_added_totals():
+    from types import SimpleNamespace
+
+    service = SimpleNamespace(_share_names={})
+    n = shareops.WIDENED_CAP + 5
+    users = [f"{k:032x}" for k in range(shareops.ADDED_PEOPLE_CAP + 3)]
+    items = [_item(f"ticket:{k}", users, ["t-a"], True) for k in range(n)]
+    st = SimpleNamespace(sent=[i.logical for i in items], confirmed=None)
+    out = shareops._widened(service, st, items)
+    assert len(out) == shareops.WIDENED_CAP
+    assert len(out[0]["people_added"]) == shareops.ADDED_PEOPLE_CAP and out[0]["people_added_total"] == len(users)
+    assert out[0]["teams_added_total"] == 1

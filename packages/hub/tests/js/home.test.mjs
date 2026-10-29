@@ -103,14 +103,14 @@ test("P07: Shared tickets card lists tickets shared with me with workspace and w
   const none = homeView({ workspaces: ws, items: [], shared: [], actions: {} });
   assert.doesNotMatch(textOf(none), /Shared tickets/);
   let opened;
-  const out = homeView({ workspaces: ws, items: [], actions: { open: (id) => { opened = id; } },
+  const out = homeView({ workspaces: ws, items: [], actions: { openShared: (it) => { opened = it.workspace_id + "/" + it.key; } },
     shared: [{ workspace_id: "w1", key: "PW-1", title: "Invoice CSV export", shared_by: "Anna" }] });
   const t = textOf(out);
   assert.match(t, /Shared tickets \(1\)/);
   assert.match(t, /Invoice CSV export/);
   assert.match(t, /Product · shared by Anna/);
   const all = (n) => [n, ...n.children.flatMap(all)];
-  const open = out.flatMap(all).filter((n) => n.tag === "button" && n.textContent === "Open" && n.listeners.click);
+  const open = out.flatMap(all).filter((n) => n.tag === "button" && n.textContent === "Read" && n.listeners.click);
   open[0].listeners.click();
-  assert.equal(opened, "w1");
+  assert.equal(opened, "w1/PW-1");
 });

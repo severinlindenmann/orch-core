@@ -99,7 +99,7 @@ export function homeView(d) {
     sharedItems.map((it) => h("article", { class: "list-row row" },
       h("div", { class: "grow" }, h("b", { text: text(it.title ?? it.key ?? "Ticket") }),
         note([workspaceName(it.workspace_id), it.shared_by ? "shared by " + text(it.shared_by) : "shared with you"].join(" · "))),
-      d.actions?.open && it.workspace_id ? h("button", { text: "Open", onclick: () => d.actions.open(it.workspace_id) }) : null))) : null;
+      d.actions?.openShared && it.workspace_id ? h("button", { text: "Read", onclick: () => d.actions.openShared(it) }) : null))) : null;
   const browser = d.thisBrowser;
   const active = browser?.state === "active";
   const fromWorkspace = browser?.state === "from_workspace";

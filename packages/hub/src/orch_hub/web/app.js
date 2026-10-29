@@ -662,7 +662,7 @@ async function home() {
       newChannels: state.newChannels,
       thisBrowser: state.user.needs_sign_in ? { state: "from_workspace" } : mine ? { state: "active", label: state.me.label } : dead ? { state: "dead", label: state.me?.label } : { state: "unregistered" },
       notice: state.notice,
-      actions: { review: (it) => navigate("#/w/" + it.workspace_id + "/item/" + encodeURIComponent(it.key || it.item_id)), open: (id) => navigate("#/w/" + id), connect: () => navigate("#/workspaces"), register: () => registerView(), removeChannel, forgetLocal, dismissNew },
+      actions: { review: (it) => navigate("#/w/" + it.workspace_id + "/item/" + encodeURIComponent(it.key || it.item_id)), open: (id) => navigate("#/w/" + id), openShared: (it) => navigate("#/shared/" + it.workspace_id + "/" + encodeURIComponent(it.key)), connect: () => navigate("#/workspaces"), register: () => registerView(), removeChannel, forgetLocal, dismissNew },
     };
     liveItems = { user_id: user.user_id, items: homeData.items };
     shell("home", homeView(homeData), workspaces.some((w) => w.can_start) ? advancedForm(workspaces) : null);
@@ -1167,6 +1167,26 @@ function navigate(hash) {
   location.hash = hash;
 }
 
+// A ticket shared with me, read only. Everything comes from GET /me/shared (caller-scoped): the page shows nothing the
+// list does not already give this person. A ticket that is no longer in the list means the sharing ended.
+async function sharedTicketPage(route) {
+  const finishLoading = loading();
+  pageLoading("home");
+  try {
+    if (!(await refresh())) return loginView();
+    await loadRail();
+    const res = await api("GET", "/me/shared");
+    const it = res.status === 200 ? (res.body.items ?? []).find((x) => x.workspace_id === route.workspace && x.key === route.key) : null;
+    const back = h("button", { text: it ? "Back" : "Back to Home", onclick: () => navigate("#/home") });
+    if (res.status !== 200) return shell("home", h("h1", { text: "Shared ticket" }), h("p", { text: "This ticket could not be loaded right now. Try again in a moment." }), back);
+    if (!it) return shell("home", h("h1", { text: "Sharing ended" }), h("p", { text: "The owner stopped sharing this ticket." }), back);
+    shell("home", h("h1", { text: renderText(it.title ?? it.key) }),
+      h("p", { class: "small muted", text: [it.shared_by ? "Shared by " + renderText(it.shared_by) : "Shared with you", it.status ? renderText(it.status) : null, "read only"].filter(Boolean).join(" · ") }),
+      it.deadline ? h("p", { class: "small muted", text: "Due " + renderText(it.deadline) }) : null,
+      it.description ? h("p", { class: "prewrap", text: renderText(it.description) }) : null, back);
+  } finally { finishLoading(); }
+}
+
 async function workspacePage(route) {
   const finishLoading = loading();
   pageLoading("workspaces", "workspace");
@@ -1233,6 +1253,7 @@ async function renderRoute() {
       else if (route.kind === "access") await accessView(route.workspace, route.key);
       else if (route.kind === "addon") await addonView(route.workspace, route.key);
       else if (route.kind === "settings") await settingsView(route.workspace, route.key);
+      else if (route.kind === "shared") await sharedTicketPage(route);
       else if (route.workspace) await workspacePage(route);
       else await ({ home, approvals, workspaces, services, admin, activity, account, handoffs, phones, register: registerRoute }[route.kind] ?? pageRender(route.kind) ?? home)();
     }

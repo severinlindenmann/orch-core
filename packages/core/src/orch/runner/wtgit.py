@@ -53,6 +53,7 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from orch import gitsafe
+from orch.privdir import others_can_write
 
 from .supervise import SpawnError
 
@@ -260,14 +261,14 @@ def _walk_safe(path: str) -> tuple[Any, os.stat_result]:
 def _ancestor(st: os.stat_result, what: str) -> None:
     if st.st_uid not in (0, os.geteuid()):
         raise _moved(f"{what} is owned by another user")
-    if stat.S_IMODE(st.st_mode) & 0o022 and not st.st_mode & stat.S_ISVTX:
+    if others_can_write(st, os.geteuid()) and not st.st_mode & stat.S_ISVTX:
         raise _moved(f"{what} is writable by group or others and not sticky")
 
 
 def _owned(st: os.stat_result, what: str) -> None:
     """Only the person's own account may rename entries in ``what`` (Opus #439 F2): owned by the effective UID, not
     writable by group or other."""
-    if st.st_uid != os.geteuid() or stat.S_IMODE(st.st_mode) & 0o022:
+    if st.st_uid != os.geteuid() or others_can_write(st, os.geteuid()):
         raise _moved(f"{what} is not owned by this user or is writable by others")
 
 

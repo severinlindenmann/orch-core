@@ -36,6 +36,7 @@ import { hasFeature, isRealHost, showsLogout } from '@/api/features'
 import { logout } from '@/api/prodApi'
 import { activeGrantOf } from '@/api/grants'
 import { roleOf } from '@/api/permissions'
+import { isRunning } from '@/api/workspaces'
 import { useAttention } from '../attention'
 import { useRole } from '../useRole'
 import { HubLogout } from './CompanyRail'
@@ -179,9 +180,11 @@ export function Sidebar() {
   const attention = useAttention(workspace?.id)
   // The viewer's own active grant in the current workspace (revoke, re-issue and switching all show).
   const ws = workspace?.id
-  const grants = useQuery({ ...queries.grants(ws!), enabled: !!ws })
+  // Only for a workspace that is running: a host that is paused or switched off refuses every read (409).
+  const ready = !!workspace && isRunning(workspace)
+  const grants = useQuery({ ...queries.grants(ws!), enabled: ready })
   const addOns = useQuery({ ...queries.addOns(ws!), enabled: isRealHost() && !!ws && hasFeature('worktrees', ws) })
-  const today = useQuery({ ...queries.today(ws!), enabled: !!ws })
+  const today = useQuery({ ...queries.today(ws!), enabled: ready })
   const grant = grants.data && today.data ? activeGrantOf(grants.data, me?.person, Date.parse(today.data.now)) : undefined
   // A grant that ends on another day says the date (grants run up to 24 h).
   const grantTime = grant ? (today.data && !sameLocalDay(grant.until, today.data.now) ? fmtDateTime(grant.until) : fmtClock(grant.until)) : undefined
@@ -471,8 +474,8 @@ const CORE_NAV = [
   { to: '/quick', label: 'Quick tasks', icon: Zap, feature: 'quick_on', real: true },
   /** Drop (proposed `drop/1`): listed where the host serves it; the page itself says when it is not available. */
   { to: '/drop', label: 'Drop', icon: PackageOpen, feature: 'drop', real: true },
-  /** Worktrees (H11d): one folder per ticket; the mock has it as an addon page. */
-  { to: '/worktrees', label: 'Worktrees', icon: FolderGit2, feature: 'worktrees', real: true },
+  /** Work copies (H11d): one folder per ticket; the mock has it as an addon page. */
+  { to: '/worktrees', label: 'Work copies', icon: FolderGit2, feature: 'worktrees', real: true },
   /** Terminals (add-on): every terminal and agent session; listed only while the add-on is ON (the server adds `terminals_page` then). */
   { to: '/terminals', label: 'Terminals', icon: SquareTerminal, feature: 'terminals_page', real: true },
   /** Files (File Explorer add-on): owners only, listed only while the add-on is ON (the server adds `explorer` then). */

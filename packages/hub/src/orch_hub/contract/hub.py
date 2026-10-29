@@ -79,6 +79,31 @@ def device_id(dk_sig_pub: bytes) -> str:
 Check = Callable[[Any], bool]
 
 
+_BY = re.compile(r"^(person|agent):[A-Za-z0-9_-]{1,64}$")
+
+
+def space_item_body_ok(b: Any) -> bool:
+    """Mirror of orch.hubclient.wire.space_item_body_ok: ``{name, size, data, by}``, ``by`` required, optional
+    ``restored_from`` (an item id)."""
+    if type(b) is not dict or not {"name", "size", "data", "by"} <= set(b) <= {
+        "name",
+        "size",
+        "data",
+        "by",
+        "restored_from",
+    }:
+        return False
+    return (
+        type(b["name"]) is str
+        and type(b["size"]) is int
+        and b["size"] >= 0
+        and type(b["data"]) is str
+        and type(b["by"]) is str
+        and _BY.fullmatch(b["by"]) is not None
+        and ("restored_from" not in b or _hex16(b["restored_from"]))
+    )
+
+
 def _hex16(x: Any) -> bool:
     try:
         unhex(x, 16)
@@ -313,7 +338,7 @@ FIELDS: dict[str, dict[str, Check]] = {
         "item_id": _hex16,
         "workspace_id": _hex16,
         "created_ms": _int_min(0),
-        "body": lambda x: type(x) is dict,
+        "body": lambda x: space_item_body_ok(x),
         "dev": _bool,
     },
     # p4 (§6.3): what a new channel key signs to prove possession at registration (signed by that key)
@@ -1459,6 +1484,11 @@ PROFILE_FIELDS: dict[str, Check] = {
 LINK_OPTIONAL: dict[str, frozenset[str]] = {"join": frozenset({"alias_users"}), "directory_get": frozenset({"query"})}
 LINK_OPS: dict[str, tuple[str, str | None, dict[str, Check]]] = {
     "snapshot_get": ("w2h", None, {}),
+    "hub_where": (
+        "w2h",
+        None,
+        {},
+    ),  # M4 (#1461, protocol 10.9): the addresses the hub advertises and its name (unsigned)
     "mcp_servers_get": ("w2h", None, {}),  # M3 (#1435): the signed hub.mcp_servers of the link's workspace
     "org_skills_get": ("w2h", None, {}),  # M3 (#1430): the signed hub.org_skills of the link's workspace
     "org_secrets_get": ("w2h", None, {}),  # M3 (#1431): the signed hub.org_secrets of the link's workspace

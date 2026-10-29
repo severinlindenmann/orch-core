@@ -1536,7 +1536,8 @@ item_hash = "sha256:" + hex(H("orch/v2/hub-share-item|" || cj(signed share.item)
   - `needs_you` `{type: question | gate | verdict | review | handoff, title, deadline}`;
   - `ticket` `{key, type (ticket type), title, status (status list), labels (sorted unique label tokens ≤ 32),
     deadline, description?}` (`description` optional, ticket only: 1 to 4000 bytes, multi-line text rule; the host puts
-    the ticket's Summary and Context there only when the owner's rule says "include the description"; vectors
+    the ticket's Summary, Context and Requirements there only when the owner's rule says "include the description";
+    plan, decisions, findings, comments and files never; vectors
     `share_item_description_*`);
   - `question` `{key, type (the ticket's type), id (Q<n>), title (the ticket's title), text (≤ 2000 bytes, multi-line),
     deadline}`;
@@ -1649,7 +1650,7 @@ hub.space      {v, suite, kind: "hub.space", hv, hub_id, op_cert_id, space_id, e
 hub.space_wrap {v, suite, kind: "hub.space_wrap", hv, hub_id, op_cert_id, space_id, epoch, workspace_id,
                 wxk_version ≥ 1, sealed: b64u, dev}                        signed by HK_op, label sig_hub_space_wrap
 space.item     {v, suite, kind: "space.item", hv, hub_id, space_id, epoch, members_hash: b64u(32), item_id,
-                workspace_id (the author), created_ms, body: object (opaque to the contract), dev}
+                workspace_id (the author), created_ms, body: {name, size, data, by, restored_from?}, dev}
                                                                             signed by the author's WSK, sig_space_item
 ```
 
@@ -1669,6 +1670,17 @@ space.item     {v, suite, kind: "space.item", hv, hub_id, space_id, epoch, membe
   into a space of another hub, or shown to another member set fails (vectors `space_item_resealed_into_later_epoch`,
   `space_item_from_other_hub`, `space_item_members_hash_mismatch`); a hub that shows two member lists for one epoch is
   caught by the author's own hash. "No backfill" is therefore enforced by the authors' signatures, not only by hub policy.
+- **The item body** (hub M3 spaces, SP-1) is closed: `{name: text, size: int ≥ 0, data: b64u, by, restored_from?}`.
+  `by` is REQUIRED and matches `^(person|agent):[A-Za-z0-9_-]{1,64}$`: who the writing host says acted, `person:<person
+  id>` or `agent:<id of the agent's verified grant>`. The host sets it from the verified call, never from arguments. It
+  is signed with the item, but the hub and readers cannot check it (a host may lie about who acted): a reader shows it
+  as a fixed word (person / agent / unknown), labelled "as the workspace says". `restored_from` is optional, an item id
+  (`hex16`): the item this one is a restore of (same name, same bytes; the restoring host's `WSK` signs it, so a
+  restore is a new item of its author, never a console action). An item without `by`, with a malformed `by` or
+  `restored_from`, or with any other body key is `malformed`, at the author, at the hub's `space_put` and at every
+  reader; there is no legacy form. Vectors: `space_item_by_missing`, `space_item_by_bad_kind`, `space_item_by_bad_chars`,
+  `space_item_by_too_long`, `space_item_by_not_text`, `space_item_by_agent_ok`, `space_item_restored_from_ok`,
+  `space_item_restored_from_bad`, `space_item_body_extra_key`.
 - **An item** is sealed with SALTED-AEAD (v2 §5.1) under a key derived through HKDF, never `SK_e` itself:
   `base = HKDF(SK_e, salt = 32 zero bytes, info = "orch/v2/space-item|" space_id "|" epoch)`; per item
   `key = HKDF(base, salt16, "orch/v2/space-item-msg")`; `sealed = salt16 || AES-256-GCM(key, 12 zero bytes,
@@ -1779,7 +1791,7 @@ hub.audit {v, suite, kind: "hub.audit", hv, hub_id, op_cert_id, seq ≥ 1, prev:
   otherwise (vectors `audit_share_*`); `channel` (p4) `{channel_id, user_id, change: register | revoke | renew, factor,
   actor_user_id | null, nonce}`, hub-wide (`scope_tag` null; `actor_user_id` null = the operator at the hub terminal,
   there is no `unrevoke`, §6.2; `renew` = a new certificate for the same channel key, the factor unchanged, recorded BEFORE it is issued and refusing the renewal when the chain cannot be written. **Contract text only in V3: no hub renews**, the certificate lasts 31 days and then the phone pairs again); `grant` `{group, workspace_id, role | null, actor_user_id, nonce}`; `membership`
-  `{group, user_id, added, actor_user_id, nonce}`; `market_policy` (D14, §7.1) `{version ≥ 1, policy_hash: b64u(32), actor_user_id, nonce}`, hub-wide (`scope_tag` null; the version the change produced and the hash of the new policy, the actor is always a hub-admin); `space` `{space_id, epoch, change: create | add | remove | unbind | delete,
+  `{group, user_id, added, actor_user_id, nonce}`; `market_policy` (D14, §7.1) `{version ≥ 1, policy_hash: b64u(32), actor_user_id, nonce}`, hub-wide (`scope_tag` null; the version the change produced and the hash of the new policy, the actor is always a hub-admin); `hub_settings` (M4, #1461) `{change: general | addresses, actor_user_id, nonce}`, hub-wide (`scope_tag` null; an admin changed the hub's name or company, or the addresses it advertises: it names which setting and who, never the value; written BEFORE the change is saved, and the change is refused when the chain cannot be written); `space` `{space_id, epoch, change: create | add | remove | unbind | delete,
   workspace_id | null, actor_user_id | null, nonce}`. The acting admin's `UK` signature on a grant or membership change is
   the custodial event it came from (spec §10); the audit record points at it, it does not replace it. **Every event of every type carries `nonce`, 32 random bytes
   inside the event; no type is exempt.** Records carry the event's hash to every tenant, so an event without a nonce
@@ -2832,17 +2844,17 @@ must equal `page_ticket_with_proj` byte for byte) and the hub runs `proj_build`;
 `roster_v`). The hub also runs `hub_join`. #1198 C8 (§5, §9.6): orch-core runs `card_reader`, `hub_reader`, `owner_proof`,
 `owner_proof_recorded`, `joined_payload` and `left_payload`; the hub runs all of them and `owner_proof_join`. Each case carries its `phase`; the L2 cases name their finding in `note`. The cross-repo contract job (V3-D8) runs from phase 2.
 
+**`vectors_published.json`** (M4, #1357 S0; `make_vectors_published.py`): the sections `slug_cases`, `origin_cases`, `reach_cases`,
+`csp_cases`, `password_record_cases`, `password_verify_cases`, `meta_cases`, `meta_hash_cases`, `commit_cases`, `route_cases`,
+`extend_cases`, `row_cases`, `row_scope_cases`, `approval_cases` (both paths), `narrow_cases` and `pass_cases`, with `required`
+naming the cases an implementation must not lose. orch-hub and orch-publish replay every section; orch-core replays twelve and skips four with reasons: `row_cases` and `row_scope_cases` (rows are made by orch-publish and read by the hub console), `narrow_cases` and `pass_cases` (verified by orch-publish), and for `approval_cases` it checks only what the host computes (the request pre-check and the `request_hash`).
+
 `vectors_hub_backup.json` (M4 S0; FAKE keys, words and ephemeral keys, fixed in the generator only): `labels`, `constants`,
 `words` (three 24-word lists; the first two are valid BIP-39), `keys`, an `example` file (header, envelope, sealed payload
 and tar) and `cases` with `check` one of `bk_key`, `open_backup`, `tar`, `file_list`, `restore_floor`, `hub_where` and
 `expect` `{"ok": …}` or `{"error": code, "reason"?}`. The hub replays every case and fails on an unknown check or a missing
 required case; orch-core replays `hub_where`. Expected values are written by hand in the generator, not computed by the code
 under test; the BK / K_auth / seal values are computed there from first principles and compared with the module.
-
-**`vectors_published.json`** (M4, #1357 S0; `make_vectors_published.py`): the sections `slug_cases`, `origin_cases`, `reach_cases`,
-`csp_cases`, `password_record_cases`, `password_verify_cases`, `meta_cases`, `meta_hash_cases`, `commit_cases`, `route_cases`,
-`extend_cases`, `row_cases`, `row_scope_cases`, `approval_cases` (both paths), `narrow_cases` and `pass_cases`, with `required`
-naming the cases an implementation must not lose. orch-hub and orch-publish replay every section; orch-core replays twelve and skips four with reasons: `row_cases` and `row_scope_cases` (rows are made by orch-publish and read by the hub console), `narrow_cases` and `pass_cases` (verified by orch-publish), and for `approval_cases` it checks only what the host computes (the request pre-check and the `request_hash`).
 
 ## 16. Decided here, and open points for L2
 

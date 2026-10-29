@@ -74,6 +74,8 @@ LEAVES = {
     "summary": "the type, a one-line title and the deadline",
     "question": "the full question (up to 2000 bytes)",
 }
+#: The body sections that make up a ticket's shared description (only under a rule that says "include the description").
+DESCRIPTION_SECTIONS = ("summary", "context", "requirements")
 LATER_EDITS = "Later edits to these tickets are shared too, until you stop sharing them."
 _MU = threading.Lock()
 _NAMES = {"type": "array", "items": {"type": "string"}, "maxItems": 64}
@@ -290,16 +292,19 @@ def ticket_fact(store: Any, state: Any, uid: str, t: Any) -> Any:
 
 
 def _description_of(store: Any, uid: str) -> str:
-    """The ticket's Summary and Context text from ``body.md`` (checked against the log by the store), or ``""``: a body
-    that does not match its log, or cannot be read, is no description at all (fail closed). Only the rules that say
-    "include the description" ever use it."""
+    """The ticket's person-written text, Summary, Context and Requirements, from ``body.md`` (checked against the log
+    by the store), or ``""``: a body that does not match its log, or cannot be read, is no description at all (fail
+    closed). A ticket made in the dashboard has only Requirements ("What should be true when this is done?"). The
+    plan, decisions, findings, comments and files never leave. Only the rules that say "include the description" use
+    it."""
     from orch.store.errors import StoreError
 
     try:
         texts = store.body_sections(uid)
     except (StoreError, OSError):
         return ""
-    return "\n\n".join(x.strip() for x in (texts.get("summary", ""), texts.get("context", "")) if x.strip())
+    parts = (texts.get(k, "") for k in DESCRIPTION_SECTIONS)
+    return "\n\n".join(x.strip() for x in parts if x.strip())
 
 
 def _plan(items: list[Any]) -> str:
@@ -315,7 +320,10 @@ def _rows(items: list[Any], limit: int = 100) -> dict[str, Any]:
 
 def _leaves(kind: str, items: list[Any]) -> str:
     if kind == "ticket" and any("description" in i.payload for i in items if i.kind == "ticket"):
-        return "the ticket's title, status, labels, deadline and description; no comments or files"
+        return (
+            "the ticket's title, status, labels, deadline and description (summary, context and requirements); "
+            "no plan, comments or files"
+        )
     return LEAVES[kind]
 
 
@@ -331,6 +339,9 @@ def _names_for(service: WorkspaceService, ids: set[str]) -> dict[str, str]:
 #: full list behind the small "i") and the owner's confirmation (the plan digest over the items, audiences included)
 #: binds all of it; above them there is no review: the host refuses in plain words, nothing is cut silently.
 MAX_REVIEW_PEOPLE, MAX_REVIEW_WIDENED = 500, 200
+#: Distinct teams in one review, and every name the review lists (readers, plus the people and teams added per widened
+#: item). The names bound keeps the answer far below ``frames.MAX_FRAME`` (1.5 MB), so a review never fails as a frame.
+MAX_REVIEW_TEAMS, MAX_REVIEW_NAMES = 200, 5000
 TOO_MANY = "This rule reaches too many people. Narrow it to share."
 
 
@@ -387,13 +398,22 @@ def _review(service: WorkspaceService, want: list[Any], had: set[str], st: Any =
     wide = st.widened(want) if st is not None else []
     leaving = new + wide
     people = {u for i in leaving if i.audience for u in i.audience["users"]}
-    if len(people) > MAX_REVIEW_PEOPLE or len(wide) > MAX_REVIEW_WIDENED:
+    teams = {g for i in leaving if i.audience for g in i.audience["groups"]}
+    if len(people) > MAX_REVIEW_PEOPLE or len(teams) > MAX_REVIEW_TEAMS or len(wide) > MAX_REVIEW_WIDENED:
         raise HostError("invalid.input", TOO_MANY)
     widened = _widened(service, st, wide) if wide else []
+    readers = _readers(service, leaving)
+    names = (
+        len(readers["people"])
+        + len(readers["teams"])
+        + sum(len(w["people_added"]) + len(w["teams_added"]) for w in widened)
+    )
+    if names > MAX_REVIEW_NAMES:
+        raise HostError("invalid.input", TOO_MANY)
     kinds = sorted({i.kind for i in leaving})
     return {
         "hub_id": getattr(state, "hub_id", None),
-        "readers": _readers(service, leaving),
+        "readers": readers,
         "widened": widened,
         "new": _rows(new),
         "leaves": [{"kind": k, "text": _leaves(k, leaving)} for k in kinds if k in LEAVES],
@@ -683,6 +703,8 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
                     raise HostError(
                         "invalid.input", "share: what would be shared is not what you were shown; nothing changed"
                     )
+                if op == "share.rule_add":  # over the hard limits: refused before anything is saved
+                    _review(service, shown, set(st.sent), st)
                 if changed:
                     st.rules, st.withdrawn = after, withdrawn
                     _save(service, st)

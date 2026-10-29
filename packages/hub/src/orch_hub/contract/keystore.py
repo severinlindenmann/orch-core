@@ -87,9 +87,9 @@ class OpSigner(_Signer):
             "hub.space_proposal": "sig_hub_space_proposal",
             "hub.org_skills": "sig_hub_org_skills",
             "hub.mcp_servers": "sig_hub_mcp_servers",
-            "hub.org_secrets": "sig_hub_org_secrets",
             "hub.release_narrow": "sig_hub_release_narrow",
             "hub.app_pass": "sig_hub_app_pass",
+            "hub.org_secrets": "sig_hub_org_secrets",
             "hub.api_origin": "sig_hub_api_origin",
         }
     )

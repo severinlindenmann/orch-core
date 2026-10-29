@@ -84,11 +84,7 @@ def test_a_click_grant_goes_to_the_runner_and_never_to_the_dashboard(world):
     from orch.click.protocol import DEPOSIT_RISK
 
     # run 13 C3: the signer marks the risk of agent access, with the length the person chose
-    assert view["risk_lines"] == [
-        DEPOSIT_RISK,
-        "Agents get this authority for 8 hours, until it ends or you stop it.",
-        "Agents can run as you for 8 hours",  # D2: the risk line of the grant in a launch sequence, shared
-    ]
+    assert view["risk_lines"] == [DEPOSIT_RISK]  # r7-P10: one warning, the length is in the headline and the grant row
     res = click.sign(p["request_id"], v["view_digest"])
     assert res["deposit"] == "confirmed" and res["deposit_id"] == p["request_id"][3:]
     gid = res["grant"]

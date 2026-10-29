@@ -20,7 +20,7 @@ interface State {
 }
 const state = async (s: ReturnType<typeof setup>) => (await s.api.getAddonState(s.ws, 'guide')) as unknown as State
 
-const TITLES = ['Start here', 'Today, Board and Tickets', 'A ticket and quick tasks', 'Approving things', 'Agents and their access', 'Worktrees, Activity and add-ons', 'Settings', 'Repositories', 'Worktrees', 'Shares and Publish', 'Coming later', 'Keyboard shortcuts']
+const TITLES = ['Start here', 'Today, Board and Tickets', 'A ticket and quick tasks', 'Approving things', 'Agents and their access', 'Work copies, Activity and add-ons', 'Settings', 'Repositories', 'Work copies', 'Shares and Publish', 'Coming later', 'Keyboard shortcuts']
 
 describe('guide package', () => {
   it('starts installed and granted in every demo workspace; open is a viewer action', () => {

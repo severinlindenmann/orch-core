@@ -119,7 +119,7 @@ Every addon page, panel and Today card, each marked with the orange A.
 - [ ] **Wiki** — Open a page, edit it, link it to a ticket. Page: `/addon/wiki/pages`.
 - [ ] **Terminals** — Run `orch status`, `git log`, arrow-up history; an agent mirror is read-only. Page: `/addon/terminals/sessions`.
 - [ ] **Estimate** — Estimate a card in its ticket panel; the Board column shows the sum. Page: `/board`.
-- [ ] **Worktrees** — Add a worktree, Remove is refused on a dirty one, Open terminal here. Page: `/addon/worktrees/worktrees`, Busy day.
+- [ ] **Work copies** — Add a work copy, Remove is refused on a dirty one, Open terminal here. Page: `/addon/worktrees/worktrees`, Busy day.
 - [ ] **Quick tasks** — Add, close with proof, make a ticket, the outgrew decision. Page: `/addon/quick/quick`, Busy day.
 - [ ] **Records** — Record changes, push twice (rejected: pull first), pull, push. Page: `/addon/records/records`, Busy day.
 - [ ] **Activity** — Filters and Show older. Page: `/addon/activity/activity`, Busy day.
@@ -180,7 +180,7 @@ Compact addon pages; what needs you sits above the tabs.
 - [ ] **Schedules** — Schedules | Runs; the finding above the tabs. Page: `/addon/schedules/schedules`, Busy day.
 - [ ] **AI Factory** — The folded “n permits waiting · Review” row above the tabs; expand it to answer. Page: `/addon/factory/factory`, Busy day.
 - [ ] **Quick tasks** — Active | Completed. Page: `/addon/quick/quick`, Busy day.
-- [ ] **Worktrees** — Filters, then Add worktree. Page: `/addon/worktrees/worktrees`, Busy day.
+- [ ] **Work copies** — Filters, then Add work copy. Page: `/addon/worktrees/worktrees`, Busy day.
 
 ### 13. Widgets
 

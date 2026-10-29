@@ -54,6 +54,7 @@ from pathlib import Path
 
 from orch import fdwait
 from orch.posixmod import posixmod
+from orch.privdir import others_can_write
 
 pwd = posixmod("pwd")
 
@@ -225,7 +226,7 @@ def _private_dir(raw: Path | str, what: str) -> Path:
         raise SandboxError(f"{what} is not a directory") from e
     if stat.S_ISLNK(st.st_mode) or not stat.S_ISDIR(st.st_mode):
         raise SandboxError(f"{what} must be a real directory, not a symlink")
-    if st.st_uid != os.getuid() or st.st_mode & 0o022:
+    if st.st_uid != os.getuid() or others_can_write(st, os.getuid()):
         raise SandboxError(f"{what} must be owned by this user and not writable by group or others")
     return _real(raw)
 

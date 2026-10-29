@@ -15,7 +15,7 @@ const T = { timeout: 5000 }
 const row = (over: Partial<AddOnRow> & Pick<AddOnRow, 'id' | 'title'>): AddOnRow => ({ desc: `About ${over.title}.`, state: 'on', locked: null, blocked: null, ...over })
 const ROWS = [
   row({ id: 'dashboard', title: 'Dashboard', locked: 'always on', version: '0.1.0' }),
-  row({ id: 'worktrees', title: 'Worktrees', version: '1.2.3' }),
+  row({ id: 'worktrees', title: 'Work copies', version: '1.2.3' }),
   row({ id: 'publish', title: 'Publish', state: 'off', version: null }),
   row({ id: 'usage', title: 'Usage', state: 'off' }),
 ]

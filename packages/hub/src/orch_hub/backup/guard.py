@@ -148,6 +148,20 @@ def _in_place_credentials(new: Path, live: Path, survivors: set[str]) -> None:
         c.close()
 
 
+def live_channels(new: Path, live: Path, now: int, actor: str | None) -> None:
+    """Channels that exist only in the live hub (paired after the backup) are put into the staged store AS REVOKED, so the
+    periodic relay purge (``unpurged_revoked``) still removes their push target and mailbox."""
+    c = _connect(new / "channels.db", live / "channels.db")
+    try:
+        c.execute(
+            "INSERT OR IGNORE INTO main.channels(channel_id, user_id, kind, label, factor, created_ms, revoked_ms, revoked_by) "
+            "SELECT channel_id, user_id, kind, label, factor, created_ms, ?, ? FROM live.channels",
+            (now, actor or "restore"),
+        )
+    finally:
+        c.close()
+
+
 def _drop_recovering(new: Path) -> None:
     """Whoever must recover has NO password and TOTP row at all (not just the flag): the backup's or the live one."""
     a = sqlite3.connect(new / "access.db")

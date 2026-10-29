@@ -838,3 +838,16 @@ def test_L2_a_pending_row_that_is_not_live_does_not_come_back(w):
     w.env.acc._db.execute("DELETE FROM restore_pending")  # confirmed live after the backup
     _restore(w, data, words)
     assert _rows(w.state, "access.db", "SELECT * FROM restore_pending") == []
+
+
+def test_L3_a_channel_paired_after_the_backup_is_revoked_in_the_store_so_the_relay_purge_runs(w):
+    words, data = _backup(w)
+    _signer, cid = w.register_channel(w.login(w.ann))
+    _restore(w, data, words)
+    rows = _rows(
+        w.state,
+        "channels.db",
+        "SELECT channel_id FROM channels WHERE revoked_ms IS NOT NULL "
+        "AND channel_id NOT IN (SELECT channel_id FROM relay_purged)",
+    )
+    assert (cid,) in rows

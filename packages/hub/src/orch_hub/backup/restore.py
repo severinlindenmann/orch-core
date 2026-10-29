@@ -278,6 +278,8 @@ def _revoke_channels(new: Path, live: Path | None, removed: set[str], actor: str
     """Every channel of the staged copy and of the live hub is revoked (also in ``revoked_channels`` of the access store,
     which is what hosts read), every session, pairing code and challenge is gone, the removed users' credentials too."""
     ids: set[str] = set()
+    if live is not None:
+        G.live_channels(new, live, now, actor)
     db = sqlite3.connect(new / "channels.db", isolation_level=None)
     try:
         db.execute("BEGIN IMMEDIATE")

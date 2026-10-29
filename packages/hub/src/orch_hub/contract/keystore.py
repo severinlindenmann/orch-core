@@ -71,6 +71,20 @@ class RootSigner(_Signer):
 
     KINDS = MappingProxyType({"hub.op_cert": "sig_hub_op_cert", "hub.op_revoked": "sig_hub_op_revoked"})
 
+    def sign_backup_header(self, o: Mapping[str, Any]) -> bytes:
+        """The ``hub.backup`` header signature (protocol §17.1): only this key signs it, under its own label (not in
+        ``HUB_LABELS``, so it is not a ``KINDS`` entry); the caller builds the envelope."""
+        from . import backup as B
+
+        if type(o) is not dict or o.get("kind") != B.KIND:
+            raise KeyUseError("not a hub.backup header")
+        if o.get("v") != 2 or o.get("suite") != S.SUITE_ID or o.get("hv") != H.HV:
+            raise KeyUseError("header is not v 2, suite 2, hv 0")
+        try:
+            return self._sig(B.LABEL + cj(o))
+        except CanonError as e:
+            raise KeyUseError(str(e)) from None
+
 
 class OpSigner(_Signer):
     """``HK_op``: the card, UK and channel certificates, snapshots, hub->host link messages, publish transport."""
@@ -87,6 +101,9 @@ class OpSigner(_Signer):
             "hub.space_proposal": "sig_hub_space_proposal",
             "hub.org_skills": "sig_hub_org_skills",
             "hub.mcp_servers": "sig_hub_mcp_servers",
+            "hub.release_narrow": "sig_hub_release_narrow",
+            "hub.app_pass": "sig_hub_app_pass",
+            "hub.org_secrets": "sig_hub_org_secrets",
             "hub.api_origin": "sig_hub_api_origin",
         }
     )

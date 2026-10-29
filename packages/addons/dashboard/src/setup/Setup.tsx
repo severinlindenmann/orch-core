@@ -14,11 +14,14 @@ import { Inline, Raw } from '../components/sign/visible'
 import './setup.css'
 
 const clickRiskCopy = 'Faster, less safe: anything using this computer as you, including your agents, could approve for you. Choose this only on your own computer.'
-const terminalStepCopy = "One step needs your terminal: you'll type yes once."
+/** The plain meaning of One click, behind "What does this mean?"; the full risk sentence stays in the review step. */
+const clickMeaningCopy =
+  'Anything running as you on this computer, including your agents, could approve for you. Choose a passphrase if the computer is shared.'
+const terminalStepCopy = "One step needs your terminal: you'll press Enter once."
 const voidCopy =
-  'If setup fails before your workspace is created, these secret words and recovery code will no longer work. Run orch setup again to get new ones.'
+  'If setup stops before it finishes, you get new words next time.'
 const expiredCopy =
-  'This session has ended. In your terminal, press Enter to open a fresh setup link (or run orch setup again). It starts a new session with new secret words and a new recovery code.'
+  'This session has ended. In your terminal, press Enter to open a fresh setup link (or run orch setup again). It starts a new session with new recovery words.'
 /** A short, secret-free cause for the "session ended" copy: the API code, or `client: Name: message`. */
 export function reasonOf(e: unknown): string {
   if (e instanceof SetupError) return e.code
@@ -28,7 +31,7 @@ export function reasonOf(e: unknown): string {
 }
 /** The cause in plain words; the code itself stays under "Technical details". */
 export function plainReason(code: string): string {
-  if (code === 'session.required' || code === 'session.expired') return 'This page no longer has its link to your terminal. This happens after a reload or when the session ran out.'
+  if (code === 'session.required' || code === 'session.expired') return 'This page has lost its link to orch. This happens after a reload or when the session ran out.'
   if (code === 'setup.ended') return 'This setup was already finished or stopped.'
   if (code === 'setup.token' || code === 'setup.unavailable') return 'The link to your terminal could not be used.'
   if (code.startsWith('client:') || code.startsWith('http.')) return 'The page could not reach orch on this computer.'
@@ -89,14 +92,25 @@ export function summarize(review: Review): { lines: string[]; unknown: boolean; 
     else if (item.type === 'settings.changed' && only('set') && f?.set && typeof f.set === 'object' && !Array.isArray(f.set)) {
       const set = f.set as Record<string, unknown>
       const okHours = !('grant_hours' in set) || typeof set.grant_hours === 'number'
-      if (!Object.keys(set).every((k) => k === 'grant_hours') || !okHours) odd(item.title)
+      // `repos` is quiet only when it declares exactly the setup folder (made a repository by the git flag); any
+      // other project path is a decision the person must see.
+      const repos = set.repos
+      const repoPaths =
+        repos && typeof repos === 'object' && !Array.isArray(repos)
+          ? Object.values(repos as Record<string, unknown>).map((r) => (r && typeof r === 'object' ? (r as { path?: unknown }).path : undefined))
+          : undefined
+      const hasGit = review.flags.some((fl) => fl.id === 'git')
+      const quietRepo = !!repoPaths && repoPaths.length === 1 && repoPaths[0] === review.workspace?.dir && hasGit
+      if (!Object.keys(set).every((k) => k === 'grant_hours' || k === 'repos') || !okHours || (repos !== undefined && !repoPaths)) odd(item.title)
       else {
+        if (repoPaths && !quietRepo) for (const rp of repoPaths) odd(`Project folder: ${typeof rp === 'string' ? rp : 'unknown'}`)
         if (typeof set.grant_hours === 'number') lines.push(`Agents may work for you for up to ${duration(set.grant_hours)}`)
       }
     } else odd(item.title)
   }
   for (const flag of review.flags) {
-    if (flag.id === 'custody' || flag.id === 'terminal' || flag.id === 'records' || flag.id === 'trust') lines.push(flag.text)
+    if (flag.id === 'custody' || flag.id === 'terminal' || flag.id === 'records' || flag.id === 'trust' || flag.id === 'perms') lines.push(flag.text)
+    else if (flag.id === 'git') continue // shown as the 'Safe copies' row on the card; its detail stays in the fold
     else if (flag.id !== 'runner' && flag.id !== 'terminals') odd(flag.text) // a flag this page does not know is shown
   }
   if (addons.length) lines.push(`Add-ons: ${addons.join(', ')}`)
@@ -111,7 +125,7 @@ export function reviewFacts(review: Review): Fact[] {
   if (ws) {
     facts.push({ icon: '▦', label: 'Workspace', value: `${ws.workspace_name ?? ws.name} (tickets ${ws.prefix}-0001…)` })
     facts.push({ icon: '☺', label: 'Owner', value: ws.name })
-    facts.push({ icon: '▤', label: 'Folder', value: ws.dir.split(/[\\/]/).filter(Boolean).at(-1) ?? ws.dir })
+    facts.push({ icon: '▤', label: 'Project folder', value: ws.dir.split(/[\\/]/).filter(Boolean).at(-1) ?? ws.dir })
   }
   const has = (id: string) => review.flags.some((f) => f.id === id)
   if (has('custody')) facts.push({ icon: '◈', label: 'How you approve', value: 'One click on this computer' })
@@ -132,25 +146,32 @@ export function reviewFacts(review: Review): Fact[] {
   if (agents !== undefined) facts.push({ icon: '✦', label: 'Agents', value: agents })
   const addons = review.items.filter((i) => i.type === 'addon.granted' && i.id !== 'addon:dashboard').map((i) => i.title)
   if (addons.length) facts.push({ icon: '⊞', label: 'Add-ons', value: addons })
+  if (has('git')) facts.push({ icon: '⧉', label: 'Safe copies', value: 'Each ticket gets its own safe copy of this folder. None of your files are changed, except .gitignore.' })
   if (has('records')) facts.push({ icon: '◷', label: 'History', value: 'Tickets are saved on this computer only' })
   return facts
 }
 const prefixOk = (p: string) => /^[A-Z][A-Z0-9]{1,7}$/.test(p)
 /** A ticket prefix from a workspace name: first letters, capitals, letters and digits only ("Marketing Department" gives
- * MARK, "Personal Workspace" gives PW); empty or unusable names fall back to PW. */
+ * MARK, "Personal Workspace" gives PW); empty or unusable names fall back to MW (My workspace). */
 export function suggestPrefix(name: string): string {
   const words = name.toUpperCase().match(/[A-Z0-9]+/g) ?? []
   const p = (words.length >= 2 ? words.map((w) => w[0]).join('') : (words[0] ?? '').slice(0, 4)).slice(0, 8)
-  return prefixOk(p) ? p : 'PW'
+  return prefixOk(p) ? p : 'MW'
+}
+/** The default workspace name for a person: "<name>'s workspace", or "My workspace" while no name is typed. */
+export function defaultWorkspaceName(name: string): string {
+  const n = name.trim()
+  return n ? `${n}'s workspace` : 'My workspace'
 }
 const statusWord = { todo: 'Waiting', doing: 'Running', done: 'Done', failed: 'Failed', skipped: 'Skipped' }
 const statusIcon = { todo: '•', doing: '◔', done: '✓', failed: '✕', skipped: '–' }
 /** Roll up display rows only; setup still uses the original server steps. */
 export function groupProgress(steps: Progress['steps']): Progress['steps'] {
   const groups = [
+    { id: 'perms', label: 'Folders made private', ids: ['perms'] },
     { id: 'key', label: 'Your key', ids: ['keys', 'genesis', 'custody'] },
     { id: 'workspace', label: 'Your workspace', ids: ['git', 'settings', 'records', 'trust'] },
-    { id: 'services', label: 'Background services', ids: ['register', 'runner', 'runner_grant'] },
+    { id: 'services', label: 'Starting orch', ids: ['register', 'runner', 'runner_grant'] },
     { id: 'addons', label: 'Add-ons', ids: [] },
     { id: 'approval', label: 'Approval', ids: ['flags'] },
   ]
@@ -184,8 +205,8 @@ function Words({ words }: { words: string[] | null }) {
     </span>
   )
 }
-const pausedCopy = 'The setup in your terminal has ended. Run orch setup again to start a new session with new secret words.'
-const steps = ['Welcome', 'You', 'What agents can do', 'Approval', 'Check words', 'Review']
+const pausedCopy = 'The setup in your terminal has ended. Run orch setup again to start a new session with new recovery words.'
+const steps = ['Welcome', 'You', 'What agents can do', 'Approval', 'Recovery words', 'Review']
 /** Finish setup has two screens: what exists and what to add, then the review. */
 const finishSteps = ['Your workspace', 'Review']
 /** Hours a person can choose, in words. */
@@ -241,8 +262,6 @@ function FinishChoices({
         <dd>{hoursText(current.agent_hours)}</dd>
         <dt>Agent execution on this computer</dt>
         <dd>{yesNo(current.runner.enabled)}</dd>
-        <dt>Agent access for this computer’s runner</dt>
-        <dd>{current.runner_grant ? 'Given before' : 'Not given'}</dd>
         <dt>You approve with</dt>
         <dd>{current.method === 'click' ? 'One click on this computer' : 'Terminal'}</dd>
       </dl>
@@ -350,8 +369,7 @@ export function ConfirmWords({ words }: { words: string[] | null }) {
   return (
     <section className="confirm-words" role="status" aria-label="Final check">
       <p>
-        <strong>Continue in the setup window on this computer.</strong> Compare these words with it. If all three match in this order, type yes in that window
-        and press Enter.
+        <strong>Continue in the setup window on this computer.</strong> Compare these words with it. If all three match in this order, press Enter in that window.
       </p>
       <ol className="words word-tiles" aria-label="Your three words">
         {(words ?? []).map((w, i) => (
@@ -363,7 +381,7 @@ export function ConfirmWords({ words }: { words: string[] | null }) {
       <small className="words-wait">Waiting for you in the setup window…</small>
       <details>
         <summary>Are the words different?</summary>
-        <p>Do not type yes. Close the setup window, then run orch setup again to start over with new words.</p>
+        <p>Do not press Enter. Close the setup window, then run orch setup again to start over with new recovery words.</p>
       </details>
     </section>
   )
@@ -372,8 +390,8 @@ export function Setup({ api }: { api: SetupAPI }) {
   const [state, setState] = useState<SetupState>()
   const [profile, setProfile] = useState<Profile>({
     name: '',
-    workspace_name: 'Personal Workspace',
-    prefix: 'PW',
+    workspace_name: 'My workspace',
+    prefix: 'MW',
     addons: [],
     method: 'terminal',
     agent_hours: 8,
@@ -383,8 +401,9 @@ export function Setup({ api }: { api: SetupAPI }) {
   })
   const [step, setStep] = useState(0)
   const [prefixEdited, setPrefixEdited] = useState(false)
+  const [workspaceEdited, setWorkspaceEdited] = useState(false)
+  const [showWorkspaceFields, setShowWorkspaceFields] = useState(false)
   const [secrets, setSecrets] = useState<Secrets | null>(null)
-  const [words, setWords] = useState<Record<string, string>>({})
   const [review, setReview] = useState<Review>()
   const [run, setRun] = useState<string>()
   const [progress, setProgress] = useState<Progress>()
@@ -392,7 +411,6 @@ export function Setup({ api }: { api: SetupAPI }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [ended, setEnded] = useState(false)
-  const [saved, setSaved] = useState(false)
   const [notice, setNotice] = useState('')
   const [reason, setReason] = useState('')
   // "No agent access" is a choice of its own (B11 finding 21); it keeps the workspace default time and no runner grant.
@@ -411,12 +429,9 @@ export function Setup({ api }: { api: SetupAPI }) {
     if (secretRef.current) {
       secretRef.current.passphrase = null
       secretRef.current.recovery_words.fill('')
-      secretRef.current.check_positions.length = 0
       secretRef.current = null
     }
     setSecrets(null)
-    setWords({})
-    setSaved(false)
   }
   async function act(fn: () => Promise<void>) {
     if (lock.current) return
@@ -599,7 +614,7 @@ export function Setup({ api }: { api: SetupAPI }) {
       drop()
     }
   }, [api])
-  // Worktrees need a git repository: a new workspace in a folder without git offers to make one (nothing is committed)
+  // Work copies need a git repository: a new workspace in a folder without git offers to make one (nothing is committed)
   const offersTrust = state?.mode === 'new' && state.claude?.available === true
   const parentConfig = state?.claude?.parent_config ?? ''
   const offersGit = state?.mode === 'new' && state.git?.repo === false && profile.addons.includes('worktrees')
@@ -612,7 +627,7 @@ export function Setup({ api }: { api: SetupAPI }) {
     setStep(5)
   }
   async function approveProfile() {
-    await api.call('profile', { ...profile, git_init: offersGit && profile.git_init === true, records: state?.mode !== 'finish' && profile.records !== false, trust_folder: offersTrust && (parentConfig ? profile.trust_parent === true : profile.trust_folder !== false), trust_parent: offersTrust && !!parentConfig && profile.trust_parent === true })
+    await api.call('profile', { ...profile, git_init: offersGit && profile.git_init !== false, records: state?.mode !== 'finish' && profile.records !== false, trust_folder: offersTrust && (parentConfig ? profile.trust_parent === true : profile.trust_folder !== false), trust_parent: offersTrust && !!parentConfig && profile.trust_parent === true })
     if (state?.mode === 'finish' || confirmed.current) await getReview()
     else {
       const revealed = await api.call<Secrets>('secrets/reveal', {})
@@ -622,37 +637,32 @@ export function Setup({ api }: { api: SetupAPI }) {
     }
   }
   async function confirm() {
-    const result = await api.call<{ ok: boolean; attempts_left?: number }>('secrets/confirm', { words })
-    // A wrong attempt keeps the entries that were right and clears only the wrong ones (the words are on this page
-    // anyway). A right one, or the end of the session, clears everything.
-    const typedWords = { ...words }
-    const keep: Record<string, string> = {}
-    if (!result.ok && result.attempts_left !== 0 && secretRef.current)
-      for (const [pos, w] of Object.entries(typedWords))
-        if (w.trim().toLowerCase() === secretRef.current.recovery_words[Number(pos) - 1]) keep[pos] = w
-    Object.keys(words).forEach((key) => {
-      words[key] = ''
-    })
-    setWords(keep)
-    if (result.ok) {
-      confirmed.current = true
-      drop()
-      await getReview()
-    } else if (result.attempts_left === 0) {
-      drop()
-      setEnded(true)
-      api.forget()
-      setError(expiredCopy)
-    } else setError(`Those words did not match. ${result.attempts_left} attempts left.`)
+    await api.call<{ ok: boolean }>('secrets/confirm', { acknowledged: true })
+    confirmed.current = true
+    drop()
+    await getReview()
+  }
+  /** "Save as file": the words already on this page become a text file in the browser. Nothing is sent anywhere. */
+  function saveRecovery() {
+    const text = `orch recovery words\n\n${secrets!.recovery_words.map((w, i) => `${i + 1}. ${w}`).join('\n')}\n\nKeep this file somewhere safe. Only you should have it.\n`
+    const url = URL.createObjectURL(new Blob([text], { type: 'text/plain' }))
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'orch-recovery-words.txt'
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 0)
+    setNotice('Recovery words saved as a file. Keep it somewhere safe.')
   }
   async function copyRecovery() {
     try {
       await navigator.clipboard.writeText(secrets!.recovery_words.join(' '))
-      setNotice('Recovery code copied. We will try to clear your clipboard in 60 seconds.')
+      setNotice('Recovery words copied. We will try to clear your clipboard in 60 seconds.')
       // Do not retain the secret in a timer closure, or read unrelated clipboard contents.
       setTimeout(clearClipboard, 60_000)
     } catch {
-      setNotice('Copy is unavailable. Write down the recovery code or print it.')
+      setNotice('Copy is unavailable. Save the recovery words as a file or print them.')
     }
   }
   async function finish() {
@@ -676,11 +686,13 @@ export function Setup({ api }: { api: SetupAPI }) {
   }
   const terminalReviewMissing =
     !!review &&
-    (((state?.mode === 'finish' || !!review.runner_grant) && !review.tty_confirm) ||
+    ((profile.method !== 'click' && (state?.mode === 'finish' || !!review.runner_grant) && !review.tty_confirm) ||
       (review.tty_confirm && review.fingerprint?.length !== 3))
-  const approvalCount = review ? review.items.length + (review.workspace ? 1 : 0) : 0
   const summary = review ? summarize(review) : { lines: [], unknown: false, odd: [] as string[] }
+  const cancelHint =
+    step === 0 ? (state?.mode === 'finish' ? 'Your workspace keeps working. Finish this any time.' : 'Nothing is set up yet. Come back any time.') : ''
   const cancel = !ended && !run && state && !state.complete && (
+    <span className="cancel-wrap">
     <button
       className="cancel"
       disabled={busy}
@@ -695,6 +707,8 @@ export function Setup({ api }: { api: SetupAPI }) {
     >
       Finish setup later
     </button>
+    {cancelHint && <small className="cancel-hint">{cancelHint}</small>}
+    </span>
   )
   const next = (n: number) => (
     <button className="primary" onClick={() => setStep(n)}>
@@ -724,7 +738,7 @@ export function Setup({ api }: { api: SetupAPI }) {
             'You',
             'What may agents do here?',
             'How do you want to approve things?',
-            'Your secret words',
+            'Your recovery words',
             'Review your setup',
           ][step]
   return (
@@ -794,14 +808,48 @@ export function Setup({ api }: { api: SetupAPI }) {
             <>
               <label>
                 Your name
-                <input autoComplete="name" value={profile.name} onChange={(e) => update({ name: e.target.value })} />
+                <input autoComplete="name" value={profile.name} onChange={(e) => {
+                    const name = e.target.value
+                    // Until the person edits them, the workspace name and prefix follow "Your name" (Anna Test: "Anna Test's workspace", AT).
+                    const patch: Partial<Profile> = { name }
+                    if (!workspaceEdited) patch.workspace_name = defaultWorkspaceName(name)
+                    // Once the workspace name was edited by hand, the prefix follows that name, not the person's.
+                    if (!prefixEdited) patch.prefix = suggestPrefix(workspaceEdited ? profile.workspace_name : name)
+                    update(patch)
+                  }}
+                />
               </label>
+              {!profile.name.trim() && <small>Type your name to continue.</small>}
+              {!showWorkspaceFields && (
+                <div className="ws-summary">
+                  <span data-testid="ws-summary" aria-live="polite">
+                    {profile.name.trim() ? (
+                      <>
+                        Your workspace: <strong><Inline>{profile.workspace_name}</Inline></strong>{' '}
+                        {[1, 2].map((n) => (
+                          <span className="chip" key={n}>
+                            {profile.prefix.trim() || 'MW'}-{String(n).padStart(4, '0')}
+                          </span>
+                        ))}
+                      </>
+                    ) : (
+                      'Your workspace is named after you.'
+                    )}
+                  </span>
+                  <button type="button" className="link" onClick={() => setShowWorkspaceFields(true)}>
+                    Change
+                  </button>
+                </div>
+              )}
+              {showWorkspaceFields && (
+                <>
               <label>
                 Workspace name
                 <input
                   value={profile.workspace_name}
                   onChange={(e) => {
                     const workspace_name = e.target.value
+                    setWorkspaceEdited(true)
                     update(prefixEdited ? { workspace_name } : { workspace_name, prefix: suggestPrefix(workspace_name) })
                   }}
                 />
@@ -822,10 +870,12 @@ export function Setup({ api }: { api: SetupAPI }) {
               <div className="ticket-preview" aria-label="Ticket number preview">
                 {[1, 2, 3].map((n) => (
                   <span className="chip" key={n}>
-                    {profile.prefix.trim() || 'PW'}-{String(n).padStart(4, '0')}
+                    {profile.prefix.trim() || 'MW'}-{String(n).padStart(4, '0')}
                   </span>
                 ))}
               </div>
+                </>
+              )}
               <SetupFooter cancel={cancel}>
                 <button onClick={() => setStep(0)}>Back</button>
                 <button
@@ -876,7 +926,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                           addons: e.target.checked
                             ? [...profile.addons, a.id]
                             : profile.addons.filter((id) => id !== a.id),
-                          // ticking Worktrees again asks the git question again
+                          // ticking Work copies again asks the git question again
                           ...(a.id === 'worktrees' ? { git_init: undefined } : {}),
                         })
                       }
@@ -885,28 +935,27 @@ export function Setup({ api }: { api: SetupAPI }) {
                   ),
                 )}
               {offersGit && (
-                <div className="note" role="group" aria-label="Git repository">
+                <div className="note" role="group" aria-label="Work copies">
                   <p>
-                    <strong>This folder is not a git repository.</strong> Worktrees need one.
+                    <strong>Your project folder is not set up for work copies yet.</strong> Agents work best when
+                    each ticket gets its own copy. We can do it for you; your files stay as they are.
                   </p>
                   <label className="toggle">
                     <span>
-                      <strong>Make it a git repository</strong>
-                      <small>
-                        Runs git init and keeps orch’s own folders out of git. None of your files is committed.
-                      </small>
+                      <strong>Set it up for me (recommended)</strong>
+                      <small>Each ticket gets its own safe copy. None of your files are changed, except .gitignore.</small>
                     </span>
                     <input
                       type="radio"
                       name="git"
-                      checked={profile.git_init === true}
+                      checked={profile.git_init !== false}
                       onChange={() => update({ git_init: true })}
                     />
                   </label>
                   <label className="toggle">
                     <span>
-                      <strong>Continue without worktrees</strong>
-                      <small>Each ticket gets its own work folder instead.</small>
+                      <strong>Skip this</strong>
+                      <small>Agents work one ticket at a time.</small>
                     </span>
                     <input
                       type="radio"
@@ -921,13 +970,7 @@ export function Setup({ api }: { api: SetupAPI }) {
               )}
               <SetupFooter cancel={cancel}>
                 <button onClick={() => setStep(1)}>Back</button>
-                {offersGit && profile.git_init === undefined ? (
-                  <button className="primary" disabled>
-                    Choose above to continue →
-                  </button>
-                ) : (
-                  next(3)
-                )}
+                {next(3)}
               </SetupFooter>
             </>
           )}
@@ -944,12 +987,15 @@ export function Setup({ api }: { api: SetupAPI }) {
                     onChange={() => update({ method, ...(method === 'click' ? { relay: false } : {}) })}
                   />
                   <span>
-                    <strong>{method === 'click' ? 'One click on this computer' : 'Passphrase'}</strong>
+                    <strong>
+                      {method === 'click' ? 'One click on this computer' : 'Passphrase'}
+                      {method === 'click' && state.click_available && <span className="badge">Recommended</span>}
+                    </strong>
                     <small>
                       {method === 'terminal'
-                        ? 'Type your passphrase each time you approve'
+                        ? 'Type your passphrase each time. Safest if others use this computer.'
                         : state.click_available
-                          ? 'Faster, but less safe'
+                          ? 'No typing. Best on your own computer.'
                           : clickOffText(state.click_reason)}
                     </small>
                     {method === 'terminal' && profile.method === 'terminal' && <small>{terminalStepCopy}</small>}
@@ -957,9 +1003,12 @@ export function Setup({ api }: { api: SetupAPI }) {
                 </label>
               ))}
               {profile.method === 'click' && state.click_available && (
-                <p className="notice" data-testid="click-risk">
-                  <Inline>{clickRiskCopy}</Inline>
-                </p>
+                <details className="click-risk" data-testid="click-risk">
+                  <summary>What does this mean?</summary>
+                  <p>
+                    <Inline>{clickMeaningCopy}</Inline>
+                  </p>
+                </details>
               )}
               <h2>How long can agents work on their own?</h2>
               <div className="segments">
@@ -1005,7 +1054,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                     />
                   </label>
                   {profile.method === 'click' && (
-                    <p>Phone approvals are not available with One click yet. Choose Terminal to use them.</p>
+                    <p>Phone approvals are not available with One click yet. Choose Passphrase to use them.</p>
                   )}
                 </>
               )}
@@ -1064,7 +1113,7 @@ export function Setup({ api }: { api: SetupAPI }) {
           )}
           {step === 4 && (
             <>
-              <p>Keep these somewhere safe. Only you should have them.</p>
+              <p>These 24 words are the only way back if you lose access. Keep them somewhere safe.</p>
               {secrets ? (
                 <>
                   {secrets.passphrase && (
@@ -1075,7 +1124,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                     </section>
                   )}
                   <section className="recovery-print">
-                    <h2>Recovery code</h2>
+                    <h2>Recovery words</h2>
                     <ol className="recovery">
                       {secrets.recovery_words.map((word, i) => (
                         <li key={i}>
@@ -1085,38 +1134,15 @@ export function Setup({ api }: { api: SetupAPI }) {
                     </ol>
                   </section>
                   <div className="segments">
-                    <button onClick={() => void copyRecovery()}>Copy recovery code</button>
-                    <button onClick={() => window.print()}>Print recovery code</button>
+                    <button onClick={() => void copyRecovery()}>Copy</button>
+                    <button onClick={saveRecovery}>Save as file</button>
+                    <button onClick={() => window.print()}>Print</button>
                   </div>
                   <p role="status">{notice}</p>
                   <p className="warning">{voidCopy}</p>
-                  <label>
-                    <input type="checkbox" checked={saved} onChange={(e) => setSaved(e.target.checked)} /> I saved my
-                    secret words and recovery code
-                  </label>
-                  <h2>Check three recovery words</h2>
-                  <div className="word-check">
-                    {secrets.check_positions.map((n) => (
-                      <label key={n}>
-                        Word {n}
-                        <input
-                          autoComplete="off"
-                          autoCorrect="off"
-                          spellCheck={false}
-                          value={words[String(n)] ?? ''}
-                          onChange={(e) => setWords({ ...words, [String(n)]: e.target.value })}
-                        />
-                      </label>
-                    ))}
-                  </div>
-                  <p>Only these three recovery words are checked. Five incorrect attempts end this session.</p>
                   <SetupFooter cancel={cancel}>
-                    <button
-                      className="primary"
-                      disabled={!saved || secrets.check_positions.some((n) => !words[String(n)]?.trim())}
-                      onClick={() => void act(confirm)}
-                    >
-                      Confirm saved words →
+                    <button className="primary" onClick={() => void act(confirm)}>
+                      I saved my words — continue →
                     </button>
                   </SetupFooter>
                 </>
@@ -1185,7 +1211,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                 </div>
               )}
               <details className="review-technical">
-                <summary>Everything you approve ({approvalCount} items)</summary>
+                <summary>Details</summary>
                 <p>Times and IDs are filled in when you sign.</p>
                 {review.workspace && (
                   <section className="review-item">
@@ -1219,6 +1245,18 @@ export function Setup({ api }: { api: SetupAPI }) {
                     ))}
                   </section>
                 ))}
+                {review.flags.filter((f) => f.detail).map((f) => (
+                  <section className="review-item" key={`detail-${f.id}`}>
+                    {f.id === 'git' && (
+                      <p>
+                        <Raw>{f.text}</Raw>
+                      </p>
+                    )}
+                    <p>
+                      <Raw>{f.detail ?? ""}</Raw>
+                    </p>
+                  </section>
+                ))}
                 {review.runner_grant && (
                   <section className="review-item">
                     <h3>Runner access</h3>
@@ -1236,18 +1274,15 @@ export function Setup({ api }: { api: SetupAPI }) {
                     <li>Click {state.mode === 'finish' ? 'Finish setup' : 'Create workspace'} below.</li>
                     <li>Return to the terminal window where you started orch setup. Leave this page open to compare the three words.</li>
                     <li>
-                      Check the terminal shows <Words words={review.fingerprint} />. If it does, type yes there.
+                      Check the terminal shows <Words words={review.fingerprint} />. If it does, press Enter there.
                     </li>
                   </ol>
-                  <p>If any word is different, do not type yes. Close the terminal window and run orch setup again.</p>
+                  <p>If any word is different, do not press Enter. Close the terminal window and run orch setup again.</p>
                 </div>
               )}
               {terminalReviewMissing && (
                 <p role="alert">Terminal confirmation is missing. Return to your terminal to restart setup.</p>
               )}
-              <p>
-                {state.mode === 'finish' ? 'Finish setup' : 'Create workspace'} approves the {approvalCount} items in the list above.
-              </p>
               <SetupFooter cancel={cancel}>
                 <button
                   className="primary"
@@ -1294,7 +1329,9 @@ export function Setup({ api }: { api: SetupAPI }) {
             </p>
             )
           )}
-          <p><small>Your Mac may say 'Background Items Added' for orch. That's expected. Leave it on.</small></p>
+          {state?.os === 'darwin' && (
+            <p><small>On a Mac only: your Mac may say “orch added items that run in the background”. That is fine; leave it on.</small></p>
+          )}
           <ol className="progress">
             {groupProgress(progress?.steps ?? []).map((s) => (
               <li key={s.id}>
@@ -1305,6 +1342,21 @@ export function Setup({ api }: { api: SetupAPI }) {
               </li>
             ))}
           </ol>
+          {progress?.steps.some((s) => s.id === 'trust' && s.status === 'skipped') && (
+            <div className="progress-note" role="note">
+              {progress.reason_codes?.trust === 'not_installed' || progress.reason_codes?.trust === 'not_started'
+                ? 'Claude Code will ask once to trust this folder. Say yes there.'
+                : 'Claude Code will ask once about this folder. See why below.'}
+              {progress.reasons?.trust && (
+                <details>
+                  <summary>Why?</summary>
+                  <p>
+                    <Inline>{progress.reasons.trust}</Inline>
+                  </p>
+                </details>
+              )}
+            </div>
+          )}
           {progress?.error && (
             <>
               <p role="alert" className="warning">
@@ -1373,10 +1425,27 @@ export async function mount(session: Promise<SetupAPI> = bootstrapSetup()) {
     root.render(<Setup api={api} />)
   } catch (e) {
     const reason = report(e)
+    const used = /^(session\.|setup\.ended$)/.test(reason)
     root.render(
       <main className="setup">
-        <h1>Open setup from your terminal</h1>
-        <p>{expiredCopy}</p>
+        <h1>{used ? 'This setup link was already used' : 'Setup could not open'}</h1>
+        <p>
+          {used
+            ? 'A setup link works only once. If you finished setup, your workspace is ready.'
+            : 'This page could not start setup. If you finished setup before, your workspace is ready.'}
+        </p>
+        <p>
+          <a className="primary" href="/">
+            Open dashboard →
+          </a>
+        </p>
+        <details>
+          <summary>Need to set up again?</summary>
+          <p>
+            In your terminal, press Enter for a fresh link, or run <code>orch setup</code>. It starts a new session with
+            new recovery words.
+          </p>
+        </details>
         <Reason reason={reason} />
       </main>,
     )

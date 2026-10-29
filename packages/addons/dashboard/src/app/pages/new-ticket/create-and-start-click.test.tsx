@@ -10,6 +10,7 @@ import { routingApi } from '@/api/modelRouting'
 import { ApiError, type TicketDocument } from '@/api/types'
 import { clearMark, markOf, phaseOf } from '@/app/pages/ticket/progress'
 import * as gesture from '@/components/sign/trustedPress'
+import { EXECUTION_SHORT } from '@/app/terminal/real/executionLine'
 import { renderApp } from '@/test/renderApp'
 
 vi.mock('@/api/features', async (orig) => ({ ...(await orig<typeof import('@/api/features')>()), handoffMode: () => true }))
@@ -67,10 +68,10 @@ async function signed(beforeSign?: (dialog: HTMLElement) => void) {
   await r.user.click(await within(sheet).findByRole('button', { name: 'Create and start' }, T))
   const dialog = (await screen.findAllByRole('dialog', {}, T)).find((d) => d.hasAttribute('data-handoff-dialog'))!
   expect(await within(dialog).findByTestId('not-signed-start')).toBeInTheDocument() // the real dialog carries the unsigned block
-  expect(api.prepareClick).not.toHaveBeenCalled() // opening the dialog prepares nothing
-  // the trusted press of the outcome button prepares; the review then shows and its armed Sign signs
-  fireEvent.click(await within(dialog).findByRole('button', { name: 'Sign and start agent' }, T))
+  // run-9 J04: the dialog opens straight on the host's review (prepared without a press, so never armed); the one
+  // press on its Sign signs exactly that review
   await within(dialog).findByTestId('click-panel', {}, T)
+  expect(api.prepareClick).toHaveBeenCalledTimes(1)
   expect(s.sign).not.toHaveBeenCalled()
   const go = within(dialog).getByRole('button', { name: 'Sign and start agent' })
   await waitFor(() => expect(go).toBeEnabled(), { timeout: ARM_MS + 3000 })
@@ -82,6 +83,22 @@ async function signed(beforeSign?: (dialog: HTMLElement) => void) {
 }
 
 describe('the real click path', () => {
+  it('Create without starting: the real sign box says what happens and names the button after the choice', async () => {
+    const r = renderApp('/board')
+    await waitFor(() => expect(screen.getByTestId('topbar-title')).not.toHaveTextContent(/^$/), T)
+    await r.user.click(await screen.findByRole('button', { name: /New ticket/ }, T))
+    const sheet = await screen.findByRole('dialog', { name: 'New ticket' }, T)
+    await r.user.type(await within(sheet).findByLabelText('Title', {}, T), 'Export CSV')
+    await r.user.type(within(sheet).getByLabelText(/^What should be true/), 'Empty months export a header row')
+    await r.user.click(await within(sheet).findByRole('button', { name: 'Create ticket' }, T))
+    const dialog = (await screen.findAllByRole('dialog', {}, T)).find((d) => d.hasAttribute('data-handoff-dialog'))!
+    expect(await within(dialog).findByText('No agent starts. You can start one later.', {}, T)).toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: 'Create ticket' })).toBeInTheDocument()
+    // P09: the signing step is a centred dialog, not a small popover in the corner
+    expect(dialog.hasAttribute('data-sign-popover')).toBe(false)
+    expect(dialog.hasAttribute('data-sign-sheet')).toBe(true)
+  })
+
   it('stopped at the agent access: the ticket exists, no second ticket can be made, nothing starts, the failure is marked', async () => {
     s.sign.mockRejectedValue(new ApiError(409, { code: 'human.click_refused', message: 'the host refused the grant. 4 of 5 signatures landed; the ticket DEMO-0044 stays a draft.', retryable: false, reason: 'stopped' }))
     s.state.mockResolvedValue({ id: REQ, state: 'bound', key: 'DEMO-0044', progress: { done: 4, of: 5, last: 'grant' } })
@@ -124,7 +141,12 @@ describe('the real click path', () => {
       env: ['TERM'], grant: { id: GRANT, until: new Date(Date.now() + 86_400_000).toISOString(), scope: 'workable' }, blocked: null, warnings: [],
     })
     s.start.mockResolvedValue({ run: { run: 'r_01M4Y46B485AXD4CBEJZ15Z1TV' } as never })
-    const { r } = await signed((dialog) => expect(within(dialog).getByTestId('not-signed-notice')).toBeInTheDocument()) // the review shows the notice in full
+    const { r } = await signed((dialog) => {
+      const notice = within(dialog).getByTestId('not-signed-notice') // the review shows the notice
+      expect(within(notice).getByTestId('not-signed-execution-line')).toHaveTextContent(EXECUTION_SHORT)
+      expect(notice).toHaveTextContent('Signing means you know this.')
+      expect(EXECUTION_SHORT).toMatch(/as you/); expect(EXECUTION_SHORT).toMatch(/this computer/); expect(EXECUTION_SHORT).toMatch(/run commands and open your files and keys/)
+    })
     expect(notices).toHaveBeenCalled()
     await waitFor(() => expect(s.start).toHaveBeenCalledTimes(1), T)
     expect(s.start.mock.calls[0][1]).toBe(REQ)
@@ -176,7 +198,7 @@ describe('the real click path', () => {
   })
 })
 
-it.each([null, 14, 15, 16])('one review with %s minutes access: only a grant needs the second press', async (minutes) => {
+it.each([null, 14, 15, 16])('one review with %s minutes access: never armed by Create and start, one press in the sign box signs', async (minutes) => {
   const { DEPOSIT_RISK } = await import('@/api/click')
   vi.spyOn(gesture, 'takeTrustedPress').mockReturnValueOnce(true)
   const shown = view()
@@ -190,7 +212,7 @@ it.each([null, 14, 15, 16])('one review with %s minutes access: only a grant nee
     } })
   }
   shown.view.op = needsGrant ? 'grant' : 'new'
-  shown.view.risk_lines = needsGrant ? [DEPOSIT_RISK, 'Agents can run as you for 8 hours'] : []
+  shown.view.risk_lines = needsGrant ? [DEPOSIT_RISK] : []
   vi.mocked(api.viewClick).mockResolvedValue(shown)
   s.sign.mockResolvedValue({ state: 'submitted', duplicate: false, key: 'DEMO-0044', deposit: 'confirmed' })
   s.start.mockResolvedValue({ run: { run: 'r_test' } as never })
@@ -206,7 +228,7 @@ it.each([null, 14, 15, 16])('one review with %s minutes access: only a grant nee
   expect(action).toMatchObject({ action: 'new_sequence', launch: { harness: expect.any(String), mode: expect.any(String) } })
   if (needsGrant) {
     expect(action).toHaveProperty('agent.hours', 168) // the workspace's access setting (#1555), here 168 h; the mocked signer's line below is its own
-    expect(panel).toHaveTextContent('Agents can run as you for 8 hours')
+    expect(panel).toHaveTextContent('could use this access while it lasts')
     const button = screen.getByRole('button', { name: 'Sign and start agent' })
     expect(screen.queryByTestId('sign-arm-status')).not.toBeInTheDocument()
     expect(button).toBeDisabled()
@@ -222,6 +244,14 @@ it.each([null, 14, 15, 16])('one review with %s minutes access: only a grant nee
   } else {
     expect(action).not.toHaveProperty('agent')
     expect(panel).not.toHaveTextContent(DEPOSIT_RISK)
+    // Opus r9-build 1: the "Create and start" click (a trusted press) never arms the review: nothing signs by itself
+    await new Promise(resolve => setTimeout(resolve, ARM_MS + 400))
+    expect(s.sign).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('sign-arm-status')).not.toBeInTheDocument()
+    const button = screen.getByRole('button', { name: 'Sign and start agent' })
+    await waitFor(() => expect(button).toBeEnabled(), { timeout: ARM_MS + 3000 })
+    fireEvent.pointerDown(button)
+    fireEvent.click(button)
   }
   await waitFor(() => expect(s.sign).toHaveBeenCalledTimes(1), T)
   await waitFor(() => expect(s.start).toHaveBeenCalledWith(expect.any(String), REQ), T)

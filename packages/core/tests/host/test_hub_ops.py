@@ -72,7 +72,9 @@ def test_join_selective_signs_hub_joined_and_adds_no_member(human, served):
 def test_the_review_says_what_the_hub_does_not_get(human):
     prepared = human.prepare("hub.join", join_args())
     content = signcontent.build(prepared, verified=True)
-    assert content["headline"] == f"Join hub {HUB_ID[:12]} in selective mode: the hub sees only what you share"
+    assert content["headline"] == (
+        f"Join hub {HUB_ID[:12]} in selective mode: the hub sees only what you share, plus this workspace's name"
+    )
     notes = " ".join(content["notes"])
     assert "never gets the workspace key" in notes and "not a member" in notes
     assert signer._PLAIN["hub.join"].format(hub_id=HUB_ID, mode="selective").startswith("join hub")

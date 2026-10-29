@@ -11,6 +11,7 @@ import { handoffMode } from '@/api/features'
 import { MAX_IMAGES, missingPasted, pastedIn } from '@/api/pasteImage'
 import { MAX_CRITERIA, MAX_SECTION_BYTES, MAX_SEQUENCE_STEPS, type HandoffAction, type HandoffRequest, type HandoffState } from '@/api/handoff'
 import { can, roleOf } from '@/api/permissions'
+import { trustedPress } from '@/components/sign/trustedPress'
 import { SignPopover, type SignedHow } from '@/components/sign/SignPopover'
 import { Inline } from '@/components/sign/visible'
 import { SignButton } from '@/components/sign/SignButton'
@@ -368,7 +369,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
   // `notice`: the review shows the full "runs as you" notice (not read yet). Signing counts as reading it only when the
   // one-click review showed it (see `noticeSeen`); signed any other way, the start is refused and the pill offers Start agent.
   interface StartSnapshot { reviewed: Reviewed; idem: string; priorGrantIds: string[]; view: Pick<StartPlan, 'shown' | 'choices' | 'choice'>; withAccess: boolean; notice: boolean }
-  const [handoffNew, setHandoffNew] = useState<{ action: HandoffAction; draft: Draft; another: boolean; start: StartSnapshot | null; anchor: HTMLElement | null; n: number } | null>(null)
+  const [handoffNew, setHandoffNew] = useState<{ action: HandoffAction; draft: Draft; another: boolean; start: StartSnapshot | null; anchor: HTMLElement | null; n: number; trusted: boolean } | null>(null)
   const [signing, setSigning] = useState(false)
   const primaryRef = useRef<HTMLButtonElement>(null)
   const secondaryRef = useRef<HTMLButtonElement>(null)
@@ -393,7 +394,8 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
   const submitting = useRef(false)
   // E-7: a criterion typed in the box but not added with "Add" is added when the ticket is submitted, never dropped.
   const flushAc = useRef<(() => string) | null>(null)
-  const submit = async (another: boolean, wantStart = false, anchor: HTMLElement | null = null) => {
+  // remember: the main button (and Cmd+Enter) keep the choice as the default; a menu item is used once (P09).
+  const submit = async (another: boolean, wantStart = false, anchor: HTMLElement | null = null, remember = true, trusted = false) => {
     if (submitting.current) return
     const extra = flushAc.current?.() ?? ''
     const full = extra ? { ...draft, acceptance: [...draft.acceptance, extra] } : draft
@@ -413,7 +415,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
       // so a grant that lapsed since the form was drawn falls back to "Only create" and not to a form error.
       const startPossibleNow = plan.available && !(!fresh && accessTooMany(full, me.person, plan.hours))
       const startNow = wantStart && startPossibleNow && !another
-      if (startPossibleNow) plan.setPref({ start: wantStart })
+      if (startPossibleNow && remember) plan.setPref({ start: wantStart })
       const withAccess = startNow && !fresh
       const made = handoffNewTicket(full, me.person, withAccess ? plan.hours : null)
       if ('problem' in made) return setServerError(made.problem)
@@ -423,7 +425,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
       const start: StartSnapshot | null = startNow
         ? { reviewed: { ...plan.reviewed, grantId: fresh?.id ?? null }, idem: newIdem(), priorGrantIds: plan.priorGrantIds, view: { shown: plan.shown, choices: plan.choices, choice: plan.choice }, withAccess, notice: plan.noticeUnread }
         : null
-      return setHandoffNew((old) => ({ action: made.action, draft: full, another, start, anchor, n: (old?.n ?? 0) + 1 }))
+      return setHandoffNew((old) => ({ action: made.action, draft: full, another, start, anchor, n: (old?.n ?? 0) + 1, trusted }))
     }
     submitting.current = true
     const needs = SECTIONS_BY_TYPE[full.type]
@@ -535,7 +537,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
       onKeyDown={(e) => {
         if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
           e.preventDefault()
-          void submit(false, startFirst, primaryRef.current)
+          void submit(false, startFirst, primaryRef.current, true, trustedPress(e.nativeEvent))
         }
       }}
     >
@@ -568,6 +570,13 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
                 autoFocus={!overlay}
                 value={draft.title}
                 onChange={(e) => patch({ title: e.target.value })}
+                onKeyDown={(e) => {
+                  // Enter in the title moves on to the next field (the requirements); it never submits.
+                  if (e.key === 'Enter' && !e.metaKey && !e.ctrlKey && !e.nativeEvent.isComposing) {
+                    e.preventDefault()
+                    root.current?.querySelector<HTMLElement>('textarea')?.focus()
+                  }
+                }}
                 maxLength={160}
                 placeholder="What needs to happen?"
                 aria-invalid={(attempted && !!check.title) || undefined}
@@ -649,18 +658,29 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
                 signing={signing}
                 slowLabel="Still starting…"
                 data-testid="nt-primary"
-                onClick={() => void submit(false, startFirst, primaryRef.current)}
+                onClick={(e) => void submit(false, startFirst, primaryRef.current, true, trustedPress(e.nativeEvent))}
                 disabled={!canCreate || create.isPending || (!!handoffNew && !signing)}
               />
               {startPossible && (
+                <Button
+                  ref={secondaryRef}
+                  type="button"
+                  variant="outline"
+                  data-testid="nt-secondary"
+                  onClick={(e) => void submit(false, !startFirst, startFirst ? null : secondaryRef.current, false, trustedPress(e.nativeEvent))}
+                  disabled={!canCreate || create.isPending || !!handoffNew}
+                >
+                  {startFirst ? createLabel : 'Create and start'}
+                </Button>
+              )}
+              {startPossible && (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <Button ref={secondaryRef} type="button" variant="outline" size="icon" aria-label="More ways to create" disabled={!canCreate || create.isPending || !!handoffNew}>
+                    <Button type="button" variant="outline" size="icon" aria-label="More ways to create" disabled={!canCreate || create.isPending || !!handoffNew}>
                       <ChevronDown className="size-4" aria-hidden />
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
-                    <DropdownMenuItem onSelect={() => void submit(false, !startFirst, secondaryRef.current)}>{startFirst ? 'Create without starting' : 'Create and start'}</DropdownMenuItem>
                     <DropdownMenuItem onSelect={() => setPickAgent(true)}>Choose agent…</DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
@@ -674,7 +694,8 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
       {handoffNew && (
         <SignPopover
           key={`${handoffNew.n}-${handoffNew.start?.withAccess ? plan.hours : 0}`}
-          title="New ticket"
+          autoStart={handoffNew.trusted}
+          title={handoffNew.start ? 'New ticket' : 'Create this ticket?'}
           ws={workspace.id}
           action={(() => {
             // The access length is chosen in the review; the action follows it (a refusal for size keeps the one that was prepared).
@@ -683,6 +704,8 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
             return 'problem' in again ? handoffNew.action : { ...again.action, launch: handoffNew.action.action === 'new_sequence' ? handoffNew.action.launch : undefined }
           })()}
           startsAgent={!!handoffNew.start}
+          lead={handoffNew.start ? undefined : <p className="text-[13px] text-text-muted" data-testid="nt-lead">No agent starts. You can start one later.</p>}
+          claudeCode={handoffNew.start?.reviewed.choice.harness === 'claude-code'}
           summary={<div className="space-y-1 text-[13px]" data-testid="nt-summary"><p><span className="text-text-muted">Title </span><Inline>{handoffNew.draft.title.trim()}</Inline></p>{handoffNew.draft.sections.requirements?.trim() && <p className="line-clamp-3 whitespace-pre-line"><span className="text-text-muted">Should be true </span><Inline>{handoffNew.draft.sections.requirements.trim()}</Inline></p>}</div>}
           anchor={handoffNew.anchor}
           controls={handoffNew.start?.withAccess ? <AccessSelect hours={plan.hours} onHours={plan.setHours} lengths={plan.lengths} prefix={workspace.prefix} agentName={harnessName(handoffNew.start.reviewed.choice.harness)} /> : undefined}

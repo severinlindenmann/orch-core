@@ -1,6 +1,7 @@
 import { emptyState, itemKey } from "./feel.js";
 import { renderText } from "./render.js";
 import { newChannelsNotice } from "./phones.js";
+import { privateRows } from "./workspaces.js";
 
 function h(tag, props = {}, ...kids) {
   const el = document.createElement(tag);
@@ -17,6 +18,17 @@ function h(tag, props = {}, ...kids) {
 const text = (v) => renderText(String(v ?? ""));
 const chip = (label, kind = "") => h("span", { class: "chip " + kind, text: label });
 const note = (label) => h("p", { class: "small muted", text: label });
+
+const sharedId = (it) => String(it.workspace_id) + ":" + String(it.key);
+/** P04: tickets that were in the last successful /me/shared read and are gone from this one are "ended". `prev` is null
+ * when there is no earlier read (nothing to compare). A shared-again ticket drops out of the ended list. Only call this
+ * after a successful read, so an unreachable hub never produces a false "stopped sharing". */
+export function sharedEnded(prev, next, ended = []) {
+  const now = new Set(next.map(sharedId));
+  const have = new Set(ended.map((e) => e.id));
+  const gone = Array.isArray(prev) ? prev.filter((it) => it.shared_by && !now.has(sharedId(it)) && !have.has(sharedId(it))) : [];
+  return [...ended, ...gone.map((it) => ({ id: sharedId(it), by: it.shared_by, title: it.title ?? it.key ?? "a ticket" }))].filter((e) => !now.has(e.id));
+}
 
 /** Health and totals use only this person's workspace list. */
 export function homeSummary(workspaces, items = [], offline = []) {
@@ -39,9 +51,29 @@ export function workspaceStatus(w) {
   return "offline since " + (Number.isNaN(date.getTime()) ? "an unknown time" : date.toLocaleString());
 }
 
+/** The first-run home is replaced by the full home once a workspace or an item shows up. */
+export const firstRunOutgrown = (rows, items) => (rows ?? []).length > 0 || (items ?? []).length > 0;
+
+/** A brand-new hub shows one thing: connect a workspace. No signing or developer widgets yet. */
+function firstRunHome(d) {
+  const notice = d.notice?.nodeType ? d.notice : d.notice ? h("div", { class: "banner", role: "status", text: text(d.notice) }) : null;
+  const added = newChannelsNotice(d.newChannels, { remove: (c) => d.actions?.removeChannel(c.channel_id), dismiss: () => d.actions?.dismissNew?.() });
+  return [h("h1", { text: "Hello, " + text(d.user?.name ?? "you") }), notice, ...added,
+    h("p", { class: "company-summary muted", text: "Nothing connected yet." }),
+    h("section", { class: "card first-run first-run-root", "aria-labelledby": "first-run-heading" },
+      h("h2", { id: "first-run-heading", text: "Connect your first workspace" }),
+      h("p", { text: "Open your workspace, go to Settings, then Hub, and paste the one-time link there. Your hub admin can give you the link." }),
+      d.user?.is_admin && d.actions?.connect ? h("button", { class: "pri", text: "Get a one-time link", onclick: () => d.actions.connect() }) : null,
+      note("Approvals appear here as soon as a workspace is connected."))].filter(Boolean);
+}
+
 /** Person home only; the driver owns navigation and the manual decision form. */
 export function homeView(d) {
+  if (!(d.workspaces ?? []).length && !(d.channels ?? []).length && !(d.items ?? []).length) return firstRunHome(d);
   const health = homeSummary(d.workspaces ?? [], d.items ?? [], d.offline ?? []);
+  // P05: a hub admin's count also includes connected workspaces that are private to someone else (the card below stays own only)
+  const hidden = privateRows(d.workspaces ?? [], d.adminWorkspaces);
+  const counted = { ...health, online: health.online + hidden.filter((w) => w.online).length, offline: health.offline + hidden.filter((w) => !w.online).length };
   const workspaces = health.rows;
   const byId = new Map(workspaces.map((w) => [w.workspace_id, w]));
   const offline = new Set(d.offline ?? []);
@@ -49,13 +81,13 @@ export function homeView(d) {
   const mode = (it) => it.mode ?? byId.get(it.workspace_id)?.mode;
   const summary = (it) => it.summary_only || (!it.signable && mode(it) === "selective");
   const items = health.items;
-  const shortName = (w, id) => text(w?.name || "A workspace");
+  const shortName = (w, id) => text(w?.name || (w?.owner_name ? w.owner_name + "'s workspace" : "A workspace"));
   const workspaceName = (id) => shortName(byId.get(id), id);
   const needs = h("section", { class: "card needs-you", "aria-labelledby": "needs-heading" },
     h("div", { class: "section-head row" }, h("h2", { id: "needs-heading", class: "grow", text: "Needs you" }), chip(String(items.length))),
     workspaces.some((w) => w.mode === "selective") ? h("p", { class: "small muted only-shared" }, "Only items you share appear here ",
       h("details", { class: "info" }, h("summary", { "aria-label": "More about what appears here", text: "i" }),
-        h("p", { class: "small muted", text: "A workspace you joined with Only what I choose sends the hub just what you share. Other questions are still waiting in that workspace, so its own count can be higher." }))) : null,
+        h("p", { class: "small muted", text: "A workspace that shares only what you choose sends the hub just what you share. Other questions are still waiting in that workspace, so its own count can be higher." }))) : null,
     items.length ? workspaces.filter((w) => items.some((it) => it.workspace_id === w.workspace_id)).map((w) => h("section", { class: "workspace-needs", "data-live-key": w.workspace_id },
       h("h3", { text: workspaceName(w.workspace_id) }),
       items.filter((it) => it.workspace_id === w.workspace_id).map((it) => h("article", { class: "list-row row", "data-live-key": itemKey(it) },
@@ -75,15 +107,28 @@ export function homeView(d) {
           : "Hand-offs and approvals wait until it is back"))),
       d.actions.open ? h("button", { text: "Open", onclick: () => d.actions.open(w.workspace_id) }) : null))
       : emptyState("workspaces"));
+  // Tickets shared with this person (GET /me/shared, the same filter as search): read-only, hidden when there are none.
+  const sharedItems = (d.shared ?? []).filter((it) => it && typeof it === "object");
+  const endedItems = (d.ended ?? []).filter((e) => e && typeof e === "object");
+  const sharedCard = sharedItems.length || endedItems.length ? h("section", { class: "card shared-tickets", "aria-labelledby": "shared-heading" },
+    h("h2", { id: "shared-heading", text: "Shared tickets (" + sharedItems.length + ")" }),
+    endedItems.map((e) => h("div", { class: "list-row row ended", role: "status" },
+      h("div", { class: "grow" }, note(text(e.by) + " stopped sharing " + text(e.title))),
+      d.actions?.dismissEnded ? h("button", { text: "Dismiss", onclick: () => d.actions.dismissEnded(e.id) }) : null)),
+    sharedItems.map((it) => h("article", { class: "list-row row" },
+      h("div", { class: "grow" }, h("b", { text: text(it.title ?? it.key ?? "Ticket") }),
+        note([workspaceName(it.workspace_id), it.shared_by ? "shared by " + text(it.shared_by) : "shared with you"].join(" · "))),
+      d.actions?.openShared && it.workspace_id ? h("button", { text: "Read", onclick: () => d.actions.openShared(it) }) : null))) : null;
   const browser = d.thisBrowser;
   const active = browser?.state === "active";
+  const fromWorkspace = browser?.state === "from_workspace";
   const local = h("div", { class: "browser-card" },
     h("b", { text: active ? "This browser holds a signing key for you" : "This browser cannot sign yet" }),
-    active ? note("Name: " + text(browser.label || "this browser")) : note("Browser not registered"),
-    !active ? note(browser?.state === "dead" ? "The key is missing here or was removed at the hub. Register again to sign here."
+    active ? note("Name: " + text(browser.label || "this browser")) : fromWorkspace ? note("You came here from a workspace") : note("This browser has no signing key yet"),
+    fromWorkspace ? note("Sign in here once with your password and code. Then you can set up signing in this browser.") : !active ? note(browser?.state === "dead" ? "The key is missing here or was removed at the hub. Register again to sign here."
       : "Registering gives this browser a signing key for you. Signing needs the key; being signed in only lets you look.") : null,
     browser?.state === "dead" ? h("button", { text: "Forget the key in this browser", onclick: () => d.actions.forgetLocal() }) : null,
-    !active ? h("button", { class: "pri", text: "Register this browser", onclick: () => d.actions.register() }) : null);
+    !active && !fromWorkspace ? h("button", { class: "pri", text: "Register this browser", onclick: () => d.actions.register() }) : null);
   const signing = h("section", { class: "card", "aria-labelledby": "signing-heading" },
     h("h2", { id: "signing-heading", text: "Where you can sign" }), local,
     (d.channels ?? []).map((c) => h("div", { class: "list-row row" },
@@ -93,6 +138,6 @@ export function homeView(d) {
   const notice = d.notice?.nodeType ? d.notice : d.notice ? h("div", { class: "banner", role: "status", text: text(d.notice) }) : null;
   const added = newChannelsNotice(d.newChannels, { remove: (c) => d.actions?.removeChannel(c.channel_id), dismiss: () => d.actions?.dismissNew?.() });
   return [h("h1", { text: "Hello, " + text(d.user?.name ?? "you") }), notice, ...added,
-    h("p", { class: "company-summary", text: health.online + " workspaces online, " + health.offline + " offline, " + health.waiting + " things need you" }),
-    h("div", { class: "home-grid" }, needs, h("div", { class: "home-side" }, spaces, signing))].filter(Boolean);
+    h("p", { class: "company-summary", text: counted.online + (counted.online === 1 ? " workspace" : " workspaces") + " online, " + counted.offline + " offline, " + health.waiting + (health.waiting === 1 ? " thing needs you" : " things need you") }),
+    h("div", { class: "home-grid" }, needs, h("div", { class: "home-side" }, sharedCard, spaces, signing))].filter(Boolean);
 }

@@ -39,7 +39,7 @@ export interface ClickRun {
   fresh: boolean
   problem: ClickProblem | null
   signed: ClickSigned | null
-  start: (action: ClickAction, retryFloor?: number) => Promise<void>
+  start: (action: ClickAction, retryFloor?: number, pressed?: boolean) => Promise<void>
   /** Read the View again (it changed). The same request. */
   review: () => Promise<void>
   /** `revealKey`: a shown-secret grant only (the page key its review was made for). */
@@ -75,9 +75,12 @@ export function settledAs(prepared: ClickPrepared, signed: ClickSigned): { state
   return { state, request }
 }
 
-/** `minLeadS`: the host's minimum scheduling lead when the page knows it (the schedules list), for a "too soon" refusal. */
-export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done', state: HandoffState | null, request: HandoffRequest | null) => void, minLeadS?: number): ClickRun {
+/** `minLeadS`: the host's minimum scheduling lead when the page knows it (the schedules list), for a "too soon" refusal.
+ *  `opts.refetchOnDone` (default true): read the pages behind the dialog again after a signature. */
+export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done', state: HandoffState | null, request: HandoffRequest | null) => void, minLeadS?: number, opts: { refetchOnDone?: boolean } = {}): ClickRun {
   const qc = useQueryClient()
+  const refetching = useRef(opts.refetchOnDone !== false)
+  refetching.current = opts.refetchOnDone !== false
   const leadNow = useRef(minLeadS)
   leadNow.current = minLeadS
   const [phase, setPhaseState] = useState<ClickPhase>('idle')
@@ -104,7 +107,11 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
     live.current.phase = p
     setPhaseState(p)
   }, [])
-  const refetch = useCallback(() => {
+  const refetch = useCallback((success = false) => {
+    // `refetchOnDone: false`: the step is only the first half of something (a hub join waits for the hub to confirm), and
+    // the pages behind the dialog are refused until then. Only the success path skips; a refusal, cancel, expiry or
+    // unknown outcome reads as before. The caller reads the pages once, when the whole thing is done.
+    if (success && !refetching.current) return
     for (const k of refetchKeys) void qc.invalidateQueries({ queryKey: [k] })
   }, [qc])
   const fail = useCallback(
@@ -136,7 +143,9 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
   )
 
   const start = useCallback(
-    async (action: ClickAction, retryFloor = 0) => {
+    /** `pressed`: a real press started this (default). An auto-prepare without one (run-9 J04: the start review
+     * opens on the host's View) passes `false`, so the one-press arm (`fresh`) is never set without a press. */
+    async (action: ClickAction, retryFloor = 0, pressed = true) => {
       sequenceStart.current = action.action === 'new_sequence' && !!action.launch
       if (!ws || busy.current || live.current.phase !== 'idle') return // a double click is one prepare
       busy.current = true
@@ -161,7 +170,7 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
         live.current.prepared = got
         live.current.ws = ws
         setPrepared(got)
-        await read(ws, got.request_id, true)
+        await read(ws, got.request_id, pressed)
       } catch (e) {
         if (!mounted.current) return
         // The answer may have been lost: only then does "Try again" repeat the same intent. A definite answer (the
@@ -200,7 +209,7 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
         const got = await (delay ? api.signClick(where, open.request_id, view.view_digest, revealKey, sealed, delay) : sealed ? api.signClick(where, open.request_id, view.view_digest, revealKey, sealed) : api.signClick(where, open.request_id, view.view_digest, revealKey))
         if (got.state === 'held' && got.deadline_ms) {
           trackHold(where, open.request_id, got.deadline_ms / 1000, () => {
-            refetch()
+            refetch(true)
             const as = settledAs(open, { state: 'submitted', duplicate: false })
             settled.current?.('done', as.state, as.request)
           })
@@ -210,7 +219,7 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
         if (!mounted.current) return
         setSigned(got)
         setPhase('done')
-        refetch()
+        refetch(true)
         const as = settledAs(open, got)
         settled.current?.('done', as.state, as.request)
       } catch (e) {
@@ -248,7 +257,7 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
           stopped = true
           setSigned({ state: 'submitted', duplicate: false })
           setPhase('done')
-          refetch()
+          refetch(true)
           const as = settledAs(prepared, { state: 'submitted', duplicate: false })
           settled.current?.('done', as.state, as.request)
         } else if (got.state === 'cancelled' || got.state === 'expired') {

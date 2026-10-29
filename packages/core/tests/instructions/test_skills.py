@@ -119,7 +119,7 @@ def test_each_skill_is_small(skill: Skill):
 PINNED = {
     "orch-tickets": ("1.0.2", "aba26b31bdaa0d3f"),
     "orch-work-on-ticket": ("1.0.7", "0cdebbbdadcfc666"),
-    "orch-refine-ticket": ("1.0.5", "4eeb69d4bb40a7ff"),
+    "orch-refine-ticket": ("1.0.7", "4f0190f1126c1b9b"),
 }
 
 

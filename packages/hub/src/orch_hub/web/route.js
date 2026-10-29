@@ -10,10 +10,17 @@ export function parseRoute(hash) {
   if (m) return { kind: "invite", token: m[1] };
   m = /^#t=([A-Za-z0-9._-]{8,128})$/.exec(value);
   if (m) return { kind: "ticket", token: m[1] };
-  m = /^#\/(home|approvals|workspaces|services|admin|activity|account|handoffs|phones)$/.exec(value);
+  m = /^#\/(home|approvals|workspaces|services|admin|activity|account|handoffs|phones|register)$/.exec(value);
   if (m) return { kind: m[1] };
   m = /^#\/([a-z][a-z0-9-]{0,31})$/.exec(value);
   if (m && pagePaths.has(m[1])) return { kind: m[1] };
+  m = /^#\/shared\/([0-9a-f]{32})\/([^/]+)$/.exec(value);
+  if (m) {
+    try {
+      const key = decodeURIComponent(m[2]);
+      return !key || /[\x00-\x1f\x7f]/.test(key) ? { kind: "home" } : { kind: "shared", workspace: m[1], key };
+    } catch { return { kind: "home" }; }
+  }
   m = /^#\/w\/([0-9a-f]{32})(?:\/(item|addon|settings|access)\/([^/]+))?$/.exec(value);
   if (!m) return { kind: "home" };
   try {

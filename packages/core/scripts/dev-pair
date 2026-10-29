@@ -908,8 +908,7 @@ def step_setup(ctx: Ctx, prefix: str, name: str) -> None:
                                         "method": "terminal", "agent_hours": 8, "agent_grant": False, "relay": False},
               token)  # fmt: skip
         sec = route("POST", api + "secrets/reveal", {}, token)
-        words = {str(p): sec["recovery_words"][p - 1] for p in sec["check_positions"]}
-        if not route("POST", api + "secrets/confirm", {"words": words}, token).get("ok"):
+        if not route("POST", api + "secrets/confirm", {"acknowledged": True}, token).get("ok"):
             raise Refused("orch setup: the recovery words were refused")
         ctx.passphrase = sec["passphrase"]
         ctx.sb.write("secrets/passphrase", ctx.passphrase.encode())

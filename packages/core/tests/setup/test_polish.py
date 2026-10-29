@@ -48,7 +48,7 @@ def test_finish_state_has_current_values_and_words_and_never_custody(tmp):
     assert st["missing"] == ["addon:terminals", "addon:worktrees", "addon:quick", "runner_grant"]
     assert st["missing_words"] == [
         "Terminals add-on",
-        "Worktrees add-on",
+        "Work copies add-on",
         "Quick tasks add-on",
         "Agent access for this computer's runner",
     ]
@@ -160,3 +160,39 @@ def test_the_placeholder_positions_are_part_of_the_digest(tmp):
     before = plan.digest
     plan.rows[0]["placeholders"] = [*plan.rows[0]["placeholders"], 0]
     assert rv_mod._digest(plan) != before
+
+
+def test_the_sign_line_names_a_passphrase_only_when_one_was_chosen():
+    from orch.setup.steps import sign_line
+
+    assert "passphrase" not in sign_line("7", True)
+    assert sign_line("7", True) == "\norch setup is creating your workspace.\n"
+    assert "7" not in sign_line("7", True) and "7" not in sign_line("7", False)
+    assert sign_line("7", False).rstrip().endswith("with one passphrase.")
+
+
+def test_the_state_names_the_os_of_the_machine_running_setup(tmp):
+    from orch.setup.flow import SetupFlow
+    from orch.setup.osfacts import _platform
+
+    from .conftest import make_env
+
+    f = SetupFlow(make_env(tmp))
+    f.launch(str(tmp.work))
+    st = f.dispatch("GET", "state", {}, None)[1]
+    assert st["os"] == _platform() and st["os"] in ("linux", "darwin", "windows")
+
+
+def test_r9_p10_the_setup_words_are_plain(tmp):
+    from orch.setup.flow import SetupFlow
+    from orch.setup.steps import STEP_LABELS
+
+    from .conftest import make_env
+
+    f = SetupFlow(make_env(tmp))
+    f.launch(str(tmp.work))
+    addons = {a["id"]: a for a in f.dispatch("GET", "state", {}, None)[1]["addons"]}
+    assert addons["worktrees"]["title"] == "Work copies"
+    assert "worktree" not in (addons["worktrees"]["title"] + addons["worktrees"]["desc"]).lower()
+    assert "CLI" not in addons["quick"]["desc"] and "Off: nobody" in addons["quick"]["desc"]
+    assert STEP_LABELS["git"] == "Preparing work copies"

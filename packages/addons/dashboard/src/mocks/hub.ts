@@ -1,7 +1,7 @@
 // A simulated hub for the mockup and its tests (V3 A7). Scenario by address: `?hub=standalone|selective|full|offline|nottold`
 // (kept for the tab). Reads are fixed by the scenario. Stopping sharing (a ticket, a rule) is a plain owner click; a
 // join and a leave are signed by One click with the backup key and change the scenario (see the click routes below).
-import type { HubPreview, HubRule, HubShare, HubStatus } from '@/api/hub'
+import type { HubAudienceList, HubSharedTicket, HubPreview, HubRule, HubShare, HubStatus } from '@/api/hub'
 import { BACKUP_KEY_LINE, CLICK_RISK, type ClickViewAnswer } from '@/api/click'
 import { fail, ok, type MockRouter } from './router'
 
@@ -68,6 +68,16 @@ function mockShare(): HubShare {
   }
 }
 
+export const MOCK_SHARED_WITH_YOU: HubSharedTicket[] = [
+  { workspace_id: 'a'.repeat(32), key: 'DEMO-0007', title: 'Invoice export for Ben', shared_by: 'Anna', status: 'open', type: 'feature', deadline: '2026-11-06', description: 'Export invoices as CSV.' },
+]
+
+export const MOCK_AUDIENCE: HubAudienceList = {
+  people: [{ user_id: 'b'.repeat(32), name: 'Ben Test' }, { user_id: 'c'.repeat(32), name: 'Carla Test' }],
+  teams: [{ group: 'finance', members: 4 }],
+  note: 'from the hub, not signed',
+}
+
 function mockPreview(body: { add?: HubRule; remove?: HubRule } | null): HubPreview {
   const base = SHARED.map((t) => ({ kind: 'ticket' as const, line: `ticket ${t.key}: ${t.title}` }))
   const notes = { kind: 'summary' as const, line: 'needs you: question: Which greeting?' }
@@ -89,9 +99,13 @@ function mockPreview(body: { add?: HubRule; remove?: HubRule } | null): HubPrevi
   }
   items = items.filter((i) => !withdrawn.has(i.line.replace(/^ticket ([^:]+):.*$/, '$1')))
   const fresh = items.slice(base.length + 1).map((i) => i.line)
+  const aud = add && (add.kind === 'type' || add.kind === 'tag' || add.kind === 'ticket') ? add.audience : undefined
+  const names = (aud?.users ?? []).map((u) => MOCK_AUDIENCE.people.find((p) => p.user_id === u)?.name ?? 'a person on the hub')
+  const withText = add && (add.kind === 'type' || add.kind === 'tag' || add.kind === 'ticket') && add.description === true
   const review = {
-    hub_id: 'ab12cd34ef56ab12', audience: { read: 3, edit: 1, admin: 1 }, audience_note: 'from the hub, not signed',
-    new_count: added, new_more: 0, new_items: fresh, leaves: added ? ["the ticket's title, status, labels and deadline; no description, comments or files"] : [],
+    hub_id: 'ab12cd34ef56ab12', readers: { people: names, teams: aud?.groups ?? [], note: 'from the hub, not signed', info: null }, widened: [],
+    new_count: added, new_more: 0, new_items: fresh,
+    leaves: added ? [withText ? "the ticket's title, status, labels, deadline and description (summary, context and requirements); no plan, comments or files" : "the ticket's title, status, labels and deadline; no description, comments or files"] : [],
     later_edits: 'Later edits to these tickets are shared too, until you stop sharing them.',
   }
   return { count: items.length, new: added, revoked: removed, more: 0, items, rules: [], plan: 'P'.repeat(42) + String(items.length % 10), review }
@@ -100,6 +114,8 @@ function mockPreview(body: { add?: HubRule; remove?: HubRule } | null): HubPrevi
 export function registerHubRoutes(r: MockRouter) {
   r.add('GET', '/api/w/:ws/hub', () => ok(mockHubStatus()))
   r.add('GET', '/api/w/:ws/hub/share', () => ok(mockShare()))
+  r.add('GET', '/api/w/:ws/hub/shared', () => ok({ items: scenario() === 'selective' || scenario() === 'full' ? MOCK_SHARED_WITH_YOU : [] }))
+  r.add('GET', '/api/w/:ws/hub/share/audience', () => ok(MOCK_AUDIENCE))
   r.add('POST', '/api/w/:ws/hub/share/preview', (_s, c) => ok(mockPreview(c.body as { add?: HubRule; remove?: HubRule } | null)))
   // Stopping sharing: a plain owner click (the server's full-session and owner checks are its own tests).
   r.add('POST', '/api/w/:ws/hub/share/revoke', (_s, c) => {
@@ -130,6 +146,9 @@ export function registerHubRoutes(r: MockRouter) {
 // with a backup key. The key is sealed by the page for real; this mock has no private half and never opens it.
 let oneClickOn = true
 let connectError: string | null = null
+let confirmAfter = 0 // how many refreshes the mock hub needs before it confirms (0: the connect itself confirms)
+let refreshes = 0
+export const setMockConfirmAfter = (n: number) => { confirmAfter = n; refreshes = 0 }
 /** Tests and the dev switch: is One click on in the mock workspace? (Off means the key is back under a passphrase.) */
 export const setMockOneClick = (on: boolean) => {
   oneClickOn = on
@@ -153,7 +172,7 @@ function mockView(ws: string, id: string): ClickViewAnswer | null {
     view_digest: 'sha256:' + '1'.repeat(64),
     view: {
       risk: CLICK_RISK, op: r.op, workspace: { id: ws, name: 'billing', prefix: 'DEMO' }, fingerprint: '0123456789ab',
-      lines: [join ? `join hub ${r.hubId} in ${r.full ? 'full' : 'selective'} mode: ${r.full ? 'the hub will be able to read everything in this workspace' : 'the hub sees only what you share and never gets the workspace key'}` : `leave hub ${r.hubId} and tell it that this workspace is no longer bound`, '', BACKUP_KEY_LINE],
+      lines: [join ? `join hub ${r.hubId} in ${r.full ? 'full' : 'selective'} mode: ${r.full ? 'the hub will be able to read everything in this workspace' : 'the hub sees only what you share, plus this workspace\'s name, and never gets the workspace key'}` : `leave hub ${r.hubId} and tell it that this workspace is no longer bound`, '', BACKUP_KEY_LINE],
       checks: [], confirm: { kind: 'click' }, expires_at: new Date(Date.now() + 600_000).toISOString(), auth: 'convenience', device: 'd_' + 'a'.repeat(32), artifacts: null,
       ...(keptKey() ? {} : { seal: { v: 1, alg: 'P256-HKDF-SHA256-A256GCM', pk: SIGNER_PK, purposes: ['hub.backup_key'] }, backup_key_line: BACKUP_KEY_LINE }),
     },
@@ -199,7 +218,9 @@ export function registerHubClickRoutes(r: MockRouter) {
     const b = c.body as { invite?: string; hub_card?: string } | null
     if (!b?.hub_card) return fail(400, 'invalid.input', 'Needs an invite and a card.')
     if (connectError) return fail(502, 'hub.unreachable', connectError, undefined, true)
-    return ok({ connected: true, mode: 'selective' })
+    refreshes = 0
+    return ok({ connected: true, mode: 'selective', confirmed: confirmAfter === 0 })
   })
+  r.add('POST', '/api/w/:ws/hub/refresh', () => { refreshes += 1; return ok({ confirmed: refreshes >= confirmAfter }) })
   r.add('POST', '/api/w/:ws/click/state', (_s, c) => ok({ id: (c.body as { request_id?: string } | null)?.request_id ?? '', state: 'prepared' }))
 }

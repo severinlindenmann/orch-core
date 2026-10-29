@@ -124,8 +124,9 @@ On the page you answer, and orch waits for you each time:
    save them in a password manager: the passphrase unlocks every signature, and the 24 words are the only way back to
    your key if you lose this Mac or the passphrase. The page then asks for three of the words to check you wrote them
    down.
-3. **Review.** The page shows what you are about to create. Press Create. The Terminal shows three words that the page
-   must show too; if they match, type `yes` there.
+3. **Review.** The page shows what you are about to create. Press Create. With One click on this computer, setup just
+   runs: there is no terminal check. With Terminal approval, the Terminal shows three words that the page must show too;
+   if they match, press Enter there (do not type `yes`).
 
 **What you should see:** the page lists every step as done and the Terminal prints `workspace DEMO set up in <folder>`. The folder now
 has a hidden `.orch` folder plus `AGENTS.md`, `CLAUDE.md` and skill folders for your agents. Check:

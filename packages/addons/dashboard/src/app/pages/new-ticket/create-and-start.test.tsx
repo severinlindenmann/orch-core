@@ -14,13 +14,14 @@ import { nowMs } from '@/lib/time'
 vi.mock('@/api/features', async (orig) => ({ ...(await orig<typeof import('@/api/features')>()), handoffMode: () => true }))
 // The signing dialog is its own feature; here it shows the action, the "not signed" block, and reports how it ended.
 vi.mock('@/components/sign/SignPopover', () => ({
-  SignPopover: (p: { title: string; startsAgent?: boolean; controls?: React.ReactNode; action: { action: string }; unsigned?: React.ReactNode; onSettled?: (phase: string, st: unknown, req: unknown, how?: { via: string; unsignedShown: boolean }) => void; onClose: () => void }) => {
+  SignPopover: (p: { title: string; startsAgent?: boolean; controls?: React.ReactNode; lead?: React.ReactNode; action: { action: string }; unsigned?: React.ReactNode; onSettled?: (phase: string, st: unknown, req: unknown, how?: { via: string; unsignedShown: boolean }) => void; onClose: () => void }) => {
     const req = { ...fakeRequest({ key: 'DEMO-0044', id: 'hr_' + '0'.repeat(25) + '7' }), op: 'new' }
     const done = (how?: { via: string; unsignedShown: boolean }) => p.onSettled?.('done', state(req, { state: 'submitted', key: 'DEMO-0044' }), req, how)
     return (
       <div role="dialog" aria-label={p.title}>
         <pre data-testid="sent-action">{JSON.stringify(p.action)}</pre>
         <span data-testid="starts-agent">{String(!!p.startsAgent)}</span>
+        {p.lead}
         {p.controls}
         {p.unsigned}
         {/* "signed": one click from this popover, with the unsigned slot on screen (what the real popover reports then) */}
@@ -85,25 +86,41 @@ async function open(storage: Record<string, string> = {}) {
 }
 const sent = async () => JSON.parse((await screen.findByTestId('sent-action')).textContent ?? '{}')
 const createOnly = async (r: { user: { click: (e: Element) => Promise<void> } }, sheet: HTMLElement) => {
-  await r.user.click(await within(sheet).findByRole('button', { name: 'More ways to create' }, T))
-  await r.user.click(await screen.findByRole('menuitem', { name: 'Create without starting' }, T))
+  await r.user.click(await within(sheet).findByRole('button', { name: 'Create ticket' }, T))
 }
 const startBtn = (sheet: HTMLElement) => within(sheet).findByRole('button', { name: 'Create and start' }, T)
 
 beforeEach(() => { clearMark(WS(), 'DEMO-0044'); GRANT = { ...GRANT, until: inHours(48) }; setup() })
 
 describe('the form', () => {
-  it('offers Create and start as the main button, Create without starting in the menu, and a quiet agent summary', async () => {
+  it('offers Create and start as the main button, a visible Create ticket beside it, and a quiet agent summary', async () => {
     const { r, sheet } = await open()
     await startBtn(sheet)
     expect(within(sheet).queryByTestId('agent-line')).toBeNull()
     expect(sheet).not.toHaveTextContent('will draft a plan')
     expect(within(sheet).getByTestId('nt-agent-summary')).toHaveTextContent('Claude Code · Write requirements and plan')
     expect(within(sheet).queryByRole('button', { name: 'Change' })).toBeNull()
+    // P06: both ways are visible buttons; the menu keeps only the agent choice
+    expect(within(sheet).getByRole('button', { name: 'Create ticket' })).toBeInTheDocument()
     await r.user.click(within(sheet).getByRole('button', { name: 'More ways to create' }))
-    expect(await screen.findByRole('menuitem', { name: 'Create without starting' }, T)).toBeInTheDocument()
-    expect(screen.getByRole('menuitem', { name: 'Choose agent…' })).toBeInTheDocument()
+    expect(await screen.findByRole('menuitem', { name: 'Choose agent…' }, T)).toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: 'Create without starting' })).toBeNull()
     expect(screen.queryByRole('menuitem', { name: 'Create and start' })).toBeNull()
+  })
+
+  it('P06: Enter in Title moves to the requirements and submits nothing', async () => {
+    const { r, sheet } = await open()
+    const title = within(sheet).getByLabelText('Title')
+    await r.user.click(title)
+    await r.user.keyboard('{Enter}')
+    expect(within(sheet).getByLabelText(/^What should be true/)).toHaveFocus()
+    expect(screen.queryByTestId('nt-summary')).toBeNull()
+  })
+
+  it('a risk-notices answer without `acknowledged` counts as not read and does not crash the form', async () => {
+    s.notices.mockResolvedValue({} as never)
+    const { sheet } = await open()
+    expect(await startBtn(sheet)).toBeInTheDocument()
   })
 
   it('Choose agent… opens the shared picker; the footer summary follows the choice, which is remembered for this workspace', async () => {
@@ -120,19 +137,28 @@ describe('the form', () => {
     expect(stored).toMatchObject({ harness: 'codex', mode: 'work', start: true })
   })
 
-  it('remembers Create without starting: next time Create is the main button and Create and start is in the menu', async () => {
+  it('Create without starting from the menu is used once: the main button and the stored choice stay as they were', async () => {
     const { r, sheet } = await open()
     await createOnly(r, sheet)
     expect((await sent()).agent).toBeUndefined()
-    expect(JSON.parse(localStorage.getItem(`orch.dashboard.new-ticket.agent.p_sev.${WS()}`) ?? '{}').start).toBe(false)
-    cleanup()
-    const again = await open({ [`orch.dashboard.new-ticket.agent.p_sev.${WS()}`]: JSON.stringify({ start: false, harness: 'claude-code', mode: 'work', model: '' }) })
-    expect(await within(again.sheet).findByRole('button', { name: 'Create ticket' }, T)).toBeInTheDocument()
-    expect(within(again.sheet).queryByRole('button', { name: 'Create and start' })).toBeNull()
-    await again.r.user.click(within(again.sheet).getByRole('button', { name: 'More ways to create' }))
-    await again.r.user.click(await screen.findByRole('menuitem', { name: 'Create and start' }, T))
+    expect(await screen.findByTestId('nt-lead')).toHaveTextContent('No agent starts. You can start one later.')
+    expect(localStorage.getItem(`orch.dashboard.new-ticket.agent.p_sev.${WS()}`)).toBeNull() // nothing was written
+    expect(await startBtn(sheet)).toBeInTheDocument()
+  })
+
+  it('the main button keeps its choice: with start=false stored, Create ticket is main and the menu start is used once', async () => {
+    const key = `orch.dashboard.new-ticket.agent.p_sev.${WS()}`
+    const stored = JSON.stringify({ start: false, harness: 'claude-code', mode: 'work', model: '' })
+    const { r, sheet } = await open({ [key]: stored })
+    expect(await within(sheet).findByRole('button', { name: 'Create ticket' }, T)).toBeInTheDocument()
+    await r.user.click(within(sheet).getByRole('button', { name: 'Create and start' }))
     expect(await screen.findByTestId('not-signed-start')).toBeInTheDocument()
-    expect(JSON.parse(localStorage.getItem(`orch.dashboard.new-ticket.agent.p_sev.${WS()}`) ?? '{}').start).toBe(true)
+    expect(JSON.parse(localStorage.getItem(key) ?? '{}').start).toBe(false) // the menu did not change the default
+    cleanup()
+    const again = await open({ [key]: stored })
+    await again.r.user.click(await within(again.sheet).findByRole('button', { name: 'Create ticket' }, T))
+    expect((await sent()).agent).toBeUndefined()
+    expect(JSON.parse(localStorage.getItem(key) ?? '{}').start).toBe(false) // the main button persists its choice
   })
 
   it('shows only Create, and says why, when the runner is not connected', async () => {
@@ -165,8 +191,9 @@ describe('what is signed', () => {
     const action = await sent()
     expect(action.agent).toEqual({ hours: 168 })
     expect(action.launch).toEqual({ harness: 'claude-code', mode: 'refine' })
-    expect(await screen.findByTestId('not-signed-start')).toHaveTextContent('Then: start an agent on the new ticket.')
-    expect(screen.getByTestId('not-signed-start').textContent!.length).toBeLessThan(230) // one line, not a paragraph
+    expect(await screen.findByTestId('not-signed-start')).toHaveTextContent('Claude Code starts on it.')
+    expect(screen.getByTestId('not-signed-start').textContent).not.toMatch(/model|mode/i) // that detail stays in the form footer
+    expect(screen.getByTestId('not-signed-start').textContent!.length).toBeLessThan(60) // one short line
     expect(screen.getByTestId('starts-agent')).toHaveTextContent('true') // the dialog's steps then say the agent starts with the access already there
   })
 

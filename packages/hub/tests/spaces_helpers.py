@@ -24,6 +24,10 @@ KEY = {G.WS_A: "wsk_a", G.WS_B: "wsk_b", WS_C: "wsk_a"}
 WXK = {G.WS_A: "wxk_a", G.WS_B: "wxk_b", WS_C: "wxk_a"}
 
 
+#: a valid space.item body (protocol 10.4): ``by`` is required
+ITEM_BODY = {"name": "note.txt", "size": 5, "data": "aGVsbG8", "by": "person:p_test"}
+
+
 class SHub(Hub):
     def __init__(self, store_path: str = ":memory:", registry=None, access=None):
         self.access = access or Access()
@@ -130,7 +134,7 @@ class Host:
             "item_id": item_id,
             "workspace_id": self.ws,
             "created_ms": NOW - 1,
-            "body": body or {"kind": "note", "text": "hello"},
+            "body": body or ITEM_BODY,
             "dev": True,
         }
         signed = KS.WskSigner(G.K.priv[KEY[self.ws]]).sign_object(o)

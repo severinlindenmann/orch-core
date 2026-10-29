@@ -1,4 +1,4 @@
-import { addFirst, codeReviewWaits, policySentence } from '@/api/gates'
+import { addFirst, codeReviewWaits, missingWords, policySentence } from '@/api/gates'
 import type { GateName, GateStatus, QuestionStatus, TicketDocument } from '@/api/types'
 import { roleMeets } from '@/api/roles'
 import { can } from '@/api/permissions'
@@ -65,6 +65,19 @@ export const lacks = (g: Pick<GateStatus, 'missing'>) => (g.missing?.length ?? 0
 export function lackText(gate: 'requirements' | 'plan', missing: string[]): string {
   if (missing.includes(gate)) return `Waiting for the agent to write the ${gate}`
   return addFirst(missing)
+}
+
+/** The first of requirements, plan that is not approved and still lacks something (core's `missing`), in plain words. */
+export type Gap = { gate: 'requirements' | 'plan'; missing: string[]; title: string; text: string }
+export function gapOf(t: Pick<TicketDocument, 'gates'>): Gap | null {
+  for (const gate of ['requirements', 'plan'] as const) {
+    const g = t.gates[gate]
+    if (g.state !== 'approved' && lacks(g)) {
+      const missing = g.missing ?? []
+      return { gate, missing, title: `The ${gate === 'plan' ? 'plan is' : 'requirements are'} not finished yet`, text: `Still missing: ${missingWords(missing)}.` }
+    }
+  }
+  return null
 }
 
 /** Human actions the viewer can take now, only where the gate or the needs say so. */

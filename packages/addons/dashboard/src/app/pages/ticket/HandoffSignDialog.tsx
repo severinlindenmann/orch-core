@@ -74,6 +74,10 @@ export function HandoffSignDialog({
   const [text, setText] = useState('')
   const [outcome, setOutcome] = useState<'pass' | 'fail' | null>(null)
   const radio = useRef<HTMLInputElement>(null)
+  // The opening press of an approve is used once: it is kept per action object and spent when the review starts,
+  // so a remount never re-arms without a new press. Approve never depends on the ambient press flag.
+  const press = useRef<{ a: HumanAction | null; left: boolean }>({ a: null, left: false })
+  if (press.current.a !== action) press.current = { a: action, left: action?.kind === 'approve' && action.pressed === true }
   // A preview replaces the verdict form in the dialog body; the choice and note stay in this component's state.
   const [preview, setPreview] = useState<{ artifact: Artifact; acId: string } | null>(null)
   if (!action) return null
@@ -132,9 +136,14 @@ export function HandoffSignDialog({
       action={request}
       doneToast={doneToastOf(action)}
       confirmLabel={confirmLabel}
+      autoStart={action.kind === 'approve' ? press.current.left : undefined}
+      armOnStart
       hint={preview ? 'Go back to the verdict to sign' : hint}
       warning={warning}
-      onPending={onPending}
+      onPending={(pending) => {
+        if (pending) press.current.left = false
+        onPending?.(pending)
+      }}
       onSettled={(phase) => {
         // The host confirmed the signature: the item leaves Today and the approvals now, not at the next read.
         if (phase === 'done') signedNow(qc, ws, ticket.key, action.kind === 'answer' ? action.question : action.kind === 'verdict' ? 'verify' : action.gate, now)

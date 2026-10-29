@@ -4,6 +4,31 @@ import { api, mockStore } from '@/api/client'
 import { renderApp } from '@/test/renderApp'
 
 describe('Tickets page', () => {
+  it('shows what others shared through the hub as read-only "Shared by" rows, and nothing without a hub', async () => {
+    const shared = vi.spyOn(api, 'getHubShared').mockResolvedValue({
+      items: [{ workspace_id: 'a'.repeat(32), key: 'DEMO-0007', title: 'Invoice export for Ben', shared_by: 'Anna', status: 'open', type: 'feature', deadline: null, description: 'Export invoices as CSV.' }],
+    })
+    renderApp('/tickets')
+    const box = await screen.findByTestId('shared-with-you')
+    expect(within(box).getByText('Invoice export for Ben')).toBeInTheDocument()
+    expect(within(box).getByText(/Shared by/)).toHaveTextContent('Shared by Anna')
+    expect(within(box).getByText('Export invoices as CSV.')).toBeInTheDocument()
+    expect(within(box).queryByRole('button')).toBeNull() // read only: nothing to press
+    shared.mockResolvedValue({ items: [] })
+    vi.restoreAllMocks()
+  })
+
+  it('P03: the shared section sits above the tickets table', async () => {
+    vi.spyOn(api, 'getHubShared').mockResolvedValue({
+      items: [{ workspace_id: 'a'.repeat(32), key: 'DEMO-0007', title: 'Invoice export for Ben', shared_by: 'Anna', status: 'open', type: 'feature', deadline: null, description: null }],
+    })
+    renderApp('/tickets')
+    const box = await screen.findByTestId('shared-with-you')
+    const table = await screen.findByRole('table', { name: 'Tickets' })
+    expect(box.compareDocumentPosition(table) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    vi.restoreAllMocks()
+  })
+
   it('lists the workspace tickets in a table', async () => {
     renderApp('/tickets')
     const table = await screen.findByRole('table', { name: 'Tickets' })

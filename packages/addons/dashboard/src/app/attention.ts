@@ -38,6 +38,16 @@ export function terminalWaitsOf(items: { kind: string; ref?: string }[]): { coun
   return { count: waits.length, run: waits[0]?.ref }
 }
 
+/** Is the ticket's agent inside `orch wait` (the host's own signal, run-10 J04), not just quiet at its prompt? */
+export function agentInWait(items: { kind: string; ticket?: string; source?: string }[], ticketKey: string): boolean {
+  return items.some((i) => i.kind === 'terminal_wait' && i.ticket === ticketKey && i.source === 'wait')
+}
+
+/** The run id of the terminal wait of one ticket's agent, if it waits. */
+export function terminalWaitFor(items: { kind: string; ticket?: string; ref?: string }[], ticketKey: string): string | undefined {
+  return items.find((i) => i.kind === 'terminal_wait' && i.ticket === ticketKey && i.ref)?.ref
+}
+
 /** The three nouns of the dashboard, defined once: what needs you, what waits on others, and the agent sessions. */
 export function useAttention(ws: string | undefined): Attention {
   const me = useMe(ws)

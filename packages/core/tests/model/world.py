@@ -273,6 +273,19 @@ class World:
             tasks = [{"id": "T1", "text": "do it", "verify": {"cmd": "make test"}, "proves": ["AC1"]}]
             self.edit(uid, actor, {"ticket.tasks": tasks})
 
+    def approve_plan(self, uid: str, who: str = "sev"):
+        """r10-P02: an agent starts and finishes tasks only after the plan is approved. Fill what the requirements and
+        plan gates need (keeping existing acceptance criteria and tasks), then approve both."""
+        v = self.view(uid)
+        names = ("context", "requirements", "out_of_scope", "plan", "decisions", "verification")
+        secs = {s: f"{s} text" for s in names}
+        sets = {} if v.acceptance else {"ticket.acceptance": [{"id": "AC1", "text": "it works"}]}
+        self.edit(uid, who, sets, secs)
+        if not v.tasks:
+            self.edit(uid, who, {"ticket.tasks": [{"id": "T1", "text": "do it", "verify": None, "proves": []}]})
+        self.decide(uid, who, "requirements")
+        self.decide(uid, who, "plan")
+
     def decide(
         self, uid: str, who: str, gate: str, kind: str = "approve", text: str = "x", try_: bool = False, **over: Any
     ):

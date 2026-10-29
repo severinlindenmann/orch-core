@@ -12,6 +12,8 @@ not right.
   (V3-D8). The reference code that produces it is `src/orch_hub/contract/`; `uv run pytest tests/test_vectors.py`
   checks that the reference rebuilds the file byte for byte and that every case replays from its JSON. Where the
   reference and this document disagree, this document wins.
+- **Hub backup and `hub_where` (M4, #1358):** §17 and §10.9, vectors [`vectors_hub_backup.json`](vectors_hub_backup.json)
+  (generator `make_vectors_hub_backup.py`; the hub replays all cases, orch-core the `hub_where` ones).
 - **Status:** H0 draft for the L2 gate (one Opus security pass, orch-core #847). Choices this document had to make
   are marked **DECIDED HERE** and listed in §16.
 
@@ -163,6 +165,7 @@ literal `orch/v2/hub-…|` names.
 | `sig_hub_channel_relay_req` | `orch/v2/hub-channel-relay-req\|` | channel key | the bytes of a channel → relay request | 10.8.4 |
 | `sig_hub_org_skills` | `orch/v2/hub-org-skills\|` | `HK_op` | `cj(o)` of `hub.org_skills` | 7.3 |
 | `sig_hub_mcp_servers` | `orch/v2/hub-mcp-servers\|` | `HK_op` | `cj(o)` of `hub.mcp_servers` | 7.4 |
+| `sig_hub_org_secrets` | `orch/v2/hub-org-secrets\|` | `HK_op` | `cj(o)` of `hub.org_secrets` | 7.5 |
 | `h_hub_session_ref` | `orch/v2/hub-session-ref\|` | hash | names a pairing session inside `hub.channel_auth` | 6.4 |
 | `sig_hub_space_proposal` | `orch/v2/hub-space-proposal\|` | `HK_op` | `cj(o)` of `hub.space_proposal` | 10.4 |
 | `sig_hub_relay_request` | `orch/v2/hub-relay-req\|` | `HK_op` | the bytes of a hub → relay request | 10.8 |
@@ -188,6 +191,18 @@ literal `orch/v2/hub-…|` names.
 | `h_channel_id` | `orch/v2/id/channel\|` | hash | `channel_id` | 2.3 |
 | `h_hub_event_digest` | `orch/v2/hub-event-digest\|` | hash | what the channel key signs | 8 |
 | `h_hub_publish_request` | `orch/v2/hub-publish-request\|` | hash | what the owner's approval names | 11 |
+| `h_publish_request_direct` | `orch/v2/publish-request\|` | hash | what the owner's approval names on the direct v2 12.1 path (M4) | 11.4 |
+| `h_app_meta` | `orch/v2/app-meta\|` | hash | the stored meta of one app version (`meta_hash`, M4) | 11.4 |
+| `h_app_reach` | `orch/v2/app-reach\|` | hash | the approved reach list of one app version (`reach_hash`, M4) | 11.4 |
+| `sig_hub_release_narrow` | `orch/v2/hub-release-narrow\|` | `HK_op` | `cj(o)` of `hub.release_narrow` (revoke a link, stop an app; M4) | 11.6 |
+| `sig_hub_app_pass` | `orch/v2/hub-app-pass\|` | `HK_op` | `cj(o)` of `hub.app_pass` (single-use pass into a company/group app; M4) | 11.8 |
+
+**Hub-local labels of the backup (§17).** `orch/v2/hub-backup|` (`HK_root` signs a backup header) and
+`orch/v2/hub-backup-aad|` (AAD of the sealed payload) name no object any other repo reads, so, like the access-change
+label, they stay out of the table above and of `vectors_hub.json`; `tests/test_hub_backup_vectors.py` checks they are new,
+end in `|` and keep the union with every label above prefix-free. `HK_root` may sign **only** `hub.op_cert`,
+`hub.op_revoked` and `hub.backup` (the hub key store gains that one signer method in M4 S5; no "sign these bytes").
+HKDF infos (outside the table): `orch/v2/hub-backup-auth` (the MAC key), `orch/v2/seal|hub-backup|<hub_id>` (the seal).
 
 HKDF labels (not signed bytes, so outside the prefix-free table; `info` = label followed by `|` fields, v2 §3): `orch/v2/space-item` (item key of a space and epoch), `orch/v2/space-item-msg` (one item), `orch/v2/hub-view` (the view key of a workspace and epoch, §10.7) and `orch/v2/hub-view-msg` (one view page) and `orch/v2/hub-share-msg` (one shared item under its item key). Reused unchanged: `orch/v2/sig/host-event|` and `orch/v2/event|` (ticket-format §5.5, verified by the hub in §10.7, never signed by it), `orch/v2/seal-aad|`, `orch/v2/publish|` (`WSK`, v2 §12.1, the direct path only), `orch/v2/sig/ws-event|` (owner device, ticket-format §5.3),
 `orch/v2/sig/device-cert|` (`PK`, v2 §6.1).
@@ -626,6 +641,51 @@ until the owner accepts that digest (human-only), and an agent reaches it only t
 the credential, filters `tools/list` and refuses `tools/call` for an Off tool; the agent's `--mcp-config` holds only the proxy's local
 address and a per-session capability. Any change of address, sign-in or secret is a new digest and a new accept; withdrawing applies at
 the next sync; unbind removes the cached bundle. Vectors: `vectors_org_skills.json` (`mcp_cases`, `mcp_bundle_cases`).
+
+### 7.5 Company secrets (M3, #1431-#1433)
+
+A company secret is a value an admin enters in the console. The admin's BROWSER seals it, once per bound workspace, to that
+workspace's exchange key (WXK) with the v2 §5.3 construction and the new seal purpose **`org-secret`**; the hub stores only
+sealed bytes and never holds a value or a key that opens one.
+
+```
+sealed = eph_pub(65) || AES-256-GCM(K, 12 zero bytes, value_utf8, AAD)         fresh ephemeral key per wrap
+K      = HKDF-SHA-256(ECDH(eph, WXK_pub) x-coordinate, salt = eph_pub || WXK_pub, info = "orch/v2/seal|org-secret|" || hex(workspace_id))
+AAD    = "orch/v2/seal-aad|" || u8(2) || u8(10) || "org-secret" || secret_id(16) || u32(secret version) || extra
+extra  = hub_id(16) || workspace_id(16) || u32(wxk_version) || u64(expires_ms) || u8(len(name)) || name
+```
+
+All ids are lower-case hex of 16 bytes, integers are big-endian, `name` matches `[a-z][a-z0-9-]{0,39}` (ASCII). A wrap therefore
+opens only for the one hub, workspace, WXK version, secret id, version, expiry and name it was made for.
+
+**One value rule**, enforced by the browser before sealing, by the hub API, and by the host AFTER unsealing (a sealed value that
+breaks it is refused): visible ASCII `0x20-0x7E` only, no leading or trailing space, length 8 to 4096 (the value is used as a
+Bearer header). **Expiry:** `expires_ms` is required; the host refuses a wrap with `expires_ms <= now` and one with
+`expires_ms > issued_ms + 366 days` (`issued_ms` of the bundle that carried it).
+
+Implementations: core `orch.hubclient.orgsecrets`, hub `orch_hub.contract.org_secrets` (standalone, D79), browser
+`web/seal.js` (exports only `sealOrgSecret`; WebCrypto, non-extractable ephemeral key; the fixed-ephemeral test seam lives in
+`tests/js/seal_seam.mjs` and is never served). Vectors: `vectors_org_secrets.json` (kinds `aad`, `value`, `seal`, `open`; FAKE keys;
+generated by `make_vectors_org_secrets.py`). Core, hub and the browser module each replay EVERY case and fail on one they do not handle.
+
+**Bundle `hub.org_secrets`** (S-2; core verifier in S-3), fetched with `org_secrets_get`:
+
+```
+hub.org_secrets {v, suite, kind: "hub.org_secrets", hv, hub_id, op_cert_id, workspace_id, version: int >= 1, issued_ms,
+                 secrets: [{id, name, version, expires_ms, wxk_version, sealed (base64url)}] (0..50, sorted by name, unique), dev}
+                                                                  signed by HK_op, label sig_hub_org_secrets
+```
+
+Verified like 7.3 (`other_workspace`, `stale_bundle`, `bundle_conflict`). The hub puts into a workspace's bundle ONLY that
+workspace's own wraps (the link's authenticated workspace, never a caller-named one), of secrets that are not removed, not
+expired, and shared with it. `sealed` is base64url WITHOUT padding (core `crypto.b64u`) of 65 + (8..4096) + 16 bytes. Vectors: `vectors_org_secrets_bundle.json` (S-3 replays it).
+
+Hub rules (S-2): a value entry (create, rotate, "enter again") is always version `current + 1` (create = 1) with one wrap per
+bound workspace of the share set, each with that workspace's CURRENT verified card `wxk_version`; the hub refuses extras,
+duplicates, missing wraps and a stale `wxk_version`. Unshare, remove, chosen-to-all and unbind each run in one database
+transaction. `secret_use {secret_id, day, n}`: `day` is a UTC calendar date `YYYY-MM-DD` (within 7 days back to 1 day ahead of the hub's clock), `n` is the number of uses on that UTC day so far (the hub keeps the larger value),
+bounded, rate limited per workspace, shown to the admin as untrusted. The hub can read a value only if it is taken over and
+substitutes its own key (deferred to #1263).
 
 ## 8. Custodial events
 
@@ -1319,6 +1379,8 @@ unknown `op` is `unknown_op`.
 | `snapshot_get` | w2h | both | `{}` | `{"snapshot": <hub.snapshot>}` |
 | `mcp_servers_get` | w2h | both | `{}` | `{"bundle": <hub.mcp_servers>}`: the remote MCP servers offered to the link's workspace (M3 #1435, 7.4) |
 | `org_skills_get` | w2h | both | `{}` | `{"bundle": <hub.org_skills>}`: the company skills offered to the link's workspace (M3 #1430, 7.3) |
+| `org_secrets_get` | w2h | both | `{}` | `{"bundle": <hub.org_secrets>}`: the sealed company secrets of the link's workspace only (M3 #1431, 7.5) |
+| `secret_use` | w2h | both | `{secret_id, day, n}` | `{}`: `day` is `"YYYY-MM-DD"` (UTC), `n` the uses that day (counts only, 7.5) |
 | `event_deliver` | h2w | both | `{"log", "event"}`: a custodial event (§8) | `{}` or `{"error"}` |
 | `route_out` | w2h | both | `{"envelope": b64u}`: a v2 §11 ws→ws envelope, as is | `{}` |
 | `route_in` | h2w | both | `{"envelope": b64u}` | `{}` |
@@ -1338,6 +1400,7 @@ unknown `op` is `unknown_op`.
 | `space_get` | w2h | both | `{"space_id", "since"}` | `{"space", "wraps", "entries", "next"}` |
 | `space_proposals` | w2h | both | `{}` | `{"proposals": [<hub.space_proposal>]}` (p4, §10.4) |
 | `switch_ticket` | w2h | both | `{"origin", "return_to", "kind": "open"\|"signout"}` | `{"ticket", "url"}` (hub one-app, below) |
+| `hub_where` | w2h | both | `{}` | `{"addresses": [{"kind", "link"}], "name"}`: where this hub can be reached and its display name (M4, §10.9). Unsigned: a hint under the TLS pin |
 | `switch_redeem` | w2h | both | `{"ticket"}` | `{"user_id", "name", "return_to", "kind"}` (hub one-app) |
 | `rail_get` | w2h | both | `{"origin"}` | `{"hub": {name, origin, network_origin}, "user_id", "workspaces": [{workspace_id, name, role, online, badge, origin, current}]}` (hub one-app) |
 | `profile_put` | w2h | both | `{listed, tags, description, handles, not_handled, accepts, contact, languages, hours}` | `{}` |
@@ -1413,7 +1476,7 @@ The `share_put {item_id, sealed}` body of H0 left `sealed` opaque. Its content, 
 
 ```
 share.item {v, suite, kind: "share.item", hv, hub_id, workspace_id, item_id, item_kind: "needs_you" | "ticket" | "question",
-            item_version ≥ 1, issued_ms, chain: {log, seq, head}, content: <exact per item_kind>, f1?, dev}
+            item_version ≥ 1, issued_ms, chain: {log, seq, head}, content: <exact per item_kind>, f1?, audience?, dev}
             signed by the workspace's WSK, label sig_share_item
 IK        = 32 fresh random bytes per put
 wrap      = seal_to(HXK, purpose "hub-share", recipient id hub_id, object_id item_id, epoch item_version,
@@ -1459,10 +1522,23 @@ item_hash = "sha256:" + hex(H("orch/v2/hub-share-item|" || cj(signed share.item)
   raises `roster_v`, a new generation, a changed policy or source list, a re-asked question); until then events built
   on the old values are refused at admission (§8.6). Reference `check_f1`, vectors `share_item_with_f1`,
   `share_item_f1_*`.
+- **The `audience` block (P02, optional, additive).** Who besides the owner alias may READ this item at the hub. Exactly
+  `{"users": [<hub user id, 32 hex>…], "groups": [<hub group name>…]}`: each list sorted and unique (at most 32 users,
+  16 groups), at least one entry in total, and **only on a `ticket` item** (`malformed` on any other kind, or with an
+  extra key). It is signed by the workspace's `WSK` with the rest of the item, so only the workspace owner's host decides
+  it; the hub cannot add a reader and hub roles, groups and the hub-admin group still grant nothing (spec §8a). An item
+  without one is readable by the owner alias only, as before. The hub admits a reader at read time (`list_shared`) only
+  if the viewer is an active hub user who is named in `users` or is a member of a group named in `groups` **now**, on a
+  live item whose signature still verifies; anything else, an unknown group included, reads nothing (fail closed). An
+  audience reader may read, never sign: `shared_item` and every custodial build (§8.6) stay owner-only. Reference
+  `check_audience`, vectors `share_item_with_audience_and_description`, `share_item_audience_*`.
 - **Content per kind (C6 4, D9).** Exact keys, no free objects, the text rule of §8.5:
   - `needs_you` `{type: question | gate | verdict | review | handoff, title, deadline}`;
   - `ticket` `{key, type (ticket type), title, status (status list), labels (sorted unique label tokens ≤ 32),
-    deadline}`;
+    deadline, description?}` (`description` optional, ticket only: 1 to 4000 bytes, multi-line text rule; the host puts
+    the ticket's Summary, Context and Requirements there only when the owner's rule says "include the description";
+    plan, decisions, findings, comments and files never; vectors
+    `share_item_description_*`);
   - `question` `{key, type (the ticket's type), id (Q<n>), title (the ticket's title), text (≤ 2000 bytes, multi-line),
     deadline}`;
   - `title` one line ≤ 200 bytes; `deadline` `YYYY-MM-DD` or null (C6's date; D9's `deadline_ms` is replaced: the
@@ -1574,7 +1650,7 @@ hub.space      {v, suite, kind: "hub.space", hv, hub_id, op_cert_id, space_id, e
 hub.space_wrap {v, suite, kind: "hub.space_wrap", hv, hub_id, op_cert_id, space_id, epoch, workspace_id,
                 wxk_version ≥ 1, sealed: b64u, dev}                        signed by HK_op, label sig_hub_space_wrap
 space.item     {v, suite, kind: "space.item", hv, hub_id, space_id, epoch, members_hash: b64u(32), item_id,
-                workspace_id (the author), created_ms, body: object (opaque to the contract), dev}
+                workspace_id (the author), created_ms, body: {name, size, data, by, restored_from?}, dev}
                                                                             signed by the author's WSK, sig_space_item
 ```
 
@@ -1594,6 +1670,17 @@ space.item     {v, suite, kind: "space.item", hv, hub_id, space_id, epoch, membe
   into a space of another hub, or shown to another member set fails (vectors `space_item_resealed_into_later_epoch`,
   `space_item_from_other_hub`, `space_item_members_hash_mismatch`); a hub that shows two member lists for one epoch is
   caught by the author's own hash. "No backfill" is therefore enforced by the authors' signatures, not only by hub policy.
+- **The item body** (hub M3 spaces, SP-1) is closed: `{name: text, size: int ≥ 0, data: b64u, by, restored_from?}`.
+  `by` is REQUIRED and matches `^(person|agent):[A-Za-z0-9_-]{1,64}$`: who the writing host says acted, `person:<person
+  id>` or `agent:<id of the agent's verified grant>`. The host sets it from the verified call, never from arguments. It
+  is signed with the item, but the hub and readers cannot check it (a host may lie about who acted): a reader shows it
+  as a fixed word (person / agent / unknown), labelled "as the workspace says". `restored_from` is optional, an item id
+  (`hex16`): the item this one is a restore of (same name, same bytes; the restoring host's `WSK` signs it, so a
+  restore is a new item of its author, never a console action). An item without `by`, with a malformed `by` or
+  `restored_from`, or with any other body key is `malformed`, at the author, at the hub's `space_put` and at every
+  reader; there is no legacy form. Vectors: `space_item_by_missing`, `space_item_by_bad_kind`, `space_item_by_bad_chars`,
+  `space_item_by_too_long`, `space_item_by_not_text`, `space_item_by_agent_ok`, `space_item_restored_from_ok`,
+  `space_item_restored_from_bad`, `space_item_body_extra_key`.
 - **An item** is sealed with SALTED-AEAD (v2 §5.1) under a key derived through HKDF, never `SK_e` itself:
   `base = HKDF(SK_e, salt = 32 zero bytes, info = "orch/v2/space-item|" space_id "|" epoch)`; per item
   `key = HKDF(base, salt16, "orch/v2/space-item-msg")`; `sealed = salt16 || AES-256-GCM(key, 12 zero bytes,
@@ -1704,7 +1791,7 @@ hub.audit {v, suite, kind: "hub.audit", hv, hub_id, op_cert_id, seq ≥ 1, prev:
   otherwise (vectors `audit_share_*`); `channel` (p4) `{channel_id, user_id, change: register | revoke | renew, factor,
   actor_user_id | null, nonce}`, hub-wide (`scope_tag` null; `actor_user_id` null = the operator at the hub terminal,
   there is no `unrevoke`, §6.2; `renew` = a new certificate for the same channel key, the factor unchanged, recorded BEFORE it is issued and refusing the renewal when the chain cannot be written. **Contract text only in V3: no hub renews**, the certificate lasts 31 days and then the phone pairs again); `grant` `{group, workspace_id, role | null, actor_user_id, nonce}`; `membership`
-  `{group, user_id, added, actor_user_id, nonce}`; `market_policy` (D14, §7.1) `{version ≥ 1, policy_hash: b64u(32), actor_user_id, nonce}`, hub-wide (`scope_tag` null; the version the change produced and the hash of the new policy, the actor is always a hub-admin); `space` `{space_id, epoch, change: create | add | remove | unbind | delete,
+  `{group, user_id, added, actor_user_id, nonce}`; `market_policy` (D14, §7.1) `{version ≥ 1, policy_hash: b64u(32), actor_user_id, nonce}`, hub-wide (`scope_tag` null; the version the change produced and the hash of the new policy, the actor is always a hub-admin); `hub_settings` (M4, #1461) `{change: general | addresses, actor_user_id, nonce}`, hub-wide (`scope_tag` null; an admin changed the hub's name or company, or the addresses it advertises: it names which setting and who, never the value; written BEFORE the change is saved, and the change is refused when the chain cannot be written); `hub_backup` (M4 S5, §17) `{change: key_set | key_confirmed | made | downloaded, actor_user_id: hex16 | null, nonce}`, hub-wide (`scope_tag` null; the backup key was set or replaced, a backup was made, or one was handed out; `actor_user_id` null = the schedule or the hub terminal; never a key, a word or a file name); `hub_restore` (M4 S6, §17.8) `{backup_made_ms, gap_ms ≥ 0, op_seq ≥ 1, actor_user_id: hex16 | null, nonce}`, hub-wide (`scope_tag` null; the hub is restored from a backup made at `backup_made_ms`, `gap_ms` ago, issuing `op_seq`; written before the swap); `space` `{space_id, epoch, change: create | add | remove | unbind | delete,
   workspace_id | null, actor_user_id | null, nonce}`. The acting admin's `UK` signature on a grant or membership change is
   the custodial event it came from (spec §10); the audit record points at it, it does not replace it. **Every event of every type carries `nonce`, 32 random bytes
   inside the event; no type is exempt.** Records carry the event's hash to every tenant, so an event without a nonce
@@ -1799,9 +1886,9 @@ contract.) **Selective workspaces are out of scope (L2P-6).** D71: the hub-admin
 card says the hub sees only what it shares; release metadata, including releases made on the direct v2 path that the
 hub never forwarded, stays hidden from it. Only a later, explicit owner opt-in could add them (not specified).
 
-**Response rows carry exactly** `workspace_id`, `release_id`, `kind`, `state`, `created_ms`, `expires_ms`
-(or `null`), `revoked`, `bytes`, `public_url`, which **MUST be `null` in `hv: 0`** (orch-publish has no public kind; a non-null value is a violation, vector `admin_read_row_with_public_url`). A later `hv` may add it for live public releases only, never for a URL that carries a token or grants access; any other field is a
-violation (`check_admin_read_row`, vectors `admin_read_row_*`).
+**Response.** `200 {"rows": [...]}`, each row one of the two shapes of §11.5 (links and apps), checked by
+`check_published_rows` at orch-publish and again at the hub. (hv 0 used a release row with a `public_url`; M4 S1 removed
+it and its vectors `admin_read_row_*`.)
 
 ### 10.7 The hub's workspace view: `log_sync` (phase 4, V3-D23)
 
@@ -2201,6 +2288,29 @@ to the push-configuration `404`):
 - Reference `relayroutes.route` (`cutover_put`/`cutover_get`), `cutover_hub`, `cutover_workspace`; vectors
   `relay_route_cutover_*`, `cutover_*`, and the signed request bytes `phase4.relay_routes.cutover_put`/`cutover_get`.
 
+### 10.9 `hub_where`: the hub's addresses (M4 #1461)
+
+**Purpose.** A hub's link address is not signed (the host pins the hub's TLS key from the card, never an address), so an
+admin can change which addresses the hub advertises (private network, office network, this server, public address)
+without touching a card, a binding or a certificate. Bound hosts learn the list with this op on every link session.
+
+**Request** `{}`. **Reply** `{"addresses": [{"kind", "link"}], "name"}`, and nothing else (exact keys):
+
+- `addresses`: 1 to 4 entries, each exactly `kind` and `link`; `kind` is one of `private`, `office`, `server`, `public`
+  (the UI words "Private network (VPN)", "Office network", "On this server", "Public address"); `link` is `host:port` with
+  the grammar of the connect link's endpoint (host a name, an IPv4 address or `[v6]`; port 1..65535 without leading zero;
+  at most 300 characters; no scheme, path, space or user info). No `link` twice. Order is the hub's preference.
+- `name`: the display name, 1 to 60 code points **as sent**; the receiver removes every character of the Unicode
+  categories `Cc`, `Cf` (so bidi marks and embeddings, zero-width characters), `Cs`, `Co`, `Cn`, `Zl` and `Zp`, trims outer white space and
+  refuses the answer (`malformed`) if nothing is left. It is shown as the hub's own words, never inside workspace-owned UI.
+
+Anything else is `malformed` (fail closed; the host keeps what it holds). **The answer is a hint, not evidence** (Opus
+conditions 1-4 of the M4 design check): a host stores an address only after a TLS handshake **at that address** passes
+against the pin it already holds, keeps the last good address until a replacement passed, and never takes an address from
+a link-fetched card (the card is fetched over plain HTTP and proves nothing about where the hub is). Reference
+`orch_hub.contract.where.check_hub_where` (hub) and `orch.hubclient.where.check_hub_where` (core, written from this text);
+both replay the `hub_where_*` cases of `vectors_hub_backup.json` (§15) and must agree with them.
+
 ## 11. Publish through the hub (phase 2, D76, V3-D4)
 
 **Purpose.** A workspace publishes through its hub; orch-publish accepts it only with the workspace's live binding
@@ -2253,7 +2363,12 @@ Every signature comes before the nonce store (v2 §12.1). Policy checks of orch-
 is orch-publish's route definition (`access: "public"` of a share or app); F1 fixes the list, and every such request
 needs step 9.
 
-**Direct requests (V3-D36).** There are none. orch-publish refuses a request without `Orch-Hub` and `Orch-Hub-Signature` as
+**Direct requests (V3-D36; amended by M4 S3, #1357).** The only direct requests are the **app routes of §11.4**, and only when
+the operator switched orch-publish's `allow_direct` setting on (off by default; `--allow-direct`): a workspace with no hub
+then publishes an app with a v2 §12.1 request (`WSK` over `orch/v2/publish|`, no `Orch-Hub`), the owner's approval built for
+the direct path (`hub_id` null, §11.4), checked in the order 1, 2, 3, 4, 8, 9 of the table above (no binding, no hub card).
+An approval on a direct route that takes none is `bad_approval`. Share routes never take the direct path. Everything else:
+orch-publish refuses a request without `Orch-Hub` and `Orch-Hub-Signature` as
 `403 hub_required` (half a pair is `400 malformed`), and `POST /v1/ws/{ws}/register` no longer exists: a workspace is
 admitted only through its card (below).
 
@@ -2285,7 +2400,8 @@ The owner's local-key authorisation of **one exact request**, signed at the host
 
 ```
 approval = {"o": {"v": 2, "suite": 2, "kind": "hub.publish_approval", "hv": 0, "workspace_id", "hub_id",
-                  "device_id", "request_hash", "access": "public"},
+                  "device_id", "request_hash", "access"},        // M4: hub_id is null on the direct path; access is any of
+                                                      // public|password|company|group (11.4), the request's own
             "device_cert": <v2 §6.1 device_cert, signed by the owner's PK>,
             "pk_pub": <b64u, the owner's PK>,
             "sig": b64u(Sign(dk_sig, "orch/v2/sig/hub-publish-approval|" || cj(o)))}
@@ -2319,12 +2435,238 @@ included. Vectors: `publish_approval_reused_on_second_request` (same body, fresh
 `publish_approval_replayed_with_its_request` (`replay`), `publish_approval_attached_by_hub` and
 `publish_approval_stripped_by_hub` (`bad_signature`).
 
+**M4 amendment.** The approval is path-agnostic (§11.4): `hub_id` is `null` on the direct v2 §12.1 path, whose `request_hash`
+uses `orch/v2/publish-request|` and no hub part; and `access` may be any of `public`, `password`, `company`, `group`. For an
+app commit, rollback or start the approval is required whatever the access.
+
 Requests for `secret` or `sealed` access keep the v2 path: the host evaluates the charter (spec §5.5, §8 "the agent
 `publish(...)` path is unchanged") and no approval is needed. An approval on such a request is still verified, and its
 `access` (`"public"`) then mismatches → `bad_approval`.
 
 **Full mode** (phase 3+): until custodial signing (phase 4), a dev full-mode workspace uses the same owner approval
 (V3-D3); from phase 4 the approval is a custodial signature carried the same way (spec §8), defined then as a new `hv`.
+
+### 11.4 Published: links and apps (M4, #1357; vectors `vectors_published.json`)
+
+M4 adds shared **apps** (kind `page`, `app`, `form`: static files, no server code) next to the existing token links, and
+a company list of both. orch-publish stays the source of truth; the hub is a window with two narrowing buttons
+(§11.6). This section and §11.5 to §11.9 are the contract; `contracts/hub/vectors_published.json` pins it
+(`make_vectors_published.py`), and orch-hub, orch-publish and orch-core each replay **every** section of it against their
+own copy of the rules (`orch_hub.contract.published`, `pubsrv/published.py`, `orch/hubclient/published.py`). The hub
+contract version stays `hv: 0`: the design's name "hv1" for the new rows means "the M4 revision of this document", not a
+second wire version (an `hv` bump would make every existing verifier refuse every existing object). Nothing here is a
+second signing scheme: the new signed kinds are ordinary §2.2 objects. `hub.release_narrow` and `hub.app_pass` carry no `dev` member: they are only
+valid under a held hub card that was verified again for the request, dev marker included (§2.4), so a real orch-publish
+refuses a dev hub's narrowing and pass through the card (`dev_refused`).
+
+**Authority (unchanged from V3-D4).** Widening needs a person at the workspace: publish, update, rollback, start, a wider
+access, a new reach. Narrowing (revoke a link, stop an app) may also come from a hub admin (§11.6). The hub never signs
+anything that widens exposure.
+
+**Slugs (C7 neighbour, condition 11).** An app lives at `/a/<slug>/`. `slug` matches `[a-z0-9-]{3,40}` (`slug`) and is not
+`s`, `a`, `v`, `api`, `pass`, `rows`, `v1`, `v2` (`reserved_slug`; the one- and two-letter names are already too short, the
+list still names them so a later change of the length cannot free them). A slug starts and ends with a letter or digit (`[a-z0-9][a-z0-9-]{1,38}[a-z0-9]`). A slug is never freed after the app is removed.
+
+**The version meta.** A version is uploaded in two steps that serve nothing by themselves: `PUT
+/v1/ws/{ws}/apps/{id}/versions/{n}` (the meta, signed by `WSK` like every request) and `PUT .../versions/{n}/files/{path}`
+(the bytes). The meta has exactly these members and nothing else:
+
+```
+meta = {slug, name (1..60, one line, text rule §8.5), kind: page|app|form, access: public|password|company|group,
+        audience, pw, reach[], files[{path, size, sha256 (hex)}], label (1..80, one line), ticket (ULID | null)}
+audience: null for public and password; "company" for company; "group:<hub group>" or "ws:<workspace_id>" for group
+pw:       the password record (§11.4.1) for access "password", null otherwise
+reach:    strictly sorted, duplicate-free canonical origins (§11.7), at most 8, none of them the hub's or publish's own host
+files:    sorted by path (strictly), no two equal ignoring case (`files_order`), 1..500, relative paths of segments [A-Za-z0-9_~+@-][A-Za-z0-9._~+@-]* (so no .., no
+          dot-file, no empty segment, no backslash), size 0..50 000 000, and `index.html` is present
+```
+
+`meta_hash = b64u(H("orch/v2/app-meta|" || cj(meta)))` and `reach_hash = b64u(H("orch/v2/app-reach|" || cj(reach)))`. The
+meta hash covers **every** member, the files list with its sha256 and the password record included (vectors
+`meta_hash_cases`: one variant per member, no two hashes equal).
+
+**Commit, rollback and start (C3).** Three requests carry the same body and are the only ones that make a version live:
+
+```
+POST /v1/ws/{ws}/apps/{id}/commit | rollback | start
+body = {op: "commit"|"rollback"|"start" (the route's), app_id (the route's), version ≥ 1, meta_hash, reach_hash, access, audience}
+```
+
+`rollback` names an older stored version; `start` names the version to run again. **Every one of them needs the owner's
+approval (§11.3), whatever the access** (`approval_required`; the old rule "only public access" is gone for these
+routes). The approval grants exactly the body's `access`, and `request_hash` names the whole request, so the body's
+`meta_hash`, `reach_hash`, `access`, `audience` and `version` are all inside what the owner signed (vectors
+`approval_for_company_used_for_public`, `approval_mismatched_reach_hash`, `approval_other_manifest`,
+`approval_other_version`). orch-publish records `approved_by_person` = the approval's `person_id`.
+
+Before it serves a byte, orch-publish recomputes `meta_hash` and `reach_hash` from the **stored** meta and compares them,
+`access` and `audience` with the body (`meta_mismatch`), then recomputes size and sha256 of every stored file and compares
+the set with the meta's list: a missing, extra or changed file is `file_mismatch`, and a version whose files are not all
+stored is `file_mismatch` too. The meta and file `PUT`s alone serve nothing. The stored meta is validated as above
+(`reserved_slug`, `slug`, `name`, `kind`, `access`, `audience`, `password`, `files`, `files_order`, `no_index`, `label`,
+`ticket`, and the reach codes of §11.7).
+
+App operations are classified **only** through `app_route` over the raw request target; a router that decodes or normalises the path before classifying could skip the approval check, so S1 and S3 must route that way.
+
+**Routes and who needs what.** The routes of orch-publish for this contract, and whether the owner's approval is required:
+
+| Route | `op` | Approval |
+|---|---|---|
+| `PUT /v1/ws/{ws}/apps/{id}/versions/{n}` (meta), `PUT .../versions/{n}/files/{path}` | `app.meta`, `app.file` | no |
+| `POST .../apps/{id}/commit`, `.../rollback`, `.../start` | `app.commit`, `app.rollback`, `app.start` | **yes** |
+| `POST .../apps/{id}/stop`, `DELETE .../apps/{id}` | `app.stop`, `app.remove` | no (narrowing; `WSK` only) |
+| `POST /v1/ws/{ws}/shares/{id}/extend` `{days}` | `share.extend` | no (`WSK` plus the person's signed note at the host) |
+| `POST /v1/ws/{ws}/shares/{id}/password` `{pw}` | `share.password` | no (narrowing; `WSK`) |
+
+`id` and `ws` are 32 lower-case hex digits; a target with a query, `%`, `//` or a dot segment is not a route (vectors
+`route_cases`). **Extend** takes `{"days": 1..30}` and sets the expiry to `now + days` (never more than 30 days from now,
+`days`); agents cannot extend (the host answers `op.not_allowed`). **Stop** keeps the files; **remove** deletes files and
+form rows, and the slug stays taken.
+
+**S2 as built (#1453).** `share.extend` also requires the link to be live and the new end to be later than the old one
+(`not_longer`, 400). `share.password` takes only `{"pw": <C5 record>}`: `null`, a string and any record with other parameters
+are `malformed`, because taking a password away widens access and there is no route for it. A link with a password asks for it
+on the open form (`p`, after the token, rate limit and KDF slot first; a wrong password is not a view). The host's
+`publish.extend` is column P (ticket owner, owner or maintainer); the person's signed note over the extension is not built in
+S2. A hub narrowing is recorded at publish (`hub_narrowings`) and the workspace's share list shows `narrowed_by: "hub"`.
+
+**The approval on both paths (Opus condition 2, S0 CHANGE).** Apps publish through the hub **and** on the direct v2 §12.1
+path, so a workspace with no hub can publish a public app and hub-optional holds. The approval of §11.3 is the same
+object on both paths; what differs is one field and one hash:
+
+| | hub path | direct path |
+|---|---|---|
+| `o.hub_id` | the forwarding hub's id | `null` |
+| `request_hash` | §11.3 (`orch/v2/hub-publish-request\|`, with `hub_id`) | `H("orch/v2/publish-request\|" ‖ suite ‖ workspace_id ‖ u64(ts) ‖ nonce ‖ lp16(METHOD) ‖ lp16(host) ‖ lp16(target) ‖ H(body))`, the same fields and no hub part |
+| the approval travels in | `Orch-Owner-Approval`, inside the `WSK` bytes of §11.1 | `Orch-Owner-Approval`; `WSK` signs the v2 §12.1 bytes, which do not cover it (an approval stripped on the way is only `approval_required`, one attached by a third party names an exact request and nothing else) |
+
+An approval for one path never verifies on the other (`other_hub`; the request hashes also differ, vectors
+`hub_approval_on_direct_path`, `direct_approval_on_hub_path`, `direct_approval_with_the_hub_path_request_hash`). **Whether
+orch-publish admits direct requests at all is its own configuration, owned by slice S3**; §11.2's "Direct requests (V3-D36):
+there are none" describes today's server, and S3 must amend it together with the owner's decision before the direct route is
+switched on. This slice only fixes the approval's bytes so that S3 and S4 build to one contract.
+
+Order of the approval step for an app request, after the signature and nonce steps of §11.2 (hub path) or v2 §12.1 (direct):
+the route is one that takes an approval and has no query (`malformed`); the body parses and is a valid release body whose
+`op` and `app_id` are the route's (`malformed`); the workspace is the route's (`other_workspace`); an approval is present
+(`approval_required`); the approval verifies as §11.3 steps 1 to 7 with `hub_id` as above, `request_hash` as above and
+`access` = the body's.
+
+#### 11.4.1 The password record (C5, condition 8)
+
+Passwords are **generated** by the host (5 words for a link, 6 for an app, shown once). The host sends only the record:
+
+```
+pw = {"alg": "scrypt", "n": 32768, "r": 8, "p": 1, "salt": b64u(16 bytes), "dk": b64u(32 bytes)}
+dk = scrypt(UTF-8(password), salt, n, r, p, dklen 32)
+```
+
+Exactly these members and exactly these parameters, else `malformed` (a weaker record is refused, a heavier one is a memory
+attack on the server). orch-publish compares with a constant-time compare; a password over 256 bytes, an empty one or a
+non-string never reaches the KDF. A verifier takes a rate-limit check and a KDF slot **before** calling the KDF, a wrong
+password is not a view, and the password arrives by `POST` to publish's own gate page, never in a query, never logged
+(S3). Vectors `password_record_cases`, `password_verify_cases`.
+
+### 11.5 Admin read rows for links and apps (C1)
+
+The rows of the company list are the answer of §10.6 (`{"rows": [...]}`; scope, canonical target, window and signature of
+§10.6 are unchanged; S1 removed the old release row and its `admin_read_row_*` vectors). A row is one of two shapes, told apart by
+`type`, with **exactly** these members:
+
+```
+link: workspace_id, id, type "link", kind secret|once, state live|expired|revoked, created_ms, expires_ms (int|null), bytes,
+      label, ticket (ULID|null), by_kind person|agent, by_name (str|null), views, has_password (bool)
+app:  workspace_id, id, type "app", kind page|app|form, state running|stopped|removed, created_ms, updated_ms, bytes, label,
+      ticket, by_kind, by_name, slug, name, access, has_password, version, visits_30d
+```
+
+`label` (≤ 80), `name` (≤ 60) and `by_name` (≤ 60) follow the text rule of §8.5; `by_name` is asserted by the workspace and
+display only. `has_password` is a bool; for an app it is `true` exactly when `access` is `password`. **A row never carries**
+a token or its hash, a link with its token, a password record, a path, any content, a URL, or any other member (`malformed`;
+vectors `row_cases`, named `row_*_with_token`, `..._with_password_record`, `..._with_a_path`, `..._with_content`). The
+console renders the text members through `render_text` (§8.4). Rows of a workspace outside the scope (full mode, bound to
+the calling hub, current `WSK`) are never emitted, at orch-publish **and** at the hub (`not_bound`, vectors
+`row_scope_cases`: a selective workspace's rows are refused).
+
+### 11.6 The hub's narrowing: `hub.release_narrow` (C2, condition 7)
+
+A hub admin may **revoke a link or stop an app** of a full-mode workspace bound to the hub, and nothing else. The hub
+signs, under `HK_op`, `orch/v2/hub-release-narrow|`:
+
+```
+hub.release_narrow {v, suite, kind: "hub.release_narrow", hv, hub_id, workspace_id, target: "share"|"app", id (32 hex),
+                    action: "revoke"|"stop", ts_ms, nonce (b64u 32 bytes)}
+PUT /v2/hub/narrow    body = the signed object, no other header
+```
+
+`action` is `revoke` exactly for a `share` and `stop` exactly for an `app`; every other action (`start`, `extend`, `remove`,
+...) or pairing is `malformed`. Checks at orch-publish, in order (a signature always before the nonce store):
+
+| # | Check | Refusal |
+|---|---|---|
+| 1 | envelope, `kind`, `v`, `hv` (`wrong_suite` for the suite), the exact field set and types, the action/target pairing | `malformed`, `wrong_suite` |
+| 2 | `\|now − ts_ms\| ≤ 120 s` | `stale_timestamp` |
+| 3 | the held, current hub card for `hub_id`, verified again for this request | `unknown_hub` |
+| 4 | the signature under that card's `HK_op` | `bad_hub_signature` |
+| 5 | the nonce is unseen for this hub; then recorded | `replay` |
+| 6 | the workspace has a binding, status `bound`, under its card's **current** `WSK` (`not_bound`), to this hub (`other_hub`), in `mode: "full"` (`not_bound`) | `not_bound`, `other_hub` |
+| 7 | the target exists (`not_found`) and belongs to `workspace_id` | `not_found`, `other_workspace` |
+
+The workspace sees the narrowing in its own list and activity. The hub keeps an activity record (`link.revoked`,
+`app.stopped`: ids and labels only). Vectors `narrow_*` (`narrow_start_refused`, `narrow_other_workspace`,
+`narrow_selective_refused`, `narrow_replay`, and the rest).
+
+### 11.7 Reach origins and the app CSP (C7, condition 10)
+
+`reach` lists the origins the app's page may fetch from. Each entry is a **canonical https origin**, `https://<name>[:<port>]`:
+lower case, ASCII, no path (not even `/`), query, fragment or userinfo, the default port not spelled out, a port in
+1..65535. Refused, with the code in brackets: any `*` (`wildcard`); a scheme other than `https`, so `http:`, `data:`,
+`javascript:`, `blob:`, `ws:` and a bare host (`https_only`); `user@` (`userinfo`); a path, query, fragment or backslash
+(`path`); an IP literal in any spelling, `127.0.0.1`, `127.1`, `0x7f.0.0.1`, `2130706433`, `[::1]` (`ip_literal`: a last label
+that starts with a digit is never a name); `localhost`, a one-word host or a name under `.local`, `.internal`, `.lan`, `.home`,
+`.corp`, `.intranet`, `.private`, `.localhost`, `.home.arpa`, `.test`, `.invalid`, `.example`, `.onion`, `.alt` (`not_remote`); a host equal to the host of the hub or of orch-publish itself,
+**whatever the port** (cookies do not separate ports: `forbidden_origin`); anything else not in canonical form (`origin`).
+A list is strictly sorted with no duplicates (`reach_order`) and has at most 8 entries (`reach`). The workspace's own
+`settings.publish.app_reach` must also contain every entry (S4); the owner approves the list per version (it is inside
+`meta_hash` and `reach_hash`).
+
+The policy of one view is built by a pure function both sides share (vectors `csp_cases`):
+
+```
+base = the configured share origin + the view path, "http(s)://host[:port]/a/<slug>/v/<view id>/" (never taken from a Host header)
+CSP  = "sandbox allow-scripts allow-forms allow-popups allow-downloads; default-src 'none'; script-src B 'unsafe-inline';
+        style-src B 'unsafe-inline'; img-src B; font-src B; connect-src B R1 R2 ...; form-action B; base-uri 'none';
+        frame-ancestors 'none'"          (B = base, R = the reach entries; one line)
+```
+
+`base` must match `https?://host[:port](/segment)*/` with segments of `[A-Za-z0-9._~-]` (so nothing in it can end a CSP
+source: `base`). There is no `allow-same-origin`, `allow-top-navigation` or `allow-popups-to-escape-sandbox`: each app runs as an
+opaque origin. The CSP limits background requests only; navigation, `window.open` and links can still send data, which the
+release review and the threat notes say plainly.
+
+### 11.8 The pass into a company or group app: `hub.app_pass` (C6, condition 19)
+
+For `access: company` or `group` publish asks the hub who may open. The hub signs, under `HK_op`, `orch/v2/hub-app-pass|`:
+
+```
+hub.app_pass {v, suite, kind: "hub.app_pass", hv, hub_id, workspace_id, app_id, audience, nonce (b64u 32 bytes), exp_ms}
+```
+
+It names **no person and no user**. Publish issued `nonce` for this app (`pass_nonces`, single use). Checks, in order:
+envelope and fields (`malformed`, `wrong_suite`) -> the held hub card (`unknown_hub`) and `HK_op` signature
+(`bad_hub_signature`) -> the app's workspace is bound to this hub under its current `WSK`, any mode (`not_bound`,
+`other_hub`) -> the app exists (`not_found`) in that workspace (`other_workspace`) -> its access is `company` or `group`
+(`not_company_app`) -> `audience` equals the stored audience (`audience_mismatch`) -> `exp_ms > now` (`expired`) and `exp_ms −
+now ≤ 60 s` (`pass_too_long`) -> the nonce was issued for this app (`bad_nonce`), is unspent (`replay`) and not past its own
+`until_ms` (`expired`). The caller spends the nonce in the same transaction. The hub sends the pass only to the publish
+origin of its own configuration (S5). The hub decides who is in the company, so a compromised hub can over-grant company and
+group apps (and only those); that is said in the release review text and in §13.
+
+### 11.9 Codes added by M4
+
+`meta_mismatch` (409), `file_mismatch` (409), `not_found` (404), `expired` (401), `pass_too_long` (400), `bad_nonce` (401),
+`not_company_app` (403), `audience_mismatch` (403), and the validation codes of §11.4 and §11.7. All other refusals reuse
+§14.
 
 ## 12. Who verifies what (summary)
 
@@ -2369,6 +2711,13 @@ Requests for `secret` or `sealed` access keep the v2 path: the host evaluates th
   F1 id and generation checks; publish requests through the v2 nonce store; link messages only through the 120 s
   window in V3 (SHORTCUT).
 
+**M4 password apps (§11.4.1).** The 5 tries a minute per app are shared by every visitor, so one address can keep a password app's gate closed (a lock-out, accepted for v1; the per-IP bucket and the KDF slots bound the cost, hardening is #1263).
+
+**M4 reach and DNS (§11.7).** A reach entry is judged by its spelling only. A public-looking name that resolves to a private
+or loopback address (DNS rebinding, a record the owner or an attacker controls) cannot be caught by this contract; the CSP
+limits the browser's background requests to the approved names, and the release review tells the owner to approve names, not
+addresses. Publish and the hub never resolve a reach name.
+
 ## 14. Refusal codes
 
 v2 codes keep their meaning (v2 §14). New in H0:
@@ -2393,6 +2742,9 @@ v2 codes keep their meaning (v2 §14). New in H0:
 | `reader_downgrade` | card | §5 step 7: a newer card declares a lower `reader` than the held one |
 | `hub_too_old` | card at join (host) | §5 "Reader level": the card's `reader` is below the workspace's `required_reader`; the host's `sign.convenience_readers` reason |
 | `unknown_op`, `wrong_mode` | link | §10 |
+| `wrong_backup_key` | hub restore (local) | §17.5: the key derived from the typed words is not the backup header's `bk_pub` |
+| `backup_invalid` | hub restore (local) | §17: every other reason a backup file is refused (container, envelope, signature, MAC, fields, file list, seal, tar entries, hashes, sequence overflow); the `reason` (§17.9) is for the admin's log, never an oracle on the wire |
+| `hub_retired` | link reply (M4 S8) | the hub is being removed: an unsigned notice, shown on the host as a banner with the break-glass leave; the host never unbinds, leaves or deletes anything because of it |
 | `bad_wrap` | `wk_seal` reply | the wrap does not open under `HXK`, is not bound to this `hub_id`, this workspace and the stated epoch, or is another wrap for an epoch already sealed (§10.2a) |
 | `bad_epoch` | `wk_seal` reply | v2 code reused: the epoch is lower than the newest one held for the live binding (§10.2a) |
 | `auth_failed` | link open | §10.1: every failure before the link is authenticated (unknown workspace, key mismatch, bad signature) returns this one code, so an unauthenticated peer learns nothing; the reason stays in the hub's log |
@@ -2448,6 +2800,11 @@ bind of a non-phone channel), `challenge_invalid` (400, `session_ref` of another
 `cert_expired` (403, told only to a holder of the key or a channel session), `forbidden_role` (403, a channel session
 outside its scope), `replay` (409, an older push key).
 
+M4 (§11.4 to §11.9): `meta_mismatch`, `file_mismatch`, `not_found`, `expired`, `pass_too_long`, `bad_nonce`, `not_company_app`,
+`audience_mismatch`, `reserved_slug`, `slug`, `name`, `kind`, `access`, `audience`, `password`, `files`, `files_order`, `no_index`,
+`label`, `ticket`, `wildcard`, `https_only`, `userinfo`, `path`, `ip_literal`, `not_remote`, `forbidden_origin`, `origin`, `reach`, `reach_order`,
+`days`.
+
 Reused: `malformed`, `wrong_suite`, `bad_signature`, `cert_invalid`, `cert_expired`, `revoked`, `other_workspace`,
 `other_person`, `stale_timestamp`, `unknown_workspace`, `replay`, `stale_card`. HTTP statuses for publish are in §11.2;
 link errors travel as `{"error": code}` reply bodies; host-side refusals are local (logged, never sent back as content).
@@ -2466,7 +2823,7 @@ link errors travel as `{"error": code}` reply bodies; host-side refusals are loc
 | `hub_joined` | the owner-signed workspace-log event and its ticket-format §5.3 bytes; a One-click (`auth: "convenience"`) join that carries its `owner_proof` (§9.6) |
 | `publish` | a forwarded request: `wsk_signed_hex` (hub-path bytes), `approval_hash_hex`, `hub_signed_hex`, `request_hash` |
 | `link_auth` | challenge, exporter, signed bytes, signature |
-| `audit`, `admin_read` | V3-D4 / F3: a 4-record chain with its events and hashes; the admin read signed bytes, a request and a row |
+| `audit`, `admin_read` | V3-D4 / F3: a 4-record chain with its events and hashes; the admin read signed bytes and a request |
 | `spaces` | V3-D8: the space key per epoch, `sk_commit`, one sealed item (salt, derived key, AAD, plaintext object) and one wrap (ephemeral seed, AAD) |
 | `phase4` | p4: the `log_sync` lines, heads, view key, AAD and one sealed page; a ticket projection `proj_ticket`, a ticket page carrying it and its plaintext bytes (D15b); a prepared context and digest; a relay request and its bytes; the relay routes' request bytes and one sealed push payload (`relay_routes`); the custodial type table; the `space.accept` built from the vector proposal |
 | `share_item_f1` | C3b addendum: a ticket item with an `f1` block and its `item_hash` (§10.2b, §8.6) |
@@ -2490,6 +2847,18 @@ plus `selective_build`. D15b: orch-core builds the `log_sync_proj_*` pages (its 
 must equal `page_ticket_with_proj` byte for byte) and the hub runs `proj_build`; both run `workspace_roster_v*` (hub: `project_workspace`, core: its replay's
 `roster_v`). The hub also runs `hub_join`. #1198 C8 (§5, §9.6): orch-core runs `card_reader`, `hub_reader`, `owner_proof`,
 `owner_proof_recorded`, `joined_payload` and `left_payload`; the hub runs all of them and `owner_proof_join`. Each case carries its `phase`; the L2 cases name their finding in `note`. The cross-repo contract job (V3-D8) runs from phase 2.
+
+**`vectors_published.json`** (M4, #1357 S0; `make_vectors_published.py`): the sections `slug_cases`, `origin_cases`, `reach_cases`,
+`csp_cases`, `password_record_cases`, `password_verify_cases`, `meta_cases`, `meta_hash_cases`, `commit_cases`, `route_cases`,
+`extend_cases`, `row_cases`, `row_scope_cases`, `approval_cases` (both paths), `narrow_cases` and `pass_cases`, with `required`
+naming the cases an implementation must not lose. orch-hub and orch-publish replay every section; orch-core replays twelve and skips four with reasons: `row_cases` and `row_scope_cases` (rows are made by orch-publish and read by the hub console), `narrow_cases` and `pass_cases` (verified by orch-publish), and for `approval_cases` it checks only what the host computes (the request pre-check and the `request_hash`).
+
+`vectors_hub_backup.json` (M4 S0; FAKE keys, words and ephemeral keys, fixed in the generator only): `labels`, `constants`,
+`words` (three 24-word lists; the first two are valid BIP-39), `keys`, an `example` file (header, envelope, sealed payload
+and tar) and `cases` with `check` one of `bk_key`, `open_backup`, `tar`, `file_list`, `restore_floor`, `hub_where` and
+`expect` `{"ok": …}` or `{"error": code, "reason"?}`. The hub replays every case and fails on an unknown check or a missing
+required case; orch-core replays `hub_where`. Expected values are written by hand in the generator, not computed by the code
+under test; the BK / K_auth / seal values are computed there from first principles and compared with the module.
 
 ## 16. Decided here, and open points for L2
 
@@ -2589,3 +2958,145 @@ transport in the action).
   it, which only stops publishing. **orch-publish never pins a binding first-come:** that would make the hub's choice
   of `WSK` authoritative. A binding counts only under the `WSK` of the card publish already holds (§9.2, §11.2 step 5).
 - **Relay accounts by hub card** (E1) and hub↔hub objects (H7) are not in H0.
+| 46 | Backup file header (M4 S0) | the §2.4 envelope `{o, sig}` plus a `mac` key; `v: 2`, `hv: 0` like every hub object (the design draft said `v: 1`) | §2.4 |
+| 47 | Backup MAC covers `cj(header)` only, not the signature | the signature is verified separately and the header already holds the root key, so a swapped root changes the MAC input | Opus condition 12 |
+| 48 | Backup payload nonce | all-zero, safe because every seal draws a fresh ephemeral key (as `seal_sk`) | v2 §5.3 |
+| 49 | Required files and `snapshot_seq` | `hk_root.key`, `hxk.key`, `meta.json` must be listed; the header carries `snapshot_seq` besides `op_seq` and `card_seq` (condition 14 raises all three) | design 4.2, conditions 13-14 |
+
+## 17. Hub backup (M4, #1462; design `m4-settings-design.md` 4.2-4.3 and the Opus conditions 9-17)
+
+Everything here is local to the hub (no link op, no other repo reads it). It is written first so that the backup code
+(M4 S5) and the restore code (M4 S6) have one fixed shape and one vector file. A hub is optional for its workspaces: a
+backup protects the hub's own state (keys, people, channels), nothing a workspace needs to keep working.
+
+### 17.1 The file
+
+```
+file     = MAGIC || u32(len(E)) || E || sealed            MAGIC = "ORCHBAK1" (8 bytes), E = cj(envelope) exactly
+envelope = {"o": header, "sig": b64u(Sign(HK_root, "orch/v2/hub-backup|" || cj(header))), "mac": b64u(HMAC-SHA256(K_auth, cj(header)))}
+header   = {v: 2, suite: 2, kind: "hub.backup", hv: 0, hub_id, hk_root_pub, made_ms, op_seq, card_seq, snapshot_seq,
+            bk_pub, files: [{path, size, sha256}], dev}
+sealed   = eph_pub (65) || AES-256-GCM(K, nonce = 12 zero bytes, tar, AAD)
+```
+
+`E` is at most 1 MiB and byte-for-byte the canonical form of its own parse (strict, §2.3). `made_ms`, `op_seq`, `card_seq`
+and `snapshot_seq` are integers in `0 … 2^53 − 1`; `hub_id` is 32 lower-case hex; `hk_root_pub` and `bk_pub` are 65-byte
+public keys (b64u); `dev` is a boolean. `op_seq` and `card_seq` are the hub's current counters (§4, §5), `snapshot_seq` the
+newest access snapshot sequence it issued. The header is public: nothing in it is secret.
+
+### 17.2 The backup key from 24 words
+
+The hub generates 24 BIP-39 English words (256 bits + the 8-bit checksum, as core's recovery code), shows them once, and
+keeps only `bk_pub` and `K_auth`. `normalise(words)` = NFKD, lower case, split on white space, rejoin with single spaces;
+the caller checks the wordlist and the checksum **before** deriving (a list of 24 other strings simply gives another key;
+the vectors use valid lists). Then
+
+```
+okm    = scrypt(password = normalise(words) in UTF-8, salt = "orch/v2/hub-backup-key|" || 0x02, N = 2^17, r = 8, p = 1, dklen = 40)
+BK     = (int(okm) mod (n − 1)) + 1        n = the P-256 group order (FIPS 186-5 A.2.1)
+bk_pub = the public key of BK
+K_auth = HKDF-SHA256(ikm = okm, salt = 32 zero bytes, info = "orch/v2/hub-backup-auth", L = 32)
+```
+
+`K_auth` is stored on the server (0600) so a nightly backup needs no secret; `BK` and the words are never stored, logged or
+written to a file, and are wiped from memory after use. Replacing the words (new `BK`) makes a new backup and then deletes
+the kept backups made under the old key.
+
+### 17.3 Signature and MAC (why both)
+
+The header is public and `bk_pub` is in it, so anyone could build a file under **another** `HK_root`, seal it to a copied
+`bk_pub` and sign it correctly. The signature alone proves only "some root signed this". The MAC needs `K_auth`, which comes
+from the words only: a restore recomputes it from the typed words, so a forged file fails with `backup_invalid`/`mac` even
+though its signature and seal verify. In place, a different `hub_id` is refused earlier (`other_hub`). On a fresh server the
+person additionally compares the fingerprint (`hub_id`, 8 × 4 characters, as the phone shows it) before typing the words.
+
+### 17.4 The seal
+
+`seal_to(bk_pub)` with purpose `hub-backup` (v2 §5.3's construction): a fresh ephemeral P-256 key per seal;
+`K = HKDF-SHA256(ECDH(eph, bk_pub), salt = eph_pub || bk_pub, info = "orch/v2/seal|hub-backup|" || hub_id, L = 32)`;
+`AAD = "orch/v2/hub-backup-aad|" || cj(header)`. A payload moved under another header does not open. The plaintext is a tar.
+
+### 17.5 What a restore checks, and in which order (nothing is written before the last step passes)
+
+1. Container: magic, length, canonical envelope (`backup_invalid`/`container`).
+2. Envelope: exactly `o`, `sig`, `mac`; `kind`, `suite`, `v`, `hv` (`envelope`).
+3. `HK_root` signature over the header, with the `hk_root_pub` the header itself names (`sig`).
+4. Exact header fields and types (`fields`); the file list (§17.6); `hub_id` = the id of `hk_root_pub` (`hub_id`).
+5. `dev`: a real hub refuses `dev: true` (`dev_refused`), a dev hub refuses `dev: false` (`dev_mismatch`).
+6. In place: `hub_id` and `hk_root_pub` equal the running hub's, else `other_hub`. Fresh server: the fingerprint is shown.
+7. Words → keys. `bk_pub` ≠ the header's: `wrong_backup_key`.
+8. MAC mismatch: `backup_invalid`/`mac`.
+9. Open the seal with the header as AAD (`seal`), then the tar rules (§17.7), then every SHA-256 (`hash`).
+
+Steps 1-6 need no words, so a restore can show the fingerprint and refuse the wrong hub before asking for them.
+
+### 17.6 The file list and what is never in a backup
+
+`files` is 1 to 512 entries, strictly ascending by `path` (so unique), exactly the keys `path`, `size`, `sha256`
+(lower-case hex). A path is relative, `/`-separated, 1 to 8 segments of `[A-Za-z0-9][A-Za-z0-9._-]{0,63}`, at most 200
+characters (so never absolute, never empty, never `.` or `..`, never a backslash); no path is a directory of another (not just its
+sorted neighbour: `keys`, `keys-x`, `keys/a` is refused) and no two paths are equal when case-folded (`HK_ROOT.key` next to
+`hk_root.key`), both `files_order`;
+`size` ≤ 200 MiB and the sum ≤ 200 MiB (also the upload limit). `hk_root.key`, `hxk.key` and `meta.json` must be listed.
+The list contains every key file, `meta.json`, `op/<current>/`, `revoked/`, `tls.key`, `hub-settings.json` and a
+consistent copy (SQLite backup API) of every store, and **never**: `setup-token`; `route-queue.db` (and its `-wal`,
+`-shm`, `-journal`); `event-deliver.db` (the event delivery queue; rebuilt, never restored; also with its sidecars); anything under `backups/`, `tmp/`, `logs/`, `state.new/`, `state.old/`; `*.log`, `*.tmp`, `*.lock`,
+`*.pid`. Inside the copied stores these rows are removed first: sessions, pending TOTP enrolments, pairing codes, limiter
+and failure rows, switch tickets, push tokens. The words are never in a backup. (Row removal is the writer's duty, tested
+in M4 S5; the path rules are checked by `file_list` vectors.)
+
+### 17.7 Extraction
+
+The plaintext is a tar. A restore accepts exactly the header's list and nothing else: **regular files only** (type `0`; a
+symlink, hard link, device, fifo, directory, sparse or any other type is refused: `tar_type`); the entry name is a valid
+path of §17.6 and in the list (`tar_path`, `tar_unlisted`), appears once (`tar_dup`), has the listed size **checked from the
+entry header before its data is read** (`tar_size`) and the listed SHA-256 (`hash`); every listed file appears
+(`tar_missing`); anything the tar library cannot read is `tar`. The tar's own modes, owners and times are ignored. The
+restore writes under a fresh staging directory (`state.new/`, directories 0700, files 0600) with its own paths, then swaps.
+All entries are validated in memory before the first write.
+
+### 17.8 Sequence floor (anti-rollback)
+
+After a restore the hub must issue `op_seq`, `card_seq` and `snapshot_seq` above everything it ever issued, or a bound
+workspace refuses the restored hub as stale (§5 step 7, §7):
+
+```
+in place     v = max(live, backup) + 1000
+fresh server v = max(backup + 1000, clock)    clock = unix MILLISECONDS now (the hub passes milliseconds)
+every v      v ≤ 2^53 − 1, else the restore is refused (backup_invalid / seq_overflow)
+```
+
+The clock value must be an integer (not a boolean or a float) in 0 .. 2^53 − 1, else `backup_invalid` / `fields`, in place
+too. Restoring the same backup twice therefore climbs twice (`live` after the first restore is the first result), and a workspace
+that accepted the first accepts the second. The restore never reissues a user or channel certificate for non-admin users:
+people the backup brought back stay suspended until an admin turns each on in People; the op certificate of the backup is
+revoked live before the restore; `revoked/` and the access removals of the live hub are merged, never dropped.
+
+The clock is in milliseconds (the contract function only takes the larger of two integers): seconds would fall below a live
+counter that earlier in-place restores had already pushed up by thousands. 1.9e12 is far below 2^53.
+
+**Never widen, never revive (M4 S6).** In place the result is a subset of the live hub: the org secrets, shares, wraps, skill and MCP offers, add-on requests of `access.db`, and the registry, connections, shares, spaces, changes, wk-seal and workspace-view stores, are the LIVE ones; grants and group members are intersected with the live rows (the role is the live role); every surviving person keeps the LIVE password and TOTP. Restricting rows (add-on allow lists, the policy's allow / block / ceiling, `disabled`, `must_recover`, revocations, lockouts) are never dropped: in place the stricter of backup and live, on a fresh server kept as they were; only granting rows are live-or-staged. On a fresh server every org secret share, "shared with all" flag and skill or MCP offer is switched off into `restore_pending` until an admin turns it on again, and every admin must use a one-time recovery link.
+
+**What the hub does (M4 S6).** Every check of §17.5 and the floor pass before anything is written. The listed files are written
+under `<state>.new` (0700/0600), then made safe: people removed or disabled in the live hub stay removed or disabled, a
+hub-admin demoted live is not one again, live channel revocations are added, every other non-admin is suspended (disabled; an
+admin enabling them sets `must_recover`), every channel is revoked (also in `revoked_channels`) and every session, pairing code
+and challenge dropped, the backup's op certificate is revoked, and the hub rotates to `op_seq`/`card_seq` of the floor with a UK
+certificate only for the admins and no channel certificate. A new `version_floor` row of the access store lifts the next
+version of every snapshot and org bundle above the `snapshot_seq` floor. Kept from the live hub, never taken from the backup:
+the backup key file, the audit chain and activity history (appended to), `hub-settings.json` and `tls.key` (in place), the kept
+backups and the setup token. The restore is audited (`hub_restore`, see the audit events: the backup's `made_ms`, the `gap_ms` since then and the
+new `op_seq`) before the live op certificate is revoked; the swap is two renames (`<state>` to `<state>.old`, `<state>.new`
+to `<state>`) that the next start completes or undoes, and `<state>.old` goes after the first good start. No restore while an
+update or a remove runs (and the reverse): one `flock` per state dir. Refusal codes: `wrong_backup_key`, `backup_invalid` (§17.9),
+`other_hub`, `dev_mismatch`, `dev_refused`, `restore_busy`, `no_admin` (nobody would be able to sign in), `restore_failed`.
+
+### 17.9 Reasons
+
+`backup_invalid` carries a stable `reason` for the admin's log and for the vectors: `container`, `envelope`, `sig`,
+`fields`, `hub_id`, `mac`, `seal`, `words`, `files`, `files_path`, `files_size`, `files_order`, `files_required`, `tar`,
+`tar_type`, `tar_path`, `tar_unlisted`, `tar_dup`, `tar_size`, `tar_missing`, `hash`, `seq_overflow`. The page shows one
+plain sentence for all of them ("this file is not a backup of this hub, or it was changed").
+
+Reference: `orch_hub.contract.backup` (`derive_keys`, `header_mac`, `read_header`, `open_backup`, `check_file_list`,
+`check_tar`, `restore_floor`, `seal_payload`) and `orch_hub.contract.where`. Vectors: `vectors_hub_backup.json`.

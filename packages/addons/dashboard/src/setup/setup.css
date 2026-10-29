@@ -135,6 +135,16 @@
   border-color: var(--brand);
   font-weight: 600;
 }
+.setup a.primary {
+  display: inline-block;
+  padding: 9px 14px;
+  border: 1px solid var(--brand);
+  background: var(--brand);
+  color: var(--on-brand);
+  border-radius: 8px;
+  font-weight: 600;
+  text-decoration: none;
+}
 .setup button:disabled {
   opacity: 0.5;
   cursor: default;
@@ -226,11 +236,6 @@
   font-size: 11px;
   margin-right: 5px;
 }
-.setup .word-check {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-}
 .setup .review-item {
   border-bottom: 1px solid var(--border);
   padding-bottom: 12px;
@@ -281,6 +286,42 @@
   color: var(--danger);
   background: var(--danger-soft);
 }
+.setup .ws-summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  margin: 8px 0 16px;
+  color: var(--text-muted);
+}
+.setup .ws-summary strong {
+  color: var(--text);
+}
+.setup .ws-summary .link {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--accent, inherit);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.setup .progress-note {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  border: 1px dashed var(--warning);
+  border-radius: 8px;
+  background: var(--warning-soft);
+  font-size: 13px;
+}
+.setup .progress-note summary {
+  cursor: pointer;
+  margin-top: 4px;
+  color: var(--text-muted);
+}
+.setup .progress-note p {
+  margin: 6px 0 0;
+  color: var(--text-muted);
+}
 .setup .open-workspace {
   margin-top: 32px;
 }
@@ -298,6 +339,16 @@
 }
 .setup .review-facts dd small {
   color: var(--text-muted);
+}
+.setup .cancel-wrap {
+  display: block;
+}
+.setup .cancel-hint {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-faint);
+  text-decoration: none;
 }
 .setup .cancel {
   padding: 9px 0;
@@ -475,4 +526,25 @@ body:has(> #root > .setup) {
   border: 1px solid var(--border);
   border-radius: 999px;
   font-size: 13px;
+}
+
+.setup .badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-size: 11px;
+  font-weight: 600;
+  vertical-align: middle;
+}
+.setup details.click-risk {
+  margin-top: 4px;
+}
+.setup details.click-risk summary {
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 13px;
+  text-decoration: underline;
 }

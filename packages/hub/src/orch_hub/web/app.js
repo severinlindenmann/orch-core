@@ -7,16 +7,18 @@ import { ChannelError, deleteChannel, generateKey, loadChannel, saveChannel, sig
 import { inboxView, reviewMeaning, signedMeaning } from "./inbox.js";
 import { parseRoute, registerPages } from "./route.js";
 import { PAGES } from "./pages.js";
-import { homeView, workspaceStatus } from "./home.js";
+import { firstRunOutgrown, homeView, sharedEnded, workspaceStatus } from "./home.js";
 import { activityView } from "./activity.js";
 import { accountFromWorkspaceView, accountView } from "./account.js";
 import { adminView } from "./admin.js";
 import { changesView, checkChange, sentence as changeSentence } from "./changes.js";
+import { totpPanel } from "./totp.js";
 import { inviteView } from "./invite.js";
+import { rememberDashboard } from "./connect.js";
 import { servicesView } from "./services.js";
 import { handoffsView } from "./handoffs.js";
 import { phonesView } from "./phones.js";
-import { workspacesView, workspaceDetailsView } from "./workspaces.js";
+import { workspacesView, workspaceDetailsView, newWorkspaces } from "./workspaces.js";
 import { OPEN_FIRST, colour, initials, landing, landingPlan, railRows, safeUrl } from "./switch.js";
 import { Refusal, grantTermsOk, grantSentence, grantFacts, addonFacts, addonTermsOk, settingsFacts, settingsTermsOk, checkBindings, checkPrepared, describe, renderMulti, renderText, shortHash, verifyQuestion, DECISIONS } from "./render.js";
 
@@ -42,11 +44,11 @@ function h(tag, props = {}, ...kids) {
   if (props["data-sign"] !== undefined) { e.arm = () => arm(e); e.arm(); }
   return e;
 }
-let servicesTimer, viewRevision = 0;
+let servicesTimer, workspacesTimer, viewRevision = 0;
 let frame = null;
 let railSnapshot = "";
 let paintedRoute = null;
-const show = (...nodes) => { clearInterval(servicesTimer); viewRevision++; frame = null; paintedRoute = null; root.classList.remove("shelled"); root.replaceChildren(...nodes.flat().filter(Boolean)); };
+const show = (...nodes) => { clearInterval(servicesTimer); clearInterval(workspacesTimer); viewRevision++; frame = null; paintedRoute = null; root.classList.remove("shelled"); root.replaceChildren(...nodes.flat().filter(Boolean)); };
 const field = (label, input) => h("div", {}, h("label", { text: label }), input);
 const banner = (kind, title, text) => h("div", { class: "banner " + kind, role: kind === "bad" ? "alert" : "status" }, h("b", { text: title }), text ? h("div", { class: "small", text }) : null);
 
@@ -113,11 +115,11 @@ function loginView(err) {
       if (r.status !== 200) return loginView(say(r.body.error === "malformed" ? "bad_credentials" : r.body.error)); // run-11 #11: a sign-in failure is never "could not be read safely"
       await afterLogin();
     },
-  }, field("Name or user id", id), field("Password", pw), field("6-digit code", code), h("div", { class: "row top" }, h("button", { class: "pri", type: "submit", text: "Sign in" })));
+  }, field("Your name", id), field("Password", pw), field("6-digit code", code), h("div", { class: "row top" }, h("button", { class: "pri", type: "submit", text: "Sign in" })));
   show(h("h1", { text: "Sign in to your hub" }), err ? banner("bad", "Not signed in", err) : null, form);
 }
 
-// First admin (prototype): the installer's one-time link opens this page; the hub shows the authenticator secret once.
+// First admin (prototype): the installer's one-time link opens this page; the hub shows the authenticator QR once and signs the new admin in.
 function setupView(token, err) {
   const name = h("input", { id: "name", autocomplete: "name", required: true, value: "Admin" });
   const pw = h("input", { id: "pw", type: "password", autocomplete: "new-password", required: true, minlength: 10 });
@@ -130,18 +132,25 @@ function setupView(token, err) {
       history.replaceState(null, "", location.pathname);
       show(
         h("h1", { text: "Admin created" }),
-        banner("ok", "Write these down", "They are shown once."),
-        h("dl", { class: "facts" }, h("dt", { text: "User id" }), h("dd", { class: "fp", id: "new-user-id", text: r.body.user_id }), h("dt", { text: "Authenticator secret (add it to your authenticator app)" }), h("dd", { class: "fp", id: "new-totp", text: r.body.totp_secret })),
-        h("div", { class: "row top" }, h("button", { class: "pri", text: "Continue to sign in", onclick: () => loginView() })),
+        banner("ok", "You are signed in"),
+        h("h2", { text: "Add your sign-in code to your phone" }),
+        h("p", { class: "muted", text: "Scan this with your authenticator app. You will need the app's 6-digit code each time you sign in." }),
+        totpPanel(r.body.totp_uri, r.body.totp_secret),
+        h("div", { class: "row top" }, h("button", { class: "pri", id: "open-hub", text: "Open the hub", onclick: () => afterLogin() })),
       );
     },
   }, field("Your name", name), field("Choose a password (10 or more characters)", pw), h("div", { class: "row top" }, h("button", { class: "pri", type: "submit", text: "Create the admin" })));
   show(h("h1", { text: "Set up your hub" }), err ? banner("bad", "Not created", err) : null, h("p", { class: "muted", text: "This creates the first admin, with a password and an authenticator code." }), form);
 }
 
+/** Hub admin routes need a full sign-in; roles also need an admin or owner role in that workspace (the hub refuses the rest). */
+const canAdmin = (w) => !state.user?.needs_sign_in && (w ? ["admin", "owner"].includes(w.role) : !!state.user?.is_admin);
+
 async function refresh() {
-  const [who, chans] = await Promise.all([api("GET", "/session"), api("GET", "/me/channels")]);
+  // A session that came from a workspace (needs_sign_in) is refused /me/channels: ask only when the hub will answer.
+  const who = await api("GET", "/session");
   if (who.status !== 200) { clearSession(); return false; }
+  const chans = who.body.needs_sign_in ? { status: 0, body: {} } : await api("GET", "/me/channels");
   if (state.user?.user_id !== who.body.user_id) clearSession();
   state.user = who.body;
   state.channels = chans.status === 200 ? chans.body.channels : [];
@@ -158,6 +167,7 @@ function pageLoading(active, kind = active) {
 
 function shell(active, ...nodes) {
   nodes = [recoveryBanner(), ...nodes];
+  if (active !== "workspaces") clearInterval(workspacesTimer);
   if (active !== "services") { clearInterval(servicesTimer); viewRevision++; } // leave the Services page: stop its refresh
   const sameRoute = paintedRoute === location.hash;
   const tab = (id, label, cls) => h("a", { href: "#/" + id, "data-tab": id, class: cls + (active === id ? " on" : ""), "aria-current": active === id ? "page" : null, text: label, onclick: (e) => { e.preventDefault(); navigate("#/" + id); } });
@@ -259,6 +269,7 @@ async function openWorkspace(w) {
   const r = await api("POST", "/switch/ticket", { workspace_id: w.id, return_to: "/", kind: "open" });
   const url = r.status === 200 ? safeUrl(r.body.url) : null;
   if (!url) { state.notice = banner("bad", "Cannot open " + renderText(w.name), say(r.status === 200 ? "malformed" : r.body.error)); return home(); }
+  rememberDashboard(url); // so the /c page can send a connect link to this dashboard next time
   location.assign(url);
 }
 
@@ -304,7 +315,7 @@ async function landFromTicket(t) {
   const name = renderText(p.body.name ?? "you");
   const plan = landingPlan(p.body);
   if (plan === "redeem") return redeemTicket(t, false);
-  if (plan === "confirm") return plain(h("h1", { text: "Continue as " + name + "?" }), h("p", { class: "muted", text: "You came from a workspace. Nothing happens until you continue." }),
+  if (plan === "confirm") return plain(h("h1", { text: "Continue as " + name + "?" }), h("p", { class: "muted", text: "This workspace was connected for " + name + ". Nothing happens until you continue." }),
     h("div", { class: "row" }, h("button", { class: "pri", text: "Continue", onclick: () => redeemTicket(t, false) }), h("button", { text: "Cancel", onclick: () => loginView() })));
   const cur = renderText(p.body.signed_in_as?.name ?? "someone else");
   return plain(h("h1", { text: "Different person" }), h("p", { text: "You are signed in as " + cur + " here. This link is for " + name + "." }),
@@ -315,6 +326,13 @@ async function landFromTicket(t) {
 function reauthView() {
   show(h("div", { class: "plain" }, h("h1", { text: "Sign in again to use admin tools" }), h("p", { class: "muted", text: "You arrived from a workspace. Admin tools need your password and code." }),
     h("button", { class: "pri", text: "Sign in again", onclick: async () => { await api("DELETE", "/session"); clearSession(); loginView(); } })));
+}
+
+// P17: an admin whose session came from a workspace keeps "Connect a workspace" in reach. The click explains why one real
+// sign-in is needed, then the normal login form (password + code) runs; nothing here grants a session.
+function signInToAddWorkspace() {
+  show(h("div", { class: "plain" }, h("h1", { text: "Sign in once to add a workspace" }), h("p", { class: "muted", text: "You arrived from a workspace. Adding a workspace needs your password and code. You come straight back here afterwards." }),
+    h("button", { class: "pri", id: "sign-in-to-connect", text: "Sign in", onclick: async () => { await api("DELETE", "/session"); clearSession(); returnHash = "#/workspaces"; loginView(); } })));
 }
 
 async function activity() {
@@ -398,21 +416,32 @@ async function handoffs() {
   } finally { finishLoading(); }
 }
 
-async function workspaces() {
+async function workspaces(joined = [], known = null) {
   const finishLoading = loading();
   pageLoading("workspaces");
   try {
       if (!(await refresh())) return loginView();
       state.menu = false;
       await loadRail();
-      const [ws, ho, admin] = await Promise.all([api("GET", "/me/workspaces"), api("GET", "/me/handoffs"), api("GET", "/admin/workspaces")]);
+      const [ws, ho, admin] = await Promise.all([api("GET", "/me/workspaces"), api("GET", "/me/handoffs"), canAdmin() ? api("GET", "/admin/workspaces") : Promise.resolve({ status: 0, body: {} })]);
       const adminRows = admin.status === 200 ? admin.body.workspaces ?? [] : null;
       const hub = ws.body?.hub;
       const actions = {
         open: (w) => { closeDialog(); return openWorkspace({ id: w.workspace_id, name: w.name ?? "Workspace" }); },
         copy: copyText,
-        connect: async () => {
-          const r = await api("POST", "/admin/connect", {});
+        openLink: (link) => { window.open(link, "_blank", "noopener"); },
+        signInToConnect: signInToAddWorkspace,
+        people: async () => { // the real, active people of this hub (admin-only route); the hub rejects anyone else
+          const r = await api("GET", "/admin/users");
+          return r.status === 200 ? (r.body.users ?? []).filter((u) => !u.disabled) : [];
+        },
+        invite: async (name) => { // the existing admin invite (name checked by the hub): a one-time sign-in link
+          const r = await api("POST", "/admin/invites", { name });
+          if (r.status !== 200 || typeof r.body.link !== "string") throw new Error("invite failed");
+          return r.body;
+        },
+        connect: async (ownerUser) => {
+          const r = await api("POST", "/admin/connect", ownerUser ? { owner_user: ownerUser } : {});
           if (r.status < 200 || r.status >= 300 || typeof r.body.link !== "string" || !Number.isFinite(r.body.expires_ms)) throw new Error("connect failed");
           return r.body;
         },
@@ -422,14 +451,35 @@ async function workspaces() {
           await workspaces();
         },
         details: async (w) => {
-          const r = await api("GET", "/workspaces/" + encodeURIComponent(w.workspace_id) + "/roles");
+          const r = canAdmin(w) ? await api("GET", "/workspaces/" + encodeURIComponent(w.workspace_id) + "/roles") : { status: 0, body: {} };
           dialog(...workspaceDetailsView(w, { hub, actions, roles: r.status === 200 ? r.body : null,
             owner: adminRows?.find((row) => row.workspace_id === w.workspace_id)?.owner_alias }),
             h("div", { class: "row" }, h("button", { text: "Close", onclick: closeDialog })));
         },
       };
-      shell("workspaces", workspacesView({ workspaces: ws.status === 200 ? ws.body.workspaces ?? [] : [],
-        handoffs: ho.status === 200 ? ho.body.handoffs ?? [] : [], admin: adminRows, hub, actions }));
+      const rows = ws.status === 200 ? ws.body.workspaces ?? [] : [];
+      shell("workspaces", workspacesView({ workspaces: rows, handoffs: ho.status === 200 ? ho.body.handoffs ?? [] : [], admin: adminRows, hub, actions, joined, self: state.user.user_id,
+        canConnect: !!state.user.is_admin, needsSignIn: !!state.user.needs_sign_in }));
+      // Watch for joins while this page is open (3 s, paused while the tab is hidden, stopped by leaving the route).
+      clearInterval(workspacesTimer);
+      // Diff only against a successful first read: a failed one must not make every workspace look newly joined.
+      let seen = known ?? (ws.status === 200 ? new Set(rows.map((w) => w.workspace_id)) : null);
+      const mine = ++viewRevision;
+      let checking = false;
+      workspacesTimer = setInterval(async () => {
+        if (document.hidden || checking || mine !== viewRevision) return;
+        checking = true;
+        try {
+          const r = await api("GET", "/me/workspaces");
+          if (mine !== viewRevision || r.status !== 200) return;
+          if (seen === null) return void (await workspaces([], null)); // the first good read: draw it, nothing is "joined"
+          const fresh = newWorkspaces(seen, r.body.workspaces);
+          if (!fresh.length) return;
+          for (const w of fresh) seen.add(w.workspace_id);
+          void pollLive();
+          await workspaces([...joined, ...fresh], seen);
+        } finally { checking = false; }
+      }, 3000);
   } finally { finishLoading(); }
 }
 
@@ -596,25 +646,31 @@ async function home() {
     state.menu = false;
     await loadRail();
     const user = state.user;
-    const [ws, needs] = await Promise.all([api("GET", "/me/workspaces"), api("GET", "/me/needs-you")]);
+    const [ws, needs, sharedRes, adminRes] = await Promise.all([api("GET", "/me/workspaces"), api("GET", "/me/needs-you"), api("GET", "/me/shared"), canAdmin() ? api("GET", "/admin/workspaces") : Promise.resolve({ status: 0, body: {} })]);
     if (!user || state.user !== user) return;
     const mine = state.me && state.channels.find((c) => c.channel_id === state.me.channelId && c.status === "active");
     const workspaces = ws.status === 200 ? ws.body.workspaces : [];
     const dead = !mine && (state.me || state.channels.some((c) => c.status === "active" && c.kind === "browser"));
+    const shared = sharedRes.status === 200 ? sharedRes.body.items ?? [] : [];
+    // P04: per person, in this browser; diffed only after a successful read, dropped on sign out (clearSession)
+    const ended = sharedRes.status === 200 ? trackShared(user.user_id, shared) : loadEnded(user.user_id);
     homeData = {
       user_id: user.user_id,
       user: state.user,
       items: needs.status === 200 ? needs.body.items : [],
       offline: needs.status === 200 ? needs.body.offline : [],
       workspaces,
+      adminWorkspaces: adminRes.status === 200 ? adminRes.body.workspaces ?? [] : null,
+      shared,
+      ended,
       channels: state.channels.map((c) => ({ ...c, status: c.status + (state.me?.channelId === c.channel_id ? " (this browser)" : "") })),
       newChannels: state.newChannels,
-      thisBrowser: mine ? { state: "active", label: state.me.label } : dead ? { state: "dead", label: state.me?.label } : { state: "unregistered" },
+      thisBrowser: state.user.needs_sign_in ? { state: "from_workspace" } : mine ? { state: "active", label: state.me.label } : dead ? { state: "dead", label: state.me?.label } : { state: "unregistered" },
       notice: state.notice,
-      actions: { review: (it) => navigate("#/w/" + it.workspace_id + "/item/" + encodeURIComponent(it.key || it.item_id)), open: (id) => navigate("#/w/" + id), register: () => registerView(), removeChannel, forgetLocal, dismissNew },
+      actions: { review: (it) => navigate("#/w/" + it.workspace_id + "/item/" + encodeURIComponent(it.key || it.item_id)), open: (id) => navigate("#/w/" + id), dismissEnded: (id) => { dismissEnded(user.user_id, id); void home(); }, openShared: (it) => navigate("#/shared/" + it.workspace_id + "/" + encodeURIComponent(it.key)), connect: () => navigate("#/workspaces"), register: () => registerView(), removeChannel, forgetLocal, dismissNew },
     };
     liveItems = { user_id: user.user_id, items: homeData.items };
-    shell("home", homeView(homeData), advancedForm(workspaces));
+    shell("home", homeView(homeData), workspaces.some((w) => w.can_start) ? advancedForm(workspaces) : null);
     state.notice = null;
   } finally { finishLoading(); }
 }
@@ -647,7 +703,21 @@ function clearSession() {
   state.adminPage = null;
   state.notice = null;
   state.menu = false;
+  forgetSharedMemory();
 }
+
+// P04: what the last good /me/shared read held, and the "stopped sharing" lines not yet dismissed, per person. In memory only
+// (the console keeps nothing in web storage): gone on reload and on sign out. Diffed only after a successful read, so an
+// unreachable hub never produces a false "stopped sharing".
+const sharedMemory = new Map();
+function loadEnded(uid) { return sharedMemory.get(uid)?.ended ?? []; }
+function trackShared(uid, items) {
+  const ended = sharedEnded(sharedMemory.get(uid)?.last ?? null, items, loadEnded(uid));
+  sharedMemory.set(uid, { last: items.map((it) => ({ workspace_id: it.workspace_id, key: it.key, title: it.title, shared_by: it.shared_by })), ended });
+  return ended;
+}
+function dismissEnded(uid, id) { const m = sharedMemory.get(uid); if (m) m.ended = m.ended.filter((e) => e.id !== id); }
+function forgetSharedMemory() { sharedMemory.clear(); }
 
 async function signOut() {
   await api("DELETE", "/session");
@@ -655,6 +725,10 @@ async function signOut() {
   loginView();
 }
 
+async function registerRoute() { // a hub with no workspace has no Home signing card: register a browser from here
+  if (!(await refresh())) return loginView();
+  registerView();
+}
 function registerView(err) {
   const label = h("input", { id: "label", value: "This browser", maxlength: 60 });
   const pw = h("input", { id: "pw2", type: "password", autocomplete: "current-password", required: true });
@@ -753,7 +827,15 @@ function reviewDecision(it, c) {
 }
 
 // Keep the wanted fragment while the sign-in form is showing.
-async function afterLogin() { return renderRoute(); }
+// The page to land on after the next sign-in; only a short same-origin hash route is ever accepted.
+let returnHash = null;
+const SAFE_RETURN = /^#\/[a-z0-9\/_-]{0,40}$/i;
+async function afterLogin() {
+  const back = returnHash;
+  returnHash = null;
+  if (typeof back === "string" && SAFE_RETURN.test(back) && location.hash !== back) { location.hash = back; return; }
+  return renderRoute();
+}
 
 // Agent access terms are display and signing input; the host checks its pending record at landing.
 async function accessView(wsId, raw) {
@@ -770,7 +852,7 @@ async function accessView(wsId, raw) {
   const action = { type: "grant.requested", log: "workspace", ...terms };
   shell("home", h("div", {}, back,
     h("h1", { text: "Approve agent access" }),
-    h("p", { class: "sentence", text: grantSentence(terms, mine.name ?? wsId.slice(0, 8)) }),
+    h("p", { class: "sentence", text: grantSentence(terms, mine.name ?? "A workspace") }),
     h("dl", { class: "facts" }, grantFacts(terms).flatMap(([k, v]) => [h("dt", { text: k }), h("dd", { text: v })])),
     h("div", { class: "row" }, h("button", { class: "pri", text: "Review and approve", onclick: () => startSign(wsId, action) }))));
 }
@@ -792,7 +874,7 @@ async function addonView(wsId, raw) {
   const action = { type: "addon.requested", log: "workspace", ...terms };
   shell("home", h("div", {}, back,
     h("h1", { text: "Approve an add-on" }),
-    h("p", { class: "sentence", text: "The workspace " + renderText(mine.name ?? wsId.slice(0, 8)) + " asks to install and turn on " + renderText(terms.name) + "." }),
+    h("p", { class: "sentence", text: "The workspace " + renderText(mine.name ?? "A workspace") + " asks to install and turn on " + renderText(terms.name) + "." }),
     h("dl", { class: "facts" }, addonFacts(terms).flatMap(([k, v]) => [h("dt", { text: k }), h("dd", { text: v })])),
     h("p", { class: "small muted", text: "Approving here lets the workspace's computer install exactly this package. You can check the fingerprint against the one shown in the workspace." }),
     h("div", { class: "row" }, h("button", { class: "pri", "data-sign": "", text: "Review and approve", onclick: () => startSign(wsId, action) }))));
@@ -819,13 +901,13 @@ async function settingsView(wsId, raw) {
   const action = { type: "settings.changed", log: "workspace", set: terms };
   shell("home", h("div", {}, back,
     h("h1", { text: "Change workspace settings" }),
-    h("p", { class: "sentence", text: "This link asks to change how long things are held in " + renderText(mine.name ?? wsId.slice(0, 8)) + ". Check the change below; nothing happens until you approve." }),
+    h("p", { class: "sentence", text: "This link asks to change how long things are held in " + renderText(mine.name ?? "A workspace") + ". Check the change below; nothing happens until you approve." }),
     h("dl", { class: "facts" }, settingsFacts(terms).flatMap(([k, v]) => [h("dt", { text: k }), h("dd", { text: v })])),
     h("div", { class: "row" }, h("button", { class: "pri", "data-sign": "", text: "Review and approve", onclick: () => startSign(wsId, action) }))));
 }
 
 function advancedForm(workspaces) {
-  const ws = h("select", {}, workspaces.filter((w) => w.can_start).map((w) => h("option", { value: w.workspace_id, text: renderText(w.name ?? w.workspace_id.slice(0, 8)) })));
+  const ws = h("select", {}, workspaces.filter((w) => w.can_start).map((w) => h("option", { value: w.workspace_id, text: renderText(w.name ?? "A workspace") })));
   const type = h("select", {}, Object.keys(DECISIONS).filter((t) => t !== "question.answered").map((t) => h("option", { value: t, text: t })));
   const inputs = Object.fromEntries(["log", "question", "gate", "outcome", "hash", "option", "text"].map((k) => [k, h("input", { id: "f-" + k })]));
   const go = h("button", { class: "pri", "data-sign": "", text: "Review", onclick: () => {
@@ -998,6 +1080,20 @@ async function pollLive() {
       reconcileRows(frame.querySelector(".rail"), railView());
       railSnapshot = JSON.stringify(state.rail);
     }
+    if (frame?.isConnected && parseRoute(location.hash).kind === "home" && frame.querySelector(".first-run-root") && firstRunOutgrown(state.rail.rows, liveItems.items)) {
+      void home(); // the first workspace connected while this page was open: draw the full home
+      return;
+    }
+    // P04: the hub Home's Shared tickets card follows the same list; a change (or an ended share) redraws Home once
+    if (frame?.isConnected && parseRoute(location.hash).kind === "home" && homeData?.user_id === user.user_id) {
+      const sharedNow = await api("GET", "/me/shared");
+      if (user !== state.user) return;
+      if (sharedNow.status === 200 && Array.isArray(sharedNow.body.items)) {
+        const before = JSON.stringify(homeData.shared) + JSON.stringify(homeData.ended);
+        const ended = trackShared(user.user_id, sharedNow.body.items);
+        if (before !== JSON.stringify(sharedNow.body.items) + JSON.stringify(ended)) { void home(); return; }
+      }
+    }
     const current = frame?.isConnected && parseRoute(location.hash).kind === "home" ? frame.querySelector(".needs-you") : null;
     if (current && homeData?.user_id === user.user_id) {
       homeData.items = liveItems.items;
@@ -1031,7 +1127,7 @@ function openShortcuts() {
 async function openSearch() {
   if (!state.user || document.querySelector('[role="dialog"]')) return;
   const user = state.user;
-  let people = [], index = 0, matches = [];
+  let people = [], shared = [], index = 0, matches = [];
   const results = h("div", { id: "search-results", role: "listbox", "aria-label": "Search results" });
   const input = h("input", { type: "search", placeholder: "Search pages, workspaces, tickets…", "aria-label": "Search everything", role: "combobox", "aria-controls": "search-results", "aria-expanded": "true", "aria-autocomplete": "list" });
   const choose = () => {
@@ -1044,7 +1140,7 @@ async function openSearch() {
   };
   const draw = () => {
     if (state.user !== user) { results.replaceChildren(); return; }
-    matches = filterSearch(searchEntries({ admin: user.is_admin, workspaces: state.rail.rows, items: liveItems.user_id === user.user_id ? liveItems.items : [], people }), input.value);
+    matches = filterSearch(searchEntries({ admin: user.is_admin, workspaces: state.rail.rows, items: liveItems.user_id === user.user_id ? liveItems.items : [], people, shared }), input.value);
     index = Math.max(0, Math.min(index, matches.length - 1));
     results.replaceChildren();
     let group;
@@ -1066,8 +1162,9 @@ async function openSearch() {
   const layer = dialog(h("h1", { text: "Search everything" }), input, results, h("button", { text: "Close", onclick: closeDialog }));
   layer.classList.add("search-layer");
   draw(); input.focus();
-  const [needs, rail, users] = await Promise.all([api("GET", "/me/needs-you"), api("GET", "/rail"), user.is_admin ? api("GET", "/admin/users") : Promise.resolve(null)]);
+  const [needs, rail, users, sharedRes] = await Promise.all([api("GET", "/me/needs-you"), api("GET", "/rail"), user.is_admin && !user.needs_sign_in ? api("GET", "/admin/users") : Promise.resolve(null), api("GET", "/me/shared")]);
   if (!layer.isConnected || state.user !== user) return;
+  if (sharedRes.status === 200) shared = sharedRes.body.items ?? [];
   liveItems = { user_id: user.user_id, items: needs.status === 200 ? needs.body.items ?? [] : [] };
   if (rail.status === 200) state.rail.rows = railRows(rail.body);
   if (users?.status === 200) people = users.body.users ?? [];
@@ -1099,6 +1196,26 @@ function navigate(hash) {
   location.hash = hash;
 }
 
+// A ticket shared with me, read only. Everything comes from GET /me/shared (caller-scoped): the page shows nothing the
+// list does not already give this person. A ticket that is no longer in the list means the sharing ended.
+async function sharedTicketPage(route) {
+  const finishLoading = loading();
+  pageLoading("home");
+  try {
+    if (!(await refresh())) return loginView();
+    await loadRail();
+    const res = await api("GET", "/me/shared");
+    const it = res.status === 200 ? (res.body.items ?? []).find((x) => x.workspace_id === route.workspace && x.key === route.key) : null;
+    const back = h("button", { text: it ? "Back" : "Back to Home", onclick: () => navigate("#/home") });
+    if (res.status !== 200) return shell("home", h("h1", { text: "Shared ticket" }), h("p", { text: "This ticket could not be loaded right now. Try again in a moment." }), back);
+    if (!it) return shell("home", h("h1", { text: "Sharing ended" }), h("p", { text: "The owner stopped sharing this ticket." }), back);
+    shell("home", h("h1", { text: renderText(it.title ?? it.key) }),
+      h("p", { class: "small muted", text: [it.shared_by ? "Shared by " + renderText(it.shared_by) : "Shared with you", it.status ? renderText(it.status) : null, "read only"].filter(Boolean).join(" · ") }),
+      it.deadline ? h("p", { class: "small muted", text: "Due " + renderText(it.deadline) }) : null,
+      it.description ? h("p", { class: "prewrap", text: renderText(it.description) }) : null, back);
+  } finally { finishLoading(); }
+}
+
 async function workspacePage(route) {
   const finishLoading = loading();
   pageLoading("workspaces", "workspace");
@@ -1107,8 +1224,9 @@ async function workspacePage(route) {
     await loadRail();
     const w = state.rail.rows.find((row) => row.id === route.workspace);
     if (!w) return shell("workspaces", h("h1", { text: "Workspace unavailable" }), h("p", { text: "This workspace is not in your list." }));
-    const needs = await api("GET", "/me/needs-you");
+    const [needs, sharedRes] = await Promise.all([api("GET", "/me/needs-you"), api("GET", "/me/shared?workspace_id=" + encodeURIComponent(w.id))]);
     const items = needs.status === 200 ? needs.body.items.filter((it) => it.workspace_id === w.id) : [];
+    const sharedTickets = sharedRes.status === 200 ? (sharedRes.body.items ?? []).filter((it) => it.workspace_id === w.id) : [];
     if (route.kind === "item" && w.online) {
       const item = items.find((it) => it.key === route.key || it.item_id === route.key);
       if (item) return reviewItem(item);
@@ -1117,9 +1235,18 @@ async function workspacePage(route) {
     shell("workspaces", h("h1", { text: renderText(w.name) + (w.online ? "" : " is " + workspaceStatus(w)) }),
       h("p", { text: w.online ? "Online" : "Hand-offs and approvals wait until this workspace is back." }),
       h("p", { text: needs.status === 200 && w.online ? items.length + " things need you" : w.badge ? w.badge + " things need you. They wait until the workspace is back." : "Waiting items will be shown when the workspace is back." }),
+      sharedTicketsView(sharedTickets),
       w.online ? h("button", { text: "Open workspace", disabled: !w.canOpen, onclick: () => openWorkspace(w) }) : null,
       w.online && !w.canOpen ? h("p", { text: OPEN_FIRST }) : null);
   } finally { finishLoading(); }
+}
+
+// "Shared tickets (n)": read-only rows; the owner sees with whom a ticket is shared, anyone else by whom.
+function sharedTicketsView(list) {
+  if (!list.length) return null;
+  return h("section", { "aria-label": "Shared tickets" }, h("h2", { text: "Shared tickets (" + list.length + ")" }),
+    list.map((it) => h("div", { class: "list-row" }, h("b", { text: renderText(it.title ?? it.key ?? "Ticket") }),
+      h("div", { class: "small muted", text: Array.isArray(it.shared_with) ? (it.shared_with.length ? "Shared with " + it.shared_with.map(renderText).join(", ") : "Only you") : it.shared_by ? "Shared by " + renderText(it.shared_by) : "Shared" }))));
 }
 
 // Serialize renders so an earlier slow read cannot overwrite the final route.
@@ -1155,8 +1282,9 @@ async function renderRoute() {
       else if (route.kind === "access") await accessView(route.workspace, route.key);
       else if (route.kind === "addon") await addonView(route.workspace, route.key);
       else if (route.kind === "settings") await settingsView(route.workspace, route.key);
+      else if (route.kind === "shared") await sharedTicketPage(route);
       else if (route.workspace) await workspacePage(route);
-      else await ({ home, approvals, workspaces, services, admin, activity, account, handoffs, phones }[route.kind] ?? pageRender(route.kind) ?? home)();
+      else await ({ home, approvals, workspaces, services, admin, activity, account, handoffs, phones, register: registerRoute }[route.kind] ?? pageRender(route.kind) ?? home)();
     }
   } catch { loginView("Something went wrong. Please sign in again."); }
   finally { routing = false; }

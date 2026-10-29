@@ -13,13 +13,13 @@ from orch.setup.flow import SetupFlow
 from orch.setup.protocol import SetupError
 
 from .conftest import PROFILE, make_env, post
-from .test_secrets import reveal, words_for
+from .test_secrets import reveal
 
 
 def to_review(flow, profile):
     post(flow, "profile", profile)
-    r = reveal(flow)
-    post(flow, "secrets/confirm", {"words": words_for(r)})
+    reveal(flow)
+    post(flow, "secrets/confirm", {"acknowledged": True})
     return post(flow, "review")[1]
 
 
@@ -76,6 +76,27 @@ def test_r2_long_agent_hours_and_a_runner_grant_need_no_typed_word(flow):
     grant = next(i for i in out["items"] if i["id"] == "runner_grant")
     assert "grant: set at signing" in grant["volatile"]
     assert any(rv.PLACEHOLDER in line for line in grant["lines"])
+
+
+def test_click_method_has_no_terminal_check_even_with_exec_addons_and_grant(flow):
+    prof = {
+        **PROFILE,
+        "method": "click",
+        "agent_grant": True,
+        "agent_hours": 72,
+        "addons": ["dashboard", "start-agent", "terminals", "worktrees"],
+    }
+    out = to_review(flow, prof)
+    assert out["tty_confirm"] is False and out["fingerprint"] is None
+    assert out["runner_grant"] is not None and out["digest"]
+    f2 = rev_flow(flow)
+    out2 = to_review(f2, {**prof, "agent_grant": False, "agent_hours": 8})
+    assert out2["tty_confirm"] is False and out2["fingerprint"] is None
+
+
+def test_terminal_method_keeps_the_terminal_check_for_exec_addons(flow):
+    out = to_review(flow, {**PROFILE, "method": "terminal", "addons": ["dashboard", "terminals"]})
+    assert out["tty_confirm"] is True and len(out["fingerprint"]) == 3
 
 
 def rev_flow(flow):

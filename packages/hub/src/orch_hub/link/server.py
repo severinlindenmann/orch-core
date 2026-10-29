@@ -30,6 +30,7 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Self
 
+from ..backup.hubop import FENCE as RESTORE_FENCE
 from ..contract import hub as H
 from ..contract import suite as S
 from ..contract.canon import CanonError, b64u, unb64u, unhex
@@ -85,6 +86,7 @@ class LinkServer:
         views: Any = None,
         shares: Any = None,
         switch: Any = None,
+        where: Callable[[], dict[str, Any]] | None = None,
         deliveries: Any = None,
         host: str = "127.0.0.1",
         port: int = 0,
@@ -112,6 +114,7 @@ class LinkServer:
         self._views = views
         self._shares = shares
         self._switch = switch
+        self._where = where
         self._deliveries = deliveries  # custodial.DeliveryQueue: event_deliver out, its replies in (§8.7)
         self._retry_at = float("-inf")
         self._dev, self._now = dev_mode, now_ms
@@ -430,6 +433,8 @@ class LinkServer:
     def _run(self, ws: str, wsk: bytes, o: dict[str, Any], now: int, same: bool = False) -> dict[str, Any]:
         handler = ops.HANDLERS.get(o["op"])
         try:
+            if RESTORE_FENCE.is_set():
+                raise Refused("restore_busy")  # a restore is swapping the state dir; the host retries
             if handler is None:
                 raise Refused("unknown_op")  # an op of a later phase: in the table, not served yet
             if o["op"] != "join" and self._reg.pin(ws) is None:
@@ -464,6 +469,7 @@ class LinkServer:
                 views=self._views,
                 shares=self._shares,
                 switch=self._switch,
+                where=self._where,
                 same_computer=same,
             )
             return handler(ctx)

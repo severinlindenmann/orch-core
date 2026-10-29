@@ -2,10 +2,13 @@ import { FocusButton } from '../focus/FocusButton'
 import { can } from '@/api/permissions'
 import { Link } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
-import { Bot, Check, ChevronDown, CircleHelp, Copy, Loader2, Lock, Tag, Timer } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { Bot, Check, ChevronDown, CircleHelp, Copy, Loader2, Lock, Pencil, Share2, Tag, Timer } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '@/api/client'
 import { runQueries } from '@/api/runs'
+import { queries } from '@/api/queries'
+import { agentInWait, terminalWaitFor } from '@/app/attention'
+import { TicketProgress } from './NextStep'
 import { addonActive } from '@/api/addons'
 import { AddonBadge, useAddons, useRunAddonAction } from '@/addon-ui'
 import { canSpawnAgent } from '@/addon-ui/capabilities'
@@ -15,15 +18,20 @@ import { StartAgentSplit } from '@/app/terminal/real/StartAgentSplit'
 import { precheckReason } from '@/addon-ui/SpawnConfirm'
 import { useWorkspace } from '@/app/workspace'
 import { workspaceOfTicket } from '@/api/workspaces'
+import { hubQueries, hubServed } from '@/api/hub'
+import { ShareTicketDialog } from './ShareTicketDialog'
+import { StopSharing } from '../settings/hub/StopSharing'
 import type { ClosedInfo, TicketDocument } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { VIEWER_REASON } from '@/components/DisabledReason'
 import { CopyLinkButton } from '@/app/shell/CopyLinkButton'
 import { BlockedByConnection } from './Needs'
-import { availableActions, gateActionName, blockedApproval, primaryAction, primaryLabel } from './actions'
-import { clearMark, phaseOf, startMark, useMark, type Phase, type ProgressRun } from './progress'
-import { agentName, ago, fmtClock, KeyRef, Mono, Pill, StatusChip, useIsVisibleKey, type HumanAction, type Jump, type Viewer } from './shared'
+import { availableActions, gapOf, gateActionName, blockedApproval, primaryAction, primaryLabel } from './actions'
+import { useTicketEdit } from './EditTicket'
+import type { AgentMode } from '@/api/agents'
+import { agentWorking, clearMark, phaseOf, startMark, useMark, type Phase, type ProgressRun } from './progress'
+import { Ago, agentName, fmtClock, KeyRef, Mono, Pill, StatusChip, useIsVisibleKey, type HumanAction, type Jump, type Viewer } from './shared'
 
 export function CopyButton({ text, label }: { text: string; label: string }) {
   const [done, setDone] = useState(false)
@@ -44,7 +52,7 @@ export function CopyButton({ text, label }: { text: string; label: string }) {
 }
 
 /** Who is working on the ticket, in one line. Claiming is the agents' job, so people get no Claim/Release here. */
-export function AgentStatus({ ticket, viewer }: { ticket: TicketDocument; viewer: Viewer }) {
+export function AgentStatus({ ticket, viewer, wait }: { ticket: TicketDocument; viewer: Viewer; /** the agent is idle at its prompt (run-9 J04) */ wait?: string }) {
   // A claim the host marks not live (ended by Done or Close, lapsed, grant over) is history: nobody is working (run 8, 8).
   const c = ticket.claim?.live === false ? null : ticket.claim
   const subagents = new Set(ticket.tasks_state.flatMap((t) => (t.lease && t.lease.session !== c?.session ? [t.lease.session] : []))).size
@@ -54,7 +62,7 @@ export function AgentStatus({ ticket, viewer }: { ticket: TicketDocument; viewer
       <span className="min-w-0 truncate">
         {c ? (
           <>
-            <span className="text-text">{agentName(c.agent)}</span> is working for <span className="text-text">{viewer.name(c.for)}</span>
+            <span className="text-text">{agentName(c.agent)}</span> {agentWorking(ticket, wait) ? 'is working' : 'may be waiting for the next step'} for <span className="text-text">{viewer.name(c.for)}</span>
             {' · '}since {fmtClock(c.since)}
             {subagents > 0 && ` · ${subagents} ${subagents === 1 ? 'subagent' : 'subagents'}`}
           </>
@@ -70,7 +78,6 @@ const START_AGENT = 'start-agent'
 
 /** The person-visible reason no agent can start now (an agent works on it already), or null. A lapsed claim is history. */
 export const WORKING_REASON = 'An agent is already working on this ticket'
-const agentWorks = (t: TicketDocument) => !!t.claim && t.claim.live !== false
 
 export interface StartAgent {
   /** "Start agent" is part of this ticket's actions (the addon or core's agent.start is available here). */
@@ -79,7 +86,11 @@ export interface StartAgent {
   reason: string | null
   /** The primary button may offer it: nothing blocks it and the ticket is in a state an agent works on. */
   startable: boolean
+  /** The viewer may start an agent on this ticket whatever is running now ("Ask the agent to finish" stops the idle one first). */
+  canStart: boolean
   run: () => void
+  /** Open the start flow in another mode (the not-finished card asks for `continue`). */
+  runWith: (mode: AgentMode, stopFirst?: string) => void
   /** A real host: the same dialog in choose mode ("Change agent or model"). Absent in the mock, where the add-on has its own flow. */
   choose?: () => void
   /** The start-agent addon's own title, for its badge in the mock (none on a real host). */
@@ -96,6 +107,8 @@ function useStartAgent(ticket: TicketDocument, viewer: Viewer): StartAgent {
   const { data: addons } = useAddons()
   const r = useRunAddonAction(ticket.key)
   const [open, setOpen] = useState<'start' | 'choose' | null>(null)
+  const [mode, setMode] = useState<AgentMode | undefined>(undefined)
+  const [stopFirst, setStopFirst] = useState<string | undefined>(undefined)
   const real = isRealHost()
   const pkg = addons?.find((a) => a.name === START_AGENT)
   const finished = ticket.status === 'done' || ticket.status === 'closed'
@@ -103,17 +116,61 @@ function useStartAgent(ticket: TicketDocument, viewer: Viewer): StartAgent {
     ? !!workspace && hasFeature('agent_start', workspace.id) && !finished
     : !!workspace && addonActive(workspace, START_AGENT) && canSpawnAgent(pkg, workspace.addons[START_AGENT]) && !finished
   const roleBlocked = real ? !can(viewer.role, 'ticket.act') : !r.allowed(START_AGENT, 'start')
-  const reason = roleBlocked ? VIEWER_REASON : agentWorks(ticket) ? WORKING_REASON : real ? null : precheckReason(ticket, viewer.name)
-  const run = () => (real ? setOpen('start') : r.run(START_AGENT, 'start'))
-  const choose = real ? () => setOpen('choose') : undefined
+  const reason = roleBlocked ? VIEWER_REASON : agentWorking(ticket) ? WORKING_REASON : real ? null : precheckReason(ticket, viewer.name)
+  const run = () => {
+    setMode(undefined)
+    setStopFirst(undefined)
+    if (real) setOpen('start')
+    else r.run(START_AGENT, 'start')
+  }
+  const runWith = useCallback((m: AgentMode, stop?: string) => {
+    setMode(m)
+    setStopFirst(stop)
+    setOpen('start')
+  }, [])
+  const choose = real ? () => { setMode(undefined); setOpen('choose') } : undefined
   const startable = shown && !reason && ticket.status !== 'testing'
+  const canStart = real && shown && !roleBlocked && ticket.status !== 'testing'
   const node = (
     <>
       {r.dialog}
-      {open && workspace && <StartAgentDialog key={open} ws={workspace.id} ticket={ticket.key} open choose={open === 'choose'} onClose={() => setOpen(null)} />}
+      {open && workspace && <StartAgentDialog key={`${open}:${mode ?? ''}:${stopFirst ?? ''}`} ws={workspace.id} ticket={ticket.key} open choose={open === 'choose'} initial={mode ? { mode, ...(stopFirst ? { stopFirst } : {}) } : undefined} onClose={() => setOpen(null)} />}
     </>
   )
-  return { shown, reason, startable, run, choose, node, addon: real ? undefined : { name: START_AGENT, title: pkg?.title } }
+  return { shown, reason, startable, canStart, run, runWith, choose, node, addon: real ? undefined : { name: START_AGENT, title: pkg?.title } }
+}
+
+export interface ShareTicket {
+  /** "Share with the hub" / "Stop sharing" is part of this ticket's actions (owner, hub joined in share-some mode). */
+  shown: boolean
+  /** The hub already has this ticket: the item stops sharing instead. */
+  shared: boolean
+  run: () => void
+  node: React.ReactNode
+}
+
+/**
+ * Sharing this one ticket with the hub, from the ticket itself. Only the owner of the ticket's workspace, only in
+ * "share only what I choose" mode (full shares everything, standalone has no hub). It opens the same review as
+ * Settings (`ShareTicketDialog`, `StopSharing`); the Actions menu holds the item, so there is one dialog and one rule.
+ */
+function useShareTicket(ticket: TicketDocument, viewer: Viewer): ShareTicket {
+  const { workspaces } = useWorkspace()
+  const home = workspaceOfTicket(ticket.key, workspaces)
+  const ws = home?.id
+  const served = !!ws && viewer.role === 'owner' && hubServed(ws)
+  const status = useQuery({ ...hubQueries.status(ws ?? ''), enabled: served })
+  const selective = served && status.data?.mode === 'selective' && status.data.joined
+  const share = useQuery({ ...hubQueries.share(ws ?? ''), enabled: selective })
+  const [open, setOpen] = useState<'share' | 'stop' | null>(null)
+  const shown = selective && !!share.data?.available && ticket.status !== 'closed'
+  const shared = !!share.data?.tickets.includes(ticket.key)
+  const node = open && home ? (
+    open === 'share'
+      ? <ShareTicketDialog key="share" ws={home.id} workspace={home} ticket={ticket.key} title={ticket.title} onClose={() => setOpen(null)} />
+      : <StopSharing key="stop" ws={home.id} workspace={home} ticket={ticket.key} onClose={() => setOpen(null)} />
+  ) : null
+  return { shown, shared, run: () => setOpen(shared ? 'stop' : 'share'), node }
 }
 
 /** " · why it is their turn", or nothing when the host gave no reason (no dangling separator). */
@@ -131,12 +188,12 @@ function Next() {
 }
 
 /** The header's Actions menu lists EVERY action the viewer has, the primary one included (tagged "next"). */
-export function ActionsMenu({ ticket, viewer, sign, jump, start, signing = false }: { ticket: TicketDocument; viewer: Viewer; sign: (a: HumanAction) => void; jump: (j: Jump) => void; start: StartAgent; signing?: boolean }) {
+export function ActionsMenu({ ticket, viewer, sign, jump, start, share, signing = false }: { ticket: TicketDocument; viewer: Viewer; sign: (a: HumanAction) => void; jump: (j: Jump) => void; start: StartAgent; /** Absent: no sharing item (the mock page tests). */ share?: ShareTicket; signing?: boolean }) {
   const av = availableActions(ticket, viewer)
   const primary = primaryAction(av, { start: start.startable })
   const isNext = (k: string) => (primary?.kind === 'approve' ? `approve:${primary.gate}` : primary?.kind === 'answer' ? `answer:${primary.question}` : primary?.kind) === k
   const needs = av.approve.length > 0 || av.verdict || av.answer.length > 0
-  const other = av.requestChanges.length > 0 || start.shown
+  const other = av.requestChanges.length > 0 || start.shown || !!share?.shown
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -163,7 +220,7 @@ export function ActionsMenu({ ticket, viewer, sign, jump, start, signing = false
           </DropdownMenuItem>
         )}
         {av.approve.map((g) => (
-          <DropdownMenuItem key={g} onSelect={() => sign({ kind: 'approve', gate: g })}>
+          <DropdownMenuItem key={g} onSelect={() => sign({ kind: 'approve', gate: g, pressed: false })}>
             <Check />
             Approve {gateActionName(g)}
             {isNext(`approve:${g}`) && <Next />}
@@ -196,13 +253,19 @@ export function ActionsMenu({ ticket, viewer, sign, jump, start, signing = false
             Change agent or model…
           </DropdownMenuItem>
         )}
+        {share?.shown && (
+          <DropdownMenuItem onSelect={share.run} data-testid="share-ticket-item">
+            <Share2 />
+            {share.shared ? 'Stop sharing' : 'Share with the hub'}
+          </DropdownMenuItem>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   )
 }
 
 /** The header's one primary button: what the viewer should do next (a quiet status when an agent works and nothing waits). */
-function PrimaryButton({ ticket, viewer, jump, start, signing, phase }: { ticket: TicketDocument; viewer: Viewer; jump: (j: Jump) => void; start: StartAgent; signing: boolean; phase: Phase }) {
+function PrimaryButton({ ticket, viewer, jump, start, signing, phase, idle = false }: { ticket: TicketDocument; viewer: Viewer; jump: (j: Jump) => void; start: StartAgent; signing: boolean; phase: Phase; /** The agent waits or the plan is unfinished: the card says so, so no "Agent is working" next to it. */ idle?: boolean }) {
   const { workspace } = useWorkspace()
   const av = availableActions(ticket, viewer)
   const blocked = blockedApproval(ticket, viewer)
@@ -231,7 +294,7 @@ function PrimaryButton({ ticket, viewer, jump, start, signing, phase }: { ticket
     )
   // The next-step card under the header owns Approve and Give verdict (B6): one place for the one next thing.
   if (p && (p.kind === 'approve' || p.kind === 'verdict')) return null
-  if (!p) return !busy && agentWorks(ticket) && ticket.status !== 'done' ? <span className="inline-flex items-center gap-1.5 text-[13px] text-text-muted" data-testid="agent-working-note"><Loader2 className="size-3.5 animate-spin" aria-hidden />Agent is working…</span> : null
+  if (!p) return !busy && !idle && agentWorking(ticket) && ticket.status !== 'done' ? <span className="inline-flex items-center gap-1.5 text-[13px] text-text-muted" data-testid="agent-working-note"><Loader2 className="size-3.5 animate-spin" aria-hidden />Agent is working…</span> : null
   const run = () => {
     if (p.kind === 'answer') jump({ tab: 'questions', id: `question-${p.question}` })
     else start.run()
@@ -259,7 +322,7 @@ const RESOLUTION: Record<ClosedInfo['resolution'], string> = {
  * A closed ticket reads like any other (host v1.4): this says why and when. `duplicate_of` may name a ticket you cannot
  * open (it would answer "not found"), so it is plain text, never a link and never a title.
  */
-function ClosedNotice({ closed, name }: { closed: ClosedInfo; name: (id: string) => string }) {
+export function ClosedNotice({ closed, name }: { closed: ClosedInfo; name: (id: string) => string }) {
   return (
     <section aria-label="Closed" data-testid="closed-notice" className="space-y-1 rounded-md border border-border bg-surface-2 px-3 py-2 text-[13px] text-text-muted">
       <p>
@@ -271,7 +334,7 @@ function ClosedNotice({ closed, name }: { closed: ClosedInfo; name: (id: string)
           </>
         )}
         {closed.by && ` · by ${name(closed.by)}`}
-        {closed.at && ` · ${ago(closed.at)}`}
+        {closed.at && <> · <Ago at={closed.at} /></>}
       </p>
       {closed.text && <p className="whitespace-pre-wrap text-text">{closed.text}</p>}
     </section>
@@ -283,6 +346,34 @@ function newestRun(runs: ReadonlyArray<{ ticket?: string | null; kind?: string; 
   const mine = (Array.isArray(runs) ? runs : []).filter((r) => r.ticket === key && r.kind === 'agent')
   const newest = mine.reduce<(typeof mine)[number] | null>((a, r) => (!a || Date.parse(r.started_at) > Date.parse(a.started_at) ? r : a), null)
   return newest as ProgressRun | null
+}
+
+const START_EVENT = 'orch:start-agent'
+
+/** The newest agent run of this ticket and the run id its agent waits in a terminal on (Today's terminal_wait), polled.
+ *  Real host only: in the mock both are absent, so mock mode never shows the stopped or waiting cards. */
+function useTicketAgent(ticket: TicketDocument, home: string | undefined) {
+  const runs = useQuery({ ...runQueries.list(home ?? ''), enabled: isRealHost() && !!home })
+  const today = useQuery({ ...queries.today(home ?? ''), enabled: isRealHost() && !!home })
+  const items = today.data?.needs_you ?? []
+  return { run: newestRun(runs.data?.runs, ticket.key), wait: terminalWaitFor(items, ticket.key), inWait: agentInWait(items, ticket.key) }
+}
+
+/** The stepper and the next-step card, told what the ticket's agent really did (never ran / waiting / ended early). */
+export function TicketProgressLive(p: { ticket: TicketDocument; viewer: Viewer; sign: (a: HumanAction) => void; jump: (j: Jump) => void; signing?: boolean }) {
+  const { workspaces } = useWorkspace()
+  const home = workspaceOfTicket(p.ticket.key, workspaces)?.id
+  const { run, wait, inWait } = useTicketAgent(p.ticket, home)
+  // "Start agent again" asks the header's one start flow (its dialog); this card holds no second dialog and reads
+  // `startable` only, so a viewer who cannot start sees no button.
+  const edit = useTicketEdit()
+  const { canStart } = useStartAgent(p.ticket, p.viewer)
+  // "Ask the agent to finish": the header's start flow in `continue` mode; the idle run is stopped only when Start is pressed.
+  const onFinish = canStart
+    ? () => window.dispatchEvent(new CustomEvent(START_EVENT, { detail: { ticket: p.ticket.key, mode: 'continue', ...(wait ? { stop: wait } : {}) } }))
+    : undefined
+  const onEdit = edit ? () => edit() : undefined
+  return <TicketProgress {...p} run={run} wait={wait} inWait={inWait} onFinish={onFinish} onEdit={onEdit} />
 }
 
 /** The one status pill for the agent's progress, in plain words, in a live region so changes are announced. */
@@ -364,11 +455,27 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
     queryFn: () => (home ? api.listTickets(home, { parent: ticket.key }) : []),
     enabled: ticket.type === 'epic' && !!home,
   })
+  const { run, wait } = useTicketAgent(ticket, home)
   const start = useStartAgent(ticket, viewer)
+  const share = useShareTicket(ticket, viewer)
+  const { startable, canStart, run: startPlain, runWith } = start
+  // The listener reads the latest start through a ref, so it subscribes once per ticket, not on every render.
+  const latest = useRef({ startable, canStart, startPlain, runWith })
+  latest.current = { startable, canStart, startPlain, runWith }
+  useEffect(() => {
+    // A plain key starts as before (only when nothing blocks); {ticket, mode} comes from "Ask the agent to finish", after its idle run was stopped.
+    const on = (e: Event) => {
+      const d = (e as CustomEvent<string | { ticket: string; mode: AgentMode; stop?: string }>).detail
+      if (typeof d === 'string') {
+        if (d === ticket.key && latest.current.startable) latest.current.startPlain()
+      } else if (d?.ticket === ticket.key && latest.current.canStart) latest.current.runWith(d.mode, d.stop)
+    }
+    window.addEventListener(START_EVENT, on)
+    return () => window.removeEventListener(START_EVENT, on)
+  }, [ticket.key])
   const av = availableActions(ticket, viewer)
-  const needsYou = av.answer.length > 0 || av.approve.length > 0 || !!av.verdict
-  const runs = useQuery({ ...runQueries.list(home ?? ''), enabled: isRealHost() && !!home })
-  const run = newestRun(runs.data as Parameters<typeof newestRun>[0], ticket.key)
+  const edit = useTicketEdit()
+  const needsYou = av.answer.length > 0 || av.approve.length > 0 || !!av.verdict || !!wait
   const mark = useMark(home ?? '', ticket.key)
   const tracking = !!mark || run?.state === 'starting' || run?.state === 'running'
   const [tick, setTick] = useState(() => Date.now())
@@ -378,7 +485,7 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
     const t = setInterval(() => setTick(Date.now()), 1000)
     return () => clearInterval(t)
   }, [tracking])
-  const phase = phaseOf(ticket, { needsYou, mark, run, now: tracking ? tick : Date.now() })
+  const phase = phaseOf(ticket, { needsYou, mark, run, wait, now: tracking ? tick : Date.now() })
   useEffect(() => {
     if (phase.kind === 'working' && home) clearMark(home, ticket.key)
   }, [phase.kind, home, ticket.key])
@@ -406,12 +513,20 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
         )}
       </div>
       <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start">
-        <h1 className="min-w-0 flex-1 text-xl font-semibold leading-tight tracking-tight text-text">{ticket.title}</h1>
+        <h1 className="min-w-0 flex-1 text-xl font-semibold leading-tight tracking-tight text-text">
+          {edit ? (
+            <button type="button" onClick={() => edit({ kind: 'title' })} aria-label={`Change the title: ${ticket.title}`} title="Change the title" className="group inline-flex max-w-full items-baseline gap-2 rounded-sm text-left outline-none hover:text-brand focus-visible:ring-2 focus-visible:ring-ring">
+              <span className="min-w-0">{ticket.title}</span>
+              <Pencil aria-hidden className="size-3.5 shrink-0 opacity-0 transition-opacity group-hover:opacity-70 group-focus-visible:opacity-70" />
+            </button>
+          ) : ticket.title}
+        </h1>
         <div className="flex flex-wrap items-center gap-2 sm:shrink-0">
           <FocusButton ticket={ticket.key} />
-          <PrimaryButton ticket={ticket} viewer={viewer} jump={jump} start={start} signing={signing} phase={phase} />
-          <ActionsMenu ticket={ticket} viewer={viewer} sign={sign} jump={jump} start={start} signing={signing} />
+          <PrimaryButton ticket={ticket} viewer={viewer} jump={jump} start={start} signing={signing} phase={phase} idle={!!wait || !!gapOf(ticket)} />
+          <ActionsMenu ticket={ticket} viewer={viewer} sign={sign} jump={jump} start={start} share={share} signing={signing} />
           {start.node}
+          {share.node}
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
@@ -457,7 +572,7 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
       )}
 
       <BlockedByConnection ticket={ticket} />
-      {phase.kind !== 'starting' && phase.kind !== 'failed' && <AgentStatus ticket={ticket} viewer={viewer} />}
+      {phase.kind !== 'starting' && phase.kind !== 'failed' && <AgentStatus ticket={ticket} viewer={viewer} wait={wait} />}
     </header>
   )
 }

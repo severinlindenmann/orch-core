@@ -70,6 +70,24 @@ const ROLE_RANK: Record<Role, number> = { viewer: 0, member: 1, maintainer: 2, o
  */
 const MAX_PAGES = 25
 
+/**
+ * A workspace read the host refuses because the dashboard add-on is off or paused (409 `addon.disabled` / `addon.paused`):
+ * the workspace list we read was older than the host's state. The page does not retry the read or log it; whoever owns the
+ * query cache is told once, drops the workspace list, and the shell shows its "Getting your workspace ready" card.
+ */
+const notReadyListeners = new Set<() => void>()
+export function onWorkspaceNotReady(fn: () => void): () => void {
+  notReadyListeners.add(fn)
+  return () => void notReadyListeners.delete(fn)
+}
+let notReadyAt = 0
+function workspaceNotReady(): void {
+  const now = Date.now()
+  if (now - notReadyAt < 1000) return // a page's parallel reads all answer at once: one refresh is enough
+  notReadyAt = now
+  for (const fn of notReadyListeners) fn()
+}
+
 async function call<T>(path: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE' = 'GET', body?: unknown, signal?: AbortSignal): Promise<T> {
   const token = getToken()
   const result = await createFetchTransport('', () => token).request(method, path, body, signal)
@@ -79,6 +97,7 @@ async function call<T>(path: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE' =
   }
   if (result.status >= 400) {
     const body = result.json as ApiErrorBody | null
+    if (result.status === 409 && path.startsWith('/api/w/') && (body?.error?.code === 'addon.disabled' || body?.error?.code === 'addon.paused')) workspaceNotReady()
     throw new ApiError(
       result.status,
       body?.error ?? { code: 'host.unavailable', message: 'Host not available', retryable: result.status >= 500 },
@@ -332,6 +351,8 @@ const click = {
   getHubApproval: (ws: string, id: string) => call<import('./hubsign').HubApprovalState>(`${w(ws)}/hub/approve/${encodeURIComponent(id)}`),
   getHubStatus: (ws: string) => call<import('./hub').HubStatus>(`${w(ws)}/hub`),
   getHubShare: (ws: string) => call<import('./hub').HubShare>(`${w(ws)}/hub/share`),
+  getHubShared: (ws: string) => call<{ items: import('./hub').HubSharedTicket[] }>(`${w(ws)}/hub/shared`),
+  getHubAudience: (ws: string) => call<import('./hub').HubAudienceList>(`${w(ws)}/hub/share/audience`),
   getHubPreview: (ws: string, body: { add?: import('./hub').HubRule; remove?: import('./hub').HubRule }) =>
     call<import('./hub').HubPreview>(`${w(ws)}/hub/share/preview`, 'POST', body),
   /** Stop sharing (one ticket, or one rule with the plan the owner was shown): a plain owner click, no signature. */
@@ -343,6 +364,18 @@ const click = {
     call<import('./hub').HubAdded>(`${w(ws)}/hub/share/rule-add`, 'POST', { rule, expect }),
   syncHubShare: (ws: string, expect: string) => call<import('./hub').HubAdded>(`${w(ws)}/hub/share/sync`, 'POST', { expect }),
   getHubLink: (ws: string, link: string) => call<import('./hub').HubLinkInfo>(`${w(ws)}/hub/link`, 'POST', { link }),
+  /** M3 H-5: company skills and tools offered by the hub (the owner's Company tab). */
+  getOrgOffers: (ws: string) => call<import('./org').OrgOffers>(`${w(ws)}/org`),
+  getOrgItem: (ws: string, kind: import('./org').OrgKind, name: string) =>
+    call<import('./org').OrgShown>(`${w(ws)}/org/item?kind=${kind}&name=${encodeURIComponent(name)}`),
+  acceptOrgItem: (ws: string, kind: import('./org').OrgKind, name: string, digest: string) =>
+    call<{ kind: import('./org').OrgKind; name: string; status: import('./org').OrgStatus }>(`${w(ws)}/org/accept`, 'POST', { kind, name, digest }),
+  declineOrgItem: (ws: string, kind: import('./org').OrgKind, name: string) =>
+    call<{ kind: import('./org').OrgKind; name: string; status: 'off' }>(`${w(ws)}/org/decline`, 'POST', { kind, name }),
+  syncOrg: (ws: string) => call<{ result: Record<string, string> }>(`${w(ws)}/org/sync`, 'POST', {}),
+  setOrgTool: (ws: string, server: string, tool: string, on: boolean, pin?: string) =>
+    call<{ server: string; tool: string; on: boolean }>(`${w(ws)}/org/tool`, 'POST', { server, tool, on, ...(on ? { pin } : {}) }),
+  refreshHub: (ws: string) => call<import('./hub').HubRefreshed>(`${w(ws)}/hub/refresh`, 'POST', {}),
   connectHub: (ws: string, body: import('./hub').HubConnectRequest) => call<import('./hub').HubConnected>(`${w(ws)}/hub/connect`, 'POST', body),
   cancelClick: (ws: string, requestId: string) => call<{ id: string; state: string }>(`${w(ws)}/click/cancel`, 'POST', { request_id: requestId }),
   // How I approve (B6): the person's own default way to sign, and whether a phone is paired. Both were missing here, so

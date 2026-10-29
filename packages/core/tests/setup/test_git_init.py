@@ -19,7 +19,7 @@ from .test_create import (
     run_ok,
     setup_flow,
 )
-from .test_secrets import reveal, words_for
+from .test_secrets import reveal
 
 WITH_GIT = {**AGENT, "git_init": True}
 
@@ -52,10 +52,12 @@ def test_git_init_must_be_a_boolean(flow):
 def test_the_review_names_git_init_and_the_repo_it_declares(tmp):
     f = setup_flow(tmp, FakePorts())
     post(f, "profile", WITH_GIT)
-    r = reveal(f)
-    post(f, "secrets/confirm", {"words": words_for(r)})
+    reveal(f)
+    post(f, "secrets/confirm", {"acknowledged": True})
     rv = post(f, "review")[1]
-    assert any(x["id"] == "git" and "git init" in x["text"] and "none of your files" in x["text"] for x in rv["flags"])
+    git = next(x for x in rv["flags"] if x["id"] == "git")
+    assert "git init" not in git["text"] and ".orch" not in git["text"] and "Your files stay as they are" in git["text"]
+    assert "git init" in git["detail"] and ".orch-work/" in git["detail"] and "None of your files" in git["detail"]
     settings = next(i for i in rv["items"] if i["id"] == "settings")
     assert settings["type"] == "settings.changed" and settings["fields"]["set"]["repos"] == {
         "work": {"path": str(tmp.work)}
@@ -118,3 +120,24 @@ def test_init_repository_refuses_a_gitignore_that_is_a_link(tmp):
     with pytest.raises(OSError):
         steps.init_repository(tmp.work)
     assert target.read_text() == "x"
+
+
+def test_the_review_names_the_private_folders_and_the_run_makes_them_first(tmp):
+    f, ports, p, rv = run_ok(tmp, AGENT)
+    perms = next(x for x in rv["flags"] if x["id"] == "perms")
+    assert perms["text"].startswith("Folders made private")
+    assert p["steps"][0]["id"] == "perms" and p["steps"][0]["status"] == "done"
+    assert [e[0] for e in ports.log if e[0] in ("privatize", "genesis")] == ["privatize", "genesis"]
+
+
+def test_the_signed_perms_text_names_the_paths_the_run_changes(tmp):
+    from pathlib import Path
+
+    from orch import layout as layout_mod
+    from orch import privdir
+
+    f, ports, p, rv = run_ok(tmp, AGENT)
+    detail = next(x for x in rv["flags"] if x["id"] == "perms")["detail"]
+    home = Path(f.e.env.get("HOME") or Path.home())
+    real = privdir.setup_paths(Path(f.dir), layout_mod.store_of(f.dir), f.e.state_dir, home)
+    assert all(privdir.shown(x, home) in detail for x in real)

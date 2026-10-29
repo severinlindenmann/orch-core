@@ -465,6 +465,7 @@ class EditTicket(Action):
     key: Key
     head_seq: Annotated[int, Field(ge=1)]
     sections: dict[SectionId, SectionText] = Field(default_factory=dict, max_length=10)
+    title: Annotated[str, StringConstraints(min_length=1, max_length=200)] | None = None  # r7-P07: the new title
     acceptance: EditAcceptance | None = None
     tasks: EditTasks | None = None
     people: dict[PeopleRole, PeopleChange] | None = None
@@ -501,6 +502,10 @@ class EditTicket(Action):
             }
             if intent["ticket"]["key"] != self.key:
                 raise sequence.SequenceInvalid("the host answered for another ticket")
+            if self.title is not None:
+                title = normalize_text(self.title, one_line=True).strip()
+                if title != doc.get("title"):  # core refuses a title that does not differ; here "unchanged" is no edit
+                    intent["title"] = {"was": doc.get("title"), "text": title}
             if self.acceptance is not None and (self.acceptance.edit or self.acceptance.add):
                 a = self.acceptance
                 was = [{"id": x["id"], "text": x["text"]} for x in doc.get("acceptance") or []]
@@ -1912,18 +1917,32 @@ def done_error(prepared: dict, row: dict | None = None) -> HostError:
             exit=5,
         )
     signed_at = info.get("submitted_at") or row.get("submitted_at")
-    return HostError(
-        {
-            "code": "intent.done",
-            "message": "This is already done.",
-            "retryable": False,
-            "state": "submitted",
-            "signed_at": signed_at,
-            "op": op,
-            "summary": summary,
-        },
-        exit=5,
-    )
+    error = {
+        "code": "intent.done",
+        "message": "This is already done.",
+        "retryable": False,
+        "state": "submitted",
+        "signed_at": signed_at,
+        "op": op,
+        "summary": summary,
+    }
+    ticket = created_ticket(prepared)
+    if ticket:
+        error["ticket"] = ticket
+    return HostError(error, exit=5)
+
+
+def created_ticket(prepared: dict) -> dict | None:
+    """The ticket a signed request created (key and title), from the host's own committed `ticket.created` event.
+    Plain words for the page: it never shows the raw event JSON."""
+    for ev in (prepared.get("material") or {}).get("review", []):
+        if not isinstance(ev, dict) or ev.get("type") != "ticket.created":
+            continue
+        body = ev.get("payload") if isinstance(ev.get("payload"), dict) else ev
+        key, title = body.get("key"), body.get("title")
+        if isinstance(key, str) and key:
+            return {"key": key, "title": title if isinstance(title, str) else ""}
+    return None
 
 
 def read_done(human, ws: str, rid: str) -> HostError:

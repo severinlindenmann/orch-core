@@ -171,6 +171,7 @@ class SetupFlow:
         relay = self.e.relay()
         assert self.root is not None or not self.dir
         from . import facts
+        from .osfacts import _platform
 
         sug = (
             facts.suggest(dict(self.e.env), Path(self.dir))
@@ -205,6 +206,7 @@ class SetupFlow:
             "suggested": sug,
             "addons": [a.view() for a in self.addons.values()],
             "methods": list(METHODS),
+            "os": _platform(),  # the machine running setup: the page words things only for the OS they are true on
             "click_available": bool(click_ok),
             "click_reason": click_reason,
             "click_risk": CONVENIENCE_RISK,
@@ -306,8 +308,22 @@ class SetupFlow:
         if self.mode == "finish":
             assert self.facts is not None
             missing = facts_mod.missing_items(self.facts, self.profile, self.addons)
+        from orch import layout as layout_mod
+        from orch import privdir
+
+        home = Path(self.e.env.get("HOME") or Path.home())
+        shown = [
+            privdir.shown(p, home)
+            for p in privdir.setup_paths(Path(self.dir), layout_mod.store_of(self.dir), self.e.state_dir, home)
+        ]
         plan = review_mod.plan(
-            self.profile, self.dir, self.addons, self.facts, manifest_bytes=self.e.manifest_bytes, missing=missing
+            self.profile,
+            self.dir,
+            self.addons,
+            self.facts,
+            manifest_bytes=self.e.manifest_bytes,
+            missing=missing,
+            private_paths=shown,
         )
         rid = "rv_" + _secrets.token_hex(8)
         self.review = _Review(rid, plan)
@@ -369,6 +385,8 @@ class SetupFlow:
 
     def _step_ids(self, plan: review_mod.Plan) -> list[str]:
         ids = [] if self.mode == "finish" else ["keys", "genesis", "register"]
+        if any(f["id"] == "perms" for f in plan.flags):
+            ids.insert(0, "perms")
         if any(f["id"] == "git" for f in plan.flags):
             ids.append("git")
         if any(f["id"] == "runner" for f in plan.flags):
@@ -440,17 +458,14 @@ class SetupFlow:
         return self.secrets.reveal()
 
     def _approve(self, body: Any) -> dict[str, Any]:
+        if self.phase != "secrets":
+            raise SetupError("setup.phase", "the recovery words are acknowledged right after they are shown", 409)
         if self.secrets is None:
             raise SetupError("secrets.not_shown", "show the secrets first", 409)
         if not isinstance(body, dict):
-            raise SetupError("invalid.input", "words", 400, field="words")
-        out = self.secrets.confirm(body.get("words"))
-        if out.get("ok"):
-            self.phase = "review"
-        elif out["attempts_left"] <= 0:
-            # the session dies; a new `orch setup` draws NEW secrets
-            self.error = {"code": "secrets.exhausted", "message": "too many wrong words; start the setup again"}
-            self.phase = "cancelled"
+            raise SetupError("invalid.input", "acknowledged", 400, field="acknowledged")
+        out = self.secrets.confirm(body.get("acknowledged"))
+        self.phase = "review"
         return out
 
     def _drop_secrets(self) -> None:

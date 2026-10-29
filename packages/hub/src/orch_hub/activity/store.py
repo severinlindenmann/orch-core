@@ -37,12 +37,28 @@ ACTIVITY_TYPES = (
     "mcp.saved",
     "mcp.removed",
     "mcp.offered",
+    "space.created",
+    "space.member_added",
+    "space.member_removed",
+    "secret.created",
+    "secret.shared",
+    "secret.rotated",
+    "secret.removed",
     "space.mode_set",
     "space.archived",
     "space.unarchived",
     "addon.allowed",
     "addon.request_approved",
     "addon.request_refused",
+    "hub.settings.changed",
+    "link.revoked",
+    "app.stopped",
+    "hub.backup.key_set",
+    "hub.backup.key_confirmed",
+    "hub.backup.made",
+    "hub.backup.downloaded",
+    "hub.backup.restored",
+    "hub.restore.confirmed",
 )
 # Only structured references, never request bodies, credentials, or free-form notes.
 DETAIL_FIELDS = frozenset(
@@ -63,6 +79,10 @@ DETAIL_FIELDS = frozenset(
         "direct",
         "skill",
         "server",
+        "setting",  # which hub setting changed ("general" or "addresses"), never its value
+        "secret",
+        "link",  # a shared link id (32 hex)
+        "app",  # an app id (32 hex)
     }
 )
 REASON_MAX_BYTES = 800  # 200 characters of UTF-8

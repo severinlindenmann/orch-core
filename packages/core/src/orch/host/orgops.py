@@ -12,6 +12,8 @@ Ops:
   Written to ``hub/org/accepted.json``: the same host op plus 0600 file as ``space.accept`` (a signed person op
   is a known
   gap, tracked in orch-core#1263).
+* ``org.tool {server, tool, on, pin?}``: turn one tool of an accepted company server On (for exactly the pin shown;
+  ``changed`` if it moved) or Off. P only, owner. Every tool starts Off.
 * ``org.decline {kind, name}``: turn an item off again. P only, owner.
 * ``org.sync``: fetch both bundles from the bound hub and verify them (no rollback). Grants nothing. P, and G at
   most once
@@ -33,7 +35,14 @@ if TYPE_CHECKING:
 
 __all__ = ["NETWORK_OPS", "ORG_OPS", "ORG_READS", "execute", "serve"]
 
-ORG_OPS: dict[str, int] = {"org.offers": 1, "org.show": 1, "org.accept": 1, "org.decline": 1, "org.sync": 1}
+ORG_OPS: dict[str, int] = {
+    "org.offers": 1,
+    "org.show": 1,
+    "org.accept": 1,
+    "org.decline": 1,
+    "org.tool": 1,
+    "org.sync": 1,
+}
 ORG_READS = frozenset({"org.offers"})
 NETWORK_OPS = frozenset({"org.sync"})  # talks to the hub: off the workspace worker
 AGENT_SYNC_MIN_S = 60.0
@@ -48,6 +57,17 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
     },
     "org.decline": {
         "type": "object", "properties": {"kind": _KIND, "name": _NAME}, "required": ["kind", "name"],
+        "additionalProperties": False,
+    },
+    "org.tool": {
+        "type": "object",
+        "properties": {
+            "server": {"type": "string", "pattern": "^[a-z0-9-]{1,40}$"},
+            "tool": {"type": "string", "pattern": "^[A-Za-z0-9_.-]{1,128}$"},
+            "on": {"type": "boolean"},
+            "pin": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        },
+        "required": ["server", "tool", "on"],
         "additionalProperties": False,
     },
     "org.accept": {
@@ -84,7 +104,7 @@ def _check(call: Call) -> tuple[str, dict[str, Any]]:
     if op not in ORG_READS:
         if service.state == "degraded":
             raise HostError("workspace.degraded", f"the workspace is read-only: {service.cause}")
-    if op in ("org.show", "org.accept", "org.decline"):
+    if op in ("org.show", "org.accept", "org.decline", "org.tool"):
         _owner(call)  # the owner at the person column; never an agent
     elif op == "org.sync":
         if call.column.name == "G":
@@ -130,6 +150,11 @@ def serve(call: Call) -> dict[str, Any]:
         return ok_result(orgstate.show(service, args["kind"], args["name"]))
     if op == "org.accept":
         return ok_result(orgstate.accept(service, args["kind"], args["name"], args["digest"], call.viewer or ""))
+    if op == "org.tool":
+        if args["on"] and "pin" not in args:
+            raise HostError("invalid.input", "org.tool: pin is required to turn a tool on")
+        got = orgstate.set_tool(service, args["server"], args["tool"], args["on"], args.get("pin"), call.viewer or "")
+        return ok_result(got)
     return ok_result(orgstate.decline(service, args["kind"], args["name"]))  # org.decline
 
 
@@ -141,6 +166,20 @@ async def execute(call: Call, planned: dict[str, Any]) -> dict[str, Any]:
     return await asyncio.to_thread(_sync, call.service)
 
 
+def _report_use(service: WorkspaceService, link: Any) -> None:
+    """Counts only (``secret_use {secret_id, day, n}``). Best effort: a refusal or a broken link puts the counts
+    back and never blocks or fails the sync."""
+    from . import orgsecrets
+
+    rows = orgsecrets.take_usage(service)
+    for i, row in enumerate(rows):
+        try:
+            link.call("secret_use", row)
+        except Exception:  # noqa: BLE001
+            orgsecrets.restore_usage(service, rows[i:])
+            return
+
+
 def _sync(service: WorkspaceService) -> dict[str, Any]:
     from orch.hubclient.errors import HubRefused
     from orch.hubclient.tlslink.client import LinkClosed, LinkError, LinkTimeout
@@ -149,14 +188,19 @@ def _sync(service: WorkspaceService) -> dict[str, Any]:
     from .workspace import ok_result
 
     bodies: dict[str, Any] = {}
+    ops = [("skill", "org_skills_get"), ("mcp", "mcp_servers_get")]
+    if orgstate.isolated(service):
+        ops.append(("secrets", "org_secrets_get"))  # tier B only: tier A never asks for a wrap (condition 11)
     try:
-        link = peerops._open_link(service)  # noqa: SLF001 - mode-agnostic, one short link for the two requests
+        link = peerops._open_link(service)  # noqa: SLF001 - mode-agnostic, one short link for the requests
         try:
-            for kind, op in (("skill", "org_skills_get"), ("mcp", "mcp_servers_get")):
+            for kind, op in ops:
                 try:
                     bodies[kind] = link.call(op, {})
                 except (LinkError, HubRefused) as exc:
                     bodies[kind] = exc.code  # a refusal (an older hub: unknown_op) is the result of that kind
+            if "secrets" in bodies:
+                _report_use(service, link)
         finally:
             link.close()
     except (OSError, LinkClosed, LinkTimeout):

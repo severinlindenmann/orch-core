@@ -502,7 +502,7 @@ function install() {
   ag.preview = async () => agentPreview(current)
   ag.runnerReview = async (_ws: string, b: { on: boolean; terminals?: boolean }) => ({
     view: { op: b.on ? 'runner.on' : 'runner.off', on: b.on, terminals: b.on && !!b.terminals, lines: b.on
-      ? ['Turn on dashboard execution for Demo.', 'Agents may run commands on this computer as you when you start them.', 'Dashboard execution: agents and terminals started here run as you. Anything that takes over this dashboard, or any agent it starts, can run commands and read your files and keys.', 'That includes reading your SSH keys and your orch keys. The dashboard can then start agents, create worktrees and open terminals for this workspace, as you.']
+      ? ['Turn on dashboard execution for Demo.', 'Agents may run commands on this computer as you when you start them.', 'Agents and terminals you start here work as you on this computer. They can run programs and open your files, including secret keys, and so can anything that takes over this dashboard. Only continue on a computer you trust.', 'That includes reading your SSH keys and your orch keys. The dashboard can then start agents, create worktrees and open terminals for this workspace, as you.']
       : ['Turn off dashboard execution for Demo.', 'Open terminals close within a second; agents already running keep running; the dashboard starts no new ones.'] },
     view_digest: 'sha256:' + 'a'.repeat(64),
   })
@@ -573,7 +573,7 @@ function install() {
       { id: 'dashboard', title: 'Dashboard', desc: "This workspace's dashboard (locked on).", state: 'on', locked: 'The dashboard is always on: it is what shows this workspace.', blocked: null },
       { id: 'start-agent', title: 'Start agents', desc: 'Start an agent from the dashboard. It runs on this computer, as you.', state: 'on', locked: null, blocked: 'Stop first: an agent of yours is running right now.' },
       { id: 'terminals', title: 'Terminals', desc: 'Open a terminal on this computer from the dashboard. It runs as you.', state: 'off', locked: null, blocked: 'Needs dashboard execution first. Turn it on here, then switch this on.', runner_switch: true },
-      { id: 'worktrees', title: 'Worktrees', desc: 'Each ticket gets its own copy of your project folder, so agents do not overwrite each other.', state: 'off', locked: null, blocked: null },
+      { id: 'worktrees', title: 'Work copies', desc: 'Each ticket gets its own copy of your project folder, so agents do not overwrite each other.', state: 'off', locked: null, blocked: null },
       { id: 'publish', title: 'Publish', desc: 'Share files of a ticket with a link.', state: current.startsWith('addons-publish') ? 'on' : 'off', locked: null, blocked: null },
       { id: 'quick', title: 'Quick tasks', desc: 'Small one-off tasks. Always available; there is nothing to switch on.', state: 'on', locked: 'Always available. There is nothing to switch.', blocked: null },
     ],

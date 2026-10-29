@@ -16,7 +16,7 @@ const ADDON_PAGES: [string, RegExp, RegExp][] = [
   ['usage/overview', /Usage/, /Cost · this month/],
   ['wiki/pages', /Wiki/, /Tariff data conventions/],
   ['terminals/sessions', /Terminals/, /view-only mirrors/],
-  ['worktrees/worktrees', /Worktrees/, /With changes/],
+  ['worktrees/worktrees', /Work copies/, /With changes/],
   ['quick/quick', /Quick tasks/, /Quick task \(one line\)/],
   ['records/records', /Records/, /Record changes/],
   ['activity/activity', /Activity/, /events today/],
@@ -100,9 +100,8 @@ describe('accessibility smoke (axe, no serious or critical violations)', () => {
     ['Overview', /Tariff tables live in a shared drive/],
     ['Acceptance', /Acceptance criteria/],
     ['Questions', /Should .valid_from. in the seeds be a DATE/],
-    ['Artifacts', /tariff-export\.log/],
+    ['Results', /tariff-export\.log/],
     ['History', /Timeline/],
-    ['Raw', /Ticket document/],
   ]
   it.each(tabs)('ticket DEMO-0043, %s tab', async (tab, marker) => {
     await check('/ticket/DEMO-0043', /^Load tariff tables as dbt seeds$/, marker, async (user) => {
@@ -110,7 +109,11 @@ describe('accessibility smoke (axe, no serious or critical violations)', () => {
       await user.click(t)
       await waitFor(() => expect(t).toHaveAttribute('aria-selected', 'true'))
     })
-  }, 30_000) // the Raw tab renders the whole ticket document as highlighted JSON; axe needs longer than the default 10 s
+  }, 30_000)
+
+  it('ticket DEMO-0043, Technical details (raw document)', async () => {
+    await check('/ticket/DEMO-0043?tab=raw', /^Load tariff tables as dbt seeds$/, /Ticket document/)
+  }, 30_000) // the raw view renders the whole ticket document as highlighted JSON; axe needs longer than the default 10 s
 
   it.each(ADDON_PAGES)('addon page %s', async (p, title, marker) => {
     await check(`/addon/${p}`, title, marker)

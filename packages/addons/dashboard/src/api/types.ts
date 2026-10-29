@@ -610,6 +610,9 @@ export interface NeedsYouItem {
   text: string
   since: string
   ref?: string // Q2, gate name, ...; for terminal_wait the run id ("Open terminal" opens it)
+  /** terminal_wait only: how the host knows. "wait": the agent is inside `orch wait` (run-10 J04, whatever its terminal
+   *  prints); "hook" / "quiet": its prompt (fallbacks for agents outside orch wait). */
+  source?: 'wait' | 'hook' | 'quiet'
   /** Gate hash an approval item covers (approval items only). */
   hash?: string
   /** Real host only. */
@@ -934,7 +937,7 @@ export interface AddonActionResult {
   url?: string
   /** A ticket this action created (e.g. an imported issue): the success toast offers "Open". */
   ticket?: string
-  /** A terminals session this action opened (e.g. Worktrees' "Open terminal here"): core opens the dock on it. */
+  /** A terminals session this action opened (e.g. Work copies' "Open terminal here"): core opens the dock on it. */
   terminal?: string
   /** Reversible: the toast carries "Undo", which posts `undo.action` with `undo.args` (same addon). */
   undo?: { action: string; args?: Record<string, string | number | boolean> }
@@ -975,7 +978,7 @@ export interface ActionResult {
 export interface ApiErrorBody {
   ok: false
   exit?: number
-  error: { code: string; message: string; hint?: string; fix?: string | { argv: string[] }; retryable: boolean; retry_after_ms?: number; reason?: string; request_id?: string; signed_at?: string | null; op?: string; summary?: string; commit?: string; message_hidden?: boolean; detail?: ErrorDetail }
+  error: { code: string; message: string; hint?: string; fix?: string | { argv: string[] }; retryable: boolean; retry_after_ms?: number; reason?: string; request_id?: string; signed_at?: string | null; op?: string; summary?: string; ticket?: { key: string; title: string }; commit?: string; message_hidden?: boolean; detail?: ErrorDetail }
 }
 
 /** `Error.detail` (host contract v1.9): the server forwards it only for the click-to-sign refusal codes (H12d-2). */
@@ -998,6 +1001,7 @@ export class ApiError extends Error {
   readonly signed_at?: string | null
   readonly op?: string
   readonly summary?: string
+  readonly ticket?: { key: string; title: string }
   /** A failed records push: the local commit that already landed. */
   readonly commit?: string
   /** The records child's message had characters that are hidden: it is withheld (null) and the code stands. */
@@ -1019,6 +1023,7 @@ export class ApiError extends Error {
     this.signed_at = body.signed_at
     this.op = body.op
     this.summary = body.summary
+    this.ticket = body.ticket
     this.commit = body.commit
     this.message_hidden = body.message_hidden
     this.exit = exit

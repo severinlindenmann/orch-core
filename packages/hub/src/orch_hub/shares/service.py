@@ -9,7 +9,10 @@
   BEFORE the change commits.
 * ``on_unbind`` / ``sync`` delete a workspace's items when its binding ends or leaves selective mode.
 * ``list_shared`` is the read API for the web view and the phone. Hub groups and the hub-admin group get no role in a
-  selective workspace (spec §8a), so only the hub user the admin aliased as the workspace's owner sees its items.
+  selective workspace (spec §8a): the hub user the admin aliased as the workspace's owner sees every item; anyone else
+  sees only the TICKET items whose owner-signed ``audience`` names them (by id) or a group they belong to now (P02,
+  contract 10.2b). The audience is the owner's word, signed by ``WSK``; no hub role or admin can add a reader, and no
+  reader can sign (``shared_item`` stays owner-only).
 """
 
 from __future__ import annotations
@@ -38,6 +41,7 @@ class ShareService:
         dev_mode: bool,
         now_ms: Callable[[], int] | None = None,
         on_change: Callable[[dict[str, Any]], Any] | None = None,
+        access: Any = None,
     ) -> None:
         """``hxk`` is the hub's key-agreement key (an EC private key, or :func:`orch_hub.shares.hxk_handle`).
         ``on_change`` receives the chain's ``share`` event of every accepted put, revoke and purge (before it commits)."""
@@ -45,6 +49,7 @@ class ShareService:
         self._hub, self._hxk, self._dev = hub_id, hxk, dev_mode
         self._now = now_ms or (lambda: int(time.time() * 1000))
         self._on_change = on_change
+        self._access = access  # the hub's Access (P02): resolves a signed audience; None: owner alias only
         self._pending: set[str] = (
             set()
         )  # workspaces whose purge failed (audit down): retried at the next sync/reconcile
@@ -198,18 +203,38 @@ class ShareService:
     # --- read API (D13: the hub web view and the phone) -----------------------------------------------------------
 
     def list_shared(self, user_id: str, workspace_id: str) -> list[dict[str, Any]]:
-        """The shared items of a selective workspace that ``user_id`` may see: the owner alias only. Every other user,
-        hub-admins and role holders included, gets ``[]`` (spec §8a). Each entry is ``{item_id, sealed (bytes), digest,
-        size, stored_ms, item_version, item (the verified share.item), signed (the signed item), hash}``; an item that
-        no longer opens and verifies (bad wrap, signature or content) is left out (fail closed)."""
+        """The shared items of a selective workspace that ``user_id`` may see. The owner alias sees all of them. Anyone
+        else sees only ticket items whose verified, owner-signed ``audience`` names them or a group they are a member of
+        now (and only while they are an active hub user); hub-admins and role holders get nothing by their role
+        (spec §8a). Each entry is ``{item_id, sealed (bytes), digest, size, stored_ms, item_version, item (the verified
+        share.item), signed (the signed item), hash}``; an item that no longer opens and verifies (bad wrap, signature
+        or content) is left out (fail closed)."""
         with self._reg.lock:
             try:
                 self._selective(workspace_id)
             except Refused:
                 return []
-            if type(user_id) is not str or self._reg.owner_alias(workspace_id) != user_id:
+            if type(user_id) is not str or not user_id:
                 return []
-            return self._open_all(workspace_id, self.store.items(workspace_id))
+            rows = self._open_all(workspace_id, self.store.items(workspace_id))
+            if self._reg.owner_alias(workspace_id) == user_id:
+                return rows
+            return [it for it in rows if self.audience_reads(user_id, it["item"])]
+
+    def audience_reads(self, user_id: str, item: dict[str, Any]) -> bool:
+        """May ``user_id`` read this VERIFIED item through its signed audience (not as the owner)? Fail closed on every
+        doubt: no Access, no audience, not a ticket item, an inactive or unknown user, any lookup error."""
+        aud = item.get("audience")
+        if self._access is None or type(aud) is not dict or item.get("item_kind") != "ticket":
+            return False
+        try:
+            if not self._access.is_active(user_id):
+                return False
+            if user_id in aud["users"]:
+                return True
+            return any(user_id in self._access.members(g) for g in aud["groups"])
+        except Exception:  # noqa: BLE001  (a malformed id, a closed store, ...): nothing is read
+            return False
 
     def shared_item(self, user_id: str, workspace_id: str, item_id: str) -> dict[str, Any]:
         """One live shared item for the custodial build (protocol.md §8.6): the same entry as :meth:`list_shared`.

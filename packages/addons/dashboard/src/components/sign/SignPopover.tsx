@@ -1,11 +1,12 @@
 import type { Workspace } from '@/api/types'
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { Children, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useRouter } from '@tanstack/react-router'
 import { toast } from 'sonner'
 import { api } from '@/api/client'
 import { queries } from '@/api/queries'
 import type { HandoffAction, HandoffRequest, HandoffState } from '@/api/handoff'
+import { ReviewShown } from './AccessSelect'
 import { clickEligible, clickReady, DEPOSIT_RISK } from '@/api/click'
 import { scheduleKey, type ScheduleList } from '@/api/schedules'
 import { useWorkspace } from '@/app/workspace'
@@ -20,6 +21,7 @@ import { storyOf } from './story'
 import { takeTrustedPress, trustedPress } from './trustedPress'
 import { HubAddonPanel, HubSettingsPanel } from './HubSignPanel'
 import { hubSettingsSplit, isAddonGrant } from '@/api/hubsign'
+import { ClaudeConsentLine, isOwner, useClaudeConsent, type ClaudeConsent } from './claudeConsent'
 
 /**
  * How a settled signature was made. `unsignedShown` is true only on the one-click path, when the `unsigned` slot was
@@ -46,6 +48,10 @@ export interface SignPopoverProps {
   hint?: string | null
   /** The form, before the request exists. */
   children?: ReactNode
+  /** The caller read `trustedPress(e.nativeEvent)` in its own click/keydown handler: true opens the host's review at once, false keeps the idle box. Absent: the ambient press flag decides (legacy). A remount without it prepares nothing. */
+  autoStart?: boolean
+  /** With `autoStart`: the opening press also starts the 1 s arm (one click signs after the countdown). Never for a review with risk lines (they need their own press). */
+  armOnStart?: boolean
   /** Choices that are part of what is signed (agent access length): shown above the review in every state but signing. A change of `action` needs a new key on this component, which prepares again. */
   controls?: ReactNode
   /** A plain-words summary above the review, in every state but signing. Unlike `controls` it never holds back the preparation. */
@@ -72,6 +78,10 @@ export interface SignPopoverProps {
   /** Show the review in place, under the row that asked (an accordion), not as a popover. */
   inline?: boolean
   initialFocus?: () => HTMLElement | null
+  /** This signature starts a Claude Code agent: an owner is asked, in one preselected line, to let it open the ticket's folder without asking. */
+  claudeCode?: boolean
+  /** The caller's own consent state (it showed the line itself or hands it over): this popover then makes none. */
+  consent?: ClaudeConsent
   /** The person asked to approve in the hub instead (an optional extra, A1/FB15): show the hub panel, sign nothing here. */
   forceHub?: boolean
   /** The host's minimum scheduling lead in seconds, for a "too soon" refusal. Default: the schedules list's
@@ -103,23 +113,42 @@ export function SignPopover(p: SignPopoverProps) {
   // The hub is an optional extra path: only when the caller asks for it, and only for what the hub can approve here.
   // An add-on grant goes through the one hub approval route (FB15): the host prepares it for the hub, nothing signs here.
   const viaHub = p.forceHub === true && (isAddonGrant(p.action) || !!hubSettingsSplit(p.action))
+  const consentRef = useRef<ReturnType<typeof useClaudeConsent> | null>(null)
   const click = useClickSign(p.ws, (_phase, state, request) => {
-    if (p.doneToast !== '') toast.success(p.doneToast ?? `${p.title}: signed`)
-    p.onSettled?.('done', state, request, { via: 'click', unsignedShown: unsignedShown.current })
+    const settle = () => {
+      if (p.doneToast !== '') toast.success(p.doneToast ?? `${p.title}: signed`)
+      p.onSettled?.('done', state, request, { via: 'click', unsignedShown: unsignedShown.current })
+    }
+    // P03: the consent is recorded after the signature settled and before the caller starts the agent (a failure never stops the start)
+    const recorded = consentRef.current?.grant()
+    if (recorded) void recorded.then(settle)
+    else settle()
   }, leadS)
   const callbacks = useRef(p)
   callbacks.current = p
   const router = useRouter({ warn: false })
   const me = useMe(p.ws).data
+  const own = useClaudeConsent(p.ws, !p.consent && !!p.claudeCode && !!here && isOwner(here, me?.person))
+  const consent = p.consent ?? own
+  consentRef.current = consent
   const sequenceStart = p.action?.action === 'new_sequence' && !!p.action.launch
   // D2 grant terms come from the signer's conditional sequence, never the proposed browser action.
   const story = sequenceStart ? { signLabel: 'Sign and start agent', steps: [] } : storyOf(p.action, { startsAgent: p.startsAgent, person: me?.person })
   const canClick = clickReady(here) && (!p.action || clickEligible(p.action))
   const started = useRef(false)
+  // A form is real children only: an array of `false` (approve) is none.
+  const hasForm = Children.toArray(p.children).length > 0
   useLayoutEffect(() => {
-    if (!viaHub && canClick && p.action && !p.children && (!p.controls || (p.action.action === 'new_sequence' && !!p.action.launch)) && !p.hint && !started.current && takeTrustedPress()) {
+    if (!viaHub && canClick && p.action && !hasForm && (!p.controls || sequenceStart) && !p.hint && !started.current) {
+      // Run-9 J04: "Create and start" opens straight on the host's review, so ONE press in the sign box signs what is
+      // shown. It prepares only: the "Create and start" click never counts as that press (never armed, Opus r9-build 1).
+      // P06: an explicit `autoStart` (read in the caller's own handler) replaces the ambient flag, which is consumed either way.
+      const ambient = takeTrustedPress()
+      const open = p.autoStart ?? ambient
+      if (!open && !sequenceStart) return
       started.current = true
-      void click.start(p.action)
+      const arm = p.autoStart === undefined ? ambient : open && p.armOnStart === true
+      void click.start(p.action, 0, sequenceStart ? false : arm)
     }
   })
   useEffect(() => {
@@ -164,20 +193,22 @@ export function SignPopover(p: SignPopoverProps) {
     </SignShell>
   }
   return <SignShell inline={p.inline} anchor={anchor} open={!folded} onDismiss={() => void close()} title={<SignerHeadline view={click.view?.view ?? {}} fallback={<Inline>{p.title}</Inline>} />} showClose onOpenAutoFocus={e => { e.preventDefault(); (p.initialFocus?.() ?? cancelRef.current)?.focus() }}>
-    {(!sequenceStart || !click.view || click.view.view.risk_lines?.includes(DEPOSIT_RISK)) && p.controls}{p.lead}{!click.view && p.summary}
+    {(!sequenceStart || !click.view || click.view.view.risk_lines?.includes(DEPOSIT_RISK)) && <ReviewShown.Provider value={!!click.view}>{p.controls}</ReviewShown.Provider>}{p.lead}{!click.view && p.summary}
     {/* The switch is read before the press; a request already open keeps its review (the signer refuses it if the switch moved). */}
     {!canClick && click.phase === 'idle' ? <><p>One click is not ready on this computer.</p>{router && <Link to="/settings/$tab" params={{ tab: 'general' }} onClick={() => void close()}>Turn on One click</Link>}<div className="flex justify-end">{dismiss('Close')}</div></> : <>
       {click.phase === 'idle' && <>{p.children}{p.hint && <p>{p.hint}</p>}<div className="flex flex-wrap justify-end gap-2">{dismiss('Cancel')}<Button disabled={!p.action || !!p.hint} onClick={e => { if (trustedPress(e.nativeEvent) && p.action) void click.start(p.action) }}>{p.confirmLabel ?? story?.signLabel ?? p.title}</Button></div></>}
       {['preparing', 'viewing'].includes(click.phase) && <p role="status">Reading the review…</p>}
-      {(click.phase === 'ready' || click.phase === 'signing') && click.view && <ClickSignPanel ws={p.ws} answer={click.view} problem={click.problem} signing={click.phase === 'signing'} onSign={() => void click.sign()} onCancel={() => void close()} onDisarm={() => void click.cancel()} pressed={click.fresh} waitUntil={waitUntil} story={story} label={p.confirmLabel} manyWorkspaces={many} />}
+      {(click.phase === 'ready' || click.phase === 'signing') && click.view && <ClickSignPanel ws={p.ws} answer={click.view} problem={click.problem} signing={click.phase === 'signing'} extra={click.prepared?.repeat ? <p data-testid="click-repeat-note" className="text-[13px] font-medium text-text">This makes another ticket like one already signed.</p> : undefined} onSign={() => void click.sign()} onCancel={() => void close()} onDisarm={() => void click.cancel()} pressed={click.fresh} waitUntil={waitUntil} story={story} label={p.confirmLabel} manyWorkspaces={many} />}
       {click.phase === 'settling' && <p role="status">The outcome is not certain yet. Do not sign again. {click.settleNote}</p>}
       {click.phase === 'failed' && click.problem && (click.problem.next === 'unavailable' ? <><p>{click.problem.body || click.problem.title}</p>{p.ws && click.problem.devices && <RefusalDevices ws={p.ws} ids={click.problem.devices} />}</> : <ClickProblemBox problem={click.problem} ws={p.ws} />)}
       {click.phase === 'cancelled' && <p role="status">Nothing was signed.</p>}
       {['cancelled', 'failed', 'settling'].includes(click.phase) && <div className="flex flex-wrap justify-end gap-2">
         {/* An ended or unsettled attempt can always be left: Cancel withdraws a request still open, Close just closes. */}
         {dismiss(click.phase === 'failed' && click.prepared && click.problem?.next !== 'check' ? 'Cancel' : 'Close')}
+        {click.phase === 'failed' && click.problem?.ticket && router && <Link to="/ticket/$key" params={{ key: click.problem.ticket.key }} onClick={() => void close()} data-testid="open-existing-ticket" className="inline-flex h-9 items-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground hover:bg-primary/90">Open it</Link>}
         {(click.phase === 'cancelled' || (click.phase === 'failed' && ['prepare', 'retry', 'again', 'review'].includes(click.problem?.next ?? ''))) && <Button onClick={e => { if (trustedPress(e.nativeEvent) && p.action) void click.again(p.action) }}>Try again</Button>}
       </div>}
+      {(click.phase === 'ready' || click.phase === 'signing') && <ClaudeConsentLine c={consent} />}
       {p.unsigned && click.phase !== 'done' && <div ref={unsignedEl} data-testid="handoff-unsigned">{p.unsigned}</div>}
     </>}
   </SignShell>

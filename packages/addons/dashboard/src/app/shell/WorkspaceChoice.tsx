@@ -47,26 +47,33 @@ export const RECHECK_MS = 2500
 export const RECHECK_MAX = 24
 
 /** Refresh the workspace list now and then while `active`; stops when the page is left, or after `RECHECK_MAX` tries. */
-export function useRecheck(active: boolean) {
+export function useRecheck(active: boolean): boolean {
   const queryClient = useQueryClient()
+  const [gaveUp, setGaveUp] = useState(false)
   useEffect(() => {
     if (!active) return
+    setGaveUp(false)
     let tries = 0
     const timer = window.setInterval(() => {
       tries += 1
       void queryClient.invalidateQueries({ queryKey: ['workspaces'] })
-      if (tries >= RECHECK_MAX) window.clearInterval(timer)
+      if (tries >= RECHECK_MAX) {
+        window.clearInterval(timer)
+        setGaveUp(true)
+      }
     }, RECHECK_MS)
     return () => window.clearInterval(timer)
   }, [active, queryClient])
+  return gaveUp
 }
 
 /** An address that names (by `?ws=`) a workspace whose host is not running. The others keep working. */
 export function WorkspaceStopped({ workspace }: { workspace: Workspace }) {
   const unsafe = workspace.host_state === 'workspace.name_invalid'
   const [checking, setChecking] = useState(false)
-  useRecheck(!unsafe && !workspace.host_message)
-  usePageHeader(unsafe ? 'Workspace not shown' : workspace.host_state === 'addon.disabled' ? 'Dashboard setup' : workspace.host_message ? 'Workspace can\'t be opened' : 'Host not running')
+  const gaveUp = useRecheck(!unsafe && !workspace.host_message)
+  const notReady = workspace.host_state === 'addon.paused' || workspace.host_state === 'addon.disabled'
+  usePageHeader(unsafe ? 'Workspace not shown' : notReady ? 'Getting your workspace ready' : workspace.host_message ? 'Workspace can\'t be opened' : 'Host not running')
   if (unsafe)
     return (
       <div className="mx-auto mt-16 max-w-md rounded-lg border border-border bg-surface p-8 text-center" role="status">
@@ -77,17 +84,17 @@ export function WorkspaceStopped({ workspace }: { workspace: Workspace }) {
         </p>
       </div>
     )
-  if (workspace.host_state === 'addon.disabled')
+  if (notReady)
     return (
-      <div className="mx-auto mt-16 max-w-md rounded-lg border border-border bg-surface p-8 text-center" role="status">
+      <div className="mx-auto mt-16 max-w-md rounded-lg border border-border bg-surface p-8 text-center" role="status" data-testid="workspace-paused">
         <ServerOff className="mx-auto size-7 text-text-muted" aria-hidden />
-        <h1 className="mt-3 text-lg font-semibold">The dashboard is not switched on yet</h1>
-        <p className="mt-1.5 text-[13px] text-text-muted">
-          This workspace's dashboard was switched off. Once it is switched on again, try again.
-        </p>
-        <Button variant="outline" size="sm" className="mt-3" disabled={checking} onClick={() => { setChecking(true); window.setTimeout(() => window.location.reload(), 600) }}>
-          {checking ? 'Checking…' : 'Try again'}
-        </Button>
+        <h1 className="mt-3 text-lg font-semibold">Getting your workspace ready…</h1>
+        <p className="mt-1.5 text-[13px] text-text-muted">This opens by itself in a moment.</p>
+        {gaveUp && (
+          <Button variant="outline" size="sm" className="mt-3" disabled={checking} onClick={() => { setChecking(true); window.setTimeout(() => window.location.reload(), 600) }}>
+            {checking ? 'Checking…' : 'Try again'}
+          </Button>
+        )}
       </div>
     )
   if (workspace.host_message)

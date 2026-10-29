@@ -1,3 +1,4 @@
+import { SharedToday } from './SharedToday'
 import { HubBanner } from '../../shell/HubBanner'
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useQueries, useQuery } from '@tanstack/react-query'
@@ -296,7 +297,7 @@ function TodayInbox({ items, decisions, readOnly, locked, canAddon, viewer, atte
     }
     if (e.item.kind === 'approval') return <ApprovalRow key={row.id} {...props} />
     if (e.item.kind === 'verdict') return <VerdictRow key={row.id} {...props} />
-    if (e.item.kind === 'terminal_wait') return <TerminalWaitRow key={row.id} item={e.item} now={now} />
+    if (e.item.kind === 'terminal_wait') return <TerminalWaitRow key={row.id} item={e.item} ticket={byKey[e.item.ticket]} now={now} />
     return <NoticeRow key={row.id} item={e.item} now={now} />
   }
 
@@ -411,6 +412,7 @@ function TodayInbox({ items, decisions, readOnly, locked, canAddon, viewer, atte
           <aside className="min-w-0 space-y-4">
             {agentsKnown && <AgentsPanel {...agentProps} />}
             <Glance readOnly={!canAddon} max={GLANCE_TILES} />
+            <SharedToday ws={ws} />
             <Recently recent={today.data!.recent} now={now} />
           </aside>
         </div>
@@ -419,6 +421,7 @@ function TodayInbox({ items, decisions, readOnly, locked, canAddon, viewer, atte
           {agentsKnown && <AgentsBar {...agentProps} />}
           {queue}
           <Glance readOnly={!canAddon} />
+          <SharedToday ws={ws} />
         </div>
       )}
       {signTicket && <SignDialog ticket={signTicket} action={signing!.action} onClose={() => setSigning(null)} onPending={setPending} />}

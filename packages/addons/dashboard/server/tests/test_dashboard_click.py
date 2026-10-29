@@ -185,6 +185,7 @@ class HostCheck:
         self.reads, self.checks, self.cancelled, self.pending = [], [], [], {}
         self.mismatch = False
         self.listing: list[dict] = []  # what `human.pending` without arguments lists (terminal hand-offs have a code)
+        self.review: list | None = None  # the committed events the host's record answers
         self.replay_error: str | None = None  # an idem code the host answers to the "Already done" replay
         self.verified: dict = {}  # what `adapters.handoff.request` answers (the verified record)
         self.key: str | None = None  # the ticket key of the host's row, once a sequence created it
@@ -199,7 +200,7 @@ class HostCheck:
             return {
                 "op": "log",
                 "request": {"id": REQ, "state": "submitted", "submitted_at": "2026-10-13T15:20:00Z"},
-                "material": {"review": [{"type": "log.added", "payload": {"message": "host text"}}]},
+                "material": {"review": self.review or [{"type": "log.added", "payload": {"message": "host text"}}]},
             }
         if op == "human.cancel":
             self.cancelled.append(args["request_id"])
@@ -1376,6 +1377,83 @@ def test_1087_an_ended_attempt_is_never_signed_later_and_pressing_again_is_a_fre
     assert script.states[rid] == "bound"  # prepared, not signed: signing it is the person's own next click
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"action": "new_sequence", "title": "Plan the launch", "priority": "high", "sections": {"summary": "Why."}},
+        {"action": "quick_start", "title": "Plan the launch", "description": "Why."},
+    ],
+)
+def test_p06_a_new_ticket_with_the_text_of_an_earlier_one_shows_its_own_review(
+    client, token, stub, script, host_check, rich, body
+):
+    """Run-10 J04c-01: an earlier ticket with the same title and text left an unreadable signed record. The first
+    press must show a fresh review (a new request, its own idem), never the dead end;
+    only the person's Sign signs it."""
+    script.features = ["custody", "sequence"]
+    first = prepare(client, token, stub, body)
+    assert first.status_code == 200, first.text
+    script.states[first.json()["request_id"]] = "submitted"  # the earlier ticket was signed
+    host_check.replay_error = "idem.conflict"  # and its record cannot be read here
+    again = prepare(client, token, stub, body)
+    assert again.status_code == 200, again.text
+    rid = again.json()["request_id"]
+    assert rid != first.json()["request_id"] and script.prepared == 2
+    assert script.states[rid] == "bound"  # prepared, not signed
+    assert again.json()["repeat"] is True  # the page says: this makes another ticket like one already signed
+    idems = [a["idem"] for c, a in script.clients[0].calls if c == "prepare"]
+    assert len(set(idems)) == 2  # a new intent id: no earlier signature is reused
+
+
+def test_p06_a_lost_response_repress_of_a_new_ticket_is_already_done_with_its_sequence_replayed(
+    client, token, stub, script, host_check, rich
+):
+    script.features = ["custody", "sequence"]
+    body = {"action": "new_sequence", "title": "Plan the launch", "priority": "high", "sections": {"summary": "Why."}}
+    first = prepare(client, token, stub, body)
+    script.states[first.json()["request_id"]] = "submitted"
+    again = prepare(client, token, stub, body)
+    assert again.status_code == 409 and again.json()["error"]["code"] == "intent.done"
+    assert script.prepared == 1 and "sequence" not in again.json()  # no second ticket
+    replay = [a for a in host_check.reads if "sequence" in a]
+    assert replay and replay[0]["sequence"]["intent"]  # the host binds the sequence: it is sent along
+
+
+def test_p06_when_the_stepped_retry_is_also_signed_it_steps_once_more(client, token, stub, script, host_check, rich):
+    script.features = ["custody", "sequence"]
+    body = {"action": "new_sequence", "title": "Plan the launch", "priority": "high", "sections": {"summary": "Why."}}
+    a = prepare(client, token, stub, body).json()["request_id"]
+    script.states[a] = "submitted"
+    host_check.replay_error = "idem.conflict"
+    b = prepare(client, token, stub, body).json()["request_id"]
+    script.states[b] = "submitted"
+    c = prepare(client, token, stub, body)
+    assert c.status_code == 200, c.text
+    assert c.json()["request_id"] not in (a, b) and c.json()["repeat"] is True and script.prepared == 3
+
+
+def test_p06_already_done_names_the_created_ticket_in_plain_fields(client, token, stub, script, host_check, rich):
+    script.features = ["custody", "sequence"]
+    body = {"action": "new_sequence", "title": "Plan the launch", "priority": "high", "sections": {"summary": "Why."}}
+    first = prepare(client, token, stub, body)
+    script.states[first.json()["request_id"]] = "submitted"
+    host_check.review = [
+        {"type": "ticket.created", "key": "DEMO-0007", "title": "Plan the launch", "ticket_type": "feature"},
+        {"type": "log.added", "payload": {"message": "x"}},
+    ]
+    err = prepare(client, token, stub, body).json()["error"]
+    assert err["code"] == "intent.done" and err["ticket"] == {"key": "DEMO-0007", "title": "Plan the launch"}
+
+
+def test_p06_a_comment_with_an_unreadable_signed_record_still_blocks(client, token, stub, script, host_check, rich):
+    prepare(client, token, stub, comment(1))
+    assert sign_lost(client, token, stub).status_code == 200
+    host_check.replay_error = "idem.conflict"
+    again = client.post(url(stub, "prepare"), json=comment(1), headers=hdr(token))
+    assert again.status_code == 409 and again.json()["error"]["code"] == "intent.blocked"
+    assert script.prepared == 1
+
+
 def test_794_a_signed_attempt_is_already_done_even_after_earlier_cancels(client, token, stub, script, rich):
     prepare(client, token, stub, comment(1))
     assert client.post(url(stub, "cancel"), json={"request_id": REQ}, headers=hdr(token)).status_code == 200
@@ -1694,8 +1772,7 @@ def test_an_unknown_outcome_ends_only_when_the_host_answer_is_known():
 
 DEPOSIT_LINE = "The secret goes to your orch runner on this machine and is never shown"
 DEPOSIT_RISK = (
-    "Anything that takes over the dashboard can give agents standing authority to act for you on tickets for as long "
-    "as the grant lasts (up to 7 days, the length you choose); you can stop it at any time."
+    "Whoever controls this dashboard could use this access while it lasts. You can stop it any time."
 )
 SECRET = "demo-not-a-real-secret-tail"
 GRANT = "gr_01M4Y46B485AXD4CBEJZ15Z1TV"
@@ -1716,7 +1793,7 @@ def grant_view(**over):
         "fingerprint": "0123456789ab",
         "lines": ["grant for Demo Owner", "", DEPOSIT_RISK, DEPOSIT_LINE],
         "headline": "Give your orch runner agent access for 8 hours",
-        "risk_lines": [DEPOSIT_RISK, "Agents get this authority for 8 hours, until it ends or you stop it."],
+        "risk_lines": [DEPOSIT_RISK],
         "deposit": True,
         "deposit_line": DEPOSIT_LINE,
         "confirm": {"kind": "click"},

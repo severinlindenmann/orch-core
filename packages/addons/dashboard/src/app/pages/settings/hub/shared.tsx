@@ -1,4 +1,4 @@
-import { useId, type ReactNode } from 'react'
+import { useId, useState, type ReactNode } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { api } from '@/api/client'
@@ -51,8 +51,8 @@ export function Panel({ title, children, tone = '' }: { title: string; children:
     <h2 className="font-semibold">{title}</h2>{children}
   </section>
 }
-export function Action({ id, children, onClick, disabled = false }: { id: string; children: ReactNode; onClick: () => void; disabled?: boolean }) {
-  return <Button data-testid={id} variant="outline" className="h-auto max-w-full whitespace-normal text-left" disabled={disabled} onClick={onClick}>{children}</Button>
+export function Action({ id, children, onClick, disabled = false, variant = 'outline' }: { id: string; children: ReactNode; onClick: () => void; disabled?: boolean; variant?: 'outline' | 'default' }) {
+  return <Button data-testid={id} variant={variant} className="h-auto max-w-full whitespace-normal text-left" disabled={disabled} onClick={onClick}>{children}</Button>
 }
 export function Field({ label, value, onChange, hint, testId }: { label: string; value: string; onChange: (v: string) => void; hint?: string; testId: string }) {
   const id = useId()
@@ -61,10 +61,19 @@ export function Field({ label, value, onChange, hint, testId }: { label: string;
     {hint && <p id={id + '-hint'} className="text-xs text-text-muted">{hint}</p>}
   </div>
 }
-export function Flow({ title, onClose, children, finish = 'terminal' }: { title: string; onClose: () => void; children: ReactNode; finish?: 'terminal' | 'here' }) {
+/** A small "Details" link: counts, ids and "not signed" notes stay one click away, never hidden from the person. */
+export function Details({ children, testId }: { children: ReactNode; testId?: string }) {
+  const [open, setOpen] = useState(false)
+  return <div className="space-y-2">
+    <button type="button" data-testid={testId} aria-expanded={open} className="text-[13px] text-text-muted underline" onClick={() => setOpen(v => !v)}>{open ? 'Hide details' : 'Details'}</button>
+    {open && <div className="space-y-2 text-text-muted">{children}</div>}
+  </div>
+}
+/** `cancel`: the footer label before that. `action`: the confirm button, next to Cancel. */
+export function Flow({ title, onClose, children, finish = 'terminal', cancel, action }: { title: string; onClose: () => void; children: ReactNode; finish?: 'terminal' | 'here'; cancel?: string; action?: ReactNode }) {
   return <Dialog open onOpenChange={open => !open && onClose()}><DialogContent showCloseButton={false} className="data-[state=open]:animate-none data-[state=closed]:animate-none max-h-[85vh] overflow-y-auto sm:max-w-2xl">
     <DialogTitle>{title}</DialogTitle><DialogDescription className="sr-only">Review the hub change before confirming.</DialogDescription>
     <div className="min-w-0 space-y-4 text-sm break-words">{children}</div>
-    {finish === 'terminal' && <div className="flex justify-end"><Action id="hub-flow-cancel" onClick={onClose}>Cancel</Action></div>}
+    {finish === 'terminal' && <div className="flex flex-wrap items-center justify-end gap-2"><Action id="hub-flow-cancel" variant="outline" onClick={onClose}>{cancel ?? 'Cancel'}</Action>{action}</div>}
   </DialogContent></Dialog>
 }

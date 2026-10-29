@@ -9,7 +9,7 @@ import { routingApi, type RoutingChoices } from '@/api/modelRouting'
 import { agentsApi, LOGIN_NOTICE, type AgentPreview, type Runner } from '@/api/agents'
 import { api } from '@/api/client'
 import { ARM_MS, CLICK_RISK, DEPOSIT_LINE, DEPOSIT_RISK, type ClickViewAnswer } from '@/api/click'
-import { mergeRunItems, type Run, type RunList } from '@/api/runs'
+import { mergeRunItems, runsApi, type Run, type RunList } from '@/api/runs'
 import { ApiError } from '@/api/types'
 import { nowMs } from '@/lib/time'
 import { TooltipProvider } from '@/components/ui/tooltip'
@@ -238,6 +238,21 @@ describe('start', () => {
     expect(a[2]).toBe('f'.repeat(64))
     expect(a[3]).toMatch(/^a_[0-7][0-9A-HJKMNP-TV-Z]{25}$/)
     expect(b[3]).toBe(a[3])
+  })
+
+  it('stopFirst: the idle run is stopped only when Start is pressed, before the start; cancelling leaves it alone', async () => {
+    const stop = vi.spyOn(runsApi, 'stop').mockResolvedValue({ state: 'exited', cleanup: 'complete' } as never)
+    const order: string[] = []
+    stop.mockImplementation(async () => { order.push('stop'); return { state: 'exited', cleanup: 'complete' } as never })
+    s.start.mockImplementation(async () => { order.push('start'); return { run } })
+    const { onStarted, onClose } = mount(vi.fn(), vi.fn(), { initial: { mode: 'continue', stopFirst: 'r_idle' } })
+    await screen.findByTestId('agent-preview', {}, T)
+    expect(stop).not.toHaveBeenCalled() // the dialog is open; nothing stopped yet
+    expect(onClose).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByTestId('agent-start'))
+    await waitFor(() => expect(onStarted).toHaveBeenCalledWith(run), T)
+    expect(stop).toHaveBeenCalledWith(WS, 'r_idle')
+    expect(order).toEqual(['stop', 'start'])
   })
 
   it('a changed choice must be previewed again before Start', async () => {
@@ -702,7 +717,7 @@ describe('sheet risk notice', () => {
     const d = await screen.findByTestId('grant-risk-details')
     expect(d).toHaveTextContent('Runs as you on this computer')
     expect(d).not.toHaveAttribute('open')
-    expect(d).toHaveTextContent('standing authority')
+    expect(d).toHaveTextContent('could use this access while it lasts')
   })
   it('acknowledged: quiet line only; unreadable answer: full notice (fail closed)', async () => {
     s.notices.mockResolvedValue({ acknowledged: { grant: true } })
@@ -801,5 +816,61 @@ describe('prefilled by the New ticket form (initial)', () => {
     fireEvent.click(start)
     await waitFor(() => expect(s.start).toHaveBeenCalled(), T)
     expect(s.start.mock.calls[0][3]).toBe('idem-from-review')
+  })
+})
+
+// P03-sec: ONE consent state. The folder consent is recorded only when its line was on screen and still ticked.
+describe('the Claude Code folder consent', () => {
+  const trust = { available: true, on: false, config: 'missing' as const, offered: true, why_not: '', parent_config: '', agent_needs_consent: true, agent_why_not: '' }
+  let grant: ReturnType<typeof vi.spyOn>
+  beforeEach(() => {
+    vi.spyOn(api, 'getWorkspaces').mockResolvedValue([{ id: WS, grant_hours: 168, click: { custody: 'convenience', enabled: true, available: true }, members: [{ person: 'p_me', role: 'owner' }] }] as unknown as Awaited<ReturnType<typeof api.getWorkspaces>>)
+    vi.spyOn(api, 'getMe').mockResolvedValue({ person: 'p_me' } as Awaited<ReturnType<typeof api.getMe>>)
+    vi.spyOn(api, 'getClaudeTrust').mockResolvedValue(trust)
+    grant = vi.spyOn(api, 'grantClaudeTrust').mockResolvedValue({ on: true })
+  })
+  async function signAccess(tick: boolean) {
+    s.runner.mockResolvedValue({ runner: runner() })
+    s.preview.mockResolvedValue(preview({ spec: null, grant: null, blocked: { code: 'launch.no_grant', message: null, detail: {} } }))
+    const { onStarted } = mount()
+    await screen.findByTestId('agent-access', {}, T)
+    await waitFor(() => expect(screen.getByTestId('agent-start')).toBeEnabled(), T)
+    fireEvent.click(screen.getByTestId('agent-start'))
+    await prepareAccess()
+    const line = await screen.findByTestId('claude-consent', {}, T)
+    if (!tick) fireEvent.click(within(line).getByRole('checkbox'))
+    s.runner.mockResolvedValue({ runner: runner({ grant: { id: GRANT, until: SOON, scope: 'workable' } }) })
+    s.preview.mockResolvedValue(preview())
+    const sign = screen.getByRole('button', { name: /^Sign and start agent$/ })
+    await waitFor(() => expect(sign).toBeEnabled(), { timeout: ARM_MS + 2000 })
+    fireEvent.pointerDown(sign)
+    fireEvent.click(sign)
+    await waitFor(() => expect(onStarted).toHaveBeenCalledWith(run), { timeout: 8000 })
+  }
+  it('signing the access with the line shown and ticked records the consent once', async () => {
+    await signAccess(true)
+    expect(grant).toHaveBeenCalledTimes(1)
+    expect(grant).toHaveBeenCalledWith(WS, false)
+  }, 15000)
+  it('signing the access with the line unticked records nothing, and the agent still starts', async () => {
+    await signAccess(false)
+    expect(grant).not.toHaveBeenCalled()
+    expect(s.start).toHaveBeenCalledTimes(1)
+  }, 15000)
+  it('access already there: the line is in the form, ticked, and Start records it first', async () => {
+    mount()
+    const line = await screen.findByTestId('claude-consent', {}, T)
+    expect(within(line).getByRole('checkbox')).toBeChecked()
+    await waitFor(() => expect(screen.getByTestId('agent-start')).toBeEnabled(), T)
+    fireEvent.click(screen.getByTestId('agent-start'))
+    await waitFor(() => expect(s.start).toHaveBeenCalledTimes(1), T)
+    expect(grant).toHaveBeenCalledTimes(1)
+  })
+  it('the instant path (nothing to read) shows no line and records nothing: the form opens instead', async () => {
+    s.notices.mockResolvedValue({ acknowledged: { start_agent: true } })
+    const { onStarted } = mount(vi.fn(), vi.fn(), {})
+    expect(await screen.findByTestId('claude-consent', {}, T)).toBeInTheDocument()
+    expect(onStarted).not.toHaveBeenCalled()
+    expect(grant).not.toHaveBeenCalled()
   })
 })

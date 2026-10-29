@@ -22,6 +22,7 @@ from ..contract.canon import cj
 from ..contract.hub import Refused
 from ..keys import HubKeys, KeysError
 from .orgmcp import org_mcp
+from .orgsecrets import org_secrets
 from .orgskills import org_skills
 from .store import Access, AccessError
 
@@ -68,7 +69,7 @@ class AccessSnapshots:
                 "op_cert_id": op_cert_id,
                 "workspace_id": workspace_id,
                 "generation": 0,
-                "version": (row[0] if row else 0) + 1,
+                "version": max(row[0] if row else 0, a.version_floor()) + 1,
                 "issued_ms": self._now(),
                 "roles": roles,
                 "revoked_channels": revoked,
@@ -97,6 +98,18 @@ class AccessSnapshots:
             workspace_id, "hub.mcp_servers", "servers", "org_mcp_bundle", lambda: store.offered_to(workspace_id)
         )
 
+    def org_secrets(self, workspace_id: str, mode: str) -> dict[str, Any]:
+        """The signed ``hub.org_secrets`` of ONE workspace (M3 #1431): only ITS sealed wraps, of live unexpired secrets. The
+        hub cannot open them. An expiry changes the content, so it gets a new version like any other change."""
+        store = org_secrets(self._a)
+        return self._bundle(
+            workspace_id,
+            "hub.org_secrets",
+            "secrets",
+            "org_secrets_bundle",
+            lambda: store.wraps_for(workspace_id, self._now()),
+        )
+
     def _bundle(
         self, workspace_id: str, kind: str, field: str, table: str, items: Callable[[], list[dict[str, Any]]]
     ) -> dict[str, Any]:
@@ -123,7 +136,7 @@ class AccessSnapshots:
                     "hub_id": self._keys.hub_id,
                     "op_cert_id": op_cert_id,
                     "workspace_id": workspace_id,
-                    "version": (row[0] if row else 0) + 1,
+                    "version": max(row[0] if row else 0, self._a.version_floor()) + 1,
                     "issued_ms": self._now(),
                     field: content,
                     "dev": dev_of(self._keys),

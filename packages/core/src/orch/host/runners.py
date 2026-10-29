@@ -609,6 +609,10 @@ class RunnerHub:
             if rec.get("state") not in LIVE and "ended_ts" not in rec:
                 rec["ended_ts"] = time.time()
             self.store.records[rec["run"]] = rec
+            if rec.get("state") not in LIVE:  # the run is over: its company MCP capability goes (idempotent)
+                from . import orgmcp
+
+                orgmcp.revoke_run(self, rec["run"])
             # an evicted record's ``gone`` takes a fresh rev (a client keeps the higher rev per run, so the record's
             # old rev would be ignored); the saved record takes the next one, so the persisted maximum covers both
             gones = []
@@ -1338,6 +1342,9 @@ class RunnerHub:
         for task in self._checks.values():
             task.cancel()
         self._checks.clear()
+        from . import orgmcp
+
+        orgmcp.shutdown(self)  # host stop: the proxy listener and every capability go
         for sub in list(self.subs.values()):
             self.end_sub(sub, reason)
 
@@ -1500,13 +1507,19 @@ QUIET_SECONDS = 90.0
 
 
 def waiting_of(service: Any, hub: Any, rec: dict[str, Any]) -> dict[str, Any] | None:
-    """``{since, source}`` when the agent of this run may be waiting for the person in its terminal (the Notification
-    hook's marker, else the terminal quiet for :data:`QUIET_SECONDS`), else ``None``. Local to this machine and display
+    """``{since, source}`` when the agent of this run may be waiting for the person: inside ``orch wait`` on its ticket
+    (``wait``, :mod:`orch.host.agentwaits`), else in its terminal (the Notification hook's marker, else the terminal
+    quiet for :data:`QUIET_SECONDS`), else ``None``. Local to this machine and display
     only: it is never signed, logged or sent to a hub. New output clears it."""
     if hub is None or rec.get("kind") != "agent" or rec.get("state") not in LIVE or not rec.get("ticket"):
         return None
-    seen = hub.activity.get(rec["run"])
+    from . import agentwaits
+
     now = time.time()
+    since = agentwaits.of(service, rec, now)
+    if since is not None:  # run-10 J04: inside orch wait, whatever its terminal prints (the harness ticks a timer)
+        return {"since": _iso(since), "source": "wait"}
+    seen = hub.activity.get(rec["run"])
     session = rec.get("session")
     layout = getattr(service.store, "layout", None)
     if session and layout is not None:

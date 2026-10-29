@@ -11,7 +11,7 @@ class Node_ {
   all() { return [this, ...this.children.flatMap((c) => c.all())]; }
 }
 globalThis.document = { createElement: (t) => new Node_(t), createTextNode: (t) => new Node_("#text", t), getElementById: () => null };
-const { homeView, homeSummary, workspaceStatus } = await import("../../src/orch_hub/web/home.js");
+const { homeView, sharedEnded, homeSummary, workspaceStatus } = await import("../../src/orch_hub/web/home.js");
 const spaces = [{ workspace_id: "a", name: "Product", online: true }, { workspace_id: "b", name: "Legal", online: false }];
 test("summary excludes another person's workspace", () => {
   const out = homeSummary(spaces, [{ workspace_id: "a", signable: true }, { workspace_id: "secret" }]);
@@ -27,7 +27,7 @@ test("home groups rows, names their workspace, and shows health", () => {
   ], actions: {} });
   const nodes = out.flatMap((n) => n.all());
   const text = out.map((n) => n.textContent).join(" ");
-  assert.match(text, /1 workspaces online, 1 offline, 2 things need you/);
+  assert.match(text, /1 workspace online, 1 offline, 2 things need you/);
   assert.doesNotMatch(text, /Secret/);
   const groups = nodes.filter((n) => n.className === "workspace-needs");
   assert.equal(groups.length, 1);
@@ -62,4 +62,81 @@ test("with a selective workspace the needs card says quietly that only shared it
   assert.match(text(sel), /Only items you share appear here/);
   const full = homeView({ workspaces: [{ workspace_id: "f", name: "F", mode: "full", online: true }], items: [], actions: {} });
   assert.doesNotMatch(text(full), /Only items you share appear here/);
+});
+
+test("first-run home shows only the connect card", () => {
+  const out = homeView({ user: { name: "Anna", is_admin: true }, workspaces: [], items: [], channels: [], thisBrowser: { state: "unregistered" }, actions: { connect() {} } });
+  const text = out.map((n) => n.textContent).join(" ");
+  assert.match(text, /Connect your first workspace/);
+  assert.match(text, /Get a one-time link/);
+  assert.doesNotMatch(text, /Where you can sign|Register this browser|Needs you|My workspaces/);
+  const withWs = homeView({ user: { name: "Anna" }, workspaces: [{ workspace_id: "a", name: "P", online: true }], items: [], channels: [], thisBrowser: { state: "unregistered" }, actions: {} });
+  const t2 = withWs.map((n) => n.textContent).join(" ");
+  assert.match(t2, /Where you can sign/);
+  assert.doesNotMatch(t2, /Connect your first workspace/);
+});
+
+test("the first-run home carries a root marker and gives way once a workspace or item exists", async () => {
+  const { firstRunOutgrown } = await import("../../src/orch_hub/web/home.js");
+  const out = homeView({ user: { name: "Anna" }, workspaces: [], items: [], channels: [], actions: {} });
+  assert.ok(out.flatMap((n) => n.all()).some((n) => (n.className || "").split(" ").includes("first-run-root")));
+  assert.equal(firstRunOutgrown([], []), false);
+  assert.equal(firstRunOutgrown([{ id: "a" }], []), true);
+  assert.equal(firstRunOutgrown([], [{ key: "k" }]), true);
+  const src = (await import("node:fs")).readFileSync(new URL("../../src/orch_hub/web/app.js", import.meta.url), "utf8");
+  assert.match(src, /querySelector\("\.first-run-root"\) && firstRunOutgrown\(/);
+});
+
+test("P03: a nameless workspace uses its owner's name; a workspace session explains why signing is not set up", () => {
+  const out = homeView({ user: { name: "Anna" }, workspaces: [{ workspace_id: "a", owner_name: "Ben", online: true }], items: [], channels: [],
+    thisBrowser: { state: "from_workspace" }, actions: { register() {} } });
+  const t = out.map((n) => n.textContent ?? "").join(" ");
+  assert.match(t, /Ben's workspace/);
+  assert.doesNotMatch(t, /A workspace\b|not registered/i);
+  assert.match(t, /You came here from a workspace/);
+  assert.doesNotMatch(t, /Register this browser/);
+});
+
+test("P07: Shared tickets card lists tickets shared with me with workspace and who shared; hidden when none", () => {
+  const ws = [{ workspace_id: "w1", name: "Product", online: true, mode: "selective" }];
+  const textOf = (out) => out.flat().map((n) => n.textContent).join("\n");
+  const none = homeView({ workspaces: ws, items: [], shared: [], actions: {} });
+  assert.doesNotMatch(textOf(none), /Shared tickets/);
+  let opened;
+  const out = homeView({ workspaces: ws, items: [], actions: { openShared: (it) => { opened = it.workspace_id + "/" + it.key; } },
+    shared: [{ workspace_id: "w1", key: "PW-1", title: "Invoice CSV export", shared_by: "Anna" }] });
+  const t = textOf(out);
+  assert.match(t, /Shared tickets \(1\)/);
+  assert.match(t, /Invoice CSV export/);
+  assert.match(t, /Product · shared by Anna/);
+  const all = (n) => [n, ...n.children.flatMap(all)];
+  const open = out.flatMap(all).filter((n) => n.tag === "button" && n.textContent === "Read" && n.listeners.click);
+  open[0].listeners.click();
+  assert.equal(opened, "w1/PW-1");
+});
+
+test("P04: sharedEnded names what vanished from the last good read, never on first read, and a re-shared ticket drops out", () => {
+  const a = { workspace_id: "w1", key: "PW-1", title: "Invoice export", shared_by: "Anna" }, b = { workspace_id: "w1", key: "PW-2", title: "Other", shared_by: "Anna" };
+  assert.deepEqual(sharedEnded(null, [a]), []);
+  assert.deepEqual(sharedEnded([a, b], [b]), [{ id: "w1:PW-1", by: "Anna", title: "Invoice export" }]);
+  const ended = sharedEnded([a, b], [b]);
+  assert.equal(sharedEnded([b], [b], ended).length, 1); // kept until dismissed
+  assert.deepEqual(sharedEnded([b], [a, b], ended), []); // shared again
+});
+
+test("P04: ended lines show in the Shared tickets card (even with nothing shared) and Dismiss clears them", () => {
+  const textOf = (out) => out.flat().map((n) => n.textContent).join("\n");
+  const ws = [{ workspace_id: "w1", name: "Product", online: true, mode: "selective" }];
+  let dismissed;
+  const out = homeView({ workspaces: ws, items: [], shared: [], ended: [{ id: "w1:PW-1", by: "Anna", title: "Invoice export" }], actions: { dismissEnded: (id) => { dismissed = id; } } });
+  assert.match(textOf(out), /Anna stopped sharing Invoice export/);
+  const all = (n) => [n, ...n.children.flatMap(all)];
+  out.flatMap(all).find((n) => n.tag === "button" && n.textContent === "Dismiss").listeners.click();
+  assert.equal(dismissed, "w1:PW-1");
+  assert.doesNotMatch(textOf(homeView({ workspaces: ws, items: [], shared: [], ended: [], actions: {} })), /Shared tickets/);
+});
+
+test("P04: the sharer's own rows (no shared_by) never become a stopped-sharing line", () => {
+  const own = { workspace_id: "w1", key: "PW-9", title: "Mine" };
+  assert.deepEqual(sharedEnded([own], []), []);
 });

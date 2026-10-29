@@ -255,3 +255,55 @@ def test_a_missing_home_folder_makes_no_file_and_state_says_missing_or_odd(tmp_p
     assert claude_folder.trust_folder(env, root) is False and claude_folder.config_state(env) == "missing"
     _, env = _home(tmp_path, [1])
     assert claude_folder.config_state(env) == "odd"
+
+
+def test_a_config_without_a_projects_key_still_gets_the_one_trust_entry(tmp_path):
+    """r10-P10: Claude Code writes ~/.claude.json before it has opened any project (no "projects" key): that is not a
+    failure, the one entry is added; any other shape of the key stays untouched."""
+    root = tmp_path / "work" / "ws"
+    root.mkdir(parents=True)
+    home, env = _home(tmp_path, {"numStartups": 1, "hasCompletedOnboarding": True})
+    assert claude_folder.trust_folder(env, root) is True
+    doc = json.loads((home / ".claude.json").read_text())
+    assert doc["numStartups"] == 1
+    assert doc["projects"] == {os.path.realpath(root): {"hasTrustDialogAccepted": True}}
+    (home / ".claude.json").write_text(json.dumps({"projects": []}))
+    assert claude_folder.trust_folder(env, root) is False
+    assert json.loads((home / ".claude.json").read_text()) == {"projects": []}
+    (home / ".claude.json").write_text(json.dumps({"projects": None}))  # an explicit null stays refused
+    assert claude_folder.trust_folder(env, root) is False
+    assert json.loads((home / ".claude.json").read_text()) == {"projects": None}
+
+
+def test_refusal_codes_tell_asking_once_from_somebody_elses_settings(tmp_path):
+    root = tmp_path / "work" / "ws"
+    root.mkdir(parents=True)
+    _, env = _home(tmp_path, None)
+    assert claude_folder.refusal_code(env, root) == "not_started"
+    assert claude_folder.refusal_code({"HOME": str(tmp_path / "nohome"), "PATH": ""}, root) == "not_installed"
+    (root / ".mcp.json").write_text("{}")
+    assert claude_folder.refusal_code(env, root) == "foreign_config"
+    (root / ".mcp.json").unlink()
+    (tmp_path / "work" / "CLAUDE.md").write_text("x")
+    assert claude_folder.refusal_code(env, root) == "parent_config"
+
+
+def test_a_skipped_trust_step_always_carries_a_plain_reason(tmp, monkeypatch):
+    monkeypatch.setattr(claude_folder, "claude_installed", lambda env: True)
+    from tests.setup.fakes import FakePorts
+
+    class Refusing(FakePorts):
+        def trust_folder(self, root, *, allow_parent=False):
+            return False
+
+    f, ports, p, rv = run_ok(tmp, {**AGENT, "trust_folder": True}, Refusing())
+    assert {s["id"]: s["status"] for s in p["steps"]}["trust"] == "skipped"
+    assert p["reasons"].get("trust")
+    assert p["reason_codes"]["trust"] == "other"  # the fake ports say nothing more: never the "say yes" advice
+
+    from orch.setup.steps import RealPorts
+
+    real = RealPorts.__new__(RealPorts)
+    real.env = {"HOME": str(tmp.home)}
+    why = real.trust_why(tmp.work)
+    assert why and "sign card" not in why

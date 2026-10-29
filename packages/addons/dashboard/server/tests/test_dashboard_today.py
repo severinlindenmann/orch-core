@@ -92,14 +92,34 @@ def test_a_waiting_run_is_a_terminal_wait_row_with_the_run_id():
             "ref": "r_1",
             "since": "2026-10-26T09:10:00Z",
             "blocking": False,
+            "source": "hook",
         }
     ]
 
 
-def test_a_newer_event_or_a_real_need_hides_the_terminal_wait():
+def test_an_agent_inside_orch_wait_is_a_terminal_wait_and_not_working(monkeypatch):
+    # run-10 J04: the host saw the agent inside `orch wait` (its terminal ticks a timer, so it is never quiet)
+    import importlib
+
+    from orch_dashboard.adapters.today import AGENT_WAITS, terminal_waits, today
+
+    runs = [{"run": "r_1", "ticket": "DEMO-0001", "waiting": {"since": "2026-10-26T09:10:00Z", "source": "wait"}}]
+    (got,) = terminal_waits(runs, _rows(), {})
+    assert got["source"] == "wait" and got["text"] == AGENT_WAITS and got["ref"] == "r_1"
+    odd = [{**runs[0], "waiting": {"since": "2026-10-26T09:10:00Z", "source": "<b>x</b>"}}]
+    assert "source" not in terminal_waits(odd, _rows(), {})[0]  # an unknown source is not passed on
+    today_mod = importlib.import_module("orch_dashboard.adapters.today")
+    monkeypatch.setattr(today_mod, "summary", lambda r, *a, **k: {"uid": r["uid"]})
+    doc = today({"items": [], "sub_cursor": None}, _rows(), "ws", "now", "Owner", "owner", runs=runs)
+    assert doc["working"] == [] and [n["kind"] for n in doc["needs_you"]] == ["terminal_wait"]
+
+
+def test_a_real_need_hides_the_terminal_wait_but_a_newer_ticket_event_does_not():
     from orch_dashboard.adapters.today import terminal_waits
 
-    assert terminal_waits(_runs("2026-10-26T08:00:00Z"), _rows(), {}) == []  # the ticket moved on after the marker
+    # run-9 J04: the person approved the plan after the agent went idle; the agent is still idle (the host clears
+    # `waiting` when it prints again), so the wait stays and the ticket never shows "working"
+    assert [w["ref"] for w in terminal_waits(_runs("2026-10-26T08:00:00Z"), _rows(), {})] == ["r_1"]
     assert terminal_waits(_runs(), _rows(), {"u1": [{"kind": "question"}]}) == []  # a real question is open
     assert terminal_waits(_runs(), [], {}) == []  # a ticket the person does not see
 
@@ -115,3 +135,17 @@ def test_terminal_waits_are_listed_but_never_counted(monkeypatch):
     doc = today({"items": [], "sub_cursor": None}, _rows(), "ws", "now", "Owner", "owner", runs=_runs())
     assert [n["kind"] for n in doc["needs_you"]] == ["terminal_wait"]
     assert actionable_count(doc["needs_you"], "owner") == 0
+
+
+def test_an_idle_agent_is_not_listed_as_working(monkeypatch):
+    # run-9 J04: Today's "working" list never shows a ticket whose agent waits idle at its prompt
+    import importlib
+
+    from orch_dashboard.adapters import today
+
+    today_mod = importlib.import_module("orch_dashboard.adapters.today")
+    monkeypatch.setattr(today_mod, "summary", lambda r, *a, **k: {"uid": r["uid"]})
+    busy = today({"items": [], "sub_cursor": None}, _rows(), "ws", "now", "Owner", "owner", runs=[])
+    assert busy["working"] == [{"uid": "u1"}]
+    idle = today({"items": [], "sub_cursor": None}, _rows(), "ws", "now", "Owner", "owner", runs=_runs())
+    assert idle["working"] == [] and [n["kind"] for n in idle["needs_you"]] == ["terminal_wait"]

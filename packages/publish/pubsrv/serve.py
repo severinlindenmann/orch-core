@@ -13,6 +13,7 @@ import base64
 import hashlib
 import hmac
 import html
+import json
 import os
 import re
 import secrets
@@ -25,6 +26,7 @@ from collections import deque
 from urllib.parse import parse_qs, quote
 
 from . import db
+from . import published as P
 
 ID32 = r"[0-9a-f]{32}"
 TOKEN = re.compile(r"[A-Za-z0-9_-]{43}")  # base64url of the host's 32 random bytes
@@ -118,13 +120,18 @@ _LANDING_BODY = (
     "<h1>Files were shared with you</h1>"
     '<form id="f" method="post" action="@ACTION@" hidden>'
     '<input type="hidden" name="t" value="">'
-    "<p>Nothing has been opened yet.</p>"
+    "<p>Nothing has been opened yet.</p>@PW@"
     '<button type="submit">Open shared files</button>'
     '<p class="s">Opening these files may count as one view. If this link allows only one view, '
     "you may not be able to reopen it.</p></form>"
     '<p id="x" hidden>This address is incomplete. Open the original link again, using the whole link '
     "you were given, including the part after the # sign.</p>"
     f"<script>{_SCRIPT}</script>"
+)
+_PW_FIELD = '<p><label>Password <input type="password" name="p" autocomplete="off" required maxlength="256"></label></p>'
+WRONG_PW = (
+    "Wrong password",
+    "That password did not work. Use your link again and check the password.",
 )
 ASK = " Ask the person who sent it for a new link."
 NOT_FOUND = ("Not found", "Nothing is shared at this address.")
@@ -227,7 +234,7 @@ def not_found():
 
 
 class ShareServer:
-    def __init__(self, data_dir, clock=None):
+    def __init__(self, data_dir, clock=None, share_origin=None, api_host=None):
         self.db_path = db.prepare_dir(data_dir)
         self.shares_dir = os.path.realpath(os.path.join(data_dir, "shares"))
         self.clock = clock or _now
@@ -235,6 +242,17 @@ class ShareServer:
         self._lock = threading.Lock()
         self._ips = {}  # ip -> (tokens, last monotonic time)
         db.init(self.db_path)
+        from .appserve import AppServer  # late: it imports this module
+
+        # apps are served from the CONFIGURED origin (never a Host header); without one every /a/ answer is a 404
+        self.apps = AppServer(
+            self.db_path,
+            os.path.join(os.path.realpath(data_dir), "apps"),
+            self.clock,
+            share_origin,
+            api_host,
+            self._ip_ok,
+        )
 
     # -- ASGI -----------------------------------------------------------------------------------
 
@@ -252,10 +270,19 @@ class ShareServer:
         try:
             resp = await self._route(scope, receive, method)
         except (sqlite3.Error, OSError):
-            resp = page(503, ("Unavailable", "This service is not available right now."))
+            resp = self._fallback(
+                scope, 503, ("Unavailable", "This service is not available right now.")
+            )
         except Exception:  # noqa: BLE001 - fail closed, never echo details
-            resp = page(500, ("Error", "Something went wrong."))
+            resp = self._fallback(scope, 500, ("Error", "Something went wrong."))
         await resp.send(send, head=method == "HEAD")
+
+    def _fallback(self, scope, status, text):
+        """An error page; under /a/ it carries the sandbox CSP like every other /a/ response."""
+        path = scope.get("path") or ""
+        if path == "/a" or path.startswith("/a/"):
+            return self.apps.page(status, text)
+        return page(status, text)
 
     def _ip_ok(self, scope):
         """Cheap bucket before any DB work. Behind a proxy this is the proxy's address, so the
@@ -280,6 +307,14 @@ class ShareServer:
             path = scope["raw_path"].decode("ascii").split("?", 1)[0]
         except (KeyError, AttributeError, UnicodeError):
             return not_found()
+        is_app = path == "/a" or path.startswith("/a/")
+        # a service worker script must never be registered from /a/ or /s/ (Opus condition 6)
+        if any(k == b"service-worker" for k, _ in scope.get("headers", ())):
+            if is_app:
+                return self.apps.page(403, ("Not allowed", "This request is not allowed."))
+            return page(403, ("Not allowed", "This request is not allowed."))
+        if is_app:
+            return await self.apps.route(scope, receive, method, path)
         if method not in ("GET", "HEAD", "POST"):
             return page(
                 405,
@@ -353,6 +388,10 @@ class ShareServer:
         if why:
             return gone(why)
         body = _LANDING_BODY.replace("@ACTION@", f"/s/{share_id}/open")
+        if row["pw"] is not None:  # a second factor on top of the token (M4 C5)
+            body = body.replace("@PW@", _PW_FIELD)
+        else:
+            body = body.replace("@PW@", "")
         return page(200, ("Open shared files", ""), body=body, csp=LANDING_CSP)
 
     def _rate_ok(self, share_id, now):
@@ -389,6 +428,12 @@ class ShareServer:
                 return not_found()
             if not self._rate_ok(share_id, now):
                 return page(429, TOO_MANY, extra={"retry-after": "60"})
+            if (
+                row["pw"] is not None
+            ):  # the password, after the token and BEFORE a view is counted (cond. 8, 9)
+                bad = self._check_password(row, form, now)
+                if bad is not None:
+                    return bad
             view = secrets.token_hex(16)
             conn.execute("BEGIN IMMEDIATE")
             try:
@@ -414,6 +459,22 @@ class ShareServer:
         finally:
             conn.close()
         return _Resp(303, b"", extra={"location": f"/s/{share_id}/v/{view}/"})
+
+    def _check_password(self, share_id_row, form, now):
+        """None when the password opens the link, else the refusal page. Rate check and a KDF slot come BEFORE the
+        KDF; a wrong password is not a view (nothing is counted)."""
+        if not self.apps._try_ok("s:" + share_id_row["id"], now):
+            return page(429, TOO_MANY, extra={"retry-after": "60"})
+        given = (form.get("p") or [""])[0]
+        if not given or len(given.encode("utf-8", "replace")) > P.PW_INPUT_MAX:
+            return page(401, WRONG_PW)
+        if not self.apps._kdf.acquire(blocking=False):
+            return page(503, ("Busy", "Try again in a moment."), extra={"retry-after": "5"})
+        try:
+            ok = P.password_ok(json.loads(share_id_row["pw"]), given)
+        finally:
+            self.apps._kdf.release()
+        return None if ok else page(401, WRONG_PW)
 
     # -- files ----------------------------------------------------------------------------------
 
@@ -463,7 +524,7 @@ class ShareServer:
             os.close(fd)
             return not_found()
         ext = os.path.splitext(rel)[1].lower()
-        extra = {"access-control-allow-origin": "*"}
+        extra = {}  # never an Access-Control-Allow-Origin (not "*", not "null"): files do not answer other origins
         if ext in INLINE_TYPES:
             ctype = INLINE_TYPES[ext]
         else:
@@ -512,5 +573,5 @@ class ShareServer:
         return page(200, ("Shared files", ""), body=f"<h1>Shared files</h1><ul>{items}</ul>")
 
 
-def create_share_app(data_dir, clock=None):
-    return ShareServer(data_dir, clock)
+def create_share_app(data_dir, clock=None, share_origin=None, api_host=None):
+    return ShareServer(data_dir, clock, share_origin, api_host)

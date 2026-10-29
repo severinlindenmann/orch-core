@@ -187,6 +187,7 @@ def plan(
     *,
     manifest_bytes: Any,
     missing: list[str] | None = None,
+    private_paths: list[str] | None = None,
 ) -> Plan:
     """The plan of ``profile``. In new mode every item is planned; in finish mode only ``missing`` ones (R7)."""
     from orch.custody.cli import RISK as CONVENIENCE_RISK
@@ -251,12 +252,23 @@ def plan(
         )
         runner_grant = {"hours": hours, "scope": RUNNER_GRANT_SCOPE, "holder": HOLDER}
     flags: list[dict[str, str]] = []
+    if facts is None:  # a new workspace: orch's folders are made private (P08), shown here before it happens
+        flags.append(
+            {
+                "id": "perms",
+                "text": "Folders made private: only you can change this folder and orch's own folders.",
+                "detail": "Removes the group and other write permission from these folders, where you own them: "
+                + ", ".join(private_paths or [])
+                + ". Nothing else is changed.",
+            }
+        )
     if profile.get("git_init") and wanted("git"):
         flags.append(
             {
                 "id": "git",
-                "text": "Make this folder a git repository (git init), and keep .orch/ and .orch-work/ out of it. "
-                "It gets one empty first commit, none of your files.",
+                "text": "Keep a history of changes in this folder. Your files stay as they are.",
+                "detail": "This runs git init, keeps .orch/ and .orch-work/ out of the repository, and makes one empty "
+                "first commit. None of your files is committed.",
             }
         )
     if profile.get("records") and facts is None:  # a new workspace only
@@ -282,7 +294,8 @@ def plan(
     exec_addon = any(
         info[a].needs_runner or info[a].needs_terminals for a in profile["addons"] if info[a].kind == "addon"
     )
-    tty = facts is not None or runner_grant is not None or exec_addon
+    # One click (method click) has no terminal check: the risk notice and the Create click are the consent (P01)
+    tty = profile["method"] != "click" and (facts is not None or runner_grant is not None or exec_addon)
     p = Plan(items, flags, runner_grant, risk, tty, _canon_profile(profile, directory))
     if facts is None:
         p.workspace = _workspace(profile, directory)

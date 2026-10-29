@@ -38,7 +38,7 @@ from orch.host.review import HOST_PERSON_OPS
 from orch.host.runnergrants import GRANT_OPS
 from orch.host.runners import RUN_OPS
 from orch.host.shareops import SHARE_OPS, SHARE_READS
-from orch.host.spaceops import SPACE_OPS, SPACE_READS
+from orch.host.spaceops import SPACE_AGENT_WRITES, SPACE_OPS, SPACE_READS
 from orch.host.terms import TERM_OPS
 from orch.host.transcripts import LINK_OPS, TRANSCRIPT_OPS
 from orch.host.worktrees import WORKTREE_OPS
@@ -246,16 +246,18 @@ def test_every_served_op_in_every_row_of_the_effective_column_table():
         elif op in HUB_OPS:  # V3 C2a: P only (the op checks the owner role); status reads
             assert kind == (
                 ("person_read", "read")
-                if op in ("hub.status", "hub.handoff", "hub.link", "hub.switch", "hub.directory")
+                if op in ("hub.status", "hub.handoff", "hub.link", "hub.switch", "hub.directory", "hub.shared")
                 else ("person_write", "write")
             )
         elif op in COSMETIC_OPS:  # D6: column P only (owner role)
             assert kind == ("person_write", "write")
         elif op in SHARE_OPS:  # V3 C6: column P only (owner role)
-            assert kind == (("person_read", "read") if op in SHARE_READS else ("person_write", "write"))
+            assert kind == (
+                ("person_read", "read") if op in SHARE_READS | {"share.audience"} else ("person_write", "write")
+            )
         elif op in MARKET_OPS:  # V3 G2: P and G; the op refuses an agent's add and --commit itself
             assert kind == (("pg_read", "read") if op in MARKET_READS else ("pg_write", "write"))
-        elif op in ORG_OPS:  # M3 H-2: offers P and G, sync P and G, show P only, accept and decline P only (owner)
+        elif op in ORG_OPS:  # M3 H-2: offers, sync P and G; show, accept, decline, tool P only (owner)
             assert kind == {
                 "org.offers": ("pg_read", "read"),
                 "org.sync": ("pg_write", "write"),
@@ -263,7 +265,8 @@ def test_every_served_op_in_every_row_of_the_effective_column_table():
             }.get(op, ("person_write", "write"))
             assert op in ORG_READS or kind[1] == "write" or op == "org.show"
         elif op in SPACE_OPS:  # V3 C13: list and get for P and G, the rest P only (owner role)
-            assert kind == (("pg_read", "read") if op in SPACE_READS else ("person_write", "write"))
+            want = ("pg_read", "read") if op in SPACE_READS else ("person_write", "write")
+            assert kind == (("pg_write", "write") if op in SPACE_AGENT_WRITES else want)
         elif op in PEER_OPS:  # V3 C12: reads for P and G, writes P only (owner role)
             assert kind == (("pg_read", "read") if op in PEER_READS else ("person_write", "write"))
         elif op in AGENT_OPS:  # H11c: P only

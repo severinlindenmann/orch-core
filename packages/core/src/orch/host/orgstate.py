@@ -9,6 +9,12 @@ Files under ``<state>/hosts/<ws>/hub/org/`` (a 0700 folder, files 0600, host UID
   things stricter (a hand edit fails the signature). The stored bundle's ``version`` is also the pin: a sync
   never takes a
   lower one.
+* ``seen.json``: ``{servers: {name: {hub_id, binding_seq, digest, at, tools: [row]}}}``. What the
+  proxy last saw in a server's ``tools/list`` (so the owner can look at it). A row is the whole tool view plus its pin
+  (``mcpshared.tool_view``; nothing is cut) or ``{name, problem: "too_long"}``. Grants nothing.
+* ``tools.json``: ``{entries: [{hub_id, binding_seq, server, server_digest, tool, pin, at, by}]}``: the tools the owner
+  turned On, for exactly the pin shown. Written only by ``org.tool`` (and cleared by decline), behind the owner check;
+  :func:`tool_policy` ignores an entry of another binding, another server digest or a server that is not served.
 * ``accepted.json``: ``{entries: [{hub_id, binding_seq, kind, name, digest, at, by}]}``. Written only by ``org.accept``,
   ``org.decline`` (and a sync that prunes a withdrawn item), all behind the owner check. This is the ONLY authority for
   "the owner said yes".
@@ -22,6 +28,7 @@ Unbind or leave deletes the whole folder. Core imports no hub code (D79): this u
 
 from __future__ import annotations
 
+import re
 import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -40,13 +47,19 @@ __all__ = [
     "offers_view",
     "org_dir",
     "purge",
+    "record_seen",
     "served",
+    "set_tool",
     "sync_bundles",
+    "tool_policy",
 ]
 
 KINDS = ("skill", "mcp")
 _ITEMS = {"skill": "skills", "mcp": "servers"}  # the member of the bundle that holds the items
 _MU = threading.RLock()
+_PIN = re.compile(r"sha256:[0-9a-f]{64}")
+_TOOL_KEYS = {"hub_id", "binding_seq", "server", "server_digest", "tool", "pin", "at", "by"}
+MAX_SEEN_TOOLS = 200
 _NOTES = {
     "skill": [
         "A company skill is advice from your company hub. It ranks below orch's rules and cannot widen what an"
@@ -89,7 +102,10 @@ def purge(service: WorkspaceService) -> None:
     folder."""
     import shutil
 
+    from . import orgsecrets
+
     with _MU:
+        orgsecrets.drop_cache(service)  # the opened values go first, then the files (secrets.json and the pins)
         shutil.rmtree(org_dir(service), ignore_errors=True)
 
 
@@ -238,6 +254,12 @@ def show(service: WorkspaceService, kind: str, name: str) -> dict[str, Any]:
     out = {"kind": kind, "status": status, "item": item, "notes": _NOTES[kind], "untrusted": True}
     if status == "needs_isolation" or (kind == "mcp" and item["auth"] == "hub_secret" and not iso):
         out["needs_isolation"] = "needs a separate agent user: this server's secret cannot be kept from an agent here"
+    if kind == "mcp":
+        out["tools"] = _tool_rows(service, state, name, item["digest"])
+        if item["auth"] == "hub_secret":
+            from . import orgsecrets
+
+            out["secret_status"] = orgsecrets.secret_status(service, state, item.get("secret"))
     return out
 
 
@@ -260,6 +282,10 @@ def accept(service: WorkspaceService, kind: str, name: str, digest: str, who: st
         rows = [
             r for r in _entries(service) if not (r["kind"] == kind and r["name"] == name and r["hub_id"] == b["hub_id"])
         ]
+        if kind == "mcp" and not any(r["kind"] == kind and r["name"] == name for r in accepted_entries(service, state)):
+            _drop_server(
+                service, name
+            )  # a fresh accept (never accepted, or withdrawn before) starts with every tool Off
         rows.append({**b, "kind": kind, "name": name, "digest": digest, "at": _now_ms(service), "by": who})
         _write(service, "accepted.json", {"entries": rows})
         return {"kind": kind, "name": name, "status": "on"}
@@ -273,7 +299,180 @@ def decline(service: WorkspaceService, kind: str, name: str) -> dict[str, Any]:
         keep = [r for r in rows if not (r["kind"] == kind and r["name"] == name and r["hub_id"] == b["hub_id"])]
         if len(keep) != len(rows):
             _write(service, "accepted.json", {"entries": keep})
+        if kind == "mcp":
+            _drop_server(service, name)  # a re-accept starts with every tool Off
+            from . import orgsecrets
+
+            orgsecrets.prune(service)  # its company secret (if no other server uses it) is not kept
         return {"kind": kind, "name": name, "status": "off"}
+
+
+# -- tools -----------------------------------------------------------------------------------------------------------
+
+
+def _tool_entries(service: WorkspaceService) -> list[dict[str, Any]]:
+    doc = _read(service, "tools.json")
+    rows = doc.get("entries") if type(doc) is dict else None
+    if type(rows) is not list:
+        return []
+    return [
+        r for r in rows
+        if type(r) is dict and set(r) == _TOOL_KEYS and type(r["tool"]) is str and type(r["pin"]) is str
+        and type(r["server"]) is str and type(r["server_digest"]) is str
+    ]  # fmt: skip
+
+
+def _seen_servers(service: WorkspaceService) -> dict[str, Any]:
+    doc = _read(service, "seen.json")
+    servers = doc.get("servers") if type(doc) is dict else None
+    return servers if type(servers) is dict else {}
+
+
+def _drop_server(service: WorkspaceService, name: str) -> None:
+    """Forget the tools the owner turned On for a server and what was seen of it (any binding: both are tied to it)."""
+    with _MU:
+        entries = _tool_entries(service)
+        keep = [r for r in entries if r["server"] != name]
+        if len(keep) != len(entries):
+            _write(service, "tools.json", {"entries": keep})
+        seen = _seen_servers(service)
+        if name in seen:
+            _write(service, "seen.json", {"servers": {k: v for k, v in seen.items() if k != name}})
+
+
+def _seen_row(t: Any) -> dict[str, Any] | None:
+    """``t`` when it is a consistent seen row: a ``too_long`` stub, or a view that is its own :func:`tool_view` and
+    whose pin is the pin of exactly that view. Else None (what the owner is shown is what is pinned)."""
+    from .mcpshared import TOOL_NAME, tool_pin, tool_view
+
+    if type(t) is not dict:
+        return None
+    if set(t) == {"name", "problem"}:
+        ok = type(t["name"]) is str and TOOL_NAME.fullmatch(t["name"]) is not None and t["problem"] == "too_long"
+        return t if ok else None
+    pin = t.get("pin")
+    if type(pin) is not str or not _PIN.fullmatch(pin):
+        return None
+    body = {k: v for k, v in t.items() if k != "pin"}
+    view, problem = tool_view(body)
+    if view is None or problem is not None or view != body or tool_pin(view) != pin:
+        return None
+    return t
+
+
+def _seen_tools(service: WorkspaceService, state: Any, server: str, digest: str) -> list[dict[str, Any]]:
+    """The tools last seen for this server under the current binding and exactly this server digest."""
+    rec = _seen_servers(service).get(server)
+    if type(rec) is not dict or {k: rec.get(k) for k in ("hub_id", "binding_seq")} != _binding(state):
+        return []
+    if rec.get("digest") != digest or type(rec.get("tools")) is not list:
+        return []
+    return [r for r in map(_seen_row, rec["tools"]) if r is not None]
+
+
+def record_seen(service: WorkspaceService, server: str, server_digest: str, tools: list[dict[str, Any]]) -> None:
+    """The proxy saw ``tools/list`` of a server: keep each tool exactly as its view (plus pin), or as a ``too_long``
+    stub, so the owner can look at what is pinned. Grants nothing. Anything inconsistent (a bad server name, a row
+    whose pin is not the pin of its view) or no hub binding: no effect, nothing is cut or repaired."""
+    from .mcpshared import server_name_ok
+
+    try:
+        if not server_name_ok(server) or type(server_digest) is not str or type(tools) is not list:
+            return
+        rows: list[dict[str, Any]] = []
+        for t in tools[:MAX_SEEN_TOOLS]:
+            row = _seen_row(t)
+            if row is None:
+                return
+            rows.append(row)
+        with _MU:
+            state = _state(service)
+            seen = _seen_servers(service)
+            b = _binding(state)
+            old = seen.get(server)
+            if (
+                type(old) is dict
+                and old.get("digest") == server_digest
+                and old.get("tools") == rows
+                and all(old.get(k) == v for k, v in b.items())
+            ):
+                return
+            seen[server] = {**b, "digest": server_digest, "at": _now_ms(service), "tools": rows}
+            _write(service, "seen.json", {"servers": seen})
+    except Exception:  # noqa: BLE001 - a listing the owner never sees must never break a tool call
+        return
+
+
+def tool_policy(service: WorkspaceService, server: str) -> dict[str, str]:
+    """``{tool: pin}`` the owner turned On, for the current binding and the server as it is served right now. A server
+    that is not served, or whose digest changed, has no On tool. Never raises."""
+    try:
+        with _MU:
+            state = _state(service)
+            rec = next((r for r in served(service)["mcp"] if r["name"] == server), None)
+            if rec is None:
+                return {}
+            b = _binding(state)
+            return {
+                r["tool"]: r["pin"]
+                for r in _tool_entries(service)
+                if r["hub_id"] == b["hub_id"] and r["binding_seq"] == b["binding_seq"] and r["server"] == server
+                and r["server_digest"] == rec["digest"] and _PIN.fullmatch(r["pin"])
+            }  # fmt: skip
+    except Exception:  # noqa: BLE001 - any doubt is "nothing is On"
+        return {}
+
+
+def _tool_rows(service: WorkspaceService, state: Any, server: str, digest: str) -> list[dict[str, Any]]:
+    on = tool_policy(service, server)
+    b = _binding(state)
+    mine = {
+        r["tool"] for r in _tool_entries(service)
+        if r["hub_id"] == b["hub_id"] and r["binding_seq"] == b["binding_seq"] and r["server"] == server
+    }  # fmt: skip
+    out = []
+    for t in _seen_tools(service, state, server, digest):
+        if t.get("problem") == "too_long":
+            out.append({"name": t["name"], "problem": "too_long", "status": "too_long"})  # never On, no pin
+            continue
+        if on.get(t["name"]) == t["pin"]:
+            status = "on"
+        elif t["name"] in mine:
+            status = "changed"  # turned On once for something else: the owner must click again
+        else:
+            status = "off"
+        out.append({**t, "status": status})  # the stored view and pin: what is shown is what is pinned
+    return out
+
+
+def set_tool(service: WorkspaceService, server: str, tool: str, on: bool, pin: str | None, who: str) -> dict[str, Any]:
+    """Turn one tool of an accepted server On (for exactly the pin shown) or Off (always works)."""
+    with _MU:
+        state = _state(service)
+        rec = next((r for r in served(service)["mcp"] if r["name"] == server), None)
+        if rec is None:
+            raise HostError("not_found", f"company tool server {server!r} is not on: orch org accept mcp {server}")
+        b = _binding(state)
+        rows = [
+            r for r in _tool_entries(service) if r["hub_id"] == b["hub_id"] and r["binding_seq"] == b["binding_seq"]
+        ]
+        keep = [r for r in rows if not (r["server"] == server and r["tool"] == tool)]
+        if on:
+            seen = next((t for t in _seen_tools(service, state, server, rec["digest"]) if t["name"] == tool), None)
+            if seen is None:
+                raise HostError("not_found", f"no tool {tool!r} seen on {server!r} yet: let an agent list its tools")
+            if seen.get("problem") == "too_long":
+                raise HostError("invalid.input", f"org: too_long: {tool} is too long to review; it stays off")
+            if pin is None or pin != seen["pin"]:
+                raise HostError(
+                    "invalid.input",
+                    f"org: changed: {tool!r} is not the version you were shown; look again: orch org show",
+                )
+            keep.append({**b, "server": server, "server_digest": rec["digest"], "tool": tool, "pin": pin,
+                         "at": _now_ms(service), "by": who})  # fmt: skip
+        if keep != _tool_entries(service) or on:
+            _write(service, "tools.json", {"entries": keep})
+        return {"server": server, "tool": tool, "status": "on" if on else "off"}
 
 
 def served(service: WorkspaceService) -> dict[str, list[dict[str, Any]]]:
@@ -289,6 +488,9 @@ def served(service: WorkspaceService) -> dict[str, list[dict[str, Any]]]:
     for kind, key in (("skill", "skills"), ("mcp", "mcp")):
         out[key] = [i for i in offers[kind] if accepts.get((kind, i["name"])) == i["digest"]]
     if out["mcp"] and not isolated(service):
+        from . import orgsecrets
+
+        orgsecrets.drop_cache(service)  # isolation lost: no opened company secret stays in memory
         out["mcp"] = [i for i in out["mcp"] if i["auth"] != "hub_secret"]  # tier A: no credential servers (condition 3)
     return out
 
@@ -297,7 +499,8 @@ def served(service: WorkspaceService) -> dict[str, list[dict[str, Any]]]:
 
 
 def sync_bundles(service: WorkspaceService, bodies: dict[str, Any]) -> dict[str, str]:
-    """Take the two reply bodies of ``org_skills_get`` / ``mcp_servers_get`` (an error string for one the hub refused),
+    """Take the reply bodies of ``org_skills_get`` / ``mcp_servers_get`` (and ``org_secrets_get`` under ``secrets``,
+    only asked for on an isolated host; an error string for one the hub refused),
     verify each against the card and the held bundle (no rollback), store what is new and prune the accepts of
     withdrawn items. Returns ``{kind: "new" | "same" | <refusal code>}``. Nothing is enabled by this."""
     from orch.hubclient.errors import HubRefused
@@ -353,4 +556,9 @@ def sync_bundles(service: WorkspaceService, bodies: dict[str, Any]) -> dict[str,
         keep = [r for r in rows if keeps(r)]
         if len(keep) != len(rows):
             _write(service, "accepted.json", {"entries": keep})
+        from . import orgsecrets
+
+        sec = orgsecrets.sync_secrets(service, state, held, bodies.get("secrets"), _now_ms(service))
+        if sec is not None:
+            result["secrets"] = sec  # tier A: no key at all (nothing was asked, nothing is reported)
     return result

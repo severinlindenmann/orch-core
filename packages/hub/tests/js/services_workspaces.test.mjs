@@ -1,6 +1,7 @@
 // Run-11 #12/#13: the Services and Workspaces pages, against a tiny DOM stub.
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 class Node_ {
   constructor(tag, text) { this.tag = tag; this.nodeType = tag === "#text" ? 3 : 1; this.children = []; this.attrs = {}; this._text = text ?? ""; this.className = ""; this.listeners = {}; }
@@ -14,7 +15,7 @@ class Node_ {
 }
 globalThis.document = { createElement: (t) => new Node_(t), createTextNode: (t) => new Node_("#text", t), getElementById: () => null };
 const { servicesView, summary, stateOf } = await import("../../src/orch_hub/web/services.js");
-const { workspacesView, workspaceDetailsView, connectWorkspaceView } = await import("../../src/orch_hub/web/workspaces.js");
+const { workspacesView, privateRows, workspaceDetailsView, connectWorkspaceView, newWorkspaces } = await import("../../src/orch_hub/web/workspaces.js");
 const { when, ago } = await import("../../src/orch_hub/web/ui.js");
 
 const NOW = new Date(2026, 9, 27, 12, 0).getTime();
@@ -93,8 +94,8 @@ test("workspace table shows modes, status, versions, hosts, warnings without a h
   assert.match(t, /2 workspaces run an older orch/);
   assert.match(t, /Legal, Archive/);
   assert.match(t, /The hub still works with 0.1.0 and newer\./);
-  assert.match(t, /Everything/);
-  assert.match(t, /Only what I choose/);
+  assert.match(t, /Shares everything/);
+  assert.match(t, /Shares only what you choose/);
   assert.match(t, /Personal: only its owner/);
   assert.match(t, /Offline.*since 2 min ago/);
   assert.match(t, /0.2.0 · abcdef1/);
@@ -123,8 +124,8 @@ test("details show access only when allowed and send mode changes to the workspa
   const hidden = workspaceDetailsView(w, { roles: null, owner: "Anna" }, NOW);
   assert.doesNotMatch(text(hidden), /Who has access/);
   assert.match(text(hidden), /OwnerAnna/);
-  assert.match(text(hidden), /Only what I choose/);
-  assert.match(text(hidden), /To change what this workspace shares, open it and use Settings > Hub. The owner confirms there./);
+  assert.match(text(hidden), /Shares only what you choose/);
+  assert.match(text(hidden), /To change what this workspace shares, open it and use Settings > Hub. The workspace owner confirms with one click on their dashboard./);
   const out = workspaceDetailsView(w, { roles: { owner: "Anna", groups: [{ group: "Design", role: "edit", members: ["Lee", "Sam"] }] },
     actions: { open: (row) => { opened = row; } } }, NOW);
   assert.match(text(out), /Who has accessOwner: AnnaDesign · editLee, Sam/);
@@ -133,33 +134,35 @@ test("details show access only when allowed and send mode changes to the workspa
   assert.equal(find(out, (n) => n.tag === "button").length, 1);
 });
 
-test("connect link keeps the suggestion out of the copied link and shows expiry", async () => {
+test("connect link is copied unchanged, shows expiry, and Copy says what to do next", async () => {
   let copied;
   const out = [connectWorkspaceView({ link: "/join#one-time", expires_ms: NOW + 1800000 }, { copy: async (s) => { copied = s; return true; } })];
   assert.match(text(out), /Works once, for 30 minutes \(until 12:30\)/);
-  assert.match(text(out), /Suggested: Only what I choose\./);
+  assert.doesNotMatch(text(out), /Suggested|Everything|Mission Control/);
+  assert.doesNotMatch(text(out), /Now open your workspace/, "the next step shows after Copy");
   const input = find(out, (n) => n.tag === "input")[0];
   assert.equal(input.getAttribute("readonly"), "");
   assert.equal(input.getAttribute("value"), "/join#one-time");
-  clickButton(out, "Everything");
-  assert.match(text(out), /Suggested: Everything. The workspace owner confirms the mode with one click in Mission Control./);
-  assert.deepEqual(find(out, (n) => n.getAttribute("aria-pressed") !== null).map((n) => n.getAttribute("aria-pressed")), ["false", "true"]);
   await clickButton(out, "Copy");
   assert.equal(copied, "/join#one-time");
-  assert.match(text(out), /Copied/);
+  assert.match(text(out), /Copied ✓/);
+  let opened;
+  const withOpen = [connectWorkspaceView({ link: "/join#one-time", expires_ms: NOW + 1800000 }, { openLink: (l) => { opened = l; } })];
+  clickButton(withOpen, "Open link");
+  assert.equal(opened, "/join#one-time");
+  assert.match(text(out), /Send this link to the workspace owner, or open it on their computer\./);
 });
 
 test("admin empty state connects; left disclosure includes only unbound rows and removes the selected row", async () => {
   const left = workspace({ workspace_id: "left", name: "Old", status: "unbound", left_ms: NOW });
   let removed, connected = 0;
-  const out = workspacesView({ workspaces: [], handoffs: [], admin: [left, workspace({ status: "bound" })], actions: {
+  const out = workspacesView({ workspaces: [], handoffs: [], admin: [left], actions: {
     connect: async () => { connected++; return { link: "/join#fresh", expires_ms: NOW + 1800000 }; },
     remove: async (w) => { removed = w; },
   } }, NOW);
   assert.match(text(out), /No workspaces yet/);
   assert.match(text(out), /Show left workspaces \(1\)/);
   assert.match(text(out), new RegExp("Left " + new Date(NOW).toLocaleDateString().replaceAll("/", "\\/")));
-  assert.doesNotMatch(text(out), /Product/);
   await clickButton(out, "Connect a workspace");
   assert.equal(connected, 1);
   assert.equal(find(out, (n) => n.tag === "input")[0].getAttribute("value"), "/join#fresh");
@@ -286,4 +289,176 @@ test("services refresh every 15 seconds, pause while hidden, and stop after navi
   release();
   await pending;
   assert.equal(timers.size, 0);
+});
+
+test("a workspace that joined replaces the empty state and the used link with a green message", async () => {
+  const w = workspace({ name: "Anna's workspace" });
+  const opened = [];
+  const out = workspacesView({ workspaces: [w], handoffs: [], admin: [w], joined: [w], actions: { open: (x) => opened.push(x.workspace_id) } }, NOW);
+  const t = text(out);
+  assert.doesNotMatch(t, /No workspaces yet/);
+  const banner = find(out, (n) => n.attrs?.role === "status" || n.getAttribute?.("role") === "status")[0];
+  assert.match(banner.textContent, /Anna's workspace joined/);
+  assert.match(banner.textContent, /It is online now/);
+  clickButton(out, "Open Anna's workspace");
+  assert.deepEqual(opened, [w.workspace_id]);
+});
+
+test("only workspaces that were not on screen count as joined", () => {
+  const known = new Set(["a", "b"]);
+  assert.deepEqual(newWorkspaces(known, [{ workspace_id: "a" }, { workspace_id: "c" }, {}]).map((x) => x.workspace_id), ["c"]);
+  assert.deepEqual(newWorkspaces(known, undefined), []);
+});
+
+test("the admin empty state points to the Connect button; a member is told to ask the admin", () => {
+  assert.match(text(workspacesView({ handoffs: [], workspaces: [], admin: [] })), /Press .Connect a workspace./);
+  assert.match(text(workspacesView({ handoffs: [], workspaces: [], admin: null })), /Ask your hub admin/);
+});
+
+test("workspaces are named after their owner and connect asks whose workspace it is", async () => {
+  const a = workspace({ name: null, owner_name: "Ben Test" }), b = workspace({ workspace_id: "b".repeat(32), name: null, owner_name: "Anna Test" });
+  const sent = [];
+  const out = workspacesView({ workspaces: [a, b], handoffs: [], admin: [], self: "u1", actions: {
+    people: async () => [{ user_id: "u1", name: "Anna Test" }, { user_id: "u2", name: "Ben Test" }],
+    connect: async (owner) => { sent.push(owner); return { link: "/c#" + owner, expires_ms: NOW + 1800000 }; } } }, NOW);
+  const t = text(out);
+  assert.match(t, /Ben Test's workspace/); assert.match(t, /Owner: Ben Test/); assert.match(t, /Anna Test's workspace/);
+  assert.doesNotMatch(t, /Another workspace/);
+  await clickButton(out, "Connect a workspace");
+  assert.deepEqual(sent, []); // r9 P04: with several people nothing is preselected
+  assert.match(text(out), /Whose workspace is this\?/);
+  const select = find(out, (n) => n.tag === "select")[0];
+  assert.deepEqual(find([select], (n) => n.tag === "option").map((o) => o.textContent), ["Choose…", "Anna Test", "Ben Test", "Someone new…"]);
+  select.value = "u2";
+  await select.listeners.change({ target: select });
+  assert.deepEqual(sent, ["u2"]);
+  assert.equal(find(out, (n) => n.tag === "input" && n.getAttribute("aria-label") === "Connect link")[0].value, "/c#u2");
+});
+
+test("a workspace-session admin still sees Connect a workspace; the click asks for one sign-in and mints nothing", async () => {
+  let asked = 0, minted = 0;
+  const out = workspacesView({ workspaces: [], handoffs: [], admin: null, canConnect: true, needsSignIn: true,
+    actions: { signInToConnect: () => { asked++; }, connect: async () => { minted++; return {}; } } }, NOW);
+  assert.match(text(out), /Connect a workspace/);
+  assert.match(text(out), /No workspaces yet/);
+  await clickButton(out, "Connect a workspace");
+  assert.equal(asked, 1);
+  assert.equal(minted, 0);
+  const member = workspacesView({ workspaces: [], handoffs: [], admin: null, actions: {} }, NOW);
+  assert.doesNotMatch(text(member), /Connect a workspace/);
+});
+
+test("the return route after sign-in is a short same-origin hash only", () => {
+  const source = readFileSync(new URL("../../src/orch_hub/web/app.js", import.meta.url), "utf8");
+  const re = new RegExp(source.match(/const SAFE_RETURN = \/(.*)\/i;/)[1], "i");
+  assert.ok(re.test("#/workspaces"));
+  for (const bad of ["https://evil.test/", "//evil.test", "#//evil.test", "javascript:alert(1)", "#/a?x=1", "#/" + "a".repeat(60), "workspaces"]) assert.ok(!re.test(bad), bad);
+});
+
+test("a full admin whose admin list failed to load still mints a link (no sign-out)", async () => {
+  let asked = 0, minted = 0;
+  const out = workspacesView({ workspaces: [], handoffs: [], admin: null, canConnect: true, needsSignIn: false,
+    actions: { signInToConnect: () => { asked++; }, people: async () => [], connect: async () => { minted++; return { link: "/j", expires_ms: NOW + 1000 }; } } }, NOW);
+  await clickButton(out, "Connect a workspace");
+  assert.equal(asked, 0);
+  assert.equal(minted, 1);
+});
+
+test("one workspace on an older orch is worded in the singular", () => {
+  const out = workspacesView({ workspaces: [workspace(), workspace({ workspace_id: "b", name: "Legal", version_state: "older" })],
+    handoffs: [], hub: { version: "0.3.0", min_supported: "0.1.0" } }, NOW);
+  assert.match(text(out), /1 workspace runs an older orch/);
+  assert.doesNotMatch(text(out), /1 workspaces/);
+});
+
+// r9 P04: the admin can pick "Someone new..." in Connect a workspace; nothing is silently preselected.
+const twoPeople = [{ user_id: "a".repeat(32), name: "Admin" }, { user_id: "b".repeat(32), name: "Ben" }];
+
+test("P04: with several people nothing is preselected and no workspace link is minted until one is chosen", async () => {
+  const connected = [];
+  const out = workspacesView({ workspaces: [], handoffs: [], admin: [], self: "a".repeat(32), actions: {
+    people: async () => twoPeople,
+    connect: async (who) => { connected.push(who); return { link: "/c#fresh", expires_ms: NOW + 1800000 }; },
+  } }, NOW);
+  await clickButton(out, "Connect a workspace");
+  assert.deepEqual(connected, [], "no link before a person is chosen");
+  const select = find(out, (n) => n.tag === "select")[0];
+  const options = find([select], (n) => n.tag === "option");
+  assert.deepEqual(options.map((o) => o.textContent), ["Choose…", "Admin", "Ben", "Someone new…"]);
+  assert.ok(options.every((o) => o.getAttribute("selected") === null || o === options[0]));
+  assert.equal(find(out, (n) => n.className === "ws-link")[0].hidden, true, "the link is hidden until a person is chosen");
+  select.value = "b".repeat(32);
+  await select.listeners.change({ target: select });
+  assert.deepEqual(connected, ["b".repeat(32)]);
+  assert.equal(find(out, (n) => n.className === "ws-link")[0].hidden, false);
+});
+
+test("P04: Someone new shows a name field, calls invite (not connect), and shows the sign-in link", async () => {
+  const connected = [], invited = [];
+  let refreshed = 0;
+  const out = workspacesView({ workspaces: [], handoffs: [], admin: [], self: "a".repeat(32), actions: {
+    people: async () => { refreshed++; return twoPeople; },
+    connect: async (who) => { connected.push(who); return { link: "/c#fresh", expires_ms: NOW + 1800000 }; },
+    invite: async (name) => { invited.push(name); return { link: "http://hub.test/#invite=tok", expires_ms: NOW + 1800000 }; },
+    copy: async () => true,
+  } }, NOW);
+  await clickButton(out, "Connect a workspace");
+  const select = find(out, (n) => n.tag === "select")[0];
+  select.value = "__new__";
+  await select.listeners.change({ target: select });
+  assert.deepEqual(connected, [], "Someone new never mints a workspace link");
+  const name = find(out, (n) => n.tag === "input" && n.getAttribute("aria-label") === "Their name")[0];
+  assert.ok(name);
+  assert.match(text(out), /Create sign-in link/);
+  await clickButton(out, "Create sign-in link");
+  assert.deepEqual(invited, [], "an empty name is not sent");
+  name.value = "  Ben Muster ";
+  await clickButton(out, "Create sign-in link");
+  assert.deepEqual(invited, ["Ben Muster"]);
+  assert.deepEqual(connected, []);
+  assert.equal(find(out, (n) => n.tag === "input" && n.getAttribute("aria-label") === "Sign-in link")[0].getAttribute("value"), "http://hub.test/#invite=tok");
+  assert.match(text(out), /come back here to connect their workspace/);
+  assert.ok(refreshed >= 2, "the people list is refreshed after the invite");
+});
+
+test("P04: an invite that fails shows a plain error", async () => {
+  const out = workspacesView({ workspaces: [], handoffs: [], admin: [], self: "a".repeat(32), actions: {
+    people: async () => twoPeople, invite: async () => { throw new Error("x"); } } }, NOW);
+  await clickButton(out, "Connect a workspace");
+  const select = find(out, (n) => n.tag === "select")[0];
+  select.value = "__new__";
+  await select.listeners.change({ target: select });
+  find(out, (n) => n.tag === "input" && n.getAttribute("aria-label") === "Their name")[0].value = "Ben";
+  await clickButton(out, "Create sign-in link");
+  assert.match(text(out), /Could not create a sign-in link\. Please try again\./);
+});
+
+test("P05: a hub admin also sees a connected workspace private to someone else, without Open, roles, host or address; others see only their own", () => {
+  const ben = { workspace_id: "ben", name: "Ben Test's workspace", owner_name: "Ben Test", mode: "selective", status: "bound", host: "ben-mac", address: "10.9.9.9", version: "0.2.0", grants: [{ group: "x" }] };
+  const left = { workspace_id: "old", name: "Left one", status: "unbound" };
+  const mine = [workspace()];
+  const asAdmin = workspacesView({ workspaces: mine, handoffs: [], admin: [{ ...mine[0], status: "bound" }, ben, left] }, NOW);
+  const t = text(asAdmin);
+  assert.match(t, /Ben Test's workspace/);
+  assert.match(t, /Private to Ben Test/);
+  assert.match(t, /Only Ben Test can open it/);
+  assert.doesNotMatch(t, /10\.9\.9\.9|ben-mac/);
+  const rows = find(asAdmin, (n) => n.tag === "tr" && n.getAttribute("data-workspace"));
+  assert.deepEqual(rows.map((r) => r.getAttribute("data-workspace")), [mine[0].workspace_id, "ben"]);
+  assert.equal(find([rows[1]], (n) => n.tag === "button" && n.textContent === "Open").length, 0);
+  assert.equal(find([rows[0]], (n) => n.tag === "button" && n.textContent === "Open").length, 1);
+  const none = workspacesView({ workspaces: mine, handoffs: [], admin: null }, NOW);
+  assert.doesNotMatch(text(none), /Ben Test/);
+  const details = text(workspaceDetailsView(privateRows(mine, [ben])[0], {}, NOW));
+  assert.doesNotMatch(details, /Open Ben|Change mode|Runs on/);
+  assert.match(details, /Only Ben Test can open it/);
+});
+
+test("P05: the Home count includes private workspaces for a hub admin and nobody else", async () => {
+  const { homeView } = await import("../../src/orch_hub/web/home.js");
+  const ws = [{ workspace_id: "a", name: "Anna", online: true, mode: "selective" }];
+  const ben = { workspace_id: "ben", name: "Ben", owner_name: "Ben", mode: "selective", status: "bound" };
+  const line = (d) => homeView({ workspaces: ws, items: [], shared: [], actions: {}, ...d }).flat().map((n) => n.textContent).join("\n").match(/\d+ workspaces? online, \d+ offline/)[0];
+  assert.equal(line({ adminWorkspaces: [ben] }), "2 workspaces online, 0 offline");
+  assert.equal(line({ adminWorkspaces: null }), "1 workspace online, 0 offline");
 });

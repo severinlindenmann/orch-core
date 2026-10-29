@@ -39,7 +39,7 @@ const calls = (p: string) => state.host.calls.filter((c) => c.path.includes(p))
 it('lists each ticket’s worktree in plain words and keeps folder and branch behind Technical details', async () => {
   route()
   show('/w/DEMO/worktrees')
-  const list = await screen.findByRole('list', { name: 'Worktrees' }, T)
+  const list = await screen.findByRole('list', { name: 'Work copies' }, T)
   const [first, second] = within(list).getAllByRole('listitem')
   expect(first).toHaveTextContent('Ready')
   expect(first).toHaveTextContent('no unsaved changes')

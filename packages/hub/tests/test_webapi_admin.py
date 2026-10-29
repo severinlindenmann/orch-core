@@ -185,6 +185,28 @@ def test_setup_token_creates_one_admin_once(w):
     assert w.call("POST", "/setup", {**body, "token": "tok-abc"})[:2] == (401, {"error": "bad_credentials"})
 
 
+def test_setup_signs_the_new_admin_in_once_with_a_browser_cookie(w):
+    f = w.env.keys.state / "setup-token"
+    f.write_text("tok-abc\n")
+    w.api.d.setup_token_file = f
+    for admin in list(w.env.acc.members("hub-admin")):
+        w.env.acc.remove_member("hub-admin", admin)
+    body = {"token": "tok-abc", "name": "boss", "password": "a long password 1"}
+    s, o, h = w.call("POST", "/setup", body)
+    assert s == 200 and o["totp_uri"].startswith("otpauth://")
+    cookie = h["Set-Cookie"]
+    assert "HttpOnly" in cookie and "SameSite=Strict" in cookie
+    tok = cookie.split(";")[0].split("=", 1)[1]
+    info = w.api.d.channels.session_info(tok)
+    assert info["user_id"] == o["user_id"] and info["scope"] == "full" and info["via"] == "setup"
+    w.browser_tokens.add(tok)  # the cookie works on a hub-admin route and on the session route
+    assert w.call("GET", "/session", token=tok)[0] == 200
+    assert w.call("GET", "/admin/users", token=tok)[0] == 200
+    # single use: the same token answers 401 and sets no cookie; a wrong token never gets a session
+    s2, _, h2 = w.call("POST", "/setup", body)
+    assert s2 == 401 and "Set-Cookie" not in h2
+
+
 def test_web_listen_takes_a_private_ip_not_a_wildcard(w):
     from orch_hub.serve import parse_web_listen
 
@@ -221,3 +243,27 @@ def test_workspace_remove(w):
     assert w.env.acc.grants(WS) == []
     assert w.call("GET", "/admin/workspaces", token=admin)[1]["workspaces"] == []
     assert w.call("DELETE", path, token=admin)[:2] == (404, {"error": "unknown_workspace"})
+
+
+def test_p05_admin_lists_a_selective_workspace_of_someone_else_but_a_member_cannot_and_me_workspaces_still_omits_it(w):
+    ben_ws = "ef" * 16
+    ben = w.env.user("ben")
+    w.reg.add(ben_ws, "selective", owner=ben)
+    s, o, _ = w.call(
+        "GET", "/admin/workspaces", token=w.login(w.admin)
+    )  # the hub admin sees it exists (name, owner, status)
+    assert s == 200 and ben_ws in {r["workspace_id"] for r in o["workspaces"]}
+    assert w.call("GET", "/admin/workspaces", token=w.login(ben))[:2] == (
+        403,
+        {"error": "forbidden_role"},
+    )  # server-side gate
+    assert w.call("GET", "/admin/workspaces", token=w.login(w.ann))[:2] == (403, {"error": "forbidden_role"})
+    s, o, _ = w.call("GET", "/me/workspaces", token=w.login(w.admin))  # unchanged: no role in a selective workspace
+    assert s == 200 and ben_ws not in {r["workspace_id"] for r in o["workspaces"]}
+
+
+def test_p05_a_switch_session_of_an_admin_is_refused_on_admin_workspaces(w):
+    ticket_session = w.env.svc.open_session(w.admin)["token"]  # a workspace vouched for it: no password sign-in
+    w.browser_tokens.add(ticket_session)
+    s, o, _ = w.call("GET", "/admin/workspaces", token=ticket_session)
+    assert (s, o["error"]) == (403, "reauth_required")

@@ -21,8 +21,9 @@ test("the console's own files contain no HTML, script or storage sink", () => {
   for (const f of files) {
     const source = readFileSync(new URL(f, DIR), "utf8");
     // SVG namespace is an identifier, never a network request.
-    const text = f === "pages/connections.js" ? source.replaceAll('"http://www.w3.org/2000/svg"', '"svg-namespace"') : source;
-    for (const [rx, name] of SINKS) assert.ok(!rx.test(text), `${f}: ${name}`);
+    const text = f === "pages/connections.js" || f === "qr.js" ? source.replaceAll('"http://www.w3.org/2000/svg"', '"svg-namespace"') : source;
+    // connect.js alone remembers the (non-secret) address of the workspace dashboard in the browser, nothing else.
+    for (const [rx, name] of SINKS) assert.ok((f === "connect.js" && name.startsWith("web storage")) || !rx.test(text), `${f}: ${name}`);
     if (f.endsWith(".html")) {
       assert.ok(!/<script(?![^>]*\bsrc=)/i.test(text), `${f}: inline script`);
       assert.ok(!/\son\w+\s*=|\sstyle\s*=|<style/i.test(text), `${f}: inline handler or style`);

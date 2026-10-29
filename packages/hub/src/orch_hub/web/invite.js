@@ -4,6 +4,7 @@
 import { sha256, unb64u, utf8 } from "./cj.js";
 import { loadChannel, signProof } from "./channel.js";
 import { h, text } from "./ui.js";
+import { totpPanel } from "./totp.js";
 
 export const PROOF_LABEL = "orch/v2/invite-proof|";
 export const MIN_PASSWORD = 10;
@@ -115,7 +116,8 @@ export function inviteView(token, d) {
       banner("ok", "Add this code to your authenticator app now. It is shown only once."),
       h("dl", { class: "facts" },
         h("dt", { text: "Your name for signing in" }), h("dd", { id: "invite-name", text: text(done.name ?? "") }),
-        h("dt", { text: "Code for your authenticator app" }), h("dd", { class: "fp", id: "invite-secret", text: code })),
+        ),
+      totpPanel(done.totp_uri, code, { id: "invite-secret" }),
       h("div", { class: "row" }, copy, hint),
       done.kind === "join" ? h("p", { class: "muted", text: "You do not have access to any workspace yet. Your admin adds you to groups afterwards." }) : null,
       done.recovery ? h("p", { class: "muted", text: "Your devices were removed. Set them up again once you are signed in." }) : null,

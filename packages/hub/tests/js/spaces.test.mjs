@@ -14,7 +14,7 @@ class Node_ {
   all() { return [this, ...this.children.flatMap((c) => c.all())]; }
 }
 globalThis.document = { createElement: (t) => new Node_(t), createTextNode: (t) => new Node_("#text", t), getElementById: () => null };
-const { spacesView } = await import("../../src/orch_hub/web/pages/spaces.js");
+const { spacesView, historyView, newSpaceDialog, STATEMENT, RESTORE_LINE } = await import("../../src/orch_hub/web/pages/spaces.js");
 const NOW = 1_800_000_000_000;
 const find = (n, pred) => n.all().filter(pred);
 const data = { spaces: [
@@ -25,7 +25,7 @@ const data = { spaces: [
 test("the page says plainly that the hub can read, lists members with Reads/Edits, and hides archived spaces", () => {
   const calls = [];
   const view = spacesView(data, { setMode: (s, m, mode) => calls.push(["mode", s.space_id, m.workspace_id, mode]), archive: (s, a) => calls.push(["archive", s.space_id, a]) }, NOW);
-  assert.match(view.textContent, /The hub and its admins can read what is in a shared space\./);
+  assert.match(view.textContent, /The hub and its admins can read this space\./);
   assert.match(view.textContent, /Finance/); assert.doesNotMatch(view.textContent, /Old/);   // archived: hidden by default
   assert.match(view.textContent, /Show archived \(1\)/);
   const selects = find(view, (n) => n.tag === "select");
@@ -47,4 +47,96 @@ test("the page says plainly that the hub can read, lists members with Reads/Edit
 
 test("no spaces: a plain empty state", () => {
   assert.match(spacesView({ spaces: [] }, {}, NOW).textContent, /No shared spaces yet/);
+});
+
+const clickAll = (n, label) => find(n, (x) => x.tag === "button" && x.textContent === label);
+const WS = [{ workspace_id: "a", name: "Product", mode: "full" }, { workspace_id: "c", name: "Legal", mode: "selective" }];
+
+test("New shared space: three steps, the statement is on the page and in the dialog, the tick is required", () => {
+  const made = [];
+  const view = spacesView({ ...data, workspaces: WS }, { create: (f) => made.push(f) }, NOW);
+  assert.ok(view.textContent.includes(STATEMENT));
+  find(view, (n) => n.attrs.id === "new-space")[0].listeners.click();
+  const dlg = find(view, (n) => n.attrs.id === "space-dialog")[0];
+  assert.match(dlg.textContent, /step 1 of 3/);
+  clickAll(dlg, "Next")[0].listeners.click();                        // no type yet: stays on step 1
+  assert.match(dlg.textContent, /step 1 of 3/);
+  find(dlg, (n) => n.attrs["data-type"] === "board")[0].listeners.click();
+  clickAll(dlg, "Next")[0].listeners.click();
+  assert.match(dlg.textContent, /step 2 of 3/);
+  clickAll(dlg, "Next")[0].listeners.click();                        // no name yet: stays on step 2
+  assert.match(dlg.textContent, /step 2 of 3/);
+  const [name, purpose] = find(dlg, (n) => n.tag === "input");
+  name.value = " Launches "; name.listeners.input(); purpose.value = "Dates"; purpose.listeners.input();
+  clickAll(dlg, "Next")[0].listeners.click();
+  assert.match(dlg.textContent, /step 3 of 3/);
+  assert.ok(dlg.textContent.includes(STATEMENT) && dlg.textContent.includes("its owner has to accept first"));
+  const create = clickAll(dlg, "Create")[0];
+  assert.equal(create.disabled, true);
+  const [box_a] = find(dlg, (n) => n.tag === "input" && n.attrs.type === "checkbox" && n.attrs["aria-label"] === "Product");
+  box_a.checked = true; box_a.listeners.change();
+  create.listeners.click();                                          // not ticked: nothing is sent
+  assert.equal(made.length, 0); assert.equal(create.disabled, true);
+  const tick = find(dlg, (n) => n.attrs.id === "space-understood")[0];
+  tick.checked = true; tick.listeners.change();
+  assert.equal(create.disabled, false);
+  create.listeners.click();
+  assert.deepEqual(made[0], { type: "board", name: "Launches", purpose: "Dates", members: ["a"], understood: true });
+  assert.equal(find(view, (n) => n.attrs.id === "space-dialog")[0].children.length, 0);   // the dialog closed
+});
+
+test("a member is removed only on the second click and added from the picker", () => {
+  const calls = [];
+  const view = spacesView({ ...data, workspaces: WS, about: { s1: { type: "wiki", purpose: "How we <b>work</b>" } } },
+    { removeMember: (s, m) => calls.push(["rm", s.space_id, m.workspace_id]), addMember: (s, id) => calls.push(["add", s.space_id, id]) }, NOW);
+  assert.match(view.textContent, /Wiki/); assert.match(view.textContent, /How we <b>work<\/b>/);
+  assert.equal(find(view, (n) => n.tag === "b" && n.textContent === "work").length, 0);
+  const rm = find(view, (n) => n.tag === "button" && n.textContent === "Remove")[0];
+  rm.listeners.click(); assert.equal(calls.length, 0); assert.equal(rm.textContent, "Sure? Remove");
+  rm.listeners.click(); assert.deepEqual(calls[0], ["rm", "s1", "a"]);
+  const pick = find(view, (n) => n.tag === "select" && n.attrs["aria-label"] === "Add a workspace")[0];
+  assert.deepEqual(pick.children.map((o) => o.attrs.value), ["", "c"]);   // only the workspace that is not in yet
+  assert.match(pick.textContent, /its owner accepts first/);
+  clickAll(view, "Add")[0].listeners.click(); assert.equal(calls.length, 1);   // nothing picked
+  pick.value = "c"; clickAll(view, "Add")[0].listeners.click();
+  assert.deepEqual(calls[1], ["add", "s1", "c"]);
+});
+
+test("history: newest first as sent, person/agent badge from a fixed table, restored, removed, file size, no restore button", () => {
+  const v = (extra) => ({ item_id: "i", created_ms: NOW - 1000, author: "Product", by: "person", restored: false, revoked: false, content: { text: "hello" }, ...extra });
+  const view = historyView({ names: [{ name: "plan.md", versions: [v({ by: "agent" }), v({ by: "root:x", restored: true }), v({ content: { file: 5000 } })] }], removed: [{ item_id: "r", author: "Legal", revoked: true }] }, NOW);
+  const chips = find(view, (n) => n.tag === "span" && /chip by-/.test(n.className)).map((n) => n.textContent);
+  assert.deepEqual(chips, ["agent", "unknown", "person"]);
+  assert.equal(find(view, (n) => n.tag === "span" && /chip by-/.test(n.className))[0].attrs.title, "As the workspace says");
+  assert.match(view.textContent, /restored/); assert.match(view.textContent, /file \(5 KB\)/);
+  assert.match(view.textContent, /removed/); assert.match(view.textContent, /put by Legal/);
+  assert.ok(view.textContent.includes(RESTORE_LINE));
+  assert.equal(find(view, (n) => n.tag === "button").length, 0);        // no Restore button, no button at all
+  assert.equal(find(view, (n) => n.tag === "a").length, 0);
+});
+
+test("history prints hostile item text inert: text only, no element, no link", () => {
+  const evil = "<img src=x onerror=alert(1)><a href='javascript:alert(2)'>x</a> https://evil.example \u202e";
+  const view = historyView({ names: [{ name: "<b>n</b>", versions: [{ item_id: "i", created_ms: NOW, author: "<i>W</i>", by: "person", restored: false, content: { text: evil, cut: true } }] }], removed: [] }, NOW);
+  assert.ok(view.textContent.includes("<img src=x onerror=alert(1)>"));
+  assert.ok(view.textContent.includes("<b>n</b>") && view.textContent.includes("(cut here)"));
+  assert.ok(view.textContent.includes("<U+202E>"));
+  for (const tag of ["img", "a", "b", "i", "script"]) assert.equal(find(view, (n) => n.tag === tag).length, 0, tag);
+});
+
+test("the History button loads the history once opened and hides it again", async () => {
+  const view = spacesView(data, { history: async (s) => ({ names: [{ name: "n.md", versions: [{ item_id: "i", created_ms: NOW, by: "agent", content: { text: "hi" } }] }], removed: [] }) }, NOW);
+  const btn = find(view, (n) => n.attrs.class === undefined && n.className === "space-history-btn")[0];
+  await btn.listeners.click();
+  await new Promise((r) => setTimeout(r, 0));
+  assert.match(view.textContent, /n\.md/); assert.equal(btn.textContent, "Hide history");
+  await btn.listeners.click();
+  assert.doesNotMatch(view.textContent, /n\.md/);
+});
+
+test("no innerHTML (or any HTML sink) anywhere in the page, and item data only reaches textContent", async () => {
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("../../src/orch_hub/web/pages/spaces.js", import.meta.url), "utf8");
+  for (const bad of [/innerHTML/, /outerHTML/, /insertAdjacentHTML/, /\bhref\b/, /\.src\b/, /setAttribute\(\s*["']on/, /document\.write/]) assert.doesNotMatch(src, bad);
+  assert.doesNotMatch(src, /h\("a"/);                                  // never a link from item data
 });

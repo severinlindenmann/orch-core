@@ -758,7 +758,7 @@ it('setup Create posts the review digest shown with core rows and terminal finge
     let value: unknown = {ok:true}
     if (String(url).endsWith('/state')) value = {
       phase:'profile',mode:'finish',dir:'/demo',dir_name:'demo',suggested:{name:'Demo',prefix:'TST'},
-      addons:[{id:'worktrees',title:'Worktrees',desc:'Copies',required:false,default:false,kind:'addon',capabilities:[]}],
+      addons:[{id:'worktrees',title:'Work copies',desc:'Copies',required:false,default:false,kind:'addon',capabilities:[]}],
       methods:['terminal'],click_available:false,click_reason:'',agent_hours:[8],
       relay:{available:false,enabled:false},missing:['addon:worktrees'],labels:{},
       current:{name:'Demo',prefix:'TST',addons_on:[],agent_hours:8,runner:{enabled:false,terminals:false},runner_grant:false,method:'terminal'},
@@ -774,11 +774,11 @@ it('setup Create posts the review digest shown with core rows and terminal finge
   })
   render(<Setup api={new SetupAPI('demo-not-a-real-token', fetcher as typeof fetch)}/>)
   await screen.findByRole('heading',{name:'Finish setting up your workspace'})
-  fireEvent.click(screen.getByLabelText(/Worktrees/))
+  fireEvent.click(screen.getByLabelText(/Work copies/))
   fireEvent.click(screen.getByRole('button',{name:'Continue →'}))
   await screen.findByRole('heading',{name:'Review your setup'})
   expect(screen.getByText('Agents: 8 hours')).not.toBeVisible() // collapsed, but in the page
-  fireEvent.click(screen.getByText(/^Everything you approve \(/))
+  fireEvent.click(screen.getByText('Details', { selector: '.review-technical > summary' })) // r9-P10: the fold is 'Details', no count
   expect(screen.getByText('Agents: 8 hours')).toBeVisible()
   expect(screen.getByText((_, el) => !!el?.classList.contains('words') && el.textContent === 'demo not real')).toBeVisible()
   fireEvent.click(screen.getByRole('button',{name:'Finish setup'}))

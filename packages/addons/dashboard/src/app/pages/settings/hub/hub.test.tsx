@@ -31,11 +31,6 @@ const hubPage = (scenario: HubScenario, path = '/w/DEMO/settings/hub') => {
   setHubScenario(scenario)
   return renderApp(path)
 }
-const type = async (view: ReturnType<typeof renderApp>, id: string, text: string) => {
-  const el = await screen.findByTestId(id, {}, T)
-  await view.user.clear(el)
-  await view.user.type(el, text)
-}
 
 describe('the Hub tab has a different page for each mode', () => {
   it('standalone: not connected, nothing to fear, a way to connect', async () => {
@@ -56,10 +51,12 @@ describe('the Hub tab has a different page for each mode', () => {
     expect(screen.getByTestId('hub-full-switch')).toBeTruthy() // one click, also with One click on
   })
 
-  it('full: says the hub reads everything and labels the hub numbers "from the hub, not signed"', async () => {
+  it('full: says the hub reads everything and keeps "from the hub, not signed" behind Details', async () => {
     hubPage('full')
     expect(await screen.findByText('The hub can read everything in this workspace', {}, T)).toBeTruthy()
-    expect(screen.getByText('from the hub, not signed')).toBeTruthy()
+    expect(screen.queryByText(/not signed/)).toBeNull()
+    fireEvent.click(screen.getByTestId('hub-access-details'))
+    expect(screen.getByText('From the hub, not signed.')).toBeTruthy()
     expect(screen.getByText('8 people')).toBeTruthy()
     expect(screen.queryByTestId('hub-full-switch')).toBeNull() // already full: the only way back is leave and join again
     expect(screen.getByText(/Leave this hub, then rejoin/)).toBeTruthy()
@@ -154,14 +151,15 @@ describe('leaving (A3.5 / A3.6)', () => {
 })
 
 describe('stopping sharing one ticket', () => {
-  it('reviews what stops and offers one inline press-again button: no terminal command, no typed word, no backup key', async () => {
+  it('reviews what stops and offers one Stop sharing button: no terminal command, no typed word, no backup key', async () => {
     const view = hubPage('selective')
     await view.user.click(await screen.findByTestId('hub-choose-share', {}, T))
     await view.user.click(within(await screen.findByTestId('hub-ticket-list', {}, T)).getByTestId('hub-ticket-revoke-0'))
     const dialog = await screen.findByRole('dialog', { name: 'Stop sharing this ticket' }, T)
-    expect(within(dialog).getByText(/asked to delete its copy/)).toBeTruthy()
+    expect(within(dialog).getByText(/The hub stops showing the ticket/)).toBeTruthy()
     expect(within(dialog).getByText(/cannot be taken back/)).toBeTruthy()
-    expect(within(dialog).getByTestId('hub-revoke-ticket')).toHaveTextContent('DEMO-0043 · Export report as PDF')
+    expect(within(dialog).getByTestId('hub-revoke-ticket')).toHaveTextContent('“Export report as PDF”')
+    await view.user.click(within(dialog).getByTestId('hub-revoke-details'))
     expect(within(dialog).getByTestId('hub-review-workspace')).toHaveTextContent(/^Workspace DEMO · [0-9a-z]{1,8}/)
     expect(await within(dialog).findByTestId('hub-revoke-stop', {}, T)).toHaveTextContent('Stop sharing')
     expect(within(dialog).queryByTestId('hub-revoke-unavailable')).toBeNull()
@@ -170,11 +168,11 @@ describe('stopping sharing one ticket', () => {
     expect(within(dialog).queryByRole('textbox')).toBeNull()
     expect(within(dialog).queryByTestId('hub-backup-input')).toBeNull()
     for (const code of document.querySelectorAll('code')) expect(code.textContent).not.toContain('orch hub')
-    await view.user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    await view.user.click(within(dialog).getByRole('button', { name: 'Keep sharing' }))
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Stop sharing this ticket' })).toBeNull(), T)
   })
 
-  it('a second press stops sharing and the ticket leaves the list', async () => {
+  it('one press stops sharing, the dialog closes and the ticket leaves the list', async () => {
     vi.spyOn(gesture, 'trustedPress').mockReturnValue(true)
     const revoke = vi.spyOn(api, 'revokeHubShare')
     const view = hubPage('selective')
@@ -185,7 +183,7 @@ describe('stopping sharing one ticket', () => {
     await waitFor(() => expect(stop).toBeEnabled(), T)
     fireEvent.click(stop)
     fireEvent.click(stop)
-    expect(await within(dialog).findByTestId('hub-revoke-stop-done', {}, T)).toBeTruthy()
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Stop sharing this ticket' })).toBeNull(), T)
     expect(revoke).toHaveBeenCalledTimes(1)
     expect(revoke.mock.calls[0][1]).toBe('DEMO-0043')
     // the page behind the open dialog is aria-hidden: count the rows directly
@@ -201,21 +199,45 @@ describe('share rules (A3.3)', () => {
     expect(await screen.findByText('Choose what to share', {}, T)).toBeTruthy()
     expect(await screen.findAllByText('Always shared', {}, T)).toHaveLength(2)
     await view.user.click(screen.getByTestId('hub-rule-add'))
-    await type(view, 'hub-rule-value', 'team')
+    await view.user.click((await screen.findByTestId('hub-rule-chips', {}, T)).querySelector('button')!)
     await waitFor(() => expect(screen.getByText(/1 now visible/)).toBeTruthy(), T)
     await view.user.click(screen.getByTestId('hub-share-review'))
     expect(await screen.findByTestId('hub-add-review', {}, T)).toBeTruthy()
     expect(screen.getByTestId('hub-add-later')).toHaveTextContent('Later edits')
+    expect(screen.getByTestId('hub-add-sentence')).toHaveTextContent(/^Share \d+ \S+ tickets? from .+ with the hub/)
+    expect(screen.getByTestId('hub-add-review').textContent).not.toMatch(/[0-9a-f]{32}/) // ids and the plan are behind Details
+    expect(screen.queryByTestId('hub-add-hub')).toBeNull()
     expect(screen.getByTestId('hub-add-go')).toBeTruthy()
     expect(screen.queryByTestId('hub-command')).toBeNull()
     expect(screen.getAllByText(/cannot be taken back/).length).toBeGreaterThan(0)
+  })
+
+  it('the form asks who should see it (hub people and teams, Only me by default) and ticks the description', async () => {
+    const view = hubPage('selective')
+    await view.user.click(await screen.findByTestId('hub-choose-share', {}, T))
+    await view.user.click(await screen.findByTestId('hub-rule-add', {}, T))
+    expect(await screen.findByText('Who should see it?', {}, T)).toBeTruthy()
+    expect(await screen.findByText('Ben Test', {}, T)).toBeTruthy()
+    expect(screen.getByText(/Team:/)).toBeTruthy()
+    expect(screen.getByTestId('hub-rule-only-me')).toHaveTextContent('Only me')
+    expect(screen.getByTestId('hub-rule-description')).toBeChecked()
+    const preview = vi.spyOn(api, 'getHubPreview')
+    const picked = (await screen.findByTestId('hub-rule-chips', {}, T)).querySelector('button')!
+    const value = picked.getAttribute('data-testid')!.replace('hub-rule-chip-', '')
+    expect(value).not.toBe('')
+    await view.user.click(picked)
+    await view.user.click(screen.getByTestId('hub-rule-description')) // untick: the text stays home
+    await view.user.click(await screen.findByTestId('hub-rule-team-finance', {}, T))
+    await waitFor(() => expect(preview).toHaveBeenLastCalledWith(expect.anything(), { add: { kind: 'type', value, audience: { users: [], groups: ['finance'] }, description: false } }), T)
+    expect(screen.getByTestId('hub-rule-only-me')).toHaveTextContent('not signed')
+    vi.restoreAllMocks()
   })
 
   it('a value with shell characters is never put into a command', async () => {
     const view = hubPage('selective')
     await view.user.click(await screen.findByTestId('hub-choose-share', {}, T))
     await view.user.click(await screen.findByTestId('hub-rule-add', {}, T))
-    await type(view, 'hub-rule-value', 'a; rm -rf ~')
+    await view.user.click((await screen.findByTestId('hub-rule-chips', {}, T)).querySelector('button')!)
     await view.user.click(await screen.findByTestId('hub-share-review', {}, T).then((b) => { return b }))
     await waitFor(() => expect((screen.getByTestId('hub-share-review') as HTMLButtonElement).disabled).toBe(false), T)
     await view.user.click(screen.getByTestId('hub-share-review'))
@@ -304,10 +326,10 @@ describe('by click (#1198 C11)', () => {
     await view.user.keyboard('{Escape}')
     await waitFor(() => expect(screen.queryByTestId('info-drawer-content')).toBeNull(), T)
     expect(screen.getByTestId('hub-link-hub').textContent).not.toContain('Only what I choose')
-    expect(screen.getAllByText(/Notes that need your attention and full questions are always shared/)).toHaveLength(1)
+    expect(screen.queryByText(/Notes that need your attention and full questions are always shared/)).toBeNull() // the long mode text is behind the i of the mode choice
     expect(screen.queryByText(/Review it here/)).toBeNull()
     expect(screen.queryByTestId('hub-card-text')).toBeNull() // no card file, no separate invite, no mode step
-    await sign('Sign and join the hub')
+    await sign('Connect')
     expect(await screen.findByText('Connected · Hub sees only what you share', {}, T)).toBeTruthy() // the page behind says it
     expect(screen.queryByRole('dialog')).toBeNull() // and the dialog closed by itself: nothing left to press
     expect(seal).toHaveBeenCalledTimes(1)
@@ -322,8 +344,9 @@ describe('by click (#1198 C11)', () => {
     const view = hubPage('standalone')
     await view.user.click(await screen.findByTestId('hub-connect', {}, T))
     await pasteLink()
+    await view.user.click(await screen.findByTestId('hub-mode-other', {}, T))
     await view.user.click(await screen.findByTestId('hub-mode-full', {}, T))
-    const btn = await screen.findByRole('button', { name: 'Sign and join the hub' }, T)
+    const btn = await screen.findByRole('button', { name: 'Connect' }, T)
     expect(screen.queryByTestId('hub-backup-input')).toBeNull()
     await waitFor(() => expect(btn).toBeEnabled(), { timeout: 5000 })
     trustedPresses() // the armed Sign signs only on a trusted press (fireEvent is untrusted)
@@ -351,7 +374,7 @@ describe('by click (#1198 C11)', () => {
     const view = hubPage('standalone')
     await view.user.click(await screen.findByTestId('hub-connect', {}, T))
     await pasteLink()
-    await sign('Sign and join the hub')
+    await sign('Connect')
     const failed = await screen.findByTestId('hub-connect-failed', {}, T)
     expect(failed.textContent).toContain("Couldn't connect. Try again.")
     // The reason is behind the i of the failure: hidden by default, there on press.

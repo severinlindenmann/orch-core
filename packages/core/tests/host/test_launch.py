@@ -13,6 +13,11 @@ from orch.runner.config import ConfigError, RunnerConfig, parse, read_config
 
 LOGIN = RunnerConfig()
 
+REFINE = (
+    "Run orch status, then refine ticket ORC-7. When the gates are complete, run orch wait until the person approves;"
+    " then build the ticket in this session. Follow AGENTS.orch.md."
+)
+
 
 def test_codex_and_claude_argv_through_the_login_shell():
     argv, login, program = launch_argv("codex", "work", None, "ORC-7", LOGIN)
@@ -26,7 +31,7 @@ def test_codex_and_claude_argv_through_the_login_shell():
         "opus",
         "--session-id",
         "@orch-session-id",
-        "Run orch status, then refine ticket ORC-7. Follow AGENTS.orch.md.",
+        REFINE,
     ]
     argv, _, _ = launch_argv("claude-code", "refine", "opus", "ORC-7", LOGIN, workdir=True)
     assert argv[4:] == [
@@ -38,19 +43,22 @@ def test_codex_and_claude_argv_through_the_login_shell():
         "--setting-sources",
         "user",
         "--strict-mcp-config",
+        "--mcp-config",
+        "@orch-mcp",
         "--append-system-prompt-file",
         "@orch-rules",
-        "Run orch status, then refine ticket ORC-7. Follow AGENTS.orch.md.",
+        REFINE,
     ]
     assert LOGIN_EXEC == 'exec "$0" "$@"'
 
 
 def test_only_a_work_folder_agent_ignores_project_settings_and_mcp_files():
-    flags = {"--setting-sources", "--strict-mcp-config", "--append-system-prompt-file"}
+    flags = {"--setting-sources", "--strict-mcp-config", "--mcp-config", "@orch-mcp", "--append-system-prompt-file"}
     argv, _, _ = launch_argv("claude-code", "work", None, "ORC-7", LOGIN, workdir=True)
     head = ["claude", "--session-id", "@orch-session-id", "--setting-sources", "user", "--strict-mcp-config"]
     assert argv[4:10] == head
     assert flags <= set(argv)
+    assert argv[10:14] == ["--mcp-config", "@orch-mcp", "--append-system-prompt-file", "@orch-rules"]
     # a repo, worktree or root launch (workdir False), a person-run harness and codex: Claude Code's normal behaviour
     assert not flags & set(launch_argv("claude-code", "work", None, "ORC-7", LOGIN)[0])
     assert not flags & set(launch_argv("claude-code", None, None, None, LOGIN, workdir=True)[0])
@@ -192,3 +200,13 @@ def test_delegate_false_adds_one_equals_flag_before_the_prompt_for_claude_only()
     assert not any(
         a.startswith("--disallowedTools") for a in launch_argv("codex", "work", None, "ORC-7", LOGIN, delegate=False)[0]
     )
+
+
+def test_the_refine_prompt_keeps_the_session_for_the_build():
+    # run-9 J04: "refine ticket X" read as "this session is only for refining"; the agent stopped before the approval
+    from orch.host.launch import prompt
+
+    text = prompt("refine", "ORC-7")
+    assert text.startswith("Run orch status, then refine ticket ORC-7.")
+    assert "orch wait" in text and "build" in text and "this session" in text
+    assert text.endswith("Follow AGENTS.orch.md.")

@@ -17,3 +17,8 @@ test("setup and switch tickets keep their existing shapes", () => {
 test("unknown and malformed fragments fall back safely", () => {
   for (const hash of [null, "", "#/nope", "#/w/nope", `#/w/${ws}/item/%`, `#/w/${ws}/item/%00`, `#/w/${ws}/item/a/b`]) assert.deepEqual(parseRoute(hash), { kind: "home" });
 });
+test("P03: shared ticket route carries workspace and decoded key; malformed falls back to home", () => {
+  assert.deepEqual(parseRoute(`#/shared/${ws}/PW-1`), { kind: "shared", workspace: ws, key: "PW-1" });
+  assert.equal(parseRoute(`#/shared/${ws}/a%20b`).key, "a b");
+  for (const hash of [`#/shared/nope/PW-1`, `#/shared/${ws}`, `#/shared/${ws}/%`, `#/shared/${ws}/%00`, `#/shared/${ws}/a/b`]) assert.deepEqual(parseRoute(hash), { kind: "home" });
+});

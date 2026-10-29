@@ -20,6 +20,8 @@ export interface SignStory {
   compact?: boolean
   /** A quick task: what was typed, so the review can fold the derived rows under "Also signed". */
   quick?: QuickTyped
+  /** The workspace line (prefix, id, name) sits under "Details" instead of on the main surface: a dialog opened from inside that workspace's own page (hub join). The line is folded, never dropped; a risk state shows it anyway. */
+  foldWorkspace?: boolean
 }
 
 /** What agents may do with the access, in the words of the review (the same for every grant the dashboard signs). */
@@ -40,7 +42,7 @@ export function storyOf(action: ClickAction | null | undefined, ctx: StoryContex
       const hours = action.action === 'new_sequence' ? action.agent?.hours : undefined
       if (hours) return agentCreate(hours)
       if (ctx.startsAgent) return { signLabel: 'Sign and create ticket', steps: ['You sign.', 'The ticket is created.', 'An agent starts, with the access you already gave, and writes the requirements and a plan.', 'It stops and waits: nothing is built until you approve the plan.'] }
-      return { signLabel: 'Sign and create ticket', steps: ['You sign.', 'The ticket is created.', 'Nothing starts yet: an agent starts only when you press Start agent.'] }
+      return { signLabel: 'Create ticket', steps: ['You sign.', 'The ticket is created.', 'Nothing starts yet: an agent starts only when you press Start agent.'] }
     }
     case 'quick_start': {
       const hours = action.agent?.hours
@@ -67,7 +69,7 @@ export function storyOf(action: ClickAction | null | undefined, ctx: StoryContex
       return { signLabel: 'Sign and show the secret', access: { length }, steps: ['You sign.', `The secret is shown once on this page. Agents that hold it may work for you for ${length} from now.`] }
     }
     case 'hub_join':
-      return { signLabel: 'Sign and join the hub', steps: ['You sign.', 'This workspace is joined to the hub as shown.'] }
+      return { signLabel: 'Connect', foldWorkspace: true, steps: ['You sign.', 'This workspace is joined to the hub as shown.'] }
     case 'hub_mode_full':
       return { signLabel: 'Sign and let the hub read everything', steps: ['You sign.', 'The hub can read everything in this workspace.'] }
     case 'hub_leave':

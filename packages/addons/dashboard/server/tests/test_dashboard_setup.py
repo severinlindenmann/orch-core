@@ -57,7 +57,7 @@ def setup(tmp_path):
                     status, out = 410, {"error": {"code": "secrets.shown", "message": "already shown"}}
                 else:
                     facts["revealed"] = True
-                    out = {"passphrase": SECRET, "recovery_words": [SECRET] * 24, "check_positions": [8, 17, 23]}
+                    out = {"passphrase": SECRET, "recovery_words": [SECRET] * 24}
             elif self.path == "/api/setup/profile":
                 assert json.loads(raw)["name"] == SECRET
             elif self.path == "/api/setup/state":

@@ -45,7 +45,7 @@ import re
 from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, Request
-from pydantic import BaseModel, ConfigDict, StringConstraints, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError, model_validator
 
 from . import reads
 from .adapters.addons import display
@@ -53,7 +53,7 @@ from .cosmetic_routes import full_session, refused
 from .errors import HostError, fail
 from .gateway import Gateway
 from .market_routes import new_idem
-from .stepup import refuse_step_up
+from .stepup import LOCAL, refuse_step_up, stepup_required
 from .terminals import Idem
 from .text import hidden
 
@@ -62,6 +62,7 @@ ROLES = ("read", "edit", "admin")
 HUB_ID = re.compile(r"^[0-9a-f]{8,64}$")
 TICKET_KEY = re.compile(r"^[A-Za-z][A-Za-z0-9]{0,15}-[0-9]{1,9}$")
 TICKET_LINE = re.compile(r"^ticket ([A-Za-z][A-Za-z0-9]{0,15}-[0-9]{1,9}): ")
+MAX_READERS = 50  # names or widened items shown in one review
 MAX_TICKETS = 100  # share.preview lists at most 100 rows; more means the list is not complete
 log = logging.getLogger("orch_dashboard.security")
 
@@ -110,12 +111,28 @@ class LinkBody(BaseModel):
         return self
 
 
+HubUserId = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{32}$")]
+HubGroup = Annotated[str, StringConstraints(pattern=r"^[a-z0-9][a-z0-9-]{0,39}$")]
+
+
+class Audience(BaseModel):
+    """Who besides the owner may read the shared tickets on the hub (P02): hub user ids and team names. The ids are
+    what core signs; the names the page shows come from `GET /hub/share/audience` (from the hub, not signed)."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    users: list[HubUserId] = Field(default_factory=list, max_length=32)
+    groups: list[HubGroup] = Field(default_factory=list, max_length=16)
+
+
 class Rule(BaseModel):
-    """One share rule, as core's `share.preview` and `orch hub share rule` take it (exactly one value, or none)."""
+    """One share rule, as core's `share.preview` and `orch hub share rule` take it (exactly one value, or none). A
+    type, tag or ticket rule may also carry the `audience` and whether the `description` is included."""
 
     model_config = ConfigDict(extra="forbid", strict=True)
     kind: Literal["type", "tag", "ticket", "questions", "needs_you"]
     value: RuleValue | None = None
+    audience: Audience | None = None
+    description: bool | None = None
 
     @model_validator(mode="after")
     def shape(self):
@@ -126,10 +143,17 @@ class Rule(BaseModel):
                 raise ValueError("the value has invisible characters, outer spaces or a leading dash")
             if self.kind == "ticket" and not TICKET_KEY.fullmatch(self.value):
                 raise ValueError("a ticket rule names a ticket key")
+        if self.value is None and (self.audience is not None or self.description is not None):
+            raise ValueError("only a type, tag or ticket rule has readers or a description")
         return self
 
     def host(self) -> dict:
-        return {"kind": self.kind} if self.value is None else {"kind": self.kind, self.kind: self.value}
+        out: dict = {"kind": self.kind} if self.value is None else {"kind": self.kind, self.kind: self.value}
+        if self.audience is not None:
+            out["audience"] = {"users": list(self.audience.users), "groups": list(self.audience.groups)}
+        if self.description is not None:
+            out["description"] = self.description
+        return out
 
 
 class PreviewBody(BaseModel):
@@ -245,12 +269,29 @@ def _rule_row(raw) -> dict | None:
     value = display(raw.get(kind)) if kind in ("type", "tag", "ticket") else None
     if kind in ("type", "tag", "ticket") and value is None:
         return None
+    aud = raw.get("audience") if isinstance(raw.get("audience"), dict) else {}
+    ids = _audience_ids(aud) if aud else None
     return {
         "kind": kind,
         "value": value,
         "count": _int(raw.get("count")) or 0,
         "describes": display(raw.get("describes")),
+        "readers": (len(aud.get("users") or []) + len(aud.get("groups") or [])) if aud else 0,
+        # the reader ids as core stores them: Stop sharing sends the rule back exactly (core matches a removal
+        # exactly). A present but malformed or over-long list (or a non-object) is no form the page could send back:
+        # the row is not removable here, so a bare rule of the same kind and value is never removed in its place
+        "audience": ids,
+        "removable": ids is not None or ("audience" not in raw),
+        "description": raw.get("description") is True,
     }
+
+
+def _audience_ids(aud: dict) -> dict | None:
+    try:
+        ok = Audience.model_validate(aud)
+    except ValidationError:
+        return None
+    return {"users": list(ok.users), "groups": list(ok.groups)}
 
 
 def _refused(raw) -> list[dict]:
@@ -286,6 +327,98 @@ def share_view(rules, preview) -> dict:
     }
 
 
+class _Cut(Exception):
+    """A readers or widened list that cannot be shown whole: missing, malformed, over its cap or with a dropped row."""
+
+
+# The hard limits of a review (the host refuses above them, in plain words): below them the whole list is passed on, a
+# longer one is a cut review and no review at all.
+MAX_PEOPLE, MAX_TEAMS, MAX_WIDENED = 500, 200, 200
+
+
+def _names(raw, n: int) -> list[str]:
+    if not isinstance(raw, list) or len(raw) > n:
+        raise _Cut
+    out = []
+    for t in raw:
+        text = display(t) if isinstance(t, str) else None
+        if text is None:
+            raise _Cut
+        out.append(text[:80])
+    return out
+
+
+def _readers_view(raw) -> dict:
+    """Who can read the new items at the hub, by name (from the hub, not signed): closed fields, never a cut list."""
+    if not isinstance(raw, dict):
+        raise _Cut
+    note, info = raw.get("note"), raw.get("info")
+    return {
+        "people": _names(raw.get("people"), MAX_PEOPLE),
+        "teams": _names(raw.get("teams"), MAX_TEAMS),
+        "note": display(note)[:80] if isinstance(note, str) else None,
+        "info": display(info)[:200] if isinstance(info, str) else None,
+    }
+
+
+def _widened_view(raw) -> list[dict]:
+    """Items already shared that this change makes reach more people or carry their description, never a cut list."""
+    if not isinstance(raw, list) or len(raw) > MAX_WIDENED:
+        raise _Cut
+    out = []
+    for w in raw:
+        line = display(w.get("line")) if isinstance(w, dict) and isinstance(w.get("line"), str) else None
+        if line is None:
+            raise _Cut
+        out.append({
+            "line": line[:300],
+            "people_added": _names(w.get("people_added"), MAX_PEOPLE),
+            "teams_added": _names(w.get("teams_added"), MAX_TEAMS),
+            "description_added": w.get("description_added") is True,
+        })  # fmt: skip
+    return out
+
+
+def shared_view(raw) -> dict:
+    """`hub.shared`: tickets other workspaces of the hub shared with this owner, read-only display data (closed fields,
+    cleaned text). It grants nothing and the page never offers an action on these rows."""
+    raw = raw if isinstance(raw, dict) else {}
+    items = []
+    for r in (raw.get("items") if isinstance(raw.get("items"), list) else [])[:100]:
+        if not isinstance(r, dict):
+            continue
+        by, key, title = display(r.get("shared_by")), display(r.get("key")), display(r.get("title"))
+        if by is None or key is None or title is None or not TICKET_KEY.fullmatch(key):
+            continue
+        text = display(r.get("description")) if isinstance(r.get("description"), str) else None
+        status, kind = display(r.get("status")), display(r.get("type"))
+        deadline = display(r.get("deadline")) if isinstance(r.get("deadline"), str) else None
+        items.append({
+            "workspace_id": r.get("workspace_id") if isinstance(r.get("workspace_id"), str) else "",
+            "key": key, "title": title[:200], "shared_by": by[:80],
+            "status": (status or "")[:20], "type": (kind or "")[:20],
+            "deadline": deadline[:10] if deadline else None, "description": text[:4000] if text else None,
+        })  # fmt: skip
+    return {"items": items}
+
+
+def audience_view(raw) -> dict:
+    """`share.audience`: the hub's people (id, name) and teams (name, member count only). Display data, not signed."""
+    raw = raw if isinstance(raw, dict) else {}
+    people = []
+    for p in (raw.get("people") if isinstance(raw.get("people"), list) else [])[:200]:
+        name = display(p.get("name")) if isinstance(p, dict) else None
+        uid = p.get("user_id") if isinstance(p, dict) else None
+        if name is not None and isinstance(uid, str) and re.fullmatch(r"[0-9a-f]{32}", uid):
+            people.append({"user_id": uid, "name": name[:80]})
+    teams = []
+    for t in (raw.get("teams") if isinstance(raw.get("teams"), list) else [])[:50]:
+        g = t.get("group") if isinstance(t, dict) else None
+        if isinstance(g, str) and re.fullmatch(r"[a-z0-9][a-z0-9-]{0,39}", g):
+            teams.append({"group": g, "members": _int(t.get("members")) or 0})
+    return {"people": people, "teams": teams, "note": "from the hub, not signed"}
+
+
 def _review_view(raw) -> dict | None:
     """The host's review of an adding change, closed fields only; the page shows these words and adds none."""
     if not isinstance(raw, dict):
@@ -296,12 +429,15 @@ def _review_view(raw) -> dict | None:
         line = display(r.get("line")) if isinstance(r, dict) else None
         if line is not None:
             rows.append(line[:300])
-    aud = raw.get("audience") if isinstance(raw.get("audience"), dict) else None
     hub_id = raw.get("hub_id")
+    try:  # fail closed: a cut or malformed readers/widened list is no review
+        readers, widened = _readers_view(raw.get("readers")), _widened_view(raw.get("widened"))
+    except _Cut:
+        return None
     return {
         "hub_id": hub_id if isinstance(hub_id, str) and HUB_ID.fullmatch(hub_id) else None,
-        "audience": {r: _int(aud.get(r)) or 0 for r in ROLES} if aud else None,
-        "audience_note": display(raw.get("audience_note"))[:80] if isinstance(raw.get("audience_note"), str) else None,
+        "readers": readers,
+        "widened": widened,
         "new_count": _int(new.get("count")) or 0,
         "new_more": _int(new.get("more")) or 0,
         "new_items": rows,
@@ -333,6 +469,16 @@ def preview_view(raw) -> dict:
         "plan": raw["plan"] if isinstance(raw.get("plan"), str) and PLAN.fullmatch(raw["plan"]) else None,
         "review": _review_view(raw.get("review")),
     }
+
+
+#: host codes that only mean "the hub did not answer (yet)"; every other refusal is shown as a failure
+NOT_ANSWERED = {"hub.unreachable", "host.timeout", "timeout"}
+
+
+def _confirmed(got) -> bool:
+    """The hub's first snapshot is pinned (the host answers its version); without one the add-on stays paused."""
+    v = got.get("snapshot_version") if isinstance(got, dict) else None
+    return type(v) is int and v >= 1
 
 
 SEEN_TOKENS = 200  # sessions whose shown plans are remembered
@@ -414,6 +560,17 @@ def register(app: FastAPI, gateway: Gateway):
         log.warning("sharing taken away from the dashboard: %s (%s) by %s", op, kind, person)
         return got
 
+    @app.get("/api/w/{ws}/hub/shared")
+    def hub_shared(ws: str = Depends(reads.workspace)):
+        """Tickets other workspaces shared with this workspace's owner through the hub (read-only; owners only)."""
+        return shared_view(link_for(ws, "hub.shared").call("hub.shared"))
+
+    @app.get("/api/w/{ws}/hub/share/audience")
+    def hub_share_audience(ws: str = Depends(reads.workspace)):
+        """The people and teams of the hub the owner may name as readers (the host asks the hub; owners only)."""
+        link = link_for(ws, "share.audience")
+        return audience_view(link.call("share.audience"))
+
     @app.post("/api/w/{ws}/hub/share/revoke")
     def hub_share_revoke(body: RevokeBody, request: Request, ws: str = Depends(reads.workspace)):
         return reduce(ws, request, "share.revoke", {"ref": body.ref}, "item")
@@ -491,4 +648,25 @@ def register(app: FastAPI, gateway: Gateway):
         args = {"hub_card": card} | ({"invite": invite} if invite else {}) | ({"addr": body.addr} if body.addr else {})
         got = link.call("hub.connect", args, write=True, idem=body.idem)
         mode = got.get("mode") if isinstance(got, dict) else None
-        return {"connected": True, "mode": mode if mode in MODES else None}
+        return {"connected": True, "mode": mode if mode in MODES else None, "confirmed": _confirmed(got)}
+
+    @app.post("/api/w/{ws}/hub/refresh")
+    def hub_refresh(request: Request, ws: str = Depends(reads.workspace)):
+        """Ask the host for the hub's first (or newest) snapshot again, for a join the hub had not confirmed yet (the
+        add-on stays paused until it is pinned). Same gate as connect: a session that was not opened on this computer
+        is refused; nothing here weakens the pause, the host lifts it only when a verified snapshot is pinned."""
+        token = request.state.token
+        auth = app.state.auth
+        if auth.login_kind(token) != LOCAL:
+            raise stepup_required("checking with your hub")
+        if not full_session(auth, token):  # a switch session or a read-only one never asks the hub
+            raise refused("Sign in on this computer to check with your hub.")
+        link = link_for(ws, "hub.refresh", paused_ok=True)
+        try:
+            got = link.call("hub.refresh", {}, write=True, idem=new_idem())
+        except HostError as exc:
+            if exc.error.get("code") not in NOT_ANSWERED:
+                raise  # role.denied, op.not_allowed, a snapshot that does not verify...: a real failure, said as one
+            log.info("hub refresh: no answer from the hub (%s)", exc.error.get("code"))
+            return {"confirmed": False}  # the hub did not answer (yet): the page says so and offers the same button
+        return {"confirmed": _confirmed({"snapshot_version": ((got or {}).get("snapshot") or {}).get("version")})}

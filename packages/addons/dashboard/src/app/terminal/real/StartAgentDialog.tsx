@@ -15,7 +15,7 @@ import {
   TERMINAL_ONLY, LOGIN_NOTICE, worktreeLine, type AgentArgs, type AgentMode, type AgentPreview, type Harness, type Runner,
 } from '@/api/agents'
 import { clickReady, DEPOSIT_RISK, depositViewOk, type ClickAction } from '@/api/click'
-import { newIdem, type Run } from '@/api/runs'
+import { newIdem, runsApi, type Run } from '@/api/runs'
 import { ApiError } from '@/api/types'
 import { ClickSignPanel } from '@/components/sign/ClickSignPanel'
 import { storyOf } from '@/components/sign/story'
@@ -36,6 +36,8 @@ import { MODE_LABEL, ModelPick } from '@/components/agents/AgentChoice'
 import { AgentIcon } from '@/components/agents/AgentIcon'
 import { AccessSelect } from '@/components/sign/AccessSelect'
 import { SignButton } from '@/components/sign/SignButton'
+import { ClaudeConsentLine, isOwner, useClaudeConsent } from '@/components/sign/claudeConsent'
+import { useMe } from '@/app/useMe'
 import { lastTrigger, SignShell } from '@/components/sign/SignShell'
 import { RunnerSwitch } from '@/components/RunnerSwitch'
 import { usableGrant } from '@/app/pages/new-ticket/startAfterCreate'
@@ -73,6 +75,8 @@ export interface StartInitial {
   note?: string
   /** The idem of an earlier Start whose answer was lost: a retry then returns that run, never a second one. */
   idem?: string
+  /** The id of an idle run to stop right before the start ("Ask the agent to finish"): nothing is stopped if the person cancels. */
+  stopFirst?: string
 }
 
 const lastKey = (ws: string) => `orch.dashboard.start-agent.harness.${ws}`
@@ -122,6 +126,7 @@ function StartAgent({ ws, ticket, onClose, onStarted, initial, choose }: { ws: s
   const [anchor] = useState<HTMLElement | null>(() => lastTrigger())
   // One idem per opening, kept for every retry of Start (the run id is `r_` + its ULID).
   const [idem] = useState(() => initial?.idem ?? newIdem())
+  const stoppedRef = useRef(false)
   const [harness, setHarness] = useState<Harness>(initial?.harness ?? lastHarness(ws))
   const [mode, setMode] = useState<AgentMode>(initial?.mode ?? 'work')
   const [model, setModel] = useState(initial?.model ?? '')
@@ -144,6 +149,9 @@ function StartAgent({ ws, ticket, onClose, onStarted, initial, choose }: { ws: s
   const runner = useQuery({ ...runnerQuery(ws) })
   const workspaces = useQuery(queries.workspaces())
   const prefix = workspaces.data?.find((w) => w.id === ws)?.prefix ?? ''
+  // P03: an owner is asked once, in one preselected line, to let Claude Code open the ticket folder without asking
+  const me = useMe(ws).data
+  const consent = useClaudeConsent(ws, harness === 'claude-code' && isOwner(workspaces.data?.find((w) => w.id === ws), me?.person))
   // Model routing: the closed list of models for this agent (from core); the choice is a name of that list, never free text.
   const routing = hasFeature('model_routing', ws)
   const choices = useQuery({ ...routingQueries.choices(ws), enabled: routing })
@@ -221,6 +229,11 @@ function StartAgent({ ws, ticket, onClose, onStarted, initial, choose }: { ws: s
     setError('')
     setNote('')
     try {
+      if (initial?.stopFirst && !stoppedRef.current) {
+        await runsApi.stop(ws, initial.stopFirst)
+        stoppedRef.current = true
+      }
+      await consent.grant() // never rejects; a refusal only leaves Claude Code's own question
       const { run } = await agentsApi.start(ws, at.args, at.data.spec, idem)
       if (ackRef.current.shownFull.length) void ackRef.current.acknowledge(ackRef.current.shownFull) // starting with the full notice on screen counts as reading it
       rememberHarness(ws, at.args.harness)
@@ -256,11 +269,11 @@ function StartAgent({ ws, ticket, onClose, onStarted, initial, choose }: { ws: s
   if (step !== 'form') leftForm.current = true
   const quiet = instantAllowed && !fellThrough && !leftForm.current
   const tried = useRef(false)
-  const settled = !runner.isPending && !ack.isPending && !!data && !stale && !loading
+  const settled = !runner.isPending && !ack.isPending && !consent.pending && !!data && !stale && !loading
   useEffect(() => {
     if (!quiet || !settled || tried.current) return
     tried.current = true
-    const fine = ready && !startFull && !loginFull && otherWarnings.length === 0 && !!shown
+    const fine = ready && !consent.asks && !startFull && !loginFull && otherWarnings.length === 0 && !!shown
     if (!fine) { setFellThrough(true); return }
     toast.loading(`Starting ${agentName}…`, { id: toastId })
     void start(shown!).then((ok) => { if (!ok) setFellThrough(true) })
@@ -322,6 +335,8 @@ function StartAgent({ ws, ticket, onClose, onStarted, initial, choose }: { ws: s
         title="Give agents access"
         action={{ action: 'runner_grant', hours, scope: 'workable' }}
         startsAgent
+        claudeCode={harness === 'claude-code'}
+        consent={consent}
         anchor={anchor}
         controls={accessSelect}
         doneToast=""
@@ -384,6 +399,7 @@ function StartAgent({ ws, ticket, onClose, onStarted, initial, choose }: { ws: s
         <RiskNotice startFull={startFull} loginFull={loginFull} loginNotice={loginNotice} onAcknowledge={() => void acknowledge(shownFull)} single={!!initial}>
           {data && <PreviewLines ws={ws} data={data} ticket={ticket} harness={shown?.args.harness ?? harness} />}
         </RiskNotice>
+        {!needsAccess && <ClaudeConsentLine c={consent} />}
         <details className="group/more" data-testid="agent-more" open={moreOpen || (!!strong && checkFailing)} onToggle={(e) => setMoreOpen(e.currentTarget.open)}>
           <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 text-text-muted underline-offset-4 hover:underline [&::-webkit-details-marker]:hidden">More options</summary>
           <form className="mt-2 grid grid-cols-1 items-center gap-x-3 gap-y-2 sm:grid-cols-[110px_minmax(0,1fr)]" onSubmit={(e) => { e.preventDefault(); if (!badModel && !badLabel) void preview(form) }}>
@@ -539,7 +555,7 @@ export function RunnerGrantCard({ ws, runner, loading, blocked, onChanged, initi
   const hostSettings = useQuery({ ...queries.hostSettings(ws), retry: false })
   const maxHours = grantDefaultHours({ grant_hours: hostSettings.data?.grant_hours ?? workspace?.grant_hours })
   const maxKnown = !workspaces.isPending && !hostSettings.isPending // until both answered, the maximum is a guess: show nothing about it
-  const riskText = maxKnown ? DEPOSIT_RISK.replace('up to 7 days', `up to ${hoursText(maxHours)}`) : DEPOSIT_RISK.replace(' (up to 7 days, the length you choose)', ' (the length you choose)')
+  const riskText = DEPOSIT_RISK // P14: core's one short sentence, verbatim (the length is chosen in the review above it)
   // Shown in full until acknowledged once (kept per person and workspace); an unreadable answer counts as not acknowledged.
   const qcRisk = useQueryClient()
   const ackQ = useQuery({ queryKey: ['risk-notices', ws], queryFn: () => agentsApi.riskNotices(ws), retry: false, enabled: !!sheet })

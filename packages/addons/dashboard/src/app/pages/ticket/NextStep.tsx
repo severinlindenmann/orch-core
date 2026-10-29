@@ -1,14 +1,35 @@
 import { Check, Info, Loader2 } from 'lucide-react'
 import type { ReactNode } from 'react'
-import { addFirst } from '@/api/gates'
 import type { GateName, GateStatus, TicketDocument } from '@/api/types'
 import { Button } from '@/components/ui/button'
+import { trustedPress } from '@/components/sign/trustedPress'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
-import { availableActions, GATE_LABEL, policyText } from './actions'
+import { openDockOn } from '@/app/terminal/dock/request'
+import { useNow } from '@/lib/useNow'
+import { activityLine } from './activity'
+import { agentWorking, type ProgressRun } from './progress'
+import { availableActions, gapOf, GATE_LABEL, policyText } from './actions'
 import { fmtDay, fmtExact, type HumanAction, type Jump, Mono, presenceLabel, type Viewer } from './shared'
 
-type Props = { ticket: TicketDocument; viewer: Viewer; sign: (a: HumanAction) => void; jump: (j: Jump) => void; signing?: boolean }
+type Props = {
+  ticket: TicketDocument
+  viewer: Viewer
+  sign: (a: HumanAction) => void
+  jump: (j: Jump) => void
+  signing?: boolean
+  /** The newest agent run of this ticket; without one nothing ran, so nothing "stopped". */
+  run?: ProgressRun | null
+  /** The run id of the ticket's open terminal wait: the agent asks something in its terminal. */
+  wait?: string | null
+  /** The host saw the agent inside `orch wait` (run-10 J04): it waits for a decision, not at its prompt. */
+  inWait?: boolean
+  /** "Ask the agent to finish" on the not-finished card (absent: the viewer may not start an agent, no button). */
+  onFinish?: () => void
+  /** "Add it myself": opens the edit sheet (absent: the viewer may not edit, no button). */
+  onEdit?: () => void
+  openTerminal?: (run: string) => void
+}
 type StepId = 'understand' | 'build' | 'check' | 'done'
 type StepState = 'done' | 'current' | 'todo'
 
@@ -173,16 +194,17 @@ const APPROVE = {
 } as const
 
 /** The one thing to do next, in plain words; nothing when there is nothing to do or say. */
-function NextStepCard({ ticket, viewer, sign, jump, signing = false }: Props) {
+function NextStepCard({ ticket, viewer, sign, jump, signing = false, run, wait, inWait = false, onFinish, onEdit, openTerminal = openDockOn }: Props) {
   const av = availableActions(ticket, viewer)
   const status = ticket.status as string
-  const working = !!ticket.claim && ticket.claim.live !== false
+  const working = agentWorking(ticket, wait)
+  const now = useNow()
   const gate = APPROVE_ORDER.find((g) => av.approve.includes(g))
   if (gate) {
     const c = APPROVE[gate]
     return (
       <Card title={c.title} text={c.text} gate={{ name: gate, status: ticket.gates[gate], viewer }}>
-        <Button size="sm" disabled={signing} onClick={() => sign({ kind: 'approve', gate })}>
+        <Button size="sm" disabled={signing} onClick={(e) => sign({ kind: 'approve', gate, pressed: trustedPress(e.nativeEvent) })}>
           {c.button}
         </Button>
         <Button size="sm" variant="outline" disabled={signing} onClick={() => sign({ kind: 'request_changes', gate })}>
@@ -212,16 +234,56 @@ function NextStepCard({ ticket, viewer, sign, jump, signing = false }: Props) {
       </Card>
     )
   }
-  // Owner feedback 5/14: the agent ended its run before the requirements or the plan were complete, and nothing said so.
-  if ((status === 'open' || status === 'in_progress' || status === 'in-progress') && !working) {
-    const stuck = (['requirements', 'plan'] as const).find((g) => ticket.gates[g].state !== 'approved' && !!ticket.gates[g].missing?.length)
-    if (stuck) return <Card title="The agent stopped early" text={`${addFirst(ticket.gates[stuck].missing ?? [])} Start the agent again to finish it.`} />
+  // The plan or requirements lack something and the agent is idle (it asks in its terminal, or its run ended): say what, and offer the way on.
+  const open = (status === 'open' || status === 'in_progress' || status === 'in-progress') && !finishedOf(ticket)
+  const gap = gapOf(ticket)
+  const idle = !!wait || (!working && (run?.state === 'exited' || run?.state === 'lost'))
+  if (gap && open && idle) {
+    return (
+      <Card title={gap.title} text={gap.text}>
+        {onFinish && (
+          <Button size="sm" onClick={onFinish}>
+            Ask the agent to finish
+          </Button>
+        )}
+        {onEdit && (
+          <Button size="sm" variant="outline" onClick={onEdit}>
+            Add it myself
+          </Button>
+        )}
+      </Card>
+    )
+  }
+  // Run-9 J04: the plan is approved and the agent is idle (its turn ended) or its run ended: one button, the build.
+  if (open && !gap && idle && ticket.gates.plan?.state === 'approved' && onFinish) {
+    // `idle` may come from a quiet terminal only (90 s without output): say "may be waiting", never "stopped" (Opus r9-build 2)
+    return (
+      <Card title="Plan approved" text="The agent may be waiting. If it does not go on by itself, start the build.">
+        <Button size="sm" onClick={onFinish}>
+          Start building
+        </Button>
+      </Card>
+    )
+  }
+  // The agent waits in `orch wait` and nothing is missing: someone else's decision is due (not this viewer's).
+  if (wait && inWait && !finishedOf(ticket)) {
+    return <Card title="Waiting for a decision" text="The agent goes on when someone approves or answers." />
+  }
+  // The agent asks something in its terminal and no gap is known: one button to it.
+  if (wait && !finishedOf(ticket)) {
+    return (
+      <Card title="The agent is waiting for you" text="The agent is idle. Open it to see why.">
+        <Button size="sm" onClick={() => openTerminal(wait)}>
+          Open terminal
+        </Button>
+      </Card>
+    )
   }
   if (working && !finishedOf(ticket)) {
     return (
       <p data-testid="next-step" className="flex items-center gap-2 px-1 text-[13px] text-text-muted">
         <Loader2 className="size-3.5 shrink-0 animate-spin" aria-hidden />
-        Agent is working on it
+        <span data-testid="activity-line">{activityLine(ticket, stepStates(ticket), run, now) ?? 'Agent is working on it'}</span>
       </p>
     )
   }
@@ -229,11 +291,11 @@ function NextStepCard({ ticket, viewer, sign, jump, signing = false }: Props) {
 }
 
 /** Where the ticket is (four plain steps) and the one next step for the person looking at it. */
-export function TicketProgress({ ticket, viewer, sign, jump, signing = false }: Props) {
+export function TicketProgress({ ticket, viewer, sign, jump, signing = false, run, wait, inWait, onFinish, onEdit, openTerminal }: Props) {
   return (
     <div className="min-w-0 space-y-2">
       <Stepper ticket={ticket} />
-      <NextStepCard ticket={ticket} viewer={viewer} sign={sign} jump={jump} signing={signing} />
+      <NextStepCard ticket={ticket} viewer={viewer} sign={sign} jump={jump} signing={signing} run={run} wait={wait} inWait={inWait} onFinish={onFinish} onEdit={onEdit} openTerminal={openTerminal} />
     </div>
   )
 }

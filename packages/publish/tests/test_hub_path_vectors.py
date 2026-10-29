@@ -18,7 +18,7 @@ VEC = json.loads(
 )
 CHECKS = (
     "binding_store", "publish", "card", "card_text", "op_cert", "op_revoked",
-    "admin_read", "admin_read_rows", "admin_read_row", "card_reader",
+    "admin_read", "card_reader",
 )  # fmt: skip
 CASES = [c for c in VEC["cases"] if c["check"] in CHECKS]
 
@@ -83,11 +83,6 @@ def run(check, a):
         }
         r = R.check_admin_read(a["request"], st, now)
         return {"hub": r["hub"], "workspaces": r["workspaces"]}
-    if check == "admin_read_rows":
-        return {"rows": len(R.check_rows(a["rows"], a["scope"]))}
-    if check == "admin_read_row":
-        R.check_row(a["row"])
-        return {"row": True}
     if check == "binding_store":
         s = _apply_store(a["steps"], a["workspace_id"], proto.unb64u(a["wsk_pub"], 65), now, dev)
         return {"binding_seq": s["binding_seq"], "status": s["status"]}

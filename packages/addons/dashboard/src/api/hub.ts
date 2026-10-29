@@ -30,9 +30,31 @@ export interface HubStatus {
   hub_card?: string | null
 }
 
+/** Who besides the owner may read the shared tickets on the hub: hub user ids and team names. */
+export interface HubAudience { users: string[]; groups: string[] }
+
 export type HubRule =
   | { kind: 'needs_you' | 'questions'; value: null }
-  | { kind: 'type' | 'tag' | 'ticket'; value: string }
+  | { kind: 'type' | 'tag' | 'ticket'; value: string; audience?: HubAudience; description?: boolean }
+
+/** `GET /api/w/<ws>/hub/shared`: tickets other workspaces of the hub shared with this owner. Read-only. */
+export interface HubSharedTicket {
+  workspace_id: string
+  key: string
+  title: string
+  shared_by: string
+  status: string
+  type: string
+  deadline: string | null
+  description: string | null
+}
+
+/** `GET /api/w/<ws>/hub/share/audience`: the hub's people and teams to choose from. From the hub, not signed. */
+export interface HubAudienceList {
+  people: { user_id: string; name: string }[]
+  teams: { group: string; members: number }[]
+  note: string
+}
 
 export interface HubRuleRow {
   kind: HubRule['kind']
@@ -40,6 +62,14 @@ export interface HubRuleRow {
   /** Items the rule matches now. */
   count: number
   describes: string | null
+  /** People and teams besides you who can read what the rule shares (0: only you). */
+  readers?: number
+  /** The reader ids as core stores the rule (null: none, or not shown): Stop sharing sends the rule back exactly. */
+  audience?: HubAudience | null
+  /** false: the readers could not be read back, so the rule cannot be sent back exactly and Stop sharing is off. */
+  removable?: boolean
+  /** The ticket description is shared too. */
+  description?: boolean
 }
 
 /** `GET /api/w/<ws>/hub/share`. */
@@ -71,8 +101,10 @@ export interface HubPreview {
 /** From the host's `share.preview`: every word of the review of an adding change; the page adds none. */
 export interface HubShareReview {
   hub_id: string | null
-  audience: { read: number; edit: number; admin: number } | null
-  audience_note: string | null
+  /** Who can read the new items on the hub, by name (from the hub, not signed). */
+  readers: { people: string[]; teams: string[]; note: string | null; info: string | null }
+  /** Items already shared that this change makes reach more people or carry their description. */
+  widened: { line: string; people_added: string[]; teams_added: string[]; description_added: boolean }[]
   new_count: number
   new_more: number
   new_items: string[]
@@ -95,13 +127,18 @@ export interface HubConnectRequest { idem: string; invite?: string; hub_card: st
 /** `POST /hub/link` (run-9 feedback 6): the host read the connect link (fetched the hub card, checked it against the
  * link's hub id). `hub_card` is the card as text, to hand back to the join; nothing is signed or kept by this read. */
 export interface HubLinkInfo { hub_id: string; name: string; code: string; endpoint: string | null; owner_user?: string | null; dev: boolean; hub_card: string }
-export interface HubConnected { connected: true; mode: HubMode | null }
+/** `confirmed`: the hub's first settings snapshot is pinned, so the add-ons are no longer paused. False: joined, the hub
+ * has not answered yet; `POST /hub/refresh` asks again. */
+export interface HubConnected { connected: true; mode: HubMode | null; confirmed: boolean }
+export interface HubRefreshed { confirmed: boolean }
 
 /** Does this host serve the hub reads (and so the pages)? The mock lists every feature. */
 export const hubServed = (ws: string | undefined): boolean => hasFeature('hub', ws)
 
 export const hubQueries = {
   status: (ws: string) => queryOptions({ queryKey: ['hub', ws, 'status'], queryFn: () => api.getHubStatus(ws), staleTime: 15_000, retry: false }),
+  shared: (ws: string) => queryOptions({ queryKey: ['hub', ws, 'shared'], queryFn: () => api.getHubShared(ws), staleTime: 10_000, refetchInterval: 15_000, retry: false, refetchOnWindowFocus: true }),
+  audience: (ws: string) => queryOptions({ queryKey: ['hub', ws, 'audience'], queryFn: () => api.getHubAudience(ws), staleTime: 60_000, retry: false }),
   share: (ws: string) => queryOptions({ queryKey: ['hub', ws, 'share'], queryFn: () => api.getHubShare(ws), retry: false }),
 }
 

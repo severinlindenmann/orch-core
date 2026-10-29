@@ -468,6 +468,8 @@ def publish_request(
     hub: str = HUB_ID,
     nonce: bytes = NONCE,
     wsk_signs_approval: Any = "same",
+    target: str = PUB_TARGET,
+    method: str = "PUT",
 ) -> dict[str, Any]:
     """A hub-path request. ``wsk_signs_approval`` is the approval the host's WSK signature commits to ("same" = the
     one attached); a different value models a hub that attached or swapped an approval after the host signed."""
@@ -475,7 +477,7 @@ def publish_request(
     if appr == "default":
         appr = approval(body=body, nonce=nonce, ts=ts)
     committed = appr if wsk_signs_approval == "same" else wsk_signs_approval
-    pbytes = H.hub_path_signed_bytes(ws, ts, nonce, "PUT", PUB_HOST, PUB_TARGET, body, hub, committed)
+    pbytes = H.hub_path_signed_bytes(ws, ts, nonce, method, PUB_HOST, target, body, hub, committed)
     headers = {
         "Orch-Workspace": WS_A,
         "Orch-Ts": str(ts),
@@ -487,9 +489,9 @@ def publish_request(
     if appr is not None:
         headers["Orch-Owner-Approval"] = b64u(cj(appr))
     return {
-        "method": "PUT",
+        "method": method,
         "host": PUB_HOST,
-        "target": PUB_TARGET,
+        "target": target,
         "headers": headers,
         "body_hex": body.hex(),
         "access": access,
@@ -585,6 +587,10 @@ def space_wrap(
 DEFAULT_MEMBERS = {1: [WS_A, WS_B], 2: [WS_A, WS_B, WS_C]}
 
 
+#: a valid space.item body (protocol 10.4): ``by`` is REQUIRED, ``restored_from`` optional
+ITEM_BODY = {"name": "notes.md", "size": 5, "data": b64u(b"hello"), "by": "person:" + fake16("person_1")}
+
+
 def space_item_obj(
     ws: str = WS_A,
     item_id: str | None = None,
@@ -603,7 +609,7 @@ def space_item_obj(
         "item_id": item_id or fake16("item_1"),
         "workspace_id": ws,
         "created_ms": NOW - 1000,
-        "body": {"kind": "ticket.summary", "title": "Reconcile March invoices", "status": "open"},
+        "body": ITEM_BODY,
         "dev": True,
         **kw,
     }
@@ -772,19 +778,6 @@ def admin_req(
     }
     headers.update(hdr_kw)
     return {"method": method, "target": target, "headers": {k: v for k, v in headers.items() if v is not None}}
-
-
-ADMIN_ROW = {
-    "workspace_id": WS_A,
-    "release_id": "rel_2026_10_22_a",
-    "kind": "share",
-    "state": "active",
-    "created_ms": NOW - DAY,
-    "expires_ms": NOW + DAY,
-    "revoked": False,
-    "bytes": 12_345,
-    "public_url": None,
-}
 
 
 # --------------------------------------------------------------------------------------------------------------------
@@ -2470,6 +2463,30 @@ def build() -> dict[str, Any]:
         "the author consented to another member set",
     )
 
+    # the body (protocol 10.4): by is REQUIRED and shaped person|agent:<id>; restored_from is an item id
+    def body_case(name: str, expect: dict[str, Any], note: str, **kw: Any) -> None:
+        body = {k: v for k, v in {**ITEM_BODY, **kw}.items() if v is not None}
+        case(name, "space_item", {**it, "sealed": seal_obj(space_item_obj(body=body))}, expect, 3, note)
+
+    body_case(
+        "space_item_by_agent_ok", {"ok": {"author": WS_A}}, "an agent put: by = agent:<session>", by="agent:s_01J9ZP-x"
+    )
+    body_case(
+        "space_item_restored_from_ok",
+        {"ok": {"author": WS_A}},
+        "a restore names its source item",
+        restored_from=fake16("item_0"),
+    )
+    body_case("space_item_by_missing", {"error": "malformed"}, "no item without by (no legacy path)", by=None)
+    body_case("space_item_by_bad_kind", {"error": "malformed"}, "by is person: or agent:", by="user:abc")
+    body_case("space_item_by_bad_chars", {"error": "malformed"}, "by has a closed alphabet", by="agent:a b")
+    body_case(
+        "space_item_by_too_long", {"error": "malformed"}, "by id is at most 64 characters", by="agent:" + "a" * 65
+    )
+    body_case("space_item_by_not_text", {"error": "malformed"}, "by is text", by=7)
+    body_case("space_item_restored_from_bad", {"error": "malformed"}, "restored_from is an item id", restored_from="x")
+    body_case("space_item_body_extra_key", {"error": "malformed"}, "the body is closed", extra=1)
+
     # consent: the host's put guard and the hub's rule for adding selective workspaces (L2P-2)
     rule = {"space_id": SPACE, "members": sorted([WS_A, WS_B])}
     hp = {**with_card, "rule": rule}
@@ -3386,21 +3403,6 @@ def build() -> dict[str, Any]:
         ok_ar,
         3,
     )
-    case(
-        "admin_read_rows_in_scope",
-        "admin_read_rows",
-        {"rows": [ADMIN_ROW], "scope": [WS_A]},
-        {"ok": {"rows": 1}},
-        3,
-    )
-    case(
-        "admin_read_row_outside_scope_never_emitted",
-        "admin_read_rows",
-        {"rows": [ADMIN_ROW, {**ADMIN_ROW, "workspace_id": WS_C}], "scope": [WS_A]},
-        {"error": "not_bound"},
-        3,
-        "whatever the target resolved to, a row of another workspace is not returned",
-    )
     sel_b = {**ab, "bindings": {WS_A: [{"binding": binding(mode="selective")}]}}
     case(
         "admin_read_selective_binding_excluded",
@@ -3454,32 +3456,6 @@ def build() -> dict[str, Any]:
         {"error": "not_bound"},
         3,
     )
-    case("admin_read_row_valid", "admin_read_row", {"row": ADMIN_ROW}, {"ok": {"row": True}}, 3)
-    case(
-        "admin_read_row_with_public_url",
-        "admin_read_row",
-        {"row": {**ADMIN_ROW, "public_url": "https://x.example/p/abc"}},
-        {"error": "malformed"},
-        3,
-        "public_url is null in hv 0: no public kind exists; a later hv adds it for live public releases only",
-    )
-    case(
-        "admin_read_row_extra_content_field",
-        "admin_read_row",
-        {"row": {**ADMIN_ROW, "content": "aGk"}},
-        {"error": "malformed"},
-        3,
-        "metadata only",
-    )
-    case(
-        "admin_read_row_missing_field",
-        "admin_read_row",
-        {"row": {k: v for k, v in ADMIN_ROW.items() if k != "bytes"}},
-        {"error": "malformed"},
-        3,
-    )
-    case("admin_read_row_wrong_type", "admin_read_row", {"row": {**ADMIN_ROW, "revoked": 0}}, {"error": "malformed"}, 3)
-
     # ---- unbind removes the workspace from every space (same step as hub.unbound)
     e2_a = space_rec(2, [WS_A])
     un = lambda ws, rec, sid=SPACE: {"unbind": {"ws": ws, "space_id": sid, "space": rec}}
@@ -3524,6 +3500,24 @@ def build() -> dict[str, Any]:
     pb = {**base, "workspace_id": WS_A, "cards": cards, "hub_card": c, "bindings": {WS_A: [{"binding": b1}]}}
     ok_pub = {"ok": {"workspace": WS_A, "hub": HUB_ID, "approved": True}}
     case("publish_public_with_approval", "publish", {**pb, "request": publish_request()}, ok_pub, 2)
+    app_target = f"/v1/ws/{WS_A}/apps/{fake16('app_1')}/commit"
+    app_body = b'{"op":"commit"}'
+    case(
+        "app_commit_through_legacy_check_without_approval",
+        "publish",
+        {**pb, "request": publish_request(appr=None, access=None, body=app_body, target=app_target, method="POST")},
+        {"error": "approval_required"},
+        2,
+        "M4 S0 review M2: an app commit/rollback/start route needs the approval whatever the access",
+    )
+    case(
+        "publish_approval_without_hub_id_on_the_hub_path",
+        "publish",
+        {**pb, "request": publish_request(appr=approval(hub_id=None))},
+        {"error": "other_hub"},
+        2,
+        "M4: a direct-path approval (hub_id null) never verifies through a hub",
+    )
     case(
         "publish_secret_without_approval",
         "publish",
@@ -3890,7 +3884,6 @@ def build() -> dict[str, Any]:
             "ts_ms": NOW,
             "signed_hex": H.admin_read_bytes(HUB_ID, NOW, "GET", ADMIN_TARGET).hex(),
             "request": admin_req(),
-            "row": ADMIN_ROW,
         },
         "phase4": p4["section"],
         "cases": cases,

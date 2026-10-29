@@ -129,6 +129,9 @@ class FakePorts:
     def git_init(self, root: Path) -> None:
         self.log.append(("git_init", str(root)))
 
+    def privatize(self, root: Path) -> None:
+        self.log.append(("privatize", str(root)))
+
     def trust_folder(self, root: Path, *, allow_parent: bool = False) -> bool:
         self.log.append(("trust_folder", str(root)))
         return True
@@ -161,7 +164,7 @@ class FakePorts:
         return FakeLink(self)
 
     @contextlib.contextmanager
-    def unlock(self, wid, passphrase, digest, fields):
+    def unlock(self, wid, passphrase, digest, fields, one_click=False):
         self.unlocks += 1
         self.log.append(("unlock",))
         yield steps_backend()

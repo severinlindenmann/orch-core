@@ -38,6 +38,10 @@ SITES: dict[tuple[str, str], tuple[int, str]] = {
     ("dispatch.py", "RegistryBackend._register"): (3, "unreachable (sub.open is not an R op)"),
     ("dispatch.py", "RegistryBackend.status"): (2, "unreachable (host.status is not an R op); would be N's answer"),
     ("dispatch.py", "RegistryBackend.whoami"): (2, "R gets no runner info (P and G only)"),
+    ("dispatch.py", "RegistryBackend.wait"): (
+        2,
+        "R is not G: a relay's wait records no 'agent waits' (column G with a verified grant only, run-10 J04)",
+    ),
     ("outcomes.py", "principal_of"): (2, "raises for R (the principal is r:<device>, never derived from a uid)"),
     ("reads_ws.py", "_person_reader"): (1, "unreachable (session.list, grant.list are not R ops); refuses R"),
     ("reads_ws.py", "reader_list"): (
@@ -107,7 +111,11 @@ SITES: dict[tuple[str, str], tuple[int, str]] = {
         "unreachable (org.* are not R ops); a relay peer is not column P or G, so it is refused",
     ),
     ("spaceops.py", "_owner"): (2, "unreachable (space.* are not R ops); R is not P, so it would be refused"),
-    ("spaceops.py", "_check"): (2, "unreachable (space.* are not R ops); a relay peer is not column P or G"),
+    ("spaceops.py", "_actor"): (
+        2,
+        "unreachable (space.* are not R ops); a relay peer is refused before the actor is named",
+    ),
+    ("spaceops.py", "_check"): (4, "unreachable (space.* are not R ops); a relay peer is not column P or G"),
     ("worktrees.py", "_claim_ok"): (4, "unreachable (worktree.* are not R ops)"),
     ("worktrees.py", "_plan"): (2, "unreachable (worktree.* are not R ops)"),
     ("worktrees.py", "_register"): (4, "unreachable (worktree.* are not R ops)"),

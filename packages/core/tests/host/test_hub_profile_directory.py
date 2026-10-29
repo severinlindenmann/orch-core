@@ -196,3 +196,10 @@ def test_hub_profile_old_inflight_push_cannot_skip_new_profile(tmp_path, monkeyp
     count = len(received)
     hubops._snapshot_link(service, state, b"key", lambda x: x, True)
     assert len(received) == count
+
+
+def test_hub_shared_takes_no_argument_and_is_a_network_read():
+    hubops._validate("hub.shared", {})
+    with pytest.raises(HostError):
+        hubops._validate("hub.shared", {"workspace": "x"})
+    assert "hub.shared" in hubops.NETWORK_OPS and hubops.HUB_OPS["hub.shared"] == 1

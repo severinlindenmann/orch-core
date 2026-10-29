@@ -6,10 +6,11 @@ import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
 import { RouterProvider } from '@tanstack/react-router'
 import { OrbitMark } from '../brand/OrbitMark'
+import { BootScreen } from '../app/shell/BootScreen'
 import { CHECKLIST_PATH, createAppRouter } from '../app/router'
 import { getToken, isForeignNavigation, onSessionChange } from '../api/bootstrap'
 import { setFeatures } from '../api/features'
-import { session } from '../api/prodApi'
+import { onWorkspaceNotReady, session } from '../api/prodApi'
 import { StepUpModal } from './StepUpModal'
 import './shell.css'
 
@@ -49,11 +50,13 @@ function App() {
   const again = () => { void queryClient.cancelQueries({ queryKey: ['session'] }).then(() => features.refetch()) }
   if (features.error && !checklistOnly) return <main className="prod-login" role="alert"><OrbitMark /><h1>The dashboard server did not answer</h1><p>{features.error.message}</p><p><button type="button" className="prod-retry" onClick={again}>Try again</button></p></main>
   if (!router && slow) return <main className="prod-login" role="alert"><OrbitMark /><h1>The dashboard is slow to answer</h1><p>Your computer or the orch host may be busy. This page keeps trying; you can also ask again now.</p><p><button type="button" className="prod-retry" onClick={again}>Try again</button></p></main>
-  if (!router) return <div aria-label="Loading session" role="status" className="prod-skeleton" />
+  if (!router) return <BootScreen />
   return <RouterProvider router={router} />
 }
 
 export function Shell() {
+  // A workspace read refused because its dashboard add-on went off or paused after the list was read: read the list again.
+  useEffect(() => onWorkspaceNotReady(() => void queryClient.invalidateQueries({ queryKey: ['workspaces'] })), [])
   const [token, setToken] = useState(getToken)
   const hadSession = useRef(token !== null)
   if (token) hadSession.current = true

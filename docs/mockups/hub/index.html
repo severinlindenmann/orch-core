@@ -188,6 +188,88 @@ details summary{cursor:pointer;color:var(--text-muted);font-size:13px;margin:6px
 .lf{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px}
 .lf .card{margin:0}
 .lf .cb p{margin:4px 0 10px;color:var(--text-muted);font-size:13px}
+/* skill map (draft) */
+.sktabs{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 14px}
+.sktabs .seg button{padding:6px 12px;font-size:13px;border:0;background:transparent;color:var(--text-muted);cursor:pointer}
+.sktabs .seg button.on{background:var(--surface-3);color:var(--text)}
+.sktabs .seg .c{margin-left:6px;background:var(--warning-soft);color:var(--warning);border-radius:999px;padding:0 6px;font:600 11px "Geist Mono",monospace}
+.sktabs select{background:var(--surface-2);border:1px solid var(--border-strong);border-radius:8px;color:var(--text);padding:5px 9px;font:inherit;font-size:13px}
+.sksum{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+.sksum span{background:var(--surface);border:1px solid var(--border);border-radius:9px;padding:6px 11px;font-size:12.5px;color:var(--text-muted);display:flex;align-items:center;gap:6px}
+.sksum b{color:var(--text);font-size:14px}
+.hd8{width:8px;height:8px;border-radius:50%;display:inline-block;flex:none;background:var(--text-faint)}
+.hd8.ok{background:var(--success)} .hd8.warn{background:var(--warning)} .hd8.bad{background:var(--danger)} .hd8.idle{background:var(--text-faint)}
+.smap{position:relative;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:56px;margin-bottom:8px}
+.smap h3{font:600 10.5px "Geist Mono",monospace;letter-spacing:.12em;color:var(--text-faint);margin:0 0 10px;text-transform:uppercase}
+.smap h3 small{letter-spacing:0;text-transform:none;font-weight:400;margin-left:6px}
+.sn{position:relative;z-index:2;display:flex;align-items:center;gap:9px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:8px 10px;margin-bottom:8px;cursor:pointer;width:100%;text-align:left;color:var(--text);font:inherit;transition:opacity .15s,border-color .15s}
+.sn:hover{border-color:var(--border-strong)}
+.sn .ic2{width:26px;height:26px;border-radius:7px;display:grid;place-items:center;flex:none}
+.sn .ic2 svg.i{width:14px;height:14px}
+.sn .nm{font-weight:600;font-size:13px;line-height:1.25;display:block}
+.sn .sb{display:block;color:var(--text-faint);font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.sn .tx{min-width:0;flex:1}
+.sn .rt{display:flex;align-items:center;gap:5px;flex:none}
+.sn.k-skill .ic2{background:var(--brand-soft);color:var(--brand)}
+.sn.k-mcp .ic2{background:var(--violet-soft);color:var(--violet)}
+.sn.k-cli .ic2,.sn.k-script .ic2{background:var(--info-soft);color:var(--info)}
+.sn.k-sys .ic2{background:var(--note-soft);color:var(--note)}
+.kt{font:500 10.5px "Geist Mono",monospace;color:var(--warning);background:var(--warning-soft);border-radius:5px;padding:0 5px;white-space:nowrap}
+.smap.focus .sn{opacity:.25}
+.smap.focus .sn.hl{opacity:1;border-color:var(--brand)}
+.smap svg.edges{position:absolute;inset:0;width:100%;height:100%;z-index:1;pointer-events:none;overflow:visible}
+.smap svg.edges path{fill:none;stroke:var(--border-strong);stroke-width:1.3}
+.smap svg.edges path.hl{stroke:var(--brand);stroke-width:2}
+.smap svg.edges path.drift{stroke:var(--danger);stroke-dasharray:4 4}
+.smap.focus svg.edges path:not(.hl){opacity:.12}
+.sklg{display:flex;gap:16px;color:var(--text-faint);font-size:12px;flex-wrap:wrap;margin-bottom:14px}
+.sklg span{display:flex;align-items:center;gap:6px}
+.sklg i.l{width:22px;border-top:2px solid var(--border-strong)} .sklg i.d{width:22px;border-top:2px dashed var(--danger)}
+.skatt{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
+.skatt .card{margin:0;cursor:pointer;padding:13px 15px}
+.skatt .card:hover{border-color:var(--border-strong)}
+.skatt .h{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.skatt .why{font-size:12.5px;color:var(--text-muted)}
+.skatt .fx{margin-top:8px;font-size:12.5px;color:var(--brand)}
+.skcmp td.c{text-align:center}
+.skcmp .on{display:inline-block;width:13px;height:13px;border-radius:50%;background:var(--brand)}
+.skcmp .off{display:inline-block;width:13px;height:13px;border-radius:50%;border:1px solid var(--border-strong)}
+.skcmp tr.sr{cursor:pointer} .skcmp tr.sr:hover td{background:rgba(255,255,255,.02)}
+.skrow{cursor:pointer}
+.drawer{position:fixed;top:0;right:0;bottom:0;width:430px;max-width:100vw;background:var(--surface);border-left:1px solid var(--border-strong);box-shadow:-24px 0 50px rgba(0,0,0,.45);padding:20px 22px 28px;overflow-y:auto;z-index:60;animation:drw .18s ease}
+@keyframes drw{from{transform:translateX(30px);opacity:0}}
+.drawer .x{position:absolute;right:12px;top:10px}
+.drawer h3{margin:0 0 2px;font-size:18px}
+.drawer .what{font-size:15px;line-height:1.45;margin:12px 0 8px}
+.drawer h4{font:600 10.5px "Geist Mono",monospace;letter-spacing:.12em;color:var(--text-faint);text-transform:uppercase;margin:20px 0 8px}
+.drawer .iss{border-radius:9px;padding:9px 11px;font-size:13px;margin-bottom:8px;background:var(--surface-2);border-left:3px solid var(--warning)}
+.drawer .iss.bad{border-left-color:var(--danger)} .drawer .iss.idle{border-left-color:var(--text-faint)}
+.drawer .iss small{display:block;color:var(--text-muted);margin-top:2px}
+.drawer .when{display:grid;grid-template-columns:auto 1fr;gap:6px 10px;font-size:13px}
+.drawer .steps div{display:flex;gap:10px;font-size:13px;color:var(--text-muted);margin-bottom:5px}
+.drawer .steps b{color:var(--text-faint);font:600 11px "Geist Mono",monospace;width:14px;flex:none;padding-top:2px}
+.drawer .st3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.drawer .st3 div{background:var(--surface-2);border-radius:9px;padding:8px 10px;font-size:11.5px;color:var(--text-muted)}
+.drawer .st3 b{display:block;font-size:17px;color:var(--text)}
+.drawer .chips{display:flex;flex-wrap:wrap;gap:6px}
+.drawer details{margin-top:18px;border-top:1px solid var(--border);padding-top:10px;color:var(--text-faint);font-size:12px}
+.drawer details summary{cursor:pointer}
+.drawer pre{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px;overflow:auto;font:11.5px/1.5 "Geist Mono",monospace;color:var(--text-muted);white-space:pre-wrap}
+@media(max-width:860px){.smap{grid-template-columns:1fr;gap:14px}.smap svg.edges{display:none}}
+.drawer .tag{white-space:normal}
+.sktabs .seg{flex-wrap:wrap;max-width:100%}
+.brk{display:inline-grid;place-items:center;width:16px;height:16px;border-radius:50%;border:2px solid var(--danger);color:var(--danger);font:700 10px/1 "Geist Mono",monospace}
+.skwho{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.skchip{display:inline-flex;align-items:center;gap:6px;background:var(--surface-2);border:1px solid var(--border);border-radius:999px;padding:3px 10px;font-size:12.5px;color:var(--text);cursor:pointer}
+.skchip:hover{border-color:var(--border-strong)}
+.skchip span{color:var(--text-faint);font-size:11.5px}
+.skchip.chg span:first-of-type{color:var(--warning)}
+.paths{display:flex;flex-direction:column;gap:6px}
+.pth{display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:var(--surface-2);border-radius:9px;padding:7px 10px;font-size:13px}
+.pth .a small{display:block;color:var(--text-faint);font-size:11px}
+.pth .ar{color:var(--text-faint)}
+.pth.bad{border:1px dashed rgba(248,113,113,.5)}
+.skcmp td{vertical-align:top}
 @media (prefers-reduced-motion: reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
 @media(max-width:860px){
   .app{grid-template-columns:56px minmax(0,1fr)}
@@ -497,7 +579,7 @@ function openApproval(id){
   const opts = a.options ? `<div class="field" style="margin-top:10px"><label>Your answer</label>${a.options.map((o,i) => `<label style="display:flex;gap:8px;align-items:center;padding:6px 0;color:var(--text)"><input type="radio" name="opt" ${i===0?"checked":""}> ${esc(o)}</label>`).join("")}</div>` : "";
   dialog(`${wsb(a.ws)} ${esc(a.kind)}`,
     `<div class="signbox"><div class="h">${esc(a.title)}</div><div class="small muted">${esc(W(a.ws).name)} · asked by ${esc(a.by)} · ${esc(a.when)}</div><ul class="small" style="margin:8px 0 0;padding-left:18px">${a.lines.map((l) => `<li>${esc(l)}</li>`).join("")}</ul></div>${opts}
-     <details><summary>Show exactly what is signed</summary><pre class="mono small" style="white-space:pre-wrap;background:var(--bg);padding:10px;border-radius:8px;border:1px solid var(--border)">op: ${esc(a.sig)}\nworkspace: ${esc(W(a.ws).name)} (${esc(a.ws)}…)\nsigner: Severin · browser key Chrome · MacBook Pro\nreview: sha256:7c1e…a90b</pre></details>
+     <details><summary>What you sign</summary><pre class="mono small" style="white-space:pre-wrap;background:var(--bg);padding:10px;border-radius:8px;border:1px solid var(--border)">op: ${esc(a.sig)}\nworkspace: ${esc(W(a.ws).name)} (${esc(a.ws)}…)\nsigner: Severin · browser key Chrome · MacBook Pro\nreview: sha256:7c1e…a90b</pre></details>
      <p class="small muted" style="margin:10px 0 0">You approve with the key held by this browser. Nobody else can approve as you.</p>`,
     `<button class="btn" data-close>Cancel</button>${a.kind === "Question" ? "" : `<button class="btn dan" data-decide="${a.id}" data-how="refuse">Refuse</button>`}<button class="btn pri" data-decide="${a.id}" data-how="ok">${a.kind === "Question" ? "Send answer" : "Approve"}</button>`);
 }
@@ -980,6 +1062,197 @@ P.lookfeel = () => {
   return `<h1>Look &amp; feel</h1><p class="lead">Small things that make the hub feel fast and calm. Try each one here; they work across the whole mockup.</p>${note("lookfeel")}
   <div class="lf">${demos.map(([k, t, s]) => `<div class="card"><div class="cb"><b>${t}</b><p>${s}</p><button class="btn sm pri" data-lf="${k}">Try it</button></div></div>`).join("")}</div>`;
 };
+
+// ---------------------------------------------------------------- skills v2 (draft 29 Oct, after Opus critique)
+// Same structure in every workspace: skill → uses (MCP server, command, script; reads or changes) → reaches (system, maybe a secret).
+// Needs attention is computed: missing tool/secret where the skill is on, expiring secret, card fields missing, guard blocks, marked wrong by a person.
+const SKT = {
+  "mcp-github":{n:"GitHub", k:"MCP server", mcp:"GitHub", sys:["github"]},
+  "mcp-drive":{n:"Google Drive", k:"MCP server", mcp:"Google Drive", sys:["drive"]},
+  "mcp-shop":{n:"Shop database", k:"MCP server", mcp:"Shop database (staging)", sys:["shopdb"]},
+  "mcp-browser":{n:"Playwright browser", k:"MCP server", mcp:"Playwright browser", sys:["web"]},
+  "cli-orch":{n:"orch", k:"built-in command", sys:["tix"]},
+  "sc-deploy":{n:"deploy.sh", k:"script in the skill", sys:["shopsrv"]},
+  "sc-news":{n:"newsletter.py", k:"script in the skill", sys:["news"]},
+  "sc-cost":{n:"cost_report.py", k:"script in the skill", sys:["ai","drive"]},
+};
+const SKS = {
+  github:{n:"GitHub", s:"code and pull requests", key:"GitHub token (read only)"},
+  drive:{n:"Google Drive", s:"company files", signin:true},
+  shopdb:{n:"Shop database", s:"orders (staging)", key:"Shop staging password"},
+  shopsrv:{n:"Shop server", s:"the live shop", key:"Deploy key", local:true},
+  web:{n:"Public web", s:"any website"},
+  tix:{n:"Tickets", s:"the workspace’s own tickets"},
+  news:{n:"Newsletter service", s:"mail to all customers", key:"Newsletter API key"},
+  ai:{n:"AI provider", s:"usage and cost", key:"Company OpenAI key"},
+};
+// from: "co" = company skill, else the workspace that made it. use: {tool: "reads" | "changes"}
+const SK = {
+  "acme-writing-style":{t:"Acme writing style", from:"co", share:"all", owner:"Anna Keller", rev:"20 Oct", runs:31, wrong:0, last:"today", use:{},
+    what:"Writes in Acme’s voice: short sentences, “du”, no jargon.", yes:"Any text a customer or colleague will read", no:"Code, contracts",
+    steps:["Apply the style rules to the draft","Check the word list (no ‘leverage’, no ‘synergy’)"], checks:true},
+  "release-checklist":{t:"Release checklist", from:"co", share:["pr","su"], owner:"Marco Rossi", rev:"27 Oct", runs:8, wrong:0, last:"Mon", use:{"mcp-github":"reads","cli-orch":"changes"},
+    what:"Walks a release through its checks and writes the result into the ticket.", yes:"A ticket says ‘release’", no:"Hotfixes",
+    steps:["Read the release ticket","Check on GitHub that the pull requests are merged","Tick the checklist in the ticket","Hand off to Marketing for the release notes"], checks:true},
+  "contract-review-rules":{t:"Contract review rules", from:"co", share:["lg"], owner:"Lea Brunner", rev:"14 Oct", runs:3, wrong:2, last:"yesterday", use:{"mcp-drive":"reads"},
+    what:"Checks a contract against Acme’s rules and lists what to change.", yes:"A contract or offer to check", no:"",
+    steps:["Read the contract from Drive › Legal","Compare it with the rules","List the changes, most important first"]},
+  "customer-tone":{t:"Customer tone (support)", from:"co", share:["su","mk"], owner:"Marco Rossi", rev:"24 Oct", runs:44, wrong:0, last:"today", use:{"mcp-shop":"reads","mcp-drive":"reads"},
+    blocked:{tool:"mcp-shop", act:"refund_order", n:3},
+    what:"Answers customers kindly and looks up their order first; never changes an order.", yes:"A customer writes to Support", no:"Internal mail, newsletters",
+    steps:["Read the customer’s message","Look up the order in the shop database","Draft the answer in Acme’s voice","A person sends it"], checks:true},
+  "deploy-shop":{t:"Put shop changes live", from:"pr", owner:"Severin", rev:"20 Oct", runs:9, wrong:0, last:"today", use:{"mcp-github":"reads","sc-deploy":"changes"},
+    stuck:{n:2, of:9, at:"check the shop answers"},
+    what:"Puts a merged change live on the shop after the checks pass.", yes:"A merged change should go live", no:"Anything not merged yet",
+    steps:["Check on GitHub that the checks are green","Run deploy.sh","Open the shop and check it answers"]},
+  "ui-check":{t:"Check the shop pages", from:"pr", owner:"Marco Rossi", rev:"19 Oct", runs:23, wrong:0, last:"today", use:{"mcp-browser":"reads"},
+    what:"Opens the shop preview in a browser and checks the main pages look right.", yes:"Before a release, after page changes", no:"Changes without pages",
+    steps:["Open the preview","Click through start, product, checkout","Put a screenshot of anything odd into the ticket"]},
+  "newsletter-send":{t:"Send the newsletter", from:"mk", owner:"Anna Keller", rev:"2 Oct", runs:4, wrong:0, last:"1 Oct", use:{"sc-news":"changes"},
+    what:"Sends the approved newsletter to the customer list.", yes:"A newsletter ticket is approved", no:"Drafts, single mails",
+    steps:["Check the ticket is approved","Load the text","Send it with newsletter.py","Post the open rate in the ticket the next day"]},
+  "web-research":{t:"Web research", from:"mk", owner:"", rev:"1 Mar", runs:0, wrong:0, last:"March", use:{"mcp-browser":"reads"},
+    what:"Looks things up on the web and sums them up with sources.", yes:"Questions about public facts", no:"Customer data",
+    steps:["Search","Read 3–5 sources","Sum up with links"]},
+  "ai-cost-report":{t:"AI cost report", from:"fi", owner:"Severin", rev:"27 Oct", runs:5, wrong:0, last:"27 Oct", use:{"sc-cost":"changes"}, sysMode:{ai:"reads"},
+    what:"Builds the monthly AI cost report per workspace and saves it to Drive.", yes:"Month end, or someone asks about AI cost", no:"Other costs",
+    steps:["Read the usage from the AI provider","Split it by workspace","Save the report to Drive › Finance"]},
+};
+const skOnIn = (k) => { const s = SK[k]; return s.from !== "co" ? [s.from] : s.share === "all" ? D.ws.map((w) => w.id) : s.share; };
+const skIn = (k, ws) => skOnIn(k).includes(ws);
+const skList = (ws) => Object.keys(SK).filter((k) => ws === "all" || skIn(k, ws));
+const skTools = (k) => Object.keys(SK[k].use);
+const skSys = (k) => [...new Set(skTools(k).flatMap((t) => SKT[t].sys))];
+const shared = (share, ws) => share === "all" || share.includes(ws);
+// what a skill needs in a workspace but does not get there (only company tools and secrets can be missing)
+function skMissing(k, ws){
+  const out = [];
+  skTools(k).forEach((t) => { const m = SKT[t].mcp && D.mcp.find((x) => x.name === SKT[t].mcp); if (m && !shared(m.share, ws)) out.push(`the ${SKT[t].n} tool`); });
+  skSys(k).forEach((y) => { const key = SKS[y].key && !SKS[y].local && D.secrets.find((x) => x.name === SKS[y].key); if (key && !shared(key.share, ws) && !out.includes(`the ${SKS[y].n} tool`)) out.push(`the secret “${key.name}”`); });
+  return out;
+}
+function skIssues(k){
+  const s = SK[k], out = [];
+  skOnIn(k).forEach((ws) => { const miss = skMissing(k, ws); if (miss.length) out.push({t:"bad", ws, m:`Can’t work in ${W(ws).name}`, d:`It needs ${miss.join(" and ")}, which ${miss.length > 1 ? "are" : "is"} not shared with ${W(ws).name}.`, f:`Share with ${W(ws).name}, or turn the skill off there`}); });
+  if (s.blocked) out.push({t:"bad", m:"Tried to do more than its card says", d:`The safety guard blocked “${s.blocked.act}” ${s.blocked.n}× this week while this skill was in use. The card says it never changes an order.`, f:"Fix the skill text, or change the card"});
+  skSys(k).forEach((y) => { const key = SKS[y].key && D.secrets.find((x) => x.name === SKS[y].key); if (key && key.exp.startsWith("in 5")) out.push({t:"warn", m:`Its secret runs out ${key.exp}`, d:`“${key.name}” expires; the skill stops working then.`, f:"Renew the secret"}); });
+  if (s.wrong) out.push({t:"warn", m:`Marked as the wrong skill ${s.wrong}×`, d:"People said an agent used it for something else (NDA questions). The card has no “not for” line.", f:"Add a “not for” line"});
+  else if (!s.no) out.push({t:"warn", m:"The card has no “not for” line", d:"Agents can’t tell when to leave it alone.", f:"Add a “not for” line"});
+  if (s.stuck) out.push({t:"warn", m:`${s.stuck.n} of ${s.stuck.of} tickets that used it got stuck`, d:`Both at the same step: “${s.stuck.at}”.`, f:"Open the last stuck ticket"});
+  if (!s.owner) out.push({t:"warn", m:"Nobody owns it", d:"No person is named as responsible.", f:"Set an owner"});
+  if (!s.runs) out.push({t:"idle", m:`Not used since ${s.last}`, d:"Maybe it is not needed here any more.", f:"Turn it off"});
+  return out;
+}
+const skAllIssues = (ws) => skList(ws).flatMap((k) => skIssues(k).filter((i) => ws === "all" || !i.ws || i.ws === ws).map((i) => ({k, ...i}))).sort((a, b) => ({bad:0, warn:1, idle:2}[a.t] - {bad:0, warn:1, idle:2}[b.t]));
+const skHealth = (k, ws) => { const i = skIssues(k).filter((x) => !ws || ws === "all" || !x.ws || x.ws === ws); return i.some((x) => x.t === "bad") ? "bad" : i.some((x) => x.t === "warn") ? "warn" : i.length ? "idle" : "ok"; };
+const skChanges = (k) => Object.values(SK[k].use).includes("changes");
+const skModeOf = (k, t, y) => (SK[k].sysMode || {})[y] || SK[k].use[t];
+const skSrc = (k, here) => SK[k].from === "co" ? `<span class="tag">company</span>` : here ? `<span class="tag">made here</span>` : wsTag(SK[k].from);
+let skTab = "att", skWs = "all", skWsTab = "att";
+
+const skLine = (ws) => { const L = skList(ws), it = skAllIssues(ws), n = new Set(it.map((i) => i.k)).size, c = L.filter(skChanges).length;
+  return `<p class="muted" style="margin:0 0 14px">${L.length} skills · ${n ? `<b style="color:var(--warning)">${it.length} things to look at in ${n} skills</b>` : "all fine"} · ${c} can change things</p>`; };
+const skWsPick = () => `<select data-skws>${[["all","All workspaces"], ...D.ws.map((w) => [w.id, w.name])].map(([v, l]) => `<option value="${v}" ${skWs === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>`;
+const skMode = (m) => m === "changes" ? `<span class="tag w">can change</span>` : `<span class="tag">reads</span>`;
+
+function skAtt(ws, here){
+  const it = skAllIssues(ws);
+  if (!it.length) return `<div class="card"><div class="empty">${ic("ck")}<div style="font-weight:600;color:var(--text);margin-top:6px">Nothing to do</div><div class="small">Every skill here works, has an owner, and does what its card says.</div></div></div>`;
+  return `<div class="skatt">${it.map((i) => `<div class="card" data-sk="${i.k}"><div class="h"><i class="hd8 ${i.t}"></i><b>${esc(SK[i.k].t)}</b><span style="flex:1"></span>${skSrc(i.k, here)}</div><div>${esc(i.m)}</div><div class="why">${esc(i.d)}</div><div class="fx">→ ${esc(i.f)}</div></div>`).join("")}</div>`;
+}
+// hub: one table, skills × workspaces; a red ring = on there but can't work
+function skTable(ws){
+  const L = skList(ws), cols = ws === "all" ? D.ws : [];
+  const row = (k) => `<tr class="sr" data-sk="${k}"><td><i class="hd8 ${skHealth(k, ws)}"></i> <b>${esc(SK[k].t)}</b>${skChanges(k) ? ` <span class="tag w">can change</span>` : ""}<div class="small muted">${esc(SK[k].what)}</div></td><td class="small">${esc(SK[k].owner || "—")}</td><td class="small mono">${SK[k].runs}×</td>
+    ${cols.map((w) => { const on = skIn(k, w.id), bad = on && skMissing(k, w.id).length; return `<td class="c">${bad ? `<span class="brk" title="On, but can’t work here">!</span>` : on ? `<span class="on" style="background:${w.color}"></span>` : `<span class="off"></span>`}</td>`; }).join("")}</tr>`;
+  const grp = (label, ks) => ks.length ? `<tr><td colspan="${cols.length + 3}" class="small faint" style="background:var(--surface-2)">${label}</td></tr>${ks.map(row).join("")}` : "";
+  return `<div class="card tw skcmp"><table><tr><th>Skill</th><th>Owner</th><th>Used 30 d</th>${cols.map((w) => `<th style="text-align:center">${wsb(w.id)}<div class="small" style="font-weight:400;text-transform:none;letter-spacing:0">${esc(w.name)}</div></th>`).join("")}</tr>
+    ${grp("COMPANY SKILLS", L.filter((k) => SK[k].from === "co"))}${grp("MADE IN ONE WORKSPACE", L.filter((k) => SK[k].from !== "co"))}</table></div>
+    ${cols.length ? `<p class="small muted"><span class="on" style="background:var(--brand);display:inline-block;width:10px;height:10px;border-radius:50%"></span> on · <span class="brk" style="transform:scale(.8)">!</span> on, but something it needs is not shared there · <span class="off" style="display:inline-block;width:10px;height:10px;border-radius:50%;border:1px solid var(--border-strong)"></span> off</p>` : ""}`;
+}
+// by system: who can reach it, read or change, with which secret
+function skSystems(ws, here){
+  const L = skList(ws), sys = [...new Set(L.flatMap(skSys))];
+  const who = (y) => L.filter((k) => skSys(k).includes(y)).map((k) => { const t = skTools(k).find((t) => SKT[t].sys.includes(y)); return {k, mode:skModeOf(k, t, y)}; });
+  sys.sort((a, b) => who(b).some((x) => x.mode === "changes") - who(a).some((x) => x.mode === "changes"));
+  return `<div class="card">${sys.map((y) => { const w = who(y), key = SKS[y].key;
+    return `<div class="row" style="align-items:flex-start"><span class="av">${ic(key ? "ky" : "sh")}</span><div class="tx"><b>${esc(SKS[y].n)}</b> <span class="small muted">${esc(SKS[y].s)}</span>
+      <div class="s">${key ? `uses the secret “${esc(key)}”` : SKS[y].signin ? "each person signs in with their own account" : "no secret needed"}</div>
+      <div class="skwho">${w.map(({k, mode}) => `<button class="skchip ${mode === "changes" ? "chg" : ""}" data-sk="${k}"><i class="hd8 ${skHealth(k, ws)}"></i>${esc(SK[k].t)} <span>${mode === "changes" ? "can change" : "reads"}</span>${ws === "all" && !here ? ` <span>· ${SK[k].from === "co" ? (SK[k].share === "all" ? "all" : SK[k].share.map((s) => W(s).prefix).join(" ")) : W(SK[k].from).prefix}</span>` : ""}</button>`).join("")}</div></div></div>`; }).join("")}</div>
+    <p class="small muted">Sorted so systems that can be changed come first. Click a skill to open its card.</p>`;
+}
+function skCard(k, ctxWs){
+  const s = SK[k], iss = skIssues(k).filter((x) => !ctxWs || !x.ws || x.ws === ctxWs);
+  const where = s.from === "co" ? `Company skill · on in ${s.share === "all" ? "all workspaces" : s.share.map((w) => esc(W(w).name)).join(", ")}` : `Made in ${esc(W(s.from).name)}`;
+  document.querySelectorAll(".drawer").forEach((d) => d.remove());
+  const el = document.createElement("aside"); el.className = "drawer";
+  el.innerHTML = `<button class="btn sm gh x" data-skclose>✕</button>
+    <h3>${esc(s.t)}</h3><div class="small muted">${where} · owner ${s.owner ? esc(s.owner) : `<span style="color:var(--warning)">nobody</span>`}</div>
+    <p class="what">${esc(s.what)}</p>
+    ${iss.length ? `<h4>Needs attention</h4>${iss.map((i) => `<div class="iss ${i.t}">${esc(i.m)}<small>${esc(i.d)}</small></div>`).join("")}` : ""}
+    <h4>When</h4><div class="when"><span style="color:var(--success)">For</span><span>${esc(s.yes)}</span><span style="color:var(--danger)">Not for</span><span>${s.no ? esc(s.no) : `<span style="color:var(--warning)">missing</span>`}</span></div>
+    <h4>What it does</h4><div class="steps">${s.steps.map((t, i) => `<div><b>${i + 1}</b>${esc(t)}</div>`).join("")}</div>
+    <h4>What it can reach</h4>${skTools(k).length ? `<div class="paths">${skTools(k).map((t) => SKT[t].sys.map((y) => `<div class="pth"><span class="a">${esc(SKT[t].n)}<small>${esc(SKT[t].k)}</small></span><span class="ar">→</span><span class="a">${esc(SKS[y].n)}<small>${esc(SKS[y].s)}</small></span>${skMode(skModeOf(k, t, y))}${SKS[y].key ? `<span class="kt">${esc(SKS[y].key)}</span>` : ""}</div>`).join("")).join("")}
+      ${s.blocked ? `<div class="pth bad"><span class="a">${esc(SKT[s.blocked.tool].n)}</span><span class="ar">→</span><span class="a">${esc(s.blocked.act)}</span><span class="tag d">blocked ${s.blocked.n}× · not on the card</span></div>` : ""}</div>` : `<div class="small muted">Nothing outside: it is knowledge only.</div>`}
+    <h4>Last 30 days</h4><div class="st3"><div><b>${s.runs}</b>times used</div><div><b>${s.wrong}</b>marked as wrong skill</div><div><b>${esc(s.last)}</b>last used</div></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:18px">${iss.length ? `<button class="btn pri" data-toast="Mockup: ${esc(iss[0].f)}">${esc(iss[0].f)}</button>` : ""}
+      <button class="btn" data-toast="Mockup: makes a ticket ‘Improve ${esc(s.t)}’ with this card and its use; the agent proposes a change, you approve it before it is used">Ask an agent to improve it</button>
+      ${s.checks ? `<button class="btn" data-toast="Mockup: runs its test questions: does it start when it should, and stay out when it should not">Run its checks</button>` : `<button class="btn" data-toast="Mockup: an agent writes 5 test questions from the card; you approve them">Add checks</button>`}
+      ${s.from !== "co" ? `<button class="btn" data-toast="Mockup: becomes a company skill; you pick which workspaces get it (signed by you)">Make it a company skill</button>` : ""}</div>
+    <details><summary>Technical details</summary><pre>skills/${esc(k)}/SKILL.md
+---
+name: ${esc(k)}
+description: ${esc(s.what)} Use when: ${esc(s.yes)}.
+metadata:
+  orch.title: "${esc(s.t)}"
+  orch.owner: "${esc(s.owner || "")}"
+  orch.reviewed: "${esc(s.rev)}"
+  orch.not-for: "${esc(s.no)}"
+  orch.uses: "${skTools(k).map((t) => t + ":" + s.use[t]).join(" ")}"
+  orch.reaches: "${skSys(k).join(" ")}"
+---</pre><div>“uses” and “reaches” are filled in from what agents really did with the skill; the owner confirms them with one click. Last confirmed ${esc(s.rev)}.</div></details>`;
+  document.body.appendChild(el);
+}
+
+N.skillmap = [["new","Needs attention first, computed: a skill that can’t work in a workspace because a tool or secret it needs isn’t shared there; a secret that runs out; the guard blocked an action the card doesn’t allow; marked as wrong skill by a person; no owner; no ‘not for’ line; not used"],["new","Skill card in plain words: title, what it is for, for / not for, steps, what it can reach (each path marked reads or can change, with its secret), use in the last 30 days"],["new","Same card fields in every workspace (SKILL.md metadata); ‘uses’ and ‘reaches’ come from what agents really did, the owner confirms with one click"],["new","Skills: one table; in the hub with a column per workspace (on / on but broken / off)"],["new","Who can reach what: one row per system (GitHub, shop, Drive…), which skills read or can change it, with which secret"],["new","Ask an agent to improve a skill (you approve the change); add or run test questions per skill; make a workspace skill a company skill"],["new","A workspace without a hub shows the same page with its own skills only"]];
+NOTE_TITLES.skillmap = "Skills: understand and look after";
+
+const P_skillsOverview = P.skills;
+const SKTABS = [["att","Needs attention"],["skills","Skills"],["sys","Who can reach what"],["setup","Set up & share"]];
+P.skills = () => {
+  const n = skAllIssues("all").length, ws = skTab === "setup" ? "all" : skWs;
+  const tabs = `<div class="sktabs"><div class="seg">${SKTABS.map(([k, l]) => `<button class="${skTab === k ? "on" : ""}" data-sktab="${k}">${l}${k === "att" && n ? `<span class="c">${n}</span>` : ""}</button>`).join("")}</div>${skTab !== "setup" ? skWsPick() : ""}</div>`;
+  const head = `<h1>Skills, MCP &amp; secrets</h1><p class="lead">What the company’s agents know (skills), which tools they use (MCP servers) and what they can reach with which secret.</p>`;
+  if (skTab === "setup") { const o = P_skillsOverview(); return head + note("skills") + tabs + o.slice(o.indexOf("<h2>")); }
+  return head + note("skillmap") + tabs + skLine(ws) + (skTab === "att" ? skAtt(ws) : skTab === "skills" ? skTable(ws) : skSystems(ws));
+};
+
+// Mission Control of a workspace: same page, only its own skills; works the same with no hub
+MC_NAV.splice(4, 0, ["skills","ky","Skills"]);
+const renderWsBase = renderWs;
+renderWs = (id, sub) => {
+  const base = renderWsBase(id, sub);
+  if (sub !== "skills" || !W(id).online) return base;
+  const w = W(id), n = skAllIssues(id).length, L = skList(id);
+  const rows = (arr) => arr.map((k) => `<div class="row skrow" data-sk="${k}" data-skctx="${id}"><i class="hd8 ${skHealth(k, id)}"></i><div class="tx"><b>${esc(SK[k].t)}</b>${skChanges(k) ? ` <span class="tag w">can change</span>` : ""}<div class="s">${esc(SK[k].what)}</div></div><span class="small faint">${SK[k].runs}× in 30 d</span></div>`).join("");
+  return `<h1>Skills</h1><p class="lead">What the agents in ${esc(w.name)} know, and what they can reach.</p>${note("skillmap")}
+    <div class="sktabs"><div class="seg">${[["att","Needs attention"],["skills","Skills"],["sys","Who can reach what"]].map(([k, l]) => `<button class="${skWsTab === k ? "on" : ""}" data-skwstab="${k}">${l}${k === "att" && n ? `<span class="c">${n}</span>` : ""}</button>`).join("")}</div></div>
+    ${skLine(id)}
+    ${skWsTab === "att" ? skAtt(id, true) : skWsTab === "sys" ? skSystems(id, true) : `<div class="card"><div class="hd">Made here<span class="sp"></span><button class="btn sm" data-toast="Mockup: asks in plain words: what is it for, when not, who owns it">${ic("pl")} New skill</button></div>${rows(L.filter((k) => SK[k].from === id)) || `<div class="empty small">None yet</div>`}</div>
+      <div class="card"><div class="hd">From the company <span class="small muted" style="font-weight:400">only when connected to a hub</span></div>${rows(L.filter((k) => SK[k].from === "co")) || `<div class="empty small">None</div>`}</div>`}`;
+};
+
+document.addEventListener("click", (e) => {
+  const t = e.target.closest("[data-sktab],[data-skwstab],[data-sk],[data-skclose]"); if (!t) return;
+  const d = t.dataset;
+  if (d.skclose !== undefined) return document.querySelectorAll(".drawer").forEach((x) => x.remove());
+  if (d.sktab) { skTab = d.sktab; if (location.hash !== "#skills") { location.hash = "skills"; return; } return render(); }
+  if (d.skwstab) { skWsTab = d.skwstab; return render(); }
+  if (d.sk) return skCard(d.sk, d.skctx || (location.hash.startsWith("#w/") ? location.hash.split("/")[1] : skWs !== "all" ? skWs : null));
+});
+document.addEventListener("change", (e) => { if (e.target.matches("[data-skws]")) { skWs = e.target.value; render(); } });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") document.querySelectorAll(".drawer").forEach((x) => x.remove()); });
+window.addEventListener("hashchange", () => document.querySelectorAll(".drawer").forEach((x) => x.remove()));
 
 // ---------------------------------------------------------------- router + events
 const TITLES = Object.assign({}, NOTE_TITLES, {requirements:"Requirements"});

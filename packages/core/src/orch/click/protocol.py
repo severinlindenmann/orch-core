@@ -70,10 +70,7 @@ RISK = "Convenience signing: agents running as you, or anything that takes over 
 #: v1.6 (D-P2-27, §0.8.6 item 6): the View of a deposit-only grant carries this line (and in ``lines``)
 DEPOSIT_LINE = "The secret goes to your orch runner on this machine and is never shown"
 #: the owner's plain-language risk of a click-issued runner grant (D-P2-27), the tier-A sentence of its View
-DEPOSIT_RISK = (
-    "Anything that takes over the dashboard can give agents standing authority to act for you on tickets for as long "
-    "as the grant lasts (up to 7 days, the length you choose); you can stop it at any time."
-)
+DEPOSIT_RISK = "Whoever controls this dashboard could use this access while it lasts. You can stop it any time."
 #: #1198 C7: the View of a grant whose secret is shown once in the page (sealed to the page's key) carries this line
 #: (and in ``lines``) and ``seal.purposes == ["grant.secret"]``
 REVEAL_LINE = "The secret is shown once, on this page, only to you. orch keeps only a fingerprint of it"
@@ -397,12 +394,11 @@ def _hours_line(events: Events) -> list[str]:
 def _grant_risk(events: Events, deposit: bool, reveal: bool) -> list[str]:
     # deposit (the runner grant, "agent access" handed to the runner) or reveal (the secret shown once in the page);
     # any other grant never reaches a View (terminal_only), and is still marked here
-    lines = [DEPOSIT_RISK if deposit else REVEAL_RISK, *_hours_line(events)]
+    # r7-P10: a runner grant carries ONE risk line (the length is in the headline and the grant row, and DEPOSIT_RISK
+    # says it is the length you choose, up to 7 days); the shown secret keeps its own risk line and the length
     if deposit:
-        hours = next((e.get("hours") for e in events if e.get("type") == "grant.issued"), None)
-        if type(hours) is int and hours > 0:
-            lines.append(f"Agents can run as you for {hours} {'hour' if hours == 1 else 'hours'}")
-    return lines
+        return [DEPOSIT_RISK]
+    return [REVEAL_RISK, *_hours_line(events)]
 
 
 def _addon_grant_risk(events: Events, deposit: bool, reveal: bool) -> list[str]:

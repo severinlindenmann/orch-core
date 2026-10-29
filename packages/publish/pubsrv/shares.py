@@ -22,7 +22,8 @@ from fastapi import APIRouter, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 
-from . import db, pathrules, registry
+from . import db, narrow, pathrules, registry
+from . import published as P
 from .auth import WINDOW_MS, Refusal
 
 MAX_FILE = 25 * 1024 * 1024
@@ -38,6 +39,8 @@ _ID = re.compile(registry.ID32)
 _HEX64 = re.compile(r"[0-9a-f]{64}")
 _TICKET = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 _META_KEYS = {"ticket", "kind", "expires_ms", "view_limit", "token_hash", "files"}
+#: display members of the company list (C1): optional, filled by the workspace and shown as asserted text only
+_DISPLAY_KEYS = {"label", "by_kind", "by_name"}
 _FILE_KEYS = {"path", "size", "sha256"}
 
 
@@ -75,7 +78,7 @@ def parse_meta(raw, now_ms):
         m = json.loads(raw.decode("utf-8"), object_pairs_hook=_no_dup_pairs)
     except (UnicodeError, ValueError):
         raise Refusal(400, "malformed") from None
-    if not isinstance(m, dict) or set(m) != _META_KEYS:
+    if not isinstance(m, dict) or not _META_KEYS <= set(m) <= _META_KEYS | _DISPLAY_KEYS:
         raise Refusal(400, "malformed")
     if not (isinstance(m["ticket"], str) and _TICKET.fullmatch(m["ticket"])):
         raise Refusal(400, "bad_ticket")
@@ -91,6 +94,15 @@ def parse_meta(raw, now_ms):
         raise Refusal(400, "bad_expiry")
     if not (isinstance(m["token_hash"], str) and _HEX64.fullmatch(m["token_hash"])):
         raise Refusal(400, "bad_token_hash")
+    m.setdefault("label", m["ticket"])  # a host that names nothing: the list shows the ticket id
+    m.setdefault("by_kind", "person")
+    m.setdefault("by_name", None)
+    if not P.text_ok(m["label"], 80):
+        raise Refusal(400, "bad_label")
+    if m["by_kind"] not in ("person", "agent"):
+        raise Refusal(400, "bad_by")
+    if m["by_name"] is not None and not P.text_ok(m["by_name"], 60):
+        raise Refusal(400, "bad_by")
     files = m["files"]
     if not isinstance(files, list) or not 1 <= len(files) <= pathrules.MAX_FILES:
         raise Refusal(400, "bad_files")
@@ -127,7 +139,7 @@ def manifest_hash(m):
 class Store:
     def __init__(self, data_dir):
         self.root = os.path.abspath(data_dir)
-        for d in ("incoming", "shares"):
+        for d in ("incoming", "shares", "apps"):
             os.makedirs(os.path.join(self.root, d), mode=0o700, exist_ok=True)
 
     def share_dir(self, kind, sid):
@@ -137,17 +149,18 @@ class Store:
     def _open_dir(name, dir_fd=None):
         return os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=dir_fd)
 
-    def make_incoming(self, sid):
-        base = self.share_dir("incoming", sid)
+    def make_incoming(self, sid, kind="incoming"):
+        base = self.share_dir(kind, sid)
         os.makedirs(base, mode=0o700, exist_ok=True)
         for sub in ("files", ".tmp"):
             os.makedirs(os.path.join(base, sub), mode=0o700, exist_ok=True)
 
-    def write_file(self, sid, path, data):
-        """Write one file into incoming/<sid>/files/<path>. Directories are walked and created with
-        O_NOFOLLOW from a dir fd; the bytes go to a fresh O_EXCL temp file and are renamed into place."""
+    def write_file(self, sid, path, data, kind="incoming"):
+        """Write one file into <kind>/<sid>/files/<path> (apps: sid is "<app id>/<version>"). Directories are
+        walked and created with O_NOFOLLOW from a dir fd; the bytes go to a fresh O_EXCL temp file and are
+        renamed into place."""
         parts = path.split("/")
-        base = self._open_dir(self.share_dir("incoming", sid))
+        base = self._open_dir(self.share_dir(kind, sid))
         fds = [base]
         try:
             tmp_dir = self._open_dir(".tmp", base)
@@ -210,6 +223,48 @@ class Store:
         finally:
             for fd in fds:
                 os.close(fd)
+
+    def stat_files(self, kind, sid):
+        """{path: (size, sha256 hex)} of every regular file under <kind>/<sid>/files, recomputed from the bytes on
+        disk (nothing follows a symlink; a symlink or other non-regular entry is listed with size -1 so a caller
+        comparing against a manifest sees it as an extra file). Missing dir: {}."""
+        out = {}
+        top = os.path.join(self.share_dir(kind, sid), "files")
+
+        def walk(fd, prefix):
+            for name in sorted(os.listdir(fd)):
+                st = os.stat(name, dir_fd=fd, follow_symlinks=False)
+                rel = prefix + name
+                if stat.S_ISDIR(st.st_mode):
+                    sub = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+                    try:
+                        walk(sub, rel + "/")
+                    finally:
+                        os.close(sub)
+                elif stat.S_ISREG(st.st_mode):
+                    h = hashlib.sha256()
+                    ffd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=fd)
+                    with os.fdopen(ffd, "rb") as f:
+                        for chunk in iter(lambda: f.read(1 << 20), b""):
+                            h.update(chunk)
+                    out[rel] = (st.st_size, h.hexdigest())
+                else:
+                    out[rel] = (-1, "")
+
+        try:
+            fd = os.open(top, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        except OSError:
+            return {}
+        try:
+            walk(fd, "")
+        finally:
+            os.close(fd)
+        return out
+
+    def remove_tree(self, kind, sid):
+        import shutil
+
+        shutil.rmtree(self.share_dir(kind, sid), ignore_errors=True)
 
     def go_live(self, sid):
         """Move incoming/<sid>/files to shares/<sid>/files with one rename."""
@@ -290,9 +345,10 @@ def op_put_meta(settings, store, ws, wsk, sid, raw):
                 raise Refusal(413, "quota_exceeded")
             conn.execute(
                 "INSERT INTO shares(id, owner_ws, ticket, kind, token_hash, expires_ms, view_limit,"
-                " state, manifest_hash, bytes, created_ms) VALUES (?,?,?,?,?,?,?,'staged',?,?,?)",
+                " state, manifest_hash, bytes, created_ms, label, by_kind, by_name)"
+                " VALUES (?,?,?,?,?,?,?,'staged',?,?,?,?,?,?)",
                 (sid, ws, m["ticket"], m["kind"], m["token_hash"], m["expires_ms"],
-                 m["view_limit"], mh, total, now),
+                 m["view_limit"], mh, total, now, m["label"], m["by_kind"], m["by_name"]),
             )  # fmt: skip
             conn.executemany(
                 "INSERT INTO share_files(share_id, path, size, sha256) VALUES (?,?,?,?)",
@@ -447,7 +503,77 @@ def op_revoke(settings, store, ws, wsk, sid):
         conn.close()
 
 
-def _view(row, now):
+def _json_body(raw):
+    """A small strict JSON object body (no duplicate keys)."""
+    try:
+        m = json.loads(raw.decode("utf-8"), object_pairs_hook=_no_dup_pairs)
+    except (UnicodeError, ValueError):
+        raise Refusal(400, "malformed") from None
+    if not isinstance(m, dict):
+        raise Refusal(400, "malformed")
+    return m
+
+
+def op_extend(settings, ws, wsk, sid, raw):
+    """``POST /shares/{id}/extend {days}`` (M4 C4, condition 14): a live link ends ``days`` (1..30) from NOW and never
+    earlier than it already did. The person's signed note is checked at the host; here only the bounds."""
+    body = _json_body(raw)
+    problem = P.extend_problem(body)
+    if problem is not None:
+        raise Refusal(400, problem)
+    conn = db.connect(settings.db_path)
+    try:
+        _txn(conn, ws, wsk)
+        try:
+            row = owned_share(conn, ws, sid)
+            now = settings.clock()
+            if row["state"] != "live" or row["expires_ms"] <= now:
+                _gone(row)
+            new = P.extend_expiry(now, body)
+            if new <= row["expires_ms"]:
+                raise Refusal(400, "not_longer")
+            conn.execute("UPDATE shares SET expires_ms=? WHERE id=?", (new, sid))
+            conn.execute("COMMIT")
+        except BaseException:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
+        return {"id": sid, "expires_ms": new, "result": "extended"}
+    finally:
+        conn.close()
+
+
+def op_password(settings, ws, wsk, sid, raw):
+    """``POST /shares/{id}/password {pw}`` (M4 C4/C5, condition 8): ``pw`` must be a valid C5 record made by the host
+    (scrypt n=32768 r=8 p=1). Never null: taking a password away widens access, so there is no route for it (the
+    owner shares again instead). Publish never sees the plain password."""
+    body = _json_body(raw)
+    if set(body) != {"pw"} or P.password_record_problem(body["pw"]) is not None:
+        raise Refusal(400, "malformed")
+    conn = db.connect(settings.db_path)
+    try:
+        _txn(conn, ws, wsk)
+        try:
+            row = owned_share(conn, ws, sid)
+            if row["state"] != "live" or row["expires_ms"] <= settings.clock():
+                _gone(row)
+            conn.execute(
+                "UPDATE shares SET pw=? WHERE id=?", (json.dumps(body["pw"], sort_keys=True), sid)
+            )
+            conn.execute(
+                "DELETE FROM views WHERE share_id=?", (sid,)
+            )  # open sessions end: they passed without it
+            conn.execute("COMMIT")
+        except BaseException:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
+        return {"id": sid, "has_password": True}
+    finally:
+        conn.close()
+
+
+def _view(row, now, narrowed=False):
     state = row["state"]
     if state == "live" and row["expires_ms"] <= now:
         state = "expired"
@@ -461,6 +587,9 @@ def _view(row, now):
         "views": row["views"],
         "bytes": row["bytes"],
         "created_ms": row["created_ms"],
+        "has_password": row["pw"] is not None,
+        # a hub admin revoked this link (M4 C2): the workspace sees who narrowed it, in its own list
+        "narrowed_by": "hub" if narrowed else None,
     }
 
 
@@ -471,7 +600,11 @@ def op_list(settings, ws):
             "SELECT * FROM shares WHERE owner_ws=? ORDER BY created_ms, id", (ws,)
         ).fetchall()
         now = settings.clock()
-        return {"shares": [_view(r, now) for r in rows]}
+        return {
+            "shares": [
+                _view(r, now, narrow.narrowed_by_hub(conn, ws, "share", r["id"])) for r in rows
+            ]
+        }
     finally:
         conn.close()
 
@@ -482,7 +615,7 @@ def op_get(settings, ws, sid):
         row = owned_share(conn, ws, sid)
         if row["state"] in ("revoked", "expired"):
             _gone(row)
-        out = _view(row, settings.clock())
+        out = _view(row, settings.clock(), narrow.narrowed_by_hub(conn, ws, "share", sid))
         out["files"] = [
             {"path": f["path"], "size": f["size"], "present": bool(f["present"])}
             for f in conn.execute(
@@ -564,6 +697,16 @@ def install(app, settings):
     @router.post("/shares/{sid}/commit")
     async def commit(sid: str, request: Request):
         return await guarded(request, lambda ws, wsk: op_commit(settings, store, ws, wsk, sid))
+
+    @router.post("/shares/{sid}/extend")
+    async def extend(sid: str, request: Request):
+        raw = await request.body()
+        return await guarded(request, lambda ws, wsk: op_extend(settings, ws, wsk, sid, raw))
+
+    @router.post("/shares/{sid}/password")
+    async def password(sid: str, request: Request):
+        raw = await request.body()
+        return await guarded(request, lambda ws, wsk: op_password(settings, ws, wsk, sid, raw))
 
     @router.delete("/shares/{sid}")
     async def revoke(sid: str, request: Request):

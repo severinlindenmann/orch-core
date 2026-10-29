@@ -1,11 +1,12 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { useRouter, useRouterState } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { InfoDrawer } from '@/components/InfoDrawer'
 import type { Workspace } from '@/api/types'
 import { hubQueries, hubServed, type HubStatus } from '@/api/hub'
 import { Raw } from '@/components/sign/visible'
-import { Action, Panel, useFullAllowed, useHub, violet } from './shared'
-import { JoinFlow } from './JoinFlow'
+import { Action, Details, Panel, useFullAllowed, useHub, violet } from './shared'
+import { JoinFlow, connectFromHash } from './JoinFlow'
 import { FullSwitch } from './FullSwitch'
 import { LeaveFlow } from './LeaveFlow'
 import { ShareRules, AlwaysShared } from './ShareRules'
@@ -17,6 +18,19 @@ export function HubTab({ workspace }: { workspace: Workspace }) {
   const status = useHub(ws)
   const fullAllowed = useFullAllowed(ws)
   const [flow, setFlow] = useState<'join' | 'full' | 'leave' | 'share'>()
+  // P13: the hub's /c page opens Settings > Hub with `#connect=<link>`. Take it once, take it out of the address, and open
+  // the join dialog (standalone only) with the link prefilled.
+  const router = useRouter()
+  const hash = useRouterState({ select: s => s.location.hash })
+  const [incoming] = useState(() => connectFromHash(hash))
+  const [initialLink, setInitialLink] = useState<string>()
+  useEffect(() => {
+    if (/^#?connect=/.test(hash)) router.history.replace(router.history.location.pathname + router.history.location.search)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  const mode = status.data?.mode
+  useEffect(() => {
+    if (incoming && mode === 'standalone') { setInitialLink(incoming); setFlow('join') }
+  }, [incoming, mode])
   if (!hubServed(ws)) return <Panel title="Hub settings unavailable"><p>This host does not serve hub settings yet.</p></Panel>
   if (status.isPending) return <Panel title="Hub"><p role="status">Loading hub settings…</p></Panel>
   if (status.isError) return <Panel title="Hub"><p role="alert">Could not load hub settings.</p><Action id="hub-status-retry" onClick={() => void status.refetch()}>Try again</Action></Panel>
@@ -37,23 +51,23 @@ export function HubTab({ workspace }: { workspace: Workspace }) {
       {hubName && <p className="text-sm font-semibold">Hub <Raw>{hubName}</Raw></p>}
       {s.hub_id && <InfoDrawer testId="hub-status-details"><p className="break-words text-sm">Hub id (from the hub, not signed): <Raw>{s.hub_id}</Raw></p></InfoDrawer>}
     </>}
-    {flow === 'join' && <JoinFlow ws={ws} onClose={() => setFlow(undefined)} />}
+    {flow === 'join' && <JoinFlow ws={ws} initialLink={initialLink} onClose={() => setFlow(undefined)} />}
     {flow === 'full' && <FullSwitch ws={ws} onClose={() => setFlow(undefined)} />}
     {flow === 'leave' && <LeaveFlow ws={ws} onClose={() => setFlow(undefined)} />}
   </div>
 }
 export function StandalonePage({ onJoin }: { onJoin: () => void }) {
   return <><Panel title="Hub"><p><strong>Not connected.</strong> This workspace works on its own. Connect a hub to use your phone, publish files and hand work to other workspaces.</p>
-    <p className="text-text-muted">You need the connect link from a hub admin and your backup key from setup. You confirm the connection here with one click.</p>
+    <p className="text-text-muted">You need a connect link from your hub admin.</p>
     <Action id="hub-connect" onClick={onJoin}>Connect a hub</Action>
   </Panel><Panel title="What stays the same"><p>Your tickets, agents and keys stay on this computer.</p><p>You can leave the hub at any time and keep working.</p></Panel></>
 }
 export function SelectivePage({ ws, fullAllowed: _fullAllowed, onShare, onFull, onLeave }: { ws: string; fullAllowed: boolean; onShare: () => void; onFull: () => void; onLeave: () => void }) {
   const share = useQuery(hubQueries.share(ws))
-  return <><Panel title="Connected · Hub sees only what you share" tone={violet}><p>You keep signing locally. Needs-you notes (items that need your attention) and full questions are always shared; the hub sees nothing else unless you choose it.</p></Panel>
+  return <><Panel title="Connected · Hub sees only what you share" tone={violet}><p>You keep signing locally. Notes that need you and full questions are always shared; the hub sees nothing else, apart from this workspace's name, unless you choose it.</p></Panel>
     <Panel title="What the hub can see">
       {share.isPending ? <p role="status">Loading shared items…</p> : share.isError ? <><p role="alert">Could not load shared items.</p><Action id="hub-shared-retry" onClick={() => void share.refetch()}>Try again</Action></> : !share.data.available ? <p data-testid="hub-share-unavailable">Sharing settings are not available on this host yet. Update orch to choose what the hub sees.</p> : <>
-        <p>{share.data.shared} shared items · from the hub, not signed</p><AlwaysShared share={share.data} />
+        <p>{share.data.shared} shared items</p><Details testId="hub-shared-details"><p>Counts are from the hub, not signed.</p></Details><AlwaysShared share={share.data} />
         <p>{share.data.rules.filter(r => r.kind !== 'needs_you' && r.kind !== 'questions').length} sharing rules</p>
         {share.data.refused.length > 0 && <p className="text-warning">{share.data.refused.length} items could not be shared.</p>}
       </>}
@@ -67,7 +81,7 @@ export function SelectivePage({ ws, fullAllowed: _fullAllowed, onShare, onFull, 
 }
 export function FullPage({ status, onLeave }: { status: HubStatus; onLeave: () => void }) {
   return <><Panel title="The hub can read everything in this workspace" tone={violet}><p>Every ticket, file and note, now and later. Hub admins act as admins here. Approvals use your phone or passkey.</p></Panel>
-    <Panel title="Access through the hub"><p className="text-text-muted">from the hub, not signed</p>
+    <Panel title="Access through the hub"><Details testId="hub-access-details"><p>From the hub, not signed.</p></Details>
       {(['read', 'edit', 'admin'] as const).map(role => <div key={role} className="flex flex-wrap justify-between gap-2 border-t border-border py-2"><span>{role === 'read' ? 'Can read' : role === 'edit' ? 'Can edit' : 'Admins'}</span><span>{status.groups ? (status.groups[role] === 1 ? '1 person' : status.groups[role] + ' people') : 'Count not available'}</span></div>)}
     </Panel>
     <Panel title="Share only some things instead"><p>Leave this hub, then rejoin and choose “Only what I choose”. What the hub has already read cannot be taken back.</p></Panel>

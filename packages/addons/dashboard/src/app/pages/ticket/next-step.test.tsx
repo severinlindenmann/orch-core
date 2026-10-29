@@ -1,7 +1,8 @@
-import { cleanup, render, screen, within } from '@testing-library/react'
+import { act, cleanup, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, expect, it, vi } from 'vitest'
 import type { TicketDocument } from '@/api/types'
+import * as gesture from '@/components/sign/trustedPress'
 import { TicketProgress } from './NextStep'
 
 afterEach(cleanup)
@@ -30,22 +31,100 @@ it('a plan the viewer may approve: one card with Approve plan and Change somethi
   expect(card).toHaveTextContent('Plan ready')
   const user = userEvent.setup()
   await user.click(within(card).getByRole('button', { name: 'Approve plan' }))
-  expect(sign).toHaveBeenLastCalledWith({ kind: 'approve', gate: 'plan' })
+  expect(sign).toHaveBeenLastCalledWith({ kind: 'approve', gate: 'plan', pressed: false }) // a synthetic click is no press (P06)
+  vi.spyOn(gesture, 'trustedPress').mockReturnValue(true)
+  await user.click(within(card).getByRole('button', { name: 'Approve plan' }))
+  expect(sign).toHaveBeenLastCalledWith({ kind: 'approve', gate: 'plan', pressed: true })
+  vi.restoreAllMocks()
   await user.click(within(card).getByRole('button', { name: 'Change something' }))
   expect(sign).toHaveBeenLastCalledWith({ kind: 'request_changes', gate: 'plan' })
   expect(screen.getByTestId('step-understand')).toHaveAttribute('data-state', 'current')
 })
 
-it('the agent stopped early: says what to add first and to start the agent again, with no button', async () => {
+const run = (state: 'starting' | 'running' | 'exited' | 'lost') => ({ state, started_at: '2026-10-29T08:00:00Z' })
+const noSections = async () => {
   const doc = await demo()
   doc.status = 'open'
   doc.claim = null
   doc.gates.requirements = { ...doc.gates.requirements, state: 'pending', approvals: [], missing: ['context', 'out_of_scope'] }
-  show(doc)
+  return doc
+}
+const showWith = (doc: TicketDocument, o: { run?: ReturnType<typeof run> | null; wait?: string | null }) =>
+  render(<TicketProgress ticket={structuredClone(doc)} viewer={viewer as never} sign={vi.fn()} jump={() => {}} run={o.run} wait={o.wait} />)
+
+it('a ticket that never ran shows no banner, however empty its sections are', async () => {
+  showWith(await noSections(), { run: null })
+  expect(screen.queryByTestId('next-step')).toBeNull()
+})
+
+it('a run that is starting or running shows no banner', async () => {
+  for (const state of ['starting', 'running'] as const) {
+    const view = showWith(await noSections(), { run: run(state) })
+    expect(screen.queryByTestId('next-step')).toBeNull()
+    view.unmount()
+  }
+})
+
+it('a run that ended with the plan unfinished: says what is missing and offers the two ways on', async () => {
+  const onFinish = vi.fn()
+  const onEdit = vi.fn()
+  render(<TicketProgress ticket={await noSections()} viewer={viewer as never} sign={vi.fn()} jump={() => {}} run={run('exited')} onFinish={onFinish} onEdit={onEdit} />)
   const card = screen.getByTestId('next-step')
-  expect(card).toHaveTextContent('The agent stopped early')
-  expect(card).toHaveTextContent('Add Context and Out of scope first. Start the agent again to finish it.')
-  expect(within(card).queryAllByRole('button')).toHaveLength(0)
+  expect(card).toHaveTextContent('The requirements are not finished yet')
+  expect(card).toHaveTextContent('Still missing: a short background and what is not included.')
+  expect(card).not.toHaveTextContent('stopped early')
+  const buttons = within(card).getAllByRole('button')
+  expect(buttons.map((b) => b.textContent)).toEqual(['Ask the agent to finish', 'Add it myself'])
+  const user = userEvent.setup()
+  await user.click(buttons[0])
+  expect(onFinish).toHaveBeenCalledOnce()
+  await user.click(buttons[1])
+  expect(onEdit).toHaveBeenCalledOnce()
+})
+
+it('the card shows no button the viewer cannot use', async () => {
+  render(<TicketProgress ticket={await noSections()} viewer={viewer as never} sign={vi.fn()} jump={() => {}} run={run('exited')} />)
+  expect(within(screen.getByTestId('next-step')).queryAllByRole('button')).toHaveLength(0)
+})
+
+it('a terminal wait on an unfinished plan: the not-finished card, not Open terminal', async () => {
+  const doc = await demo()
+  doc.status = 'open'
+  doc.claim = null
+  doc.gates.requirements.state = 'approved'
+  doc.gates.plan = { ...doc.gates.plan, state: 'pending', approvals: [], missing: ['context', 'acceptance'] }
+  render(<TicketProgress ticket={doc} viewer={viewer as never} sign={vi.fn()} jump={() => {}} run={run('running')} wait="run_7" onFinish={vi.fn()} onEdit={vi.fn()} openTerminal={vi.fn()} />)
+  const card = screen.getByTestId('next-step')
+  expect(card).toHaveTextContent('The plan is not finished yet')
+  expect(card).toHaveTextContent('Still missing: a short background and one check that proves it works')
+  expect(screen.queryByRole('button', { name: 'Open terminal' })).toBeNull()
+  expect(screen.queryByText(/Agent is working/)).toBeNull()
+})
+
+it('once the gap is filled the Plan ready card takes its place', async () => {
+  const doc = await demo()
+  doc.status = 'open'
+  doc.claim = null
+  doc.gates.requirements.state = 'approved'
+  doc.gates.plan = { ...doc.gates.plan, state: 'pending', approvals: [], missing: ['context'] }
+  const view = render(<TicketProgress ticket={doc} viewer={viewer as never} sign={vi.fn()} jump={() => {}} wait="run_7" onFinish={vi.fn()} />)
+  expect(screen.getByTestId('next-step')).toHaveTextContent('The plan is not finished yet')
+  view.rerender(<TicketProgress ticket={{ ...doc, gates: { ...doc.gates, plan: { ...doc.gates.plan, missing: [] } } }} viewer={viewer as never} sign={vi.fn()} jump={() => {}} wait="run_7" onFinish={vi.fn()} />)
+  expect(screen.getByTestId('next-step')).toHaveTextContent('Plan ready')
+  expect(screen.getByRole('button', { name: 'Approve plan' })).toBeInTheDocument()
+})
+
+it('a terminal wait for the ticket with nothing missing: the idle card with Open terminal', async () => {
+  const onOpen = vi.fn()
+  const doc = await demo()
+  doc.status = 'open'
+  doc.claim = null
+  render(<TicketProgress ticket={doc} viewer={viewer as never} sign={vi.fn()} jump={() => {}} run={run('running')} wait="run_7" openTerminal={onOpen} />)
+  const card = screen.getByTestId('next-step')
+  expect(card).toHaveTextContent('The agent is waiting for you')
+  expect(card).toHaveTextContent('The agent is idle. Open it to see why.')
+  await userEvent.setup().click(within(card).getByRole('button', { name: 'Open terminal' }))
+  expect(onOpen).toHaveBeenCalledWith('run_7')
 })
 
 it('the stepper: done steps, the first open one is current, the rest still to do', async () => {
@@ -199,7 +278,63 @@ it('while the agent works: one calm line, no buttons', async () => {
   doc.gates.plan.state = 'approved'
   show(doc)
   const line = screen.getByTestId('next-step')
-  expect(line).toHaveTextContent('Agent is working on it')
+  expect(line).toHaveTextContent(/Building: Seed configs with types · \d+ h/)
   expect(within(line).queryAllByRole('button')).toHaveLength(0)
   expect(line).not.toHaveTextContent('The agent stopped early')
+})
+
+// run-9 J04: after "Approve plan" the agent's turn had ended; the ticket showed "Agent is working on it" for minutes.
+const approvedIdle = async () => {
+  const doc = await demo()
+  doc.status = 'in_progress' as never
+  doc.claim = { agent: 'claude-code', session: 's_1', for: 'p_sev', since: '2026-10-29T08:00:00Z', live: true } as never
+  doc.gates.requirements = { ...doc.gates.requirements, state: 'approved', missing: [] }
+  doc.gates.plan = { ...doc.gates.plan, state: 'approved', missing: [] }
+  doc.tasks_state = doc.tasks_state.map((t) => ({ ...t, state: 'todo' as const, lease: null, receipt: null, done_at: null }))
+  return doc
+}
+
+it('an idle agent after the plan approval: no spinner, one Start building button', async () => {
+  const onFinish = vi.fn()
+  render(<TicketProgress ticket={await approvedIdle()} viewer={viewer as never} sign={vi.fn()} jump={() => {}} run={run('running')} wait="r_1" onFinish={onFinish} />)
+  const card = screen.getByTestId('next-step')
+  expect(card).toHaveTextContent('Plan approved')
+  expect(card).not.toHaveTextContent('working')
+  expect(card).not.toHaveTextContent('stopped') // the idle source may be a quiet terminal: "may be waiting"
+  expect(card).toHaveTextContent('may be waiting')
+  expect(within(card).getAllByRole('button')).toHaveLength(1)
+  await userEvent.setup().click(within(card).getByRole('button', { name: 'Start building' }))
+  expect(onFinish).toHaveBeenCalledOnce()
+})
+
+it('the same ticket while the agent prints (no wait): the working note, no button', async () => {
+  render(<TicketProgress ticket={await approvedIdle()} viewer={viewer as never} sign={vi.fn()} jump={() => {}} run={run('running')} wait={null} onFinish={vi.fn()} />)
+  expect(screen.getByTestId('next-step')).toHaveTextContent(/Working on it/)
+  expect(screen.queryByRole('button', { name: 'Start building' })).toBeNull()
+})
+
+it('agentWorking: a live claim is working only while the agent is not idle', async () => {
+  const { agentWorking } = await import('./progress')
+  const t = await approvedIdle()
+  expect(agentWorking(t)).toBe(true)
+  expect(agentWorking(t, 'r_1')).toBe(false)
+  expect(agentWorking({ claim: null })).toBe(false)
+})
+
+it('P15: the working line says what the agent does and counts up on its own', async () => {
+  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+  try {
+    const doc = await demo()
+    doc.status = 'in_progress' as never
+    doc.gates.requirements.state = 'approved'
+    doc.gates.plan.state = 'approved'
+    doc.claim = { session: 's', agent: 'a', live: true, since: new Date().toISOString() } as never
+    doc.tasks_state = [{ id: 'T1', text: 'Add hello.txt', verify: null, proves: [], state: 'doing', lease: { session: 's', agent: 'a', since: new Date(Date.now() - 30_000).toISOString() }, receipt: null, done_at: null }]
+    show(doc)
+    expect(screen.getByTestId('activity-line')).toHaveTextContent('Building: Add hello.txt · just now')
+    const { setClock } = await import('@/lib/time')
+    setClock(() => Date.now() + 120_000)
+    await act(async () => { await vi.advanceTimersByTimeAsync(31_000) })
+    expect(screen.getByTestId('activity-line')).toHaveTextContent('Building: Add hello.txt · 2 min')
+  } finally { vi.useRealTimers() }
 })

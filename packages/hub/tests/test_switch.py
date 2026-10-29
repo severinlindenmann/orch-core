@@ -344,6 +344,8 @@ def test_a_switch_session_reaches_only_the_named_routes_everything_else_is_close
             "change_id",
             "name",
             "space_id",
+            "share_id",
+            "app_id",
         ):
             path = path.replace("{" + name + "}", ws)
         s, o, _ = w.call(rt.method, path, {}, token=fresh())
@@ -486,3 +488,34 @@ def test_signing_in_after_a_switch_gives_a_normal_session(w):
     assert w.api.d.channels.session_info(real)["via"] is None
     s, me, _ = w.call("GET", "/session", token=real)
     assert s == 200 and me["needs_sign_in"] is False
+
+
+def test_workspace_rows_fall_back_to_the_owner_never_an_id_and_count_several(w):
+    from orch_hub.switch import workspace_rows
+
+    w.reg.ws[WS]["name"] = None
+    w.reg.ws[WS_SEL]["name"] = None
+    rows = {r["workspace_id"]: r for r in workspace_rows(w.reg, w.env.acc, w.ann)}
+    names = sorted(r["name"] for r in rows.values())
+    assert names == ["ann's workspace", "ann's workspace 2"] and all(r["owner_name"] == "ann" for r in rows.values())
+    assert all(WS[:8] not in r["name"] for r in rows.values())
+
+
+def test_a_connect_link_for_ben_issues_to_ben_only_and_the_owner_must_be_a_real_active_person(w):
+    admin = w.login(w.admin)
+    ben = w.env.user("ben")
+    ws = "e" * 32
+    w.reg.add(ws, "full", owner=ben)
+    r = ops.switch_ticket(ctx(w, ws, "switch_ticket", {"origin": DASH, "return_to": "/", "kind": "open"}))
+    assert w.sw.peek(r["ticket"], "to_hub")["user"] == ben  # the ticket is for the workspace's owner alias, nobody else
+    w.api.d.invites = type(
+        "I", (), {"mint": lambda self, now, owner_user=None: ("code" + str(owner_user)[:4], now + 1)}
+    )()
+    w.api.d.keys = type("K", (), {"hub_id": "a" * 32})()
+    w.api.d.api_origin = ORIGIN
+    s, o, _ = w.call("POST", "/admin/connect", {"owner_user": ben}, token=admin)
+    assert s == 200 and o["owner_user"] == ben and o["link"].endswith("~" + ben)
+    for bad in ("f" * 32, 5, "", None):
+        assert w.call("POST", "/admin/connect", {"owner_user": bad}, token=admin)[:2] == (400, {"error": "malformed"})
+    w.env.acc.set_disabled(ben, True, actor=w.admin)
+    assert w.call("POST", "/admin/connect", {"owner_user": ben}, token=admin)[1] == {"error": "malformed"}

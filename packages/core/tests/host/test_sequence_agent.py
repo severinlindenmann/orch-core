@@ -12,7 +12,7 @@ from orch.host.sequence import Aborted
 from tests.host import human_helpers
 from tests.host.dispatch_helpers import SESSION
 from tests.host.test_sequence import Rig, doc, intent_of
-from tests.host.test_sequence_quick import click_prepare, quick
+from tests.host.test_sequence_quick import _quick_on, click_prepare, quick  # noqa: F401
 
 lab, served, human = human_helpers.lab, human_helpers.served, human_helpers.human
 from tests.host.test_click import click  # noqa: E402,F401
@@ -213,13 +213,16 @@ def test_i5_the_review_says_the_start_is_not_signed_and_names_the_grant(human, t
     notes = sequence.build_content(first, verified=True)["notes"]
     joined = "\n".join(notes)
     assert "Not signed: the agent start" in joined
-    assert "Agents may work on any ticket they are allowed to work on" in joined
+    assert "Agents may work, as you, on any ticket you allow, not only this one, for 8 hours." in joined
+    assert "never to the dashboard" not in joined and "mode:" not in joined  # r7-P10: those are technical details
     assert "Typed word" not in joined and "GRANT" not in joined
     assert "Nothing here approves the requirements or the plan" in joined
-    assert any("5 steps" in n for n in notes)
+    assert not any("steps" in n for n in notes)
     assert "Create DEMO-" in content["headline"]
     text = signer.render(first, lambda w: ("ws", "ORCH"))
     assert "Not signed: the agent start" in text and "5 signatures, ONE confirmation" in text
+    assert "One confirmation signs all 5 steps." in text  # the technical details carry the note
+    assert "never to the dashboard" in text  # and the full grant sentence (secret route)
     assert not any(
         "Not signed" in n for n in sequence.build_content(Rig(human, tmp_path / "b").first(), verified=True)["notes"]
     )  # a ticket without the agent part says nothing about a start
@@ -231,3 +234,33 @@ def test_i6_the_grant_is_exactly_what_start_agent_uses_today_a_workable_runner_g
     ev = next(e for _, evs, _ in rig.submitted for e in evs if e["type"] == "grant.issued")
     assert (ev["scope"], ev["verbs"], ev["label"], ev["hours"]) == ("workable", "agent", "runner", 3)
     assert out["landed"] == 5
+
+
+def test_review_digest_stable_across_minutes(monkeypatch, click, served, human):  # noqa: F811
+    """J04-01: the review text holds no wall clock, so a View built a minute later has the same digest."""
+    import time
+
+    from tests.host.test_sequence_quick import quick
+
+    t0 = time.time()
+    intents = [
+        sequence.validate_intent(intent_of(agent=AGENT)),
+        sequence.validate_intent(quick(agent=AGENT)),
+    ]
+    for intent in intents:
+        base = sequence.extra_lines(intent)
+        full = sequence.extra_lines(intent, full=True)
+        assert any("from when you sign" in n for n in full)  # r7-P10: the technical details keep the full sentence
+        for dt in (61, 3600):
+            monkeypatch.setattr(time, "time", lambda dt=dt: t0 + dt)
+            assert sequence.extra_lines(intent) == base
+            assert sequence.extra_lines(intent, full=True) == full
+        monkeypatch.undo()
+
+    click.signer._execution = lambda entry: True
+    p = click_prepare(click, quick(agent=AGENT))
+    v = click.view(p["request_id"])
+    monkeypatch.setattr(time, "time", lambda: t0 + 61)
+    click.mono.t += 61
+    out = click.sign(p["request_id"], v["view_digest"])
+    assert out["grant"].startswith("gr_")

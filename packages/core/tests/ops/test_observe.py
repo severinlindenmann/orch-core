@@ -41,6 +41,7 @@ def test_submit_on_a_repo_linked_ticket_works_end_to_end(ws, cli):
 
 
 def test_a_new_commit_is_observed_on_the_next_show_and_old_receipts_stop_counting(ws, cli):
+    ws.plan_gate_off()  # r10-P02: no plan approval in this test; an agent builds only after one
     repo = ws.repo()
     claimed(cli)
     cli("ac", "add", "a")
@@ -67,6 +68,7 @@ def test_wait_observes_too_and_a_missing_branch_or_repo_is_skipped(ws, cli):
     cli("show")
     assert "branch.pushed" not in types(ws)
     cli("set", "1", LINKS)
+    cli("ask", "Which?")  # something open for a person: the wait waits (else wait.incomplete)
     assert cli("wait", "--timeout", "1").code == 0
     assert "branch.pushed" in types(ws)
 

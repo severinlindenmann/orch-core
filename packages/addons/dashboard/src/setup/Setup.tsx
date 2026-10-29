@@ -1215,7 +1215,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                   <section className="review-item" key={`detail-${f.id}`}>
                     <h3>Change history</h3>
                     <p>
-                      <Raw>{f.detail}</Raw>
+                      <Raw>{f.detail ?? ""}</Raw>
                     </p>
                   </section>
                 ))}

@@ -1192,3 +1192,16 @@ def test_one_capability_has_at_most_four_posts_in_flight_across_its_servers(env)
         for t in threads:
             t.join(10)
     assert results == [200] * 4
+
+
+# -- delta fix N3: the capability shape has boundaries ---------------------------------------------------------------
+
+
+def test_capability_shape_has_boundaries():
+    from orch.host.mcpshared import CAPABILITY_SHAPE, new_capability
+
+    real = new_capability()
+    assert CAPABILITY_SHAPE.search(f"token={real}, next").group(0) == real
+    assert CAPABILITY_SHAPE.search("n" + real) is None  # "nocap_..."
+    assert CAPABILITY_SHAPE.search("nocap_" + "a" * 60) is None
+    assert CAPABILITY_SHAPE.search("ocap_" + "a" * 44) is None

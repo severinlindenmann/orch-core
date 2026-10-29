@@ -40,7 +40,7 @@ __all__ = [
     "tool_view",
 ]
 
-CAPABILITY_SHAPE = re.compile(r"ocap_[A-Za-z0-9_-]{43}")
+CAPABILITY_SHAPE = re.compile(r"(?<![A-Za-z0-9_-])ocap_[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])")
 SERVER_NAME = re.compile(r"[a-z0-9-]{1,40}")
 TOOL_NAME = re.compile(r"[A-Za-z0-9_.-]{1,128}")
 TOOL_TITLE_MAX = 100

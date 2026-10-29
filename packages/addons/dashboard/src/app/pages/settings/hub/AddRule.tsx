@@ -31,6 +31,15 @@ function who(r: { people: string[]; teams: string[] }): string {
   return names.length ? 'Who will see it: ' + names.join(', ') : 'Only you can see it.'
 }
 
+/** "feature tickets", "tickets labelled x", "ticket DEMO-1": the rule in words (the value is drawn verbatim, never reworded). */
+function ruleWords(rule: HubRule, n: number): React.ReactNode {
+  const tickets = n === 1 ? 'ticket' : 'tickets'
+  if (rule.kind === 'type') return <><Raw>{rule.value}</Raw> {tickets}</>
+  if (rule.kind === 'tag') return <>{tickets} labelled <Raw>{rule.value}</Raw></>
+  if (rule.kind === 'ticket') return <>ticket <Raw>{rule.value}</Raw></>
+  return <Raw>{rule.kind}</Raw>
+}
+
 export function AddRuleReview({ ws, workspace, rule, after, onDone }: { ws: string; workspace: HubWorkspace; rule: HubRule; after: HubPreview | undefined; onDone?: () => void }) {
   const qc = useQueryClient()
   const [busy, setBusy] = useState(false)
@@ -50,14 +59,13 @@ export function AddRuleReview({ ws, workspace, rule, after, onDone }: { ws: stri
     ).finally(() => setBusy(false))
   }
   return <div className="space-y-2" data-testid="hub-add-review">
-    <p data-testid="hub-add-rule">Tickets: <Raw>{rule.kind}</Raw>{rule.value !== null && <> · <Raw>{rule.value}</Raw></>}{rule.value !== null && rule.description ? ' · with description' : ''}</p>
-    <WorkspaceLine workspace={{ id: workspace.id, name: workspace.name, prefix: workspace.prefix }} many testId="hub-review-workspace" />
+    <p data-testid="hub-add-sentence">Share {rule.kind === 'ticket' ? null : <>{review.new_count} </>}{ruleWords(rule, review.new_count)} from <Raw>{workspace.name}</Raw> with the hub{rule.value !== null && rule.description ? ', with their descriptions' : ''}.</p>
     <div className="flex items-center gap-1" data-testid="hub-add-readers">
       <p><Raw>{who(review.readers)}</Raw></p>
       <InfoDrawer testId="hub-add-readers-info"><p>{review.readers.note ?? 'From the hub, not signed.'}</p>{review.readers.info && <p>{review.readers.info}</p>}</InfoDrawer>
     </div>
     {review.widened.map((w, i) => <p key={i} data-testid="hub-add-widened" className="text-warning">Reaches more now: <Raw>{w.line.replace(/^ticket [^:]+:\s*/, '')}</Raw>{w.people_added.length + w.teams_added.length > 0 && <> · adds <Raw>{[...w.people_added, ...w.teams_added.map(t => 'team ' + t)].join(', ')}</Raw></>}{w.description_added && ' · now with its description'}</p>)}
-    <InfoDrawer testId="hub-add-details"><p data-testid="hub-add-hub">Hub: <Raw>{review.hub_id ?? 'unknown'}</Raw></p>{after.plan && <p>Plan: <Raw>{after.plan}</Raw></p>}</InfoDrawer>
+    <InfoDrawer testId="hub-add-details"><p data-testid="hub-add-rule">Tickets: <Raw>{rule.kind}</Raw>{rule.value !== null && <> · <Raw>{rule.value}</Raw></>}{rule.value !== null && rule.description ? ' · with description' : ''}</p><WorkspaceLine workspace={{ id: workspace.id, name: workspace.name, prefix: workspace.prefix }} many testId="hub-review-workspace" /><p data-testid="hub-add-hub">Hub: <Raw>{review.hub_id ?? 'unknown'}</Raw></p>{after.plan && <p>Plan: <Raw>{after.plan}</Raw></p>}</InfoDrawer>
     <p data-testid="hub-add-new">{review.new_count} new {review.new_count === 1 ? 'item leaves' : 'items leave'} this computer.</p>
     {review.leaves.map((t, i) => <p key={i} data-testid="hub-add-leaves">What leaves: <Raw>{t}</Raw></p>)}
     {review.later_edits && <p data-testid="hub-add-later">{review.later_edits}</p>}

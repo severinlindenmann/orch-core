@@ -9,7 +9,7 @@ import { OrbitMark } from '../brand/OrbitMark'
 import { CHECKLIST_PATH, createAppRouter } from '../app/router'
 import { getToken, isForeignNavigation, onSessionChange } from '../api/bootstrap'
 import { setFeatures } from '../api/features'
-import { session } from '../api/prodApi'
+import { onWorkspaceNotReady, session } from '../api/prodApi'
 import { StepUpModal } from './StepUpModal'
 import './shell.css'
 
@@ -54,6 +54,8 @@ function App() {
 }
 
 export function Shell() {
+  // A workspace read refused because its dashboard add-on went off or paused after the list was read: read the list again.
+  useEffect(() => onWorkspaceNotReady(() => void queryClient.invalidateQueries({ queryKey: ['workspaces'] })), [])
   const [token, setToken] = useState(getToken)
   const hadSession = useRef(token !== null)
   if (token) hadSession.current = true

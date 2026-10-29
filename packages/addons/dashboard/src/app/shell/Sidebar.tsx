@@ -36,6 +36,7 @@ import { hasFeature, isRealHost, showsLogout } from '@/api/features'
 import { logout } from '@/api/prodApi'
 import { activeGrantOf } from '@/api/grants'
 import { roleOf } from '@/api/permissions'
+import { isRunning } from '@/api/workspaces'
 import { useAttention } from '../attention'
 import { useRole } from '../useRole'
 import { HubLogout } from './CompanyRail'
@@ -179,9 +180,11 @@ export function Sidebar() {
   const attention = useAttention(workspace?.id)
   // The viewer's own active grant in the current workspace (revoke, re-issue and switching all show).
   const ws = workspace?.id
-  const grants = useQuery({ ...queries.grants(ws!), enabled: !!ws })
+  // Only for a workspace that is running: a host that is paused or switched off refuses every read (409).
+  const ready = !!workspace && isRunning(workspace)
+  const grants = useQuery({ ...queries.grants(ws!), enabled: ready })
   const addOns = useQuery({ ...queries.addOns(ws!), enabled: isRealHost() && !!ws && hasFeature('worktrees', ws) })
-  const today = useQuery({ ...queries.today(ws!), enabled: !!ws })
+  const today = useQuery({ ...queries.today(ws!), enabled: ready })
   const grant = grants.data && today.data ? activeGrantOf(grants.data, me?.person, Date.parse(today.data.now)) : undefined
   // A grant that ends on another day says the date (grants run up to 24 h).
   const grantTime = grant ? (today.data && !sameLocalDay(grant.until, today.data.now) ? fmtDateTime(grant.until) : fmtClock(grant.until)) : undefined

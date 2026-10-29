@@ -272,6 +272,8 @@ export type ClickNext =
   | 'open'
 
 export interface ClickProblem {
+  /** P06: Already done for a new ticket: the existing ticket, to open (key and title come from the host's record). */
+  ticket?: { key: string; title: string }
   title: string
   body: string
   next: ClickNext
@@ -348,6 +350,7 @@ export function clickProblem(e: unknown, minLeadS?: number): ClickProblem {
     case DEV_REFUSED:
       return { title: 'Refused by a dev sandbox host', body: devRefusedSentence(e), next: 'unavailable' }
     case 'intent.done':
+      if (e.ticket?.key) return { title: 'Already done', body: `${e.ticket.title ? `“${e.ticket.title}” (${e.ticket.key})` : e.ticket.key} was already created.`, next: 'open', ticket: e.ticket, signedAt: e.signed_at }
       return { title: 'Already done', body: alreadySigned(e), next: 'again', signedAt: e.signed_at, details: alreadyDetails(e) }
     case 'addon.already':
       // The add-on is already as asked: plain words, nothing to sign, nothing to "do again".

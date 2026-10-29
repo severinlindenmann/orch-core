@@ -185,6 +185,7 @@ class HostCheck:
         self.reads, self.checks, self.cancelled, self.pending = [], [], [], {}
         self.mismatch = False
         self.listing: list[dict] = []  # what `human.pending` without arguments lists (terminal hand-offs have a code)
+        self.review: list | None = None  # the committed events the host's record answers
         self.replay_error: str | None = None  # an idem code the host answers to the "Already done" replay
         self.verified: dict = {}  # what `adapters.handoff.request` answers (the verified record)
         self.key: str | None = None  # the ticket key of the host's row, once a sequence created it
@@ -199,7 +200,7 @@ class HostCheck:
             return {
                 "op": "log",
                 "request": {"id": REQ, "state": "submitted", "submitted_at": "2026-10-13T15:20:00Z"},
-                "material": {"review": [{"type": "log.added", "payload": {"message": "host text"}}]},
+                "material": {"review": self.review or [{"type": "log.added", "payload": {"message": "host text"}}]},
             }
         if op == "human.cancel":
             self.cancelled.append(args["request_id"])
@@ -1429,6 +1430,19 @@ def test_p06_when_the_stepped_retry_is_also_signed_it_steps_once_more(client, to
     c = prepare(client, token, stub, body)
     assert c.status_code == 200, c.text
     assert c.json()["request_id"] not in (a, b) and c.json()["repeat"] is True and script.prepared == 3
+
+
+def test_p06_already_done_names_the_created_ticket_in_plain_fields(client, token, stub, script, host_check, rich):
+    script.features = ["custody", "sequence"]
+    body = {"action": "new_sequence", "title": "Plan the launch", "priority": "high", "sections": {"summary": "Why."}}
+    first = prepare(client, token, stub, body)
+    script.states[first.json()["request_id"]] = "submitted"
+    host_check.review = [
+        {"type": "ticket.created", "key": "DEMO-0007", "title": "Plan the launch", "ticket_type": "feature"},
+        {"type": "log.added", "payload": {"message": "x"}},
+    ]
+    err = prepare(client, token, stub, body).json()["error"]
+    assert err["code"] == "intent.done" and err["ticket"] == {"key": "DEMO-0007", "title": "Plan the launch"}
 
 
 def test_p06_a_comment_with_an_unreadable_signed_record_still_blocks(client, token, stub, script, host_check, rich):

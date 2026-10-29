@@ -368,6 +368,16 @@ TOP_KEYS = {
         lambda v, code: v is None or (isinstance(v, str) and len(v) <= 40 and TIME.fullmatch(v) is not None),
     ),
     "op": _on(INTENT_DONE, _match(OP, OP_MAX)),
+    # P06: the ticket a signed new-ticket request created: its key and title, plain, nothing else
+    "ticket": _on(
+        INTENT_DONE,
+        lambda v, code: isinstance(v, dict)
+        and set(v) == {"key", "title"}
+        and isinstance(v["key"], str)
+        and TICKET_KEY.fullmatch(v["key"]) is not None
+        and isinstance(v["title"], str)
+        and len(v["title"]) <= 400,
+    ),
     "summary": _on(INTENT_DONE, lambda v, code: isinstance(v, str) and len(v) <= SUMMARY_MAX),
     # a landed local commit rides on any push failure, host refusals included (core records/cli.py)
     "commit": _match(COMMIT, 64),

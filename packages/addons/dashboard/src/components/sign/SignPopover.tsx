@@ -205,6 +205,7 @@ export function SignPopover(p: SignPopoverProps) {
       {['cancelled', 'failed', 'settling'].includes(click.phase) && <div className="flex flex-wrap justify-end gap-2">
         {/* An ended or unsettled attempt can always be left: Cancel withdraws a request still open, Close just closes. */}
         {dismiss(click.phase === 'failed' && click.prepared && click.problem?.next !== 'check' ? 'Cancel' : 'Close')}
+        {click.phase === 'failed' && click.problem?.ticket && router && <Link to="/ticket/$key" params={{ key: click.problem.ticket.key }} onClick={() => void close()} data-testid="open-existing-ticket" className="inline-flex h-9 items-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground hover:bg-primary/90">Open it</Link>}
         {(click.phase === 'cancelled' || (click.phase === 'failed' && ['prepare', 'retry', 'again', 'review'].includes(click.problem?.next ?? ''))) && <Button onClick={e => { if (trustedPress(e.nativeEvent) && p.action) void click.again(p.action) }}>Try again</Button>}
       </div>}
       {(click.phase === 'ready' || click.phase === 'signing') && <ClaudeConsentLine c={consent} />}

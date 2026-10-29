@@ -1126,7 +1126,7 @@ def test_n6_status_never_waits_for_the_channel(script, stub, tmp_path):
     held.wait(2)
     t0 = time.monotonic()
     assert signer.status() == signer._last
-    assert time.monotonic() - t0 < 0.3
+    assert time.monotonic() - t0 < 0.6  # waiting for the lock would take the 1 s hold; idle takes ~1 ms
     t.join()
 
 

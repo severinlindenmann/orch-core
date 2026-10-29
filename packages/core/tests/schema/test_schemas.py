@@ -2183,35 +2183,40 @@ def test_repeated_patterns_are_references_not_copies():
 @pytest.mark.slow
 def test_validation_speed_of_an_event_stays_cheap():
     """Measured about 0.26 ms per event on a laptop (is_valid fast path, envelope and definitions inlined). The
-    bound is relative to a calibration loop on the same machine (a slow CI box scales both), and the best of 5
-    runs counts, so a return to $ref chains (about 6x slower: over 200x the calibration, today about 40x)
-    fails and load noise does not."""
+    bound is a ratio to a calibration loop (a JSON round trip of the same events) measured back to back with the
+    validation in the same round, 9 rounds, and the smallest per-round ratio counts. A noisy neighbour that hits
+    one block of a round inflates only that round's ratio; the cleanest round decides. Today the ratio is about
+    40x, a return to $ref chains (about 6x slower) is 200x or more, so the bound is 150x: a real regression
+    fails clearly, a 100x blip of shared-runner noise does not."""
+    import json
     import time
 
     events = [(e["type"], e) for e in ex.EVENTS.values()]
     for _t, e in events:
         V("event", e)
 
-    def calibration() -> float:  # a JSON round trip of the same events: pure-Python work, per event
-        import json
-
+    def calibration() -> float:  # pure-Python work, per event
         t0 = time.process_time()
-        for _ in range(200):
+        for _ in range(100):
             for _t, e in events:
                 json.loads(json.dumps(e))
-        return (time.process_time() - t0) / (200 * len(events))
+        return (time.process_time() - t0) / (100 * len(events))
 
     def validation() -> float:
         t0 = time.process_time()
-        for _ in range(20):
+        for _ in range(10):
             for _t, e in events:
                 V("event", e)
-        return (time.process_time() - t0) / (20 * len(events))
+        return (time.process_time() - t0) / (10 * len(events))
 
-    cal = min(calibration() for _ in range(5))
-    per_event = min(validation() for _ in range(5))
-    print(f"validation {per_event * 1000:.3f} ms per event, calibration {cal * 1e6:.2f} us")
-    assert per_event < 100 * cal, f"{per_event * 1000:.2f} ms per event, calibration {cal * 1e6:.2f} us"
+    rounds = []
+    for _ in range(9):
+        cal = calibration()
+        rounds.append((validation() / cal, cal))
+    ratio, cal = min(rounds)
+    seen = [round(r) for r, _c in rounds]
+    print(f"validation {ratio:.1f}x calibration ({cal * 1e6:.2f} us); rounds {seen}")
+    assert ratio < 150, f"{ratio:.0f}x calibration ({cal * 1e6:.2f} us per event), rounds {seen}"
 
 
 def test_event_schemas_repeat_the_envelope_of_event_json():

@@ -37,7 +37,9 @@ def test_users_groups_members_grants_round_trip(w):
     _, o, _ = w.call("GET", f"/admin/grants?workspace_id={ws2}", token=tok)
     assert o["grants"] == [{"workspace_id": ws2, "group": "devs", "role": "edit"}]
     _, o, _ = w.call("GET", "/admin/groups", token=tok)
-    assert {"name": "devs", "members": [carol], "grants": [{"workspace_id": ws2, "role": "edit"}]} in o["groups"]
+    assert {"name": "devs", "members": [carol], "ends": {}, "grants": [{"workspace_id": ws2, "role": "edit"}]} in o[
+        "groups"
+    ]
     assert w.call("POST", "/admin/grants/revoke", {"workspace_id": ws2, "group": "devs"}, token=tok)[0] == 200
     assert (
         w.call("POST", "/admin/grants/revoke", {"workspace_id": ws2, "group": "devs"}, token=tok)[:2]
@@ -311,3 +313,50 @@ def test_my_workspaces_tells_an_admin_when_the_owners_were_asked(w, monkeypatch)
     _, o, _ = w.call("GET", "/me/workspaces", token=w.login(w.admin))
     assert o["workspaces"] and all(r["update_asked_ms"] == 4242 for r in o["workspaces"])
     assert all(r["update_asked_target"] == "9.9.9" for r in o["workspaces"])
+
+
+# --- GA-07: end dates, the review list, the default group --------------------------------------------------------------
+
+DAY = 86_400_000
+
+
+def test_ga07_member_with_an_end_date_review_keep_and_default_group_over_http(w):
+    tok = w.login(w.admin)
+    carol = w.env.user("carol", password=False)
+    now = w.clock()
+    assert w.call("POST", "/admin/groups", {"name": "temps"}, token=tok)[0] == 200
+    end = now + 5 * DAY
+    assert w.call("PUT", f"/admin/groups/temps/members/{carol}", {"ends_ms": end}, token=tok)[0] == 200
+    _, o, _ = w.call("GET", "/admin/groups", token=tok)
+    assert next(g for g in o["groups"] if g["name"] == "temps")["ends"] == {carol: end}
+    # a past or too-far end date is refused; the hub-admin group takes none
+    s, o, _ = w.call("PUT", f"/admin/groups/temps/members/{carol}", {"ends_ms": now - 1}, token=tok)
+    assert s >= 400 and "error" in o
+    assert w.call("PUT", f"/admin/groups/temps/members/{carol}", {"ends_ms": "soon"}, token=tok)[0] >= 400
+    s, _o, _ = w.call("PUT", f"/admin/groups/hub-admin/members/{carol}", {"ends_ms": end}, token=tok)
+    assert s == 400
+    # the review list shows it ("ends in 5 days"), one click extends it by 30 days
+    _, o, _ = w.call("GET", "/admin/review", token=tok)
+    assert [(i["group"], i["user_id"], i["ends_ms"], i["ended"]) for i in o["items"]] == [("temps", carol, end, False)]
+    assert w.call("POST", "/admin/review/keep", {"group": "temps", "user_id": carol}, token=tok)[0] == 200
+    _, o, _ = w.call("GET", "/admin/groups", token=tok)
+    assert next(g for g in o["groups"] if g["name"] == "temps")["ends"] == {carol: end + 30 * DAY}
+    # the default group: admin only, never hub-admin
+    assert w.call("PUT", "/admin/default-group", {"group": "temps"}, token=tok)[:2] == (
+        200,
+        {"ok": True, "default_group": "temps"},
+    )
+    assert w.call("PUT", "/admin/default-group", {"group": "hub-admin"}, token=tok)[0] == 400
+    _, o, _ = w.call("GET", "/admin/groups", token=tok)
+    assert o["default_group"] == "temps"
+
+
+def test_ga07_only_a_hub_admin_may_use_the_new_routes(w):
+    other = w.env.user("dave")
+    tok = w.login(other)
+    for method, path, body in (
+        ("GET", "/admin/review", None),
+        ("POST", "/admin/review/keep", {"group": "x", "user_id": other}),
+        ("PUT", "/admin/default-group", {"group": None}),
+    ):
+        assert w.call(method, path, body, token=tok)[0] in (401, 403), path

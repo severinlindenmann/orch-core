@@ -164,10 +164,12 @@ def test_leave_and_a_fresh_join_never_carry_a_pinned_snapshot():
     """Run 12 delta: the hub's role projection belongs to one membership."""
     ws, me, joined, left = _direct()
     assert joined(1, [{"person_id": me, "user_id": U_MARA}]) is None
-    ws.hub["ledger"][HUB]["snapshot"] = {"o": {"roles": {U_MARA: "admin"}}}
+    ws.hub["ledger"][HUB]["snapshot"] = {"o": {"roles": {U_MARA: "admin"}, "ends_ms": {}}}
     assert left(1) is None
     assert ws.hub["ledger"][HUB]["snapshot"] is None  # leave clears it
-    ws.hub["ledger"][HUB]["snapshot"] = {"o": {"roles": {U_MARA: "admin"}}}  # a stale one that somehow survived
+    ws.hub["ledger"][HUB]["snapshot"] = {
+        "o": {"roles": {U_MARA: "admin"}, "ends_ms": {}}
+    }  # a stale one that somehow survived
     assert joined(2, []) is None
     assert ws.hub["ledger"][HUB]["snapshot"] is None  # a fresh join does not inherit it
 
@@ -185,5 +187,41 @@ def test_forged_alias_then_leave_then_correct_rejoin_is_refused_and_inert():
     assert ws.hub["aliases"] == {me: victim}  # one alias, no stacking
     assert ws.hub["ledger"][HUB]["snapshot"] is None
     assert identity.member_role(ws, "p_" + me) == "owner"  # no snapshot yet: the local role stands
-    ws.hub["ledger"][HUB]["snapshot"] = {"o": {"roles": {U_MARA: "admin"}}}  # the real user has a role, the victim none
+    ws.hub["ledger"][HUB]["snapshot"] = {
+        "o": {"roles": {U_MARA: "admin"}, "ends_ms": {}}
+    }  # the real user has a role, the victim none
     assert identity.member_role(ws, "p_" + me) is None  # fail closed, never more than the local role
+
+
+def test_ga07_a_hub_users_role_ends_at_the_event_time_in_ends_ms():
+    """The model reads ends_ms at the deterministic time of the event it judges (`ws.at_ms`), never the wall clock."""
+    ws, me, joined, _left = _direct()
+    assert joined(1, []) is None
+    end = 1_790_000_000_000
+    ws.hub["ledger"][HUB]["snapshot"] = {
+        "o": {"roles": {U_MARA: "admin", U_TOM: "read"}, "ends_ms": {U_MARA: end}, "issued_ms": end - 10_000}
+    }
+    ws.at_ms = end - 1
+    assert identity.role_of(ws, "u_" + U_MARA) == "owner" and identity.role_of(ws, "u_" + U_TOM) is not None
+    ws.at_ms = end  # exclusive end: the very ms is already over
+    assert identity.role_of(ws, "u_" + U_MARA) is None and identity.role_of(ws, "u_" + U_TOM) is not None
+    ws.at_ms = end + 10**9
+    assert identity.role_of(ws, "u_" + U_MARA) is None
+    assert "u_" + U_MARA not in {p for p in identity.persons(ws)} and identity.known(ws, "u_" + U_TOM)
+
+
+def test_ga07_the_engine_judges_an_event_at_its_own_time_without_touching_the_earlier_state():
+    import copy
+
+    from orch.model import engine
+    from orch.model.types import Core
+
+    core = Core()
+    before = copy.deepcopy(core)
+    sc = engine._scratch(
+        core, "T", {"type": "ticket.created", "actor": {"kind": "person"}, "at": "2026-10-09T09:10:11Z"}
+    )
+    from orch.model.types import ts
+
+    assert sc.ws.at_ms == ts("2026-10-09T09:10:11Z") * 1000
+    assert core.ws.at_ms == 0 and core.ws == before.ws  # the earlier State is untouched

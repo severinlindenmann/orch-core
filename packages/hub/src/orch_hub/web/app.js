@@ -87,7 +87,7 @@ const WORDS = {
   bad_channel_proof: "The signature was not accepted.",
   busy: "Another action is running. Try again in a moment.",
   helper_unavailable: "The service helper does not answer. Ask your IT person to start it on the server.",
-  not_set_up: "The service helper is not set up on this server.",
+  not_set_up: "The start and stop buttons are not switched on for this server. orch sets them up by itself only on Linux with systemd; on other servers ask your IT person to start the service helper.",
   unknown_part: "This service is not managed from here.",
   bad_action: "That action is not allowed.",
   update_unavailable: "Updates from here need signed releases, which do not exist yet.",

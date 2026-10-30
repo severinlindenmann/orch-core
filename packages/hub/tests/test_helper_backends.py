@@ -48,6 +48,8 @@ def test_argv_is_fixed_and_exact():
         lambda g: g.update(host_id="a b"),
         lambda g: g["parts"].update({"wiki": g["parts"]["relay"]}),
         lambda g: g["parts"]["relay"].update(unit="orch-hub-helper.service"),
+        lambda g: g["parts"]["relay"].update(unit="orch-ab12cd-hub-helper.service"),
+        lambda g: g["parts"]["relay"].update(unit="orch-ab12cd-hub-helper@x.service"),
         lambda g: g.update(v=2),
         lambda g: g.update(parts={}),
     ],
@@ -95,3 +97,13 @@ def test_real_runner_bounded_and_no_shell():
     rc, out, _ = B.run_argv(["/bin/echo", "a;b $HOME"], 5)
     assert rc == 0 and out.strip() == "a;b $HOME"
     assert B.run_argv(["/bin/sleep", "3"], 1)[0] == 124
+
+
+def test_installer_vector_parses_and_the_installers_own_unit_is_refused():
+    """contracts/hub/helper_config_vector.json is what ``orch install`` writes (core test_helper_unit checks it)."""
+    import json
+    from pathlib import Path
+
+    vec = json.loads((Path(__file__).resolve().parents[3] / "contracts/hub/helper_config_vector.json").read_text())
+    cfg = B.parse_config(vec)
+    assert set(cfg.parts) == {"hub", "relay", "publish"} and cfg.parts["hub"].kind == "systemd-user"

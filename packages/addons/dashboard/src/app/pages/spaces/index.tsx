@@ -14,19 +14,22 @@ import { markSpacesSeen } from './seen'
 
 export const KIND_TEXT: Record<string, string> = { wiki: 'Wiki', files: 'Files', notes: 'Notes' }
 export const spaceTitle = (s: HubSpace) => s.name || 'Shared space'
+/** Two spaces with the same name are told apart by the last 6 characters of their id; a unique name shows none. */
+export const spaceLabel = (s: HubSpace, all: HubSpace[]) =>
+  all.filter((o) => spaceTitle(o) === spaceTitle(s)).length > 1 ? `${spaceTitle(s)} (…${s.id.slice(-6)})` : spaceTitle(s)
 export const kindText = (k: string) => KIND_TEXT[k] ?? (k ? k.charAt(0).toUpperCase() + k.slice(1) : '')
 
 function fmtSize(n: number): string {
   return n < 1024 ? `${n} B` : `${Math.round(n / 1024)} KB`
 }
 
-function SpaceCard({ ws, space, openHub }: { ws: string; space: HubSpace; openHub: () => void }) {
+function SpaceCard({ ws, space, all, openHub }: { ws: string; space: HubSpace; all: HubSpace[]; openHub: () => void }) {
   const items = useQuery({ ...hubQueries.spaceItems(ws, space.id) })
   const kind = kindText(space.kind)
   return (
-    <section className="rounded-lg border border-border bg-surface p-4" data-testid="space-card" aria-label={spaceTitle(space)}>
+    <section className="rounded-lg border border-border bg-surface p-4" data-testid="space-card" aria-label={spaceLabel(space, all)}>
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="text-[15px] font-medium"><Name>{spaceTitle(space)}</Name></h2>
+        <h2 className="text-[15px] font-medium"><Name>{spaceLabel(space, all)}</Name></h2>
         <span className="text-[12px] text-text-muted">
           {kind ? `${kind} · ` : ''}{space.members} {space.members === 1 ? 'workspace' : 'workspaces'}
           {items.data ? ` · ${items.data.items.length} ${items.data.items.length === 1 ? 'item' : 'items'}` : ''}
@@ -80,7 +83,7 @@ export function SpacesPage() {
       ) : spaces.length === 0 ? (
         <p data-testid="spaces-none" className="text-[13px] text-text-muted">This workspace is not in a shared space yet.</p>
       ) : (
-        spaces.map((s) => <SpaceCard key={s.id} ws={ws} space={s} openHub={() => openHub('/')} />)
+        spaces.map((s) => <SpaceCard key={s.id} ws={ws} space={s} all={spaces} openHub={() => openHub('/')} />)
       )}
     </div>
   )

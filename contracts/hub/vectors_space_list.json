@@ -1,0 +1,220 @@
+{
+ "doc": "space_list reply (hub link, w2h): meta names only listed spaces; values are exactly name and kind. Replayed by core (check) and the hub (its real reply must satisfy the ok shape).",
+ "cases": [
+  {
+   "name": "ok",
+   "reply": {
+    "spaces": [
+     {
+      "o": {
+       "space_id": "00000000000000000000000000000001"
+      }
+     }
+    ],
+    "meta": {
+     "00000000000000000000000000000001": {
+      "name": "Team notes",
+      "kind": "wiki"
+     }
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "ok_empty",
+   "reply": {
+    "spaces": [],
+    "meta": {}
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "ok_no_meta_for_space",
+   "reply": {
+    "spaces": [
+     {
+      "o": {
+       "space_id": "00000000000000000000000000000001"
+      }
+     }
+    ],
+    "meta": {}
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "meta_missing_key",
+   "reply": {
+    "spaces": [
+     {
+      "o": {
+       "space_id": "00000000000000000000000000000001"
+      }
+     }
+    ]
+   },
+   "expect": "refused"
+  },
+  {
+   "name": "meta_extra_top_key",
+   "reply": {
+    "spaces": [],
+    "meta": {},
+    "x": 1
+   },
+   "expect": "refused"
+  },
+  {
+   "name": "meta_unknown_space_id",
+   "reply": {
+    "spaces": [
+     {
+      "o": {
+       "space_id": "00000000000000000000000000000001"
+      }
+     }
+    ],
+    "meta": {
+     "00000000000000000000000000000002": {
+      "name": "x",
+      "kind": ""
+     }
+    }
+   },
+   "expect": "refused"
+  },
+  {
+   "name": "meta_extra_value_key",
+   "reply": {
+    "spaces": [
+     {
+      "o": {
+       "space_id": "00000000000000000000000000000001"
+      }
+     }
+    ],
+    "meta": {
+     "00000000000000000000000000000001": {
+      "name": "x",
+      "kind": "",
+      "y": "z"
+     }
+    }
+   },
+   "expect": "refused"
+  },
+  {
+   "name": "meta_missing_value_key",
+   "reply": {
+    "spaces": [
+     {
+      "o": {
+       "space_id": "00000000000000000000000000000001"
+      }
+     }
+    ],
+    "meta": {
+     "00000000000000000000000000000001": {
+      "name": "x"
+     }
+    }
+   },
+   "expect": "refused"
+  },
+  {
+   "name": "meta_non_string_name",
+   "reply": {
+    "spaces": [
+     {
+      "o": {
+       "space_id": "00000000000000000000000000000001"
+      }
+     }
+    ],
+    "meta": {
+     "00000000000000000000000000000001": {
+      "name": 5,
+      "kind": ""
+     }
+    }
+   },
+   "expect": "refused"
+  },
+  {
+   "name": "meta_name_65_long",
+   "reply": {
+    "spaces": [
+     {
+      "o": {
+       "space_id": "00000000000000000000000000000001"
+      }
+     }
+    ],
+    "meta": {
+     "00000000000000000000000000000001": {
+      "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": ""
+     }
+    }
+   },
+   "expect": "refused"
+  },
+  {
+   "name": "meta_name_64_long",
+   "reply": {
+    "spaces": [
+     {
+      "o": {
+       "space_id": "00000000000000000000000000000001"
+      }
+     }
+    ],
+    "meta": {
+     "00000000000000000000000000000001": {
+      "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": ""
+     }
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "meta_kind_33_long",
+   "reply": {
+    "spaces": [
+     {
+      "o": {
+       "space_id": "00000000000000000000000000000001"
+      }
+     }
+    ],
+    "meta": {
+     "00000000000000000000000000000001": {
+      "name": "a",
+      "kind": "kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk"
+     }
+    }
+   },
+   "expect": "refused"
+  },
+  {
+   "name": "meta_name_control_char",
+   "reply": {
+    "spaces": [
+     {
+      "o": {
+       "space_id": "00000000000000000000000000000001"
+      }
+     }
+    ],
+    "meta": {
+     "00000000000000000000000000000001": {
+      "name": "a\nb",
+      "kind": ""
+     }
+    }
+   },
+   "expect": "refused"
+  }
+ ]
+}

@@ -80,6 +80,18 @@ describe('Shared spaces: the page', () => {
   }, SLOW)
 })
 
+describe('Shared spaces: same name', () => {
+  it('tells two spaces with the same name apart by the end of their id', async () => {
+    real()
+    const twin = { ...space, id: 'c'.repeat(26) + 'abcdef' }
+    vi.spyOn(api, 'getSpaces').mockResolvedValue({ spaces: [space, twin], note })
+    vi.spyOn(api, 'getSpaceItems').mockResolvedValue({ id: SID, note, refused: 0, items: [] })
+    renderApp('/spaces', { viewer: 'p_sev' })
+    const cards = await screen.findAllByTestId('space-card', {}, COLD)
+    expect(cards.map((c) => within(c).getByRole('heading').textContent)).toEqual(['Team notes (…bbbbbb)', 'Team notes (…abcdef)'])
+  }, SLOW)
+})
+
 describe('Shared spaces: Today row', () => {
   it('appears for a space not opened yet and clears after Open', async () => {
     real()

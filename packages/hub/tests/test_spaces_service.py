@@ -40,6 +40,7 @@ def test_create_signs_a_record_and_wraps_every_member(shub):
     listed = a.request("space_list", {})
     assert [s["o"]["space_id"] for s in listed["spaces"]] == [rec["space_id"]]
     assert listed["meta"] == {rec["space_id"]: {"name": "finance", "kind": ""}}  # unsigned display data
+    assert set(listed) == {"spaces", "meta"} and set(listed["meta"][rec["space_id"]]) == {"name", "kind"}
 
 
 def test_item_roundtrip_between_two_members(shub):

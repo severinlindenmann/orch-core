@@ -97,8 +97,33 @@ W2H_OPS: dict[str, str | None] = {
     "wk_seal": "full",
     "log_sync": "full",
 }
+NAME_MAX, KIND_MAX = 64, 32
+
+
+def space_list_reply_ok(b: dict[str, Any]) -> bool:
+    """``{"spaces": [hub.space], "meta": {space_id: {"name", "kind"}}}``: ``meta`` only names listed spaces and each
+    value is exactly name and kind, short printable strings (unsigned display data; vectors_space_list.json)."""
+    if set(b) != {"spaces", "meta"} or type(b["spaces"]) is not list or type(b["meta"]) is not dict:
+        return False
+    ids = set()
+    for r in b["spaces"]:
+        o = r.get("o") if type(r) is dict else None
+        sid = o.get("space_id") if type(o) is dict else None
+        if type(sid) is not str:
+            return False
+        ids.add(sid)
+    for sid, m in b["meta"].items():
+        if sid not in ids or type(m) is not dict or set(m) != {"name", "kind"}:
+            return False
+        for k, cap in (("name", NAME_MAX), ("kind", KIND_MAX)):
+            v = m[k]
+            if type(v) is not str or len(v) > cap or not v.isprintable():
+                return False
+    return True
+
+
 _REPLY: dict[str, Callable[[dict[str, Any]], bool]] = {
-    "space_list": lambda b: set(b) == {"spaces", "meta"} and type(b["spaces"]) is list and type(b["meta"]) is dict,
+    "space_list": lambda b: space_list_reply_ok(b),
     "space_put": lambda b: set(b) == {"seq"} and type(b["seq"]) is int,
     "space_revoke": lambda b: set(b) == {"seq"} and type(b["seq"]) is int,
     "space_get": lambda b: (

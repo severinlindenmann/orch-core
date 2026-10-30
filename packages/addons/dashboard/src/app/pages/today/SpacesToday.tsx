@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { hubQueries } from '@/api/hub'
 import { Name } from '@/components/sign/visible'
 import { useMe } from '@/app/useMe'
-import { kindText, spaceTitle } from '../spaces'
+import { kindText, spaceLabel } from '../spaces'
 import { markSpacesSeen, readSeenSpaces } from '../spaces/seen'
 
 /** Today's "New shared space" row (run-15c P03): one row for a space of the hub this workspace is in and this person
@@ -25,7 +25,7 @@ export function SpacesToday({ ws }: { ws: string | undefined }) {
         {fresh.slice(0, 3).map((s) => (
           <li key={s.id} className="flex items-center justify-between gap-2 py-1.5" data-testid="spaces-today-row">
             <span className="min-w-0">
-              <span className="block truncate text-[13px]">New shared space: <Name>{spaceTitle(s)}</Name></span>
+              <span className="block truncate text-[13px]">New shared space: <Name>{spaceLabel(s, list.data?.spaces ?? [])}</Name></span>
               <span className="block text-[12px] text-text-faint">This workspace is a member{kindText(s.kind) ? `. ${kindText(s.kind)}` : ''} · shared through the hub.</span>
             </span>
             <Link to="/spaces" onClick={() => { markSpacesSeen(person, ws, [s.id]); bump((n) => n + 1) }} className="shrink-0 rounded border border-border px-2 py-0.5 text-[12px] hover:bg-surface-hover focus-visible:ring-2 focus-visible:ring-ring">Open</Link>

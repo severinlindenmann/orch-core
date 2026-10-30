@@ -267,3 +267,47 @@ def test_p05_a_switch_session_of_an_admin_is_refused_on_admin_workspaces(w):
     w.browser_tokens.add(ticket_session)
     s, o, _ = w.call("GET", "/admin/workspaces", token=ticket_session)
     assert (s, o["error"]) == (403, "reauth_required")
+
+
+def test_update_request_marks_older_workspaces_once_and_only_admins_may_ask(w, monkeypatch):
+    from orch_hub import __version__
+
+    asked: dict[str, dict] = {}
+    monkeypatch.setattr(w.reg, "status", lambda ws: {"version": "0.0.1"}, raising=False)
+    monkeypatch.setattr(
+        w.reg,
+        "ask_update",
+        lambda ws, t, now, by: asked.setdefault(ws, {"target_version": t, "asked_ms": now}),
+        raising=False,
+    )
+    tok = w.login(w.admin)
+    s, o, _ = w.call("POST", "/admin/workspaces/update-request", {}, token=tok)
+    assert s == 200 and o["asked"] == len(w.reg.ws) and o["target_version"] == __version__
+    assert asked and all(a["target_version"] == __version__ for a in asked.values())
+    # only newly asked workspaces are counted: a second press asks nobody new
+    done = set(asked)
+    monkeypatch.setattr(w.reg, "ask_update", lambda ws, t, now, by: ws not in done, raising=False)
+    assert w.call("POST", "/admin/workspaces/update-request", {}, token=tok)[1]["asked"] == 0
+    assert w.call("POST", "/admin/workspaces/update-request", {}, token=w.login(w.ann))[0] == 403
+
+
+def test_update_request_reaches_only_the_workspace_that_is_still_older_and_keeps_the_first_time(hub):
+    from orch_hub import __version__
+
+    c = hub.open(first=True)
+    c.request("join", hub.join_body(mode="full"))
+    older = {"version": "0.0.1", "commit": "", "host": "h", "name": "n"}
+    assert c.request("status_put", older) == {}
+    ws = next(iter(hub.registry.pins()))
+    assert hub.registry.ask_update(ws, __version__, 1000, "u") is True
+    assert hub.registry.ask_update(ws, __version__, 2000, "u") is False  # idempotent: the first time stays
+    assert hub.registry.update_ask(ws) == {"target_version": __version__, "asked_ms": 1000}
+    assert c.request("status_put", older) == {"update_requested": {"target_version": __version__}}
+    assert c.request("status_put", {**older, "version": __version__}) == {}  # updated: no more request
+
+
+def test_my_workspaces_tells_an_admin_when_the_owners_were_asked(w, monkeypatch):
+    monkeypatch.setattr(w.reg, "update_ask", lambda ws: {"target_version": "9.9.9", "asked_ms": 4242}, raising=False)
+    _, o, _ = w.call("GET", "/me/workspaces", token=w.login(w.admin))
+    assert o["workspaces"] and all(r["update_asked_ms"] == 4242 for r in o["workspaces"])
+    assert all(r["update_asked_target"] == "9.9.9" for r in o["workspaces"])

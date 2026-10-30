@@ -52,6 +52,11 @@ CHECKS = {
     "frame_cost",
     "gate",
     "custodial_cannot",
+    # R3, inside a session
+    "app_frame",
+    "request_head",
+    "app_seq",
+    "route_digest",
 }
 
 
@@ -234,9 +239,48 @@ def _run(c: dict[str, Any]) -> dict[str, Any]:
                 return {"ok": True}
             case "custodial_cannot":
                 return _custodial(a)
+            case "app_frame":
+                return {"ok": _describe(R.app_frame_parse(a["dir"], _frame(a)))}
+            case "request_head":
+                f = R.app_frame_parse(a["dir"], _frame(a))
+                R.check_request_head(f.value)
+                return {"ok": True}
+            case "app_seq":
+                return _seq(a["frames"])
+            case "route_digest":
+                b = R.route_bytes(
+                    a["workspace_id"], a["method"], a["template"], a["path"], a["query"], bytes.fromhex(a["body_hex"])
+                )
+                d = R.route_digest(
+                    a["workspace_id"], a["method"], a["template"], a["path"], a["query"], bytes.fromhex(a["body_hex"])
+                )
+                return {"bytes_hex": b.hex(), "digest_hex": d.hex()}
     except H.Refused as e:
         return {"error": e.code}
     raise AssertionError(f"unhandled check {c['check']!r}")
+
+
+def _frame(spec: dict[str, Any]) -> bytes:
+    """A frame spec of the vectors: ``hex``, or ``fill`` (``kind || id || bytes([byte]) * len``) for large frames."""
+    if "hex" in spec:
+        return bytes.fromhex(spec["hex"])
+    f = spec["fill"]
+    return bytes([f["kind"]]) + f["id"].to_bytes(4, "big") + bytes([f["byte"]]) * f["len"]
+
+
+def _describe(f: R.AppFrame) -> dict[str, Any]:
+    return {"kind": f.kind, "id": f.id, "value": len(f.value) if f.kind in ("BODY", "WS_BINARY") else f.value}
+
+
+def _seq(frames: list[dict[str, Any]]) -> dict[str, Any]:
+    st = R.AppStream()
+    out = []
+    for i, f in enumerate(frames):
+        try:
+            out.append(st.feed(f["dir"], _frame(f)))
+        except H.Refused as e:
+            return {"error": e.code, "index": i}
+    return {"results": out}
 
 
 def _custodial(a: dict[str, Any]) -> dict[str, Any]:
@@ -288,3 +332,30 @@ def test_vector_remote_stream_ops_not_yet_in_runtime_table() -> None:
     """R0 fixes the contract only: the runtime link tables take the stream ops in R2 (host) and R4 (hub), each with its
     handler. Until then the hub's link verifier refuses them (unknown_op), so nothing half-built is reachable."""
     assert not set(R.STREAM_OPS) & set(H.LINK_OPS)
+
+
+def test_vector_remote_app_constants() -> None:
+    """R3: the app frame fits one Noise transport plaintext, and the constants in the file are the reference's."""
+    k = DOC["constants"]["app"]
+    assert k["plain_max"] == R.FRAME_MAX - 16 == 65519 and k["payload_max"] == 65514
+    assert k["kinds"] == R.APP_KINDS and sorted(k["kinds"].values()) == list(range(1, 11))
+    assert (k["exchanges_max"], k["websockets_max"], k["request_body_max"]) == (8, 2, 1 << 20)
+
+
+def test_vector_remote_route_digest_domain_separated() -> None:
+    """A route digest's preimage starts with its own label; a signed op's view digest is SHA-256(cj(view)), whose
+    input starts with ``{``: the two can never share a preimage. The label is new (checked with every other above)."""
+    routes = [c for c in DOC["cases"] if c["check"] == "route_digest" and "digest_hex" in c["expect"]]
+    assert routes
+    for c in routes:
+        b = bytes.fromhex(c["expect"]["bytes_hex"])
+        assert b.startswith(R.RL["h_remote_route"]) and b[:1] != b"{"
+    assert len({c["expect"]["digest_hex"] for c in routes}) == len(routes)
+
+
+def test_vector_remote_session_app_frames_replay() -> None:
+    """The session transcript continues with app frames: each decrypts at its Noise nonce and the sequence is valid."""
+    names = [c["name"] for c in DOC["cases"]]
+    assert {f"transport_session_app_{n}" for n in ("request_head", "request_end", "response_head")} <= set(names)
+    seq = next(c for c in DOC["cases"] if c["name"] == "app_seq_session_transcript")
+    assert _seq(seq["args"]["frames"]) == {"results": ["ok"] * 5}

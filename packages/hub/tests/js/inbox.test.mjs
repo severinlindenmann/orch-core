@@ -55,3 +55,15 @@ test("phone only advertises an active iphone; unavailable reads are visible", ()
   assert.doesNotMatch(text(out), /Old/);
   assert.match(text(out), /Items for Alpha cannot be read right now/);
 });
+test("Ask my phone shows only with an active phone and a signable row, and only calls the callback (never signs)", () => {
+  const phone = { channels: [{ kind: "iphone", status: "active", label: "iPhone" }] };
+  const rows = [{ workspace_id: "a", kind: "gate", key: "A-1", item_id: "x1", signable: true }, { workspace_id: "a", kind: "question", key: "A-2", item_id: "x2", summary_only: true }];
+  const asked = [];
+  const btn = (out) => find(out, (n) => n.tag === "button" && n.textContent === "Ask my phone");
+  const out = render({ ...data, ...phone, items: rows }, { askPhone: (it) => asked.push(it) });
+  assert.equal(btn(out).length, 1);
+  btn(out)[0].listeners.click();
+  assert.deepEqual(asked, [rows[0]]);
+  assert.equal(btn(render({ ...data, items: rows }, { askPhone() {} })).length, 0);
+  assert.equal(btn(render({ ...data, ...phone, items: rows })).length, 0);
+});

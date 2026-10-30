@@ -811,3 +811,33 @@ def test_backup_out_folder_is_made_0700_on_every_run(tmp_path):
     dest.mkdir(mode=0o755)
     ops.backup_copy(src, dest)
     assert oct(dest.stat().st_mode & 0o777) == "0o700"
+
+
+def test_allow_non_cgnat_warns_for_a_lan_v4_and_refuses_a_wide_v6(tmp_path):
+    lan = [
+        server.Addr("10.1.1.5", 24, "eth1"),
+        server.Addr(VPN, 16, "wt0"),
+        server.Addr(VPS, 24, "eth0"),
+        server.Addr("127.0.0.1", 8, "lo"),
+        server.Addr("fd00::5", 8, "eth2"),
+        server.Addr("fd12:3456:789a::5", 64, "eth3"),
+    ]
+    ctx, out, *_ = stub_ctx(tmp_path)
+    server_setup(ctx, "hub", names=server.Names(), local=lambda: lan, vpn_ip="10.1.1.5/24", allow_non_cgnat=True)
+    text = out.getvalue()
+    assert "WARNING: 10.1.1.5 is not in the usual private-network" in text and "10.1.1.0/24" in text
+    assert "hub link will listen on that address" in text
+    argv, _ = ctx.runner.started["hub"]
+    assert argv[argv.index("--link-listen") + 1] == "10.1.1.5:8105"
+    ctx2, out2, *_ = stub_ctx(tmp_path / "x") if (tmp_path / "x").mkdir() is None else None
+    for bad in ("fd00::5", "fd00::5/8", "fd00::5/47"):  # a ULA /8 is far wider than /48
+        with pytest.raises(InstallError, match="/48|48 to 128"):
+            server.check_vpn_ip(bad, lan, allow_non_cgnat=True)
+    with pytest.raises(InstallError, match="/48 or narrower"):
+        server.check_vpn_ip("fd00::5", lan, allow_non_cgnat=True)  # interface says /8
+    assert server.check_vpn_ip("fd12:3456:789a::5", lan, allow_non_cgnat=True)[0].prefix == 64
+    assert str(server.vpn_network(lan[5])) == "fd12:3456:789a::/64"
+    assert "WARNING" not in out2.getvalue()
+    # without the flag a LAN address is still refused
+    with pytest.raises(InstallError, match="--allow-non-cgnat"):
+        server.check_vpn_ip("10.1.1.5", lan)

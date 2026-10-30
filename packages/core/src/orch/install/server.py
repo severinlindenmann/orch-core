@@ -129,6 +129,10 @@ def local_addresses(run: Callable[[list[str]], str] | None = None) -> set[str]:
     return {a.ip for a in local_interfaces(run)}
 
 
+def is_cgnat(ip: str) -> bool:
+    return _in_cgnat(ip)
+
+
 def _in_cgnat(ip: str) -> bool:
     try:
         a = ipaddress.ip_address(ip)
@@ -156,14 +160,15 @@ def detect_vpn_ip(addresses: Iterable[Addr]) -> Addr | None:
 def vpn_network(chosen: Addr, given_prefix: int | None = None) -> ipaddress.IPv4Network:
     """The real network of the VPN (from the interface prefix, or from ``--vpn-ip IP/PREFIX``), never the whole /10."""
     prefix = given_prefix if given_prefix is not None else chosen.prefix
-    if prefix is None or prefix > 24:
+    v6 = ipaddress.ip_address(chosen.ip).version == 6
+    if prefix is None or (prefix < 48 if v6 else prefix > 24):
         raise InstallError(
             f"cannot tell the network of your VPN from {chosen.ip}"
             + (f" (the interface says /{prefix})" if prefix is not None else "")
             + ". Give it with --vpn-ip, for example --vpn-ip 100.92.1.2/16."
         )
     net = ipaddress.ip_interface(f"{chosen.ip}/{prefix}").network
-    if not net.subnet_of(_CGNAT) and not net.is_private:
+    if not (net.version == 4 and net.subnet_of(_CGNAT)) and not net.is_private:
         raise InstallError(f"--vpn-ip {chosen.ip}/{prefix}: that network is not a private one")
     return net  # type: ignore[return-value]
 
@@ -178,8 +183,12 @@ def check_vpn_ip(given: str, addresses: Iterable[Addr], *, allow_non_cgnat: bool
         raise InstallError(
             f"--vpn-ip {given!r}: that is not an IP address (example: 100.92.1.2 or 100.92.1.2/16)"
         ) from None
-    if prefix is not None and not 8 <= prefix <= 24:
-        raise InstallError(f"--vpn-ip {given}: the prefix is a number from 8 to 24 (your VPN's network size)")
+    v6 = a.version == 6
+    if prefix is not None and not (48 <= prefix <= 128 if v6 else 8 <= prefix <= 24):
+        raise InstallError(
+            f"--vpn-ip {given}: the prefix is a number from "
+            + ("48 to 128 (an IPv6 network wider than /48 is refused)" if v6 else "8 to 24 (your VPN's network size)")
+        )
     if not _in_cgnat(ip) and not (allow_non_cgnat and a.is_private and not a.is_loopback and not a.is_link_local):
         raise InstallError(
             f"--vpn-ip {given}: use an address of your private network (VPN) in 100.64.x.x - 100.127.x.x"
@@ -188,7 +197,26 @@ def check_vpn_ip(given: str, addresses: Iterable[Addr], *, allow_non_cgnat: bool
     have = next((x for x in addresses if x.ip == str(a)), None)
     if have is None:
         raise InstallError(f"--vpn-ip {given}: this computer does not have that address (is the VPN connected?)")
+    if v6:  # a wide IPv6 prefix (a whole site or ISP block) would open the VPN gate to far too many hosts
+        eff = prefix if prefix is not None else have.prefix
+        if eff is None or eff < 48:
+            raise InstallError(
+                f"--vpn-ip {given}: an IPv6 address is accepted only with a network of /48 or narrower "
+                "(give it as, for example, --vpn-ip fd12:3456:789a::1/64)"
+            )
     return have, prefix
+
+
+def non_cgnat_warning(addr: Addr, prefix: int | None) -> str:
+    """The plain warning printed when ``--allow-non-cgnat`` is used."""
+    p = prefix if prefix is not None else addr.prefix
+    net = f"{ipaddress.ip_interface(f'{addr.ip}/{p}').network}" if p is not None else f"the network of {addr.ip}"
+    return (
+        f"WARNING: {addr.ip} is not in the usual private-network (VPN) range 100.64.x.x - 100.127.x.x. "
+        "The hub link will "
+        f"listen on that address, and everyone on {net} will be let into the hub console. "
+        "Only use this on a network you fully control."
+    )
 
 
 # ------------------------------------------------------------------------------------------------------------ DNS

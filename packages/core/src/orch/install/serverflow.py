@@ -140,6 +140,8 @@ def server_setup(
             )
         if not loopback and chosen:
             plan.vpn_ip = chosen.ip
+            if allow_non_cgnat and vpn_ip and not server.is_cgnat(chosen.ip):
+                ctx.say(server.non_cgnat_warning(chosen, given_prefix))
         if chosen and hub_vpn_only:  # the gate lets in the VPN's real network, not the whole 100.64.0.0/10
             plan.vpn_net = str(vpn_network(chosen, given_prefix))
         plan.loopback = loopback

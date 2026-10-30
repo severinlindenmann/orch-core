@@ -165,8 +165,19 @@ def on_commit(service: Any, log: str, event: dict[str, Any]) -> None:
             from . import policy
 
             policy.ensure_sweeper(service)
+        if typ in _LINK_TYPES:
+            from . import linkrun
+
+            linkrun.refresh(service)  # the dedicated stream link follows the policy, the codes and the binding
     except Exception:  # noqa: BLE001
         LOG.exception("remote commit hook failed for %s", typ)
+
+
+#: the workspace lines after which the stream link may have to start, stop or restart (R4 follow-up)
+_LINK_TYPES = frozenset({
+    "remote.changed", "remote.disabled", "remote.key_rotated", "remote.device_added", "remote.device_removed",
+    "hub.joined", "hub.left",
+})  # fmt: skip
 
 
 def _drop_non_owner_devices(service: Any) -> None:
@@ -193,6 +204,10 @@ def attach(service: Any) -> None:
         with service.store.locked():
             devices.export(service)
         policy.ensure_sweeper(service)
+        from . import linkrun
+
+        with service.store.locked():
+            linkrun.refresh(service)  # a workspace opened with remote access on (or bound with a code) dials at once
     except Exception:  # noqa: BLE001
         LOG.exception("remote attach failed")
 

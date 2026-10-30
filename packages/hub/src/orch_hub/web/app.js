@@ -14,13 +14,14 @@ import { adminView } from "./admin.js";
 import { changesView, checkChange, sentence as changeSentence } from "./changes.js";
 import { KEY_GONE_NOTE, totpPanel } from "./totp.js";
 import { inviteView } from "./invite.js";
+import { INVITE_WORDS, KEY_WORDS, WELCOME, WHY as COMPANY_WHY, accountCard as companyAccountCard, begin as beginCompany, finishCallback, signInButton as companyButton } from "./oidc.js";
 import { rememberDashboard, rememberName } from "./connect.js";
 import { servicesView } from "./services.js";
 import { VERBS, checkServiceAction, resultWords, needsConfirm, hubStopConfirm, logsDialog } from "./service_actions.js";
 import { handoffsView } from "./handoffs.js";
 import { phonesView } from "./phones.js";
-import { workspacesView, workspaceDetailsView, newWorkspaces } from "./workspaces.js";
-import { OPEN_FIRST, colour, initials, landing, landingPlan, railRows, safeUrl } from "./switch.js";
+import { workspacesView, workspaceDetailsView, newWorkspaces, privateRows } from "./workspaces.js";
+import { OPEN_FIRST, colour, initials, landing, landingPlan, openingState, railRows, safeUrl } from "./switch.js";
 import { Refusal, grantTermsOk, grantSentence, grantFacts, addonFacts, addonTermsOk, settingsFacts, settingsTermsOk, checkBindings, checkPrepared, describe, renderMulti, renderText, shortHash, verifyQuestion, DECISIONS } from "./render.js";
 
 const root = document.getElementById("app");
@@ -128,7 +129,12 @@ function loginView(err) {
       await afterLogin();
     },
   }, field("Your name", id), field("Password", pw), field("6-digit code", code), h("div", { class: "row top" }, h("button", { class: "pri", type: "submit", text: "Sign in" })));
-  show(h("h1", { text: "Sign in to your hub" }), err ? banner("bad", "Not signed in", err) : null, form);
+  show(h("h1", { text: "Sign in to your hub" }), err ? banner("bad", "Not signed in", err) : null, h("div", { id: "company-slot" }), form);
+  void api("GET", "/oidc/options").then((o) => { // company login (HUB-PE-04): a button only when the admin turned it on
+    const btn = o.status === 200 ? companyButton(o.body, async () => { const r = await beginCompany(api, "signin"); if (!r.ok) loginView(COMPANY_WHY[r.error] ?? say(r.error)); }) : null;
+    const slot = document.getElementById("company-slot");
+    if (btn && slot) slot.append(btn);
+  });
 }
 
 // First admin (prototype): the installer's one-time link opens this page; the hub shows the authenticator QR once and signs the new admin in.
@@ -138,15 +144,17 @@ function setupView(token, err) {
   const form = h("form", {
     onsubmit: async (ev) => {
       ev.preventDefault();
-      const r = await api("POST", "/setup", { token, name: name.value.trim(), password: pw.value });
+      const typedName = name.value.trim();
+      const r = await api("POST", "/setup", { token, name: typedName, password: pw.value });
       pw.value = "";
       if (r.status !== 200) return setupView(token, r.body.error === "bad_credentials" ? "This setup link was already used or is wrong." : say(r.body.error));
       history.replaceState(null, "", location.pathname);
       show(
         h("h1", { text: "Admin created" }),
         banner("ok", "You are signed in"),
+        h("dl", { class: "facts" }, h("dt", { text: "Your name for signing in" }), h("dd", { id: "setup-name", text: renderText(r.body.name ?? typedName) })),
         h("h2", { text: "Add your sign-in code to your phone" }),
-        h("p", { class: "muted", text: "Scan this with your authenticator app. You will need the app's 6-digit code each time you sign in." }),
+        h("p", { class: "muted", text: "Scan this with your authenticator app. You will need the app's 6-digit code each time you sign in, together with your name and password." }),
         totpPanel(r.body.totp_uri, r.body.totp_secret),
         h("p", { class: "small muted top", id: "key-gone", text: KEY_GONE_NOTE }),
         h("div", { class: "row top" }, h("button", { class: "pri", id: "open-hub", text: "I've added it, open the hub", onclick: () => afterLogin() })),
@@ -284,6 +292,8 @@ async function loadRail() {
 }
 
 async function openWorkspace(w) {
+  const o = openingState(w.name); // at once, before the request and the navigation: the same dark page, no white frame
+  plain(h("div", { class: "opening", role: "status" }, h("b", { text: o.title }), h("span", { class: "muted", text: o.note })));
   const r = await api("POST", "/switch/ticket", { workspace_id: w.id, return_to: "/", kind: "open" });
   const url = r.status === 200 ? safeUrl(r.body.url) : null;
   if (!url) { state.notice = banner("bad", "Cannot open " + renderText(w.name), say(r.status === 200 ? "malformed" : r.body.error)); return home(); }
@@ -503,7 +513,8 @@ async function workspaces(joined = [], known = null) {
       // Watch for joins while this page is open (3 s, paused while the tab is hidden, stopped by leaving the route).
       clearInterval(workspacesTimer);
       // Diff only against a successful first read: a failed one must not make every workspace look newly joined.
-      let seen = known ?? (ws.status === 200 ? new Set(rows.map((w) => w.workspace_id)) : null);
+      // For an admin the set includes the private workspaces that only the admin list shows (selective mode).
+      let seen = known ?? (ws.status === 200 ? new Set([...rows, ...privateRows(rows, adminRows)].map((w) => w.workspace_id)) : null);
       const mine = ++viewRevision;
       pageRev = mine;
       let checking = false;
@@ -511,10 +522,13 @@ async function workspaces(joined = [], known = null) {
         if (document.hidden || checking || mine !== viewRevision) return;
         checking = true;
         try {
-          const r = await api("GET", "/me/workspaces");
+          const [r, ar] = await Promise.all([api("GET", "/me/workspaces"), canAdmin() ? api("GET", "/admin/workspaces") : Promise.resolve(null)]);
           if (mine !== viewRevision || r.status !== 200) return;
           if (seen === null) return void (await workspaces([], null)); // the first good read: draw it, nothing is "joined"
-          const fresh = newWorkspaces(seen, r.body.workspaces);
+          // A failed admin read falls back to /me/workspaces only: it never marks anything as joined.
+          const now = r.body.workspaces ?? [];
+          const merged = [...now, ...privateRows(now, ar?.status === 200 ? ar.body.workspaces ?? [] : null)];
+          const fresh = newWorkspaces(seen, merged);
           if (!fresh.length) return;
           for (const w of fresh) seen.add(w.workspace_id);
           void pollLive();
@@ -614,7 +628,12 @@ async function account() {
       copy: copyText,
       signInAgain: async () => { await api("DELETE", "/session"); clearSession(); loginView(); },
     };
-    shell("account", state.notice, accountView({ user: state.user, channels: r.body.channels, thisBrowserId: state.me?.channelId, needsSignIn: !!state.user.needs_sign_in }, { remove: removeChannel, security }));
+    const me = await api("GET", "/oidc/me");
+    const company = me.status === 200 ? companyAccountCard(me.body, {
+      link: (c) => beginCompany(api, "link", c),
+      unlink: async () => { const x = await api("DELETE", "/oidc/link"); if (x.status === 200) void account(); return x; },
+    }) : null;
+    shell("account", state.notice, accountView({ user: state.user, channels: r.body.channels, thisBrowserId: state.me?.channelId, needsSignIn: !!state.user.needs_sign_in }, { remove: removeChannel, security }), company);
     state.notice = null;
   } finally { finishLoading(); }
 }
@@ -881,7 +900,7 @@ async function registerBrowser(label, password, totp) {
     gen = await generateKey();
     const me0 = { keyPub: gen.keyPub, userId: state.user.user_id, hubId: state.me?.hubId ?? null };
     const begun = await api("POST", "/channels/register/begin", { kind: "browser", key_pub: gen.keyPub, label, password, totp });
-    if (begun.status !== 200) return say(begun.body.error);
+    if (begun.status !== 200) return state.user?.company_login ? KEY_WORDS : say(begun.body.error); // no hub password: a set-up link from an admin, never a dead end
     const signed = await signRegistration(gen.pair.privateKey, begun.body.challenge, me0, Date.now());
     const done = await api("POST", "/channels/register/complete", { challenge_id: begun.body.challenge_id, signed });
     if (done.status !== 200) return say(done.body.error);
@@ -1415,4 +1434,16 @@ async function renderRoute() {
   finally { routing = false; }
 }
 window.addEventListener("hashchange", renderRoute);
-renderRoute();
+if (location.pathname === "/oidc/callback") { // the company's sign-in page sent the browser back: finish, then leave this address
+  const search = location.search;
+  history.replaceState(null, "", "/");
+  finishCallback(api, search).then(async (r) => {
+    if (r.ok && r.purpose === "invite") state.notice = banner("ok", "Your account is ready", WELCOME); // a company-login invitation: signed in, a session only
+    if (r.ok) { if (r.where) location.hash = r.where; await renderRoute(); return; }
+    if (r.purpose === "invite") { show(h("h1", { text: "This link does not work" }), banner("bad", INVITE_WORDS[r.body?.error] ?? INVITE_WORDS.bad_invite)); return; }
+    if (r.purpose === "signin") { loginView(COMPANY_WHY[r.body?.error] ?? say(r.body?.error)); return; }
+    state.notice = banner("bad", "Company login did not finish", r.body?.reason ?? COMPANY_WHY[r.body?.error] ?? say(r.body?.error));
+    if (r.where) location.hash = r.where;
+    await renderRoute();
+  });
+} else renderRoute();

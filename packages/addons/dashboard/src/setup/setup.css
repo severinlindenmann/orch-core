@@ -458,16 +458,6 @@ body:has(> #root > .setup) {
   opacity: 0.6;
   cursor: default;
 }
-.setup .toggle:has(input[type='radio']) {
-  border: 1px solid var(--border-strong);
-  border-radius: 8px;
-  margin: 10px 0;
-  padding: 12px;
-  justify-content: flex-start;
-}
-.setup .toggle:has(input[type='radio']:checked) {
-  border-color: var(--brand);
-}
 .setup .reason {
   display: block;
   color: var(--text-muted);
@@ -589,4 +579,9 @@ body:has(> #root > .setup) {
 .setup p.state {
   font-size: 13px;
   color: var(--success);
+}
+
+.setup .sub-note {
+  font-size: 13px;
+  margin: -0.25rem 0 0.5rem;
 }

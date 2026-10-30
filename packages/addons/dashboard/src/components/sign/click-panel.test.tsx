@@ -379,6 +379,10 @@ describe('C3: one press (a contract-4 View of a request prepared by a trusted pr
     armed(v4(), { story: storyOf({ action: 'hub_join', hub_card: {}, hub_id: 'h', mode: 'selective' } as never), manyWorkspaces: true })
     expect(screen.getByTestId('sign-workspace').closest('details')).toBeNull()
   })
+  it('r14-P03: an armed agent start shows the workspace line on the main surface', () => {
+    armed(v4([], { content: { headline: HEADLINE, ticket: { key: 'DEMO-0001', title: '', uid_tail: 'abcd1234', key_note: '' } } }), { story: storyOf({ action: 'runner_grant', hours: 72 } as never, { startsAgent: true }), manyWorkspaces: false })
+    expect(screen.getByTestId('sign-workspace').closest('details')).toBeNull()
+  })
   it('the workspace prefix, short id and name, and the target, show during the arm for a person with one workspace', () => {
     armed(v4([], { content: { headline: HEADLINE, ticket: { key: 'DEMO-0001', title: '', uid_tail: 'abcd1234', key_note: '' } } }), { manyWorkspaces: false })
     const line = screen.getByTestId('sign-workspace')
@@ -461,8 +465,8 @@ describe('C3: one press (a contract-4 View of a request prepared by a trusted pr
 describe('agent access on a click View', () => {
   it('names the agent access, its length and what agents may do, when the story gives access', () => {
     mount(answer(), { story: { signLabel: 'Sign and start agent', steps: ['You sign.'], access: { length: '7 days' } } })
-    expect(screen.getByTestId('access-length')).toHaveTextContent('Let agents work for you for 7 days.')
-    expect(screen.getByTestId('agent-access')).toHaveTextContent('Agents (Claude Code) may read and change files in the project folder and run its commands.')
+    expect(screen.getByTestId('access-length')).toHaveTextContent('Agents (Claude Code) may work for you for 7 days.')
+    expect(screen.getByTestId('agent-access')).toHaveTextContent('They can read and change files in the project folder and run its commands.')
     expect(screen.queryByRole('textbox')).toBeNull()
     expect(screen.getByRole('button', { name: 'Sign and start agent' })).toBeDisabled() // until armed
     arm()
@@ -575,5 +579,27 @@ describe('r10-P08 hub join workspace line', () => {
   it('with one workspace it stays under Details', () => {
     mount(risky(), { story: join, manyWorkspaces: false })
     expect(screen.getByTestId('sign-workspace').closest('details')).not.toBeNull()
+  })
+  it('r14-P07: the workspace line shares the review\'s own fold (one fold, named Details); the risk line stays outside any fold', () => {
+    mount(answer({ headline: 'Connect', risk_lines: ['Risk line'], content: { headline: 'Hub', fields_changed: [{ field: 'hub', before: null, after: 'demo-hub-id' }] } }), { story: join, manyWorkspaces: false })
+    const fold = screen.getByTestId('sign-workspace').closest('details')!
+    expect(fold).toHaveTextContent('Workspace')
+    expect(fold.querySelector(':scope > summary')).toHaveTextContent(/^Details$/)
+    expect(screen.queryByTestId('sign-workspace-fold')).toBeNull() // no second fold of its own
+    expect(within(screen.getByTestId('sign-footer')).getByText('Risk line').closest('details')).toBeNull()
+  })
+  it('r14-P03: an agent start with risk lines shows the workspace line on the main surface', () => {
+    const start = storyOf({ action: 'runner_grant', hours: 72 } as never, { startsAgent: true })!
+    mount(risky(), { story: start, manyWorkspaces: false })
+    expect(screen.getByTestId('sign-workspace').closest('details')).toBeNull()
+  })
+  it('r14-P03: an agent start folds the line when nothing is risky and not armed, and shows it once armed', () => {
+    const start = storyOf({ action: 'runner_grant', hours: 72 } as never, { startsAgent: true })!
+    mount(answer({ headline: 'Start' }), { story: start, manyWorkspaces: false })
+    expect(screen.getByTestId('sign-workspace').closest('details')).not.toBeNull()
+  })
+  it('r14-P07: with several workspaces the review keeps its Technical details and the line stays on the main surface', () => {
+    mount(risky(), { story: join, manyWorkspaces: true })
+    expect(screen.getByTestId('sign-workspace').closest('details')).toBeNull()
   })
 })

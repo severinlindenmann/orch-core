@@ -311,6 +311,9 @@ def test_harness_comes_from_the_setters_person_not_another_persons_run(env):
 
 def test_one_runner_per_service_even_when_started_twice_at_once(env, monkeypatch):
     from orch.host import followups as mod
+    from orch.host import (
+        schedules,  # noqa: F401  imported before the patch: ScheduleRunner must subclass the real runner
+    )
 
     made = []
 

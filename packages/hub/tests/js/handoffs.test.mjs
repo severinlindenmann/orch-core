@@ -105,3 +105,10 @@ test("workspace names and actor labels are safe text; agents never use person na
   for (const actor of [null, undefined, [], "Anna", {}, { kind: "other", name: "Anna" }]) assert.equal(actorLabel(actor), "unknown");
   assert.equal(actorLabel({ kind: "person", name: {} }), "person");
 });
+
+test("filter row offers workspace and state only: no person filter (the hub never learns the sender)", () => {
+  const out = handoffsView(data, {}, now);
+  assert.deepEqual(find(out, (n) => n.tag === "select").map((n) => n.attrs["aria-label"]), ["Workspace"]);
+  assert.deepEqual(find(out, (n) => n.attrs["aria-pressed"]).map((n) => n.textContent), ["All", "Waiting", "Delivered"]);
+  assert.doesNotMatch(words(out), /person|people/i);
+});

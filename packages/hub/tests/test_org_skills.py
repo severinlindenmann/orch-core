@@ -365,3 +365,42 @@ def test_share_must_be_all_or_chosen(env):
         with pytest.raises(AccessError) as e:
             store.set_share("invoices", bad, [], actor=ADMIN)
         assert e.value.code == "malformed"
+
+
+def test_a_store_made_before_shared_existed_gets_the_column_and_keeps_its_offers(tmp_path):
+    import sqlite3
+
+    db = tmp_path / "old.db"
+    c = sqlite3.connect(db)
+    c.executescript(
+        "CREATE TABLE org_skill (name TEXT PRIMARY KEY, text TEXT NOT NULL, created_ms INTEGER NOT NULL, updated_ms INTEGER NOT NULL);"
+        "CREATE TABLE org_skill_offer (name TEXT NOT NULL REFERENCES org_skill(name) ON DELETE CASCADE, workspace_id TEXT NOT NULL, PRIMARY KEY (name, workspace_id));"
+        f"INSERT INTO org_skill_offer VALUES ('old','{WS}');"
+    )
+    c.execute("INSERT INTO org_skill VALUES ('old',?,1,1)", (TEXT,))
+    c.commit()
+    c.close()
+    db.chmod(0o600)
+    acc = Access(str(db))
+    try:
+        acc.add_user(ADMIN, "root")
+        acc.add_member("hub-admin", ADMIN)
+        s = org_skills(acc)
+        assert [(x["name"], x["shared"], x["offered_to"]) for x in s.list()] == [("old", "chosen", [WS])]
+        assert [x["name"] for x in s.offered_to(WS2)] == []  # an old explicit offer stays explicit
+        s.put("new", TEXT, actor=ADMIN)
+        assert {x["name"]: x["shared"] for x in s.list()} == {"old": "chosen", "new": "all"}
+    finally:
+        acc.close()
+
+
+def test_narrowing_drops_a_pending_restore_click_so_it_cannot_widen_again(env):
+    _keys, acc, _snaps, store = env
+    from orch_hub.backup import guard as GD
+
+    store.put("invoices", TEXT, actor=ADMIN)
+    with acc.tx() as db:
+        db.execute(GD.PENDING_SCHEMA)
+        db.execute("INSERT INTO restore_pending(kind,a,label) VALUES ('skill_all','invoices','invoices')")
+    store.set_share("invoices", "chosen", [WS], actor=ADMIN)
+    assert GD.pending(acc) == []

@@ -310,3 +310,40 @@ def test_all_stops_at_unbind_and_chosen_narrows_again(env, reg):
     for bad in ("some", None):
         with pytest.raises(AccessError):
             store.set_share("crm", bad, [], actor=ADMIN)
+
+
+def test_a_store_made_before_shared_existed_gets_the_column(tmp_path):
+    import sqlite3
+
+    db = tmp_path / "old.db"
+    c = sqlite3.connect(db)
+    c.executescript(
+        "CREATE TABLE org_mcp (name TEXT PRIMARY KEY, url TEXT NOT NULL, auth TEXT NOT NULL, secret TEXT, description TEXT NOT NULL, created_ms INTEGER NOT NULL, updated_ms INTEGER NOT NULL);"
+        "CREATE TABLE org_mcp_offer (name TEXT NOT NULL REFERENCES org_mcp(name) ON DELETE CASCADE, workspace_id TEXT NOT NULL, PRIMARY KEY (name, workspace_id));"
+        f"INSERT INTO org_mcp VALUES ('old','{URL}','none',NULL,'',1,1); INSERT INTO org_mcp_offer VALUES ('old','{WS}');"
+    )
+    c.commit()
+    c.close()
+    db.chmod(0o600)
+    acc = Access(str(db))
+    try:
+        acc.add_user(ADMIN, "root")
+        acc.add_member("hub-admin", ADMIN)
+        s = org_mcp(acc)
+        assert [(x["name"], x["shared"], x["offered_to"]) for x in s.list()] == [("old", "chosen", [WS])]
+        s.put("new", URL, "none", None, "", actor=ADMIN)
+        assert {x["name"]: x["shared"] for x in s.list()} == {"old": "chosen", "new": "all"}
+    finally:
+        acc.close()
+
+
+def test_narrowing_drops_a_pending_restore_click(env):
+    _keys, acc, _snaps, store = env
+    from orch_hub.backup import guard as GD
+
+    store.put("crm", URL, "none", None, "", actor=ADMIN)
+    with acc.tx() as db:
+        db.execute(GD.PENDING_SCHEMA)
+        db.execute("INSERT INTO restore_pending(kind,a,label) VALUES ('mcp_all','crm','crm')")
+    store.set_share("crm", "chosen", [], actor=ADMIN)
+    assert GD.pending(acc) == []

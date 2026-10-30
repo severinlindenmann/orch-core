@@ -38,6 +38,8 @@ class OrgMcpStore:
         self._a = a
         with a.lock:
             a._db.executescript(_SCHEMA)
+            if "shared" not in {r[1] for r in a._db.execute("PRAGMA table_info(org_mcp)")}:  # a store made before #1432
+                a._db.execute("ALTER TABLE org_mcp ADD COLUMN shared TEXT NOT NULL DEFAULT 'chosen'")
             a._db.execute("PRAGMA foreign_keys=ON")
 
     def _admin(self, actor: str) -> None:
@@ -68,7 +70,7 @@ class OrgMcpStore:
             if not exists and db.execute("SELECT COUNT(*) FROM org_mcp").fetchone()[0] >= MCP_MAX:
                 raise AccessError("too_many", "MCP servers")
             db.execute(
-                "INSERT INTO org_mcp(name, url, auth, secret, description, created_ms, updated_ms) VALUES (?,?,?,?,?,?,?) "
+                "INSERT INTO org_mcp(name, url, auth, secret, description, created_ms, updated_ms, shared) VALUES (?,?,?,?,?,?,?,'all') "
                 "ON CONFLICT(name) DO UPDATE SET url=excluded.url, auth=excluded.auth, secret=excluded.secret, "
                 "description=excluded.description, updated_ms=excluded.updated_ms",
                 (name, url, auth, secret, desc, now, now),
@@ -95,6 +97,10 @@ class OrgMcpStore:
             if not db.execute("SELECT 1 FROM org_mcp WHERE name=?", (name,)).fetchone():
                 raise AccessError("unknown_server")
             db.execute("UPDATE org_mcp SET shared=? WHERE name=?", (shared, name))
+            if db.execute("SELECT 1 FROM sqlite_master WHERE name='restore_pending'").fetchone():
+                db.execute(
+                    "DELETE FROM restore_pending WHERE kind='mcp_all' AND a=?", (name,)
+                )  # a stale restore click must not undo this
             db.execute("DELETE FROM org_mcp_offer WHERE name=?", (name,))
             db.executemany("INSERT INTO org_mcp_offer VALUES (?,?)", [(name, w) for w in ids])
         return {"shared": shared, "offered_to": ids}

@@ -32,6 +32,10 @@ class OrgSkillStore:
         self._a = a
         with a.lock:
             a._db.executescript(_SCHEMA)
+            if "shared" not in {
+                r[1] for r in a._db.execute("PRAGMA table_info(org_skill)")
+            }:  # a store made before #1432
+                a._db.execute("ALTER TABLE org_skill ADD COLUMN shared TEXT NOT NULL DEFAULT 'chosen'")
             a._db.execute("PRAGMA foreign_keys=ON")
 
     def _admin(self, actor: str) -> None:
@@ -70,7 +74,7 @@ class OrgSkillStore:
             if not exists and db.execute("SELECT COUNT(*) FROM org_skill").fetchone()[0] >= SKILLS_MAX:
                 raise AccessError("too_many", "company skills")
             db.execute(
-                "INSERT INTO org_skill(name, text, created_ms, updated_ms) VALUES (?,?,?,?) "
+                "INSERT INTO org_skill(name, text, created_ms, updated_ms, shared) VALUES (?,?,?,?,'all') "
                 "ON CONFLICT(name) DO UPDATE SET text=excluded.text, updated_ms=excluded.updated_ms",
                 (name, text, now, now),
             )
@@ -96,6 +100,10 @@ class OrgSkillStore:
             if not db.execute("SELECT 1 FROM org_skill WHERE name=?", (name,)).fetchone():
                 raise AccessError("unknown_skill")
             db.execute("UPDATE org_skill SET shared=? WHERE name=?", (shared, name))
+            if db.execute("SELECT 1 FROM sqlite_master WHERE name='restore_pending'").fetchone():
+                db.execute(
+                    "DELETE FROM restore_pending WHERE kind='skill_all' AND a=?", (name,)
+                )  # a stale restore click must not undo this
             db.execute("DELETE FROM org_skill_offer WHERE name=?", (name,))
             db.executemany("INSERT INTO org_skill_offer VALUES (?,?)", [(name, w) for w in ids])
         return {"shared": shared, "offered_to": ids}

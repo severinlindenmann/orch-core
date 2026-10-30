@@ -64,9 +64,9 @@ export async function skillsPage(d) {
     if (d.state.user.needs_sign_in) return d.reauthView();
     await d.loadRail();
     const r = await d.api("GET", "/admin/skills");
-    const att = await d.api("GET", "/admin/needs-attention");
     if (r.status === 403 && r.body.error === "reauth_required") return d.reauthView();
     if (r.status !== 200) return d.shell("skills", h("h1", { text: "Company skills" }), h("p", { role: "alert", text: "Cannot read the company skills. " + d.say(r.body.error) }));
+    const att = await d.api("GET", "/admin/needs-attention");
     const say = (ok, x) => { d.state.notice = x.status === 200 ? d.banner("ok", ok, null) : d.banner("bad", "Not changed", d.say(x.body.error ?? "unavailable")); };
     const save = async (name, body) => { say("Saved", await d.api("PUT", "/admin/skills/" + name, { text: body })); await skillsPage(d); };
     const remove = async (s) => { say("Removed", await d.api("DELETE", "/admin/skills/" + s.name)); await skillsPage(d); };

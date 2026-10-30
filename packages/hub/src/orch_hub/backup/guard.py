@@ -138,7 +138,16 @@ PENDING_SCHEMA = (
     "CREATE TABLE IF NOT EXISTS restore_pending (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, "
     "a TEXT NOT NULL, b TEXT NOT NULL DEFAULT '', label TEXT NOT NULL DEFAULT '')"
 )
-KINDS = ("secret_share", "secret_all", "skill_offer", "mcp_offer", "market_company", "addon_request")
+KINDS = (
+    "secret_share",
+    "secret_all",
+    "skill_all",
+    "mcp_all",
+    "skill_offer",
+    "mcp_offer",
+    "market_company",
+    "addon_request",
+)
 
 
 def _connect(path: Path, live: Path | None) -> sqlite3.Connection:

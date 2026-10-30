@@ -70,6 +70,23 @@ def roles_after(access: Access, ws: str, e: Edit, *, include_disabled: bool = Fa
 # --- increases: who must approve ---------------------------------------------------------------------------------------
 
 
+def end_change(access: Access, body: dict[str, Any]) -> str | None:
+    """For a ``member_add`` body that carries ``ends_ms``: how it changes an ACTIVE membership: ``"later"`` (a later end, or
+    permanent: an increase), ``"earlier"`` (a shortening: a reduction) or ``None`` (a new member, an ended row that counts as
+    missing, no ``ends_ms`` in the body, or no change)."""
+    if "ends_ms" not in body:
+        return None
+    cur = access.member_end(body["group"], body["user_id"])
+    new = body["ends_ms"]
+    if cur == "absent" or (cur is not None and cur <= access._now()):  # noqa: SLF001 - the model's clock
+        return None
+    if cur is None:
+        return None if new is None else "earlier"
+    if new is None or new > cur:
+        return "later"
+    return "earlier" if new < cur else None
+
+
 def _edit_of(kind: str, body: dict[str, Any]) -> Edit:
     if kind == "grant":
         return Edit(set_grant=(body["group"], body["role"]))
@@ -102,6 +119,11 @@ def reach_delta(access: Access, registry: Any, kind: str, body: dict[str, Any]) 
         gained = [
             {"user_id": u, "role": r} for u, r in sorted(after.items()) if role_rank(r) > role_rank(before.get(u))
         ]
+        if not gained and kind == "member_add" and end_change(access, body) == "later":
+            # R3: a later end date (or none) is an increase even though no role changes today: the owner is asked
+            role = next((g["role"] for g in access.grants_of_group(body["group"]) if g["workspace_id"] == ws), None)
+            if role is not None:
+                gained = [{"user_id": body["user_id"], "role": role}]
         if gained:
             out[ws] = gained
     return out

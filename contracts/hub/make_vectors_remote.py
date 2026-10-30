@@ -1175,7 +1175,7 @@ def req_head(method: str = "GET", path: str = "/api/w/" + "0" * 32 + "/runs", qu
 
 
 def ws_head(path: str = "/term", query: str = "ticket=t1", headers=None) -> dict:
-    return {"path": path, "query": query, "headers": headers or [["sec-websocket-protocol", "orch.term"]]}
+    return {"path": path, "query": query, "headers": [["sec-websocket-protocol", "orch.term"]] if headers is None else headers}
 
 
 def resp_head(status: int = 200, headers=None) -> dict:
@@ -1354,7 +1354,9 @@ def request_head_cases() -> None:
 
 SEQ_HEAD = cj(req_head())
 SEQ_POST = cj(req_head("POST", "/api/w/" + "0" * 32 + "/wiki/create"))
-SEQ_WS = cj(ws_head(query=""))  # no query on /term: the ticket is the first message (host.md 12.6.6)
+# no query on /term (the ticket is the first message, host.md 12.6.6) and no sec-websocket-protocol: the real dashboard
+# closes a socket that asks for a subprotocol with 1008
+SEQ_WS = cj(ws_head(query="", headers=[]))
 SEQ_200 = cj(resp_head())
 SEQ_101 = cj(resp_head(101, []))
 SEQ_403 = cj(resp_head(403))
@@ -1615,7 +1617,7 @@ def route_cases() -> list[bytes]:
         "route_digest_agent_start_other_workspace": route_args(
             "POST", TPL_START, f"/api/w/{WS2}/agents/start", body=START_BODY, ws=WS2
         ),
-        "route_digest_terminal_socket": route_args("WEBSOCKET", "/term", "/term", "ticket=t1"),
+        "route_digest_terminal_socket": route_args("WEBSOCKET", "/term", "/term", ""),
         "route_digest_terminal_socket_query": route_args("WEBSOCKET", "/term", "/term", "ticket=t2"),
         "route_digest_empty_body": route_args("POST", W_TPL + "/terminals/open", f"{p}/terminals/open"),
     }

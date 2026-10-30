@@ -7,8 +7,12 @@ names: the IP:port behaviour of ``orch install`` stays. Everything that touches 
 
 from __future__ import annotations
 
+import contextlib
+import errno
 import ipaddress
+import os
 import re
+import secrets
 import socket
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -29,11 +33,11 @@ __all__ = [
     "detect_vpn_ip",
     "local_addresses",
     "root_block",
+    "user_dir",
     "write_snippets",
 ]
 
 CADDY_DIR = "/etc/caddy/orch.d"
-CADDY_GROUP = "orch-caddy"
 ROLES = {"hub": ("hub",), "edge": ("relay", "publish")}
 VPN_NET = "100.64.0.0/10"
 _CGNAT = ipaddress.ip_network(VPN_NET)
@@ -206,29 +210,61 @@ def caddy_snippet(part: str, name: str, port: int, *, vpn_only: bool = False) ->
     return "\n".join(lines)
 
 
+def user_dir(root: str | Path, user: str) -> Path:
+    """The snippet directory of one OS user: ``<root>/<user>`` (root creates it, owned by that user, mode 0755)."""
+    if not re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", user):
+        raise InstallError(f"{user!r} is not a usable user name for the Caddy snippet folder")
+    return Path(root) / user
+
+
 def write_snippets(directory: Path, snippets: dict[str, str]) -> list[Path]:
-    """Write ``<part>.caddy`` files (0644, atomic). Raises OSError when the directory is not writable yet."""
+    """Write ``<part>.caddy`` files (0644) into ``directory``, which must be a real folder owned by this user.
+
+    Every file is made under a random name with ``O_EXCL|O_NOFOLLOW`` relative to the opened folder and renamed over the
+    target, so a link planted at any name is never followed (rename replaces the link itself, never what it points at).
+    Raises :class:`InstallError` when the folder is a link or not ours, ``OSError`` when it is missing."""
+    try:
+        dfd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    except OSError as e:
+        if e.errno == errno.ELOOP or e.errno == errno.ENOTDIR:
+            raise InstallError(f"{directory} is not a plain folder (a link?): not writing Caddy files there") from None
+        raise
     written = []
-    for part, text in snippets.items():
-        target = directory / f"{part}.caddy"
-        tmp = directory / f".{part}.caddy.tmp"
-        tmp.write_text(text)
-        tmp.chmod(0o644)
-        tmp.replace(target)
-        written.append(target)
+    try:
+        st = os.fstat(dfd)
+        if st.st_uid != os.geteuid() or st.st_mode & 0o022:
+            raise InstallError(
+                f"{directory} must be owned by this user and not writable by others: do the root steps first"
+            )
+        for part, text in snippets.items():
+            tmp = f".{part}.{secrets.token_hex(8)}.tmp"
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644, dir_fd=dfd)
+            try:
+                with os.fdopen(fd, "w") as fh:
+                    fh.write(text)
+                    fh.flush()
+                    os.fsync(fh.fileno())
+                os.rename(tmp, f"{part}.caddy", src_dir_fd=dfd, dst_dir_fd=dfd)
+            except BaseException:
+                with contextlib.suppress(OSError):
+                    os.unlink(tmp, dir_fd=dfd)
+                raise
+            written.append(directory / f"{part}.caddy")
+    finally:
+        os.close(dfd)
     return written
 
 
 def root_block(user: str, directory: str = CADDY_DIR, *, caddyfile: str = "/etc/caddy/Caddyfile") -> str:
-    """The ONE sudo block for a person with root. It is only printed, never executed by orch."""
-    d = shell_quote(directory)
-    imp = f"import {directory}/*.caddy"
+    """The ONE sudo block for a person with root; printed, never executed by orch. No shared writable folder: each OS
+    user gets its own folder, and Caddy imports ``<dir>/*/*.caddy``."""
+    d, mine = shell_quote(directory), shell_quote(f"{directory}/{user}")
+    imp = f"import {directory}/*/*.caddy"
     return "\n".join(
         [
             "# Run these as an administrator (they are the only steps that need root; orch never runs them):",
-            f"sudo groupadd --force {CADDY_GROUP}",
-            f"sudo usermod -aG {CADDY_GROUP} {shell_quote(user)}",
-            f"sudo install -d -m 2775 -g {CADDY_GROUP} {d}",
+            f"sudo install -d -m 0755 -o root -g root {d}",
+            f"sudo install -d -m 0755 -o {shell_quote(user)} -g {shell_quote(user)} {mine}",
             f"grep -qxF {shell_quote(imp)} {shell_quote(caddyfile)} || echo {shell_quote(imp)} | "
             f"sudo tee -a {shell_quote(caddyfile)} >/dev/null",
             "sudo systemctl reload caddy",

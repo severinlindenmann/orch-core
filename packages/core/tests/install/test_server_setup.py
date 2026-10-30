@@ -72,17 +72,47 @@ def test_publish_share_paths_are_not_logged_and_limits_differ():
     assert "max_size 8MB" in server.caddy_snippet("relay", "r.example.com", 8101)
 
 
-def test_root_block_is_text_with_every_root_step():
+def test_root_block_golden_has_no_shared_writable_folder():
     b = server.root_block("orch-edge")
-    for needle in (
-        "groupadd --force orch-caddy",
-        "usermod -aG orch-caddy orch-edge",
-        "install -d -m 2775 -g orch-caddy /etc/caddy/orch.d",
-        "import /etc/caddy/orch.d/*.caddy",
-        "systemctl reload caddy",
-        "loginctl enable-linger orch-edge",
-    ):
-        assert needle in b
+    golden("root-block-edge.sh", b)
+    assert "groupadd" not in b and "orch-caddy" not in b and "2775" not in b
+    assert "install -d -m 0755 -o orch-edge -g orch-edge /etc/caddy/orch.d/orch-edge" in b
+    assert "import /etc/caddy/orch.d/*/*.caddy" in b and "systemctl reload caddy" in b
+    assert "loginctl enable-linger orch-edge" in b
+
+
+def test_snippets_never_follow_a_planted_link(tmp_path):
+    d = tmp_path / "orch-edge"
+    d.mkdir()
+    victim = tmp_path / "victim.txt"
+    victim.write_text("keep")
+    # a link at the final name and at the old fixed temp names: none of them is written through
+    (d / "relay.caddy").symlink_to(victim)
+    (d / ".relay.caddy.tmp").symlink_to(victim)
+    server.write_snippets(d, {"relay": "site {}\n"})
+    assert victim.read_text() == "keep"
+    assert not (d / "relay.caddy").is_symlink() and (d / "relay.caddy").read_text() == "site {}\n"
+    assert oct((d / "relay.caddy").stat().st_mode & 0o777) == "0o644"
+    assert sorted(p.name for p in d.iterdir()) == [".relay.caddy.tmp", "relay.caddy"]  # no temp left behind
+
+
+def test_a_linked_or_foreign_snippet_folder_is_refused(tmp_path):
+    real = tmp_path / "real"
+    real.mkdir()
+    link = tmp_path / "orch-edge"
+    link.symlink_to(real)
+    with pytest.raises(InstallError, match="not a plain folder"):
+        server.write_snippets(link, {"relay": "x"})
+    assert list(real.iterdir()) == []
+    loose = tmp_path / "loose"
+    loose.mkdir()
+    loose.chmod(0o777)  # writable by others: another user could swap files
+    with pytest.raises(InstallError, match="not writable by others"):
+        server.write_snippets(loose, {"relay": "x"})
+    with pytest.raises(OSError):
+        server.write_snippets(tmp_path / "missing", {"relay": "x"})
+    with pytest.raises(InstallError, match="usable user name"):
+        server.user_dir("/etc/caddy/orch.d", "../evil")
 
 
 # ------------------------------------------------------------------------------------------------------ dns
@@ -137,14 +167,15 @@ def local():
 
 
 def test_edge_role_installs_relay_and_publish_only_and_writes_two_snippets(tmp_path):
-    home, caddy = tmp_path / "h", tmp_path / "orch.d"
-    home.mkdir(), caddy.mkdir()
+    home, root = tmp_path / "h", tmp_path / "orch.d"
+    caddy = root / "orch-edge"
+    home.mkdir(), caddy.mkdir(parents=True)
     ctx, out, err, calls = stub_ctx(home, SystemdFake())
     plan = server_setup(
         ctx,
         "edge",
         names=server.derive_names("example.com"),
-        caddy_dir=str(caddy),
+        caddy_dir=str(root),
         resolve=lambda n: [VPS],
         local=local,
         user="orch-edge",
@@ -178,7 +209,7 @@ def test_sudo_block_is_printed_and_never_run(tmp_path, monkeypatch):
         user="orch-edge",
     )
     text = out.getvalue()
-    assert "sudo systemctl reload caddy" in text and "sudo groupadd" in text and "enable-linger orch-edge" in text
+    assert "sudo systemctl reload caddy" in text and "sudo install -d" in text and "enable-linger orch-edge" in text
     assert "not written" in text  # the directory does not exist yet: told to do the root steps and rerun
     everything = [c for c in calls] + spawned
     assert not any("sudo" in str(c) for c in everything)
@@ -187,15 +218,16 @@ def test_sudo_block_is_printed_and_never_run(tmp_path, monkeypatch):
 
 
 def test_dns_not_ready_skips_tls_for_that_part_only(tmp_path):
-    caddy = tmp_path / "orch.d"
-    caddy.mkdir()
+    root = tmp_path / "orch.d"
+    caddy = root / "orch-edge"
+    caddy.mkdir(parents=True)
     ctx, out, err, calls = stub_ctx(tmp_path, SystemdFake())
     table = {"relay.example.com": [], "publish.example.com": [VPS]}
     plan = server_setup(
         ctx,
         "edge",
         names=server.derive_names("example.com"),
-        caddy_dir=str(caddy),
+        caddy_dir=str(root),
         resolve=lambda n: table[n],
         local=local,
         user="orch-edge",
@@ -208,15 +240,16 @@ def test_dns_not_ready_skips_tls_for_that_part_only(tmp_path):
 
 
 def test_hub_role_binds_the_vpn_ip_and_the_card_advertises_it(tmp_path):
-    caddy = tmp_path / "orch.d"
-    caddy.mkdir()
+    root = tmp_path / "orch.d"
+    caddy = root / "orch-hub"
+    caddy.mkdir(parents=True)
     ctx, out, err, calls = stub_ctx(tmp_path, SystemdFake())
     server_setup(
         ctx,
         "hub",
         names=server.derive_names("example.com"),
         hub_vpn_only=True,
-        caddy_dir=str(caddy),
+        caddy_dir=str(root),
         resolve=lambda n: [VPS],
         local=local,
         user="orch-hub",
@@ -241,14 +274,15 @@ def test_hub_role_binds_the_vpn_ip_and_the_card_advertises_it(tmp_path):
 
 
 def test_hub_without_vpn_only_is_a_public_console(tmp_path):
-    caddy = tmp_path / "orch.d"
-    caddy.mkdir()
+    root = tmp_path / "orch.d"
+    caddy = root / "orch-hub"
+    caddy.mkdir(parents=True)
     ctx, *_ = stub_ctx(tmp_path, SystemdFake())
     server_setup(
         ctx,
         "hub",
         names=server.derive_names(None, hub="hub.example.com"),
-        caddy_dir=str(caddy),
+        caddy_dir=str(root),
         resolve=lambda n: [VPS],
         local=local,
         user="orch-hub",
@@ -299,14 +333,15 @@ def test_cli_server_command_and_usage(tmp_path):
 
 
 def test_ops_units_are_written_and_enabled_for_the_hub(tmp_path):
-    caddy = tmp_path / "orch.d"
-    caddy.mkdir()
+    root = tmp_path / "orch.d"
+    caddy = root / "orch-hub"
+    caddy.mkdir(parents=True)
     ctx, out, err, calls = stub_ctx(tmp_path, SystemdFake())
     server_setup(
         ctx,
         "hub",
         names=server.derive_names("example.com"),
-        caddy_dir=str(caddy),
+        caddy_dir=str(root),
         resolve=lambda n: [VPS],
         local=local,
         user="orch-hub",
@@ -323,14 +358,15 @@ def test_ops_units_are_written_and_enabled_for_the_hub(tmp_path):
 
 
 def test_edge_has_the_health_timer_but_no_backup_timer(tmp_path):
-    caddy = tmp_path / "orch.d"
-    caddy.mkdir()
+    root = tmp_path / "orch.d"
+    caddy = root / "orch-edge"
+    caddy.mkdir(parents=True)
     ctx, out, err, calls = stub_ctx(tmp_path, SystemdFake())
     server_setup(
         ctx,
         "edge",
         names=server.derive_names("example.com"),
-        caddy_dir=str(caddy),
+        caddy_dir=str(root),
         resolve=lambda n: [VPS],
         local=local,
         user="orch-edge",
@@ -507,15 +543,16 @@ def test_a_rerun_may_use_its_own_ports_and_the_block_must_fit(tmp_path):
 
 
 def test_caddy_proxies_to_the_chosen_ports(tmp_path):
-    caddy = tmp_path / "orch.d"
-    caddy.mkdir()
+    root = tmp_path / "orch.d"
+    caddy = root / "orch-edge"
+    caddy.mkdir(parents=True)
     ctx, *_ = stub_ctx(tmp_path, SystemdFake())
     ctx.port_base = 8200
     server_setup(
         ctx,
         "edge",
         names=server.derive_names("example.com"),
-        caddy_dir=str(caddy),
+        caddy_dir=str(root),
         resolve=lambda n: [VPS],
         local=local,
         user="orch-edge",

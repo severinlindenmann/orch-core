@@ -26,6 +26,7 @@ from .server import (
     detect_vpn_ip,
     local_addresses,
     root_block,
+    user_dir,
     write_snippets,
 )
 
@@ -156,7 +157,7 @@ def server_setup(
     }
     save(ctx.layout, st)
 
-    _caddy(ctx, plan, caddy_dir)
+    _caddy(ctx, plan, caddy_dir, user)
     _ops(ctx, role, parts, names, ports)
     _closing(ctx, plan, wanted, tls, user, caddy_dir)
     return plan
@@ -183,13 +184,19 @@ def _fallback(ctx: Ctx, plan: Plan, *, address: str | None, source: str | None, 
         ctx.say(f"  {p} address: http://{rec['bind']}:{rec['port']}")
 
 
-def _caddy(ctx: Ctx, plan: Plan, caddy_dir: str) -> None:
+def _caddy(ctx: Ctx, plan: Plan, caddy_dir: str, user: str) -> None:
     if not plan.snippets:
         return
     try:
-        written = write_snippets(Path(caddy_dir), plan.snippets)
+        written = write_snippets(user_dir(caddy_dir, user), plan.snippets)
+    except InstallError as e:
+        ctx.say(f"  Caddy snippets: not written ({e}).")
+        return
     except OSError as e:
-        ctx.say(f"  Caddy snippets: not written ({caddy_dir}: {e.strerror or e}). Do the root steps below, then rerun.")
+        ctx.say(
+            f"  Caddy snippets: not written ({user_dir(caddy_dir, user)}: {e.strerror or e}). "
+            "Do the root steps below, then rerun."
+        )
         return
     for w in written:
         ctx.say(f"  Caddy snippet written: {w}")

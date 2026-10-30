@@ -59,10 +59,16 @@ sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapf
 echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
 ```
 
-The setup command prints the other root steps as **one block**; `orch` never runs it. It makes the group `orch-caddy`, a
-folder `/etc/caddy/orch.d` that group may write, one `import` line in the Caddyfile, a Caddy reload, and "linger" (so a
-user's services keep running after logout). Run that block once (you can run it again after a change; it is safe to repeat).
-Anyone in the group `orch-caddy` can change what Caddy serves: keep that group to `orch-edge` and `orch-hub`.
+The setup command prints the other root steps as **one block**; `orch` never runs it. For the user it is run for it
+makes `/etc/caddy/orch.d/<user>/` (owned by that user, mode 0755; there is no shared writable folder), adds one `import
+/etc/caddy/orch.d/*/*.caddy` line to the Caddyfile, reloads Caddy, and turns on "linger" (so the user's services keep
+running after logout). Run the block once per user (it is safe to repeat; the `import` line is added only once).
+
+**Residual risk, in plain words:** Caddy serves whatever the snippets of either user say. A person who controls the
+`orch-edge` account can therefore write a snippet for a new host name, including one that answers instead of a name the other
+user owns. "Hub only from the private network" is a rule inside the hub's own snippet; it is **not** a wall against a
+compromised `orch-edge` user. That is why the two users exist: keep the edge user (the one facing the internet) free of
+anything you would not want an attacker to have, and give it nothing from the hub.
 
 ## 4. Install orch
 

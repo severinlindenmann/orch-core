@@ -259,15 +259,26 @@ class StreamRouter:
         Invariant: a remote stream lives only while the token that opened it is live. ``recheck`` is the caller's closure
         for that (token still valid for ``user``, user still allowed to reach ``ws``); the sweep is the ONE place that
         calls it, in addition to the router's own ``allowed`` rail check."""
+        reserved: list[float] = []
         try:
-            sid = self._open(ws, user, device_id, kind, sink, recheck)
-        except Refused as r:
+            sid = self._open(ws, user, device_id, kind, sink, recheck, reserved)
+        except BaseException as r:
+            if reserved:  # a failed or host-refused open frees its slot in the shared per-workspace enroll rate
+                self._unreserve(ws, reserved[0])
+            if not isinstance(r, Refused):
+                raise
             _log.info("stream_open ws=%s stream=- kind=%s user=%s result=%s", ws, kind, user, r.code)
             self._counted(ws, False)
             raise
         _log.info("stream_open ws=%s stream=%s kind=%s user=%s result=ok", ws, sid, kind, user)
         self._counted(ws, True)
         return sid
+
+    def _unreserve(self, ws: str, ts: float) -> None:
+        with self._mu:
+            q = self._opens.get(("enr", ws))
+            if q is not None and ts in q:
+                q.remove(ts)
 
     def _counted(self, ws: str, accepted: bool) -> None:
         """The registry's aggregate op counter (``orch-hub inspect``); never raises into the open path."""
@@ -278,7 +289,14 @@ class StreamRouter:
                 pass
 
     def _open(
-        self, ws: str, user: str, device_id: str, kind: str, sink: ClientSink, recheck: Callable[[], bool] | None
+        self,
+        ws: str,
+        user: str,
+        device_id: str,
+        kind: str,
+        sink: ClientSink,
+        recheck: Callable[[], bool] | None,
+        reserved: list[float],
     ) -> str:
         if RESTORE_FENCE.is_set():
             raise Refused("unavailable")
@@ -296,13 +314,13 @@ class StreamRouter:
             ):
                 raise Refused("remote.busy")
             rates = [("dev", ws + device_id, lim.opens_per_device_min), ("usr", user, lim.opens_per_user_min)]
+            enr: deque[float] | None = None
             if kind == "enroll":
                 rates.append(("enu", user + ws, lim.enroll_opens_per_user_ws_min))
-                q = self._opens.setdefault(("enr", ws), deque())  # host-accepted enroll opens (appended on accept)
-                while q and now - q[0] >= WINDOW_S:
-                    q.popleft()
-                inflight = sum(1 for s in streams if s.ws == ws and s.kind == "enroll" and s.state == "opening")
-                if len(q) + inflight >= lim.enroll_opens_per_ws_min:
+                enr = self._opens.setdefault(("enr", ws), deque())  # shared per workspace: reserved right here
+                while enr and now - enr[0] >= WINDOW_S:
+                    enr.popleft()
+                if len(enr) >= lim.enroll_opens_per_ws_min:
                     raise Refused("remote.busy")
             qs = []
             for k, key, cap in rates:
@@ -314,6 +332,9 @@ class StreamRouter:
                 qs.append(q)
             for q in qs:
                 q.append(now)
+            if enr is not None:  # check and reserve in ONE critical section: parallel opens cannot overshoot
+                enr.append(now)
+                reserved.append(now)
             sid = os.urandom(16).hex()
             while sid in self._streams:
                 sid = os.urandom(16).hex()
@@ -346,9 +367,6 @@ class StreamRouter:
             raise Refused("unavailable")  # the link went away between the answer and now
         if s.result:
             raise Refused(s.result)
-        if kind == "enroll":
-            with self._mu:  # only an open the host accepted uses up the shared per-workspace enroll rate
-                self._opens.setdefault(("enr", ws), deque()).append(self._now())
         return sid
 
     def send(self, stream_id: str, data: bytes) -> None:

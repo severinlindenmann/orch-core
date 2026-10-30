@@ -358,6 +358,38 @@ def test_stream_enroll_rate_is_per_user_and_workspace_and_counts_only_accepted_o
     assert open_async_result(r, "uD", CODE) == "remote.busy"
 
 
+def test_stream_enroll_slots_are_reserved_atomically_and_freed_when_the_open_fails():
+    n = 3
+    r, a, _ = make(
+        limits=Limits(enroll_opens_per_ws_min=n, enroll_opens_per_user_ws_min=99, opens_per_user_min=99, per_user=99)
+    )
+    barrier = threading.Barrier(n + 1)
+    res: list[str] = []
+    mu = threading.Lock()
+
+    def go(i: int) -> None:
+        barrier.wait()
+        out = open_async_result(r, f"u{i}", f"rc_{i:032x}")
+        with mu:
+            res.append(out)
+
+    ts = [threading.Thread(target=go, args=(i,), daemon=True) for i in range(n + 1)]
+    for t in ts:
+        t.start()
+    a.wait_op("stream_open", n)  # exactly n reached the host (the extra one was refused at once)
+    deadline = time.monotonic() + 3
+    while not res and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert res == ["remote.busy"] and len(a.ops("stream_open")) == n
+    for i in range(n):  # the host refuses all of them: every reservation is freed
+        seq, _b = a.ops("stream_open")[i]
+        r.on_reply(WS_A, a, {"re": seq, "body": {"error": "remote.no_code"}})
+    for t in ts:
+        t.join(5)
+    assert sorted(res) == ["remote.busy"] + ["remote.no_code"] * n
+    open_stream(r, WS_A, a, user="uz", dev="rc_" + "dd" * 16, kind="enroll")  # a later open passes
+
+
 def open_async_result(r, user, dev):
     try:
         r.open(WS_A, user, dev, "enroll", FakeSink())

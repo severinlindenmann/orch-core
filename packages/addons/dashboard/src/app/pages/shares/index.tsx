@@ -5,7 +5,7 @@ import { Link } from '@tanstack/react-router'
 import { useState } from 'react'
 import { hasFeature } from '@/api/features'
 import { atLeast } from '@/api/permissions'
-import { effectiveState, isLoopback, kindText, newIdem, shareError, shareQueries, sharesApi, STATE_TEXT, stopName, viewsText, type Share, type Staged } from '@/api/shares'
+import { effectiveState, kindText, newIdem, shareError, shareQueries, sharesApi, STATE_TEXT, stopName, viewsText, type Share, type Staged } from '@/api/shares'
 import { LoadFailed } from '@/components/LoadFailed'
 import { Inline } from '@/components/sign/visible'
 import { Button } from '@/components/ui/button'
@@ -97,15 +97,11 @@ function SharesBody({ onRevoke, onSign }: { onRevoke: (s: Share) => void; onSign
         </p>
       )}
       {data && data.configured && !data.live && (
-        <p role="status" data-testid="shares-unreachable" className="rounded-lg border border-warning/40 px-3 py-2 text-[12px]">
-          The publish server is not running or cannot be reached, so views and states are the ones this computer last knew.{' '}
-          {isLoopback(data.server) ? (
-            <>
-              It runs on this computer: start it in a terminal with <code className="font-mono">orch-publish dev</code>.
-            </>
-          ) : (
-            <>Check that the server is up and that its address is right in Add-ons, Publish.</>
-          )}
+        <p role="status" data-testid="shares-unreachable" className="flex flex-wrap items-center gap-2 rounded-lg border border-warning/40 px-3 py-2 text-[12px]">
+          <span>Sharing is not reachable right now, so views and states are the ones this computer last knew.</span>
+          <Button size="sm" variant="secondary" onClick={() => void list.refetch()}>
+            Try again
+          </Button>
         </p>
       )}
       {list.isPending ? (

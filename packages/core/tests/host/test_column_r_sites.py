@@ -92,7 +92,7 @@ SITES: dict[tuple[str, str], tuple[int, str]] = {
     ("workspace.py", "StatusBackend.run"): (2, "unreachable (host.status is not an R op); would be N's answer"),
     ("workspace.py", "WorkspaceGate._column"): (6, "socket only: resolve() raises for a relay peer"),
     ("publishing.py", "_person"): (2, "unreachable (publish.* are not R ops); R is not P, so it would be refused"),
-    ("publishing.py", "_prepare"): (4, "unreachable (publish.* are not R ops); R would be no person"),
+    ("publishing.py", "_prepare"): (6, "unreachable (publish.* are not R ops); R would be no person"),
     ("publishing.py", "facts_for"): (2, "unreachable (publish.share is prepared through human.prepare, P only)"),
     ("publishing.py", "_discard"): (2, "unreachable (publish.* are not R ops)"),
     ("publishing.py", "_list"): (6, "unreachable (publish.list is not an R op); R would see what P sees"),

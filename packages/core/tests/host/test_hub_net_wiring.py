@@ -311,3 +311,61 @@ def test_the_transport_resolver_applies_the_same_policy_behind_a_proxy() -> None
     for bad in ("hubbox", "x.internal", "10.0.0.1", "169.254.169.254"):
         with pytest.raises(OSError):
             check(bad)
+
+
+# -- unusable network settings never dial direct --------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("damage", ["corrupt", "loose", "unknown_key"])
+def test_unusable_settings_mean_no_connect_and_no_answer(tmp_path, monkeypatch, damage) -> None:
+    import socket
+
+    (tmp_path / "hosts").mkdir(mode=0o700)
+    hubnet.set_proxy(tmp_path, "http://p.office:3128", None, None)
+    f = hubnet.net_dir(tmp_path) / "hub-net.json"
+    if damage == "corrupt":
+        f.write_text("{not json")
+    elif damage == "loose":
+        os.chmod(f, 0o666)
+    else:
+        f.write_text('{"proxy": null, "proxy_user": null, "extra": 1}')
+    connects: list[object] = []
+    real = socket.socket.connect
+    monkeypatch.setattr(socket.socket, "connect", lambda self, a: connects.append(a) or real(self, a))
+    monkeypatch.setattr(socket, "create_connection", lambda *a, **k: connects.append(a))
+    from orch.host import hublinkprobe
+
+    hublinkprobe.clear()
+    state = SimpleNamespace(addr="hub.example.com:7443", addrs=[], hub_id="h")
+    svc = SimpleNamespace(state_dir=tmp_path, workspace_id="w", clock=lambda: 1.0)
+    monkeypatch.setattr(hubops, "workspace_dev", lambda s: False)
+    assert hubops._reachable(svc, state) == (None, True)  # noqa: SLF001
+    assert connects == []
+    # the address learner: nothing is probed or stored either
+    assert hubaddr.apply_where(svc, state, {"addresses": [{"link": "wss://x.example.com"}], "name": None}) is False
+    assert connects == []
+    # no file at all is the normal direct setup
+    hubnet.clear_proxy(tmp_path)
+    assert hubnet.load(tmp_path).proxy is None
+
+
+def test_no_dial_site_falls_back_to_a_missing_net() -> None:
+    """A ``net`` that cannot be loaded must raise, never become ``None`` (= direct). In the host and the remote
+    client no code assigns ``net = None`` and no dial passes a literal ``net=None``."""
+    bad = []
+    for p in sorted(SRC.rglob("*.py")):
+        rel = str(p.relative_to(SRC))
+        if not rel.startswith(("host/", "remoteclient/", "hubclient/tlsadapter")):
+            continue
+        for n in ast.walk(ast.parse(p.read_text())):
+            if isinstance(n, ast.Assign | ast.AnnAssign):
+                targets = n.targets if isinstance(n, ast.Assign) else [n.target]
+                if any(isinstance(t, ast.Name) and t.id == "net" for t in targets) and (
+                    isinstance(n.value, ast.Constant) and n.value.value is None
+                ):
+                    bad.append(f"{rel}:{n.lineno} net = None")
+            if isinstance(n, ast.Call):
+                for k in n.keywords:
+                    if k.arg == "net" and isinstance(k.value, ast.Constant) and k.value.value is None:
+                        bad.append(f"{rel}:{n.lineno} net=None")
+    assert not bad, bad

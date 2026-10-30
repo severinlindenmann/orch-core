@@ -828,6 +828,25 @@ def _refused(code: str) -> HostError:
     return HostError("hub.refused", f"the hub is refused: {code}")
 
 
+NET_BROKEN_NOTE = "The network settings of this computer can't be read, so the hub is not contacted. Fix or clear them."
+
+
+def _reachable(service: WorkspaceService, state: Any) -> tuple[bool | None, bool]:
+    """``(up, net_broken)`` for ``hub.status``. Network settings that exist but cannot be used (a corrupt file, loose
+    permissions) are fail-closed: no connect of any kind (a direct probe would go around the owner's proxy), ``up`` is
+    ``None``. No settings file at all is a normal direct setup."""
+    from orch.hubclient.tlslink.errors import ProxyError
+
+    from . import hublinkprobe, hubnet
+
+    try:
+        net = hubnet.load(service.state_dir)
+    except ProxyError:
+        return None, True
+    scope = f"{service.state_dir}:{service.workspace_id}"
+    return hublinkprobe.reachable(scope, _addr({}, state, workspace_dev(service)), net=net), False
+
+
 def _network(call: Call, op: str, args: dict[str, Any]) -> dict[str, Any]:
     """R6 (#1594, design section 3): the owner's proxy for hub links. Owner at this workspace only (``_owner`` ran: an
     agent is ``op.not_allowed``; the dashboard route is in the remote refused lists). The hub never reaches this. The
@@ -969,17 +988,9 @@ def serve(call: Call) -> dict[str, Any]:
         from . import hublinkprobe
 
         binding = None if state is None else state.status
-        up = None
+        up, net_broken = None, False
         if binding == "bound":
-            from . import hubnet
-
-            try:
-                net: Any = hubnet.load(service.state_dir)
-            except OSError:
-                net = None
-            up = hublinkprobe.reachable(
-                f"{service.state_dir}:{service.workspace_id}", _addr({}, state, workspace_dev(service)), net=net
-            )
+            up, net_broken = _reachable(service, state)
         return ok_result(
             {
                 "snapshot": snapshot.pinned_view(state, int(service.clock() * 1000)),
@@ -1000,6 +1011,8 @@ def serve(call: Call) -> dict[str, Any]:
                 "binding": binding,
                 "hub_card": None if state is None else state.card,  # public; the dashboard's one-click mode switch
                 "reachable": up,
+                # R6: settings that cannot be read mean no probe and no dial at all, said in plain words
+                "network": {"broken": net_broken, "note": NET_BROKEN_NOTE if net_broken else None},
                 **hublinkprobe.peer_view(service),  # peer_outbox, link_error
                 "log_sync": _log_sync_status(service),
                 "update_notice": _update_notice(service, state),  # HUB-WS-04: hub admin asks for an update

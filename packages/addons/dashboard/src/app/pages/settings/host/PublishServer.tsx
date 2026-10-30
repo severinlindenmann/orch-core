@@ -64,7 +64,7 @@ export function PublishServer({ workspace, owner, embedded = false }: { workspac
     <Wrap embedded={embedded}>
       <div className="space-y-2 text-[13px]" data-testid="publish-server">
         <p className="text-text-muted">
-          When you share files, they are sent to a publish server you choose, and the link opens on a second address. Only a person changes these addresses, with one click here.
+          When you share files, they are sent to a publish server you choose, and links open at the same address unless you set a different one. Only a person changes these addresses, with one click here.
         </p>
         {data.configured ? (
           <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5">
@@ -149,7 +149,7 @@ export function PublishServer({ workspace, owner, embedded = false }: { workspac
           <DialogContent className="max-w-md gap-3 border-border bg-surface">
             <DialogHeader>
               <DialogTitle>Where shared files go</DialogTitle>
-              <DialogDescription>Ask your workspace administrator for the publish server address. You will see both addresses again when you sign. Files you share later go to the first address, and links open at the second.</DialogDescription>
+              <DialogDescription>Ask your workspace administrator for the publish server address. You will see the addresses again when you sign. Files you share later go there, and links open at the same address unless you choose a different one.</DialogDescription>
             </DialogHeader>
             <PublishForm server={server} share={share} setServer={setServer} setShare={setShare} />
             <DialogFooter>
@@ -177,28 +177,45 @@ export function PublishServer({ workspace, owner, embedded = false }: { workspac
 export function publishValidation(server: string, share: string) {
   const bad = (v: string) => v !== '' && !ORIGIN.test(v)
   const problem = bad(server)
-    ? 'The files address must start with https:// (or http://127.0.0.1 for this computer), in lower case, with no path.'
+    ? 'The address must start with https:// (or http://127.0.0.1 for this computer), in lower case, with no path.'
     : bad(share)
       ? 'The links address must start with https:// (or http://127.0.0.1 for this computer), in lower case, with no path.'
-      : server && server === share
-        ? 'The two addresses must differ: opened files get their own address.'
-        : ''
-  const ready = ORIGIN.test(server) && ORIGIN.test(share) && server !== share
+      : ''
+  const ready = ORIGIN.test(server) && ORIGIN.test(share)
   return { problem, ready }
 }
 
+/** One address by default (files and links both use it). `share` follows `server` until the person opens "Links open at a different address". */
 export function PublishForm({ server, share, setServer, setShare }: { server: string; share: string; setServer: (value: string) => void; setShare: (value: string) => void }) {
   const { problem } = publishValidation(server, share)
+  const [separate, setSeparate] = useState(share !== '' && share !== server)
   return (
     <div className="space-y-3 text-[13px]">
       <div className="space-y-1.5">
-        <Label htmlFor="pub-server">Files are sent to</Label>
-        <input id="pub-server" className="h-8 w-full rounded border border-border bg-bg px-2 font-mono text-[12px]" value={server} onChange={(e) => setServer(e.target.value.trim())} placeholder="https://pub.example.org" />
+        <Label htmlFor="pub-server">Publish server address</Label>
+        <input
+          id="pub-server"
+          className="h-8 w-full rounded border border-border bg-bg px-2 font-mono text-[12px]"
+          value={server}
+          onChange={(e) => {
+            const v = e.target.value.trim()
+            setServer(v)
+            if (!separate) setShare(v)
+          }}
+          placeholder="https://pub.example.org"
+        />
+        {!separate && <p className="text-[12px] text-text-muted">Files and links both use this address.</p>}
       </div>
-      <div className="space-y-1.5">
-        <Label htmlFor="pub-share">Links open at</Label>
-        <input id="pub-share" className="h-8 w-full rounded border border-border bg-bg px-2 font-mono text-[12px]" value={share} onChange={(e) => setShare(e.target.value.trim())} placeholder="https://apps.example.org" />
-      </div>
+      {separate ? (
+        <div className="space-y-1.5">
+          <Label htmlFor="pub-share">Links open at</Label>
+          <input id="pub-share" className="h-8 w-full rounded border border-border bg-bg px-2 font-mono text-[12px]" value={share} onChange={(e) => setShare(e.target.value.trim())} placeholder="https://apps.example.org" />
+        </div>
+      ) : (
+        <button type="button" className="text-[12px] text-accent hover:underline" onClick={() => { setSeparate(true); setShare('') }}>
+          Links open at a different address
+        </button>
+      )}
       {problem && <p role="alert" className="text-danger">{problem}</p>}
     </div>
   )

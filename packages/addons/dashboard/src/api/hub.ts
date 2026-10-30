@@ -23,6 +23,8 @@ export interface HubStatus {
   reseal_needed: boolean
   key_change_pending: boolean
   log_sync_stuck: boolean
+  /** The version a hub admin asked this workspace to update to (HUB-WS-04); `null`: no request, or already there. */
+  update_target?: string | null
   /** From the hub, not signed: people per role in the pinned group snapshot. `null`: no snapshot yet. */
   groups: { read: number; edit: number; admin: number } | null
   snapshot_version: number | null
@@ -110,6 +112,9 @@ export interface HubShareReview {
   new_items: string[]
   leaves: string[]
   later_edits: string | null
+  /** Short forms for the one-ticket dialog (the host words them too). */
+  leaves_short?: string | null
+  later_edits_short?: string | null
 }
 
 /** `POST /hub/share/rule-add` and `/hub/share/sync`: sharing more. `synced: false`: saved, sent when the hub is back. */
@@ -137,7 +142,7 @@ export const hubServed = (ws: string | undefined): boolean => hasFeature('hub', 
 
 export const hubQueries = {
   status: (ws: string) => queryOptions({ queryKey: ['hub', ws, 'status'], queryFn: () => api.getHubStatus(ws), staleTime: 15_000, retry: false }),
-  shared: (ws: string) => queryOptions({ queryKey: ['hub', ws, 'shared'], queryFn: () => api.getHubShared(ws), staleTime: 10_000, refetchInterval: 15_000, retry: false, refetchOnWindowFocus: true }),
+  shared: (ws: string) => queryOptions({ queryKey: ['hub', ws, 'shared'], queryFn: () => api.getHubShared(ws), staleTime: 3_000, refetchInterval: 5_000, retry: false, refetchOnWindowFocus: true }),
   audience: (ws: string) => queryOptions({ queryKey: ['hub', ws, 'audience'], queryFn: () => api.getHubAudience(ws), staleTime: 60_000, retry: false }),
   share: (ws: string) => queryOptions({ queryKey: ['hub', ws, 'share'], queryFn: () => api.getHubShare(ws), retry: false }),
 }

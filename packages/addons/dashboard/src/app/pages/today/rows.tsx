@@ -276,8 +276,12 @@ export function QuestionRow({ item, ticket, now, expanded, onToggle, sign, asked
 export function ApprovalRow({ item, ticket, now, expanded, onToggle, sign, decider, locked }: CoreRowProps) {
   const gate = item.ref as Exclude<GateName, 'verify'>
   const readOnly = decider !== undefined
+  // R12 P03: requirements and plan are asked in one card and signed once (the same approve_both action as the ticket page).
+  const both = !!item.both
   const covers =
-    gate === 'requirements'
+    both
+      ? `Requirements · ${plural(ticket?.acceptance.length ?? 0, 'acceptance criterion', 'acceptance criteria')} · Plan · ${plural(ticket?.tasks.length ?? 0, 'task')}`
+      : gate === 'requirements'
       ? `Requirements · ${ticket?.acceptance.length ?? 0} acceptance criteria`
       : gate === 'code'
         ? `Code review · commit ${ticket?.branch.head ?? ''} · ${ticket ? diffstat(ticket.branch) : ''}`
@@ -298,7 +302,7 @@ export function ApprovalRow({ item, ticket, now, expanded, onToggle, sign, decid
         ) : locked ? (
           <Locked />
         ) : (
-          <Button size="sm" variant="outline" disabled={!ticket} onClick={() => sign(item.ticket, { kind: 'approve', gate })}>
+          <Button size="sm" variant="outline" disabled={!ticket} onClick={() => sign(item.ticket, both ? { kind: 'approve_both' } : { kind: 'approve', gate })}>
             Review
           </Button>
         )
@@ -311,6 +315,34 @@ export function ApprovalRow({ item, ticket, now, expanded, onToggle, sign, decid
         </Button>
       )}
     </RowShell>
+  )
+}
+
+// ------------------------------------------------------------------ the agent is writing the plan
+
+/** R12 P03: the requirements approval is held back while the agent still writes the plan. A quiet line says why nothing
+ *  is asked yet; it is not an item (never counted or announced) and goes when the plan is ready or the agent stops. */
+export function WritingRow({ item, now }: { item: NeedsYouItem; now: string }) {
+  return (
+    <RowShell
+      testId={`card-writing:${item.ticket}`}
+      icon={<Loader2 className="size-4 animate-spin" aria-label="working" />}
+      ask="The agent is writing the plan"
+      sub={
+        <>
+          <TicketLine ticket={item.ticket} title={item.title} />
+          <span> · you will approve requirements and plan together</span>
+        </>
+      }
+      age={ageOf(item, now)}
+      action={
+        <Button size="sm" variant="outline" asChild>
+          <Link to="/ticket/$key" params={{ key: item.ticket }}>
+            Open ticket
+          </Link>
+        </Button>
+      }
+    />
   )
 }
 

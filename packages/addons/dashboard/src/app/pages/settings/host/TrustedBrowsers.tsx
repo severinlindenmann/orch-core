@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { showsLogout } from '@/api/features'
 import { getToken } from '@/api/bootstrap'
 import { createFetchTransport } from '@/api/fetchTransport'
 import { Section } from '../../ticket/shared'
@@ -17,6 +18,7 @@ export function TrustedBrowsers() {
   const [rows, setRows] = useState<Row[] | null>(null)
   const [error, setError] = useState(false)
   const load = useCallback(async () => {
+    if (showsLogout()) return // a hub or remote session is refused this route by design: no call
     try {
       const res = await transport().request('GET', '/api/trusted')
       setRows(res.status === 200 && Array.isArray(res.json) ? (res.json as Row[]) : null)

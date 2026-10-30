@@ -8,7 +8,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { InfoDrawer } from '@/components/InfoDrawer'
 import { Link } from '@tanstack/react-router'
-import { Check, Copy, Loader2 } from 'lucide-react'
+import { Check, Copy, Loader2, Plus } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { copyText } from '@/app/copyLink'
 import { SignPopover } from '@/components/sign/SignPopover'
@@ -20,9 +20,13 @@ import {
   DAYS,
   VIEWS,
   adminCommand,
+  fileBase64,
+  LIMITS,
   fmtSize,
   reachNote,
   isUnknownWorkspace,
+  isUnreachable,
+  unpickable,
   kindText,
   newIdem,
   shareError,
@@ -30,6 +34,7 @@ import {
   sharesApi,
   unshareable,
   type Days,
+  type Picked,
   type Sent,
   type ShareKind,
   type Staged,
@@ -43,7 +48,7 @@ export const refreshShares = (qc: ReturnType<typeof useQueryClient>, ws: string)
 type Stage =
   | { at: 'form' }
   | { at: 'confirm'; staged: Staged }
-  | { at: 'send'; staged: Staged; error?: { text: string; unknown: boolean } }
+  | { at: 'send'; staged: Staged; connected?: boolean; error?: { text: string; unknown: boolean; unreachable: boolean } }
   | { at: 'link'; sent: Sent }
 
 function Failure({ text }: { text: string }) {
@@ -86,6 +91,10 @@ export function ShareFlow({ ws, ticket, resume, onClose }: { ws: string; ticket:
 
   // form
   const [picked, setPicked] = useState<string[]>([])
+  // files picked on this computer (P05): kept aside by the host, named again in Review, covered by the one signature
+  const [added, setAdded] = useState<Picked[]>([])
+  const [adding, setAdding] = useState(false)
+  const pick = useRef<HTMLInputElement>(null)
   const [kind, setKind] = useState<ShareKind>('secret')
   const [days, setDays] = useState<Days>(7)
   const [views, setViews] = useState<Views>(1)
@@ -99,7 +108,37 @@ export function ShareFlow({ ws, ticket, resume, onClose }: { ws: string; ticket:
   const signed = useRef(false)
 
   const files = ticket.artifacts.map((a) => ({ a, why: unshareable(a) }))
-  const total = ticket.artifacts.filter((a) => picked.includes(a.name)).reduce((n, a) => n + (a.bytes ?? 0), 0)
+  const total = ticket.artifacts.filter((a) => picked.includes(a.name)).reduce((n, a) => n + (a.bytes ?? 0), 0) + added.reduce((n, f) => n + f.size, 0)
+  const count = picked.length + added.length
+
+  const addFiles = async (list: FileList | null) => {
+    const chosen = Array.from(list ?? [])
+    if (pick.current) pick.current.value = ''
+    if (chosen.length === 0 || adding) return
+    setAdding(true)
+    setError('')
+    const taken = [...ticket.artifacts.map((a) => a.name), ...added.map((f) => f.name)]
+    try {
+      for (const file of chosen) {
+        if (picked.length + taken.length - ticket.artifacts.length >= LIMITS.files) {
+          setError(`A share holds at most ${LIMITS.files} files.`)
+          break
+        }
+        const why = unpickable(file, taken)
+        if (why) {
+          setError(`${file.name}: ${why}`)
+          continue
+        }
+        const got = await sharesApi.upload(ws, { name: file.name, data: await fileBase64(file) }, newIdem())
+        taken.push(got.name)
+        setAdded((a) => [...a, got])
+      }
+    } catch (e) {
+      setError(shareError(e))
+    } finally {
+      setAdding(false)
+    }
+  }
 
   const discard = (staged: Staged) => {
     // best effort: a person who closes before the signature does not want this copy to wait
@@ -110,11 +149,11 @@ export function ShareFlow({ ws, ticket, resume, onClose }: { ws: string; ticket:
   }
 
   const prepare = async () => {
-    if (busy || picked.length === 0) return
+    if (busy || count === 0) return
     setBusy(true)
     setError('')
     try {
-      const got = await sharesApi.prepare(ws, { ticket: ticket.key, artifacts: picked, kind, days, ...(kind === 'once' ? { views } : {}) }, prepareIdem)
+      const got = await sharesApi.prepare(ws, { ticket: ticket.key, artifacts: picked, ...(added.length ? { uploads: added.map((f) => f.upload_id) } : {}), kind, days, ...(kind === 'once' ? { views } : {}) }, prepareIdem)
       void refreshShares(qc, ws)
       setStage({ at: 'confirm', staged: got.staged })
     } catch (e) {
@@ -129,13 +168,34 @@ export function ShareFlow({ ws, ticket, resume, onClose }: { ws: string; ticket:
     sending.current = true
     if (sendIdem.current?.id !== staged.staged_id) sendIdem.current = { id: staged.staged_id, idem: newIdem() }
     setStage({ at: 'send', staged })
+    const idem = sendIdem.current.idem
+    const fail = (e: unknown, connected?: boolean) => {
+      void refreshShares(qc, ws)
+      setStage({ at: 'send', staged, ...(connected ? { connected } : {}), error: { text: shareError(e), unknown: isUnknownWorkspace(e), unreachable: isUnreachable(e) } })
+    }
     try {
-      const sent = await sharesApi.send(ws, staged.staged_id, sendIdem.current.idem)
+      let sent: Sent
+      try {
+        sent = await sharesApi.send(ws, staged.staged_id, idem)
+      } catch (e) {
+        if (!isUnknownWorkspace(e)) throw e
+        // The sharing server does not know this workspace yet: connect it by itself and send once more.
+        setStage({ at: 'send', staged, connected: true })
+        try {
+          await sharesApi.register(ws, newIdem())
+        } catch {
+          throw e // not allowed here (or not the owner): the first refusal, in its own words
+        }
+        try {
+          sent = await sharesApi.send(ws, staged.staged_id, idem)
+        } catch (e2) {
+          return fail(e2, true)
+        }
+      }
       void refreshShares(qc, ws)
       setStage({ at: 'link', sent })
     } catch (e) {
-      void refreshShares(qc, ws)
-      setStage({ at: 'send', staged, error: { text: shareError(e), unknown: isUnknownWorkspace(e) } })
+      fail(e)
     } finally {
       sending.current = false
     }
@@ -149,14 +209,14 @@ export function ShareFlow({ ws, ticket, resume, onClose }: { ws: string; ticket:
           <DialogHeader>
             <DialogTitle>Share files</DialogTitle>
             <DialogDescription>
-              Pick files of <Inline>{ticket.key}</Inline>. Files are uploaded only after you approve.
+              Pick files for <Inline>{ticket.key}</Inline>. Nothing is sent until you approve.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3 text-[13px]">
             {data && !data.configured && <p className="text-warning">No publish server is set up yet. Set one up on the Add-ons page, then come back.</p>}
             <fieldset className="space-y-1.5">
               <legend className="mb-1 font-medium">Files</legend>
-              {files.length === 0 && <p className="text-text-muted">This ticket has no files yet.</p>}
+              {files.length === 0 && added.length === 0 && <p className="text-text-muted">This ticket has no files yet. Add one from this computer.</p>}
               {files.map(({ a, why }) => (
                 <label key={a.name} className="flex items-start gap-2">
                   <input
@@ -173,7 +233,27 @@ export function ShareFlow({ ws, ticket, resume, onClose }: { ws: string; ticket:
                   </span>
                 </label>
               ))}
-              {picked.length > 0 && <p className="text-[12px] text-text-muted">{picked.length} selected{total ? `, ${fmtSize(total)}` : ''}.</p>}
+              {added.map((f) => (
+                <div key={f.upload_id} className="flex items-start gap-2" data-picked={f.upload_id}>
+                  <input type="checkbox" className="mt-0.5" checked readOnly aria-label={`${f.name} from this computer`} />
+                  <span className="min-w-0 flex-1">
+                    <Inline>{f.name}</Inline>
+                    <span className="text-text-faint"> · {fmtSize(f.size)}</span>
+                  </span>
+                  <Button type="button" size="sm" variant="ghost" className="h-6 px-2 text-[12px]" aria-label={`Remove ${f.name}`} onClick={() => setAdded((a) => a.filter((x) => x.upload_id !== f.upload_id))}>
+                    Remove
+                  </Button>
+                </div>
+              ))}
+              <div className="flex items-center gap-2 pt-1">
+                <input ref={pick} type="file" multiple hidden data-testid="share-file-input" onChange={(e) => void addFiles(e.target.files)} />
+                <Button type="button" size="sm" variant="secondary" disabled={adding || busy} onClick={() => pick.current?.click()}>
+                  {adding ? <Loader2 className="mr-1 size-3.5 animate-spin" aria-hidden /> : <Plus className="mr-1 size-3.5" aria-hidden />}
+                  Add a file
+                </Button>
+                <span className="text-[12px] text-text-muted">from this computer, up to 1 MB</span>
+              </div>
+              {count > 0 && <p className="text-[12px] text-text-muted">{count} selected{total ? `, ${fmtSize(total)}` : ''}.</p>}
             </fieldset>
             <fieldset className="space-y-1.5">
               <legend className="mb-1 font-medium">Kind of link</legend>
@@ -221,7 +301,7 @@ export function ShareFlow({ ws, ticket, resume, onClose }: { ws: string; ticket:
             <Button variant="ghost" onClick={onClose} disabled={busy}>
               Cancel
             </Button>
-            <Button onClick={() => void prepare()} disabled={busy || picked.length === 0 || (!!data && !data.configured)}>
+            <Button onClick={() => void prepare()} disabled={busy || adding || count === 0 || (!!data && !data.configured)}>
               {busy ? 'Preparing…' : 'Review selected files'}
             </Button>
           </DialogFooter>
@@ -299,11 +379,16 @@ export function ShareFlow({ ws, ticket, resume, onClose }: { ws: string; ticket:
             <DialogDescription>{err ? 'Nothing is shared yet. Your signature stays good for an hour.' : 'This takes a moment. Do not close this window.'}</DialogDescription>
           </DialogHeader>
           {!err && (
-            <p role="status" className="flex items-center gap-2 text-[13px] text-text-muted">
-              <Loader2 className="size-4 animate-spin" aria-hidden /> Sending…
-            </p>
+            <ul role="status" className="space-y-1 text-[13px]">
+              <li className="text-success">✓ Signed</li>
+              {stage.connected && <li className="text-success">✓ This workspace is now connected to sharing</li>}
+              <li className="flex items-center gap-2 text-text-muted">
+                <Loader2 className="size-4 animate-spin" aria-hidden /> Sending {s.files.length} file{s.files.length === 1 ? '' : 's'}…
+              </li>
+            </ul>
           )}
           {err && <Failure text={err.text} />}
+          {err?.unreachable && <p className="text-[12px] text-text-muted">Your signature stays good for an hour. Press Try again when sharing is back.</p>}
           {err?.unknown && data && (
             <InfoDrawer>
               <p className="mt-1">The server’s admin runs:</p>

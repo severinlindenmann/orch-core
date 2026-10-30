@@ -199,6 +199,18 @@ function BuiltInGroup({ ws }: { ws: NonNullable<ReturnType<typeof useWorkspace>[
     </section>
   )
 }
+/** The built-in add-ons that are off, in Browse (P05): found where people look, each with Turn on. */
+function BuiltInOff({ ws }: { ws: NonNullable<ReturnType<typeof useWorkspace>['workspace']> }) {
+  const data = useQuery(queries.addOns(ws.id))
+  const any = data.data?.available && data.data.add_ons.some((r) => r.state !== 'on' && r.locked === null)
+  if (!any) return null
+  return (
+    <section aria-labelledby="built-in-off-h" className="space-y-1">
+      <h2 id="built-in-off-h" className="text-sm font-semibold">Built in</h2>
+      <BuiltInAddOns key={ws.id} workspace={ws} browse label="Built-in add-ons that are off" />
+    </section>
+  )
+}
 export function MarketPage() {
   const { workspace } = useWorkspace()
   return <MarketWorkspace key={workspace?.id ?? 'loading'} />
@@ -307,6 +319,7 @@ function MarketWorkspace() {
         <>
           {tab === 'browse' && (
             <>
+              {workspace && <BuiltInOff ws={workspace} />}
               <div className="grid grid-cols-2 gap-2 @min-[640px]:flex">
                 <Input aria-label="Search add-ons" placeholder="Search add-ons…" className="col-span-2 min-w-0 flex-1 basis-48" value={search} onChange={(e) => setSearch(e.target.value)} />
                 <select aria-label="Source" className="min-w-0 max-w-full rounded border border-border bg-surface p-2 text-sm" value={source} onChange={(e) => setSource(e.target.value)}>

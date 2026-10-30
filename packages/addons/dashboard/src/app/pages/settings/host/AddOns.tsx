@@ -37,12 +37,17 @@ export interface AddOnListProps {
   /** Said under the list when it has no rows. */
   empty?: string
   label?: string
+  /** The Browse tab (P05): only the built-in add-ons that are off, each with a Turn on button instead of a switch. */
+  browse?: boolean
+  /** With `browse`: only these add-ons. */
+  only?: readonly string[]
 }
 
-export function BuiltInAddOns({ workspace, rows, tag, actions, empty, label = 'Add-ons' }: AddOnListProps) {
+export function BuiltInAddOns({ workspace, rows, tag, actions, empty, label = 'Add-ons', browse, only }: AddOnListProps) {
   const [setup, setSetup] = useState<{ name: 'publish'; enabling: boolean } | null>(null)
   const data = useQuery({ ...queries.addOns(workspace.id), enabled: !rows })
-  const list = rows ? { available: true, add_ons: rows } : data.data
+  const full = rows ? { available: true, add_ons: rows } : data.data
+  const list = full && browse ? { ...full, add_ons: full.add_ons.filter((r) => r.state !== 'on' && r.locked === null && (!only || only.includes(r.id))) } : full
   const role = useViewerRole(workspace)
   const qc = useQueryClient()
   const [open, setOpen] = useState<Record<string, boolean>>({})
@@ -82,7 +87,7 @@ export function BuiltInAddOns({ workspace, rows, tag, actions, empty, label = 'A
           <LoadFailed what="add-ons" onRetry={() => void data.refetch()} />
         ) : !list ? (
           <p className="text-[13px] text-text-muted">Reading the add-ons…</p>
-        ) : !list.add_ons.length && empty ? (
+        ) : browse && !list.add_ons.length ? null : !list.add_ons.length && empty ? (
           <p className="text-[13px] text-text-muted">{empty}</p>
         ) : !list.available ? (
           <p className="text-[13px] text-text-muted">This host does not say which add-ons there are.</p>
@@ -137,9 +142,14 @@ export function BuiltInAddOns({ workspace, rows, tag, actions, empty, label = 'A
                         <Loader2 className="size-3.5 animate-spin" aria-hidden /> {mine.turningOn ? 'Turning on…' : 'Turning off…'}
                       </span>
                     )}
-                    {!fixed && on && !mine && <span className="text-xs text-text-muted">On</span>}
+                    {!fixed && on && !mine && !browse && <span className="text-xs text-text-muted">On</span>}
                     {actions?.(row, { owner, busy: !!busy })}
-                    {!fixed && (
+                    {!fixed && browse && (
+                      <Button size="sm" aria-label={`Turn on ${plain(row.title)}`} disabled={disabled || !!busy} onClick={() => flip(row)}>
+                        Turn on
+                      </Button>
+                    )}
+                    {!fixed && !browse && (
                       <Switch
                         aria-label={`${plain(row.title)}`}
                         aria-describedby={why ? `addon-${row.id}-why` : undefined}

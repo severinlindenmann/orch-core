@@ -17,6 +17,7 @@ import { useElementWidth } from '@/lib/useElementWidth'
 import { cn } from '@/lib/utils'
 import { CardFields, People, ProgressBar, type BoardPeople } from '../board/TicketCard'
 import { PriorityMarker, TypeIcon } from '../board/lib'
+import { useJustCreated } from '../new-ticket/justCreated'
 import { isCollapsed, NO_EPIC, progressLabel, type EpicGroups } from '../board/grouping'
 import { Ago, agentName, statusLabel } from '../ticket/shared'
 import type { SortKey } from './search'
@@ -107,6 +108,10 @@ export function TicketsTable({
   // With Estimate on the list has its own Points column (the chip is not repeated in the add-on column).
   const hasPoints = estimateOn(workspace)
   const body = useRef<HTMLTableSectionElement>(null)
+  const fresh = useJustCreated() // the ticket just created: a short highlight and a "New" tag, scrolled into view
+  useEffect(() => {
+    if (fresh) [...(body.current?.rows ?? [])].find((r) => r.dataset.key === fresh)?.scrollIntoView?.({ block: 'nearest' })
+  }, [fresh])
   useEffect(() => {
     if (!focusKey) return
     const row = [...(body.current?.rows ?? [])].find((r) => r.dataset.key === focusKey)
@@ -137,7 +142,7 @@ export function TicketsTable({
         data-state={isSel ? 'selected' : undefined}
         onFocus={(e) => e.target === e.currentTarget && onFocus(t.key)}
         onClick={() => void navigate({ to: '/ticket/$key', params: { key: t.key } })}
-        className={cn('cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand', focusKey === t.key && 'bg-surface-2')}
+        className={cn('cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand', focusKey === t.key && 'bg-surface-2', fresh === t.key && 'bg-brand-soft transition-colors')}
       >
         {canSelect && (
           <TableCell className="px-1.5 py-1.5" onClick={(e) => e.stopPropagation()}>
@@ -153,6 +158,7 @@ export function TicketsTable({
         <TableCell className="px-1.5 py-1.5">
           <div className="truncate text-[13px] text-text" title={t.title}>
             {t.title}
+            {fresh === t.key && <span data-testid={'ticket-new-' + t.key} className="ml-2 rounded-full bg-brand-soft px-1.5 text-[10px] leading-4 font-medium text-brand">New</span>}
           </div>
           {(t.labels.length > 0 || t.match) && (
             <div className="mt-0.5 flex min-w-0 items-center gap-1 overflow-hidden">

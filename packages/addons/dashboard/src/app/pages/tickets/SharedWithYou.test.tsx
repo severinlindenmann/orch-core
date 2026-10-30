@@ -10,18 +10,18 @@ describe('SharedWithYou stays current', () => {
   beforeEach(() => sessionStorage.clear())
   afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks() })
 
-  it('polls: a rename shows within 15 s, a vanished ticket becomes a "stopped sharing" line that Dismiss removes', async () => {
+  it('polls: a rename shows within 5 s, a vanished ticket becomes a "stopped sharing" line that Dismiss removes', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     const get = vi.spyOn(api, 'getHubShared').mockResolvedValue({ items: [t('D-7', 'Invoice export for Ben')] })
     const { user } = renderApp('/tickets')
     const box = await screen.findByTestId('shared-with-you')
     expect(within(box).getByText('Invoice export for Ben')).toBeInTheDocument()
     get.mockResolvedValue({ items: [t('D-7', 'Invoice export for Ben v2')] })
-    await act(async () => { await vi.advanceTimersByTimeAsync(15_500) })
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_500) })
     expect(await screen.findByText('Invoice export for Ben v2')).toBeInTheDocument()
     expect(screen.queryByTestId('shared-ended')).toBeNull() // a rename needs no note
     get.mockResolvedValue({ items: [] })
-    await act(async () => { await vi.advanceTimersByTimeAsync(15_500) })
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_500) })
     const note = await screen.findByTestId('shared-ended')
     expect(note).toHaveTextContent('Anna stopped sharing Invoice export for Ben v2')
     expect(screen.queryByTestId('shared-row')).toBeNull()
@@ -30,13 +30,26 @@ describe('SharedWithYou stays current', () => {
     await waitFor(() => expect(screen.queryByTestId('shared-with-you')).toBeNull())
   })
 
+  it('P17: names, titles, text and the ended note use the normal font; only the key is mono; hidden characters stay visible', async () => {
+    vi.spyOn(api, 'getHubShared').mockResolvedValue({ items: [{ ...t('D-7', 'Invoice\u202E export\u200B'), shared_by: 'An\u202Ena', description: 'Body\u2066 text' }] })
+    renderApp('/tickets')
+    const box = await screen.findByTestId('shared-with-you')
+    const mono = [...box.querySelectorAll('.font-mono')]
+    expect(mono.length).toBeGreaterThan(0)
+    for (const e of mono) expect(e.textContent).toBe('D-7')
+    expect(box.textContent).toContain('Invoice\\u{202e} export\\u{200b}')
+    expect(box.textContent).toContain('An\\u{202e}na')
+    expect(box.textContent).toContain('Body\\u{2066} text')
+    expect(box.textContent).not.toMatch(/[\u202E\u200B\u2066]/)
+  })
+
   it('a failed read gives no "stopped sharing" note and keeps the last list', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     const get = vi.spyOn(api, 'getHubShared').mockResolvedValue({ items: [t('D-7', 'Invoice export')] })
     renderApp('/tickets')
     await screen.findByTestId('shared-row')
     get.mockRejectedValue(new Error('hub away'))
-    await act(async () => { await vi.advanceTimersByTimeAsync(15_500) })
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_500) })
     expect(screen.queryByTestId('shared-ended')).toBeNull()
     expect(screen.getByText('Invoice export')).toBeInTheDocument()
   })
@@ -52,7 +65,7 @@ describe('SharedWithYou stays current', () => {
     expect(JSON.stringify(Object.values(sessionStorage))).not.toContain('secret body')
     expect(JSON.stringify(Object.values(sessionStorage))).not.toContain('Mine')
     get.mockResolvedValue({ items: [] })
-    await act(async () => { await vi.advanceTimersByTimeAsync(15_500) })
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_500) })
     expect(await screen.findByTestId('shared-ended')).toHaveTextContent('Anna stopped sharing Invoice export')
     expect(screen.getAllByTestId('shared-ended')).toHaveLength(1) // not "stopped sharing Mine"
     void stored

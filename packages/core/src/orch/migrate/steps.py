@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from orch.layout import STATE_DIR, WORK_DIR
 from orch.ops.errors import OrchError
 
 __all__ = [
@@ -72,7 +73,7 @@ def protected_snapshot(root: Path) -> dict[str, str | None]:
     snap: dict[str, str | None] = {}
     for dirpath, dirnames, filenames in os.walk(root):
         rel_dir = Path(dirpath).relative_to(root)
-        if rel_dir.parts[:1] and rel_dir.parts[0] in (".state", ".orch-work"):
+        if rel_dir.parts[:1] and rel_dir.parts[0] in (STATE_DIR, WORK_DIR):
             dirnames.clear()
             continue
         for name in filenames:

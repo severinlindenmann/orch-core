@@ -53,11 +53,20 @@ FAKE_PASS = (
     'TOOL = "pass-cli"\n'
     + FAKE_COMMON
     + """
+import hashlib
 V = SIM / "vault"
+
+
+def item_id(title):
+    return "ID" + hashlib.sha1(title.encode()).hexdigest()[:20]
+
+
 if argv[:1] == ["info"]:
     sys.exit(0)
 if argv[:3] == ["item", "create", "login"]:
     if "--get-template" in argv:
+        if (SIM / "pass-template-fail").exists():
+            sys.exit(1)
         print(json.dumps({"title": "", "username": "", "email": "", "password": "", "note": "", "urls": []}))
         sys.exit(0)
     item = json.loads(stdin)
@@ -65,13 +74,23 @@ if argv[:3] == ["item", "create", "login"]:
     if os.environ.get("PROTON_PASS_AGENT_REASON", "") == "":
         sys.exit(9)
     (V / (item["title"] + ".json")).write_text(json.dumps(item))
+    print(json.dumps({"id": item_id(item["title"]), "share_id": "SHARE"}))
+    sys.exit(0)
+if argv[:2] == ["item", "list"]:
+    assert opt("--vault-name") == "Agents" and opt("--output") == "json"
+    if (SIM / "pass-list-fail").exists():
+        sys.exit(3)
+    items = [{"id": item_id(p.stem), "content": {"title": p.stem}} for p in sorted(V.glob("*.json"))]
+    print(json.dumps({"items": items}))
     sys.exit(0)
 if argv[:2] == ["item", "view"]:
-    p = V / (opt("--item-title") + ".json")
-    if not p.exists():
-        sys.exit(1)
-    print(json.loads(p.read_text())[opt("--field")])
-    sys.exit(0)
+    if (SIM / "pass-view-fail").exists() or "--item-title" in argv:
+        sys.exit(3)
+    for p in V.glob("*.json"):
+        if item_id(p.stem) == opt("--item-id"):
+            print(json.loads(p.read_text())[opt("--field")])
+            sys.exit(0)
+    sys.exit(1)
 sys.exit(2)
 """
 )
@@ -235,11 +254,12 @@ def test_init_succeeds_without_leaking_and_prints_only_the_allowed_lines(lab, ca
     assert rc == 0 and err == ""
     pub = json.loads((lab.repo / "release/keys/root-1.pub.json").read_text())
     lines = out.splitlines()
-    assert lines[:2] == ["root key id: root-1", f"fingerprint: {pub['fingerprint']}"]
+    assert [x.split(":")[0] for x in lines[:2]] == ["proton item id (root)", "proton item id (ci)"]
+    assert lines[2:4] == ["root key id: root-1", f"fingerprint: {pub['fingerprint']}"]
     assert pub["fingerprint"].startswith("sha256:") and len(pub["fingerprint"]) == 71
-    assert lines[2] == "changed files:"
+    assert lines[4] == "changed files:"
     assert lines[-1] == "ORCH_RELEASE_KEY in environment release: present"
-    changed = {x.strip() for x in lines[3:-1]}
+    changed = {x.strip() for x in lines[5:-1]}
     assert changed == {
         ".gitignore",
         "install.sh",
@@ -383,6 +403,53 @@ def test_refuses_when_the_root_item_already_exists(lab, capsys):
     _assert_refused_cleanly(lab, capsys, "already exists")
 
 
+def test_refuses_when_the_ci_item_already_exists(lab, capsys):
+    (lab.sim / "vault" / f"{ceremony.CI_TITLE}.json").write_text(
+        json.dumps({"title": "x", "username": "u", "password": "AAAA"})
+    )
+    _assert_refused_cleanly(lab, capsys, "already exists")
+
+
+@pytest.mark.parametrize("flag", ["pass-list-fail", "pass-view-fail"])
+def test_an_error_from_pass_cli_is_never_read_as_absent(lab, capsys, flag):
+    (lab.sim / flag).write_text("")
+    if flag == "pass-view-fail":  # view is not used for the existence check at all: init must go through
+        assert run_main(lab, capsys, "init")[0] == 1  # ... but the read-back by ID then fails, without a title fallback
+        assert not any("--item-title" in c["argv"] for c in lab.calls())
+        return
+    _assert_refused_cleanly(lab, capsys, "refusing")
+
+
+def test_unparseable_list_output_refuses(lab, capsys, monkeypatch):
+    real = ceremony.run
+    monkeypatch.setattr(
+        ceremony,
+        "run",
+        lambda a, i=b"", **k: (0, b"not json") if a[:3] == ["pass-cli", "item", "list"] else real(a, i, **k),
+    )
+    _assert_refused_cleanly(lab, capsys, "did not return JSON")
+
+
+def test_template_unreadable_aborts_before_anything_is_stored(lab, capsys):
+    (lab.sim / "pass-template-fail").write_text("")
+    _assert_refused_cleanly(lab, capsys, "template")
+
+
+def test_template_with_unexpected_filled_fields_aborts(lab, capsys, monkeypatch):
+    real = ceremony.run
+    tpl = json.dumps({"title": "", "username": "", "password": "", "note": "", "totp": "SECRETISH"}).encode()
+    monkeypatch.setattr(ceremony, "run", lambda a, i=b"", **k: (0, tpl) if "--get-template" in a else real(a, i, **k))
+    _assert_refused_cleanly(lab, capsys, "unexpected non-empty")
+
+
+def test_readback_and_resign_use_the_item_id_never_the_title(lab, capsys, monkeypatch):
+    _init_then(lab, capsys, monkeypatch)
+    assert run_main(lab, capsys, "resign-revocations")[0] == 0
+    views = [c for c in lab.calls() if c["tool"] == "pass-cli" and c["argv"][:2] == ["item", "view"]]
+    assert len(views) == 3 and all("--item-id" in c["argv"] and "--item-title" not in c["argv"] for c in views)
+    assert not any("--item-title" in c["argv"] for c in lab.calls())
+
+
 def test_refuses_when_the_release_environment_is_missing(lab, capsys):
     (lab.sim / "gh-env.json").unlink()
     _assert_refused_cleanly(lab, capsys, "does not exist")
@@ -461,8 +528,8 @@ def test_temp_dir_is_removed_on_a_signal(lab, monkeypatch, capsys):
 def test_failing_children_do_not_echo_their_output(lab, capsys, monkeypatch):
     real = ceremony.run
 
-    def noisy(argv, stdin=b""):
-        rc, out = real(argv, stdin)
+    def noisy(argv, stdin=b"", **kw):
+        rc, out = real(argv, stdin, **kw)
         if argv[:2] == ["gh", "secret"] and argv[2] == "set":
             return 1, b"SUPERSECRET-OUTPUT"
         return rc, out
@@ -560,9 +627,10 @@ def test_resign_reads_the_root_from_proton_and_never_creates_anything(lab, capsy
     n = len(lab.calls())
     assert run_main(lab, capsys, "resign-revocations")[0] == 0
     new = lab.calls()[n:]
-    assert [c["argv"][:2] for c in new if c["tool"] == "pass-cli"] == [["info"], ["item", "view"]]
+    assert [c["argv"][:2] for c in new if c["tool"] == "pass-cli"] == [["info"], ["item", "list"], ["item", "view"]]
     assert all(c["tool"] == "pass-cli" for c in new)  # no gh call at all
-    assert new[1]["argv"][-2:] == ["--field", "password"]
+    assert not any("--item-title" in c["argv"] for c in lab.calls())
+    assert new[2]["argv"][-2:] == ["--field", "password"]
 
 
 # ---- the current list is verified before the root key is fetched ---------------------------------------------------

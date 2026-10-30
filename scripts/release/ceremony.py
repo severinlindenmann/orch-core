@@ -74,14 +74,14 @@ def _step(name: str) -> None:
         raise Ceremony(f"injected failure at {name}")
 
 
-def run(argv: list[str], stdin: bytes = b"") -> tuple[int, bytes]:
+def run(argv: list[str], stdin: bytes = b"", timeout: int = 120) -> tuple[int, bytes]:
     """The ONLY way to start a program: argv plus stdin bytes, sanitized env, no shell. Returns (exit code, stdout).
 
     stderr is captured and dropped, so a child can never leak a value through our stderr either."""
     env = childenv.sanitize(os.environ)
     env["PROTON_PASS_AGENT_REASON"] = REASON
     try:
-        p = subprocess.run(argv, input=stdin, capture_output=True, env=env, shell=False, timeout=120)  # noqa: S603
+        p = subprocess.run(argv, input=stdin, capture_output=True, env=env, shell=False, timeout=timeout)  # noqa: S603
     except (OSError, subprocess.TimeoutExpired):
         return 127, b""
     return p.returncode, p.stdout
@@ -110,67 +110,122 @@ def _seed(key: Ed25519PrivateKey) -> bytearray:
 # --- Proton Pass and GitHub, all through run() ----------------------------------------------------------------------
 
 
-def _pass_item_exists(title: str) -> bool:
-    rc, _ = run(["pass-cli", "item", "view", "--vault-name", VAULT, "--item-title", title, "--field", "username"])
-    return rc == 0
+def _walk(node):
+    """Yield (title, id-or-None) for every dict in a pass-cli JSON document that has a title (own or in ``content``)."""
+    if isinstance(node, dict):
+        title = node.get("title")
+        if not isinstance(title, str) and isinstance(node.get("content"), dict):
+            title = node["content"].get("title")
+        if isinstance(title, str):
+            item_id = node.get("id") or node.get("item_id")
+            yield title, item_id if isinstance(item_id, str) else None
+        for v in node.values():
+            yield from _walk(v)
+    elif isinstance(node, list):
+        for v in node:
+            yield from _walk(v)
 
 
-def _pass_store(title: str, username: str, seed: bytearray, note: str) -> None:
-    """Create the login item; the JSON (with the base64 seed) goes in on stdin."""
-    rc, out = run(["pass-cli", "item", "create", "login", "--get-template"])
+def _pass_items() -> list[tuple[str, str | None]]:
+    """Every (title, id) in the vault. An error or unreadable answer REFUSES: absence is never inferred from it."""
+    rc, out = run(["pass-cli", "item", "list", "--vault-name", VAULT, "--output", "json"])
+    if rc != 0:
+        raise Ceremony("pass-cli could not list the vault: refusing (I will not guess that an item is absent)")
     try:
-        tpl = json.loads(out) if rc == 0 else {}
+        doc = json.loads(out)
     except ValueError:
-        tpl = {}
-    if not isinstance(tpl, dict):
-        tpl = {}
-    item = dict(tpl)
+        raise Ceremony("pass-cli item list did not return JSON: refusing") from None
+    return list(_walk(doc))
+
+
+def _pass_find_id(title: str) -> str:
+    ids = {i for t, i in _pass_items() if t == title and i}
+    if len(ids) != 1:
+        raise Ceremony(f"expected exactly one vault item titled {title!r}, found {len(ids)}: refusing")
+    return next(iter(ids))
+
+
+def _pass_template() -> dict:
+    """The item template of this pass-cli version. If it cannot be read, nothing is stored (no guessed shape)."""
+    rc, out = run(["pass-cli", "item", "create", "login", "--get-template"], timeout=10)
+    try:
+        tpl = json.loads(out) if rc == 0 else None
+    except ValueError:
+        tpl = None
+    if not isinstance(tpl, dict) or not {"title", "username", "password"} <= set(tpl):
+        raise Ceremony("cannot read pass-cli's login item template: nothing was stored (confirm the shape first)")
+    note_key = "note" if "note" in tpl else "notes" if "notes" in tpl else None
+    extra = {k: v for k, v in tpl.items() if k not in {"title", "username", "password", note_key} and v}
+    if extra:
+        raise Ceremony("pass-cli's login template has unexpected non-empty fields: nothing was stored")
+    return tpl
+
+
+def _created_id(out: bytes) -> str:
+    """The item ID that ``create`` printed (JSON ``id``/``item_id``, else the single long token in its output)."""
+    text = out.decode(errors="replace")
+    try:
+        found = {i for _, i in _walk(json.loads(text)) if i}
+        if not found:
+            doc = json.loads(text)
+            found = {doc[k] for k in ("id", "item_id") if isinstance(doc, dict) and isinstance(doc.get(k), str)}
+    except ValueError:
+        found = set(re.findall(r"[A-Za-z0-9_=-]{16,}", text))
+    if len(found) != 1:
+        raise Ceremony("the item was created but its ID could not be read from pass-cli's answer: find it in Proton")
+    return next(iter(found))
+
+
+def _pass_store(tpl: dict, title: str, username: str, seed: bytearray, note: str) -> str:
+    """Create the login item from a fixed key set (JSON with the base64 seed on stdin). Returns the new item's ID."""
+    item = dict(tpl)  # the extra template keys are empty (checked in _pass_template)
     item.update({"title": title, "username": username, "password": base64.b64encode(bytes(seed)).decode()})
-    if "note" in tpl or not tpl:
-        item["note"] = note
-    elif "notes" in tpl:
-        item["notes"] = note
+    for k in ("note", "notes"):
+        if k in tpl:
+            item[k] = note
     payload = bytearray(json.dumps(item).encode())
     try:
-        rc, _ = run(
+        rc, out = run(
             ["pass-cli", "item", "create", "login", "--vault-name", VAULT, "--from-template", "-"], bytes(payload)
         )
     finally:
         _wipe(payload)
     if rc != 0:
         raise Ceremony(f"pass-cli could not store the item {title!r}")
+    return _created_id(out)
 
 
-def _pass_read_seed(title: str) -> bytearray:
-    rc, out = run(["pass-cli", "item", "view", "--vault-name", VAULT, "--item-title", title, "--field", "password"])
+def _pass_read_seed(item_id: str) -> bytearray:
+    rc, out = run(["pass-cli", "item", "view", "--vault-name", VAULT, "--item-id", item_id, "--field", "password"])
     if rc != 0:
-        raise Ceremony(f"pass-cli could not read the item {title!r}")
+        raise Ceremony("pass-cli could not read the item (by ID)")
     raw = bytearray(out.strip())
     try:
         seed = bytearray(base64.b64decode(bytes(raw), validate=True))
     except ValueError:
-        raise Ceremony(f"the item {title!r} does not hold a base64 seed") from None
+        raise Ceremony("the vault item does not hold a base64 seed") from None
     finally:
         _wipe(raw)
     if len(seed) != 32:
         _wipe(seed)
-        raise Ceremony(f"the item {title!r} does not hold a 32-byte seed")
+        raise Ceremony("the vault item does not hold a 32-byte seed")
     return seed
 
 
-def _store_and_verify(title: str, username: str, key: Ed25519PrivateKey, note: str) -> None:
+def _store_and_verify(tpl: dict, label: str, title: str, username: str, key: Ed25519PrivateKey, note: str) -> None:
     seed = _seed(key)
     try:
-        _pass_store(title, username, seed, note)
+        item_id = _pass_store(tpl, title, username, seed, note)
     finally:
         _wipe(seed)
-    back = _pass_read_seed(title)
+    print(f"proton item id ({label}): {item_id}", flush=True)  # not secret; recovery names the item by this ID
+    back = _pass_read_seed(item_id)
     try:
         same = _pub(Ed25519PrivateKey.from_private_bytes(bytes(back))) == _pub(key)
     finally:
         _wipe(back)
     if not same:
-        raise Ceremony(f"read-back of {title!r} does not match the generated key")
+        raise Ceremony(f"read-back of the {label} item does not match the generated key")
 
 
 def _gh_secret_set(key: Ed25519PrivateKey, repo: str) -> None:
@@ -224,12 +279,15 @@ def _check_environment(repo: str) -> None:
         raise Ceremony(f"the {ENV_NAME!r} environment's branch policy is not exactly: main")
 
 
-def _preflight_init(repo: str, root: Path) -> None:
+def _preflight_init(repo: str, root: Path) -> dict:
     rc, _ = run(["pass-cli", "info"])
     if rc != 0:
         raise Ceremony("pass-cli info failed: log in first (scripts/pass-login.sh)")
-    if _pass_item_exists(ROOT_TITLE):
-        raise Ceremony(f"the item {ROOT_TITLE!r} already exists: refusing (rotation is not part of this script)")
+    titles = {t for t, _ in _pass_items()}
+    for title in (ROOT_TITLE, CI_TITLE):
+        if title in titles:
+            raise Ceremony(f"the item {title!r} already exists: refusing (rotation is not part of this script)")
+    tpl = _pass_template()
     rc, _ = run(["gh", "auth", "status"])
     if rc != 0:
         raise Ceremony("gh is not authenticated")
@@ -238,6 +296,7 @@ def _preflight_init(repo: str, root: Path) -> None:
         raise Ceremony("release/keys/root-1.pub.json already exists: refusing")
     if re.search(r"^PRODUCTION_ROOTS: Mapping\[str, bytes\] = \{\}$", _read(root / KEYS_PY), re.M) is None:
         raise Ceremony("keys.py already embeds production roots: refusing")
+    return tpl
 
 
 # --- file edits -----------------------------------------------------------------------------------------------------
@@ -315,7 +374,7 @@ def _gitignore(root: Path) -> str:
 
 def cmd_init(root: Path, repo: str, tmp: Path) -> int:
     _step("preflight")
-    _preflight_init(repo, root)
+    tpl = _preflight_init(repo, root)
     now = _now()
     staged: dict[str, str] = {}
 
@@ -324,7 +383,7 @@ def cmd_init(root: Path, repo: str, tmp: Path) -> int:
     root_pub = _pub(root_key)
     fp = _fingerprint(root_pub)
     note = f"orch release root key {ROOT_ID}; created {_stamp(now)}; fingerprint {fp}. Never leaves Proton Pass."
-    _store_and_verify(ROOT_TITLE, ROOT_ID, root_key, note)
+    _store_and_verify(tpl, "root", ROOT_TITLE, ROOT_ID, root_key, note)
 
     _step("ci-key")
     ci_key = Ed25519PrivateKey.generate()
@@ -342,7 +401,7 @@ def cmd_init(root: Path, repo: str, tmp: Path) -> int:
         f"orch release CI key {CI_ID}; created {_stamp(now)}; core/main only; restores the GitHub secret {SECRET_NAME}."
     )
     _step("ci-proton")
-    _store_and_verify(CI_TITLE, CI_ID, ci_key, ci_note)
+    _store_and_verify(tpl, "ci", CI_TITLE, CI_ID, ci_key, ci_note)
     _step("ci-secret")
     _gh_secret_set(ci_key, repo)
 
@@ -441,7 +500,7 @@ def cmd_resign(root: Path, repo: str, tmp: Path) -> int:
     print(f"re-signing: min_serial {prev['min_serial']}, revoked {prev['revoked']}")
 
     _step("read-root")
-    seed = _pass_read_seed(ROOT_TITLE)
+    seed = _pass_read_seed(_pass_find_id(ROOT_TITLE))
     try:
         key = Ed25519PrivateKey.from_private_bytes(bytes(seed))
     finally:

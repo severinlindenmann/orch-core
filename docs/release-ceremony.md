@@ -29,7 +29,7 @@ release/keys/revocations.json` exits 0).
 
     python3 -I scripts/release/ceremony.py resign-revocations
 
-Reads the root from Proton, checks it is the published `root-1`, re-signs the list with a new `issued_at` (same
+Reads the root from Proton, checks it is the root embedded in `keys.py` and `install.sh`, re-signs the list with a new `issued_at` (same
 `min_serial` and `revoked`), writes `release/keys/revocations.json`, bumps the `install.sh` floor.
 **Paste:** the printed `issued_at` and file list. Commit and PR the two files. The list is valid 30 days, clients warn
 10 days before it expires, and after expiry updates fail closed (running installs keep running).
@@ -39,13 +39,16 @@ Reads the root from Proton, checks it is the published `root-1`, re-signs the li
 The script prints a fixed message (no child output) and removes its temp dir; the repo tree is only written at the
 very end, so a failure earlier leaves it untouched. What already happened outside the repo:
 
+Each Proton item's ID is printed the moment it is created (`proton item id (root): ...`, `proton item id (ci): ...`).
+It is not secret. Keep it from the output. Items are only ever named by that ID, never by title.
+
 | Failed at | Already done | Recovery |
 |---|---|---|
-| preflight | nothing | fix the cause (login, environment, policy), rerun |
-| storing the root | maybe the Proton item | in Proton delete "orch release root key" if present, rerun |
-| CI key to Proton / GitHub secret | root item, maybe CI item | delete both Proton items ("orch release CI key rk-1" too); the secret is overwritten on rerun; rerun |
-| writing files | all external steps | do NOT rerun `init` (it would refuse). Delete both Proton items, rerun; the old secret is overwritten |
-| secret list shows MISSING | files written | set the secret again from the Proton item "orch release CI key rk-1": `pass-cli item view --vault-name Agents --item-title "orch release CI key rk-1" --field password \| gh secret set ORCH_RELEASE_KEY --env release --repo severinlindenmann/orch-core` |
+| preflight | nothing | fix the cause (login, environment, policy, pass-cli errors), rerun |
+| storing the root | maybe the root item | open Proton, delete the item with the printed root ID, rerun |
+| CI key to Proton / GitHub secret | root item, maybe CI item | delete the items with the printed root and CI IDs; the secret is overwritten on rerun; rerun |
+| writing files | all external steps | do NOT rerun `init` until the Proton items with both printed IDs are deleted; then rerun (the old secret is overwritten) |
+| secret list shows MISSING | files written | set the secret again from the CI item: `pass-cli item view --vault-name Agents --item-id <CI ID> --field password \| gh secret set ORCH_RELEASE_KEY --env release --repo severinlindenmann/orch-core` |
 
 `init` refuses while the root item exists, so a half-finished run is always cleaned up by hand first. Deleting is safe
 only while nothing has been published: once `release/keys/` is merged, rotation (a new root) is a separate task.

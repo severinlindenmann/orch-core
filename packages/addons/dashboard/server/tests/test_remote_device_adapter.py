@@ -584,10 +584,22 @@ def test_the_adapter_imports_no_http_client():
     names = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
-            names |= {a.name.split(".")[0] for a in node.names}
+            names |= {a.name.split(".")[0] for a in node.names} | {a.name for a in node.names}
         elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
-            names.add(node.module.split(".")[0])
-    assert not names & {"http", "httpx", "requests", "urllib", "aiohttp", "socket", "urllib3", "websockets", "uvicorn"}
+            names |= {node.module.split(".")[0], node.module}
+    banned = {
+        "http",
+        "http.client",
+        "httpx",
+        "requests",
+        "urllib",
+        "aiohttp",
+        "socket",
+        "urllib3",
+        "websockets",
+        "uvicorn",
+    }
+    assert not names & banned
 
 
 def test_frame_constants_are_the_hosts(app):

@@ -232,7 +232,7 @@ TABLE: dict[tuple[str, str], tuple[str, str]] = {
     # --- worktrees
     (POST, W + "/worktrees/create"): (ALLOWED, "admin action, plain click"),
     (POST, W + "/worktrees/remove"): (ALLOWED, "turning off"),
-    (POST, W + "/workdir/delete"): (ALLOWED, "turning off"),
+    (POST, W + "/workdir/delete"): (ALLOWED, "permanently deletes the person's files: presence for a remote device"),
     # --- shares
     (GET, W + "/shares"): (ALLOWED, ""),
     (POST, W + "/shares/prepare"): (ALLOWED, "admin action, plain click"),
@@ -358,7 +358,6 @@ REMOTE_DEVICE: dict[tuple[str, str], tuple[str, str]] = {
         W + "/agents/preview",
         W + "/runner/forget",
         W + "/worktrees/remove",
-        W + "/workdir/delete",
         W + "/shares/revoke",
         W + "/shares/discard",
     ),
@@ -381,6 +380,7 @@ REMOTE_DEVICE: dict[tuple[str, str], tuple[str, str]] = {
         W + "/runs/{run}/link",
         W + "/runs/{run}/detach",
         W + "/agents/start",
+        W + "/workdir/delete",
     ),
     **_rows(
         PRESENCE,

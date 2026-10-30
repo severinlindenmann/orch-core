@@ -96,6 +96,7 @@ def test_presence_rows_are_the_agent_work_and_the_terminals():
     W = routegate.W
     assert {k for k, (rule, _) in COLUMN.items() if rule == PRESENCE} == {
         ("POST", W + "/agents/start"),
+        ("POST", W + "/workdir/delete"),
         ("POST", W + "/runs/{run}/link"),
         ("POST", W + "/runs/{run}/detach"),
         ("POST", W + "/runs/{run}/attach"),
@@ -104,7 +105,12 @@ def test_presence_rows_are_the_agent_work_and_the_terminals():
         ("WEBSOCKET", "/term"),
     }
     for key, (rule, level) in COLUMN.items():
-        if rule == PRESENCE and key[1] != W + "/agents/start" and "link" not in key[1] and "detach" not in key[1]:
+        if (
+            rule == PRESENCE
+            and key[1] not in (W + "/agents/start", W + "/workdir/delete")
+            and "link" not in key[1]
+            and "detach" not in key[1]
+        ):
             assert level == "terminals", key  # a terminal route is a Terminals-level route
 
 
@@ -460,7 +466,6 @@ CLASSIFY_ALLOWLIST: dict[str, str] = {
     # gate, the host op is called over the dashboard's own link). classify() refuses what it does not list.
     "grant.forget": "runner/forget: turning off",
     "worktree.remove": "worktrees/remove: turning off",
-    "workdir.delete": "workdir/delete: turning off",
     "publish.revoke": "shares/revoke: turning off",
     "publish.discard": "shares/discard: turning off",
     "workspace.cosmetic.set": "workspace/cosmetic: owner plain click, role read from the stream's person",
@@ -469,6 +474,10 @@ CLASSIFY_ALLOWLIST: dict[str, str] = {
     "term.open": "terminals/open: the TERMINALS rule, level-gated by the row",
     "remote.off": "remote/off: a VIEW write that ends the stream's own session",
 }  # fmt: skip
+#: the same kind of false positive, but only on a PRESENCE row: the op deletes the person's own files for good, so a remote device needs a covering presence batch for the exact request (the host also writes an audit line).
+PRESENCE_GATED_OPS: dict[str, str] = {
+    "workdir.delete": "workdir/delete: permanent deletion of the person's work folder; presence, level work",
+}
 
 
 def _op_literals(tree):
@@ -545,7 +554,8 @@ def test_a_row_that_admits_a_stream_is_true_about_its_handler(app):
         if method != "GET":
             for op in sorted(set().union(*(_op_literals(t) for t in trees)) - READ_OPS):
                 cls = remote_kinds.SIGNER_OPS[op] if op in remote_kinds.SIGNER_OPS else remote_kinds.classify(op)
-                if cls == remote_kinds.REFUSED and not any(op.startswith(k) for k in CLASSIFY_ALLOWLIST):
+                gated = rule == PRESENCE and op in PRESENCE_GATED_OPS
+                if cls == remote_kinds.REFUSED and not gated and not any(op.startswith(k) for k in CLASSIFY_ALLOWLIST):
                     lies.append((method, template, f"host op {op} is refused from a stream"))
         for src in _sources(route, deep=False):  # the literals of the handler itself (shared helpers hold whole tables)
             tree = ast.parse(textwrap.dedent(src))
@@ -563,3 +573,30 @@ def test_a_row_that_admits_a_stream_is_true_about_its_handler(app):
                 lies.append((method, template, f"signer op {op} is refused from a stream"))
     assert checked > 20
     assert not lies, f"rows that admit a stream but whose handler would refuse it: {lies}"
+
+
+# --- workdir/delete: a permanent deletion of the person's files needs presence from a remote device ---
+class _WorkdirHost:
+    def __init__(self):
+        self.calls = []
+
+    def call(self, op, args=None, write=False, idem=None, **kw):
+        self.calls.append((op, args, write, idem))
+        return {"deleted": True, "folder": ".orch-work/DEMO-1"}
+
+
+def test_workdir_delete_from_a_stream_needs_a_presence_batch(app, auth, ws, fake, monkeypatch):
+    from orch_dashboard.gateway import Gateway
+
+    host = _WorkdirHost()
+    monkeypatch.setattr(Gateway, "enabled", lambda self, w: host)
+    client = stream_client(app, auth, ws)[0]
+    body = {"ticket": "DEMO-1", "idem": "a_01M4Y46B485AXD4CBEJZ15Z1TV"}
+    fake.answers["presence_take"] = ClickError("remote.presence_required", "no batch")
+    res = client.post(f"/api/w/{ws}/workdir/delete", json=body)
+    assert res.status_code == 428 and code(res) == "remote.presence_required"
+    assert host.calls == []  # nothing was deleted: the host op was never called
+    fake.answers["presence_take"] = {}
+    res = client.post(f"/api/w/{ws}/workdir/delete", json=body)
+    assert res.status_code == 200 and res.json() == {"deleted": True}
+    assert host.calls == [("workdir.delete", {"ticket": "DEMO-1"}, True, body["idem"])]

@@ -214,7 +214,8 @@ describe('what is signed', () => {
     await createOnly(r, sheet)
     expect((await sent()).agent).toBeUndefined()
     await r.user.click(screen.getByRole('button', { name: 'signed' }))
-    await waitFor(() => expect(r.router.state.location.pathname).toBe('/ticket/DEMO-0044'), T)
+    await screen.findByText(/Created DEMO-0044/, {}, T) // P19: said in a toast with Open; the person stays where they were
+    expect(r.router.state.location.pathname).not.toBe('/ticket/DEMO-0044')
     expect(s.preview).not.toHaveBeenCalled()
     expect(s.start).not.toHaveBeenCalled()
   })

@@ -252,6 +252,8 @@ class WebDeps:
     switch: Any = None
     #: relay/publish health for the Services page (``orch_hub.services.Services``); None = ``unavailable``
     services: Any = None
+    #: the service helper's socket client (``orch_hub.services.helper_client``); None = no helper (buttons stay hidden)
+    helper: Any = None
     #: the route queue (``recent``): hand-offs between workspaces, for the Workspaces page; None = an empty list
     routes: Any = None
     authz: Any = None  # live routing authorization; None means no allowed edges
@@ -2193,7 +2195,11 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
         states = [reg.binding_state(w) for w in reg.pins()]
         joined = [st for st in states if st is not None and st["status"] in ("bound", "unbound")]
         online = sum(1 for st in joined if st["status"] == "bound")
-        return 200, {**self.d.services.snapshot(), "workspaces": {"count": len(joined), "online": online}}
+        return 200, {
+            **self.d.services.snapshot(),
+            "workspaces": {"count": len(joined), "online": online},
+            "helper": self._service_helper_info(),
+        }
 
     def _h_my_handoffs(self, c: Ctx, p: dict, q: dict, b: dict | None):
         mine = {w["workspace_id"]: w for w in self._workspaces(c.user_id)}

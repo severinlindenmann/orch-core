@@ -62,9 +62,10 @@ function firstRunHome(d) {
     h("p", { class: "company-summary muted", text: "Nothing connected yet." }),
     h("section", { class: "card first-run first-run-root", "aria-labelledby": "first-run-heading" },
       h("h2", { id: "first-run-heading", text: "Connect your first workspace" }),
-      h("p", { text: "Open your workspace, go to Settings, then Hub, and paste the one-time link there. Your hub admin can give you the link." }),
-      d.user?.is_admin && d.actions?.connect ? h("button", { class: "pri", text: "Get a one-time link", onclick: () => d.actions.connect() }) : null,
-      note("Approvals appear here as soon as a workspace is connected."))].filter(Boolean);
+      d.user?.is_admin && d.actions?.connect
+        ? [h("p", { text: "We make a link for your workspace. You use it once." }), h("button", { class: "pri", text: "Connect a workspace", onclick: () => d.actions.connect() })]
+        : h("p", { text: "Ask your hub admin to connect a workspace for you." }),
+      note("More areas (approvals, add-ons, activity…) appear here once a workspace is connected."))].filter(Boolean);
 }
 
 /** Person home only; the driver owns navigation and the manual decision form. */

@@ -9,7 +9,7 @@ const state = {
   suggested: { name: 'Demo', prefix: 'TST', method: 'click', agent_hours: 72, agent_grant: true },
   addons: [
     { id: 'dashboard', title: 'Dashboard', desc: 'Browser', required: true, default: true, kind: 'addon', capabilities: [] },
-    { id: 'worktrees', title: 'Work copies', desc: 'Each ticket gets its own copy of your project, so agents do not overwrite each other.', required: false, default: true, kind: 'addon', capabilities: [] },
+    { id: 'worktrees', title: 'Own copy per ticket', desc: 'Each ticket gets its own copy of your project so agents do not overwrite each other.', required: false, default: true, kind: 'addon', capabilities: [] },
     { id: 'quick', title: 'Quick tasks', desc: 'Small one-off tasks', required: false, default: true, kind: 'flag', capabilities: [] },
   ],
   methods: ['terminal', 'click'], click_available: true, click_reason: '',

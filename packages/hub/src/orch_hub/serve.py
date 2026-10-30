@@ -51,6 +51,8 @@ from .remote import wire_remote
 from .restart import exec_self
 from .router import AccessAuthz, RouteQueue, Router
 from .services import Services
+from .services.helper_client import HelperClient
+from .services.helper_server import SOCK_FILE
 from .settings import SETTINGS_FILE, serve_origins, where_answer
 from .settings import load as load_settings
 from .shares import ShareService, ShareStore, hxk_handle
@@ -365,6 +367,7 @@ def serve(
                     behind_edge=cfg.behind_edge,
                     edge_url=cfg.resolved_api_origin(),
                 ),
+                helper=HelperClient(state / SOCK_FILE),
                 routes=queue,
                 authz=authz,
                 connections=connections,

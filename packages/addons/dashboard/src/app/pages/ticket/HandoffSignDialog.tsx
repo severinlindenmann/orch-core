@@ -26,7 +26,7 @@ function titleOf(a: HumanAction, ticketTitle: string): string {
     case 'approve':
       return `Approve ${gateActionName(a.gate)}`
     case 'verdict':
-      return 'Give verdict (Verify)'
+      return 'Give verdict'
     case 'request_changes':
       return `Request changes on ${gateActionName(a.gate)}`
   }
@@ -76,7 +76,14 @@ export function HandoffSignDialog({
   const navigate = useNavigate()
   const qc = useQueryClient()
   const [text, setText] = useState('')
-  const [outcome, setOutcome] = useState<'pass' | 'fail' | null>(() => (action?.kind === 'verdict' && allChecked(ticket) ? 'pass' : null))
+  // Only a pick is stored; Pass is the default while every requirement is proven (what the list calls "Recommended"). Nothing is
+  // sent by this: the person still presses Sign, and the verdict signed is the one shown. A new action starts without a pick.
+  // The key names the ticket and the content round (hash) too: the dialog stays mounted across tickets and verify rounds.
+  const actionKey = action ? `${ticket.key}|${action.kind}-${action.kind === 'answer' ? action.question : 'gate' in action ? action.gate : ''}|${liveHash(ticket, action) ?? ''}` : ''
+  const [pick, setPick] = useState<{ k: string; v: 'pass' | 'fail' } | null>(null)
+  if (!action && pick) setPick(null) // closed: the next opening starts without a pick
+  const outcome: 'pass' | 'fail' | null = pick && pick.k === actionKey ? pick.v : action?.kind === 'verdict' && allChecked(ticket) ? 'pass' : null
+  const setOutcome = (v: 'pass' | 'fail') => setPick({ k: actionKey, v })
   const radio = useRef<HTMLInputElement>(null)
   // The opening press of an approve is used once: it is kept per action object and spent when the review starts,
   // so a remount never re-arms without a new press. Approve never depends on the ambient press flag.

@@ -12,6 +12,16 @@ import { LeaveFlow } from './LeaveFlow'
 import { ShareRules, AlwaysShared } from './ShareRules'
 import { NotTold } from './NotTold'
 import { HubBanner } from '@/app/shell/HubBanner'
+import { useOpenHub, useRail } from '@/app/shell/CompanyRail'
+
+/** Once connected, the way in: the same signed one-hop ticket as the rail icon, as a visible button. */
+function OpenHub({ ws }: { ws: string }) {
+  const rail = useRail()
+  const open = useOpenHub(ws)
+  if (rail.data && !rail.data.hub) return null // the rail says there is no hub: nothing to open
+  const name = rail.data?.hub?.name
+  return <Panel title={name ? `${name} hub` : 'Hub'}><p>See your company's workspaces and what needs you.</p><Action id="hub-open" variant="default" onClick={() => open('/')}>Open hub</Action></Panel>
+}
 
 export function HubTab({ workspace }: { workspace: Workspace }) {
   const ws = workspace.id
@@ -46,6 +56,7 @@ export function HubTab({ workspace }: { workspace: Workspace }) {
       <HubBanner ws={ws} />
       {(s.reseal_needed || s.key_change_pending || s.log_sync_stuck || s.link === 'joining' || s.link === 'switching') && <Panel title="Hub needs attention" tone="border-warning/40 bg-warning-soft"><p>The hub connection has work pending. Check its state in a terminal before making changes.</p></Panel>}
       {s.mode === 'standalone' && <StandalonePage onJoin={() => setFlow('join')} />}
+      {(s.mode === 'selective' || s.mode === 'full') && <OpenHub ws={ws} />}
       {s.mode === 'selective' && <SelectivePage ws={ws} fullAllowed={fullAllowed} onShare={() => setFlow('share')} onFull={() => setFlow('full')} onLeave={() => setFlow('leave')} />}
       {s.mode === 'full' && <FullPage status={s} onLeave={() => setFlow('leave')} />}
       {hubName && <p className="text-sm font-semibold">Hub <Raw>{hubName}</Raw></p>}

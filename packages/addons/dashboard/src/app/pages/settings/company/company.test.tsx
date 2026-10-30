@@ -30,6 +30,16 @@ describe('the Company tab', () => {
     expect(screen.getByTestId('company-sync').textContent).toBe('Get the latest from your hub')
   })
 
+  it('explains company secrets and marks the tools that use one', async () => {
+    page()
+    await screen.findByText('Company tools', {}, T)
+    expect(screen.getByTestId('company-intro').textContent).toMatch(/company secret.*You never see it.*separate agent user/)
+    expect(screen.getByTestId('company-secret-billing').textContent).toBe('Uses a company secret from your hub')
+    expect(screen.queryByTestId('company-secret-crm')).toBeNull()
+    expect(screen.queryByTestId('company-secret-style-guide')).toBeNull()
+    expect(document.body.textContent).not.toMatch(/hub_secret/)
+  })
+
   it('shows skill text as plain text: markdown and HTML stay literal', async () => {
     const hostile = 'Use **bold** and <img src=x onerror=alert(1)> and [link](http://x)'
     const shown: OrgShown = { kind: 'skill', status: 'off', notes: [], untrusted: true, needs_isolation: null,

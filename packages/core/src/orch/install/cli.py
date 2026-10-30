@@ -356,7 +356,8 @@ def write_hub_settings(
     link = link_port
     loop = address in ("localhost", P.ADDRESS_LOOPBACK)
     if link_host:  # server role: the card advertises the VPN address for the link and the https name for the console
-        web = f"{web_origin}:443" if web_origin else f"http://{P.ADDRESS_LOOPBACK}:{port}"
+        own = P.ADDRESS_LOOPBACK if loop else address  # no name: the console answers on the VPN address itself
+        web = f"{web_origin}:443" if web_origin else f"http://{own}:{port}"
         # one entry: behind Caddy every allowed origin must be https (hub config); the settings shape wants host:port,
         # the hub drops the default port when it builds the allowed Origin (settings.origin_of)
         addrs = [{"kind": "private" if vpn_only else "public", "web": web, "link": f"{link_host}:{link}"}]

@@ -111,10 +111,14 @@ def server_setup(
 
     if role == "hub":  # the link binds the private-network address; a name is optional
         plan.vpn_ip = check_vpn_ip(vpn_ip, mine) if vpn_ip else detect_vpn_ip(mine)
-        if (wanted or hub_vpn_only) and plan.vpn_ip is None:
+        if plan.vpn_ip is None:  # the hub link never listens on every interface: no VPN address, no hub
             raise InstallError(
                 "no private-network (VPN) address found on this computer. "
                 "Connect the VPN first, or give it with --vpn-ip."
+            )
+        if address and address not in (plan.vpn_ip, P.ADDRESS_LOOPBACK):
+            raise InstallError(
+                f"--address {address}: the hub of a server listens only on the private-network address {plan.vpn_ip}"
             )
 
     if not wanted:
@@ -177,12 +181,13 @@ def tls_all(names: Names, plan: Plan, role: str) -> set[str]:
 def _fallback(ctx: Ctx, plan: Plan, *, address: str | None, source: str | None, ref: str | None, dev: bool) -> None:
     """No names: the IP:port behaviour of ``orch install`` (a private-network hub takes its VPN address)."""
     st = load(ctx.layout)
-    addr = address or plan.vpn_ip if plan.role == "hub" else address
-    addr = addr or choose_address(ctx, None, st)
+    hub = plan.role == "hub"
+    addr = plan.vpn_ip if hub else (address or choose_address(ctx, None, st))
     ctx.say("No domain name given: the parts listen on an IP address and a port (no secure https address).")
     recs = {}
     for p in plan.parts:
-        recs[p] = install_part(ctx, p, address=addr, source=source, ref=ref, dev=dev, sync=False)
+        extra = dict(link_address=plan.vpn_ip) if p == "hub" else {}  # never --bind-all
+        recs[p] = install_part(ctx, p, address=addr, source=source, ref=ref, dev=dev, sync=False, **extra)
     sync_helper(ctx)
     for p, rec in recs.items():
         ctx.say(f"  {p} address: http://{rec['bind']}:{rec['port']}")

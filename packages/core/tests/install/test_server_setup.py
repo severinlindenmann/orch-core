@@ -638,3 +638,34 @@ def test_no_tls_means_no_edge_mode(tmp_path):
         user="orch-hub",
     )  # DNS missing: no TLS, no edge flags
     assert "--behind-edge" not in ctx.runner.started["hub"][0]
+
+
+# ----------------------------------------------------------------------------------------- H3: never --bind-all
+
+
+def test_the_hub_of_a_server_never_listens_on_every_interface(tmp_path):
+    for names, kw in ((server.Names(), {}), (server.derive_names("example.com"), {"resolve": lambda n: [VPS]})):
+        home = tmp_path / ("a" if not names.hub else "b")
+        home.mkdir()
+        (home / "orch.d" / "orch-hub").mkdir(parents=True)
+        ctx, *_ = stub_ctx(home, SystemdFake())
+        server_setup(ctx, "hub", names=names, local=local, caddy_dir=str(home / "orch.d"), user="orch-hub", **kw)
+        argv, _ = ctx.runner.started["hub"]
+        assert "--bind-all" not in argv and "0.0.0.0" not in " ".join(argv)
+        assert argv[argv.index("--link-listen") + 1] == f"{VPN}:8105"
+        web = argv[argv.index("--web-listen") + 1]
+        assert web in ("127.0.0.1:8100", f"{VPN}:8100")
+
+
+def test_no_vpn_address_refuses_the_hub_in_plain_words_with_or_without_names(tmp_path):
+    ctx, *_ = stub_ctx(tmp_path)
+    for names in (server.Names(), server.derive_names("example.com")):
+        with pytest.raises(InstallError, match="no private-network .VPN. address found"):
+            server_setup(ctx, "hub", names=names, local=lambda: {VPS, "127.0.0.1"}, resolve=lambda n: [VPS])
+    assert not ctx.runner.started
+
+
+def test_a_server_hub_refuses_another_address(tmp_path):
+    ctx, *_ = stub_ctx(tmp_path)
+    with pytest.raises(InstallError, match="only on the private-network address"):
+        server_setup(ctx, "hub", names=server.Names(), address="192.168.1.20", local=local)

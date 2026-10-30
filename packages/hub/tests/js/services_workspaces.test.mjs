@@ -150,7 +150,7 @@ test("connect link is copied unchanged, shows expiry, and Copy says what to do n
   const withOpen = [connectWorkspaceView({ link: "/join#one-time", expires_ms: NOW + 1800000 }, { openLink: (l) => { opened = l; } }, { selected: "u1", self: "u1" })];
   clickButton(withOpen, "Open link");
   assert.equal(opened, "/join#one-time");
-  assert.match(text(out), /Send this link to the workspace owner, or open it on their computer\./);
+  assert.match(text(out), /Copied ✓ Send it to the workspace owner\. They open their workspace, go to Settings › Hub and press Connect a hub\./);
 });
 
 test("r11 P03: Open link is offered only for the signed-in person's own workspace, Copy for everyone", async () => {
@@ -348,7 +348,7 @@ test("workspaces are named after their owner and connect asks whose workspace it
   assert.deepEqual(sent, []); // r9 P04: with several people nothing is preselected
   assert.match(text(out), /Whose workspace is this\?/);
   const select = find(out, (n) => n.tag === "select")[0];
-  assert.deepEqual(find([select], (n) => n.tag === "option").map((o) => o.textContent), ["Choose…", "Anna Test", "Ben Test", "Someone new…"]);
+  assert.deepEqual(find([select], (n) => n.tag === "option").map((o) => o.textContent), ["Choose…", "Anna Test", "Ben Test", "Someone new (add them now)"]);
   select.value = "u2";
   await select.listeners.change({ target: select });
   assert.deepEqual(sent, ["u2"]);
@@ -404,7 +404,7 @@ test("P04: with several people nothing is preselected and no workspace link is m
   assert.deepEqual(connected, [], "no link before a person is chosen");
   const select = find(out, (n) => n.tag === "select")[0];
   const options = find([select], (n) => n.tag === "option");
-  assert.deepEqual(options.map((o) => o.textContent), ["Choose…", "Admin", "Ben", "Someone new…"]);
+  assert.deepEqual(options.map((o) => o.textContent), ["Choose…", "Admin", "Ben", "Someone new (add them now)"]);
   assert.ok(options.every((o) => o.getAttribute("selected") === null || o === options[0]));
   assert.equal(find(out, (n) => n.className === "ws-link")[0].hidden, true, "the link is hidden until a person is chosen");
   select.value = "b".repeat(32);
@@ -592,4 +592,10 @@ test("P05: the Home count includes private workspaces for a hub admin and nobody
   const line = (d) => homeView({ workspaces: ws, items: [], shared: [], actions: {}, ...d }).flat().map((n) => n.textContent).join("\n").match(/\d+ workspaces? online, \d+ offline/)[0];
   assert.equal(line({ adminWorkspaces: [ben] }), "2 workspaces online, 0 offline");
   assert.equal(line({ adminWorkspaces: null }), "1 workspace online, 0 offline");
+});
+
+test("P12: after Copy the banner names the person and the exact route", async () => {
+  const out = [connectWorkspaceView({ link: "/join#x", expires_ms: NOW + 1800000 }, { copy: async () => true }, { people: [{ user_id: "u2", name: "Ben Test" }], selected: "u2", self: "u1" })];
+  await clickButton(out, "Copy");
+  assert.match(text(out), /Copied ✓ Send it to Ben Test\. They open their workspace, go to Settings › Hub and press Connect a hub\./);
 });

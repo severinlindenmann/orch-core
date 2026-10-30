@@ -149,7 +149,11 @@ def _share_rule(e: Mapping[str, Any]) -> bool:
     return item is None and ver is None and h is None and n is not None
 
 
-EVENT_RULES: dict[str, Any] = {"share": _share_rule}
+def _membership_rule(e: Mapping[str, Any]) -> bool:
+    return e["added"] or e["ends_ms"] is None  # a removal carries no end date
+
+
+EVENT_RULES: dict[str, Any] = {"share": _share_rule, "membership": _membership_rule}
 
 
 def check_event(typ: str, event: Any) -> dict[str, Any]:

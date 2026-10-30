@@ -416,3 +416,7 @@ def test_membership_event_needs_ends_ms_int_or_null():
     for bad in (no_ends, {**ev, "ends_ms": "1"}, {**ev, "ends_ms": 0}, {**ev, "ends_ms": True}, {**ev, "ends_ms": 1.5}):
         with pytest.raises(Refused):
             AU.check_event("membership", bad)
+
+    with pytest.raises(Refused):
+        AU.check_event("membership", {**ev, "added": False, "ends_ms": 1_800_000_000_000})  # a removal has no end date
+    AU.check_event("membership", {**ev, "added": False})

@@ -412,7 +412,7 @@ export function VerdictRow({ item, ticket, now, expanded, onToggle, sign, decide
     >
       <p className="text-xs tabular-nums text-text-muted">
         <span className={cn(proven === ac.length && ac.length > 0 ? 'text-success' : 'text-text')}>
-          AC {proven}/{ac.length} evidenced
+          Checked {proven} of {ac.length} {ac.length === 1 ? 'requirement' : 'requirements'}
         </span>
         {' · '}
         {receipts} receipts · {ticket?.artifacts.length ?? 0} artifacts

@@ -144,8 +144,25 @@ def _sequence(prepared: Mapping[str, Any], events: list[Any], workspace_id: str,
     if meta is None:
         return
     try:
-        if not isinstance(meta, dict) or set(meta) != {"digest", "of", "intent"}:
+        if not isinstance(meta, dict) or not {"digest", "of", "intent"} <= set(meta) <= {
+            "digest",
+            "of",
+            "intent",
+            "plan_policy",
+        }:
             _refuse("the sequence material has keys outside its schema")
+        if (
+            "plan_policy" in meta
+        ):  # host's word on the plan's rule (shown, not signed): only canonical, only for both gates
+            pp = meta["plan_policy"]
+            try:
+                canonical = meta["intent"].get("kind") == "approve_gates" and canon.dumps(
+                    canon.canonical_policy(pp)
+                ) == canon.dumps(pp)
+            except canon.HashError:
+                canonical = False
+            if not canonical:
+                _refuse("the plan rule in the sequence material is not a canonical policy")
         intent = sequence.validate_intent(meta["intent"])
         plan = sequence.steps(intent)
         if meta["digest"] != sequence.digest_of(workspace_id, person, intent) or meta["of"] != len(plan):
@@ -958,6 +975,11 @@ def render(
             sequence.steps_line(intent, int(prepared["material"]["sequence"]["of"])),
             *sequence.technical_lines(intent),
         ]
+        plan_rule = prepared["material"]["sequence"].get("plan_policy")
+        if plan_rule is not None:
+            extra.append(
+                f"{signcontent.who_approves('plan')} (per host, not signed): {signcontent.policy_words(plan_rule)}"
+            )
         prepared = sequence.expand(prepared)
     material = prepared["material"]
     events = prepared["events"]

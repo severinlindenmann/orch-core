@@ -1321,7 +1321,7 @@ def build_content(prepared: Mapping[str, Any], *, verified: bool) -> dict[str, A
             signcontent._row(content, "publisher (per host, not signed)", publisher or "unsigned")
         return content
     if intent["kind"] == GATES:
-        return _gates_content(content, prepared, intent)
+        return _gates_content(content, prepared, intent, verified=verified)
     key = prepared["material"]["ticket"]["key"]
     # the key is the host's word: said so right next to it (invariant 1), with the end of the signed id
     key = f"{signcontent.one(key)} (key per host; signed id …{content['ticket']['uid_tail']})"
@@ -1388,7 +1388,9 @@ def build_content(prepared: Mapping[str, Any], *, verified: bool) -> dict[str, A
     return content  # "One confirmation signs all N steps ..." is in the technical details (r7-P10)
 
 
-def _gates_content(content: dict[str, Any], prepared: Mapping[str, Any], intent: Mapping[str, Any]) -> dict[str, Any]:
+def _gates_content(
+    content: dict[str, Any], prepared: Mapping[str, Any], intent: Mapping[str, Any], *, verified: bool
+) -> dict[str, Any]:
     """The review of approving both gates: the requirements as a single approval shows them (built from the first
     request), then the plan's sections and tasks from the intent, in full. The person reads both, then signs once."""
     from orch.host import signcontent
@@ -1414,6 +1416,12 @@ def _gates_content(content: dict[str, Any], prepared: Mapping[str, Any], intent:
     content["sections"] = sections
     tasks = signcontent._tasks(intent["plan"]["tasks"])
     content["tasks"] = tasks
+    plan_rule = prepared["material"]["sequence"].get("plan_policy")
+    if plan_rule is not None and verified:  # like a single approval's rule: only once the signer recomputed it
+        signcontent._row(content, signcontent.who_approves("plan"), signcontent.policy_words(plan_rule))
+        content["ticket"]["key_note"] += (
+            "; who approves the plan is read from this computer's settings and is not part of what you sign here"
+        )
     notes = content.setdefault("notes", [])
     notes.extend(extra_lines(intent))
     return content

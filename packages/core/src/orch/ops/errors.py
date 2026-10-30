@@ -587,6 +587,26 @@ _SPECS = [
         ["orch", "status"],
         "A verify or code decision while a linked repo ref is missing.",
     ),
+    _e(
+        "update.unverified",
+        5,
+        False,
+        "the release or catalog could not be verified",
+        "nothing was changed; do not install it",
+        ["orch", "doctor"],
+        "A signed release envelope failed a check (signature, certificate, revocation, format, channel or file "
+        "hash). The reason is in the message (CONTRACT.md section 4).",
+    ),
+    _e(
+        "update.stale",
+        5,
+        False,
+        "the release or catalog is out of date",
+        "nothing was changed; fetch a fresh one later",
+        ["orch", "doctor"],
+        "A correctly signed envelope is expired, older than the newest one seen, or carries an older revocation "
+        "list than the stored one.",
+    ),
     # 6 parse
     _e(
         "parse.json",

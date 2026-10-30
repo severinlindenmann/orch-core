@@ -8,6 +8,7 @@ documented test seam), so the macOS keychain is never opened. One workspace, one
 """
 
 import itertools
+import json
 import os
 import re
 import shutil
@@ -18,7 +19,7 @@ import uuid
 import pytest
 from conftest import ORIGIN, PORT
 from fastapi.testclient import TestClient
-from realhost_kit import Workspace, key_of, ready_requirements, short_run_root
+from realhost_kit import Workspace, key_of, ready_plan, ready_requirements, short_run_root
 
 from orch_dashboard.app import create_app
 from orch_dashboard.auth import Auth
@@ -40,6 +41,12 @@ def seeding(ws: Workspace) -> dict:
         k = keys[name] = key_of(ws.agent("new", title, "--type", "feature", "--priority", "medium"))
         ws.agent("ac", "add", "It works", "--ref", k)
         ready_requirements(ws, k, f"{title}: do the described thing.")
+    # requirements and plan both written, nothing approved: the combined "Approve requirements and plan" card
+    k = keys["both"] = key_of(ws.agent("new", "Export the ledger", "--type", "feature", "--priority", "medium"))
+    ws.agent("ac", "add", "It exports", "--ref", k)
+    ready_requirements(ws, k, "Export the ledger as one file.")
+    ready_plan(ws, k)
+    ws.agent("task", "add", "Write the exporter", "--verify", "echo ok", "--proves", "AC1", "--ref", k)
     return keys
 
 
@@ -434,3 +441,16 @@ def test_a_different_view_for_an_already_signed_request_is_already_signed(world,
     assert _head(click, world) == after
     # The server did not cancel or forget anything because of it: the request's state still reads submitted.
     assert click.post("state", {"request_id": rid}).json()["state"] == "submitted"
+
+
+def test_approve_both_prepares_and_shows_both_texts_against_the_real_host(world, click):
+    """The combined card (R11 P09) once answered 500 `internal` on a real host: unit tests used hand-built reads."""
+    key = world.keys["both"]
+    seq = click.ticket(key)["head"]["seq"]
+    prepared = click.prepare({"action": "approve_both", "key": key, "head_seq": seq})
+    assert prepared.status_code == 200, prepared.text
+    got = prepared.json()
+    view = click.post("view", {"request_id": got["request_id"]})
+    assert view.status_code == 200, view.text
+    shown = json.dumps(view.json()["view"])
+    assert "Export the ledger as one file." in shown and "One module, streamed output." in shown

@@ -61,3 +61,22 @@ it('approve_both prepares one approve_both request bound to the head the page sh
   render(<QueryClientProvider client={new QueryClient()}><HandoffSignDialog ticket={t} action={{ kind: 'approve_both' }} ws="w" onClose={() => {}} /></QueryClientProvider>)
   expect((last() as unknown as { autoStart: boolean }).autoStart).toBe(false)
 })
+
+// A combined approval that cannot be prepared is no dead end: the dialog closes and the two single approvals are offered.
+it('approve_both: when the request cannot be prepared the dialog closes and the combined card is blocked for the ticket', async () => {
+  const { bothIsBlocked, unblockBoth } = await import('./actions')
+  const onClose = vi.fn()
+  const t = { ...ticket, key: 'T-FB', head: { seq: 7, hash: 'h' } } as unknown as TicketDocument
+  render(<QueryClientProvider client={new QueryClient()}><HandoffSignDialog ticket={t} action={{ kind: 'approve_both' }} ws="w" onClose={onClose} /></QueryClientProvider>)
+  expect(bothIsBlocked('T-FB')).toBe(false)
+  ;(last() as unknown as { onPrepareFailed: () => void }).onPrepareFailed()
+  expect(bothIsBlocked('T-FB')).toBe(true)
+  expect(onClose).toHaveBeenCalled()
+  unblockBoth('T-FB')
+})
+it('a failed prepare of another action does not block the combined card', async () => {
+  const { bothIsBlocked } = await import('./actions')
+  render(show({ kind: 'approve', gate: 'plan' }))
+  ;(last() as unknown as { onPrepareFailed: () => void }).onPrepareFailed()
+  expect(bothIsBlocked('T-1')).toBe(false)
+})

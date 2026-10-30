@@ -14,7 +14,7 @@ import { Prose, Raw } from '@/components/sign/visible'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
-import { gateActionName } from './actions'
+import { blockBoth, gateActionName } from './actions'
 import { useViewer, type HumanAction } from './shared'
 
 function titleOf(a: HumanAction, ticketTitle: string): string {
@@ -161,6 +161,12 @@ export function HandoffSignDialog({
           return
         }
         signedNow(qc, ws, ticket.key, action.kind === 'answer' ? action.question : action.kind === 'verdict' ? 'verify' : action.gate, now)
+      }}
+      onPrepareFailed={() => {
+        // The combined card is never a dead end: whatever stopped it, the two single approvals are offered instead.
+        if (action.kind !== 'approve_both') return
+        blockBoth(ticket.key)
+        onClose()
       }}
       onClose={onClose}
       initialFocus={() => (action.kind === 'verdict' ? radio.current : null)}

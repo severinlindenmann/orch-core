@@ -1,4 +1,4 @@
-// The approvals list only opens the existing review flow; it never signs.
+// The approvals list only opens the existing review flow (or asks the person's phone to open it); it never signs.
 import { h, text, chip, when } from "./ui.js";
 
 const kindOf = (it) => ["gate", "verdict", "question"].includes(it.kind) ? it.kind : it.type;
@@ -33,7 +33,8 @@ export function inboxView(data, actions, now = Date.now()) {
         h("p", { text: [text(it.key), text(it.title)].filter(Boolean).join(" · ") }), h("p", { class: "small muted", text: name(id) }),
         it.deadline != null ? h("p", { class: "small", text: "Due " + (typeof it.deadline === "number" ? when(it.deadline, now) : text(it.deadline)) }) : null,
         summary ? h("p", { text: "Summary only: answer it in " + name(id) }) : null),
-        h("button", { text: summary ? "Open" : "Review", onclick: () => summary ? actions.open({ id, name: workspaces.find((w) => w.workspace_id === id)?.name || "Workspace" }) : actions.review(it) }));
+        h("div", { class: "row" }, h("button", { text: summary ? "Open" : "Review", onclick: () => summary ? actions.open({ id, name: workspaces.find((w) => w.workspace_id === id)?.name || "Workspace" }) : actions.review(it) }),
+          phone && !summary && it.item_id && actions.askPhone ? h("button", { class: "ghost", text: "Ask my phone", onclick: () => actions.askPhone(it) }) : null));
     })));
   }
   for (const id of (data.offline ?? []).filter(selected)) out.push(h("div", { class: "list-row row" }, h("p", { text: name(id) + " is offline. Items for it are delivered when it is back." }), chip("Waiting")));

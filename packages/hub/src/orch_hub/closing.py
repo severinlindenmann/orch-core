@@ -9,7 +9,7 @@ One persisted state machine in ``<state>/hub-removal.json`` (0600, written atomi
     notified      the signed ``hub.closing`` notice is pushed to the live workspaces; the rest pull it (``closing_get``)
     ordered       the one-shot order file is written and the detached remover started
 
-Cancel is allowed until ``withdrawn``. The web request never deletes anything: it persists ``closing`` and a background
+Cancel is allowed until ``withdrawing`` (the point of no return, persisted before the withdraw runs). The web request never deletes anything: it persists ``closing`` and a background
 worker does the rest; the remover (``orch host prune --hub-order``) is a separate process (see :mod:`.closing_launch`).
 The order file carries no path. Nothing here puts a key, a word, a nonce or a file name into an activity row."""
 
@@ -42,7 +42,7 @@ RESULT_FILE = "remove-result.json"
 NONCE_LIFE_MS = 5 * 60_000
 ORDER_LIFE_MS = 10 * 60_000
 STALL_MS = 60 * 60_000  # step 6 needs a fresh confirm when the run was idle this long
-STATES = ("closing", "preflight_ok", "backed_up", "withdrawn", "notified", "ordered")
+STATES = ("closing", "preflight_ok", "backed_up", "withdrawing", "withdrawn", "notified", "ordered")
 CANCEL_OK = frozenset({"closing", "preflight_ok", "backed_up"})
 
 #: In ``closing`` and later the web API answers only these handlers (everything else that writes: 409 ``hub_closing``).
@@ -69,6 +69,7 @@ PLAIN = {
     "closing": "Checking that the hub can be removed.",
     "preflight_ok": "Making a last backup.",
     "backed_up": "Withdrawing company secrets, skills and tools.",
+    "withdrawing": "Withdrawing company secrets, skills and tools.",
     "withdrawn": "Telling the connected workspaces.",
     "notified": "Starting the removal.",
     "ordered": "Removing. This page will stop answering.",
@@ -300,7 +301,7 @@ class Closing:
             if self._doc["state"] not in CANCEL_OK:
                 raise ClosingError(
                     "removal_started",
-                    "The hub has already withdrawn company content. Finish removing it, or restore the last backup.",
+                    "Too late to cancel: removing the hub is in progress.",
                 )
             self._doc = None
             self._save()
@@ -368,7 +369,9 @@ class Closing:
         if self._state() == "preflight_ok":  # 3 the last backup, still WITH the secrets (the restore point)
             self._backup()
             self._advance("backed_up")
-        if self._state() == "backed_up":  # 4 withdraw
+        if self._state() == "backed_up":  # 4 withdraw: the point of no return is persisted FIRST (cancel refuses from here)
+            self._advance("withdrawing")
+        if self._state() == "withdrawing":  # also the resume point after a crash: finish forward, never back to open
             self._withdraw()
             self._advance("withdrawn")
         if self._state() == "withdrawn":  # 5 notify

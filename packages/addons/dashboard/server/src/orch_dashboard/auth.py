@@ -321,6 +321,11 @@ class Auth:
             if token is not None:
                 self._drop(token)
 
+    def stream_person(self, token):
+        """The person a stream was opened for (the host gave it), or None for any other session."""
+        with self._locked():
+            return self.streams[token][2] if token in self.sessions and token in self.streams else None
+
     def bound_workspace(self, token):
         """The one workspace a session may see: a switch session's ticket workspace, or a stream's workspace."""
         with self._locked():

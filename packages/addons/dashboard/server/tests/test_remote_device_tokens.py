@@ -223,3 +223,46 @@ def test_a_stream_gets_no_stepup_arguments_from_the_handlers(auth, ws):
     # the same helper for a passkey session still says `remote: True` (unchanged)
     remote = auth.open_remote()["token"]
     assert refuse_step_up(auth, request_for(remote), "sign", plain, ws) == {"remote": True}
+
+
+# --- a stream is never a full session; owner routes use the stream's person and CURRENT role ---
+def test_no_remote_device_full_session_shortcut(app, auth, ws):
+    from orch_dashboard.cosmetic_routes import full_session
+
+    token = auth.open_stream(STREAM, ws, PERSON)
+    assert full_session(auth, token) is False
+    import pathlib
+    import re
+
+    src = pathlib.Path(click_signer.__file__).parent
+    for path in src.glob("*.py"):
+        if path.name in ("auth.py", "policy.py", "security.py", "remote_identity.py", "stepup.py", "routegate.py"):
+            continue
+        assert not re.search(r"listener_of\([^)]*\)\s*==\s*[\"']remote-device", path.read_text()), path.name
+
+
+def test_remote_device_owner_route_uses_stream_person_current_role(app, auth, ws, monkeypatch):
+    """The cosmetic route is owner-only. The stream's person decides, read from the member list at EACH request."""
+    from orch_dashboard import gateway as gw
+
+    roles = {PERSON: "owner"}
+    seen = []
+
+    class Link:
+        welcome = {"peer": {"person": "p_" + "ee" * 16}}  # the dashboard's own person: must NOT be used for a stream
+
+        def call(self, op, args=None, **kw):
+            seen.append(op)
+            if op == "member.list":
+                return {"members": [{"person": p, "role": r} for p, r in roles.items()]}
+            return {"ok": True}
+
+    monkeypatch.setattr(gw.Gateway, "enabled", lambda self, w: Link())
+    client = stream_client(app, auth, ws)[0]
+    body = {"if_current": {"name": "a", "icon": None}, "name": "b"}
+    res = client.put(f"/api/w/{ws}/workspace/cosmetic", json=body)
+    assert code(res) != "role.denied" and "workspace.cosmetic.set" in seen
+    roles[PERSON] = "member"  # demoted since the stream opened
+    seen.clear()
+    res = client.put(f"/api/w/{ws}/workspace/cosmetic", json=body)
+    assert res.status_code == 403 and code(res) == "role.denied" and "workspace.cosmetic.set" not in seen

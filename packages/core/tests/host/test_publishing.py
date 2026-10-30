@@ -1206,6 +1206,9 @@ def test_the_review_tags_each_address_in_plain_words():
     from orch.host.signcontent import _reach
 
     assert _reach("http://127.0.0.1:8103") == "this computer" and _reach("http://localhost") == "this computer"
-    assert _reach("http://192.168.1.5:8103") == "the office network" and _reach("http://100.64.0.9") == "the office network"
+    assert (
+        _reach("http://192.168.1.5:8103") == "the office network"
+        and _reach("http://100.64.0.9") == "the office network"
+    )
     assert _reach("http://172.16.0.1") == "the office network" and _reach("http://172.32.0.1") == "a public address"
     assert _reach("https://files.example.org:8443") == "a public address"

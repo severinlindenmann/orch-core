@@ -242,6 +242,9 @@ def _merge_people(new: Path, live: Path | None, now: int) -> tuple[frozenset[str
         db.execute("PRAGMA foreign_keys=ON")
         db.execute("BEGIN IMMEDIATE")
         users = {u for (u,) in db.execute("SELECT user_id FROM users")}
+        if live is None:  # a fresh server: a default group for new people is a granting setting, staged OFF
+            with contextlib.suppress(sqlite3.OperationalError):
+                db.execute("UPDATE default_group SET grp=NULL")
         if live is not None:
             live_users = {u: d for u, d in _live_rows(live, "access.db", "SELECT user_id, disabled_ms FROM users")}
             live_admins = {

@@ -30,6 +30,7 @@ from ..invites import Invites
 ADMIN_GROUP = "hub-admin"
 #: access.db tables taken from the live store as they are (in place): withdrawals, offers, allow lists, policies
 LIVE_TABLES = (
+    "default_group",
     "org_secrets",
     "org_secret_shares",
     "org_secret_wraps",
@@ -51,7 +52,8 @@ LIVE_TABLES = (
 CLASSES: dict[str, str] = {
     "access.db:users": "restricting",  # fields: disabled_ms, must_recover are restricting (stricter wins); the row itself is people
     "access.db:groups": "granting",
-    "access.db:members": "granting",
+    "access.db:members": "granting",  # ends_ms is restricting: the EARLIER of backup and live wins (_in_place_access)
+    "access.db:default_group": "granting",  # in place: the live row; fresh: none (staged OFF)
     "access.db:grants": "granting",
     "access.db:revoked_channels": "restricting",
     "access.db:snapshots": "state",
@@ -172,6 +174,7 @@ def _in_place_access(new: Path, live: Path) -> None:
             "DELETE FROM main.members WHERE NOT EXISTS (SELECT 1 FROM live.members l "
             "WHERE l.grp=main.members.grp AND l.user_id=main.members.user_id)"
         )
+        _merge_member_ends(c)
         c.execute(
             "DELETE FROM main.grants WHERE NOT EXISTS (SELECT 1 FROM live.grants l "
             "WHERE l.workspace_id=main.grants.workspace_id AND l.grp=main.grants.grp)"
@@ -192,6 +195,10 @@ def _in_place_access(new: Path, live: Path) -> None:
         c.execute(
             "DELETE FROM main.groups WHERE name<>? AND name NOT IN (SELECT name FROM live.groups)", (ADMIN_GROUP,)
         )
+        if _has(c, "main", "default_group"):  # the live row, unless that group is not in the staged store
+            c.execute(
+                "UPDATE main.default_group SET grp=NULL WHERE grp IS NOT NULL AND grp NOT IN (SELECT name FROM main.groups)"
+            )
         c.execute("COMMIT")
     except BaseException:
         with contextlib.suppress(sqlite3.Error):
@@ -327,6 +334,23 @@ def _merge_policy(back: dict[str, Any], live: dict[str, Any]) -> dict[str, Any]:
 
 def _create_like_live(c: sqlite3.Connection, table: str) -> None:
     c.execute(c.execute("SELECT sql FROM live.sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()[0])
+
+
+def _merge_member_ends(c: sqlite3.Connection) -> None:
+    """The end date of a membership is RESTRICTING: where both the backup and the live hub have the row, the EARLIER end wins
+    and no end date counts as later than any date. A restore therefore never lifts a shortening, never revives an ended row
+    as permanent, and never lengthens one."""
+    for col in ("ends_ms", "added_ms", "confirmed_ms"):  # a backup made before GA-07 lacks the columns
+        if not any(r[1] == col for r in c.execute("PRAGMA main.table_info(members)")):
+            c.execute(f"ALTER TABLE main.members ADD COLUMN {col} INTEGER")
+    if not any(r[1] == "ends_ms" for r in c.execute("PRAGMA live.table_info(members)")):
+        return
+    c.execute(
+        "UPDATE main.members SET ends_ms = (SELECT CASE WHEN l.ends_ms IS NULL THEN main.members.ends_ms "
+        "WHEN main.members.ends_ms IS NULL THEN l.ends_ms ELSE MIN(l.ends_ms, main.members.ends_ms) END "
+        "FROM live.members l WHERE l.grp=main.members.grp AND l.user_id=main.members.user_id) "
+        "WHERE EXISTS (SELECT 1 FROM live.members l WHERE l.grp=main.members.grp AND l.user_id=main.members.user_id)"
+    )
 
 
 def _merge_restricting(c: sqlite3.Connection) -> None:

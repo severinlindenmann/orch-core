@@ -1301,3 +1301,43 @@ def test_S6_L2_the_background_tick_writes_nothing_while_the_restore_fence_is_set
     stop.set()
     t.join(15)
     assert len(waits) >= 3 and ticks == []  # two full iterations ran with the fence set: no tick
+
+
+def test_restore_keeps_the_earlier_member_end_never_lifts_a_shortening(w):
+    acc = w.env.acc
+    now = acc._now()
+    far, soon, sooner = now + 90 * 86_400_000, now + 30 * 86_400_000, now + 10 * 86_400_000
+    acc.add_group("temps")
+    for u in (w.ann, w.dave, w.carol):
+        acc.add_member("temps", u)
+    acc.set_member_end("temps", w.ann, far)  # (a) backup: far;   live: shortened to soon
+    acc.set_member_end("temps", w.dave, soon)  # (b) backup: soon;  live: made permanent (later)
+    acc.set_member_end("temps", w.carol, soon)  # (c) backup: soon;  live: sooner
+    words, data = _backup(w)
+    acc.set_member_end("temps", w.ann, soon)
+    acc.set_member_end("temps", w.dave, None)
+    acc.set_member_end("temps", w.carol, sooner)
+    _restore(w, data, words)
+    q = _rows(w.state, "access.db", "SELECT user_id, ends_ms FROM members WHERE grp='temps'")
+    assert dict(q) == {w.ann: soon, w.dave: soon, w.carol: sooner}
+
+
+def test_restore_does_not_revive_an_ended_row_as_permanent(w):
+    acc = w.env.acc
+    acc.add_group("temps")
+    acc.add_member("temps", w.ann)  # backup: permanent
+    words, data = _backup(w)
+    ended = acc._now() - 1
+    acc._db.execute("UPDATE members SET ends_ms=? WHERE grp='temps' AND user_id=?", (ended, w.ann))  # live: ended
+    _restore(w, data, words)
+    assert _rows(w.state, "access.db", "SELECT ends_ms FROM members WHERE grp='temps'") == [(ended,)]
+
+
+def test_restore_default_group_is_the_live_one(w):
+    acc = w.env.acc
+    acc.add_group("newbies")
+    acc.set_default_group("newbies", actor=w.admin)
+    words, data = _backup(w)
+    acc.set_default_group(None, actor=w.admin)
+    _restore(w, data, words)
+    assert _rows(w.state, "access.db", "SELECT grp FROM default_group") == [(None,)]

@@ -18,7 +18,15 @@ from orch import canon
 from orch.addons import builtin
 from orch.addons.install import read_lock
 from orch.addons.lockfile import Planned
-from orch.addons.manifest import Manifest, ManifestError, _core_key, declarations, incompatibility, load_manifest
+from orch.addons.manifest import (
+    EVENTS_KEY,
+    Manifest,
+    ManifestError,
+    _core_key,
+    declarations,
+    incompatibility,
+    load_manifest,
+)
 from orch.addons.package import MANIFEST_FILE, Package
 
 from . import ADDONS, MarketError, deps, index, policy
@@ -224,6 +232,9 @@ def diff(
             widened = True  # a new or changed needs rule
         ko, kn = set(ev_old["artifact_kinds"]), set(ev_new["artifact_kinds"])
         added["artifact_kinds"], removed["artifact_kinds"] = sorted(kn - ko), sorted(ko - kn)
+        if ev_old.get(EVENTS_KEY) != ev_new.get(EVENTS_KEY):
+            changes.append("events changed")
+            widened = True  # what the add-on may wake a follow-up with: the person reads it again
         for k in _DOC_KEYS:
             if old.doc.get(k) != new.doc.get(k):
                 changes.append(f"{k.replace('_', ' ')} changed")

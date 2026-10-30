@@ -193,6 +193,7 @@ class StoreLanding:
         under this lock: :func:`marketinstall.recheck`), never from the hub. Returns ``(event with seq/prev/at/based_on,
         the request record)``."""
         from orch import canon
+        from orch.addons.manifest import EVENTS_KEY
         from orch.hubclient.custodial import LandRefused
         from orch.identity import new_ulid
         from orch.model import Code, Refusal
@@ -233,6 +234,7 @@ class StoreLanding:
             "sections",
             "artifact_kinds",
             "runtime",
+            EVENTS_KEY,
             "staged",
         )
         body = {k: ev[k] for k in keys if k in ev}

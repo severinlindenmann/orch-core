@@ -11,7 +11,7 @@ from test_phone_routes import (
     put_push,
     w,  # noqa: F401  fixture: a Web with a fake relay and a notifier
 )
-from webapi_helpers import WS, WS_OTHER, WS_SEL, Web, shared_item
+from webapi_helpers import ORIGIN, WS, WS_OTHER, WS_SEL, Web, shared_item
 
 ITEM = "22" * 16
 TICKET = "aa" * 16
@@ -104,3 +104,28 @@ def test_rate_limits_are_per_user_and_per_item(ready):
         w.clock.advance(11_000)
         codes.append(_ask(w, tok, item=f"{i:02x}" * 16)[0])
     assert 429 in codes
+
+
+def test_a_switch_session_is_refused_and_no_hint_is_sent(ready):
+    from orch_hub.switch import SwitchService
+
+    w = ready
+    w.api.d.switch = SwitchService(hub_origin=lambda: ORIGIN, hub_name="Acme", now_ms=w.clock)
+    _, _, h = w.call("POST", "/switch/redeem", {"t": w.api.d.switch.issue_to_hub(w.ann, WS, "/")})
+    tok = h["Set-Cookie"].split(";")[0].split("=", 1)[1]
+    w.browser_tokens.add(tok)
+    s, o, _ = _ask(w, tok)
+    assert (s, o["error"]) == (403, "reauth_required")
+    w.notifier.drain()
+    assert w.relay.sent == []
+
+
+def test_a_revoked_phone_is_not_asked(ready):
+    w = ready
+    s, _, _ = w.call("POST", f"/admin/channels/{w.cid}/revoke", {}, token=w.login(w.admin))
+    assert s == 200
+    w.notifier.drain()
+    w.relay.sent.clear()
+    assert _ask(w, w.login(w.ann))[:2] == (200, {"asked": 0})
+    w.notifier.drain()
+    assert w.relay.sent == []

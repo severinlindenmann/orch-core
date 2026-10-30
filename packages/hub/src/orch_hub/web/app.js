@@ -16,7 +16,7 @@ import { totpPanel } from "./totp.js";
 import { inviteView } from "./invite.js";
 import { rememberDashboard, rememberName } from "./connect.js";
 import { servicesView } from "./services.js";
-import { VERBS, checkServiceAction, resultWords } from "./service_actions.js";
+import { VERBS, checkServiceAction, resultWords, needsConfirm, hubStopConfirm, logsDialog } from "./service_actions.js";
 import { handoffsView } from "./handoffs.js";
 import { phonesView } from "./phones.js";
 import { workspacesView, workspaceDetailsView, newWorkspaces } from "./workspaces.js";
@@ -662,9 +662,8 @@ function serviceFailed(code, detail) {
   dialog(banner("bad", "Nothing was changed", say(code) + (detail ? " (" + renderText(detail) + ")" : "")), h("div", { class: "row" }, h("button", { text: "Close", onclick: closeDialog })));
 }
 async function serviceAction(name, verb, confirmed = false) {
-  if (name === "hub" && verb === "stop" && !confirmed) { // a second plain click (no typed word) before the hub stops itself
-    dialog(h("h1", { text: "Stop the Hub?" }), h("p", { class: "sentence", text: "This console and every workspace link go offline. Workspaces keep working on their own; you start the hub again on the server." }),
-      h("div", { class: "row" }, h("button", { text: "Cancel", onclick: closeDialog }), h("button", { class: "dan", id: "hub-stop-confirm", text: "Yes, stop the Hub", onclick: () => { closeDialog(); void serviceAction(name, verb, true); } })));
+  if (needsConfirm(name, verb) && !confirmed) { // a second plain click (no typed word) before the hub stops itself
+    dialog(...hubStopConfirm({ onCancel: closeDialog, onYes: () => { closeDialog(); void serviceAction(name, verb, true); } }));
     return;
   }
   if (!state.me) { state.notice = banner("warn", "Register this browser first", null); return home(); }
@@ -712,12 +711,7 @@ async function openLogs(name) {
   if (!state.me) { state.notice = banner("warn", "Register this browser first", null); return home(); }
   const r = await api("GET", svcPath(name, "/logs") + "?channel_id=" + encodeURIComponent(state.me.channelId));
   if (r.status !== 200) return serviceFailed(r.body.error);
-  const pre = h("pre", { class: "mono small logs", id: "log-text" });
-  pre.textContent = r.body.text || "Nothing was logged in the last hour.";
-  const header = "orch " + name + " log, last hour, " + new Date().toISOString() + "\n";
-  dialog(h("h1", { text: "Logs: " + renderText(name) }), pre,
-    h("p", { class: "small muted", id: "log-note", text: "Secrets are hidden as far as we can tell; don't paste logs publicly." }),
-    h("div", { class: "row" }, h("button", { text: "Copy for IT", onclick: () => copyText(header + r.body.text) }), h("button", { text: "Close", onclick: closeDialog })));
+  dialog(...logsDialog(renderText(name), r.body.text, { copy: copyText, onClose: closeDialog }));
 }
 // The hub restarts or stops itself: this page cannot ask it anything while it is down, so it polls and says what to do if it stays away.
 async function waitForHub(verb) {

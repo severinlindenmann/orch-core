@@ -77,3 +77,38 @@ test("a Logs button per managed part calls logs(name)", () => {
   b[0].listeners.click();
   assert.deepEqual(calls, ["relay"]);
 });
+
+const { hubStopConfirm, logsDialog, needsConfirm, LOG_NOTE } = await import("../../src/orch_hub/web/service_actions.js");
+const nodes = (list) => list.flatMap((n) => n.all());
+
+test("the Logs dialog shows log text literally, with the note, and copies exactly that text", () => {
+  const copied = [];
+  const dlg = logsDialog("relay", "09:00 <b>x</b> [redacted]", { copy: (t) => copied.push(t), onClose: () => {} });
+  const all = nodes(dlg);
+  const pre = all.find((n) => n.attrs.id === "log-text");
+  assert.equal(pre.textContent, "09:00 <b>x</b> [redacted]");
+  assert.equal(all.filter((n) => n.tag === "b").length, 0); // no element was created from the log
+  assert.equal(all.find((n) => n.attrs.id === "log-note").textContent, LOG_NOTE);
+  all.find((n) => n.attrs.id === "log-copy").listeners.click();
+  assert.equal(copied.length, 1);
+  assert.ok(copied[0].endsWith("\n09:00 <b>x</b> [redacted]"));
+});
+
+test("Logs are offered only where the page is given a logs action (the admin page)", () => {
+  const withLogs = servicesView(data({ state: "up", parts: [{ name: "relay" }] }), { service: () => {}, logs: () => {}, copy: () => {} }, NOW);
+  const without = servicesView(data({ state: "up", parts: [{ name: "relay" }] }), { service: () => {}, copy: () => {} }, NOW);
+  assert.equal(find(withLogs, (n) => n.attrs["data-logs"]).length, 1);
+  assert.equal(find(without, (n) => n.attrs["data-logs"]).length, 0);
+});
+
+test("stopping the Hub needs the second click; relay and publish do not ask", () => {
+  assert.equal(needsConfirm("hub", "stop"), true);
+  for (const [n, v] of [["hub", "restart"], ["hub", "start"], ["relay", "stop"], ["publish", "stop"], ["relay", "restart"]]) assert.equal(needsConfirm(n, v), false, n + v);
+  const sent = [];
+  const dlg = hubStopConfirm({ onYes: () => sent.push("yes"), onCancel: () => sent.push("no") });
+  assert.deepEqual(sent, []); // showing the question sends nothing
+  const yes = nodes(dlg).find((n) => n.attrs.id === "hub-stop-confirm");
+  assert.equal(yes.textContent, "Yes, stop the Hub");
+  yes.listeners.click();
+  assert.deepEqual(sent, ["yes"]);
+});

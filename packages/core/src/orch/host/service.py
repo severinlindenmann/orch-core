@@ -173,6 +173,10 @@ class Host:
         #: §11A.17: the passed start-up proof of ``--dev-sim-convenience`` (:class:`orch.host.devmode.DevHost`), fixed
         #: for the life of the process; ``None`` on every normal host
         self.dev = dev
+        #: ``orch update`` health check (orch.update.quarantine): control socket only, nothing signed
+        from orch.update.quarantine import active as quarantine_active
+
+        self.quarantine = quarantine_active(self.state_dir)
         #: V3-D38: the workspace id a pending dev host (:attr:`dev` pending) admitted as its one genesis in this process
         self.pending_claim: str | None = None
         self.pending_lock = threading.Lock()
@@ -341,10 +345,11 @@ class Host:
             self.intents.open()
             self.jobs.open()
             self.runners.load()
-            self.recovered = self.control.recover()
-            self.control.sweep_keys()
-            self.intents.sweep()
-            self.jobs.sweep()
+            if not self.quarantine:
+                self.recovered = self.control.recover()
+                self.control.sweep_keys()
+                self.intents.sweep()
+                self.jobs.sweep()
         except BaseException:
             self._release_host_lock()
             raise
@@ -399,6 +404,9 @@ class Host:
         }
         server = Server(listener, self.registry, self.limits, ControlGate(self), welcome)
         self.servers["control"] = (server, asyncio.create_task(server.serve()))
+        if self.quarantine:
+            LOG.warning("QUARANTINE (orch update health check): control socket only, no runner, no workspaces, no link")
+            return
         await self._serve_runner()
         if not self.hook_listen:  # the persisted setting of `orch host webhooks on` (the unit carries no flags)
             from .hooks import read_settings

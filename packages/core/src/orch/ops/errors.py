@@ -966,6 +966,27 @@ _MIGRATE = (
     ),
     ("migrate.step_failed", 5, False, "a migration step failed; the data was backed up first", "restore the backup"),
 )
+# `orch update` (orch.update.engine, cli/update.py)
+_UPDATE = (
+    ("update.unreachable", 9, True, "could not reach the release server; nothing was changed", "try again later"),
+    ("update.no_record", 2, False, "orch was not installed with the installer", "install with the one-line installer"),
+    ("update.downgrade", 3, False, "the release is older than the installed version", "nothing to do"),
+    ("update.too_old", 5, False, "this orch is too old to update directly", "run the installer again"),
+    ("update.no_space", 4, False, "not enough free disk space for a safe update", "free some space, then update again"),
+    ("update.agents_running", 4, True, "agent runs are active", "let them finish or run orch stop all"),
+    ("update.rolled_back", 5, False, "the update failed and the old version and data were put back", "see the log"),
+    (
+        "update.after_commit",
+        5,
+        False,
+        "orch was updated but is not healthy; the data stays",
+        "orch update --use VERSION",
+    ),
+)
+_SPECS += [
+    _e(code, exit_, retry, msg, hint, ["orch", "update", "--check"], "Updating orch: " + msg + ".")
+    for code, exit_, retry, msg, hint in _UPDATE
+]
 _SPECS += [
     _e(code, exit_, retry, msg, hint, ["orch", "migrate", "--check"], "Data across updates: " + msg + ".")
     for code, exit_, retry, msg, hint in _MIGRATE

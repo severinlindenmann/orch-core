@@ -857,6 +857,9 @@ class ControlGate:
         if self.host.draining:
             refuse(self.host.restarting())
             return None
+        if self.host.quarantine and op != "host.list":  # orch update health check: answer, change nothing
+            refuse(HostError("host.unavailable", "this host is in quarantine while orch is being updated"))
+            return None
         if "auth" in frame:
             refuse(HostError("req.invalid", "auth is not allowed on the control socket"))
             return None

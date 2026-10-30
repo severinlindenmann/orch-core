@@ -233,6 +233,9 @@ class SwitchService:
                     "online": w["online"],
                     "badge": n,
                     "origin": self.origin_of(ws),
+                    # D93: a workspace joined for chosen items only refuses a switch from the hub (its host says
+                    # switch.refused), so the console does not offer "Open workspace" for it (run-15 J02)
+                    "switchable": registry.mode(ws) == "full",
                     "current": ws == current,
                 }
             )

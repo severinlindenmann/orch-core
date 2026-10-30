@@ -69,3 +69,8 @@ def test_a_part_started_by_the_installer_does_not_inherit_loader_variables(tmp_p
 @pytest.mark.parametrize("name", ["DYLD_INSERT_LIBRARIES", "LD_PRELOAD", "PYTHONPATH"])
 def test_the_one_sanitizer_has_no_exceptions_for_loader_names(name):
     assert name not in childenv.sanitize({name: "1"})
+
+
+def test_sanitize_drops_the_bytecode_cache_prefix_and_case_switch():
+    out = childenv.sanitize({"PYTHONPYCACHEPREFIX": "/x", "PYTHONCASEOK": "1", "HOME": "/h"})
+    assert out == {"HOME": "/h"}

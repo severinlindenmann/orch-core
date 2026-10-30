@@ -124,7 +124,7 @@ test("the workspace page lists shared tickets under the waiting count, for the o
   let output;
   const shared = [{ workspace_id: ws, title: "Invoice export for Ben", shared_with: ["Ben Test"] }, { workspace_id: ws, title: "Other", shared_by: "Anna Test" }, { workspace_id: "cd".repeat(16), title: "Elsewhere" }];
   const context = vm.createContext({ pageLoading() {}, loading: () => () => {}, skeleton: () => ({}), show() {}, state: { rail: { rows: [{ id: ws, name: "Anna Test's workspace", online: true, canOpen: true }] } },
-    refresh: async () => true, loadRail: async () => {}, renderText: String, workspaceStatus: () => "", OPEN_FIRST: "", openWorkspace() {},
+    refresh: async () => true, loadRail: async () => {}, renderText: String, workspaceStatus: () => "", OPEN_FIRST: "", OPEN_ON_ITS_COMPUTER: "", openWorkspace() {},
     h: (tag, props, ...kids) => ({ tag, ...props, kids: kids.flat() }),
     shell: (active, ...nodes) => { output = nodes; },
     api: async (method, path) => ({ status: 200, body: path.startsWith("/me/shared") ? { items: shared } : { items: [] } }) });

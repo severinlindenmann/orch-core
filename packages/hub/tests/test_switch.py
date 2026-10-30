@@ -249,6 +249,16 @@ def test_rail_lists_my_workspaces_with_origins_and_badges(w):
     assert all(x["origin"] is None for x in o["workspaces"] if x["workspace_id"] != WS)
 
 
+def test_run15_j02_a_selective_workspace_is_not_switchable(w):
+    """D93: the host refuses a hub switch into a workspace joined for chosen items only, so the rail says so and the
+    console shows no Open button for it (Ben's 403 on /auth/switch)."""
+    token = w.login(w.ann)
+    s, o, _ = w.call("GET", "/rail", token=token)
+    rows = {x["workspace_id"]: x for x in o["workspaces"]}
+    assert s == 200 and rows[WS]["switchable"] is True
+    assert rows[WS_SEL]["switchable"] is False
+
+
 def test_no_switch_service_means_unavailable(tmp_path):
     x = Web(tmp_path)
     try:

@@ -43,6 +43,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from orch import childenv
+
 from . import units
 
 __all__ = [
@@ -136,7 +138,9 @@ def plan(
 def _default_run(argv: Sequence[str]) -> subprocess.CompletedProcess[str]:
     if os.environ.get("PYTEST_CURRENT_TEST") or os.environ.get("ORCH_NO_SERVICE_MANAGER") == "1":
         raise OSError(f"{argv[0]} refused: the service manager is off (a test, or ORCH_NO_SERVICE_MANAGER=1)")
-    return subprocess.run(list(argv), capture_output=True, text=True, timeout=30, check=False)
+    return subprocess.run(
+        list(argv), capture_output=True, text=True, timeout=30, check=False, env=childenv.sanitize(os.environ)
+    )
 
 
 def _failed(argv: Sequence[str], res: subprocess.CompletedProcess[str]) -> str:

@@ -241,11 +241,10 @@ jobs:
           # ONE resolution over all five wheels (they are installed side by side and must agree on versions), with
           # sha256 pins for every dependency; the five orch wheels themselves are not in the file (their own hashes
           # are in the manifest). constraints.py refuses an unhashed or unpinned line and normalizes the file.
-          uv pip compile --generate-hashes --universal --python-version 3.11 --quiet --no-header \
+          ls dist/orch_*-"${VERSION}"-py3-none-any.whl | sed 's#^#./#' > wheels.in
+          uv pip compile wheels.in --generate-hashes --universal --python-version 3.14 --quiet --no-header \
             --no-emit-package orch-core --no-emit-package orch-dashboard --no-emit-package orch-hub \
-            --no-emit-package orch-relay --no-emit-package orch-publish \
-            dist/orch_core-"${VERSION}"-*.whl dist/orch_dashboard-"${VERSION}"-*.whl dist/orch_hub-"${VERSION}"-*.whl \
-            dist/orch_relay-"${VERSION}"-*.whl dist/orch_publish-"${VERSION}"-*.whl -o resolved.txt
+            --no-emit-package orch-relay --no-emit-package orch-publish -o resolved.txt
           python3 -I scripts/release/constraints.py --out dist/constraints.txt resolved.txt
           test -s dist/constraints.txt
       - name: Changelog since the previous release

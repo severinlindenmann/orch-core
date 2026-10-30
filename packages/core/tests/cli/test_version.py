@@ -168,7 +168,7 @@ def test_stamp_sets_every_part_to_the_one_version(tmp_path):
 
 
 def test_every_part_of_the_tree_carries_the_one_dev_version():
-    """One version for all parts: a part left at its own number would trip the hub's and the updater's version checks."""
+    """One version for all parts: a part left at its own number trips the hub and updater version checks."""
     import tomllib
 
     mod = _stamp_module()

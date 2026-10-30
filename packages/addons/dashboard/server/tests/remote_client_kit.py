@@ -118,7 +118,7 @@ def fake_client(*, hub_name: str = "Hub Name", own_name: str | None = None) -> S
     calls: list[tuple[str, tuple, dict]] = []
     store = SimpleNamespace(
         hub=lambda: {"origin": "https://hub.example:8443", "link": "hub.example:8444", "hub_id": "f" * 32, "spki": "x"},
-        workspaces=lambda: {WS_A: {"name": own_name, "device_id": "rc_" + "1" * 32}} if own_name else {WS_A: {}},
+        workspaces=lambda: {WS_A: {"name": own_name, "device_id": "rd_" + "1" * 32}} if own_name else {WS_A: {}},
     )
     c = SimpleNamespace(store=store, calls=calls, sessions={}, hub_name=hub_name)
     c.signed_in = lambda: True

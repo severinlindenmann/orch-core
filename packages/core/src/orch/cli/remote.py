@@ -520,6 +520,25 @@ def _reset(args: argparse.Namespace, env: Mapping[str, str], out: TextIO, err: T
     return 0 if rc == 0 else 1
 
 
+def _client(args: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextIO) -> int:
+    """``orch remote open``: start the remote client (``orch_dashboard.remote_client``, in the dashboard addon) and open
+    the person's browser at it. Same refusals as ``orch dashboard``: an agent's environment, an addon that is not
+    installed."""
+    from orch.cli import dashboard
+
+    refusal = dashboard.agent_refusal(list(args), env)
+    if refusal:
+        err.write(f"orch remote open: human_only: {refusal}\n")
+        return EXIT_REFUSED
+    if not dashboard._module_installed(env):  # noqa: SLF001 - the launcher's own probe
+        err.write(f"orch remote open: {dashboard.INSTALL_HINT}\n")
+        return 1
+    out.flush()
+    err.flush()
+    os.execve(sys.executable, [sys.executable, "-P", "-m", "orch_dashboard.remote_client", *args], dict(env))
+    return 1  # pragma: no cover - execve does not return
+
+
 def main(
     args: Sequence[str],
     *,
@@ -529,6 +548,8 @@ def main(
 ) -> int:
     from orch.cli import remote_access
 
+    if args and args[0] in ("open", "client"):  # R5 (#1593): the remote client on THIS computer (the person's terminal)
+        return _client(args[1:], env=env, out=out, err=err)
     if (
         args and args[0] in remote_access.VERBS
     ):  # R2 (#1590): remote access to the workspace itself, signed by the owner

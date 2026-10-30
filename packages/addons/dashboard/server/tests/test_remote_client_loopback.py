@@ -607,3 +607,13 @@ def test_sign_in_error_does_not_say_which_field(static):
         assert C  # imported
     finally:
         ctl.stop()
+
+
+def test_the_client_refuses_an_agent_environment():
+    import io
+
+    from orch_dashboard.remote_client.__main__ import main
+
+    err = io.StringIO()
+    assert main([], env={"ORCH_SESSION": "s"}, err=err) == 3
+    assert "never opens it" in err.getvalue()

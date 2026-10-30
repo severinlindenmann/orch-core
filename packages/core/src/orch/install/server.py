@@ -18,6 +18,8 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from orch import privdir
+
 from . import parts as P
 from .parts import InstallError
 
@@ -333,7 +335,7 @@ def write_snippets(directory: Path, snippets: dict[str, str]) -> list[Path]:
     written = []
     try:
         st = os.fstat(dfd)
-        if st.st_uid != os.geteuid() or st.st_mode & 0o022:
+        if st.st_uid != os.geteuid() or privdir.others_can_write(st, os.geteuid()):
             raise InstallError(
                 f"{directory} must be owned by this user and not writable by others: do the root steps first"
             )

@@ -13,7 +13,6 @@ import datetime
 import hashlib
 import json
 import os
-import pwd
 import re
 import shlex
 import shutil
@@ -239,6 +238,8 @@ def _check_dest(dest: Path, shared: bool, owner: str | None) -> str | None:
     if shared:
         if owner is not None:
             try:
+                import pwd  # POSIX only: imported where used (the oslock guard: modules import on every OS)
+
                 want = pwd.getpwnam(owner).pw_uid
             except KeyError:
                 return f"the backup user {owner} does not exist: do the root steps in docs/pilot-server.md"

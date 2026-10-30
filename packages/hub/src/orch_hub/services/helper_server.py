@@ -26,6 +26,7 @@ from typing import Any
 from . import helper_proto as P
 from .helper_backends import ACTION_TIMEOUT_S, Config, Part, Runner, run_argv
 from .helper_proto import HEX32, HelperError
+from .redact import redact
 from .helper_verify import ReadOnlyAuth
 
 SOCK_FILE = "helper.sock"
@@ -197,7 +198,7 @@ class HelperService:
                 return {"accepted": True, "will_restart": True}
             rc, _out, err = self._run(argv, ACTION_TIMEOUT_S)
             if rc != 0:
-                raise HelperError("action_failed", _short(err))
+                raise HelperError("action_failed", _short(redact(err, max_lines=2)))
             return {"accepted": True, "will_restart": False}
         finally:
             if lock is not None:
@@ -257,7 +258,17 @@ class HelperServer:
         if st is not None:
             if not stat.S_ISSOCK(st.st_mode) or st.st_uid != os.geteuid():
                 raise HelperError("bad_socket_path")
-            os.unlink(self._path)  # our own stale socket
+            probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            probe.settimeout(1)
+            try:
+                probe.connect(str(self._path))
+            except OSError:
+                pass  # nothing answers: a stale socket of ours
+            else:
+                raise HelperError("already_running")
+            finally:
+                probe.close()
+            os.unlink(self._path)
         s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         old = os.umask(0o177)
         try:

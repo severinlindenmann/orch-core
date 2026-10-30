@@ -46,6 +46,8 @@ def test_argv_is_fixed_and_exact():
         lambda g: g["parts"].update({"Relay": g["parts"]["relay"]}),
         lambda g: g["parts"].update({"../x": g["parts"]["relay"]}),
         lambda g: g.update(host_id="a b"),
+        lambda g: g["parts"].update({"wiki": g["parts"]["relay"]}),
+        lambda g: g["parts"]["relay"].update(unit="orch-hub-helper.service"),
         lambda g: g.update(v=2),
         lambda g: g.update(parts={}),
     ],

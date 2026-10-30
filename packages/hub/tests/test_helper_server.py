@@ -302,3 +302,27 @@ def test_client_over_the_real_socket(rig, short):
     finally:
         srv.stop()
     assert cl.info()["state"] == "not_set_up"  # the socket file is gone with the server
+
+
+def test_bind_refuses_when_a_helper_already_answers_but_replaces_a_stale_socket(rig, short):
+    path = short / "d.sock"
+    a = HS.HelperServer(rig.svc, path)
+    a.bind()
+    threading.Thread(target=a.serve_forever, daemon=True).start()
+    try:
+        with pytest.raises(P.HelperError) as e:
+            HS.HelperServer(rig.svc, path).bind()
+        assert e.value.code == "already_running"
+    finally:
+        a._stop.set()
+        a._sock.close()  # dead server, socket file stays: stale
+    HS.HelperServer(rig.svc, path).bind()
+
+
+def test_failed_command_output_is_redacted(rig):
+    rig.rc = 1
+    rig.ran.clear()
+    orig = rig._run
+    rig.svc._run = lambda argv, t: (1, "", "failed token=abc12345678")
+    r = rig.run(rig.prepare())
+    assert r["code"] == "action_failed" and "abc12345678" not in r["detail"]

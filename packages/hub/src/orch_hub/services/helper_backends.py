@@ -22,6 +22,7 @@ from .helper_proto import HOST_RE, PART_RE, HelperError
 CONFIG_FILE = "helper.json"
 UNIT_RE = re.compile(r"orch-[a-z0-9][a-z0-9-]{0,40}(@[a-z0-9-]{1,40})?\.service")
 LABEL_RE = re.compile(r"[A-Za-z][A-Za-z0-9 -]{0,23}")
+PARTS = ("hub", "relay", "publish")  # the closed set the console knows
 KINDS = ("systemd", "systemd-user")
 VERBS = ("start", "stop", "restart")
 SYSTEMCTL = "/usr/bin/systemctl"
@@ -72,7 +73,7 @@ def parse_config(obj: object) -> Config:
         raise HelperError("bad_config", "parts")
     parts: dict[str, Part] = {}
     for name, p in raw.items():
-        if type(name) is not str or not PART_RE.fullmatch(name):
+        if type(name) is not str or name not in PARTS or not PART_RE.fullmatch(name):
             raise HelperError("bad_config", "part name")
         if type(p) is not dict or set(p) != {"label", "kind", "unit"}:
             raise HelperError("bad_config", f"part {name}")
@@ -81,7 +82,7 @@ def parse_config(obj: object) -> Config:
             raise HelperError("bad_config", f"{name} label")
         if kind not in KINDS:
             raise HelperError("bad_config", f"{name} kind (systemd or systemd-user)")
-        if type(unit) is not str or not UNIT_RE.fullmatch(unit):
+        if type(unit) is not str or not UNIT_RE.fullmatch(unit) or unit.startswith("orch-hub-helper"):
             raise HelperError("bad_config", f"{name} unit")
         parts[name] = Part(name, label, kind, unit)
     return Config(host, parts)

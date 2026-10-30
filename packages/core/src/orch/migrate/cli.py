@@ -132,7 +132,9 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextI
                 code = max(code, ERRORS["migrate.step_failed"].exit)
             if "error" in row and "backup" in row and fd is not None:
                 try:  # a failed step: put the root back as it was, while we still hold the lock
-                    backup_mod.restore(Path(row["backup"]), root, env, own_failure=True, lock_fd=fd)
+                    backup_mod.restore(
+                        Path(row["backup"]), root, env, own_failure=True, lock_fd=fd, say=warnings.append
+                    )
                     row["restored"] = True
                 except Exception as exc:  # noqa: BLE001
                     row["restore_error"] = str(exc)

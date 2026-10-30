@@ -360,3 +360,27 @@ test("no notice when nothing was recovered, and a removed admin is named plainly
 test("app.js dispatches #invite= with one line and keeps the link out of the address bar after use", () => {
   assert.match(appSource, /route\.kind === "invite"\) show\(inviteView\(route\.token, \{ api, say, signIn: \(\) => loginView\(\), openHub: \(\) => afterLogin\(\), finished: \(\) => history\.replaceState\(null, "", location\.pathname\) \}\)\)/);
 });
+
+test("a company invitation shows one button, no password form, and sends the token only in the start POST body", async () => {
+  const calls = []; const went = [];
+  const d = { api: async (m, p, b) => { calls.push([m, p, b]); return p === "/invite/peek" ? { status: 200, body: { kind: "join", name: "Julia", needs_proof: false, company: true, provider: "google" } } : { status: 200, body: { url: "https://accounts.google.com/o/oauth2/v2/auth?state=x" } }; }, assign: (u) => went.push(u) };
+  const view = inviteView(TOKEN, d);
+  await view.ready;
+  const all = view[0].all();
+  assert.equal(all.filter((n) => n.tag === "input").length, 0); // no password field
+  const btn = all.find((n) => n.attrs.id === "invite-company");
+  assert.equal(btn.textContent, "Continue with Google");
+  await btn.listeners.click();
+  assert.deepEqual(calls.at(-1), ["POST", "/oidc/invite/start", { token: TOKEN }]);
+  assert.deepEqual(went, ["https://accounts.google.com/o/oauth2/v2/auth?state=x"]);
+  assert.ok(!went[0].includes(TOKEN));
+});
+
+test("a company invitation does not follow an unsafe address", async () => {
+  const went = [];
+  const d = { api: async (m, p) => (p === "/invite/peek" ? { status: 200, body: { kind: "join", name: "J", needs_proof: false, company: true, provider: "entra" } } : { status: 200, body: { url: "javascript:alert(1)" } }), assign: (u) => went.push(u) };
+  const view = inviteView(TOKEN, d);
+  await view.ready;
+  await view[0].all().find((n) => n.attrs.id === "invite-company").listeners.click();
+  assert.deepEqual(went, []);
+});

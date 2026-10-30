@@ -60,6 +60,7 @@ from ..contract import suite as S
 from ..contract.canon import CanonError, loads_strict, unb64u
 from ..contract.hub import HV, Refused, channel_proof_bytes
 from ..invites import Invite, InviteError, proof_digest
+from ..oidc import OidcError
 from ..relay.client import RelayError
 from ..spaces.service import SpaceError
 from ..switch import SwitchError, clean_return_to, owner_fallback_names, workspace_rows
@@ -1721,7 +1722,11 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
         return 200, person_reach(self.d.access, self.d.registry, p["user_id"])
 
     def _h_a_users(self, c: Ctx, p: dict, q: dict, b: dict | None):
-        return 200, {"users": self.d.access.users()}
+        users = self.d.access.users()
+        if self.d.user_invites is not None:  # who joined through a company-login invitation, and what that account said
+            labels = self.d.user_invites.company_labels()
+            users = [{**u, "company": labels[u["user_id"]]} if u["user_id"] in labels else u for u in users]
+        return 200, {"users": users}
 
     def _h_a_user_remove(self, c: Ctx, p: dict, q: dict, b: dict | None):
         with self._chg().reducing("user_remove", confirm=confirmed(b), user_id=p["user_id"]):
@@ -1755,11 +1760,19 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
 
     def _h_a_invite(self, c: Ctx, p: dict, q: dict, b: dict | None):
         b = _need(b, name=str)
+        company = b.get("company", False)
+        if type(company) is not bool or b.keys() - {"name", "company"}:
+            raise ApiError("malformed")
         name = check_name(b["name"].strip())  # the sign-in name, validated like every user name
         inv = self._inv()
         if (self.d.api_origin or c.origin) is None:
             raise ApiError("unavailable")
-        token, iid, expires = inv.create("join", created_by=c.user_id, name=name)
+        if company:  # "Sign in with your company account": only while company login is on and tested
+            try:
+                self.d.oidc.ready() if self.d.oidc is not None else (_ for _ in ()).throw(ApiError("unavailable"))
+            except OidcError:
+                raise ApiError("oidc_not_ready") from None
+        token, iid, expires = inv.create("join", created_by=c.user_id, name=name, company=company)
         self._record("invite.created", actor_id=c.user_id, detail={"invite_id": iid})
         return 200, {"link": self._invite_link(c, token), "expires_ms": expires, "invite_id": iid}
 
@@ -1877,7 +1890,11 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
         row = inv.peek(b["token"])
         self._creator_standing(row)
         if row.kind == "join":
-            return 200, {"kind": "join", "name": row.name, "needs_proof": False}, []
+            out = {"kind": "join", "name": row.name, "needs_proof": False}
+            if row.company:  # the page shows the company button instead of a password form
+                cfg = self.d.oidc.settings() if self.d.oidc is not None else None
+                out.update(company=True, provider=cfg["provider"] if cfg else None)
+            return 200, out, []
         uid = row.for_user or ""
         if not self.d.access.is_active(uid):
             raise InviteError()  # the person was removed or disabled since: the link is dead, same answer
@@ -1914,6 +1931,10 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
     def _apply_invite(self, row: Invite, password: str, proof: Any) -> dict[str, Any]:
         """The account change, run by ``Invites.redeem`` inside the claim's transaction: whatever raises here leaves the
         link unused. Returns what the person's own screen shows once."""
+        if (
+            row.company
+        ):  # a company-login link is redeemed only by /oidc/invite/finish: before any change, the generic answer
+            raise InviteError()
         self._creator_standing(row)
         if row.kind == "join":
             return self._apply_join(row, password)

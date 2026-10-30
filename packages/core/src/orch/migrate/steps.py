@@ -75,7 +75,7 @@ def is_signed_path(rel: str | os.PathLike[str]) -> bool:
 
 
 #: the only files under ``.state`` that orch rebuilds (the index and the lock; the heads
-#: database is durable evidence, not derived): everything else there, checkpoints, abandoned logs and pending intents included, is real data
+#: database is durable evidence, not derived): everything else there is real data
 DERIVED_NAMES: tuple[str, ...] = ("index.sqlite*", "lock")
 
 

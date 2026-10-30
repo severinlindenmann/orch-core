@@ -521,6 +521,25 @@ def test_a_connect_link_for_ben_issues_to_ben_only_and_the_owner_must_be_a_real_
     assert w.call("POST", "/admin/connect", {"owner_user": ben}, token=admin)[1] == {"error": "malformed"}
 
 
+def test_run15c_p08_settings_landing_is_for_an_admin_or_owner_of_the_workspace_only(w):
+    """P08: return_to '/settings/hub' is the one landing the console adds; a member who only edits may not ask for it."""
+    w.sw.set_origin(WS, DASH)
+    body = {"workspace_id": WS, "return_to": "/settings/hub", "kind": "open"}
+    editor = w.login(w.ann)  # edit on WS (fixture)
+    assert w.call("POST", "/switch/ticket", {**body, "return_to": "/"}, token=editor)[0] == 200  # opening is fine
+    s, o, _ = w.call("POST", "/switch/ticket", body, token=editor)
+    assert (s, o["error"]) == (403, "forbidden_role")
+    bob = w.env.user("bob")
+    w.env.acc.add_group("wsadmins")
+    w.env.acc.add_member("wsadmins", bob)
+    w.env.acc.grant(WS, "wsadmins", "admin")
+    tok = w.login(bob)
+    s, o, _ = w.call("POST", "/switch/ticket", body, token=tok)
+    assert s == 200 and o["url"].startswith(DASH + "/#t=")
+    s, o, _ = w.call("POST", "/switch/ticket", {**body, "return_to": "/settings/hub/../x"}, token=editor)
+    assert s == 200  # an unclean path is cleaned to "/" (as before), so it is not the settings landing
+
+
 def test_run15_p03_a_switch_session_registers_a_browser_key_only_with_password_and_code(w):
     """P03: reg_begin/reg_complete are open to a workspace-vouched session, but reg_begin re-proves password + a fresh code
     and refuses every kind but browser; the rest of the closed list stays closed."""

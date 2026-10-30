@@ -129,7 +129,10 @@ export function homeView(d) {
       : note(dead ? "The key is missing here or was removed at the hub. Set up signing again to sign here." : "One step: confirm with your password and a code."),
     dead ? h("button", { text: "Forget the key in this browser", onclick: () => d.actions.forgetLocal() }) : null,
     !active ? h("button", { class: "pri", text: "Set up signing", onclick: () => d.actions.register() }) : null);
-  const signing = h("section", { class: "card", "aria-labelledby": "signing-heading" },
+  // P08: a person with nothing to sign (not an admin, nothing shared for approval, no key or phone) is not shown the card;
+  // it appears by itself as soon as something needs their approval.
+  const canSign = active || dead || (d.channels ?? []).length > 0 || !!d.user?.is_admin || items.some((it) => !summary(it));
+  const signing = !canSign ? null : h("section", { class: "card", "aria-labelledby": "signing-heading" },
     h("h2", { id: "signing-heading", text: "Where you can sign" }), local,
     (d.channels ?? []).map((c) => h("div", { class: "list-row row" },
       h("div", { class: "grow" }, h("b", { text: text(c.label || c.kind) }), note(text(c.kind) + " · " + text(c.status))),

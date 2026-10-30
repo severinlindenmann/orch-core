@@ -121,6 +121,21 @@ test("run15 P03: a browser with no key gets one green button, Set up signing, an
   assert.doesNotMatch(ok, /Set up signing/);
 });
 
+test("run15c P08: a member with nothing to sign sees no 'Where you can sign'; it appears with an item, a phone, a key or admin rights", () => {
+  const ws = [{ workspace_id: "a", name: "P", online: true, mode: "full" }];
+  const base = { user: { name: "Ben" }, workspaces: ws, items: [], channels: [], thisBrowser: { state: "unregistered" }, actions: {} };
+  assert.doesNotMatch(textOf(homeView(base)), /Where you can sign|signing key/);
+  const signable = homeView({ ...base, items: [{ workspace_id: "a", title: "Q", signable: true }] });
+  assert.match(textOf(signable), /Where you can sign/);
+  assert.match(textOf(signable), /Set up signing/);
+  const summaryOnly = homeView({ ...base, workspaces: [{ ...ws[0], mode: "selective" }], items: [{ workspace_id: "a", title: "Q", summary_only: true }] });
+  assert.doesNotMatch(textOf(summaryOnly), /Where you can sign/);  // nothing here that this person can sign
+  assert.match(textOf(homeView({ ...base, channels: [{ channel_id: "c", kind: "phone", status: "active" }] })), /Where you can sign/);
+  assert.match(textOf(homeView({ ...base, user: { name: "Anna", is_admin: true } })), /Where you can sign/);
+  assert.match(textOf(homeView({ ...base, thisBrowser: { state: "active", label: "x" } })), /Where you can sign/);
+  assert.match(textOf(homeView({ ...base, thisBrowser: { state: "dead" } })), /Forget the key/);
+});
+
 test("P07: Shared tickets card lists tickets shared with me with workspace and who shared; hidden when none", () => {
   const ws = [{ workspace_id: "w1", name: "Product", online: true, mode: "selective" }];
   const textOf = (out) => out.flat().map((n) => n.textContent).join("\n");

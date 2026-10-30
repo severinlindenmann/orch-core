@@ -91,6 +91,7 @@ def test_serve_refuses_while_an_update_is_unfinished_and_starts_on_a_fresh_machi
     from orch.migrate import init_root
     from orch.migrate.journal import write_journal
     from orch.ops.errors import OrchError
+
     from orch_dashboard import __main__ as cli
 
     state = tmp_path / "state"

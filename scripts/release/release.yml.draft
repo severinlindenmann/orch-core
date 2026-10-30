@@ -34,6 +34,12 @@
 #   REQUIRED (the refresh anchor list is git tags, trusted.py): protect `v*` tags (no update, no delete) and turn on
 #   immutable releases, so a version tag cannot be moved, nor its release retitled, replaced or deleted.
 #
+# ---- seq -------------------------------------------------------------------------------------------------------------
+#   seq = github.run_number + repository variable RELEASE_SEQ_OFFSET (default 0). run_number only grows, so seq grows.
+#   It fails closed: if the workflow is ever recreated and run numbers restart, the new seq is lower than the verified
+#   current one and channel_seq.py REFUSES to move the pointer (nothing is published). Fix: set RELEASE_SEQ_OFFSET to
+#   the last published seq. Clients also refuse any seq below the one they have seen (seq_seen).
+#
 # ---- The "signing oracle" finding, re-checked -----------------------------------------------------------------------
 #   Finding (earlier Opus review): a signing step that signs whatever payload it is handed (an input, an artifact, a
 #   downloaded pointer, a file from a pull request) is an oracle: anyone who can influence that content gets a valid
@@ -106,6 +112,7 @@ jobs:
           EVENT: ${{ github.event_name }}
           INPUT_CHANNEL: ${{ inputs.channel }}
           RUN_NUMBER: ${{ github.run_number }}
+          SEQ_OFFSET: ${{ vars.RELEASE_SEQ_OFFSET || '0' }}
           SHA: ${{ github.sha }}
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -137,7 +144,7 @@ jobs:
             echo "mode=$mode"
             echo "channel=$channel"
             echo "version=$version"
-            echo "seq=${RUN_NUMBER}"
+            echo "seq=$((RUN_NUMBER + SEQ_OFFSET))"
             echo "sha=${SHA}"
             echo "test=$test"
             echo "key_id=$key_id"

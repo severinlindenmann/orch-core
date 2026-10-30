@@ -68,3 +68,8 @@ def test_tag_protection_and_immutable_releases_are_marked_required():
 def test_constraints_are_resolved_with_an_age_cutoff_and_the_residual_is_documented():
     assert '--exclude-newer "$cutoff"' in DRAFT and "- 7 days" in DRAFT
     assert "Pilot residual (constraints)" in DRAFT
+
+
+def test_seq_is_run_number_plus_offset_and_the_pointer_guard_fails_closed():
+    assert "RUN_NUMBER + SEQ_OFFSET" in DRAFT and "RELEASE_SEQ_OFFSET" in DRAFT
+    assert "scripts/release/channel_seq.py" in DRAFT and "REFUSES to move the pointer" in DRAFT

@@ -2368,6 +2368,19 @@ class ClickSigner:
             return wid, digest if type(digest) is str else None, op, rid if type(rid) is str else None
         return None
 
+    def _refuse_remote_kind(self, op: str, args: Mapping[str, Any]) -> None:
+        """R2 (#1590, design note 2): when the call carries ``remote: true``, every ``remote.*`` kind is refused before
+        anything else: ``prepare`` of one, and ``view`` / ``sign`` / ``cancel`` of a request that is one. The route gate
+        of the dashboard refuses them too; this is the signer's own check, so a server that skipped it gets no
+        signature. Remote access is changed at this computer only."""
+        name = args.get("op") if op == "prepare" else None
+        if name is None and op in ("view", "sign", "cancel"):
+            approval = self.approvals.get((args.get("workspace_id"), args.get("request_id")))
+            name = approval.op if approval is not None else None
+        if isinstance(name, str) and name.startswith("remote."):
+            self._note("refused", workspace=args.get("workspace_id"), code="remote_kind")
+            raise refused("terminal_only", "remote access is changed at this computer, never from a remote session")
+
     def handle(self, op: str, args: Mapping[str, Any]) -> dict[str, Any]:
         if not isinstance(args, Mapping):
             raise ClickError("invalid.input", "args is an object")
@@ -2386,6 +2399,7 @@ class ClickSigner:
                 raise ClickError("invalid.input", "stepup comes with remote: true")
             proof = args.get("stepup")
             args = {k: v for k, v in args.items() if k not in ("remote", "stepup")}
+            self._refuse_remote_kind(op, args)  # R2 (#1590): a remote session never prepares or signs remote access
             target = self._stepup_target(op, args)
             if target is not None:
                 try:

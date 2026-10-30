@@ -171,7 +171,7 @@ def test_operation_errors_are_declared_once_known_and_complete():
     control_only = {"relay.pair_open", "relay.no_primary", "relay.quota"}
     # V3-D38: no registry op creates a workspace any more; these come from the genesis library `orch setup` uses
     control_only |= {"host.busy", "custody.unsafe_mode", "host.unavailable"}
-    # R2 (#1590): hub.switch's refusal of a console switch for a workspace with remote access (hubops._switch, T3)
+    # R2 (#1590, D93): raised by the host op hub.switch (hubops._refuse_switch), which no registry op declares
     control_only |= {"switch.refused"}
     # #1198 R1-5: returned by the dashboard server's remote listener (route gate, passkey login, enrollment), no op
     control_only |= {"cosmetic.conflict"}  # run 13 D6: host op workspace.cosmetic.set

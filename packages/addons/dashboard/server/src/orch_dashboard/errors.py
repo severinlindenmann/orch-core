@@ -65,6 +65,7 @@ def status(code: str) -> int:
         "market.actor_refused",
         "passkey.stepup_required",
         "passkey.invalid",
+        "switch.refused",
     } or code.startswith("grant."):
         return 403
     if code in {"intent.done", "intent.expired"}:

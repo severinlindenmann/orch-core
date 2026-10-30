@@ -83,7 +83,9 @@ SEALED_OPS: dict[str, tuple[str, ...]] = {
     "hub.join": ("hub.backup_key",),
     "hub.mode": ("hub.backup_key",),
     "hub.leave": ("hub.backup_key",),
-    "remote.set": ("hub.backup_key",),  # R2 (#1590): the remote owner proof is made from the same typed backup key
+    # R2 (#1590): the owner's remote policy and device confirmation are clicks only at the loopback dashboard, with the
+    # backup key sealed to the signer (the remote owner proof); a remote session never reaches them (``handle``)
+    "remote.set": ("hub.backup_key",),
     "remote.device_confirm": ("hub.backup_key",),
 }
 #: #1198 C13: ``device.rotate`` (a new key for this computer) is a click only through the signer's own ``rotate`` op,
@@ -228,7 +230,7 @@ CLICK_OPS = frozenset(
         "hub.join",  # #1198 C10: only with the backup key sealed to the signer (SEALED_OPS); see view.check_prepared
         "hub.mode",
         "hub.leave",
-        "remote.set",  # R2 (#1590): only with the backup key sealed to the signer (SEALED_OPS)
+        "remote.set",  # R2 (#1590): sealed backup key like a hub step; refused when the call is from a remote session
         "remote.device_confirm",
         "device.remove",  # #1198 C15: refused for the signing device and an owner's last device (device.lockout)
         "addon.grant",  # every add-on, publish included (#1198 C2); the review lists what is signed
@@ -369,11 +371,10 @@ HUB_LEAVE_RISK = (
     "reaching this workspace."
 )
 HUB_RISK = "This changes what a hub can read of this workspace."
-REMOTE_RISK = (
-    "Devices you add can reach this workspace from outside your network, at the level you choose, until you turn it "
-    "off or the end date passes."
-)
-REMOTE_DEVICE_RISK = "This device will be able to open this workspace from afar, up to the level you choose."
+REMOTE_RISK = "Devices you add can use this workspace from afar, up to the level you chose, until you turn it off."
+REMOTE_AGENTS_RISK = "Agents on this computer can act as you."
+REMOTE_HUB_FULL_LINE = "The hub can already act for people in this workspace. Remote access does not change that."
+REMOTE_DEVICE_RISK = "Check that the six words match the ones on the device; this device can then reach this workspace."
 DEVICE_REMOVE_RISK = (
     "That device can no longer sign for this workspace; to use it again, it must be paired again as a new device."
 )
@@ -471,8 +472,17 @@ def _hub_risk(events: Events, deposit: bool, reveal: bool) -> list[str]:
 
 
 def _remote_risk(events: Events, deposit: bool, reveal: bool) -> list[str]:
-    types = {ev.get("type") for ev in events}
-    return [REMOTE_DEVICE_RISK] if "remote.device_added" in types else [REMOTE_RISK]
+    out: list[str] = []
+    for ev in events:
+        if ev.get("type") == "remote.changed":
+            out.append(REMOTE_RISK)
+            if ev.get("agents_risk") is True:
+                out.append(REMOTE_AGENTS_RISK)
+            if ev.get("hub_mode") == "full":
+                out.append(REMOTE_HUB_FULL_LINE)
+        elif ev.get("type") == "remote.device_added":
+            out.append(REMOTE_DEVICE_RISK)
+    return list(dict.fromkeys(out)) or [REMOTE_RISK]
 
 
 def _schedule_risk(events: Events, deposit: bool, reveal: bool) -> list[str]:

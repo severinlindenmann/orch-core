@@ -754,7 +754,7 @@ def test_a_tool_added_after_the_first_listing_is_new(served, org):
     assert rows["edit"]["new"] is True
 
 
-def test_a_new_digest_starts_a_new_baseline(served, org):
+def test_a_new_digest_takes_the_previous_tools_as_the_baseline(served, org):
     srv = accept_mcp(served, org)
     orgstate.record_seen(svc(served), "crm", srv["digest"], tools_of("find"))
     org.servers = [org.server("crm", url="https://tools.example.com/other")]
@@ -763,8 +763,8 @@ def test_a_new_digest_starts_a_new_baseline(served, org):
     new = org.servers[0]
     ok(req(served, "org.accept", {"kind": "mcp", "name": "crm", "digest": new["digest"]}))
     orgstate.record_seen(svc(served), "crm", new["digest"], tools_of("find", "edit"))
-    rows = ok(req(served, "org.show", {"kind": "mcp", "name": "crm"}))["data"]["tools"]
-    assert [t["new"] for t in rows] == [False, False]
+    rows = {t["name"]: t for t in ok(req(served, "org.show", {"kind": "mcp", "name": "crm"}))["data"]["tools"]}
+    assert rows["find"]["new"] is False and rows["edit"]["new"] is True  # added with the widening: badge
 
 
 @pytest.mark.parametrize(
@@ -782,3 +782,19 @@ def test_a_malformed_snapshot_drops_the_accept(served, org, snapshot):
     assert orgstate.served(svc(served))["mcp"] == []  # stricter: not accepted any more
     assert rows(req(served, "org.offers"), "mcp")["crm"]["status"] == "off"
     assert srv["digest"]
+
+
+def test_the_org_tool_schema_itself_refuses_off_with_a_list():
+    v = orgops._VALIDATORS["org.tool"]  # noqa: SLF001
+    pins = [{"tool": "a", "pin": "sha256:" + "0" * 64}]
+    assert v.is_valid({"server": "crm", "on": True, "tools": pins})
+    assert not v.is_valid({"server": "crm", "on": False, "tools": pins})
+    assert not v.is_valid({"server": "crm", "on": True, "tool": "a", "tools": pins})
+    assert v.is_valid({"server": "crm", "on": False, "tool": "a"})
+
+
+def test_changed_fields_looks_only_at_the_five_known_fields():
+    item = {"name": "x", "digest": "d", "url": "u", "auth": "none", "secret": None, "description": "", "extra": "z"}
+    snap = {"url": "u", "auth": "none", "secret": None, "description": "", "other": "q"}
+    assert orgstate.changed_fields(item, snap) == []
+    assert [c["field"] for c in orgstate.changed_fields({**item, "url": "v"}, snap)] == ["url"]

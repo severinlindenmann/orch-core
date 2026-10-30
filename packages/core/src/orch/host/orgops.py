@@ -86,8 +86,14 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
             },
         },
         "required": ["server", "on"],
-        "oneOf": [{"required": ["tool"], "not": {"required": ["tools"]}},
-                  {"required": ["tools", "on"], "not": {"anyOf": [{"required": ["tool"]}, {"required": ["pin"]}]}}],
+        "oneOf": [
+            {"required": ["tool"], "not": {"required": ["tools"]}},
+            {
+                "required": ["tools", "on"],
+                "properties": {"on": {"const": True}},
+                "not": {"anyOf": [{"required": ["tool"]}, {"required": ["pin"]}]},
+            },
+        ],
         "additionalProperties": False,
     },
     "org.accept": {

@@ -222,9 +222,7 @@ def changed_fields(item: dict[str, Any], snap: dict[str, Any]) -> list[dict[str,
     """What differs between the offered item and the accepted snapshot: ``[{field, word, was}]`` (``was`` is the
     accepted text; omitted for a skill's long ``text``). Nothing here grants anything."""
     out = []
-    for k in sorted(set(item) | set(snap)):
-        if k in ("name", "digest"):
-            continue
+    for k in _FIELD_WORDS:
         new, old = item.get(k), snap.get(k)
         if (new if type(new) is str else None) == old:
             continue
@@ -489,7 +487,12 @@ def record_seen(service: WorkspaceService, server: str, server_digest: str, tool
                 or not all(type(n) is str for n in names)
                 or any(old.get(k) != v for k, v in b.items())
             ):
-                names = [r["name"] for r in rows]  # the first listing of this digest: what is not new later
+                names = [r["name"] for r in rows]  # the first listing: what is not new later
+                same_binding = type(old) is dict and all(old.get(k) == v for k, v in b.items())
+                if same_binding and old.get("digest") != server_digest and type(old.get("tools")) is list:
+                    # the server changed (a widening): what the owner saw before is the baseline, so a tool added
+                    # with the change gets the "new" badge
+                    names = [t["name"] for t in old["tools"] if type(t) is dict and type(t.get("name")) is str]
             seen[server] = {**b, "digest": server_digest, "at": _now_ms(service), "baseline": names, "tools": rows}
             _write(service, "seen.json", {"servers": seen})
     except Exception:  # noqa: BLE001 - a listing the owner never sees must never break a tool call

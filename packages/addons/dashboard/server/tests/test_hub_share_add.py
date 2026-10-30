@@ -53,7 +53,8 @@ def test_the_review_is_the_hosts_closed_shape(client, token, stub, host):
     review = show(client, stub, token)["review"]
     assert review["hub_id"] == "ab" * 8 and review["readers"]["people"] == ["Ben Test"]
     assert review["new_count"] == 1 and review["new_items"] == ["ticket K-2: Second"]
-    assert review["leaves"] and review["later_edits"].startswith("Later edits") and review["leaves_short"] == "the title, status and deadline"
+    assert review["leaves"] and review["later_edits"].startswith("Later edits")
+    assert review["leaves_short"] == "the title, status and deadline"
 
 
 def test_a_shown_plan_is_sent_once_as_the_sessions_person(client, token, stub, host, caplog):

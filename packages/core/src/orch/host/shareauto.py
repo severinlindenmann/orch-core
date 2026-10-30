@@ -3,8 +3,8 @@
 A commit to the workspace (any ticket change) marks the workspace dirty; after a quiet moment (:data:`DEBOUNCE_S`, at
 most :data:`MAX_WAIT_S` under a steady stream of commits) the thread runs :func:`orch.host.shareops.auto_sync`. That
 pass only re-sends or withdraws items of the selection the owner already confirmed (see
-:meth:`orch.hubclient.shares.ShareState.auto_wanted`); it never widens it. It does nothing in full mode, without a
-bound selective hub, or while the workspace is degraded. A hub that cannot be reached is retried with a growing delay
+:meth:`orch.hubclient.shares.ShareState.auto_wanted`); it never widens it. It does nothing without a
+bound hub (selective or full), or while the workspace is degraded. A hub that cannot be reached is retried with a growing delay
 (:data:`RETRY_MIN_S` to :data:`RETRY_MAX_S`); a pass that cannot ever apply (full mode, no hub) parks the thread until
 the owner's next share operation arms it again.
 

@@ -77,6 +77,15 @@ LEAVES = {
 #: The body sections that make up a ticket's shared description (only under a rule that says "include the description").
 DESCRIPTION_SECTIONS = ("summary", "context", "requirements")
 LATER_EDITS = "Later edits are shared too, until you stop sharing."
+#: The short forms for the one-ticket dialog (same facts as LEAVES / LATER_EDITS; the long text stays for the CLI and
+#: the Details drawer). The page words none of it.
+LEAVES_SHORT = {
+    "ticket": "the title, status, labels and deadline",
+    "summary": "the type, a one-line title and the deadline",
+    "question": "the full question",
+}
+LEAVES_SHORT_DESCRIPTION = "the title, status, labels, deadline and description"
+LATER_EDITS_SHORT = "Later edits are shared too."
 _MU = threading.Lock()
 _NAMES = {"type": "array", "items": {"type": "string"}, "maxItems": 64}
 _RULE = {
@@ -324,6 +333,17 @@ def _leaves(kind: str, items: list[Any]) -> str:
     return LEAVES[kind]
 
 
+def _leaves_short(kinds: list[str], items: list[Any]) -> str:
+    """One short phrase for what leaves, from the same facts as ``_leaves``."""
+    parts = []
+    for k in kinds:
+        if k not in LEAVES_SHORT:
+            continue
+        described = k == "ticket" and any("description" in i.payload for i in items if i.kind == "ticket")
+        parts.append(LEAVES_SHORT_DESCRIPTION if described else LEAVES_SHORT[k])
+    return "; ".join(parts)
+
+
 def _names_for(service: WorkspaceService, ids: set[str]) -> dict[str, str]:
     """Display names for these hub users, from the in-memory cache only. A review is built on the workspace worker where
     nothing may touch the network, so it never asks the hub: the cache is filled by ``share.audience`` (the share form
@@ -415,6 +435,8 @@ def _review(service: WorkspaceService, want: list[Any], had: set[str], st: Any =
         "new": _rows(new),
         "leaves": [{"kind": k, "text": _leaves(k, leaving)} for k in kinds if k in LEAVES],
         "later_edits": LATER_EDITS,
+        "leaves_short": _leaves_short(kinds, leaving),
+        "later_edits_short": LATER_EDITS_SHORT,
     }
 
 

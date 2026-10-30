@@ -12,10 +12,11 @@ import { activityView } from "./activity.js";
 import { accountFromWorkspaceView, accountView } from "./account.js";
 import { adminView } from "./admin.js";
 import { changesView, checkChange, sentence as changeSentence } from "./changes.js";
-import { totpPanel } from "./totp.js";
+import { KEY_GONE_NOTE, totpPanel } from "./totp.js";
 import { inviteView } from "./invite.js";
 import { rememberDashboard, rememberName } from "./connect.js";
 import { servicesView } from "./services.js";
+import { VERBS, checkServiceAction, resultWords, needsConfirm, hubStopConfirm, logsDialog } from "./service_actions.js";
 import { handoffsView } from "./handoffs.js";
 import { phonesView } from "./phones.js";
 import { workspacesView, workspaceDetailsView, newWorkspaces } from "./workspaces.js";
@@ -73,7 +74,7 @@ async function api(method, path, body) {
 }
 const WORDS = {
   no_session: "Your sign-in ended. Sign in again.",
-  bad_credentials: "Wrong user id, password or code. A code works once; wait for the next one.",
+  bad_credentials: "Wrong name, password or code. A code works once; wait for the next one.",
   rate_limited: "Too many tries. Wait a moment.",
   event_changed: "The request changed while you were deciding.",
   prepared_expired: "Time ran out.",
@@ -83,6 +84,13 @@ const WORDS = {
   forbidden_role: "Your role does not allow this.",
   too_many_channels: "You have the maximum number of devices. Remove one first.",
   bad_channel_proof: "The signature was not accepted.",
+  busy: "Another action is running. Try again in a moment.",
+  helper_unavailable: "The service helper does not answer. Ask your IT person to start it on the server.",
+  not_set_up: "The service helper is not set up on this server.",
+  unknown_part: "This service is not managed from here.",
+  bad_action: "That action is not allowed.",
+  update_unavailable: "Updates from here need signed releases, which do not exist yet.",
+  action_failed: "The server refused the command.",
   malformed: "The answer could not be read safely.",
   unavailable: "The hub cannot be reached.",
   bad_ticket: "This link expired. Go back and click again.",
@@ -140,7 +148,8 @@ function setupView(token, err) {
         h("h2", { text: "Add your sign-in code to your phone" }),
         h("p", { class: "muted", text: "Scan this with your authenticator app. You will need the app's 6-digit code each time you sign in." }),
         totpPanel(r.body.totp_uri, r.body.totp_secret),
-        h("div", { class: "row top" }, h("button", { class: "pri", id: "open-hub", text: "Open the hub", onclick: () => afterLogin() })),
+        h("p", { class: "small muted top", id: "key-gone", text: KEY_GONE_NOTE }),
+        h("div", { class: "row top" }, h("button", { class: "pri", id: "open-hub", text: "I've added it, open the hub", onclick: () => afterLogin() })),
       );
     },
   }, field("Your name", name), field("Choose a password (10 or more characters)", pw), h("div", { class: "row top" }, h("button", { class: "pri", type: "submit", text: "Create the admin" })));
@@ -177,20 +186,23 @@ function shell(active, ...nodes) {
   const tab = (id, label, cls) => h("a", { href: "#/" + id, "data-tab": id, class: cls + (active === id ? " on" : ""), "aria-current": active === id ? "page" : null, text: label, onclick: (e) => { e.preventDefault(); navigate("#/" + id); } });
   // The section tabs: orch's own, with every page module of pages/ slotted in after the tab it names (PAGES is generated
   // from the folder by the server; nothing here lists a page).
-  const items = [["home", "Home"], ["approvals", "Approvals"], ["workspaces", "Workspaces"], ["phones", "Phones"], ["handoffs", "Hand-offs"], ["account", "Account"], ["services", "Services", true], ["activity", "Activity", true], ["admin", "Admin", true]].map(([id, label, admin]) => ({ id, label, admin: !!admin }));
+  // P14: an empty hub shows only what is useful; the entries marked `later` appear once a workspace is connected (routes still open by URL).
+  const items = [["home", "Home"], ["approvals", "Approvals", false, true], ["workspaces", "Workspaces"], ["phones", "Phones"], ["handoffs", "Hand-offs", false, true], ["account", "Account"], ["services", "Services", true, true], ["activity", "Activity", true, true], ["admin", "Admin", true]].map(([id, label, admin, later]) => ({ id, label, admin: !!admin, later: !!later }));
   for (let todo = [...PAGES].sort((x, y) => (x.path < y.path ? -1 : 1)), moved = true; todo.length && moved;) {
     moved = false;
     for (const pg of [...todo]) {
       const at = items.findIndex((t) => t.id === pg.nav.after);
       if (at < 0) continue;
-      items.splice(at + 1, 0, { id: pg.path, label: pg.nav.label, admin: pg.nav.admin });
+      items.splice(at + 1, 0, { id: pg.path, label: pg.nav.label, admin: pg.nav.admin, later: !!pg.nav.needsWorkspace });
       todo.splice(todo.indexOf(pg), 1); moved = true;
     }
   }
-  for (const pg of PAGES) if (!items.some((t) => t.id === pg.path)) items.push({ id: pg.path, label: pg.nav.label, admin: pg.nav.admin }); // an unresolved nav.after is still reachable (pages.test.mjs fails on it)
-  const tabs = (cls) => items.filter((t) => !t.admin || state.user?.is_admin).map((t) => tab(t.id, t.label, cls));
+  for (const pg of PAGES) if (!items.some((t) => t.id === pg.path)) items.push({ id: pg.path, label: pg.nav.label, admin: pg.nav.admin, later: !!pg.nav.needsWorkspace }); // an unresolved nav.after is still reachable (pages.test.mjs fails on it)
+  const empty = state.rail.ready === true && !state.rail.rows.length; // a rail that could not be read hides nothing
+  const tabs = (cls) => items.filter((t) => (!t.admin || state.user?.is_admin) && !(t.later && empty)).map((t) => tab(t.id, t.label, cls));
   const name = renderText(state.user?.name ?? "");
   const hubName = renderText(state.rail.hubName);
+  const topNav = h("nav", { class: "navtabs top-nav", "aria-label": "Sections" }, ...tabs("nav"));
   const side = h("aside", { class: "side", "aria-label": "Hub" },
     h("div", { class: "logo" }, h("i"), h("span", { text: "orch" })),
     h("div", { class: "hubbox" }, h("span", { text: hubName })),
@@ -198,7 +210,7 @@ function shell(active, ...nodes) {
     h("div", { class: "sp" }), h("div", { class: "who" }, h("span", { text: name })));
   if (!frame) {
     const top = h("header", { class: "topbar" }, h("span", { class: "t breadcrumb", text: hubName }),
-      h("nav", { class: "navtabs top-nav", "aria-label": "Sections" }, ...tabs("nav")),
+      topNav,
       h("span", { class: "grow" }), h("button", { text: "Search ⌘K", onclick: () => openSearch() }), h("button", { text: "?", "aria-label": "Keyboard shortcuts", onclick: () => openShortcuts() }), h("span", { class: "small muted", text: name }), signOutMenu());
     show(h("div", { class: "app" }, railView(), side, h("div", { class: "main" }, top, h("div", { class: "content", id: "main-content", tabindex: "-1" }, nodes.flat(2)))));
     root.classList.add("shelled");
@@ -209,6 +221,7 @@ function shell(active, ...nodes) {
     replaceContent(frame.querySelector(".content"), nodes.flat(2).filter(Boolean), sameRoute);
     if (railSnapshot !== JSON.stringify(state.rail)) {
       frame.querySelector(".rail").replaceChildren(...railView().childNodes);
+      frame.querySelector(".top-nav")?.replaceWith(topNav);
       railSnapshot = JSON.stringify(state.rail);
     }
   }
@@ -265,6 +278,7 @@ async function loadRail() {
   if (r.status !== 200) r = await api("GET", "/me/workspaces"); // older hub without the rail: the plain list, nothing openable
   if (!user || state.user !== user) return;
   state.rail.rows = r.status === 200 ? railRows(r.body) : [];
+  state.rail.ready = r.status === 200;
   const n = r.status === 200 ? r.body.hub?.name : null;
   state.rail.hubName = typeof n === "string" && n ? n : "Hub";
 }
@@ -568,7 +582,7 @@ async function services(silent = false) {
     if (revision !== viewRevision) return;
     if (r.status === 403 && r.body.error === "reauth_required") return reauthView();
     if (r.status !== 200) return shell("services", h("h1", { text: "Services" }), banner("bad", "Cannot read the services", say(r.body.error)));
-    shell("services", servicesView({ ...r.body, workspaces_list: ws.status === 200 ? ws.body.workspaces : undefined }, { check: () => services(), open: () => navigate("#/workspaces"), copy: copyText }));
+    shell("services", servicesView({ ...r.body, workspaces_list: ws.status === 200 ? ws.body.workspaces : undefined }, { check: () => services(), open: () => navigate("#/workspaces"), copy: copyText, service: serviceAction, logs: openLogs }));
     clearInterval(servicesTimer);
     let checking = false;
     servicesTimer = setInterval(async () => {
@@ -667,6 +681,79 @@ async function approveChange(change, ap) {
     h("details", {}, h("summary", { text: "What exactly is signed" }), factsList([["Change", change.id], ["Workspace", ap.workspace_id], ["Access version it was based on", String(r.body.ctx.base_snapshot_version)], ["Lapses on", new Date(change.expires_ms).toLocaleString()]])),
     h("div", { class: "row" }, h("button", { text: "Cancel", onclick: done }), sign));
   sign.arm();
+}
+// Start, stop or restart a part: the helper makes the request, this page checks the digest, the admin signs with this browser's key.
+const svcPath = (name, tail) => "/admin/services/" + encodeURIComponent(name) + tail;
+function serviceFailed(code, detail) {
+  dialog(banner("bad", "Nothing was changed", say(code) + (detail ? " (" + renderText(detail) + ")" : "")), h("div", { class: "row" }, h("button", { text: "Close", onclick: closeDialog })));
+}
+async function serviceAction(name, verb, confirmed = false) {
+  if (needsConfirm(name, verb) && !confirmed) { // a second plain click (no typed word) before the hub stops itself
+    dialog(...hubStopConfirm({ onCancel: closeDialog, onYes: () => { closeDialog(); void serviceAction(name, verb, true); } }));
+    return;
+  }
+  if (!state.me) { state.notice = banner("warn", "Register this browser first", null); return home(); }
+  const me = state.me;
+  const r = await api("POST", svcPath(name, "/prepare"), { action: verb, channel_id: me.channelId });
+  if (r.status === 401) return loginView(say("no_session"));
+  if (r.status !== 200) return serviceFailed(r.body.error);
+  let digest;
+  try { digest = await checkServiceAction(r.body, { part: name, action: verb, userId: state.user.user_id, channelId: me.channelId }); } catch (e) { return serviceFailed(e.message === "event_changed" ? "event_changed" : "malformed"); }
+  const sign = h("button", { class: verb === "stop" ? "dan" : "pri", id: "sign", "data-sign": "", disabled: true, text: "Please review…" });
+  const label = VERBS[verb] + " " + (r.body.text.match(/^\w+ (\w+)/)?.[1] ?? name);
+  sign.arm = () => arm(sign, label);
+  const onVis = () => sign.arm();
+  document.addEventListener("visibilitychange", onVis);
+  window.addEventListener("focus", onVis);
+  const done = () => { document.removeEventListener("visibilitychange", onVis); window.removeEventListener("focus", onVis); closeDialog(); };
+  sign.addEventListener("click", async (ev) => {
+    if (!ev.isTrusted || sign.disabled || offline || sign.getAttribute("aria-busy") === "true") return;
+    sign.disabled = true;
+    sign.setAttribute("aria-busy", "true");
+    try {
+      const proof = await signProof(me.pair.privateKey, digest);
+      const a = await api("POST", svcPath(name, "/run"), { channel_id: me.channelId, nonce: r.body.ctx.nonce, proof });
+      done();
+      if (a.status !== 200) {
+        if (a.body.error === "channel_revoked") await deleteChannel().catch(() => {});
+        return serviceFailed(a.body.error, a.body.error === "action_failed" ? a.body.detail : undefined);
+      }
+      if (a.body.will_restart) return waitForHub(verb);
+      toast(renderText(r.body.ctx.part) + " " + resultWords[verb]);
+      await services(true);
+    } catch {
+      done();
+      serviceFailed("unavailable");
+    }
+  });
+  dialog(h("h1", { text: VERBS[verb] + " " + (r.body.text.match(/^\w+ (\w+)/)?.[1] ?? name) + "?" }),
+    h("p", { class: "sentence", text: r.body.text }),
+    h("p", { class: "small muted", text: "The hub signs this with this browser's key. Nothing else is changed." }),
+    h("div", { class: "row" }, h("button", { text: "Cancel", onclick: done }), sign));
+  sign.arm();
+}
+// The last hour of a part's log. The helper redacted it; it is shown as text only (textContent), never as HTML.
+async function openLogs(name) {
+  if (!state.me) { state.notice = banner("warn", "Register this browser first", null); return home(); }
+  const r = await api("GET", svcPath(name, "/logs") + "?channel_id=" + encodeURIComponent(state.me.channelId));
+  if (r.status !== 200) return serviceFailed(r.body.error);
+  dialog(...logsDialog(renderText(name), r.body.text, { copy: copyText, onClose: closeDialog }));
+}
+// The hub restarts or stops itself: this page cannot ask it anything while it is down, so it polls and says what to do if it stays away.
+async function waitForHub(verb) {
+  const cmd = "systemctl start orch-hub";
+  const box = h("div", { class: "card" });
+  const show = (...nodes) => { box.replaceChildren(...nodes); };
+  show(banner("warn", verb === "stop" ? "The hub is stopping" : "The hub is restarting…", "This page cannot reach it for a moment."));
+  dialog(box);
+  if (verb === "stop") return show(banner("warn", "The hub is stopped", "Workspaces keep working on their own. To start it again, run this on the server:"), h("div", { class: "cmd" }, h("code", { text: cmd })), h("div", { class: "row" }, h("button", { text: "Copy", onclick: () => copyText(cmd) }), h("button", { text: "Close", onclick: closeDialog })));
+  const until = Date.now() + 60000;
+  while (Date.now() < until) {
+    await new Promise((res) => setTimeout(res, 2000));
+    const r = await api("GET", "/admin/services").catch(() => null);
+    if (r?.status === 200 || r?.status === 401 || r?.status === 403) { closeDialog(); return services(true); }
+  }
+  show(banner("bad", "The hub did not come back", "Run this on the server:"), h("div", { class: "cmd" }, h("code", { text: cmd })), h("div", { class: "row" }, h("button", { text: "Copy", onclick: () => copyText(cmd) }), h("button", { text: "Close", onclick: closeDialog })));
 }
 async function rejectChange(change, ap) {
   const r = await api("POST", changePath(change, "/reject"), { workspace_id: ap.workspace_id });

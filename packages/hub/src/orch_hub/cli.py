@@ -137,6 +137,13 @@ def _parser() -> argparse.ArgumentParser:
     from .access.cli import add_parsers
 
     add_parsers(sub)
+    hp = sub.add_parser(
+        "helper",
+        help="run the service helper (start/stop/restart this machine's parts for the console; unix socket only)",
+    )
+    hp.add_argument("--state", help="hub state dir (default: $ORCH_HUB_STATE)")
+    hp.add_argument("--print-sudoers", action="store_true", help="print the sudoers lines to install, then exit")
+    hp.add_argument("--user", help="with --print-sudoers: the user the helper runs as")
     from .spaces.cli import add_parsers as add_space_parsers
 
     add_space_parsers(sub)
@@ -155,8 +162,28 @@ def _relay_register(args: argparse.Namespace) -> int:
     return 0
 
 
+def _helper(args: argparse.Namespace) -> int:
+    from .services.helper_backends import load_config, sudoers_text
+    from .services.helper_proto import HelperError
+    from .services.helper_server import run_helper
+
+    state = Path(args.state) if args.state else default_state_dir()
+    if not args.print_sudoers:
+        return run_helper(state)
+    try:
+        if not args.user:
+            raise HelperError("bad_config", "--user is needed")
+        print(sudoers_text(args.user, list(load_config(state).parts.values())), end="")
+    except HelperError as e:
+        print(f"orch-hub: refused: {e}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    if args.group == "helper":
+        return _helper(args)
     if args.group == "serve":
         from .serve import serve
 

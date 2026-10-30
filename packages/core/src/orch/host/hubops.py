@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, Any
 
 from jsonschema import Draft202012Validator
 
+from . import agentevents
 from .errors import HostError
 
 if TYPE_CHECKING:
@@ -1246,6 +1247,7 @@ def _snapshot_link(
         mode=state.mode, now_ms=lambda: int(service.clock() * 1000),
     )  # fmt: skip
     _send_status(service, state, hub_link)
+    agentevents.send(service, state, hub_link)  # HUB-AC-03: four references per agent action, never content
     try:
         if send_profile:
             profile = _load_profile(service)

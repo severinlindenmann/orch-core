@@ -10,6 +10,7 @@ h2w request, see :mod:`orch_hub.router`). ``wk_seal`` is served in full mode (:m
 from __future__ import annotations
 
 import logging
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
@@ -119,6 +120,7 @@ class OpContext:
     wk_seals: WkSeals | None = None  # the wk_seal store; None: the op is `unavailable`
     views: ViewService | None = None  # D15's log_sync receiver; None: the op is `unavailable`
     shares: Any = None  # orch_hub.shares.ShareService; None = share ops not served (unknown_op)
+    activity: Any = None  # orch_hub.activity.ActivityLog; None: agent_events is `unavailable`
     switch: Any = None  # orch_hub.switch.SwitchService; None = switch/rail ops not served (unknown_op)
     where: Callable[[], dict[str, Any]] | None = None  # settings.where_answer: the advertised addresses and the name
     same_computer: bool = False  # the link's socket shows the peer is on this computer (never a peer-sent claim)
@@ -730,6 +732,40 @@ def status_put(c: OpContext) -> dict[str, Any]:
     return {}
 
 
+#: HUB-AC-03: at most this many agent events per workspace per hour are kept; the rest are dropped (the call still succeeds)
+AGENT_EVENTS_PER_HOUR = 500
+_AGENT_SEEN: dict[str, list[int]] = {}
+_AGENT_LOCK = threading.Lock()
+
+
+def agent_events(c: OpContext) -> dict[str, Any]:
+    """HUB-AC-03 (#1426): what agents did in this workspace, as four references per event (type word, agent session,
+    ticket key, time). Display data for the admin's Activity page: it grants nothing, the hub never asks for more, and
+    nothing is stored but the references. Time on the page is the hub's own clock (the workspace's is not trusted)."""
+    if c.activity is None:
+        raise Refused("unavailable")
+    _require_pin(c)
+    _require_bound(c)
+    _require_not_pending(c)
+    with _AGENT_LOCK:
+        stamps = [t for t in _AGENT_SEEN.get(c.workspace_id, []) if c.now_ms - t < 3_600_000]
+        room = max(AGENT_EVENTS_PER_HOUR - len(stamps), 0)
+        take = c.body["events"][:room]
+        _AGENT_SEEN[c.workspace_id] = [*stamps, *([c.now_ms] * len(take))]
+    for e in take:
+        try:
+            c.activity.record(
+                "agent.event",
+                actor_kind="agent",
+                actor_session=e["agent"],
+                workspace_id=c.workspace_id,
+                detail={"what": e["kind"], **({"ticket": e["ticket"]} if e["ticket"] else {})},
+            )
+        except ValueError:
+            raise Refused("malformed") from None
+    return {}
+
+
 def addon_request(c: OpContext) -> dict[str, Any]:
     """M3 (#1450): the workspace's host says an install was refused by the hub policy. Bounded display data for the hub
     admin's Add-ons page; it grants nothing and changes no policy."""
@@ -796,6 +832,7 @@ HANDLERS: dict[str, Callable[[OpContext], dict[str, Any]]] = {
     "owner_get": owner_get,
     "addon_request": addon_request,
     "status_put": status_put,
+    "agent_events": agent_events,
     "org_skills_get": org_skills_get,
     "mcp_servers_get": mcp_servers_get,
     "org_secrets_get": org_secrets_get,

@@ -7,14 +7,18 @@ the journal and the status file are the warning. The unit generators are pure an
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
+import pwd
 import shlex
 import shutil
 import socket
 import ssl
+import stat
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -57,7 +61,7 @@ def health_unit_files(python: str, config: Path) -> dict[str, str]:
 def backup_unit_files(python: str, src: Path, dest: Path, shared: bool = False) -> dict[str, str]:
     """``orch-hub-backup.service`` + ``.timer`` (every night 03:40): copy the sealed hub backups to the pull folder."""
     argv = [python, "-P", "-m", "orch.install.ops", "backup-copy", "--src", str(src), "--dest", str(dest)]
-    argv += ["--shared"] if shared else []
+    argv += ["--shared", "--owner", "orch-backup"] if shared else []
     return {
         "orch-hub-backup.service": _service("copy the sealed hub backups to the pull folder", argv),
         "orch-hub-backup.timer": (
@@ -161,38 +165,97 @@ def _write_status(path: Path, report: dict[str, Any]) -> None:
 # ------------------------------------------------------------------------------------------------- backup copy
 
 
-def backup_copy(src: Path, dest: Path, keep: int = BACKUP_KEEP, *, shared: bool = False) -> tuple[list[str], list[str]]:
+def _check_dest(dest: Path, shared: bool, owner: str | None) -> str | None:
+    """A problem sentence when ``dest`` is not the folder we expect (a link, wrong owner, wrong mode), else ``None``.
+    Nothing is created, re-moded or copied by this check; it never follows a link."""
+    try:
+        st = os.lstat(dest)
+    except FileNotFoundError:
+        return f"the backup drop folder {dest} does not exist: do the root steps in docs/pilot-server.md"
+    except OSError as e:
+        return f"cannot look at the backup folder {dest}: {e.strerror}"
+    if stat.S_ISLNK(st.st_mode) or not stat.S_ISDIR(st.st_mode):
+        return f"the backup folder {dest} is a link or not a folder: nothing was copied"
+    if shared:
+        if owner is not None:
+            try:
+                want = pwd.getpwnam(owner).pw_uid
+            except KeyError:
+                return f"the backup user {owner} does not exist: do the root steps in docs/pilot-server.md"
+            if st.st_uid != want:
+                return f"the backup folder {dest} is not owned by {owner}: nothing was copied"
+        if stat.S_IMODE(st.st_mode) != 0o2770:
+            have = f"{stat.S_IMODE(st.st_mode):o}"
+            return f"the backup folder {dest} must have mode 2770 (it has {have}): nothing was copied"
+    elif st.st_uid != os.geteuid():
+        return f"the backup folder {dest} is not owned by this user: nothing was copied"
+    return None
+
+
+def _write_private(dest: Path, name: str, src: Path, mode: int) -> None:
+    """The ONE way a file is written into the backup folder: a random O_EXCL temp name (never a predictable one, a link
+    planted at any name is never followed), the content copied through file descriptors, the mode set on the descriptor,
+    then a rename over the target name (a rename replaces a link, it never writes through it)."""
+    fd_src = os.open(src, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        fd, tmp = tempfile.mkstemp(dir=dest, prefix=".hub-", suffix=".part")
+        try:
+            os.fchmod(fd, mode)
+            with os.fdopen(fd, "wb") as out, os.fdopen(fd_src, "rb", closefd=False) as inp:
+                shutil.copyfileobj(inp, out)
+            os.replace(tmp, dest / name)
+        except BaseException:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp)
+            raise
+    finally:
+        os.close(fd_src)
+
+
+def backup_copy(
+    src: Path, dest: Path, keep: int = BACKUP_KEEP, *, shared: bool = False, owner: str | None = None
+) -> tuple[list[str], list[str]]:
     """Copy the sealed ``*.orchbak`` files not yet in ``dest``; keep the newest ``keep`` there. ``(copied, problems)``.
     The files are sealed with the hub's backup key; this folder holds nothing a thief could read.
 
-    ``shared``: ``dest`` is a drop folder an administrator made (owned by the ``orch-backup`` user, group-writable and
-    setgid for its group, of which the hub user is a member): it is not created or re-moded here, and the files are
-    group-readable (0640) so that user can read them."""
-    if shared:
-        if not dest.is_dir():
-            return [], [f"the backup drop folder {dest} does not exist: do the root steps in docs/pilot-server.md"]
+    ``shared``: ``dest`` is a drop folder an administrator made (owned by ``owner``, the ``orch-backup`` user, mode
+    2770, group-writable for the hub user). It is not created or re-moded here and files are group-readable (0640).
+    The folder is checked first (a link, another owner or another mode: a problem is reported, nothing is copied)."""
+    if not shared:
+        if not os.path.lexists(dest):
+            dest.mkdir(parents=True, exist_ok=True, mode=0o700)
+        bad = _check_dest(dest, False, None)
+        if bad:
+            return [], [bad]
+        dest.chmod(0o700)  # on every run (not a link: checked above)
     else:
-        dest.mkdir(parents=True, exist_ok=True, mode=0o700)
-        dest.chmod(0o700)  # on every run, also when the folder was made earlier with another mode
+        bad = _check_dest(dest, True, owner)
+        if bad:
+            return [], [bad]
     files = sorted(src.glob("hub-*.orchbak")) if src.is_dir() else []
     if not files:
         return [], ["there is no hub backup yet (set the backup key up in the hub console)"]
-    copied = []
+    copied, problems = [], []
     stamp = lambda n: n.rsplit("-", 1)[-1]  # noqa: E731 - the UTC part of hub-<hub8>-<utc>.orchbak
     have = [stamp(q.name) for q in dest.glob("hub-*.orchbak")]
     newest = max(have, default="")
     for f in files:
         target = dest / f.name
-        if target.exists() or stamp(f.name) < newest or not f.is_file() or f.is_symlink():
-            continue  # already there, or older than what was pruned: not copied back
-        tmp = dest / f".{f.name}.part"
-        shutil.copyfile(f, tmp)
-        tmp.chmod(0o640 if shared else 0o600)
-        tmp.replace(target)
+        if not f.is_file() or f.is_symlink() or stamp(f.name) < newest:
+            continue  # older than what was pruned: not copied back
+        try:
+            cur = os.lstat(target)  # lstat: a dangling link planted at the name counts as present
+        except FileNotFoundError:
+            cur = None
+        if cur is not None:
+            if stat.S_ISLNK(cur.st_mode):
+                problems.append(f"{target} is a link, not a backup: left alone, not overwritten")
+            continue
+        _write_private(dest, f.name, f, 0o640 if shared else 0o600)
         copied.append(f.name)
     for old in sorted(dest.glob("hub-*.orchbak"))[:-keep] if keep > 0 else []:
         old.unlink(missing_ok=True)
-    return copied, []
+    return copied, problems
 
 
 def main(argv: Sequence[str]) -> int:
@@ -207,6 +270,7 @@ def main(argv: Sequence[str]) -> int:
     b.add_argument("--dest", required=True)
     b.add_argument("--keep", type=int, default=BACKUP_KEEP)
     b.add_argument("--shared", action="store_true")
+    b.add_argument("--owner", default=None)
     a = p.parse_args(list(argv))
     if a.cmd == "health":
         cfg = json.loads(Path(a.config).read_text())
@@ -215,7 +279,7 @@ def main(argv: Sequence[str]) -> int:
         for line in report["problems"]:
             print(f"orch health: WARNING: {line}", file=sys.stderr)
         return 0 if report["ok"] else 1
-    copied, problems = backup_copy(Path(a.src), Path(a.dest), a.keep, shared=a.shared)
+    copied, problems = backup_copy(Path(a.src), Path(a.dest), a.keep, shared=a.shared, owner=a.owner)
     for name in copied:
         print(f"orch backup: copied {name}")
     for line in problems:

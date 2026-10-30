@@ -776,7 +776,7 @@ def test_runbook_backup_pull_uses_a_restricted_key_and_no_shell():
 def test_shared_drop_folder_is_not_re_moded_and_files_are_group_readable(tmp_path):
     src, drop = tmp_path / "b", tmp_path / "drop"
     src.mkdir()
-    drop.mkdir(mode=0o2770)
+    drop.mkdir()
     drop.chmod(0o2770)
     (src / "hub-abcd1234-20260101T030000Z.orchbak").write_bytes(b"x")
     copied, problems = ops.backup_copy(src, drop, shared=True)
@@ -841,3 +841,53 @@ def test_allow_non_cgnat_warns_for_a_lan_v4_and_refuses_a_wide_v6(tmp_path):
     # without the flag a LAN address is still refused
     with pytest.raises(InstallError, match="--allow-non-cgnat"):
         server.check_vpn_ip("10.1.1.5", lan)
+
+
+def _shared(tmp_path):
+    src, drop = tmp_path / "b", tmp_path / "drop"
+    src.mkdir()
+    drop.mkdir()
+    drop.chmod(0o2770)
+    (src / "hub-abcd1234-20260101T030000Z.orchbak").write_bytes(b"real")
+    return src, drop
+
+
+def test_planted_links_in_the_shared_folder_are_never_followed(tmp_path):
+    src, drop = _shared(tmp_path)
+    canary = tmp_path / "canary.txt"
+    canary.write_text("keep")
+    canary.chmod(0o600)
+    name = "hub-abcd1234-20260101T030000Z.orchbak"
+    (drop / f".{name}.part").symlink_to(canary)  # the old predictable temp name
+    (drop / name).symlink_to(tmp_path / "does-not-exist")  # dangling link at the target name
+    copied, problems = ops.backup_copy(src, drop, shared=True)
+    assert copied == [] and any("is a link" in p for p in problems)
+    assert canary.read_text() == "keep" and oct(canary.stat().st_mode & 0o777) == "0o600"
+    assert (drop / name).is_symlink() and not (tmp_path / "does-not-exist").exists()
+    (drop / name).unlink()  # link removed: now it copies, and still not through the planted .part link
+    copied, problems = ops.backup_copy(src, drop, shared=True)
+    assert copied == [name] and problems == []
+    assert canary.read_text() == "keep" and oct(canary.stat().st_mode & 0o777) == "0o600"
+    assert (drop / name).read_bytes() == b"real" and not (drop / name).is_symlink()
+    assert oct((drop / name).stat().st_mode & 0o777) == "0o640"
+
+
+def test_a_symlinked_or_wrong_mode_or_foreign_drop_folder_copies_nothing(tmp_path):
+    import getpass
+
+    src, drop = _shared(tmp_path)
+    link = tmp_path / "link"
+    link.symlink_to(drop)
+    copied, problems = ops.backup_copy(src, link, shared=True)
+    assert copied == [] and "link or not a folder" in problems[0] and list(drop.iterdir()) == []
+    drop.chmod(0o770)
+    copied, problems = ops.backup_copy(src, drop, shared=True)
+    assert copied == [] and "mode 2770" in problems[0]
+    drop.chmod(0o2770)
+    copied, problems = ops.backup_copy(src, drop, shared=True, owner="no-such-user-xyz")
+    assert copied == [] and "does not exist" in problems[0]
+    assert ops.backup_copy(src, drop, shared=True, owner=getpass.getuser())[0]  # the right owner passes
+    plain_link = tmp_path / "plain-link"
+    plain_link.symlink_to(tmp_path / "out")
+    (tmp_path / "out").mkdir()
+    assert ops.backup_copy(src, plain_link)[1] and list((tmp_path / "out").iterdir()) == []  # also not shared

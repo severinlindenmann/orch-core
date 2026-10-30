@@ -10,11 +10,11 @@ import json
 from pathlib import Path
 
 import pytest
-from orch.crypto.encoding import b64u
 from adapter_kit import STREAM, App, Wire
 from device_kit import app, click_start, fake, passkey_store, ws  # noqa: F401
+from orch.crypto.encoding import b64u
 
-from orch_dashboard.remote_device import HEAD, WS_OPEN, frame
+from orch_dashboard.remote_device import HEAD, WS_OPEN
 
 DOC = json.loads((Path(__file__).resolve().parents[5] / "contracts" / "hub" / "vectors_remote.json").read_text())
 CASES = [c for c in DOC["cases"] if c["check"] == "app_seq"]

@@ -5,7 +5,7 @@ import { Link } from '@tanstack/react-router'
 import { useState } from 'react'
 import { hasFeature } from '@/api/features'
 import { atLeast } from '@/api/permissions'
-import { effectiveState, kindText, newIdem, shareError, shareQueries, sharesApi, STATE_TEXT, stopName, viewsText, type Share, type Staged } from '@/api/shares'
+import { effectiveState, kindText, newIdem, shareError, shareQueries, sharesApi, STATE_TEXT, stopName, UNAVAILABLE_TEXT, viewsText, type Share, type Staged, type UnavailableReason } from '@/api/shares'
 import { LoadFailed } from '@/components/LoadFailed'
 import { Inline } from '@/components/sign/visible'
 import { Button } from '@/components/ui/button'
@@ -14,8 +14,10 @@ import { cn } from '@/lib/utils'
 import { usePageHeader } from '@/app/shell/ShellUi'
 import { useRole } from '@/app/useRole'
 import { useWorkspace } from '@/app/workspace'
+import type { Workspace } from '@/api/types'
 import { refreshShares, ShareFlow } from './ShareFlow'
 import { RevokeShare } from './Revoke'
+import { TurnOnPublish } from './TurnOnPublish'
 
 // Wide: a table cell. Phone: a labelled line of a stacked card.
 const CELL = 'px-3 py-2 max-sm:flex max-sm:justify-between max-sm:gap-3 max-sm:px-0 max-sm:py-0 max-sm:before:text-text-faint max-sm:before:content-[attr(data-label)]'
@@ -62,6 +64,34 @@ function StagedRow({ s, ws, mayChange, onSign }: { s: Staged; ws: string; mayCha
   )
 }
 
+/** Sharing cannot be listed and the host said why: one line, and one button only where one click fixes it. */
+function Unavailable({ reason, workspace, onOn }: { reason: UnavailableReason; workspace: Workspace; onOn: () => void }) {
+  const [turning, setTurning] = useState(false)
+  const t = UNAVAILABLE_TEXT[reason]
+  return (
+    <div className="max-w-2xl space-y-3">
+      <h1 className="text-xl font-semibold tracking-tight">Shares</h1>
+      <div data-testid="shares-unavailable" className="space-y-1 rounded-lg border border-border bg-surface p-4">
+        <h2 className="text-[15px] font-semibold">{t.title}</h2>
+        <p className="text-[13px] text-text-muted">{t.text}</p>
+        {t.button &&
+          (reason === 'off' ? (
+            <Button size="sm" className="mt-2" onClick={() => setTurning(true)}>
+              {t.button}
+            </Button>
+          ) : (
+            <Button size="sm" className="mt-2" asChild>
+              <Link to="/addons" search={{ tab: 'installed' }}>
+                {t.button}
+              </Link>
+            </Button>
+          ))}
+      </div>
+      {turning && <TurnOnPublish workspace={workspace} onOn={() => { setTurning(false); onOn() }} onClose={() => setTurning(false)} />}
+    </div>
+  )
+}
+
 function SharesBody({ onRevoke, onSign }: { onRevoke: (s: Share) => void; onSign: (s: Staged) => void }) {
   usePageHeader('Shares')
   const { workspace } = useWorkspace()
@@ -71,14 +101,8 @@ function SharesBody({ onRevoke, onSign }: { onRevoke: (s: Share) => void; onSign
   const list = useQuery({ ...shareQueries.list(ws ?? ''), enabled: served })
   if (!workspace || !ws) return null
   if (!served || (list.data && !list.data.available)) {
-    return (
-      <div className="max-w-2xl space-y-2">
-        <h1 className="text-xl font-semibold tracking-tight">Shares</h1>
-        <p data-testid="shares-unavailable" className="text-[13px] text-text-muted">
-          Publish is not on for this workspace, so there is nothing to list here. Turn it on on the Add-ons page.
-        </p>
-      </div>
-    )
+    const reason: UnavailableReason = (list.data && !list.data.available && list.data.reason) || 'off'
+    return <Unavailable reason={reason} workspace={workspace} onOn={() => void list.refetch()} />
   }
   if (list.isError) return <LoadFailed what="shares" detail={shareError(list.error)} onRetry={() => void list.refetch()} />
   const data = list.data && list.data.available ? list.data : null

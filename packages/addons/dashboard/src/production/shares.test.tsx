@@ -9,6 +9,7 @@ import { ARM_MS } from '@/api/click'
 import { setFeatures } from '@/api/features'
 import { READS, clickOn, prepareByClick, show, useFakeHost, workspace } from '@/test/hostHarness'
 import { queryClient } from '@/production/Shell'
+import { market, installedAddon, stage } from '@/test/fixtures/market'
 
 // The production app on a fake server that speaks the Shares routes (Publish add-on). The link rule is tested here:
 // shown once, gone after Done and after a reload, and in no cache, storage or log.
@@ -91,6 +92,40 @@ const route = () => {
 }
 const calls = (p: string) => state.host.calls.filter((c) => c.path.includes(p))
 afterEach(() => sessionStorage.clear())
+
+// Run 14 (J08-01, J07-03): the host cannot list shares and says why. The page names the reason in one line; a button only
+// where one click fixes it; never "Could not load" and never a Retry that cannot help.
+it.each([
+  ['off', 'Sharing is switched off', 'Turn on sharing'],
+  ['not_configured', 'Sharing has no server yet', 'Set up sharing'],
+  ['paused', 'Your hub paused sharing', null],
+  ['hub_mode', 'Sharing is not available here', null],
+  ['hub_not_connected', 'Sharing is waiting for the hub', null],
+])('Shares page, sharing unavailable (%s): one line, %s, no Retry', async (reason, title, button) => {
+  route()
+  state.host.override = (p, m) => (p.endsWith('/shares') && m === 'GET' ? Response.json({ available: false, reason, can_fix: button !== null }) : undefined)
+  show('/w/DEMO/shares')
+  const card = await screen.findByTestId('shares-unavailable', {}, T)
+  expect(card).toHaveTextContent(title)
+  expect(screen.queryByText(/Could not load/)).toBeNull()
+  expect(screen.queryByRole('button', { name: /Retry|Try again/ })).toBeNull()
+  if (button) expect(within(card).getByRole(reason === 'off' ? 'button' : 'link', { name: button })).toBeInTheDocument()
+  else expect(within(card).queryByRole('button')).toBeNull()
+})
+
+it('"Turn on sharing" opens the turn-on review in place', async () => {
+  route()
+  const ws0 = state.host.workspaces[0] as never as { features: string[]; addOns: unknown; market: unknown; marketInstalled: unknown; marketStage: unknown }
+  ws0.features = [...READS, 'publish', 'market']
+  ws0.addOns = { available: true, add_ons: [{ id: 'publish', title: 'Publish', desc: 'Share files.', state: 'off', locked: null, blocked: null, needs: 'publish', set_up: true }] }
+  ws0.market = { markets: [market()] }
+  ws0.marketInstalled = { addons: [installedAddon()] }
+  ws0.marketStage = stage()
+  state.host.override = (p, m) => (p.endsWith('/shares') && m === 'GET' ? Response.json({ available: false, reason: 'off', can_fix: true }) : undefined)
+  show('/w/DEMO/shares')
+  await userEvent.setup().click(await within(await screen.findByTestId('shares-unavailable', {}, T)).findByRole('button', { name: 'Turn on sharing' }))
+  expect(await screen.findByRole('dialog', { name: 'Turn on Publish' }, T)).toBeInTheDocument()
+})
 
 it('a show-once link opened as often as allowed reads Used up, not Live', () => {
   const base = { state: 'live' as const, expires_at: '2999-01-01T00:00:00Z', kind: 'once' as const, view_limit: 1 }

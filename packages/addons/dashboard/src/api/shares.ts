@@ -56,8 +56,11 @@ export interface Staged {
   created_at: string | null
 }
 
+/** Why the host cannot list shares (an expected state, not a failure). `can_fix`: one click on the page changes it. */
+export type UnavailableReason = 'off' | 'not_configured' | 'paused' | 'hub_mode' | 'hub_not_connected'
+
 export type SharesData =
-  | { available: false }
+  | { available: false; reason?: UnavailableReason; can_fix?: boolean }
   | {
       available: true
       configured: boolean
@@ -179,6 +182,8 @@ const CODE_TEXT: Record<string, string> = {
   'publish.changed': 'The prepared copy changed or is gone. Prepare the share again.',
   'publish.unreachable': 'Sharing is not reachable right now. Nothing was shared.',
   'publish.no_link': 'The files were shared but no link came back. Revoke this share and share again.',
+  'hub.not_joined': 'This workspace has joined a hub but is not connected to it yet.',
+  'hub.state_mismatch': 'Sharing files as links is not available with the way this workspace is joined to the hub.',
   'runner.disabled': 'Publish is switched off for this workspace. Turn it on in Settings, Add-ons.',
   'rate.limited': 'Too many publish requests in a minute. Wait a little and try again.',
   'lock.busy': 'This copy is being sent right now. Try again in a moment.',
@@ -196,6 +201,15 @@ export function shareError(e: unknown): string {
   const reason = (e.detail as { reason?: string } | undefined)?.reason
   if (e.code === 'publish.server_refused') return (reason && REASON_TEXT[reason]) || REASON_TEXT.rejected
   return CODE_TEXT[e.code] ?? 'That did not work. Reload and try again.'
+}
+
+/** The one line a page shows for each reason sharing is unavailable: a title, a sentence, and (only where one click fixes it) a button. */
+export const UNAVAILABLE_TEXT: Record<UnavailableReason, { title: string; text: string; button: string | null }> = {
+  off: { title: 'Sharing is switched off', text: 'Turn it on to send files of a ticket as a link.', button: 'Turn on sharing' },
+  not_configured: { title: 'Sharing has no server yet', text: 'Choose where files are sent, then share a ticket’s files as a link.', button: 'Set up sharing' },
+  paused: { title: 'Your hub paused sharing', text: 'It works again when the hub allows it.', button: null },
+  hub_mode: { title: 'Sharing is not available here', text: 'Links work only while this workspace shares selected things with the hub, not everything.', button: null },
+  hub_not_connected: { title: 'Sharing is waiting for the hub', text: 'This workspace has joined a hub but is not connected to it yet.', button: null },
 }
 
 export const isUnreachable = (e: unknown): boolean => e instanceof ApiError && e.code === 'publish.unreachable'

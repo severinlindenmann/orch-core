@@ -22,7 +22,10 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-__all__ = ["activate", "active", "clear", "marker"]
+__all__ = ["QUARANTINE_KEYS", "activate", "active", "clear", "marker"]
+
+#: the only service that runs before the commit point; hub, relay, publish and the dashboard start after it
+QUARANTINE_KEYS = ("host",)
 
 
 def marker(state: Path) -> Path:

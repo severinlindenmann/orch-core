@@ -51,11 +51,12 @@ class FakeSource:
 class FakeServices:
     def __init__(self, state: Path, layout: InstallLayout) -> None:
         self.state, self.layout = state, layout
-        self.up = ["host", "runner", "dashboard"]
+        self.up = ["host", "runner", "dashboard", "hub"]
         self.events: list[str] = []
         self.problems_quarantine: list[str] = []
         self.problems_normal: list[str] = []
         self.started_with: list[tuple[str, bool]] = []
+        self.started_names: list[tuple[list[str], bool]] = []
 
     def running(self) -> list[str]:
         return list(self.up)
@@ -69,6 +70,7 @@ class FakeServices:
 
         self.events.append("start-q" if quarantine else "start")
         self.started_with.append((orch_bin.parent.parent.parent.name, quarantine))
+        self.started_names.append((list(names), quarantine))
         assert q.active(self.state) == quarantine, "the quarantine marker must match the start mode"
         self.up = list(names)
 
@@ -93,6 +95,8 @@ class World:
         (self.state / "data.txt").write_text("before\n")
         (self.state / "keys").mkdir()
         (self.state / "keys" / "wsk").write_text("secret-key-material\n")
+        (self.state / "install" / "parts" / "hub" / "data").mkdir(parents=True)
+        (self.state / "install" / "parts" / "hub" / "data" / "hub.db").write_text("hub-state\n")
         self.layout = InstallLayout.of(self.env)
         self.layout.ensure()
         self.source = FakeSource()
@@ -137,6 +141,7 @@ class World:
                 return 5, json.dumps({"ok": False})
             (self.state / "data.txt").write_text("migrated\n")
             (self.state / "keys" / "wsk").write_text("changed\n")
+            (self.state / "install" / "parts" / "hub" / "data" / "hub.db").write_text("hub-state-changed\n")
             return 0, json.dumps({"ok": True, "roots": []})
         if list(args)[:1] == ["migrate"] and "--check" in args:
             if self.old_cannot_read_new:

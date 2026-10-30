@@ -21,13 +21,13 @@ from orch.lifecycle.units import ORDER_START, ORDER_STOP, Env, LifecycleError, S
 from orch.ops.errors import OrchError
 
 from .layout import InstallLayout, Record, requirements_text
+from .quarantine import QUARANTINE_KEYS
 from .uvenv import check_uv, install_argv, uv_env, venv_argv
 
 __all__ = ["GithubSource", "LifecycleServices", "run_orch", "uv_install"]
 
 REPO = "severinlindenmann/orch-core"
 PYTHON_VERSION = "3.14"
-QUARANTINE_KEYS = ("host", "dashboard", "hub", "relay", "publish")  # the runner and the records timer stay off
 
 
 def run_orch(orch_bin: Path, args: Sequence[str]) -> tuple[int, str]:
@@ -164,6 +164,8 @@ class LifecycleServices:
         out: list[str] = []
         if not self.e.answers(self.e.state / "run" / "control" / "host.sock"):
             out.append("the host does not answer")
+        if quarantine:  # before the commit only the host runs; the other parts are checked after it (warnings)
+            return out
         for s in self._svcs():
             if not s.installed or s.key in ("host", "runner", "records"):
                 continue

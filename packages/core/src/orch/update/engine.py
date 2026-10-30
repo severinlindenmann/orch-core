@@ -55,6 +55,7 @@ from .layout import (
     version_key,
     write_record,
 )
+from .quarantine import QUARANTINE_KEYS
 from .verify import UpdateRefused, Verified, verify_envelope
 
 __all__ = ["Crash", "Outcome", "Seams", "Source", "Updater"]
@@ -401,7 +402,7 @@ class Updater:
         bin_ = self.layout.tool_bin(to)
         quarantine.activate(self.state)
         try:
-            self.s.services.start(bin_, info.get("running") or [], quarantine=True)
+            self.s.services.start(bin_, [n for n in info.get("running") or [] if n in QUARANTINE_KEYS], quarantine=True)
             problems = self._wait_healthy(True)
             if problems:
                 raise OrchError("update.rolled_back", "the new version did not start cleanly: " + "; ".join(problems))

@@ -252,3 +252,17 @@ def test_the_check_changes_nothing_and_reports(w):
     assert "TEST release" in doc["changelog"]
     untouched(w)
     assert w.services.events == []
+
+
+def test_only_the_host_runs_in_quarantine_and_parts_data_is_never_rolled_back(w):
+    w.services.problems_quarantine = ["the host does not answer"]
+    hub_db = w.state / "install" / "parts" / "hub" / "data" / "hub.db"
+    o = w.updater().update()
+    assert o.action == "rolled-back"
+    quarantined = [names for names, q in w.services.started_names if q]
+    assert quarantined == [["host"]]  # no hub, relay, publish or dashboard before the commit
+    assert [names for names, q in w.services.started_names if not q][-1] == ["host", "runner", "dashboard", "hub"]
+    backup = next((w.home / ".local/share/orch/backups").iterdir())
+    assert not (backup / "data" / "install" / "parts").exists()
+    assert hub_db.read_text() == "hub-state-changed\n"  # the rollback did not touch it either way
+

@@ -228,6 +228,15 @@ def test_loopback_policy_values():
     assert not LOOPBACK.websocket_ok("/term", [f"localhost:{PORT}"], [f"http://localhost:{PORT}"])
 
 
+def test_setup_csp_lets_the_first_run_page_probe_a_loopback_port_and_nothing_else():
+    """run-15 P01: only /setup, only plain-http loopback ports, nothing wider; the remote CSP is untouched."""
+    csp = LOOPBACK.setup_csp()
+    assert f"connect-src 'self' http://127.0.0.1:* ws://127.0.0.1:{PORT};" in csp
+    assert csp.replace(" http://127.0.0.1:*", "", 1) == LOOPBACK.csp()  # the only difference
+    assert "localhost" not in csp and "script-src 'self';" in csp and "unsafe" not in csp
+    assert REMOTE.setup_csp() == REMOTE.csp() and "127.0.0.1" not in REMOTE.setup_csp()
+
+
 def test_remote_policy_values():
     assert REMOTE.hosts_for(True) == (NAME,) == REMOTE.hosts_for(False)
     assert REMOTE.origin_for(NAME) == f"https://{NAME}"

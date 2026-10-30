@@ -223,3 +223,16 @@ def test_a_switch_session_also_works_on_loopback_but_only_as_a_reader(client, li
     link.answers["rail"] = {"hub": {"name": "Acme", "origin": None}, "user_id": "u", "workspaces": []}
     assert client.get(f"/api/w/{WS}/hub/rail", headers=h).status_code == 200
     assert client.post(f"/api/w/{WS}/settings", json={}, headers=h).status_code == 403
+
+
+def test_p01_the_403_on_a_hub_switch_is_never_an_origin_problem_of_the_configured_address(client, link):
+    """run-15 J02-02 reproduced: a POST /auth/switch whose Origin is this dashboard's own origin opens (no origin.bad). A
+    tunnel or another address in the Host is refused as host.bad (421) before any origin test, and an Origin that is not the
+    Host's own is origin.bad (403): both stay refused on purpose, the guard is unchanged. The 403 the tester saw is the
+    host's own refusal `switch.refused` (D93), which the failure page now says in plain words."""
+    link.answers["redeem"] = {"user_id": "u", "name": "Ann", "return_to": "/", "kind": "open"}
+    assert client.post("/auth/switch", json={"t": TICKET}, headers=H).status_code == 200
+    tunnel = client.post("/auth/switch", json={"t": TICKET}, headers={"Origin": "http://127.0.0.1:47821", "Host": "127.0.0.1:47821"})
+    assert tunnel.status_code == 421 and tunnel.json()["error"]["code"] == "host.bad"
+    foreign = client.post("/auth/switch", json={"t": TICKET}, headers={"Origin": "http://127.0.0.1:47821"})
+    assert foreign.status_code == 403 and foreign.json()["error"]["code"] == "origin.bad"

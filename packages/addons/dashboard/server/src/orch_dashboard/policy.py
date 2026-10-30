@@ -89,6 +89,16 @@ class ListenerPolicy:
     def csp(self) -> str:
         return self.csp_template.format(port=self.port, name=self.host)
 
+    def setup_csp(self) -> str:
+        """The CSP of the first-run page (``/setup``) only. On a plain-http loopback listener it may also ask a loopback
+        port whether the new workspace's dashboard answers (run-15 P01: the page must not send a browser on another
+        computer to a dead address). Still loopback only, plain ports, no ``localhost``, no other host; scripts stay
+        ``'self'``. A remote (https) listener keeps its CSP unchanged."""
+        csp = self.csp()
+        if self.scheme == "http" and "connect-src 'self' " in csp:
+            return csp.replace("connect-src 'self' ", "connect-src 'self' http://127.0.0.1:* ", 1)
+        return csp
+
     # -- WebSocket --
     def websocket_ok(self, path: str, hosts: list[str], origins: list[str]) -> bool:
         """Only `/term`; Host and Origin exactly this listener's (a missing or `null` Origin refused). A stream has no

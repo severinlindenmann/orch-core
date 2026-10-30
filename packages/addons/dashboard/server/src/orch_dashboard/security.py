@@ -244,7 +244,7 @@ class Security:
                     ]
                 else:
                     hs += [
-                        (b"content-security-policy", policy.csp().encode()),
+                        (b"content-security-policy", (policy.setup_csp() if path == "/setup" else policy.csp()).encode()),
                         (b"x-content-type-options", b"nosniff"),
                         (b"x-frame-options", b"DENY"),
                         (b"referrer-policy", b"no-referrer"),

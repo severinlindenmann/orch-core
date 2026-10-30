@@ -3995,3 +3995,39 @@ def test_a_remote_session_cannot_even_prepare_a_remote_change(client, token, stu
     monkeypatch.setattr(client_login_kind(), "login_kind", lambda self, t: "remote", raising=False)
     res = prepare(client, token, stub, REMOTE_SET)
     assert res.status_code == 403 and res.json()["error"]["code"] == "op.not_allowed"
+
+
+def prepared_remote(client, token, stub, backup):
+    assert prepare(client, token, stub, REMOTE_SET).status_code == 200
+    backup.view = backup_view(op="remote.set")
+
+
+def test_dropped_ops_record_sign_refused(client, token, stub, backup):
+    prepared_remote(client, token, stub, backup)
+    client.app.state.clicks.ops.pop(REQ, None)  # the record is lost; the binding is not
+    res = sign_hub(client, token, stub, sealed={"hub.backup_key": BACKUP_ENV})
+    assert res.status_code == 404 and sent_of(backup, "sign") == []
+
+
+def test_replaced_ops_record_still_requires_bound_token(client, token, stub, backup, auth):
+    prepared_remote(client, token, stub, backup)
+    records = client.app.state.clicks
+    records.ops[REQ] = (records.ops[REQ][0], "approve", None, records.ops[REQ][3])  # replaced by a plain one
+    other = other_session(client, auth)
+    for step in (view_of(client, other, stub), sign_hub(client, other, stub)):
+        assert step.status_code == 404
+    assert view_of(client, token, stub).status_code != 404  # the bound token passes the gate (the check then fails)
+
+
+def test_other_token_gets_not_found(client, token, stub, backup, auth):
+    prepared_remote(client, token, stub, backup)
+    assert view_of(client, other_session(client, auth), stub).status_code == 404
+
+
+def test_binding_kept_after_view_cleared_after_end(client, token, stub, backup, auth):
+    prepared_remote(client, token, stub, backup)
+    records = client.app.state.clicks
+    assert view_of(client, token, stub).status_code == 200
+    assert records.bound(REQ) is not None  # kept after a view
+    records.forget(REQ)  # signed, cancelled or expired: the request ends for good
+    assert records.bound(REQ) is None

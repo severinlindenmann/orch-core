@@ -436,6 +436,7 @@ class Clicks:
     def forget(self, request_id: str) -> None:
         with self.lock:
             self.ops.pop(request_id, None)
+            self.tokens.pop(request_id, None)  # the request ended for good: its binding goes with it
 
 
 def verify(prepared: dict, ws: str, **expect) -> dict:
@@ -535,11 +536,14 @@ def register(app: FastAPI, gateway: Gateway):
 
     def remote_step_only_here(request: Request, request_id: str) -> None:
         """R2: a remote-access change is viewed and signed only by the loopback session that prepared it (every step,
-        not only prepare). Any other session, a remote one included, gets `not_found`, as for another's request."""
-        if not isinstance(clicks.get(request_id)[2], REMOTE_STEPS):
+        not only prepare). The BINDING decides, not the ops record: a request id with a bound token needs LOCAL and
+        that very token whatever the record says (a lost or replaced record opens nothing); a remote-step record
+        without a binding is refused too. Any other session gets `not_found`, as for another's request."""
+        bound = clicks.bound(request_id)
+        if bound is None and not isinstance(clicks.get(request_id)[2], REMOTE_STEPS):
             return
         token = request.state.token
-        if app.state.auth.login_kind(token) != LOCAL or clicks.bound(request_id) != token:
+        if bound is None or bound != token or app.state.auth.login_kind(token) != LOCAL:
             raise fail("not_found", exit=2)
 
     def mine(ws: str, request_id: str) -> None:
@@ -1175,6 +1179,8 @@ def register(app: FastAPI, gateway: Gateway):
         mine(ws, body.request_id)
         rid = body.request_id
         wanted = clicks.get(rid)[2]
+        if wanted is None and clicks.bound(rid) is not None:  # a remote change is never signed blind
+            raise fail("not_found", exit=2)
         # In flight counts as unsettled from here on, BEFORE the channel is used: nothing here cancels the request or
         # replaces the signer under it, and the mark is already there if the answer is lost. (A second signature of
         # the request is refused by the signer and the host, which are the ones that know.)

@@ -488,7 +488,7 @@ def test_backup_copy_is_incremental_and_prunes(tmp_path):
         (src / f"hub-abcd1234-2026010{i}T030000Z.orchbak").write_bytes(b"sealed%d" % i)
     copied, problems = ops.backup_copy(src, dest, keep=3)
     assert len(copied) == 4 and problems == []
-    assert sorted(p.name for p in dest.iterdir()) == [f"hub-abcd1234-2026010{i}T030000Z.orchbak" for i in (2, 3, 4)]
+    assert sorted(p.name for p in dest.glob("hub-*")) == [f"hub-abcd1234-2026010{i}T030000Z.orchbak" for i in (2, 3, 4)]
     copied2, _ = ops.backup_copy(src, dest, keep=3)
     assert copied2 == []  # nothing new, and the pruned one is not copied back
     (src / "hub-abcd1234-20260105T030000Z.orchbak").write_bytes(b"new")
@@ -779,11 +779,13 @@ def test_shared_drop_folder_is_not_re_moded_and_files_are_group_readable(tmp_pat
     drop.mkdir()
     drop.chmod(0o2770)
     (src / "hub-abcd1234-20260101T030000Z.orchbak").write_bytes(b"x")
-    copied, problems = ops.backup_copy(src, drop, shared=True)
+    copied, problems = ops.backup_copy(src, drop, shared=True, record=tmp_path / "rec.json")
     assert len(copied) == 1 and problems == []
     assert oct(drop.stat().st_mode & 0o7777) == "0o2770"  # untouched
     assert oct((drop / copied[0]).stat().st_mode & 0o777) == "0o640"
-    assert ops.backup_copy(src, tmp_path / "nope", shared=True)[1][0].startswith("the backup drop folder")
+    assert ops.backup_copy(src, tmp_path / "nope", shared=True, record=tmp_path / "rec.json")[1][0].startswith(
+        "the backup drop folder"
+    )
     assert "--shared" in ops.backup_unit_files("/p", src, drop, True)["orch-hub-backup.service"]
     assert "--shared" not in ops.backup_unit_files("/p", src, drop)["orch-hub-backup.service"]
 
@@ -860,12 +862,12 @@ def test_planted_links_in_the_shared_folder_are_never_followed(tmp_path):
     name = "hub-abcd1234-20260101T030000Z.orchbak"
     (drop / f".{name}.part").symlink_to(canary)  # the old predictable temp name
     (drop / name).symlink_to(tmp_path / "does-not-exist")  # dangling link at the target name
-    copied, problems = ops.backup_copy(src, drop, shared=True)
-    assert copied == [] and any("is a link" in p for p in problems)
+    copied, problems = ops.backup_copy(src, drop, shared=True, record=tmp_path / "rec.json")
+    assert copied == [] and any("left alone" in p for p in problems)
     assert canary.read_text() == "keep" and oct(canary.stat().st_mode & 0o777) == "0o600"
     assert (drop / name).is_symlink() and not (tmp_path / "does-not-exist").exists()
     (drop / name).unlink()  # link removed: now it copies, and still not through the planted .part link
-    copied, problems = ops.backup_copy(src, drop, shared=True)
+    copied, problems = ops.backup_copy(src, drop, shared=True, record=tmp_path / "rec.json")
     assert copied == [name] and problems == []
     assert canary.read_text() == "keep" and oct(canary.stat().st_mode & 0o777) == "0o600"
     assert (drop / name).read_bytes() == b"real" and not (drop / name).is_symlink()
@@ -878,16 +880,59 @@ def test_a_symlinked_or_wrong_mode_or_foreign_drop_folder_copies_nothing(tmp_pat
     src, drop = _shared(tmp_path)
     link = tmp_path / "link"
     link.symlink_to(drop)
-    copied, problems = ops.backup_copy(src, link, shared=True)
+    copied, problems = ops.backup_copy(src, link, shared=True, record=tmp_path / "rec.json")
     assert copied == [] and "link or not a folder" in problems[0] and list(drop.iterdir()) == []
     drop.chmod(0o770)
-    copied, problems = ops.backup_copy(src, drop, shared=True)
+    copied, problems = ops.backup_copy(src, drop, shared=True, record=tmp_path / "rec.json")
     assert copied == [] and "mode 2770" in problems[0]
     drop.chmod(0o2770)
-    copied, problems = ops.backup_copy(src, drop, shared=True, owner="no-such-user-xyz")
+    copied, problems = ops.backup_copy(src, drop, shared=True, record=tmp_path / "rec.json", owner="no-such-user-xyz")
     assert copied == [] and "does not exist" in problems[0]
-    assert ops.backup_copy(src, drop, shared=True, owner=getpass.getuser())[0]  # the right owner passes
+    assert ops.backup_copy(src, drop, shared=True, record=tmp_path / "rec.json", owner=getpass.getuser())[
+        0
+    ]  # the right owner passes
     plain_link = tmp_path / "plain-link"
     plain_link.symlink_to(tmp_path / "out")
     (tmp_path / "out").mkdir()
     assert ops.backup_copy(src, plain_link)[1] and list((tmp_path / "out").iterdir()) == []  # also not shared
+
+
+def test_names_planted_in_the_shared_folder_change_neither_copy_nor_prune(tmp_path):
+    src, drop = tmp_path / "b", tmp_path / "drop"
+    src.mkdir()
+    drop.mkdir()
+    drop.chmod(0o2770)
+    rec = tmp_path / "state" / "rec.json"
+    canary = tmp_path / "canary.txt"
+    canary.write_text("keep")
+    real = [f"hub-abcd1234-2026010{i}T030000Z.orchbak" for i in (1, 2, 3)]
+    for n in real[:2]:
+        (src / n).write_bytes(b"r" + n[-14:-13].encode())
+    fake_future = "hub-abcd1234-99999999T999999Z.orchbak"
+    (drop / fake_future).write_bytes(b"fake")
+    link = "hub-abcd1234-20251231T030000Z.orchbak"
+    (drop / link).symlink_to(canary)
+    foreign = "hub-ffffffff-20260102T030000Z.orchbak"
+    (drop / foreign).write_bytes(b"other hub")
+    copied, problems = ops.backup_copy(src, drop, keep=2, shared=True, record=rec)
+    assert copied == real[:2] and problems == []  # the planted future name did not block the real backups
+    (src / real[2]).write_bytes(b"r3")
+    copied, _ = ops.backup_copy(src, drop, keep=2, shared=True, record=rec)
+    assert copied == [real[2]]
+    assert not (drop / real[0]).exists()  # our oldest copy is pruned (keep=2) ...
+    assert (drop / real[1]).exists() and (drop / real[2]).exists()
+    assert (drop / fake_future).read_bytes() == b"fake" and (drop / foreign).read_bytes() == b"other hub"
+    assert (drop / link).is_symlink() and canary.read_text() == "keep"  # ... and nothing planted was touched
+    assert oct(rec.stat().st_mode & 0o777) == "0o600"
+    # a source file stamped far in the future (or with a wrong shape) is not copied
+    (src / "hub-abcd1234-20990101T000000Z.orchbak").write_bytes(b"x")
+    (src / "hub-abcd1234-bad.orchbak").write_bytes(b"x")
+    assert ops.backup_copy(src, drop, keep=2, shared=True, record=rec)[0] == []
+    # a record entry that is now a symlink or a directory is never deleted
+    victim = tmp_path / "victim.txt"
+    victim.write_text("v")
+    (drop / real[1]).unlink()
+    (drop / real[1]).symlink_to(victim)
+    (src / "hub-abcd1234-20260104T030000Z.orchbak").write_bytes(b"r4")
+    ops.backup_copy(src, drop, keep=2, shared=True, record=rec)
+    assert victim.read_text() == "v" and (drop / real[1]).is_symlink()

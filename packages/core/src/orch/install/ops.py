@@ -7,10 +7,12 @@ the journal and the status file are the warning. The unit generators are pure an
 
 from __future__ import annotations
 
+import calendar
 import contextlib
 import json
 import os
 import pwd
+import re
 import shlex
 import shutil
 import socket
@@ -58,10 +60,13 @@ def health_unit_files(python: str, config: Path) -> dict[str, str]:
     }
 
 
-def backup_unit_files(python: str, src: Path, dest: Path, shared: bool = False) -> dict[str, str]:
+def backup_unit_files(
+    python: str, src: Path, dest: Path, shared: bool = False, record: Path | None = None
+) -> dict[str, str]:
     """``orch-hub-backup.service`` + ``.timer`` (every night 03:40): copy the sealed hub backups to the pull folder."""
     argv = [python, "-P", "-m", "orch.install.ops", "backup-copy", "--src", str(src), "--dest", str(dest)]
     argv += ["--shared", "--owner", "orch-backup"] if shared else []
+    argv += ["--record", str(record)] if record else []
     return {
         "orch-hub-backup.service": _service("copy the sealed hub backups to the pull folder", argv),
         "orch-hub-backup.timer": (
@@ -212,15 +217,71 @@ def _write_private(dest: Path, name: str, src: Path, mode: int) -> None:
         os.close(fd_src)
 
 
+_NAME = re.compile(r"hub-([0-9a-f]{8})-(\d{8}T\d{6}Z)\.orchbak")
+RECORD_MAX = 400
+
+
+def _stamp_ms(stamp: str) -> int | None:
+    try:
+        return int(calendar.timegm(time.strptime(stamp, "%Y%m%dT%H%M%SZ")) * 1000)
+    except ValueError:
+        return None
+
+
+def _load_record(path: Path) -> list[str]:
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        with os.fdopen(fd) as fh:
+            done = json.load(fh).get("done", [])
+        return [n for n in done if isinstance(n, str) and _NAME.fullmatch(n)]
+    except (OSError, ValueError, AttributeError):
+        return []
+
+
+def _save_record(path: Path, done: list[str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".rec-", suffix=".tmp")
+    with os.fdopen(fd, "w") as fh:
+        os.fchmod(fd, 0o600)
+        fh.write(json.dumps({"done": done[-RECORD_MAX:]}, sort_keys=True) + "\n")
+    os.replace(tmp, path)
+
+
+def _prune(dest: Path, done: list[str], keep: int) -> None:
+    """Delete only files THIS hub copied (named in its own record) beyond the newest ``keep``: a regular file owned by
+    this user, found by lstat (a link, a directory or another user's file is never touched)."""
+    if keep <= 0:
+        return
+    mine = sorted(set(done), key=lambda n: _NAME.fullmatch(n).group(2))  # type: ignore[union-attr]
+    for name in mine[:-keep]:
+        try:
+            st = os.lstat(dest / name)
+        except OSError:
+            continue
+        if stat.S_ISREG(st.st_mode) and st.st_uid == os.geteuid():
+            with contextlib.suppress(OSError):
+                os.unlink(dest / name)
+
+
 def backup_copy(
-    src: Path, dest: Path, keep: int = BACKUP_KEEP, *, shared: bool = False, owner: str | None = None
+    src: Path,
+    dest: Path,
+    keep: int = BACKUP_KEEP,
+    *,
+    shared: bool = False,
+    owner: str | None = None,
+    record: Path | None = None,
+    now: Callable[[], float] = time.time,
 ) -> tuple[list[str], list[str]]:
-    """Copy the sealed ``*.orchbak`` files not yet in ``dest``; keep the newest ``keep`` there. ``(copied, problems)``.
-    The files are sealed with the hub's backup key; this folder holds nothing a thief could read.
+    """Copy the sealed ``hub-<id8>-<UTC>.orchbak`` files not yet copied; keep the newest ``keep`` of OUR copies there.
+    ``(copied, problems)``. The files are sealed with the hub's backup key; the folder holds nothing a thief could read.
 
     ``shared``: ``dest`` is a drop folder an administrator made (owned by ``owner``, the ``orch-backup`` user, mode
     2770, group-writable for the hub user). It is not created or re-moded here and files are group-readable (0640).
-    The folder is checked first (a link, another owner or another mode: a problem is reported, nothing is copied)."""
+    The folder is checked first (a link, another owner or another mode: a problem is reported, nothing is copied).
+
+    What was copied is remembered in ``record`` (hub-owned, 0600), never read back from names in ``dest``: another
+    member of the shared group can plant any name there, which must change neither what is copied nor what is pruned."""
     if not shared:
         if not os.path.lexists(dest):
             dest.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -228,33 +289,42 @@ def backup_copy(
         if bad:
             return [], [bad]
         dest.chmod(0o700)  # on every run (not a link: checked above)
+        record = record or dest / ".copied.json"
     else:
         bad = _check_dest(dest, True, owner)
         if bad:
             return [], [bad]
-    files = sorted(src.glob("hub-*.orchbak")) if src.is_dir() else []
-    if not files:
+        if record is None:
+            return [], ["backup copy in a shared folder needs --record FILE (in the hub's own state folder)"]
+    horizon = (now() + 86400) * 1000
+    cands = {}
+    for q in src.glob("hub-*.orchbak") if src.is_dir() else []:
+        m = _NAME.fullmatch(q.name)
+        ms = _stamp_ms(m.group(2)) if m else None
+        if m and ms is not None and ms <= horizon and q.is_file() and not q.is_symlink():
+            cands[q.name] = m.group(1)
+    if not cands:
         return [], ["there is no hub backup yet (set the backup key up in the hub console)"]
+    ids = set(cands.values())
+    if len(ids) != 1:
+        return [], ["the hub's backup folder holds backups of more than one hub id: not copying"]
+    done = _load_record(record)
     copied, problems = [], []
-    stamp = lambda n: n.rsplit("-", 1)[-1]  # noqa: E731 - the UTC part of hub-<hub8>-<utc>.orchbak
-    have = [stamp(q.name) for q in dest.glob("hub-*.orchbak")]
-    newest = max(have, default="")
-    for f in files:
-        target = dest / f.name
-        if not f.is_file() or f.is_symlink() or stamp(f.name) < newest:
-            continue  # older than what was pruned: not copied back
+    for name in sorted(cands):
+        if name in done:
+            continue
         try:
-            cur = os.lstat(target)  # lstat: a dangling link planted at the name counts as present
+            cur = os.lstat(dest / name)  # lstat: a dangling link planted at the name counts as present
         except FileNotFoundError:
             cur = None
         if cur is not None:
-            if stat.S_ISLNK(cur.st_mode):
-                problems.append(f"{target} is a link, not a backup: left alone, not overwritten")
+            problems.append(f"{dest / name} is there but not from this hub's record: left alone, not overwritten")
             continue
-        _write_private(dest, f.name, f, 0o640 if shared else 0o600)
-        copied.append(f.name)
-    for old in sorted(dest.glob("hub-*.orchbak"))[:-keep] if keep > 0 else []:
-        old.unlink(missing_ok=True)
+        _write_private(dest, name, src / name, 0o640 if shared else 0o600)
+        copied.append(name)
+        done.append(name)
+    _save_record(record, done)
+    _prune(dest, done, keep)
     return copied, problems
 
 
@@ -271,6 +341,7 @@ def main(argv: Sequence[str]) -> int:
     b.add_argument("--keep", type=int, default=BACKUP_KEEP)
     b.add_argument("--shared", action="store_true")
     b.add_argument("--owner", default=None)
+    b.add_argument("--record")
     a = p.parse_args(list(argv))
     if a.cmd == "health":
         cfg = json.loads(Path(a.config).read_text())
@@ -279,7 +350,9 @@ def main(argv: Sequence[str]) -> int:
         for line in report["problems"]:
             print(f"orch health: WARNING: {line}", file=sys.stderr)
         return 0 if report["ok"] else 1
-    copied, problems = backup_copy(Path(a.src), Path(a.dest), a.keep, shared=a.shared, owner=a.owner)
+    copied, problems = backup_copy(
+        Path(a.src), Path(a.dest), a.keep, shared=a.shared, owner=a.owner, record=Path(a.record) if a.record else None
+    )
     for name in copied:
         print(f"orch backup: copied {name}")
     for line in problems:

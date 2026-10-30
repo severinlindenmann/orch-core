@@ -75,7 +75,13 @@ def _ops(
     timers = ["orch-health.timer"]
     if role == "hub":
         out = Path(backup_drop) if backup_drop else lay.home / BACKUP_OUT
-        files |= ops.backup_unit_files(sys.executable, lay.data("hub") / "backups", out, shared=bool(backup_drop))
+        files |= ops.backup_unit_files(
+            sys.executable,
+            lay.data("hub") / "backups",
+            out,
+            shared=bool(backup_drop),
+            record=ops_dir / "backup-copied.json",
+        )
         timers.append("orch-hub-backup.timer")
     _install_timers(ctx, files, timers)
     ctx.say(f"  health check every 5 minutes: the status is in {cfg['status_file']}, warnings go to the journal")

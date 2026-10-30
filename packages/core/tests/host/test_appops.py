@@ -197,3 +197,15 @@ def test_everything_is_off_until_the_publish_addon_is_granted(served, human, mon
     bare = World(served, human, monkeypatch)
     uid, key = bare.ticket_with(**{"index.html": INDEX})
     assert err(prepare(bare, key, "index.html")) == "runner.disabled"
+
+
+def test_a_stage_whose_meta_names_another_ticket_is_never_sent(a):
+    uid, key = ticket(a)
+    staged = ok(prepare(a, key, "index.html", "app.js"))["data"]["staged_id"]
+    path = a.served.lab.state / "hosts" / a.served.wid / "publish" / "appstage" / staged / "meta.json"
+    doc = json.loads(path.read_text())
+    assert doc["app"]["ticket"] == uid
+    doc["app"]["ticket"] = "0" * 26
+    path.write_text(json.dumps(doc))
+    assert err(a.req("app.send", {"staged_id": staged})) == "publish.changed"
+    assert a.server.requests == []

@@ -173,6 +173,11 @@ def _stage_read(service: WorkspaceService, staged_id: str, entry: dict[str, Any]
 
 
 def _verify_stage(service: WorkspaceService, stage: dict[str, Any]) -> list[bytes]:
+    """Every staged file read now and its sha256 recomputed from the bytes (``_stage_read``), and the meta bound to the
+    stage's own ticket, before anything trusts ``meta_hash`` or the words: the hashes in the signed text then cover the
+    bytes that go, and a stage whose meta names another ticket is never sent."""
+    if stage["app"].get("ticket") != stage["ticket"]["uid"]:
+        raise HostError("publish.changed", "the staged release is not valid: prepare it again")
     return [_stage_read(service, stage["staged_id"], f) for f in stage["app"]["files"]]
 
 
@@ -254,7 +259,7 @@ def _prepare(call: Call, args: dict[str, Any]) -> dict[str, Any]:
     meta = {
         "slug": slug, "name": args["name"], "kind": args["kind"], "access": access, "audience": audience,
         "pw": None, "reach": sorted(set(args.get("reach", []))), "files": files,
-        "label": P._display(view.title, 80) or view.key, "ticket": None,
+        "label": P._display(view.title, 80) or view.key, "ticket": view.uid,
     }  # fmt: skip
     if (bad := pub.meta_problem(meta)) is not None:
         raise HostError("invalid.input", f"app.prepare: the app is not valid ({bad})")
@@ -321,6 +326,8 @@ def signed_release(call: Call, stage: dict[str, Any], text: str) -> bool:
     """Is there a ``log.added`` note on the ticket, signed by this person (actor kind person), with exactly ``text``,
     not older than an hour? The same check a share uses: the words are the staged release's, so a changed file, access,
     reach or version has other words and the old signature covers nothing."""
+    if not text.startswith(approval.APP_MARK + "\n"):  # an app approval is a note of the app.release op alone
+        return False
     return P._signed_approval(call, {"ticket": stage["ticket"]}, text)  # noqa: SLF001
 
 
@@ -360,6 +367,7 @@ def _plan(call: Call, args: dict[str, Any]) -> dict[str, Any]:
     stage = _load_stage(service, args["staged_id"])
     view = P._ticket(call, stage["ticket"]["uid"])  # noqa: SLF001
     P._may_share(call, view)  # noqa: SLF001
+    _verify_stage(service, stage)  # the bytes and the ticket first: only then are the words worth comparing
     text = _text(service, stage, cfg)
     if not signed_release(call, stage, text):
         raise HostError(

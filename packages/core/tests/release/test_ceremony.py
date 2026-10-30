@@ -976,3 +976,29 @@ def test_when_restoring_fails_too_the_message_names_the_files(lab, capsys, monke
     assert rc == 1 and "restoring it failed for: .gitignore" in err
     assert not list(lab.repo.rglob("*.ceremony-tmp"))
     assert lab.tmp_left() == []
+
+
+# ---- file modes ----------------------------------------------------------------------------------------------------
+
+
+def test_an_executable_install_sh_stays_executable_after_init_and_resign(lab, capsys, monkeypatch):
+    sh, keys_py = lab.repo / "install.sh", lab.repo / ceremony.KEYS_PY
+    sh.chmod(0o755)
+    keys_py.chmod(0o640)
+    assert run_main(lab, capsys, "init")[0] == 0
+    assert stat.S_IMODE(sh.stat().st_mode) == 0o755 and stat.S_IMODE(keys_py.stat().st_mode) == 0o640
+    capsys.readouterr()
+    from email.utils import format_datetime
+
+    monkeypatch.setattr(ceremony, "_now", lambda: T0 + timedelta(days=14))
+    (lab.sim / "gh-date").write_text(format_datetime(T0 + timedelta(days=14), usegmt=True))
+    assert run_main(lab, capsys, "resign-revocations")[0] == 0
+    assert stat.S_IMODE(sh.stat().st_mode) == 0o755
+
+
+def test_a_failed_write_keeps_the_mode_too(lab, capsys, monkeypatch):
+    sh = lab.repo / "install.sh"
+    sh.chmod(0o755)
+    _fail_replace_on(monkeypatch, 7)
+    assert run_main(lab, capsys, "init")[0] == 1
+    assert stat.S_IMODE(sh.stat().st_mode) == 0o755 and lab.snapshot() == lab.original

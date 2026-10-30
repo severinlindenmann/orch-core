@@ -24,6 +24,7 @@ import os
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -413,6 +414,8 @@ def _commit_files(root: Path, staged: dict[str, str]) -> list[str]:
             tmp = dest.with_name(dest.name + ".ceremony-tmp")
             tmps.append(tmp)
             tmp.write_text(staged[rel], encoding="utf-8")
+            if old is not None:  # keep the file's mode (install.sh must stay executable)
+                os.chmod(tmp, stat.S_IMODE(dest.stat().st_mode))
             originals[rel] = old
             os.replace(tmp, dest)
             changed.append(rel)

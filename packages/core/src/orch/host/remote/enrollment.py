@@ -30,7 +30,7 @@ from ..errors import HostError
 
 __all__ = [
     "CODE_TTL_MS", "CODES_MAX", "TRIES_MAX", "assertion_ok", "check_enroll", "code_text", "drop", "forget_all",
-    "issue", "on_added", "outstanding", "pending_list", "pending_source", "verify", "wait_added",
+    "issue", "on_added", "outstanding", "pending_list", "pending_source", "still_pending", "verify", "wait_added",
 ]  # fmt: skip
 
 CODE_TTL_MS = 15 * 60_000
@@ -291,6 +291,15 @@ def pending_source(service: Any, pid: str) -> dict[str, Any] | None:
             "name": p.name, "presence_kind": p.presence_kind, "transport_pub": p.transport_pub,
             "presence_pub": p.presence_pub, "code_id": p.code_id,
         }  # fmt: skip
+
+
+def still_pending(service: Any, code_id: str) -> bool:
+    """Is a device that proved the code ``code_id`` still waiting (stream open, not expired)? Re-checked at the submit
+    of ``remote.device_confirm`` under the store lock, so a confirmation prepared earlier never adds a gone device."""
+    st = _ws(service)
+    now = _now(service)
+    with st.mu:
+        return any(p.code_id == code_id and now < p.expires_ms for p in st.pending.values())
 
 
 def pending_list(service: Any, now_ms: int) -> list[dict[str, Any]]:

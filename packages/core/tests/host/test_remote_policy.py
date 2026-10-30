@@ -565,13 +565,21 @@ def test_device_confirm_needs_a_pending_device_and_adds_it_with_the_proof(human,
         "name": "Severin's MacBook", "presence_kind": "platform", "transport_pub": b64u(b"\x07" * 32),
         "presence_pub": point(), "code_id": "rc_" + "2" * 32,
     }  # fmt: skip
-    remotefacts.set_pending_source(lambda service, pid: pending if pid == "rp_" + "1" * 32 else None)
-    try:
-        prepared = human.prepare(
-            "remote.device_confirm", {"pending": "rp_" + "1" * 32, "level_cap": "work", "days": 30}
-        )
-    finally:
-        remotefacts.set_pending_source(None)
+    from orch.host.remote import enrollment
+
+    live = {"on": True}  # the enroll stream of the pending device
+    monkeypatch.setattr(
+        remotefacts, "_pending_source", lambda service, pid: pending if pid == "rp_" + "1" * 32 else None
+    )
+    monkeypatch.setattr(
+        enrollment, "still_pending", lambda service, code_id: live["on"] and code_id == pending["code_id"]
+    )
+    prepared = human.prepare("remote.device_confirm", {"pending": "rp_" + "1" * 32, "level_cap": "work", "days": 30})
+    stale = human.prepare("remote.device_confirm", {"pending": "rp_" + "1" * 32, "level_cap": "view", "days": 30})
+    live["on"] = False  # R2 review L2: the stream closed after the prepare
+    assert err(submit_with(human, stale, human.owner_proof(stale))) == "remote.no_pending"
+    assert not remote_state(served).get("devices")
+    live["on"] = True
     ev = prepared["events"][0]
     assert ev["person"] == human.person.ref and ev["level_cap"] == "work" and ev["owner_proof"] is None
     want = wire.device_fp("platform", b"\x07" * 32, wire.unb64u(pending["presence_pub"], 65)).hex()

@@ -1153,6 +1153,11 @@ class HumanOps:
                         service, person=record["person"], op=record["op"], request_id=record["id"],
                         event=e, proof=e.get("owner_proof"),
                     )  # fmt: skip
+            if record["op"] == "remote.device_confirm":  # R2 review L2: the waiting device, again under the lock
+                from .remote import enrollment
+
+                if not all(enrollment.still_pending(service, e.get("code_id")) for e in events):
+                    raise HostError("remote.no_pending", "no device is waiting to be added (it may have disconnected)")
             if any(e.get("auth") == "convenience" for e in events):  # §0.8.6: the condition, again at submit
                 convenience.check(
                     service,

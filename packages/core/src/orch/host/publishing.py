@@ -447,12 +447,14 @@ def _upload_dir(service: WorkspaceService, upload_id: str) -> Path:
     return _base(service) / "upload" / upload_id
 
 
-def _load_upload(service: WorkspaceService, upload_id: str) -> dict[str, Any]:
+def _load_upload(service: WorkspaceService, upload_id: str, by: str) -> dict[str, Any]:
+    """A pick's record, only for the person who made it (another person's pick is as good as absent)."""
     meta = _read_json(service, _upload_dir(service, upload_id) / "meta.json")
     if (
         not isinstance(meta, dict)
         or meta.get("upload_id") != upload_id
         or meta.get("ws") != service.workspace_id
+        or meta.get("by") != by
         or not isinstance(meta.get("size"), int)
         or not isinstance(meta.get("sha256"), str)
     ):
@@ -528,8 +530,12 @@ def _stage_upload(call: Call, args: dict[str, Any]) -> dict[str, Any]:
         for mtime, old in pending:  # stale ones go; at the cap the oldest makes room
             if now - mtime > STAGE_KEEP:
                 shutil.rmtree(_upload_dir(service, old), ignore_errors=True)
-        pending = _uploads(service)
-        for _, old in pending[: max(0, len(pending) - MAX_UPLOADS + 1)]:
+        mine = []  # the cap is per person: one person's picks never push out another's
+        for mtime, old in _uploads(service):
+            meta = _read_json(service, _upload_dir(service, old) / "meta.json")
+            if isinstance(meta, dict) and meta.get("by") == str(call.viewer):
+                mine.append((mtime, old))
+        for _, old in mine[: max(0, len(mine) - MAX_UPLOADS + 1)]:
             shutil.rmtree(_upload_dir(service, old), ignore_errors=True)
         upload_id = "pu_" + secrets.token_hex(16)
         digest = hashlib.sha256(data).hexdigest()
@@ -626,7 +632,7 @@ def _prepare(call: Call, args: dict[str, Any]) -> dict[str, Any]:
         raise HostError("invalid.input", "publish.prepare: pick at least one file")
     if upload_ids and call.column.name != "P":
         raise HostError("op.not_allowed", "only a person adds a file from this computer")
-    picked = [_load_upload(service, u) for u in upload_ids]
+    picked = [_load_upload(service, u, str(call.viewer)) for u in upload_ids]
     lowered = [n.lower() for n in [*names, *(m["name"] for m in picked)]]
     if len(set(lowered)) != len(lowered):
         raise HostError(

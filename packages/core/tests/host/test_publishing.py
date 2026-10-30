@@ -1178,11 +1178,12 @@ def test_a_hub_that_forgot_the_workspace_registers_again_once_and_retries(w):
     ok(w.req("publish.register", {}))
     staged = w.prepare(key, "report.md")["staged_id"]
     w.approve(staged)
+    before = w.hub.ops().count("card_put")
     w.hub.error = "unknown_workspace"
     res = w.send(staged)  # still unknown after the one registration: refused in plain words, nothing is sent
     assert err(res) == "publish.server_refused" and "orch publish" not in res["error"]["message"]
     assert "orch-publish" not in res["error"]["message"]
-    assert [o for o in w.hub.ops() if o == "card_put"], "the workspace was registered once more"
+    assert w.hub.ops().count("card_put") == before + 1, "registered exactly once more, then one retry"
     w.hub.error = None
     ok(w.send(staged))
 
@@ -1269,6 +1270,52 @@ def test_prepare_refuses_a_missing_or_changed_pick_and_a_name_clash(w):
     path = w.base() / "upload" / changed["upload_id"] / "data"
     path.write_bytes(b"swapd")  # same size, other bytes
     assert err(w.req("publish.prepare", {"ref": key, "uploads": [changed["upload_id"]]})) == "not_found"
+    assert not (w.base() / "stage").exists() or not list((w.base() / "stage").iterdir())
+
+
+def _retag(w, up: dict[str, Any], **change: Any) -> Path:
+    d = w.base() / "upload" / up["upload_id"]
+    meta = json.loads((d / "meta.json").read_text())
+    meta.update(change)
+    (d / "meta.json").write_text(json.dumps(meta))
+    return d
+
+
+def test_a_pick_belongs_to_the_person_who_made_it(w):
+    uid, key = w.ticket_with(**{"report.md": REPORT})
+    up = pick(w, "mine.txt", b"mine")
+    d = _retag(w, up, by="someone-else")  # as if another person had made it
+    assert err(w.req("publish.prepare", {"ref": key, "uploads": [up["upload_id"]]})) == "not_found"
+    assert d.exists() and (d / "data").read_bytes() == b"mine"
+
+
+def test_the_pick_cap_counts_only_the_callers_own_picks(w, monkeypatch):
+    monkeypatch.setattr(publishing, "MAX_UPLOADS", 3)
+    theirs = [pick(w, f"b{i}.txt", b"b%d" % i) for i in range(3)]
+    for up in theirs:
+        _retag(w, up, by="person-b")
+    mine = [pick(w, f"a{i}.txt", b"a%d" % i)["upload_id"] for i in range(5)]
+    left = {p.name for p in (w.base() / "upload").glob("pu_*")}
+    assert {u["upload_id"] for u in theirs} <= left, "the other person's picks were not evicted"
+    assert len(left - {u["upload_id"] for u in theirs}) == 3 and mine[-1] in left
+
+
+@pytest.mark.parametrize("tamper", ["symlink", "hardlink", "mode", "other_workspace"])
+def test_a_tampered_pick_is_refused_at_prepare(w, tamper):
+    uid, key = w.ticket_with(**{"report.md": REPORT})
+    up = pick(w, "t.txt", b"tamper")
+    d = w.base() / "upload" / up["upload_id"]
+    if tamper == "symlink":
+        (d / "data").unlink()
+        (d / "data").symlink_to(w.base() / "upload" / "elsewhere")
+        (w.base() / "upload" / "elsewhere").write_bytes(b"tamper")
+    elif tamper == "hardlink":
+        os.link(d / "data", w.base() / "upload" / "second-name")
+    elif tamper == "mode":
+        os.chmod(d / "data", 0o644)
+    else:
+        _retag(w, up, ws="another-workspace")
+    assert err(w.req("publish.prepare", {"ref": key, "uploads": [up["upload_id"]]})) == "not_found"
     assert not (w.base() / "stage").exists() or not list((w.base() / "stage").iterdir())
 
 

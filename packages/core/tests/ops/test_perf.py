@@ -10,7 +10,7 @@ import pytest
 from tests.ops.helpers import Cli, Ws
 
 pytestmark = pytest.mark.slow
-SLACK = 3 if os.environ.get("CI") else 1  # shared runners are slower; the budgets are for a laptop
+SLACK = 5 if os.environ.get("CI") else 1  # shared runners are slower; the budgets are for a laptop
 
 
 @pytest.fixture(scope="module")

@@ -67,5 +67,5 @@ def test_transport_maps_it_to_unreachable_and_never_dials(listener, pin):
         hk_op_pub=bytes(65), wsk_pub=bytes(65), sign=lambda m: bytes(64), timeout=1,
     )  # fmt: skip
     with pytest.raises(ConnectionError):
-        t.send({"o": {"op": "snapshot_get"}, "sig": ""})
+        t.send_next("snapshot_get", lambda seq, cb: {"o": {"op": "snapshot_get"}, "sig": ""})
     assert not dialled(listener)

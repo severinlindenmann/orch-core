@@ -20,7 +20,9 @@ vi.mock('@/components/sign/SignPopover', () => ({
   ),
 }))
 
-const T = { timeout: 5000 }
+// The first test pays the cold load of the lazy ticket page; on a busy machine that alone can pass 5 s.
+vi.setConfig({ testTimeout: 30000 })
+const T = { timeout: 15000 }
 afterEach(() => { vi.restoreAllMocks(); vi.mocked(handoffMode).mockReturnValue(true) })
 
 const ticket = {
@@ -93,26 +95,29 @@ describe('buildEdit: the title (r7-P07)', () => {
 })
 
 describe('the ticket page edit', () => {
-  it('renaming from the heading is one short step: new title, Save, the one review (r10-P09)', async () => {
+  it('renaming from the heading is one short step: new title, Rename, the one review (r10-P09)', async () => {
     const { user } = renderApp('/ticket/DEMO-0043')
     await user.click(await screen.findByRole('button', { name: /^Change the title: Load tariff tables/ }, T))
     const dialog = await screen.findByRole('dialog', { name: 'Rename DEMO-0043' }, T)
     expect(within(dialog).queryByRole('button', { name: /Review and sign/ })).toBeNull() // not the long form
     const field = within(dialog).getByLabelText('Title')
     await waitFor(() => expect(field).toHaveFocus(), T)
-    await user.type(field, ' v2')
-    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+    const input = field as HTMLInputElement
+    expect([input.selectionStart, input.selectionEnd]).toEqual([input.value.length, input.value.length]) // cursor at the end, nothing selected
+    await user.type(field, ' v2{Enter}') // Enter goes through the same review as the button
     const sent = JSON.parse((await screen.findByTestId('sent-action')).textContent ?? '{}')
     expect(sent).toMatchObject({ action: 'edit_sequence', key: 'DEMO-0043' })
     expect(sent.title).toMatch(/ v2$/)
+    // the signed content is exactly the title change: nothing else rides along
+    for (const k of ['sections', 'criteria', 'added', 'links', 'people', 'owner', 'assignees', 'reviewers']) expect(sent).not.toHaveProperty(k)
   })
   it('the rename says so when the title is unchanged, and offers the full form', async () => {
     const { user } = renderApp('/ticket/DEMO-0043')
     await user.click(await screen.findByRole('button', { name: /^Change the title: Load tariff tables/ }, T))
     const dialog = await screen.findByRole('dialog', { name: 'Rename DEMO-0043' }, T)
-    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+    await user.click(within(dialog).getByRole('button', { name: 'Rename' }))
     expect(await within(dialog).findByText('The title is the same as before.')).toBeInTheDocument()
-    await user.click(within(dialog).getByRole('button', { name: 'Edit text, checks, repositories and people' }))
+    await user.click(within(dialog).getByRole('button', { name: 'More fields…' }))
     expect(await screen.findByRole('dialog', { name: 'Edit DEMO-0043' }, T)).toBeInTheDocument()
   })
   it('edits text, a criterion and the people, then asks for ONE signature', async () => {

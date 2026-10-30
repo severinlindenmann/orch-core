@@ -151,7 +151,8 @@ test("an address change that restarts the hub waits until the hub answers again"
   }, { shell: (id, notice, view) => { shownView = view; } });
   await hubSettingsPage(d, DETECTED);
   await button(card(shownView, "address"), "Save").listeners.click();
-  await new Promise((r) => setTimeout(r, 30));
+  // wait for the condition (not a fixed sleep): the restart poll pauses 1 ms between tries; give it up to 5 s on a loaded machine
+  for (const deadline = Date.now() + 5000; polls < 2 && Date.now() < deadline;) await new Promise((r) => setTimeout(r, 5));
   assert.ok(calls.some((c) => c[0] === "PUT" && c[1] === "/admin/settings/addresses"));
   assert.ok(polls >= 2);
 });

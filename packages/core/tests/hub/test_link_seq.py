@@ -8,12 +8,10 @@ import threading
 import time
 from typing import Any
 
-from orch.canon.jcs import dumps as cj
 from orch.crypto import suite
 from orch.crypto.encoding import b64u
 from orch.hubclient import HubLink
 from orch.hubclient.tlsadapter import TlsTransport
-from orch.hubclient.tlslink import client as C
 from orch.hubclient.tlslink import framing
 
 from .tlshub import TlsHub
@@ -55,11 +53,10 @@ class StrictHub:
         self._push_n += 1
         h2w = {
             "v": 2, "suite": 2, "kind": "hub.link", "hv": 0, "hub_id": hub.hub_id, "workspace_id": hub.workspace_id,
-            "dir": "h2w", "seq": self._push_n, "ts_ms": _now(), "op": "route_in", "re": None,
+            "dir": "h2w", "seq": hub.next_seq(), "ts_ms": _now(), "op": "route_in", "re": None,
             "body": {"envelope": b64u(b"env")},
         }  # fmt: skip
-        sig = suite.sign(hub.hk_op, C.SIG_ROUTE + cj(h2w))
-        framing.write_frame(hub._conns[-1], {"o": h2w, "sig": b64u(sig)}, timeout=5)  # noqa: SLF001
+        framing.write_frame(hub._conns[-1], hub.sign_frame(h2w), timeout=5)  # noqa: SLF001
         return hub.reply(o)
 
 

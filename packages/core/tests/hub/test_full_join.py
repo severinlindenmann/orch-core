@@ -24,7 +24,7 @@ from orch.hubclient import (
 )
 from tests.wsproto import r6kit
 
-from .fake import FakeHub, HostLink, host_join_proof, owner_proof_for
+from .fake import BareLink, FakeHub, HostLink, host_join_proof, owner_proof_for
 from .vec import V, private_key, pub
 
 WS = V["ids"]["workspace_a"]
@@ -38,7 +38,7 @@ def sign_wsk(b: bytes) -> bytes:
     return S.sign(WSK, b)
 
 
-class Wire:
+class Wire(BareLink):
     def __init__(self, hub: FakeHub) -> None:
         self.hub, self.down, self.sent, self.refuse_ops = hub, False, [], set()
 

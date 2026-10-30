@@ -168,3 +168,18 @@ def test_a_gate_that_binds_files_or_addon_fields_is_single_only_for_the_page():
     assert _gate({"state": "open", "single_only": True}, True)["single_only"] is True
     assert "single_only" not in _gate({"state": "open"}, True)
     assert "single_only" not in _gate({"state": "open", "single_only": False}, True)
+
+
+def _claimed_row(status, live):
+    return {
+        "key": "DEMO-0001", "uid": "u1", "title": "T", "type": "task", "status": status,
+        "claim": {"session": "s1", "agent": "a", "for": "owner", "since": "2026-10-26T09:00:00Z", "live": live},
+    }
+
+
+def test_turn_reads_plainly_on_finished_and_lapsed_tickets():
+    # run-11 P06: no "claim has lapsed" jargon; a finished ticket has no turn at all
+    for status in ("done", "closed"):
+        assert adapters.summary(_claimed_row(status, False))["turn"] == {"who": "nobody", "why": ""}
+    lapsed = adapters.summary(_claimed_row("in_progress", False))["turn"]
+    assert lapsed == {"who": "nobody", "why": "Nobody is working on it"}

@@ -150,7 +150,7 @@ anything for a person. Frames are at most 64 KiB; the per-frame signature cost i
 2. passes `stream_data` bytes only to its stream terminator (§7.2), never to a socket;
 3. after the handshake and the presence signature, hands the decrypted stream to the dashboard app in-process (D89).
 
-The hub sees stream ids, sizes and timing, and nothing more.
+The hub sees stream ids, sizes and timing, and the device or enrollment-code id (`stream_open` carries `device_id` or `rc_…` in clear), and nothing more.
 
 ### 7.2 Handshake
 

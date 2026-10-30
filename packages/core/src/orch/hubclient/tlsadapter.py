@@ -60,12 +60,10 @@ class TlsTransport:
         self._client: LinkClient | None = None
         self._lock = threading.Lock()
 
-    def send(self, message: dict[str, Any]) -> dict[str, Any]:
-        return self._run(message.get("o", {}).get("op"), lambda c: c.send(message))
-
-    def send_next(self, op: str, build: Callable[[int], dict[str, Any]]) -> dict[str, Any]:
-        """Like :meth:`send`, but the link allocates the request's ``seq`` (one allocator per link, shared with the
-        acks; a new link starts again at 1): ``build(seq)`` returns the signed message."""
+    def send_next(self, op: str, build: Callable[[int, bytes], dict[str, Any]]) -> dict[str, Any]:
+        """The link allocates the request's ``seq`` (one allocator per connection, shared with the acks; a new
+        connection starts again at 1) and ``build(seq, exporter)`` returns the message signed over the connection's TLS
+        exporter. Returns the verified signed reply."""
         return self._run(op, lambda c: c.send_next(build))
 
     def _run(self, op: object, go: Callable[[LinkClient], dict[str, Any]]) -> dict[str, Any]:
@@ -133,10 +131,7 @@ class FailoverTransport:
             assert last is not None
             raise last
 
-    def send(self, message: dict[str, Any]) -> dict[str, Any]:
-        return self._pick(message.get("o", {}).get("op")).send(message)
-
-    def send_next(self, op: str, build: Callable[[int], dict[str, Any]]) -> dict[str, Any]:
+    def send_next(self, op: str, build: Callable[[int, bytes], dict[str, Any]]) -> dict[str, Any]:
         return self._pick(op).send_next(op, build)
 
     def close(self) -> None:

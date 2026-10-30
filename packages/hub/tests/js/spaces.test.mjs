@@ -46,7 +46,10 @@ test("the page says plainly that the hub can read, lists members with Reads/Edit
 });
 
 test("no spaces: a plain empty state", () => {
-  assert.match(spacesView({ spaces: [] }, {}, NOW).textContent, /No shared spaces yet/);
+  const text = spacesView({ spaces: [] }, {}, NOW).textContent;
+  assert.match(text, /No shared spaces yet/);
+  assert.match(text, /folder of documents/);
+  assert.doesNotMatch(text, /command line|orch-hub/i);
 });
 
 const clickAll = (n, label) => find(n, (x) => x.tag === "button" && x.textContent === label);

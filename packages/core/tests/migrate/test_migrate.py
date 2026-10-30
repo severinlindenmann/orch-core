@@ -535,7 +535,9 @@ def test_a_failing_step_reports_the_backup(env, tmp_path, monkeypatch):
     monkeypatch.setattr("orch.migrate.cli.plan", lambda r, k: plan(r, k, reg))
     monkeypatch.setattr("orch.migrate.cli.apply", lambda r, k, **kw: apply(r, k, reg, **kw))
     code, out, _ = run_cli(["--apply", "--workspace", str(project)], env, tmp_path)
-    assert code == 5 and "backed up first" in out and "boom" in out
+    assert code == 5 and "put back as it was" in out and "boom" in out
+    assert read_format(project / ".orch", "workspace") == 1  # restored to the state before the first step
+    assert jr.read_journal(env) is None  # the restore made no lasting journal
 
 
 def test_an_unreachable_workspace_is_skipped_and_listed(env, tmp_path):
@@ -853,3 +855,76 @@ def test_a_backup_from_an_earlier_update_is_not_restored(root, env):
     assert code_of(bk.restore, new, root, env) == "migrate.backup_refused"
     jr.write_journal("backed-up", env, backups={str(new.resolve()): 2})
     bk.restore(new, root, env)
+
+
+def test_a_failing_step_after_a_good_one_is_rolled_back_to_the_backup(env, tmp_path, monkeypatch):
+    project = tmp_path / "proj"
+    store = project / ".orch"
+    init_root(store, "workspace")
+    reg, _ = two_steps(fail_at=3)  # step one succeeds and writes made-2.txt, step two fails
+    monkeypatch.setattr("orch.migrate.cli.plan", lambda r, k: plan(r, k, reg))
+    monkeypatch.setattr("orch.migrate.cli.apply", lambda r, k, **kw: apply(r, k, reg, **kw))
+    code, out, _ = run_cli(["--apply", "--workspace", str(project)], env, tmp_path)
+    assert code == 5 and read_format(store, "workspace") == 1 and not (store / "made-2.txt").exists()
+
+
+def swap_setup(root, env):
+    make_data(root)
+    b = bk.create_backup(root, "workspace", 1, 2, env)
+    (root / ".state/index.sqlite").write_text("kept-index")
+    (root / "events/a.jsonl").write_text("e1\ne2\n")
+    jr.write_journal("installed", env, backups={str(b.resolve()): 1})
+    return b
+
+
+@pytest.mark.parametrize("fallback", [False, True])
+def test_restore_swaps_in_and_carries_what_was_left_out(root, env, monkeypatch, fallback):
+    b = swap_setup(root, env)
+    if fallback:
+        monkeypatch.setattr(bk, "_exchange", lambda a, c: False)
+    bk.restore(b, root, env)
+    assert (root / "events/a.jsonl").read_text() == "e1\n"
+    assert (root / ".state/index.sqlite").read_text() == "kept-index"
+    assert (root / "install/tools/orch-1/bin").read_text() == "tool"
+    assert [p.name for p in root.parent.iterdir() if p.name.startswith(".root.")] == []
+    assert jr.read_journal(env)["phase"] == "installed" and not jr.read_journal(env).get("restoring")
+
+
+@pytest.mark.parametrize("fail_at", ["carry", "swap", "second_rename"])
+def test_a_crash_inside_restore_never_leaves_the_root_open_or_without_its_journal(root, env, monkeypatch, fail_at):
+    b = swap_setup(root, env)
+    monkeypatch.setattr(bk, "_exchange", lambda a, c: False)
+    real = os.rename
+    calls = []
+
+    def flaky(src, dst, *a, **k):
+        calls.append((str(src), str(dst)))
+        n = len(calls)
+        boom = (
+            (fail_at == "carry" and ".restore-" in str(dst) and n >= 2)
+            or (fail_at == "swap" and str(src) == str(root.resolve()) and ".replaced-" in str(dst))
+            or (fail_at == "second_rename" and ".restore-" in str(src) and str(dst) == str(root.resolve()))
+        )
+        if boom:
+            raise OSError("crash")
+        return real(src, dst, *a, **k)
+
+    monkeypatch.setattr(bk.os, "rename", flaky)
+    with pytest.raises(OSError):
+        bk.restore(b, root, env)
+    monkeypatch.setattr(bk.os, "rename", real)
+    assert jr.unfinished(env)  # a crash fails closed
+    assert code_of(open_root, root, "workspace", env) == "update.interrupted"
+    assert root.exists() and (root / "format.json").exists() or fail_at == "carry"
+    # the next run cleans up and can restore again
+    bk.restore(b, root, env)
+    assert (root / "events/a.jsonl").read_text() == "e1\n"
+    assert [p.name for p in root.parent.iterdir() if p.name.startswith(".root.")] == []
+
+
+def test_a_crash_between_the_two_renames_is_recovered_on_the_next_run(root, env, monkeypatch):
+    b = swap_setup(root, env)
+    aside = root.with_name(".root.replaced-dead")
+    os.rename(root, aside)  # the state a crash between the renames leaves
+    bk.restore(b, root, env)
+    assert (root / "events/a.jsonl").read_text() == "e1\n" and not aside.exists()

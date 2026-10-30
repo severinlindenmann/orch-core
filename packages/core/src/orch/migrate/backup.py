@@ -258,7 +258,9 @@ def _revocation_files(top: Path) -> dict[str, list[str]]:
     return found
 
 
-def _journal_allows(root: Path, env: Mapping[str, str] | None) -> bool:
+def _journal_allows(backup: Path, manifest: dict, env: Mapping[str, str] | None) -> bool:
+    """The current, unfinished journal lists THIS backup (``backups``: {path: format it was taken at}) and the format
+    matches the backup's ``from``: a backup left by an earlier update is never restored by a later one."""
     from .journal import read_journal
 
     try:
@@ -267,8 +269,11 @@ def _journal_allows(root: Path, env: Mapping[str, str] | None) -> bool:
         return False
     if doc is None or doc["phase"] == "committed":
         return False
-    roots = doc.get("roots")
-    return doc["phase"] == f"migrated:{root}" or (isinstance(roots, list) and str(root) in roots)
+    listed = doc.get("backups")
+    if not isinstance(listed, dict):
+        return False
+    want = listed.get(str(backup.resolve()))
+    return type(want) is int and want == manifest.get("from")
 
 
 def restore(
@@ -278,10 +283,9 @@ def restore(
     *,
     own_failure: bool = False,
 ) -> None:
-    """Put ``backup`` back into ``root``. Allowed only before the commit point: the update journal must name this root
-    with a phase before ``committed`` (``own_failure``: ``orch migrate``'s own failure path, no journal). Takes the
-    exclusive lock. Builds the result in a staging folder next to the root and swaps it in; whatever the backup left
-    out (``.state``, ``.orch-work``, ``install/tools``, the journal) is carried over untouched, and every
+    """Put ``backup`` back into ``root``. Allowed only before the commit point: the unfinished update journal must
+    list this backup (``own_failure``: ``orch migrate``'s own failure path, no journal). Takes the exclusive lock. Builds the result in a staging folder next to the
+    root and swaps it in; whatever the backup left out (``.state``, ``.orch-work``, ``install/tools``, the journal) is carried over untouched, and every
     ``revocations.jsonl`` is the union of the backup's lines and the current ones."""
     backup, root = Path(backup), Path(root).resolve()
     manifest = _manifest(backup)
@@ -293,9 +297,10 @@ def restore(
     for dirpath, dirnames, filenames in os.walk(src):
         if any(os.path.islink(os.path.join(dirpath, n)) for n in [*dirnames, *filenames]):
             raise OrchError("migrate.backup_refused", "the backup holds a link; it is not restored")
-    if not own_failure and not _journal_allows(root, env):
+    if not own_failure and not _journal_allows(backup, manifest, env):
         raise OrchError(
-            "migrate.backup_refused", "restore is only possible before an update is committed, for a root it names"
+            "migrate.backup_refused",
+            "restore is only possible before an update is committed, for a backup this update made",
         )
     fd = lock_root(root, exclusive=True)
     staging = root.with_name(f".{root.name}.restore-{secrets.token_hex(4)}")

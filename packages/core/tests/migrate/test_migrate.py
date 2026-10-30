@@ -38,6 +38,11 @@ def _no_time_machine(monkeypatch):
     monkeypatch.setattr(bk, "_exclude_from_time_machine", lambda p: None)
 
 
+def BK(root, env):
+    """The journal's ``backups`` field: every backup of root, with the format it was taken at."""
+    return {str(d.resolve()): 1 for d in bk.list_backups(env, root)}
+
+
 def code_of(fn, *a, **k) -> str:
     with pytest.raises(OrchError) as e:
         fn(*a, **k)
@@ -392,7 +397,7 @@ def test_restore_puts_the_data_back_and_merges_revocations(root, env):
     (root / "hosts/z/revocations.jsonl").write_text("z1\n")
     (root / "format.json").write_text(json.dumps({"orch": "workspace", "format": 2}))
     (root / ".state/index.sqlite").write_text("kept")
-    jr.write_journal("stopped", env, roots=[str(root.resolve())])
+    jr.write_journal("stopped", env, backups=BK(root, env))
     bk.restore(b, root, env)
     assert (root / "hosts/w/revocations.jsonl").read_text().splitlines() == ["r1", "r2", "r3"]  # r3 is never lost
     assert (root / "hosts/z/revocations.jsonl").read_text() == "z1\n"
@@ -407,14 +412,14 @@ def test_restore_never_replaces_revocations_with_older_lines(root, env):
     (root / "revocations.jsonl").write_text("a\nb\n")
     b = bk.create_backup(root, "workspace", 1, 2, env)
     (root / "revocations.jsonl").write_text("b\nc\n")  # a differs from the backup: union, backup order first
-    jr.write_journal("stopped", env, roots=[str(root.resolve())])
+    jr.write_journal("stopped", env, backups=BK(root, env))
     bk.restore(b, root, env)
     assert sorted((root / "revocations.jsonl").read_text().splitlines()) == ["a", "b", "c"]
 
 
 def test_restore_is_refused_while_orch_runs_and_for_a_foreign_backup(root, env, tmp_path):
     b = bk.create_backup(root, "workspace", 1, 2, env)
-    jr.write_journal("stopped", env, roots=[str(root.resolve())])
+    jr.write_journal("stopped", env, backups=BK(root, env))
     with lock_shared(root):
         assert code_of(bk.restore, b, root, env) == "migrate.running"
     other = tmp_path / "other"
@@ -441,7 +446,7 @@ def test_an_interrupted_journal_refuses_open(root, env):
         open_root(root, "workspace", env)
     assert e.value.code == "update.interrupted"
     for phase in ("backed-up", "installed", "migrated:/some/ws"):
-        jr.write_journal(phase, env, roots=[str(root)])
+        jr.write_journal(phase, env, backups=BK(root, env))
         assert code_of(open_root, root, "workspace", env) == "update.interrupted"
     jr.write_journal("committed", env)
     open_root(root, "workspace", env).close()
@@ -650,16 +655,16 @@ def test_a_step_that_edits_an_existing_signed_file_is_caught(root):
 
 
 def committed(env, root, phase="stopped"):
-    jr.write_journal(phase, env, roots=[str(root.resolve())])
+    jr.write_journal(phase, env, backups=BK(root, env))
 
 
 def test_restore_is_refused_after_the_commit_point_or_without_a_journal(root, env):
     b = bk.create_backup(root, "workspace", 1, 2, env)
     assert code_of(bk.restore, b, root, env) == "migrate.backup_refused"  # no journal
-    jr.write_journal("stopped", env, roots=[str(root.resolve())])
+    jr.write_journal("stopped", env, backups=BK(root, env))
     jr.write_journal("committed", env)
     assert code_of(bk.restore, b, root, env) == "migrate.backup_refused"
-    jr.write_journal("stopped", env, roots=[str(root.parent / "elsewhere")])
+    jr.write_journal("stopped", env, backups={"/elsewhere": 1})
     assert code_of(bk.restore, b, root, env) == "migrate.backup_refused"  # the journal names another root
     bk.restore(b, root, env, own_failure=True)  # orch migrate's own failure path needs no journal
 
@@ -810,7 +815,7 @@ def test_state_checkpoints_are_backed_up_and_protected_but_the_index_is_not(root
     assert (b / "data/.state/pending/p").exists() and not (b / "data/.state/index.sqlite").exists()
     assert not (b / "data/.state/index.sqlite-wal").exists()
     (root / ".state/checkpoints/1").write_text("tampered")
-    jr.write_journal("stopped", env, roots=[str(root.resolve())])
+    jr.write_journal("stopped", env, backups=BK(root, env))
     bk.restore(b, root, env)
     assert (root / ".state/checkpoints/1").read_text() == "signed"
     assert (root / ".state/index.sqlite").read_text() == "derived"  # carried over
@@ -832,3 +837,19 @@ def test_a_step_touching_state_checkpoints_or_abandoned_is_caught(root, mutate):
     with pytest.raises(OrchError):
         apply(root, "workspace", reg)
     assert read_format(root, "workspace") == 1
+
+
+def test_a_backup_from_an_earlier_update_is_not_restored(root, env):
+    old = bk.create_backup(root, "workspace", 1, 2, env)
+    jr.write_journal("stopped", env, backups=BK(root, env))
+    jr.write_journal("committed", env)
+    (root / "marker").write_text("after the first update")
+    jr.write_journal("stopped", env, backups={})  # a new update, which made no backup yet
+    assert code_of(bk.restore, old, root, env) == "migrate.backup_refused"
+    new = bk.create_backup(root, "workspace", 2, 3, env)
+    jr.write_journal("backed-up", env, backups={str(new.resolve()): 2})
+    assert code_of(bk.restore, old, root, env) == "migrate.backup_refused"
+    jr.write_journal("backed-up", env, backups={str(new.resolve()): 9})  # the format does not match
+    assert code_of(bk.restore, new, root, env) == "migrate.backup_refused"
+    jr.write_journal("backed-up", env, backups={str(new.resolve()): 2})
+    bk.restore(new, root, env)

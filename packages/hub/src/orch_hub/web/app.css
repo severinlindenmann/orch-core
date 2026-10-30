@@ -309,6 +309,7 @@ button[aria-busy="true"]::before { content:""; display:inline-block; width:12px;
 .totp-key { margin-top:8px; }
 .totp-key p { margin:0 0 6px; }
 .prewrap{white-space:pre-line}
+.logs { white-space:pre-wrap; overflow-wrap:anywhere; max-height:50vh; overflow:auto; margin:6px 0; padding:10px; border:1px solid var(--line); border-radius:8px; background:var(--bg); }
 
 /* r14 P11: the small round "i" button with a popover note; the global details rule does not apply to it. */
 details.info { position:relative; display:inline-block; border-top:0; padding:0; margin:0 0 0 8px; vertical-align:middle; }

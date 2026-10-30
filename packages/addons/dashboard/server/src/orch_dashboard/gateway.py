@@ -397,6 +397,8 @@ class Gateway:
             # V3 A10: the Add-ons page (Browse, Installed, Marketplaces); every install is a terminal hand-off
             "market": [(op, "ops/1") for op in MARKET_PAGE_OPS],
             # V3 A7: the Hub tab, the top-bar chip and the Tickets column (reads; every change is a terminal command).
+            # R2 (#1590): Settings > Devices > Remote access (the page also needs a session opened on this computer).
+            "remote": [("remote.status", "ops/1")],
             "hub": [
                 ("hub.status", "hub/1")
             ],  # share.* is checked by its own routes: an older host degrades in the page

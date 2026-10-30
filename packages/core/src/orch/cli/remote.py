@@ -527,6 +527,12 @@ def main(
     out: TextIO,
     err: TextIO,
 ) -> int:
+    from orch.cli import remote_access
+
+    if (
+        args and args[0] in remote_access.VERBS
+    ):  # R2 (#1590): remote access to the workspace itself, signed by the owner
+        return remote_access.main(args, env=env, out=out, err=err)
     try:
         ns = _parser().parse_args(list(args))
     except SystemExit as exc:

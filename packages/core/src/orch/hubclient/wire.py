@@ -13,6 +13,7 @@ from orch.canon.jcs import JcsError
 from orch.canon.jcs import dumps as cj
 from orch.crypto import suite as _suite
 from orch.crypto.encoding import EncodingError, b64u, unb64u, unhex
+from orch.model import remote as _remote
 
 from .errors import HubRefused
 from .marketpolicy import parse_policy
@@ -30,7 +31,28 @@ REQUEST_ID = re.compile(r"hr_[0-7][0-9A-HJKMNP-TV-Z]{25}")
 JOINED_KEYS = frozenset({"hub_id", "hk_root_pub", "mode", "binding_seq", "aliases"})
 LEFT_KEYS = frozenset({"hub_id", "binding_seq"})
 #: section 9.6 "Readers": the ops whose proof a recorded event may carry
-RECORDED_OPS: Mapping[str, tuple[str, ...]] = {"hub.joined": ("hub.join", "hub.mode"), "hub.left": ("hub.leave",)}
+RECORDED_OPS: Mapping[str, tuple[str, ...]] = {
+    "hub.joined": ("hub.join", "hub.mode"),
+    "hub.left": ("hub.leave",),
+    # remote access R2 (#1590, contract 10.2c "The owner proof of a remote step"): their own label and op set
+    "remote.changed": ("remote.set",),
+    "remote.device_added": ("remote.device_confirm",),
+}
+#: remote access R2: the ops the remote owner proof authorises (core-only; the hub never sees these proofs)
+REMOTE_PROOF_OPS = ("remote.set", "remote.device_confirm")
+REMOTE_LEVELS = _remote.LEVELS
+REMOTE_PRESENCE_KINDS = _remote.PRESENCE_KINDS
+REMOTE_PREMISES = _remote.PREMISES
+REMOTE_HUB_MODES = _remote.HUB_MODES
+REMOTE_CHANGED_KEYS = frozenset({"on", "level", "until_ms", "premises", "agents_risk", "hub_mode", "remote_v"})
+REMOTE_ADDED_KEYS = _remote.ADDED_KEYS
+#: contract 10.2c "The device list": ``added_ms < expires_ms <= added_ms + 366 d``
+REMOTE_DEVICE_LIFE_MAX_MS = _remote.DEVICE_LIFE_MAX_MS
+REMOTE_DEVICES_MAX = _remote.DEVICES_MAX
+_REMOTE_DEVICE_ID = re.compile(r"rd_[0-9a-f]{32}")
+_REMOTE_CODE_ID = re.compile(r"rc_[0-9a-f]{32}")
+_PERSON_REF = re.compile(r"p_[0-9a-f]{32}")
+_HEX64 = re.compile(r"[0-9a-f]{64}")
 _CanonError = (JcsError, EncodingError)
 
 SIG_OP_CERT = b"orch/v2/hub-op-cert|"
@@ -44,6 +66,9 @@ SIG_UNBOUND = b"orch/v2/sig/hub-unbound|"
 SIG_LINK = b"orch/v2/sig/hub-link|"
 SIG_ROUTE = b"orch/v2/hub-route|"
 SIG_OWNER_PROOF = b"orch/v2/sig/hub-owner-proof|"  # section 9.6: signed by the person key PK, never a device key
+#: remote access R2 (10.2c): the same proof object with its OWN label and kind, so a hub proof never stands in for a
+#: remote one or the reverse
+SIG_REMOTE_OWNER_PROOF = b"orch/v2/sig/remote-owner-proof|"
 _H_HUB_ID = b"orch/v2/id/hub|"
 _H_PERSON_ID = b"orch/v2/id/person|"
 _H_CHANNEL_ID = b"orch/v2/id/channel|"
@@ -183,6 +208,16 @@ _FIELDS: dict[str, dict[str, Callable[[Any], bool]]] = {
         "workspace_id": hex16,
         "person_id": hex16,
         "op": lambda x: type(x) is str and x in OWNER_PROOF_OPS,
+        "payload": lambda x: type(x) is dict,
+        "request_id": lambda x: type(x) is str and REQUEST_ID.fullmatch(x) is not None,
+        "issued_ms": _int_min(0),
+        "expires_ms": _int_min(1),
+        "dev": lambda x: type(x) is bool,
+    },
+    "remote.owner_proof": {
+        "workspace_id": hex16,
+        "person_id": hex16,
+        "op": lambda x: type(x) is str and x in REMOTE_PROOF_OPS,
         "payload": lambda x: type(x) is dict,
         "request_id": lambda x: type(x) is str and REQUEST_ID.fullmatch(x) is not None,
         "issued_ms": _int_min(0),
@@ -596,6 +631,58 @@ def left_payload(*, hub_id_: str, binding_seq: int, owner_proof: Mapping[str, An
     }
 
 
+def changed_payload(
+    *,
+    level: str,
+    until_ms: int | None,
+    premises: str,
+    agents_risk: bool,
+    hub_mode: str,
+    remote_v: int,
+    owner_proof: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """The exact members of ``remote.changed`` (R2); ``remote_v`` is the model's remote counter the owner saw.
+    ``owner_proof`` is ``None`` in a prepared event: the signer fills it after the review. ``malformed`` for anything
+    the model would refuse by shape."""
+    p = {
+        "on": True, "level": level, "until_ms": until_ms, "premises": premises, "agents_risk": agents_risk,
+        "hub_mode": hub_mode, "remote_v": remote_v,
+    }  # fmt: skip
+    if not _changed_shape(p):
+        raise HubRefused("malformed")
+    return {**p, "owner_proof": None if owner_proof is None else dict(owner_proof)}
+
+
+def device_added_payload(
+    *,
+    device_id: str,
+    name: str,
+    person: str,
+    presence_kind: str,
+    transport_pub: str,
+    presence_pub: str,
+    level_cap: str,
+    expires_ms: int,
+    code_id: str,
+    remote_v: int,
+    owner_proof: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """The exact members of ``remote.device_added`` (R2); ``fingerprint`` is recomputed here from the two public keys
+    (never taken from the device or the request)."""
+    try:
+        fp = device_fp(presence_kind, unb64u(transport_pub, 32), unb64u(presence_pub, 65)).hex()
+    except _CanonError:
+        raise HubRefused("malformed") from None
+    p = {
+        "device_id": device_id, "name": name, "person": person, "presence_kind": presence_kind,
+        "transport_pub": transport_pub, "presence_pub": presence_pub, "level_cap": level_cap,
+        "expires_ms": expires_ms, "fingerprint": fp, "code_id": code_id, "remote_v": remote_v,
+    }  # fmt: skip
+    if not _added_shape(p):
+        raise HubRefused("malformed")
+    return {**p, "owner_proof": None if owner_proof is None else dict(owner_proof)}
+
+
 def without_proof(payload: Mapping[str, Any]) -> dict[str, Any]:
     """The payload an owner proof is over: the event's members without ``owner_proof`` (9.6)."""
     return {k: v for k, v in payload.items() if k != "owner_proof"}
@@ -639,8 +726,95 @@ def _left_shape(p: Any) -> bool:
     )
 
 
+def recorded_keys(event_type: str) -> frozenset[str]:
+    """The exact members (without ``owner_proof``) of a recorded event that carries an owner proof."""
+    return _RECORDED_KEYS[event_type]
+
+
+def _fingerprint_ok(x: Any) -> bool:
+    return type(x) is str and _HEX64.fullmatch(x) is not None
+
+
+def _changed_shape(p: Any) -> bool:
+    """``remote.changed`` without ``owner_proof`` (R2): the owner's policy, always an "on" (off is the host's
+    ``remote.disabled``). An end date is absent only when the computer is not at a customer's place and the level is
+    below terminals; a computer at a customer's place never shares a hub's full mode with remote access."""
+    if not (
+        type(p) is dict
+        and set(p) == REMOTE_CHANGED_KEYS
+        and p["on"] is True
+        and type(p["level"]) is str
+        and p["level"] in REMOTE_LEVELS
+        and (p["until_ms"] is None or (type(p["until_ms"]) is int and p["until_ms"] >= 1))
+        and type(p["premises"]) is str
+        and p["premises"] in REMOTE_PREMISES
+        and type(p["agents_risk"]) is bool
+        and type(p["hub_mode"]) is str
+        and p["hub_mode"] in REMOTE_HUB_MODES
+        and _int_min(0)(p["remote_v"])
+    ):
+        return False
+    if p["until_ms"] is None and (p["premises"] == "yes" or p["level"] == "terminals"):
+        return False
+    return not (p["premises"] == "yes" and p["hub_mode"] == "full")
+
+
+def _added_shape(p: Any) -> bool:
+    """``remote.device_added`` without ``owner_proof`` (R2): one device the owner confirmed at the workspace."""
+    from .custodial_shape import text_ok
+
+    if not (type(p) is dict and set(p) == REMOTE_ADDED_KEYS):
+        return False
+    return (
+        type(p["device_id"]) is str
+        and _REMOTE_DEVICE_ID.fullmatch(p["device_id"]) is not None
+        and text_ok(p["name"], 64)
+        and type(p["person"]) is str
+        and _PERSON_REF.fullmatch(p["person"]) is not None
+        and type(p["presence_kind"]) is str
+        and p["presence_kind"] in REMOTE_PRESENCE_KINDS
+        and _b64u_n(32)(p["transport_pub"])
+        and is_pub(p["presence_pub"])
+        and type(p["level_cap"]) is str
+        and p["level_cap"] in REMOTE_LEVELS
+        and type(p["expires_ms"]) is int
+        and p["expires_ms"] >= 1
+        and _fingerprint_ok(p["fingerprint"])
+        and _int_min(0)(p["remote_v"])
+        and type(p["code_id"]) is str
+        and _REMOTE_CODE_ID.fullmatch(p["code_id"]) is not None
+    )
+
+
+def device_fp(presence_kind: str, transport_pub: bytes, presence_pub: bytes) -> bytes:
+    """Contract 10.2c (see :func:`orch.model.remote.device_fp`, the one implementation); ``malformed`` on any error."""
+    try:
+        return _remote.device_fp(presence_kind, transport_pub, presence_pub)
+    except ValueError:
+        raise HubRefused("malformed") from None
+
+
+def fingerprint_words(fp: bytes) -> str:
+    """Contract 16 row 68 (see :func:`orch.model.remote.fingerprint_words`); ``malformed`` on any error."""
+    try:
+        return _remote.fingerprint_words(fp)
+    except ValueError:
+        raise HubRefused("malformed") from None
+
+
+def _family(op: str) -> tuple[str, bytes]:
+    """The proof kind and signature label of an op: hub ops and remote ops never share either."""
+    if op in REMOTE_PROOF_OPS:
+        return "remote.owner_proof", SIG_REMOTE_OWNER_PROOF
+    return "hub.owner_proof", SIG_OWNER_PROOF
+
+
 def _proof_payload_ok(op: str, p: Any) -> bool:
     """The payload has the exact shape of its event's payload without ``owner_proof``; ``hub.mode`` only to full."""
+    if op == "remote.set":
+        return _changed_shape(p)
+    if op == "remote.device_confirm":
+        return _added_shape(p)
     if op == "hub.leave":
         return _left_shape(p)
     return _joined_shape(p) and (op != "hub.mode" or p["mode"] == "full")
@@ -660,9 +834,11 @@ def build_owner_proof(
 ) -> dict[str, Any]:
     """Section 9.6: the proof object, signed by ``sign`` (the person key ``PK``, held only for this call by the signer,
     C10). ``payload`` is the event payload WITHOUT its ``owner_proof`` member. Refuses (``malformed``) anything the
-    verifier would refuse, so a signer never signs a proof that cannot verify."""
+    verifier would refuse, so a signer never signs a proof that cannot verify. A remote op (R2) gets the remote kind
+    and label."""
+    kind, label = _family(op)
     o = {
-        **_head("hub.owner_proof"),
+        **_head(kind),
         "workspace_id": workspace_id,
         "person_id": person_id(pk_pub),
         "op": op,
@@ -673,24 +849,26 @@ def build_owner_proof(
         "dev": dev,
     }
     try:
-        _fields(o, "hub.owner_proof")
+        _fields(o, kind)
         cj(o)
     except (HubRefused, *_CanonError):
         raise HubRefused("malformed") from None
     if not _proof_payload_ok(op, o["payload"]) or not issued_ms < expires_ms <= issued_ms + OWNER_PROOF_MAX_MS:
         raise HubRefused("malformed")
-    return _signed(o, SIG_OWNER_PROOF, sign)
+    return _signed(o, label, sign)
 
 
-def _owner_proof(signed: Any, pk_pub: Any) -> dict[str, Any]:
-    """Section 9.6 steps 1-3: one code, ``proof_invalid``, for every way the object itself is wrong."""
+def _owner_proof(signed: Any, pk_pub: Any, family: str = "hub.owner_proof") -> dict[str, Any]:
+    """Section 9.6 steps 1-3: one code, ``proof_invalid``, for every way the object itself is wrong. ``family`` is the
+    kind the caller expects (``hub.owner_proof`` or ``remote.owner_proof``): the other family's object is wrong."""
+    label = SIG_REMOTE_OWNER_PROOF if family == "remote.owner_proof" else SIG_OWNER_PROOF
     try:
         if type(pk_pub) is not bytes:
             raise HubRefused("malformed")
         _suite.validate_public_key(pk_pub)
-        o = _envelope(signed, "hub.owner_proof")
-        _signature(signed, SIG_OWNER_PROOF, pk_pub)
-        _fields(o, "hub.owner_proof")
+        o = _envelope(signed, family)
+        _signature(signed, label, pk_pub)
+        _fields(o, family)
     except (HubRefused, _suite.CryptoError):
         raise HubRefused("proof_invalid") from None
     if o["person_id"] != person_id(pk_pub) or not _proof_payload_ok(o["op"], o["payload"]):
@@ -721,7 +899,7 @@ def check_owner_proof(
     """Section 9.6 "At the host" (C9 calls it at binding and again at submit, under the store lock): ``pk_pub`` the
     acting owner's ``PK`` from the roster, ``payload`` the event payload without ``owner_proof``, ``request_id`` the
     request being bound or submitted. Every argument is required: nothing is skipped."""
-    o = _owner_proof(signed, pk_pub)
+    o = _owner_proof(signed, pk_pub, _family(op)[0])
     if o["workspace_id"] != workspace_id or o["op"] != op or o["request_id"] != request_id:
         raise HubRefused("proof_invalid")
     if not _same(o["payload"], dict(payload)):
@@ -735,6 +913,12 @@ def check_owner_proof(
 
 
 PRIOR_TYPES = ("hub.joined", "hub.left")
+_RECORDED_KEYS: Mapping[str, frozenset[str]] = {
+    "hub.joined": JOINED_KEYS,
+    "hub.left": LEFT_KEYS,
+    "remote.changed": REMOTE_CHANGED_KEYS,
+    "remote.device_added": REMOTE_ADDED_KEYS,
+}
 
 
 def _placement(op: str, payload: Mapping[str, Any], prior: Any) -> None:
@@ -781,8 +965,8 @@ def check_recorded_owner_proof(
     host's chained, host-signed log line (never the event body or a deliverer's value). Steps: the proof and its
     bindings, the place (``stale_binding``), the time inside the proof's life (``proof_expired``), the dev marker."""
     allowed = RECORDED_OPS.get(event_type)
-    keys = JOINED_KEYS if event_type == "hub.joined" else LEFT_KEYS
-    if allowed is None or type(at_ms) is not int or at_ms < 0:
+    keys = _RECORDED_KEYS.get(event_type)
+    if allowed is None or keys is None or type(at_ms) is not int or at_ms < 0:
         raise HubRefused("malformed")
     if type(payload) is not dict or set(payload) != {*keys, "owner_proof"}:
         raise HubRefused("malformed")
@@ -793,13 +977,14 @@ def check_recorded_owner_proof(
         raise HubRefused("malformed")
     if pk_pub is None:
         raise HubRefused("proof_invalid")
-    o = _owner_proof(proof, pk_pub)
+    o = _owner_proof(proof, pk_pub, _family(allowed[0])[0])
     rest = {k: v for k, v in payload.items() if k != "owner_proof"}
     if o["workspace_id"] != workspace_id or o["person_id"] != actor_person_id or o["op"] not in allowed:
         raise HubRefused("proof_invalid")
     if not _same(o["payload"], rest):
         raise HubRefused("proof_invalid")
-    _placement(o["op"], rest, prior)
+    if event_type in PRIOR_TYPES:  # a hub step has a place in the binding; a remote step has none (R2)
+        _placement(o["op"], rest, prior)
     if not o["issued_ms"] - CLOCK_SKEW_MS <= at_ms <= o["expires_ms"]:
         raise HubRefused("proof_expired")
     check_dev(o["dev"], dev_mode)

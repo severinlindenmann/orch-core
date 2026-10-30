@@ -429,7 +429,9 @@ def test_client_pings_when_idle_and_closes_when_the_front_goes_silent(
     front = rig.add(WsFront(rig.hub.port))
     addr = parse_link_address(f"ws://127.0.0.1:{front.port}")
     with rig.open(addr, None) as link:
-        assert link._c.wait_readable(0.5) is False
+        deadline = time.monotonic() + 5  # the front records the ping on its own thread: wait for it, not a fixed time
+        while not any(op == W.PING for op, _ in front.client_frames) and time.monotonic() < deadline:
+            assert link._c.wait_readable(0.2) is False  # idle: only pings and pongs, never stream bytes
         assert any(op == W.PING for op, _ in front.client_frames)  # idle: the client pinged, the front ponged
     monkeypatch.setattr(W, "IDLE_CLOSE_S", 0.6)
     front2 = rig.add(WsFront(rig.hub.port, no_pong=True))

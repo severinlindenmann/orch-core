@@ -65,8 +65,7 @@ def main(
 
 
 def _run(root, single, out, err, sleep, stop) -> int:  # noqa: ANN001
-    from orch.hubclient.netconfig import NetConfigError, load_net
-    from orch.remoteclient import Client, Store
+    from orch.remoteclient import Client, NetConfigError, Store, load_net
 
     from . import Controller, GatedPresence, PinAsker, StaticSite, installed_static_dir
 

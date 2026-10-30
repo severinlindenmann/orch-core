@@ -480,3 +480,42 @@ def test_ticket_get_flags_a_gate_with_an_addon_package(human, tmp_path):
     key = ready(human, tmp_path)
     gates = doc(human, key)["gates"]
     assert "single_only" not in gates["requirements"] and "single_only" not in gates["plan"]
+
+
+def test_the_view_says_who_approves_the_plan_as_a_single_plan_approval_does(human, tmp_path):
+    key = ready(human, tmp_path)
+    rig = rig_for(human, tmp_path, key)
+    first = rig.first()
+    human.check(first)
+    row = next(
+        r for r in signcontent.build(first, verified=True)["fields_changed"] if r["field"] == "Who approves the plan"
+    )
+    content = signcontent.build(first, verified=True)
+    assert "not part of what you sign" in content["ticket"]["key_note"] and "not part" not in row["after"]
+    single = human.prepare("approve", {"ref": key, "gate": "plan"})
+    assert row["after"] == signcontent.policy_words(single["material"]["policy"])
+    assert first["material"]["sequence"]["plan_policy"] == single["material"]["policy"]
+    # like a single approval's rule: not shown before the signer has checked the request
+    assert not any(
+        r["field"] == "Who approves the plan"
+        for r in signcontent.build(first, verified=False).get("fields_changed", [])
+    )
+    assert "Who approves the plan (per host, not signed): " + row["after"] in signer.render(
+        first, lambda w: ("ws", "DEMO")
+    )
+
+
+def test_the_plan_rule_is_in_the_digest_and_the_signer_recomputes_it(human, tmp_path):
+    key = ready(human, tmp_path)
+    first = rig_for(human, tmp_path, key).first()
+    for mutate in (
+        lambda m: m["sequence"].update(
+            plan_policy={**m["sequence"]["plan_policy"], "count": 7}
+        ),  # digest no longer matches
+        lambda m: m["sequence"].update(plan_policy={"count": 1}),  # not canonical
+        lambda m: m["sequence"].pop("plan_policy"),  # digest no longer matches
+    ):
+        bad = copy.deepcopy(first)
+        mutate(bad["material"])
+        with pytest.raises(signer.SignerRefused):
+            human.check(bad)

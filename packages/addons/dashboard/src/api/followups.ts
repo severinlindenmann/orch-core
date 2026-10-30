@@ -205,7 +205,8 @@ export const CANCEL_SENTENCE: Record<string, string> = {
   claimed_by_other: 'Someone started working on the ticket by hand, so the wake-up was dropped.',
   grant_revoked: "The agent's permission was withdrawn, so the wake-up was dropped.",
   member_removed: 'The person whose agent set it left the workspace, so the wake-up was dropped.',
-  addon_disabled: 'Schedules was turned off, so the wake-up was dropped.',
+  // One derived reason covers Schedules itself and the add-on a follow-up waits on (core cannot tell them apart here).
+  addon_disabled: 'Schedules, or the add-on this follow-up was waiting on, was turned off or no longer offers that event, so the wake-up was dropped.',
   chain_cap: 'orch stopped this chain: too many follow-ups in a row with no task done.',
   person: 'A person cancelled it.',
   agent: 'The agent cancelled it.',

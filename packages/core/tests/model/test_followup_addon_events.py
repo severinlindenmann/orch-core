@@ -177,3 +177,38 @@ def test_a_replayed_grant_refuses_duplicate_kinds_and_titles_that_are_not_plain_
         )
         is None
     )  # fmt: skip
+
+
+def test_fired_event_must_lie_between_the_set_and_the_wake(env):
+    w, uid, a = env
+    e, _ = set_on(w, uid, a, {"source": "addon", "kind": DBX, "ref": "8812"})
+    before = stamp(w.clock - timedelta(minutes=1))  # before the follow-up was set
+    w.clock += timedelta(minutes=5)
+    after = stamp(w.clock + timedelta(minutes=1))  # after the wake itself
+    _, r = _fire_with(w, uid, e, "addon", event=wake(status="failed", at=before))
+    assert r.code == Code.FOLLOWUP_DENIED
+    _, r = _fire_with(w, uid, e, "addon", event=wake(status="failed", at=after))
+    assert r.code == Code.FOLLOWUP_DENIED
+    _, r = _fire_with(w, uid, e, "addon", event=wake(status="failed", at=stamp(w.clock)))
+    assert not hasattr(r, "code"), r
+
+
+def test_an_addon_shaped_event_is_refused_under_the_webhook_and_orch_triggers(env):
+    w, uid, a = env
+    on = {"source": "addon", "kind": DBX, "ref": "8812"}
+    for trigger, extra in (("webhook", {"hook": "0" * 64}), ("orch", {}), ("time", {})):
+        _, r = w.try_(
+            uid, "followup.set", a, followup="fu_" + w.nid(), trigger=trigger, on=on,
+            deadline=stamp(w.clock + timedelta(hours=3)), brief="x", **extra,
+        )  # fmt: skip
+        assert r.code == Code.FOLLOWUP_DENIED, trigger
+    # and a webhook follow-up cannot be woken by an add-on-shaped event
+    hook = {"source": "webhook", "kind": "hook", "status": "rang", "hook": "1" * 64}
+    e, r = w.try_(
+        uid, "followup.set", a, followup="fu_" + w.nid(), trigger="webhook", on=hook, hook="1" * 64,
+        deadline=stamp(w.clock + timedelta(hours=3)), brief="x",
+    )  # fmt: skip
+    assert not hasattr(r, "code"), r
+    w.clock += timedelta(minutes=5)
+    _, r = _fire_with(w, uid, e, "webhook", event=wake(at=stamp(w.clock)))
+    assert r.code == Code.FOLLOWUP_DENIED

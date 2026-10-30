@@ -139,7 +139,11 @@ against the declared format when it is set and before every poll, and the add-on
 of the kind. By default any declared status wakes it. Budgets: each ref at its own interval (doubling after a failure, up
 to an hour), at most 5 refs per add-on per tick, 60 calls per add-on and 200 per host per hour; a source whose polls
 fail three times in a row is marked failed (closed code) and the follow-up's deadline wakes it (`addon_silent`). One
-trigger per follow-up. An add-on only says that something finished; the agent verifies the result itself. The declaration is signed in `addon.granted` (`events`, flat: `kind`, `title`,
+trigger per follow-up. With `--on-status`, a `done` with another status does not wake the follow-up: it keeps waiting for
+its deadline (`addon_silent`; the agent can look at the result then). An answer that fails the closed shape counts as one
+of the three failures like a crash or a timeout. The ref is chosen by the agent that sets the follow-up (accepted risk:
+an agent can make the add-on, and the person's stored key, look up any ref of the declared format; the budgets above
+bound the cost, and the add-on only ever sees its own kind and that ref). An add-on only says that something finished; the agent verifies the result itself. The declaration is signed in `addon.granted` (`events`, flat: `kind`, `title`,
 `statuses`, `ref` format, `interval_s`).
 
 ## 9. Commands and fields of an add-on at the CLI (AP D5, steps 1 and 1b)

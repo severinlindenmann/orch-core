@@ -227,6 +227,8 @@ def fired_event(core: Core, t: TCore, e: dict[str, Any]) -> Refusal | None:
     wake = e.get("event")
     if wake is not None and (e["trigger"] in ("time", "deadline") or not fe.matches(rec.on or {}, wake)):
         return Refusal(Code.FOLLOWUP_DENIED, "bad_trigger: the event does not match the follow-up")
+    if wake is not None and not ts(rec.set_at) <= ts(wake["at"]) <= now:
+        return Refusal(Code.FOLLOWUP_DENIED, "bad_trigger: the event is not between the set and the wake")
     if e["trigger"] == "addon" and wake is not None:
         # the event must be one the add-on named in the match still declares (on, ref format, status); the host signs
         # it with its own clock, so the add-on's word is only a status from its declared list

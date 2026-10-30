@@ -6,7 +6,7 @@ usage: orch follow-up [REF] [--in DURATION] [--at WHEN] [--brief-file PATH] [--b
   --brief-file PATH  read the text from PATH, or - for stdin
   --brief TEXT  instructions for the fresh session
   --label LABEL  optional label
-  --on-status STATUS  with --on <add-on event>: wake only when the add-on reports this status (default: any status it declared)
+  --on-status STATUS  with --on <add-on event>: wake only when the add-on reports this status (default: any status it declared); another status does not wake it early, the deadline does
   --on EVENT  wake on an event instead of a time (--in/--at is then the deadline): question.answered, ticket.changed:testing, gate.approved:plan, webhook:<id from orch webhook new> or an add-on event such as databricks.run.finished:<run id> (the add-on checks it in the background; verify the result)
   --dry-run  say what would happen, append nothing
 more: orch describe follow_up

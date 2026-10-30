@@ -240,3 +240,30 @@ def test_a_real_addon_that_crashes_marks_the_source_failed_and_leaks_nothing(rea
         later(e, 4000)
     assert e.runner.status()["addon_sources"]["eventer.run.finished|10"]["code"] == "crashed"
     assert e.view(uid)["state"] == "pending"
+
+
+def test_a_hub_paused_addon_is_never_started_its_polls_fail_and_the_deadline_wakes_it(real, monkeypatch):
+    from orch.addons import runner
+    from orch.host import hubpolicy
+    from orch.market import MarketError
+
+    e = real
+
+    def paused(granted):
+        raise MarketError("market.policy_paused")
+
+    monkeypatch.setattr(hubpolicy, "run_gate", lambda service: paused)
+    started = []
+    real_popen = runner.subprocess.Popen
+    monkeypatch.setattr(runner.subprocess, "Popen", lambda *a, **k: started.append(a) or real_popen(*a, **k))
+    uid, _, _, deadline = e.schedule_on(on("2", kind="eventer.run.finished"), "addon", hours=72)
+    for _ in range(3):
+        e.tick()
+        later(e, 4000)
+    assert started == []  # no process was ever started
+    assert e.runner.status()["addon_sources"]["eventer.run.finished|2"]["code"] == "other"  # a closed word
+    assert e.view(uid)["state"] == "pending"
+    e.w.lab.ws.clock[0] = deadline
+    e.tick()
+    rec = e.view(uid)
+    assert (rec["state"], rec["fallback"]) == ("fired", "addon_silent") and not rec.get("event")

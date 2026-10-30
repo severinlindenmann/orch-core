@@ -50,7 +50,7 @@
         },
         "on_status": {
           "type": "string",
-          "description": "with --on <add-on event>: wake only when the add-on reports this status (default: any status it declared)",
+          "description": "with --on <add-on event>: wake only when the add-on reports this status (default: any status it declared); another status does not wake it early, the deadline does",
           "x-metavar": "STATUS"
         },
         "on": {

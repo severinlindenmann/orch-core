@@ -96,6 +96,7 @@ def _tool_text(row: dict[str, Any], server: str) -> str:
     lines = [f"Tool {name!r} of company server {plain(server)!r}"]
     if row.get("title"):
         lines.append(f"  title: {_block(row['title'])}")
+    lines.append("  kind: " + ("reads (the server says it only reads)" if row.get("reads") is True else "changes things"))
     lines.append(f"  description: {_block(row['description']) or '(none)'}")
     lines.append("  input schema (this is pinned too):")
     lines.extend("    " + ln for ln in _schema_text(row).splitlines())

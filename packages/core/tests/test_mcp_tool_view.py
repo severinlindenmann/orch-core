@@ -92,9 +92,11 @@ def test_exactly_at_the_limits_is_fine_and_whole():
 
 def test_the_view_is_canonical_and_idempotent():
     view, _ = tool_view(raw(title="", annotations={"readOnlyHint": True}, extra="x"))
-    assert view == {"name": "find", "description": "Find things", "inputSchema": {"type": "object"}}
-    assert tool_view(view) == (view, None)
-    assert tool_view({"name": "n"})[0] == {"name": "n", "description": "", "inputSchema": {"type": "object"}}
+    assert view == {"name": "find", "description": "Find things", "inputSchema": {"type": "object"}, "reads": True}
+    assert tool_view({**view, "annotations": {"readOnlyHint": True}}) == (view, None)
+    assert tool_view({"name": "n"})[0] == {
+        "name": "n", "description": "", "inputSchema": {"type": "object"}, "reads": False
+    }  # fmt: skip
 
 
 SCHEMA = {"type": "object", "properties": {"q": {"type": "string"}}}
@@ -120,8 +122,38 @@ def test_the_pin_changes_when_any_field_of_the_view_changes(label, change):
 
 def test_fields_outside_the_view_do_not_change_the_pin():
     a = tool_view(raw())[0]
-    b = tool_view(raw(annotations={"readOnlyHint": True}, outputSchema={"type": "object"}, icons=[1]))[0]
+    b = tool_view(raw(annotations={"title": "x"}, outputSchema={"type": "object"}, icons=[1]))[0]
     assert tool_pin(a) == tool_pin(b) and a == b
+
+
+@pytest.mark.parametrize(
+    ("annotations", "reads"),
+    [
+        (None, False),
+        ({}, False),
+        ({"readOnlyHint": True}, True),
+        ({"readOnlyHint": True, "destructiveHint": False}, True),
+        ({"readOnlyHint": True, "destructiveHint": True}, False),
+        ({"readOnlyHint": False}, False),
+        ({"readOnlyHint": "true"}, False),
+        ({"readOnlyHint": 1}, False),
+        ({"destructiveHint": False}, False),
+        ("readOnlyHint", False),
+    ],
+)
+def test_a_tool_is_reads_only_when_the_hint_is_exactly_true_and_not_destructive(annotations, reads):
+    extra = {} if annotations is None else {"annotations": annotations}
+    if isinstance(annotations, str):
+        assert tool_view(raw(**extra)) == (None, "text")  # not a dict: refused, never pinned
+        return
+    assert tool_view(raw(**extra))[0]["reads"] is reads
+
+
+def test_a_flipped_hint_is_a_new_pin():
+    safe = tool_view(raw(annotations={"readOnlyHint": True}))[0]
+    flipped = tool_view(raw(annotations={"readOnlyHint": True, "destructiveHint": True}))[0]
+    assert safe["reads"] is True and flipped["reads"] is False
+    assert tool_pin(safe) != tool_pin(flipped)
 
 
 def test_the_cli_review_text_is_plain_and_has_title_description_and_schema():
@@ -203,3 +235,14 @@ def test_redaction_also_hides_a_capability_glued_to_other_characters():
     for text in (f"x_{cap}", f"{cap}-x", f"url={cap}"):
         assert cap not in CAPABILITY_ANY.sub("[redacted]", text)
     assert CAPABILITY_SHAPE.search(f"x_{cap}") is None
+
+
+def test_a_top_level_reads_field_from_the_server_is_ignored():
+    """Only the annotations label a tool; a server cannot hand in the finished label."""
+    assert tool_view(raw(reads=True))[0]["reads"] is False
+
+
+def test_the_cli_review_text_says_reads_or_changes_things():
+    for annotations, word in (({"readOnlyHint": True}, "kind: reads"), ({}, "kind: changes things")):
+        view, _ = tool_view(raw(annotations=annotations))
+        assert word in cli_org._tool_text({**view, "pin": tool_pin(view)}, "crm")  # noqa: SLF001

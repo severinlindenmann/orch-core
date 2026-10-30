@@ -389,7 +389,10 @@ def tools_of(*items):
     rows = []
     for item in items:
         name, desc = (item, f"does {item}") if type(item) is str else item
-        view, problem = tool_view({"name": name, "description": desc, "inputSchema": {"type": "object"}})
+        raw = {"name": name, "description": desc, "inputSchema": {"type": "object"}}
+        if name.startswith("get_"):
+            raw["annotations"] = {"readOnlyHint": True}  # a tool the server labels as only reading
+        view, problem = tool_view(raw)
         assert problem is None
         rows.append({**view, "pin": tool_pin(view)})
     return rows
@@ -545,7 +548,7 @@ def test_record_seen_keeps_little_and_ignores_bad_input(served, org):
     orgstate.record_seen(s, "crm", srv["digest"], many)
     rec = json.loads((orgstate.org_dir(s) / "seen.json").read_text())["servers"]["crm"]
     assert len(rec["tools"]) == 200 and rec["tools"][0] == {"name": "t0", "problem": "too_long"}
-    assert set(rec["tools"][1]) == {"name", "description", "inputSchema", "pin"} and rec["digest"] == srv["digest"]
+    assert set(rec["tools"][1]) == {"name", "description", "inputSchema", "reads", "pin"} and rec["digest"] == srv["digest"]
     orgstate.record_seen(s, "Bad Name", srv["digest"], many[:1])
     orgstate.record_seen(s, "orch-x", srv["digest"], many[:1])
     orgstate.record_seen(s, "crm", srv["digest"], [{"name": "a b", "pin": PIN_A}])
@@ -587,3 +590,76 @@ def test_forwarded_seen_and_shown_are_one_view(served, org, env):  # noqa: F811
     approved = {k: v for k, v in ok(req(served, "org.show", {"kind": "mcp", "name": "crm"}))["data"]["tools"][0].items()
                 if k not in ("pin", "status")}  # fmt: skip
     assert forwarded[0] == approved == view and shown["find"]["pin"] == tool_pin(forwarded[0])
+
+
+# -- the "reads" label and the bulk click (#1438) ----
+
+
+def bulk_op(served, tools, server="crm", **kw):
+    return req(served, "org.tool", {"server": server, "on": True, "tools": tools}, **kw)
+
+
+def pin_of(rows, name):
+    return next(r["pin"] for r in rows if r["name"] == name)
+
+
+def test_show_labels_reads_and_everything_else_changes_things(served, org):
+    srv = accept_mcp(served, org)
+    orgstate.record_seen(svc(served), "crm", srv["digest"], tools_of("get_a", "edit"))
+    rows = {t["name"]: t for t in ok(req(served, "org.show", {"kind": "mcp", "name": "crm"}))["data"]["tools"]}
+    assert rows["get_a"]["reads"] is True and rows["edit"]["reads"] is False
+    assert rows["get_a"]["status"] == rows["edit"]["status"] == "off"  # a label never switches anything on
+
+
+def test_bulk_turns_on_only_the_listed_reading_tools(served, org):
+    srv = accept_mcp(served, org)
+    rows = tools_of("get_a", "get_b", "edit")
+    orgstate.record_seen(svc(served), "crm", srv["digest"], rows)
+    got = ok(bulk_op(served, [{"tool": "get_a", "pin": pin_of(rows, "get_a")}, {"tool": "get_b", "pin": pin_of(rows, "get_b")}]))
+    assert got["data"] == {"server": "crm", "tools": ["get_a", "get_b"], "status": "on"}
+    assert orgstate.tool_policy(svc(served), "crm") == {"get_a": pin_of(rows, "get_a"), "get_b": pin_of(rows, "get_b")}
+
+
+def test_bulk_refuses_a_tool_that_changes_things_and_changes_nothing(served, org):
+    srv = accept_mcp(served, org)
+    rows = tools_of("get_a", "edit")
+    orgstate.record_seen(svc(served), "crm", srv["digest"], rows)
+    res = bulk_op(served, [{"tool": "get_a", "pin": pin_of(rows, "get_a")}, {"tool": "edit", "pin": pin_of(rows, "edit")}])
+    assert err(res) == "invalid.input" and "not_reads" in res["error"]["message"]
+    assert orgstate.tool_policy(svc(served), "crm") == {}
+
+
+def test_bulk_refuses_a_stale_pin_an_unknown_tool_and_a_too_long_one(served, org):
+    srv = accept_mcp(served, org)
+    rows = tools_of("get_a")
+    orgstate.record_seen(svc(served), "crm", srv["digest"], rows + [{"name": "get_big", "problem": "too_long"}])
+    assert err(bulk_op(served, [{"tool": "get_a", "pin": PIN_B}])) == "invalid.input"
+    assert err(bulk_op(served, [{"tool": "get_ghost", "pin": PIN_B}])) == "not_found"
+    assert err(bulk_op(served, [{"tool": "get_big", "pin": PIN_B}])) == "invalid.input"
+    assert orgstate.tool_policy(svc(served), "crm") == {}
+
+
+def test_a_flipped_hint_turns_the_tool_off_and_shows_it_changed(served, org):
+    srv = accept_mcp(served, org)
+    rows = tools_of("get_a")
+    orgstate.record_seen(svc(served), "crm", srv["digest"], rows)
+    ok(bulk_op(served, [{"tool": "get_a", "pin": pin_of(rows, "get_a")}]))
+    flipped = []
+    view, _ = tool_view({"name": "get_a", "description": "does get_a", "inputSchema": {"type": "object"},
+                         "annotations": {"readOnlyHint": True, "destructiveHint": True}})  # fmt: skip
+    flipped.append({**view, "pin": tool_pin(view)})
+    orgstate.record_seen(svc(served), "crm", srv["digest"], flipped)
+    assert orgstate.tool_policy(svc(served), "crm") == {"get_a": rows[0]["pin"]}  # the old pin: no longer matches
+    shown = ok(req(served, "org.show", {"kind": "mcp", "name": "crm"}))["data"]["tools"][0]
+    assert shown["status"] == "changed" and shown["reads"] is False and shown["pin"] != rows[0]["pin"]
+
+
+def test_bulk_is_owner_only_and_on_only(served, org):
+    srv = accept_mcp(served, org)
+    rows = tools_of("get_a")
+    orgstate.record_seen(svc(served), "crm", srv["digest"], rows)
+    pins = [{"tool": "get_a", "pin": pin_of(rows, "get_a")}]
+    assert err(bulk_op(served, pins, grant=served.grant, session=SESSION)) == "op.not_allowed"
+    assert err(req(served, "org.tool", {"server": "crm", "on": False, "tools": pins})) == "invalid.input"
+    assert err(req(served, "org.tool", {"server": "crm", "on": True, "tool": "get_a", "tools": pins})) == "invalid.input"
+    assert orgstate.tool_policy(svc(served), "crm") == {}

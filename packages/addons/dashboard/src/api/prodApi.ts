@@ -380,6 +380,8 @@ const click = {
   syncOrg: (ws: string) => call<{ result: Record<string, string> }>(`${w(ws)}/org/sync`, 'POST', {}),
   setOrgTool: (ws: string, server: string, tool: string, on: boolean, pin?: string) =>
     call<{ server: string; tool: string; on: boolean }>(`${w(ws)}/org/tool`, 'POST', { server, tool, on, ...(on ? { pin } : {}) }),
+  setOrgTools: (ws: string, server: string, tools: { tool: string; pin: string }[]) =>
+    call<{ server: string; tools: string[]; on: boolean }>(`${w(ws)}/org/tools`, 'POST', { server, tools }),
   /** R2 T4: remote access (loopback only): the view, a plain turn-off, a one-time device code, removing a device. */
   getRemote: (ws: string) => call<import('./remote').RemoteView>(`${w(ws)}/remote`),
   remoteOff: (ws: string) => call<{ changed: boolean }>(`${w(ws)}/remote/off`, 'POST', {}),

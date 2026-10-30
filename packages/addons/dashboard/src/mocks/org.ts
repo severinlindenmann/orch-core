@@ -13,10 +13,11 @@ const SERVERS = [
   { name: 'crm', digest: digest('c'), url: 'https://crm.example.com/mcp', auth: 'none' as const, secret: null, description: 'Look up customers and open deals.' },
   { name: 'billing', digest: digest('d'), url: 'https://billing.example.com/mcp', auth: 'hub_secret' as const, secret: 'billing-key', description: 'Read invoices and payment status.' },
 ]
-const TOOLS: Record<string, { name: string; title?: string; description: string; schema?: object; pin: string; tooLong?: boolean }[]> = {
+const TOOLS: Record<string, { name: string; title?: string; description: string; schema?: object; pin: string; tooLong?: boolean; reads?: boolean }[]> = {
   crm: [
     { name: 'find_customer', title: 'Find a customer', description: 'Find a customer by name or email.', schema: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] }, pin: 'pin-find-1' },
-    { name: 'open_deals', description: 'List the open deals of a customer.', schema: { type: 'object', properties: { customer_id: { type: 'string' } } }, pin: 'pin-deals-1' },
+    { name: 'open_deals', description: 'List the open deals of a customer.', schema: { type: 'object', properties: { customer_id: { type: 'string' } } }, pin: 'pin-deals-1', reads: true },
+    { name: 'close_deal', description: 'Close a deal as won.', pin: 'pin-close-1' },
     { name: 'bulk_export', description: '', pin: '', tooLong: true },
   ],
   billing: [{ name: 'invoice_status', description: 'Say whether an invoice is paid.', pin: 'pin-inv-1' }],
@@ -68,8 +69,8 @@ export function mockOrgShown(kind: OrgKind, name: string): OrgShown | null {
   const s = SERVERS.find((x) => x.name === name)
   if (!s) return null
   const tools: OrgTool[] = (TOOLS[name] ?? []).map((t) => t.tooLong
-    ? { name: t.name, description: null, pin: '', status: 'too_long' as const }
-    : { name: t.name, title: t.title ?? null, description: t.description, input_schema: t.schema ? JSON.stringify(t.schema, null, 2) : null, pin: t.pin, status: toolsOn.get(`${name}/${t.name}`) === t.pin ? ('on' as const) : ('off' as const) })
+    ? { name: t.name, description: null, pin: '', status: 'too_long' as const, reads: false }
+    : { name: t.name, title: t.title ?? null, description: t.description, input_schema: t.schema ? JSON.stringify(t.schema, null, 2) : null, pin: t.pin, reads: t.reads === true, status: toolsOn.get(`${name}/${t.name}`) === t.pin ? ('on' as const) : ('off' as const) })
   const item: OrgServerItem = { kind: 'mcp', name: s.name, digest: s.digest, url: s.url, auth: s.auth, secret: s.secret, description: s.description, tools, fields_hidden: false, hidden_tools: 0 }
   const status = statusOf(kind, name, s.digest, s.auth)
   const needs = s.auth === 'hub_secret' ? 'needs a separate agent user: this server\'s secret cannot be kept from an agent here' : null
@@ -106,6 +107,16 @@ export function orgHandle(method: string, rest: string, query: URLSearchParams, 
     return { status: 200, json: { kind: b.kind, name: b.name, status: 'off' } }
   }
   if (rest === 'org/sync') return { status: 200, json: { result: { skill: 'ok', mcp: 'ok' } } }
+  if (rest === 'org/tools') {
+    const b = body as { server?: string; tools?: { tool: string; pin: string }[] } | null
+    if (!b?.server || !Array.isArray(b.tools) || b.tools.length === 0) return bad(400, 'invalid.input', 'Body must be {server, tools}')
+    const rows = b.tools.map((x) => ({ x, known: (TOOLS[b.server!] ?? []).find((t) => t.name === x.tool) }))
+    if (rows.some((r) => !r.known)) return bad(404, 'not_found', 'No such tool')
+    if (rows.some((r) => r.known!.tooLong || r.known!.pin !== r.x.pin)) return bad(400, 'invalid.input', 'org: changed: not the version you were shown')
+    if (rows.some((r) => !r.known!.reads)) return bad(400, 'invalid.input', 'org: not_reads: that tool changes things')
+    for (const r of rows) toolsOn.set(`${b.server}/${r.x.tool}`, r.x.pin)
+    return { status: 200, json: { server: b.server, tools: b.tools.map((x) => x.tool), on: true } }
+  }
   if (rest === 'org/tool') {
     const b = body as { server?: string; tool?: string; on?: boolean; pin?: string } | null
     if (!b?.server || !b.tool || typeof b.on !== 'boolean') return bad(400, 'invalid.input', 'Body must be {server, tool, on}')

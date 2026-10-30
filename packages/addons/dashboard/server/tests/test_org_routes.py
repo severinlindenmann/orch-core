@@ -113,6 +113,7 @@ def test_a_server_view_is_closed_and_tools_are_shown_in_full():
         "input_schema": None,
         "pin": "",
         "status": "too_long",
+        "reads": False,
     }
     assert tools[2]["description"] is None  # a hidden character withholds that text
     assert got["item"]["url"] == "https://crm.example.com/mcp" and got["item"]["secret"] == "crm-key"
@@ -158,6 +159,25 @@ def test_tool_on_needs_a_pin_and_sends_it(client, token, stub, host):
     assert writes(host)[0][:2] == ("org.tool", on)
 
 
+def test_the_bulk_click_sends_the_listed_tools_and_pins_as_the_owner(client, token, stub, host):
+    url = f"/api/w/{stub.ws}/org/tools"
+    body = {"server": "crm", "tools": [{"tool": "find", "pin": "p1"}, {"tool": "list", "pin": "p2"}]}
+    assert client.post(url, json=body, headers=hdr(token)).status_code == 200
+    assert writes(host)[0][:2] == ("org.tool", {"server": "crm", "on": True, "tools": body["tools"]})
+    for bad in ({"server": "crm", "tools": []}, {"server": "crm", "tools": [{"tool": "find"}]},
+                {"server": "crm", "tools": [{"tool": "find", "pin": "p"}], "on": False}):  # fmt: skip
+        assert client.post(url, json=bad, headers=hdr(token)).status_code in (400, 422)
+    assert len(writes(host)) == 1
+
+
+def test_a_reads_label_is_only_true_when_the_host_says_true():
+    from orch_dashboard.org_routes import _tools
+
+    base = {"name": "a", "description": "d", "inputSchema": {"type": "object"}, "pin": "p", "status": "off"}
+    got = [_tools([{**base, "reads": v}])[0][0]["reads"] for v in (True, False, "true", 1, None)]
+    assert got == [True, False, False, False, False]
+
+
 def test_bad_bodies_reach_nothing(client, token, stub, host):
     for path, body in (
         ("accept", {"kind": "skill", "name": "style-guide", "digest": "sha256:short"}),
@@ -189,6 +209,9 @@ def test_a_switch_session_is_read_only(client, auth, stub, host):
     ):
         r = client.post(f"/api/w/{stub.ws}/org/{path}", json=body, headers=hdr(switch))
         assert r.status_code == 403 and r.json()["error"]["code"] == "session.readonly", path
+    r = client.post(f"/api/w/{stub.ws}/org/tools", json={"server": "crm", "tools": [{"tool": "find", "pin": "p1"}]},
+                    headers=hdr(switch))  # fmt: skip
+    assert r.status_code == 403 and r.json()["error"]["code"] in ("session.readonly", "step_up_required")  # turning On
     assert host.calls == []
 
 

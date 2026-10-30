@@ -169,6 +169,8 @@ export function createApi(transport: Transport) {
     syncOrg: (ws: string) => call<{ result: Record<string, string> }>('POST', `/api/w/${ws}/org/sync`, {}),
     setOrgTool: (ws: string, server: string, tool: string, on: boolean, pin?: string) =>
       call<{ server: string; tool: string; on: boolean }>('POST', `/api/w/${ws}/org/tool`, { server, tool, on, ...(on ? { pin } : {}) }),
+    setOrgTools: (ws: string, server: string, tools: { tool: string; pin: string }[]) =>
+      call<{ server: string; tools: string[]; on: boolean }>('POST', `/api/w/${ws}/org/tools`, { server, tools }),
     /** R2 T4: remote access (loopback only): the view, a plain turn-off, a one-time device code, removing a device. */
     getRemote: (ws: string) => call<import('./remote').RemoteView>('GET', `/api/w/${ws}/remote`),
     remoteOff: (ws: string) => call<{ changed: boolean }>('POST', `/api/w/${ws}/remote/off`, {}),

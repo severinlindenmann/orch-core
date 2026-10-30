@@ -50,6 +50,7 @@ __all__ = [
     "record_seen",
     "served",
     "set_tool",
+    "set_tools_reading",
     "sync_bundles",
     "tool_policy",
 ]
@@ -354,7 +355,13 @@ def _seen_row(t: Any) -> dict[str, Any] | None:
     if type(pin) is not str or not _PIN.fullmatch(pin):
         return None
     body = {k: v for k, v in t.items() if k != "pin"}
-    view, problem = tool_view(body)
+    if type(body.get("reads")) is not bool:
+        return None
+    # the view carries the label, not the annotations it came from: rebuild the input that gives exactly this label
+    again = {k: v for k, v in body.items() if k != "reads"}
+    if body["reads"]:
+        again["annotations"] = {"readOnlyHint": True}
+    view, problem = tool_view(again)
     if view is None or problem is not None or view != body or tool_pin(view) != pin:
         return None
     return t
@@ -473,6 +480,48 @@ def set_tool(service: WorkspaceService, server: str, tool: str, on: bool, pin: s
         if keep != _tool_entries(service) or on:
             _write(service, "tools.json", {"entries": keep})
         return {"server": server, "tool": tool, "status": "on" if on else "off"}
+
+
+def set_tools_reading(service: WorkspaceService, server: str, items: list[dict[str, str]], who: str) -> dict[str, Any]:
+    """The owner's "Turn on reading tools" click: turn On, in one write, every listed tool of an accepted server, each
+    for exactly the pin shown. All or nothing: a tool that is not seen, too long, moved (``changed``) or not labelled
+    ``reads`` refuses the whole click. The label is the pinned one (see ``mcpshared.reads_label``); it only lists, it
+    never switches anything on by itself."""
+    with _MU:
+        state = _state(service)
+        rec = next((r for r in served(service)["mcp"] if r["name"] == server), None)
+        if rec is None:
+            raise HostError("not_found", f"company tool server {server!r} is not on: orch org accept mcp {server}")
+        if not items or len(items) > MAX_SEEN_TOOLS:
+            raise HostError("invalid.input", "org: tools: nothing to turn on, or too many at once")
+        seen_by = {t["name"]: t for t in _seen_tools(service, state, server, rec["digest"])}
+        b = _binding(state)
+        wanted: dict[str, str] = {}
+        for it in items:
+            tool, pin = it["tool"], it["pin"]
+            seen = seen_by.get(tool)
+            if seen is None:
+                raise HostError("not_found", f"no tool {tool!r} seen on {server!r} yet: let an agent list its tools")
+            if seen.get("problem") == "too_long":
+                raise HostError("invalid.input", f"org: too_long: {tool} is too long to review; it stays off")
+            if pin != seen["pin"]:
+                raise HostError(
+                    "invalid.input",
+                    f"org: changed: {tool!r} is not the version you were shown; look again: orch org show",
+                )
+            if seen.get("reads") is not True:
+                raise HostError("invalid.input", f"org: not_reads: {tool!r} changes things; turn it on by itself")
+            wanted[tool] = pin
+        rows = [
+            r for r in _tool_entries(service) if r["hub_id"] == b["hub_id"] and r["binding_seq"] == b["binding_seq"]
+        ]
+        keep = [r for r in rows if not (r["server"] == server and r["tool"] in wanted)]
+        now = _now_ms(service)
+        for tool, pin in wanted.items():
+            keep.append({**b, "server": server, "server_digest": rec["digest"], "tool": tool, "pin": pin,
+                         "at": now, "by": who})  # fmt: skip
+        _write(service, "tools.json", {"entries": keep})
+        return {"server": server, "tools": sorted(wanted), "status": "on"}
 
 
 def served(service: WorkspaceService) -> dict[str, list[dict[str, Any]]]:

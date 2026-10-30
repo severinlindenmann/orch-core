@@ -8,6 +8,7 @@
 | POST   | /api/w/{ws}/org/decline   | org.decline    | owner, full session (it only takes authority away)      |
 | POST   | /api/w/{ws}/org/sync      | org.sync       | owner, full session (it grants nothing)                 |
 | POST   | /api/w/{ws}/org/tool      | org.tool       | owner, full session; turning ON needs a LOCAL session   |
+| POST   | /api/w/{ws}/org/tools     | org.tool       | owner, LOCAL session: the "Turn on reading tools" click  |
 
 No signature: these are plain owner clicks, like the share reductions (`hub.py`). Turning something ON (accept, a
 tool On) adds what an agent can reach, so it is decided on this computer, like sharing more. Everything the hub wrote
@@ -23,7 +24,7 @@ import re
 from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, Request
-from pydantic import BaseModel, ConfigDict, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from . import reads
 from .cosmetic_routes import full_session, refused
@@ -59,12 +60,26 @@ class AcceptBody(ItemBody):
     digest: Digest
 
 
+class _ToolPin(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    tool: ToolName
+    pin: Pin
+
+
 class ToolBody(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     server: Name
     tool: ToolName
     on: bool
     pin: Pin | None = None
+
+
+class ToolsBody(BaseModel):
+    """The owner's "Turn on reading tools" click: the listed tools, each for the pin shown."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    server: Name
+    tools: Annotated[list[_ToolPin], Field(min_length=1, max_length=200)]
 
 
 def _str(v, high=MAX_TEXT) -> str | None:
@@ -131,7 +146,7 @@ def _tools(raw) -> tuple[list[dict], int]:
             continue
         if t["status"] == "too_long":
             out.append({"name": name, "title": None, "description": None, "input_schema": None, "pin": "",
-                        "status": "too_long"})  # fmt: skip
+                        "status": "too_long", "reads": False})  # fmt: skip
             continue
         pin = _str(t.get("pin"), 200)
         if not pin:
@@ -144,7 +159,7 @@ def _tools(raw) -> tuple[list[dict], int]:
         if (title is not None and shown_title is None) or (desc is not None and shown_desc is None) or schema is None:
             # approved view == pinned view: a tool whose pinned fields cannot all be shown can never be switched on
             out.append({"name": name, "title": None, "description": None, "input_schema": None, "pin": "",
-                        "status": "too_long"})  # fmt: skip
+                        "status": "too_long", "reads": False})  # fmt: skip
             continue
         out.append({
             "name": name,
@@ -153,6 +168,7 @@ def _tools(raw) -> tuple[list[dict], int]:
             "input_schema": schema,
             "pin": pin,
             "status": t["status"],
+            "reads": t.get("reads") is True,  # only a label: it never switches a tool on
         })  # fmt: skip
     return out, dropped
 
@@ -271,6 +287,12 @@ def register(app: FastAPI, gateway: Gateway) -> None:
             if isinstance(k, str) and isinstance(v, str) and len(k) <= 20 and re.fullmatch(r"[a-z_ ]{1,40}", v)
         }
         return {"result": keep}
+
+    @app.post("/api/w/{ws}/org/tools")
+    def org_tools(body: ToolsBody, request: Request, ws: str = Depends(reads.workspace)):
+        args = {"server": body.server, "on": True, "tools": [{"tool": t.tool, "pin": t.pin} for t in body.tools]}
+        write(ws, request, "org.tool", args, local=True)  # turning On: decided on this computer, like the single click
+        return {"server": body.server, "tools": [t.tool for t in body.tools], "on": True}
 
     @app.post("/api/w/{ws}/org/tool")
     def org_tool(body: ToolBody, request: Request, ws: str = Depends(reads.workspace)):

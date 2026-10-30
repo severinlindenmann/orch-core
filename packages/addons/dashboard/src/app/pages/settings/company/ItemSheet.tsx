@@ -43,6 +43,7 @@ function ToolRow({ tool, enabled, busy, onSet }: { tool: OrgTool; enabled: boole
   return <li className="flex items-start gap-3 py-2" data-testid={`company-tool-${tool.name}`}>
     <div className="min-w-0 flex-1 space-y-1">
       <p className="font-medium">{plain(tool.name)}{tool.title ? <span className="ml-2 font-normal text-text-muted" data-testid={`company-tool-title-${tool.name}`}>{plain(tool.title)}</span> : null}</p>
+      {!tooLong && <p className="text-xs text-text-muted" data-testid={`company-tool-kind-${tool.name}`}>{tool.reads ? 'Reads' : 'Changes things'}</p>}
       {tooLong
         ? <p className="text-warning" data-testid={`company-tool-toolong-${tool.name}`}>Too long to review — stays off</p>
         : <>
@@ -59,7 +60,22 @@ function ToolRow({ tool, enabled, busy, onSet }: { tool: OrgTool; enabled: boole
   </li>
 }
 
-function ServerDetails({ item, tools, serverOn, busy, onTool }: { item: OrgServerItem; tools: OrgTool[]; serverOn: boolean; busy: boolean; onTool: (t: OrgTool, on: boolean) => void }) {
+function ReadingTools({ tools, busy, onTurnOn }: { tools: OrgTool[]; busy: boolean; onTurnOn: (list: OrgTool[]) => void }) {
+  const [open, setOpen] = useState(false)
+  const list = tools.filter((t) => t.reads === true && t.status !== 'on' && t.status !== 'too_long' && t.pin)
+  if (list.length === 0) return null
+  if (!open) return <Action id="company-reading-open" onClick={() => setOpen(true)} disabled={busy}>Turn on reading tools</Action>
+  return <div className="space-y-2 rounded-md border border-border p-3" data-testid="company-reading-list">
+    <p>These {list.length === 1 ? 'tool only reads' : `${list.length} tools only read`} (as the server says). Turn {list.length === 1 ? 'it' : 'them'} on?</p>
+    <ul className="list-disc pl-5">{list.map((t) => <li key={t.name}>{plain(t.name)}</li>)}</ul>
+    <div className="flex gap-2">
+      <Action id="company-reading-confirm" variant="default" disabled={busy} onClick={() => { setOpen(false); onTurnOn(list) }}>Turn on {list.length === 1 ? 'this tool' : `these ${list.length}`}</Action>
+      <Action id="company-reading-cancel" onClick={() => setOpen(false)}>Cancel</Action>
+    </div>
+  </div>
+}
+
+function ServerDetails({ item, tools, serverOn, busy, onTool, onReading }: { item: OrgServerItem; tools: OrgTool[]; serverOn: boolean; busy: boolean; onTool: (t: OrgTool, on: boolean) => void; onReading: (list: OrgTool[]) => void }) {
   return <div className="space-y-3">
     <dl className="space-y-1">
       <div><dt className="inline font-medium">Address: </dt><dd className="inline break-all" data-testid="company-url">{plain(item.url) || 'not shown'}</dd></div>
@@ -72,6 +88,7 @@ function ServerDetails({ item, tools, serverOn, busy, onTool }: { item: OrgServe
         ? <p className="text-text-muted">No tools seen yet. Turn the server on, then look again.</p>
         : <>
           {!serverOn && <p className="text-text-muted">Turn the server on first to allow its tools. Every tool starts off.</p>}
+          {serverOn && <ReadingTools tools={tools} busy={busy} onTurnOn={onReading} />}
           <ul className="divide-y divide-border">{tools.map((t) => <ToolRow key={t.name} tool={t} enabled={serverOn} busy={busy} onSet={(on) => onTool(t, on)} />)}</ul>
         </>}
     </div>
@@ -110,6 +127,17 @@ export function ItemSheet({ ws, kind, name, onClose }: { ws: string; kind: OrgKi
       (e) => setMessage(refusal(e)),
     ).finally(() => setBusy(false))
   }
+  const setReading = (list: OrgTool[]) => {
+    setBusy(true)
+    setMessage('')
+    api.setOrgTools(ws, name, list.map((t) => ({ tool: t.name, pin: t.pin }))).then(
+      () => void shown.refetch(),
+      async (e) => {
+        await shown.refetch()
+        setMessage(isChanged(e) ? 'A tool changed while you were looking. Look again, then turn it on.' : refusal(e))
+      },
+    ).finally(() => setBusy(false))
+  }
   const setTool = (t: OrgTool, on: boolean) => {
     setBusy(true)
     setMessage('')
@@ -143,7 +171,7 @@ export function ItemSheet({ ws, kind, name, onClose }: { ws: string; kind: OrgKi
             : <>
               {hidden && <p role="alert" className="text-warning" data-testid="company-fields-hidden">Some details cannot be shown, so it cannot be turned on.</p>}
               {!!item.hidden_tools && <p className="text-warning" data-testid="company-hidden-tools">{item.hidden_tools} {item.hidden_tools === 1 ? 'tool' : 'tools'} could not be shown (they stay off).</p>}
-              <ServerDetails item={item} tools={item.tools} serverOn={s.status === 'on'} busy={busy} onTool={setTool} />
+              <ServerDetails item={item} tools={item.tools} serverOn={s.status === 'on'} busy={busy} onTool={setTool} onReading={setReading} />
             </>}
           <div className="space-y-1" data-testid="company-limits">
             <h3 className="font-medium">Good to know</h3>

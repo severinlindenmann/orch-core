@@ -11,8 +11,9 @@ import type { Viewer } from './shared'
 vi.mock('@/api/features', async (orig) => ({ ...(await orig<typeof import('@/api/features')>()), handoffMode: vi.fn(() => true) }))
 // The signing dialog is its own feature (SignPopover tests); here it only shows the typed action it was given.
 vi.mock('@/components/sign/SignPopover', () => ({
-  SignPopover: (p: { title: string; action: unknown; onSettled?: (phase: string) => void; onClose: () => void }) => (
-    <div role="dialog" aria-label={`sign ${p.title}`}>
+  SignPopover: (p: { title: string; action: unknown; inline?: boolean; lead?: React.ReactNode; confirmLabel?: string; onSettled?: (phase: string) => void; onClose: () => void }) => (
+    <div role={p.inline ? 'region' : 'dialog'} aria-label={`sign ${p.title}`} data-confirm={p.confirmLabel}>
+      {p.lead}
       <pre data-testid="sent-action">{JSON.stringify(p.action)}</pre>
       <button onClick={() => p.onSettled?.('done')}>signed</button>
       <button onClick={p.onClose}>cancelled</button>
@@ -108,6 +109,12 @@ describe('the ticket page edit', () => {
     const sent = JSON.parse((await screen.findByTestId('sent-action')).textContent ?? '{}')
     expect(sent).toMatchObject({ action: 'edit_sequence', key: 'DEMO-0043' })
     expect(sent.title).toMatch(/ v2$/)
+    // r12-P11: no sheet on top of the box: the review is inline in it, shows old -> new, and Rename confirms
+    expect(screen.queryByRole('dialog', { name: 'sign Rename DEMO-0043' })).toBeNull()
+    const inline = within(dialog).getByRole('region', { name: 'sign Rename DEMO-0043' })
+    expect(inline).toHaveAttribute('data-confirm', 'Rename')
+    expect(within(inline).getByTestId('rename-diff')).toHaveTextContent('Load tariff tables as dbt seeds → Load tariff tables as dbt seeds v2')
+    expect(within(dialog).getByLabelText('Title')).toHaveAttribute('readonly') // the title is read-only while signing (run-11 P08)
     // the signed content is exactly the title change: nothing else rides along
     for (const k of ['sections', 'criteria', 'added', 'links', 'people', 'owner', 'assignees', 'reviewers']) expect(sent).not.toHaveProperty(k)
   })
@@ -129,6 +136,12 @@ describe('the ticket page edit', () => {
     await user.type(within(dialog).getByLabelText('New acceptance criterion'), 'A header row is exported')
     await user.click(within(dialog).getByRole('button', { name: 'Add' }))
     await user.click(within(dialog).getByRole('button', { name: /^Review and sign \(1 change\)$/ }))
+    // the full edit is not a rename: no inline review, no Rename button, no old -> new line, and its fields cannot change while signing
+    const review = await screen.findByRole('dialog', { name: 'sign Edit DEMO-0043' })
+    expect(review).not.toHaveAttribute('data-confirm')
+    expect(screen.queryByTestId('rename-diff')).toBeNull()
+    expect(within(dialog).getByTestId('edit-fields')).toBeDisabled()
+    expect(within(dialog).getByLabelText('Title')).toBeDisabled()
     const sent = JSON.parse((await screen.findByTestId('sent-action')).textContent ?? '{}')
     expect(sent).toMatchObject({ action: 'edit_sequence', key: 'DEMO-0043', acceptance: { edit: {}, add: ['A header row is exported'] } })
     expect(typeof sent.head_seq).toBe('number')

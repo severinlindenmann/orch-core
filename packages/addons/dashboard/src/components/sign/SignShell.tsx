@@ -82,8 +82,10 @@ export function SignShell(p: SignShellProps) {
       </section>
     )
   }
-  if (wide && p.anchor) {
-    const anchor = p.anchor
+  // the button it belongs to is gone (a list that re-rendered, a closed dialog): never a corner popover, the centred dialog
+  const anchored = p.anchor && p.anchor.isConnected ? p.anchor : null
+  if (wide && anchored) {
+    const anchor = anchored
     return (
       <PopoverPrimitive.Root open={p.open} onOpenChange={(o) => !o && p.onDismiss()} modal>
         <PopoverPrimitive.Anchor virtualRef={{ current: anchor }} />

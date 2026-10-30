@@ -105,6 +105,15 @@ _SPECS = [
         "this host does not receive webhooks",
     ),
     _e(
+        "followup.too_many_hooks",
+        3,
+        True,
+        "Too many new webhooks in the last hour. Try again later.",
+        "wait a while, then run orch webhook new again; reuse a webhook you already made",
+        ["orch", "webhook", "new", "--help"],
+        "Too many new webhooks in the last hour. Try again later.",
+    ),
+    _e(
         "followup.denied",
         3,
         False,

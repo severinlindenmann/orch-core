@@ -399,3 +399,79 @@ def test_a_snapshot_without_or_with_a_bad_policy_is_refused_and_the_pin_stays():
         with pytest.raises(HubRefused) as e:
             r.refresh()
         assert e.value.code == "malformed" and snap.pinned_view(r.state)["version"] == 1
+
+
+# --- GA-07: access end dates (ends_ms), role_at, the pin floor ------------------------------------------------
+
+
+def test_ga07_ends_ms_is_exclusive_and_the_pinned_role_lapses_without_a_refresh():
+    r = Rig()
+    end = NOW + 5000
+    r.hub.set_snapshot(WS, {ADMIN: "admin", READER: "edit"}, ends_ms={READER: end})
+    assert r.refresh() is True
+    assert snap.hub_role(r.state, READER, now_ms=end - 1, dev_mode=True) == "edit"
+    assert snap.hub_role(r.state, READER, now_ms=end, dev_mode=True) is None
+    assert snap.hub_role(r.state, ADMIN, now_ms=end + 10**9, dev_mode=True) == "admin"  # no end date: unaffected
+
+
+def test_ga07_a_snapshot_issued_far_ahead_gives_no_role_to_users_with_an_end_date():
+    r = Rig()
+    r.hub.now_ms = NOW + 400_000  # the hub clock is 400 s ahead of the host's
+    r.hub.set_snapshot(WS, {ADMIN: "admin", READER: "edit"}, ends_ms={READER: NOW + 10**9})
+    r.hub.now_ms = NOW  # (the link itself still runs on the right clock)
+    r.refresh()
+    assert snap.hub_role(r.state, READER, now_ms=NOW, dev_mode=True) is None
+    assert snap.hub_role(r.state, ADMIN, now_ms=NOW, dev_mode=True) == "admin"
+    assert snap.hub_role(r.state, READER, now_ms=NOW + 100_001, dev_mode=True) == "edit"  # within 5 minutes of issue
+
+
+def test_ga07_bad_ends_ms_is_malformed_and_nothing_is_pinned():
+    for bad in ({READER: NOW - 1}, {"zz": NOW + 5}, {"33" * 16: NOW + 5}, {READER: True}):
+        r = Rig()
+        r.hub.set_snapshot(WS, {ADMIN: "admin", READER: "edit"}, ends_ms=bad)
+        before = r.state.snapshot
+        with pytest.raises(HubRefused) as e:
+            r.refresh()
+        assert e.value.code == "malformed" and r.state.snapshot == before
+
+
+def test_ga07_the_snapshot_floor_refuses_an_older_version_after_the_pin_is_gone():
+    r = Rig()
+    r.hub.set_snapshot(WS, {ADMIN: "admin"})
+    r.hub.set_snapshot(WS, {ADMIN: "admin"})
+    r.refresh()
+    top = r.state.snapshot["o"]["version"]
+    assert r.state.snapshot_floor == top
+    r.restart()
+    assert r.state.snapshot_floor == top  # persisted
+    r.state.snapshot = None  # a rebind or mode switch drops the pin, not the floor
+    r.hub.workspaces[WS].snapshot = r.hub._snapshot(WS, top - 1, {ADMIN: "admin", READER: "edit"}, [])
+    with pytest.raises(HubRefused) as e:
+        r.refresh()
+    assert e.value.code == "stale_snapshot"
+
+
+def test_ga07_floors_are_kept_per_hub_across_another_hub_and_persist():
+    from orch.hubclient import service as SV
+
+    r = Rig()
+    r.hub.set_snapshot(WS, {ADMIN: "admin"})
+    r.refresh()
+    top = r.state.snapshot["o"]["version"]
+    other = "ab" * 16
+    r.state.snapshot_floors[other] = 7  # a floor from another hub joined in between
+    carried = SV._floors_of(r.state)  # what a new state of ANY hub inherits
+    assert carried == {other: 7, r.state.hub_id: top}
+    r.restart()
+    assert r.state.snapshot_floors == {other: 7, r.state.hub_id: top} and r.state.snapshot_floor == top
+
+
+def test_ga07_status_view_lists_ended_users_without_changing_roles():
+    r = Rig()
+    end = NOW + 5000
+    r.hub.set_snapshot(WS, {ADMIN: "admin", READER: "edit"}, ends_ms={READER: end})
+    r.refresh()
+    assert "ended" not in snap.pinned_view(r.state, end - 1)
+    v = snap.pinned_view(r.state, end)
+    assert v["ended"] == [READER] and v["roles"] == {ADMIN: "admin", READER: "edit"}
+    assert snap.pinned_view(r.state) == {"version": v["version"], "roles": v["roles"]}

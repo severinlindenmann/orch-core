@@ -31,6 +31,7 @@ from . import proof as P
 from . import rules as R
 from .store import ChangeError, ChangesDB
 
+_NO_END: Any = object()  # member_add without an end-date argument (the body then has no ``ends_ms``)
 DAY_MS = 86_400_000
 TTL_MS = 14 * DAY_MS
 NOTICE_MS = 30 * DAY_MS  # how long "applied without your approval" stays on the owner's page
@@ -166,10 +167,18 @@ class Changes:
             self._access.grant(ws, group, role, actor=actor)
         return None
 
-    def member_add(self, actor: str, group: object, user_id: object) -> dict | None:
+    def member_add(
+        self, actor: str, group: object, user_id: object, *, ends_ms: object = _NO_END, confirm: bool = False
+    ) -> dict | None:
+        """Add ``user_id`` to ``group``, optionally with an end date (``ends_ms`` an int, or ``None`` = permanent). With an end
+        date the body names it, so an owner's signed proof covers it. A later end (or none) in a group that reaches a full
+        workspace is an increase and waits for its owner (R3); a shorter end is a reduction and runs the owner / last-admin
+        guards as if the member were dropped now (R4)."""
         group = _grp(group)
         user_id = _hex(user_id, "user_id")
-        body = {"group": group, "user_id": user_id}
+        body: dict[str, Any] = {"group": group, "user_id": user_id}
+        if ends_ms is not _NO_END:
+            body["ends_ms"] = self._access.check_end(ends_ms, group)
         with self._access.lock:
             if not any(g["name"] == group for g in self._access.groups()):
                 raise AccessError("unknown_group")
@@ -179,7 +188,16 @@ class Changes:
             needs = R.needs_approval(self._access, self._reg, "member_add", body, actor)
             if needs:
                 return self._propose("member_add", body, actor, needs)
-            self._access.add_member(group, user_id, actor=actor)
+            if R.end_change(self._access, body) == "earlier":  # R4: as if the member were dropped now
+                self._guard(
+                    R.Edit(drop_member=(group, user_id)),
+                    R.affected_by_group(self._access, self._reg, group),
+                    confirm=confirm,
+                )
+            if "ends_ms" in body:
+                self._access.add_member(group, user_id, actor=actor, ends_ms=body["ends_ms"])
+            else:
+                self._access.add_member(group, user_id, actor=actor)
         return None
 
     @contextmanager
@@ -715,7 +733,12 @@ class Changes:
             self._guard_owner(R.Edit(set_grant=(body["group"], body["role"])), [body["workspace_id"]])
             self._access.grant(body["workspace_id"], body["group"], body["role"], actor=actor)
         elif kind == "member_add":
-            self._access.add_member(body["group"], body["user_id"], actor=actor)
+            if "ends_ms" in body:  # a pending change whose end has passed by now is refused, never applied
+                if body["ends_ms"] is not None and body["ends_ms"] <= self._now():
+                    raise ChangeError("expired")
+                self._access.add_member(body["group"], body["user_id"], actor=actor, ends_ms=body["ends_ms"])
+            else:
+                self._access.add_member(body["group"], body["user_id"], actor=actor)
         else:
             raise ChangeError("malformed")
 

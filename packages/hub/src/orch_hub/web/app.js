@@ -130,15 +130,17 @@ function setupView(token, err) {
   const form = h("form", {
     onsubmit: async (ev) => {
       ev.preventDefault();
-      const r = await api("POST", "/setup", { token, name: name.value.trim(), password: pw.value });
+      const typedName = name.value.trim();
+      const r = await api("POST", "/setup", { token, name: typedName, password: pw.value });
       pw.value = "";
       if (r.status !== 200) return setupView(token, r.body.error === "bad_credentials" ? "This setup link was already used or is wrong." : say(r.body.error));
       history.replaceState(null, "", location.pathname);
       show(
         h("h1", { text: "Admin created" }),
         banner("ok", "You are signed in"),
+        h("dl", { class: "facts" }, h("dt", { text: "Your name for signing in" }), h("dd", { id: "setup-name", text: renderText(r.body.name ?? typedName) })),
         h("h2", { text: "Add your sign-in code to your phone" }),
-        h("p", { class: "muted", text: "Scan this with your authenticator app. You will need the app's 6-digit code each time you sign in." }),
+        h("p", { class: "muted", text: "Scan this with your authenticator app. You will need the app's 6-digit code each time you sign in, together with your name and password." }),
         totpPanel(r.body.totp_uri, r.body.totp_secret),
         h("p", { class: "small muted top", id: "key-gone", text: KEY_GONE_NOTE }),
         h("div", { class: "row top" }, h("button", { class: "pri", id: "open-hub", text: "I've added it, open the hub", onclick: () => afterLogin() })),

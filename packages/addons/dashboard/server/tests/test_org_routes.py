@@ -114,6 +114,7 @@ def test_a_server_view_is_closed_and_tools_are_shown_in_full():
         "pin": "",
         "status": "too_long",
         "reads": False,
+        "new": False,
     }
     assert tools[2]["description"] is None  # a hidden character withholds that text
     assert got["item"]["url"] == "https://crm.example.com/mcp" and got["item"]["secret"] == "crm-key"

@@ -176,3 +176,20 @@ test("P03: a shared ticket opens read only with title, description and who share
     } else assert.match(texts[1], /could not be loaded/);
   }
 });
+
+test("P14: an empty hub shows 6 menu entries; every area appears once a workspace is connected", async () => {
+  const { readdirSync } = await import("node:fs");
+  const dir = new URL("../../src/orch_hub/web/pages/", import.meta.url);
+  const PAGES = await Promise.all(readdirSync(dir).filter((f) => f.endsWith(".js")).map(async (f) => (await import(new URL(f, dir).href)).page));
+  const paint = (rail) => {
+    const root = new Element("main");
+    const state = { user: { name: "Ann", is_admin: true }, rail, menu: false };
+    const context = vm.createContext({ clearInterval, root, state, PAGES, location: { hash: "#/home" }, parseRoute, enter, replaceContent: (el, nodes) => el.replaceChildren(...nodes), renderText: String, initials: (s) => s.slice(0, 2), colour: () => "c0", navigate() {}, signOutMenu: () => new Element("button"), document: { createElement: (t) => new Element(t), createTextNode: (text) => Object.assign(new Element("#text"), { textContent: text }) } });
+    vm.runInContext(source.slice(source.indexOf("function h("), source.indexOf("const field =")) + source.slice(source.indexOf("function shell("), source.indexOf("async function loadRail(")), context);
+    context.shell("home", new Element("h1"));
+    return root.querySelector(".top-nav").querySelectorAll("[data-tab]").map((n) => n.attrs["data-tab"]);
+  };
+  assert.deepEqual(paint({ hubName: "H", rows: [], ready: true }).sort(), ["account", "admin", "home", "hub-settings", "phones", "workspaces"]);
+  assert.equal(paint({ hubName: "H", rows: [{ id: "ab".repeat(16), name: "Legal", online: true }], ready: true }).length, 17);
+  assert.equal(paint({ hubName: "H", rows: [], ready: false }).length, 17, "a rail that could not be read hides nothing");
+});

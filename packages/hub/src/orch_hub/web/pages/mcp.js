@@ -96,4 +96,4 @@ export async function mcpPage(d, retried = false) {
 }
 
 // The registry entry: the console's router, tabs and file list are built from this one export (no other file names a page).
-export const page = { path: "mcp", nav: { label: "Tools", admin: true, after: "skills" }, render: mcpPage };
+export const page = { path: "mcp", nav: { label: "Tools", admin: true, needsWorkspace: true, after: "skills" }, render: mcpPage };

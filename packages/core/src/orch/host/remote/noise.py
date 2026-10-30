@@ -61,7 +61,7 @@ def _mac(k: bytes, d: bytes) -> bytes:
     return hmac.new(k, d, hashlib.sha256).digest()
 
 
-def _kdf(ck: bytes, ikm: bytes) -> tuple[bytes, bytes]:
+def _hkdf_pair(ck: bytes, ikm: bytes) -> tuple[bytes, bytes]:
     t = _mac(ck, ikm)
     a = _mac(t, b"\x01")
     return a, _mac(t, a + b"\x02")
@@ -123,7 +123,7 @@ class Handshake:
         self.h = hashlib.sha256(self.h + d).digest()
 
     def mix_k(self, ikm: bytes) -> None:
-        self.ck, k = _kdf(self.ck, ikm)
+        self.ck, k = _hkdf_pair(self.ck, ikm)
         self.c = _Cipher(k)
 
     def enc(self, pt: bytes) -> bytes:
@@ -188,5 +188,5 @@ def write_msg2(hs: Handshake, e: bytes, challenge: bytes) -> tuple[bytes, Transp
     hs.mix_k(_dh(e, hs.re))
     hs.mix_k(_dh(e, hs.rs))
     out = ep + hs.enc(challenge)
-    k1, k2 = _kdf(hs.ck, b"")
+    k1, k2 = _hkdf_pair(hs.ck, b"")
     return out, Transport(hs.h, _Cipher(k1), _Cipher(k2))

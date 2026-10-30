@@ -192,8 +192,11 @@ def test_a_crash_at_the_commit_point_is_healed_by_the_next_update(w):
         w.updater().update()
     w.crash_at = None
     assert read_record(w.layout).version == OLD  # the record write was lost
+    w.services.up = []
     assert w.updater().update().action == "current"
     assert read_record(w.layout).version == NEW
+    assert w.services.up == ["host", "runner", "dashboard", "hub"]  # L7: the services come back too
+    assert w.services.started_with[-1] == (f"orch-{NEW}", False)
 
 
 def test_rollback_after_the_flip_but_before_the_journal_flips_back(w):
@@ -302,3 +305,31 @@ def test_use_needs_a_clean_migrate_check(w, out):
     w.check_out = out
     assert code(w.updater().use, OLD) == "format.newer"
     assert w.layout.current_version() == NEW
+
+
+def test_a_run_that_starts_after_the_check_stops_the_update(w):
+    calls = []
+
+    def live(state):
+        calls.append(1)
+        return [] if len(calls) == 1 else [{"run": "r_late"}]
+
+    w.runs = []
+    seams = w.seams()
+    seams.live_runs = live
+    from orch.update.engine import Updater
+
+    assert code(Updater(w.env, seams, w.out).update) == "update.agents_running"
+    assert w.services.events == ["stop", "start"]  # stopped, then put back on the old code
+    assert w.layout.current_version() == OLD and (w.state / "data.txt").read_text() == "before\n"
+
+
+def test_free_space_counts_three_times_the_data(w):
+    from orch.update.engine import dir_size
+
+    data = dir_size(w.state)
+    wheels = sum(len(b) for b in w.source.blobs.values())
+    w.free = 3 * data + 2 * wheels - 1
+    assert code(w.updater().update) == "update.no_space"
+    w.free = 3 * data + 2 * wheels
+    assert w.updater().update().ok

@@ -242,6 +242,12 @@ class Updater:
         # ---- from here on the machine changes
         names = self.s.services.running()
         self.s.services.stop()
+        again = self.s.live_runs(self.state) if self.s.live_runs else []
+        if again:  # a run started between the check and the stop: put things back, change nothing else
+            self.s.services.start(self.layout.tool_bin(cur), names, quarantine=False)
+            raise OrchError(
+                "update.agents_running", f"{len(again)} agent run(s) started meanwhile: update again when they are done"
+            )
         info = {
             "from_version": cur, "to_version": new, "channel": ch, "seq": ver.seq, "running": names,
             "backups": {}, "backup_list": [],
@@ -263,6 +269,9 @@ class Updater:
             return
         if self.layout.current_version() == doc["to_version"] and rec.version != doc["to_version"]:
             self._write_record(doc, rec)
+        if not doc.get("started") and doc.get("running"):  # the crash was before the services came back
+            self.s.services.start(self.layout.tool_bin(doc["to_version"]), doc["running"], quarantine=False)
+            write_journal("committed", self.env, started=True)
 
     def _root_key_id(self) -> str:
         try:
@@ -319,7 +328,7 @@ class Updater:
     def _space(self, roots: list[tuple[str, str, Path]], manifest: Mapping[str, Any]) -> None:
         wheels = sum(f["size"] for f in manifest["files"])
         data = sum(dir_size(r[2]) for r in roots)
-        need = 2 * (data + wheels)
+        need = 3 * data + 2 * wheels
         free = self.s.free_bytes(self.layout.data if self.layout.data.exists() else self.layout.data.parent)
         if free < need:
             mb = 1 << 20
@@ -429,6 +438,7 @@ class Updater:
         warnings: list[str] = []
         try:
             self.s.services.start(self.layout.tool_bin(to), info.get("running") or [], quarantine=False)
+            write_journal("committed", self.env, started=True)
             problems = self._wait_healthy(False)
         except Exception as exc:  # noqa: BLE001 - after the commit nothing is rolled back
             problems = [str(exc)]

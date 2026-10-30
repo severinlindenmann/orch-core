@@ -80,8 +80,14 @@ if argv[:2] == ["item", "list"]:
     assert opt("--vault-name") == "Agents" and opt("--output") == "json"
     if (SIM / "pass-list-fail").exists():
         sys.exit(3)
-    items = [{"id": item_id(p.stem), "content": {"title": p.stem}} for p in sorted(V.glob("*.json"))]
-    print(json.dumps({"items": items}))
+    want = opt("--filter-state") or "active"  # a run that forgets the filter never sees trashed items
+    items = []
+    for p in sorted(V.glob("*.json")):
+        state = "trashed" if json.loads(p.read_text()).get("trashed") else "active"
+        if state == want:
+            items.append({"id": item_id(p.stem), "share_id": "S", "vault_id": "V", "state": state, "flags": [],
+                          "create_time": "t", "modify_time": "t", "title": p.stem, "item_type": "login"})
+    print(json.dumps({"items": items, "folders": []}))
     sys.exit(0)
 if argv[:2] == ["item", "view"]:
     if (SIM / "pass-view-fail").exists() or "--item-title" in argv:
@@ -467,14 +473,40 @@ def test_an_error_from_pass_cli_is_never_read_as_absent(lab, capsys, flag):
     _assert_refused_cleanly(lab, capsys, "refusing")
 
 
-def test_unparseable_list_output_refuses(lab, capsys, monkeypatch):
+@pytest.mark.parametrize(
+    "answer",
+    [
+        b"not json",
+        b"null",
+        b"[]",
+        b"{}",
+        b'{"error": "vault is locked"}',
+        b'{"items": null}',
+        b'{"items": [{"metadata": {"name": "orch release root key"}, "id": "X", "state": "active"}]}',
+        b'{"items": [{"id": "X", "title": "t"}]}',
+        b'{"items": [{"id": 5, "title": "t", "state": "active"}]}',
+    ],
+)
+def test_any_other_list_shape_refuses_even_with_exit_0(lab, capsys, monkeypatch, answer):
     real = ceremony.run
-    monkeypatch.setattr(
-        ceremony,
-        "run",
-        lambda a, i=b"", **k: (0, b"not json") if a[:3] == ["pass-cli", "item", "list"] else real(a, i, **k),
+    list_cmd = ["pass-cli", "item", "list"]
+    monkeypatch.setattr(ceremony, "run", lambda a, i=None, **k: (0, answer) if a[:3] == list_cmd else real(a, i, **k))
+    _assert_refused_cleanly(lab, capsys, "unexpected answer")
+
+
+def test_a_trashed_root_item_also_blocks_init(lab, capsys):
+    (lab.sim / "vault" / f"{ceremony.ROOT_TITLE}.json").write_text(
+        json.dumps({"title": "x", "username": "u", "password": "AAAA", "trashed": True})
     )
-    _assert_refused_cleanly(lab, capsys, "did not return JSON")
+    _assert_refused_cleanly(lab, capsys, "already exists")
+
+
+def test_the_list_is_asked_for_active_and_trashed(lab, capsys):
+    assert run_main(lab, capsys, "init")[0] == 0
+    states = [
+        c["argv"][c["argv"].index("--filter-state") + 1] for c in lab.calls() if c["argv"][:2] == ["item", "list"]
+    ]
+    assert states[:2] == ["active", "trashed"]
 
 
 def test_template_unreadable_aborts_before_anything_is_stored(lab, capsys):
@@ -696,10 +728,15 @@ def test_resign_reads_the_root_from_proton_and_never_creates_anything(lab, capsy
     n = len(lab.calls())
     assert run_main(lab, capsys, "resign-revocations")[0] == 0
     new = lab.calls()[n:]
-    assert [c["argv"][:2] for c in new if c["tool"] == "pass-cli"] == [["info"], ["item", "list"], ["item", "view"]]
+    assert [c["argv"][:2] for c in new if c["tool"] == "pass-cli"] == [
+        ["info"],
+        ["item", "list"],
+        ["item", "list"],
+        ["item", "view"],
+    ]
     assert all(c["tool"] == "pass-cli" for c in new)  # no gh call at all
     assert not any("--item-title" in c["argv"] for c in lab.calls())
-    assert new[2]["argv"][-2:] == ["--field", "password"]
+    assert new[3]["argv"][-2:] == ["--field", "password"]
 
 
 # ---- the current list is verified before the root key is fetched ---------------------------------------------------

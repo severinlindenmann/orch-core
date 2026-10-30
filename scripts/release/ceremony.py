@@ -147,36 +147,32 @@ def _seed(key: Ed25519PrivateKey) -> bytearray:
 # --- Proton Pass and GitHub, all through run() ----------------------------------------------------------------------
 
 
-def _walk(node):
-    """Yield (title, id-or-None) for every dict in a pass-cli JSON document that has a title (own or in ``content``)."""
-    if isinstance(node, dict):
-        title = node.get("title")
-        if not isinstance(title, str) and isinstance(node.get("content"), dict):
-            title = node["content"].get("title")
-        if isinstance(title, str):
-            item_id = node.get("id") or node.get("item_id")
-            yield title, item_id if isinstance(item_id, str) else None
-        for v in node.values():
-            yield from _walk(v)
-    elif isinstance(node, list):
-        for v in node:
-            yield from _walk(v)
+def _pass_items() -> list[tuple[str, str, str]]:
+    """Every (title, id, state) in the vault, active AND trashed, from pass-cli's exact list shape.
 
-
-def _pass_items() -> list[tuple[str, str | None]]:
-    """Every (title, id) in the vault. An error or unreadable answer REFUSES: absence is never inferred from it."""
-    rc, out = run(["pass-cli", "item", "list", "--vault-name", VAULT, "--output", "json"])
-    if rc != 0:
-        raise Ceremony("pass-cli could not list the vault: refusing (I will not guess that an item is absent)")
-    try:
-        doc = json.loads(out)
-    except ValueError:
-        raise Ceremony("pass-cli item list did not return JSON: refusing") from None
-    return list(_walk(doc))
+    Only ``{"items": [{"id": str, "title": str, "state": str, ...}, ...]}`` is accepted. An error, a non-zero exit,
+    ``null``, ``[]``, an error object, or ANY other shape REFUSES: absence is never inferred from an odd answer."""
+    out_items: list[tuple[str, str, str]] = []
+    for state in ("active", "trashed"):
+        rc, out = run(["pass-cli", "item", "list", "--vault-name", VAULT, "--filter-state", state, "--output", "json"])
+        if rc != 0:
+            raise Ceremony("pass-cli could not list the vault: refusing (I will not guess that an item is absent)")
+        try:
+            doc = json.loads(out)
+        except ValueError:
+            doc = None
+        items = doc.get("items") if isinstance(doc, dict) else None
+        ok = isinstance(items, list) and all(
+            isinstance(i, dict) and all(isinstance(i.get(k), str) for k in ("id", "title", "state")) for i in items
+        )
+        if not ok:
+            raise Ceremony("pass-cli item list gave an unexpected answer (not the known shape): refusing")
+        out_items += [(i["title"], i["id"], i["state"]) for i in items]
+    return out_items
 
 
 def _pass_find_id(title: str) -> str:
-    ids = {i for t, i in _pass_items() if t == title and i}
+    ids = {i for t, i, _ in _pass_items() if t == title}
     if len(ids) != 1:
         raise Ceremony(f"expected exactly one vault item titled {title!r}, found {len(ids)}: refusing")
     return next(iter(ids))
@@ -202,10 +198,8 @@ def _created_id(out: bytes) -> str:
     """The item ID that ``create`` printed (JSON ``id``/``item_id``, else the single long token in its output)."""
     text = out.decode(errors="replace")
     try:
-        found = {i for _, i in _walk(json.loads(text)) if i}
-        if not found:
-            doc = json.loads(text)
-            found = {doc[k] for k in ("id", "item_id") if isinstance(doc, dict) and isinstance(doc.get(k), str)}
+        doc = json.loads(text)
+        found = {doc[k] for k in ("id", "item_id") if isinstance(doc, dict) and isinstance(doc.get(k), str)}
     except ValueError:
         found = set(re.findall(r"[A-Za-z0-9_=-]{16,}", text))
     if len(found) != 1:
@@ -341,7 +335,7 @@ def _preflight_init(repo: str, root: Path) -> dict:
     rc, _ = run(["pass-cli", "info"])
     if rc != 0:
         raise Ceremony("pass-cli info failed: log in first (scripts/pass-login.sh)")
-    titles = {t for t, _ in _pass_items()}
+    titles = {t for t, _, _ in _pass_items()}
     for title in (ROOT_TITLE, CI_TITLE):
         if title in titles:
             raise Ceremony(f"the item {title!r} already exists: refusing (rotation is not part of this script)")

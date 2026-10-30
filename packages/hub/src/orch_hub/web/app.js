@@ -1430,7 +1430,14 @@ async function renderRoute() {
       else if (route.workspace) await workspacePage(route);
       else await ({ home, approvals, workspaces, services, admin, activity, account, handoffs, phones, register: registerRoute }[route.kind] ?? pageRender(route.kind) ?? home)();
     }
-  } catch { loginView("Something went wrong. Please sign in again."); }
+  } catch (e) {
+    // A page that throws is a bug in the page, never a sign-in problem: api() returns 401s as data and each page sends a
+    // real 401 to the sign-in form itself. So say the page did not load, offer Retry, and keep the error for the console.
+    console.error("orch hub: the page did not load", e);
+    show(h("h1", { text: "This page did not load" }),
+      h("p", { role: "alert", text: "Something went wrong on this page. Try again. If it keeps happening, tell whoever runs this hub." }),
+      h("button", { type: "button", class: "primary", "data-retry": "page", text: "Retry", onclick: () => renderRoute() }));
+  }
   finally { routing = false; }
 }
 window.addEventListener("hashchange", renderRoute);

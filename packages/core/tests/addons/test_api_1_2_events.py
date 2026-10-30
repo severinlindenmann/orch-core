@@ -118,19 +118,36 @@ def test_core_is_api_1_2_and_an_older_core_range_still_fits():
     assert incompatibility(load(events=[EVENT]), "2.0.0.dev0") is None
 
 
-def test_the_grant_event_carries_the_declaration_and_the_review_says_what_it_allows():
+def test_the_grant_event_carries_the_declaration_and_every_review_uses_the_same_words():
+    from orch.addons import event_words
     from orch.addons.install import grant_event
     from orch.host import signcontent
 
     m = load(events=[EVENT])
     ev = grant_event(m, _Pkg())
     assert ev["events"] == declarations(m)["events"]
-    words = signcontent._events_words(ev["events"])  # noqa: SLF001
+    (words,) = signcontent._events_words(ev["events"], ev["capabilities"])  # noqa: SLF001
     assert "can reach the internet (orch does not limit where)" in words and "Run finished" in words
+    assert "stored key" not in words
+    # the same helper makes the line of `orch addon grant` and the hub summary; "your stored key" only with a credential
+    (keyed,) = event_words.event_lines(ev["events"], ["network", "credential"])
+    assert keyed == words + "; it uses your stored key"
     with pytest.raises(signcontent.PlainUnavailable):
-        signcontent._events_words([{"kind": "x"}])  # noqa: SLF001
+        signcontent._events_words([{"kind": "x"}], [])  # noqa: SLF001
 
 
 class _Pkg:
     digest = "sha256:" + "0" * 64
     files: dict = {}
+
+
+def test_orch_addon_grant_reviews_each_event_in_the_shared_words():
+    from orch.addons import event_words
+    from orch.addons.install import grant_event, review_lines
+
+    m = load(events=[EVENT])
+    ev = grant_event(m, _Pkg())
+    lines = review_lines(m, _Pkg(), ev, None)
+    (line,) = [x for x in lines if x.startswith("event ")]
+    assert event_words.event_lines(ev["events"], ev["capabilities"])[0] in line
+    assert "can reach the internet (orch does not limit where)" in line and "reports" in line

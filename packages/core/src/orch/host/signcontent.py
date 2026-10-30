@@ -37,6 +37,7 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from orch import canon
+from orch.addons import event_words
 from orch.addons.manifest import EVENTS_KEY
 from orch.addons.settings_value import KEY as ADDONS_KEY
 
@@ -1604,7 +1605,7 @@ def _addon(typ: str, ev: Mapping[str, Any], out: dict[str, Any]) -> str:
             _row(out, k.replace("_", " "), ev[k])
     if ev.get(EVENTS_KEY):
         _row(out, "can wake", ev[EVENTS_KEY])
-        out.setdefault("notes", []).append(_events_words(ev[EVENTS_KEY]))
+        out.setdefault("notes", []).extend(_events_words(ev[EVENTS_KEY], ev.get("capabilities") or ()))
     if ev.get("runtime") is not None:
         runtime = ev["runtime"]
         _row(out, "dependencies", runtime)
@@ -1633,8 +1634,9 @@ def _deps_words(deps: Any) -> str:
     return "; ".join(f"{one(r['name'])} {one(r.get('version'))}{_DEP_NOTES[r['note']]}" for r in rows)
 
 
-def _events_words(events: Any) -> str:
-    """addon-api 1.2 (#718): a signed `events` declaration in words. Any other shape is the full review."""
+def _events_words(events: Any, capabilities: Any = ()) -> list[str]:
+    """addon-api 1.2 (#718): a signed `events` declaration in words (the shared phrasing). Any other shape is the full
+    review."""
     if (
         not isinstance(events, list)
         or not 1 <= len(events) <= 8
@@ -1645,13 +1647,10 @@ def _events_words(events: Any) -> str:
             and type(e["interval_s"]) is int
             for e in events
         )
+        or not isinstance(capabilities, (list, tuple))
     ):
         raise PlainUnavailable("the plain view does not know these events")
-    names = "; ".join(f"{one(e['title'])} ({one(e['kind'])}, every {e['interval_s'] // 60 or 1} min)" for e in events)
-    return (
-        "Runs in the background at those intervals while a follow-up waits for it; the add-on decides when the run "
-        f"is finished; it can reach the internet (orch does not limit where). Can wake: {names}."
-    )
+    return event_words.event_lines(events, capabilities, one)
 
 
 _RUNTIME_KINDS = {"python-requirements": "Python", "node-package-lock": "Node"}

@@ -150,6 +150,19 @@ describe('leaving (A3.5 / A3.6)', () => {
   })
 })
 
+describe('the hub admin asks for an update (HUB-WS-04)', () => {
+  it('shows a plain notice with the version and the human-only way, and none without a request', async () => {
+    hubPage('update', '/w/DEMO')
+    const banner = await screen.findByTestId('hub-update-banner', {}, T)
+    expect(within(banner).getByText('Your hub admin asks you to update orch to 0.2.0')).toBeTruthy()
+    expect(within(banner).getByText('orch update')).toBeTruthy()
+    cleanup()
+    hubPage('full', '/w/DEMO')
+    await screen.findByTestId('hub-chip', {}, T)
+    expect(screen.queryByTestId('hub-update-banner')).toBeNull()
+  })
+})
+
 describe('stopping sharing one ticket', () => {
   it('reviews what stops and offers one Stop sharing button: no terminal command, no typed word, no backup key', async () => {
     const view = hubPage('selective')

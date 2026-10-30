@@ -1,7 +1,8 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { useState } from 'react'
-import { hubQueries } from '@/api/hub'
+import { hubQueries, hubServed } from '@/api/hub'
+import { isRealHost } from '@/api/features'
 import { Name } from '@/components/sign/visible'
 import { useMe } from '@/app/useMe'
 import { kindText, spaceLabel } from '../spaces'
@@ -13,7 +14,7 @@ import { markSpacesSeen, readSeenSpaces } from '../spaces/seen'
 export function SpacesToday({ ws }: { ws: string | undefined }) {
   const me = useMe()
   const person = me.data?.person
-  const list = useQuery({ ...hubQueries.spaces(ws!), enabled: !!ws })
+  const list = useQuery({ ...hubQueries.spaces(ws!), enabled: isRealHost() && !!ws && hubServed(ws) })
   const [, bump] = useState(0)
   const seen = new Set(readSeenSpaces(person, ws))
   const fresh = (list.data?.spaces ?? []).filter((s) => !seen.has(s.id))

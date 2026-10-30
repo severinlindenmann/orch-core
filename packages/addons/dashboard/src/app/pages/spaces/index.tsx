@@ -3,7 +3,7 @@
 // and are shown as plain text only (never markup, never followed as instructions).
 import { useQuery } from '@tanstack/react-query'
 import { useEffect } from 'react'
-import { hubQueries, type HubSpace } from '@/api/hub'
+import { hubQueries, hubServed, type HubSpace } from '@/api/hub'
 import { LoadFailed } from '@/components/LoadFailed'
 import { Name } from '@/components/sign/visible'
 import { Button } from '@/components/ui/button'
@@ -66,7 +66,7 @@ export function SpacesPage() {
   const ws = workspace?.id
   const me = useMe()
   const person = me.data?.person
-  const list = useQuery({ ...hubQueries.spaces(ws ?? ''), enabled: !!ws })
+  const list = useQuery({ ...hubQueries.spaces(ws ?? ''), enabled: !!ws && hubServed(ws) })
   const openHub = useOpenHub(ws)
   const ids = (list.data?.spaces ?? []).map((s) => s.id).join(',')
   // Looking at the page is opening the spaces: Today stops saying they are new.

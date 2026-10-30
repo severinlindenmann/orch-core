@@ -147,6 +147,9 @@ export function registerHubRoutes(r: MockRouter) {
   r.add('GET', '/api/w/:ws/hub', () => ok(mockHubStatus()))
   r.add('GET', '/api/w/:ws/hub/share', () => ok(mockShare()))
   r.add('GET', '/api/w/:ws/hub/shared', () => ok({ items: scenario() === 'selective' || scenario() === 'full' ? MOCK_SHARED_WITH_YOU : [] }))
+  // Shared spaces: none in the mock (the page and its tests spy the api); the real host lists them from the hub.
+  r.add('GET', '/api/w/:ws/spaces', () => ok({ spaces: [], note: 'from the hub, not signed' }))
+  r.add('GET', '/api/w/:ws/spaces/:id', (_s, c) => ok({ id: c.params.id, items: [], refused: 0, note: 'from the hub, not signed' }))
   r.add('GET', '/api/w/:ws/hub/share/audience', () => ok(MOCK_AUDIENCE))
   r.add('POST', '/api/w/:ws/hub/share/preview', (_s, c) => ok(mockPreview(c.body as { add?: HubRule; remove?: HubRule } | null)))
   // Stopping sharing: a plain owner click (the server's full-session and owner checks are its own tests).

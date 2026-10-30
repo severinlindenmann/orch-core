@@ -163,11 +163,26 @@ def test_full_mode_default_rule_sends_no_summary(served, full):
 def test_a_member_and_an_agent_cannot_share_in_full_mode(served, full):
     _, key = labelled(served, "Public note", "public")
     res = agent(served, "share.rule_add", {"rule": {"kind": "ticket", "ticket": key}})
-    assert not res["ok"] and full.ops == []
+    assert err(res) in ("op.not_allowed", "human_only") and full.ops == []
+
+
+def test_a_person_who_is_not_an_owner_cannot_share_in_full_mode(served, full, monkeypatch):
+    from orch.host import shareops
+
+    _, key = labelled(served, "Public note", "public")
+    rule = {"kind": "ticket", "ticket": key}
+    prev = ok(req(served, "share.preview", {"add": rule}))["data"]
+
+    def no(_call):
+        raise shareops.HostError("role.denied", "share rules are for workspace owners")
+
+    monkeypatch.setattr(shareops, "_owner", no)  # the person's role is not owner
+    assert err(req(served, "share.rule_add", {"rule": rule, "expect": prev["plan"]})) == "role.denied"
+    assert full.ops == []
 
 
 def test_a_hub_log_mode_mismatch_is_refused(served, selective, monkeypatch):
-    from orch.host import peerops, shareops
+    from orch.host import peerops
 
     real = peerops._hub_state
 
@@ -178,19 +193,45 @@ def test_a_hub_log_mode_mismatch_is_refused(served, selective, monkeypatch):
 
     monkeypatch.setattr(peerops, "_hub_state", lying)
     assert err(req(served, "share.rules")) == "hub.state_mismatch"
-    assert shareops
 
 
-def test_a_selective_to_full_switch_sends_only_tickets_and_unbind_forgets_sent(served, selective):
+def test_unbind_through_the_host_forgets_what_was_sent(served, selective, human):
     from orch.host import shareops
 
     _, key = labelled(served, "Public note", "public")
     ok(rule_op(served, "share.rule_add", {"kind": "ticket", "ticket": key}))
     svc = served.h.host.services[served.wid]
     assert shareops._load(svc).sent  # noqa: SLF001
-    shareops.forget_sent(svc)
+    human.run("hub.leave", {})
+    ok(served.client().req("hub.unbind", {}, idem=True))
     st = shareops._load(svc)  # noqa: SLF001
     assert not st.sent and st.confirmed is None and st.rules
+
+
+def test_after_a_switch_to_full_the_automatic_pass_revokes_summaries_and_keeps_the_ticket(
+    served, selective, monkeypatch
+):
+    from orch.host import shareops
+
+    _, key = labelled(served, "Public note", "public")
+    ok(agent(served, "ask", {"ref": key, "text": "which bank?"}))
+    ok(rule_op(served, "share.rule_add", {"kind": "ticket", "ticket": key}))  # + the default needs-you summary
+    svc = served.h.host.services[served.wid]
+    sent = set(shareops._load(svc).sent)  # noqa: SLF001
+    assert any(lg.startswith("ticket:") for lg in sent) and any(not lg.startswith("ticket:") for lg in sent)
+    before = selective.count("share_revoke")
+    monkeypatch.setattr(shareops, "_is_full", lambda service: True)  # the log now says full
+    monkeypatch.setattr(shareops, "_bound_hub", lambda service: _ok_state(service))
+    shareops.auto_sync(svc)
+    left = set(shareops._load(svc).sent)  # noqa: SLF001
+    assert left and all(lg.startswith("ticket:") for lg in left)
+    assert selective.count("share_revoke") > before
+
+
+def _ok_state(service):
+    from orch.host import peerops
+
+    return peerops._hub_state(service, full=False)  # noqa: SLF001
 
 
 def test_an_agent_cannot_read_or_change_the_rules(served, selective):

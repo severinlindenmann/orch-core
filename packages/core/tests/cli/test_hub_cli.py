@@ -270,7 +270,7 @@ def share_host(monkeypatch):
                 {"user_id": "b" * 32, "name": "Ben"},
                 {"user_id": "c" * 32, "name": "Cleo"},
             ],
-            "teams": [{"name": "team-b", "count": 2}],
+            "teams": [{"group": "team-b", "members": 2}],
         },
         "share.rules": {
             "rules": [{"kind": "tag", "tag": "x", "count": 1, "describes": "d"}],
@@ -436,11 +436,16 @@ def test_an_ambiguous_or_unknown_person_reaches_no_rule_change(share_host):
 def test_the_hubs_people_are_cleaned_before_anything_is_printed(share_host):
     share_host.answers["share.audience"] = {
         "people": [{"user_id": "a" * 32, "name": "\x1b[31mBen\u202e\nEvil"}, {"user_id": "zz\x1b[2J", "name": "X"}],
-        "teams": [{"name": "t\x1b[0m", "count": "7"}, {"name": "ok", "count": True}, {"name": "fine", "count": 3}],
+        "teams": [
+            {"group": "t\x1b[0m", "members": 7},
+            {"group": "ok", "members": True},
+            {"group": "fine", "members": 3},
+            {"group": "x" * 60, "members": 1},
+        ],
     }
     code, out = run(["share", "people"], {})
     assert code == 0 and "\x1b" not in out and "\u202e" not in out and "Evil" in out and "zz" not in out
-    assert "team fine (3 people)" in out and "team ok" not in out and "7" not in out
+    assert "team fine (3 people)" in out and "team ok" not in out and "7" not in out and "xxxx" not in out
 
 
 def test_two_people_with_one_name_are_refused_with_both_ids_listed(share_host):
@@ -450,7 +455,22 @@ def test_two_people_with_one_name_are_refused_with_both_ids_listed(share_host):
 
 
 def test_one_name_shows_the_short_id_in_the_review_and_signs_only_the_id(share_host):
+    share_host.answers["share.preview"] = {
+        **share_host.answers.get(
+            "share.preview", {"count": 1, "new": 1, "revoked": 0, "more": 0, "plan": "p" * 43, "items": []}
+        ),
+        "review": {"readers": {"people": ["Cleo"], "teams": []}},
+    }
     code, _ = run(["share", "rule", "add", "--ticket", "K-1", "--with", "Cleo"], {}, as_json=True)
-    assert code == 0 and "Cleo (..." + "c" * 8 + ")" in share_host.asked[0]
+    assert code == 0 and "Readers (from the hub, not signed): Cleo" in share_host.asked[0]
     rule = {"kind": "ticket", "ticket": "K-1", "audience": {"users": ["c" * 32], "groups": []}}
     assert ("share.rule_add", {"rule": rule, "expect": "p" * 43}) in share_host.called
+
+
+def test_a_team_is_matched_on_its_raw_safe_name_and_an_unsafe_one_is_never_signed(share_host):
+    code, _ = run(["share", "rule", "add", "--ticket", "K-1", "--team", "team-b"], {}, as_json=True)
+    rule = {"kind": "ticket", "ticket": "K-1", "audience": {"users": [], "groups": ["team-b"]}}
+    assert code == 0 and ("share.rule_add", {"rule": rule, "expect": "p" * 43}) in share_host.called
+    share_host.answers["share.audience"] = {"people": [], "teams": [{"group": "x" * 60, "members": 1}]}
+    code, _ = run(["share", "rule", "add", "--ticket", "K-1", "--team", "x" * 40], {}, as_json=True)
+    assert code == 5 and len([1 for op, _ in share_host.called if op == "share.rule_add"]) == 1

@@ -433,19 +433,21 @@ def _rule_of(a: argparse.Namespace) -> dict[str, str]:
     return picked[0]
 
 
+_GROUP = re.compile(r"[a-z0-9][a-z0-9-]{0,39}")  # the contract's group name; anything else is not signed
+
+
 def _audience(d: Any) -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
     """The hub's people and teams, every field checked and cleaned (the hub's text is data, never raw output);
     malformed entries are dropped."""
-    import re
-
     people, teams = [], []
     for p in d.get("people") if isinstance(d, dict) and isinstance(d.get("people"), list) else []:
         uid = p.get("user_id") if isinstance(p, dict) else None
         if isinstance(uid, str) and re.fullmatch(r"[0-9a-f]{32}", uid):
             people.append({"user_id": uid, "name": clean_line(str(p.get("name", "")))[:80]})
     for t in d.get("teams") if isinstance(d, dict) and isinstance(d.get("teams"), list) else []:
-        if isinstance(t, dict) and isinstance(t.get("name"), str) and type(t.get("count")) is int:
-            teams.append({"name": clean_line(t["name"])[:80], "count": t["count"]})
+        g = t.get("group") if isinstance(t, dict) else None
+        if isinstance(g, str) and _GROUP.fullmatch(g) and type(t.get("members")) is int:
+            teams.append({"group": g, "name": g, "count": t["members"]})  # the group name is a safe string: no cleaning
     return people, teams
 
 
@@ -455,11 +457,9 @@ def _with_audience(a: argparse.Namespace, rule: dict[str, Any], target: Any, env
         raise PubError("invalid.input", "--with, --team and --description go with --ticket, --tag or --type", 2)
     users: list[str] = []
     teams: list[str] = []
-    who: list[str] = []
-    a.readers_line = who
     if a.with_people or a.teams:
         people, team_rows = _audience(_call(target, "share.audience", {}, env))
-        known = {t["name"] for t in team_rows}
+        known = {t["group"] for t in team_rows}
         for want in a.with_people:
             hit = [p for p in people if p["user_id"] == want] or [p for p in people if p["name"] == want]
             if len(hit) != 1:
@@ -469,12 +469,10 @@ def _with_audience(a: argparse.Namespace, rule: dict[str, Any], target: Any, env
                                   "nobody by that name: orch hub share people: ")
                                + names, 5)  # fmt: skip
             users.append(hit[0]["user_id"])
-            who.append(f"{hit[0]['name']} (...{hit[0]['user_id'][-8:]})")
         for t in a.teams:
             if t not in known:
                 raise PubError("invalid.input", f"no team {clean_line(t[:60])!r} on the hub: orch hub share people", 5)
             teams.append(t)
-            who.append(f"team {t}")
     out = dict(rule)
     if users or teams:
         out["audience"] = {"users": sorted(set(users)), "groups": sorted(set(teams))}
@@ -570,7 +568,9 @@ def _share(a: argparse.Namespace, env: Mapping[str, str], out: TextIO, as_json: 
         f"  ... and {prev['more']} more\n" if prev["more"] else ""
     )
     verb = "will also share" if key == "add" else "will stop sharing"
-    readers = f"Readers: {', '.join(getattr(a, 'readers_line', []))}\n" if getattr(a, "readers_line", None) else ""
+    rv = (prev.get("review") or {}).get("readers") or {}
+    names = [*rv.get("people", ()), *(f"team {t}" for t in rv.get("teams", ()))]
+    readers = f"Readers (from the hub, not signed): {', '.join(clean_line(str(n)) for n in names)}\n" if names else ""
 
     if not review_prompt(
         f"The hub {verb}: {describe(rule)}.\n{readers}After this change the hub sees {prev['count']} item(s) "

@@ -1431,10 +1431,10 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
         return 0
 
     def _h_my_shared(self, c: Ctx, p: dict, q: dict, b: dict | None):
-        """Shared TICKETS of selective workspaces that the CALLER may read, nothing more. ``list_shared`` is the only
+        """Shared TICKETS of bound workspaces (selective or full) that the CALLER may read, nothing more. ``list_shared`` is the only
         gate: it answers with the caller's own identity (the owner sees all, anyone else only what a verified, owner-signed
         audience names them or their team in; hub-admins and role holders get nothing by role). Nothing here widens it;
-        an unknown, full-mode or unbound workspace answers an empty list, like a workspace the caller has no part in."""
+        an unknown or unbound workspace answers an empty list, like a workspace the caller has no part in."""
         if self.d.shares is None:
             raise ApiError("unavailable")
         only = q.get("workspace_id")

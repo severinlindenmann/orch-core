@@ -1,7 +1,7 @@
 """The hub's logic for shared items of a bound workspace (selective or full) (protocol.md §10.2, spec §8a).
 
 * ``put`` / ``revoke`` serve the link ops. They run under the registry lock, so the mode check and the write cannot be
-  separated from an unbind; a full-mode (or unbound) workspace gets ``wrong_mode`` / ``not_bound``.
+  separated from an unbind; an unbound workspace gets ``not_bound``; in full mode only ticket items are accepted (``wrong_mode`` otherwise).
 * ``share_put`` follows protocol.md §10.2b: the hub opens ``sealed`` (:mod:`orch_hub.shares.open`), checks the WSK
   signature and content, and stores the SEALED bytes. A higher ``item_version`` replaces, the same version with the same
   bytes is an idempotent ``{}``, an equal or lower one (or a revoked one) is ``stale_version``. ``share_revoke`` is
@@ -180,8 +180,8 @@ class ShareService:
             self.store.purge(ws, self._now())
 
     def sync(self, ws: str) -> None:
-        """Items belong to a live SELECTIVE binding only: any other state deletes them. The caller holds the registry
-        lock (binding_put / join) or startup. Never raises: a failing purge (audit sink down) keeps the items, marks the
+        """Items belong to a live bound workspace (selective or full) only: any other state deletes them. The caller holds
+        the registry lock (binding_put / join) or startup. Never raises: a failing purge (audit sink down) keeps the items, marks the
         workspace for a retry (here, at the next sync or reconcile) and lets the other unbind steps go on; until the
         retry succeeds the workspace serves and accepts nothing."""
         try:
@@ -196,7 +196,7 @@ class ShareService:
             _log.exception("share purge failed; items kept, retry at the next sync")
 
     def reconcile(self) -> None:
-        """At startup: drop the items of every workspace that is no longer a bound selective one (also after a crash).
+        """At startup: drop the items of every workspace that is no longer a bound one (also after a crash).
         A failure of one workspace is logged and retried later; it never stops the startup."""
         with self._reg.lock:
             for ws in sorted(set(self.store.workspaces()) | self.store.pending() | self._pending):

@@ -14,7 +14,7 @@ import os
 import re
 import secrets
 import socket
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -25,6 +25,7 @@ __all__ = [
     "CADDY_DIR",
     "ROLES",
     "Plan",
+    "Addr",
     "DnsResult",
     "Names",
     "caddy_snippet",
@@ -32,6 +33,8 @@ __all__ = [
     "derive_names",
     "detect_vpn_ip",
     "local_addresses",
+    "local_interfaces",
+    "vpn_network",
     "root_block",
     "user_dir",
     "write_snippets",
@@ -87,23 +90,43 @@ def derive_names(
 # ------------------------------------------------------------------------------------------------------ addresses
 
 
-def local_addresses(run: Callable[[list[str]], str] | None = None) -> set[str]:
-    """Every IPv4 and IPv6 address assigned to this computer (``ip -o addr`` or ``ifconfig``)."""
+@dataclass(frozen=True)
+class Addr:
+    """One address of this computer: the address, the prefix length of its interface and the interface name."""
+
+    ip: str
+    prefix: int | None = None
+    iface: str = ""
+
+
+#: interface names that are a VPN (WireGuard-based, Tailscale-like, macOS utun)
+_VPN_IFACES = ("wt", "wg", "tailscale", "nb-", "utun")
+
+
+def local_interfaces(run: Callable[[list[str]], str] | None = None) -> list[Addr]:
+    """Every IPv4 and IPv6 address assigned to this computer with its prefix and interface (``ip -o addr``)."""
     run = run or P._run
     text = run(["ip", "-o", "addr"]) or run(["ifconfig"]) or ""
-    found: set[str] = set()
-    for m in re.finditer(r"\binet6? ([0-9a-fA-F:.]+)", text):
-        try:
-            found.add(str(ipaddress.ip_address(m.group(1).split("%")[0])))
-        except ValueError:
+    found: list[Addr] = []
+    for line in text.splitlines():
+        m = re.search(r"^\d+:\s+(\S+?):?\s.*?\binet6? ([0-9a-fA-F:.]+)(?:/(\d+))?", line)
+        if m is None:
+            for m2 in re.finditer(r"\binet6? ([0-9a-fA-F:.]+)(?:/(\d+))?", line):  # ifconfig: no prefix here
+                found.append(Addr(_norm(m2.group(1)), int(m2.group(2)) if m2.group(2) else None))
             continue
-    return found
+        found.append(Addr(_norm(m.group(2)), int(m.group(3)) if m.group(3) else None, m.group(1)))
+    return [a for a in found if a.ip]
 
 
-def detect_vpn_ip(addresses: set[str] | list[str]) -> str | None:
-    """The one address of this computer in 100.64.0.0/10 (the private network, VPN); ``None`` when there is none."""
-    hits = sorted(a for a in addresses if _in_cgnat(a))
-    return hits[0] if hits else None
+def _norm(ip: str) -> str:
+    try:
+        return str(ipaddress.ip_address(ip.split("%")[0]))
+    except ValueError:
+        return ""
+
+
+def local_addresses(run: Callable[[list[str]], str] | None = None) -> set[str]:
+    return {a.ip for a in local_interfaces(run)}
 
 
 def _in_cgnat(ip: str) -> bool:
@@ -114,16 +137,58 @@ def _in_cgnat(ip: str) -> bool:
     return a.version == 4 and a in _CGNAT
 
 
-def check_vpn_ip(given: str, addresses: set[str]) -> str:
+def detect_vpn_ip(addresses: Iterable[Addr]) -> Addr | None:
+    """The address of this computer in 100.64.0.0/10 (the private network, VPN). Two or more: the one on a VPN
+    interface if that is exactly one, else a refusal (never a guess); ``None`` when there is none."""
+    hits = [a for a in addresses if _in_cgnat(a.ip)]
+    if len(hits) <= 1:
+        return hits[0] if hits else None
+    on_vpn = [a for a in hits if a.iface.startswith(_VPN_IFACES)]
+    if len(on_vpn) == 1:
+        return on_vpn[0]
+    raise InstallError(
+        "this computer has more than one private-network (100.64.x.x - 100.127.x.x) address: "
+        + ", ".join(a.ip for a in hits)
+        + ". Say which one is your VPN with --vpn-ip."
+    )
+
+
+def vpn_network(chosen: Addr, given_prefix: int | None = None) -> ipaddress.IPv4Network:
+    """The real network of the VPN (from the interface prefix, or from ``--vpn-ip IP/PREFIX``), never the whole /10."""
+    prefix = given_prefix if given_prefix is not None else chosen.prefix
+    if prefix is None or prefix > 24:
+        raise InstallError(
+            f"cannot tell the network of your VPN from {chosen.ip}"
+            + (f" (the interface says /{prefix})" if prefix is not None else "")
+            + ". Give it with --vpn-ip, for example --vpn-ip 100.92.1.2/16."
+        )
+    net = ipaddress.ip_interface(f"{chosen.ip}/{prefix}").network
+    if not net.subnet_of(_CGNAT) and not net.is_private:
+        raise InstallError(f"--vpn-ip {chosen.ip}/{prefix}: that network is not a private one")
+    return net  # type: ignore[return-value]
+
+
+def check_vpn_ip(given: str, addresses: Iterable[Addr], *, allow_non_cgnat: bool = False) -> tuple[Addr, int | None]:
+    """``--vpn-ip IP[/PREFIX]``: an address this computer has, in 100.64.0.0/10 unless ``allow_non_cgnat``."""
+    ip, _, pre = given.partition("/")
     try:
-        a = ipaddress.ip_address(given)
+        a = ipaddress.ip_address(ip)
+        prefix = int(pre) if pre else None
     except ValueError:
-        raise InstallError(f"--vpn-ip {given!r}: that is not an IP address") from None
-    if not (a in _CGNAT or (a.is_private and not a.is_loopback and not a.is_link_local)):
-        raise InstallError(f"--vpn-ip {given}: use an address of your private network (VPN), such as 100.x.y.z")
-    if str(a) not in addresses:
+        raise InstallError(
+            f"--vpn-ip {given!r}: that is not an IP address (example: 100.92.1.2 or 100.92.1.2/16)"
+        ) from None
+    if prefix is not None and not 8 <= prefix <= 24:
+        raise InstallError(f"--vpn-ip {given}: the prefix is a number from 8 to 24 (your VPN's network size)")
+    if not _in_cgnat(ip) and not (allow_non_cgnat and a.is_private and not a.is_loopback and not a.is_link_local):
+        raise InstallError(
+            f"--vpn-ip {given}: use an address of your private network (VPN) in 100.64.x.x - 100.127.x.x"
+            + ("" if allow_non_cgnat else " (another private range needs --allow-non-cgnat)")
+        )
+    have = next((x for x in addresses if x.ip == str(a)), None)
+    if have is None:
         raise InstallError(f"--vpn-ip {given}: this computer does not have that address (is the VPN connected?)")
-    return str(a)
+    return have, prefix
 
 
 # ------------------------------------------------------------------------------------------------------------ DNS
@@ -133,7 +198,7 @@ def check_vpn_ip(given: str, addresses: set[str]) -> str:
 class DnsResult:
     part: str
     name: str
-    status: str  # ok | missing | elsewhere
+    status: str  # ok | missing | elsewhere | private
     found: tuple[str, ...] = ()
 
     @property
@@ -141,6 +206,10 @@ class DnsResult:
         return self.status == "ok"
 
     def words(self) -> str:
+        tail = (
+            "Fix the record, wait a few minutes, then run this command again. "
+            f"The secure address (TLS) for {self.part} is skipped until then."
+        )
         if self.status == "ok":
             return f"{self.name}: points at this computer"
         if self.status == "missing":
@@ -149,10 +218,13 @@ class DnsResult:
                 f"wait a few minutes, then run this command again. The secure address (TLS) for {self.part} is "
                 "skipped until then."
             )
+        if self.status == "private":
+            return (
+                f"{self.name}: its DNS record points at {', '.join(self.found)}, a private address. The certificate "
+                f"authority can only reach a public address. {tail}"
+            )
         return (
-            f"{self.name}: its DNS record points at {', '.join(self.found)}, not at this computer. Fix the record, "
-            f"wait a few minutes, then run this command again. The secure address (TLS) for {self.part} is skipped "
-            "until then."
+            f"{self.name}: its DNS record points at {', '.join(self.found)}, which is not (only) this computer. {tail}"
         )
 
 
@@ -168,17 +240,27 @@ def check_dns(
     resolve: Callable[[str], list[str]],
     local: set[str],
 ) -> list[DnsResult]:
-    """``wanted`` maps part -> name; a name is fine when one of its addresses is an address of this computer."""
+    """``wanted`` maps part -> name. Fine only when EVERY answer is a public address of this computer (one answer that
+    points elsewhere, or a private one, would send the certificate check or the people to the wrong place)."""
     out = []
     for part, name in wanted.items():
         found = tuple(resolve(name))
         if not found:
             out.append(DnsResult(part, name, "missing"))
-        elif any(a in local for a in found):
-            out.append(DnsResult(part, name, "ok", found))
-        else:
+        elif not all(a in local for a in found):
             out.append(DnsResult(part, name, "elsewhere", found))
+        elif not all(_public(a) for a in found):
+            out.append(DnsResult(part, name, "private", found))
+        else:
+            out.append(DnsResult(part, name, "ok", found))
     return out
+
+
+def _public(ip: str) -> bool:
+    try:
+        return ipaddress.ip_address(ip).is_global
+    except ValueError:
+        return False
 
 
 # ----------------------------------------------------------------------------------------------------------- Caddy
@@ -189,7 +271,7 @@ _HEADER = (
 )
 
 
-def caddy_snippet(part: str, name: str, port: int, *, vpn_only: bool = False) -> str:
+def caddy_snippet(part: str, name: str, port: int, *, vpn_only: bool = False, vpn_net: str = VPN_NET) -> str:
     """The site block of one part: it proxies to 127.0.0.1:<port> (the part listens on loopback only)."""
     if part not in P.PARTS:
         raise InstallError(f"unknown part {part!r}")
@@ -198,7 +280,7 @@ def caddy_snippet(part: str, name: str, port: int, *, vpn_only: bool = False) ->
         # The ACME HTTP-01 challenge is answered by Caddy itself before any route runs, so the certificate still
         # renews from the public internet while every real request from outside the private network gets 403.
         lines += [
-            f"\t@notvpn not remote_ip {VPN_NET}",
+            f"\t@notvpn not remote_ip {vpn_net}",
             '\trespond @notvpn "This address is only open from the private network (VPN)." 403',
             "",
         ]
@@ -289,6 +371,8 @@ class Plan:
     names: Names
     vpn_only: bool = False
     vpn_ip: str | None = None
+    vpn_net: str | None = None
+    loopback: bool = False
     dns: list[DnsResult] = field(default_factory=list)
     snippets: dict[str, str] = field(default_factory=dict)
 

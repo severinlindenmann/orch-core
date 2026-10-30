@@ -9,7 +9,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from . import ops
+from . import ops, server
 from . import parts as P
 from .cli import Ctx, check_block, choose_address, install_part, load, save
 from .helper import sync_helper
@@ -17,6 +17,7 @@ from .parts import InstallError
 from .server import (
     CADDY_DIR,
     ROLES,
+    Addr,
     Names,
     Plan,
     caddy_snippet,
@@ -24,9 +25,10 @@ from .server import (
     check_vpn_ip,
     default_resolver,
     detect_vpn_ip,
-    local_addresses,
+    local_interfaces,
     root_block,
     user_dir,
+    vpn_network,
     write_snippets,
 )
 
@@ -92,8 +94,9 @@ def server_setup(
     ref: str | None = None,
     dev: bool = False,
     resolve: Callable[[str], list[str]] = default_resolver,
-    local: Callable[[], set[str]] | None = None,
+    local: Callable[[], list[Addr]] | None = None,
     user: str | None = None,
+    allow_non_cgnat: bool = False,
 ) -> Plan:
     """Install the parts of ``role`` for this OS user. ``resolve``/``local`` are the DNS seams of the tests."""
     if role not in ROLES:
@@ -105,21 +108,38 @@ def server_setup(
     if hub_vpn_only and not names.hub:
         raise InstallError("--hub-vpn-only needs a name for the hub (--domain or --domain-hub)")
     check_block(ctx, parts)  # --port-base: refuse a busy port before anything is written
-    mine = (local or (lambda: local_addresses(lambda argv: ctx.run(argv, dict(ctx.env))[1])))()
+    ifaces = (local or (lambda: local_interfaces(lambda argv: ctx.run(argv, dict(ctx.env))[1])))()
+    mine = {a.ip for a in ifaces}
     plan = Plan(role=role, parts=tuple(parts), names=names, vpn_only=hub_vpn_only)
     user = user or getpass.getuser()
 
-    if role == "hub":  # the link binds the private-network address; a name is optional
-        plan.vpn_ip = check_vpn_ip(vpn_ip, mine) if vpn_ip else detect_vpn_ip(mine)
-        if plan.vpn_ip is None:  # the hub link never listens on every interface: no VPN address, no hub
+    if role == "hub":
+        # Never wider than asked: an explicit loopback is honoured, no address means the VPN address, any other address
+        # is refused (a public bind would need its own explicit flag, which does not exist yet). Never --bind-all.
+        loopback = address in (P.ADDRESS_LOOPBACK, "localhost")
+        if loopback and wanted:
+            raise InstallError(
+                "--address 127.0.0.1 cannot be combined with domain names: the link needs the VPN address"
+            )
+        need_vpn = not loopback or hub_vpn_only
+        chosen, given_prefix = (
+            check_vpn_ip(vpn_ip, ifaces, allow_non_cgnat=allow_non_cgnat) if vpn_ip else (detect_vpn_ip(ifaces), None)
+        )
+        if chosen is None and need_vpn:  # the hub link never listens on every interface: no VPN address, no hub
             raise InstallError(
                 "no private-network (VPN) address found on this computer. "
                 "Connect the VPN first, or give it with --vpn-ip."
             )
-        if address and address not in (plan.vpn_ip, P.ADDRESS_LOOPBACK):
+        if address and not loopback and chosen and address != chosen.ip:
             raise InstallError(
-                f"--address {address}: the hub of a server listens only on the private-network address {plan.vpn_ip}"
+                f"--address {address}: the hub of a server listens on the private-network address {chosen.ip} or on "
+                "127.0.0.1 only (a public address is not offered yet)"
             )
+        if not loopback and chosen:
+            plan.vpn_ip = chosen.ip
+        if chosen and hub_vpn_only:  # the gate lets in the VPN's real network, not the whole 100.64.0.0/10
+            plan.vpn_net = str(vpn_network(chosen, given_prefix))
+        plan.loopback = loopback
 
     if not wanted:
         _fallback(ctx, plan, address=address, source=source, ref=ref, dev=dev)
@@ -152,7 +172,13 @@ def server_setup(
         rec = install_part(ctx, p, address=loop, source=source, ref=ref, dev=dev, sync=False, **extra)
         ports[p] = rec["port"]
         if p in tls:
-            plan.snippets[p] = caddy_snippet(p, wanted[p], rec["port"], vpn_only=(p == "hub" and hub_vpn_only))
+            plan.snippets[p] = caddy_snippet(
+                p,
+                wanted[p],
+                rec["port"],
+                vpn_only=(p == "hub" and hub_vpn_only),
+                vpn_net=plan.vpn_net or server.VPN_NET,
+            )
     sync_helper(ctx)
 
     st = load(ctx.layout)
@@ -168,6 +194,15 @@ def server_setup(
     _caddy(ctx, plan, caddy_dir, user)
     _ops(ctx, role, parts, names, ports)
     _closing(ctx, plan, wanted, tls, user, caddy_dir)
+    _say_binds(
+        ctx,
+        plan,
+        {
+            p: {"bind": loop, "port": ports[p], "link_port": load(ctx.layout)["parts"]["hub"].get("link_port")}
+            for p in ports
+            if p == "hub"
+        },
+    )
     return plan
 
 
@@ -182,15 +217,16 @@ def _fallback(ctx: Ctx, plan: Plan, *, address: str | None, source: str | None, 
     """No names: the IP:port behaviour of ``orch install`` (a private-network hub takes its VPN address)."""
     st = load(ctx.layout)
     hub = plan.role == "hub"
-    addr = plan.vpn_ip if hub else (address or choose_address(ctx, None, st))
+    addr = (P.ADDRESS_LOOPBACK if plan.loopback else plan.vpn_ip) if hub else (address or choose_address(ctx, None, st))
     ctx.say("No domain name given: the parts listen on an IP address and a port (no secure https address).")
     recs = {}
     for p in plan.parts:
-        extra = dict(link_address=plan.vpn_ip) if p == "hub" else {}  # never --bind-all
+        extra = dict(link_address=plan.vpn_ip) if p == "hub" and not plan.loopback else {}  # never --bind-all
         recs[p] = install_part(ctx, p, address=addr, source=source, ref=ref, dev=dev, sync=False, **extra)
     sync_helper(ctx)
     for p, rec in recs.items():
         ctx.say(f"  {p} address: http://{rec['bind']}:{rec['port']}")
+    _say_binds(ctx, plan, recs)
 
 
 def _caddy(ctx: Ctx, plan: Plan, caddy_dir: str, user: str) -> None:
@@ -234,3 +270,12 @@ def _closing(ctx: Ctx, plan: Plan, wanted: dict[str, str], tls: set[str], user: 
                 f"Each Mac must resolve {plan.names.hub} to {plan.vpn_ip} (a private-network DNS record, or an "
                 "/etc/hosts line); see docs/pilot-server.md."
             )
+
+
+def _say_binds(ctx: Ctx, plan: Plan, recs: dict[str, dict[str, Any]]) -> None:
+    """Plainly: where the hub listens (console and link). Printed at the end of every hub setup."""
+    rec = recs.get("hub")
+    if rec is None:
+        return
+    link = plan.vpn_ip or P.ADDRESS_LOOPBACK
+    ctx.say(f"The hub listens on: console {rec['bind']}:{rec['port']}, link {link}:{rec['link_port']} (nothing else).")

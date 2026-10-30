@@ -32,7 +32,8 @@ __all__ = ["Ctx", "main", "add_workspace", "choose_role", "full_server", "defaul
 
 USAGE = (
     "usage: orch install server --role hub|edge [--domain BASE] [--domain-hub N] [--domain-relay N]\n"
-    "                    [--domain-publish N] [--hub-vpn-only] [--vpn-ip IP] [--caddy-dir DIR]\n"
+    "                    [--domain-publish N] [--hub-vpn-only] [--vpn-ip IP[/PREFIX]]\n"
+    "                    [--allow-non-cgnat] [--caddy-dir DIR]\n"
     "                    [--port-base N] [--yes]\n"
     "usage: orch install phone [--user ID]\n"
     "usage: orch install {hub|relay|publish} [--address A] [--port N] [--domain D] [--source PATH] [--ref REF]\n"
@@ -918,6 +919,7 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextI
     p.add_argument("--domain-publish")
     p.add_argument("--hub-vpn-only", action="store_true")
     p.add_argument("--vpn-ip")
+    p.add_argument("--allow-non-cgnat", action="store_true")
     p.add_argument("--port-base", type=int)
     p.add_argument("--caddy-dir", default=CADDY_DIR)
     try:
@@ -947,6 +949,7 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextI
                 names=derive_names(a.domain, a.domain_hub, a.domain_relay, a.domain_publish),
                 hub_vpn_only=a.hub_vpn_only,
                 vpn_ip=a.vpn_ip,
+                allow_non_cgnat=a.allow_non_cgnat,
                 address=a.address,
                 caddy_dir=a.caddy_dir,
                 source=a.source,

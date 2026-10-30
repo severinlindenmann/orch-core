@@ -103,7 +103,7 @@ def test_read_logs_uses_the_fixed_argv_and_redacts():
     assert read_logs(part, ok) == f"a password={R}\nb"
     assert (
         seen[0][0][-9:]
-        == ["-u", "orch-relay.service", "--since", "-1h", "-n", "500", "-o", "short-iso", "--no-pager"][-9:]
+        == ["-u", "orch-relay.service", "--since", "-24h", "-n", "300", "-o", "short-iso", "--no-pager"][-9:]
     )
     assert seen[0][1] == B.LOG_TIMEOUT_S
     with pytest.raises(HelperError) as e:

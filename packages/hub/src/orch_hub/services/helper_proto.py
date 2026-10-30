@@ -45,14 +45,27 @@ class HelperError(Exception):
         self.detail = detail
 
 
+#: The effect, in plain words, per part and action (P05): what the admin cares about, no machine name. The part and the
+#: action stay bound in the signed context (``part``, ``action``, ``host_id``); only this displayed sentence is short.
+_EFFECT = {
+    ("Relay", "start"): "Phone alerts work again.",
+    ("Relay", "stop"): "Phone alerts pause until you start it again.",
+    ("Publish", "start"): "Shared pages are visible again to people outside the company.",
+    ("Publish", "stop"): "Shared pages stop being visible to people outside the company until you start it again.",
+    ("Hub", "start"): "The hub starts.",
+    ("Hub", "stop"): "Stop the Hub.",
+}
+
+
 def text_for(label: str, action: str, host_id: str, target_version: str | None) -> str:
-    """The sentence the admin reviews. Plain words, one line, built only from checked values."""
-    eff = {
-        "start": f"Start {label} on {host_id}.",
-        "stop": f"Stop {label} on {host_id}.",
-        "restart": f"Restart {label} on {host_id}. It is unavailable for a few seconds.",
-        "update": f"Update {label} on {host_id} to {target_version}.",
-    }[action]
+    """The sentence the admin reviews. Plain words, one line, built only from checked values. ``host_id`` is not shown
+    (it stays bound in the signed context)."""
+    if action == "restart":
+        eff = "Unavailable for a few seconds."
+    elif action == "update":
+        eff = f"Update {label} to {target_version}."
+    else:
+        eff = _EFFECT.get((label, action), f"{action.capitalize()} {label}.")
     if label == "Hub" and action in ("stop", "restart"):
         eff += " This console goes offline too; workspaces keep working on their own."
     return eff

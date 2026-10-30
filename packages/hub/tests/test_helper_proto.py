@@ -44,9 +44,20 @@ def test_digest_binds_every_field():
 
 
 def test_text_sentences_and_hub_warning():
-    assert P.text_for("Relay", "stop", "vps1", None) == "Stop Relay on vps1."
+    assert P.text_for("Relay", "stop", "vps1", None) == "Phone alerts pause until you start it again."
+    assert P.text_for("Relay", "start", "vps1", None) == "Phone alerts work again."
+    assert P.text_for("Relay", "restart", "vps1", None) == "Unavailable for a few seconds."
+    assert "outside the company until you start it again" in P.text_for("Publish", "stop", "vps1", None)
     assert "console goes offline" in P.text_for("Hub", "restart", "vps1", None)
+    assert "console goes offline" in P.text_for("Hub", "stop", "vps1", None)
     assert "1.2.3" in P.text_for("Publish", "update", "vps1", "1.2.3")
+    assert P.text_for("Other", "start", "vps1", None) == "Start Other."  # an unknown part still names itself
+
+
+def test_text_never_shows_the_host_name():
+    for label in ("Relay", "Publish", "Hub", "Other"):
+        for action in ("start", "stop", "restart", "update"):
+            assert "vps1" not in P.text_for(label, action, "vps1", "1.2.3"), (label, action)
 
 
 @pytest.fixture

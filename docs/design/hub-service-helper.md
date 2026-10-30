@@ -34,7 +34,7 @@ Routes (all hub-admin, `webapi/services_api.py`, registered in `features.py`):
 Only these argv are ever run (`orch-hub helper --print-sudoers --user orch-hub` prints the exact lines, no wildcards,
 `env_reset`, never `status` or `edit`):
 `/usr/bin/systemctl {start,stop,restart} <unit>` and
-`/usr/bin/journalctl -u <unit> --since -1h -n 500 -o short-iso --no-pager`.
+`/usr/bin/journalctl -u <unit> --since -24h -n 300 -o short-iso --no-pager`.
 The owner installs the drop-in (`visudo -cf`); the helper never edits sudoers.
 
 ### Made by `orch install` (systemd user units)

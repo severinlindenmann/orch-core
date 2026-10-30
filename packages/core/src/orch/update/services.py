@@ -21,10 +21,12 @@ from orch.lifecycle.units import ORDER_START, ORDER_STOP, Env, LifecycleError, S
 from orch.ops.errors import OrchError
 
 from .layout import InstallLayout, Record, requirements_text
+from .uvenv import install_argv, uv_env, venv_argv
 
 __all__ = ["GithubSource", "LifecycleServices", "run_orch", "uv_install"]
 
 REPO = "severinlindenmann/orch-core"
+PYTHON_VERSION = "3.14"
 QUARANTINE_KEYS = ("host", "dashboard", "hub", "relay", "publish")  # the runner and the records timer stay off
 
 
@@ -56,25 +58,32 @@ def uv_install(layout: InstallLayout, ver: str, files: Mapping[str, Path], rec: 
         shutil.rmtree(tool)  # an unfinished earlier try (no .complete)
     tool.mkdir(parents=True, mode=0o700)
     venv = tool / "venv"
-    env = childenv.sanitize(os.environ)
-    env["UV_PYTHON_PREFERENCE"] = "only-managed"
+    env = uv_env()
+
+    def uv_run(argv: list[str], timeout: int = 1800) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(argv, capture_output=True, text=True, env=env, timeout=timeout)
+
+    find = [uv, "python", "find", "--no-config", PYTHON_VERSION]
+    py = uv_run(find).stdout.strip()
+    if not py:
+        uv_run([uv, "python", "install", "--no-config", PYTHON_VERSION])
+        py = uv_run(find).stdout.strip()
+    if not py:
+        raise OrchError("update.unverified", f"Python {PYTHON_VERSION} is not available")
     reqs = requirements_text(
         files["constraints"].read_text(),
         [(role, p, hashlib.sha256(p.read_bytes()).hexdigest()) for role, p in files.items()],
     )
     req_file = tool / "requirements.txt"
     req_file.write_text(reqs)
-    for argv in (
-        [uv, "venv", "--no-config", "--quiet", "--python", "3.14", str(venv)],
-        [uv, "pip", "install", "--no-config", "--quiet", "--require-hashes", "--no-deps",
-         "--python", str(venv / "bin" / "python"), "-r", str(req_file)],
-    ):  # fmt: skip
-        r = subprocess.run(argv, capture_output=True, text=True, env=env, timeout=1800)
+    for argv in (venv_argv(uv, py, venv), install_argv(uv, venv / "bin" / "python", req_file)):
+        r = uv_run(argv)
         if r.returncode != 0:
-            raise OrchError(
-                "update.unverified", f"uv could not install the new version: {(r.stdout + r.stderr)[-300:]}"
-            )
-    r = subprocess.run([str(venv / "bin" / "orch"), "--version"], capture_output=True, env=env, timeout=120)
+            tail = (r.stdout + r.stderr)[-300:]
+            raise OrchError("update.unverified", f"uv could not install the new version: {tail}")
+    r = subprocess.run(
+        [str(venv / "bin" / "orch"), "--version"], capture_output=True, env=childenv.sanitize(os.environ), timeout=120
+    )
     if r.returncode != 0:
         raise OrchError("update.unverified", "the new orch does not start")
     (tool / ".complete").write_text("")

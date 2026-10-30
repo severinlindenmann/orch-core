@@ -239,7 +239,10 @@ def create_app(
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(request, exc):
-        return response("invalid.input", 400)  # never echo input or credentials
+        # never echo input or credentials; a review that could not be prepared says so in one fixed plain sentence
+        if request.url.path.endswith("/click/prepare"):
+            return response("invalid.input", 400, "That could not be used. Check it and try again.")
+        return response("invalid.input", 400)
 
     @app.get("/auth/probe")
     def probe(n: Annotated[str, Query(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")]):

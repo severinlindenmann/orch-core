@@ -13,6 +13,7 @@ from typing import Any
 
 from ..access import AccessError
 from ..access.orgsecrets import org_secrets, workspace_wxk
+from ..contract import phase4 as P4
 from ..contract.canon import CanonError, b64u, unb64u
 from ..contract.org_secrets import EXPIRY_MAX_MS, NAME, SECRETS_MAX, VALUE_MAX, VALUE_MIN
 
@@ -57,6 +58,7 @@ class SecretHandlers:
     def _h_a_secrets(self, c: Any, p: dict, q: dict, b: dict | None):
         reg, now = self.d.registry, self._now_ms()
         store = org_secrets(self.d.access)
+        people = {u["user_id"]: P4.render_text(u["name"]) for u in self.d.access.users()}
         workspaces = []
         for ws in self._bound():
             card = (reg.card(ws) or {}).get("name")
@@ -65,6 +67,7 @@ class SecretHandlers:
                 {
                     "workspace_id": ws,
                     "name": card if type(card) is str and card else None,
+                    "owner_name": people.get(reg.owner_alias(ws)),  # display name only: never an id or a key
                     "wxk_version": k[1] if k else None,
                 }
             )

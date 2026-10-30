@@ -72,3 +72,13 @@ test("an agent is shown as An agent, with the session behind the i; the CSV keep
   assert.ok(view.all().some((n) => n.tag === "summary" && n.textContent === "i"));
   assert.match(toCsv([row]), /agent:s-1/);
 });
+
+test("a workspace's agent event shows as An agent with its words, the workspace and the type filter", () => {
+  const row = { id: "e:9", ts_ms: 1000, type: "agent.event", text: "changed a ticket on ACME-12", actor: { kind: "agent", session: "sess-1" }, workspace_id: "w", workspace_name: "Work" };
+  const view = activityView({ rows: [row, rows[0]] }, {}, 4000);
+  assert.match(view.textContent, /changed a ticket on ACME-12/);
+  assert.match(view.textContent, /An agent/);
+  assert.match(view.textContent, /Work/);
+  assert.deepEqual(filterRows([row, rows[0]], { type: "agent.event" }), [row]);
+  assert.doesNotMatch(view.textContent.replace(/agent:sess-1/g, ""), /sess-1/);
+});

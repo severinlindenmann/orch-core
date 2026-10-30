@@ -54,8 +54,42 @@ WORDS = {
     "channel.revoked": "removed a phone or browser",
     "pairing.issued": "made a code to pair a phone",
     "pairing.used": "paired a phone",
+    "agent.event": "worked in a workspace",
 }
 assert set(WORDS) == set(ACTIVITY_TYPES), "every activity type needs plain words"
+
+#: what an agent did, in words (the workspace sent only the event type word; an unknown word is said generically)
+AGENT_WORDS = {
+    "ticket.created": "created a ticket",
+    "ticket.updated": "changed a ticket",
+    "ticket.closed": "closed a ticket",
+    "ticket.reopened": "reopened a ticket",
+    "ticket.submitted": "sent a ticket for review",
+    "status.changed": "changed a ticket's status",
+    "question.asked": "asked a question",
+    "question.answered": "answered a question",
+    "ticket.moved": "moved a ticket",
+    "gate.approved": "approved a gate",
+    "gate.changes_requested": "asked for changes at a gate",
+    "gate.invalidated": "reset a gate",
+    "verdict.given": "gave a verdict",
+    "artifact.added": "added a file to a ticket",
+    "artifact.replaced": "replaced a file on a ticket",
+    "branch.pushed": "pushed a branch",
+    "handoff.written": "wrote a hand-off",
+    "grant.requested": "asked for access",
+    "grant.issued": "was given access",
+    "grant.revoked": "lost access",
+    "followup.set": "set a follow-up",
+    "followup.fired": "ran a follow-up",
+    "followup.cancelled": "cancelled a follow-up",
+}
+
+
+def _agent_text(detail):
+    text = "worked in a workspace" if not detail.get("what") else AGENT_WORDS.get(detail["what"], "did something")
+    return text + (" on " + render_text(detail["ticket"]) if detail.get("ticket") else "")
+
 
 #: plain names for the signed audit chain's record types (the "Kind of event" list)
 AUDIT_WORDS = {
@@ -201,7 +235,7 @@ def feed(deps, query):
                     ev["type"],
                     actor(ev["actor_kind"], ev["actor_id"], ev["actor_session"]),
                     ev["workspace_id"],
-                    WORDS[ev["type"]],
+                    _agent_text(ev["detail"]) if ev["type"] == "agent.event" else WORDS[ev["type"]],
                     ev["subject_user"],
                     ev["detail"],
                 )

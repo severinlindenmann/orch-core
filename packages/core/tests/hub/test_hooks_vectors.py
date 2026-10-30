@@ -38,7 +38,7 @@ def request_ok(op, b):
             and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,63}", b["followup"]) is not None
             and b["source"] in SRC
             and type(b["secret"]) is str
-            and re.fullmatch(r"[A-Za-z0-9_-]{43}", b["secret"]) is not None
+            and re.fullmatch(r"hs_[A-Za-z0-9_-]{43}", b["secret"]) is not None
             and type(b["expires_ms"]) is int
             and b["expires_ms"] >= 1
             and ("replaces" not in b or (_hash(b["replaces"]) and b["replaces"] != b["token_hash"]))

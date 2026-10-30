@@ -67,7 +67,7 @@
     "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
     "followup": "FU-12",
     "source": "github",
-    "secret": "oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+    "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
     "expires_ms": 1800086400000
    },
    "expect": true
@@ -80,7 +80,7 @@
     "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
     "followup": "FU-12",
     "source": "github",
-    "secret": "oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+    "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
     "expires_ms": 1800086400000,
     "replaces": "1ad6518dc0f8c72b1ab81e7bd303341e72c23643f29f9c04e4a728659a2baf8c"
    },
@@ -94,7 +94,7 @@
     "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
     "followup": "FU-12",
     "source": "github",
-    "secret": "oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+    "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
     "expires_ms": 1800086400000,
     "replaces": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e"
    },
@@ -108,7 +108,7 @@
     "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
     "followup": "FU-12",
     "source": "databricks",
-    "secret": "oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+    "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
     "expires_ms": 1800086400000
    },
    "expect": true
@@ -121,7 +121,7 @@
     "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
     "followup": "FU-12",
     "source": "gitlab",
-    "secret": "oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+    "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
     "expires_ms": 1800086400000
    },
    "expect": false
@@ -134,7 +134,7 @@
     "token_hash": "83228F29C7DEF4994C13B57C9C90E1D0BCCD1137993FC524097DDA3A846CE22E",
     "followup": "FU-12",
     "source": "github",
-    "secret": "oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+    "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
     "expires_ms": 1800086400000
    },
    "expect": false
@@ -147,7 +147,7 @@
     "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22",
     "followup": "FU-12",
     "source": "github",
-    "secret": "oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+    "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
     "expires_ms": 1800086400000
    },
    "expect": false
@@ -160,7 +160,7 @@
     "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
     "followup": "FU-12",
     "source": "github",
-    "secret": "oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ",
+    "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ",
     "expires_ms": 1800086400000
    },
    "expect": false
@@ -173,7 +173,7 @@
     "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
     "followup": "FU/12",
     "source": "github",
-    "secret": "oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+    "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
     "expires_ms": 1800086400000
    },
    "expect": false
@@ -186,7 +186,7 @@
     "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
     "followup": "",
     "source": "github",
-    "secret": "oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+    "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
     "expires_ms": 1800086400000
    },
    "expect": false
@@ -199,7 +199,7 @@
     "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
     "followup": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
     "source": "github",
-    "secret": "oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+    "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
     "expires_ms": 1800086400000
    },
    "expect": false
@@ -212,7 +212,7 @@
     "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
     "followup": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
     "source": "github",
-    "secret": "oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+    "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
     "expires_ms": 1800086400000
    },
    "expect": true
@@ -225,7 +225,7 @@
     "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
     "followup": "FU-12",
     "source": "github",
-    "secret": "oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+    "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
     "expires_ms": 0
    },
    "expect": false
@@ -238,7 +238,7 @@
     "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
     "followup": "FU-12",
     "source": "github",
-    "secret": "oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+    "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
     "expires_ms": true
    },
    "expect": false
@@ -251,7 +251,7 @@
     "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
     "followup": "FU-12",
     "source": "github",
-    "secret": "oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+    "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
     "expires_ms": 1800086400000,
     "body": "x"
    },
@@ -897,55 +897,55 @@
   {
    "name": "github_ok",
    "check": "github",
-   "secret": "oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+   "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
    "body_hex": "7b22616374696f6e223a22636f6d706c65746564222c22636865636b5f7375697465223a7b22636f6e636c7573696f6e223a2273756363657373227d7d",
-   "header": "sha256=422d95b6f693afe81c1025b05a9fbfc115d56b3b632d5c38e0de767eae5cc664",
+   "header": "sha256=6b03c31ea6bb5b1da109898ef4ad0b98398e877f74ee1f1272b3e24be79ad58c",
    "expect": true
   },
   {
    "name": "github_wrong_secret",
    "check": "github",
-   "secret": "Yxs1vrfivlwuOneGaGDDd7WVqfmXMAwC527HXWah8so",
+   "secret": "hs_Yxs1vrfivlwuOneGaGDDd7WVqfmXMAwC527HXWah8so",
    "body_hex": "7b22616374696f6e223a22636f6d706c65746564222c22636865636b5f7375697465223a7b22636f6e636c7573696f6e223a2273756363657373227d7d",
-   "header": "sha256=422d95b6f693afe81c1025b05a9fbfc115d56b3b632d5c38e0de767eae5cc664",
+   "header": "sha256=6b03c31ea6bb5b1da109898ef4ad0b98398e877f74ee1f1272b3e24be79ad58c",
    "expect": false
   },
   {
    "name": "github_body_changed",
    "check": "github",
-   "secret": "oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+   "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
    "body_hex": "7b22616374696f6e223a22636f6d706c65746564222c22636865636b5f7375697465223a7b22636f6e636c7573696f6e223a2273756363657373227d7d20",
-   "header": "sha256=422d95b6f693afe81c1025b05a9fbfc115d56b3b632d5c38e0de767eae5cc664",
+   "header": "sha256=6b03c31ea6bb5b1da109898ef4ad0b98398e877f74ee1f1272b3e24be79ad58c",
    "expect": false
   },
   {
    "name": "github_no_prefix",
    "check": "github",
-   "secret": "oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+   "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
    "body_hex": "7b22616374696f6e223a22636f6d706c65746564222c22636865636b5f7375697465223a7b22636f6e636c7573696f6e223a2273756363657373227d7d",
-   "header": "422d95b6f693afe81c1025b05a9fbfc115d56b3b632d5c38e0de767eae5cc664",
+   "header": "6b03c31ea6bb5b1da109898ef4ad0b98398e877f74ee1f1272b3e24be79ad58c",
    "expect": false
   },
   {
    "name": "github_upper",
    "check": "github",
-   "secret": "oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+   "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
    "body_hex": "7b22616374696f6e223a22636f6d706c65746564222c22636865636b5f7375697465223a7b22636f6e636c7573696f6e223a2273756363657373227d7d",
-   "header": "SHA256=422D95B6F693AFE81C1025B05A9FBFC115D56B3B632D5C38E0DE767EAE5CC664",
+   "header": "SHA256=6B03C31EA6BB5B1DA109898EF4AD0B98398E877F74EE1F1272B3E24BE79AD58C",
    "expect": false
   },
   {
    "name": "github_sha1",
    "check": "github",
-   "secret": "oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+   "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
    "body_hex": "7b22616374696f6e223a22636f6d706c65746564222c22636865636b5f7375697465223a7b22636f6e636c7573696f6e223a2273756363657373227d7d",
-   "header": "sha1=422d95b6f693afe81c1025b05a9fbfc115d56b3b",
+   "header": "sha1=6b03c31ea6bb5b1da109898ef4ad0b98398e877f",
    "expect": false
   },
   {
    "name": "github_missing",
    "check": "github",
-   "secret": "oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+   "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
    "body_hex": "7b22616374696f6e223a22636f6d706c65746564222c22636865636b5f7375697465223a7b22636f6e636c7573696f6e223a2273756363657373227d7d",
    "header": null,
    "expect": false
@@ -953,78 +953,78 @@
   {
    "name": "github_empty_body_ok",
    "check": "github",
-   "secret": "oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+   "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
    "body_hex": "",
-   "header": "sha256=154ff65c21915a53ffc3d8c7e046b55dbc6f17f5d7ded7fb5d1e93583aa91b0f",
+   "header": "sha256=c46e1938f0bb13f023d85532617a7afd1bad22462dc7063d1678129c31023cc3",
    "expect": true
   },
   {
    "name": "generic_ok",
    "check": "generic",
-   "secret": "oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+   "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
    "body_hex": "7b22616374696f6e223a22636f6d706c65746564222c22636865636b5f7375697465223a7b22636f6e636c7573696f6e223a2273756363657373227d7d",
-   "header": "t=1799999990,v1=c68c81c1db1cee712d9b1519f600b8cafdf49de6af0b6240076a4e071de1e1fa",
+   "header": "t=1799999990,v1=1083fbfd707500f7730856a643e2ae3f27fbf4a3b1825f2081de85545dfe5eef",
    "now_s": 1800000000,
    "expect": true
   },
   {
    "name": "generic_wrong_secret",
    "check": "generic",
-   "secret": "Yxs1vrfivlwuOneGaGDDd7WVqfmXMAwC527HXWah8so",
+   "secret": "hs_Yxs1vrfivlwuOneGaGDDd7WVqfmXMAwC527HXWah8so",
    "body_hex": "7b22616374696f6e223a22636f6d706c65746564222c22636865636b5f7375697465223a7b22636f6e636c7573696f6e223a2273756363657373227d7d",
-   "header": "t=1799999990,v1=c68c81c1db1cee712d9b1519f600b8cafdf49de6af0b6240076a4e071de1e1fa",
+   "header": "t=1799999990,v1=1083fbfd707500f7730856a643e2ae3f27fbf4a3b1825f2081de85545dfe5eef",
    "now_s": 1800000000,
    "expect": false
   },
   {
    "name": "generic_stale",
    "check": "generic",
-   "secret": "oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+   "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
    "body_hex": "7b22616374696f6e223a22636f6d706c65746564222c22636865636b5f7375697465223a7b22636f6e636c7573696f6e223a2273756363657373227d7d",
-   "header": "t=1799999990,v1=c68c81c1db1cee712d9b1519f600b8cafdf49de6af0b6240076a4e071de1e1fa",
+   "header": "t=1799999990,v1=1083fbfd707500f7730856a643e2ae3f27fbf4a3b1825f2081de85545dfe5eef",
    "now_s": 1800000301,
    "expect": false
   },
   {
    "name": "generic_edge",
    "check": "generic",
-   "secret": "oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+   "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
    "body_hex": "7b22616374696f6e223a22636f6d706c65746564222c22636865636b5f7375697465223a7b22636f6e636c7573696f6e223a2273756363657373227d7d",
-   "header": "t=1799999990,v1=c68c81c1db1cee712d9b1519f600b8cafdf49de6af0b6240076a4e071de1e1fa",
+   "header": "t=1799999990,v1=1083fbfd707500f7730856a643e2ae3f27fbf4a3b1825f2081de85545dfe5eef",
    "now_s": 1800000290,
    "expect": true
   },
   {
    "name": "generic_future",
    "check": "generic",
-   "secret": "oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+   "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
    "body_hex": "7b22616374696f6e223a22636f6d706c65746564222c22636865636b5f7375697465223a7b22636f6e636c7573696f6e223a2273756363657373227d7d",
-   "header": "t=1799999990,v1=c68c81c1db1cee712d9b1519f600b8cafdf49de6af0b6240076a4e071de1e1fa",
+   "header": "t=1799999990,v1=1083fbfd707500f7730856a643e2ae3f27fbf4a3b1825f2081de85545dfe5eef",
    "now_s": 1799999689,
    "expect": false
   },
   {
    "name": "generic_t_replaced",
    "check": "generic",
-   "secret": "oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+   "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
    "body_hex": "7b22616374696f6e223a22636f6d706c65746564222c22636865636b5f7375697465223a7b22636f6e636c7573696f6e223a2273756363657373227d7d",
-   "header": "t=1799999991,v1=c68c81c1db1cee712d9b1519f600b8cafdf49de6af0b6240076a4e071de1e1fa",
+   "header": "t=1799999991,v1=1083fbfd707500f7730856a643e2ae3f27fbf4a3b1825f2081de85545dfe5eef",
    "now_s": 1800000000,
    "expect": false
   },
   {
    "name": "generic_body_changed",
    "check": "generic",
-   "secret": "oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+   "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
    "body_hex": "7b22616374696f6e223a22636f6d706c65746564222c22636865636b5f7375697465223a7b22636f6e636c7573696f6e223a2273756363657373227d7d20",
-   "header": "t=1799999990,v1=c68c81c1db1cee712d9b1519f600b8cafdf49de6af0b6240076a4e071de1e1fa",
+   "header": "t=1799999990,v1=1083fbfd707500f7730856a643e2ae3f27fbf4a3b1825f2081de85545dfe5eef",
    "now_s": 1800000000,
    "expect": false
   },
   {
    "name": "generic_garbage",
    "check": "generic",
-   "secret": "oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+   "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
    "body_hex": "7b22616374696f6e223a22636f6d706c65746564222c22636865636b5f7375697465223a7b22636f6e636c7573696f6e223a2273756363657373227d7d",
    "header": "t=1",
    "now_s": 1800000000,
@@ -1033,63 +1033,63 @@
   {
    "name": "basic_ok",
    "check": "basic",
-   "secret": "oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
-   "header": "Basic b3JjaDpvVWswNnBldlpSWmI0dURCNGpkc25WUDZ1TERzTmlYUzZNQmNCd01LTlE4",
+   "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+   "header": "Basic b3JjaDpoc19vVWswNnBldlpSWmI0dURCNGpkc25WUDZ1TERzTmlYUzZNQmNCd01LTlE4",
    "expect": true
   },
   {
    "name": "basic_wrong_user",
    "check": "basic",
-   "secret": "oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
-   "header": "Basic YWRtaW46b1VrMDZwZXZaUlpiNHVEQjRqZHNuVlA2dUxEc05pWFM2TUJjQndNS05ROA==",
+   "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+   "header": "Basic YWRtaW46aHNfb1VrMDZwZXZaUlpiNHVEQjRqZHNuVlA2dUxEc05pWFM2TUJjQndNS05ROA==",
    "expect": false
   },
   {
    "name": "basic_wrong_pass",
    "check": "basic",
-   "secret": "oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
-   "header": "Basic b3JjaDpZeHMxdnJmaXZsd3VPbmVHYUdERGQ3V1ZxZm1YTUF3QzUyN0hYV2FoOHNv",
+   "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+   "header": "Basic b3JjaDpoc19ZeHMxdnJmaXZsd3VPbmVHYUdERGQ3V1ZxZm1YTUF3QzUyN0hYV2FoOHNv",
    "expect": false
   },
   {
    "name": "basic_both_wrong",
    "check": "basic",
-   "secret": "oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+   "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
    "header": "Basic eDp5",
    "expect": false
   },
   {
    "name": "basic_no_colon",
    "check": "basic",
-   "secret": "oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+   "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
    "header": "Basic b3JjaA==",
    "expect": false
   },
   {
    "name": "basic_not_base64",
    "check": "basic",
-   "secret": "oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+   "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
    "header": "Basic !!!",
    "expect": false
   },
   {
    "name": "basic_bearer",
    "check": "basic",
-   "secret": "oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
-   "header": "Bearer b3JjaDpvVWswNnBldlpSWmI0dURCNGpkc25WUDZ1TERzTmlYUzZNQmNCd01LTlE4",
+   "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+   "header": "Bearer b3JjaDpoc19vVWswNnBldlpSWmI0dURCNGpkc25WUDZ1TERzTmlYUzZNQmNCd01LTlE4",
    "expect": false
   },
   {
    "name": "basic_lower_scheme",
    "check": "basic",
-   "secret": "oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
-   "header": "basic b3JjaDpvVWswNnBldlpSWmI0dURCNGpkc25WUDZ1TERzTmlYUzZNQmNCd01LTlE4",
+   "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+   "header": "basic b3JjaDpoc19vVWswNnBldlpSWmI0dURCNGpkc25WUDZ1TERzTmlYUzZNQmNCd01LTlE4",
    "expect": false
   },
   {
    "name": "basic_missing",
    "check": "basic",
-   "secret": "oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+   "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
    "header": null,
    "expect": false
   }

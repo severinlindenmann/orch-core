@@ -17,7 +17,7 @@ from orch_hub.hooks.store import HookStore
 
 WS = "a" * 32
 TOKEN = "hh_" + "T" * 43
-SECRET = "S" * 43
+SECRET = "hs_" + "S" * 43
 NOW = 1_800_000_000_000
 BODY = b'{"action":"completed"}'
 

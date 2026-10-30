@@ -2688,7 +2688,7 @@ without a hub keeps the direct receiver and the follow-up's deadline. **Off unle
 (`hook_put` is then `unavailable`, and the hub listens for no `/h/` request).
 
 **The token and the secret.** The workspace makes both: `token` = `hh_` + base64url(32 random bytes), no padding (46
-characters); `secret` = base64url(32 random bytes) (43 characters). The sender is given `<url_base><token>` and the
+characters); `secret` = `hs_` + base64url(32 random bytes) (46 characters; the prefixes make a token and a secret recognisable to log masks and secret scanners). The sender is given `<url_base><token>` and the
 secret. The hub keeps `token_hash` = lowercase hex SHA-256 of the token text (ASCII) and the secret; the token itself is
 never sent to the hub or stored by it. The secret's TEXT (not the decoded bytes) is the HMAC key and the Basic password.
 

@@ -28,8 +28,8 @@ def seed(label: str) -> bytes:
 
 
 TOKEN = "hh_" + b64u(seed("token"))
-SECRET = b64u(seed("secret"))
-OTHER = b64u(seed("other-secret"))
+SECRET = "hs_" + b64u(seed("secret"))
+OTHER = "hs_" + b64u(seed("other-secret"))
 TH = hashlib.sha256(TOKEN.encode()).hexdigest()
 TH2 = hashlib.sha256(("hh_" + b64u(seed("token2"))).encode()).hexdigest()
 NOW = 1_800_000_000

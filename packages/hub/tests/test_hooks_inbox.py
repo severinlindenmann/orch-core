@@ -9,7 +9,7 @@ from orch_hub.hooks.store import HookStore
 NOW = 1_800_000_000_000
 WS = "a" * 32
 TOKEN = "hh_" + "T" * 43
-SECRET = "S" * 43
+SECRET = "hs_" + "S" * 43
 BODY = b'{"x":1}'
 
 
@@ -62,7 +62,7 @@ def test_github_ring_is_stored_once():
 def test_bad_signature_unknown_and_missing_are_one_answer():
     clk, st, ib = setup()
     answers = {
-        ring(ib, gh(secret="X" * 43)),
+        ring(ib, gh(secret="hs_" + "X" * 43)),
         ring(ib, {}),
         ring(ib, gh(), token="hh_" + "U" * 43),
         ring(ib, gh(), token="nonsense"),
@@ -90,7 +90,7 @@ def test_databricks_basic_needs_both_fields():
         return {"authorization": "Basic " + base64.b64encode(f"{user}:{pw}".encode()).decode()}
 
     assert ring(ib, basic("admin", SECRET)) == 404
-    assert ring(ib, basic("orch", "x" * 43)) == 404
+    assert ring(ib, basic("orch", "hs_" + "x" * 43)) == 404
     assert ring(ib, {"authorization": "Bearer " + SECRET}) == 404
     assert ring(ib, basic("orch", SECRET)) == 204
     assert len(st.pull(WS, 0, NOW)["rings"]) == 1
@@ -99,7 +99,7 @@ def test_databricks_basic_needs_both_fields():
 def test_per_hook_bucket_only_after_the_signature_and_is_silent():
     _clk, _st, ib = setup(limits=IB.Limits(ip_per_min=600, ip_burst=600, hook_per_min=2, hook_burst=2))
     # an outsider (bad signature) never learns the bucket: still 404, however many times
-    assert {ring(ib, gh(secret="X" * 43), src="9.9.9.9") for _ in range(5)} == {404}
+    assert {ring(ib, gh(secret="hs_" + "X" * 43), src="9.9.9.9") for _ in range(5)} == {404}
     codes = [ring(ib, gh(), src=f"10.0.0.{i}") for i in range(5)]
     assert codes == [204] * 5  # over the hook limit: still 204, silently
 

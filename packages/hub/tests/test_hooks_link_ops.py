@@ -7,7 +7,7 @@ from orch_hub.hooks.inbox import HookInbox
 from orch_hub.hooks.store import HookStore
 from orch_hub.link import LinkError
 
-SECRET = "S" * 43
+SECRET = "hs_" + "S" * 43
 
 
 def th(i):

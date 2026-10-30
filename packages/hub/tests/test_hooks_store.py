@@ -6,7 +6,7 @@ from orch_hub.hooks.store import HookStore
 
 NOW = 1_800_000_000_000
 H = "ab" * 32
-SECRET = "S" * 43
+SECRET = "hs_" + "S" * 43
 WS_A, WS_B = "a" * 32, "b" * 32
 
 

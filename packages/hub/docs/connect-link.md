@@ -43,3 +43,6 @@ Workspace side: parse the link, GET the card, run `verify_card`, require `card.o
 `POST /api/v1/admin/connect` (hub-admin session, body optional `{"endpoint": "host:port"}`, default: the hub's own
 link address) answers `{link, code, hub_id, endpoint, expires_ms}`. The base origin is the console origin the admin
 used. Console: Admin, Workspaces tab, "Connect a workspace".
+A workspace on a new server: Workspaces, "New workspace on a server" is a guide only (install, `orch setup --no-browser`, the
+`ssh -o ExitOnForwardFailure=yes -L 127.0.0.1:47821:127.0.0.1:47821 user@server` tunnel, then this connect link). The hub never
+connects to the server and never sees its keys or the setup link.

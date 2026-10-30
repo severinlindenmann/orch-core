@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TextIO
 
+from orch import childenv
 from orch.wsproto import wire
 from orch.wsproto.localdial import dial_host
 
@@ -38,7 +39,8 @@ AGENT_ENV = ("ORCH_GRANT", "ORCH_SESSION")
 
 
 def _run(argv: Sequence[str], env: Mapping[str, str] | None = None) -> tuple[int, str]:
-    r = subprocess.run(list(argv), env=dict(env) if env else None, capture_output=True, text=True)
+    r = subprocess.run(list(argv), env=childenv.sanitize(env if env else os.environ, absolute_pythonpath=True),
+                       capture_output=True, text=True)  # fmt: skip
     return r.returncode, (r.stdout + r.stderr)
 
 
@@ -113,11 +115,13 @@ def _dashboard_entry() -> list[str] | None:
 
 def _mint_login(argv: list[str], env: Mapping[str, str]) -> str | None:
     """Run ``orch-dashboard open --no-browser --emit-url-fd N`` and return the single-use login URL it writes."""
+    from orch.childenv import sanitize
+
     r, w = os.pipe()
     try:
         proc = subprocess.run(
             [*argv, "open", "--no-browser", "--emit-url-fd", str(w)],
-            env=dict(env), pass_fds=(w,), capture_output=True, timeout=30,
+            env=sanitize(env, absolute_pythonpath=True), pass_fds=(w,), capture_output=True, timeout=30,
         )  # fmt: skip
         os.close(w)
         w = -1
@@ -186,7 +190,11 @@ def default_ctx(env: Mapping[str, str], out: TextIO, err: TextIO) -> Ctx:
 
 def _publish_setup(url: str) -> str | None:
     """Sign the workspace's publish settings (server = share = the part's address): the person's terminal signs."""
-    rc, out = _run([sys.executable, "-m", "orch", "publish", "setup", "--server", url, "--share", url])
+    from orch.cli import dashboard
+
+    # -P: the current directory is not on sys.path; PYTHONPATH reduced to absolute entries (the launcher's sanitizer)
+    env = dashboard.launch_env(os.environ)
+    rc, out = _run([sys.executable, "-P", "-m", "orch", "publish", "setup", "--server", url, "--share", url], env)
     return None if rc == 0 else (out.strip().splitlines() or ["failed"])[-1]
 
 
@@ -640,7 +648,7 @@ def _qr(link: str) -> str | None:
     exe = shutil.which("qrencode")
     if not exe:
         return None
-    r = subprocess.run([exe, "-t", "ANSIUTF8", link], capture_output=True, text=True)
+    r = subprocess.run([exe, "-t", "ANSIUTF8", link], capture_output=True, text=True, env=childenv.minimal(os.environ))
     return r.stdout if r.returncode == 0 else None
 
 

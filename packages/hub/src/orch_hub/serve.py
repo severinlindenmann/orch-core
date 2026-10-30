@@ -43,6 +43,8 @@ from .invites import INVITES_FILE, Invites
 from .keys import HubKeys
 from .link import LinkServer, Registry
 from .link.wkseal import WkSeals
+from .oidc.service import OidcService
+from .oidc.store import OidcStore
 from .publish import HttpPublishSync, HubPublish, PublishConfig
 from .reconcile import reconcile_full_only, reconcile_relay_purge
 from .relay import PushNotifier, RelayClient, RelayError
@@ -239,6 +241,7 @@ def serve(
     router = Router(registry, queue, authz, on_routed=connections.bump)
     audit = open_log(state, keys, dev_mode=cfg.dev)
     activity = ActivityLog(state / "activity.db")
+    oidc_store = OidcStore(state)  # company login (HUB-PE-04): settings, secret, cookie key, links
     user_invites = Invites(state / INVITES_FILE)  # join / reset / recovery links of people (the token is never stored)
     access.observer = audit.access_change  # D4: every grant and membership change is audited
     space_store = SpaceStore(str(state / SPACES_FILE))
@@ -346,6 +349,7 @@ def serve(
                 activity=activity,
                 changes=changes,
                 user_invites=user_invites,
+                oidc=OidcService(oidc_store),
                 engine=engine,
                 shares=shares,
                 view=views.reader,
@@ -479,6 +483,7 @@ def serve(
             activity.close,
             connections.close,
             user_invites.close,
+            oidc_store.close,
             audit.store.close,
             registry.close,
             wk_seals.close,

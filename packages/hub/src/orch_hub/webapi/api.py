@@ -2028,9 +2028,9 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
         normal path, so a workspace owner is asked when the group reaches theirs; a permanent one is marked as checked."""
         b = _need(b, group=str, user_id=str)
         acc = self.d.access
-        if not acc.is_member(b["group"], b["user_id"]):
-            raise ApiError("not_member")
         cur = acc.member_end(b["group"], b["user_id"])
+        if cur == "absent":  # an ended row that was not swept yet is still listed, so it may be kept (it is re-added)
+            raise ApiError("not_member")
         if cur is None:
             acc.confirm_member(b["group"], b["user_id"], actor=c.user_id)
             return 200, {"ok": True}

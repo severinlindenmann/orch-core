@@ -449,3 +449,29 @@ def test_ga07_the_snapshot_floor_refuses_an_older_version_after_the_pin_is_gone(
     with pytest.raises(HubRefused) as e:
         r.refresh()
     assert e.value.code == "stale_snapshot"
+
+
+def test_ga07_floors_are_kept_per_hub_across_another_hub_and_persist():
+    from orch.hubclient import service as SV
+
+    r = Rig()
+    r.hub.set_snapshot(WS, {ADMIN: "admin"})
+    r.refresh()
+    top = r.state.snapshot["o"]["version"]
+    other = "ab" * 16
+    r.state.snapshot_floors[other] = 7  # a floor from another hub joined in between
+    carried = SV._floors_of(r.state)  # what a new state of ANY hub inherits
+    assert carried == {other: 7, r.state.hub_id: top}
+    r.restart()
+    assert r.state.snapshot_floors == {other: 7, r.state.hub_id: top} and r.state.snapshot_floor == top
+
+
+def test_ga07_status_view_lists_ended_users_without_changing_roles():
+    r = Rig()
+    end = NOW + 5000
+    r.hub.set_snapshot(WS, {ADMIN: "admin", READER: "edit"}, ends_ms={READER: end})
+    r.refresh()
+    assert "ended" not in snap.pinned_view(r.state, end - 1)
+    v = snap.pinned_view(r.state, end)
+    assert v["ended"] == [READER] and v["roles"] == {ADMIN: "admin", READER: "edit"}
+    assert snap.pinned_view(r.state) == {"version": v["version"], "roles": v["roles"]}

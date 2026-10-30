@@ -1500,3 +1500,24 @@ def test_ga07_a_past_end_date_is_refused_up_front(w):
     with pytest.raises(AccessError) as e:
         w.changes.member_add(w.admin, "devs", w.dana, ends_ms=w.clock() - 1)
     assert e.value.code == "end_in_past"
+
+
+def test_ga07_keep_on_an_ended_row_goes_through_owner_approval_on_a_full_workspace(w):
+    acc(w).grant(WS2, "devs", "edit")  # WS2 is owned by olive
+    acc(w).add_member("devs", w.newbie, ends_ms=w.clock() + 1000)
+    w.clock.advance(2000)  # ended, not swept: no role, but the review still lists it
+    assert w.newbie not in acc(w).members("devs") and acc(w).member_end("devs", w.newbie) != "absent"
+    tok = w.login(w.admin)
+    s, o, _ = w.call("POST", "/admin/review/keep", {"group": "devs", "user_id": w.newbie}, token=tok)
+    assert s == 202 and [x["workspace_id"] for x in o["waiting_for"]] == [WS2]  # the role is gained again: ask olive
+    assert w.newbie not in acc(w).members("devs")
+    otok, osig, och = owner_session(w, w.olive)
+    s, got, _ = approve(w, otok, o["change_id"], osig, och)
+    assert s == 200 and got["state"] == "applied"
+    end = acc(w).member_end("devs", w.newbie)
+    assert w.newbie in acc(w).members("devs") and 29 * DAY < end - w.clock() <= 30 * DAY
+
+
+def test_ga07_keep_on_a_row_that_is_gone_is_not_member(w):
+    s, o, _ = w.call("POST", "/admin/review/keep", {"group": "devs", "user_id": w.newbie}, token=w.login(w.admin))
+    assert (s, o) == (404, {"error": "not_member"})

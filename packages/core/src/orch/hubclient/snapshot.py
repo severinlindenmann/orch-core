@@ -127,7 +127,7 @@ def _accept(state: HubState, signed: Any, *, workspace_id: str, now_ms: int, dev
     if o["version"] < state.snapshot_floor:  # GA-07: never go below the highest version seen, also after a rebind
         raise HubRefused("stale_snapshot")
     state.snapshot = signed
-    state.snapshot_floor = max(state.snapshot_floor, o["version"])
+    state.raise_floor(o["version"])
     return True
 
 
@@ -172,13 +172,18 @@ def refresh(
     return changed
 
 
-def pinned_view(state: HubState | None) -> dict[str, Any] | None:
+def pinned_view(state: HubState | None, now_ms: int | None = None) -> dict[str, Any] | None:
     """``{"version", "roles"}`` of the pinned copy as stored (the status shape), or None. Not a role decision: use
-    :func:`hub_role`, which verifies."""
+    :func:`hub_role`, which verifies. With ``now_ms``, the users whose access has ended by then are also listed under
+    ``ended`` (display only; the key is absent when nobody has ended)."""
     if state is None or state.snapshot is None:
         return None
     o = state.snapshot["o"]
-    return {"version": o["version"], "roles": dict(sorted(o["roles"].items()))}
+    out: dict[str, Any] = {"version": o["version"], "roles": dict(sorted(o["roles"].items()))}
+    ended = sorted(u for u, t in o.get("ends_ms", {}).items() if now_ms is not None and now_ms >= t and u in o["roles"])
+    if ended:
+        out["ended"] = ended
+    return out
 
 
 def hub_role(state: HubState | None, user_id: str, *, now_ms: int, dev_mode: bool) -> str | None:

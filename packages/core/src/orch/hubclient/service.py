@@ -62,7 +62,7 @@ class EpochKeys(Protocol):
 _ENTRY = {"unbound", "addr", "tls_spki", "hk_op_pub", "mode"}
 _OPTIONAL = {
     "outbox", "addr", "tls_spki", "hxk_pub", "sealed", "rotate_after", "card", "revoked_op_certs", "snapshot",
-    "revoked_op_objs", "publish_owed", "snapshot_floor",
+    "revoked_op_objs", "publish_owed", "snapshot_floors",
 }  # fmt: skip
 MAX_ADDRS = 4  # M4 (#1461): other addresses of the hub the host has verified (next to ``addr``)
 
@@ -133,9 +133,19 @@ class HubState:
     )
     revoked_op_certs: list[str] = field(default_factory=list)  # cert_ids of root-signed hub.op_revoked, never removed
     snapshot: dict[str, Any] | None = None  # the pinned signed hub.snapshot (section 7); its version only grows
-    #: GA-07: the highest snapshot version ever pinned from this hub. It survives a rebind and a mode switch (a new
-    #: state of the SAME hub keeps it): an older snapshot (other end dates) is never pinned again (stale_snapshot).
-    snapshot_floor: int = 0
+    #: GA-07: ``{hub_id: the highest snapshot version ever pinned from that hub}``. It survives a rebind, a mode switch
+    #: and joining another hub in between (the new state carries every entry): an older snapshot (other end dates)
+    #: is never pinned again (stale_snapshot).
+    snapshot_floors: dict[str, int] = field(default_factory=dict)
+
+    @property
+    def snapshot_floor(self) -> int:
+        """The floor of THIS state's hub."""
+        return self.snapshot_floors.get(self.hub_id, 0)
+
+    def raise_floor(self, version: int) -> None:
+        self.snapshot_floors[self.hub_id] = max(self.snapshot_floor, version)
+
     #: cert_id -> the root-signed ``hub.op_revoked`` object itself: what a ``hub.pinned`` line carries (15.2)
     revoked_op_objs: dict[str, dict[str, Any]] = field(default_factory=dict)
     #: C8 (design-c8 M2.4): hub_id -> the signed ``hub.unbound`` that orch-publish has not acknowledged yet. A leave
@@ -163,7 +173,7 @@ class HubState:
             "card": self.card,
             "revoked_op_certs": sorted(self.revoked_op_certs),
             "snapshot": self.snapshot,
-            "snapshot_floor": self.snapshot_floor,
+            "snapshot_floors": {k: self.snapshot_floors[k] for k in sorted(self.snapshot_floors)},
             "revoked_op_objs": {k: self.revoked_op_objs[k] for k in sorted(self.revoked_op_objs)},
             "publish_owed": {k: self.publish_owed[k] for k in sorted(self.publish_owed)},
         }
@@ -200,8 +210,8 @@ class HubState:
             and type(d.get("revoked_op_certs", [])) is list
             and all(wire.hex16(c) for c in d.get("revoked_op_certs", []))
             and (d.get("snapshot") is None or (type(d["snapshot"]) is dict and type(d["snapshot"].get("o")) is dict))
-            and type(d.get("snapshot_floor", 0)) is int
-            and d.get("snapshot_floor", 0) >= 0
+            and type(d.get("snapshot_floors", {})) is dict
+            and all(wire.hex16(k) and type(v) is int and v >= 0 for k, v in d.get("snapshot_floors", {}).items())
             and type(d.get("revoked_op_objs", {})) is dict
             and all(wire.hex16(k) and type(v) is dict for k, v in d.get("revoked_op_objs", {}).items())
             and type(d.get("publish_owed", {})) is dict
@@ -230,16 +240,20 @@ class HubState:
             card=d.get("card"),
             revoked_op_certs=list(d.get("revoked_op_certs", [])),
             snapshot=d.get("snapshot"),
-            snapshot_floor=d.get("snapshot_floor", 0),
+            snapshot_floors=dict(d.get("snapshot_floors", {})),
             revoked_op_objs=dict(d.get("revoked_op_objs", {})),
             publish_owed=dict(d.get("publish_owed", {})),
         )
 
 
-def _floor_of(state: HubState) -> int:
-    """The highest snapshot version this state has seen (the pinned one counts)."""
+def _floors_of(state: HubState | None) -> dict[str, int]:
+    """Every floor a state holds, with the pinned snapshot of its own hub counted."""
+    if state is None:
+        return {}
+    out = dict(state.snapshot_floors)
     held = 0 if state.snapshot is None else state.snapshot["o"]["version"]
-    return max(state.snapshot_floor, held)
+    out[state.hub_id] = max(out.get(state.hub_id, 0), held)
+    return out
 
 
 @dataclass
@@ -380,7 +394,7 @@ def _join(
             rotate_after=None if state is None else state.rotate_after,
             card=hub_card,
             revoked_op_certs=[] if state is None else list(state.revoked_op_certs),  # only ever grows
-            snapshot_floor=_floor_of(state) if state is not None and state.hub_id == wire.hub_id(root) else 0,
+            snapshot_floors=_floors_of(state),
         )
         record_joined(payload)  # the owner's signature first: nothing leaves the host before it
         save(new)

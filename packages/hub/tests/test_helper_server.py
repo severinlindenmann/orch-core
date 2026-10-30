@@ -91,7 +91,11 @@ def rig(tmp_path):
 def test_signed_restart_runs_the_fixed_argv_once(rig):
     p = rig.prepare()
     assert p["ok"], p
-    assert p["ctx"]["kind"] == P.TAG and p["ctx"]["part"] == "relay" and p["text"] == "Unavailable for a few seconds."
+    assert (
+        p["ctx"]["kind"] == P.TAG
+        and p["ctx"]["part"] == "relay"
+        and p["text"] == "Restart Relay. Unavailable for a few seconds."
+    )
     assert p["ctx"]["hub_id"] == rig.env.keys.hub_id and p["digest"] == P.digest(p["ctx"]).hex()
     r = rig.run(p)
     assert r == {"ok": True, "accepted": True, "will_restart": False}

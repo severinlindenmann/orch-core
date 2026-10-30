@@ -172,6 +172,9 @@ test("the Logs dialog: list by default, raw lines in a closed fold, recent-activ
   assert.ok(copied[0].endsWith("\n" + raw) && copied[0].includes("last 24 hours"));
   const ok = nodes(logsDialog("relay", J("12:04", "systemd[1]", "Started orch relay."), { copy: () => {}, onClose: () => {}, fmt, now: NOW_D }));
   assert.match(ok.find((n) => n.attrs.id === "log-span").textContent, /Nothing went wrong/);
+  const many = Array.from({ length: 300 }, () => J("12:04", "systemd[1]", "Started orch relay.")).join("\n");
+  const cut = nodes(logsDialog("relay", many, { copy: () => {}, onClose: () => {}, fmt, now: NOW_D }));
+  assert.equal(cut.find((n) => n.attrs.id === "log-span").textContent, "Last 300 lines."); // cut by the helper: no reassurance
   const empty = nodes(logsDialog("relay", "", { copy: () => {}, onClose: () => {}, fmt, now: NOW_D }));
   assert.equal(empty.find((n) => n.attrs.id === "log-empty").textContent, "Nothing happened in the last 24 hours.");
   assert.equal(empty.filter((n) => n.attrs.id === "log-text").length, 0);

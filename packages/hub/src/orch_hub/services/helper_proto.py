@@ -48,25 +48,25 @@ class HelperError(Exception):
 #: The effect, in plain words, per part and action (P05): what the admin cares about, no machine name. The part and the
 #: action stay bound in the signed context (``part``, ``action``, ``host_id``); only this displayed sentence is short.
 _EFFECT = {
-    ("Relay", "start"): "Phone alerts work again.",
-    ("Relay", "stop"): "Phone alerts pause until you start it again.",
-    ("Publish", "start"): "Shared pages are visible again to people outside the company.",
-    ("Publish", "stop"): "Shared pages stop being visible to people outside the company until you start it again.",
-    ("Hub", "start"): "The hub starts.",
-    ("Hub", "stop"): "Stop the Hub.",
+    ("relay", "start"): "Phone alerts work again.",
+    ("relay", "stop"): "Phone alerts pause until you start it again.",
+    ("publish", "start"): "Shared pages are visible again to people outside the company.",
+    ("publish", "stop"): "Shared pages stop being visible to people outside the company until you start it again.",
+    ("hub", "start"): "The hub starts.",
+    ("hub", "stop"): "Stop the Hub.",
 }
 
 
-def text_for(label: str, action: str, host_id: str, target_version: str | None) -> str:
+def text_for(part: str, label: str, action: str, host_id: str, target_version: str | None) -> str:
     """The sentence the admin reviews. Plain words, one line, built only from checked values. ``host_id`` is not shown
     (it stays bound in the signed context)."""
     if action == "restart":
-        eff = "Unavailable for a few seconds."
+        eff = f"Restart {label}. Unavailable for a few seconds."
     elif action == "update":
         eff = f"Update {label} to {target_version}."
     else:
-        eff = _EFFECT.get((label, action), f"{action.capitalize()} {label}.")
-    if label == "Hub" and action in ("stop", "restart"):
+        eff = _EFFECT.get((part, action), f"{action.capitalize()} {label}.")
+    if part == "hub" and action in ("stop", "restart"):
         eff += " This console goes offline too; workspaces keep working on their own."
     return eff
 

@@ -113,29 +113,30 @@ def test_info_names_the_real_user_unit_when_the_helper_does_not_answer():
     """The Services note says the unit the installer made (orch-<tag>-hub-helper.service), never a guessed name."""
     import json
     import os
+    import shutil
     import tempfile
     from pathlib import Path
 
     from orch_hub.services.helper_client import HelperClient
 
     tmp_path = Path(tempfile.mkdtemp(prefix="hs"))  # short: a unix socket path is limited to ~100 bytes
-    state = tmp_path / "st"
-    state.mkdir(mode=0o700)
-    cfg = {
-        "v": 1,
-        "host_id": "vps1",
-        "parts": {"hub": {"label": "Hub", "kind": "systemd-user", "unit": "orch-1e0740-hub.service"}},
-    }
-    f = state / "helper.json"
-    f.write_text(json.dumps(cfg))
-    os.chmod(f, 0o600)
-    info = HelperClient(state / "helper.sock").info()  # no socket: the helper is not running
-    assert info["state"] == "not_set_up" and info["helper_unit"] == "orch-1e0740-hub-helper.service"
-    # a system unit (hand-built server) or a missing file gives no guessed name
-    cfg["parts"]["hub"]["kind"] = "systemd"
-    f.write_text(json.dumps(cfg))
-    assert "helper_unit" not in HelperClient(state / "helper.sock").info()
-    assert "helper_unit" not in HelperClient(tmp_path / "nowhere" / "helper.sock").info()
-    f.unlink()
-    state.rmdir()
-    tmp_path.rmdir()
+    try:
+        state = tmp_path / "st"
+        state.mkdir(mode=0o700)
+        cfg = {
+            "v": 1,
+            "host_id": "vps1",
+            "parts": {"hub": {"label": "Hub", "kind": "systemd-user", "unit": "orch-1e0740-hub.service"}},
+        }
+        f = state / "helper.json"
+        f.write_text(json.dumps(cfg))
+        os.chmod(f, 0o600)
+        info = HelperClient(state / "helper.sock").info()  # no socket: the helper is not running
+        assert info["state"] == "not_set_up" and info["helper_unit"] == "orch-1e0740-hub-helper.service"
+        # a system unit (hand-built server) or a missing file gives no guessed name
+        cfg["parts"]["hub"]["kind"] = "systemd"
+        f.write_text(json.dumps(cfg))
+        assert "helper_unit" not in HelperClient(state / "helper.sock").info()
+        assert "helper_unit" not in HelperClient(tmp_path / "nowhere" / "helper.sock").info()
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)

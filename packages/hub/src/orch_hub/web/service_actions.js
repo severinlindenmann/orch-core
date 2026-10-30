@@ -34,6 +34,7 @@ export const resultWords = {
   restart: "restarted",
 };
 
+const LOG_LINES = 300, LOG_BYTES = 256 * 1024 - 1024; // the helper returns at most this many lines / bytes (helper_backends.LOG_TAIL, LOG_MAX_BYTES)
 export const LOG_NOTE = "Secrets are hidden as far as we can tell; don't paste logs publicly.";
 
 /** What the hub-stop dialog adds under the signed sentence (the sentence itself is the helper's and stays bound). */
@@ -111,6 +112,7 @@ export function logsDialog(name, logText, { copy, onClose, fmt, now }) {
     list.append(li);
   }
   const wrong = events.some((e) => !e.ok);
+  const full = (logText || "").split("\n").length >= LOG_LINES || (logText || "").length >= LOG_BYTES; // the helper cut it: older lines may be missing
   let pre = null, fold = null;
   if (logText) {
     pre = h("pre", { class: "mono small logs", id: "log-text" });
@@ -120,7 +122,7 @@ export function logsDialog(name, logText, { copy, onClose, fmt, now }) {
   const header = "orch " + name + " log, last 24 hours, " + new Date().toISOString() + "\n";
   return [h("h1", { text: (NAME[name] ?? name) + ": recent activity" }),
     logText ? list : h("p", { class: "muted", id: "log-empty", text: "Nothing happened in the last 24 hours." }),
-    logText ? h("p", { class: "small muted", id: "log-span", text: wrong ? "Last 24 hours." : "Last 24 hours. Nothing went wrong in this time." }) : null,
+    logText ? h("p", { class: "small muted", id: "log-span", text: full ? "Last " + LOG_LINES + " lines." : wrong ? "Last 24 hours." : "Last 24 hours. Nothing went wrong in this time." }) : null,
     fold,
     h("p", { class: "small muted", id: "log-note", text: LOG_NOTE }),
     h("div", { class: "row" }, h("button", { id: "log-copy", text: "Copy for IT", onclick: () => copy(header + (logText || "")) }), h("button", { text: "Close", onclick: onClose }))].filter(Boolean);

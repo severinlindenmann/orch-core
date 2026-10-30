@@ -467,7 +467,7 @@ def test_print_url_headless_asks_for_a_tunnel_code_and_prints_the_ssh_line(tmp_p
     )
     assert kinds == ["tunnel"]
     assert "expires in 5 min" in out
-    assert f"ssh -o ExitOnForwardFailure=yes -L {PORT}:127.0.0.1:{PORT} alice@203.0.113.9" in out
+    assert f"ssh -o ExitOnForwardFailure=yes -L 127.0.0.1:{PORT}:127.0.0.1:{PORT} alice@203.0.113.9" in out
 
 
 def test_print_url_on_a_desktop_keeps_30_seconds_and_no_ssh_line(tmp_path, monkeypatch, capsys):

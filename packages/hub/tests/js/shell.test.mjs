@@ -144,7 +144,7 @@ test("a failed first read of the workspaces never turns the existing ones into j
   const context = vm.createContext({ pageLoading() {}, loading: () => () => {}, refresh: async () => true, loadRail: async () => {}, state: { user: { user_id: "u" }, menu: false },
     api: async (m, path) => path === "/me/workspaces" ? reads[Math.min(n++, 3)] : { status: 200, body: {} },
     workspacesView: (data) => { renders.push(data); return []; }, shell() {}, closeDialog() {}, openWorkspace() {}, dialog() {}, workspaceDetailsView() {}, h() {}, copyText() {}, pollLive() {},
-    newWorkspaces: (known, rows) => (rows ?? []).filter((w) => !known.has(w.workspace_id)), clearInterval() {}, document: { hidden: false },
+    newWorkspaces: (known, rows) => (rows ?? []).filter((w) => !known.has(w.workspace_id)), privateRows: () => [], clearInterval() {}, document: { hidden: false },
     setInterval: (fn) => { timers.push(fn); return timers.length; }, viewRevision: 0, workspacesTimer: 0, canAdmin: () => false, signInToAddWorkspace() {} });
   vm.runInContext(source.slice(source.indexOf("async function workspaces("), source.indexOf("async function copyText")), context);
   await context.workspaces();                 // first read fails: nothing known yet
@@ -152,6 +152,39 @@ test("a failed first read of the workspaces never turns the existing ones into j
   assert.equal(renders.at(-1).joined.length, 0);
   await timers.at(-1)();
   assert.equal(JSON.stringify(renders.at(-1).joined.map((w) => w.workspace_id)), JSON.stringify(["b".repeat(32)]));
+});
+
+test("r14 P05: an admin's join watch also sees a private workspace; a failed admin read joins nothing", async () => {
+  const { privateRows, newWorkspaces } = await import("../../src/orch_hub/web/workspaces.js");
+  const A = "a".repeat(32), B = "b".repeat(32);
+  const mineBody = { status: 200, body: { workspaces: [{ workspace_id: A }] } };
+  const adminOf = (extra) => ({ status: 200, body: { workspaces: [{ workspace_id: A, status: "bound" }, ...extra] } });
+  const ben = { workspace_id: B, name: "Ben's workspace", owner_name: "Ben", mode: "selective", status: "bound" };
+  for (const [label, second, expected, adminCalls] of [["gained", adminOf([ben]), [B], 3], ["failed admin read", { status: 500, body: {} }, [], 2]]) {
+    const timers = [], renders = [], paths = [];
+    let adminN = 0;
+    const context = vm.createContext({ pageLoading() {}, loading: () => () => {}, refresh: async () => true, loadRail: async () => {}, state: { user: { user_id: "u" }, menu: false },
+      api: async (m, path) => { paths.push(path); if (path === "/me/workspaces") return mineBody; if (path === "/admin/workspaces") return adminN++ === 0 ? adminOf([]) : second; return { status: 200, body: {} }; },
+      workspacesView: (data) => { renders.push(data); return []; }, shell() {}, closeDialog() {}, openWorkspace() {}, dialog() {}, workspaceDetailsView() {}, h() {}, copyText() {}, pollLive() {},
+      newWorkspaces, privateRows, clearInterval() {}, document: { hidden: false },
+      setInterval: (fn) => { timers.push(fn); return timers.length; }, viewRevision: 0, workspacesTimer: 0, canAdmin: () => true, signInToAddWorkspace() {} });
+    vm.runInContext(source.slice(source.indexOf("async function workspaces("), source.indexOf("async function copyText")), context);
+    await context.workspaces();
+    await timers.at(-1)();
+    assert.equal(JSON.stringify(renders.at(-1).joined.map((w) => w.workspace_id)), JSON.stringify(expected), label);
+    assert.equal(paths.filter((x) => x === "/admin/workspaces").length, adminCalls, label);
+  }
+  // a member never reads the admin list from the watch
+  const paths = [];
+  const timers = [];
+  const context = vm.createContext({ pageLoading() {}, loading: () => () => {}, refresh: async () => true, loadRail: async () => {}, state: { user: { user_id: "u" }, menu: false },
+    api: async (m, path) => { paths.push(path); return mineBody; },
+    workspacesView: () => [], shell() {}, closeDialog() {}, openWorkspace() {}, dialog() {}, workspaceDetailsView() {}, h() {}, copyText() {}, pollLive() {},
+    newWorkspaces, privateRows, clearInterval() {}, document: { hidden: false },
+    setInterval: (fn) => { timers.push(fn); return 1; }, viewRevision: 0, workspacesTimer: 0, canAdmin: () => false, signInToAddWorkspace() {} });
+  vm.runInContext(source.slice(source.indexOf("async function workspaces("), source.indexOf("async function copyText")), context);
+  await context.workspaces(); await timers.at(-1)();
+  assert.ok(!paths.includes("/admin/workspaces"));
 });
 
 test("P03: a shared ticket opens read only with title, description and who shared it; a vanished one says sharing ended", async () => {

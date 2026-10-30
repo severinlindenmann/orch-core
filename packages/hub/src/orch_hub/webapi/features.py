@@ -23,9 +23,13 @@ from .backup_api import BackupHandlers, backup_routes
 from .changes_api import ChangeHandlers
 from .invite_status_api import STATUS as INVITE_STATUS
 from .invite_status_api import InviteStatusHandlers, invite_status_routes
+from .oidc_api import STATUS as OIDC_STATUS
+from .oidc_api import OidcHandlers, oidc_routes
 from .org_api import OrgHandlers
 from .published_api import PublishedHandlers, published_routes
 from .secrets_api import SecretHandlers, secret_routes
+from .services_api import STATUS as SERVICE_STATUS
+from .services_api import ServiceHandlers, service_routes
 from .settings_api import SettingsHandlers, settings_routes
 from .spaces_api import SpaceHandlers, space_routes
 from .update_request_api import UpdateRequestHandlers, update_request_routes
@@ -48,7 +52,9 @@ FEATURES: tuple[Feature, ...] = (
     Feature(mixin=SpaceHandlers, routes=space_routes),
     Feature(mixin=AskPhoneHandlers, routes=ask_phone_routes, status=ASK_PHONE_STATUS),
     Feature(mixin=InviteStatusHandlers, routes=invite_status_routes, status=INVITE_STATUS),
+    Feature(mixin=ServiceHandlers, routes=service_routes, status=SERVICE_STATUS),
     Feature(mixin=UpdateRequestHandlers, routes=update_request_routes),
+    Feature(mixin=OidcHandlers, routes=oidc_routes, status=OIDC_STATUS),
 )
 
 FEATURE_MIXINS: tuple[type, ...] = tuple(f.mixin for f in FEATURES)

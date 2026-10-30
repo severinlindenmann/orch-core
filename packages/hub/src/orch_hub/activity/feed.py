@@ -54,6 +54,11 @@ WORDS = {
     "channel.revoked": "removed a phone or browser",
     "pairing.issued": "made a code to pair a phone",
     "pairing.used": "paired a phone",
+    "oidc.signed_in": "signed in with the company login",
+    "oidc.member_created": "joined through the company login",
+    "oidc.linked": "linked the company login",
+    "oidc.unlinked": "removed the company login",
+    "oidc.settings_changed": "changed the company login settings",
     "agent.event": "worked in a workspace",
 }
 assert set(WORDS) == set(ACTIVITY_TYPES), "every activity type needs plain words"

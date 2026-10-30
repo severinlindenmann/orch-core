@@ -428,6 +428,88 @@ def handle_hub_leave(ctx: Context, args: dict[str, Any]) -> Result:
     return h.workspace_result(done, data, "the host now tells the hub that this workspace is unbound")
 
 
+_DAY_MS = 86_400_000
+
+
+def _remote_facts(ctx: Context, op: str) -> Any:
+    facts = getattr(ctx.prepare, "remote", None)
+    if facts is None or type(getattr(facts, "now_ms", None)) is not int:
+        raise OrchError("human_only", f"{op} is prepared only by the host, with its own facts")
+    return facts
+
+
+def handle_remote_set(ctx: Context, args: dict[str, Any]) -> Result:
+    """``remote.set {level, premises, days?, agents_risk?}`` (R2 #1590, spec D84-D93): the owner turns remote access on
+    (or changes level and end date) at the workspace: ``remote.changed`` with the remote owner proof of the backup key.
+    The host facts (clock, hub mode, isolation) come from ``ctx.prepare.remote``, never from the request. Refused
+    here, in plain codes: no end date when the computer is at a customer's place or the level is Terminals
+    (``invalid.input``), premises ``yes`` while the hub is in full mode (``remote.needs_selective``), and remote access
+    on a computer where agents run as the person unless the owner said so (``remote.agents_risk``, #1198 H1)."""
+    from orch.hubclient import wire
+    from orch.hubclient.errors import HubRefused
+
+    h = _Human(ctx, "remote.set")
+    _owner(h, "remote.set")
+    facts = _remote_facts(ctx, "remote.set")
+    level, premises, days = args["level"], args["premises"], args.get("days")
+    if days is None and (premises == "yes" or level == "terminals"):
+        raise OrchError(
+            "invalid.input", "remote access needs an end date here (a computer at a customer's place, or Terminals)"
+        )
+    if premises == "yes" and facts.hub_mode == "full":
+        raise OrchError("remote.needs_selective", "remote access is off while the hub reads this workspace (full mode)")
+    risk = bool(args.get("agents_risk", False))
+    if not facts.isolated and not risk:
+        raise OrchError("remote.agents_risk", "agents on this computer can act as you: say so to turn remote access on")
+    try:
+        payload = wire.changed_payload(
+            level=level, premises=premises, agents_risk=risk and not facts.isolated, hub_mode=facts.hub_mode,
+            remote_v=h.store.state.workspace.remote.get("version", 0),
+            until_ms=None if days is None else facts.now_ms + int(days) * _DAY_MS,
+        )  # fmt: skip
+    except HubRefused as exc:
+        raise OrchError("invalid.input", f"remote access is refused: {exc.code}") from None
+    done = h.run({"type": "remote.changed", **payload}, "workspace", f"turn on remote access ({level})", review=[])
+    data = {"level": level, "premises": premises, "until_ms": payload["until_ms"]}
+    return h.workspace_result(done, data, "remote access is on; add a device with orch remote device add")
+
+
+def handle_remote_device_confirm(ctx: Context, args: dict[str, Any]) -> Result:
+    """``remote.device_confirm {pending, level_cap, days}`` (R2): the owner adds the pending device at the workspace:
+    ``remote.device_added`` with the remote owner proof. The device's name, keys and code come from the host's pending
+    enrollment (``ctx.prepare.remote.pending``: the device proved the code at the handshake), the fingerprint is
+    recomputed here, the id is drawn by the host. ``remote.no_pending`` when the pending device is gone (the stream
+    closed or the code ran out), ``remote.full`` at 64 devices."""
+    import secrets
+
+    from orch.hubclient import wire
+    from orch.hubclient.errors import HubRefused
+
+    h = _Human(ctx, "remote.device_confirm")
+    person = _owner(h, "remote.device_confirm")
+    facts = _remote_facts(ctx, "remote.device_confirm")
+    pending = facts.pending
+    if pending is None:
+        raise OrchError("remote.no_pending", "no device is waiting to be added (it may have disconnected)")
+    if len(h.store.state.workspace.remote.get("devices", {})) >= wire.REMOTE_DEVICES_MAX:
+        raise OrchError("remote.full", "this workspace already has the most remote devices it can hold")
+    try:
+        payload = wire.device_added_payload(
+            device_id="rd_" + secrets.token_hex(16), name=pending["name"], person=person,
+            presence_kind=pending["presence_kind"], transport_pub=pending["transport_pub"],
+            presence_pub=pending["presence_pub"], level_cap=args["level_cap"],
+            expires_ms=facts.now_ms + int(args["days"]) * _DAY_MS, code_id=pending["code_id"],
+            remote_v=h.store.state.workspace.remote.get("version", 0),
+        )  # fmt: skip
+    except (HubRefused, KeyError, TypeError):
+        raise OrchError("invalid.input", "the pending device is not well formed") from None
+    done = h.run(
+        {"type": "remote.device_added", **payload}, "workspace", f"add the remote device {pending['name']}", review=[]
+    )
+    data = {"device_id": payload["device_id"], "level_cap": args["level_cap"], "expires_ms": payload["expires_ms"]}
+    return h.workspace_result(done, data, None)
+
+
 def handle_device_mark_exposed(ctx: Context, args: dict[str, Any]) -> Result:
     """``device.mark_exposed {}`` (#1097): this device key signs ``device.exposed`` for itself, the signed mark that it
     was in convenience custody. Written by :func:`orch.custody.exposure.mark_before_move` before a key enters
@@ -795,6 +877,58 @@ TASK_MARK_DONE = operation(
     handler=handle_mark_done,
 )
 
+REMOTE_SET = operation(
+    "remote.set",
+    "Human only",
+    "Turn remote access on, or change its level and end date: only you can, with your backup key, at this computer.",
+    who="human",
+    props={
+        "level": E("what a remote device may do", "view", "work", "terminals"),
+        "premises": E("does this computer run at a customer's place", "yes", "no"),
+        "days": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 365,
+            "description": "remote access ends after this many days",
+        },
+        "agents_risk": {"type": "boolean", "description": "agents on this computer can act as you (not isolated)"},
+    },
+    required=("level", "premises"),
+    emits=("remote.changed",),
+    text="ok remote.changed {level} seq={seq}\nnext: {next}",
+    data=obj({"level": STR, "premises": STR, "until_ms": {"type": ["integer", "null"]}}),
+    errors=(
+        err("role.denied"),
+        err("remote.needs_selective"),
+        err("remote.agents_risk"),
+        err("remote.proof_invalid"),
+    ),
+    handler=handle_remote_set,
+)
+REMOTE_DEVICE_CONFIRM = operation(
+    "remote.device_confirm",
+    "Human only",
+    "Add the device that is waiting to be added, with a level and an end date: only you can, with your backup key, at "
+    "this computer.",
+    who="human",
+    props={
+        "pending": {"type": "string", "pattern": "^rp_[0-9a-f]{32}$", "description": "the waiting device"},
+        "level_cap": E("the most this device may do", "view", "work", "terminals"),
+        "days": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 366,
+            "description": "the device is removed after this many days",
+        },
+    },
+    required=("pending", "level_cap", "days"),
+    emits=("remote.device_added",),
+    text="ok remote.device_added {device_id} seq={seq}",
+    data=obj({"device_id": STR, "level_cap": STR, "expires_ms": {"type": "integer"}}),
+    errors=(err("role.denied"), err("remote.no_pending"), err("remote.full"), err("remote.proof_invalid")),
+    handler=handle_remote_device_confirm,
+)
+
 OPS: dict[str, Operation] = {
     op.name: op
     for op in (
@@ -809,6 +943,8 @@ OPS: dict[str, Operation] = {
         DEVICE_MARK_EXPOSED,
         DEVICE_ROTATE,
         DEVICE_REMOVE,
+        REMOTE_SET,
+        REMOTE_DEVICE_CONFIRM,
         AC_ACCEPT,
         AC_UNACCEPT,
         TASK_MARK_DONE,

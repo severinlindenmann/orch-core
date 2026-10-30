@@ -60,6 +60,7 @@ from ..contract import suite as S
 from ..contract.canon import CanonError, loads_strict, unb64u
 from ..contract.hub import HV, Refused, channel_proof_bytes
 from ..invites import Invite, InviteError, proof_digest
+from ..oidc import OidcError
 from ..relay.client import RelayError
 from ..spaces.service import SpaceError
 from ..switch import SwitchError, clean_return_to, owner_fallback_names, workspace_rows
@@ -252,6 +253,8 @@ class WebDeps:
     switch: Any = None
     #: relay/publish health for the Services page (``orch_hub.services.Services``); None = ``unavailable``
     services: Any = None
+    #: the service helper's socket client (``orch_hub.services.helper_client``); None = no helper (buttons stay hidden)
+    helper: Any = None
     #: the route queue (``recent``): hand-offs between workspaces, for the Workspaces page; None = an empty list
     routes: Any = None
     authz: Any = None  # live routing authorization; None means no allowed edges
@@ -266,6 +269,7 @@ class WebDeps:
     settings_ctl: Any = (
         None  # webapi.settings_api.SettingsControl (restart hook, bind-all, detector); None = no address writes
     )
+    oidc: Any = None  # orch_hub.oidc.service.OidcService (company login); None = those routes answer ``unavailable``
     user_invites: Any = (
         None  # orch_hub.invites.Invites (join / reset / recovery links); None = those routes are ``unavailable``
     )
@@ -631,6 +635,15 @@ class Ctx:
     via_switch: bool = False  # the session came from a switch ticket, not a password sign-in
     cookie_value: str = ""  # the session cookie the browser sent, if any (auth-none routes may use it, never trust it)
     fetch_site: str | None = None  # the browser's Sec-Fetch-Site label, when it sent one
+    via: str = ""  # how the session began: "" (password), switch, setup, invite, oidc (company login)
+    cookie_header: str = ""  # the raw Cookie header (auth-none routes read their own cookie, e.g. the company login's)
+
+    def cookie_of(self, name: str) -> str:
+        for part in self.cookie_header.split(";"):
+            k, _, v = part.strip().partition("=")
+            if k == name:
+                return v
+        return ""
 
 
 class _Limiter:
@@ -863,6 +876,7 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
             source=source,
             cookie_value=cookie_token,
             fetch_site=headers.get("sec-fetch-site"),
+            cookie_header=headers.get("cookie", ""),
         )
         if route.auth != "none":
             ctx.token, ctx.cookie = (bearer, False) if bearer else (cookie_token, True)
@@ -871,6 +885,7 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
             info = self.d.channels.session_info(ctx.token)
             ctx.user_id, ctx.scope, ctx.channel_id = info["user_id"], info["scope"], info["channel_id"]
             ctx.via_switch = info["via"] == "switch"
+            ctx.via = info["via"] or ""
             # a session is for the carrier it was issued for (cookie = browser: ``full``; bearer = app: ``pairing`` or
             # ``channel``); the scope is stored with the session, so it also holds across a restart
             if (ctx.scope == "full") != ctx.cookie:
@@ -1164,6 +1179,7 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
                 "user_id": c.user_id,
                 "name": name,
                 "is_admin": self.d.access.is_hub_admin(c.user_id),
+                "company_login": c.via == "oidc",  # no hub password was used: keys need a set-up link from an admin
                 "needs_sign_in": c.via_switch,  # admin pages need a password sign-in (a workspace vouched for this one)
                 "recovery": self._recovery_notice(c.user_id),
             },
@@ -1713,11 +1729,17 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
         return 200, person_reach(self.d.access, self.d.registry, p["user_id"])
 
     def _h_a_users(self, c: Ctx, p: dict, q: dict, b: dict | None):
-        return 200, {"users": self.d.access.users()}
+        users = self.d.access.users()
+        if self.d.user_invites is not None:  # who joined through a company-login invitation, and what that account said
+            labels = self.d.user_invites.company_labels()
+            users = [{**u, "company": labels[u["user_id"]]} if u["user_id"] in labels else u for u in users]
+        return 200, {"users": users}
 
     def _h_a_user_remove(self, c: Ctx, p: dict, q: dict, b: dict | None):
         with self._chg().reducing("user_remove", confirm=confirmed(b), user_id=p["user_id"]):
             self.d.channels.remove_user(p["user_id"], actor=c.user_id)  # revokes and purges the user's channels too
+        if self.d.oidc is not None:  # the company-login link and its sessions go with the person
+            self.d.oidc.store.unlink(p["user_id"])
         if self.d.user_invites is not None:  # the links they made and the links made for them die with the account
             self.d.user_invites.void_created_by(p["user_id"])
             self.d.user_invites.void_for_user(p["user_id"])
@@ -1745,11 +1767,19 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
 
     def _h_a_invite(self, c: Ctx, p: dict, q: dict, b: dict | None):
         b = _need(b, name=str)
+        company = b.get("company", False)
+        if type(company) is not bool or b.keys() - {"name", "company"}:
+            raise ApiError("malformed")
         name = check_name(b["name"].strip())  # the sign-in name, validated like every user name
         inv = self._inv()
         if (self.d.api_origin or c.origin) is None:
             raise ApiError("unavailable")
-        token, iid, expires = inv.create("join", created_by=c.user_id, name=name)
+        if company:  # "Sign in with your company account": only while company login is on and tested
+            try:
+                self.d.oidc.ready() if self.d.oidc is not None else (_ for _ in ()).throw(ApiError("unavailable"))
+            except OidcError:
+                raise ApiError("oidc_not_ready") from None
+        token, iid, expires = inv.create("join", created_by=c.user_id, name=name, company=company)
         self._record("invite.created", actor_id=c.user_id, detail={"invite_id": iid})
         return 200, {"link": self._invite_link(c, token), "expires_ms": expires, "invite_id": iid}
 
@@ -1867,7 +1897,11 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
         row = inv.peek(b["token"])
         self._creator_standing(row)
         if row.kind == "join":
-            return 200, {"kind": "join", "name": row.name, "needs_proof": False}, []
+            out = {"kind": "join", "name": row.name, "needs_proof": False}
+            if row.company:  # the page shows the company button instead of a password form
+                cfg = self.d.oidc.settings() if self.d.oidc is not None else None
+                out.update(company=True, provider=cfg["provider"] if cfg else None)
+            return 200, out, []
         uid = row.for_user or ""
         if not self.d.access.is_active(uid):
             raise InviteError()  # the person was removed or disabled since: the link is dead, same answer
@@ -1904,6 +1938,10 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
     def _apply_invite(self, row: Invite, password: str, proof: Any) -> dict[str, Any]:
         """The account change, run by ``Invites.redeem`` inside the claim's transaction: whatever raises here leaves the
         link unused. Returns what the person's own screen shows once."""
+        if (
+            row.company
+        ):  # a company-login link is redeemed only by /oidc/invite/finish: before any change, the generic answer
+            raise InviteError()
         self._creator_standing(row)
         if row.kind == "join":
             return self._apply_join(row, password)
@@ -2247,7 +2285,11 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
         states = [reg.binding_state(w) for w in reg.pins()]
         joined = [st for st in states if st is not None and st["status"] in ("bound", "unbound")]
         online = sum(1 for st in joined if st["status"] == "bound")
-        return 200, {**self.d.services.snapshot(), "workspaces": {"count": len(joined), "online": online}}
+        return 200, {
+            **self.d.services.snapshot(),
+            "workspaces": {"count": len(joined), "online": online},
+            "helper": self._service_helper_info(),
+        }
 
     def _h_my_handoffs(self, c: Ctx, p: dict, q: dict, b: dict | None):
         mine = {w["workspace_id"]: w for w in self._workspaces(c.user_id)}

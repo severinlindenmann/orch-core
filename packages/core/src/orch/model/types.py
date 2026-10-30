@@ -178,6 +178,11 @@ class WsCore:
     # alias_book: {hub_id: aliases} of every hub ever joined, member?: {kind: "hub", hub_id}}; empty until the first
     # hub.joined. ``binding_seq`` only grows. ``member`` exists only in full mode and only while joined (C2b).
     hub: dict[str, Any] = field(default_factory=dict)
+    # Remote access (R2, #1590; hub-remote spec D84-D93, contract 10.2c): the owner's policy and the devices, derived
+    # from the signed ``remote.*`` lines. {} until the first one. {on, level, until_ms, premises, agents_risk, hub_mode,
+    # off_reason: None | owner | device | expired | hub_full, wrk_fp, device_version, devices: {rd_id: {name, person,
+    # presence_kind, transport_pub, presence_pub, level_cap, expires_ms, added_ms, confirmed_by, fingerprint, code_id}}}
+    remote: dict[str, Any] = field(default_factory=dict)
     unattended: list[tuple[int, str, int]] = field(default_factory=list)  # (at seconds, session, artifact bytes)
     #: C10 (hub protocol 8.8): the admitted ``grant.requested`` lines by event id: ``{person, role, scope, verbs, hours,
     #: label?, handoff, at, hub_id, used}``. A host-actor ``grant.issued`` consumes one (``used``), once.

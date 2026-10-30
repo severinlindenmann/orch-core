@@ -37,7 +37,16 @@ def token_hash(token: str) -> str:
 
 
 def meta_bytes(
-    *, ticket: str, kind: str, expires_ms: int, view_limit: int, token_hash_hex: str, files: Iterable[Mapping[str, Any]]
+    *,
+    ticket: str,
+    kind: str,
+    expires_ms: int,
+    view_limit: int,
+    token_hash_hex: str,
+    files: Iterable[Mapping[str, Any]],
+    label: str | None = None,
+    by_kind: str | None = None,
+    by_name: str | None = None,
 ) -> bytes:
     """The manifest body, byte-stable: the same arguments always give the same bytes (a re-PUT is ``unchanged``)."""
     doc = {
@@ -48,6 +57,12 @@ def meta_bytes(
         "token_hash": token_hash_hex,
         "files": [{"path": f["name"], "size": f["size"], "sha256": f["sha256"]} for f in files],
     }
+    if label is not None:  # display members (the company list): asserted text only, omitted when not given
+        doc["label"] = label
+    if by_kind is not None:
+        doc["by_kind"] = by_kind
+    if by_name is not None:
+        doc["by_name"] = by_name
     return json.dumps(doc, sort_keys=True, separators=(",", ":")).encode()
 
 

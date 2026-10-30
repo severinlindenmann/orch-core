@@ -3,6 +3,7 @@
 // hub checks every value again, writes it to its settings file and records the change in its audit log.
 import { loading } from "../feel.js";
 import { chip, h, text, when } from "../ui.js";
+import { WHY as COMPANY_WHY, begin as beginCompany, companyCard } from "../oidc.js";
 
 // The words for an address kind (owner rule: never a product name for the private network).
 const KINDS = [
@@ -36,6 +37,7 @@ const WHY = {
   restore_failed: "The restore could not be done. Nothing was changed.",
 };
 
+void COMPANY_WHY;
 const row = (label, note, on) => h("div", { class: "list-row row" },
   h("div", { class: "grow" }, h("b", { text: text(label) }), note ? h("div", { class: "small muted", text: text(note) }) : null),
   on ? chip("On", "ok") : chip("Later"));
@@ -66,13 +68,13 @@ export function addressBody(data, picks) {
 }
 
 function generalCard(data, actions) {
-  const name = h("input", { type: "text", id: "hub-name", maxlength: "60", autocomplete: "off" });
-  const company = h("input", { type: "text", id: "hub-company", maxlength: "60", autocomplete: "off" });
+  const name = h("input", { type: "text", id: "hub-name", maxlength: "60", autocomplete: "off", placeholder: "for example Acme headquarters" });
+  const company = h("input", { type: "text", id: "hub-company", maxlength: "60", autocomplete: "off", placeholder: "Your company name, for example Acme Ltd" });
   name.value = data.name ?? ""; company.value = data.company ?? "";
   const save = h("button", { type: "button", class: "primary", text: "Save", onclick: () => actions.saveGeneral?.({ name: name.value ?? "", company: company.value ?? "" }) });
   return h("div", { class: "card", "data-card": "general" }, h("h2", { text: "General" }),
     h("div", { class: "field" }, h("label", { for: "hub-name", text: "Hub name" }), name),
-    h("div", { class: "field" }, h("label", { for: "hub-company", text: "Company" }), company),
+    h("div", { class: "field" }, h("label", { for: "hub-company" }, "Company ", h("span", { class: "optional", text: "(optional)" })), company),
     h("p", { class: "small muted", text: "People see the name in the switcher. Connected workspaces show it too, in the hub's own words." }),
     save);
 }
@@ -82,10 +84,11 @@ function addressCard(data, actions) {
   const facts = KINDS.map(([kind, label]) => {
     const web = byKind.get(kind);
     return [h("dt", { text: label }), h("dd", {}, web ? h("span", { class: "mono", text: text(web) }) : h("span", { class: "muted", text: "Not set up" }),
-      kind === "server" && web ? h("span", { class: "small muted", text: " (on the server itself, use this one)" }) : null,
-      kind === data.phone_kind && web ? h("span", { class: "small muted", text: " (phones use this one)" }) : null)];
+      kind === "server" && web ? h("span", { class: "small muted", text: " (this computer only)" }) : null,
+      kind === data.phone_kind && kind !== "server" && web ? h("span", { class: "small muted", text: " (phones use this one)" }) : null)];
   }).flat();
   const card = h("div", { class: "card", "data-card": "address" }, h("h2", { text: "Address" }), h("dl", { class: "facts" }, facts));
+  if (data.phone_kind === "server") card.append(h("p", { class: "small muted", id: "phones-cannot", text: "Phones can't reach this hub yet. To add an address they can use, ask the person who installed it." }));
   if (!data.can_change_addresses) {
     card.append(h("p", { class: "small muted", text: "Addresses can't be changed on this page. To add or change one, ask the person who installed this hub." }));
     return card;
@@ -94,7 +97,7 @@ function addressCard(data, actions) {
   const here = globalThis.location?.origin ?? "";
   const picks = {}; const fields = [];
   for (const [kind, label] of KINDS) {
-    if (kind === data.phone_kind) { fields.push(h("div", { class: "field", "data-kind": kind }, h("label", { text: label }), h("span", { class: "small muted", text: "Phones use this one. It stays as it is." }))); continue; }
+    if (kind === data.phone_kind && kind !== "server") { fields.push(h("div", { class: "field", "data-kind": kind }, h("label", { text: label }), h("span", { class: "small muted", text: "Phones use this one. It stays as it is." }))); continue; }
     const cur = byKind.get(kind);
     if (kind === "public") continue; // the public address is set up with the edge, not here; an installed one stays as it is
     const choices = detected.filter((d) => d.kind === kind);
@@ -343,7 +346,8 @@ export function hubSettingsView(data, actions = {}) {
     addressCard(data, actions),
     data.backup ? backupCard(data.backup, actions) : null,
     h("div", { class: "card", "data-card": "sign-in" }, h("h2", { text: "Sign-in" }),
-      (data.sign_in ?? []).map((m) => row(m.label, m.on ? m.note : null, m.on))));
+      (data.sign_in ?? []).map((m) => row(m.label, m.on ? m.note : null, m.on))),
+    data.company ? companyCard(data.company, actions.company ?? {}) : null);
 }
 
 // Wait until the restarted hub answers again (it keeps its port), at most about 30 seconds.
@@ -367,6 +371,8 @@ export async function hubSettingsPage(d, detected = [], words = null) {
     const r = await d.api("GET", "/admin/settings");
     if (r.status === 403 && r.body.error === "reauth_required") return d.reauthView();
     if (r.status !== 200) return d.shell("hub-settings", h("h1", { text: "Hub settings" }), h("p", { role: "alert", text: "Cannot read the settings. " + d.say(r.body.error) }));
+    const co = await d.api("GET", "/admin/oidc");
+    if (co.status === 200 && typeof co.body?.has_secret === "boolean") r.body.company = co.body; // the company login card, when the hub has the routes
     const bk = await d.api("GET", "/admin/backup");
     if (bk.status === 200) r.body.backup = bk.body;
     const say = (ok, x) => { d.state.notice = x.status < 300 ? d.banner("ok", ok, null) : d.banner("bad", "Not changed", WHY[x.body.error] ?? d.say(x.body.error ?? "unavailable")); };
@@ -411,6 +417,11 @@ export async function hubSettingsPage(d, detected = [], words = null) {
           slotNote({ status: 200 }, "Backup downloaded", { downloaded: name });
         } catch { slotNote({ status: 500, body: { error: "unavailable" } }, ""); }
         await hubSettingsPage(d);
+      },
+      company: {
+        save: async (body) => { const x = await d.api("PUT", "/admin/oidc", body); if (x.status === 200) setTimeout(() => hubSettingsPage(d), 400); return x; },
+        test: () => beginCompany(d.api, "test"),
+        copy: async (t) => { try { await globalThis.navigator?.clipboard?.writeText(t); return true; } catch { return false; } },
       },
       saveGeneral: async (body) => { say("Saved", await d.api("PUT", "/admin/settings/general", body)); await hubSettingsPage(d); },
       loadDetected: async () => { const x = await d.api("GET", "/admin/settings/addresses/detected"); if (x.status === 200) await hubSettingsPage(d, x.body.addresses ?? []); },

@@ -1341,3 +1341,70 @@ def test_restore_default_group_is_the_live_one(w):
     acc.set_default_group(None, actor=w.admin)
     _restore(w, data, words)
     assert _rows(w.state, "access.db", "SELECT grp FROM default_group") == [(None,)]
+
+
+def _company_login_state(w):
+    from orch_hub.oidc.store import OidcStore
+
+    st = OidcStore(w.state)
+    st.save({"v": 1, "provider": "entra", "client_id": "cid", "tenant": "11111111-2222-3333-4444-555555555555", "domain": "",
+             "redirect_uri": "https://hub.example/oidc/callback", "mode": "invited", "idp_mfa": True, "enabled": True, "tested": True})  # fmt: skip
+    st.set_secret("client-secret-value-1")
+    key = st.cookie_key()
+    st.link(w.ann, "entra", "11111111-2222-3333-4444-555555555555", "oid-ann")
+    st.link(w.dave, "entra", "11111111-2222-3333-4444-555555555555", "oid-dave")
+    return st, key
+
+
+def test_company_login_files_are_in_the_backup_and_every_table_has_a_class(w):
+    from orch_hub.backup import guard as GD
+
+    st, _key = _company_login_state(w)
+    st.close()
+    words, data = _backup(w)
+    opened = B.open_backup(data, words=words, dev_mode=True, live=None)
+    assert {"oidc.json", "oidc.secret", "oidc.key", "oidc.db"} <= set(opened.files)
+    assert GD.class_of("oidc.db", "oidc_links") == "state"
+    assert RS.COMPANY_LOGIN <= RS.LIVE_IN_PLACE and "oidc.db" in RS.LIVE_WHOLE
+
+
+def test_in_place_company_login_stays_as_the_live_hub_has_it(w):
+    st, key = _company_login_state(w)
+    st.close()
+    words, data = _backup(w)
+    # after the backup: dave's link is removed, the secret is replaced, company login is turned off
+    from orch_hub.oidc.store import OidcStore
+
+    st = OidcStore(w.state)
+    st.unlink(w.dave)
+    st.set_secret("a-newer-client-secret-2")
+    st.save({**st.load(), "enabled": False})
+    st.close()
+    _restore(w, data, words)
+    st = OidcStore(w.state)
+    try:
+        assert st.linked(w.dave) is None and st.linked(w.ann) is not None  # no revived link
+        assert st.secret() == "a-newer-client-secret-2" and st.cookie_key() == key
+        assert st.load()["enabled"] is False
+    finally:
+        st.close()
+
+
+def test_a_fresh_server_gets_company_login_from_the_backup_but_switched_off(w, tmp_path):
+    st, key = _company_login_state(w)
+    st.close()
+    words, data = _backup(w)
+    fresh = tmp_path / "srv2" / "d"
+    RS.restore(fresh, data, words, dev_mode=True, now_ms=lambda: 1_900_000_000_000)
+    from orch_hub.oidc.store import OidcStore
+
+    st = OidcStore(fresh)
+    try:
+        cfg = st.load()
+        assert cfg["enabled"] is False and cfg["tested"] is False and cfg["client_id"] == "cid"
+        assert st.secret() == "client-secret-value-1" and st.cookie_key() == key
+        assert st.linked(w.ann) is not None
+    finally:
+        st.close()
+    for f in ("oidc.json", "oidc.secret", "oidc.key", "oidc.db"):
+        assert (fresh / f).stat().st_mode & 0o177 == 0, f

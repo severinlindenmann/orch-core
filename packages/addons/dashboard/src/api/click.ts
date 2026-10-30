@@ -161,9 +161,13 @@ export type HubJoinAction = { action: 'hub_join'; hub_card: string; hub_id: stri
 export type HubModeFullAction = { action: 'hub_mode_full'; hub_card: string; hub_id: string }
 export type HubLeaveAction = { action: 'hub_leave' }
 
+/** R2 (#1590): turn remote access on / add the waiting device, with the backup key sealed to the signer. `days` absent: until turned off. */
+export type RemoteSetAction = { action: 'remote_set'; level: 'view' | 'work' | 'terminals'; premises: 'yes' | 'no'; days?: number; agents_risk?: boolean }
+export type RemoteDeviceConfirmAction = { action: 'remote_device_confirm'; pending: string; level_cap: 'view' | 'work' | 'terminals'; days: number }
+
 /** Every typed action a click request may carry. */
 // Schedule actions inherit both existing-ticket and new-ticket shapes from HandoffAction.
-export type ClickAction = HandoffAction | RunnerGrantAction | AgentAccessAction | HubJoinAction | HubModeFullAction | HubLeaveAction
+export type ClickAction = HandoffAction | RunnerGrantAction | AgentAccessAction | HubJoinAction | HubModeFullAction | HubLeaveAction | RemoteSetAction | RemoteDeviceConfirmAction
 
 /** Core's constant (orch.click.protocol DEPOSIT_LINE): a deposit View must carry it, or Sign is not offered. */
 export const DEPOSIT_LINE = 'The secret goes to your orch runner on this machine and is never shown'
@@ -251,7 +255,7 @@ export const clickReady = (w: Pick<Workspace, 'click'> | undefined | null): bool
 const CLICK_ACTIONS: ReadonlySet<string> = new Set<ClickAction['action']>([
   'accept_criterion', 'withdraw_acceptance', 'mark_task_done',
   'approve', 'approve_both', 'request_changes', 'verdict', 'answer', 'comment', 'label', 'close', 'reopen', 'move', 'new', 'new_sequence', 'edit_sequence', 'quick_start', 'details', 'section',
-  'settings_set', 'repo_set', 'repo_remove', 'policy_set', 'member_add', 'member_role', 'member_remove', 'device_remove', 'grant_revoke', 'runner_grant', 'agent_access', 'hub_join', 'hub_leave', 'addon_grant', 'market_grant', 'market_update', 'addon_disable', 'addon_purge', 'addon_settings', 'addon_enable', 'publish_setup', 'publish_share', 'followup_cancel', 'followup_reschedule', 'followup_undo', 'schedule_add', 'schedule_cancel',
+  'settings_set', 'repo_set', 'repo_remove', 'policy_set', 'member_add', 'member_role', 'member_remove', 'device_remove', 'grant_revoke', 'runner_grant', 'agent_access', 'hub_join', 'hub_leave', 'remote_set', 'remote_device_confirm', 'addon_grant', 'market_grant', 'market_update', 'addon_disable', 'addon_purge', 'addon_settings', 'addon_enable', 'publish_setup', 'publish_share', 'followup_cancel', 'followup_reschedule', 'followup_undo', 'schedule_add', 'schedule_cancel',
 ])
 export const clickEligible = (a: ClickAction | null): boolean => !!a && CLICK_ACTIONS.has(a.action)
 

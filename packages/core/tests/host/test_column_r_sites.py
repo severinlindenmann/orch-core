@@ -97,6 +97,7 @@ SITES: dict[tuple[str, str], tuple[int, str]] = {
     ("publishing.py", "_discard"): (2, "unreachable (publish.* are not R ops)"),
     ("publishing.py", "_list"): (6, "unreachable (publish.list is not an R op); R would see what P sees"),
     ("hubops.py", "_owner"): (2, "unreachable (hub.* are not R ops); R is not P, so it would be refused"),
+    ("remote/__init__.py", "_owner"): (2, "unreachable (remote.* are not R ops); R is not P, so it would be refused"),
     ("peerops.py", "_owner"): (2, "unreachable (peer.* are not R ops); R is not P, so it would be refused"),
     ("peerops.py", "_check"): (2, "unreachable (peer.* are not R ops); a relay peer is not column P or G"),
     ("cosmeticops.py", "_check"): (

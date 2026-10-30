@@ -107,6 +107,7 @@ def class_of(db: str, table: str) -> str:
         "changes.db",
         "wk-seal.db",
         "workspace-view.db",
+        "oidc.db",  # company login links: in place the live store is the truth (restore.LIVE_WHOLE)
     ):
         return WHOLE_STORE_CLASS
     if db in ("audit.db", "activity.db"):
@@ -435,6 +436,21 @@ def never_widen(new: Path, live: Path | None) -> None:
         _in_place_access(new, live)
     else:
         _fresh_access(new)
+
+
+def oidc_off(new: Path, in_place: bool) -> None:
+    """Company login after a restore. In place the live settings, secret, key and links were carried over untouched. On a fresh
+    server they come from the backup, and what could let people in is switched off: the login is ``enabled: false`` and
+    ``tested: false`` until an admin runs the test login again (the address, and so the redirect, may have changed)."""
+    f = new / "oidc.json"
+    if in_place or not f.is_file() or f.is_symlink():
+        return
+    try:
+        cfg = json.loads(f.read_text())
+        cfg["enabled"], cfg["tested"] = False, False
+        f.write_text(json.dumps(cfg, indent=2, sort_keys=True) + "\n")
+    except OSError, ValueError, TypeError:
+        f.unlink(missing_ok=True)  # unreadable settings: no company login, never a half-set one
 
 
 def credentials(new: Path, live: Path | None) -> None:

@@ -11,5 +11,6 @@ errors:
   not_found (exit 2): orch list
   addon.off (exit 3): tell the person; do not work around it | fix: orch addon list
   followup.no_receiver (exit 3): ask an owner to run orch host webhooks on, then orch host restart | fix: orch follow-up --help
+  followup.too_many_hooks (exit 3 retry): wait a while, then run orch webhook new again; reuse a webhook you already made | fix: orch webhook new --help
   parse.text (exit 6): orch describe webhook.new
 out: ok {key} webhook {label}

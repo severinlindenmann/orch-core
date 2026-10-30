@@ -34,9 +34,14 @@ WAKES_PER_HOUR = 6
 HOUR_MS = 3_600_000
 HOOK_LIFETIME_DAYS = 15  # the longest follow-up horizon (14 days) plus one day; the hub allows up to 31
 LINK_TIMEOUT_S = 5.0
+PUTS_PER_HOUR = 10  # new hub hooks per workspace per hour (an agent cannot fill the hub's 64 slots in a loop)
 SOURCES = ("github", "generic", "databricks")
 _FOLLOWUP = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,63}")
 _LOCK = threading.Lock()
+
+
+class TooManyHooks(Exception):
+    """More than :data:`PUTS_PER_HOUR` new hub hooks in the last hour from this workspace."""
 
 
 def _path(service: Any) -> Path:
@@ -47,7 +52,8 @@ def _load(service: Any) -> dict[str, Any]:
     doc = custody.read_json(_path(service), service.host_uid) or {}
     hooks = doc.get("hooks") if isinstance(doc.get("hooks"), dict) else {}
     wakes = [w for w in doc.get("wakes", []) if isinstance(w, int)]
-    return {"hooks": hooks, "wakes": wakes}
+    puts = [w for w in doc.get("puts", []) if isinstance(w, int)]
+    return {"hooks": hooks, "wakes": wakes, "puts": puts}
 
 
 def _save(service: Any, doc: dict[str, Any]) -> None:
@@ -83,6 +89,9 @@ def register(service: Any, *, token: str, secret: str, source: str, followup: st
     if not _FOLLOWUP.fullmatch(followup):
         followup = "hook"  # bookkeeping text of the hub's row only; never decides anything here
     now_ms = int(service.clock() * 1000)
+    with _LOCK:
+        if len([t for t in _load(service)["puts"] if now_ms - t < HOUR_MS]) >= PUTS_PER_HOUR:
+            raise TooManyHooks
     link, transport = _link(service)
     try:
         reply = link.call(
@@ -100,6 +109,7 @@ def register(service: Any, *, token: str, secret: str, source: str, followup: st
     with _LOCK:
         doc = _load(service)
         doc["hooks"] = {k: v for k, v in doc["hooks"].items() if v.get("exp", 0) > now_ms}
+        doc["puts"] = [t for t in doc["puts"] if now_ms - t < HOUR_MS] + [now_ms]
         doc["hooks"][th] = {
             "hook": fe.hook_hash(token, service.workspace_id),
             "source": source,
@@ -161,6 +171,26 @@ def pull(service: Any) -> tuple[list[str], int]:
             continue
         out.append(mine["hook"])
     return out, top
+
+
+def sync(service: Any, pending: set[str]) -> None:
+    """Called on the follow-up tick with the hook hashes of the follow-ups that are pending now. A hook that was
+    pending once (``bound``) and no longer is (fired, cancelled, expired) is revoked at the hub; one that was never
+    bound is left alone until its own lifetime ends (the hub expires it too, :func:`pull` forgets it here)."""
+    gone: list[str] = []
+    with _LOCK:
+        doc = _load(service)
+        changed = False
+        for th, h in doc["hooks"].items():
+            if h["hook"] in pending:
+                if not h.get("bound"):
+                    h["bound"], changed = True, True
+            elif h.get("bound"):
+                gone.append(th)
+        if changed:
+            _save(service, doc)
+    for th in gone:
+        revoke(service, th)
 
 
 def count_wake(service: Any) -> None:

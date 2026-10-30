@@ -205,12 +205,13 @@ class FollowupRunner:
         """Pull the hub's rings for the pending webhook follow-ups (only when there is one), hand each to :meth:`ring`
         (the same call the direct receiver makes) and acknowledge. Best effort: no hub, no inbox or a failure means the
         follow-up's own deadline is the fallback. The hub's word is a token hash; see :mod:`orch.host.hubhooks`."""
-        if not self.hooks:
-            return
         from . import hubhooks
 
         try:
             if not await asyncio.to_thread(hubhooks.watching, self.service):
+                return
+            await asyncio.to_thread(hubhooks.sync, self.service, set(self.hooks))  # revoke what is settled
+            if not self.hooks:
                 return
             hooks, top = await asyncio.to_thread(hubhooks.pull, self.service)
             for hook in hooks:

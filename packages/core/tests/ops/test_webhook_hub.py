@@ -77,3 +77,39 @@ def test_the_secret_is_not_part_of_an_idempotent_replay_record(ws, cli, schedule
     from orch.host.outcomes import _mask
 
     assert "hs_" + "A" * 43 not in json.dumps(_mask({"secret": "hs_" + "A" * 43, "id": "hh_" + "B" * 43}))
+
+
+def test_too_many_new_webhooks_is_a_plain_error_not_a_fallback(ws, cli, schedules, hub):  # noqa: F811
+    from orch.host.hubhooks import TooManyHooks
+
+    claimed(cli)
+
+    def refuse(**kw):
+        raise TooManyHooks
+
+    hub.calls.clear()
+    Capabilities_direct = Capabilities.direct.__func__
+
+    def direct(cls, env=None, clock=None):
+        caps = Capabilities_direct(cls, env) if clock is None else Capabilities_direct(cls, env, clock)
+        return dataclasses.replace(caps, hub_hooks=refuse)
+
+    import pytest as _p
+
+    mp = _p.MonkeyPatch()
+    mp.setattr(Capabilities, "direct", classmethod(direct))
+    try:
+        cli.env_kw["ORCH_HOOK_BASE"] = "https://hooks.example:9000/"  # a direct receiver exists, and is NOT used
+        r = cli.j("webhook", "new", "1", "--label", "x")
+    finally:
+        mp.undo()
+    assert r.err_code == "followup.too_many_hooks", r.out
+    assert "Too many new webhooks in the last hour. Try again later." in r.out
+
+
+def test_hint_says_early_rings_are_ignored_and_what_send_test_does(ws, cli, schedules, hub):  # noqa: F811
+    claimed(cli)
+    text = cli("webhook", "new", "1", "--label", "x", "--source", "databricks").out
+    assert "is ignored" in text and "Send test" in text and "uses the ring" in text
+    text = cli("webhook", "new", "1", "--label", "x", "--source", "github").out
+    assert "is ignored" in text and "ping" in text

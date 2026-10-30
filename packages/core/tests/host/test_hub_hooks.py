@@ -201,3 +201,58 @@ def test_revoke_forgets_and_tells_the_hub(env, hub):  # noqa: F811
     assert hub.calls == [("hook_revoke", {"token_hash": th})] and hubhooks.watching(e.w.service) is False
     hubhooks.revoke(e.w.service, th)  # again: nothing to do, no traffic
     assert len(hub.calls) == 1
+
+
+def bound_follow_up(e, token):
+    on = fe.parse_on("webhook:" + token, e.w.wid)
+    return e.schedule_on(on, "webhook", hook=on["hook"])
+
+
+def test_hook_is_revoked_when_its_follow_up_fires(env, hub):  # noqa: F811
+    e = env
+    token, _ = register(e)
+    th = fe.hub_token_hash(token)
+    uid, _, _, deadline = bound_follow_up(e, token)
+    e.tick()
+    assert "hook_revoke" not in hub.ops()  # pending: kept
+    e.w.lab.ws.clock[0] = deadline
+    e.tick()  # fires by the deadline
+    e.tick()  # next tick: settled, so revoked
+    assert ("hook_revoke", {"token_hash": th}) in hub.calls
+    assert hubhooks.watching(e.w.service) is False
+
+
+def test_hook_is_revoked_when_its_follow_up_is_cancelled(env, hub):  # noqa: F811
+    e = env
+    token, _ = register(e)
+    uid, _, fid, _ = bound_follow_up(e, token)
+    e.tick()
+    e.w.person_event("followup.cancelled", uid, followup=fid, reason="person")
+    e.tick()
+    assert [c for c in hub.calls if c[0] == "hook_revoke"] == [
+        ("hook_revoke", {"token_hash": fe.hub_token_hash(token)})
+    ]
+
+
+def test_a_hook_never_bound_is_not_revoked_and_is_forgotten_after_its_lifetime(env, hub):  # noqa: F811
+    e = env
+    register(e)
+    e.tick()
+    e.tick()
+    assert "hook_revoke" not in hub.ops() and hubhooks.watching(e.w.service)
+    hubhooks.sync(e.w.service, set())
+    assert "hook_revoke" not in hub.ops()
+    e.w.lab.ws.clock[0] += (hubhooks.HOOK_LIFETIME_DAYS + 1) * 86400
+    assert hubhooks.pull(e.w.service) == ([], 0)
+
+
+def test_cap_on_new_hooks_per_hour(env, hub):  # noqa: F811
+    e = env
+    for _ in range(hubhooks.PUTS_PER_HOUR):
+        register(e)
+    n = len(hub.calls)
+    with pytest.raises(hubhooks.TooManyHooks):
+        register(e)
+    assert len(hub.calls) == n  # refused before the hub
+    e.w.lab.ws.clock[0] += 3601
+    register(e)  # an hour later it works again

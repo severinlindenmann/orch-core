@@ -113,6 +113,18 @@
         ]
       },
       {
+        "code": "followup.too_many_hooks",
+        "exit": 3,
+        "retryable": true,
+        "hint": "wait a while, then run orch webhook new again; reuse a webhook you already made",
+        "fix": [
+          "orch",
+          "webhook",
+          "new",
+          "--help"
+        ]
+      },
+      {
         "code": "parse.text",
         "exit": 6,
         "retryable": false,

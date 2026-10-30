@@ -13,9 +13,9 @@ import pytest
 
 from orch_hub.contract import closing as C
 from orch_hub.contract import hub as H
+from orch_hub.contract.backup import LABEL as BACKUP_LABEL
 from orch_hub.contract.canon import cj
 from orch_hub.contract.keystore import OpSigner
-from orch_hub.contract.backup import LABEL as BACKUP_LABEL
 from orch_hub.contract.labels import ACCESS_CHANGE_LABEL, CUSTODIAL_PREFIX, HUB_LABELS, HUB_REMOVE_LABEL, V2_REUSED
 
 VEC = Path(__file__).resolve().parents[3] / "contracts" / "hub"

@@ -23,6 +23,8 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import TextIO
 
+from orch import childenv
+
 __all__ = ["AGENT_ENV", "INSTALL_HINT", "agent_refusal", "find_entry_point", "main"]
 
 SCRIPT = "orch-dashboard"
@@ -105,14 +107,7 @@ def launch_env(env: Mapping[str, str]) -> dict[str, str]:
 def _launch_env(env: Mapping[str, str]) -> dict[str, str]:
     """``env`` with ``PYTHONPATH`` reduced to its absolute entries: Python turns an empty entry into the current
     directory at startup, which ``-P`` does not prevent (the probe and the exec use this same environment)."""
-    out = dict(env)
-    if "PYTHONPATH" in out:
-        kept = _absolute_path(out["PYTHONPATH"])
-        if kept:
-            out["PYTHONPATH"] = kept
-        else:
-            del out["PYTHONPATH"]
-    return out
+    return childenv.sanitize(env, absolute_pythonpath=True)
 
 
 def main(args: Sequence[str], *, env: Mapping[str, str], err: TextIO) -> int:

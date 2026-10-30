@@ -245,3 +245,23 @@ describe('where the bearer lives (host contract 0.8.6 item 7)', () => {
     expect(location.hash).toBe('')
   })
 })
+
+describe('remote client marker (R5)', () => {
+  afterEach(() => { document.head.innerHTML = '' })
+  const mark = () => { document.head.innerHTML = '<meta name="orch-nav" content="remote">' }
+  it('a remote session never opens the BroadcastChannel (no token sharing between tabs)', async () => {
+    mark()
+    const ctor = vi.fn()
+    vi.stubGlobal('BroadcastChannel', ctor)
+    history.replaceState(null, '', '/#launch=' + 'L'.repeat(43))
+    await bootstrap(vi.fn(async () => Response.json({ token: 'tok' })) as unknown as typeof fetch)
+    expect(ctor).not.toHaveBeenCalled()
+  })
+  it('the WebSocket offers the bearer as a sub-protocol only in a remote session', async () => {
+    history.replaceState(null, '', '/#launch=' + 'L'.repeat(43))
+    await bootstrap(vi.fn(async () => Response.json({ token: 'tok' })) as unknown as typeof fetch)
+    expect(boot.remoteSocketProtocols()).toBeUndefined()
+    mark()
+    expect(boot.remoteSocketProtocols()).toEqual(['orch.b', 'orch.b.tok'])
+  })
+})

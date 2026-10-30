@@ -16,6 +16,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Protocol
 
+from orch import childenv
 from orch.privdir import make_private_dir
 
 from .state import Layout
@@ -62,7 +63,7 @@ class PidfileRunner:
         with open(log, "ab") as lf:
             p = subprocess.Popen(
                 list(argv),
-                env={**os.environ, **env},
+                env=childenv.sanitize({**os.environ, **env}, absolute_pythonpath=True),
                 stdin=subprocess.DEVNULL,
                 stdout=lf,
                 stderr=lf,

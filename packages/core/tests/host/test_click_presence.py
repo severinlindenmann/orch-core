@@ -318,3 +318,22 @@ def test_failed_sign_restores_presence(world, human):
     world.click.mono.t += 2
     assert world.sign(rid, digest)  # the same presence still covers it
     assert world.refusal("sign", request_id=rid, view_digest=digest).code == "remote.presence_required"
+
+
+def test_presence_sequence_sign_needs_presence(world):
+    """A sequence whose first step is an allowed op (new) but that holds a presence step (people.set) is signed
+    only with a batch over its digest: the class of a sign is the strictest step (``_approval_class``)."""
+    from orch.host import sequence
+    from tests.host.test_sequence import intent_of
+    from tests.host.test_sequence_click import seq_args
+
+    intent, op, args, meta = seq_args(world.click, intent_of(people={"assignees": [world.click.owner.ref]}))
+    assert op == "new" and [s["op"] for s in sequence.steps(intent)][-1] == "people.set"
+    p = world.prepare(op, args, sequence=meta)
+    rid = p["request_id"]
+    digest = world.review(rid)
+    assert world.refusal("sign", request_id=rid, view_digest=digest).code == "remote.presence_required"
+    assert world.click.signatures == 0
+    world.present([digest])
+    assert world.sign(rid, digest)
+    assert world.click.signatures >= 1

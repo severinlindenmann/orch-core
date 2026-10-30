@@ -10,7 +10,6 @@ import { RemoteAccess } from './RemoteAccess'
 const WS = '705d40abbb8c1c90354a1acaa94c935c'
 const DEV = 'rd_' + 'a'.repeat(32)
 const PENDING = 'rp_' + 'b'.repeat(32)
-const REQ = 'hr_01M5PVRB46WS3X8H5X2RQK04S9'
 const OFF: RemoteView = { on: false, level: null, until_ms: null, premises: null, off_reason: null, isolated: true, hub_mode: 'none', devices: [], pending: [], sessions: [] }
 const ON: RemoteView = {
   ...OFF, on: true, level: 'work', until_ms: Date.now() + 86_400_000, premises: 'no',

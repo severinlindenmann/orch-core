@@ -11,6 +11,7 @@ import copy
 from collections.abc import Callable
 from typing import Any
 
+from orch.addons.manifest import EVENTS_KEY
 from orch.addons.settings_value import KEY as ADDONS_KEY
 from orch.canon import HashError, check_repo_identity, event_head, same_repo_identity
 
@@ -624,6 +625,7 @@ def addon_event(core: Core, e: dict[str, Any]) -> Refusal | None:
             copy.deepcopy(e["sections"]),
             list(e["artifact_kinds"]),
             runtime=copy.deepcopy(e.get("runtime")),
+            events=copy.deepcopy(e.get(EVENTS_KEY, [])),
         )
         named |= generations.addon_binds_gates(new.binds)
 

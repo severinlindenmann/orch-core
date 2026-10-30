@@ -29,6 +29,7 @@ from __future__ import annotations
 from typing import Any
 
 from orch import canon
+from orch.addons.manifest import EVENTS_KEY
 from orch.crypto import labels as protocol_labels
 
 from .base import CustodyError
@@ -91,6 +92,7 @@ EVENT_FIELDS: dict[str, tuple[str, ...]] = {
         "sections",
         "artifact_kinds",
         "runtime",
+        EVENTS_KEY,
         "staged",
     ),
     "addon.disabled": ("name",),

@@ -25,6 +25,7 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from orch import canon
+from orch.addons.manifest import EVENTS_KEY
 
 __all__ = [
     "KIND",
@@ -80,7 +81,7 @@ def _grant(name: str, grant: Any, bad: type[Exception]) -> dict[str, Any]:
     if (
         not isinstance(grant, Mapping)
         or not _GRANT_KEYS <= set(grant)
-        or set(grant) - (_GRANT_KEYS | {"runtime", "staged"})
+        or set(grant) - (_GRANT_KEYS | {"runtime", "staged", EVENTS_KEY})
         or grant["name"] != name
     ):
         raise bad("the grant is the addon.granted body of this add-on")

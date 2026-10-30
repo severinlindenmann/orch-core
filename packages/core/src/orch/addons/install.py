@@ -13,7 +13,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from orch.addons.manifest import Manifest, ManifestError, declarations, load_package_manifest
+from orch.addons.manifest import EVENTS_KEY, Manifest, ManifestError, declarations, load_package_manifest
 from orch.addons.package import Package, PackageError, read_package
 from orch.addons.registry import Registry
 from orch.model.types import Addon
@@ -120,6 +120,7 @@ def as_addons(view: Mapping[str, Any]) -> dict[str, Addon]:
                 enabled=bool(a["enabled"]),
                 purged=bool(a["purged"]),
                 runtime=None if a.get("runtime") is None else dict(a["runtime"]),
+                events=[dict(x) for x in a.get("events", ())],
             )
     return out
 
@@ -161,6 +162,11 @@ def review_lines(
         out.append(f"section {sec['id']} for {', '.join(sec['types'])}")
     if event["artifact_kinds"]:
         out.append(f"artifact kinds {', '.join(event['artifact_kinds'])}")
+    for ev in event.get(EVENTS_KEY, ()):
+        out.append(
+            f"event {event['name']}.{ev['kind']} ({show(ev['title'])}): background check every {ev['interval_s']} s "
+            f"while a follow-up waits; reports {', '.join(ev['statuses'])}; the add-on decides when it is finished"
+        )
     if previous is not None:
         out.append(f"previous grant: {previous.version}, package {previous.package_sha256[:19]}")
         out += [f"changed: {x}" for x in _changes(previous, event)] or ["changed: the package bytes only"]
@@ -185,6 +191,8 @@ def _changes(old: Addon, new: Mapping[str, Any]) -> list[str]:
         out.append("sections changed")
     if sorted(old.artifact_kinds) != list(new["artifact_kinds"]):
         out.append("artifact kinds changed")
+    if old.events != list(new.get(EVENTS_KEY, [])):
+        out.append("events changed")
     return out
 
 

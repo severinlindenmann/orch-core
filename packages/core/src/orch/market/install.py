@@ -224,6 +224,9 @@ def diff(
             widened = True  # a new or changed needs rule
         ko, kn = set(ev_old["artifact_kinds"]), set(ev_new["artifact_kinds"])
         added["artifact_kinds"], removed["artifact_kinds"] = sorted(kn - ko), sorted(ko - kn)
+        if ev_old.get("events") != ev_new.get("events"):
+            changes.append("events changed")
+            widened = True  # what the add-on may wake a follow-up with: the person reads it again
         for k in _DOC_KEYS:
             if old.doc.get(k) != new.doc.get(k):
                 changes.append(f"{k.replace('_', ' ')} changed")

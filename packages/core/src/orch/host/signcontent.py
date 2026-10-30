@@ -77,6 +77,7 @@ SHOWN: dict[str, frozenset[str]] = {
             "fields",
             "sections",
             "runtime",
+            "events",
             "staged",
         }
     ),
@@ -1570,7 +1571,8 @@ def _addon(typ: str, ev: Mapping[str, Any], out: dict[str, Any]) -> str:
         return f"Purge the add-on {name}"
     version = ev.get("version")
     words = _capability_words(ev.get("capabilities"))
-    declares = any(ev.get(k) not in (None, [], {}) for k in ("fields", "sections", "artifact_kinds", "runtime"))
+    keys = ("fields", "sections", "artifact_kinds", "runtime", "events")
+    declares = any(ev.get(k) not in (None, [], {}) for k in keys)
     if named and words is not None and not declares and isinstance(version, str) and _VERSION.fullmatch(version):
         _row(out, "add-on", name)
         _row(out, "version", version)
@@ -1599,6 +1601,9 @@ def _addon(typ: str, ev: Mapping[str, Any], out: dict[str, Any]) -> str:
     for k in ("capabilities", "artifact_kinds", "fields", "sections"):
         if ev.get(k) is not None:
             _row(out, k.replace("_", " "), ev[k])
+    if ev.get("events"):
+        _row(out, "events", ev["events"])
+        out.setdefault("notes", []).append(_events_words(ev["events"]))
     if ev.get("runtime") is not None:
         runtime = ev["runtime"]
         _row(out, "dependencies", runtime)
@@ -1625,6 +1630,27 @@ def _deps_words(deps: Any) -> str:
     ):
         raise PlainUnavailable("the plain view does not know these packages")
     return "; ".join(f"{one(r['name'])} {one(r.get('version'))}{_DEP_NOTES[r['note']]}" for r in rows)
+
+
+def _events_words(events: Any) -> str:
+    """addon-api 1.2 (#718): a signed `events` declaration in words. Any other shape is the full review."""
+    if (
+        not isinstance(events, list)
+        or not 1 <= len(events) <= 8
+        or not all(
+            isinstance(e, Mapping)
+            and set(e) == {"kind", "title", "statuses", "ref", "interval_s"}
+            and isinstance(e["title"], str)
+            and type(e["interval_s"]) is int
+            for e in events
+        )
+    ):
+        raise PlainUnavailable("the plain view does not know these events")
+    names = "; ".join(f"{one(e['title'])} ({one(e['kind'])}, every {e['interval_s'] // 60 or 1} min)" for e in events)
+    return (
+        "Runs in the background at those intervals while a follow-up waits for it; the add-on decides when the run "
+        f"is finished; it can reach the internet (orch does not limit where). Can wake: {names}."
+    )
 
 
 _RUNTIME_KINDS = {"python-requirements": "Python", "node-package-lock": "Node"}

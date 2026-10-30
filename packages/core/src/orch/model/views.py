@@ -447,6 +447,7 @@ def workspace_view(core: Core, now: int) -> WorkspaceView:
                         "capabilities": a.capabilities,
                         "purged": a.purged,
                         "runtime": a.runtime,
+                        "events": a.events,
                     }
                 )
                 for n, a in ws.addons.items()

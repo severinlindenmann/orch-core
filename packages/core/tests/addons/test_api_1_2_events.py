@@ -116,3 +116,21 @@ def test_core_is_api_1_2_and_an_older_core_range_still_fits():
     from orch.addons.manifest import incompatibility
 
     assert incompatibility(load(events=[EVENT]), "2.0.0.dev0") is None
+
+
+def test_the_grant_event_carries_the_declaration_and_the_review_says_what_it_allows():
+    from orch.addons.install import grant_event
+    from orch.host import signcontent
+
+    m = load(events=[EVENT])
+    ev = grant_event(m, _Pkg())
+    assert ev["events"] == declarations(m)["events"]
+    words = signcontent._events_words(ev["events"])  # noqa: SLF001
+    assert "can reach the internet (orch does not limit where)" in words and "Run finished" in words
+    with pytest.raises(signcontent.PlainUnavailable):
+        signcontent._events_words([{"kind": "x"}])  # noqa: SLF001
+
+
+class _Pkg:
+    digest = "sha256:" + "0" * 64
+    files: dict = {}

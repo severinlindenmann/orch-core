@@ -171,7 +171,7 @@ export function NewTicketOverlay({ onClose, opener }: { onClose: () => void; ope
             <Button type="button" variant="ghost" size="icon" className="absolute right-10 top-2.5 size-7 text-text-muted" aria-label="Open full page" title="Open full page" onClick={openFullPage}>
               <Maximize2 className="size-4" />
             </Button>
-            <SheetDescription className="sr-only">Create a ticket in one line, or fill in the form.</SheetDescription>
+            <SheetDescription className="sr-only">{workspace && handoffMode(workspace.id) ? 'Describe the ticket, then press Create ticket.' : 'Create a ticket in one line, or fill in the form.'}</SheetDescription>
           </SheetHeader>
           <div className="flex min-h-0 flex-1 flex-col">
             {!me || !workspace ? (

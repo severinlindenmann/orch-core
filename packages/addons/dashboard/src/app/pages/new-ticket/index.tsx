@@ -583,6 +583,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
                 aria-describedby={attempted && check.title ? 'nt-title-error' : undefined}
                 className="h-11 text-lg md:text-lg"
               />
+              <p className="text-[12px] text-text-muted" data-testid="nt-title-hint">Press Enter to continue with the requirements.</p>
               {attempted && check.title && (
                 <p id="nt-title-error" className="text-[12px] text-danger">
                   {check.title}
@@ -641,7 +642,9 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
           )}
           <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
             <AgentLine plan={plan} tooMany={tooMany} />
-            <div className="ml-auto flex flex-wrap items-center gap-2">
+            {/* While the sign box is open its own Cancel and Sign are the only ones: the form's copies are hidden (kept in layout,
+                the box is anchored to the main button). Errors live in the alert above and in the box, never in here. */}
+            <div className="ml-auto flex flex-wrap items-center gap-2" style={handoffNew ? { visibility: 'hidden' } : undefined} aria-hidden={handoffNew ? true : undefined} data-testid="nt-buttons">
               {startPossible && (
                 <span className="text-[12px] text-text-muted" data-testid="nt-agent-summary">
                   {harnessName(plan.choice.harness)} · {MODE_LABEL[plan.choice.mode]}

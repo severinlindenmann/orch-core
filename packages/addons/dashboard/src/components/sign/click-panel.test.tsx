@@ -461,8 +461,8 @@ describe('C3: one press (a contract-4 View of a request prepared by a trusted pr
 describe('agent access on a click View', () => {
   it('names the agent access, its length and what agents may do, when the story gives access', () => {
     mount(answer(), { story: { signLabel: 'Sign and start agent', steps: ['You sign.'], access: { length: '7 days' } } })
-    expect(screen.getByTestId('access-length')).toHaveTextContent('Let agents work for you for 7 days.')
-    expect(screen.getByTestId('agent-access')).toHaveTextContent('Agents (Claude Code) may read and change files in the project folder and run its commands.')
+    expect(screen.getByTestId('access-length')).toHaveTextContent('Agents (Claude Code) may work for you for 7 days.')
+    expect(screen.getByTestId('agent-access')).toHaveTextContent('They can read and change files in the project folder and run its commands.')
     expect(screen.queryByRole('textbox')).toBeNull()
     expect(screen.getByRole('button', { name: 'Sign and start agent' })).toBeDisabled() // until armed
     arm()

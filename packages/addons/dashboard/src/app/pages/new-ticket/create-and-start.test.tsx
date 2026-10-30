@@ -143,7 +143,7 @@ describe('the form', () => {
     expect((await sent()).agent).toBeUndefined()
     expect(await screen.findByTestId('nt-lead')).toHaveTextContent('No agent starts. You can start one later.')
     expect(localStorage.getItem(`orch.dashboard.new-ticket.agent.p_sev.${WS()}`)).toBeNull() // nothing was written
-    expect(await startBtn(sheet)).toBeInTheDocument()
+    await waitFor(() => expect(within(sheet).getByTestId('nt-buttons').textContent).toContain('Create and start'), T) // kept in layout while the sign box is open
   })
 
   it('the main button keeps its choice: with start=false stored, Create ticket is main and the menu start is used once', async () => {

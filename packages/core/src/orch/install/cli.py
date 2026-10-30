@@ -357,10 +357,9 @@ def write_hub_settings(
     loop = address in ("localhost", P.ADDRESS_LOOPBACK)
     if link_host:  # server role: the card advertises the VPN address for the link and the https name for the console
         web = f"{web_origin}:443" if web_origin else f"http://{P.ADDRESS_LOOPBACK}:{port}"
-        addrs = [
-            {"kind": "private" if vpn_only else "public", "web": web, "link": f"{link_host}:{link}"},
-            {"kind": "server", "web": f"http://{P.ADDRESS_LOOPBACK}:{port}", "link": None},
-        ]
+        # one entry: behind Caddy every allowed origin must be https (hub config); the settings shape wants host:port,
+        # the hub drops the default port when it builds the allowed Origin (settings.origin_of)
+        addrs = [{"kind": "private" if vpn_only else "public", "web": web, "link": f"{link_host}:{link}"}]
         return _save_hub_settings(f, {"v": 1, "name": name, "company": company, "addresses": addrs})
     host = P.ADDRESS_LOOPBACK if loop else (f"[{address}]" if ":" in address else address)
     addrs = [{"kind": hub_address_kind(address), "web": f"http://{host}:{port}", "link": f"{host}:{link}"}]
@@ -399,7 +398,8 @@ def install_part(
     web_origin: str | None = None,  # server role, hub: https://<hub name>, advertised in the card
     vpn_only: bool = False,
     public_origin: str | None = None,  # server role, publish: https://<publish name> (server = share)
-    workspace_side: bool = True,  # False: no workspace on this user; the Macs get the publish address printed instead
+    workspace_side: bool = True,
+    behind_edge: bool = False,  # server role with TLS: Caddy on this computer is the edge in front of the part
 ) -> dict[str, Any]:
     spec = P.PARTS[part]
     source = source or ctx.env.get(f"ORCH_INSTALL_SOURCE_{part.upper()}")  # a local checkout (dev machines, tests)
@@ -481,9 +481,10 @@ def install_part(
         public_origin=public_origin,
         link_port=ports_of(ctx, st)["link"],
         publish_port=ports_of(ctx, st)["publish"],
+        behind_edge=behind_edge,
     )
     log = lay.logs / f"{part}.log"
-    started = ctx.runner.start(part, argv, P.env_for(part, data), log)
+    started = ctx.runner.start(part, argv, P.env_for(part, data, behind_edge=behind_edge), log)
     check_host = dial_host(bind)  # the part listens on every interface; this computer dials itself on loopback
 
     # a computer often cannot dial its own overlay IP (NetBird): then a held port on that IP and a live process count

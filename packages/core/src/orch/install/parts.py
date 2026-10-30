@@ -167,6 +167,7 @@ def command_for(
     public_origin: str | None = None,
     link_port: int = HUB_LINK_PORT,
     publish_port: int = DEFAULT_PORTS["publish"],
+    behind_edge: bool = False,
 ) -> list[str]:
     """The ``serve`` command line of a part (argv; environment is :func:`env_for`)."""
     bind = address if address else ADDRESS_LOOPBACK
@@ -193,6 +194,8 @@ def command_for(
         ]
         if relay_url:
             cmd += ["--relay-url", relay_url]
+        if behind_edge:  # Caddy on this computer is the edge: it states the client (XFF), the origin is the https name
+            cmd += ["--behind-edge", "--trusted-peer", ADDRESS_LOOPBACK]
         if dev and not loop:  # one user on one dev machine: the hub allows its link on a network address
             cmd += ["--dev-shared-machine"]
         return cmd
@@ -218,5 +221,10 @@ def dashboard_command(entry: list[str], *, address: str, port: int) -> list[str]
     return cmd if address in (ADDRESS_LOOPBACK, "localhost") else [*cmd, "--listen", address]
 
 
-def env_for(part: str, data: Path) -> dict[str, str]:
-    return {"ORCH_RELAY_DATA": str(data)} if part == "relay" else {}
+def env_for(part: str, data: Path, *, behind_edge: bool = False) -> dict[str, str]:
+    if part != "relay":
+        return {}
+    env = {"ORCH_RELAY_DATA": str(data)}
+    if behind_edge:  # the relay trusts X-Forwarded-For only from the Caddy on this computer
+        env["ORCH_RELAY_TRUSTED_PROXY"] = ADDRESS_LOOPBACK
+    return env

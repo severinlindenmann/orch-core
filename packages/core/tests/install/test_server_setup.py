@@ -565,3 +565,76 @@ def test_setup_passes_port_base_to_the_full_server(tmp_path):
     from orch.setup import flow
 
     assert "--port-base" in flow.USAGE
+
+
+# ------------------------------------------------------------------------------------- H2: behind the edge
+
+
+def test_command_for_behind_edge_has_both_hub_flags_and_the_relay_gets_its_proxy_env():
+    from pathlib import Path
+
+    from orch.install import parts as P
+
+    kw = dict(
+        binary=Path("/b/orch-hub"),
+        data=Path("/d"),
+        address="127.0.0.1",
+        port=8100,
+        publish_url=None,
+        relay_url=None,
+        dev=False,
+    )
+    plain = P.command_for("hub", **kw)
+    edge = P.command_for("hub", behind_edge=True, link_address=VPN, **kw)
+    assert "--behind-edge" not in plain and "--trusted-peer" not in plain
+    assert edge[edge.index("--trusted-peer") + 1] == "127.0.0.1" and "--behind-edge" in edge
+    assert P.env_for("relay", Path("/d"), behind_edge=True)["ORCH_RELAY_TRUSTED_PROXY"] == "127.0.0.1"
+    assert "ORCH_RELAY_TRUSTED_PROXY" not in P.env_for("relay", Path("/d"))
+
+
+def test_server_role_with_tls_starts_hub_and_relay_behind_the_edge_and_the_card_has_one_https_entry(tmp_path):
+    (tmp_path / "e").mkdir()
+    ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+    (tmp_path / "orch.d" / "orch-hub").mkdir(parents=True)
+    server_setup(
+        ctx,
+        "hub",
+        names=server.derive_names("example.com"),
+        hub_vpn_only=True,
+        caddy_dir=str(tmp_path / "orch.d"),
+        resolve=lambda n: [VPS],
+        local=local,
+        user="orch-hub",
+    )
+    argv, _ = ctx.runner.started["hub"]
+    assert "--behind-edge" in argv and argv[argv.index("--trusted-peer") + 1] == "127.0.0.1"
+    card = json.loads((ctx.layout.data("hub") / "hub-settings.json").read_text())
+    assert [a["web"] for a in card["addresses"]] == [
+        "https://hub.example.com:443"
+    ]  # no http entry: behind_edge refuses it
+    ctx2, *_ = stub_ctx(tmp_path / "e", SystemdFake())
+    (tmp_path / "o2" / "orch-edge").mkdir(parents=True)
+    server_setup(
+        ctx2,
+        "edge",
+        names=server.derive_names("example.com"),
+        caddy_dir=str(tmp_path / "o2"),
+        resolve=lambda n: [VPS],
+        local=local,
+        user="orch-edge",
+    )
+    assert ctx2.runner.started["relay"][1]["ORCH_RELAY_TRUSTED_PROXY"] == "127.0.0.1"
+
+
+def test_no_tls_means_no_edge_mode(tmp_path):
+    ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+    server_setup(
+        ctx,
+        "hub",
+        names=server.derive_names("example.com"),
+        caddy_dir=str(tmp_path / "x"),
+        resolve=lambda n: [],
+        local=local,
+        user="orch-hub",
+    )  # DNS missing: no TLS, no edge flags
+    assert "--behind-edge" not in ctx.runner.started["hub"][0]

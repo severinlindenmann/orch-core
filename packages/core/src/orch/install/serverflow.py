@@ -131,14 +131,18 @@ def server_setup(
     for p in parts:
         https = names.url(p) if p in tls else None
         extra: dict[str, Any] = {}
+        edge = https is not None
         if p == "hub":
             extra = dict(
+                behind_edge=edge,
                 link_address=plan.vpn_ip,
                 web_origin=https,
                 vpn_only=hub_vpn_only,
                 publish_url=names.url("publish") if "publish" in tls_all(names, plan, role) else None,
                 relay_url=names.url("relay") if "relay" in tls_all(names, plan, role) else None,
             )
+        if p == "relay":
+            extra = dict(behind_edge=edge)
         if p == "publish":
             extra = dict(public_origin=https, workspace_side=False)
         rec = install_part(ctx, p, address=loop, source=source, ref=ref, dev=dev, sync=False, **extra)

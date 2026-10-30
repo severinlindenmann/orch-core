@@ -31,7 +31,8 @@ describe('the ticket Actions menu and sharing', () => {
     const boxes = within(dialog).getAllByRole('checkbox').filter(b => (b as HTMLElement).dataset.testid?.startsWith('hub-rule-person-'))
     if (boxes.length && !(boxes[0] as HTMLInputElement).checked) await view.user.click(boxes[0])
     await waitFor(() => expect(within(dialog).getByTestId('hub-add-scope')).toHaveTextContent('The hub already holds this workspace'), T)
-    fireEvent.click(go)
+    await waitFor(() => expect(within(dialog).getByTestId('hub-add-go')).toBeEnabled(), T)
+    fireEvent.click(within(dialog).getByTestId('hub-add-go'))
     await waitFor(() => expect(add).toHaveBeenCalledTimes(1), T)
   })
 

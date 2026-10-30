@@ -329,10 +329,12 @@ def test_vector_remote_transcripts_replay() -> None:
         assert ini.recv is not None and ini.recv.decrypt(b"", bytes.fromhex(t["reply_hex"])) == cj(t["reply_plain"])
 
 
-def test_vector_remote_stream_ops_not_yet_in_runtime_table() -> None:
-    """R0 fixes the contract only: the runtime link tables take the stream ops in R2 (host) and R4 (hub), each with its
-    handler. Until then the hub's link verifier refuses them (unknown_op), so nothing half-built is reachable."""
-    assert not set(R.STREAM_OPS) & set(H.LINK_OPS)
+def test_vector_remote_stream_ops_runtime_table() -> None:
+    """R4: ``stream_open`` is in the runtime link table (h2w, so its w2h reply verifies and a w2h request is
+    ``unknown_op``); the one-way ``stream_data`` / ``stream_close`` stay out of it (they verify through
+    ``verify_stream_link``, so a reply form of them is ``unknown_op`` everywhere)."""
+    assert set(R.STREAM_OPS) & set(H.LINK_OPS) == {"stream_open"}
+    assert H.LINK_OPS["stream_open"][0] == R.STREAM_OPS["stream_open"][0] == "h2w"
 
 
 def test_vector_remote_app_constants() -> None:

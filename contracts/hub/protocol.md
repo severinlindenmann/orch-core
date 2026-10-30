@@ -3240,7 +3240,7 @@ handshake hash, split keys, the first transport message each way, plain and seal
 `custodial_cannot`, and `required` naming the cases an implementation must not lose (replays into another stream,
 workspace or device; early data; a flipped byte; UP-only FIDO2; tampered and rolled-back device lists; `stream_open`
 w2h; the gate while off; every "no custodial type can" item). The hub replays every case against its reference
-(`tests/test_remote_vectors.py`, which also rebuilds the file byte for byte); **orch-core replays every case** with an
+(`tests/test_remote_vectors.py`, which also rebuilds the file byte for byte; R4: every `stream_link` case carries the connection's `exporter` (hex, `ids.link_exporter_hex`) and a stream frame signed in the pre-R1 form `label || cj(o)` is `bad_signature`, with no fallback); **orch-core replays every case** with an
 independent test-side port (`tests/host/test_remote_vectors.py`, `tests/host/remote_port.py`) and the custodial cases
 against its real `check_custodial_role` and `check_custodial_payload`; R2–R5 replay them against the real paths. The
 Noise of the reference was cross-checked once against the `noiseprotocol` package (both directions, byte-equal

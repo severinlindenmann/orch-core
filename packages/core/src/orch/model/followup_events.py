@@ -12,6 +12,8 @@ import secrets
 from collections.abc import Mapping
 from typing import Any
 
+from orch.addons.manifest import EVENTS_KEY
+
 SOURCES = ("orch", "webhook", "addon")
 #: closed kind -> statuses, per source
 KINDS: dict[str, dict[str, tuple[str, ...]]] = {
@@ -150,7 +152,7 @@ def declared(addons: Mapping[str, Any], kind: str) -> Mapping[str, Any] | None:
     if not get("enabled") or get("purged"):
         return None
     rest = kind.split(".", 1)[1]
-    return next((e for e in get("events") or () if e["kind"] == rest), None)
+    return next((e for e in get(EVENTS_KEY) or () if e["kind"] == rest), None)
 
 
 def addon_fits(decl: Mapping[str, Any], ref: Any, status: Any = None) -> bool:

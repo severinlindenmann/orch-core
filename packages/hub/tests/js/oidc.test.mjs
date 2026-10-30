@@ -40,8 +40,8 @@ test("the finish goes to the route of the purpose the hub reports for the login 
     assert.deepEqual(calls.at(-1), ["POST", path, { code: "c", state: "s" }]);
   }
   const n = calls.length;
-  assert.equal((await O.finishCallback(api, "")).ok, false); // no code: no request at all
-  assert.equal(calls.length, n);
+  assert.equal((await O.finishCallback(api, "?error=access_denied&state=s")).ok, false); // the person cancelled
+  assert.deepEqual(calls.slice(n), [["POST", "/oidc/cancel", {}]]); // only the cookie is dropped, nothing is finished
   purpose = null; // no (or a foreign) cookie: refused, nothing finished
   assert.equal((await O.finishCallback(api, "?code=c&state=s")).ok, false);
   assert.equal(calls.at(-1)[1], "/oidc/pending");
@@ -70,7 +70,7 @@ test("the sign-in button exists only when company login is on", () => {
 test("the admin card never shows a secret and says what is needed", () => {
   const card = O.companyCard({ configured: true, provider: "entra", client_id: "cid", tenant: "t", domain: "", mode: "invited", idp_mfa: false, enabled: false, tested: false, has_secret: true, redirect_uri: "https://hub.example/oidc/callback", secure_address: true }, { save: async () => ({ status: 200 }), test: async () => ({ ok: true }) });
   const t = card.textContent;
-  for (const words of ["Company login", "Redirect address", "https://hub.example/oidc/callback", "Client secret", "second step", "Test the connection", "guests", "test the connection first"]) assert.ok(t.includes(words), words);
+  for (const words of ["Company login", "Redirect address", "https://hub.example/oidc/callback", "Client secret", "second step", "Test the connection", "guests", "test the connection first", "auth_time", "amr"]) assert.ok(t.includes(words), words);
   const secret = find(card, (n) => n.attrs.id === "oidc-secret")[0];
   assert.equal(secret.attrs.type, "password");
   assert.equal(secret.attrs.value, undefined); // the saved secret is never put back into the page

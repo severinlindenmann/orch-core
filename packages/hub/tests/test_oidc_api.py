@@ -167,7 +167,6 @@ def test_linked_person_signs_in_and_it_is_a_session_only(e):
             "POST", "/channels/register/begin", {"kind": "browser", "key_pub": b64u(key.public), **creds}, token=tok
         )
         assert s in (400, 401, 403), o
-    assert e.w.env.svc.new_channels(e.w.ann) == [] or True
     rows = e.w.env.svc.db.q("SELECT COUNT(*) FROM channels WHERE user_id=?", (e.w.ann,))
     assert rows[0][0] == 0  # no key was recorded, with any factor
 
@@ -448,3 +447,40 @@ def test_pending_says_what_the_cookie_is_for_and_consumes_nothing(e):
     assert e.call("GET", "/oidc/pending", tx=tx[:-3] + "AAA")[1] == {"purpose": None}
     q2, tx2, _ = e.begin("/oidc/link/start", e.admin_tok, e.w.creds(e.w.admin))
     assert e.call("GET", "/oidc/pending", tx=tx2)[1] == {"purpose": "link"}
+
+
+def test_a_company_login_session_cannot_change_or_test_the_settings(e):
+    body = e.configure(mode="company")
+    e.w.env.acc.add_member("hub-admin", e.w.ann)
+    e.store.link(e.w.ann, "entra", TENANT, "oid-ann")
+    s, o, h = e.company_login(oid="oid-ann")
+    tok = session_of(h, e.w)
+    assert e.call("GET", "/session", token=tok)[1]["is_admin"] is True  # an admin, but signed in by the company
+    for method, path, payload in (
+        ("PUT", "/admin/oidc", {**body, "client_secret": ""}),
+        ("POST", "/admin/oidc/test/start", {}),
+        ("POST", "/admin/oidc/test/finish", {"code": "c", "state": "s"}),
+    ):
+        s, o, _ = e.call(method, path, payload, token=tok)
+        assert (s, o["error"]) == (403, "reauth_required"), (path, s, o)
+    assert e.call("GET", "/admin/oidc", token=tok)[0] == 200  # reading is fine
+    assert (
+        e.call("PUT", "/admin/oidc", {**body, "client_secret": ""}, token=e.admin_tok)[0] == 200
+    )  # a password session may
+
+
+def test_linking_also_refuses_a_provider_that_says_no_mfa(e):
+    e.configure()
+    tok = e.w.login(e.w.ann)
+    e.idp.claims = {"oid": "oid-ann", "auth_time": NOW - 5, "amr": ["pwd"]}
+    q, tx, _ = e.begin("/oidc/link/start", tok, e.w.creds(e.w.ann))
+    s, o, h = e.call("POST", "/oidc/link/finish", {"code": "c", "state": q["state"]}, token=tok, tx=tx)
+    assert s == 403 and e.store.linked(e.w.ann) is None
+    assert "Max-Age=0" in e.cookies(h)[COOKIE]
+
+
+def test_a_cancelled_login_drops_the_cookie(e):
+    e.configure()
+    q, tx, _ = e.begin()
+    s, o, h = e.call("POST", "/oidc/cancel", {}, tx=tx)
+    assert s == 200 and "Max-Age=0" in e.cookies(h)[COOKIE]

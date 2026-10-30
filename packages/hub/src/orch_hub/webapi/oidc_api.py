@@ -26,6 +26,13 @@ def oidc_routes(r: Any) -> tuple[Any, ...]:
     return (
         r("GET", "/oidc/options", "none", "oidc_options", "Is company login on, and which provider"),
         r("GET", "/oidc/pending", "none", "oidc_pending", "What the login cookie of this browser is for"),
+        r(
+            "POST",
+            "/oidc/cancel",
+            "none",
+            "oidc_cancel",
+            "The company login was cancelled or refused by the provider: drop the login cookie",
+        ),
         r("POST", "/oidc/start", "none", "oidc_start", "Begin a company login: the address to send the browser to"),
         r(
             "POST",
@@ -128,6 +135,14 @@ class OidcHandlers:
         svc = getattr(self.d, "oidc", None)
         o = svc.instance() if svc is not None else None
         return 200, {"purpose": o.purpose_of(c.cookie_of(self._tx_cookie_name())) if o is not None else None}
+
+    def _h_oidc_cancel(self, c: Any, p: dict, q: dict, b: dict | None):
+        return 200, {"ok": True}, [self._tx_clear()]
+
+    def _no_company_session(self, c: Any) -> None:
+        """Changing or testing company login needs the admin's own password + code session, never a company-login one."""
+        if c.via == "oidc":
+            raise _err("reauth_required")
 
     def _h_oidc_start(self, c: Any, p: dict, q: dict, b: dict | None):
         self._need_browser(c)
@@ -241,6 +256,8 @@ class OidcHandlers:
                 purpose="link",
                 bind=c.user_id,
             )
+            if not mfa_ok(ident):  # as at sign-in: the provider sent amr and it lacks mfa
+                raise OidcError("not_allowed")
             svc.store.link(c.user_id, ident.provider, ident.realm, ident.subject)
         except OidcError as e:
             return self._oidc_fail(e, c)
@@ -281,6 +298,7 @@ class OidcHandlers:
     def _h_a_oidc_save(self, c: Any, p: dict, q: dict, b: dict | None):
         from .api import _need
 
+        self._no_company_session(c)
         b = _need(b, provider=str, client_id=str, tenant=str, domain=str, mode=str, idp_mfa=bool, enabled=bool)
         if b.keys() - {"provider", "client_id", "tenant", "domain", "mode", "idp_mfa", "enabled", "client_secret"}:
             raise _err("malformed")
@@ -327,6 +345,7 @@ class OidcHandlers:
         return self._h_a_oidc(c, p, q, None)
 
     def _h_a_oidc_test_start(self, c: Any, p: dict, q: dict, b: dict | None):
+        self._no_company_session(c)
         self._need_browser(c)
         svc = self._oidc_svc()
         try:
@@ -338,6 +357,8 @@ class OidcHandlers:
 
     def _h_a_oidc_test_finish(self, c: Any, p: dict, q: dict, b: dict | None):
         from .api import _need
+
+        self._no_company_session(c)
 
         self._need_browser(c)
         b = _need(b, code=str, state=str)

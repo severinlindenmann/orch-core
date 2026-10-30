@@ -40,6 +40,7 @@ const WHERE = { signin: "", link: "#/account", test: "#/hub-settings" };
  *  the right finish route is called. Returns `{purpose, ok, body, where}`; the caller shows it and removes the address. */
 export async function finishCallback(api, search) {
   const q = callbackParams(search);
+  if (!q) await api("POST", "/oidc/cancel", {}); // the provider returned an error, or the person cancelled: drop the login cookie
   const pending = q ? await api("GET", "/oidc/pending") : null;
   const purpose = pending?.status === 200 && FINISH[pending.body?.purpose] ? pending.body.purpose : null;
   if (!q || !purpose) return { purpose: purpose ?? "signin", ok: false, body: { error: "oidc_failed" }, where: WHERE[purpose ?? "signin"] };
@@ -103,7 +104,8 @@ export function companyCard(data, actions) {
     h("label", { class: "small" }, mfa, " My company login already asks for a second step (like a code or an app)"),
     h("label", { class: "small" }, on, " Turn company login on", cur.tested ? null : h("span", { class: "muted", text: " (test the connection first)" })),
     h("details", { class: "info" }, h("summary", { text: "Good to know" }),
-      h("p", { class: "small muted", text: "Microsoft may leave out the sign-in method and time unless optional claims are set up; then the second-step tick is your statement, not something the hub can check." }),
+      h("p", { class: "small muted", text: "Microsoft may leave out the sign-in method (amr) unless optional claims are set up; then the second-step tick is your statement, not something the hub can check." }),
+      h("p", { class: "small muted", text: "For Microsoft, add the optional claim auth_time to the app registration (Token configuration, ID token). Without it the test login and linking fail, on purpose." }),
       h("p", { class: "small muted", text: "With \"Everyone in my company\", guests of your Microsoft tenant also join as members. They can see nothing until you give them a group." })),
     h("div", { class: "row top" }, save, test), out);
   sync();

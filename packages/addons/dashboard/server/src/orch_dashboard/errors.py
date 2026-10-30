@@ -47,7 +47,10 @@ def fail(code: str, message: str | None = None, exit: int = 9):
 def status(code: str) -> int:
     if code == "not_found":
         return 404
+    if code == "remote.presence_required":
+        return 428  # R3: this request needs a presence signature of the device first
     if code in {
+        "remote.bearer",  # R3: an outside bearer in a stream is refused, never stripped
         "usage",
         "invalid.input",
         "blob.invalid",
@@ -66,6 +69,7 @@ def status(code: str) -> int:
         "passkey.stepup_required",
         "passkey.invalid",
         "switch.refused",
+        "remote.level",  # R3: not at this access level
     } or code.startswith("grant."):
         return 403
     if code in {"intent.done", "intent.expired"}:
@@ -106,6 +110,19 @@ def status(code: str) -> int:
 
 def response(code: str, http: int):
     return JSONResponse({"ok": False, "error": {"code": code, "message": code, "retryable": False}}, status_code=http)
+
+
+def presence_required_response(view_digest: str, template: str):
+    """R3 (contract 10.2c): the request needs a presence signature covering exactly this request. The client
+    recomputes `view_digest` from what it sent and refuses to prompt on a mismatch."""
+    body = {
+        "code": "remote.presence_required",
+        "message": "Confirm with your device first.",
+        "retryable": False,
+        "view_digest": view_digest,
+        "template": template,
+    }
+    return JSONResponse({"ok": False, "error": body}, status_code=428)
 
 
 def step_up_response(remote: bool):

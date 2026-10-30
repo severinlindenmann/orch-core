@@ -54,7 +54,7 @@ from .explorer import routes as explorer_routes
 from .gateway import Gateway, state_dir
 from .hostlink import REQUEST_MEMO
 from .live import Live, SessionStream
-from .policy import LOOPBACK, loopback_policy
+from .policy import LOOPBACK, loopback_policy, remote_device_policy
 from .security import Security, log_internal
 from .wiki import routes as wiki_routes
 
@@ -196,9 +196,17 @@ def create_app(
     app.state.live = live
     app.state.term_tickets = tickets
     app.state.remote_problem = remote_problem
-    app.state.policies = {p.name: p for p in (loopback_policy(port, alt_hosts), *([remote] if remote else []))}
+    # the stream policy is always there: only the in-process stream adapter can name it (`scope["orch_listener"]`)
+    app.state.policies = {
+        p.name: p for p in (loopback_policy(port, alt_hosts), *([remote] if remote else []), remote_device_policy())
+    }
     app.add_middleware(
-        Security, auth=auth, policy=app.state.policies[LOOPBACK], registry=app.state.policies, router=app.router
+        Security,
+        auth=auth,
+        policy=app.state.policies[LOOPBACK],
+        registry=app.state.policies,
+        router=app.router,
+        presence=lambda workspace, digest: app.state.take_presence(workspace, digest),
     )
     app.add_middleware(RequestMemo)
 
@@ -258,7 +266,7 @@ def create_app(
 
     def bound_only(request: Request, rows):
         """A session opened by a hub switch sees only the workspace its ticket was for (H1)."""
-        bound = auth.switch_workspace(request.state.token)
+        bound = auth.bound_workspace(request.state.token)
         return rows if bound is None else [ws for ws in rows if ws.id == bound]
 
     @app.get("/api/session")
@@ -285,7 +293,7 @@ def create_app(
     @app.get("/api/host")
     def host(request: Request):
         info = gateway.host_info()
-        bound = auth.switch_workspace(request.state.token)
+        bound = auth.bound_workspace(request.state.token)
         if bound is None:
             return info
         # A hub-made session knows ONE workspace: the dev marker, and only the alarms of that workspace.

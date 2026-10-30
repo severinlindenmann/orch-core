@@ -63,3 +63,8 @@ def test_no_install_or_build_work_in_a_step_that_holds_the_key():
 
 def test_tag_protection_and_immutable_releases_are_marked_required():
     assert "REQUIRED (the refresh anchor list is git tags" in DRAFT and "immutable releases" in DRAFT
+
+
+def test_constraints_are_resolved_with_an_age_cutoff_and_the_residual_is_documented():
+    assert '--exclude-newer "$cutoff"' in DRAFT and "- 7 days" in DRAFT
+    assert "Pilot residual (constraints)" in DRAFT

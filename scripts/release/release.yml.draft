@@ -58,6 +58,10 @@
 #   Residual risk (accepted, documented): the build job runs dependency code (npm, uv build) from main; a
 #   compromised dependency could alter a wheel before it is hashed and signed. The constraints file hash-locks the
 #   Python dependencies; the npm tree is locked by package-lock.json (npm ci).
+#   Pilot residual (constraints): constraints.txt is resolved fresh in CI (uv pip compile, one resolution over all five
+#   wheels), not taken from the packages' locks, because those locks disagree with each other. It is held to uploads
+#   at least 7 days older than the commit (--exclude-newer) and hash-pinned; it is not reviewed in a PR. Like the npm
+#   tree, accepted for the pilot.
 
 name: release
 
@@ -245,7 +249,10 @@ jobs:
           # sha256 pins for every dependency; the five orch wheels themselves are not in the file (their own hashes
           # are in the manifest). constraints.py refuses an unhashed or unpinned line and normalizes the file.
           ls dist/orch_*-"${VERSION}"-py3-none-any.whl | sed 's#^#./#' > wheels.in
+          # nothing newer than a week before the commit: a freshly published (possibly hijacked) upload cannot enter
+          cutoff=$(date -u -d "$(git show -s --format=%cI "$SHA") - 7 days" +%Y-%m-%dT%H:%M:%SZ)
           uv pip compile wheels.in --generate-hashes --universal --python-version 3.14 --quiet --no-header \
+            --exclude-newer "$cutoff" \
             --no-emit-package orch-core --no-emit-package orch-dashboard --no-emit-package orch-hub \
             --no-emit-package orch-relay --no-emit-package orch-publish -o resolved.txt
           python3 -I scripts/release/constraints.py --out dist/constraints.txt resolved.txt

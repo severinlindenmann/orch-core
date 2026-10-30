@@ -53,7 +53,7 @@ from .gateway import Gateway, state_dir
 from .hostlink import REQUEST_MEMO
 from .live import Live, SessionStream
 from .policy import LOOPBACK, loopback_policy
-from .security import Security
+from .security import Security, log_internal
 from .wiki import routes as wiki_routes
 
 
@@ -211,7 +211,10 @@ def create_app(
 
     @app.exception_handler(HostError)
     async def host_error(request, exc):
-        return host_response(exc)
+        answer = host_response(exc)
+        if answer.status_code >= 500:
+            log_internal(exc)  # an `internal` answer: the type and frames in the log, never the message
+        return answer
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(request, exc):

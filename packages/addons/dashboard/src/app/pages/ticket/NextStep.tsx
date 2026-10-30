@@ -9,7 +9,7 @@ import { openDockOn } from '@/app/terminal/dock/request'
 import { useNow } from '@/lib/useNow'
 import { activityLine } from './activity'
 import { agentWorking, type ProgressRun } from './progress'
-import { availableActions, gapOf, GATE_LABEL, policyText } from './actions'
+import { availableActions, bothIsBlocked, gapOf, GATE_LABEL, policyText } from './actions'
 import { fmtDay, fmtExact, type HumanAction, type Jump, Mono, presenceLabel, type Viewer } from './shared'
 
 type Props = {
@@ -200,6 +200,7 @@ function NextStepCard({ ticket, viewer, sign, jump, signing = false, run, wait, 
   const working = agentWorking(ticket, wait)
   const now = useNow()
   const gate = APPROVE_ORDER.find((g) => av.approve.includes(g))
+  const oneByOne = bothIsBlocked(ticket.key)
   if (av.approveBoth) {
     return (
       <Card title="Ready for your approval" text="Read the requirements and the plan, then approve both with one signature.">
@@ -215,7 +216,7 @@ function NextStepCard({ ticket, viewer, sign, jump, signing = false, run, wait, 
   if (gate) {
     const c = APPROVE[gate]
     return (
-      <Card title={c.title} text={c.text} gate={{ name: gate, status: ticket.gates[gate], viewer }}>
+      <Card title={c.title} text={oneByOne && gate !== 'code' ? 'Approve them one at a time instead. ' + c.text : c.text} gate={{ name: gate, status: ticket.gates[gate], viewer }}>
         <Button size="sm" disabled={signing} onClick={(e) => sign({ kind: 'approve', gate, pressed: trustedPress(e.nativeEvent) })}>
           {c.button}
         </Button>

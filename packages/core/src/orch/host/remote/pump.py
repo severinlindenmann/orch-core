@@ -1,4 +1,5 @@
-"""The host thread that serves remote access stream frames from the shared hub link (R2, #1590; design note section 4).
+"""Serves remote access stream frames from the workspace's dedicated stream link (R2, #1590; design note section 4;
+R4 follow-up: ``linkrun`` owns the link and the thread, this module is what one pass does).
 
 :func:`pump` takes one h2w frame off the link (``LinkClient.next_stream``) and handles it, like
 :func:`orch.host.hubdeliver.pump` does for ``event_deliver``:
@@ -11,8 +12,9 @@
 
 Before and after every frame the sessions are swept (handshake, life, idle), the data frames they queued are sent, then
 the ``stream_close`` frames :class:`gate.StreamTable` queued (revocation, budget, bad ``seq``), all outside the store
-lock, and ``remote.session_closed`` is appended for each opened session that ended. :func:`run` loops it on the
-shared link (``peerops.shared_link``)."""
+lock, and ``remote.session_closed`` is appended for each opened session that ended. :func:`run` loops it on whatever
+link ``get_link()`` returns; the production caller is :mod:`linkrun`, which calls :func:`pump` itself on the stream
+link (nothing else uses that link, so the shared peer link is no longer involved)."""
 
 from __future__ import annotations
 

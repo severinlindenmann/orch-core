@@ -204,7 +204,7 @@ def create_app(
         policy=app.state.policies[LOOPBACK],
         registry=app.state.policies,
         router=app.router,
-        signer=gateway.click,
+        presence=lambda workspace, digest: app.state.take_presence(workspace, digest),
     )
     app.add_middleware(RequestMemo)
 

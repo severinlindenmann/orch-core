@@ -475,6 +475,13 @@ def register(app: FastAPI, gateway: Gateway):
             raise fail("click.contract", "Reload the page: this page is out of date.", exit=9)
 
     clicks = app.state.clicks = Clicks()
+
+    def take_presence(workspace_id: str, view_digest: str) -> dict:
+        """D88: a stream's presence route asks the signer to take its digest from the stream's batch (once). The
+        signer client stamps `remote` and the stream id itself; a refusal is `remote.presence_required` & co."""
+        return signer.call("presence_take", {"workspace_id": workspace_id, "view_digest": view_digest})
+
+    app.state.take_presence = take_presence
     failed_bumps: dict[str, int] = {}
     hold_gate = threading.Lock()  # serialize admission only; logout never waits for it
     held: dict[str, tuple[str, str]] = {}  # request -> (workspace, preparing session); no signed bytes

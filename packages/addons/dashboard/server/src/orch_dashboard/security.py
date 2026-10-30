@@ -106,13 +106,13 @@ def bearer_headers(headers) -> bool:
 class Security:
     """ASGI checks before routing, including duplicate headers and streamed body limits."""
 
-    def __init__(self, app, auth, policy: ListenerPolicy, others=(), registry=None, router=None, signer=None):
+    def __init__(self, app, auth, policy: ListenerPolicy, others=(), registry=None, router=None, presence=None):
         """``policy`` is the default listener (loopback). ``others`` are further listeners' policies; a request is
         handled by the one named in ``scope["orch_listener"]``, which only the server that accepted the connection
         sets (front.Front), never a header. A name that is not configured is refused (fail closed)."""
         self.app, self.auth, self.policy = app, auth, policy
-        # The click signer, for the presence of a stream's route (D88): `presence_take` answers or refuses.
-        self.signer = signer
+        # Takes the presence of a stream's route from the click signer (D88, `click.py`): returns, or raises HostError.
+        self.presence = presence
         # The app's router, for the remote route gate. Without one a gated listener answers nothing (fail closed).
         self.gate = RouteGate(router) if router is not None else None
         # `registry` (create_app's `app.state.policies`) is shared: taking a policy out of it turns that listener off
@@ -198,10 +198,10 @@ class Security:
         """Take the presence that covers this very request (D88): its `route_digest` must be in a live batch of THIS
         stream. None when taken; else the digest to ask for (`sha256:<hex>`), or a HostError of the signer."""
         digest = "sha256:" + route_digest(identity.workspace_id, method, template, path, query, body).hex()
-        if self.signer is None:
+        if self.presence is None:
             raise HostError({"code": "click.unavailable", "message": "no signer", "retryable": False}, 9)
         try:
-            self.signer.call("presence_take", {"workspace_id": identity.workspace_id, "view_digest": digest})
+            self.presence(identity.workspace_id, digest)
         except HostError as exc:
             if exc.error.get("code") == "remote.presence_required":
                 return digest

@@ -40,8 +40,14 @@ def _seed_secret(w):
     a = w.env.acc
     org_secrets(a)
     with a.tx() as db:
-        db.execute("INSERT INTO org_secrets (id,name,version,expires_ms,shared,created_by,created_ms) VALUES ('s1','k',1,?,?,'u',1)", (w.clock() + 10**9, "all"))
-        db.execute("INSERT INTO org_secret_wraps (secret_id,workspace_id,version,wxk_version,sealed) VALUES ('s1',?,1,1,x'00')", ("ab" * 16,))
+        db.execute(
+            "INSERT INTO org_secrets (id,name,version,expires_ms,shared,created_by,created_ms) VALUES ('s1','k',1,?,?,'u',1)",
+            (w.clock() + 10**9, "all"),
+        )
+        db.execute(
+            "INSERT INTO org_secret_wraps (secret_id,workspace_id,version,wxk_version,sealed) VALUES ('s1',?,1,1,x'00')",
+            ("ab" * 16,),
+        )
 
 
 def _wraps(w):
@@ -67,7 +73,16 @@ def test_steps_run_in_order_and_the_backup_is_taken_before_the_withdraw(w, monke
     kinds = [c[0] for c in w.launcher.calls]
     assert kinds == ["write_order", "dry_run", "remove_order", "write_order", "launch"]
     assert w.pushed and all(n["o"]["kind"] == "hub.closing" for _ws, n in w.pushed)
-    assert set(w.launcher.orders[-1]) == {"v", "kind", "hub_id", "removal_id", "state_dir", "issued_ms", "exp_ms", "dev"}
+    assert set(w.launcher.orders[-1]) == {
+        "v",
+        "kind",
+        "hub_id",
+        "removal_id",
+        "state_dir",
+        "issued_ms",
+        "exp_ms",
+        "dev",
+    }
 
 
 def test_preflight_failure_changes_nothing_and_cancel_works(w):
@@ -132,8 +147,17 @@ def test_a_crash_in_withdrawing_resumes_forward_after_a_restart(w):
     _begin(w)
     w.closing._doc["state"] = "withdrawing"
     w.closing._save()
-    again = Closing(keys=w.env.keys, access=w.env.acc, registry=w.reg, channels=w.env.svc, now_ms=w.clock,
-                    launcher=w.launcher, activity=w._act, audit=w.env.audit, spawn=lambda fn: fn())
+    again = Closing(
+        keys=w.env.keys,
+        access=w.env.acc,
+        registry=w.reg,
+        channels=w.env.svc,
+        now_ms=w.clock,
+        launcher=w.launcher,
+        activity=w._act,
+        audit=w.env.audit,
+        spawn=lambda fn: fn(),
+    )
     again.push = lambda ws, n: True
     assert again.phase() == "withdrawing"
     again.resume()
@@ -141,7 +165,7 @@ def test_a_crash_in_withdrawing_resumes_forward_after_a_restart(w):
 
 
 def test_a_stalled_run_needs_a_new_confirm_for_the_order(w):
-    tok, signer, ch = _begin(w)
+    _tok, signer, ch = _begin(w)
     w.clock.advance(61 * 60_000)
     w.closing.run_sync()
     assert w.closing.phase() == "notified" and w.closing.status()["state"] == "stalled"
@@ -191,14 +215,25 @@ def test_the_notice_verifies_for_its_workspace_and_is_not_served_early(w):
     n = w.closing.notice_for(ws)
     keys = w.env.keys
     held = keys.verify_card(keys.card())
-    got = H.verify_closing(n, held, workspace_id=ws, binding_seq=1, now_ms=w.clock(), dev_mode=True, revoked_op_certs=frozenset())
+    got = H.verify_closing(
+        n, held, workspace_id=ws, binding_seq=1, now_ms=w.clock(), dev_mode=True, revoked_op_certs=frozenset()
+    )
     assert got["removal_id"] == w.closing._doc["removal_id"]
     assert w.closing.notice_for("cd" * 16) is None  # not a bound workspace of this hub
 
 
 def test_link_allow_list_is_the_documented_one():
-    assert LINK_ALLOWED == {"snapshot_get", "org_skills_get", "mcp_servers_get", "org_secrets_get", "closing_get",
-                            "hub_where", "binding_put", "audit_get", "audit_ack"}
+    assert LINK_ALLOWED == {
+        "snapshot_get",
+        "org_skills_get",
+        "mcp_servers_get",
+        "org_secrets_get",
+        "closing_get",
+        "hub_where",
+        "binding_put",
+        "audit_get",
+        "audit_ack",
+    }
 
 
 def test_hub_cli_writes_are_refused_while_closing(tmp_path, capsys):
@@ -217,7 +252,6 @@ def test_f1_a_refused_order_can_be_confirmed_again_with_a_new_order_id(w):
     _tok, signer, ch = _begin(w)
     w.closing.run_sync()
     assert w.closing.phase() == "ordered"
-    first = [c[1] for c in w.launcher.calls if c[0] == "launch"]
     w.launcher.result = {"ok": False, "code": "refused", "message_plain": "The hub folder is in use."}
     st = w.closing.status()
     assert st["state"] == "stalled" and "Finish removing" in st["plain"] and st["cancel_allowed"] is False
@@ -264,7 +298,15 @@ def test_f2_a_cancelled_run_cannot_move_the_new_one(w, monkeypatch):
     gate.set()
     t.join(20)
     assert w.closing._doc["removal_id"] == new_rid
-    assert w.closing.phase() in ("closing", "preflight_ok", "backed_up", "withdrawing", "withdrawn", "notified", "ordered")
+    assert w.closing.phase() in (
+        "closing",
+        "preflight_ok",
+        "backed_up",
+        "withdrawing",
+        "withdrawn",
+        "notified",
+        "ordered",
+    )
     # the old worker did not skip the new run's preflight: it either left the doc at 'closing' or the new run took over
     assert w.closing._doc["state"] == "closing" or any(c[0] == "dry_run" for c in w.launcher.calls)
 
@@ -276,8 +318,17 @@ def test_resume_goes_on_from_every_state(w, state):
     _begin(w)
     w.closing._doc["state"] = state
     w.closing._save()
-    again = Closing(keys=w.env.keys, access=w.env.acc, registry=w.reg, channels=w.env.svc, now_ms=w.clock,
-                    launcher=w.launcher, activity=w._act, audit=w.env.audit, spawn=lambda fn: fn())
+    again = Closing(
+        keys=w.env.keys,
+        access=w.env.acc,
+        registry=w.reg,
+        channels=w.env.svc,
+        now_ms=w.clock,
+        launcher=w.launcher,
+        activity=w._act,
+        audit=w.env.audit,
+        spawn=lambda fn: fn(),
+    )
     again.push = lambda ws, n: True
     assert again.phase() == state
     again.resume()

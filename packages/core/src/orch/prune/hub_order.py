@@ -255,8 +255,8 @@ def _utc(ctx: Ctx) -> str:
 
 
 def _preflight(ctx: Ctx, dry: bool, plan: Plan | None = None) -> Plan:
-    """Every check, nothing changed. Raises :class:`Refused`. ``plan`` is filled as the checks go, so a caller that gets a
-    refusal still sees the order id once it was read."""
+    """Every check, nothing changed. Raises :class:`Refused`. ``plan`` is filled as the checks go, so a refusal
+    still leaves the order id once it was read."""
     from orch.install.state import Layout, load
     from orch.ops.runtime import state_dir
 

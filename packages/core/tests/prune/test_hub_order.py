@@ -452,7 +452,11 @@ def test_f3_launchd_job_is_removed_on_success_and_on_refusal(b):
     calls2: list[list[str]] = []
     run2 = lambda argv, env=None: (calls2.append(list(argv)), (0, ""))[1]  # noqa: E731
     assert b2.run(platform="darwin", run=run2) != 0
-    assert ["launchctl", "remove", "io.orch.hub-remove." + REMOVAL] in calls2  # a refusal does not leave the job to re-run
+    assert [
+        "launchctl",
+        "remove",
+        "io.orch.hub-remove." + REMOVAL,
+    ] in calls2  # a refusal leaves no job to re-run
 
 
 def test_f3_dry_run_and_linux_never_call_launchctl(b):

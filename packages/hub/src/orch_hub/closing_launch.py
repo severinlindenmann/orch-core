@@ -69,10 +69,10 @@ class Launcher:
             return {}
         try:
             d = json.loads(read_file(root / "install.json"))
-        except (StateError, ValueError):
+        except StateError, ValueError:
             try:
                 d = json.loads((root / "install.json").read_text())
-            except (OSError, ValueError):
+            except OSError, ValueError:
                 return {}
         return d if type(d) is dict else {}
 
@@ -96,7 +96,7 @@ class Launcher:
     def read_result(self, state_dir: Path) -> dict[str, Any] | None:
         try:
             d = json.loads(read_file(Path(state_dir) / RESULT_FILE))
-        except (StateError, ValueError):
+        except StateError, ValueError:
             return None
         return d if type(d) is dict else None
 
@@ -139,7 +139,7 @@ class Launcher:
                 timeout=DRY_RUN_TIMEOUT_S,
                 check=False,
             )
-        except (OSError, subprocess.SubprocessError):
+        except OSError, subprocess.SubprocessError:
             return False, "The removal check could not run."
         if r.returncode == 0:
             return True, ""
@@ -171,7 +171,16 @@ class Launcher:
             if r.returncode != 0:
                 raise LaunchError("systemd-run failed")
         elif kind == "launchd":
-            cmd = ["launchctl", "submit", "-l", f"io.orch.hub-remove.{removal_id}", "--", "/usr/bin/env", *[f"{k}={v}" for k, v in env.items()], *argv]
+            cmd = [
+                "launchctl",
+                "submit",
+                "-l",
+                f"io.orch.hub-remove.{removal_id}",
+                "--",
+                "/usr/bin/env",
+                *[f"{k}={v}" for k, v in env.items()],
+                *argv,
+            ]
             r = self._run(cmd, env=env, cwd="/", stdin=subprocess.DEVNULL, capture_output=True, timeout=30, check=False)
             if r.returncode != 0:
                 raise LaunchError("launchctl submit failed")

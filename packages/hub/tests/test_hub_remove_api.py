@@ -55,7 +55,16 @@ def test_preview_changes_nothing_and_shows_only_a_count(w):
     tok = w.login(w.admin)
     s, o, _ = w.call("GET", "/admin/hub/remove/preview", token=tok)
     assert s == 200
-    assert set(o) == {"state", "workspaces", "relay", "publish", "backup_key_ok", "backup_folder_hint", "cancel_allowed", "refusal"}
+    assert set(o) == {
+        "state",
+        "workspaces",
+        "relay",
+        "publish",
+        "backup_key_ok",
+        "backup_folder_hint",
+        "cancel_allowed",
+        "refusal",
+    }
     assert o["state"] == "open" and o["workspaces"] == 1 and o["backup_key_ok"] is False
     assert o["refusal"] == "Set up the backup words first."
     assert "name" not in str(o).lower() or "backup" in str(o).lower()

@@ -47,11 +47,11 @@ from ..access.orgcleanup import org_cleanup
 from ..access.store import ADMIN_GROUP, DAY_MS, EXTEND_MS, check_name
 from ..activity.feed import feed as activity_feed
 from ..backup.hubop import FENCE as RESTORE_FENCE
-from ..closing import WEB_ALLOWED as CLOSING_ALLOWED
 from ..changes import ChangeError
 from ..channels import Channels
 from ..channels.cli import pair_link
 from ..channels.service import MIN_PASSWORD, ChannelError
+from ..closing import WEB_ALLOWED as CLOSING_ALLOWED
 from ..config import dev_of
 from ..connect import LinkError, build_link
 from ..contract import channelapi as CA
@@ -875,7 +875,12 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
             raise ApiError("not_allowed")
         if method != "GET" and RESTORE_FENCE.is_set():
             raise ApiError("restore_busy")  # a restore is swapping the state dir: no write may land in the old one
-        if method != "GET" and self.d.closing is not None and self.d.closing.active() and route.handler not in CLOSING_ALLOWED:
+        if (
+            method != "GET"
+            and self.d.closing is not None
+            and self.d.closing.active()
+            and route.handler not in CLOSING_ALLOWED
+        ):
             raise ApiError("hub_closing")  # the hub is being removed: default deny for every write (allow list)
         cookie_token = self._cookie(headers.get("cookie", ""), self._cookie_name)
         auth = headers.get("authorization", "")

@@ -41,7 +41,9 @@ ORDER_FILE = "remove-order.json"
 RESULT_FILE = "remove-result.json"
 NONCE_LIFE_MS = 5 * 60_000
 ORDER_LIFE_MS = 10 * 60_000
-ORDERED_STUCK_MS = 15 * 60_000  # ordered, no result and no end of the hub after this long: "Finish removing" is offered again
+ORDERED_STUCK_MS = (
+    15 * 60_000
+)  # ordered, no result and no end of the hub after this long: "Finish removing" is offered again
 STALL_MS = 60 * 60_000  # step 6 needs a fresh confirm when the run was idle this long
 STATES = ("closing", "preflight_ok", "backed_up", "withdrawing", "withdrawn", "notified", "ordered")
 CANCEL_OK = frozenset({"closing", "preflight_ok", "backed_up"})
@@ -132,9 +134,17 @@ class Closing:
         except StateError:
             return None
         except ValueError:
-            return {"state": "closing", "removal_id": "", "fail": {"code": "state_unreadable", "plain": "The removal state could not be read."}}
+            return {
+                "state": "closing",
+                "removal_id": "",
+                "fail": {"code": "state_unreadable", "plain": "The removal state could not be read."},
+            }
         if type(d) is not dict or d.get("state") not in STATES or type(d.get("removal_id")) is not str:
-            return {"state": "closing", "removal_id": "", "fail": {"code": "state_unreadable", "plain": "The removal state could not be read."}}
+            return {
+                "state": "closing",
+                "removal_id": "",
+                "fail": {"code": "state_unreadable", "plain": "The removal state could not be read."},
+            }
         return d
 
     def _save(self) -> None:
@@ -201,7 +211,10 @@ class Closing:
             shown, plain = "stalled", "Removal is paused. Finish removing to continue."
         result = self.launcher.read_result(self.state_dir) if state == "ordered" else None
         if result is not None and not result.get("ok", False):
-            shown, plain = "stalled", str(result.get("message_plain") or "The removal was refused.") + " Finish removing to try again."
+            shown, plain = (
+                "stalled",
+                str(result.get("message_plain") or "The removal was refused.") + " Finish removing to try again.",
+            )
         elif state == "ordered" and self._ordered_stuck(doc):
             shown, plain = "stalled", "The removal did not finish. Finish removing to try again."
         return {
@@ -225,7 +238,12 @@ class Closing:
             now = self._now()
             nonce = secrets.token_hex(16)
             exp = now + NONCE_LIFE_MS
-            self._pending[user_id] = {"nonce": nonce, "channel_id": channel_id, "session": _sha(session_token), "exp_ms": exp}
+            self._pending[user_id] = {
+                "nonce": nonce,
+                "channel_id": channel_id,
+                "session": _sha(session_token),
+                "exp_ms": exp,
+            }
             ctx = C.remove_context(self.keys.hub_id, nonce, exp, user_id)
             return {"ctx": ctx, "digest": C.remove_digest(ctx).hex(), "nonce": nonce, "exp_ms": exp}
 
@@ -394,7 +412,9 @@ class Closing:
         if self._state(rid) == "preflight_ok":  # 3 the last backup, still WITH the secrets (the restore point)
             self._backup()
             self._advance("preflight_ok", "backed_up", rid)
-        if self._state(rid) == "backed_up":  # 4 withdraw: the point of no return is persisted FIRST (cancel refuses from here)
+        if (
+            self._state(rid) == "backed_up"
+        ):  # 4 withdraw: the point of no return is persisted FIRST (cancel refuses from here)
             self._advance("backed_up", "withdrawing", rid)
         if self._state(rid) == "withdrawing":  # also the resume point after a crash: finish forward, never back to open
             self._withdraw()
@@ -487,7 +507,7 @@ class Closing:
         self.launcher.write_order(self.state_dir, self._order_doc(doc, order_id))
         try:
             self.launcher.launch(self.state_dir, order_id)
-        except Exception:
+        except Exception:  # noqa: BLE001  # whatever stops the start: the order is withdrawn again
             self.launcher.remove_order(self.state_dir)  # cannot start the remover: the hub stays up in closing
             raise ClosingError("launch_failed", "The removal could not be started. The hub is still running.") from None
         with self._mu:
@@ -521,4 +541,13 @@ class Closing:
         return self.keys.op_signer.sign_object(o)  # type: ignore[no-any-return]
 
 
-__all__ = ["CANCEL_OK", "Closing", "ClosingError", "LINK_ALLOWED", "ORDER_FILE", "RESULT_FILE", "STATE_FILE", "WEB_ALLOWED"]
+__all__ = [
+    "CANCEL_OK",
+    "LINK_ALLOWED",
+    "ORDER_FILE",
+    "RESULT_FILE",
+    "STATE_FILE",
+    "WEB_ALLOWED",
+    "Closing",
+    "ClosingError",
+]

@@ -22,7 +22,6 @@ class FakeClosing:
 
     def notice_for(self, ws):
         self.sent_for.append(ws)
-        return None
 
 
 def _joined(make_hub, closing, **kw):
@@ -34,7 +33,7 @@ def _joined(make_hub, closing, **kw):
 
 def test_a_listed_op_is_served_and_every_other_op_answers_hub_closing(make_hub):
     fc = FakeClosing()
-    h, c = _joined(make_hub, fc)
+    _h, c = _joined(make_hub, fc)
     fc._active = True
     assert "snapshot" in c.request("snapshot_get", {})
     assert c.request("closing_get", {}) == {"closing": None}
@@ -44,11 +43,15 @@ def test_a_listed_op_is_served_and_every_other_op_answers_hub_closing(make_hub):
         with pytest.raises(LinkError) as e:
             c.request(op, {})
         assert e.value.code == "hub_closing", op
-    assert {"snapshot_get", "closing_get"} <= LINK_ALLOWED and "join" not in LINK_ALLOWED and "route_out" not in LINK_ALLOWED
+    assert (
+        {"snapshot_get", "closing_get"} <= LINK_ALLOWED
+        and "join" not in LINK_ALLOWED
+        and "route_out" not in LINK_ALLOWED
+    )
 
 
 def test_nothing_changes_while_the_hub_is_not_closing(make_hub):
-    h, c = _joined(make_hub, FakeClosing())
+    _h, c = _joined(make_hub, FakeClosing())
     with pytest.raises(LinkError) as e:
         c.request("space_list", {})
     assert e.value.code != "hub_closing"
@@ -69,8 +72,20 @@ def _ack(c, req):
     c.seq += 1
     c.send_raw(
         c._wsk.sign_link(
-            {"v": 2, "suite": 2, "kind": "hub.link", "hv": 0, "hub_id": c.hub_id, "workspace_id": c.workspace_id,
-             "dir": "w2h", "seq": c.seq, "ts_ms": c._now(), "op": "closing_notice", "re": req["seq"], "body": {}},
+            {
+                "v": 2,
+                "suite": 2,
+                "kind": "hub.link",
+                "hv": 0,
+                "hub_id": c.hub_id,
+                "workspace_id": c.workspace_id,
+                "dir": "w2h",
+                "seq": c.seq,
+                "ts_ms": c._now(),
+                "op": "closing_notice",
+                "re": req["seq"],
+                "body": {},
+            },
             c._c.exporter(),
         )
     )

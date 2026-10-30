@@ -171,7 +171,9 @@ class LinkServer:
         self._activity = activity
         self._where = where
         self._closing = closing  # orch_hub.closing.Closing: the guard, the notice (#1463); None = never closing
-        self._live: dict[str, set[_Port]] = {}  # ws -> the plain links attached now (the closing notice goes out on them)
+        self._live: dict[
+            str, set[_Port]
+        ] = {}  # ws -> the plain links attached now (the closing notice goes out on them)
         self._live_mu = threading.Lock()
         self._deliveries = deliveries  # custodial.DeliveryQueue: event_deliver out, its replies in (§8.7)
         self._retry_at = float("-inf")
@@ -444,7 +446,7 @@ class LinkServer:
                 if self._bound_seq(ws, port.wsk) is not None and port.is_current():  # the current pin, still bound
                     port.send_request("closing_notice", {"notice": notice})
                     sent = True
-            except Exception:  # noqa: BLE001  # a dead link: the host pulls it
+            except Exception:  # noqa: BLE001, S112  # a dead link: the host pulls it
                 continue
         return sent
 
@@ -642,7 +644,9 @@ class LinkServer:
             if RESTORE_FENCE.is_set():
                 raise Refused("restore_busy")  # a restore is swapping the state dir; the host retries
             if self._closing is not None and self._closing.active() and o["op"] not in CLOSING_LINK_ALLOWED:
-                raise Refused("hub_closing")  # the hub is being removed: default deny (allow list), nothing else is served
+                raise Refused(
+                    "hub_closing"
+                )  # the hub is being removed: default deny (allow list), nothing else is served
             if handler is None:
                 raise Refused("unknown_op")  # an op of a later phase: in the table, not served yet
             if o["op"] != "join" and self._reg.pin(ws) is None:

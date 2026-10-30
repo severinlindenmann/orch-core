@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from orch_hub.closing_launch import ENV_ALLOW, HEX32, LaunchError, Launcher
+from orch_hub.closing_launch import ENV_ALLOW, HEX32, Launcher, LaunchError
 
 RID = "ab" * 16
 
@@ -79,7 +79,9 @@ def test_the_pidfile_runner_uses_a_new_session_and_no_inherited_fds(tmp_path):
 
 def test_the_environment_is_exactly_the_allow_list(tmp_path):
     rec = Rec()
-    lc, data = _launcher(tmp_path, "pidfile", rec, env={"LANG": "C", "XDG_CONFIG_HOME": "/x", "ORCH_INSTALL_SERVICE": "pidfile"})
+    lc, data = _launcher(
+        tmp_path, "pidfile", rec, env={"LANG": "C", "XDG_CONFIG_HOME": "/x", "ORCH_INSTALL_SERVICE": "pidfile"}
+    )
     lc.launch(data, RID)
     env = rec.calls[0][1]["env"]
     assert set(env) <= set(ENV_ALLOW) and "SECRET" not in env and env["HOME"] == "/h"

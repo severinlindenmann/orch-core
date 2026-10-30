@@ -23,8 +23,20 @@ STATUS = {
 
 def danger_routes(r: Any) -> tuple[Any, ...]:
     return (
-        r("GET", "/admin/hub/remove/preview", "admin", "a_hub_remove_preview", "What removing the hub would do (changes nothing)"),
-        r("POST", "/admin/hub/remove/prepare", "admin", "a_hub_remove_prepare", "Start a removal: a single-use nonce and the context to sign"),
+        r(
+            "GET",
+            "/admin/hub/remove/preview",
+            "admin",
+            "a_hub_remove_preview",
+            "What removing the hub would do (changes nothing)",
+        ),
+        r(
+            "POST",
+            "/admin/hub/remove/prepare",
+            "admin",
+            "a_hub_remove_prepare",
+            "Start a removal: a single-use nonce and the context to sign",
+        ),
         r(
             "POST",
             "/admin/hub/remove/confirm",
@@ -33,7 +45,13 @@ def danger_routes(r: Any) -> tuple[Any, ...]:
             "Remove the hub: password + code in the request and the channel key's proof over the removal digest",
         ),
         r("GET", "/admin/hub/remove/status", "admin", "a_hub_remove_status", "How far the removal is, in plain words"),
-        r("POST", "/admin/hub/remove/cancel", "admin", "a_hub_remove_cancel", "Stop the removal (only before company content is withdrawn)"),
+        r(
+            "POST",
+            "/admin/hub/remove/cancel",
+            "admin",
+            "a_hub_remove_cancel",
+            "Stop the removal (only before company content is withdrawn)",
+        ),
     )
 
 
@@ -94,5 +112,3 @@ class DangerHandlers:
         except ClosingError as e:
             raise _err(e) from None
         return 200, {"ok": True}
-
-

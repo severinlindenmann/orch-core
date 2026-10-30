@@ -31,12 +31,12 @@ from .backup.hubop import hold_serve_lock
 from .backup.restore import finish as finish_restore
 from .backup.restore import recover as recover_swap
 from .backup.service import BackupService
-from .closing import Closing
-from .closing_launch import Launcher
 from .changes import Changes
 from .channels import Channels
 from .channels.pushkeys import PushKeyStore
 from .channels.service import CHANNELS_FILE
+from .closing import Closing
+from .closing_launch import Launcher
 from .config import HubConfig
 from .connections import ConnectionAuthz, Connections
 from .contract.hub import Refused

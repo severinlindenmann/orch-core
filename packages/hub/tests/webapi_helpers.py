@@ -56,7 +56,11 @@ class FakeRegistry:
 
     def binding_state(self, ws):
         r = self.ws.get(ws)
-        return None if r is None else {"status": r["status"], "binding": {"mode": r["mode"]}, "binding_seq": r.get("seq", 1)}
+        return (
+            None
+            if r is None
+            else {"status": r["status"], "binding": {"mode": r["mode"]}, "binding_seq": r.get("seq", 1)}
+        )
 
     def last_mode(self, ws):
         return self.ws[ws]["mode"] if ws in self.ws else None

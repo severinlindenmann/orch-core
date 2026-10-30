@@ -88,7 +88,9 @@ def _port_busy(port: int) -> bool:
 
 def _run(argv: Sequence[str], env: Mapping[str, str]) -> int:
     """Run ``argv`` with this terminal's stdin, stdout and stderr (sudo's password prompt, the dashboard's link)."""
-    return subprocess.run(list(argv), env=dict(env), check=False).returncode
+    from orch.childenv import sanitize
+
+    return subprocess.run(list(argv), env=sanitize(env, absolute_pythonpath=True), check=False).returncode
 
 
 def _sleep(seconds: float) -> None:

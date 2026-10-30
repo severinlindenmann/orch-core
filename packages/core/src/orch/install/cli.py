@@ -115,11 +115,13 @@ def _dashboard_entry() -> list[str] | None:
 
 def _mint_login(argv: list[str], env: Mapping[str, str]) -> str | None:
     """Run ``orch-dashboard open --no-browser --emit-url-fd N`` and return the single-use login URL it writes."""
+    from orch.childenv import sanitize
+
     r, w = os.pipe()
     try:
         proc = subprocess.run(
             [*argv, "open", "--no-browser", "--emit-url-fd", str(w)],
-            env=dict(env), pass_fds=(w,), capture_output=True, timeout=30,
+            env=sanitize(env, absolute_pythonpath=True), pass_fds=(w,), capture_output=True, timeout=30,
         )  # fmt: skip
         os.close(w)
         w = -1

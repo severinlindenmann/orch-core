@@ -1423,3 +1423,23 @@ def test_a_hub_state_that_disagrees_with_the_log_is_refused_in_plain_words(wfull
         hubops.publish_route(w.served.service)
     assert e.value.code == "hub.state_mismatch"
     assert "only selective" not in str(e.value) and "Settings" in str(e.value)
+    # the binding's own mode must agree too (defence in depth): fail closed
+    bad = dataclasses.replace(
+        real(w.served.service),
+        binding={**real(w.served.service).binding, "o": {**real(w.served.service).binding["o"], "mode": "selective"}},
+    )
+    monkeypatch.setattr(hubops, "_load_state", lambda service: bad)
+    with pytest.raises(HostError) as e:
+        hubops.publish_route(w.served.service)
+    assert e.value.code == "hub.state_mismatch"
+
+
+def test_the_signing_review_refuses_when_the_hub_is_joined_but_not_connected_and_signs_nothing(w, monkeypatch):
+    uid, key = w.ticket_with(**{"hello.txt": b"hello"})
+    staged = w.prepare(key, "hello.txt")["staged_id"]  # prepared while connected
+    real = hubops._load_state
+    monkeypatch.setattr(hubops, "_load_state", lambda service: dataclasses.replace(real(service), status="joining"))
+    res = w.human.prepare_res("publish.share", {"staged_id": staged})
+    assert err(res) == "hub.not_joined" and "Settings" in res["error"]["message"]
+    assert "events" not in res.get("data", {}) and w.server.requests == []  # nothing to sign, nothing sent
+    assert err(w.send(staged)) in ("publish.not_approved", "hub.not_joined")

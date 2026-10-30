@@ -580,7 +580,11 @@ def publish_route(service: WorkspaceService) -> dict[str, Any] | None:
             "This workspace has joined a hub but is not connected to it right now. Connect it in Settings, "
             "Hub, then try again.",
         )
-    if state.mode not in ("selective", "full") or state.mode != model.get("mode"):
+    if (
+        state.mode not in ("selective", "full")
+        or state.mode != model.get("mode")
+        or state.binding["o"]["mode"] != state.mode  # the signed binding must agree too: fail closed
+    ):
         raise HostError(
             "hub.state_mismatch",
             "The hub connection on this computer does not match what the workspace has signed. Open Settings, "

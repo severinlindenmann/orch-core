@@ -37,6 +37,7 @@ let registerRefusal: { code: string; reason?: string } | null = null
 let sendRefusalOnce: { code: string; reason?: string } | null = null
 let uploadN = 0
 let prepareRefusal: { code: string } | null = null
+let ticketOwner: string | null | undefined
 const state = useFakeHost(() => [workspace({ id: A, features: [...READS, 'publish'], addOns: { available: true, add_ons: [{ id: 'publish', title: 'Publish', desc: 'Share files.', state: 'on', locked: null, blocked: null }] } })])
 const refusal = (r: { code: string; reason?: string }) =>
   Response.json({ ok: false, error: { code: r.code, message: r.code, retryable: false, ...(r.reason ? { detail: { reason: r.reason } } : {}) } }, { status: 409 })
@@ -53,9 +54,10 @@ const route = () => {
   sendRefusalOnce = null
   uploadN = 0
   prepareRefusal = null
+  ticketOwner = undefined
   state.host.override = (path, method, body) => {
     if (path.endsWith('/tickets/DEMO-0001') && method === 'GET')
-      return Response.json({ ...ticket, artifacts: [{ name: 'report.md', kind: 'report', bytes: 2048, sha256: 'ab'.repeat(32), added_by: 'p_x', at: '2026-10-18T08:00:00Z' }, { name: 'bad/name.md', kind: 'report', bytes: 1, sha256: 'cd'.repeat(32), added_by: 'p_x', at: '2026-10-18T08:00:00Z' }] })
+      return Response.json({ ...ticket, ...(ticketOwner === undefined ? {} : { people: { ...ticket.people, owner: ticketOwner } }), artifacts: [{ name: 'report.md', kind: 'report', bytes: 2048, sha256: 'ab'.repeat(32), added_by: 'p_x', at: '2026-10-18T08:00:00Z' }, { name: 'bad/name.md', kind: 'report', bytes: 1, sha256: 'cd'.repeat(32), added_by: 'p_x', at: '2026-10-18T08:00:00Z' }] })
     if (!path.includes('/shares')) return undefined
     if (method === 'GET' && listRefusal) return refusal(listRefusal)
     if (method === 'GET')
@@ -644,4 +646,25 @@ it('Publish as link: a viewer sees no button', async () => {
   const user = userEvent.setup()
   const list = await onResults(user)
   expect(within(list).queryByRole('button', { name: /as a link/ })).toBeNull()
+})
+
+const asRole = (role: 'member' | 'maintainer') => {
+  const ws = state.host.workspaces[0]
+  ws.roster = ws.roster.map((m) => (m.person === ws.me ? { ...m, role } : m))
+  return ws.me
+}
+
+it.each([
+  ['a plain member on someone else\'s ticket', 'member', 'p_someone_else', false],
+  ['the ticket owner (a member)', 'member', null, true],
+  ['a maintainer on someone else\'s ticket', 'maintainer', 'p_someone_else', true],
+] as const)('Publish as link: %s', async (_who, role, owner, sees) => {
+  route()
+  const user = userEvent.setup()
+  const me = asRole(role)
+  ticketOwner = owner ?? me
+  const list = await onResults(user)
+  const btn = within(list).queryByRole('button', { name: 'Publish report.md as a link' })
+  if (sees) expect(btn).toBeInTheDocument()
+  else expect(btn).toBeNull()
 })

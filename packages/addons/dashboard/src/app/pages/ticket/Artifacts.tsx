@@ -651,7 +651,9 @@ export function Artifacts({ ticket, viewer, jump, focus }: TabProps & { focus?: 
   const [publishing, setPublishing] = useState<{ name: string; step: 'turnon' | 'share' } | null>(null)
   const real = isRealHost() && !!home && canAct(home.id)
   const publishOn = real && hasFeature('publish', home.id)
-  const mayPublish = real && (publishOn ? atLeast(viewer.role, 'member') : viewer.role === 'owner')
+  // Who may sign a share (host rule, publishing._may_share): the ticket owner (a member or more), workspace owners and maintainers.
+  const mayShare = atLeast(viewer.role, 'maintainer') || (atLeast(viewer.role, 'member') && !!viewer.person && ticket.people.owner === viewer.person)
+  const mayPublish = real && (publishOn ? mayShare : viewer.role === 'owner')
   useEffect(() => {
     if (!focus) return
     const a = ticket.artifacts.find((x) => `artifact-${x.name}` === focus)

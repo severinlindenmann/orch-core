@@ -22,6 +22,7 @@ from orch.wsproto import wire
 from orch.wsproto.localdial import dial_host
 
 from . import parts as P
+from .helper import remove_helper, sync_helper, wait_for_socket
 from .parts import InstallError
 from .service import Runner, pick_runner
 from .state import Layout, load, save
@@ -96,6 +97,9 @@ class Ctx:
     mint_login: Callable[[list[str], Mapping[str, str]], str | None] = lambda argv, env: _mint_login(argv, env)
     qr: Callable[[str], str | None] = lambda link: _qr(link)
     publish_setup: Callable[[str], str | None] = lambda url: None  # configure the workspace; returns a hint on failure
+    helper_ready: Callable[[Path], bool] = (
+        wait_for_socket  # the service helper's socket shows up (seconds, not forever)
+    )
     layout: Layout = field(init=False)
 
     def __post_init__(self) -> None:
@@ -318,6 +322,7 @@ def install_part(
     publish_url: str | None = None,
     relay_url: str | None = None,
     dev: bool = False,
+    sync: bool = True,  # False: the caller (full_server) syncs the service helper once at the end
 ) -> dict[str, Any]:
     spec = P.PARTS[part]
     source = source or ctx.env.get(f"ORCH_INSTALL_SOURCE_{part.upper()}")  # a local checkout (dev machines, tests)
@@ -432,6 +437,8 @@ def install_part(
             ctx.say(f"  publish settings: not set yet ({hint}); run: orch publish setup --server {url} --share {url}")
         else:
             ctx.say(f"  publish settings: server = share = {url}")
+    if sync:
+        sync_helper(ctx)
     return rec
 
 
@@ -570,11 +577,15 @@ def remove(ctx: Ctx, part: str, purge: bool) -> int:
     if part not in st["parts"]:
         ctx.say(f"{part} is not installed")
         return 0
+    if part == "hub":
+        remove_helper(ctx, st)  # first: its helper.json lists this hub; the helper only exists for a hub
     ctx.runner.stop(part)
     env = {**ctx.env, "UV_TOOL_DIR": str(ctx.layout.tools), "UV_TOOL_BIN_DIR": str(ctx.layout.bin)}
     ctx.run(["uv", "tool", "uninstall", P.PARTS[part].binary], env)
     del st["parts"][part]
     save(ctx.layout, st)
+    if part != "hub":
+        sync_helper(ctx)  # drops this part from the helper's list
     if purge:
         shutil.rmtree(ctx.layout.root / "parts" / part, ignore_errors=True)
         ctx.say(f"removed {part} and its data")
@@ -694,7 +705,8 @@ def full_server(
     st = load(ctx.layout)
     address = choose_address(ctx, address, st)
     for p in parts:
-        out[p] = install_part(ctx, p, address=address, source=(source_for or {}).get(p), ref=ref, dev=dev)
+        out[p] = install_part(ctx, p, address=address, source=(source_for or {}).get(p), ref=ref, dev=dev, sync=False)
+    sync_helper(ctx)
     return out
 
 

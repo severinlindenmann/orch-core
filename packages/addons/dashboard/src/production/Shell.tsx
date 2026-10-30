@@ -83,9 +83,10 @@ export function Shell() {
   const hadSession = useRef(token !== null)
   if (token) hadSession.current = true
   useEffect(() => onSessionChange(() => { queryClient.clear(); setToken(getToken()) }), [])
-  if (!token && isForeignNavigation()) return <main className="prod-login"><OrbitMark /><h1>This page was opened from another site.</h1><p>Open the dashboard from the terminal (<code>orch-dashboard open</code>) or a bookmark.</p></main>
-  if (!token && hadSession.current) return <main className="prod-login" role="alert"><OrbitMark /><h1>Your dashboard session ended</h1><p>Run <code>orch dashboard open</code> in your terminal to open it again.</p></main>
-  if (!token) return <main className="prod-login"><OrbitMark /><h1>Open your dashboard</h1><p>Run <code>orch dashboard</code> in your terminal.</p><p>Addon launcher: <code>python -m orch_dashboard open</code></p></main>
+  const way = 'Sign in again from the hub or from the link on the computer where orch runs.'
+  if (!token && isForeignNavigation()) return <main className="prod-login"><OrbitMark /><h1>This page was opened from another site.</h1><p>{way}</p><details><summary>Details</summary><p>On that computer run <code>orch-dashboard open</code>, or use a bookmark.</p></details></main>
+  if (!token && hadSession.current) return <main className="prod-login" role="alert"><OrbitMark /><h1>Your dashboard session ended</h1><p>{way}</p><details><summary>Details</summary><p>On that computer run <code>orch dashboard open</code> to open it again.</p></details></main>
+  if (!token) return <main className="prod-login"><OrbitMark /><h1>Open your dashboard</h1><p>{way}</p><details><summary>Details</summary><p>On that computer run <code>orch dashboard</code>.</p><p>Addon launcher: <code>python -m orch_dashboard open</code></p></details></main>
   return <><App /><StepUpModal /></>
 }
 

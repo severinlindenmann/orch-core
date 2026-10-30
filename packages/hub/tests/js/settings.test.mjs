@@ -210,13 +210,14 @@ test("run-15 blocker: the page opens with BOTH a company name and company login 
   assert.doesNotThrow(() => hubSettingsView({ ...DEMO, company: "Acme AG", company_login: OIDC }));
 });
 
-test("run-15 blocker: a page that throws says it did not load and offers Retry; it never falls back to the sign-in form", async () => {
+test("run-15 blocker: a page that throws says it did not open and offers Try again; it never falls back to the sign-in form", async () => {
   const src = (await import("node:fs")).readFileSync(new URL("../../src/orch_hub/web/app.js", import.meta.url), "utf8");
   const start = src.indexOf("async function renderRoute()");
   const fn = src.slice(start, src.indexOf("\n}\n", start));
   const handler = fn.slice(fn.lastIndexOf("} catch"));
-  assert.match(handler, /This page did not load/);
-  assert.match(handler, /Retry/);
+  assert.match(handler, /This page did not open/);
+  assert.match(handler, /Try again/);
+  assert.match(handler, /still signed in/);
   assert.match(handler, /console\.error/);
   assert.doesNotMatch(handler, /loginView/);
 });

@@ -101,7 +101,7 @@ export function AddRuleReview({ ws, workspace, rule, after, onDone, onCancel, ti
   </>
   if (compact) return <div className="space-y-2" data-testid="hub-add-review">
     <p data-testid="hub-add-sentence">{names
-      ? <><span data-testid="hub-add-readers"><bdi>{names}</bdi></span> will see {review.leaves_short || review.leaves.join('; ') || 'this ticket'}.</>
+      ? <><span data-testid="hub-add-readers"><bdi>{names}</bdi></span> will see {review.leaves_short || review.leaves.join('; ') || 'this ticket'}.{review.scope_short ? <span data-testid="hub-add-scope" className="block text-text-muted text-[13px]">{review.scope_short}</span> : null}</>
       : <span data-testid="hub-add-readers">{nothingNew(review) ? 'Nobody new will see it.' : 'Only you will see it.'}</span>}{(review.later_edits_short ?? review.later_edits) && names ? <> <span data-testid="hub-add-later">{review.later_edits_short ?? review.later_edits}</span></> : null}</p>
     {widened}
     <p className="text-text-muted text-[13px]" data-testid="hub-add-caveat-visible">{caveat}</p>

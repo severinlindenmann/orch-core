@@ -159,14 +159,12 @@ def test_hub_to_workspace_lands_signed_in_once(stack):
     # the dashboard tells the hub where it lives the first time it asks for the rail
     s, rail = st.dash.call("GET", f"/api/w/{WS}/hub/rail")
     assert s == 200 and rail["hub"]["name"] == "Acme" and rail["workspaces"][0]["current"] is True
-    s, o = st.hub.call(
-        "POST", "/api/v1/switch/ticket", {"workspace_id": WS, "return_to": "/w/DEMO/tickets", "kind": "open"}
-    )
+    s, o = st.hub.call("POST", "/api/v1/switch/ticket", {"workspace_id": WS, "return_to": "/", "kind": "open"})
     assert s == 200 and o["url"].startswith(st.dash_origin + "/#t=")
     t = ticket_of(o["url"])
     fresh = Browser(st.dash_port)  # a second browser with no session at the dashboard
     s, got = fresh.call("POST", "/auth/switch", {"t": t})
-    assert s == 200 and got["return_to"] == "/w/DEMO/tickets" and got["workspace_id"] == WS
+    assert s == 200 and got["return_to"] == "/" and got["workspace_id"] == WS
     fresh.bearer = got["token"]
     assert fresh.call("GET", f"/api/w/{WS}/hub/rail")[0] == 200  # signed in
     s, denied = fresh.call("POST", f"/api/w/{WS}/settings", {})  # a switch session reads; it changes nothing

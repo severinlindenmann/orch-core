@@ -1013,3 +1013,57 @@ def test_state_rejected_and_body_are_data_not_derived(root, env):
     (root / ".state/rejected/a.md").write_text("prose")
     b = bk.create_backup(root, "workspace", 1, 2, env)
     assert (b / "data/.state/rejected/a.md").read_text() == "prose"
+
+
+def _parts(root):
+    p = root / "install/parts/hub/data"
+    p.mkdir(parents=True)
+    (p / "hub.key").write_text("K")
+    return p / "hub.key"
+
+
+def test_a_killed_restore_never_loses_carried_folders(root, env):
+    key = _parts(root)
+    b = bk.create_backup(root, "workspace", 1, 2, env)
+    jr.write_journal("installed", env, backups={str(b.resolve()): 1})
+    stg = root.with_name(".root.restore-dead")  # what a restore killed after the carry loop leaves
+    (stg / "install").mkdir(parents=True)
+    os.rename(root / "install/parts", stg / "install/parts")
+    jr.write_journal("installed", env, backups={str(b.resolve()): 1}, restoring=str(root))
+    bk.restore(b, root, env)
+    assert key.read_text() == "K" and not stg.exists()
+
+
+def test_both_renames_failing_keeps_staging_and_the_next_run_recovers(root, env, monkeypatch):
+    key = _parts(root)
+    b = bk.create_backup(root, "workspace", 1, 2, env)
+    jr.write_journal("installed", env, backups={str(b.resolve()): 1})
+    monkeypatch.setattr(bk, "_exchange", lambda a, c: False)
+    real = os.rename
+    n = {"aside": 0}
+
+    def r(s, d, *a, **k):
+        if ".restore-" in str(s) and Path(d) == root.resolve():
+            raise OSError("swap fail")
+        if ".replaced-" in str(s) and Path(d) == root.resolve():
+            n["aside"] += 1
+            if n["aside"] == 1:
+                raise OSError("put back fail")
+        return real(s, d, *a, **k)
+
+    monkeypatch.setattr(bk.os, "rename", r)
+    with pytest.raises(OSError):
+        bk.restore(b, root, env)
+    monkeypatch.setattr(bk.os, "rename", real)
+    assert not root.exists() and [p for p in root.parent.iterdir() if ".restore-" in p.name]  # staging was kept
+    bk.restore(b, root, env)
+    assert key.read_text() == "K"
+
+
+def test_the_restore_lock_lives_in_the_state_dir_not_the_project(root, env):
+    b = bk.create_backup(root, "workspace", 1, 2, env)
+    jr.write_journal("stopped", env, backups={str(b.resolve()): 1})
+    bk.restore(b, root, env)
+    assert [p.name for p in root.parent.iterdir() if p.name.endswith(".lock")] == []
+    locks = list((Path(env["ORCH_STATE_DIR"]) / "locks").glob("restore-*.lock"))
+    assert len(locks) == 1 and stat.S_IMODE(locks[0].stat().st_mode) == 0o600

@@ -14,10 +14,12 @@ revocation away.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import secrets
 import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -27,6 +29,7 @@ from pathlib import Path
 from orch import childenv, oslock
 from orch.layout import STATE_DIR, WORK_DIR
 from orch.ops.errors import OrchError
+from orch.ops.runtime import state_dir
 
 from .format import LOCK_FILE, lock_root
 from .steps import atomic_write, is_derived
@@ -301,9 +304,27 @@ def _scratch_dirs(root: Path) -> list[Path]:
     return [p for p in root.parent.iterdir() if any(p.name.startswith(f".{root.name}{m}") for m in _SCRATCH)]
 
 
+def _carry_list(base: Path) -> list[str]:
+    """The entries a restore carries from the current root (everything the backup leaves out), as found in ``base``."""
+    carry = [*sorted(_SKIP_TOP), *sorted(_SKIP_REL)]
+    st = base / STATE_DIR
+    if st.is_dir():
+        carry += [f"{STATE_DIR}/{n}" for n in sorted(os.listdir(st)) if is_derived(f"{STATE_DIR}/{n}")]
+    return carry
+
+
+def _put_back(staging: Path, root: Path) -> None:
+    """Move every carried entry the root is missing back out of ``staging``."""
+    for rel in _carry_list(staging):
+        if (staging / rel).exists() and not (root / rel).exists() and not (root / rel).is_symlink():
+            (root / rel).parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            os.rename(staging / rel, root / rel)
+
+
 def _recover(root: Path) -> None:
-    """A crash between the two renames of a swap leaves no root but a ``.replaced-`` folder: put it back. Leftover
-    scratch folders of an earlier restore are removed (each by its exact path)."""
+    """Under the locks. A crash between the two renames of a swap leaves no root but a ``.replaced-`` folder: put it
+    back. A ``.restore-`` folder of a killed restore may hold the ONLY copy of the carried folders: they are moved back
+    into the root first, and the folder is deleted only then (never while the root is missing)."""
     scratch = _scratch_dirs(root) if root.parent.is_dir() else []
     if not root.exists():
         replaced = sorted(p for p in scratch if f".{root.name}.replaced-" in p.name)
@@ -311,7 +332,24 @@ def _recover(root: Path) -> None:
             os.rename(replaced[-1], root)
             scratch.remove(replaced[-1])
     for p in scratch:
+        if f".{root.name}.restore-" in p.name:
+            if not root.exists():
+                continue  # nothing to put the carried entries into: keep it
+            _put_back(p, root)
         shutil.rmtree(p, ignore_errors=True)
+
+
+def _restore_lock_fd(root: Path, env: Mapping[str, str] | None) -> int:
+    """``<state>/locks/restore-<sha256(root)>.lock``: nothing is left in the user's project. A regular file we own."""
+    d = state_dir(os.environ if env is None else env) / "locks"
+    d.mkdir(parents=True, exist_ok=True, mode=0o700)
+    path = d / f"restore-{hashlib.sha256(str(root).encode()).hexdigest()}.lock"
+    fd = os.open(path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0), 0o600)
+    st = os.fstat(fd)
+    if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid():
+        os.close(fd)
+        raise OrchError("migrate.backup_refused", "the restore lock is not a file of ours")
+    return fd
 
 
 def restore(
@@ -345,9 +383,7 @@ def restore(
             "restore is only possible before an update is committed, and only for a backup this update made",
         )
     # a sidecar lock next to the root serialises restores (the root itself may be missing in a half-done swap)
-    side = os.open(
-        root.with_name(f".{root.name}.restore.lock"), os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600
-    )
+    side = _restore_lock_fd(root, env)
     try:
         oslock.flock(side, oslock.LOCK_EX | oslock.LOCK_NB)
     except BlockingIOError:
@@ -380,12 +416,10 @@ def restore(
             have = saved.get(rel, [])
             merged = have + [x for x in current.get(rel, []) if x not in set(have)]
             atomic_write(staging / rel, ("\n".join(merged) + "\n").encode() if merged else b"")
-        carry = [*sorted(_SKIP_TOP), *sorted(_SKIP_REL)]
         moved = carried
-        st = root / STATE_DIR
-        if st.is_dir():
-            carry += [f"{STATE_DIR}/{n}" for n in sorted(os.listdir(st)) if is_derived(f"{STATE_DIR}/{n}")]
-        for rel in carry:  # into staging BEFORE the swap; the journal file is copied, the original stays until the swap
+        for rel in _carry_list(
+            root
+        ):  # into staging BEFORE the swap; the journal file is copied, the original stays until the swap
             have = root / rel
             if not (have.exists() or have.is_symlink()):
                 continue
@@ -413,11 +447,8 @@ def restore(
                 write_journal(doc["phase"], env, restoring=None)
     finally:
         os.umask(old)
-        if staging.exists():
-            for rel in carried:  # a failed restore puts the carried entries back before staging is deleted
-                if (staging / rel).exists() and root.exists() and not (root / rel).exists():
-                    (root / rel).parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-                    os.rename(staging / rel, root / rel)
+        if staging.exists() and root.exists():  # never delete staging while the root is missing: it may hold data
+            _put_back(staging, root)
             shutil.rmtree(staging, ignore_errors=True)
         if lock_fd is None:
             os.close(fd)

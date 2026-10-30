@@ -53,7 +53,8 @@ KINDS = tuple(CURRENT)
 PROTECTED_PATHS: tuple[str, ...] = (
     "events/*", "membership/head.json", "membership/keys/*", "keys/*", "*/keys/*", "local-epochs.json",
     "*/local-epochs.json", "sign-ledger.json", "*/sign-ledger.json", "*/checkpoints/*", "checkpoints/*",
-    "hosts/*/heads.sqlite*", "hosts/*/transitions/*", "hosts/*/pending-transitions/*", ".state/applied", ".state/rejected/*", ".state/body/*",
+    "hosts/*/heads.sqlite*", "hosts/*/transitions/*", "hosts/*/pending-transitions/*", ".state/applied",
+    ".state/rejected/*", ".state/body/*",
     ".state/applied/*", ".state/intents/*",
     ".state/checkpoints/*", ".state/abandoned/*", ".state/pending/*", "land/*/key", "known_hosts", "*/known_hosts",
     "git-pins.json", "*/git-pins.json", "secret-pins.json", "*/secret-pins.json", "counters.json", "*/counters.json",

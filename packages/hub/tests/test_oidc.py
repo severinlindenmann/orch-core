@@ -12,11 +12,21 @@ from orch_hub.oidc import Oidc, OidcConfig, OidcError, mfa_ok
 KEY = b"k" * 32
 
 
+class T(Oidc):
+    """Test wrapper: a default source, the fake IdP's host."""
+
+    def start(self, *, fresh=False, source="t"):
+        return super().start(fresh=fresh, source=source)
+
+    def finish(self, cookie, state, code, secret, source="t"):
+        return super().finish(cookie, state, code, secret, source)
+
+
 def make(cfg=None, clock=None):
     cfg = cfg or entra_cfg()
     idp = FakeIdp(cfg)
     t = clock or [NOW]
-    return Oidc(cfg, idp, KEY, lambda: t[0]), idp, t
+    return T(cfg, idp, KEY, lambda: t[0], frozenset({"idp.example"})), idp, t
 
 
 def login(o, idp, **kw):
@@ -190,7 +200,9 @@ def test_tampered_or_foreign_cookie_refused():
     for bad in (flipped, "", "junk", cookie[:10]):
         with pytest.raises(OidcError):
             o.finish(bad, q["state"], "c", "S")
-    other = Oidc(entra_cfg(), idp, b"z" * 32, lambda: NOW)  # a cookie sealed under another hub key
+    other = T(
+        entra_cfg(), idp, b"z" * 32, lambda: NOW, frozenset({"idp.example"})
+    )  # a cookie sealed under another hub key
     with pytest.raises(OidcError):
         other.finish(cookie, q["state"], "c", "S")
 
@@ -292,12 +304,14 @@ def test_cookie_length_cap_and_config_binding():
     url, cookie = o.start()
     q = verifier_ok(idp, url)
     idp.nonce = q["nonce"]
-    changed = Oidc(
+    changed = T(
         OidcConfig("entra", "other-client", entra_cfg().redirect_uri, tenant=entra_cfg().tenant), idp, KEY, lambda: NOW
     )
     with pytest.raises(OidcError):
         changed.finish(cookie, q["state"], "c", "S")
-    tenant2 = Oidc(entra_cfg(tenant="99999999-2222-3333-4444-555555555555"), idp, KEY, lambda: NOW)
+    tenant2 = T(
+        entra_cfg(tenant="99999999-2222-3333-4444-555555555555"), idp, KEY, lambda: NOW, frozenset({"idp.example"})
+    )
     with pytest.raises(OidcError):
         tenant2.finish(cookie, q["state"], "c", "S")
 
@@ -422,3 +436,74 @@ def test_limiter_lru_is_bounded():
     for i in range(1000):
         lim.allow(f"10.0.{i // 250}.{i % 250}", 0.0)
     assert len(lim._m) == 100
+
+
+def test_ipv4_mapped_peer_is_its_ipv4_bucket():
+    import orch_hub.oidc as M
+
+    assert M.source_key("::ffff:1.2.3.4") == M.source_key("1.2.3.4") == "1.2.3.4"
+    assert M.source_key("::ffff:1.2.3.4") != M.source_key("::ffff:5.6.7.8")  # not one shared /64
+
+
+def test_empty_source_is_a_bug():
+    o, _idp, _ = make()
+    with pytest.raises(OidcError) as e:
+        Oidc.start(o, source="")
+    assert e.value.code == "bad_config"
+    with pytest.raises(OidcError):
+        Oidc.finish(o, "x", "s", "c", "S", source="")
+
+
+def test_endpoint_hosts_must_be_the_providers_own():
+    for k, evil in (
+        ("token_endpoint", "https://evil.example/token"),
+        ("jwks_uri", "http://idp.example/jwks"),
+        ("authorization_endpoint", "https://idp.example:8443/a"),
+    ):
+        o, idp, _ = make()
+        orig = idp.get_json
+        idp.get_json = lambda u, orig=orig, k=k, evil=evil: (
+            {**orig(u), k: evil} if u.endswith("configuration") else orig(u)
+        )
+        with pytest.raises(OidcError) as e:
+            o.start()
+        assert e.value.code == "bad_discovery"
+    real = Oidc(entra_cfg(), FakeIdp(entra_cfg()), KEY)  # the real provider host list
+    assert real._hosts == frozenset({"login.microsoftonline.com"})
+    with pytest.raises(OidcError):  # the fake IdP's host is not Microsoft's
+        real.start(source="t")
+
+
+def test_outage_fetches_happen_outside_the_lock_and_are_negative_cached():
+    import threading
+
+    o, idp, t = make()
+    idp.jwks_fails = True
+    inside = []
+    orig = idp.get_json
+
+    def spy(u):
+        inside.append(o._lock.acquire(blocking=False))  # True = the lock was free during the fetch
+        if inside[-1]:
+            o._lock.release()
+        return orig(u)
+
+    idp.get_json = spy
+    refused(o, idp, "jwks_unavailable")
+    assert all(inside)
+    n = idp.jwks_calls
+    for _ in range(5):  # inside the window: no new fetch
+        refused(o, idp, "jwks_unavailable")
+    assert idp.jwks_calls == n
+    t[0] += 6
+    idp.jwks_fails = False
+    login(o, idp)  # recovers after the window
+    # discovery failure is cached too
+    o2, idp2, _t2 = make()
+    calls = []
+    idp2.get_json = lambda u: calls.append(u) or (_ for _ in ()).throw(OSError("down"))
+    for _ in range(4):
+        with pytest.raises(OidcError):
+            o2.start()
+    assert len(calls) == 1
+    assert threading.active_count() >= 1

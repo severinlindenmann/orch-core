@@ -20,7 +20,7 @@ from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from joserfc import jwt
@@ -35,6 +35,11 @@ _COOKIE_RX = re.compile(r"[A-Za-z0-9_-]+")
 START_BURST, START_EVERY_S = 10, 6.0  # starts per source, one more every START_EVERY_S
 FINISH_BURST, FINISH_EVERY_S = 10, 3.0
 SOURCES_MAX = 100_000
+NEG_S = 5.0  # a failed discovery / first key fetch is not retried for this long
+PROVIDER_HOSTS = {
+    "entra": frozenset({"login.microsoftonline.com"}),
+    "google": frozenset({"accounts.google.com", "oauth2.googleapis.com", "www.googleapis.com"}),
+}
 COOKIE_MAX = 2048
 JWKS_REFETCH_MIN_S = 60  # an unknown kid causes at most one refetch per this many seconds
 ALGS = ["RS256", "ES256"]  # never none, never HS*: the key set holds public keys only, the list is the second fence
@@ -128,6 +133,8 @@ def source_key(source: str) -> str:
         ip = ipaddress.ip_address(source)
     except ValueError:
         return source[:64]
+    if ip.version == 6 and ip.ipv4_mapped is not None:  # ::ffff:1.2.3.4 is the IPv4 peer 1.2.3.4
+        ip = ip.ipv4_mapped
     return str(ipaddress.ip_network(f"{ip}/64", strict=False)) if ip.version == 6 else str(ip)
 
 
@@ -139,6 +146,10 @@ class _Limiter:
         self._m: OrderedDict[str, tuple[float, float]] = OrderedDict()
 
     def allow(self, source: str, now: float) -> bool:  # the caller holds the lock
+        if type(source) is not str or not source:
+            raise OidcError(
+                "bad_config"
+            )  # the route always passes the real peer; an empty source is a bug, not a bucket
         k = source_key(source)
         tokens, at = self._m.pop(k, (float(self.burst), now))
         tokens = min(float(self.burst), tokens + (now - at) / self.every_s)
@@ -150,10 +161,18 @@ class _Limiter:
 
 
 class Oidc:
-    def __init__(self, cfg: OidcConfig, http: Http, box_key: bytes, now: Callable[[], float] = time.time) -> None:
+    def __init__(
+        self,
+        cfg: OidcConfig,
+        http: Http,
+        box_key: bytes,
+        now: Callable[[], float] = time.time,
+        allowed_hosts: frozenset[str] | None = None,
+    ) -> None:
         if type(box_key) is not bytes or len(box_key) != 32:
             raise OidcError("bad_config")
         self.cfg, self.http, self._box, self._now = cfg, http, box_key, now
+        self._hosts = allowed_hosts if allowed_hosts is not None else PROVIDER_HOSTS[cfg.provider]
         # a cookie made under another issuer or client id (an earlier config) does not open
         self._aad = b"|".join((_AAD, cfg.issuer.encode(), cfg.client_id.encode()))
         self._lock = threading.Lock()
@@ -164,42 +183,69 @@ class Oidc:
         self._meta: dict[str, Any] | None = None
         self._keys: KeySet | None = None
         self._keys_at = -1e9
+        self._meta_fail_at = -1e9
 
     # --- discovery + keys -------------------------------------------------------------------------------------------
     def _discover(self) -> dict[str, Any]:
-        if self._meta is None:
+        """The IdP's metadata. Fetched OUTSIDE the lock; a failure is remembered for NEG_S seconds so an outage costs one
+        slow fetch per window, not one per request."""
+        with self._lock:
+            if self._meta is not None:
+                return self._meta
+            now = self._now()
+            if now - self._meta_fail_at < NEG_S:
+                raise OidcError("idp_unreachable")
+        try:
             m = self.http.get_json(self.cfg.discovery_url)
             if not isinstance(m, dict) or not self.cfg.issuer_ok(m.get("issuer")):
                 raise OidcError("bad_discovery")  # the document must name the issuer we pinned
             for k in ("authorization_endpoint", "token_endpoint", "jwks_uri"):
-                if not (
-                    isinstance(m.get(k), str) and m[k].startswith(("https://", "http://localhost", "http://127.0.0.1"))
-                ):
-                    raise OidcError("bad_discovery")
+                if not self._host_ok(m.get(k)):
+                    raise OidcError("bad_discovery")  # only the provider's own hosts, over https
+        except OidcError:
+            with self._lock:
+                self._meta_fail_at = self._now()
+            raise
+        except Exception:  # noqa: BLE001 - fail closed
+            with self._lock:
+                self._meta_fail_at = self._now()
+            raise OidcError("idp_unreachable") from None
+        with self._lock:
             self._meta = m
-        return self._meta
+        return m
 
-    def _load_keys(self) -> KeySet:
+    def _host_ok(self, url: object) -> bool:
+        if type(url) is not str:
+            return False
+        u = urlsplit(url)
+        return u.scheme == "https" and u.hostname in self._hosts and u.port in (None, 443) and not u.username
+
+    def _fetch_keys(self) -> KeySet:
         try:
-            doc = self.http.get_json(self._discover()["jwks_uri"])
-            ks = KeySet.import_key_set(doc)
+            return KeySet.import_key_set(self.http.get_json(self._discover()["jwks_uri"]))
         except OidcError:
             raise
-        except Exception:  # network, JSON, bad key: fail closed  # noqa: BLE001 - fail closed
+        except Exception:  # noqa: BLE001 - network, JSON, bad key: fail closed
             raise OidcError("jwks_unavailable") from None
-        self._keys, self._keys_at = ks, self._now()
-        return ks
 
     def _key_for(self, kid: object) -> KeySet:
         with self._lock:
-            ks = self._keys or self._load_keys()
-            if isinstance(kid, str) and not any(k.kid == kid for k in ks.keys):
-                if self._now() - self._keys_at < JWKS_REFETCH_MIN_S:
-                    raise OidcError("unknown_kid")  # one refetch per window, then refuse
-                ks = self._load_keys()
-                if not any(k.kid == kid for k in ks.keys):
-                    raise OidcError("unknown_kid")
-            return ks
+            ks, now = self._keys, self._now()
+            window = NEG_S if ks is None else JWKS_REFETCH_MIN_S
+            unknown = ks is None or (isinstance(kid, str) and not any(k.kid == kid for k in ks.keys))
+            need = unknown and now - self._keys_at >= window
+            if need:
+                self._keys_at = now  # claimed before the fetch: a failure is the short negative cache too
+            elif ks is None:
+                raise OidcError("jwks_unavailable")
+        if need:
+            ks = self._fetch_keys()  # outside the lock
+            with self._lock:
+                self._keys = ks
+        assert ks is not None
+        if isinstance(kid, str) and not any(k.kid == kid for k in ks.keys):
+            raise OidcError("unknown_kid")
+        return ks
 
     # --- start / finish ---------------------------------------------------------------------------------------------
     def _seal(self, tx: dict[str, Any]) -> str:

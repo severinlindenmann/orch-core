@@ -204,6 +204,7 @@ it('share files end to end: pick, prepare, read every file with its size, sign, 
   expect(calls('/shares/send')).toEqual([]) // nothing sent before the signature
   const sign = await readyToSign()
   expect(calls('/shares/send')).toEqual([]) // nothing sent before the signature
+  expect(state.host.clickPrepares()).toHaveLength(1) // prepared on open, once; never armed (autoStart={false})
   expect(state.host.clickSigned).toEqual([]) // opened on the review, never armed or signed by itself: Sign is the person's press
   sign()
   const dialog = await screen.findByRole('dialog', { name: 'Your link' }, { timeout: 9000 })
@@ -352,6 +353,7 @@ async function readyToSign() {
   expect(state.host.clickPrepares().map((c) => c.body)).toEqual([{ action: 'publish_share', key: 'DEMO-0001', staged_id: STAGED }])
   expect(calls('/handoff').filter((c) => c.method === 'POST')).toEqual([])
   const sign = within(dialog).getByRole('button', { name: 'Share files' })
+  expect(state.host.clickSigned).toEqual([]) // never armed or signed before the person's own press (also on the resume path)
   await waitFor(() => expect(sign).toBeEnabled(), { timeout: ARM_MS + 3000 })
   return () => {
     fireEvent.pointerDown(sign)

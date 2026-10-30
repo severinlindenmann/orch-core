@@ -505,8 +505,8 @@ def _reach(origin: str) -> str:
     if len(parts) == 4 and all(p.isdigit() for p in parts):
         a, b = int(parts[0]), int(parts[1])
         if a == 10 or (a == 172 and 16 <= b <= 31) or (a == 192 and b == 168) or (a == 100 and 64 <= b <= 127):
-            return "office network"
-    return "public address"
+            return "the office network"
+    return "a public address"
 
 
 def _leaf_word(v: Any) -> str:

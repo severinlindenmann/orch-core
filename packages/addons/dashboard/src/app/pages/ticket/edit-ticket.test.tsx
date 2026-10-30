@@ -136,6 +136,12 @@ describe('the ticket page edit', () => {
     await user.type(within(dialog).getByLabelText('New acceptance criterion'), 'A header row is exported')
     await user.click(within(dialog).getByRole('button', { name: 'Add' }))
     await user.click(within(dialog).getByRole('button', { name: /^Review and sign \(1 change\)$/ }))
+    // the full edit is not a rename: no inline review, no Rename button, no old -> new line, and its fields cannot change while signing
+    const review = await screen.findByRole('dialog', { name: 'sign Edit DEMO-0043' })
+    expect(review).not.toHaveAttribute('data-confirm')
+    expect(screen.queryByTestId('rename-diff')).toBeNull()
+    expect(within(dialog).getByTestId('edit-fields')).toBeDisabled()
+    expect(within(dialog).getByLabelText('Title')).toBeDisabled()
     const sent = JSON.parse((await screen.findByTestId('sent-action')).textContent ?? '{}')
     expect(sent).toMatchObject({ action: 'edit_sequence', key: 'DEMO-0043', acceptance: { edit: {}, add: ['A header row is exported'] } })
     expect(typeof sent.head_seq).toBe('number')

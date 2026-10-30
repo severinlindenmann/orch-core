@@ -281,7 +281,7 @@ export function EditDialog({ ticket, viewer, focus, onClose, onBusy }: { ticket:
             Change the title, text, acceptance criteria, tasks, repositories and people, then sign once. All changes are shown together in one review; if anyone else changes the ticket meanwhile, signing stops.
           </DialogDescription>
         </DialogHeader>
-        <div className="space-y-5">
+        <fieldset disabled={!!signing} data-testid="edit-fields" className="m-0 min-w-0 space-y-5 border-0 p-0">
           <div className="space-y-1.5">
             <label htmlFor={`${acId}-title`} className="text-[13px] font-medium">Title</label>
             <Input id={`${acId}-title`} ref={focus?.kind === 'title' ? focusInput : undefined} value={title} maxLength={MAX_TITLE + 50} onChange={(e) => setTitle(e.target.value)} />
@@ -360,7 +360,7 @@ export function EditDialog({ ticket, viewer, focus, onClose, onBusy }: { ticket:
           ) : (
             <p className="text-[12px] text-text-muted">Only the ticket owner, owners and maintainers change who owns, works on or reviews this ticket.</p>
           )}
-        </div>
+        </fieldset>
         {problem && (
           <p role="alert" className="text-[13px] text-danger">
             {problem}
@@ -394,9 +394,6 @@ export function EditDialog({ ticket, viewer, focus, onClose, onBusy }: { ticket:
             ws={ws.id}
             action={signing}
             prepareOnOpen
-            inline
-            confirmLabel="Rename"
-            lead={<p data-testid="rename-diff" className="text-[13px]"><s className="text-text-muted">{ticket.title ?? ''}</s> → <span className="font-medium">{title}</span></p>}
             onClose={() => setSigning(null)}
             onSettled={(phase) => {
               if (phase !== 'done') return

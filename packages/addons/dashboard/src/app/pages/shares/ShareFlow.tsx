@@ -243,6 +243,7 @@ export function ShareFlow({ ws, ticket, resume, onClose }: { ws: string; ticket:
         action={{ action: 'publish_share', key: s.ticket ?? ticket.key, staged_id: s.staged_id }}
         anchor={null}
         prepareOnOpen
+        autoStart={false}
         confirmLabel="Share files"
         lead={
           <div className="space-y-2 text-[13px]">

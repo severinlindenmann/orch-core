@@ -97,9 +97,13 @@ const WORDS = {
   self_disable: "You cannot disable yourself.",
   conflict: "That is not possible in the person's current state.",
   bad_invite: "This link does not work. It may have been used already or it has expired.",
+  wrong_mode: "None of these workspaces can start the space yet. Pick one that is ready, or ask an owner to accept first.",
+  unknown_workspace: "One of these workspaces is no longer connected. Reload the page and pick again.",
+  exists: "That workspace is already in this space.",
+  not_accepted: "Its owner has to accept first. Nothing was changed.",
   proof_required: "Open this link in a browser where you already approve, or ask your admin for a recovery link.",
 };
-const say = (code) => WORDS[code] ?? "Refused (" + renderText(code) + ").";
+const say = (code) => WORDS[code] ?? "That did not work. Please try again.";
 
 // --- views -------------------------------------------------------------------------------------------------------------
 function loginView(err) {

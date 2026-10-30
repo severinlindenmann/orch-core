@@ -735,3 +735,59 @@ def test_resign_refuses_a_proton_root_that_differs_from_the_embedded_one_and_sig
     monkeypatch.setattr(ceremony.rootkey, "revoke", lambda *a, **k: called.append(1))
     _refused(lab, capsys, "not the embedded root", root_read=True)
     assert called == []
+
+
+# ---- the tree is never left half written ---------------------------------------------------------------------------
+
+
+def _fail_replace_on(monkeypatch, n: int):
+    real, count = os.replace, []
+
+    def flaky(a, b):
+        count.append(1)
+        if len(count) == n:
+            raise OSError("disk full")
+        return real(a, b)
+
+    monkeypatch.setattr(os, "replace", flaky)
+
+
+@pytest.mark.parametrize("n", [1, 3, 5, 6, 7])
+def test_a_failing_write_restores_the_tree_and_init_can_be_rerun(lab, capsys, monkeypatch, n):
+    _fail_replace_on(monkeypatch, n)
+    rc, out, err = run_main(lab, capsys, "init")
+    assert rc == 1
+    assert lab.snapshot() == lab.original  # byte-identical: no half-written file, no *.ceremony-tmp, no new file
+    assert not (lab.repo / "release").exists() or not any((lab.repo / "release").rglob("*"))
+    assert lab.tmp_left() == []
+    lab.assert_no_leak(out, err)
+    # recovery by hand as in the runbook: delete the Proton items, then preflight and the whole run pass again
+    monkeypatch.undo()
+    for p in (lab.sim / "vault").glob("*.json"):
+        p.unlink()
+    (lab.sim / "gh-secret").unlink()
+    for k, v in lab.env().items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.setattr(ceremony, "_now", lambda: T0)
+    assert run_main(lab, capsys, "init")[0] == 0
+
+
+def test_the_keys_files_are_written_before_the_embeds(lab, capsys, monkeypatch):
+    seen = []
+    real = os.replace
+    monkeypatch.setattr(
+        os, "replace", lambda a, b: (seen.append(Path(b).relative_to(lab.repo).as_posix()), real(a, b))[1]
+    )
+    assert run_main(lab, capsys, "init")[0] == 0
+    keys = [i for i, r in enumerate(seen) if r.startswith("release/keys/")]
+    embeds = [i for i, r in enumerate(seen) if not r.startswith("release/keys/")]
+    assert max(keys) < min(embeds) and len(seen) == 7
+
+
+def test_when_restoring_fails_too_the_message_names_the_files(lab, capsys, monkeypatch):
+    _fail_replace_on(monkeypatch, 6)  # .gitignore was already replaced, install.sh fails
+    monkeypatch.setattr(Path, "write_bytes", lambda self, data: (_ for _ in ()).throw(OSError("read-only")))
+    rc, out, err = run_main(lab, capsys, "init")
+    assert rc == 1 and "restoring it failed for: .gitignore" in err
+    assert not list(lab.repo.rglob("*.ceremony-tmp"))
+    assert lab.tmp_left() == []

@@ -47,7 +47,7 @@ It is not secret. Keep it from the output. Items are only ever named by that ID,
 | preflight | nothing | fix the cause (login, environment, policy, pass-cli errors), rerun |
 | storing the root | maybe the root item | open Proton, delete the item with the printed root ID, rerun |
 | CI key to Proton / GitHub secret | root item, maybe CI item | delete the items with the printed root and CI IDs; the secret is overwritten on rerun; rerun |
-| writing files | all external steps | do NOT rerun `init` until the Proton items with both printed IDs are deleted; then rerun (the old secret is overwritten) |
+| writing files | all external steps | the script restores the tree itself. If it says `restoring it failed for: <paths>`: `git restore -- <each tracked path listed>` and `rm <each untracked path listed, by exact name>`; then delete the Proton items with the printed IDs and rerun |
 | secret list shows MISSING | files written | set the secret again from the CI item: `pass-cli item view --vault-name Agents --item-id <CI ID> --field password \| gh secret set ORCH_RELEASE_KEY --env release --repo severinlindenmann/orch-core` |
 
 `init` refuses while the root item exists, so a half-finished run is always cleaned up by hand first. Deleting is safe

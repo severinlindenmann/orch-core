@@ -8,8 +8,10 @@ Every secret stays in this process. The root key lives in Proton Pass (vault Age
 CI key goes to the ``release`` environment secret ORCH_RELEASE_KEY (and into Proton as a backup). Secrets are only
 ever passed to another program on STDIN: never in argv, never printed, never written to a file. The only files written
 are the public outputs under release/keys/, the embedded root in two source files and the floor in install.sh; they are
-staged in a 0700 temp dir that is removed on exit and on every signal. stdout carries only key id, fingerprint, the
-changed files and issued_at. Failure messages are fixed strings: no child output is ever echoed.
+staged in a 0700 temp dir that is removed on exit and on every signal. stdout carries only key id, fingerprint,
+Proton item IDs (not secret), the changed files and issued_at. Wiping seeds is best effort only: Python keeps
+immutable copies of some values; the process is short-lived and never writes them anywhere.
+Failure messages are fixed strings: no child output is ever echoed.
 """
 
 from __future__ import annotations
@@ -381,18 +383,64 @@ def _bump_all(root: Path, staged: dict[str, str], revs_path: Path) -> None:
 
 
 def _commit_files(root: Path, staged: dict[str, str]) -> list[str]:
-    """Write the staged texts into the tree (each via a temp file in its own directory, then an atomic rename)."""
-    changed = []
-    for rel in sorted(staged):
-        dest = root / rel
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        if dest.exists() and _read(dest) == staged[rel]:
-            continue
-        tmp = dest.with_name(dest.name + ".ceremony-tmp")
-        tmp.write_text(staged[rel], encoding="utf-8")
-        os.replace(tmp, dest)
-        changed.append(rel)
+    """Write the staged texts into the tree: release/keys/* first, the embeds last (each via a temp file in its own
+    directory, then an atomic rename). On ANY failure the tree is put back from in-memory originals."""
+    order = sorted(staged, key=lambda rel: (not rel.startswith("release/keys/"), rel))
+    changed: list[str] = []
+    originals: dict[str, bytes | None] = {}
+    tmps: list[Path] = []
+    made_dirs: list[Path] = []
+    try:
+        for rel in order:
+            dest = root / rel
+            old = dest.read_bytes() if dest.exists() else None
+            if old is not None and old == staged[rel].encode("utf-8"):
+                continue
+            missing, d = [], dest.parent
+            while not d.exists():
+                missing.append(d)
+                d = d.parent
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            made_dirs += reversed(missing)
+            tmp = dest.with_name(dest.name + ".ceremony-tmp")
+            tmps.append(tmp)
+            tmp.write_text(staged[rel], encoding="utf-8")
+            originals[rel] = old
+            os.replace(tmp, dest)
+            changed.append(rel)
+    except BaseException:
+        _rollback(root, originals, tmps, made_dirs)
+        raise
     return changed
+
+
+def _rollback(root: Path, originals: dict[str, bytes | None], tmps: list[Path], made_dirs: list[Path]) -> None:
+    """Remove leftover temp files, restore replaced files, delete files and directories this run created."""
+    failed = []
+    for tmp in tmps:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            failed.append(str(tmp.relative_to(root)))
+    for rel, old in originals.items():
+        try:
+            if old is None:
+                (root / rel).unlink(missing_ok=True)
+            else:
+                (root / rel).write_bytes(old)
+        except OSError:
+            failed.append(rel)
+    for d in reversed(made_dirs):
+        try:
+            d.rmdir()
+        except OSError:
+            pass
+    if failed:
+        raise Ceremony(
+            "writing the tree failed AND restoring it failed for: "
+            + ", ".join(sorted(failed))
+            + " (restore them with git, see docs/release-ceremony.md)"
+        )
 
 
 def _gitignore(root: Path) -> str:

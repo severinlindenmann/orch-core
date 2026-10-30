@@ -795,7 +795,7 @@ def device_fp(presence_kind: str, transport_pub: bytes, presence_pub: bytes) -> 
 
 
 def fingerprint_words(fp: bytes) -> str:
-    """Contract 16 row 60 (see :func:`orch.model.remote.fingerprint_words`); ``malformed`` on any error."""
+    """Contract 16 row 68 (see :func:`orch.model.remote.fingerprint_words`); ``malformed`` on any error."""
     try:
         return _remote.fingerprint_words(fp)
     except ValueError:

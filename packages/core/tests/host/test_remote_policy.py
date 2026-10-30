@@ -591,7 +591,7 @@ def test_device_confirm_needs_a_pending_device_and_adds_it_with_the_proof(human,
 
 
 def test_the_six_words_of_a_fingerprint_are_the_contract_ones():
-    """Contract 16 row 60: the first 66 bits of ``device_fp`` as six BIP-39 words (the vector's fingerprint)."""
+    """Contract 16 row 68: the first 66 bits of ``device_fp`` as six BIP-39 words (the vector's fingerprint)."""
     case = next(c for c in VECTORS["cases"] if c["name"] == "device_fp_platform")
     a = case["args"]
     fp = wire.device_fp(a["presence_kind"], bytes.fromhex(a["transport_pub_hex"]), wire.unb64u(a["presence_pub"], 65))

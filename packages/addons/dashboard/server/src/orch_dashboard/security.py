@@ -1,11 +1,25 @@
 import contextlib
+import logging
+import traceback
 import urllib.parse
+from pathlib import Path
 
 from . import widget_frame
 from .errors import response, step_up_response
 from .policy import ListenerPolicy
 from .routegate import ALLOWED, PRE_LOGIN, STEP_UP, TERMINALS, RouteGate
 from .testrun import UPLOAD_LIMIT
+
+LOG = logging.getLogger(__name__)
+
+
+def log_internal(exc: BaseException) -> None:
+    """An `internal` answer says nothing to the client; the log says where it came from: the exception's type and the
+    frames it passed (file:line function), never its message or any value, which may hold a secret (as core's
+    `transport._log_internal`, #1659)."""
+    where = [f"{Path(f.filename).name}:{f.lineno} {f.name}" for f in traceback.extract_tb(exc.__traceback__)[-8:]]
+    LOG.error("request handler failed: %s at %s", type(exc).__name__, " < ".join(reversed(where)))
+
 
 # Frames: only the locked Widgets route (see policy.py).
 _FRAME_OWN = frozenset(
@@ -265,7 +279,8 @@ class Security:
 
         try:
             await self.app(scope, replay, secure_send)
-        except Exception:
+        except Exception as exc:
+            log_internal(exc)
             if started:
                 raise
             # No body/header interpolation in errors or logs.

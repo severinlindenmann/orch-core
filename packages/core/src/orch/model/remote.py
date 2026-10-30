@@ -51,7 +51,7 @@ def device_fp(presence_kind: str, transport_pub: bytes, presence_pub: bytes) -> 
 
 
 def fingerprint_words(fp: bytes) -> str:
-    """Contract 16 row 60: the first 66 bits of the 32-byte ``device_fp`` as six BIP-39 English words (11 bits each),
+    """Contract 16 row 68: the first 66 bits of the 32-byte ``device_fp`` as six BIP-39 English words (11 bits each),
     space separated. The owner at the workspace and the device show the same six words."""
     from orch.identity._wordlist import WORDS
 

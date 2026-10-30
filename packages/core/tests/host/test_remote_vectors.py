@@ -5,6 +5,7 @@ this file does not know, or a missing required case, fails."""
 
 from __future__ import annotations
 
+import hashlib
 import itertools
 import json
 from pathlib import Path
@@ -47,6 +48,10 @@ CHECKS = {
     "frame_cost",
     "gate",
     "custodial_cannot",
+    "app_frame",
+    "request_head",
+    "app_seq",
+    "route_digest",
 }
 
 
@@ -70,6 +75,7 @@ def test_vector_remote_host_labels_and_constants() -> None:
         "prologue": DOC["labels"]["h_remote_prologue"],
         "wrk": DOC["labels"]["h_remote_wrk"],
         "fp": DOC["labels"]["h_remote_device_fp"],
+        "route": DOC["labels"]["h_remote_route"],
     }
     k = DOC["constants"]
     assert (k["noise_protocol"].encode(), k["frame_max"], k["frame_min_cost"]) == (RP.PROTOCOL, 65535, 1024)
@@ -120,6 +126,24 @@ def _custodial(a: dict[str, Any]) -> None:
     ev = a["event"]
     C.check_custodial_role(ev["type"], a["log"], "admin")
     check_custodial_payload(ev["type"], ev, frozenset(C.HUB_FIELDS))
+
+
+def _frame(spec: dict[str, Any]) -> bytes:
+    if "hex" in spec:
+        return bytes.fromhex(spec["hex"])
+    f = spec["fill"]
+    return bytes([f["kind"]]) + f["id"].to_bytes(4, "big") + bytes([f["byte"]]) * f["len"]
+
+
+def _seq(frames: list[dict[str, Any]]) -> dict[str, Any]:
+    ex = RP.Exchanges()
+    out: list[str] = []
+    for i, f in enumerate(frames):
+        try:
+            out.append(ex.step(f["dir"], _frame(f)))
+        except HubRefused as e:
+            return {"error": e.code, "index": i}
+    return {"results": out}
 
 
 def _run(c: dict[str, Any]) -> dict[str, Any]:
@@ -190,6 +214,19 @@ def _run(c: dict[str, Any]) -> dict[str, Any]:
             case "custodial_cannot":
                 _custodial(a)
                 return {"ok": True}
+            case "app_frame":
+                kind, ident, value = RP.app_parse(a["dir"], _frame(a))
+                return {"ok": {"kind": kind, "id": ident, "value": value}}
+            case "request_head":
+                RP.no_bearer(RP.app_parse(a["dir"], _frame(a))[2])
+                return {"ok": True}
+            case "app_seq":
+                return _seq(a["frames"])
+            case "route_digest":
+                pre = RP.route_preimage(
+                    a["workspace_id"], a["method"], a["template"], a["path"], a["query"], h(a["body_hex"])
+                )
+                return {"bytes_hex": pre.hex(), "digest_hex": hashlib.sha256(pre).hexdigest()}
     except HubRefused as e:
         return {"error": e.code}
     raise AssertionError(f"unhandled check {c['check']!r}")
@@ -217,3 +254,27 @@ def test_vector_remote_host_transcripts() -> None:
         assert ini.hh == resp.hh and resp.hh.hex() == t["handshake_hash_hex"]
         assert ini.c_i2r.seal(b"", dumps(t["first_plain"])).hex() == t["first_hex"]
         assert resp.c_r2i.seal(b"", dumps(t["reply_plain"])).hex() == t["reply_hex"]
+
+
+def test_vector_remote_host_app_constants() -> None:
+    """R3: core's port uses the file's in-session constants (kinds in order, limits)."""
+    k = DOC["constants"]["app"]
+    assert {n: i for i, n in enumerate(RP.KIND) if n} == k["kinds"]
+    assert (k["plain_max"], k["exchanges_max"], k["websockets_max"], k["request_body_max"]) == (
+        RP.PLAIN_MAX,
+        RP.MAX_HTTP,
+        RP.MAX_WS,
+        RP.MAX_REQ_BODY,
+    )
+    assert set(k["methods"]) == RP.VERBS and set(k["reset_codes"]) == RP.RESETS
+    assert set(k["framing_headers"]) == RP.NEVER_IN_HEAD
+
+
+def test_vector_remote_host_session_continues_with_app_frames() -> None:
+    """The session transcript's keys carry the app frames: core seals each at its nonce to the file's bytes."""
+    t = TRANSCRIPTS["session"]
+    app = [c for c in DOC["cases"] if c["name"].startswith("transport_session_app_") and "pt_hex" in c["expect"]]
+    assert len(app) == 5
+    for c in app:
+        a = c["args"]
+        assert _cipher(t, a["dir"], a["n"]).seal(b"", bytes.fromhex(c["expect"]["pt_hex"])).hex() == a["ct_hex"]

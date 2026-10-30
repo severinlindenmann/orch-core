@@ -186,3 +186,38 @@ test("a shared ticket is found by search for the person it was shared with, and 
   assert.equal(hit[0].hash, "#/w/" + "w".repeat(32));
   assert.deepEqual(filterSearch(searchEntries({ shared: [] }), "invoice export"), []); // nothing returned for another user
 });
+
+test("delayedCommit sends only after the Undo window, Undo cancels it, leaving the page sends it at once", async () => {
+  const { delayedCommit } = await import("../../src/orch_hub/web/feel.js");
+  const saved = { document: globalThis.document, setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout };
+  const timers = new Map(); let n = 0;
+  class Node {
+    constructor() { this.nodeType = 1; this.children = []; this.attrs = {}; this.events = {}; }
+    setAttribute(k, v) { this.attrs[k] = v; }
+    addEventListener(k, f) { this.events[k] = f; }
+    append(...c) { this.children.push(...c); }
+    remove() {}
+  }
+  const made = [];
+  globalThis.document = { body: new Node(), getElementById: () => made.find((x) => x.attrs.id === "toast-region"),
+    createElement: () => { const x = new Node(); made.push(x); return x; }, createTextNode: (t) => ({ nodeType: 3, textContent: t }) };
+  globalThis.setTimeout = (fn, ms) => { timers.set(++n, { fn, ms }); return n; };
+  globalThis.clearTimeout = (id) => timers.delete(id);
+  try {
+    const sent = [];
+    const a = delayedCommit(() => sent.push("a"), "Asking");
+    assert.deepEqual(sent, []);
+    [...timers.values()].at(-1).fn();
+    assert.deepEqual(sent, ["a"]);
+    a.flush();                                   // second flush is a no-op
+    assert.deepEqual(sent, ["a"]);
+    let undone = 0;
+    const b = delayedCommit(() => sent.push("b"), "Asking", { onUndo: () => undone++ });
+    b.cancel();
+    b.flush();
+    assert.deepEqual([sent, undone], [["a"], 1]);
+    const c = delayedCommit(() => sent.push("c"), "Asking");
+    c.flush();                                   // page leaves
+    assert.deepEqual(sent, ["a", "c"]);
+  } finally { Object.assign(globalThis, saved); }
+});

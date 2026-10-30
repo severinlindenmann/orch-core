@@ -24,7 +24,7 @@ export function StepUpModal() {
     setFailed(true)
   }
   return (
-    <div role="dialog" aria-modal="true" aria-labelledby="stepup-title" data-testid="stepup-modal" className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4">
+    <div role="dialog" aria-modal="true" aria-labelledby="stepup-title" data-testid="stepup-modal" className="fixed inset-0 z-50 grid place-items-center bg-scrim p-4">
       <div className="w-full max-w-md space-y-3 rounded-lg border border-border bg-surface-1 p-5 text-[13px] shadow-lg">
         <h2 id="stepup-title" className="text-[15px] font-semibold">{here ? "Confirm it's you on this computer" : 'Make this change on the workspace computer'}</h2>
         <p>{info.message}</p>

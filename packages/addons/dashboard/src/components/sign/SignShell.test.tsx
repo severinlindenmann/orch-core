@@ -24,3 +24,11 @@ it.each(['dialog', 'sheet', 'popover'] as const)('%s keeps actions outside the s
   expect(screen.getByRole('button', { name: 'Sign' })).toBeVisible()
   expect(screen.queryByRole('button', { name: 'Close' })).toBeNull()
 })
+
+it('an anchor that is no longer in the page falls to the centred dialog, never a corner popover (r12-P11)', () => {
+  vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() }))
+  const gone = document.createElement('button') // the button was removed from the page (a list that re-rendered)
+  render(<SignShell anchor={gone} open title="Share files" showClose onDismiss={vi.fn()} onOpenAutoFocus={e => e.preventDefault()}><p>Files</p></SignShell>)
+  expect(document.querySelector('[data-sign-sheet]')).not.toBeNull()
+  expect(document.querySelector('[data-sign-popover]')).toBeNull()
+})

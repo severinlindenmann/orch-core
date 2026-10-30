@@ -333,6 +333,16 @@ def test_ae3_publish_is_one_plain_click_and_the_view_shows_both_servers(click, s
     assert v["view"]["confirm"] == {"kind": "click"}
     shown = "\n".join(v["view"]["lines"])
     assert PUBLISH["server"] in shown and PUBLISH["share"] in shown  # what is signed is on screen
+    # r12-P11: the main words are one plain line in reach words; the addresses stay in the (folded) rows and the lines
+    c = v["view"]["content"]
+    want = "Files you share go to a public address; anyone with the link can read them."
+    assert c["notes"][0] == want
+    # the rows (addresses, add-on, version, capabilities) sit under the technical details
+    assert c["fields_inline"] is False
+    flat = json_text(c)
+    for kept in (PUBLISH["server"], PUBLISH["share"], "it says it will", "per host, not signed"):
+        assert kept in flat
+    assert not any(n.startswith("Files are sent to: ") or "signed by this workspace" in n for n in c["notes"])
     click.mono.t += 2
     out = click.sign(p["request_id"], v["view_digest"])
     assert out["duplicate"] is False and click.signatures == 2

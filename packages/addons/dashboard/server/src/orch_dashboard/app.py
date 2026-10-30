@@ -140,7 +140,7 @@ SPA_PATH = re.compile(
 
 
 # Every root-level file index.html references (public/ of the UI). A test checks the built index.html against this list.
-ROOT_FILES = frozenset({"favicon.svg", "loading.css"})
+ROOT_FILES = frozenset({"favicon.svg", "loading.css", "theme-boot.js"})
 
 
 class RequestMemo:

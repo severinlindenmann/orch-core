@@ -14,6 +14,7 @@ import struct
 from collections.abc import Callable, Mapping
 from typing import Any
 
+from . import hooks as HK
 from . import suite as S
 from .canon import CanonError, b64u, cj, loads_strict, unb64u, unhex
 from .labels import EVENT_TYPE, L, custodial_label
@@ -290,6 +291,7 @@ FIELDS: dict[str, dict[str, Check]] = {
         "issued_ms": _int_min(0),
         "roles": lambda x: type(x) is dict,
         "revoked_channels": lambda x: type(x) is list,
+        "ends_ms": lambda x: type(x) is dict,  # GA-07 (protocol.md §7): {user_id: ms}, checked in verify_snapshot
         "market_policy": valid_policy,  # D14: required, never null (protocol.md §7.1)
         "dev": _bool,
     },
@@ -752,6 +754,11 @@ def verify_snapshot(
         raise Refused("malformed")
     if any(not _hex16(c) for c in revoked) or revoked != sorted(set(revoked)):
         raise Refused("malformed")
+    ends = o["ends_ms"]
+    if any(
+        not _hex16(u) or u not in roles or type(t) is not int or not o["issued_ms"] < t < 2**53 for u, t in ends.items()
+    ):
+        raise Refused("malformed")  # GA-07: only users that have a role; each end is an int after the issue time
     if o["workspace_id"] != workspace_id:
         raise Refused("other_workspace")
     if pinned is not None:
@@ -762,6 +769,24 @@ def verify_snapshot(
                 raise Refused("snapshot_conflict")
             return dict(pinned)
     return o
+
+
+#: a snapshot issued more than this far ahead of the verifier's clock is not trusted for any user with an end date (R6)
+SNAPSHOT_SKEW_MS = 5 * 60 * 1000
+
+
+def role_at(snapshot: Mapping[str, Any], user_id: str, now_ms: int) -> str | None:
+    """THE role of ``user_id`` in a verified snapshot object at ``now_ms`` (GA-07). A user listed in ``ends_ms`` has no role
+    from that time on (fail closed: the true role may only have been lowered, a fresher snapshot says), and none at all when
+    the snapshot claims to be issued more than 5 minutes ahead of this clock (a host clock set back must not extend access).
+    Hub and host use this one rule for every role decision."""
+    role = snapshot["roles"].get(user_id)
+    end = snapshot["ends_ms"].get(user_id)
+    if role is None or end is None:
+        return role
+    if now_ms >= end or snapshot["issued_ms"] > now_ms + SNAPSHOT_SKEW_MS:
+        return None
+    return role
 
 
 def _verify_bundle(
@@ -1029,7 +1054,7 @@ def verify_custodial(
         if type(item) is not dict or type(item.get("chain")) is not dict or type(item.get("f1")) is not dict:
             raise Refused("not_granted")
         _selective_item(event, log, item["chain"], item["f1"], log_heads)
-    elif snapshot["roles"].get(user) not in ROLES:
+    elif role_at(snapshot, user, now_ms) not in ROLES:
         raise Refused("forbidden_role")
     # 7b. the closed list of custodial types and the lowest role per type (p4, §8.5; selective: owner-granted users,
     # and still only custodial types)
@@ -1038,12 +1063,12 @@ def verify_custodial(
     if mode == "selective":
         floor = MEMBER_ROLE_FLOOR.get(member_roles.get(user, "viewer"))  # unknown role -> None -> forbidden_role
     else:
-        floor = snapshot["roles"].get(user)
+        floor = role_at(snapshot, user, now_ms)
     check_custodial_role(typ, log, floor)
     # 8. D66 factor policy
     if min_factor is not None and FACTOR_RANK[event["channel_factor"]] < FACTOR_RANK[min_factor]:
         raise Refused("factor_too_weak")
-    return {"user_id": user, "channel": event["channel"], "role": snapshot["roles"].get(user)}
+    return {"user_id": user, "channel": event["channel"], "role": role_at(snapshot, user, now_ms)}
 
 
 def _selective_item(
@@ -1538,7 +1563,11 @@ PROFILE_FIELDS: dict[str, Check] = {
     "hours": lambda x: type(x) is str and len(x) <= 40,
 }
 
-LINK_OPTIONAL: dict[str, frozenset[str]] = {"join": frozenset({"alias_users"}), "directory_get": frozenset({"query"})}
+LINK_OPTIONAL: dict[str, frozenset[str]] = {
+    "join": frozenset({"alias_users"}),
+    "directory_get": frozenset({"query"}),
+    "hook_put": frozenset({"replaces"}),
+}
 LINK_OPS: dict[str, tuple[str, str | None, dict[str, Check]]] = {
     # R4 (#1592, protocol 10.2c): the only stream op that is a request/reply pair. The hub sends it (h2w) and the
     # host answers with a w2h reply (same op, ``re`` = its seq, body ``{}`` or ``{"error": code}``). A w2h
@@ -1629,6 +1658,22 @@ LINK_OPS: dict[str, tuple[str, str | None, dict[str, Check]]] = {
         "full",  # selective mode never tells the hub about tickets that were not shared (D80)
         {"events": _agent_events},
     ),
+    # #1285 (protocol 10.11): the public webhook inbox. Doorbell only; every op is scoped to the link's workspace
+    "hook_put": (
+        "w2h",
+        None,
+        {
+            "token_hash": HK.HASH_RE_CHECK,
+            "followup": lambda x: type(x) is str and HK.FOLLOWUP_RE.fullmatch(x) is not None,
+            "source": _enum(*HK.SOURCES),
+            "secret": lambda x: type(x) is str and HK.SECRET_RE.fullmatch(x) is not None,
+            "expires_ms": _int_min(1),
+            "replaces": HK.HASH_RE_CHECK,
+        },
+    ),
+    "hook_revoke": ("w2h", None, {"token_hash": HK.HASH_RE_CHECK}),
+    "hook_pull": ("w2h", None, {"since": _int_min(0)}),
+    "hook_ack": ("w2h", None, {"seq": _int_min(1)}),
     "status_put": (
         "w2h",
         None,

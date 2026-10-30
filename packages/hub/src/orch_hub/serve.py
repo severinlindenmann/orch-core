@@ -14,6 +14,7 @@ import secrets
 import signal
 import sys
 import threading
+import time
 import urllib.parse
 from collections.abc import Callable
 from pathlib import Path
@@ -39,6 +40,9 @@ from .connections import ConnectionAuthz, Connections
 from .contract.hub import Refused
 from .custodial import CustodialEngine
 from .custodial.deliver import build_delivery
+from .hooks.inbox import HookInbox
+from .hooks.listener import HookListener, parse_public_url
+from .hooks.store import HookStore
 from .invites import INVITES_FILE, Invites
 from .keys import HubKeys
 from .link import LinkServer, Registry
@@ -65,6 +69,7 @@ from .webapi import SessionBridge, WebApi, WebDeps, WebServer
 from .webapi.settings_api import SettingsControl
 
 REGISTRY_FILE = "registry.db"
+HOOKS_FILE = "hooks.db"  # #1285: webhook inbox (hook secrets, one ring per hook); short-lived, not in backups
 ROUTE_QUEUE_FILE = "route-queue.db"
 SPACES_FILE = "spaces.db"
 WK_SEAL_FILE = "wk-seal.db"
@@ -184,6 +189,8 @@ def serve(
     behind_edge: bool = False,
     web_origins: frozenset[str] = frozenset(),
     api_origin: str | None = None,
+    hooks_listen: str | None = None,
+    public_hooks_url: str | None = None,
     relay_transport: Transport | None = None,
     stop: threading.Event | None = None,
     out: TextIO | None = None,
@@ -417,6 +424,19 @@ def serve(
                 loop_origin = f"http://127.0.0.1:{web.address[1]}"
                 switch.set_loopback_origin(lambda: loop_origin)
     fw = HubPublish(keys, HttpPublishSync(publish_url), PublishConfig(publish_url, api_host))
+    # #1285: the public webhook inbox. Off unless BOTH the public URL and its own listener are given (a half setting
+    # is refused: a hook URL that nothing serves, or a listener nobody can name, would only mislead)
+    hook_inbox: HookInbox | None = None
+    hook_listener: HookListener | None = None
+    if (hooks_listen is None) != (public_hooks_url is None):
+        raise ValueError("--hooks-listen and --public-hooks-url go together")
+    if hooks_listen is not None and public_hooks_url is not None:
+        hook_inbox = HookInbox(
+            HookStore(str(state / HOOKS_FILE)),
+            lambda: int(time.time() * 1000),
+            parse_public_url(public_hooks_url, dev=cfg.dev),
+        )
+        hook_listener = HookListener(hook_inbox, hooks_listen, trusted_peers=cfg.trusted_peers)
     # R4 (#1592): remote access streams. The hub forwards opaque Noise frames and judges only abuse limits (D87); the
     # rail rule and the remote-scope token decide who may open. Registry counts every stream_open by outcome.
     stream_router, remote_endpoint = wire_remote(
@@ -437,6 +457,7 @@ def serve(
         views=views.service,
         shares=shares,
         switch=switch,
+        hooks=hook_inbox,
         activity=activity,
         where=lambda: where_answer(state, extra_public=link_ws_public),
         deliveries=deliveries,
@@ -482,6 +503,8 @@ def serve(
         server.start()
         if web is not None:
             web.start()
+        if hook_listener is not None:
+            hook_listener.start()
         if threading.current_thread() is threading.main_thread():
             for sig in (signal.SIGTERM, signal.SIGINT):
                 signal.signal(sig, lambda *_: stop.set())
@@ -497,6 +520,8 @@ def serve(
             print(f"orch-hub link-ws port={server.ws_address[1]}", file=out, flush=True)
         if web is not None:
             print(f"orch-hub web port={web.address[1]}", file=out, flush=True)
+        if hook_listener is not None:
+            print(f"orch-hub hooks port={hook_listener.address[1]}", file=out, flush=True)
         finish_restore(state)  # a good start after a restore: the pre-restore state dir (old keys) goes
         for code in gate.codes():  # protocol §5 invite form: what the workspace owner passes to `orch hub join`
             print(invite_line(keys.hub_id, code), file=out, flush=True)
@@ -505,6 +530,8 @@ def serve(
         failed = False
         for close in (
             web.close if web is not None else None,
+            hook_listener.close if hook_listener is not None else None,
+            hook_inbox.store.close if hook_inbox is not None else None,
             stream_router.close_all,  # every client connection ends before the link server goes
             server.close,
             deliveries.close,

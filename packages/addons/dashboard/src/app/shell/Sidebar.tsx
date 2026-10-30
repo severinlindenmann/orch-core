@@ -218,7 +218,7 @@ export function Sidebar() {
     'flex items-center gap-2.5 rounded-md text-[13px] text-text-muted outline-none transition-colors hover:bg-surface-2 hover:text-text focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
     collapsed ? 'justify-center px-0 py-2' : 'px-2.5 py-1.5',
   )
-  const activeProps = { className: 'bg-surface-2 !text-text' }
+  const activeProps = { className: 'bg-nav-selected !text-text shadow-[inset_0_0_0_1px_var(--nav-selected-border)]' }
   const label = collapsed ? 'hidden' : ''
 
   return (

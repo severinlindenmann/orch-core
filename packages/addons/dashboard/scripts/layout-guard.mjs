@@ -13,7 +13,7 @@
 //   npm run layout:guard -- --quick                                # 1440x900, default dock, sidebar left to choose, Normal
 //   npm run layout:guard -- --only tickets --shots ./shots         # routes matching /tickets/, with screenshots
 //
-// Options: --url <base> (default http://127.0.0.1:5201), --quick, --shard <i>/<n>, --only <regex>, --dataset normal|busy, --docks min,default,max,
+// Options: --theme light|dark|both (the browser colour scheme, #421), --url <base> (default http://127.0.0.1:5201), --quick, --shard <i>/<n>, --only <regex>, --dataset normal|busy, --docks min,default,max,
 // --selftest (plants overflow on a page and checks the detector finds it; then reruns the guard with --break tabs|overlay|loading|tabrow and expects exit 1 with the reason), --shots <dir> (a PNG per page of the first configuration), --prefix <name> (screenshot file prefix),
 // --chrome <path> (or CHROME_PATH). Needs the dev build: it moves between routes through `window.__orchRouter` (main.tsx). jsdom cannot lay out, so this runs against the real dev server.
 
@@ -37,6 +37,9 @@ const ONLY = opt('only') ? new RegExp(opt('only')) : null
 const SHOTS = opt('shots')
 const PREFIX = opt('prefix', 'page')
 const QUICK = flag('quick')
+/** --theme light|dark|both (default dark): the browser's colour scheme (#421). `both` runs the pages once per theme. */
+const THEME = opt('theme', 'dark')
+if (!['light', 'dark', 'both'].includes(THEME)) throw new Error('--theme expects light, dark or both')
 /** Self-test only: break one step on purpose ('tabs', 'overlay' or 'loading') to prove the guard then fails. */
 const BREAK = opt('break')
 /** DEMO-0043's tabs: Overview, Acceptance & tasks, Questions, Results, History. */
@@ -237,7 +240,12 @@ async function main() {
   await waitForTarget(BASE)
   const { send, close } = await launch()
   try {
-    await run(send, close)
+    // The scheme the page follows when nothing is stored (System). A real pass per theme, not a recolour of one.
+    for (const scheme of THEME === 'both' ? ['dark', 'light'] : [THEME]) {
+      await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: scheme }] })
+      if (THEME === 'both') console.log(`--- theme: ${scheme}`)
+      await run(send, close)
+    }
   } finally {
     close()
   }

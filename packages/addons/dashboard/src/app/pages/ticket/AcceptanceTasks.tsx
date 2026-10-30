@@ -2,7 +2,7 @@ import { ManualAcceptanceProvider, ManualButtons } from './ManualAcceptance'
 import { useTicketEdit } from './EditTicket'
 import { CriterionEvidence } from './EvidenceView'
 import { Button } from '@/components/ui/button'
-import { ChevronDown, ChevronRight, FileText, ListChecks, Pencil, UserCheck } from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, FileText, ListChecks, Pencil, UserCheck } from 'lucide-react'
 import { useState } from 'react'
 import type { AcceptanceStatus, TaskStatus, TicketDocument } from '@/api/types'
 import { Raw } from '@/components/sign/visible'
@@ -157,7 +157,7 @@ function Criterion({ ac, ticket, jump, viewer }: { ac: AcceptanceStatus; ticket:
                 <button type="button" onClick={() => goto(ev)} className="inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1 hover:border-border-strong hover:bg-surface-2">
                   {ev.kind === 'task' ? <ListChecks className="size-3.5 text-text-muted" /> : <FileText className="size-3.5 text-text-muted" />}
                   <span className="max-w-64 truncate">{ev.ref}</span>
-                  <span className={verified ? 'text-success' : 'text-warning'}>{verified ? 'verified by receipt' : 'agent-asserted'}</span>
+                  <span className={verified ? 'text-success' : 'text-warning'}>{verified && <Check className="mr-0.5 inline size-3" aria-hidden />}{verified ? 'verified by receipt' : 'agent-asserted'}</span>
                 </button>
                 {t && <HowVerified t={t} />}
               </li>

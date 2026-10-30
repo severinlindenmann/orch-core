@@ -84,6 +84,10 @@ W2H_OPS: dict[str, str | None] = {
     "owner_get": None,
     "hub_where": None,
     "agent_events": "full",
+    "hook_put": None,
+    "hook_revoke": None,
+    "hook_pull": None,
+    "hook_ack": None,
     "status_put": None,  # R14b: this list lacked the display ops, so a real link refused them as unknown_op
     "addon_request": None,
     "profile_put": None,
@@ -129,6 +133,33 @@ _REPLY: dict[str, Callable[[dict[str, Any]], bool]] = {
         )
     ),
     "owner_get": lambda b: set(b) == {"user_id"} and type(b["user_id"]) is str,
+    # #1285 (protocol 10.11): the webhook inbox; the ring rows carry a token hash and closed words, never text
+    "hook_put": lambda b: (
+        set(b) == {"url_base"}
+        and type(b["url_base"]) is str
+        and re.fullmatch(r"https?://[^\s/?#]+/h/", b["url_base"]) is not None
+    ),
+    "hook_revoke": lambda b: b == {},
+    "hook_pull": lambda b: (
+        set(b) == {"rings", "head"}
+        and type(b["rings"]) is list
+        and len(b["rings"]) <= 50
+        and type(b["head"]) is int
+        and all(
+            type(r) is dict
+            and set(r) == {"seq", "token_hash", "source", "kind", "received_at"}
+            and type(r["seq"]) is int
+            and r["seq"] >= 1
+            and type(r["token_hash"]) is str
+            and re.fullmatch(r"[0-9a-f]{64}", r["token_hash"]) is not None
+            and r["source"] in ("github", "generic", "databricks")
+            and r["kind"] == "hook.rang"
+            and type(r["received_at"]) is int
+            and r["received_at"] >= 0
+            for r in b["rings"]
+        )
+    ),
+    "hook_ack": lambda b: set(b) == {"acked"} and type(b["acked"]) is int,
     "shared_get": lambda b: set(b) == {"items"} and type(b["items"]) is list,
     "audience_get": lambda b: set(b) == {"people", "teams"} and type(b["people"]) is list and type(b["teams"]) is list,
     "directory_get": lambda b: set(b) == {"entries"} and type(b["entries"]) is list,

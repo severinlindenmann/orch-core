@@ -1067,3 +1067,45 @@ def test_the_restore_lock_lives_in_the_state_dir_not_the_project(root, env):
     assert [p.name for p in root.parent.iterdir() if p.name.endswith(".lock")] == []
     locks = list((Path(env["ORCH_STATE_DIR"]) / "locks").glob("restore-*.lock"))
     assert len(locks) == 1 and stat.S_IMODE(locks[0].stat().st_mode) == 0o600
+
+
+def marker(env, content=None, link=False):
+    q = Path(env["ORCH_STATE_DIR"]) / "install"
+    q.mkdir(parents=True, exist_ok=True)
+    m = q / "quarantine"
+    if m.is_symlink() or m.exists():
+        m.unlink()
+    if link:
+        m.symlink_to("/nonexistent")
+    else:
+        m.write_text(content if content is not None else jr.read_journal(env)["update_id"] + "\n")
+
+
+def test_quarantine_passes_only_its_own_update(root, env):
+    jr.write_journal("stopped", env)
+    jr.write_journal("installed", env)
+    assert code_of(open_root, root, "workspace", env, quarantine_ok=True) == "update.interrupted"  # no marker
+    marker(env)
+    open_root(root, "workspace", env, quarantine_ok=True).close()
+    assert code_of(open_root, root, "workspace", env) == "update.interrupted"  # not asked for
+    marker(env, "someotherupdate")
+    assert code_of(open_root, root, "workspace", env, quarantine_ok=True) == "update.interrupted"
+    marker(env, link=True)
+    assert code_of(open_root, root, "workspace", env, quarantine_ok=True) == "update.interrupted"
+
+
+def test_quarantine_never_passes_a_restore(root, env):
+    jr.write_journal("stopped", env)
+    jr.write_journal("installed", env, restoring=str(root))
+    marker(env)
+    assert code_of(open_root, root, "workspace", env, quarantine_ok=True) == "update.interrupted"
+
+
+def test_a_marker_of_an_earlier_update_does_not_pass_the_next(root, env):
+    jr.write_journal("stopped", env)
+    old_id = jr.read_journal(env)["update_id"]
+    jr.write_journal("committed", env)
+    jr.write_journal("stopped", env)
+    assert jr.read_journal(env)["update_id"] != old_id
+    marker(env, old_id)
+    assert code_of(open_root, root, "workspace", env, quarantine_ok=True) == "update.interrupted"

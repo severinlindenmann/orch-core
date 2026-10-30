@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 from collections.abc import Mapping
 from pathlib import Path
 from types import TracebackType
@@ -125,11 +126,28 @@ def lock_root(root: Path, *, exclusive: bool) -> int:
 
 
 def _quarantined(env: Mapping[str, str] | None) -> bool:
-    """The host state dir has the quarantine marker ``orch update`` writes for its health check
-    (``<state>/install/quarantine``, see orch.update.quarantine). A broken link counts."""
+    """The quarantine marker ``orch update`` writes for its health check: ``<state>/install/quarantine``, a REGULAR
+    file (never a link) whose content is the ``update_id`` of the unfinished update journal (hex, optional trailing
+    newline). It passes only its own update, and never a journal that has ``restoring`` set."""
     from orch.ops.runtime import state_dir
 
-    return os.path.lexists(state_dir(os.environ if env is None else env) / "install" / "quarantine")
+    from .journal import read_journal
+
+    try:
+        doc = read_journal(env)
+        if doc is None or doc.get("restoring") or not isinstance(doc.get("update_id"), str):
+            return False
+        path = state_dir(os.environ if env is None else env) / "install" / "quarantine"
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                return False
+            raw = os.read(fd, 257)
+        finally:
+            os.close(fd)
+    except (OSError, OrchError):
+        return False
+    return len(raw) <= 256 and raw.decode("utf-8", "replace").strip() == doc["update_id"]
 
 
 def _interrupted(env: Mapping[str, str] | None, quarantine_ok: bool) -> bool:

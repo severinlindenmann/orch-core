@@ -16,7 +16,7 @@ from typing import Any
 
 from orch.store.store import WORKSPACE
 
-__all__ = ["MAX_EVENTS", "collect", "send"]
+__all__ = ["MAX_EVENTS", "collect", "forget_position", "send"]
 
 LOG = logging.getLogger("orch.host.agentevents")
 MAX_EVENTS = 50
@@ -115,11 +115,21 @@ def collect(store: Any, position: dict[str, Any]) -> tuple[list[dict[str, Any]],
     return out, seen
 
 
+def forget_position(service: Any, hub_id: str | None = None) -> None:
+    """Drop the position of one hub (all hubs: ``None``), so the next full pass starts at the end of every log and the
+    time the workspace was not joined (or not full) is never uploaded. Called on a leave and on a selective pass."""
+    pos = service.__dict__.get("_agent_events_pos", {})
+    if hub_id is None:
+        pos.clear()
+    else:
+        pos.pop(hub_id, None)
+
+
 def send(service: Any, state: Any, hub_link: Any) -> None:
     """Best effort, never raises. ``state`` is the hub binding (``hub_id``)."""
     try:
         if getattr(state, "mode", None) != "full":  # selective: never reveal unshared tickets (D80)
-            service.__dict__.get("_agent_events_pos", {}).pop(state.hub_id, None)  # a later full pass starts at the end
+            forget_position(service, state.hub_id)  # a later full pass starts at the end
             return
         store = getattr(service, "store", None)
         if store is None:

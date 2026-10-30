@@ -1088,6 +1088,7 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
         orgsecrets.drop_cache(service)  # then the opened values (condition 14), then the files
         orgstate.purge(service)  # M3: the company skills and servers of that binding go with it (nothing stays served)
         _stop_peers(service)  # unbound: the ws->ws link and receive thread end here
+        agentevents.forget_position(service)  # a leave: the time not joined is never uploaded after a rejoin
         return ok_result(out)
     except HubRefused as exc:
         _audit(call, "hub.refused", op=plan["op"], code=exc.code)

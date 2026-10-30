@@ -147,3 +147,17 @@ def test_going_selective_drops_the_position_so_the_selective_period_is_never_upl
     store.add("T1", "ticket.updated", {"kind": "agent", "id": "c"})
     agentevents.send(service, full, link)
     assert [e["agent"] for e in link.calls[0][1]["events"]] == ["c"]
+
+
+def test_a_leave_drops_the_position_so_a_rejoin_uploads_nothing_old():
+    store, link = FakeStore(), Link()
+    service = SimpleNamespace(store=store)
+    full = SimpleNamespace(hub_id="h1", mode="full")
+    agentevents.send(service, full, link)
+    agentevents.forget_position(service)  # what hub.leave does
+    store.add("T1", "ticket.updated", {"kind": "agent", "id": "while-away"})
+    agentevents.send(service, full, link)  # rejoin: re-initialises at the end
+    assert link.calls == []
+    store.add("T1", "ticket.updated", {"kind": "agent", "id": "after"})
+    agentevents.send(service, full, link)
+    assert [e["agent"] for e in link.calls[0][1]["events"]] == ["after"]

@@ -199,7 +199,7 @@ def close_payload(code: int) -> bytes:
     return code.to_bytes(2, "big")
 
 
-def decode_frame(buf: bytes, *, sender: str, max_payload: int = MAX_FRAME) -> tuple[Frame, int] | None:
+def decode_frame(buf: bytes | memoryview, *, sender: str, max_payload: int = MAX_FRAME) -> tuple[Frame, int] | None:
     """Read one frame from the start of ``buf`` sent by ``sender`` (``client`` or ``server``). ``None``: more bytes
     are needed. Every refusal is decided as early as the bytes allow; an oversize length is refused from the header
     alone, before any payload is read. Checks in this order: RSV bits (1002), text frame (1003), unknown opcode
@@ -280,30 +280,39 @@ class Receiver:
         if self.ended:
             return b"", []
         self._buf += data
-        while not self.ended:
-            got = decode_frame(bytes(self._buf), sender=self.sender, max_payload=self.max_payload)
-            if got is None:
-                break
-            f, used = got
-            del self._buf[:used]
-            if f.opcode == OP_CONT:
-                if not self._in_message:
-                    raise WsError(1002, "continuation")
-                out += f.payload
-                self._in_message = not f.fin
-            elif f.opcode == OP_BINARY:
-                if self._in_message:
-                    raise WsError(1002, "interleaved")
-                out += f.payload
-                self._in_message = not f.fin
-            elif f.opcode == OP_PING:
-                answers.append((OP_PONG, f.payload))
-            elif f.opcode == OP_CLOSE:
-                self.ended = True
-                self.closed = int.from_bytes(f.payload[:2], "big") if f.payload else None
-                answers.append((OP_CLOSE, close_payload(1000)))
+        view, pos = memoryview(self._buf), 0  # a read cursor: one trim per feed, never a copy of the buffer per frame
+        try:
+            while not self.ended:
+                got = decode_frame(view[pos:], sender=self.sender, max_payload=self.max_payload)
+                if got is None:
+                    break
+                f, used = got
+                pos += used
+                self._step(f, out, answers)
+        finally:
+            view.release()
+            del self._buf[:pos]
+            if self.ended:
                 self._buf.clear()
         return bytes(out), answers
+
+    def _step(self, f: Frame, out: bytearray, answers: list[tuple[int, bytes]]) -> None:
+        if f.opcode == OP_CONT:
+            if not self._in_message:
+                raise WsError(1002, "continuation")
+            out += f.payload
+            self._in_message = not f.fin
+        elif f.opcode == OP_BINARY:
+            if self._in_message:
+                raise WsError(1002, "interleaved")
+            out += f.payload
+            self._in_message = not f.fin
+        elif f.opcode == OP_PING:
+            answers.append((OP_PONG, f.payload))
+        elif f.opcode == OP_CLOSE:
+            self.ended = True
+            self.closed = int.from_bytes(f.payload[:2], "big") if f.payload else None
+            answers.append((OP_CLOSE, close_payload(1000)))
 
 
 # --- the upgrade ------------------------------------------------------------------------------------------------

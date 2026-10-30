@@ -128,7 +128,7 @@ def test_slow_head_gets_silence_and_loses_its_slot(mk):
 
 
 def test_vectors_check_request_against_the_live_upgrade(mk):
-    h = mk()
+    h = mk(max_unauthenticated=64, max_connections=64)  # upgraded sockets hold a slot until the hub sees them close
     n = 0
     for c in VEC["cases"]:
         if c["check"] != "check_request":
@@ -481,3 +481,85 @@ def test_connect_link_takes_the_new_address_grammar():
             build_link("https://h.example", "a" * 32, "code1", ep)
         with pytest.raises(LinkError):
             parse_link(f"https://h.example/c#h1.{'a' * 32}.code1.{ep}")
+
+
+# --- pre-auth amplification (review finding) -----------------------------------------------------------------------
+
+
+def test_receiver_is_linear_in_a_ping_flood():
+    """The receiver decodes with a read cursor: 4x the frames take about 4x the time (the copy-per-frame version took
+    ~0.45 s for 10,000 pings here and grew 16x for 4x the frames)."""
+
+    def run(n: int) -> float:
+        data = b"".join(W.encode_frame(W.OP_PING, b"", mask=b"\x01\x02\x03\x04") for _ in range(n))
+        r = W.Receiver("client")
+        t0 = time.process_time()
+        out, answers = r.feed(data)
+        dt = time.process_time() - t0
+        assert out == b"" and len(answers) == n
+        return dt
+
+    small = min(run(10_000) for _ in range(5))
+    big = min(run(40_000) for _ in range(4))
+    assert small < 1.0 and big / small < 9.5
+
+
+def test_ping_flood_in_one_read_closes_without_pongs(mk):
+    h = mk()
+    data = b"".join(W.encode_frame(W.OP_PING, b"", mask=b"\x01\x02\x03\x04") for _ in range(10_000))
+    t0 = time.monotonic()
+    _, out = _after_upgrade(h, data)
+    assert _close_code(out) == 1008  # the first thing back is the close: not one pong
+    assert time.monotonic() - t0 < 4
+
+
+def test_ping_flood_spread_over_reads_closes(mk):
+    h = mk()
+    s = socket.create_connection(ws_addr(h), timeout=3)
+    try:
+        s.sendall(upgrade_request("hub.example", new_key()))
+        head, _ = read_head(s)
+        assert status_of(head) == 101
+        ping = W.encode_frame(W.OP_PING, b"", mask=b"\x01\x02\x03\x04")
+        got = b""
+        s.settimeout(0.05)
+        for _ in range(200):
+            try:
+                s.sendall(ping * 5)
+            except OSError:
+                break
+            time.sleep(0.005)
+            try:
+                got += s.recv(4096)
+            except TimeoutError, OSError:
+                pass
+        end = time.monotonic() + 2
+        while time.monotonic() < end and b"\x88\x02\x03\xf0" not in got:
+            try:
+                chunk = s.recv(4096)
+            except TimeoutError:
+                continue
+            except OSError:
+                break
+            if not chunk:
+                break
+            got += chunk
+        assert b"\x88\x02\x03\xf0" in got  # close 1008
+        assert got.count(b"\x8a") <= 60  # a bounded number of pongs before it
+    finally:
+        s.close()
+
+
+def test_one_pong_per_batch(mk):
+    h = mk()
+    data = b"".join(W.encode_frame(W.OP_PING, bytes([i]), mask=b"\x01\x02\x03\x04") for i in range(5))
+    _, out = _after_upgrade(h, data)
+    assert out.startswith(W.encode_frame(W.OP_PONG, bytes([4])))  # only the latest ping is answered
+    assert out.count(W.encode_frame(W.OP_PONG, bytes([0]))) == 0
+
+
+def test_pre_auth_byte_budget(mk):
+    h = mk()
+    frame = W.encode_frame(W.OP_BINARY, b"\x00" * 70_000, mask=b"\x01\x02\x03\x04")
+    _, out = _after_upgrade(h, frame)  # 70 kB of junk before any TLS handshake: over the budget
+    assert _close_code(out) == 1008

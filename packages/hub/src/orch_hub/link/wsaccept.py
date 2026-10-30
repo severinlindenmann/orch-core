@@ -23,6 +23,10 @@ from . import tls
 from .tls import LinkClosed, LinkTimeout
 
 HEAD_TIMEOUT = 5.0  # the upgrade head must arrive whole within this long (10.10.3)
+#: Pre-auth limits (R6 review): what one unauthenticated peer may make the hub do before the inner TLS handshake is over.
+PRE_BUDGET_BYTES = 64 * 1024  # bytes received before the handshake completed (a ClientHello is ~1 KiB)
+MAX_CONTROL_PER_FEED = 16  # control frames answered from one read; more is a flood
+MAX_CONTROL_PER_SECOND = 50  # a legitimate client pings every 25 s
 
 
 def _refuse(sock: socket.socket, status: int) -> None:
@@ -95,6 +99,9 @@ class WsPipe:
         self._last_rx = self._last_tx = time.monotonic()
         self._pending = leftover
         self._closed = False
+        self._secure = False  # the inner TLS handshake is over: the pre-auth byte budget no longer applies
+        self._rx_total = 0
+        self._control: list[float] = []  # arrival times of ping answers in the last second
         try:
             sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         except OSError:
@@ -135,13 +142,28 @@ class WsPipe:
 
     # --- reading ----------------------------------------------------------------------------------------------
 
+    def mark_secure(self) -> None:
+        self._secure = True
+
     def _feed(self, data: bytes) -> bytes:
+        self._rx_total += len(data)
+        if not self._secure and self._rx_total > PRE_BUDGET_BYTES:
+            self._fail(1008)
+            raise LinkClosed("ws pre-auth budget")
         try:
             out, answers = self._rx.feed(data)
         except W.WsError as e:
             self._fail(e.close)
             raise LinkClosed(f"ws {e.close} {e.reason}") from None
-        for op, payload in answers:
+        pongs = [a for a in answers if a[0] == W.OP_PONG]
+        now = time.monotonic()
+        self._control = [t for t in self._control if now - t < 1.0] + [now] * len(pongs)
+        if len(pongs) > MAX_CONTROL_PER_FEED or len(self._control) > MAX_CONTROL_PER_SECOND:
+            self._fail(1008)  # a ping flood: no pong at all
+            raise LinkClosed("ws control flood")
+        # RFC 6455 5.5.3: answering only the most recent ping is enough
+        send = ([pongs[-1]] if pongs else []) + [a for a in answers if a[0] != W.OP_PONG]
+        for op, payload in send:
             try:
                 self._frame(op, payload, time.monotonic() + 5.0)
             except LinkClosed, LinkTimeout:
@@ -224,6 +246,7 @@ def accept_ws(
         c.set_accept_state()
         t = tls.BioTlsConn(c, pipe, stop)
         t.handshake(deadline)
+        pipe.mark_secure()
         return t
     except BaseException:
         if pipe is not None:

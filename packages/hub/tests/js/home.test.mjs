@@ -68,7 +68,12 @@ test("first-run home shows only the connect card", () => {
   const out = homeView({ user: { name: "Anna", is_admin: true }, workspaces: [], items: [], channels: [], thisBrowser: { state: "unregistered" }, actions: { connect() {} } });
   const text = out.map((n) => n.textContent).join(" ");
   assert.match(text, /Connect your first workspace/);
-  assert.match(text, /Get a one-time link/);
+  assert.match(text, /Connect a workspace/);
+  assert.match(text, /We make a link for your workspace\. You use it once\./);
+  assert.doesNotMatch(text, /one-time|Settings/);
+  assert.match(text, /More areas \(approvals, add-ons, activity…\) appear here once a workspace is connected\./);
+  const member = homeView({ user: { name: "Ben" }, workspaces: [], items: [], channels: [], thisBrowser: { state: "unregistered" }, actions: {} }).map((n) => n.textContent).join(" ");
+  assert.match(member, /Ask your hub admin to connect a workspace for you\./);
   assert.doesNotMatch(text, /Where you can sign|Register this browser|Needs you|My workspaces/);
   const withWs = homeView({ user: { name: "Anna" }, workspaces: [{ workspace_id: "a", name: "P", online: true }], items: [], channels: [], thisBrowser: { state: "unregistered" }, actions: {} });
   const t2 = withWs.map((n) => n.textContent).join(" ");

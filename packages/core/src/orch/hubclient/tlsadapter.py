@@ -74,7 +74,7 @@ class TlsTransport:
         timeout: float = 10.0,
         now_ms: Callable[[], int] | None = None,
         resolve: Callable[[str], str] | None = None,
-        net: NetSettings | None = None,
+        net: NetSettings,
         clock: Callable[[], float] = time.monotonic,
         inspected: InspectedBlock | None = None,
     ) -> None:

@@ -10,6 +10,7 @@ from __future__ import annotations
 import sys
 
 import pytest
+from orch.hubclient.netconfig import NetSettings
 from orch.remoteclient import Client, Response, Session, Store
 from remote_client_kit import FakeSession
 from test_realhost_agents import aw  # noqa: F401  (the real-host fixture: core's host, signer and the dashboard app)
@@ -31,7 +32,7 @@ def test_the_workspace_name_is_read_from_the_real_workspaces_answer(client, toke
     store.add_workspace(stub.ws, {"device_id": "rd_" + "1" * 32, "presence_ref": "ref-1", "presence_kind": "platform"})
     sess = FakeSession(stub.ws, name=None)
     sess.request = lambda *a, **k: response(200, real.content)  # exactly the bytes the handler sent
-    Client(store)._learn_name(sess)  # noqa: SLF001
+    Client(store, net=NetSettings())._learn_name(sess)  # noqa: SLF001
     assert sess.name == rows[0]["name"] == "Acme"
     assert store.workspace(stub.ws)["name"] == "Acme"  # kept, so prompts of later sessions use it from the start
 

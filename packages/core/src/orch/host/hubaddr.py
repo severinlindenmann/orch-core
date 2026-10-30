@@ -212,7 +212,7 @@ def checked_ip(host: str, *, allow_loopback: bool, proxied: bool = False, allow_
     return ips[0]
 
 
-def dial_resolver(current_addr: str | None, net: Any = None) -> Callable[[str], str]:
+def dial_resolver(current_addr: str | None, *, net: Any) -> Callable[[str], str]:
     """The ``resolve`` hook for dialling hub-learned addresses: policy-checked IP, loopback only next to a loopback
     current address (decided by the stored text). With a proxy the same policy decides the text of a name."""
     from orch.hubclient.tlslink import transport
@@ -240,7 +240,7 @@ def dial_host(a: Any, net: Any, *, allow_loopback: bool, allow_internal: bool = 
 
 
 def handshake_ok(
-    addr: str, spki: str | None, *, allow_loopback: bool = False, net: Any = None, allow_internal: bool = False
+    addr: str, spki: str | None, *, allow_loopback: bool = False, net: Any, allow_internal: bool = False
 ) -> bool:
     """True when a TLS handshake AT ``addr`` presents the held pin ``spki``. The name is resolved once, the IP checked
     (:func:`checked_ip`), and that exact IP is dialled. Nothing is sent over the connection and it is closed at once.
@@ -266,7 +266,7 @@ def handshake_ok(
     return True
 
 
-def _probe_new(scope: str, state: Any, links: list[str], net: Any = None) -> list[str]:
+def _probe_new(scope: str, state: Any, links: list[str], net: Any) -> list[str]:
     """Probe ``links`` (at most :data:`MAX_PROBES` attempts) and return the ones that passed. A link the policy
     refuses still counts as an attempt (no dial happens); one that failed within the backoff is skipped."""
     allow_lo = is_loopback(state.addr)
@@ -431,7 +431,7 @@ def move(call: Call, link_text: str, *, now_ms: int, dev: bool) -> dict[str, Any
     except OSError as exc:
         raise hubops._refused(getattr(exc, "code", "hub.proxy_refused").removeprefix("hub.")) from None  # noqa: SLF001
     if new not in known(state) and not handshake_ok(
-        new, state.tls_spki, allow_loopback=is_loopback(state.addr), net=net
+        new, state.tls_spki, allow_loopback=is_loopback(state.addr), net=net, allow_internal=is_internal(state.addr)
     ):
         raise HostError(
             "hub.unreachable",

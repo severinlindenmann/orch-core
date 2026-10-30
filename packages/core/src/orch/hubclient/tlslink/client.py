@@ -307,7 +307,7 @@ class LinkClient:
         now_ms: Callable[[], int] = lambda: int(time.time() * 1000),
         alpn: bytes | None = None,
         addr: LinkAddr | None = None,
-        net: NetSettings | None = None,
+        net: NetSettings,
     ) -> LinkClient:
         """Open and authenticate. ``host``/``port`` are where to connect (a checked IP for a name); ``addr`` is the
         parsed address (``ws(s)://`` forms included) that names the transport and the server name, ``net`` the host's

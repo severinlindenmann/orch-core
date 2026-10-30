@@ -12,6 +12,7 @@ from OpenSSL import SSL
 
 from orch.crypto import suite
 from orch.crypto.encoding import b64u
+from orch.hubclient.netconfig import NetSettings
 from orch.hubclient.tlslink import client as C
 from orch.hubclient.tlslink.client import LinkClient, LinkError
 from orch.hubclient.tlslink.tls import LinkClosed, LinkTimeout, PinMismatch
@@ -50,7 +51,7 @@ def open_link(hub: TlsHub, **kw: Any) -> LinkClient:
         "timeout": 3.0,
     }
     args.update(kw)
-    return LinkClient.open("127.0.0.1", hub.port, **args)
+    return LinkClient.open("127.0.0.1", hub.port, **args, net=NetSettings())
 
 
 def send(link: LinkClient, op: str = "snapshot_get", body: dict | None = None, **fields: Any) -> dict[str, Any]:

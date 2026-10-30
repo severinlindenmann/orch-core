@@ -1,10 +1,12 @@
+# ruff: noqa: F811
 """Opus R6 review: hub WebSocket pre-auth adversarial cases (proposed)."""
+
 from __future__ import annotations
 
 import socket
 import time
 
-from linkfakes import new_key, read_head, status_of, upgrade_request
+from linkfakes import new_key, upgrade_request
 from test_link_ws import _after_upgrade, _close_code, mk, ws_addr  # noqa: F401
 
 from orch_hub.contract import linkws as W

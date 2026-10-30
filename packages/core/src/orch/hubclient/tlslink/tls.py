@@ -216,7 +216,7 @@ def dial_link(
     *,
     timeout: float = 10.0,
     alpn: tuple[bytes, ...] = (),
-    net: NetSettings | None = None,
+    net: NetSettings,
     connect_host: str | None = None,
 ) -> TlsConn:
     """THE dial: every byte of a hub link leaves the host through here. Reach ``addr`` as its scheme and the host's
@@ -265,7 +265,7 @@ def connect_pinned(
     *,
     timeout: float = 10.0,
     alpn: tuple[bytes, ...] = (),
-    net: NetSettings | None = None,
+    net: NetSettings,
 ) -> TlsConn:
     """:func:`dial_link` for a direct ``host:port`` (a convenience; not a second dial path)."""
     h = "[" + host + "]" if ":" in host else host

@@ -230,7 +230,7 @@ def test_failover_moves_past_an_inspected_address_to_a_pinned_one(rig: Rig) -> N
     def to(a: LinkAddr) -> TlsTransport:
         return TlsTransport(
             addr=a.text, tls_spki_sha256=rig.hub.spki, hub_id=rig.hub.hub_id, workspace_id=rig.hub.workspace_id,
-            hk_op_pub=rig.hub.hk_op_pub, wsk_pub=WSK_PUB, sign=sign, timeout=3.0,
+            hk_op_pub=rig.hub.hk_op_pub, wsk_pub=WSK_PUB, sign=sign, timeout=3.0, net=NetSettings(),
         )  # fmt: skip
 
     f = FailoverTransport([to(bad), to(good)])
@@ -454,7 +454,7 @@ def test_ws_front_faults_are_refused_and_never_followed(rig: Rig, fault: str, re
     front = rig.add(WsFront(rig.hub.port, misbehave=fault))
     addr = parse_link_address(f"ws://127.0.0.1:{front.port}")
     with pytest.raises(LinkClosed, match=reason):
-        tls.dial_link(addr, rig.hub.spki, timeout=3.0)
+        tls.dial_link(addr, rig.hub.spki, timeout=3.0, net=NetSettings())
     assert not rig.hub._conns
     assert rig.dials == [("127.0.0.1", front.port)]  # a redirect target is never dialled
 
@@ -465,7 +465,7 @@ def test_wrong_outer_certificate_fails_the_address_without_retrying_as_ws(
     front = rig.add(WsFront(rig.hub.port, pki=rig.pki))
     monkeypatch.setattr(transport, "outer_context", ssl.create_default_context)  # system trust only: not the test CA
     with pytest.raises(LinkClosed, match="outer_tls"):
-        tls.dial_link(parse_link_address(f"wss://127.0.0.1:{front.port}"), rig.hub.spki, timeout=3.0)
+        tls.dial_link(parse_link_address(f"wss://127.0.0.1:{front.port}"), rig.hub.spki, timeout=3.0, net=NetSettings())
     assert rig.dials == [("127.0.0.1", front.port)] and not rig.hub._conns
 
 
@@ -473,7 +473,7 @@ def test_outer_wss_is_checked_but_the_pin_still_decides(rig: Rig) -> None:
     impostor = rig.hub_with(TlsHub(wsk_pub=WSK_PUB).start())
     addr, _, _ = rig.build("wss", hub=impostor)  # outer TLS is fine (trusted), inner key is not the card's
     with pytest.raises(LinkInspected):
-        tls.dial_link(addr, rig.hub.spki, timeout=3.0)
+        tls.dial_link(addr, rig.hub.spki, timeout=3.0, net=NetSettings())
 
 
 def test_big_payload_goes_in_chunks_of_at_most_64k(rig: Rig) -> None:
@@ -487,7 +487,9 @@ def test_big_payload_goes_in_chunks_of_at_most_64k(rig: Rig) -> None:
 
 def test_a_closed_listener_is_just_unreachable(rig: Rig) -> None:
     with pytest.raises(LinkClosed):
-        tls.dial_link(parse_link_address(f"ws://127.0.0.1:{closed_port()}"), rig.hub.spki, timeout=2.0)
+        tls.dial_link(
+            parse_link_address(f"ws://127.0.0.1:{closed_port()}"), rig.hub.spki, timeout=2.0, net=NetSettings()
+        )
 
 
 def test_listener_base_is_abstract() -> None:

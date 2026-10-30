@@ -22,7 +22,7 @@ _MU = threading.Lock()
 _CACHE: dict[tuple[str, str], tuple[float, bool]] = {}
 
 
-def reachable(scope: str, addr: str | None, *, now: float | None = None, net: Any = None) -> bool | None:
+def reachable(scope: str, addr: str | None, *, now: float | None = None, net: Any) -> bool | None:
     """``True`` / ``False`` for the hub address, ``None`` when it is unusable. Cached ``CACHE_S`` seconds."""
     if not addr:
         return None

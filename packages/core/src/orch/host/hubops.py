@@ -489,7 +489,7 @@ def _transport(service: WorkspaceService, hub_id: str, link: dict[str, Any] | No
         net = hubnet.load(service.state_dir)  # the host's own proxy settings; a broken file never means "direct"
     except ProxyError as exc:
         return _Down(exc)
-    check = hubaddr.dial_resolver(link["addr"], net)  # every dial: resolve once, policy, connect to that IP
+    check = hubaddr.dial_resolver(link["addr"], net=net)  # every dial: resolve once, policy, connect to that IP
 
     def to(addr: str) -> TlsTransport:
         return TlsTransport(

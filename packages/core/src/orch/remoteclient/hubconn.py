@@ -112,7 +112,7 @@ def dial(
     *,
     timeout: float = 10.0,
     addr: LinkAddr | None = None,
-    net: NetSettings | None = None,
+    net: NetSettings,
 ) -> TlsWire:
     """The link's TLS 1.3 to the hub's link address, SPKI-pinned, ALPN ``orch-remote/1`` (refused when not selected).
     ``addr`` (a parsed ``ws(s)://`` or direct address) and ``net`` (this computer's own proxy settings) go through the

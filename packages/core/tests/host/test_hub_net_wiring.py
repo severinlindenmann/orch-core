@@ -84,7 +84,7 @@ def test_the_block_is_shared_by_address_and_survives_a_new_transport(tmp_path, m
     def make() -> TlsTransport:
         return TlsTransport(
             addr="hub.example:7443", tls_spki_sha256="A" * 43, hub_id="h", workspace_id="w", hk_op_pub=b"",
-            wsk_pub=b"", sign=lambda b: b, inspected=hubnet.inspected(tmp_path, "hub.example:7443"),
+            wsk_pub=b"", sign=lambda b: b, net=NetSettings(), inspected=hubnet.inspected(tmp_path, "hub.example:7443"),
         )  # fmt: skip
 
     t1 = make()
@@ -307,7 +307,7 @@ def test_a_public_name_goes_through_the_proxy_and_the_current_class_is_the_excep
 
 
 def test_the_transport_resolver_applies_the_same_policy_behind_a_proxy() -> None:
-    check = hubaddr.dial_resolver("hub.example.com:7443", PROXY)
+    check = hubaddr.dial_resolver("hub.example.com:7443", net=PROXY)
     assert check("hub2.example.com") == "hub2.example.com"
     for bad in ("hubbox", "x.internal", "10.0.0.1", "169.254.169.254"):
         with pytest.raises(OSError):
@@ -439,3 +439,58 @@ def test_http_paths_ignore_the_environment_proxy(monkeypatch) -> None:
     assert made and not any(isinstance(h, urllib.request.ProxyHandler) and h.proxies for h in made[-1].handlers)
     src = Path(connectlink.__file__).read_text()
     assert "ProxyHandler({})" in src
+
+
+# -- Opus R6 review L2: net is required at every dial ----------------------------------------------------------
+
+DIAL_FUNCS = {"dial_link", "connect_pinned", "dial", "_pinned_tls_request", "reachable"}
+DASH = Path(__file__).resolve().parents[2] / ".." / "addons" / "dashboard" / "server" / "src"
+
+
+def _defs(root: Path):
+    for p in sorted(root.rglob("*.py")):
+        yield p, ast.parse(p.read_text())
+
+
+def test_the_dial_functions_have_no_default_for_net() -> None:
+    wanted = {"dial_link", "connect_pinned", "dial", "_pinned_tls_request", "reachable", "open", "__init__"}
+    found = set()
+    for p, tree in _defs(SRC):
+        rel = str(p.relative_to(SRC))
+        if rel not in (
+            "hubclient/tlslink/tls.py", "hubclient/tlslink/client.py", "hubclient/tlsadapter.py",
+            "remoteclient/hubconn.py", "remoteclient/client.py", "host/hublinkprobe.py",
+        ):  # fmt: skip
+            continue
+        for n in ast.walk(tree):
+            if isinstance(n, ast.FunctionDef) and n.name in wanted:
+                names = [a.arg for a in n.args.kwonlyargs]
+                if "net" in names:
+                    i = names.index("net")
+                    assert n.args.kw_defaults[i] is None, f"{rel}:{n.lineno} {n.name} gives net a default"
+                    found.add((rel, n.name))
+                assert "net" not in [a.arg for a in n.args.args], f"{rel}:{n.lineno} net must be keyword-only"
+    assert len(found) >= 8, found
+
+
+def test_every_call_of_a_dial_function_passes_net() -> None:
+    names = DIAL_FUNCS | {"TlsTransport", "Client"}
+    bad = []
+    for root in (SRC, DASH):
+        for p, tree in _defs(root):
+            for n in ast.walk(tree):
+                if not isinstance(n, ast.Call):
+                    continue
+                f = n.func
+                name = f.attr if isinstance(f, ast.Attribute) else getattr(f, "id", "")
+                recv = ast.unparse(f.value) if isinstance(f, ast.Attribute) else ""
+                hit = name in names or (name == "open" and recv == "LinkClient")
+                if name == "Client" and "remoteclient" not in p.as_posix():
+                    hit = False
+                if name in ("reachable", "dial") and recv not in ("hublinkprobe", "", "hubconn"):
+                    hit = False
+                if p.name == "client.py" and p.parent.name == "host":
+                    hit = False  # the LOCAL host socket
+                if hit and "net" not in {k.arg for k in n.keywords}:
+                    bad.append(f"{p.name}:{n.lineno} {name}")
+    assert not bad, bad

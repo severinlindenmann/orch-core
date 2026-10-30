@@ -291,10 +291,40 @@ def test_p01_remote_listeners_never_carry_the_hub_origin():
         assert "hub_origin" not in json.loads(res.body)["error"] and res.status_code == 403
 
 
-def test_p01_the_network_address_never_gets_the_hub_origin_only_127_0_0_1_does(link, auth, tmp_path):
-    """`serve --listen` is an alt host of the loopback policy: a pre-login request from the LAN address must not learn
-    the hub, the exact 127.0.0.1:<port> Host does."""
+def _asgi_post(app, server, host, origin=None):
+    """A real ASGI call with the accepting socket's address in the scope (what uvicorn sets)."""
+    import asyncio
+
+    body = json.dumps({"t": TICKET}).encode()
+    headers = [
+        (b"host", host.encode()),
+        (b"content-type", b"application/json"),
+        (b"content-length", str(len(body)).encode()),
+    ]
+    if origin:
+        headers.append((b"origin", origin.encode()))
+    scope = {"type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1", "method": "POST", "scheme": "http",
+             "path": "/auth/switch", "raw_path": b"/auth/switch", "query_string": b"", "headers": headers,
+             "server": server, "client": ("192.168.1.99", 5555), "root_path": ""}  # fmt: skip
+    out = {"status": None, "body": b""}
+
+    async def receive():
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    async def send(m):
+        if m["type"] == "http.response.start":
+            out["status"] = m["status"]
+        elif m["type"] == "http.response.body":
+            out["body"] += m.get("body", b"")
+
+    asyncio.run(app(scope, receive, send))
+    return out["status"], json.loads(out["body"] or b"{}")
+
+
+def test_p01_locality_comes_from_the_accepting_socket_not_the_host_header(link, auth, tmp_path):
+    """`serve --listen` is a second socket of the loopback policy. A network client may send any Host."""
     lan = "192.168.1.20:8151"
+    own = f"127.0.0.1:{PORT}"
     state = tmp_path / "state"
     state.mkdir(mode=0o700)
     static = tmp_path / "static"
@@ -304,8 +334,15 @@ def test_p01_the_network_address_never_gets_the_hub_origin_only_127_0_0_1_does(l
     with TestClient(app, base_url=ORIGIN) as c:
         _rail_read(c, link, auth)
         link.answers["redeem"] = HostError({"code": "switch.refused", "message": "x", "retryable": False})
-        own = c.post("/auth/switch", json={"t": TICKET}, headers=H)
-        assert own.json()["error"]["hub_origin"] == "https://hub.test"
-        via_lan = c.post("/auth/switch", json={"t": TICKET}, headers={"Host": lan, "Origin": "http://" + lan})
-        assert via_lan.status_code == 403 and via_lan.json()["error"]["code"] == "switch.refused"
-        assert "hub_origin" not in via_lan.json()["error"]
+        # accepted on the loopback socket with the loopback Host: refused by the host, hub_origin included
+        status, got = _asgi_post(app, ("127.0.0.1", PORT), own, ORIGIN)
+        assert status == 403 and got["error"]["hub_origin"] == "https://hub.test"
+        # accepted on the network socket but claiming the loopback Host: 421 host.bad, nothing learned
+        status, got = _asgi_post(app, ("192.168.1.20", PORT), own, ORIGIN)
+        assert status == 421 and "hub_origin" not in got.get("error", {})
+        # the network address on the network socket: served, but never with the hub origin
+        status, got = _asgi_post(app, ("192.168.1.20", PORT), lan, "http://" + lan)
+        assert status == 403 and "hub_origin" not in got["error"]
+        # an alt host claimed on the loopback socket (an ssh tunnel with a forged Host): 421
+        status, got = _asgi_post(app, ("127.0.0.1", PORT), lan, "http://" + lan)
+        assert status == 421

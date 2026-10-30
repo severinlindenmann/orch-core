@@ -8,7 +8,7 @@ from starlette.concurrency import run_in_threadpool
 
 from . import widget_frame
 from .errors import HostError, host_response, presence_required_response, response, step_up_response
-from .policy import ListenerPolicy, clean_path
+from .policy import LOOPBACK, ListenerPolicy, accepted_on_loopback, clean_path
 from .remote_identity import REMOTE_STREAM, RemoteIdentity, route_digest, workspace_key
 from .routegate import ALLOWED, PRE_LOGIN, PRESENCE, STEP_UP, TERMINALS, RouteGate, rule_device
 from .testrun import UPLOAD_LIMIT
@@ -266,6 +266,12 @@ class Security:
         host = values(b"host")
         setup_host = setup or path.startswith("/assets/") or path in ("/favicon.svg", "/loading.css", "/theme-boot.js")
         allowed = policy.hosts_for(setup_host)
+        if policy.name == LOOPBACK and not policy.stream and policy.alt_hosts:
+            # The network address (`serve --listen`) is a second socket of this same policy. Tie Host and socket: the
+            # loopback socket answers only its loopback names, the network socket only the network address, so a
+            # network client cannot pass as local by sending `Host: 127.0.0.1:<port>`.
+            local = accepted_on_loopback(scope, missing=True)
+            allowed = tuple(h for h in allowed if (h not in policy.alt_hosts) == local)
         origin = policy.origin_for(host[0]) if len(host) == 1 else ""
         if len(host) != 1 or host[0] not in allowed:
             return await reject("host.bad", 421)

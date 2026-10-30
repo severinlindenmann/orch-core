@@ -43,7 +43,7 @@ from pydantic import BaseModel, ConfigDict, StringConstraints
 from . import adapters, reads
 from .errors import HostError, fail, response
 from .gateway import Gateway
-from .policy import LOOPBACK, REMOTE
+from .policy import LOOPBACK, REMOTE, accepted_on_loopback
 from .text import hidden
 
 TICKET = re.compile(r"^([0-9a-f]{32})\.[0-9a-f]{32}$")
@@ -139,9 +139,9 @@ def register(app: FastAPI, gateway: Gateway, auth=None, clock=time.monotonic):
     hub_origins: dict[str, str] = {}  # ws -> the joined hub's origin, filled only by the authenticated rail read below
 
     def failed(code: str, http: int, message: str, ws: str, listener: str, request: Request):
-        # The network address (`serve --listen`) is an alt host of the LOOPBACK policy, not a listener of its own: only
-        # the exact 127.0.0.1:<port> Host counts as this computer.
-        own = request.headers.get("host") == request.app.state.policies[LOOPBACK].host
+        # The network address (`serve --listen`) is a second socket of the LOOPBACK policy, not a listener of its own,
+        # and a Host header proves nothing: only a connection accepted on a loopback socket counts as this computer.
+        own = accepted_on_loopback(request.scope)
         return switch_failure(code, http, message, hub_origins.get(ws) if own else None, listener)
 
     def link_for(ws: str):

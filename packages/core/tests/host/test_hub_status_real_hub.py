@@ -76,3 +76,69 @@ def test_registry_row_has_version_and_name_after_join(human, served, real_hub, m
     assert reg.status(served.wid)["version"] == orch.__version__
     # selective keeps host and name private (the hub then shows its friendly fallback, never an id)
     assert reg.display_name(served.wid) == ("Acme core" if mode == "full" else None)
+
+
+def test_hub_update_request_becomes_a_self_clearing_notice(monkeypatch):
+    """HUB-WS-04: the hub's admin asked for an update; the status_put reply carries only the version; the host keeps a
+    notice while its own version is lower and drops it when it is not. The request is polled, never pushed."""
+    from types import SimpleNamespace
+
+    import orch
+
+    monkeypatch.setattr(hubops, "_workspace_name", lambda service: "n")
+    clock = [1000.0]
+    service = SimpleNamespace(clock=lambda: clock[0])
+    state = SimpleNamespace(hub_id="h1", mode="full")
+    replies = [{}]
+    calls = []
+
+    class Link:
+        def call(self, op, body):
+            calls.append(op)
+            return replies[0]
+
+    hubops._send_status(service, state, Link())
+    assert hubops._update_notice(service, state) is None and calls == ["status_put"]
+    hubops._send_status(service, state, Link())
+    assert calls == ["status_put"]  # same body, inside the poll time: not sent again
+    replies[0] = {"update_requested": {"target_version": "99.0.0"}}
+    clock[0] += hubops.STATUS_POLL_S + 1  # the next link use polls again
+    hubops._send_status(service, state, Link())
+    assert calls == ["status_put"] * 2
+    assert hubops._update_notice(service, state) == {"target_version": "99.0.0"}
+    monkeypatch.setattr(orch, "__version__", "99.1.0")  # updated: the notice clears itself
+    assert hubops._update_notice(service, state) is None
+    monkeypatch.setattr(orch, "__version__", "1.0.0")
+    replies[0] = {}  # the hub dropped the request
+    clock[0] += hubops.STATUS_POLL_S + 1
+    hubops._send_status(service, state, Link())
+    assert hubops._update_notice(service, state) is None
+
+
+def test_the_status_put_reply_accepts_only_the_version_and_no_text():
+    from orch.hubclient.tlslink.client import _REPLY
+
+    ok_reply = _REPLY["status_put"]
+    assert ok_reply({}) and ok_reply({"update_requested": {"target_version": "0.1.1"}})
+    assert not ok_reply({"update_requested": {"target_version": "0.1.1", "text": "x"}})
+    assert not ok_reply({"update_requested": {"target_version": "click <b>here</b>"}})
+    assert not ok_reply({"update_requested": {"target_version": "1" * 33}})
+    assert not ok_reply({"other": 1})
+
+
+@pytest.mark.parametrize("target", ["click <b>here</b>", "1" * 33, "", "9.9\n9", 7])
+def test_the_host_rejects_a_hostile_update_target_even_if_the_transport_let_it_through(monkeypatch, target):
+    """HUB-WS-04 L5: the host re-checks the version pattern itself; it does not rely only on the transport's check."""
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(hubops, "_workspace_name", lambda service: "n")
+    service = SimpleNamespace(clock=lambda: 1000.0)
+    state = SimpleNamespace(hub_id="h1", mode="full")
+
+    class Link:
+        def call(self, op, body):
+            return {"update_requested": {"target_version": target}}
+
+    hubops._send_status(service, state, Link())
+    assert hubops._update_notice(service, state) is None
+    assert service.__dict__["_hub_update_req"] == {}

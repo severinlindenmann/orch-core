@@ -22,6 +22,29 @@ from orch.crypto.encoding import b64u, unb64u
 from orch.hubclient.tlslink import client as C
 from orch.hubclient.tlslink import framing, tls
 
+
+class _HubConn(tls.TlsConn):
+    """The hub side of one connection. A pyOpenSSL ``Connection`` is not safe for a concurrent read and write from two
+    threads, and the hub thread sits in ``recv`` while a test thread pushes a frame: unsynchronised, a push could
+    corrupt the TLS state and the client saw ``LinkClosed: Error`` (the flake of R1's ack-signing test). Every SSL
+    call takes one lock (the wait for readiness stays outside it), so a push interleaves safely with the reads."""
+
+    def __init__(self, conn: SSL.Connection, sock: socket.socket) -> None:
+        super().__init__(conn, sock)
+        self._ssl_lock = threading.Lock()
+
+    def _run(self, fn, deadline: float):  # type: ignore[no-untyped-def]
+        def locked():  # type: ignore[no-untyped-def]
+            with self._ssl_lock:
+                return fn()
+
+        return super()._run(locked, deadline)
+
+    def exporter(self) -> bytes:
+        with self._ssl_lock:
+            return super().exporter()
+
+
 Handler = Callable[["TlsHub", dict[str, Any]], Any]
 
 
@@ -140,7 +163,7 @@ class TlsHub:
         sock.setblocking(False)
         c = SSL.Connection(self._ctx, sock)
         c.set_accept_state()
-        conn = tls.TlsConn(c, sock)
+        conn = _HubConn(c, sock)
         self._conns.append(conn)
         try:
             conn.handshake(time.monotonic() + 5)

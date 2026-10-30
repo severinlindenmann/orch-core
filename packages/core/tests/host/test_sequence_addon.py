@@ -337,7 +337,8 @@ def test_ae3_publish_is_one_plain_click_and_the_view_shows_both_servers(click, s
     c = v["view"]["content"]
     want = "Files you share go to public address; anyone with the link can read them."
     assert c["notes"][0] == want
-    assert c["fields_inline"] is False  # the rows (addresses, add-on, version, capabilities) sit under the technical details
+    # the rows (addresses, add-on, version, capabilities) sit under the technical details
+    assert c["fields_inline"] is False
     flat = json_text(c)
     for kept in (PUBLISH["server"], PUBLISH["share"], "it says it will", "per host, not signed"):
         assert kept in flat

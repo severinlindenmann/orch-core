@@ -203,6 +203,23 @@ def _code(x: Any) -> str:
     return x if type(x) is str and 0 < len(x) <= 40 else "malformed"
 
 
+class _FairLock:
+    """A mutex whose waiters are served in turn. The link's readers (``next_route_in``, ``next_stream``, ...) wait for
+    the socket WHILE holding the lock; with a plain ``threading.Lock`` the thread that just released it takes it
+    again at once and a second reader (the remote stream pump beside the ws->ws loop) can starve for seconds. A waiter
+    holds ``_gate`` while it waits for ``_lock``, so the releasing thread has to queue behind it."""
+
+    def __init__(self) -> None:
+        self._gate, self._lock = threading.Lock(), threading.Lock()
+
+    def __enter__(self) -> None:
+        with self._gate:
+            self._lock.acquire()
+
+    def __exit__(self, *exc: object) -> None:
+        self._lock.release()
+
+
 class LinkClient:
     """An authenticated link. Use :meth:`open`; one request is in flight at a time."""
 
@@ -220,7 +237,8 @@ class LinkClient:
     ) -> None:
         self._c, self.hub_id, self.workspace_id, self._hk_op = conn, hub_id, workspace_id, hk_op_pub
         self.mode, self._now, self._t, self._max = mode, now_ms, timeout, max_frame
-        self._lock = threading.Lock()
+        self._lock = _FairLock()
+        self._ov_mu = threading.Lock()  # guards ``_overflow`` alone: the pump reads it without waiting on the link
         self._open = True
         self._sign: Callable[[bytes], bytes] | None = None
         self._seq = 0  # the highest w2h seq used on this link (requests carry the caller's, acks continue from here)
@@ -386,8 +404,10 @@ class LinkClient:
             # approvals share this link). The frame is dropped and only THAT stream ends (``remote.busy``, by the pump).
             if o["op"] == "stream_open" and self._sign is not None:
                 self._write_w2h("stream_open", {"error": "remote.busy"}, reply_to=o["seq"])  # the hub is waiting for it
-            elif body["stream_id"] not in self._overflow and len(self._overflow) < MAX_QUEUED * 4:
-                self._overflow.append(body["stream_id"])
+            else:
+                with self._ov_mu:
+                    if body["stream_id"] not in self._overflow and len(self._overflow) < MAX_QUEUED * 4:
+                        self._overflow.append(body["stream_id"])
             return True
         if len(queue) >= MAX_QUEUED:
             # L2-C3-5: REFUSE, never drop. The hub resends what was not acknowledged after a reconnect, so closing
@@ -545,7 +565,7 @@ class LinkClient:
     def take_stream_overflow(self) -> list[str]:
         """The ids of streams that lost an h2w frame to a full queue since the last call (F3). The pump closes each
         ``remote.busy``: the host cannot know what the lost frame was, so the stream cannot go on."""
-        with self._lock:
+        with self._ov_mu:
             out, self._overflow = self._overflow, []
             return out
 

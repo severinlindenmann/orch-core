@@ -336,9 +336,16 @@ async def attach_wait(call: Call, result: dict[str, Any]) -> dict[str, Any]:
     from . import adapter
 
     wait = call.frame["args"].get("wait_ms", 0)
-    data = result["data"]
+    data = result.get("data")
     ad = adapter.current(call.service)
-    if data["frames"] or not wait or ad is None or ad.attach_id != data["attach_id"]:
+    if (
+        not isinstance(data, dict)
+        or "frames" not in data
+        or data["frames"]
+        or not wait
+        or ad is None
+        or ad.attach_id != data["attach_id"]
+    ):
         return result
     loop = asyncio.get_running_loop()
     ev = asyncio.Event()

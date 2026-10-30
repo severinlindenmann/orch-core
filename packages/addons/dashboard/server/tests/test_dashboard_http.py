@@ -224,6 +224,24 @@ def test_loading_css_is_served_as_css_with_the_csp(gateway, auth, tmp_path):
         assert c.get("/loading.css").status_code == 404  # missing file: the closed 404, never index.html
 
 
+def test_theme_boot_js_is_served_as_javascript_with_nosniff(gateway, auth, tmp_path):
+    """#421: the pre-paint theme script is a root file; a wrong type or a missing nosniff would block it under the CSP."""
+    from fastapi.testclient import TestClient
+
+    from orch_dashboard.app import create_app
+
+    static = tmp_path / "static"
+    static.mkdir()
+    (static / "index.html").write_text("<html><head></head></html>", encoding="utf-8")
+    (static / "theme-boot.js").write_text("(function(){})()", encoding="utf-8")
+    with TestClient(create_app(PORT, gateway, auth, static), base_url=ORIGIN) as c:
+        res = c.get("/theme-boot.js")
+        assert res.status_code == 200
+        assert "javascript" in res.headers["content-type"]
+        assert res.headers["x-content-type-options"] == "nosniff"
+        assert "script-src 'self'" in res.headers["content-security-policy"]
+
+
 def test_every_root_file_the_built_shell_references_is_served(client):
     """B12A N6 / old 32: each root-level href/src of the built index.html is a route (needs the built UI)."""
     import re

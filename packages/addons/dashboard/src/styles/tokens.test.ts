@@ -78,7 +78,7 @@ describe('light theme tokens (#421)', () => {
   })
 
   it('every token the light theme sets exists in the dark :root, and the new tokens exist in both', () => {
-    const NEW = ['disabled-bg', 'disabled-text', 'disabled-border', 'focus-ring', 'nav-selected', 'nav-selected-border', 'brand-chip-text', 'risk-bar', 'scrim', 'add-bg', 'del-bg', 'addon-text']
+    const NEW = ['disabled-bg', 'disabled-text', 'disabled-border', 'focus-ring', 'nav-selected', 'nav-selected-border', 'brand-chip-text', 'risk-bar', 'risk-danger-bar', 'scrim', 'add-bg', 'del-bg', 'addon-text']
     for (const n of NEW) {
       expect(dark[n], 'dark ' + n).toBeDefined()
       expect(light[n], 'light ' + n).toBeDefined()

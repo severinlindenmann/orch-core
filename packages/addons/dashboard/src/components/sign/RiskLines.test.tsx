@@ -20,3 +20,17 @@ describe('RiskLines', () => {
     expect(scroll).not.toHaveBeenCalled()
   })
 })
+
+describe('RiskLines tone (#421)', () => {
+  it('is the warning tone by default and the danger tone (red bar, red icon) when asked', () => {
+    const { rerender, getByTestId } = render(<RiskLines lines={['Sends data out.']} />)
+    const ul = () => getByTestId('sign-risk-lines')
+    expect(ul().dataset.tone).toBe('warning')
+    expect(ul().className).toContain('border-l-risk-bar')
+    rerender(<RiskLines lines={['Sends data out.']} danger />)
+    expect(ul().dataset.tone).toBe('danger')
+    expect(ul().className).toContain('border-l-risk-danger-bar')
+    expect(ul().className).not.toContain('border-l-risk-bar ')
+    expect(ul().querySelector('svg')!.getAttribute('class')).toContain('text-danger')
+  })
+})

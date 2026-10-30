@@ -13,6 +13,15 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals())
 
 describe('theme choice (#421)', () => {
+  it('index.html (also the setup wizard page) loads the boot script before the app, and names both schemes', async () => {
+    const { readFileSync } = await import('node:fs')
+    const { join } = await import('node:path')
+    const html = readFileSync(join(__dirname, '../../index.html'), 'utf8')
+    const boot = html.indexOf('src="/theme-boot.js"')
+    expect(boot).toBeGreaterThan(-1)
+    expect(boot).toBeLessThan(html.indexOf('type="module"'))
+    expect(html).toContain('name="color-scheme" content="light dark"')
+  })
   it('a stored Light sets data-theme before anything renders', () => {
     localStorage.setItem(THEME_KEY, 'light')
     media(false)

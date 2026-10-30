@@ -74,6 +74,7 @@ export function serverGuideView(actions = {}, opts = {}) {
       step(1, "On the server, install orch", installer ? s1.shown : h("p", { class: "small muted", text: "The installer is not published yet. Ask your IT for it, or install orch the way your IT describes." })),
       step(2, "On the server, start the setup", s2.shown, h("p", { class: "small muted", text: "It prints a link that works once. Keep it in that terminal." })),
       step(3, "On your computer, open the secure tunnel", h("div", { class: "ws-who" }, user, h("span", { text: "@" }), server), problem, s3.shown,
+        h("p", { class: "small muted", text: "If setup shows a different number, use the line it prints on the server." }),
         h("p", { class: "small muted", text: "Then open the link from step 2 in your browser and finish the setup there. You prove you own the workspace on that page." })),
       step(4, "Connect it to this hub", h("p", { class: "small muted", text: "When the setup is finished, make a link and paste it in the new workspace's Mission Control, under Settings > Hub > Connect." }), make, result)));
 }

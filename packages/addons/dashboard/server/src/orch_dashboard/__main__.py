@@ -5,7 +5,6 @@ import asyncio
 import errno
 import fcntl
 import functools
-import getpass
 import hashlib
 import hmac
 import html
@@ -381,23 +380,12 @@ class FrontServer(uvicorn.Server):
 
 
 def tunnel_line(port, environ=None, user=None, host=None):
-    """The command to run on the person's own computer: ``ssh -L <port>:127.0.0.1:<port> <user>@<host>``. The host is
-    the address this very SSH session reached us on when there is one, else this machine's name."""
-    environ = os.environ if environ is None else environ
-    if host is None:
-        parts = (environ.get("SSH_CONNECTION") or "").split()
-        host = parts[2] if len(parts) == 4 else ""
-        if not _plain(host):
-            host = socket.getfqdn() or socket.gethostname()
-    user = user or getpass.getuser()
-    if not (_plain(host) and _plain(user)):
-        raise RuntimeError("cannot name this machine or user for an ssh command; build the tunnel line yourself")
-    return f"ssh -o ExitOnForwardFailure=yes -L {port}:127.0.0.1:{port} {user}@{host}"
+    """The command to run on the person's own computer, the same one core prints (orch.setup.tunnel):
+    ``ssh -o ExitOnForwardFailure=yes -L 127.0.0.1:<port>:127.0.0.1:<port> <user>@<server>``. A name that fails the
+    closed patterns (or is unknown) shows as the ``<user>`` / ``<server>`` placeholder, never as part of the command."""
+    from orch.setup.tunnel import tunnel_line as core_tunnel_line
 
-
-def _plain(value):
-    # no leading "-": ssh would read a user or host like "-oFoo" as an option
-    return bool(value) and not value.startswith("-") and all(c.isalnum() or c in "-_.:" for c in value)
+    return core_tunnel_line(port, os.environ if environ is None else environ, user=user, server=host)
 
 
 def bind_listener(wanted):

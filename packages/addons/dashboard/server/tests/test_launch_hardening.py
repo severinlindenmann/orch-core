@@ -405,7 +405,7 @@ def test_print_url_tunnel_line_uses_the_real_user_and_the_ssh_address():
     env = {"SSH_CONNECTION": "1.2.3.4 5555 203.0.113.9 22"}
     assert (
         launcher.tunnel_line(47821, env, user="alice")
-        == "ssh -o ExitOnForwardFailure=yes -L 47821:127.0.0.1:47821 alice@203.0.113.9"
+        == "ssh -o ExitOnForwardFailure=yes -L 127.0.0.1:47821:127.0.0.1:47821 alice@203.0.113.9"
     )
 
 
@@ -413,13 +413,13 @@ def test_print_url_tunnel_line_falls_back_to_the_host_name(monkeypatch):
     monkeypatch.setattr(launcher.socket, "getfqdn", lambda: "box.example.org")
     assert (
         launcher.tunnel_line(1234, {}, user="bob")
-        == "ssh -o ExitOnForwardFailure=yes -L 1234:127.0.0.1:1234 bob@box.example.org"
+        == "ssh -o ExitOnForwardFailure=yes -L 127.0.0.1:1234:127.0.0.1:1234 bob@box.example.org"
     )
 
 
-def test_print_url_tunnel_line_refuses_odd_names():
-    with pytest.raises(RuntimeError):
-        launcher.tunnel_line(1234, {}, user="bob", host="x; rm -rf ~")
+def test_print_url_tunnel_line_shows_a_placeholder_for_odd_names():
+    line = launcher.tunnel_line(1234, {}, user="bob", host="x; rm -rf ~")
+    assert line.endswith(" bob@<server>") and "rm" not in line
 
 
 def test_print_url_tunnel_code_lives_5_minutes_and_stays_single_use():
@@ -445,7 +445,7 @@ def _print_url_run(tmp_path, monkeypatch, capsys, environ, tunnel=False):
     for name, value in environ.items():
         monkeypatch.setenv(name, value)
     monkeypatch.setattr(launcher.sys, "platform", "linux")
-    monkeypatch.setattr(launcher.getpass, "getuser", lambda: "alice")
+    monkeypatch.setattr("getpass.getuser", lambda: "alice")
     monkeypatch.setattr(launcher.sys.stdout, "isatty", lambda: True)
     auth, issued, _t, _a = _launch(tmp_path, monkeypatch)
     monkeypatch.setattr(
@@ -483,9 +483,10 @@ def test_print_url_text_follows_the_servers_expiry_not_the_kind(tmp_path, monkey
 
 
 @pytest.mark.parametrize("user,host", [("-oProxyCommand=x", "box"), ("bob", "-oFoo"), ("bob", "-x.example")])
-def test_print_url_tunnel_line_rejects_a_leading_dash(user, host):
-    with pytest.raises(RuntimeError):
-        launcher.tunnel_line(1234, {}, user=user, host=host)
+def test_print_url_tunnel_line_never_passes_a_leading_dash(user, host):
+    line = launcher.tunnel_line(1234, {}, user=user, host=host)
+    assert "<user>" in line or "<server>" in line
+    assert not any(part.startswith("-o") and "Proxy" in part for part in line.split())
 
 
 def test_port_listener_can_rebind_after_a_connection_closed():

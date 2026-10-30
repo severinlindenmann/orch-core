@@ -61,6 +61,10 @@ def _interrupted(why: str) -> OrchError:
     )
 
 
+def _rank(phase: str) -> int:
+    return 3 if phase.startswith("migrated:") else PHASES.index(phase) if phase in PHASES[:3] else 4
+
+
 def write_journal(phase: str, env: Mapping[str, str] | None = None, **fields: Any) -> dict[str, Any]:
     """Record ``phase`` (other fields, e.g. ``from_version``, ``to_version``, ``backups``, are kept and updated)."""
     if not _valid_phase(phase):
@@ -68,7 +72,14 @@ def write_journal(phase: str, env: Mapping[str, str] | None = None, **fields: An
     try:
         doc = read_journal(env) or {}
     except OrchError:
-        doc = {}  # a damaged journal is replaced by the phase being written
+        if phase != "stopped":  # only a new update replaces a damaged journal
+            raise
+        doc = {}
+    old = doc.get("phase")
+    if old is not None and old != "committed" and _rank(phase) < _rank(old):
+        raise ValueError(f"update phase {phase!r} cannot follow {old!r}")
+    if old == "committed" and phase != "stopped" and phase != "committed":
+        raise ValueError(f"update phase {phase!r} cannot follow 'committed'")
     doc.update(fields)
     doc.update({"v": 1, "phase": phase, "at": int(time.time())})
     path = journal_path(env)

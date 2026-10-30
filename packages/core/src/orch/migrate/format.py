@@ -106,7 +106,9 @@ class RootHandle:
 def lock_root(root: Path, *, exclusive: bool) -> int:
     """The lock fd of ``<root>/format.lock`` (non-blocking). Shared for services, exclusive for a migration."""
     root = Path(root)
-    fd = os.open(root / LOCK_FILE, os.O_RDWR | os.O_CREAT | getattr(os, "O_CLOEXEC", 0), 0o600)
+    fd = os.open(
+        root / LOCK_FILE, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0), 0o600
+    )
     try:
         oslock.flock(fd, (oslock.LOCK_EX if exclusive else oslock.LOCK_SH) | oslock.LOCK_NB)
     except BlockingIOError:
@@ -132,6 +134,8 @@ def open_root(path: Path, kind: str, env: Mapping[str, str] | None = None) -> Ro
         raise _not_a_root(path, "no such folder")
     fd = lock_root(path, exclusive=False)
     try:
+        if unfinished(env):  # re-check under the lock: an update may have started meanwhile
+            raise OrchError("update.interrupted", "an update was interrupted: run `orch update` to finish or roll back")
         fmt = read_format(path, kind)
         if fmt is None:
             raise _not_a_root(path, "no format.json")

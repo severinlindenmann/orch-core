@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import shutil
 import subprocess
 import sys
@@ -29,20 +30,20 @@ from orch.ops.errors import OrchError
 from .format import LOCK_FILE, lock_root
 from .steps import atomic_write
 
-__all__ = ["KEEP", "backups_dir", "create_backup", "list_backups", "restore"]
+__all__ = ["KEEP", "backups_dir", "create_backup", "list_backups", "prune_backups", "restore"]
 
 KEEP = 3
 MANIFEST = "manifest.json"
 DATA = "data"
 #: top-level entries left out (derived or runtime), and one nested path
 _SKIP_TOP = frozenset({STATE_DIR, WORK_DIR, LOCK_FILE})
-_SKIP_REL = frozenset({"install/tools"})
+_SKIP_REL = frozenset({"install/tools", "install/update.json"})
 _REVOCATIONS = "revocations.jsonl"
 _SYNC_NAMES = frozenset(
     {"mobile documents", "dropbox", "google drive", "googledrive", "onedrive", "icloud drive", "clouddocs"}
 )
 _SYNC_PREFIXES = ("googledrive-", "dropbox-", "onedrive-", "icloud")
-_SYNC_MARKERS = (".dropbox", ".dropbox.cache", ".dropbox.attr", ".tmp.driveupload", ".tmp.drivedownload")
+_SYNC_MARKERS = (".stfolder", ".dropbox", ".dropbox.cache", ".dropbox.attr", ".tmp.driveupload", ".tmp.drivedownload")
 
 
 def backups_dir(env: Mapping[str, str] | None = None) -> Path:
@@ -54,16 +55,38 @@ def backups_dir(env: Mapping[str, str] | None = None) -> Path:
     return Path(home) / ".local" / "share" / "orch" / "backups"
 
 
-def synced_folder(path: Path) -> Path | None:
-    """The ancestor of ``path`` that a cloud client syncs (by its name or its marker files), or None."""
+def synced_folder(path: Path, home: Path | None = None) -> Path | None:
+    """The ancestor of ``path`` that a cloud client syncs (by name, location or marker file), or None."""
     p = Path(os.path.realpath(path))
+    home_real = Path(os.path.realpath(home)) if home is not None else None
     for a in (p, *p.parents):
         name = a.name.lower()
         if name in _SYNC_NAMES or name.startswith(_SYNC_PREFIXES):
             return a
+        if a.parent.name == "Library" and a.name in ("CloudStorage", "Mobile Documents"):
+            return a
+        if (
+            sys.platform == "darwin"
+            and home_real is not None
+            and a.parent == home_real
+            and a.name in ("Documents", "Desktop")
+        ):
+            return a  # iCloud "Desktop & Documents" syncs these when it is on
         if any((a / m).exists() for m in _SYNC_MARKERS):
             return a
     return None
+
+
+def _exclude_from_time_machine(path: Path) -> None:
+    """Best effort: keys must not leave this machine through Time Machine either."""
+    if sys.platform != "darwin" or shutil.which("tmutil") is None:
+        return
+    try:
+        subprocess.run(
+            ["tmutil", "addexclusion", str(path)], capture_output=True, env=childenv.minimal(os.environ), timeout=20
+        )
+    except (OSError, subprocess.SubprocessError):
+        pass
 
 
 def _excluded(rel: str) -> bool:
@@ -83,13 +106,7 @@ def _copy(src: Path, dst: Path, clone: bool, rel: str = "") -> bool:
         if entry.is_dir(follow_symlinks=False) and (erel in nested or any(r.startswith(erel + "/") for r in _SKIP_REL)):
             all_cloned = _copy(Path(entry.path), target, clone, erel) and all_cloned
             continue
-        if (
-            clone
-            and subprocess.run(
-                ["cp", "-c", "-R", entry.path, str(target)], capture_output=True, env=childenv.minimal(os.environ)
-            ).returncode
-            == 0
-        ):
+        if clone and _clone(entry.path, target):
             continue
         all_cloned = False
         if entry.is_dir(follow_symlinks=False):
@@ -97,6 +114,20 @@ def _copy(src: Path, dst: Path, clone: bool, rel: str = "") -> bool:
         else:
             shutil.copy2(entry.path, target, follow_symlinks=False)
     return all_cloned
+
+
+def _clone(src: str, target: Path) -> bool:
+    try:
+        r = subprocess.run(["cp", "-c", "-R", src, str(target)], capture_output=True, env=childenv.minimal(os.environ))
+    except OSError:
+        return False
+    if r.returncode == 0:
+        return True
+    if target.is_symlink() or target.is_file():
+        target.unlink()
+    elif target.exists():
+        shutil.rmtree(target)  # a partial clone must not turn into a half-merged copy
+    return False
 
 
 def _same_volume(a: Path, b: Path) -> bool:
@@ -111,12 +142,13 @@ def create_backup(
     env: Mapping[str, str] | None = None,
     *,
     ts: str | None = None,
-    keep: int = KEEP,
 ) -> Path:
-    """Back up ``root`` and prune to the last ``keep`` backups of this root. Returns the backup directory."""
+    """Back up ``root``. Returns the backup directory. Nothing is pruned here: :func:`prune_backups` runs only after
+    the migration succeeded, so a failing update never eats its own way back."""
     root = Path(root).resolve()
     base = backups_dir(env)
-    sync = synced_folder(base)
+    home = Path((os.environ if env is None else env).get("HOME") or Path.home())
+    sync = synced_folder(base, home)
     if sync is not None:
         raise OrchError(
             "migrate.backup_refused",
@@ -128,6 +160,7 @@ def create_backup(
     try:
         base.mkdir(parents=True, exist_ok=True, mode=0o700)
         os.chmod(base, 0o700)
+        _exclude_from_time_machine(base)
         stamp = ts or time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
         name = f"{stamp}-{kind}-{from_n}-{to_n}"
         dest, n = base / name, 1
@@ -141,36 +174,67 @@ def create_backup(
         try:
             clone = sys.platform == "darwin" and _same_volume(root, base)
             cloned = _copy(root, dest / DATA, clone)
+            _private(dest)
             manifest = {
                 "v": 1, "kind": kind, "root": str(root), "from": from_n, "to": to_n,
-                "method": "clone" if cloned else "copy",
+                "method": "clone" if cloned else "copy", "created": time.time_ns(),
             }  # fmt: skip
             atomic_write(dest / MANIFEST, (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode())
-            os.chmod(dest / DATA, 0o700)
         except BaseException:
             shutil.rmtree(dest, ignore_errors=True)
             raise
     finally:
         os.umask(old)
-    for old_backup in list_backups(env, root)[keep:]:
-        shutil.rmtree(old_backup, ignore_errors=True)
     return dest
 
 
+def _private(top: Path) -> None:
+    """``chmod go=`` over the whole tree (a clone keeps the source modes; directories become 0700)."""
+    for dirpath, dirnames, filenames in os.walk(top):
+        for name in [*dirnames, *filenames]:
+            p = os.path.join(dirpath, name)
+            if os.path.islink(p):
+                continue
+            os.chmod(p, os.stat(p).st_mode & ~0o077)
+        os.chmod(dirpath, os.stat(dirpath).st_mode & ~0o077)
+
+
+def _manifest(d: Path) -> dict | None:
+    try:
+        m = json.loads((d / MANIFEST).read_text())
+    except (OSError, ValueError):
+        return None
+    return m if isinstance(m, dict) else None
+
+
 def list_backups(env: Mapping[str, str] | None, root: Path) -> list[Path]:
-    """The backups of ``root``, newest first."""
+    """The backups of ``root``, newest first (by the creation time in the manifest, not the folder name)."""
     base, root = backups_dir(env), Path(root).resolve()
-    out: list[Path] = []
-    if not base.is_dir():
-        return out
-    for d in sorted((p for p in base.iterdir() if p.is_dir()), key=lambda p: p.name, reverse=True):
-        try:
-            m = json.loads((d / MANIFEST).read_text())
-        except (OSError, ValueError):
-            continue
-        if isinstance(m, dict) and m.get("root") == str(root):
-            out.append(d)
-    return out
+    found: list[tuple[int, str, Path]] = []
+    if base.is_dir():
+        for d in (p for p in base.iterdir() if p.is_dir()):
+            m = _manifest(d)
+            if m and m.get("root") == str(root):
+                created = m.get("created")
+                found.append((created if type(created) is int else 0, d.name, d))
+    return [d for _, _, d in sorted(found, reverse=True)]
+
+
+def prune_backups(
+    env: Mapping[str, str] | None, root: Path, *, keep: int = KEEP, pin_from: int | None = None
+) -> list[Path]:
+    """Keep the newest ``keep`` backups of ``root`` plus the OLDEST backup made at format ``pin_from`` (the data as it
+    was before the migration now pending). Returns what was removed."""
+    backups = list_backups(env, root)
+    pinned = None
+    if pin_from is not None:
+        pinned = next((d for d in reversed(backups) if (_manifest(d) or {}).get("from") == pin_from), None)
+    removed = []
+    for d in backups[keep:]:
+        if d != pinned:
+            shutil.rmtree(d, ignore_errors=True)
+            removed.append(d)
+    return removed
 
 
 def _lines(path: Path) -> list[str]:
@@ -192,48 +256,71 @@ def _revocation_files(top: Path) -> dict[str, list[str]]:
     return found
 
 
-def restore(backup: Path, root: Path) -> None:
-    """Put ``backup`` back into ``root`` (exclusive lock: refused while orch runs). Every ``revocations.jsonl`` is
-    the union of the backup's lines and the current ones, never replaced."""
-    backup, root = Path(backup), Path(root)
+def _journal_allows(root: Path, env: Mapping[str, str] | None) -> bool:
+    from .journal import read_journal
+
     try:
-        manifest = json.loads((backup / MANIFEST).read_text())
-        src = backup / DATA
-        ok = manifest.get("v") == 1 and src.is_dir()
-    except (OSError, ValueError, AttributeError):
-        ok = False
-    if not ok:
+        doc = read_journal(env)
+    except OrchError:
+        return False
+    if doc is None or doc["phase"] == "committed":
+        return False
+    roots = doc.get("roots")
+    return doc["phase"] == f"migrated:{root}" or (isinstance(roots, list) and str(root) in roots)
+
+
+def restore(
+    backup: Path,
+    root: Path,
+    env: Mapping[str, str] | None = None,
+    *,
+    own_failure: bool = False,
+) -> None:
+    """Put ``backup`` back into ``root``. Allowed only before the commit point: the update journal must name this root
+    with a phase before ``committed`` (``own_failure``: ``orch migrate``'s own failure path, no journal). Takes the
+    exclusive lock. Builds the result in a staging folder next to the root and swaps it in; whatever the backup left
+    out (``.state``, ``.orch-work``, ``install/tools``, the journal) is carried over untouched, and every
+    ``revocations.jsonl`` is the union of the backup's lines and the current ones."""
+    backup, root = Path(backup), Path(root).resolve()
+    manifest = _manifest(backup)
+    src = backup / DATA
+    if not manifest or manifest.get("v") != 1 or not src.is_dir():
         raise OrchError("migrate.backup_refused", f"{backup} is not a backup")
-    if Path(manifest["root"]).resolve() != root.resolve():
+    if Path(manifest["root"]).resolve() != root:
         raise OrchError("migrate.backup_refused", "this backup was made of another data folder")
+    for dirpath, dirnames, filenames in os.walk(src):
+        if any(os.path.islink(os.path.join(dirpath, n)) for n in [*dirnames, *filenames]):
+            raise OrchError("migrate.backup_refused", "the backup holds a link; it is not restored")
+    if not own_failure and not _journal_allows(root, env):
+        raise OrchError(
+            "migrate.backup_refused", "restore is only possible before an update is committed, for a root it names"
+        )
     fd = lock_root(root, exclusive=True)
+    staging = root.with_name(f".{root.name}.restore-{secrets.token_hex(4)}")
+    old = os.umask(0o077)
     try:
-        current = _revocation_files(root)
-        for entry in os.scandir(root):
-            if entry.name in _SKIP_TOP:
-                continue
-            if entry.is_dir(follow_symlinks=False):
-                shutil.rmtree(entry.path)
-            else:
-                os.unlink(entry.path)
-        old = os.umask(0o077)
-        try:
-            _restore_tree(src, root)
-        finally:
-            os.umask(old)
-        saved = _revocation_files(src)
+        saved, current = _revocation_files(src), _revocation_files(root)
+        shutil.copytree(src, staging, symlinks=True)
         for rel in set(saved) | set(current):
             have = saved.get(rel, [])
             merged = have + [x for x in current.get(rel, []) if x not in set(have)]
-            atomic_write(root / rel, ("\n".join(merged) + "\n").encode() if merged else b"")
+            atomic_write(staging / rel, ("\n".join(merged) + "\n").encode() if merged else b"")
+        keep_rel = [*sorted(_SKIP_TOP), *sorted(_SKIP_REL)]
+        aside = root.with_name(f".{root.name}.replaced-{secrets.token_hex(4)}")
+        os.rename(root, aside)
+        try:
+            os.rename(staging, root)
+        except BaseException:
+            os.rename(aside, root)
+            raise
+        for rel in keep_rel:  # what the backup never held stays exactly as it was
+            have = aside / rel
+            if have.exists() or have.is_symlink():
+                (root / rel).parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+                os.rename(have, root / rel)
+        shutil.rmtree(aside, ignore_errors=True)
     finally:
+        os.umask(old)
         os.close(fd)
-
-
-def _restore_tree(src: Path, dst: Path) -> None:
-    for entry in os.scandir(src):
-        target = dst / entry.name
-        if entry.is_dir(follow_symlinks=False):
-            shutil.copytree(entry.path, target, symlinks=True, dirs_exist_ok=True)
-        else:
-            shutil.copy2(entry.path, target, follow_symlinks=False)
+        if staging.exists():
+            shutil.rmtree(staging, ignore_errors=True)

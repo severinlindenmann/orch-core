@@ -32,6 +32,10 @@ __all__ = [
     "REVEAL_RISK",
     "REASONS",
     "REFUSALS",
+    "REMOTE_KIND_REFUSED",
+    "REMOTE_NO_STREAM",
+    "REMOTE_PRESENCE_INVALID",
+    "REMOTE_PRESENCE_REQUIRED",
     "CONTRACT",
     "CONTRACT_MISMATCH",
     "FEATURES",
@@ -174,6 +178,12 @@ REFUSALS = (
     "stopped",
     "resumable",
 )
+#: R3 (#1591): the codes of a call that comes from a remote-device stream (``stream`` in the call, set by the dashboard
+#: adapter, never by the device); each has ONE static text, the reason only in the signer log
+REMOTE_KIND_REFUSED = "remote.kind_refused"  # this kind, level or person is never signed from a stream
+REMOTE_PRESENCE_REQUIRED = "remote.presence_required"  # no live presence batch covers this review
+REMOTE_PRESENCE_INVALID = "remote.presence_invalid"  # the nonce or the assertion is not acceptable (no reason shown)
+REMOTE_NO_STREAM = "remote.no_stream"  # the host knows no open stream with that id
 #: #517: the only codes whose host ``Error.detail`` the signer forwards, each with its closed ``reason`` set (§0.3).
 #: Taken from the host's own closed schema (:data:`orch.host.errors.DETAIL_KEYS`): one source of truth
 DETAIL_REASONS: dict[str, frozenset[str]] = {

@@ -29,7 +29,7 @@ def test_remote_set_by_click_needs_the_backup_key_and_shows_the_risk(click, serv
     view = v["view"]
     assert view["confirm"] == {"kind": "click"} and view["seal"]["purposes"] == ["hub.backup_key"]
     assert view["backup_key_line"] in view["lines"]
-    assert view["risk_lines"] == [protocol.REMOTE_RISK]
+    assert view["risk_lines"] == [protocol.REMOTE_RISK, protocol.REMOTE_AGENTS_RISK]
     click.sign(p["request_id"], v["view_digest"], sealed=seal_for(v, served, p["request_id"]))
     assert click.signatures == 1
     served.service.store.refresh()

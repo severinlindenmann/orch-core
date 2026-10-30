@@ -39,6 +39,7 @@ from orch.host.errors import HostError
 from orch.posixmod import posixmod
 from orch.setup import osfront
 from orch.setup.oslauncher import LAUNCHER_PATH
+from orch.setup.tunnel import tunnel_line
 
 pwd = posixmod("pwd")
 
@@ -298,7 +299,7 @@ def _tunnel_lines(name: str, env: Mapping[str, str]) -> list[str]:
     return [
         "If you are locked out, the link ran out, or you prefer SSH, the SSH tunnel always works (no passkey needed).",
         "On your computer, run:",
-        f"  ssh -o ExitOnForwardFailure=yes -L {port}:127.0.0.1:{port} {_person()}@{name}",
+        "  " + tunnel_line(port, env, user=_person(), server=name),
         "Then, on the server (in that SSH session), run:  orch dashboard open --print-url",
         "and open the link it prints in your computer's browser.",
         "For a new sign-in link, run on the server:  orch remote reset",

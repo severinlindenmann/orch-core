@@ -430,3 +430,19 @@ def test_setup_server_flag_goes_to_install_server_without_a_workspace(tmp_path):
     assert set(load(ctx.layout)["parts"]) == {"relay", "publish"} and not load(ctx.layout)["workspaces"]
     err2 = io.StringIO()
     assert flow.main(["--server", "--role", "edge"], env={"ORCH_GRANT": "x"}, out=out, err=err2) == 3
+
+
+def test_a_part_that_answers_after_five_seconds_passes_and_a_dead_one_fails_in_plain_words(tmp_path):
+    t = {"now": 0.0}
+    ctx, out, err, _ = stub_ctx(tmp_path)
+    ctx.clock = lambda: t["now"]
+    ctx.sleep = lambda s: t.__setitem__("now", t["now"] + s)
+    ctx.health = lambda h, p: t["now"] >= 5.0  # the stub part comes up after 5 s
+    ctx.port_free = lambda p, h: True
+    ctx.runner.info = lambda part: {"running": False, "pid": None, "service": "x"}
+    assert cli.main(["publish", "--address", "127.0.0.1"], env=ctx.env, out=out, err=err, ctx=ctx) == 0
+    assert 5.0 <= t["now"] < 7.0
+    ctx.health = lambda h, p: False
+    assert cli.main(["relay", "--address", "127.0.0.1"], env=ctx.env, out=out, err=err, ctx=ctx) == 1
+    assert "within 60 seconds" in err.getvalue()
+    assert t["now"] >= 65.0

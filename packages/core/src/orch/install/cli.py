@@ -68,7 +68,8 @@ def _resolve_ref(url: str, ref: str) -> str:
     return line.split()[0]
 
 
-def _health(host: str, port: int, timeout: float = 30.0) -> bool:
+def _health(host: str, port: int, timeout: float = 2.0) -> bool:
+    """One short probe; :func:`wait_ready` repeats it until its deadline."""
     end = time.time() + timeout
     while time.time() < end:
         try:
@@ -77,6 +78,20 @@ def _health(host: str, port: int, timeout: float = 30.0) -> bool:
         except OSError:
             time.sleep(0.3)
     return False
+
+
+READY_DEADLINE = 60.0
+
+
+def wait_ready(ctx: Ctx, probe: Callable[[], bool]) -> bool:
+    """Poll ``probe`` until it is true or the deadline passes (``ctx.ready_deadline`` seconds)."""
+    end = ctx.clock() + ctx.ready_deadline
+    while True:
+        if probe():
+            return True
+        if ctx.clock() >= end:
+            return False
+        ctx.sleep(0.5)
 
 
 @dataclass
@@ -100,6 +115,9 @@ class Ctx:
     mint_login: Callable[[list[str], Mapping[str, str]], str | None] = lambda argv, env: _mint_login(argv, env)
     qr: Callable[[str], str | None] = lambda link: _qr(link)
     publish_setup: Callable[[str], str | None] = lambda url: None  # configure the workspace; returns a hint on failure
+    ready_deadline: float = READY_DEADLINE  # seconds a part gets to answer (polled, not a single check)
+    clock: Callable[[], float] = time.monotonic
+    sleep: Callable[[float], None] = time.sleep
     helper_ready: Callable[[Path], bool] = (
         wait_for_socket  # the service helper's socket shows up (seconds, not forever)
     )
@@ -439,9 +457,11 @@ def install_part(
             ctx.runner.info(part)["running"] and not ctx.port_free(port, check_host)
         )
 
-    if not answers():
+    if not wait_ready(ctx, answers):
         tail = log.read_text()[-500:] if log.exists() else ""
-        raise InstallError(f"{part} did not answer on {check_host}:{port}; log {log}\n{tail}")
+        raise InstallError(
+            f"{part} did not answer on {check_host}:{port} within {ctx.ready_deadline:.0f} seconds; log {log}\n{tail}"
+        )
     url = f"http://{bind}:{port}"
     rec: dict[str, Any] = {
         "port": port,
@@ -795,8 +815,15 @@ def start_dashboard(ctx: Ctx, bind: str, port: int) -> dict[str, Any] | None:
         "dashboard", P.dashboard_command(entry, address=bind, port=port), env, lay.logs / "dashboard.log"
     )
     check = "127.0.0.1"
-    if not ctx.health(check, port) and not (ctx.runner.info("dashboard")["running"] and not ctx.port_free(port, check)):
-        ctx.say(f"  the dashboard did not answer on {bind}:{port}; log {lay.logs / 'dashboard.log'}")
+
+    def up() -> bool:
+        return ctx.health(check, port) or (ctx.runner.info("dashboard")["running"] and not ctx.port_free(port, check))
+
+    if not wait_ready(ctx, up):
+        ctx.say(
+            f"  the dashboard did not answer on {bind}:{port} within {ctx.ready_deadline:.0f} seconds; "
+            f"log {lay.logs / 'dashboard.log'}"
+        )
     rec = {
         "port": port,
         "bind": bind,

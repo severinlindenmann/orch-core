@@ -24,7 +24,7 @@ function save(key: string, value: unknown) {
 
 /** Tickets other workspaces shared with this owner through the hub: read-only rows, "Shared by Anna". They are the other
  * person's tickets (not in this workspace's log), so there is nothing to open or change here. The list refreshes by itself
- * (hubQueries.shared polls); when a ticket disappears from a successful read, a plain "X stopped sharing T" line stays until
+ * (hubQueries.shared polls every 5 s while the tab is visible); when a ticket disappears from a successful read, a plain "X stopped sharing T" line stays until
  * dismissed. A failed read never produces that note (react-query keeps the last good data and `data` does not change).
  * Shows nothing when the workspace has no hub, the hub is away or nothing is shared and nothing ended. */
 export function SharedWithYou({ ws, limit }: { ws: string; limit?: number }) {

@@ -140,7 +140,7 @@ export const hubServed = (ws: string | undefined): boolean => hasFeature('hub', 
 
 export const hubQueries = {
   status: (ws: string) => queryOptions({ queryKey: ['hub', ws, 'status'], queryFn: () => api.getHubStatus(ws), staleTime: 15_000, retry: false }),
-  shared: (ws: string) => queryOptions({ queryKey: ['hub', ws, 'shared'], queryFn: () => api.getHubShared(ws), staleTime: 10_000, refetchInterval: 15_000, retry: false, refetchOnWindowFocus: true }),
+  shared: (ws: string) => queryOptions({ queryKey: ['hub', ws, 'shared'], queryFn: () => api.getHubShared(ws), staleTime: 3_000, refetchInterval: 5_000, retry: false, refetchOnWindowFocus: true }),
   audience: (ws: string) => queryOptions({ queryKey: ['hub', ws, 'audience'], queryFn: () => api.getHubAudience(ws), staleTime: 60_000, retry: false }),
   share: (ws: string) => queryOptions({ queryKey: ['hub', ws, 'share'], queryFn: () => api.getHubShare(ws), retry: false }),
 }

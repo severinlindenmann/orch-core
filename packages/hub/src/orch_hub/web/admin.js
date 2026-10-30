@@ -196,6 +196,7 @@ export function adminView(d) {
   function people() {
     const inviteName = h("input", { id: "invite-name", required: true, maxlength: 80, autocomplete: "off" });
     const inviteBtn = h("button", { class: "pri", type: "submit", id: "invite-person", text: "Invite a person" });
+    const inviteCompany = h("input", { id: "invite-company-login", type: "checkbox" });
     const groupName = h("input", { required: true, maxlength: 120 });
     const person = select(data.users.map((u) => [u.user_id, u.name]));
     const group = select(data.groups.map((g) => [g.name, g.name]));
@@ -215,12 +216,16 @@ export function adminView(d) {
         h("section", { class: "card" }, h("h3", { text: "Invite a person" }),
           h("form", { onsubmit: async (ev) => {
             ev.preventDefault();
-            const made = await postLink(ev.submitter ?? inviteBtn, "/admin/invites", { name: inviteName.value.trim() });
+            const company = inviteCompany.checked;
+            const made = await postLink(ev.submitter ?? inviteBtn, "/admin/invites", { name: inviteName.value.trim(), ...(company ? { company: true } : {}) });
             if (!made) return;
             inviteName.value = "";
-            showLink("Invitation link", "Send this link to the person. They choose their own password and scan their own code; you will not see them.", made,
+            inviteCompany.checked = false;
+            showLink("Invitation link", company ? "Send this link to the person. They sign in with their company account; they get no hub password. To approve things later they ask you for a set-up link."
+              : "Send this link to the person. They choose their own password and scan their own code; you will not see them.", made,
               [p("Add them to groups afterwards. A new person has no access to any workspace until you do.")]);
-          } }, h("div", { class: "form-grid" }, field("Their name", inviteName), inviteBtn)), linkBox),
+          } }, h("div", { class: "form-grid" }, field("Their name", inviteName), inviteBtn),
+            h("label", { class: "small" }, inviteCompany, " They sign in with the company account (Microsoft / Google), no hub password")), linkBox),
         h("section", { class: "card" }, h("h3", { text: "Add to group" }),
           form("Add to group", [field("Person", person), field("Group", group)], "PUT", () => "/admin/groups/" + enc(group.value) + "/members/" + enc(person.value), () => undefined), preview)),
       h("section", { class: "card" }, h("h3", { text: "People" }), data.users.length ? data.users.map((u) => h("article", { class: "list-row row" },

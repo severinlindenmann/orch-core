@@ -820,9 +820,13 @@ def verify_closing(
     ``ends_ms`` not after ``issued_ms`` or more than 7 days after it), ``cert_expired`` (``now >= ends_ms``). Returns
     the verified object; a pure function, nothing is stored."""
     o = _under_card(signed, "hub.closing", held, dev_mode, revoked_op_certs)
+    if now_ms >= held["op_cert"]["expires_ms"]:
+        raise Refused(
+            "cert_expired"
+        )  # the op cert that signed it has ended (checked at every use, like a snapshot's card)
     if o["workspace_id"] != workspace_id:
         raise Refused("other_workspace")
-    if o["binding_seq"] != binding_seq:
+    if type(binding_seq) is not int or o["binding_seq"] != binding_seq:
         raise Refused("stale_binding")
     if o["issued_ms"] > now_ms + CLOCK_SKEW_MS or not o["issued_ms"] < o["ends_ms"] <= o["issued_ms"] + CLOSING_MAX_MS:
         raise Refused("cert_invalid")

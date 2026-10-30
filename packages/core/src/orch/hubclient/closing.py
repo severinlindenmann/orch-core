@@ -39,6 +39,8 @@ def verify_closing(
 
     Returns ``{removal_id, issued_ms, ends_ms, binding_seq}``: the only members a host records."""
     o = wire._under_card(signed, "hub.closing", SIG_CLOSING, held, dev_mode, revoked_op_certs)  # noqa: SLF001
+    if now_ms >= held["op_cert"]["expires_ms"]:
+        raise HubRefused("cert_expired")  # the op cert that signed it has ended
     if o["workspace_id"] != workspace_id:
         raise HubRefused("other_workspace")
     if type(binding_seq) is not int or o["binding_seq"] != binding_seq:

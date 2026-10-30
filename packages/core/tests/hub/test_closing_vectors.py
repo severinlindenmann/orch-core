@@ -50,6 +50,7 @@ def test_the_refusal_classes_of_the_file_are_all_exercised() -> None:
     got = {run(c).get("error") for c in VEC["cases"]}
     assert got >= {
         None,
+        "wrong_suite",
         "bad_signature",
         "malformed",
         "other_hub",

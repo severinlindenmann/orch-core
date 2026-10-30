@@ -15,7 +15,8 @@ from orch_hub.contract import closing as C
 from orch_hub.contract import hub as H
 from orch_hub.contract.canon import cj
 from orch_hub.contract.keystore import OpSigner
-from orch_hub.contract.labels import HUB_LABELS, HUB_REMOVE_LABEL, V2_REUSED
+from orch_hub.contract.backup import LABEL as BACKUP_LABEL
+from orch_hub.contract.labels import ACCESS_CHANGE_LABEL, CUSTODIAL_PREFIX, HUB_LABELS, HUB_REMOVE_LABEL, V2_REUSED
 
 VEC = Path(__file__).resolve().parents[3] / "contracts" / "hub"
 DOC = json.loads((VEC / "vectors_hub_closing.json").read_text())
@@ -59,6 +60,7 @@ def test_every_refusal_class_is_covered() -> None:
     got = {run(c).get("error") for c in DOC["cases"]}
     assert got >= {
         None,
+        "wrong_suite",
         "bad_signature",
         "malformed",
         "other_hub",
@@ -114,7 +116,15 @@ def test_closing_object_refuses_a_life_over_seven_days() -> None:
 
 def test_labels_are_prefix_free() -> None:
     assert HUB_LABELS["sig_hub_closing"] == "orch/v2/hub-closing|"
-    every = {*HUB_LABELS.values(), *V2_REUSED.values(), HUB_REMOVE_LABEL}
+    every = {
+        *HUB_LABELS.values(),
+        *V2_REUSED.values(),
+        HUB_REMOVE_LABEL,
+        ACCESS_CHANGE_LABEL,
+        CUSTODIAL_PREFIX,
+        BACKUP_LABEL.decode(),
+        BACKUP_LABEL.decode().replace("backup|", "backup-aad|"),
+    }
     for a, b in itertools.permutations(every, 2):
         assert not b.startswith(a), (a, b)
 
@@ -126,3 +136,12 @@ def test_protocol_doc_names_the_notice() -> None:
         assert f"| `{op}` |" in doc
     for code in {c["expect"]["error"] for c in DOC["cases"] if "error" in c["expect"]} | {"hub_closing"}:
         assert f"`{code}`" in doc, code
+
+
+def test_a_bool_binding_seq_is_not_current() -> None:
+    """``True == 1`` in Python: the verifier's own binding_seq must be a real int (same rule as core)."""
+    good = next(c for c in DOC["cases"] if c["name"] == "valid notice")["args"]
+    for bad in (True, "3", 3.0, None):
+        with pytest.raises(H.Refused) as e:
+            H.verify_closing(good["notice"], HELD, workspace_id=good["workspace_id"], binding_seq=bad, now_ms=good["now_ms"], dev_mode=True)  # fmt: skip
+        assert e.value.code == "stale_binding"

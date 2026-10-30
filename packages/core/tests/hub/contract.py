@@ -504,6 +504,8 @@ def verify_closing(
 ) -> dict[str, Any]:
     """#1463 (protocol 9.7): a ``hub.closing`` notice against the host's own workspace and CURRENT binding."""
     o = _under_card(signed, "hub.closing", held, dev_mode, revoked_op_certs)
+    if now_ms >= held["op_cert"]["expires_ms"]:
+        raise Refused("cert_expired")
     if o["workspace_id"] != workspace_id:
         raise Refused("other_workspace")
     if o["binding_seq"] != binding_seq:

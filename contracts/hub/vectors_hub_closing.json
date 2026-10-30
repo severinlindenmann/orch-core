@@ -998,6 +998,126 @@
    "args": {
     "binding_seq": 3,
     "dev_mode": true,
+    "notice": {
+     "o": {
+      "binding_seq": 3,
+      "dev": true,
+      "ends_ms": 1790604740000,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789999940000,
+      "kind": "hub.closing",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "removal_id": "3370ef8c9b605974999bea4575e7c1fe",
+      "suite": 2,
+      "v": 3,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "3qGqXIXgQsK7T9Nbz1N49oYZSvIMbhO6abytbIlZooq05Z0jaVU4XYnGNhEGp8WXpMRE-s1kzRAAOJIhGbo2Rw"
+    },
+    "now_ms": 1790000000000,
+    "revoked_op_certs": [],
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "header v is 3 (re-signed)"
+  },
+  {
+   "args": {
+    "binding_seq": 3,
+    "dev_mode": true,
+    "notice": {
+     "o": {
+      "binding_seq": 3,
+      "dev": true,
+      "ends_ms": 1790604740000,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789999940000,
+      "kind": "hub.closing",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "removal_id": "3370ef8c9b605974999bea4575e7c1fe",
+      "suite": 1,
+      "v": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "DFVq7qEtfaN0x5M1n3DH3KP7yLvUBkTjMwLI7FrOrsYaIb0_Bw1mdE04v5_hQZmDhSChiFUfJRwrP5Eiic768w"
+    },
+    "now_ms": 1790000000000,
+    "revoked_op_certs": [],
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "expect": {
+    "error": "wrong_suite"
+   },
+   "name": "header suite is 1 (re-signed)"
+  },
+  {
+   "args": {
+    "binding_seq": 3,
+    "dev_mode": true,
+    "notice": {
+     "o": {
+      "binding_seq": 3,
+      "dev": true,
+      "ends_ms": 1790604740000,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 1,
+      "issued_ms": 1789999940000,
+      "kind": "hub.closing",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "removal_id": "3370ef8c9b605974999bea4575e7c1fe",
+      "suite": 2,
+      "v": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "RwZ0f4DhmvesUAEI4y9dpZae6DRfGOPOWvybcHOVJLQ_e0gevEKJ9Ld_9uplOm9Y6FOX9KkAJ0nHjamNQw8b_w"
+    },
+    "now_ms": 1790000000000,
+    "revoked_op_certs": [],
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "header hv is 1 (re-signed)"
+  },
+  {
+   "args": {
+    "binding_seq": 3,
+    "dev_mode": true,
+    "notice": {
+     "o": {
+      "binding_seq": 3,
+      "dev": true,
+      "ends_ms": 1822054400000,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1821449600000,
+      "kind": "hub.closing",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "removal_id": "3370ef8c9b605974999bea4575e7c1fe",
+      "suite": 2,
+      "v": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "lZcOx3ouREA1x4A2FFRr-jBMP2JxUnRg4N6fkqbv0OQxQ7f4XcRaY5jblN62EZRxwsuStcJmGKjKBvSbMdDO6g"
+    },
+    "now_ms": 1821536000000,
+    "revoked_op_certs": [],
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "expect": {
+    "error": "cert_expired"
+   },
+   "name": "the op cert has ended (the notice has not)"
+  },
+  {
+   "args": {
+    "binding_seq": 3,
+    "dev_mode": true,
     "notice": [],
     "now_ms": 1790000000000,
     "revoked_op_certs": [],

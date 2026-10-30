@@ -1429,7 +1429,7 @@ set; (4) `hub_id` equals the pinned hub (`other_hub`); (5) `op_cert_id` equals t
 (`stale_op_cert`); (6) the dev marker (§2.4); (7) `workspace_id` is the host's own (`other_workspace`); (8) `binding_seq`
 equals the host's CURRENT binding's (`stale_binding`: a notice of an older or a not-yet-seen binding, e.g. replayed after a
 rejoin); (9) `issued_ms <= now + 300 s`, `issued_ms < ends_ms` and `ends_ms <= issued_ms + 7 days` (`cert_invalid`);
-(10) `now < ends_ms` (`cert_expired`, reused: there is no separate code for an expired notice). Any other input is
+(10) `now < ends_ms` and `now` before the held op cert's `expires_ms` (`cert_expired`, reused: there is no separate code for an expired notice or op cert). Any other input is
 `malformed`. The verifier is a pure function: it stores nothing.
 
 **What a host does with a verified notice** (host side, a later PR): it records `closing: {removal_id, issued_ms, ends_ms,
@@ -3247,7 +3247,7 @@ v2 codes keep their meaning (v2 §14). New in H0:
 | `backup_invalid` | hub restore (local) | §17: every other reason a backup file is refused (container, envelope, signature, MAC, fields, file list, seal, tar entries, hashes, sequence overflow); the `reason` (§17.9) is for the admin's log, never an oracle on the wire |
 | `hub_closing` | link reply; hub web API (409) (#1463) | §9.7: the hub is being removed and this op or write is not on its closing allow list. Nothing was changed |
 | `stale_binding` (extended) | `hub.closing` | §9.7 step 8: the notice's `binding_seq` is not the host's current binding's. `cert_expired` and `cert_invalid` are reused for the notice's time rules (steps 9 and 10) |
-| `hub_retired` | link reply (M4 S8) | the hub is being removed: an unsigned notice, shown on the host as a banner with the break-glass leave; the host never unbinds, leaves or deletes anything because of it |
+| `hub_retired` | (replaced, M4 S8) | no longer sent: the unsigned banner notice is replaced by the signed `hub.closing` (§9.7) and the refusal `hub_closing` |
 | `bad_wrap` | `wk_seal` reply | the wrap does not open under `HXK`, is not bound to this `hub_id`, this workspace and the stated epoch, or is another wrap for an epoch already sealed (§10.2a) |
 | `bad_epoch` | `wk_seal` reply | v2 code reused: the epoch is lower than the newest one held for the live binding (§10.2a) |
 | `auth_failed` | link open | §10.1: every failure before the link is authenticated (unknown workspace, key mismatch, bad signature) returns this one code, so an unauthenticated peer learns nothing; the reason stays in the hub's log |
@@ -3370,10 +3370,10 @@ required case; orch-core replays `hub_where`. Expected values are written by han
 under test; the BK / K_auth / seal values are computed there from first principles and compared with the module.
 
 `vectors_hub_closing.json` (#1463, §9.7; `make_vectors_hub_closing.py`; the FAKE keys of `vectors_hub.json`): the held `card`, `now_ms`,
-`cases` (35 signed `hub.closing` notices with `args` = `notice`, `workspace_id`, `binding_seq`, `now_ms`, `dev_mode`,
+`cases` (39 signed `hub.closing` notices with `args` = `notice`, `workspace_id`, `binding_seq`, `now_ms`, `dev_mode`,
 `revoked_op_certs` and `expect` `{"ok": true}` or `{"error": code}`: valid, wrong label, wrong key, tampered field, extra
 or missing field, other hub, other workspace, stale or unseen `binding_seq`, stale or revoked op cert, dev at a real
-verifier and the reverse, issued in the future, 7-day limit, expired) and `digest_cases` (the removal proof digest, console
+verifier and the reverse, re-signed envelope headers, issued in the future, 7-day limit, expired, op cert ended) and `digest_cases` (the removal proof digest, console
 side). The hub (`verify_closing`) and orch-core (`orch.hubclient.closing.verify_closing`) replay every one of `cases`;
 the hub and the browser replay `digest_cases`.
 

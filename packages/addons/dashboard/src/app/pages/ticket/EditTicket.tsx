@@ -196,16 +196,16 @@ function RenameDialog({ ticket, onBusy, onFull, onClose }: { ticket: TicketDocum
       <DialogContent aria-label={`Rename ${ticket.key}`} className="sm:max-w-lg" onOpenAutoFocus={(e) => { e.preventDefault(); const f = document.getElementById('rename-title') as HTMLInputElement | null; if (f) { f.focus(); f.setSelectionRange(f.value.length, f.value.length) } }}>
         <DialogHeader>
           <DialogTitle>Rename {ticket.key}</DialogTitle>
-          <DialogDescription>Write the new title, then confirm once.</DialogDescription>
+          <DialogDescription>Write the new title. Press Rename to see the change, and once more to confirm.</DialogDescription>
         </DialogHeader>
         <form onSubmit={(e) => { e.preventDefault(); save() }} className="space-y-2">
           <Input id="rename-title" aria-label="Title" autoFocus readOnly={!!signing} value={title} maxLength={MAX_TITLE + 50} onChange={(e) => setTitle(e.target.value)} />
           {problem && <p role="alert" className="text-[13px] text-danger">{problem}</p>}
-          <DialogFooter>
-            <Button type="button" variant="ghost" disabled={!!signing} onClick={onFull}>More fields…</Button>
+          {!signing && <DialogFooter>
+            <Button type="button" variant="ghost" onClick={onFull}>More fields…</Button>
             <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
-            <Button type="submit" disabled={!!signing}>Rename</Button>
-          </DialogFooter>
+            <Button type="submit">Rename</Button>
+          </DialogFooter>}
         </form>
         {signing && ws && (
           <SignPopover
@@ -213,6 +213,9 @@ function RenameDialog({ ticket, onBusy, onFull, onClose }: { ticket: TicketDocum
             ws={ws.id}
             action={signing}
             prepareOnOpen
+            inline
+            confirmLabel="Rename"
+            lead={<p data-testid="rename-diff" className="text-[13px]"><s className="text-text-muted">{ticket.title ?? ''}</s> → <span className="font-medium">{title}</span></p>}
             onClose={() => setSigning(null)}
             onSettled={(phase) => {
               if (phase !== 'done') return
@@ -391,6 +394,9 @@ export function EditDialog({ ticket, viewer, focus, onClose, onBusy }: { ticket:
             ws={ws.id}
             action={signing}
             prepareOnOpen
+            inline
+            confirmLabel="Rename"
+            lead={<p data-testid="rename-diff" className="text-[13px]"><s className="text-text-muted">{ticket.title ?? ''}</s> → <span className="font-medium">{title}</span></p>}
             onClose={() => setSigning(null)}
             onSettled={(phase) => {
               if (phase !== 'done') return

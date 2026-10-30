@@ -195,15 +195,16 @@ it('share files end to end: pick, prepare, read every file with its size, sign, 
   await waitFor(() => expect(calls('/shares/prepare')).toHaveLength(1), T)
   expect(calls('/shares/prepare')[0].body).toMatchObject({ ticket: 'DEMO-0001', artifacts: ['report.md'], kind: 'once', days: 3, views: 3 })
   // the review before the signature lists every file with its size and a link to the ticket's artifacts
-  const confirm = await screen.findByRole('dialog', { name: 'Review your share' }, T)
+  const confirm = (await screen.findByRole('list', { name: 'Files to share' }, T)).closest('[role="dialog"]') as HTMLElement
+  expect(screen.queryByRole('button', { name: 'Continue to approval' })).toBeNull() // r12-P11: one sheet, no extra step
   const files = within(confirm).getByRole('list', { name: 'Files to share' })
   expect(files).toHaveTextContent('report.md')
   expect(files).toHaveTextContent('2.0 KB')
   expect(within(files).getByRole('link', { name: 'Open report.md on the ticket' })).toHaveAttribute('href', expect.stringContaining('/ticket/DEMO-0001'))
   expect(calls('/shares/send')).toEqual([]) // nothing sent before the signature
-  await user.click(within(confirm).getByRole('button', { name: 'Continue to approval' }))
   const sign = await readyToSign()
   expect(calls('/shares/send')).toEqual([]) // nothing sent before the signature
+  expect(state.host.clickSigned).toEqual([]) // opened on the review, never armed or signed by itself: Sign is the person's press
   sign()
   const dialog = await screen.findByRole('dialog', { name: 'Your link' }, { timeout: 9000 })
   expect(state.host.clickSigned).toHaveLength(1)
@@ -242,6 +243,7 @@ it('a reload shows the share in the list and never the link', async () => {
 
 it('cancelling at the review drops the prepared copy and sends nothing', async () => {
   route()
+  clickOn(state.host.workspaces[0])
   window.innerWidth = 1400
   const user = userEvent.setup()
   show('/w/DEMO/ticket/DEMO-0001')
@@ -249,12 +251,12 @@ it('cancelling at the review drops the prepared copy and sends nothing', async (
   const form = await screen.findByRole('dialog', { name: 'Share files' }, T)
   await user.click(within(form).getByRole('checkbox', { name: /report\.md/ }))
   await user.click(within(form).getByRole('button', { name: 'Review selected files' }))
-  const confirm = await screen.findByRole('dialog', { name: 'Review your share' }, T)
-  await user.click(within(confirm).getByRole('button', { name: 'Cancel' }))
+  const confirm = (await screen.findByRole('list', { name: 'Files to share' }, T)).closest('[role="dialog"]') as HTMLElement
+  await user.click(await within(confirm).findByRole('button', { name: 'Cancel' }, T))
   await waitFor(() => expect(calls('/shares/discard')).toHaveLength(1), T)
   expect(calls('/shares/send')).toEqual([])
   expect(calls('/handoff').filter((c) => c.method === 'POST')).toEqual([])
-  expect(state.host.clickPrepares()).toEqual([])
+  expect(state.host.clickSigned).toEqual([]) // the review was prepared on open, nothing was signed
 })
 
 it('a server that does not know the workspace is said in words, with the admin step behind Technical details', async () => {
@@ -269,7 +271,6 @@ it('a server that does not know the workspace is said in words, with the admin s
   expect(box).toHaveTextContent('Waiting for your signature')
   expect(box).toHaveTextContent('prepared by an agent')
   await user.click(within(box).getByRole('button', { name: 'Review and sign' }))
-  await user.click(await screen.findByRole('button', { name: 'Continue to approval' }, T))
   ;(await readyToSign())()
   const alert = await screen.findByRole('alert', {}, { timeout: 9000 })
   expect(alert).toHaveTextContent('has not allowed this workspace yet')
@@ -343,15 +344,14 @@ async function openPublish() {
   return await screen.findByTestId('publish-server', {}, T)
 }
 
-/** The approval step after "Continue to approval": its outcome button prepares through the signer (no terminal hand-off);
- * returns the press of the armed Sign. */
+/** The one sheet of a share (r12-P11): the review is prepared on open, Sign (labelled "Share files") is still the person's own
+ * press; returns that press. */
 async function readyToSign() {
-  const outcome = await screen.findByRole('button', { name: 'Share files of DEMO-0001' }, T)
-  const dialog = outcome.closest('[role="dialog"]') as HTMLElement
-  await prepareByClick(dialog, 'Share files of DEMO-0001')
+  // the dialog is named by the host's own headline once the review has loaded, so find it by its Sign button
+  const dialog = (await screen.findByRole('button', { name: 'Share files' }, T)).closest('[role="dialog"]') as HTMLElement
   expect(state.host.clickPrepares().map((c) => c.body)).toEqual([{ action: 'publish_share', key: 'DEMO-0001', staged_id: STAGED }])
   expect(calls('/handoff').filter((c) => c.method === 'POST')).toEqual([])
-  const sign = within(dialog).getByRole('button', { name: /^Sign( |$)/ })
+  const sign = within(dialog).getByRole('button', { name: 'Share files' })
   await waitFor(() => expect(sign).toBeEnabled(), { timeout: ARM_MS + 3000 })
   return () => {
     fireEvent.pointerDown(sign)
@@ -368,7 +368,6 @@ async function signedShare(user: ReturnType<typeof userEvent.setup>) {
   const form = await screen.findByRole('dialog', { name: 'Share files' }, T)
   await user.click(within(form).getByRole('checkbox', { name: /report\.md/ }))
   await user.click(within(form).getByRole('button', { name: 'Review selected files' }))
-  await user.click(within(await screen.findByRole('dialog', { name: 'Review your share' }, T)).getByRole('button', { name: 'Continue to approval' }))
   return readyToSign()
 }
 
@@ -423,7 +422,6 @@ it('on the Shares page the link also stays until Done when the list then fails t
   const user = userEvent.setup()
   show('/w/DEMO/shares')
   await user.click(await screen.findByRole('button', { name: 'Review and sign' }, T))
-  await user.click(await screen.findByRole('button', { name: 'Continue to approval' }, T)) // the dialog's own
   const sign = await readyToSign()
   const inner = state.host.override!
   state.host.override = (p, m, b) => {

@@ -43,7 +43,6 @@ export const refreshShares = (qc: ReturnType<typeof useQueryClient>, ws: string)
 type Stage =
   | { at: 'form' }
   | { at: 'confirm'; staged: Staged }
-  | { at: 'sign'; staged: Staged }
   | { at: 'send'; staged: Staged; error?: { text: string; unknown: boolean } }
   | { at: 'link'; sent: Sent }
 
@@ -96,6 +95,8 @@ export function ShareFlow({ ws, ticket, resume, onClose }: { ws: string; ticket:
   // one idem per staged copy for send, kept for every retry of it
   const sendIdem = useRef<{ id: string; idem: string } | null>(null)
   const sending = useRef(false)
+  // the signature settled: closing the review after that must not discard the copy that is being sent
+  const signed = useRef(false)
 
   const files = ticket.artifacts.map((a) => ({ a, why: unshareable(a) }))
   const total = ticket.artifacts.filter((a) => picked.includes(a.name)).reduce((n, a) => n + (a.bytes ?? 0), 0)
@@ -229,30 +230,22 @@ export function ShareFlow({ ws, ticket, resume, onClose }: { ws: string; ticket:
     )
   }
 
-  // ---- confirm: every file with its size and a link to where it is on the ticket, before the signature
+  // ---- review and sign in ONE sheet (r12-P11): the files and where they go are the lead, the host's review loads at once
+  // (prepare only: nothing is armed and nothing signs by itself, Sign is the person's own press), and "Share files" signs.
   if (stage.at === 'confirm') {
     const s = stage.staged
-    const sum = s.files.reduce((n, f) => n + f.size, 0)
+    const note = reachNote(server, share)
     return (
-      <Dialog
-        open
-        onOpenChange={(o) => {
-          if (o) return
-          discard(s)
-          onClose()
-        }}
-      >
-        <DialogContent className="max-h-[90vh] max-w-md gap-3 overflow-y-auto border-border bg-surface">
-          <DialogHeader>
-            <DialogTitle>Review your share</DialogTitle>
-            <DialogDescription>
-              {s.origin === 'agent' ? 'An agent prepared this copy. ' : ''}Files are uploaded only after you approve.
-            </DialogDescription>
-          </DialogHeader>
+      <SignPopover
+        key={s.staged_id}
+        title={`Share files of ${s.ticket ?? ticket.key}`}
+        ws={ws}
+        action={{ action: 'publish_share', key: s.ticket ?? ticket.key, staged_id: s.staged_id }}
+        anchor={null}
+        prepareOnOpen
+        confirmLabel="Share files"
+        lead={
           <div className="space-y-2 text-[13px]">
-            <p>
-              {kindText(s.kind, s.views)} · works for {s.days} day{s.days === 1 ? '' : 's'}
-            </p>
             <ul aria-label="Files to share" className="divide-y divide-border rounded border border-border px-2">
               {s.files.map((f) => (
                 <li key={f.name} className="flex flex-wrap items-baseline gap-x-2 py-1.5">
@@ -264,11 +257,11 @@ export function ShareFlow({ ws, ticket, resume, onClose }: { ws: string; ticket:
                 </li>
               ))}
             </ul>
-            <p className="text-[12px] text-text-muted">
-              {s.files.length} file{s.files.length === 1 ? '' : 's'}, {fmtSize(sum)} in all.
-            </p>
-            <Where server={server} share={share} />
+            {note && <p className="text-[12px] text-text-muted">{note}</p>}
+            <p role="note" className="text-[12px] text-warning">Anyone with the link can read these files. A copy cannot be taken back.</p>
             <InfoDrawer>
+              {server && <p className="break-all font-mono">Files are sent to {server}</p>}
+              {share && <p className="break-all font-mono">The link opens at {share}</p>}
               <p className="mt-1 break-all font-mono">Prepared copy {s.staged_id}</p>
               {s.files.map((f) => (
                 <p key={f.name} className="break-all font-mono">
@@ -277,35 +270,15 @@ export function ShareFlow({ ws, ticket, resume, onClose }: { ws: string; ticket:
               ))}
             </InfoDrawer>
           </div>
-          <DialogFooter>
-            <Button
-              variant="ghost"
-              onClick={() => {
-                discard(s)
-                onClose()
-              }}
-            >
-              Cancel
-            </Button>
-            <Button onClick={() => setStage({ at: 'sign', staged: s })}>Continue to approval</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    )
-  }
-
-  // ---- sign: the existing signing flow, one review
-  if (stage.at === 'sign') {
-    const s = stage.staged
-    return (
-      <SignPopover
-        title={`Share files of ${s.ticket ?? ticket.key}`}
-        ws={ws}
-        action={{ action: 'publish_share', key: s.ticket ?? ticket.key, staged_id: s.staged_id }}
-        onSettled={(phase, _state, _request) => {
-          if (phase === 'done') void send(s)
+        }
+        onSettled={(phase) => {
+          if (phase === 'done') {
+            signed.current = true
+            void send(s)
+          }
         }}
         onClose={() => {
+          if (signed.current) return
           discard(s)
           onClose()
         }}

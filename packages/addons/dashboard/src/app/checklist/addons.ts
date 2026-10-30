@@ -931,7 +931,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
         id: 'S16',
         title: 'Share files wording',
         text: 'On a ticket choose "Share files" and go through it. After approving, look at the link window and press Copy.',
-        see: 'Steps read "Review selected files", "Review your share", "Continue to approval", and "Files are uploaded only after you approve." The link window has no corner X, only "I\'ve saved the link — close"; Copy shows "Link copied to the clipboard."',
+        see: 'Steps read "Review selected files", then one sheet "Share files of …" with the files and "Share files"; the files are uploaded only after you approve. The link window has no corner X, only "I\'ve saved the link — close"; Copy shows "Link copied to the clipboard."',
       },
       {
         id: 'S17',

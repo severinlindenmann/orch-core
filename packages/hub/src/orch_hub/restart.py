@@ -54,4 +54,4 @@ def exec_self(argv: Sequence[str] | None = None) -> None:
         except OSError, ValueError:
             pass
     close_descriptors()
-    os.execv(sys.executable, [sys.executable, *args[1:]])
+    os.execv(sys.executable, [sys.executable, "-P", *args[1:]])  # -P: the current directory is never imported

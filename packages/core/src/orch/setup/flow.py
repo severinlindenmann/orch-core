@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from orch import childenv
+
 from . import claude_folder
 from . import facts as facts_mod
 from . import review as review_mod
@@ -601,7 +603,7 @@ def _open_browser(environ: Mapping[str, str], err: Any, launch: dict[str, Any], 
         try:
             res = subprocess.run(
                 [*cmd, "open", "/setup", "--emit-url-fd", str(write_fd), *(["--no-browser"] if no_browser else [])],
-                env=dict(environ),
+                env=childenv.sanitize(environ, absolute_pythonpath=True),
                 stdin=subprocess.DEVNULL,
                 capture_output=True,
                 timeout=60,

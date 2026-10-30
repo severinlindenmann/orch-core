@@ -926,6 +926,7 @@ def test_a_crash_between_the_two_renames_is_recovered_on_the_next_run(root, env,
     b = swap_setup(root, env)
     aside = root.with_name(".root.replaced-dead")
     os.rename(root, aside)  # the state a crash between the renames leaves
+    jr.write_journal("installed", env, restoring=str(root), restore_aside=str(aside))
     bk.restore(b, root, env)
     assert (root / "events/a.jsonl").read_text() == "e1\n" and not aside.exists()
 
@@ -1029,7 +1030,7 @@ def test_a_killed_restore_never_loses_carried_folders(root, env):
     stg = root.with_name(".root.restore-dead")  # what a restore killed after the carry loop leaves
     (stg / "install").mkdir(parents=True)
     os.rename(root / "install/parts", stg / "install/parts")
-    jr.write_journal("installed", env, backups={str(b.resolve()): 1}, restoring=str(root))
+    jr.write_journal("installed", env, backups={str(b.resolve()): 1}, restoring=str(root), restore_staging=str(stg))
     bk.restore(b, root, env)
     assert key.read_text() == "K" and not stg.exists()
 
@@ -1109,3 +1110,41 @@ def test_a_marker_of_an_earlier_update_does_not_pass_the_next(root, env):
     assert jr.read_journal(env)["update_id"] != old_id
     marker(env, old_id)
     assert code_of(open_root, root, "workspace", env, quarantine_ok=True) == "update.interrupted"
+
+
+def test_a_planted_scratch_folder_is_deleted_not_imported(root, env):
+    b = swap_setup(root, env)
+    planted = root.with_name(".root.restore-x")
+    (planted / "install/tools/evil").mkdir(parents=True)
+    (planted / "install/tools/evil/bin").write_text("evil")
+    bk.restore(b, root, env)
+    assert not planted.exists() and not (root / "install/tools/evil").exists()
+    assert (root / "install/tools/orch-1/bin").read_text() == "tool"
+
+
+def test_a_planted_replaced_folder_is_not_swapped_in(root, env):
+    b = swap_setup(root, env)
+    os.rename(root, tmp := root.with_name("moved"))
+    planted = root.with_name(".root.replaced-x")
+    planted.mkdir()
+    (planted / "format.json").write_text("{}")
+    root.mkdir()  # a root exists again but we will see the planted one is only deleted
+    os.rmdir(root)
+    os.rename(tmp, root)
+    bk.restore(b, root, env)
+    assert not planted.exists() and read_format(root, "workspace") == 1
+
+
+@pytest.mark.parametrize("kind", ["group_writable", "symlink"])
+def test_a_recorded_staging_folder_that_is_not_ours_is_refused(root, env, tmp_path, kind):
+    b = swap_setup(root, env)
+    stg = root.with_name(".root.restore-rec")
+    if kind == "symlink":
+        (tmp_path / "elsewhere").mkdir()
+        stg.symlink_to(tmp_path / "elsewhere")
+    else:
+        stg.mkdir()
+        os.chmod(stg, 0o770)
+    jr.write_journal("installed", env, backups={str(b.resolve()): 1}, restoring=str(root), restore_staging=str(stg))
+    assert code_of(bk.restore, b, root, env) == "migrate.backup_refused"
+    assert stg.exists() or stg.is_symlink()

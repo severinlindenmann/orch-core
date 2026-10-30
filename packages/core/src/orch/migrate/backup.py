@@ -321,22 +321,54 @@ def _put_back(staging: Path, root: Path) -> None:
             os.rename(staging / rel, root / rel)
 
 
-def _recover(root: Path) -> None:
-    """Under the locks. A crash between the two renames of a swap leaves no root but a ``.replaced-`` folder: put it
-    back. A ``.restore-`` folder of a killed restore may hold the ONLY copy of the carried folders: they are moved back
-    into the root first, and the folder is deleted only then (never while the root is missing)."""
+def _trusted(p: Path) -> bool:
+    """Ours, not a link, not writable by group or others (checked with lstat: nothing is followed)."""
+    try:
+        st = os.lstat(p)
+    except OSError:
+        return False
+    return stat.S_ISDIR(st.st_mode) and st.st_uid == os.getuid() and not st.st_mode & 0o022
+
+
+def _remove(p: Path) -> None:
+    """Delete one scratch entry by its exact path; a link is unlinked, never followed."""
+    if p.is_symlink() or not p.is_dir():
+        try:
+            p.unlink()
+        except OSError:
+            pass
+    else:
+        shutil.rmtree(p, ignore_errors=True)
+
+
+def _recover(root: Path, env: Mapping[str, str] | None = None) -> None:
+    """Under the locks. Acts ONLY on the staging and replaced paths the journal recorded for the interrupted restore
+    (each checked with lstat: ours, not a link, not group/world writable; otherwise refused). A recorded ``.replaced-``
+    folder with no root is put back. A recorded ``.restore-`` folder may hold the ONLY copy of the carried folders: they
+    go back into the root first, and it is deleted only then (never while the root is missing). Any other scratch folder
+    with these names is planted or stale: it is deleted by exact path, never imported."""
+    from .journal import read_journal
+
+    try:
+        doc = read_journal(env) or {}
+    except OrchError:
+        doc = {}
+    staging_rec, aside_rec = doc.get("restore_staging"), doc.get("restore_aside")
     scratch = _scratch_dirs(root) if root.parent.is_dir() else []
-    if not root.exists():
-        replaced = sorted(p for p in scratch if f".{root.name}.replaced-" in p.name)
-        if replaced:
-            os.rename(replaced[-1], root)
-            scratch.remove(replaced[-1])
     for p in scratch:
-        if f".{root.name}.restore-" in p.name:
+        if str(p) not in (staging_rec, aside_rec):
+            continue
+        if not _trusted(p):
+            raise OrchError("migrate.backup_refused", f"{p.name} is not a folder of ours; it is not used")
+    if not root.exists() and aside_rec and any(str(p) == aside_rec for p in scratch):
+        os.rename(aside_rec, root)
+        scratch = [p for p in scratch if str(p) != aside_rec]
+    for p in scratch:
+        if str(p) == staging_rec:
             if not root.exists():
                 continue  # nothing to put the carried entries into: keep it
             _put_back(p, root)
-        shutil.rmtree(p, ignore_errors=True)
+        _remove(p)
 
 
 def _restore_lock_fd(root: Path, env: Mapping[str, str] | None) -> int:
@@ -393,7 +425,7 @@ def restore(
     try:
         if root.exists():  # the root lock first: a refused invocation must not touch the first run's leftovers
             fd = lock_root(root, exclusive=True) if lock_fd is None else lock_fd
-        _recover(root)  # only under the locks (a missing root = a half-done swap, only the sidecar lock exists)
+        _recover(root, env)  # only under the locks (a missing root = a half-done swap, only the sidecar lock exists)
         if fd < 0:
             fd = lock_root(root, exclusive=True) if lock_fd is None else lock_fd
     except BaseException:
@@ -408,7 +440,11 @@ def restore(
     old = os.umask(0o077)
     try:
         write_journal(
-            (read_journal(env) or {"phase": "stopped"})["phase"], env, restoring=str(root)
+            (read_journal(env) or {"phase": "stopped"})["phase"],
+            env,
+            restoring=str(root),
+            restore_staging=str(staging),
+            restore_aside=str(aside),
         )  # an unfinished journal from here on: a crash never reopens the root
         saved, current = _revocation_files(src), _revocation_files(root)
         shutil.copytree(src, staging, symlinks=True)
@@ -444,7 +480,7 @@ def restore(
             if created:
                 clear_journal(env)
             else:
-                write_journal(doc["phase"], env, restoring=None)
+                write_journal(doc["phase"], env, restoring=None, restore_staging=None, restore_aside=None)
     finally:
         os.umask(old)
         if staging.exists() and root.exists():  # never delete staging while the root is missing: it may hold data

@@ -21,7 +21,7 @@ export function stateOf(svc) {
 
 /** The banner above the list. Never green while a service that is set up does not answer. */
 export function summary(data) {
-  const bad = ["hub", "relay", "publish"].filter((n) => data[n] && data[n].state === "down").map((n) => NAME[n]);
+  const bad = ["hub", "relay", "publish", "edge"].filter((n) => data[n] && data[n].state === "down").map((n) => NAME[n]);
   if (bad.length) return { kind: "warn", text: bad.length === 1 ? bad[0] + " is not answering" : bad.join(" and ") + " are not answering" };
   const off = ["relay", "publish"].filter((n) => data[n].state === "not_set_up").map((n) => NAME[n]);
   return { kind: "", text: off.length ? "Everything that is set up is working. " + off.join(" and ") + (off.length === 1 ? " is" : " are") + " not set up." : "All services are working" };
@@ -31,9 +31,12 @@ function detail(name, svc, now) {
   const bits = [];
   if (name === "hub") bits.push(ago(svc.started_ms, now) === "just now" ? "Just started" : "Running for " + ago(svc.started_ms, now).replace(" ago", ""));
   else if (svc.state === "not_set_up") bits.push("Not set up on this hub");
+  else if (name === "edge" && svc.state === "up" && !svc.checked_ms) bits.push("Hub runs behind it");
   else if (svc.state === "up") bits.push("Answered " + ago(svc.checked_ms ?? now, now));
   else bits.push(svc.last_ok_ms ? "Last answered " + ago(svc.last_ok_ms, now) : "Has not answered yet");
-  if (svc.url) bits.push(text(svc.url));
+  const addr = svc.url || (name === "hub" ? globalThis.location?.origin : null);
+  if (addr) bits.push("Address " + text(addr));
+  else if (svc.state !== "not_set_up") bits.push("No address");
   return bits.join(" · ");
 }
 
@@ -97,7 +100,7 @@ export function servicesView(data, actions, now = Date.now()) {
       h("div", { class: "svc-main" },
         h("h3", {}, dot(st.dot), NAME[name]),
         h("p", { class: "small muted", text: WHAT[name] }),
-        h("p", { class: "small muted", text: name === "edge" ? text(svc.url) : detail(name, svc, now) })),
+        h("p", { class: "small muted", text: detail(name, svc, now) })),
       h("div", { class: "svc-side" },
         chip(st.label, st.kind),
         name !== "edge" ? h("span", { class: "small muted", text: svc.version ? "Version " + text(svc.version) : "Version -" }) : null,

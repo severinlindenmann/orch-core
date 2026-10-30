@@ -66,10 +66,31 @@ def test_tag_protection_and_immutable_releases_are_marked_required():
 
 
 def test_constraints_are_resolved_with_an_age_cutoff_and_the_residual_is_documented():
-    assert '--exclude-newer "$cutoff"' in DRAFT and "- 7 days" in DRAFT
+    assert '--exclude-newer "$cutoff"' in DRAFT and "cdate - 7*86400" in DRAFT
     assert "Pilot residual (constraints)" in DRAFT
 
 
 def test_seq_is_run_number_plus_offset_and_the_pointer_guard_fails_closed():
     assert "RUN_NUMBER + SEQ_OFFSET" in DRAFT and "RELEASE_SEQ_OFFSET" in DRAFT
     assert "scripts/release/channel_seq.py" in DRAFT and "REFUSES to move the pointer" in DRAFT
+
+
+def test_publish_and_refresh_checkouts_fetch_the_full_history_for_the_tag_list():
+    for job in ("publish", "refresh"):
+        text = DRAFT.split(f"\n  {job}:\n", 1)[1].split("\n  refresh:\n" if job == "publish" else "\0", 1)[0]
+        checkout = text.split("actions/checkout@", 1)[1].split("- uses: astral-sh", 1)[0]
+        assert "fetch-depth: 0" in checkout, job
+
+
+def test_seq_offset_is_validated_before_the_shell_arithmetic():
+    i_check = DRAFT.index('[[ "$SEQ_OFFSET" =~ ^[0-9]{1,9}$ ]]')
+    assert i_check < DRAFT.index("seq=$((RUN_NUMBER + SEQ_OFFSET))")
+
+
+def test_version_and_seq_of_a_test_candidate_derive_from_the_same_number():
+    assert 'version="${base}.dev${seq}"' in DRAFT and "RUN_NUMBER}" not in DRAFT.replace("${RUN_NUMBER + ", "")
+    assert "dev${RUN_NUMBER}" not in DRAFT
+
+
+def test_the_dependency_cutoff_is_min_of_commit_date_and_now():
+    assert '[ "$cdate" -le "$now" ] || cdate=$now' in DRAFT and "cdate - 7*86400" in DRAFT

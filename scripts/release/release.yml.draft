@@ -120,6 +120,8 @@ jobs:
           KEY_ID_TEST: ${{ vars.RELEASE_TEST_KEY_ID }}
         run: |
           set -euo pipefail
+          [[ "$SEQ_OFFSET" =~ ^[0-9]{1,9}$ ]] || { echo "::error::RELEASE_SEQ_OFFSET must be 1 to 9 digits"; exit 1; }
+          seq=$((RUN_NUMBER + SEQ_OFFSET))
           test=false
           mode=release
           base=$(python3 -I -c 'import tomllib; print(tomllib.load(open("packages/core/pyproject.toml","rb"))["project"]["version"])')
@@ -128,7 +130,7 @@ jobs:
           case "$EVENT" in
             push) channel=main; version="$base" ;;
             workflow_dispatch)
-              channel="$INPUT_CHANNEL"; test=true; version="${base}.dev${RUN_NUMBER}"
+              channel="$INPUT_CHANNEL"; test=true; version="${base}.dev${seq}"  # version and seq come from the same number
               [[ "$channel" =~ ^test-[a-z0-9][a-z0-9-]{0,30}$ ]] || { echo "::error::the channel must look like test-name"; exit 1; } ;;
             schedule) channel=main; mode=refresh; version="" ;;
             *) echo "::error::unexpected event"; exit 1 ;;
@@ -144,7 +146,7 @@ jobs:
             echo "mode=$mode"
             echo "channel=$channel"
             echo "version=$version"
-            echo "seq=$((RUN_NUMBER + SEQ_OFFSET))"
+            echo "seq=${seq}"
             echo "sha=${SHA}"
             echo "test=$test"
             echo "key_id=$key_id"
@@ -257,7 +259,11 @@ jobs:
           # are in the manifest). constraints.py refuses an unhashed or unpinned line and normalizes the file.
           ls dist/orch_*-"${VERSION}"-py3-none-any.whl | sed 's#^#./#' > wheels.in
           # nothing newer than a week before the commit: a freshly published (possibly hijacked) upload cannot enter
-          cutoff=$(date -u -d "$(git show -s --format=%cI "$SHA") - 7 days" +%Y-%m-%dT%H:%M:%SZ)
+          # (the committer date can be set into the future, so take the earlier of it and now)
+          cdate=$(date -u -d "$(git show -s --format=%cI "$SHA")" +%s)
+          now=$(date -u +%s)
+          [ "$cdate" -le "$now" ] || cdate=$now
+          cutoff=$(date -u -d "@$((cdate - 7*86400))" +%Y-%m-%dT%H:%M:%SZ)
           uv pip compile wheels.in --generate-hashes --universal --python-version 3.14 --quiet --no-header \
             --exclude-newer "$cutoff" \
             --no-emit-package orch-core --no-emit-package orch-dashboard --no-emit-package orch-hub \

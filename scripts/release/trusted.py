@@ -191,7 +191,9 @@ def _trusted_current(channel, revocations, verify, now, get_pointer, get_release
         if rdoc["seq"] > best["seq"]:
             best_tag, best = t, rdoc
     if best_tag != tag or best["seq"] != doc["seq"]:
-        raise Refused(f"channel pointer is {tag} (seq {doc['seq']}) but the highest verified release is {best_tag}: rollback?")
+        raise Refused(
+            f"channel pointer is {tag} (seq {doc['seq']}) but the highest verified release is {best_tag}: rollback?"
+        )
     if not _same_but_times(best, doc):
         raise Refused(f"{tag}: the release and the channel pointer disagree")
     return Trusted(doc=best, tag=best_tag)

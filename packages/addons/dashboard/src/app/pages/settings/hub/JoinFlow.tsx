@@ -12,7 +12,7 @@ import type { HubLinkInfo } from '@/api/hub'
 import { newIdem } from '@/api/runs'
 import { Raw } from '@/components/sign/visible'
 import { HubStep } from '../host/HubStep'
-import { Action, Flow, NoOneClick, caveat, useHubRefresh, useOneClick, violet } from './shared'
+import { Action, Flow, NoOneClick, caveat, useHubRefresh, useOneClick } from './shared'
 import { ModeChoice } from './ModeChoice'
 
 export const LINK = /^https?:\/\/\S+\/c#h1\.[0-9a-f]{32}\.[A-Za-z0-9_-]{1,64}(\.[^\s~]+)?(~[0-9a-f]{32})?$/
@@ -42,21 +42,40 @@ export function JoinFlow({ ws, onClose, initialLink }: { ws: string; onClose: ()
   const [problem, setProblem] = useState('')
   const [signed, setSigned] = useState(false)
   const [mode, setMode] = useState<'selective' | 'full'>('selective')
-  const [choosing, setChoosing] = useState(false)
   const [noCopied, setNoCopied] = useState(false)
   const link = text.trim()
+  const textRef = useRef(text)
+  textRef.current = text
   const [detailsOpen, setDetailsOpen] = useState(false)
   const valid = LINK.test(link)
   // P12: the clipboard is read only on this click (a user gesture), checked with LINK, and only fills the field and starts
   // the lookup. Nothing is signed: the person still reads the hub and presses Connect.
   const canRead = typeof navigator !== 'undefined' && typeof navigator.clipboard?.readText === 'function'
-  const useCopied = async () => {
+  // `auto`: no click was made (permission was already granted): the link only fills the field and names its host; the lookup
+  // (an outbound call) waits for "Look up this hub", exactly like a link that came in the address.
+  const useCopied = async (auto = false) => {
     setNoCopied(false)
     try {
       const got = ((await navigator.clipboard.readText()) ?? '').trim()
-      if (LINK.test(got)) { setText(got); setArmed(true) } else setNoCopied(true)
-    } catch { setNoCopied(true) }
+      if (auto && textRef.current.trim()) return // the person typed or pasted meanwhile: never replace it
+      if (LINK.test(got)) { setText(got); setArmed(!auto) } else if (!auto) setNoCopied(true)
+    } catch { if (!auto) setNoCopied(true) }
   }
+
+  // Run 15 P04: when the browser already lets this page read the clipboard, a copied connect link is picked up at once (same
+  // LINK check, same lookup as the button; nothing is signed). Otherwise the button is the one big step. A link that came in
+  // the address is never replaced.
+  useEffect(() => {
+    if (initialLink || !canRead) return
+    let alive = true
+    const perms = typeof navigator !== 'undefined' ? navigator.permissions : undefined
+    if (!perms?.query) return
+    perms.query({ name: 'clipboard-read' as PermissionName }).then(
+      st => { if (alive && st.state === 'granted') void useCopied(true) },
+      () => {},
+    )
+    return () => { alive = false }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // The hub is looked up as soon as the pasted text is a link: nothing to click before the hub is shown.
   useEffect(() => {
@@ -76,26 +95,29 @@ export function JoinFlow({ ws, onClose, initialLink }: { ws: string; onClose: ()
   if (signed && info) return <Flow title="Connect a hub" onClose={leave} finish="here"><ConnectStage ws={ws} info={info} mode={mode} onClose={leave} /></Flow>
 
   return <Flow title="Connect a hub" onClose={onClose} finish="here">
-    {!failed && <div className="space-y-1">
-      <label htmlFor="hub-link-text" className="sr-only">Connect link</label>
-      <p id="hub-link-hint" className="text-sm text-text-muted">Paste the connect link from your hub admin.</p>
-      {canRead && !valid && <Action id="hub-link-use-copied" onClick={() => { void useCopied() }}>Use copied link</Action>}
+    {!failed && <div className="space-y-2">
+      {canRead && !valid && <Action id="hub-link-use-copied" variant="default" onClick={() => { void useCopied() }}>Use copied link</Action>}
       {noCopied && <p role="status" data-testid="hub-link-nocopied" className="text-sm text-text-muted">There is no connect link copied yet.</p>}
-      <input id="hub-link-text" data-testid="hub-link-text" autoFocus value={text} onChange={e => { setText(e.target.value); setArmed(true) }} autoComplete="off" spellCheck={false} aria-describedby="hub-link-hint"
-        className="min-h-11 w-full rounded-md border border-border bg-bg px-3 font-mono text-xs" />
+      {info && valid && <p role="status" data-testid="hub-link-found" className="font-medium text-success">Link found. Hub at <Raw>{hubAt}</Raw></p>}
+      <details className="text-sm" data-testid="hub-link-paste" open={!canRead || undefined}>
+        <summary className="cursor-pointer text-text-muted">{canRead ? 'Paste a different link' : 'Paste the connect link from your hub admin'}</summary>
+        <div className="mt-1 space-y-1">
+          <label htmlFor="hub-link-text" className="sr-only">Connect link</label>
+          <p id="hub-link-hint" className="text-sm text-text-muted">Paste the connect link from your hub admin.</p>
+          <input id="hub-link-text" data-testid="hub-link-text" autoFocus={!canRead} value={text} onChange={e => { setText(e.target.value); setArmed(true) }} autoComplete="off" spellCheck={false} aria-describedby="hub-link-hint"
+            className="min-h-11 w-full rounded-md border border-border bg-bg px-3 font-mono text-xs" />
+        </div>
+      </details>
     </div>}
     {link && !valid && <p role="alert" data-testid="hub-link-bad" className="text-danger">This does not look like a connect link. Paste all of it, from https:// to the end.</p>}
-    {valid && !armed && <div className="space-y-1"><p data-testid="hub-link-from">This link points to <Raw>{link.replace(/^(https?:\/\/[^/]+).*$/, '$1')}</Raw></p><Action id="hub-link-lookup" onClick={() => setArmed(true)}>Look up this hub</Action></div>}
+    {valid && !armed && <div className="space-y-1"><p data-testid="hub-link-from">Link found. This link points to <Raw>{link.replace(/^(https?:\/\/[^/]+).*$/, '$1')}</Raw></p><Action id="hub-link-lookup" onClick={() => setArmed(true)}>Look up this hub</Action></div>}
     {looking && <p role="status" data-testid="hub-link-looking">Looking up the hub…</p>}
     {problem && <p role="alert" data-testid="hub-link-problem" className="text-danger">{problem}</p>}
     {info && <>
       {!failed && <><div className="space-y-2 rounded-md border border-border p-3" data-testid="hub-link-hub">
         <p className="font-bold">Connect to the hub at <Raw>{hubAt}</Raw>?</p>
-        {choosing && !signed
-          ? <ModeChoice mode={mode} onChange={setMode} />
-          : <div className={'rounded-md border p-2 ' + violet} data-testid="hub-mode-box">
-            <p className="text-sm">{mode === 'full' ? 'The hub can read every ticket and file.' : 'The hub sees the tickets you pick, notes that need you, and this workspace\'s name.'}{!signed && <> <button type="button" data-testid="hub-mode-other" className="underline" onClick={() => setChoosing(true)}>Change</button></>}</p>
-          </div>}
+        <ModeChoice mode={mode} onChange={setMode} />
+        {mode === 'selective' && <p className="text-[13px] text-text-muted" data-testid="hub-link-later">Leaving later does not take back what the hub already read.</p>}
         <details className="text-sm text-text-muted" data-testid="hub-link-details" onToggle={e => setDetailsOpen(e.currentTarget.open)}>
           <summary className="cursor-pointer">Details</summary>
           {detailsOpen && <>

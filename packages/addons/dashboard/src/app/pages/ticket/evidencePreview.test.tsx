@@ -220,3 +220,17 @@ describe('reformatted JSON is bounded', () => {
     expect(out.replace(/\n */g, '').replace(/": /g, '":')).toBe(prose(src))
   })
 })
+
+describe('run 15c P10: an empty file is said to be empty, never a blank box', () => {
+  it('an empty file reads "This file is empty" with no empty <pre>, the hash behind Details', async () => {
+    const { container } = show('notes.txt', { bytes: enc(''), text: '' })
+    expect(await screen.findByText('This file is empty.')).toBeInTheDocument()
+    expect(container.querySelector('pre')).toBeNull()
+    expect(within(screen.getByTestId('no-preview-card')).getByText('Details')).toBeInTheDocument()
+  })
+  it('a file named like a receipt is still just an empty file', async () => {
+    show('T1-receipt.log', { bytes: enc(''), text: '' })
+    expect(await screen.findByText('This file is empty.')).toBeInTheDocument()
+    expect(screen.queryByText(/Check passed/)).toBeNull()
+  })
+})

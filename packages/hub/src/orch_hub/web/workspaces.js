@@ -1,6 +1,7 @@
 import { emptyState, toast } from "./feel.js";
 // Connected workspaces and their availability.
 import { restoredNotice } from "./pages/hub-settings.js";
+import { serverGuideView } from "./serverguide.js";
 import { ago, chip, h, text } from "./ui.js";
 
 const nameOf = (end) => (end && end.name ? text(end.name) : end && end.owner_name ? text(end.owner_name + "'s workspace") : "Another workspace");
@@ -225,20 +226,28 @@ export function workspacesView(data, now = Date.now()) {
   const connectBox = h("div");
   const joined = data.joined ?? [];
   for (const row of joined) connectBox.append(joinedBannerView(row, actions));
+  // The node with the connect link (or the person picker); the link is made here, only when a button asks for it.
+  const connectNode = async () => {
+    const people = (await actions.people?.()) ?? [];
+    // With several people nothing is preselected and no link exists until one is chosen; alone, the admin is the person.
+    const mine = people.length > 1 ? null : people.find((x) => x.user_id === data.self)?.user_id ?? people[0]?.user_id ?? null;
+    const first = people.length > 1 ? null : await actions.connect(mine);
+    return connectWorkspaceView(first, actions, { people, selected: mine, self: data.self });
+  };
   const connect = button("Connect a workspace", async () => {
     if (data.needsSignIn) return actions.signInToConnect?.(); // a session that came from a workspace: sign in once first
     connect.disabled = true;
     connectBox.textContent = "";
-    try {
-      const people = (await actions.people?.()) ?? [];
-      // With several people nothing is preselected and no link exists until one is chosen; alone, the admin is the person.
-      const mine = people.length > 1 ? null : people.find((x) => x.user_id === data.self)?.user_id ?? people[0]?.user_id ?? null;
-      const first = people.length > 1 ? null : await actions.connect(mine);
-      connectBox.append(connectWorkspaceView(first, actions, { people, selected: mine, self: data.self }));
-    }
+    try { connectBox.append(await connectNode()); }
     catch { connectBox.append(h("p", { role: "alert", text: "Could not create a link. Please try again." })); }
     finally { connect.disabled = false; }
   }, { class: "pri" });
+  // HUB-WS-07: a guide only (no request when it opens); the installer line stays hidden until the installer is published.
+  const guide = button("New workspace on a server", () => {
+    connectBox.textContent = "";
+    connectBox.append(serverGuideView(actions, { installerUrl: data.installerUrl, installerVerified: data.installerVerified,
+      connectView: connectNode, needsSignIn: data.needsSignIn, signInToConnect: actions.signInToConnect }));
+  });
   const waitingFor = new Map();
   for (const r of data.handoffs) if (r.status === "waiting" && r.to.workspace_id) waitingFor.set(r.to.workspace_id, (waitingFor.get(r.to.workspace_id) ?? 0) + 1);
   const shown = [...data.workspaces, ...privateRows(data.workspaces, data.admin)];
@@ -292,7 +301,7 @@ export function workspacesView(data, now = Date.now()) {
   }
   return [
     data.restored ? restoredNotice(data.restored, actions) : null,
-    h("div", { class: "row" }, h("h1", { class: "grow", text: "Workspaces" }), data.admin != null || data.canConnect ? connect : null),
+    h("div", { class: "row" }, h("h1", { class: "grow", text: "Workspaces" }), data.admin != null || data.canConnect ? [guide, connect] : null),
     connectBox,
     older.length ? h("div", { class: "banner warn" }, h("b", { text: older.length === 1 ? "1 workspace runs an older orch" : older.length + " workspaces run an older orch" }),
       small(older.map(nameOf).join(", ")), data.hub?.min_supported ? small("The hub still works with " + text(data.hub.min_supported) + " and newer.") : null,

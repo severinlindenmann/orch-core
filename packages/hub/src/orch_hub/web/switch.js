@@ -85,3 +85,10 @@ export function openTarget(path) {
   const m = /^\/open\/([0-9a-f]{32})$/.exec(typeof path === "string" ? path : "");
   return m ? m[1] : null;
 }
+
+/** The in-page state shown at once when the person opens a workspace, before the ticket is asked for and the browser leaves
+ * (same dark page as the hub and the dashboard, so no white frame in between). Words only; the caller renders them. */
+export function openingState(name) {
+  const n = typeof name === "string" && name.trim() ? name.trim() : "your workspace";
+  return { title: "Opening " + n + "\u2026", note: "Just a moment." };
+}

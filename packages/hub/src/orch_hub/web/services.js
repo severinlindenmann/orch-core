@@ -37,6 +37,22 @@ function detail(name, svc, now) {
   return bits.join(" · ");
 }
 
+/** Start / Stop / Restart buttons when the helper runs on this machine and manages the part; else null. */
+function controls(name, data, actions) {
+  const helper = data.helper;
+  if (!actions.service || helper?.state !== "up" || !(helper.parts ?? []).some((p) => p.name === name)) return null;
+  const off = !!helper.hub_busy;
+  const b = (verb, cls = "") => h("button", { class: cls, type: "button", disabled: off, "data-svc": name + "|" + verb, text: verb === "start" ? "Start" : verb === "stop" ? "Stop" : "Restart", onclick: () => actions.service(name, verb) });
+  const down = data[name]?.state === "down";
+  return h("div", { class: "svc-ctl row" }, down ? b("start", "pri") : null, b("restart"), b("stop"), actions.logs ? h("button", { type: "button", "data-logs": name, text: "Logs", onclick: () => actions.logs(name) }) : null);
+}
+
+function helperNote(data) {
+  const st = data.helper?.state;
+  if (st === "down") return h("p", { class: "small muted", id: "helper-note", text: "The service helper is not running, so the buttons are off. Ask your IT person to start it on the server: orch-hub helper." });
+  return null;
+}
+
 function restart(name, copy) {
   const where = name === "hub" ? "on this server" : "on the computer that hosts " + NAME[name];
   const cmd = COMMAND[name];
@@ -71,7 +87,7 @@ function connections(data) {
       h("ul", { class: "flow-column", "aria-label": "Connected services" }, ["relay", "publish", "edge"].map(serviceNode))));
 }
 
-/** data: GET /admin/services. actions: {check, open, copy}. */
+/** data: GET /admin/services. actions: {check, open, copy, service(name, verb), logs(name)}. */
 export function servicesView(data, actions, now = Date.now()) {
   if (!["hub", "relay", "publish"].some((name) => data[name])) return [h("h1", { text: "Services" }), emptyState("services")];
   const sum = summary(data);
@@ -86,17 +102,19 @@ export function servicesView(data, actions, now = Date.now()) {
         chip(st.label, st.kind),
         name !== "edge" ? h("span", { class: "small muted", text: svc.version ? "Version " + text(svc.version) : "Version -" }) : null,
         ["relay", "publish"].includes(name) ? h("button", { class: svc.state === "down" ? "pri" : "", text: "Check now", onclick: () => actions.check() }) : null),
-      name !== "edge" ? restart(name, actions.copy) : null);
+      name !== "edge" ? controls(name, data, actions) : null,
+      name !== "edge" && !controls(name, data, actions) ? restart(name, actions.copy) : null);
   });
   const ws = data.workspaces ?? { count: 0, online: 0 };
   return [
     h("h1", { text: "Services" }),
     h("div", { class: "overall " + sum.kind, id: "services-summary", role: "status" }, dot(sum.kind ? "warn" : "up"), sum.text),
     h("p", { class: "muted", text: "Workspaces connect to this hub. The hub sends phone alerts through Relay and outside pages through Publish." }),
+    helperNote(data),
     connections(data),
     h("section", { class: "card svc-list", "aria-label": "Services" }, rows),
     h("section", { class: "card row" },
       h("div", { class: "grow" }, h("h3", { text: "Workspaces" }), h("p", { class: "small muted", id: "services-ws", text: ws.count + (ws.count === 1 ? " workspace" : " workspaces") + ", " + ws.online + " online" })),
       h("button", { text: "See workspaces and hand-offs", onclick: () => actions.open() })),
-  ];
+  ].filter(Boolean);
 }

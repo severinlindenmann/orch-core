@@ -531,7 +531,7 @@ class TermSocket:
 
     def __init__(self, websocket: WebSocket, gateway: Gateway, auth, tickets: Tickets, streams):
         self.websocket, self.gateway, self.auth, self.tickets, self.streams = websocket, gateway, auth, tickets, streams
-        in_stream = websocket.scope.get("orch_listener", LOOPBACK) == REMOTE_DEVICE
+        in_stream = getattr(websocket, "scope", {}).get("orch_listener", LOOPBACK) == REMOTE_DEVICE
         self.idle_s = STREAM_IDLE_S if in_stream else None
         self.intent: Intent | None = None
         self.link: HostLink | None = None

@@ -635,11 +635,11 @@ def _check_manifest_api_1_1(obj: dict[str, Any]) -> None:
 def _check_manifest_events(obj: dict[str, Any]) -> None:
     """addon-api 1.2: ``events`` needs an api range that excludes 1.0 and 1.1, the ``network`` capability, unique kinds
     and clean titles."""
-    events = obj.get("events")
+    from orch.addons.manifest import EVENTS_KEY, _api_in_range
+
+    events = obj.get(EVENTS_KEY)
     if events is None:
         return
-    from orch.addons.manifest import _api_in_range
-
     api = obj.get("api", ">=1.0,<2")
     if _api_in_range((1, 1), api) is not False:
         raise SchemaError("addon-manifest", "/api", "events needs add-on API 1.2: set api to a range that excludes 1.1")
@@ -649,11 +649,11 @@ def _check_manifest_events(obj: dict[str, Any]) -> None:
     for i, ev in enumerate(events):
         if ev["kind"] in seen:
             raise SchemaError(
-                "addon-manifest", _pointer(["events", i, "kind"]), f"event {ev['kind']!r} is declared twice"
+                "addon-manifest", _pointer([EVENTS_KEY, i, "kind"]), f"event {ev['kind']!r} is declared twice"
             )
         seen.add(ev["kind"])
         if suspicious(ev["title"]) or not ev["title"].isprintable() or ev["title"] != ev["title"].strip():
-            raise SchemaError("addon-manifest", _pointer(["events", i, "title"]), "a title is plain printable text")
+            raise SchemaError("addon-manifest", _pointer([EVENTS_KEY, i, "title"]), "a title is plain printable text")
 
 
 _AGENTS_LINE = re.compile(r"(?![0-9]+[.)] )[A-Za-z0-9][\x20-\x7e]{0,199}(?![\s\S])")

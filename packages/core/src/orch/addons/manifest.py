@@ -16,6 +16,7 @@ from orch.addons.package import MANIFEST_FILE, Package, PackageError, check_path
 
 __all__ = [
     "ADDON_API",
+    "EVENTS_KEY",
     "CAPABILITIES",
     "LEGACY_API",
     "Manifest",
@@ -28,6 +29,8 @@ __all__ = [
 ]
 
 ADDON_API = "1.2"  # the add-on API this core implements, major.minor (docs/architecture/addon-api.md)
+#: the manifest key and the ``addon.granted`` key of the declared wake events (one literal: the layout lint counts them)
+EVENTS_KEY = "events"
 LEGACY_API = ">=1.0,<2"  # what an orch.addon/2 manifest (no api key) is read as
 
 # the closed list (§11.4; addon-api 1.1 adds choose_model and credential; credential needs network)
@@ -102,7 +105,7 @@ class Manifest:
     @property
     def events(self) -> list[dict[str, Any]]:
         """The wake events the add-on can report (addon-api 1.2), as written."""
-        return self.doc.get("events", [])
+        return self.doc.get(EVENTS_KEY, [])
 
     @property
     def agents_md(self) -> str:
@@ -182,7 +185,7 @@ def declarations(m: Manifest) -> dict[str, Any]:
         "artifact_kinds": sorted(k["kind"] for k in m.artifact_kinds),
     }
     if m.events:  # only when declared: a grant without events keeps its bytes
-        out["events"] = [
+        out[EVENTS_KEY] = [
             {
                 "kind": e["kind"],
                 "title": e["title"],

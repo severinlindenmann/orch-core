@@ -511,16 +511,37 @@ def test_short_plain_link_does_not_detach_stream_port(mk):
     assert len(sink.wait("frame")) == 1 and sink.wait("frame")[0][2] is ev[2]
 
 
-@pytest.mark.parametrize("op", ["snapshot_get"])
-def test_stream_port_refuses_other_ops(mk, op):
+@pytest.mark.parametrize(
+    ("op", "body", "override"),
+    [
+        ("snapshot_get", {}, {}),
+        (
+            "join",
+            {
+                "invite": "x",
+                "card": {},
+                "pk_pub": b64u(S.public_bytes(S.key_from_seed(S.fake_seed("r4f")))),
+                "binding": {},
+                "owner_proof": None,
+            },
+            {},
+        ),
+        ("binding_put", {"object": {}, "owner_proof": None}, {}),
+        ("status_put", {"version": "1", "commit": "", "host": "h", "name": "n"}, {}),
+        ("route_out", {"envelope": b64u(b"x")}, {}),
+        (
+            "hub_where",
+            {},
+            {"re": 1},
+        ),  # the keepalive is a request: with `re` set it is a reply, which a stream link never sends
+    ],
+)
+def test_stream_port_refuses_other_ops(mk, op, body, override):
     sink = Sink()
     hub = mk(sink)
     joined(hub).close()
     c = stream_link(hub)
-    body = {
-        "snapshot_get": {},
-    }[op]
-    c.send_raw(c.build(op, body))
+    c.send_raw(c.build(op, body, **override))
     refused(c, "unknown_op")
     sink.wait("detach")  # the link is over, its streams with it
 

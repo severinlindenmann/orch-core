@@ -44,13 +44,25 @@ def run_orch(orch_bin: Path, args: Sequence[str]) -> tuple[int, str]:
     return r.returncode, (r.stdout or "") + (r.stderr or "")
 
 
-def uv_install(layout: InstallLayout, ver: str, files: Mapping[str, Path], rec: Record) -> None:
+def uv_install(
+    layout: InstallLayout, ver: str, files: Mapping[str, Path], rec: Record, signed: Sequence[Mapping[str, Any]]
+) -> None:
     """Install ``ver`` the way install.sh does: the pinned uv, a venv in ``tools/orch-<ver>/venv``, then
     ``uv pip install --require-hashes --no-deps`` of the verified files only. ``.complete`` is written last."""
     import hashlib
     import shutil
 
     uv = check_uv(layout.data, rec.uv.get("path") or "")
+    pinned = [(f["role"], files[f["role"]], f["sha256"]) for f in signed]  # the SIGNED hashes, never a re-hash of disk
+    held: dict[str, bytes] = {}
+    for role, path, sha in pinned:
+        data = path.read_bytes()
+        if hashlib.sha256(data).hexdigest() != sha or len(data) != next(f["size"] for f in signed if f["role"] == role):
+            raise OrchError(
+                "update.unverified", f"{path.name} no longer matches the signed release; nothing was installed"
+            )
+        held[role] = data
+    reqs = requirements_text(held["constraints"].decode("utf-8"), pinned)
     tool = layout.tool_dir(ver)
     if tool.exists():
         shutil.rmtree(tool)  # an unfinished earlier try (no .complete)
@@ -68,10 +80,6 @@ def uv_install(layout: InstallLayout, ver: str, files: Mapping[str, Path], rec: 
         py = uv_run(find).stdout.strip()
     if not py:
         raise OrchError("update.unverified", f"Python {PYTHON_VERSION} is not available")
-    reqs = requirements_text(
-        files["constraints"].read_text(),
-        [(role, p, hashlib.sha256(p.read_bytes()).hexdigest()) for role, p in files.items()],
-    )
     req_file = tool / "requirements.txt"
     req_file.write_text(reqs)
     for argv in (venv_argv(uv, py, venv), install_argv(uv, venv / "bin" / "python", req_file)):

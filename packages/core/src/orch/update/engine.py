@@ -84,7 +84,7 @@ class Services(Protocol):
 class Seams:
     source: Source
     services: Services
-    installer: Callable[[InstallLayout, str, Mapping[str, Path], Record], None]
+    installer: Callable[[InstallLayout, str, Mapping[str, Path], Record, Sequence[Mapping[str, Any]]], None]
     run_orch: Callable[[Path, Sequence[str]], tuple[int, str]]
     free_bytes: Callable[[Path], int] = lambda p: shutil.disk_usage(p).free
     live_runs: Callable[[Path], list[Any]] | None = None
@@ -361,7 +361,7 @@ class Updater:
         if at < 1:
             self._backup(info, roots)
         if at < 2:
-            self.s.installer(self.layout, to, files, read_record(self.layout))
+            self.s.installer(self.layout, to, files, read_record(self.layout), info["files"])
             check_bin = self.layout.tool_bin(to)
             rc, out = self.s.run_orch(check_bin, ["--version", "--json"])
             if rc != 0 or to not in out:

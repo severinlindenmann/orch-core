@@ -123,7 +123,7 @@ class World:
         write_record(self.layout, record())
 
     # -- seams
-    def installer(self, layout, ver, files, rec) -> None:
+    def installer(self, layout, ver, files, rec, signed) -> None:
         assert set(files) >= {"core", "constraints"}
         self.fake_bin(ver)
 

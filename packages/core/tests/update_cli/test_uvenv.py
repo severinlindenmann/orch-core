@@ -54,6 +54,15 @@ def test_parity_with_install_sh():
     assert not any(k.startswith(("UV_", "PIP_")) for k in uvenv.KEEP_ENV)
 
 
+def SIGNED(tmp_path):
+    import hashlib
+
+    return [
+        {"role": r, "name": n, "size": 5, "sha256": hashlib.sha256((tmp_path / n).read_bytes()).hexdigest()}
+        for r, n in (("core", "c.whl"), ("constraints", "constraints.txt"))
+    ]
+
+
 def test_uv_install_runs_a_stub_uv_with_the_pinned_argv_and_env(tmp_path, monkeypatch):
     log = tmp_path / "calls.txt"
     uv = tmp_path / "uv"
@@ -75,7 +84,9 @@ def test_uv_install_runs_a_stub_uv_with_the_pinned_argv_and_env(tmp_path, monkey
     for n in ("c.whl", "constraints.txt"):
         (tmp_path / n).write_text("x==1\n")
     rec = Record("main", "2.0.0", {}, None, 1, "r", "k", [], "t", "/x", {"path": str(uv), "version": "0.13.3"}, [])
-    uv_install(lay, "2.0.0", {"core": tmp_path / "c.whl", "constraints": tmp_path / "constraints.txt"}, rec)
+    uv_install(
+        lay, "2.0.0", {"core": tmp_path / "c.whl", "constraints": tmp_path / "constraints.txt"}, rec, SIGNED(tmp_path)
+    )
     out = log.read_text()
     assert "--no-build" in out and "--require-hashes" in out
     assert "UV_PYTHON_DOWNLOADS_JSON_URL" not in out and "UV_NO_VERIFY_HASHES" not in out and "PIP_INDEX_URL" not in out
@@ -129,3 +140,20 @@ def test_pinned_uv_constants_equal_install_sh():
     assert re.search(rf'^UV_VERSION="{re.escape(uvenv.UV_VERSION)}"$', text, re.M)
     for t, sha in uvenv.UV_BIN_SHA256.items():
         assert re.search(rf'^UV_BIN_SHA256_{t.replace("-", "_")}="{sha}"$', text, re.M), t
+
+
+def test_a_wheel_swapped_after_the_download_is_refused(tmp_path, monkeypatch):
+    uv = tmp_path / "uv"
+    uv.write_text("#!/bin/sh\nexit 0\n")
+    uv.chmod(0o755)
+    monkeypatch.setattr("orch.update.services.check_uv", lambda *a, **k: str(uv))
+    lay = InstallLayout.of({"HOME": str(tmp_path), "ORCH_STATE_DIR": str(tmp_path / "s")})
+    lay.ensure()
+    for n in ("c.whl", "constraints.txt"):
+        (tmp_path / n).write_text("x==1\n")
+    signed = SIGNED(tmp_path)
+    (tmp_path / "c.whl").write_text("EVIL\n")  # swapped on disk after verification
+    rec = Record("main", "2.0.0", {}, None, 1, "r", "k", [], "t", "/x", {"path": str(uv), "version": "0.13.3"}, [])
+    with pytest.raises(OrchError) as e:
+        uv_install(lay, "2.0.0", {"core": tmp_path / "c.whl", "constraints": tmp_path / "constraints.txt"}, rec, signed)
+    assert e.value.code == "update.unverified" and not lay.tool_dir("2.0.0").exists()

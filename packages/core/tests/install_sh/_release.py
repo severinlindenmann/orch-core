@@ -67,7 +67,9 @@ def make_wheel(dest: Path, dist: str, version: str, *, entry: str | None = None)
     files: dict[str, bytes] = {
         f"{dist}/__init__.py": f"def main():\n    print('{dist} {version}')\n".encode(),
         f"{dist}-{version}.dist-info/METADATA": f"Metadata-Version: 2.1\nName: {dist}\nVersion: {version}\n".encode(),
-        f"{dist}-{version}.dist-info/WHEEL": b"Wheel-Version: 1.0\nGenerator: test\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
+        f"{dist}-{version}.dist-info/WHEEL": (
+            b"Wheel-Version: 1.0\nGenerator: test\nRoot-Is-Purelib: true\nTag: py3-none-any\n"
+        ),
     }
     if entry:
         files[f"{dist}-{version}.dist-info/entry_points.txt"] = f"[console_scripts]\n{entry} = {dist}:main\n".encode()
@@ -149,7 +151,12 @@ def build_release(
     signer = GEN.SIGNER[key_id]
     serial = cert_serial or {"rk-3": 3, "rk-4": 4}[key_id]
     cert = GEN.cert_doc(
-        signer, serial, "core", cert_channels or ["develop", "main"], stamp(now - timedelta(days=1)), stamp(now + timedelta(days=90))
+        signer,
+        serial,
+        "core",
+        cert_channels or ["develop", "main"],
+        stamp(now - timedelta(days=1)),
+        stamp(now + timedelta(days=90)),
     )
     env = GEN.envelope(GEN.jcs(m), key_id, cert=GEN.key_cert(key_id, raw=GEN.jcs(cert)))
     (out / "channel.json").write_text(GEN.text(env), encoding="utf-8")
@@ -173,7 +180,8 @@ def fake_bin(tmp: Path, *, pinned_uv: bool = True, **stubs: str) -> Path:
     b = tmp / "bin"
     b.mkdir(exist_ok=True)
     if pinned_uv:
-        script = f'#!/bin/sh\nif [ "$1" = "--version" ]; then echo "uv {pinned_uv_version()} (test)"; exit 0; fi\nexec "{real_uv()}" "$@"\n'
+        version_line = f'if [ "$1" = "--version" ]; then echo "uv {pinned_uv_version()} (test)"; exit 0; fi'
+        script = f'#!/bin/sh\n{version_line}\nexec "{real_uv()}" "$@"\n'
         (b / "uv").write_text(script)
         (b / "uv").chmod(0o755)
     for name, body in stubs.items():
@@ -196,7 +204,9 @@ def run_install(
         "TMPDIR": str(tmp / "tmp"),
         "UV_PYTHON_PREFERENCE": "system",
         "UV_PYTHON_DOWNLOADS": "never",
-        "UV_PYTHON_INSTALL_DIR": subprocess.run([real_uv(), "python", "dir"], capture_output=True, text=True).stdout.strip(),
+        "UV_PYTHON_INSTALL_DIR": subprocess.run(
+            [real_uv(), "python", "dir"], capture_output=True, text=True
+        ).stdout.strip(),
         "LC_ALL": "C",
     }
     env.update(env_extra or {})
@@ -220,9 +230,12 @@ def data(tmp: Path) -> Path:
 def installed_anything(tmp: Path) -> bool:
     """True when orch left anything behind: a version folder, the current link, the shim or the record."""
     s = state(tmp)
-    return bool(
-        list((s / "install" / "tools").glob("orch-*")) if (s / "install" / "tools").exists() else []
-    ) or (s / "install" / "current").is_symlink() or (tmp / "home" / ".local" / "bin" / "orch").is_symlink() or (data(tmp) / "install.json").exists()
+    return (
+        bool(list((s / "install" / "tools").glob("orch-*")) if (s / "install" / "tools").exists() else [])
+        or (s / "install" / "current").is_symlink()
+        or (tmp / "home" / ".local" / "bin" / "orch").is_symlink()
+        or (data(tmp) / "install.json").exists()
+    )
 
 
 def mode(p: Path) -> int:

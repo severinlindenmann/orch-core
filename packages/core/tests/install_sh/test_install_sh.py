@@ -4,6 +4,7 @@ installed, so every tampered piece must leave NOTHING behind."""
 from __future__ import annotations
 
 import base64
+import getpass
 import hashlib
 import json
 import re
@@ -272,7 +273,8 @@ def test_server_with_linger_off_prints_the_sudo_line_and_stops(tmp_path, script)
     res = run_install(tmp_path, script, "--server", "--from", str(rel.dir), path_dirs=[_linux_stubs(tmp_path, "no")])
     assert res.returncode == 1
     assert "sudo loginctl enable-linger" in res.stderr
-    assert [ln for ln in res.stderr.splitlines() if ln.strip().startswith("sudo ")] == [ln for ln in res.stderr.splitlines() if "sudo loginctl enable-linger" in ln]  # exactly one command line
+    commands = [ln.strip() for ln in res.stderr.splitlines() if ln.strip().startswith("sudo ")]
+    assert commands == [f"sudo loginctl enable-linger {getpass.getuser()}"]  # exactly one command line
     assert not installed_anything(tmp_path)
     assert not (tmp_path / "home" / ".local" / "share").exists()  # not even uv was fetched
 

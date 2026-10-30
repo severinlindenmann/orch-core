@@ -19,6 +19,8 @@
 #   <data>/install.json                       install record (data = $XDG_DATA_HOME/orch, else ~/.local/share/orch)
 #   <data>/uv/uv-<pinned version>/uv          the pinned uv, when none of that version was found
 #
+# Test knob: ORCH_INSTALL_UV_BASE overrides where the uv archive is fetched from; its sha256 is still checked.
+#
 # Everything runs inside main, called on the last line: a download cut short runs nothing.
 
 set -eu
@@ -703,7 +705,7 @@ stop_unverified() { # stop_unverified <stderr file of the verifier>
   case "$line" in
     "REFUSED "*)
       reason=${line#REFUSED }
-      die "Stopped: the download could not be verified ($(explain "$reason")). Nothing was installed."
+      die "Stopped: the download could not be verified ($(explain "$reason")). Nothing was installed or changed."
       ;;
     NOKEY*) die "Stopped: this copy of the installer has no release key built in, so it cannot verify anything. Get install.sh from the official release. Nothing was installed." ;;
     "RECORD "*) die "Stopped: ${line#RECORD }. Move $RECORD away only if you want to start fresh. Nothing was changed." ;;

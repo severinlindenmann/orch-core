@@ -131,6 +131,38 @@ def test_rows_report_setup(client, token, stub, gateway, monkeypatch, settings, 
     assert reads == ["workspace.settings"]
 
 
+@pytest.mark.parametrize(
+    "state,want",
+    [
+        ({"parts": {"publish": {"url": "http://127.0.0.1:8102"}}}, "http://127.0.0.1:8102"),
+        ({"parts": {"publish": {"url": "https://pub.example.org"}}}, "https://pub.example.org"),
+        ({"parts": {"publish": {"url": "http://example.com"}}}, None),  # not an address core accepts
+        ({"parts": {"publish": {"url": "https://pub.example.org/x"}}}, None),
+        ({"parts": {"publish": {}}}, None),
+        ({"parts": {}}, None),
+        (None, None),  # no installer state at all (Publish hosted elsewhere)
+    ],
+)
+def test_rows_suggest_the_publish_server_installed_here(
+    client, token, stub, gateway, monkeypatch, tmp_path, state, want
+):
+    import json
+
+    from test_addon_switches import _get, _VersionLink
+
+    (tmp_path / "install").mkdir()
+    if state is not None:
+        (tmp_path / "install" / "install.json").write_text(json.dumps(state))
+    monkeypatch.setenv("ORCH_STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(gateway, "enabled", lambda ws: _VersionLink())
+    monkeypatch.setattr(
+        gateway, "call", lambda ws, op, args=None: {"runner": None} if op == "whoami" else {"publish": None}
+    )
+    rows = {r["id"]: r for r in _get(client, token, stub, "add-ons").json()["add_ons"]}
+    assert rows["publish"]["suggest"] == want
+    assert "suggest" not in rows["quick"] or rows["quick"]["suggest"] is None
+
+
 @pytest.mark.parametrize("name,fields", [("publish", {"publish": PUBLISH})])
 def test_plan_reads_the_preview_over_the_real_host_link(gateway, stub, p1, name, fields):
     """e2e run 4: the grant body is read over the real `HostLink` (no stubbed `gateway.call`), answered by core's own

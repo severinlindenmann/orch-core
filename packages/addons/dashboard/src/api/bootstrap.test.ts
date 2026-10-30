@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as boot from './bootstrap'
-import { bootstrap, clearSession, confirmSwitch, declineSwitch, getPendingSwitch, getToken, landSwitch, safeDestination } from './bootstrap'
+import { bootstrap, clearSession, confirmSwitch, declineSwitch, getPendingSwitch, getToken, landSwitch, safeDestination, switchWasRefused } from './bootstrap'
 
 beforeEach(() => {
   sessionStorage.clear()
@@ -68,6 +68,17 @@ describe('hub switch link, E4: the key proves itself before the ticket is used',
   })
   it('the upgrade path is gone', () => {
     expect('adoptToken' in boot).toBe(false)
+  })
+})
+
+describe('run-15 J02: a switch the workspace refuses by design (D93)', () => {
+  it('is remembered as refused, so the error page can say to open it on its own computer', async () => {
+    history.replaceState(null, '', `/#t=${TICKET}`)
+    await bootstrap(vi.fn())
+    vi.mocked(switchProof).mockResolvedValueOnce({ name: 'Product', proof: PROOF })
+    const fetcher = vi.fn(async () => Response.json({ ok: false, error: { code: 'switch.refused' } }, { status: 403 })) as unknown as typeof fetch
+    expect(await landSwitch(fetcher)).toEqual({ kind: 'failed' })
+    expect(switchWasRefused()).toBe(true)
   })
 })
 
@@ -243,5 +254,25 @@ describe('where the bearer lives (host contract 0.8.6 item 7)', () => {
     expect(document.cookie).not.toContain('demo-not-a-real-token')
     expect(location.href).not.toContain('demo-not-a-real-token')
     expect(location.hash).toBe('')
+  })
+})
+
+describe('remote client marker (R5)', () => {
+  afterEach(() => { document.head.innerHTML = '' })
+  const mark = () => { document.head.innerHTML = '<meta name="orch-nav" content="remote">' }
+  it('a remote session never opens the BroadcastChannel (no token sharing between tabs)', async () => {
+    mark()
+    const ctor = vi.fn()
+    vi.stubGlobal('BroadcastChannel', ctor)
+    history.replaceState(null, '', '/#launch=' + 'L'.repeat(43))
+    await bootstrap(vi.fn(async () => Response.json({ token: 'tok' })) as unknown as typeof fetch)
+    expect(ctor).not.toHaveBeenCalled()
+  })
+  it('the WebSocket offers the bearer as a sub-protocol only in a remote session', async () => {
+    history.replaceState(null, '', '/#launch=' + 'L'.repeat(43))
+    await bootstrap(vi.fn(async () => Response.json({ token: 'tok' })) as unknown as typeof fetch)
+    expect(boot.remoteSocketProtocols()).toBeUndefined()
+    mark()
+    expect(boot.remoteSocketProtocols()).toEqual(['orch.b', 'orch.b.tok'])
   })
 })

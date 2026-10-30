@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest'
 
-vi.mock('./bootstrap', () => ({ confirmSwitch: vi.fn(async () => undefined) }))
+vi.mock('./bootstrap', () => ({ confirmSwitch: vi.fn(async () => undefined), switchWasRefused: vi.fn(() => false) }))
 import { confirmSwitch } from './bootstrap'
 import { showSwitchConfirm, showSwitchFailed } from './switchConfirm'
 
@@ -48,4 +48,12 @@ it('the error page opens nothing by itself', () => {
   showSwitchFailed(root)
   expect(root.textContent).toContain('This link no longer works')
   expect(confirmSwitch).not.toHaveBeenCalled()
+})
+
+it('run-15 J02: a switch the workspace refuses by design says to open it on its own computer, not that the link broke', () => {
+  const root = document.createElement('div')
+  showSwitchFailed(root, true)
+  expect(root.textContent).toContain('Open this workspace on its own computer')
+  expect(root.textContent).toContain('shares only chosen items with the hub')
+  expect(root.textContent).not.toContain('This link no longer works')
 })

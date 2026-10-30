@@ -9,14 +9,19 @@ Files under ``<state>/hosts/<ws>/hub/org/`` (a 0700 folder, files 0600, host UID
   things stricter (a hand edit fails the signature). The stored bundle's ``version`` is also the pin: a sync
   never takes a
   lower one.
-* ``seen.json``: ``{servers: {name: {hub_id, binding_seq, digest, at, tools: [row]}}}``. What the
-  proxy last saw in a server's ``tools/list`` (so the owner can look at it). A row is the whole tool view plus its pin
+* ``seen.json``: ``{servers: {name: {hub_id, binding_seq, digest, at, baseline: [name], tools: [row]}}}``
+  (``baseline``: the tool names of the first listing of this digest, so a tool added later shows a "new" badge).
+  What the proxy last saw in a server's ``tools/list`` (so the owner can look at it). A row is the whole tool view
+  plus its pin
   (``mcpshared.tool_view``; nothing is cut) or ``{name, problem: "too_long"}``. Grants nothing.
 * ``tools.json``: ``{entries: [{hub_id, binding_seq, server, server_digest, tool, pin, at, by}]}``: the tools the owner
   turned On, for exactly the pin shown. Written only by ``org.tool`` (and cleared by decline), behind the owner check;
   :func:`tool_policy` ignores an entry of another binding, another server digest or a server that is not served.
-* ``accepted.json``: ``{entries: [{hub_id, binding_seq, kind, name, digest, at, by}]}``. Written only by ``org.accept``,
-  ``org.decline`` (and a sync that prunes a withdrawn item), all behind the owner check. This is the ONLY authority for
+* ``accepted.json``: ``{entries: [{hub_id, binding_seq, kind, name, digest, snapshot, at, by}]}``. ``snapshot`` is the
+  accepted item itself (every field but name and digest) so a later change can be shown as "what changed". It is
+  display only: nothing is served from it, and a malformed one drops the entry (stricter). Written only by
+  ``org.accept``, ``org.decline`` (and a sync that prunes a withdrawn item), all behind the owner check. This is the
+  ONLY authority for
   "the owner said yes".
 
 **Served = accepted AND the offered item with the same digest AND the current binding AND the text/URL rules.** Nothing
@@ -184,8 +189,50 @@ def _entries(service: WorkspaceService) -> list[dict[str, Any]]:
     rows = doc.get("entries") if type(doc) is dict else None
     if type(rows) is not list:
         return []
-    keys = {"hub_id", "binding_seq", "kind", "name", "digest", "at", "by"}
-    return [r for r in rows if type(r) is dict and set(r) == keys and r["kind"] in KINDS]
+    keys = {"hub_id", "binding_seq", "kind", "name", "digest", "snapshot", "at", "by"}
+    return [
+        r for r in rows
+        if type(r) is dict and set(r) == keys and r["kind"] in KINDS and _snapshot_ok(r["snapshot"])
+    ]  # fmt: skip
+
+
+_SNAP_VALUE_MAX = 200_000
+
+
+def _snapshot_ok(snap: Any) -> bool:
+    """A snapshot is a flat dict of text/None. Display only."""
+    if type(snap) is not dict:
+        return False
+    return all(
+        type(k) is str and len(k) <= 40 and (v is None or (type(v) is str and len(v) <= _SNAP_VALUE_MAX))
+        for k, v in snap.items()
+    )
+
+
+def _snapshot_of(item: dict[str, Any]) -> dict[str, Any]:
+    """The accepted item as shown to the owner: every field but name and digest (those are the key). Values that are
+    not text stay out (``_snapshot_ok``), so the closed shape never holds a surprise."""
+    return {k: v for k, v in item.items() if k not in ("name", "digest") and (v is None or type(v) is str)}
+
+
+_FIELD_WORDS = {"url": "address", "auth": "sign-in", "secret": "secret", "description": "description", "text": "text"}
+
+
+def changed_fields(item: dict[str, Any], snap: dict[str, Any]) -> list[dict[str, Any]]:
+    """What differs between the offered item and the accepted snapshot: ``[{field, word, was}]`` (``was`` is the
+    accepted text; omitted for a skill's long ``text``). Nothing here grants anything."""
+    out = []
+    for k in sorted(set(item) | set(snap)):
+        if k in ("name", "digest"):
+            continue
+        new, old = item.get(k), snap.get(k)
+        if (new if type(new) is str else None) == old:
+            continue
+        row: dict[str, Any] = {"field": k, "word": _FIELD_WORDS.get(k, k)}
+        if k != "text":
+            row["was"] = old
+        out.append(row)
+    return out
 
 
 def accepted_entries(service: WorkspaceService, state: Any) -> list[dict[str, Any]]:
@@ -255,6 +302,8 @@ def show(service: WorkspaceService, kind: str, name: str) -> dict[str, Any]:
     out = {"kind": kind, "status": status, "item": item, "notes": _NOTES[kind], "untrusted": True}
     if status == "needs_isolation" or (kind == "mcp" and item["auth"] == "hub_secret" and not iso):
         out["needs_isolation"] = "needs a separate agent user: this server's secret cannot be kept from an agent here"
+    if entry is not None and entry["digest"] != item["digest"]:
+        out["changed"] = changed_fields(item, entry["snapshot"])
     if kind == "mcp":
         out["tools"] = _tool_rows(service, state, name, item["digest"])
         if item["auth"] == "hub_secret":
@@ -287,7 +336,8 @@ def accept(service: WorkspaceService, kind: str, name: str, digest: str, who: st
             _drop_server(
                 service, name
             )  # a fresh accept (never accepted, or withdrawn before) starts with every tool Off
-        rows.append({**b, "kind": kind, "name": name, "digest": digest, "at": _now_ms(service), "by": who})
+        rows.append({**b, "kind": kind, "name": name, "digest": digest, "snapshot": _snapshot_of(item),
+                     "at": _now_ms(service), "by": who})  # fmt: skip
         _write(service, "accepted.json", {"entries": rows})
         return {"kind": kind, "name": name, "status": "on"}
 
@@ -404,7 +454,14 @@ def record_seen(service: WorkspaceService, server: str, server_digest: str, tool
                 and all(old.get(k) == v for k, v in b.items())
             ):
                 return
-            seen[server] = {**b, "digest": server_digest, "at": _now_ms(service), "tools": rows}
+            names = old.get("baseline") if type(old) is dict and old.get("digest") == server_digest else None
+            if (
+                type(names) is not list
+                or not all(type(n) is str for n in names)
+                or any(old.get(k) != v for k, v in b.items())
+            ):
+                names = [r["name"] for r in rows]  # the first listing of this digest: what is not new later
+            seen[server] = {**b, "digest": server_digest, "at": _now_ms(service), "baseline": names, "tools": rows}
             _write(service, "seen.json", {"servers": seen})
     except Exception:  # noqa: BLE001 - a listing the owner never sees must never break a tool call
         return
@@ -430,6 +487,16 @@ def tool_policy(service: WorkspaceService, server: str) -> dict[str, str]:
         return {}
 
 
+def _baseline(service: WorkspaceService, state: Any, server: str, digest: str) -> list[str] | None:
+    """The tool names of the first listing of this server digest (None if there is none)."""
+    rec = _seen_servers(service).get(server)
+    if type(rec) is not dict or {k: rec.get(k) for k in ("hub_id", "binding_seq")} != _binding(state):
+        return None
+    names = rec.get("baseline")
+    ok = rec.get("digest") == digest and type(names) is list and all(type(n) is str for n in names)
+    return names if ok else None
+
+
 def _tool_rows(service: WorkspaceService, state: Any, server: str, digest: str) -> list[dict[str, Any]]:
     on = tool_policy(service, server)
     b = _binding(state)
@@ -438,9 +505,13 @@ def _tool_rows(service: WorkspaceService, state: Any, server: str, digest: str) 
         if r["hub_id"] == b["hub_id"] and r["binding_seq"] == b["binding_seq"] and r["server"] == server
     }  # fmt: skip
     out = []
+    known = _baseline(service, state, server, digest)
     for t in _seen_tools(service, state, server, digest):
         if t.get("problem") == "too_long":
-            out.append({"name": t["name"], "problem": "too_long", "status": "too_long"})  # never On, no pin
+            row = {"name": t["name"], "problem": "too_long", "status": "too_long"}  # never On, no pin
+            if known is not None:
+                row["new"] = t["name"] not in known
+            out.append(row)
             continue
         if on.get(t["name"]) == t["pin"]:
             status = "on"
@@ -448,7 +519,10 @@ def _tool_rows(service: WorkspaceService, state: Any, server: str, digest: str) 
             status = "changed"  # turned On once for something else: the owner must click again
         else:
             status = "off"
-        out.append({**t, "status": status})  # the stored view and pin: what is shown is what is pinned
+        row = {**t, "status": status}  # the stored view and pin: what is shown is what is pinned
+        if known is not None:
+            row["new"] = t["name"] not in known  # a tool the owner had not seen when they accepted: a badge only
+        out.append(row)
     return out
 
 

@@ -81,7 +81,8 @@ def _describe(shown: dict[str, Any]) -> str:
             f"Company tool server {plain(item['name'])!r}\n  address: {plain(item['url'])}\n  sign-in: {sign_in}\n"
             f"  for: {_block(item['description']) or '(not said)'}\n  every tool starts Off.\n"
         )
-    return body + "\n" + "".join(f"- {n}\n" for n in shown["notes"]) + f"  digest {item['digest'][:23]}...\n"
+    changed = "".join(f"  changed since you turned it on: {plain(c['word'])}\n" for c in shown.get("changed", []))
+    return body + changed + "\n" + "".join(f"- {n}\n" for n in shown["notes"]) + f"  digest {item['digest'][:23]}...\n"
 
 
 def _schema_text(row: dict[str, Any]) -> str:
@@ -96,7 +97,9 @@ def _tool_text(row: dict[str, Any], server: str) -> str:
     lines = [f"Tool {name!r} of company server {plain(server)!r}"]
     if row.get("title"):
         lines.append(f"  title: {_block(row['title'])}")
-    lines.append("  kind: " + ("reads (the server says it only reads)" if row.get("reads") is True else "changes things"))
+    lines.append(
+        "  kind: " + ("reads (the server says it only reads)" if row.get("reads") is True else "changes things")
+    )
     lines.append(f"  description: {_block(row['description']) or '(none)'}")
     lines.append("  input schema (this is pinned too):")
     lines.extend("    " + ln for ln in _schema_text(row).splitlines())

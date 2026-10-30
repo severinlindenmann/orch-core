@@ -178,6 +178,38 @@ def test_a_reads_label_is_only_true_when_the_host_says_true():
     assert got == [True, False, False, False, False]
 
 
+def test_what_changed_is_a_closed_view_with_our_own_words():
+    from orch_dashboard.org_routes import item_view
+
+    raw = {"kind": "mcp", "status": "changed", "item": {"name": "crm", "digest": D1, "url": "https://x.example.com/m"},
+           "changed": [{"field": "url", "word": "EVIL", "was": "https://old.example.com/m"},
+                       {"field": "auth", "word": "x", "was": "none"},
+                       {"field": "text", "word": "x", "was": "the whole old text"},
+                       {"field": "description", "word": "x", "was": "bad\u202etext"},
+                       {"field": "other", "word": "x", "was": "y"}, "junk", {"field": 5}],
+           "tools": []}  # fmt: skip
+    got = item_view(raw)["changed"]
+    assert got == [
+        {"field": "url", "word": "address", "was": "https://old.example.com/m"},
+        {"field": "auth", "word": "sign-in", "was": "none"},
+        {"field": "text", "word": "text", "was": None},  # a skill's text is never repeated
+        {"field": "description", "word": "description", "was": None},  # hidden characters: withheld
+    ]
+    assert item_view({"kind": "mcp", "item": {}})["changed"] == []
+
+
+def test_a_new_tool_badge_is_only_true_when_the_host_says_true():
+    from orch_dashboard.org_routes import _tools
+
+    base = {"name": "a", "description": "d", "inputSchema": {"type": "object"}, "pin": "p", "status": "off"}
+    assert [_tools([{**base, "new": v}])[0][0]["new"] for v in (True, False, "yes", None)] == [
+        True,
+        False,
+        False,
+        False,
+    ]
+
+
 def test_bad_bodies_reach_nothing(client, token, stub, host):
     for path, body in (
         ("accept", {"kind": "skill", "name": "style-guide", "digest": "sha256:short"}),

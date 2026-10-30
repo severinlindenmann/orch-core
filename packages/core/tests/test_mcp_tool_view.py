@@ -246,3 +246,11 @@ def test_the_cli_review_text_says_reads_or_changes_things():
     for annotations, word in (({"readOnlyHint": True}, "kind: reads"), ({}, "kind: changes things")):
         view, _ = tool_view(raw(annotations=annotations))
         assert word in cli_org._tool_text({**view, "pin": tool_pin(view)}, "crm")  # noqa: SLF001
+
+
+def test_the_cli_shows_what_changed_in_our_words():
+    shown = {"kind": "mcp", "notes": [], "item": {"name": "crm", "url": "https://x.example.com/m", "auth": "none",
+             "secret": None, "description": "", "digest": "sha256:" + "a" * 64},
+             "changed": [{"field": "url", "word": "address\x1b[2J", "was": "https://old"}]}  # fmt: skip
+    text = cli_org._describe(shown)  # noqa: SLF001
+    assert "changed since you turned it on: address" in text and "\x1b" not in text

@@ -64,7 +64,8 @@ export function mockOrgShown(kind: OrgKind, name: string): OrgShown | null {
     const s = SKILLS.find((x) => x.name === name)
     if (!s) return null
     const item: OrgSkillItem = { kind: 'skill', name: s.name, digest: s.digest, text: s.text, text_hidden: false }
-    return { kind, status: statusOf(kind, name, s.digest), item, notes: NOTES.skill, untrusted: true, needs_isolation: null }
+    const status = statusOf(kind, name, s.digest)
+    return { kind, status, item, notes: NOTES.skill, untrusted: true, needs_isolation: null, changed: status === 'changed' ? [{ field: 'text', word: 'text', was: null }] : [] }
   }
   const s = SERVERS.find((x) => x.name === name)
   if (!s) return null

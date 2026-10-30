@@ -295,13 +295,13 @@ def test_hand_edited_files_can_only_make_things_stricter(served, org):
     # an accept written by hand for an item that was never offered, and one for the offered item with a made-up digest
     forged = [
         {"hub_id": state.hub_id, "binding_seq": state.binding_seq, "kind": "skill", "name": "invoices",
-         "digest": "sha256:" + "1" * 64, "at": 1, "by": "x"},
+         "digest": "sha256:" + "1" * 64, "snapshot": {}, "at": 1, "by": "x"},
         {"hub_id": state.hub_id, "binding_seq": state.binding_seq, "kind": "skill", "name": "never-offered",
-         "digest": OB.skill_digest("never-offered", TEXT), "at": 1, "by": "x"},
+         "digest": OB.skill_digest("never-offered", TEXT), "snapshot": {}, "at": 1, "by": "x"},
         {"hub_id": "00" * 16, "binding_seq": state.binding_seq, "kind": "skill", "name": "invoices",
-         "digest": OB.skill_digest("invoices", TEXT), "at": 1, "by": "x"},  # another hub
+         "digest": OB.skill_digest("invoices", TEXT), "snapshot": {}, "at": 1, "by": "x"},  # another hub
         {"hub_id": state.hub_id, "binding_seq": state.binding_seq + 1, "kind": "skill", "name": "invoices",
-         "digest": OB.skill_digest("invoices", TEXT), "at": 1, "by": "x"},  # another binding
+         "digest": OB.skill_digest("invoices", TEXT), "snapshot": {}, "at": 1, "by": "x"},  # another binding
     ]  # fmt: skip
     from orch.store.fsio import write_atomic
 
@@ -548,7 +548,10 @@ def test_record_seen_keeps_little_and_ignores_bad_input(served, org):
     orgstate.record_seen(s, "crm", srv["digest"], many)
     rec = json.loads((orgstate.org_dir(s) / "seen.json").read_text())["servers"]["crm"]
     assert len(rec["tools"]) == 200 and rec["tools"][0] == {"name": "t0", "problem": "too_long"}
-    assert set(rec["tools"][1]) == {"name", "description", "inputSchema", "reads", "pin"} and rec["digest"] == srv["digest"]
+    assert (
+        set(rec["tools"][1]) == {"name", "description", "inputSchema", "reads", "pin"}
+        and rec["digest"] == srv["digest"]
+    )
     orgstate.record_seen(s, "Bad Name", srv["digest"], many[:1])
     orgstate.record_seen(s, "orch-x", srv["digest"], many[:1])
     orgstate.record_seen(s, "crm", srv["digest"], [{"name": "a b", "pin": PIN_A}])
@@ -579,7 +582,7 @@ def test_forwarded_seen_and_shown_are_one_view(served, org, env):  # noqa: F811
     cap = mint(env)
     assert lst(env, cap)["result"]["tools"] == []  # lists everything, forwards nothing: all Off
     shown = {t["name"]: t for t in ok(req(served, "org.show", {"kind": "mcp", "name": "crm"}))["data"]["tools"]}
-    assert shown["big"] == {"name": "big", "problem": "too_long", "status": "too_long"}
+    assert shown["big"] == {"name": "big", "problem": "too_long", "status": "too_long", "new": False}
     res = tool_op(served, "big", True, PIN_A)
     assert err(res) == "invalid.input" and "too long to review; it stays off" in res["error"]["message"]
     assert tool_op(served, "big", True) is not None and orgstate.tool_policy(s, "crm") == {}
@@ -588,7 +591,7 @@ def test_forwarded_seen_and_shown_are_one_view(served, org, env):  # noqa: F811
     assert len(forwarded) == 1
     view, _ = tool_view(good)
     approved = {k: v for k, v in ok(req(served, "org.show", {"kind": "mcp", "name": "crm"}))["data"]["tools"][0].items()
-                if k not in ("pin", "status")}  # fmt: skip
+                if k not in ("pin", "status", "new")}  # fmt: skip
     assert forwarded[0] == approved == view and shown["find"]["pin"] == tool_pin(forwarded[0])
 
 
@@ -615,7 +618,11 @@ def test_bulk_turns_on_only_the_listed_reading_tools(served, org):
     srv = accept_mcp(served, org)
     rows = tools_of("get_a", "get_b", "edit")
     orgstate.record_seen(svc(served), "crm", srv["digest"], rows)
-    got = ok(bulk_op(served, [{"tool": "get_a", "pin": pin_of(rows, "get_a")}, {"tool": "get_b", "pin": pin_of(rows, "get_b")}]))
+    got = ok(
+        bulk_op(
+            served, [{"tool": "get_a", "pin": pin_of(rows, "get_a")}, {"tool": "get_b", "pin": pin_of(rows, "get_b")}]
+        )
+    )
     assert got["data"] == {"server": "crm", "tools": ["get_a", "get_b"], "status": "on"}
     assert orgstate.tool_policy(svc(served), "crm") == {"get_a": pin_of(rows, "get_a"), "get_b": pin_of(rows, "get_b")}
 
@@ -624,7 +631,9 @@ def test_bulk_refuses_a_tool_that_changes_things_and_changes_nothing(served, org
     srv = accept_mcp(served, org)
     rows = tools_of("get_a", "edit")
     orgstate.record_seen(svc(served), "crm", srv["digest"], rows)
-    res = bulk_op(served, [{"tool": "get_a", "pin": pin_of(rows, "get_a")}, {"tool": "edit", "pin": pin_of(rows, "edit")}])
+    res = bulk_op(
+        served, [{"tool": "get_a", "pin": pin_of(rows, "get_a")}, {"tool": "edit", "pin": pin_of(rows, "edit")}]
+    )
     assert err(res) == "invalid.input" and "not_reads" in res["error"]["message"]
     assert orgstate.tool_policy(svc(served), "crm") == {}
 
@@ -661,5 +670,103 @@ def test_bulk_is_owner_only_and_on_only(served, org):
     pins = [{"tool": "get_a", "pin": pin_of(rows, "get_a")}]
     assert err(bulk_op(served, pins, grant=served.grant, session=SESSION)) == "op.not_allowed"
     assert err(req(served, "org.tool", {"server": "crm", "on": False, "tools": pins})) == "invalid.input"
-    assert err(req(served, "org.tool", {"server": "crm", "on": True, "tool": "get_a", "tools": pins})) == "invalid.input"
+    assert (
+        err(req(served, "org.tool", {"server": "crm", "on": True, "tool": "get_a", "tools": pins})) == "invalid.input"
+    )
     assert orgstate.tool_policy(svc(served), "crm") == {}
+
+
+# -- widening is visible: the accepted snapshot and "what changed" (#1441) ----
+
+
+def accepted_doc(served):
+    return json.loads((orgstate.org_dir(svc(served)) / "accepted.json").read_text())["entries"]
+
+
+def test_accept_keeps_a_snapshot_of_the_accepted_server(served, org):
+    srv = accept_mcp(served, org, desc="Look up customers.")
+    snap = accepted_doc(served)[0]["snapshot"]
+    assert snap == {"url": URL, "auth": "none", "secret": None, "description": "Look up customers."}
+    assert "changed" not in ok(req(served, "org.show", {"kind": "mcp", "name": "crm"}))["data"]
+    assert srv["digest"] == accepted_doc(served)[0]["digest"]
+
+
+def test_a_changed_address_or_sign_in_shows_what_changed_and_serves_nothing(served, org):
+    accept_mcp(served, org)
+    org.servers = [org.server("crm", url="https://tools.example.com/other", auth="hub_secret", secret="crm-key")]
+    org.versions["mcp"] += 1
+    sync(served)
+    shown = ok(req(served, "org.show", {"kind": "mcp", "name": "crm"}))["data"]
+    assert shown["status"] == "changed"
+    words = {c["field"]: c for c in shown["changed"]}
+    assert set(words) == {"url", "auth", "secret"}
+    assert words["url"] == {"field": "url", "word": "address", "was": URL}
+    assert words["auth"]["was"] == "none" and words["secret"]["was"] is None
+    assert orgstate.served(svc(served))["mcp"] == []  # the snapshot is display only
+    assert accepted_doc(served)[0]["snapshot"]["url"] == URL  # still the accepted one until the owner accepts again
+
+
+def test_a_changed_skill_says_the_text_changed_without_repeating_it(served, org):
+    org.skills = [org.skill("invoices")]
+    sync(served)
+    ok(req(served, "org.accept", {"kind": "skill", "name": "invoices", "digest": OB.skill_digest("invoices", TEXT)}))
+    org.skills = [org.skill("invoices", "Be brief.")]
+    org.versions["skill"] += 1
+    sync(served)
+    shown = ok(req(served, "org.show", {"kind": "skill", "name": "invoices"}))["data"]
+    assert shown["status"] == "changed" and shown["changed"] == [{"field": "text", "word": "text"}]
+
+
+def test_accepting_again_takes_a_new_snapshot(served, org):
+    srv = accept_mcp(served, org)
+    org.servers = [org.server("crm", url="https://tools.example.com/other")]
+    org.versions["mcp"] += 1
+    sync(served)
+    new = org.servers[0]
+    ok(req(served, "org.accept", {"kind": "mcp", "name": "crm", "digest": new["digest"]}))
+    assert accepted_doc(served)[0]["snapshot"]["url"] == "https://tools.example.com/other"
+    assert "changed" not in ok(req(served, "org.show", {"kind": "mcp", "name": "crm"}))["data"]
+    assert srv["digest"] != new["digest"]
+
+
+def test_a_tool_added_after_the_first_listing_is_new(served, org):
+    srv = accept_mcp(served, org)
+    orgstate.record_seen(svc(served), "crm", srv["digest"], tools_of("find"))
+    rows = ok(req(served, "org.show", {"kind": "mcp", "name": "crm"}))["data"]["tools"]
+    assert [t["new"] for t in rows] == [False]  # the first listing is the baseline, not news
+    orgstate.record_seen(svc(served), "crm", srv["digest"], tools_of("find", "edit"))  # the server adds a tool
+    rows = {t["name"]: t for t in ok(req(served, "org.show", {"kind": "mcp", "name": "crm"}))["data"]["tools"]}
+    assert rows["find"]["new"] is False and rows["edit"]["new"] is True and rows["edit"]["status"] == "off"
+    orgstate.record_seen(svc(served), "crm", srv["digest"], tools_of("find", "edit"))  # a repeat keeps the baseline
+    rows = {t["name"]: t for t in ok(req(served, "org.show", {"kind": "mcp", "name": "crm"}))["data"]["tools"]}
+    assert rows["edit"]["new"] is True
+
+
+def test_a_new_digest_starts_a_new_baseline(served, org):
+    srv = accept_mcp(served, org)
+    orgstate.record_seen(svc(served), "crm", srv["digest"], tools_of("find"))
+    org.servers = [org.server("crm", url="https://tools.example.com/other")]
+    org.versions["mcp"] += 1
+    sync(served)
+    new = org.servers[0]
+    ok(req(served, "org.accept", {"kind": "mcp", "name": "crm", "digest": new["digest"]}))
+    orgstate.record_seen(svc(served), "crm", new["digest"], tools_of("find", "edit"))
+    rows = ok(req(served, "org.show", {"kind": "mcp", "name": "crm"}))["data"]["tools"]
+    assert [t["new"] for t in rows] == [False, False]
+
+
+@pytest.mark.parametrize(
+    "snapshot",
+    [None, "x", [], {"url": 5}, {"url": ["a"]}, {"url": "x" * 200_001}],
+)
+def test_a_malformed_snapshot_drops_the_accept(served, org, snapshot):
+    srv = accept_mcp(served, org)
+    p = orgstate.org_dir(svc(served)) / "accepted.json"
+    entries = accepted_doc(served)
+    entries[0]["snapshot"] = snapshot
+    from orch.store.fsio import write_atomic
+
+    write_atomic(p, json.dumps({"entries": entries}, default=str).encode(), mode=0o600)
+    assert orgstate.served(svc(served))["mcp"] == []  # stricter: not accepted any more
+    assert rows(req(served, "org.offers"), "mcp")["crm"]["status"] == "off"
+    assert srv["digest"]

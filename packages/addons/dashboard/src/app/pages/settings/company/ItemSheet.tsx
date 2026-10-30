@@ -43,7 +43,7 @@ function ToolRow({ tool, enabled, busy, onSet }: { tool: OrgTool; enabled: boole
   return <li className="flex items-start gap-3 py-2" data-testid={`company-tool-${tool.name}`}>
     <div className="min-w-0 flex-1 space-y-1">
       <p className="font-medium">{plain(tool.name)}{tool.title ? <span className="ml-2 font-normal text-text-muted" data-testid={`company-tool-title-${tool.name}`}>{plain(tool.title)}</span> : null}</p>
-      {!tooLong && <p className="text-xs text-text-muted" data-testid={`company-tool-kind-${tool.name}`}>{tool.reads ? 'Reads' : 'Changes things'}</p>}
+      {!tooLong && <p className="text-xs text-text-muted" data-testid={`company-tool-kind-${tool.name}`}>{tool.reads ? 'Reads' : 'Changes things'}{tool.new && <span className="ml-2 rounded bg-surface-2 px-1.5 py-0.5 font-medium text-warning" data-testid={`company-tool-new-${tool.name}`}>New</span>}</p>}
       {tooLong
         ? <p className="text-warning" data-testid={`company-tool-toolong-${tool.name}`}>Too long to review — stays off</p>
         : <>
@@ -163,7 +163,15 @@ export function ItemSheet({ ws, kind, name, onClose }: { ws: string; kind: OrgKi
         {shown.isError && <p role="alert">Could not load this. Get the latest from your hub and try again.</p>}
         {s && item && <>
           <p data-testid="company-sheet-status"><span className="font-medium">Now: </span>{STATUS_WORD[s.status]}</p>
-          {s.status === 'changed' && <p className="text-warning">Your hub changed this since you last turned it on. Read it again.</p>}
+          {s.status === 'changed' && <div className="space-y-1" data-testid="company-changed">
+            <p className="text-warning">Your hub changed this since you last turned it on. Read it again.</p>
+            {!!s.changed?.length && <>
+              <h3 className="font-medium">What changed</h3>
+              <ul className="list-disc space-y-1 pl-5">{s.changed.map((c) => <li key={c.field} data-testid={`company-changed-${c.field}`}>
+                <span className="font-medium">{c.word.charAt(0).toUpperCase() + c.word.slice(1)}</span>{c.was !== null && c.field !== 'text' ? <span className="text-text-muted"> (before: {c.field === 'auth' ? (c.was === 'hub_secret' ? 'company secret' : 'no sign-in') : plain(c.was) || 'empty'})</span> : null}
+              </li>)}</ul>
+            </>}
+          </div>}
           {item.kind === 'skill'
             ? hidden
               ? <p role="alert" data-testid="company-text-hidden">This text has characters that cannot be shown, so it cannot be turned on.</p>

@@ -2,6 +2,7 @@
 // (kept for the tab). Reads are fixed by the scenario. Stopping sharing (a ticket, a rule) is a plain owner click; a
 // join and a leave are signed by One click with the backup key and change the scenario (see the click routes below).
 import type { HubAudienceList, HubSharedTicket, HubPreview, HubRule, HubShare, HubStatus } from '@/api/hub'
+import { EMPTY_PROFILE, type ProfileFields } from '@/api/profile'
 import { BACKUP_KEY_LINE, CLICK_RISK, type ClickViewAnswer } from '@/api/click'
 import { fail, ok, type MockRouter } from './router'
 
@@ -111,6 +112,20 @@ function mockPreview(body: { add?: HubRule; remove?: HubRule } | null): HubPrevi
   return { count: items.length, new: added, revoked: removed, more: 0, items, rules: [], plan: 'P'.repeat(42) + String(items.length % 10), review }
 }
 
+/** The owner's profile (HUB-WS-09): kept in memory; `pushed` only when the scenario has a hub the host could reach. */
+let mockProfile: ProfileFields = { ...EMPTY_PROFILE }
+export const resetMockProfile = () => { mockProfile = { ...EMPTY_PROFILE } }
+function registerHubProfileRoutes(r: MockRouter) {
+  r.add('GET', '/api/w/:ws/hub/profile', () => ok({ ...mockProfile, pushed: false }))
+  r.add('PUT', '/api/w/:ws/hub/profile', (_s, c) => {
+    const b = c.body as Partial<ProfileFields> | null
+    if (!b || typeof b.listed !== 'boolean' || typeof b.description !== 'string') return fail(400, 'invalid.input', 'Body must be a profile')
+    mockProfile = { ...EMPTY_PROFILE, ...b }
+    const s = scenario()
+    return ok({ ...mockProfile, pushed: s === 'selective' || s === 'full' })
+  })
+}
+
 export function registerHubRoutes(r: MockRouter) {
   r.add('GET', '/api/w/:ws/hub', () => ok(mockHubStatus()))
   r.add('GET', '/api/w/:ws/hub/share', () => ok(mockShare()))
@@ -139,6 +154,7 @@ export function registerHubRoutes(r: MockRouter) {
     if (typeof (c.body as { expect?: unknown } | null)?.expect !== 'string') return fail(400, 'invalid.input', 'Body must be {expect}')
     return ok({ synced: true, pending: null, put: 0 })
   })
+  registerHubProfileRoutes(r)
   registerHubClickRoutes(r)
 }
 

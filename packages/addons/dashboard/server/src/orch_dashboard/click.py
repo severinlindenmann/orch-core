@@ -18,6 +18,7 @@ to the preparing session by the signer; other views retain the existing per-pers
 import hashlib
 import re
 import threading
+import time
 from collections import OrderedDict
 from typing import Annotated, Literal
 
@@ -64,6 +65,7 @@ RISK = "Convenience signing: agents running as you, or anything that takes over 
 ViewDigest = Annotated[str, StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$")]
 TTL = 660  # a request lives 10 minutes at most (the signer caps it); the session forgets it a minute later
 REMEMBERED = 256
+BINDING_KEEP = 2 * TTL  # a tombstoned binding outlives the longest request by a whole lifetime
 #: refusals after which a request can no longer be signed: its slot is free again
 ENDED = {"expired", "not_prepared_here", "custody_changed", "human.request_expired", "human.request_state"}
 #: the signer says `the request is <state>` when an intent's idem returns a request that already ended
@@ -403,23 +405,44 @@ class Clicks:
     def __init__(self):
         self.lock = threading.Lock()
         self.ops: OrderedDict[str, tuple[str, str, object, int]] = OrderedDict()
-        self.tokens: OrderedDict[str, str] = (
-            OrderedDict()
-        )  # request id -> the session token that prepared a REMOTE_STEP
+        #: request id -> [session token, ended, time ended] of every REMOTE_STEP request. Never deleted while the
+        #: request can still be live at the host: `forget` only tombstones it, purged after BINDING_KEEP.
+        self.bindings: OrderedDict[str, list] = OrderedDict()
+        self.clock = time.monotonic
+        self.known: OrderedDict[str, None] = OrderedDict()  # ids of the other (non-remote) requests ever added
 
-    def bind(self, request_id: str, token: str) -> None:
-        with self.lock:
-            self.tokens[request_id] = token
-            while len(self.tokens) > REMEMBERED:
-                self.tokens.popitem(last=False)
+    def _purge(self) -> None:
+        now = self.clock()
+        for rid in [r for r, (_, ended, at) in self.bindings.items() if ended and now - at > BINDING_KEEP]:
+            del self.bindings[rid]
 
-    def bound(self, request_id: str) -> str | None:
+    def bind(self, request_id: str, token: str) -> bool:
+        """Bind a request prepared by `token`. False when another session already holds it (live or tombstoned)."""
         with self.lock:
-            return self.tokens.get(request_id)
+            self._purge()
+            held = self.bindings.get(request_id)
+            if held is not None and held[0] != token:
+                return False
+            self.bindings[request_id] = [token, False, 0.0]
+            return True
+
+    def is_known(self, request_id: str) -> bool:
+        with self.lock:
+            return request_id in self.known
+
+    def binding(self, request_id: str) -> tuple[str, bool] | None:
+        with self.lock:
+            self._purge()
+            held = self.bindings.get(request_id)
+            return None if held is None else (held[0], held[1])
 
     def add(self, ws: str, request_id: str, op: str, body: object, epoch: int) -> None:
         with self.lock:
             self.ops[request_id] = (ws, op, body, epoch)
+            if not isinstance(body, REMOTE_STEPS):
+                self.known[request_id] = None
+                while len(self.known) > 16 * REMEMBERED:
+                    self.known.popitem(last=False)
             self.ops.move_to_end(request_id)
             while len(self.ops) > REMEMBERED:
                 self.ops.popitem(last=False)
@@ -436,7 +459,9 @@ class Clicks:
     def forget(self, request_id: str) -> None:
         with self.lock:
             self.ops.pop(request_id, None)
-            self.tokens.pop(request_id, None)  # the request ended for good: its binding goes with it
+            held = self.bindings.get(request_id)
+            if held is not None and not held[1]:  # tombstone, never delete: it stays refused for its lifetime
+                held[1], held[2] = True, self.clock()
 
 
 def verify(prepared: dict, ws: str, **expect) -> dict:
@@ -534,17 +559,25 @@ def register(app: FastAPI, gateway: Gateway):
             handoffs.settle_all(rid)
             handoffs.disown(rid)
 
-    def remote_step_only_here(request: Request, request_id: str) -> None:
-        """R2: a remote-access change is viewed and signed only by the loopback session that prepared it (every step,
-        not only prepare). The BINDING decides, not the ops record: a request id with a bound token needs LOCAL and
-        that very token whatever the record says (a lost or replaced record opens nothing); a remote-step record
-        without a binding is refused too. Any other session gets `not_found`, as for another's request."""
-        bound = clicks.bound(request_id)
-        if bound is None and not isinstance(clicks.get(request_id)[2], REMOTE_STEPS):
+    def authorize(request_id: str | None, token: str, body: object = None) -> None:
+        """THE rule for remote-access changes (R2), the only place LOCAL and the token are decided: prepare (`body`
+        given), view, sign and cancel all come here. A bound request id (live or tombstoned) needs a session opened on
+        this computer AND the very token that prepared it, whatever the ops record says; a remote-step record without
+        a binding is `not_found`. Fail closed."""
+        local = app.state.auth.login_kind(token) == LOCAL
+        if request_id is None:
+            if isinstance(body, REMOTE_STEPS) and not local:
+                raise fail("op.not_allowed", "Change remote access on the computer itself.", exit=3)
             return
-        token = request.state.token
-        if bound is None or bound != token or app.state.auth.login_kind(token) != LOCAL:
+        held = clicks.binding(request_id)
+        if held is not None:
+            if held[1] or held[0] != token or not local:
+                raise fail("not_found", exit=2)
+            return
+        if isinstance(clicks.get(request_id)[2], REMOTE_STEPS):
             raise fail("not_found", exit=2)
+        if clicks.get(request_id)[2] is None and not clicks.is_known(request_id):
+            raise fail("not_found", exit=2)  # neither a record nor a binding nor ever seen: unknown means refuse
 
     def mine(ws: str, request_id: str) -> None:
         """A request of this PERSON in this workspace (any of their sessions); another's, or none, is `not_found`."""
@@ -862,10 +895,7 @@ def register(app: FastAPI, gateway: Gateway):
         token = request.state.token
         if app.state.auth.login_kind(token) == "switch":
             raise fail("session.readonly", "Open a full session to sign.", exit=3)
-        if isinstance(body, REMOTE_STEPS) and app.state.auth.login_kind(token) != LOCAL:
-            # R2: remote access is changed only from a session opened on this computer (design note 2); the signer
-            # refuses it for a remote session as well
-            raise fail("op.not_allowed", "Change remote access on the computer itself.", exit=3)
+        authorize(None, token, body)  # R2: remote access is changed only from a session opened on this computer
         gateway.enabled(ws)  # pinned workspace, dashboard addon enabled in it (the hand-off's `human()` does this)
         with handoffs.lock:
             handoffs.reserve(token)  # check and take a slot in one step (shared with the hand-off)
@@ -1010,8 +1040,8 @@ def register(app: FastAPI, gateway: Gateway):
         clicks.forget(rid)  # adopted by the new signer; it is no longer an orphan
         sweep()
         clicks.add(ws, rid, planned.op, body, signer.restarts)
-        if isinstance(body, REMOTE_STEPS):
-            clicks.bind(rid, token)
+        if isinstance(body, REMOTE_STEPS) and not clicks.bind(rid, token):
+            raise fail("intent.blocked", "This change is open in another window.", exit=5)
         if planned.sequence:  # a display aid for `state` (how far a stopped run got); it decides nothing
             handoffs.note_intent(planned.person, rid, planned.sequence["intent"])
         handoffs.own(planned.person, ws, rid, TTL)
@@ -1024,7 +1054,7 @@ def register(app: FastAPI, gateway: Gateway):
     @app.post("/api/w/{ws}/click/view", dependencies=[Depends(contract)])
     def view(body: Step, request: Request, ws: str = Depends(workspace)):
         mine(ws, body.request_id)
-        remote_step_only_here(request, body.request_id)
+        authorize(body.request_id, request.state.token)
         rid = body.request_id
         _, op, wanted, _ = clicks.get(rid)
         # The hand-off's gate on the host's own record: it must be the action that was asked for (the ticket, the exact
@@ -1173,13 +1203,13 @@ def register(app: FastAPI, gateway: Gateway):
 
     @app.post("/api/w/{ws}/click/sign", dependencies=[Depends(contract)])
     def sign(body: Sign, request: Request, ws: str = Depends(workspace)):
-        remote_step_only_here(request, body.request_id)  # first: a remote change is the preparing session's only
+        authorize(body.request_id, request.state.token)  # first: a remote change is the preparing session's only
         step = refuse_step_up(app.state.auth, request, "sign", body, ws)  # where a typed key arrives: fail closed
         step = ready(step)
         mine(ws, body.request_id)
         rid = body.request_id
         wanted = clicks.get(rid)[2]
-        if wanted is None and clicks.bound(rid) is not None:  # a remote change is never signed blind
+        if wanted is None and clicks.binding(rid) is not None:  # a remote change is never signed blind
             raise fail("not_found", exit=2)
         # In flight counts as unsettled from here on, BEFORE the channel is used: nothing here cancels the request or
         # replaces the signer under it, and the mark is already there if the answer is lost. (A second signature of
@@ -1284,6 +1314,7 @@ def register(app: FastAPI, gateway: Gateway):
     @app.post("/api/w/{ws}/click/cancel", dependencies=[Depends(contract)])
     def cancel(body: Step, request: Request, ws: str = Depends(workspace)):
         mine(ws, body.request_id)
+        authorize(body.request_id, request.state.token)
         rid = body.request_id
         if rid in held:
             if held[rid] != (ws, request.state.token):

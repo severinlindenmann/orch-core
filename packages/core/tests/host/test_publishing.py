@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import base64
 import copy
+import dataclasses
 import hashlib
 import json
 import os
@@ -22,6 +23,7 @@ import pytest
 from orch import crypto
 from orch.crypto import suite as S
 from orch.host import hubops, hubpolicy, publishing, signcontent
+from orch.host.errors import HostError
 from orch.host.publishing import PUBLISH_OPS
 from orch.publishclient import approval, flow
 from tests.host import human_helpers
@@ -30,7 +32,7 @@ from tests.host.human_helpers import Human
 from tests.host.test_artifact_get import stored
 from tests.host.test_blobs import add, sha, upload
 from tests.host.test_click import Click, click  # noqa: F401
-from tests.host.test_hub_ops import HUB_ID, connect_args, join_args
+from tests.host.test_hub_ops import HUB_ID, connect_args, join_args, keystore  # noqa: F401  (fixture: a full join)
 from tests.hub import contract as H
 from tests.hub.fake import BareLink, sign_with
 from tests.hub.vec import private_key, pub
@@ -200,8 +202,8 @@ class World:
         if join:
             self.join()
 
-    def join(self) -> None:
-        self.human.run("hub.join", join_args())
+    def join(self, mode: str = "selective") -> None:
+        self.human.run("hub.join", join_args(mode=mode))
         ok(self.served.client().req("hub.connect", connect_args(), idem=True))
 
     def _genesis(self) -> dict[str, Any]:
@@ -1067,8 +1069,6 @@ def test_a_copy_that_may_be_live_is_not_discarded(w):
 def test_only_the_ticket_owner_or_a_manager_may_sign_a_share(w, served):
     from types import SimpleNamespace
 
-    from orch.host.errors import HostError
-
     uid, key = w.ticket_with(**{"report.md": REPORT})
     member = served.lab.add_member()
     store = served.lab.ws.other()
@@ -1138,6 +1138,7 @@ def test_an_old_approval_among_many_other_events_is_still_found_and_a_stale_one_
 def test_a_member_or_viewer_cannot_sign_a_share_through_the_real_path(tmp_path, monkeypatch):
     from tests.host.live_helpers import world
 
+    monkeypatch.setattr(publishing, "_hub_route", lambda service, **kw: None)  # about roles here, not the hub path
     wd = world(tmp_path, map_to="quinn")
     try:
         quinn = Human(wd, wd.quinn)
@@ -1361,3 +1362,64 @@ def test_the_review_tags_each_address_in_plain_words():
     assert _reach("http://192.168.1.5:8103") == "office network" and _reach("http://100.64.0.9") == "office network"
     assert _reach("http://172.16.0.1") == "office network" and _reach("http://172.32.0.1") == "public address"
     assert _reach("https://files.example.org:8443") == "public address"
+
+
+# -- P01 (run 14): a full-mode workspace publishes through the hub too; every refusal is in plain words ---------------
+
+
+@pytest.fixture
+def wfull(served, human, monkeypatch, keystore):  # noqa: F811
+    world = World(served, human, monkeypatch, join=False)
+    world.join("full")
+    world.addon()
+    world.configure()
+    return world
+
+
+def test_a_full_mode_workspace_publishes_through_the_hub_and_the_link_is_shown_once(wfull):
+    w = wfull
+    assert hubops.publish_route(w.served.service)["mode"] == "full"
+    uid, key = w.ticket_with(**{"hello.txt": b"hello from orch"})
+    staged = w.prepare(key, "hello.txt")["staged_id"]
+    w.approve(staged)
+    data = ok(w.send(staged))["data"]
+    share_id, token = LINK.fullmatch(data["link"]).groups()
+    assert data["shown_once"] is True and w.server.shares[share_id]["state"] == "live"
+    assert "publish_out" in w.hub.ops() and "card_put" in w.hub.ops()  # through the hub, never a direct POST
+    assert w.server.bad_signatures == []
+    # the link is kept nowhere on this computer
+    assert token.encode() not in w.everything_on_disk()
+    # and it is listed (no token) for the person to stop
+    rows = ok(w.req("publish.list", {}))["data"]["shares"]
+    assert [r["id"] for r in rows] == [share_id] and "link" not in json.dumps(rows)
+
+
+def test_a_full_mode_share_is_the_persons_signature_not_the_hubs_and_an_agent_cannot_send(wfull):
+    w = wfull
+    uid, key = w.ticket_with(**{"hello.txt": b"hello from orch"})
+    staged = w.prepare(key, "hello.txt")["staged_id"]
+    assert err(w.send(staged)) == "publish.not_approved"  # no signature yet: the route alone publishes nothing
+    assert err(w.send(staged, agent=True)) in ("op.not_allowed", "publish.not_approved")
+    assert w.server.shares == {}
+
+
+def test_the_refusals_before_signing_are_plain_words_not_codes(served, human, monkeypatch):
+    w = World(served, human, monkeypatch, join=False)
+    human.run("hub.join", join_args())  # joined, never connected
+    w.addon()
+    w.configure()
+    uid, key = w.ticket_with(**{"hello.txt": b"hello"})
+    res = w.req("publish.prepare", {"ref": key, "artifacts": ["hello.txt"]})
+    assert err(res) == "hub.not_joined"
+    text = res["error"]["message"]
+    assert "Settings" in text and "hub.state_mismatch" not in text and "orch hub" not in text
+
+
+def test_a_hub_state_that_disagrees_with_the_log_is_refused_in_plain_words(wfull, monkeypatch):
+    w = wfull
+    real = hubops._load_state
+    monkeypatch.setattr(hubops, "_load_state", lambda service: dataclasses.replace(real(service), mode="selective"))
+    with pytest.raises(HostError) as e:
+        hubops.publish_route(w.served.service)
+    assert e.value.code == "hub.state_mismatch"
+    assert "only selective" not in str(e.value) and "Settings" in str(e.value)

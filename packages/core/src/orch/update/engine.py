@@ -20,6 +20,7 @@ Everything that touches the machine is a seam on :class:`Seams`, so the tests ru
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import shutil
@@ -39,11 +40,12 @@ from orch.ops.errors import OrchError
 from orch.ops.runtime import state_dir
 
 from . import quarantine
+from .envelope import parse_envelope
+from .keys import embedded_roots
 from .layout import (
     InstallLayout,
     Record,
     check_version,
-    ensure_shim,
     flip_current,
     new_record,
     prune_cache,
@@ -81,7 +83,7 @@ class Services(Protocol):
 class Seams:
     source: Source
     services: Services
-    installer: Callable[[InstallLayout, str, Mapping[str, Path]], None]
+    installer: Callable[[InstallLayout, str, Mapping[str, Path], Record], None]
     run_orch: Callable[[Path, Sequence[str]], tuple[int, str]]
     free_bytes: Callable[[Path], int] = lambda p: shutil.disk_usage(p).free
     live_runs: Callable[[Path], list[Any]] | None = None
@@ -239,8 +241,9 @@ class Updater:
             "from_version": cur, "to_version": new, "channel": ch, "seq": ver.seq, "running": names, "backups": [],
             "roots": [str(r[2].resolve()) for r in roots],
             "revocations_issued_at": ver.revocations_issued_at, "root_key_id": self._root_key_id(),
-            "files": {f["name"]: f["sha256"] for f in manifest["files"]},
-            "roles": {f["name"]: f["role"] for f in manifest["files"]}, "log": str(self.log_path),
+            "min_serial": ver.min_serial, "release_key_id": self._release_key_id(),
+            "trusted_roots": sorted(embedded_roots()), "log": str(self.log_path),
+            "files": [{k: f[k] for k in ("role", "name", "sha256", "size")} for f in manifest["files"]],
         }  # fmt: skip
         try:
             self._phase("stopped", **info)
@@ -260,6 +263,12 @@ class Updater:
         try:
             env = json.loads(self._envelope)
             return str(env["key_cert"]["root_key_id"])
+        except Exception:  # noqa: BLE001
+            return ""
+
+    def _release_key_id(self) -> str:
+        try:
+            return parse_envelope(self._envelope).sig_key_id
         except Exception:  # noqa: BLE001
             return ""
 
@@ -327,10 +336,10 @@ class Updater:
         cache = self.layout.cache_dir(info["to_version"])
         self._envelope = (cache / "release.json").read_bytes()
         files: dict[str, Path] = {}
-        for name, sha in info["files"].items():
-            if hashlib.sha256((cache / name).read_bytes()).hexdigest() != sha:
-                raise OrchError("update.unverified", f"{name} in the download cache does not match its hash")
-            files[info["roles"][name]] = cache / name
+        for f in info["files"]:
+            if hashlib.sha256((cache / f["name"]).read_bytes()).hexdigest() != f["sha256"]:
+                raise OrchError("update.unverified", f"{f['name']} in the download cache does not match its hash")
+            files[f["role"]] = cache / f["name"]
         return files
 
     # ------------------------------------------------------------------------------------------ forward phases
@@ -348,7 +357,7 @@ class Updater:
         if at < 1:
             self._backup(info, roots)
         if at < 2:
-            self.s.installer(self.layout, to, files)
+            self.s.installer(self.layout, to, files, read_record(self.layout))
             check_bin = self.layout.tool_bin(to)
             rc, out = self.s.run_orch(check_bin, ["--version", "--json"])
             if rc != 0 or to not in out:
@@ -407,7 +416,6 @@ class Updater:
     def _commit(self, info: dict[str, Any], rec: Record) -> Outcome:
         to, frm = info["to_version"], info["from_version"]
         flip_current(self.layout, to)
-        ensure_shim(self.layout)
         self._phase("committed")  # the commit point: from here on, forward only
         self._write_record(read_journal_safe(self.env) or info, rec)
         warnings: list[str] = []
@@ -420,7 +428,7 @@ class Updater:
             warnings.append(p)
         for _label, _kind, root in roots_of(info):
             backup_mod.prune_backups(self.env, root)  # only now: a failing update never eats its own way back
-        prune_tools(self.layout, to, frm)
+        prune_tools(self.layout, to)
         prune_cache(self.layout, {to, frm})
         if problems:
             msg = (
@@ -430,17 +438,20 @@ class Updater:
             return Outcome(False, "updated", frm, to, msg, self.log_path, warnings, "update.after_commit")
         return Outcome(True, "updated", frm, to, f"orch is now {to}", self.log_path)
 
-    def _write_record(self, info: Mapping[str, Any], old: Record | None) -> None:
+    def _write_record(self, info: Mapping[str, Any], old: Record) -> None:
         write_record(
             self.layout,
             new_record(
                 old,
                 channel=info["channel"],
                 version=info["to_version"],
-                previous=info["from_version"],
                 seq=info["seq"],
                 revocations_issued_at=info["revocations_issued_at"],
+                min_serial=info["min_serial"],
                 root_key_id=info["root_key_id"],
+                release_key_id=info["release_key_id"],
+                trusted_roots=info["trusted_roots"],
+                tool_dir=str(self.layout.tool_dir(info["to_version"])),
                 files=info["files"],
             ),
         )
@@ -525,8 +536,10 @@ class Updater:
             running = self.s.services.running()
             self.s.services.stop()
             flip_current(self.layout, ver)
-            write_record(self.layout, Record(rec.channel, ver, cur, rec.seq_seen, rec.revocations_issued_at,
-                                             rec.root_key_id, rec.files, int(time.time())))  # fmt: skip
+            write_record(
+                self.layout,
+                dataclasses.replace(rec, version=ver, tool_dir=str(self.layout.tool_dir(ver))),
+            )
             self.s.services.start(self.layout.tool_bin(ver), running, quarantine=False)
             problems = self._wait_healthy(False)
             msg = f"orch {ver} is selected again; your data was not changed"

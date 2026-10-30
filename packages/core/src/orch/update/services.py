@@ -20,7 +20,7 @@ from orch import childenv
 from orch.lifecycle.units import ORDER_START, ORDER_STOP, Env, LifecycleError, Svc, discover, start_svc, stop_svc
 from orch.ops.errors import OrchError
 
-from .layout import InstallLayout
+from .layout import InstallLayout, Record, requirements_text
 
 __all__ = ["GithubSource", "LifecycleServices", "run_orch", "uv_install"]
 
@@ -42,20 +42,42 @@ def run_orch(orch_bin: Path, args: Sequence[str]) -> tuple[int, str]:
     return r.returncode, (r.stdout or "") + (r.stderr or "")
 
 
-def uv_install(layout: InstallLayout, ver: str, files: Mapping[str, Path]) -> None:
-    """``uv tool install --require-hashes`` of the verified files into ``tools/orch-<ver>`` (its own UV_TOOL_DIR)."""
+def uv_install(layout: InstallLayout, ver: str, files: Mapping[str, Path], rec: Record) -> None:
+    """Install ``ver`` the way install.sh does: the pinned uv, a venv in ``tools/orch-<ver>/venv``, then
+    ``uv pip install --require-hashes --no-deps`` of the verified files only. ``.complete`` is written last."""
+    import hashlib
+    import shutil
+
+    uv = rec.uv.get("path") or ""
+    if not uv or not os.access(uv, os.X_OK):
+        raise OrchError("update.no_record", "the uv that install.sh pinned is gone: run the installer again")
     tool = layout.tool_dir(ver)
-    tool.mkdir(parents=True, exist_ok=True, mode=0o700)
-    argv = ["uv", "tool", "install", "--force", "--python", "3.14", "--require-hashes",
-            "--constraints", str(files["constraints"]), str(files["core"])]  # fmt: skip
-    for role in ("dashboard", "hub", "relay", "publish"):
-        if role in files:
-            argv += ["--with", str(files[role])]
+    if tool.exists():
+        shutil.rmtree(tool)  # an unfinished earlier try (no .complete)
+    tool.mkdir(parents=True, mode=0o700)
+    venv = tool / "venv"
     env = childenv.sanitize(os.environ)
-    env["UV_TOOL_DIR"], env["UV_TOOL_BIN_DIR"] = str(tool), str(tool / "bin")
-    r = subprocess.run(argv, capture_output=True, text=True, env=env, timeout=1800)
+    env["UV_PYTHON_PREFERENCE"] = "only-managed"
+    reqs = requirements_text(
+        files["constraints"].read_text(),
+        [(role, p, hashlib.sha256(p.read_bytes()).hexdigest()) for role, p in files.items()],
+    )
+    req_file = tool / "requirements.txt"
+    req_file.write_text(reqs)
+    for argv in (
+        [uv, "venv", "--no-config", "--quiet", "--python", "3.14", str(venv)],
+        [uv, "pip", "install", "--no-config", "--quiet", "--require-hashes", "--no-deps",
+         "--python", str(venv / "bin" / "python"), "-r", str(req_file)],
+    ):  # fmt: skip
+        r = subprocess.run(argv, capture_output=True, text=True, env=env, timeout=1800)
+        if r.returncode != 0:
+            raise OrchError(
+                "update.unverified", f"uv could not install the new version: {(r.stdout + r.stderr)[-300:]}"
+            )
+    r = subprocess.run([str(venv / "bin" / "orch"), "--version"], capture_output=True, env=env, timeout=120)
     if r.returncode != 0:
-        raise OrchError("update.unverified", f"uv could not install the new version: {(r.stdout + r.stderr)[-300:]}")
+        raise OrchError("update.unverified", "the new orch does not start")
+    (tool / ".complete").write_text("")
 
 
 class GithubSource:

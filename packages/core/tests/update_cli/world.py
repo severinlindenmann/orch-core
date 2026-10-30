@@ -12,7 +12,7 @@ from pathlib import Path
 from orch.migrate import init_root
 from orch.update import keys as keys_mod
 from orch.update.engine import Seams, Updater
-from orch.update.layout import InstallLayout, Record, ensure_shim, flip_current, write_record
+from orch.update.layout import InstallLayout, Record, flip_current, write_record
 
 DIR = Path(__file__).resolve().parent.parent / "vectors" / "release"
 _spec = importlib.util.spec_from_file_location("gen_release_vectors_upd", DIR / "gen_release_vectors.py")
@@ -68,12 +68,19 @@ class FakeServices:
         from orch.update import quarantine as q
 
         self.events.append("start-q" if quarantine else "start")
-        self.started_with.append((orch_bin.parent.parent.name, quarantine))
+        self.started_with.append((orch_bin.parent.parent.parent.name, quarantine))
         assert q.active(self.state) == quarantine, "the quarantine marker must match the start mode"
         self.up = list(names)
 
     def health(self, *, quarantine: bool) -> list[str]:
         return list(self.problems_quarantine if quarantine else self.problems_normal)
+
+
+def record(version: str = OLD, seq: dict | None = None, rev: str | None = "2026-10-20T00:00:00Z", min_serial: int = 1):
+    return Record(
+        "main", version, {"main": 41} if seq is None else seq, rev, min_serial, "root-1", "rk-3", ["root-1"],
+        "2026-10-01T00:00:00Z", "/x", {"path": "/bin/true", "version": "0.13.3"}, [],
+    )  # fmt: skip
 
 
 class World:
@@ -103,27 +110,24 @@ class World:
     # -- the installed old version
     def fake_bin(self, ver: str) -> None:
         d = self.layout.tool_dir(ver)
-        (d / "bin").mkdir(parents=True, exist_ok=True)
-        b = d / "bin" / "orch"
+        (d / "venv" / "bin").mkdir(parents=True, exist_ok=True)
+        b = d / "venv" / "bin" / "orch"
         b.write_text(f"#!/bin/sh\n# fake {ver}\n")
         b.chmod(b.stat().st_mode | stat.S_IXUSR)
+        (d / ".complete").write_text("")
 
     def install_old(self) -> None:
         self.fake_bin(OLD)
         flip_current(self.layout, OLD)
-        ensure_shim(self.layout)
-        write_record(
-            self.layout,
-            Record("main", OLD, None, {"main": 41}, "2026-10-20T00:00:00Z", "root-1", {}, 1),
-        )
+        write_record(self.layout, record())
 
     # -- seams
-    def installer(self, layout, ver, files) -> None:
+    def installer(self, layout, ver, files, rec) -> None:
         assert set(files) >= {"core", "constraints"}
         self.fake_bin(ver)
 
     def run_orch(self, orch_bin: Path, args) -> tuple[int, str]:
-        ver = orch_bin.parent.parent.name.removeprefix("orch-")
+        ver = orch_bin.parent.parent.parent.name.removeprefix("orch-")
         if list(args) == ["--version", "--json"]:
             return 0, json.dumps({"version": ver})
         if list(args)[:1] == ["migrate"] and "--apply" in args:

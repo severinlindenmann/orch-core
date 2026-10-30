@@ -12,7 +12,7 @@ from orch.update import quarantine
 from orch.update.engine import Crash
 from orch.update.layout import read_record
 
-from .world import OLD, World, use_test_root
+from .world import OLD, World, record, use_test_root
 
 NEW = "2.0.0.dev42"
 
@@ -50,9 +50,10 @@ def test_happy_path(w):
     assert (w.state / "data.txt").read_text() == "migrated\n"
     assert read_journal(w.env)["phase"] == "committed"
     rec = read_record(w.layout)
-    assert (rec.version, rec.previous, rec.seq("main")) == (NEW, OLD, 42)
+    assert (rec.version, rec.seq("main"), rec.min_serial) == (NEW, 42, 2)
+    assert rec.uv["path"] == "/bin/true" and rec.release_key_id == "rk-3" and rec.trusted_roots == ["root-1"]
     assert rec.root_key_id == "root-1" and rec.revocations_issued_at == "2026-10-20T00:00:00Z"
-    assert set(rec.files) == {f for f in w.source.blobs}
+    assert {f["name"] for f in rec.files} == set(w.source.blobs) and rec.tool_dir.endswith(f"orch-{NEW}")
     # order: stop, quarantine start, stop, normal start; both versions kept
     assert w.services.events == ["stop", "start-q", "stop", "start"]
     assert w.services.started_with == [(f"orch-{NEW}", True), (f"orch-{NEW}", False)]
@@ -88,19 +89,17 @@ def test_a_tampered_file_changes_nothing(w):
 
 
 def test_a_lower_seq_is_refused(w):
-    rec = read_record(w.layout)
-    from orch.update.layout import Record, write_record
+    from orch.update.layout import write_record
 
-    write_record(w.layout, Record(rec.channel, rec.version, None, {"main": 50}, rec.revocations_issued_at,
-                                  rec.root_key_id, {}, 1))  # fmt: skip
+    write_record(w.layout, record(seq={"main": 50}))
     assert code(w.updater().update) == "update.stale"
     untouched(w)
 
 
 def test_an_older_release_is_a_downgrade(w):
-    from orch.update.layout import Record, write_record
+    from orch.update.layout import write_record
 
-    write_record(w.layout, Record("main", OLD, None, {}, "2026-10-20T00:00:00Z", "root-1", {}, 1))
+    write_record(w.layout, record(seq={}))
     w.source.publish("main", 40)
     assert code(w.updater().update) == "update.downgrade"
     untouched(w)

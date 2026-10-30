@@ -1,53 +1,56 @@
 """The A/B install layout, the install record and the download cache: the one place that knows where orch lives on disk.
 
-THIS DOCSTRING IS THE CONTRACT FOR ``install.sh`` (task P2-C). install.sh, ``orch update`` and the services
-all follow it;
-nobody else invents a path. ``<data>`` is ``$XDG_DATA_HOME/orch`` when that is an absolute path, else
-``~/.local/share/orch`` (the same place as the backups: :func:`orch.migrate.backup.backups_dir`). Everything below is
-mode 0700 (files 0600), owned by the person who runs orch, and never in a synced folder.
+THIS DOCSTRING IS THE CONTRACT with ``install.sh`` (P2-C builds exactly this). ``<state>`` is the host state dir
+(:func:`orch.ops.runtime.state_dir`: ``ORCH_STATE_DIR``, else ``$XDG_CONFIG_HOME/orch``, else ``~/.config/orch``).
+``<data>`` is ``$XDG_DATA_HOME/orch`` when that is an absolute path, else ``~/.local/share/orch`` (where the backups
+are). Directories are 0700, files 0600, never in a synced folder.
 
 ::
 
-    <data>/install.json                      the install record (below), atomic write, 0600
-    <data>/install/tools/orch-<ver>/         one directory per installed version = that install's UV_TOOL_DIR
-    <data>/install/tools/orch-<ver>/bin/orch the entry point of that version (its UV_TOOL_BIN_DIR is the bin/ above)
-    <data>/install/current                   a RELATIVE symlink to tools/orch-<ver>; flipped atomically (rename over it)
-    <data>/install/bin/orch                  the shim on the person's PATH: a symlink to ../current/bin/orch
-    <data>/install/cache/<ver>/              the verified download: the files the manifest lists + release.json
-    <data>/install/logs/update-<ts>.log      one log per ``orch update`` run
-    <data>/install/update.lock               held (flock) by a running ``orch update``/``--use``
+    <state>/install/tools/orch-<ver>/venv/        one environment per version (A/B); ``venv/bin/orch`` is its entry point
+    <state>/install/tools/orch-<ver>/.complete    written LAST: a version without it is not installed
+    <state>/install/current                       symlink ``tools/orch-<ver>`` (relative), flipped by rename
+    ~/.local/bin/orch                             one-time symlink to <state>/install/current/venv/bin/orch; never changes
+    <state>/install/update.json                   the update journal (orch.migrate.journal)
+    <data>/install.json                           the install record (below), 0600, ``format`` ``orch.install/1``
+    <data>/uv/uv-<uvver>/uv                       the pinned uv that install.sh fetched (the record names it)
+    <data>/cache/<ver>/                           verified download of a release: its files + ``release.json`` (the envelope)
+    <data>/logs/update-<ts>-<pid>.log             one log per ``orch update`` run
+    <data>/update.lock                            held (flock) by a running ``orch update``
 
-``<ver>`` matches ``\\d+\\.\\d+\\.\\d+(\\.dev\\d+)?`` (the manifest's version, checked by the verifier). Any
-other string is
-refused before it becomes a path component.
+``<state>/install/tools`` is also where ``orch install hub|relay|publish`` keep their own tools; the update backup leaves
+it out and a restore never touches it (:mod:`orch.migrate.backup`). Only ``orch-<ver>`` directories belong to this module.
+``<ver>`` matches ``\\d+\\.\\d+\\.\\d+(\\.dev\\d+)?``; any other string is refused before it becomes a path component.
 
-How install.sh installs a version V (after it verified the envelope and the files, B1):
+There is NO ``uv tool install``. A version is installed with the pinned uv, from the verified local files only::
 
-1. ``mkdir -p <data>/install/tools/orch-V``; run ``uv tool install --python 3.14 --require-hashes --constraints
-   constraints.txt <core wheel> --with <dashboard wheel> [--with <hub|relay|publish wheel> ...]`` with
-   ``UV_TOOL_DIR=<data>/install/tools/orch-V`` and ``UV_TOOL_BIN_DIR=<data>/install/tools/orch-V/bin``, using ONLY the
-   files the verified manifest lists, by their verified names.
-2. Copy the verified files and the envelope to ``<data>/install/cache/V/`` (``release.json`` is the envelope).
-3. Flip ``current`` to ``tools/orch-V`` (:func:`flip_current`: create ``current.<pid>.tmp`` as a relative symlink,
-   ``rename`` it over ``current``) and make the shim (:func:`ensure_shim`).
-4. Write the install record (:func:`write_record`) with ``seq_seen`` and ``revocations_issued_at`` taken from the
-   verified manifest and revocation list. install.sh never leaves a record that has a lower ``seq_seen`` than it
-   verified: ``orch update`` passes the stored values back to the verifier and refuses a lower ``seq`` (rollback).
-5. Put ``<data>/install/bin`` on PATH (``uv tool update-shell`` is not used: it would point at uv's own bin dir).
+    uv venv --no-config --python <3.14> <state>/install/tools/orch-V/venv
+    uv pip install --no-config --require-hashes --no-deps --python <venv>/bin/python -r requirements.txt
 
-The install record ``<data>/install.json`` (exact key set, ``format`` 1)::
+where ``requirements.txt`` is the signed ``constraints`` file's lines plus one ``file:///<abs path> --hash=sha256:<hex>``
+line per manifest file that is not the constraints file (:func:`requirements_text`). Then ``venv/bin/orch --version`` must
+run, and only then ``.complete`` is written. install.sh then flips ``current`` (:func:`flip_current`), makes the PATH
+link once, and writes the install record.
 
-    {"format": 1, "channel": "main", "version": "2.0.0", "previous": null | "<ver>",
-     "seq_seen": {"main": 17}, "revocations_issued_at": "2026-10-20T00:00:00Z", "root_key_id": "root-1",
-     "files": {"<name>": "<sha256>"}, "installed_at": 1761800000}
+The install record ``<data>/install.json`` (exact key set)::
 
-It is written only by install.sh and ``orch update`` (never from workspace files, ``ORCH_*`` variables or agent-writable
-config). ``version`` is informational: the truth for "what is installed" is where ``current`` points; ``orch update``
-repairs a record that disagrees with a committed journal. A damaged record is refused (fail closed), never guessed.
+    {"format": "orch.install/1", "channel": "main", "version": "2.0.0", "seq_seen": {"main": 17},
+     "revocations_issued_at": "2026-10-20T00:00:00Z", "min_serial": 2, "root_key_id": "root-1",
+     "release_key_id": "rk-3", "trusted_roots": ["root-1"], "installed_at": "2026-10-30T10:00:00Z",
+     "tool_dir": "<state>/install/tools/orch-V", "uv": {"path": "...", "version": "0.13.3"},
+     "files": [{"role": "core", "name": "...", "sha256": "...", "size": 1}]}
 
-Retention: :func:`prune_tools` keeps the CURRENT version, the PREVIOUS one and one more (the newest other), and
+Written only by install.sh and ``orch update``, never from workspace files, ``ORCH_*`` variables or agent-writable config.
+``seq_seen[channel]`` only goes up; ``orch update`` passes the stored ``seq_seen``, ``revocations_issued_at`` and
+``min_serial`` to the verifier and refuses anything lower. ``version`` is informational: what is installed is where
+``current`` points, and ``orch update`` repairs a record that disagrees with a committed journal. A damaged record is
+refused (fail closed), never guessed.
+
+Retention: :func:`prune_tools` keeps the CURRENT version and the two newest others (the previous and one more);
 :func:`prune_cache` keeps the two newest cache directories.
 """
+
+# ruff: noqa: E501  (the contract tables in the module docstring are wider than the line limit)
 
 from __future__ import annotations
 
@@ -65,25 +68,28 @@ from orch.migrate.steps import atomic_write
 from orch.ops.errors import OrchError
 
 __all__ = [
+    "RECORD_FORMAT",
     "InstallLayout",
     "Record",
-    "ensure_shim",
     "flip_current",
+    "new_record",
     "prune_cache",
     "prune_tools",
     "read_record",
+    "requirements_text",
     "version_key",
     "write_record",
 ]
 
 VERSION_RE = re.compile(r"(\d+)\.(\d+)\.(\d+)(?:\.dev(\d+))?")
+RECORD_FORMAT = "orch.install/1"
 _RECORD_KEYS = {
-    "format", "channel", "version", "previous", "seq_seen", "revocations_issued_at", "root_key_id", "files",
-    "installed_at",
+    "format", "channel", "version", "seq_seen", "revocations_issued_at", "min_serial", "root_key_id", "release_key_id",
+    "trusted_roots", "installed_at", "tool_dir", "uv", "files",
 }  # fmt: skip
 _CHANNEL = re.compile(r"main|develop|test-[a-z0-9][a-z0-9-]{0,30}")
 _LIMIT = 1 << 20
-KEEP_TOOLS_EXTRA = 1
+KEEP_TOOLS_EXTRA = 2
 KEEP_CACHE = 2
 
 
@@ -112,15 +118,18 @@ def data_home(env: Mapping[str, str]) -> Path:
 
 @dataclass(frozen=True)
 class InstallLayout:
+    state: Path
     data: Path
 
     @classmethod
     def of(cls, env: Mapping[str, str]) -> InstallLayout:
-        return cls(data_home(env))
+        from orch.ops.runtime import state_dir
+
+        return cls(state_dir(env), data_home(env))
 
     @property
     def root(self) -> Path:
-        return self.data / "install"
+        return self.state / "install"
 
     @property
     def tools(self) -> Path:
@@ -131,24 +140,16 @@ class InstallLayout:
         return self.root / "current"
 
     @property
-    def bin(self) -> Path:
-        return self.root / "bin"
-
-    @property
-    def shim(self) -> Path:
-        return self.bin / "orch"
-
-    @property
     def cache(self) -> Path:
-        return self.root / "cache"
+        return self.data / "cache"
 
     @property
     def logs(self) -> Path:
-        return self.root / "logs"
+        return self.data / "logs"
 
     @property
     def lock(self) -> Path:
-        return self.root / "update.lock"
+        return self.data / "update.lock"
 
     @property
     def record(self) -> Path:
@@ -158,7 +159,10 @@ class InstallLayout:
         return self.tools / f"orch-{check_version(ver)}"
 
     def tool_bin(self, ver: str) -> Path:
-        return self.tool_dir(ver) / "bin" / "orch"
+        return self.tool_dir(ver) / "venv" / "bin" / "orch"
+
+    def is_complete(self, ver: str) -> bool:
+        return (self.tool_dir(ver) / ".complete").is_file()
 
     def cache_dir(self, ver: str) -> Path:
         return self.cache / check_version(ver)
@@ -166,11 +170,10 @@ class InstallLayout:
     def ensure(self) -> None:
         old = os.umask(0o077)
         try:
-            for d in (self.data, self.root, self.tools, self.bin, self.cache, self.logs):
+            for d in (self.state, self.root, self.tools, self.data, self.cache, self.logs):
                 d.mkdir(parents=True, exist_ok=True, mode=0o700)
         finally:
             os.umask(old)
-        os.chmod(self.root, 0o700)
 
     def current_version(self) -> str | None:
         """The version ``current`` points at, or None (no install, or a link that does not name a tools dir)."""
@@ -185,7 +188,7 @@ class InstallLayout:
         return ver if VERSION_RE.fullmatch(ver) else None
 
     def installed_versions(self) -> list[str]:
-        """Versions that have a tools directory, newest first."""
+        """Complete versions (``.complete`` present), newest first."""
         out = []
         try:
             names = [e.name for e in os.scandir(self.tools) if e.is_dir(follow_symlinks=False)]
@@ -193,16 +196,16 @@ class InstallLayout:
             return []
         for n in names:
             v = n.removeprefix("orch-")
-            if n.startswith("orch-") and VERSION_RE.fullmatch(v):
+            if n.startswith("orch-") and VERSION_RE.fullmatch(v) and self.is_complete(v):
                 out.append(v)
         return sorted(out, key=version_key, reverse=True)
 
 
 def flip_current(layout: InstallLayout, ver: str) -> None:
-    """Point ``current`` at ``tools/orch-<ver>`` in one atomic rename. The tools directory must exist."""
-    if not layout.tool_dir(ver).is_dir():
+    """Point ``current`` at ``tools/orch-<ver>`` in one atomic rename. The version must be complete."""
+    if not layout.is_complete(ver):
         raise OrchError("update.unverified", f"version {ver} is not installed")
-    tmp = layout.root / f"current.{os.getpid()}.tmp"
+    tmp = layout.root / f"current.new-{os.getpid()}"
     try:
         tmp.unlink()
     except FileNotFoundError:
@@ -210,24 +213,6 @@ def flip_current(layout: InstallLayout, ver: str) -> None:
     os.symlink(Path("tools") / f"orch-{ver}", tmp)
     os.replace(tmp, layout.current)
     _fsync_dir(layout.root)
-
-
-def ensure_shim(layout: InstallLayout) -> None:
-    """``<data>/install/bin/orch`` -> ``../current/bin/orch`` (idempotent)."""
-    layout.bin.mkdir(parents=True, exist_ok=True, mode=0o700)
-    want = Path("..") / "current" / "bin" / "orch"
-    try:
-        if os.readlink(layout.shim) == str(want):
-            return
-    except OSError:
-        pass
-    tmp = layout.bin / f"orch.{os.getpid()}.tmp"
-    try:
-        tmp.unlink()
-    except FileNotFoundError:
-        pass
-    os.symlink(want, tmp)
-    os.replace(tmp, layout.shim)
 
 
 def _fsync_dir(path: Path) -> None:
@@ -243,6 +228,16 @@ def _fsync_dir(path: Path) -> None:
         os.close(fd)
 
 
+def requirements_text(constraints: str, files: Iterable[tuple[str, Path, str]]) -> str:
+    """The ``requirements.txt`` install.sh feeds ``uv pip install --require-hashes``: the signed constraints, then one
+    hash-pinned ``file://`` line per wheel. ``files`` is ``(role, path, sha256)``; the constraints role is not listed."""
+    lines = [constraints.rstrip("\n")]
+    for role, path, sha in files:
+        if role != "constraints":
+            lines.append(f"{Path(os.path.abspath(path)).as_uri()} --hash=sha256:{sha}")
+    return "\n".join(lines) + "\n"
+
+
 # ---------------------------------------------------------------------------------------------------- install record
 
 
@@ -250,21 +245,27 @@ def _fsync_dir(path: Path) -> None:
 class Record:
     channel: str
     version: str
-    previous: str | None
     seq_seen: dict[str, int]
     revocations_issued_at: str | None
+    min_serial: int
     root_key_id: str
-    files: dict[str, str]
-    installed_at: int
+    release_key_id: str
+    trusted_roots: list[str]
+    installed_at: str
+    tool_dir: str
+    uv: dict[str, str]
+    files: list[dict[str, Any]]
 
     def seq(self, channel: str) -> int | None:
         return self.seq_seen.get(channel)
 
     def to_json(self) -> dict[str, Any]:
         return {
-            "format": 1, "channel": self.channel, "version": self.version, "previous": self.previous,
-            "seq_seen": dict(self.seq_seen), "revocations_issued_at": self.revocations_issued_at,
-            "root_key_id": self.root_key_id, "files": dict(self.files), "installed_at": self.installed_at,
+            "format": RECORD_FORMAT, "channel": self.channel, "version": self.version, "seq_seen": dict(self.seq_seen),
+            "revocations_issued_at": self.revocations_issued_at, "min_serial": self.min_serial,
+            "root_key_id": self.root_key_id, "release_key_id": self.release_key_id,
+            "trusted_roots": list(self.trusted_roots), "installed_at": self.installed_at, "tool_dir": self.tool_dir,
+            "uv": dict(self.uv), "files": [dict(f) for f in self.files],
         }  # fmt: skip
 
 
@@ -288,29 +289,35 @@ def read_record(layout: InstallLayout) -> Record:
     except ValueError:
         doc = None
     try:
-        if not isinstance(doc, dict) or set(doc) != _RECORD_KEYS or doc["format"] != 1:
+        if not isinstance(doc, dict) or set(doc) != _RECORD_KEYS or doc["format"] != RECORD_FORMAT:
             raise ValueError("keys")
         seq = doc["seq_seen"]
-        files = doc["files"]
         if not (
             isinstance(seq, dict) and all(_CHANNEL.fullmatch(k) and type(v) is int and v >= 1 for k, v in seq.items())
         ):
             raise ValueError("seq_seen")
-        if not (isinstance(files, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in files.items())):
-            raise ValueError("files")
         rev = doc["revocations_issued_at"]
-        prev = doc["previous"]
         if rev is not None and not isinstance(rev, str):
             raise ValueError("revocations_issued_at")
-        if prev is not None:
-            check_version(prev)
-        if not _CHANNEL.fullmatch(str(doc["channel"])) or not isinstance(doc["root_key_id"], str):
+        if type(doc["min_serial"]) is not int or doc["min_serial"] < 1:
+            raise ValueError("min_serial")
+        for k in ("root_key_id", "release_key_id", "installed_at", "tool_dir"):
+            if not isinstance(doc[k], str):
+                raise ValueError(k)
+        roots = doc["trusted_roots"]
+        uv = doc["uv"]
+        files = doc["files"]
+        if not (isinstance(roots, list) and all(isinstance(r, str) for r in roots)):
+            raise ValueError("trusted_roots")
+        if not (isinstance(uv, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in uv.items())):
+            raise ValueError("uv")
+        if not (isinstance(files, list) and all(isinstance(f, dict) for f in files)):
+            raise ValueError("files")
+        if not _CHANNEL.fullmatch(str(doc["channel"])):
             raise ValueError("channel")
-        if type(doc["installed_at"]) is not int:
-            raise ValueError("installed_at")
         return Record(
-            doc["channel"], check_version(doc["version"]), prev, dict(seq), rev, doc["root_key_id"], dict(files),
-            doc["installed_at"],
+            doc["channel"], check_version(doc["version"]), dict(seq), rev, doc["min_serial"], doc["root_key_id"],
+            doc["release_key_id"], list(roots), doc["installed_at"], doc["tool_dir"], dict(uv), list(files),
         )  # fmt: skip
     except (ValueError, KeyError, OrchError):
         raise _no_record("it does not have the expected shape") from None
@@ -318,24 +325,31 @@ def read_record(layout: InstallLayout) -> Record:
 
 def write_record(layout: InstallLayout, rec: Record) -> None:
     layout.data.mkdir(parents=True, exist_ok=True, mode=0o700)
-    atomic_write(layout.record, (json.dumps(rec.to_json(), indent=2, sort_keys=True) + "\n").encode(), 0o600)
+    atomic_write(layout.record, (json.dumps(rec.to_json(), indent=1, sort_keys=True) + "\n").encode(), 0o600)
 
 
 def new_record(
-    old: Record | None,
+    old: Record,
     *,
     channel: str,
     version: str,
-    previous: str | None,
     seq: int,
     revocations_issued_at: str,
+    min_serial: int,
     root_key_id: str,
-    files: Mapping[str, str],
+    release_key_id: str,
+    trusted_roots: list[str],
+    tool_dir: str,
+    files: list[dict[str, Any]],
 ) -> Record:
-    """The record after a verified install: ``seq_seen`` only ever goes up (per channel)."""
-    seen = dict(old.seq_seen) if old else {}
+    """The record after a verified update: ``seq_seen`` only goes up per channel, the revocation state never goes down,
+    and the uv install.sh pinned is carried over."""
+    seen = dict(old.seq_seen)
     seen[channel] = max(seen.get(channel, 0), seq)
-    return Record(channel, version, previous, seen, revocations_issued_at, root_key_id, dict(files), int(time.time()))
+    return Record(
+        channel, version, seen, revocations_issued_at, max(min_serial, old.min_serial), root_key_id, release_key_id,
+        trusted_roots, time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), tool_dir, dict(old.uv), files,
+    )  # fmt: skip
 
 
 # ---------------------------------------------------------------------------------------------------------- retention
@@ -348,14 +362,11 @@ def _rm_under(parent: Path, child: Path) -> None:
     shutil.rmtree(child, ignore_errors=True)
 
 
-def prune_tools(layout: InstallLayout, current: str, previous: str | None) -> list[str]:
-    """Keep current, previous and one more (the newest other); remove the rest. Returns the versions removed."""
-    keep = {current}
-    if previous:
-        keep.add(previous)
-    others = [v for v in layout.installed_versions() if v not in keep]
-    keep.update(others[:KEEP_TOOLS_EXTRA])
-    gone = [v for v in layout.installed_versions() if v not in keep]
+def prune_tools(layout: InstallLayout, current: str) -> list[str]:
+    """Keep ``current`` and the two newest other complete versions; remove the rest. Returns the versions removed."""
+    versions = layout.installed_versions()
+    keep = {current, *[v for v in versions if v != current][:KEEP_TOOLS_EXTRA]}
+    gone = [v for v in versions if v not in keep]
     for v in gone:
         _rm_under(layout.tools, layout.tool_dir(v))
     return gone

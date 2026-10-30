@@ -115,3 +115,90 @@ def test_read_logs_uses_the_fixed_argv_and_redacts():
 
     with pytest.raises(HelperError):
         read_logs(part, boom)
+
+
+TRICKY = [
+    ("https://u:p@ss:w/rd@host.example/path", ["p@ss", "w/rd"]),
+    ("redis://:pa/ss@@host:6379/0", ["pa/ss"]),
+    ("fetch ftp://a@b:c,d;e@host/x ok", ["c,d;e"]),
+    ("password=ab,cd", ["ab,cd", "cd"]),
+    ("db_password=ab;cd&ef user=ann", ["ab;cd", "ef"]),
+    ("secret: top secret value here", ["top secret", "value here"]),
+    ("--password hunter2 --other x", ["hunter2"]),
+    ("--token=abc,def;ghi next=1", ["abc,def", "ghi"]),
+    ("token zzzz9999yyyy", ["zzzz9999"]),
+    ("password: s3cret next", ["s3cret"]),
+    ('{"password": "a\\"b,c\\"d", "x": 1}', ['a\\"b', "b,c", 'c\\"d']),
+    ("password='it''s, ok' tail", ["it''s", "s, ok"]),
+    ('password="unterminated, secret', ["unterminated", "secret"]),
+    ("API_KEY=ab cd ef", ["ab cd", "cd ef"]),
+    ("session_token=é€ü,ñ", ["é€ü", "ü,ñ"]),
+]
+
+
+@pytest.mark.parametrize(("line", "gone"), TRICKY)
+def test_tricky_cases_err_on_over_redaction(line, gone):
+    out = redact(line)
+    for g in gone:
+        assert g not in out, (line, out)
+    assert R in out
+
+
+def test_a_following_key_value_pair_stays_readable():
+    assert "user=ann" in redact("login ok password=hunter2 user=ann")
+
+
+def test_fuzz_no_secret_of_four_chars_survives():
+    import json
+    import random
+
+    rnd = random.Random(20261030)
+    alpha = "abcXYZ019:@/,;'\"é€ü._!?#%$()[]{}<>|~"
+    forms = [
+        ("pw_eq", "password={s}", False),
+        ("tok_colon", "token: {s}", False),
+        ("dbpw", "db_password={s} user=ann", False),
+        ("flag_sp", "--password {s} --next 1", True),
+        ("flag_eq", "--token={s} x=1", False),
+        ("word_sp", "token {s}", True),
+        ("json", '{{"password": {j}, "k": 1}}', None),
+        ("url", "connect https://user:{s}@host.example/path?x=1", True),
+    ]
+    checked = 0
+    for _ in range(400):
+        name, tpl, no_space = rnd.choice(forms)
+        n = rnd.randint(6, 24)
+        s = "".join(rnd.choice(alpha) for _ in range(n))
+        if no_space is False:
+            s = s.replace("=", "")  # unquoted, may hold spaces and everything but a following key=
+            if rnd.random() < 0.5:
+                s = s[: n // 2] + " " + s[n // 2 :]
+        if name in ("flag_sp", "word_sp", "url", "flag_eq"):
+            s = s.replace(" ", "")
+        if name == "url":
+            s = s.replace("/", "/") + "@x" * rnd.randint(0, 2)  # several @ in the password
+            s = s.replace("?", "")
+        line = "ts orch-relay[1]: " + tpl.format(s=s, j=json.dumps(s))
+        out = redact(line)
+        base = redact("ts orch-relay[1]: " + tpl.format(s="", j='""'))
+        for i in range(len(s) - 3):
+            w = s[i : i + 4]
+            if sum(ch.isalnum() for ch in w) < 2 or w in base or w.strip() != w:
+                continue
+            assert w not in out, (line, out, w)
+            checked += 1
+    assert checked > 1000
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "Oct 30 09:52:11 vps orch-relay[123]: push sent to device ok in 12 ms",
+        "GET /healthz 200 0.4ms from 127.0.0.1",
+        "Started orch relay service.",
+        "orch-hub.service: Main process exited, status=0/SUCCESS",
+        "link: workspace Product connected (full)",
+    ],
+)
+def test_ordinary_lines_without_secrets_stay_readable(line):
+    assert redact(line) == line

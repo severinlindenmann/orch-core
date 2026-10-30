@@ -1354,7 +1354,7 @@ def request_head_cases() -> None:
 
 SEQ_HEAD = cj(req_head())
 SEQ_POST = cj(req_head("POST", "/api/w/" + "0" * 32 + "/wiki/create"))
-SEQ_WS = cj(ws_head())
+SEQ_WS = cj(ws_head(query=""))  # no query on /term: the ticket is the first message (host.md 12.6.6)
 SEQ_200 = cj(resp_head())
 SEQ_101 = cj(resp_head(101, []))
 SEQ_403 = cj(resp_head(403))

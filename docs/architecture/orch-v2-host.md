@@ -12683,7 +12683,8 @@ attach.allow  {att:AttId, ticket_hash:Hash,            // sha256 of the 32-byte 
    ticket**: 128 random bits, stored hashed, single use, bound to the workspace, run, mode, take, from, the bearer
    session and the server generation, valid at most 30 s (the dashboard server's choice), 10 attempts per minute. It
    calls nothing on the host. (React StrictMode's double mount leaves one unused ticket that simply expires.)
-2. The browser opens the WebSocket `GET /term` and sends `{"ticket":"…"}`.
+2. The browser opens the WebSocket `GET /term` and sends `{"ticket":"…"}`. There is no query on `/term` (the ticket is
+   the first message); a socket with a query string is closed 1008 before presence.
 3. Only then the server calls `term.attach`, verifies the runner (§12.6.1), connects and presents the host ticket at
    once. So the 10 s host capability and the runner's lockout can never be burned by a slow browser.
 

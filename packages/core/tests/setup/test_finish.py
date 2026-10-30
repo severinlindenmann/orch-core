@@ -422,3 +422,31 @@ def test_finish_on_a_complete_workspace_can_be_closed_with_the_dashboard_url(tmp
     out = f.dispatch("POST", "finish", {}, {})[1]
     assert out["url"] and out["workspace_id"]
     assert f.finished and f.outcome == "done"
+
+
+def test_finish_when_the_dashboard_does_not_open_is_retryable_and_keeps_the_session(tmp):
+    """r11-P01: the dashboard service did not open -> 503 setup.dashboard_unavailable (retryable); the setup session
+    stays open (not finished), and a second Finish that works returns the login link and ends the session."""
+    on = frozenset({"dashboard", "terminals", "worktrees", "start-agent", "quick"})
+    f = finish_flow(tmp, FakePorts(), [mkfacts(addons=on, grant_issued=True)])
+    answers: list = [RuntimeError("service down"), None]
+
+    def url(_wid):
+        a = answers.pop(0) if answers else "http://127.0.0.1:8151/#launch=abc&to=%2F"
+        if isinstance(a, Exception):
+            raise a
+        if a is None:
+            raise SetupError("setup.dashboard_unavailable", "no login link", 503, retry=True)
+        return a
+
+    f.e.workspace_url = url
+    for _ in range(2):
+        with pytest.raises(SetupError) as e:
+            f.dispatch("POST", "finish", {}, {})
+        assert e.value.code == "setup.dashboard_unavailable" and e.value.status == 503
+        assert e.value.extra.get("retry") is True
+        assert "service down" not in e.value.message  # the cause is logged, never sent to the page
+        assert not f.finished and f.outcome == "paused"
+    out = f.dispatch("POST", "finish", {}, {})[1]
+    assert out["url"] == "http://127.0.0.1:8151/#launch=abc&to=%2F"
+    assert f.finished and f.outcome == "done"

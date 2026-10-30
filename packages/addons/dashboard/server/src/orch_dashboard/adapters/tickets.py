@@ -33,6 +33,11 @@ PRESENCE = {"passphrase": "password", "secure-enclave": "touchid", "convenience"
 AUTH_RAW = re.compile(r"[a-z0-9][a-z0-9-]{0,31}")
 
 
+# A finished ticket has no turn and nobody waits on it (run-11 P06).
+FINISHED_STATUSES = ("done", "closed", "cancelled")
+NOBODY_WORKING = "Nobody is working on it"
+
+
 def host_status(status: str) -> str:
     return status.replace("-", "_")
 
@@ -82,8 +87,10 @@ def summary(row: dict, viewer: str | None = None, mine: dict[str, list[dict]] | 
     kinds = list(row.get("needs", []))
     if own:
         turn = {"who": viewer, "why": _why(own[0])}
+    elif row["status"] in FINISHED_STATUSES:
+        turn = {"who": "nobody", "why": ""}
     elif claim and claim.get("live") is False:
-        turn = {"who": "nobody", "why": "The agent's claim has lapsed"}
+        turn = {"who": "nobody", "why": NOBODY_WORKING}
     elif claim:
         turn = {"who": f"agent:{claim.get('agent') or claim['session']}", "why": "An agent holds the claim"}
     else:
@@ -402,10 +409,10 @@ def document(
     live = (claim or row_claim or {}).get("live")
     if own:
         turn = {"who": viewer, "why": _why(own[0])}
-    elif not (claim or row_claim):
+    elif not (claim or row_claim) or status in FINISHED_STATUSES:
         turn = {"who": "nobody", "why": ""}
     elif live is False:
-        turn = {"who": "nobody", "why": "The agent's claim has lapsed"}
+        turn = {"who": "nobody", "why": NOBODY_WORKING}
     else:
         who = (claim or {}).get("agent") or (claim or row_claim)["session"]
         turn = {"who": "agent:" + who, "why": "An agent holds the claim"}

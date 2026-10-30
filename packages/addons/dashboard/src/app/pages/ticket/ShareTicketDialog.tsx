@@ -18,10 +18,10 @@ export function ShareTicketDialog({ ws, workspace, ticket, title, onClose }: { w
   const readers: HubAudience | undefined = users.length || groups.length ? { users: [...users].sort(), groups: [...groups].sort() } : undefined
   const rule: HubRule = { kind: 'ticket', value: ticket, ...(readers ? { audience: readers } : {}), description: withText }
   const { current, error, retry } = useSharePreview(ws, { add: rule })
-  return <Flow title="Share this ticket with the hub" onClose={onClose}>
-    <div className="space-y-3"><AudiencePicker ws={ws} users={users} groups={groups} withText={withText} onUsers={setUsers} onGroups={setGroups} onWithText={setWithText} /></div>
+  return <Flow title="Share this ticket" onClose={onClose}>
+    <div className="space-y-3"><AudiencePicker ws={ws} compact users={users} groups={groups} withText={withText} onUsers={setUsers} onGroups={setGroups} onWithText={setWithText} /></div>
     {error
       ? <div role="alert"><p className="text-danger">{error}</p><Action id="hub-preview-retry" onClick={retry}>Try again</Action></div>
-      : <AddRuleReview ws={ws} workspace={workspace} rule={rule} title={title} after={current} onDone={onClose} />}
+      : <AddRuleReview ws={ws} workspace={workspace} rule={rule} title={title} compact after={current} onDone={onClose} />}
   </Flow>
 }

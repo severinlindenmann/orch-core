@@ -85,7 +85,7 @@ class Ctx:
     run: Callable[..., tuple[int, str]] = _run
     resolve_ref: Callable[[str, str], str] = _resolve_ref
     core_commit: Callable[[], str | None] = core_commit
-    health: Callable[[str, int], bool] = _health
+    health: Callable[..., bool] = _health  # (host, port[, timeout]): something listens there
     detect: Callable[[], list[tuple[str, str]]] = P.detect_addresses
     port_free: Callable[[int, str], bool] = P.port_free
     runner: Runner | None = None
@@ -132,22 +132,44 @@ def _mint_login(argv: list[str], env: Mapping[str, str]) -> str | None:
     return line if line.startswith("http://") else None
 
 
-def workspace_login_url(ctx: Ctx, directory: str) -> str | None:
+#: setup's Finish: how long the dashboard service may take to answer (the page's proxy gives up after 15 s)
+SERVICE_WAIT = 6.0
+
+
+class LoginUnavailable(Exception):
+    """The dashboard service should serve this workspace but gave no login link (setup's Finish says: try again)."""
+
+
+def workspace_login_url(ctx: Ctx, directory: str, *, wait: float = SERVICE_WAIT) -> str | None:
     """Setup's "Open your workspace": register the workspace, make sure the dashboard SERVICE (not the stopped
     launcher of the setup page) runs, and return a fresh single-use login URL on it.
-    ``None`` when there is no dashboard service."""
-    if add_workspace(ctx, directory) is None:
-        return None
-    dash = load(ctx.layout).get("dashboard")
-    entry = ctx.dashboard_entry()
-    if not dash or not entry:
-        return None
-    env = {
-        "HOME": str(ctx.layout.home),
-        "PATH": ctx.env.get("PATH", os.defpath),
-        "ORCH_STATE_DIR": str(ctx.layout.root.parent),
-    }
-    return ctx.mint_login(entry, env)
+    ``None`` when this machine has no dashboard service (the setup page's own dashboard is the destination then).
+    :class:`LoginUnavailable` when there is one but it gave no link: it did not answer (started once more, waited
+    ``wait`` s each time), or minting failed. Each call mints a new link, so a retry never reuses a spent one."""
+    try:
+        if add_workspace(ctx, directory) is None:
+            return None
+        dash = load(ctx.layout).get("dashboard")
+        entry = ctx.dashboard_entry()
+        if not dash or not entry:
+            return None
+        if not ctx.health("127.0.0.1", dash["port"], wait):
+            start_dashboard(ctx, dash["bind"], dash["port"])
+            if not ctx.health("127.0.0.1", dash["port"], wait):
+                raise LoginUnavailable(f"the dashboard did not answer on port {dash['port']}")
+        env = {
+            "HOME": str(ctx.layout.home),
+            "PATH": ctx.env.get("PATH", os.defpath),
+            "ORCH_STATE_DIR": str(ctx.layout.root.parent),
+        }
+        url = ctx.mint_login(entry, env)
+    except LoginUnavailable:
+        raise
+    except Exception as e:  # noqa: BLE001 - Finish must answer in words, never with a traceback
+        raise LoginUnavailable(f"the dashboard could not be started ({type(e).__name__})") from e
+    if not url:
+        raise LoginUnavailable("the dashboard gave no login link")
+    return url
 
 
 def default_ctx(env: Mapping[str, str], out: TextIO, err: TextIO) -> Ctx:

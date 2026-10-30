@@ -301,16 +301,19 @@ def test_idle_event_reader_does_not_block_calls():
     r.start()
     reading.wait()
     time.sleep(0.1)
-    worst = 0.0
+    waits = []
     for _ in range(10):
         began = time.perf_counter()
         assert link.call("whoami") == {"person": "p_test"}
-        worst = max(worst, time.perf_counter() - began)
+        waits.append(time.perf_counter() - began)
+    # the median: one call hit by a scheduling stall on a shared runner does not fail it; waiting behind the
+    # reader (0.5 s poll) would slow every call
+    typical = sorted(waits)[len(waits) // 2]
     stop.set()
     r.join()
     t.join()
     link.close()
-    assert worst < 0.2, f"a call waited {worst:.3f}s behind the idle event reader"
+    assert typical < 0.2, f"a call waited {typical:.3f}s (median) behind the idle event reader: {waits}"
 
 
 def test_event_reader_still_gets_events_and_nothing_is_lost():

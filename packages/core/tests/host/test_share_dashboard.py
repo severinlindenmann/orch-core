@@ -497,7 +497,7 @@ def test_include_the_description_shares_the_requirements_text_a_dashboard_ticket
     rule = {"kind": "ticket", "ticket": key, "description": True}
     review = ok(req(served, "share.preview", {"add": rule}))["data"]["review"]
     (leaves,) = [x["text"] for x in review["leaves"] if x["kind"] == "ticket"]
-    assert "description (summary, context and requirements)" in leaves and "no plan" in leaves  # what it is, in words
+    assert "deadline and description" in leaves and "never its plan" in leaves and "(" not in leaves
     ok(rule_op(served, "share.rule_add", rule))
     item = selective.opened[-1]
     assert item["content"]["description"] == "Ben can see the export."

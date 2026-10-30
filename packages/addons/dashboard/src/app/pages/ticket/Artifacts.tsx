@@ -31,7 +31,7 @@ import { atLeast } from '@/api/permissions'
 import { unshareable } from '@/api/shares'
 import { ShareFlow } from '../shares/ShareFlow'
 import { TurnOnPublish } from '../shares/TurnOnPublish'
-import { cardTitle, CHECK_QUIET, EvidenceThumb, isCheck, TypeBadge } from './EvidenceThumb'
+import { cardTitle, checkOf, EvidenceThumb, TypeBadge } from './EvidenceThumb'
 
 export const KIND_ICON: Record<Artifact['kind'], typeof FileText> = {
   screenshot: ImageIcon,
@@ -452,7 +452,7 @@ function RemotePreview({ a, ticket, unavailable, holdPictures = false }: { a: Ar
   if (d.binary || d.text == null || looksBinary(d.text)) {
     return <NoPreviewCard a={a} why={ext === 'pdf' ? 'PDF documents are not previewed here: a PDF viewer would run inside this page. Open the file from the ticket on the host.' : `Binary file${ext ? ` (type .${ext})` : ''}: there is no text to show.`} />
   }
-  if (d.text === '') return <NoPreviewCard a={a} quiet why={isCheck(a) ? CHECK_QUIET : 'This file is empty.'} />
+  if (d.text === '') return <NoPreviewCard a={a} quiet why="This file is empty." />
   const { shown, cut, bytes } = capText(d.text.replace(/\r\n/g, '\n'))
   // HTML evidence goes through the same viewer as an inline page (inert sandboxed frame). A page cut at 64 KiB
   // would be a different document from the one the digest names: not previewed.
@@ -680,6 +680,7 @@ export function Artifacts({ ticket, viewer, jump, focus }: TabProps & { focus?: 
         <ul className="grid grid-cols-1 gap-3 @[28rem]/cards:grid-cols-2 @[44rem]/cards:grid-cols-3" aria-label="Artifacts">
           {ticket.artifacts.map((a) => {
             const Icon = KIND_ICON[a.kind]
+            const check = checkOf(a, ticket.tasks_state)
             return (
               <li
                 key={a.name}
@@ -688,13 +689,13 @@ export function Artifacts({ ticket, viewer, jump, focus }: TabProps & { focus?: 
                 aria-current={open?.name === a.name ? 'true' : undefined}
                 className={cn('flex scroll-mt-4 flex-col rounded-lg border bg-surface p-2.5', a.addon ? addonHairline : 'border-border')}
               >
-                <EvidenceThumb a={a} ticket={ticket.key} />
+                <EvidenceThumb a={a} ticket={ticket.key} check={check} />
                 <div className="mt-2 flex items-center gap-1.5">
                   <Icon className="size-3.5 shrink-0 text-text-muted" aria-hidden />
                   <span className="min-w-0 flex-1 truncate text-[13px] font-medium" title={a.name}>
-                    {cardTitle(a)}
+                    {cardTitle(a, check)}
                   </span>
-                  <TypeBadge a={a} />
+                  <TypeBadge a={a} check={check} />
                 </div>
                 {a.label && <p className="mt-0.5 line-clamp-2 text-[12px] text-text-muted">{a.label}</p>}
                 <p className="mt-1 truncate text-[11px] text-text-faint">

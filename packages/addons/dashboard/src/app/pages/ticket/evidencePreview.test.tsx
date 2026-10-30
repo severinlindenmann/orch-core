@@ -228,8 +228,9 @@ describe('run 15c P10: an empty file is said to be empty, never a blank box', ()
     expect(container.querySelector('pre')).toBeNull()
     expect(within(screen.getByTestId('no-preview-card')).getByText('Details')).toBeInTheDocument()
   })
-  it('the empty output of a check says it passed', async () => {
+  it('a file named like a receipt is still just an empty file', async () => {
     show('T1-receipt.log', { bytes: enc(''), text: '' })
-    expect(await screen.findByText('The check ran and printed nothing. That is normal when it passes.')).toBeInTheDocument()
+    expect(await screen.findByText('This file is empty.')).toBeInTheDocument()
+    expect(screen.queryByText(/Check passed/)).toBeNull()
   })
 })

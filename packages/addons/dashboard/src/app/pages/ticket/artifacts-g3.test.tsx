@@ -4,9 +4,9 @@ import { renderApp } from '@/test/renderApp'
 import { render } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { unshareable } from '@/api/shares'
-import type { TicketDocument } from '@/api/types'
+import type { Artifact, TicketDocument } from '@/api/types'
 import { Artifacts } from './Artifacts'
-import { cardTitle, typeBadge } from './EvidenceThumb'
+import { checkOf } from './EvidenceThumb'
 import type { Viewer } from './shared'
 
 const T = { timeout: 4000 }
@@ -78,27 +78,49 @@ describe('Ticket artifacts: viewer', () => {
 })
 
 describe('run 15c P10: a check result card', () => {
-  const receipt = { name: 'T1-receipt.log', kind: 'receipt' as const, task: 'T1', bytes: 0, sha256: 'sha256:' + 'e3b0c442'.repeat(8), added_by: 'agent', at: '2026-10-30T10:00:00Z' }
-  it('is titled "Check of T1" with a CHECK badge, the hash only behind Details', () => {
-    const ticket = { key: 'DEMO-1', artifacts: [receipt], people: {} } as unknown as TicketDocument
+  const sha = 'sha256:' + 'e3b0c442'.repeat(8)
+  const art = (over: Record<string, unknown> = {}): Artifact => ({ name: 'T1-receipt.log', kind: 'receipt', task: 'T1', bytes: 0, sha256: sha, added_by: 'host', added_by_kind: 'host', at: '2026-10-30T10:00:00Z', ...over }) as Artifact
+  const tasks = (exit?: number) => [{ id: 'T1', receipt: exit === undefined ? null : { exit, ms: 5 } }]
+  function cardOf(artifact: object, tasksState: unknown) {
+    const ticket = { key: 'DEMO-1', artifacts: [artifact], people: {}, tasks_state: tasksState } as unknown as TicketDocument
     const viewer = { name: (p: string) => p, role: 'owner' } as unknown as Viewer
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     render(
       <QueryClientProvider client={client}>
-        <Artifacts ticket={ticket} viewer={viewer} jump={() => {}} />
+        <Artifacts ticket={ticket} viewer={viewer} jump={() => {}} sign={() => {}} />
       </QueryClientProvider>,
     )
-    const card = screen.getByRole('list', { name: 'Artifacts' }).querySelector('li')!
+    return screen.getByRole('list', { name: 'Artifacts' }).querySelector('li')!
+  }
+  it('a host receipt with exit 0 is titled "Check of T1" with a CHECK badge, the hash behind Details, no Publish', () => {
+    const card = cardOf(art(), tasks(0))
     expect(within(card).getByText('Check of T1')).toBeInTheDocument()
-    expect(within(card).queryByText('T1-receipt.log', { selector: 'span.truncate' })).toBeNull()
     expect(within(card).getByTestId('type-badge')).toHaveTextContent('CHECK')
     expect(within(card).getByText('Details')).toBeInTheDocument()
     expect(within(card).queryByRole('button', { name: /Publish/ })).toBeNull()
   })
-  it('title and badge follow the name when the kind is log', () => {
-    expect(cardTitle({ name: 'T2-receipt.log', kind: 'log', task: 'T2' })).toBe('Check of T2')
-    expect(cardTitle({ name: 'out.log', kind: 'log' })).toBe('out.log')
-    expect(typeBadge({ name: 'T2-receipt.log', kind: 'log' }).label).toBe('CHECK')
+  it('checkOf: passed, failed, and no recorded status', () => {
+    expect(checkOf(art(), tasks(0))).toBe('passed')
+    expect(checkOf(art(), tasks(2))).toBe('failed')
+    expect(checkOf(art(), tasks())).toBeNull()
+    expect(checkOf(art(), undefined)).toBeNull()
+  })
+  it('a failing status says so on the badge', () => {
+    const card = cardOf(art(), tasks(1))
+    expect(within(card).getByText('Check of T1')).toBeInTheDocument()
+    expect(within(card).getByTestId('type-badge')).toHaveTextContent('CHECK')
+  })
+  it('a file an agent named x-receipt.txt is a normal file, never a check', () => {
+    const agent = art({ name: 'x-receipt.txt', kind: 'other', task: undefined, added_by: 'claude-code', added_by_kind: 'agent' })
+    expect(checkOf(agent, tasks(0))).toBeNull()
+    const card = cardOf(agent, tasks(0))
+    expect(within(card).getByText('x-receipt.txt')).toBeInTheDocument()
+    expect(within(card).getByTestId('type-badge')).not.toHaveTextContent('CHECK')
+  })
+  it('an agent-added file of kind receipt is not a check either, and a host receipt with no status claims nothing', () => {
+    expect(checkOf(art({ added_by: 'claude-code', added_by_kind: 'agent' }), tasks(0))).toBeNull()
+    const card = cardOf(art(), tasks())
+    expect(within(card).getByText('T1-receipt.log')).toBeInTheDocument()
   })
   it('an empty file cannot be published as a link', () => {
     expect(unshareable({ name: 'a.txt', kind: 'other', bytes: 0 })).toBe('The file is empty.')

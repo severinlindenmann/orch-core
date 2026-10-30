@@ -8,7 +8,7 @@ import { isRealHost } from '@/api/features'
 import { verifiedMedia } from '@/api/evidenceMedia'
 import { queries } from '@/api/queries'
 import { workspaceOfTicket } from '@/api/workspaces'
-import type { Artifact } from '@/api/types'
+import type { Artifact, TaskStatus } from '@/api/types'
 import { highlight, langForFile, tokenClass, type Token } from '@/addon-ui/highlight'
 import { prose, visible } from '@/components/sign/visible'
 import { cn } from '@/lib/utils'
@@ -34,21 +34,25 @@ async function limited<T>(run: () => Promise<T>): Promise<T> {
 
 const ext = (name: string) => /\.([A-Za-z0-9]+)$/.exec(name)?.[1].toLowerCase() ?? ''
 
-/** A check result: the stored output of a task's check (`task done --run`), named `<task>-receipt.log` (run 15c P10). */
-export const isCheck = (a: Pick<Artifact, 'name' | 'kind'>): boolean => a.kind === 'receipt' || /^[^/]+-receipt\.[A-Za-z0-9]+$/.test(a.name)
+/** The result of a check, from what the HOST recorded only: a receipt artifact the host added (`added_by_kind` host) for a task
+ *  whose receipt has an exit status. The file name and anything an agent wrote never count. null: not a recorded check. */
+export type CheckResult = 'passed' | 'failed'
+export function checkOf(a: Pick<Artifact, 'kind' | 'task' | 'added_by' | 'added_by_kind'>, tasks: ReadonlyArray<Pick<TaskStatus, 'id' | 'receipt'>> | undefined): CheckResult | null {
+  if (a.kind !== 'receipt' || !(a.added_by_kind === 'host' || a.added_by === 'host') || !a.task) return null
+  const exit = tasks?.find((t) => t.id === a.task)?.receipt?.exit
+  return typeof exit !== 'number' ? null : exit === 0 ? 'passed' : 'failed'
+}
 
-/** What the card calls a check result: "Check of T1", not the file name. Other files keep their name. */
-export function cardTitle(a: Pick<Artifact, 'name' | 'kind' | 'task'>): string {
-  if (!isCheck(a)) return a.name
-  const task = a.task ?? /^(.+)-receipt\.[A-Za-z0-9]+$/.exec(a.name)?.[1]
-  return task ? `Check of ${task}` : 'Check result'
+/** What the card calls a recorded check: "Check of T1". Every other file keeps its real name. */
+export function cardTitle(a: Pick<Artifact, 'name' | 'task'>, check: CheckResult | null | undefined): string {
+  return check && a.task ? `Check of ${a.task}` : a.name
 }
 
 export const CHECK_QUIET = 'The check ran and printed nothing. That is normal when it passes.'
 
 /** The type word that is always written on the badge (colour is only a second cue). */
-export function typeBadge(a: Pick<Artifact, 'name' | 'kind'>): { label: string; tone: string } {
-  if (isCheck(a)) return { label: 'CHECK', tone: 'text-success' }
+export function typeBadge(a: Pick<Artifact, 'name' | 'kind'>, check?: CheckResult | null): { label: string; tone: string } {
+  if (check) return { label: 'CHECK', tone: check === 'passed' ? 'text-success' : 'text-danger' }
   const e = ext(a.name)
   const by: Record<string, [string, string]> = {
     json: ['JSON', 'text-warning'], jsonl: ['JSON', 'text-warning'], py: ['PY', 'text-info'], md: ['MD', 'text-info'], markdown: ['MD', 'text-info'],
@@ -60,8 +64,8 @@ export function typeBadge(a: Pick<Artifact, 'name' | 'kind'>): { label: string; 
   return hit ? { label: hit[0], tone: hit[1] } : { label: e ? e.toUpperCase().slice(0, 5) : a.kind.toUpperCase().slice(0, 5), tone: 'text-text-muted' }
 }
 
-export function TypeBadge({ a }: { a: Pick<Artifact, 'name' | 'kind'> }) {
-  const b = typeBadge(a)
+export function TypeBadge({ a, check }: { a: Pick<Artifact, 'name' | 'kind'>; check?: CheckResult | null }) {
+  const b = typeBadge(a, check)
   return <span data-testid="type-badge" className={cn('rounded border border-border bg-surface-2 px-1.5 py-px font-mono text-[10px] font-medium', b.tone)}>{b.label}</span>
 }
 
@@ -111,19 +115,19 @@ function TextThumb({ text, name }: { text: string; name: string }) {
   )
 }
 
-/** A file with no bytes: say so, never an empty box. */
-function EmptyThumb({ a }: { a: Pick<Artifact, 'name' | 'kind'> }) {
-  return isCheck(a) ? (
+/** A file with no bytes: say so, never an empty box. Only a host-recorded check says passed or failed. */
+function EmptyThumb({ check }: { check?: CheckResult | null }) {
+  return check ? (
     <div data-testid="thumb-empty" className="flex h-full flex-col items-center justify-center gap-1 text-center text-[12px]">
-      <span className="font-medium text-success">Check passed</span>
-      <span className="text-text-muted">{CHECK_QUIET}</span>
+      <span className={check === 'passed' ? 'font-medium text-success' : 'font-medium text-danger'}>{check === 'passed' ? 'Check passed' : 'Check failed'}</span>
+      <span className="text-text-muted">{check === 'passed' ? CHECK_QUIET : 'The check printed nothing.'}</span>
     </div>
   ) : (
     <div data-testid="thumb-empty" className="flex h-full items-center justify-center text-[12px] text-text-muted">This file is empty</div>
   )
 }
 
-export function EvidenceThumb({ a, ticket }: { a: Artifact; ticket: string }) {
+export function EvidenceThumb({ a, ticket, check }: { a: Artifact; ticket: string; check?: CheckResult | null }) {
   const [ref, seen] = useInView()
   const workspaces = useQuery(queries.workspaces())
   const home = workspaceOfTicket(ticket, workspaces.data ?? [])
@@ -139,7 +143,7 @@ export function EvidenceThumb({ a, ticket }: { a: Artifact; ticket: string }) {
       // Only PNG, JPEG and WebP are pictures here; SVG and GIF stay icons.
       const url = m.type === 'png' || m.type === 'jpeg' || m.type === 'webp' ? verifiedMedia(m, a.sha256) : undefined
       if (url) body = <img src={url} alt={`Picture ${visible(a.name)}`} referrerPolicy="no-referrer" className="size-full object-cover" />
-    } else if (!d.binary && d.text === '') body = <EmptyThumb a={a} />
+    } else if (!d.binary && d.text === '') body = <EmptyThumb check={check} />
     else if (!d.binary && d.text != null && !looksBinary(d.text)) body = <TextThumb text={d.text} name={a.name} />
   }
   // The demo (no host) carries the text inline; a real host's file is only ever shown from the digest-checked read above.

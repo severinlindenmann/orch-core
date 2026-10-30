@@ -40,20 +40,23 @@ export function sendHandoffView(workspaces, actions = {}) {
     h("div", { class: "row" }, button("Cancel", () => actions.close?.()), open)];
 }
 
+// The chosen filters live here so a redraw with fresh data (poll, refresh) keeps them.
+const chosen = { workspace: "", state: "all" };
+
 export function handoffsView(data, actions = {}, now = Date.now()) {
   const handoffs = data.handoffs ?? [], workspaces = data.workspaces ?? [];
   const known = new Map(workspaces.map((w) => [w.workspace_id, w]));
   for (const row of handoffs) for (const w of [row.from, row.to]) if (w?.workspace_id && !known.has(w.workspace_id)) known.set(w.workspace_id, w);
   const workspace = h("select", { "aria-label": "Workspace" }, h("option", { value: "", text: "All workspaces" }),
     [...known.values()].map((w) => h("option", { value: w.workspace_id, text: nameOf(w) })));
-  workspace.value = "";
-  let state = "all";
+  if (!known.has(chosen.workspace)) chosen.workspace = "";
+  workspace.value = chosen.workspace;
   const results = h("section", { class: "card", "aria-label": "Hand-offs" });
-  const states = ["All", "Waiting", "Delivered"].map((label) => button(label, () => { state = label.toLowerCase(); draw(); }));
+  const states = ["All", "Waiting", "Delivered"].map((label) => button(label, () => { chosen.state = label.toLowerCase(); draw(); }));
   function draw() {
-    states.forEach((b) => b.setAttribute("aria-pressed", String(b.textContent.toLowerCase() === state)));
-    const rows = handoffs.filter((r) => (state === "all" || r.status === state) &&
-      (!workspace.value || r.from?.workspace_id === workspace.value || r.to?.workspace_id === workspace.value));
+    states.forEach((b) => b.setAttribute("aria-pressed", String(b.textContent.toLowerCase() === chosen.state)));
+    const rows = handoffs.filter((r) => (chosen.state === "all" || r.status === chosen.state) &&
+      (!chosen.workspace || r.from?.workspace_id === chosen.workspace || r.to?.workspace_id === chosen.workspace));
     results.textContent = "";
     if (!rows.length) {
       results.append(handoffs.length ? h("p", { class: "empty", text: "No hand-offs match these filters." }) : emptyState("handoffs"));
@@ -68,7 +71,7 @@ export function handoffsView(data, actions = {}, now = Date.now()) {
           h("td", { text: when(r.sent_ms, now) }), h("td", {}, chip(st.label, st.kind)));
       })))));
   }
-  workspace.addEventListener("change", draw);
+  workspace.addEventListener("change", () => { chosen.workspace = workspace.value; draw(); });
   draw();
   return [h("div", { class: "row" }, h("h1", { class: "grow", text: "Hand-offs" }),
     button("Send a hand-off", () => actions.dialog?.(...sendHandoffView(workspaces, actions)), { class: "pri" })),

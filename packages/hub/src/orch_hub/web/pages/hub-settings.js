@@ -32,6 +32,7 @@ const WHY = {
   dev_refused: "This backup is of a different kind of hub (test or real).",
   restore_busy: "Another big action is running on this hub (a restore, an update or a removal). Try again when it is done.",
   no_admin: "After this restore nobody could sign in as an admin, so it was not done.",
+  rate_limited: "A backup was made a moment ago. Try again in a few minutes.",
   restore_failed: "The restore could not be done. Nothing was changed.",
 };
 
@@ -137,22 +138,68 @@ export function wordsMayShow(loc = globalThis.location, privateWebs = []) {
   return privateWebs.includes(origin);
 }
 
+const MAX_WORDS_FILE = 4096;  // the 24 words are well under 300 bytes; anything bigger is not the words file
+
+/** The 24 words from text that came from a file or the clipboard: exactly 24 words, joined by single spaces, else null.
+ *  Only a shape check for a plain message; the hub still opens the backup with the words or refuses. */
+function wordsFrom(raw) {
+  const list = String(raw ?? "").trim().split(/\s+/).filter(Boolean);
+  return list.length === 24 && list.every((w) => /^\S{1,32}$/.test(w)) ? list.join(" ") : null;
+}
+
+/** The words input of the restore form: Choose the file / Paste (read in this page, never stored, never sent anywhere but
+ *  the restore request), with the old text box behind "Type them instead". `get()` returns the words and forgets them. */
+function wordsInput(id) {
+  let fromFile = "";
+  const status = h("span", { class: "small muted", role: "status" });
+  const area = h("textarea", { id: id + "-words", rows: "3", autocomplete: "off", spellcheck: "false", hidden: true, "aria-label": "The 24 backup words" });
+  const take = (raw, label) => {
+    const w = wordsFrom(raw);
+    fromFile = w ?? "";
+    status.textContent = w ? label + " ✓" : "That is not the 24 words. Choose the words file again, or type them.";
+  };
+  const file = h("input", { type: "file", accept: ".txt,text/plain", hidden: true, "aria-label": "The words file", onchange: async (e) => {
+    const f = e?.target?.files?.[0];
+    if (!f || !(f.size <= MAX_WORDS_FILE)) return take("", "");
+    let t = "";
+    try { t = await f.text(); } catch { t = ""; }
+    take(t, "Words file chosen: " + text(f.name ?? "file"));
+  } });
+  const choose = h("button", { type: "button", text: "Choose the file", onclick: () => file.click?.() });
+  const paste = h("button", { type: "button", text: "Paste", onclick: async () => {
+    let t = "";
+    try { t = await globalThis.navigator?.clipboard?.readText(); } catch { t = ""; }
+    take(t, "Words pasted");
+  } });
+  const typed = h("button", { type: "button", class: "link", text: "Type them instead", onclick: () => { area.removeAttribute("hidden"); typed.setAttribute("hidden", ""); } });
+  const node = h("div", { class: "field", "data-words-input": "1" },
+    h("label", { text: "The 24 backup words" }),
+    h("div", { class: "row" }, choose, paste, status), file, area, typed);
+  return { node, get: () => {
+    const typedWords = String(area.value ?? "").trim();
+    const w = typedWords || fromFile;
+    area.value = ""; file.value = ""; fromFile = ""; status.textContent = "";
+    return w;
+  } };
+}
+
 /** Password + code, then one button. `onSubmit({password, totp})` resolves nothing; the page re-renders afterwards. */
-function stepUpForm(id, label, onSubmit, withWords = false) {
-  const wordsBox = withWords ? h("textarea", { id: id + "-words", rows: "3", autocomplete: "off", spellcheck: "false", "aria-label": "The 24 backup words" }) : null;
+function stepUpForm(id, label, onSubmit, withWords = false, onCancel = null) {
+  const words = withWords ? wordsInput(id) : null;
   const pw = h("input", { id: id + "-pw", type: "password", autocomplete: "current-password", "aria-label": "Password" });
   const code = h("input", { id: id + "-totp", inputmode: "numeric", autocomplete: "one-time-code", maxlength: "6", "aria-label": "6-digit code" });
   const go = h("button", { type: "button", class: "primary", text: label, onclick: async () => {
     const body = { password: pw.value ?? "", totp: String(code.value ?? "").trim() };
-    if (wordsBox) { body.words = String(wordsBox.value ?? ""); wordsBox.value = ""; }
+    if (words) body.words = words.get();
     pw.value = ""; code.value = "";
     await onSubmit(body);
   } });
   return h("div", { class: "stepup", "data-stepup": id },
     h("p", { class: "small muted", text: STEP_UP }),
-    wordsBox ? h("div", { class: "field" }, h("label", { for: id + "-words", text: "The 24 backup words" }), wordsBox) : null,
+    words ? words.node : null,
     h("div", { class: "field" }, h("label", { for: id + "-pw", text: "Password" }), pw),
-    h("div", { class: "field" }, h("label", { for: id + "-totp", text: "6-digit code" }), code), go);
+    h("div", { class: "field" }, h("label", { for: id + "-totp", text: "6-digit code" }), code),
+    onCancel ? h("div", { class: "row" }, go, h("button", { type: "button", text: "Cancel", onclick: onCancel })) : go);
 }
 
 /** The 24 words as a numbered grid. Shown once; "I have saved it" clears them. */
@@ -164,19 +211,33 @@ function wordsPanel(words, actions) {
     try { ok = !!(await actions.copy?.(list.join(" "))); } catch { ok = false; }
     copy.textContent = ok ? "Copied" : "Select and copy";
   } });
+  const save = h("button", { type: "button", text: "Save as a file", onclick: () => {
+    try {
+      const url = URL.createObjectURL(new Blob([list.join(" ") + "\n"], { type: "text/plain" }));
+      h("a", { href: url, download: "hub-backup-words.txt" }).click?.();
+      setTimeout(() => URL.revokeObjectURL?.(url), 0);
+      save.textContent = "Saved";
+    } catch { save.textContent = "Could not save"; }
+  } });
+  const host = String(globalThis.location?.hostname ?? "").replace(/^\[|\]$/g, "");
+  const onServer = host === "localhost" || host === "::1" || /^127\.\d+\.\d+\.\d+$/.test(host);   // the browser runs on the hub machine: a file would land on the server
   return h("div", { class: "banner ok", role: "status", "data-words": "1" },
     h("b", { text: "Write these 24 words down" }),
     h("p", { class: "small", text: "They are shown only now. Keep them somewhere safe, away from this server. Without them a backup cannot be opened, and nobody can get them back for you." }),
-    grid, h("div", { class: "row" }, copy, h("button", { type: "button", class: "primary", text: "I have saved it", onclick: () => actions.wordsSaved?.() })));
+    onServer ? null : h("p", { class: "small", text: "Keep this file somewhere safe and offline. Anyone with it and your password can restore your hub." }),
+    grid, h("div", { class: "row" }, copy, onServer ? null : save, h("button", { type: "button", class: "primary", text: "I have saved it", onclick: () => actions.wordsSaved?.() })));
 }
 
 function backupRows(b, actions) {
   if (!b.backups.length) return h("p", { class: "small muted", text: "No backup yet." });
   return h("ul", { class: "list backups" }, b.backups.filter((x) => NAMES.test(String(x.name))).map((x) => {
     const row = h("li", { class: "list-row row", "data-backup": x.name },
-      h("div", { class: "grow" }, h("b", { text: text(when(x.made_ms)) }), h("div", { class: "small muted", text: Math.max(1, Math.round(x.size / 1024)) + " KB" })));
+      h("div", { class: "grow" }, h("b", { text: text(when(x.made_ms)) }), h("div", { class: "small muted", text: Math.max(1, Math.round(x.size / 1024)) + " KB" }),
+        b.note?.downloaded === x.name ? h("div", { class: "small", "data-downloaded": "1", text: "Downloaded" }) : null));
     const slot = h("div", { class: "stepup-slot" });
-    row.append(h("button", { type: "button", text: "Download", onclick: () => slot.replaceChildren(stepUpForm("dl-" + x.name.slice(4, 12), "Download", (c) => actions.download?.(x.name, c))) }));
+    row.append(h("button", { type: "button", text: "Download", onclick: () => slot.replaceChildren(h("div", { class: "dl-form" },
+      h("b", { text: "Download the backup of " + text(when(x.made_ms)) }),
+      stepUpForm("dl-" + x.name.slice(4, 12), "Download this backup", (c) => actions.download?.(x.name, c), false, () => slot.replaceChildren()))) }));
     if (actions.restore) row.append(h("button", { type: "button", text: "Restore", onclick: () => slot.replaceChildren(restorePanel(x, actions)) }));
     return h("div", {}, row, slot);
   }));
@@ -195,10 +256,10 @@ function restorePanel(x, actions) {
 }
 
 /** The notice after a restore: what happened, what to check. */
-function restoredNotice(n, actions) {
+export function restoredNotice(n, actions) {
   return h("div", { class: "banner warn", role: "status", "data-restored": "1" },
     h("b", { text: "Restored from the backup of " + text(when(n.made_ms)) }),
-    h("p", { class: "small", text: "Changes made after it are gone. Check People and Workspaces. " + (n.suspended ? text(n.suspended) + (n.suspended === 1 ? " person is" : " people are") + " switched off: turn each one on again in People." : "") }),
+    h("p", { class: "small", text: "Changes made after it are gone. Check that your workspaces show Online. " + (n.suspended ? text(n.suspended) + (n.suspended === 1 ? " person is" : " people are") + " switched off: turn them on again in People." : "") }),
     h("div", { class: "row" }, h("button", { type: "button", text: "Got it", onclick: () => actions.dismissRestored?.() })));
 }
 
@@ -212,6 +273,27 @@ function pendingList(items, actions) {
     h("ul", { class: "list" }, items.map((x) => h("li", { class: "list-row row", "data-pending-id": String(x.id) },
       h("div", { class: "grow" }, h("b", { text: text(x.label) }), h("div", { class: "small muted", text: text(PENDING_WORD[x.kind] ?? "Shared item") })),
       h("button", { type: "button", text: "Turn on", onclick: () => actions.confirmPending?.(x.id) })))));
+}
+
+// --- P07 (QA run 12): the backup card shows the result of its own buttons, right under them ---------------------------------
+/** The wait before another "Back up now" (the hub allows one in 10 minutes), in plain words; null when it may be made. */
+function waitWord(b, now = Date.now()) {
+  const left = Number(b.next_manual_ms ?? 0) - now;
+  if (!(left > 0)) return null;
+  const min = Math.max(1, Math.ceil(left / 60000));
+  return "You just made one. You can make another in " + min + (min === 1 ? " minute." : " minutes.");
+}
+function backupNow(b, actions) {
+  const wait = waitWord(b);
+  return h("div", { class: "row backup-now" },
+    h("button", { type: "button", class: "primary", text: "Back up now", disabled: wait ? "disabled" : null, onclick: () => actions.makeBackup?.() }),
+    wait ? h("span", { class: "small muted", "data-backup-wait": "1", text: wait }) : null);
+}
+/** The message slot: what the last backup action did. Always in the card, never at the top of the page. */
+function backupNoteView(n) {
+  if (!n?.title) return null;
+  return h("div", { class: "banner backup-note " + (n.kind === "bad" ? "bad" : "ok"), role: n.kind === "bad" ? "alert" : "status", "data-backup-note": n.kind },
+    h("b", { text: text(n.title) }), n.detail ? h("div", { class: "small", text: text(n.detail) }) : null);
 }
 
 function backupCard(b, actions) {
@@ -236,7 +318,8 @@ function backupCard(b, actions) {
   card.append(
     h("p", { class: "small muted", text: "A backup is made every day. The " + text(b.keep) + " newest are kept on this server. The files are sealed: only the 24 words open them." }),
     backupRows(b, actions),
-    h("div", { class: "row" }, h("button", { type: "button", class: "primary", text: "Back up now", onclick: () => actions.makeBackup?.() })),
+    backupNow(b, actions),
+    backupNoteView(b.note),
     h("p", { class: "small muted", text: "To keep a copy in another place, download a file and store it away from this server." }));
   const more = h("div", { class: "replace" });
   if (mayShow) {
@@ -289,6 +372,12 @@ export async function hubSettingsPage(d, detected = [], words = null) {
     if (bk.status === 200) r.body.backup = bk.body;
     const say = (ok, x) => { d.state.notice = x.status < 300 ? d.banner("ok", ok, null) : d.banner("bad", "Not changed", WHY[x.body.error] ?? d.say(x.body.error ?? "unavailable")); };
     const backupNote = (x, ok) => { d.state.notice = x.status < 300 ? d.banner("ok", ok, null) : d.banner("bad", "Not done", WHY[x.body.error] ?? d.say(x.body.error ?? "unavailable")); };
+    // P07: the result of Back up now and Download shows in the Backup card, not at the top of the page. It lives for one render.
+    const slotNote = (x, ok, extra = {}) => {
+      d.state.backupNote = x.status < 300 ? { kind: "ok", title: ok, ...extra }
+        : { kind: "bad", title: "Not done", detail: WHY[x.body.error] ?? d.say(x.body.error ?? "unavailable") };
+    };
+    if (r.body.backup && d.state.backupNote) { r.body.backup.note = d.state.backupNote; d.state.backupNote = null; }
     const actions = {
       detected,
       words,
@@ -311,17 +400,17 @@ export async function hubSettingsPage(d, detected = [], words = null) {
       },
       confirmPending: async (id) => { backupNote(await d.api("POST", "/admin/backup/restore/pending/confirm", { id }), "Turned on"); await hubSettingsPage(d); },
       dismissRestored: async () => { await d.api("POST", "/admin/backup/restored/dismiss", {}); await hubSettingsPage(d); },
-      makeBackup: async () => { backupNote(await d.api("POST", "/admin/backups", {}), "Backup made"); await hubSettingsPage(d); },
+      makeBackup: async () => { slotNote(await d.api("POST", "/admin/backups", {}), "Backup made"); await hubSettingsPage(d); },
       download: async (name, c) => {
         const x = await d.api("POST", "/admin/backups/download", { name, ...c });
-        if (x.status !== 200) { backupNote(x, ""); return hubSettingsPage(d); }
+        if (x.status !== 200) { slotNote(x, ""); return hubSettingsPage(d); }
         try {
           const bin = atob(String(x.body.data).replace(/-/g, "+").replace(/_/g, "/"));
           const bytes = Uint8Array.from(bin, (ch) => ch.charCodeAt(0));
           const a = h("a", { href: URL.createObjectURL(new Blob([bytes], { type: "application/octet-stream" })), download: x.body.name });
           a.click?.();
-          backupNote({ status: 200 }, "Backup downloaded");
-        } catch { backupNote({ status: 500, body: { error: "unavailable" } }, ""); }
+          slotNote({ status: 200 }, "Backup downloaded", { downloaded: name });
+        } catch { slotNote({ status: 500, body: { error: "unavailable" } }, ""); }
         await hubSettingsPage(d);
       },
       saveGeneral: async (body) => { say("Saved", await d.api("PUT", "/admin/settings/general", body)); await hubSettingsPage(d); },
@@ -334,6 +423,7 @@ export async function hubSettingsPage(d, detected = [], words = null) {
       },
     };
     d.shell("hub-settings", d.state.notice, hubSettingsView(r.body, actions));
+    globalThis.document?.querySelector?.("[data-backup-note]")?.scrollIntoView?.({ block: "nearest" });
     d.state.notice = null;
   } finally { finish(); }
 }

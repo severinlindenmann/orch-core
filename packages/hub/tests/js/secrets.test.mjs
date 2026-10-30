@@ -63,7 +63,7 @@ test("every value box is a password field that browsers do not remember or spell
 test("the page says in plain words who can read it and never uses the crypto words", () => {
   const t = secretsView(data, {}).textContent;
   assert.match(t, /The hub could read this value if it were taken over\./);
-  assert.match(t, /ready/); assert.match(t, /needs the value again/); assert.match(t, /Enter the value again/);
+  assert.match(t, /Ready/); assert.match(t, /Needs the value/); assert.match(t, /Enter the value/); assert.match(t, /Waiting for you to type the value again for this workspace/);
   assert.match(t, /Used 12 times this week \(as reported by the workspaces\)/);
   assert.match(t, /Product/); assert.match(t, /A workspace/);
   assert.ok(!/WXK|\bseal|\bwrap|encrypt|ciphertext/i.test(t.replace(/\blocked\b/g, "")), t);
@@ -153,7 +153,7 @@ test("Enter the value again: one form per secret that keeps who can read it and 
   const seen = [];
   const view = secretsView(data, { save: async (f) => { seen.push(f); return { ok: true }; } });
   const card = find(view, (n) => n.attrs["data-secret"] === "crm-key")[0];
-  const reenter = find(card, (n) => n.tag === "button" && n.textContent === "Enter the value again")[0];
+  const reenter = find(card, (n) => n.tag === "button" && n.textContent === "Enter the value")[0];
   assert.equal(reenter.className, "primary", "highlighted when a workspace needs it");
   const again = find(card, (n) => n.className === "secret-entry")[0];
   assert.equal(again.hidden, true);
@@ -202,4 +202,26 @@ test("review fix 1: a long pasted value is refused with a length message, never 
   assert.equal(calls.length, 0);
   assert.match(find(view, (n) => n.attrs.role === "alert")[0].textContent, /between 8 and 4096/);
   assert.equal(input.value.length, 5000);
+});
+
+test("P10: valid for offers 7/30/90/365 with 90 selected, and a recommended hint", () => {
+  const view = secretsView({ ...data, secrets: [] }, {});
+  const sel = find(view, (n) => n.tag === "select" && n.attrs["aria-label"] === "Valid for")[0];
+  assert.deepEqual(find(sel, (n) => n.tag === "option").map((o) => o.attrs.value), ["7", "30", "90", "365"]);
+  assert.equal(sel.value, "90");
+  assert.match(view.textContent, /Recommended: 90 days\. Pick 7 days for something temporary\./);
+});
+
+test("P10: a workspace with only an owner name reads as the owner's workspace, never an id", () => {
+  const d = { ...data, workspaces: [{ workspace_id: WS[0], name: "Anna's workspace" }, { workspace_id: WS[1], name: "Ben's workspace" }] };
+  const t = secretsView(d, {}).textContent;
+  assert.match(t, /Ben's workspace/); assert.ok(!t.includes(WS[1]));
+});
+
+test("P10: no Enter-the-value button, hint or warning when every row is ready", () => {
+  const ready = { ...data, secrets: [{ ...data.secrets[0], state: { [WS[0]]: { state: "ready" }, [WS[1]]: { state: "ready" } } }] };
+  const view = secretsView(ready, {});
+  assert.equal(button(view, "Enter the value"), undefined);
+  assert.ok(!/Waiting for you|Needs the value|Enter the value/.test(view.textContent));
+  assert.match(view.textContent, /Ready/);
 });

@@ -624,6 +624,8 @@ export interface NeedsYouItem {
   cut?: boolean
   /** The ticket is closed: an open question on it is still listed, but it is not actionable work. */
   closed?: boolean
+  /** Client only (Today, R12 P03): this requirements approval stands for requirements AND plan, signed once (approve_both). */
+  both?: boolean
 }
 
 export interface TodayDocument {

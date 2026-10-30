@@ -535,6 +535,7 @@ dev marker; `push_pub` is not the channel key (`malformed`); `issued_ms` newer t
 | GET | `/hub/card` | none | → `{card, api_origin}` (the held, signed card and the signed `hub.api_origin`) |
 | POST | `/session/channel` | pairing | `{auth: <signed hub.channel_auth>}` → `{token, user_id, channel_id, expires_ms, channel_cert, card}` |
 | PUT | `/channels/{channel_id}/push` | channel (that channel) | `{env, topic, token, push_key: <signed hub.channel_push> \| null}` → `{registered: true}`; `null` keeps the held push key (an APNs token change needs no new key; without a held key it is `malformed`). The hub then registers the target at the relay (§10.8.1) |
+| POST | `/workspaces/{workspace_id}/items/{item_id}/ask-phone` | browser cookie only (HUB-AP05, #1381) | no body → `{asked: n}`: a `needs_you` hint (§10.8.2) to the caller's own `n` live phone channels (`n = 0` sends nothing). It carries no action, outcome or text and signs nothing: the phone opens, prepares for its OWN channel (§8.4) and signs with its device key. The item must be one the person can read and that waits on them (`signable`, in the `needs-you` list); a workspace they are not in, a foreign, missing, summary-only or not-pending item all answer `unknown_item`. 6 a minute per person, 1 per 10 s per (person, item) (`rate_limited`); a switch-ticket session gets `reauth_required`. No new signed bytes, no new vector |
 
 **Not here.** App Attest (SHORTCUT of §6.3 stays). Renewing a channel certificate for the same key (the `renew` audit change exists, §10.5, but no hub renews in V3: the certificate lasts 31 days, then the phone pairs again). Admin-floor custodial types from a phone (spec §7 wants
 a sign-in within 5 min for them; a V3 phone offers only the four decision types).
@@ -1454,6 +1455,7 @@ unknown `op` is `unknown_op`.
 | `profile_put` | w2h | both | `{listed, tags, description, handles, not_handled, accepts, contact, languages, hours}` | `{}` |
 | `directory_get` | w2h | both | `{query?: string}` | `{entries: [...]}` (at most 50) |
 | `status_put` | w2h | both | `{"version", "commit", "host", "name"}` | `{}`, or `{"update_requested": {"target_version"}}` |
+| `agent_events` | w2h | full | `{"events": [{"kind", "ts_ms", "agent", "ticket"}]}` (1-50) | `{}` (HUB-AC-03 #1426) |
 | `addon_request` | w2h | both | `{"name", "version", "actor"}` | `{}` (M3 #1450) |
 | `owner_get` | w2h | both | `{}` | `{"user_id"}`: the hub user this hub names as the owner of the calling workspace (V3-D19 owner alias; FB15 §8.8b) |
 | `log_sync` | w2h | full | `{"epoch", "log", "from_seq", "count", "head", "reset", "sealed": b64u}` | `{"seq", "head"}` (p4, §10.7) |
@@ -1466,6 +1468,14 @@ built in D5/C5 against this table). Phases: `snapshot_get`, `publish_out` and th
 carry needs-you summaries only until C6); `route_*`, `wk_seal`, `audit_ack` in phase 3; `event_deliver`, `log_sync`, `space_proposals` in phase 4.
 `log_sync` carries the workspace's own log **to** the hub; like every other op it asks the hub to sign nothing, and
 nothing in it can become signed bytes: the hub builds custodial events only from an action a channel started (§8.4).
+
+`agent_events` tells the hub what agents did in the workspace, for the admin's Activity page, four references per event and
+nothing else: `kind` is one of a closed set of event type words (`ticket.created`, `ticket.updated`, `gate.approved`, ... and `event` for any other; the list is `AGENT_EVENT_KINDS` in the hub contract), `ts_ms` a
+non-negative integer, `agent` the agent session name (`[0-9A-Za-z][0-9A-Za-z._:@-]*`, at most 64) and `ticket` a ticket key
+(`ACME-12`) or `""`. Every member is required, no other member is allowed, and one bad event refuses the call
+(`malformed`). It carries no title, comment, prompt, path or secret, and the hub has no op to ask for more. Full mode only: a selective binding is refused `wrong_mode` (the hub must not learn of tickets that were not shared, D80), and the host sends nothing in selective mode. The hub needs a
+bound, pinned workspace that is not pending (else the usual refusals), keeps at most 500 events per workspace per hour (the
+rest are dropped, the reply is still `{}`) and stamps rows with its own clock. It grants nothing and signs nothing.
 
 `profile_put` replaces the pinned, bound workspace's display profile (exact keys): `listed` is boolean;
 `tags` and `accepts` are lists of at most 8 strings of at most 24 characters; `handles` and `not_handled`

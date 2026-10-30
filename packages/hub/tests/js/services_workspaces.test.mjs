@@ -594,6 +594,12 @@ test("P05: the Home count includes private workspaces for a hub admin and nobody
   assert.equal(line({ adminWorkspaces: null }), "1 workspace online, 0 offline");
 });
 
+test("P12: after Copy the banner names the person and the exact route", async () => {
+  const out = [connectWorkspaceView({ link: "/join#x", expires_ms: NOW + 1800000 }, { copy: async () => true }, { people: [{ user_id: "u2", name: "Ben Test" }], selected: "u2", self: "u1" })];
+  await clickButton(out, "Copy");
+  assert.match(text(out), /Copied ✓ Send it to Ben Test\. They open their workspace, go to Settings › Hub and press Connect a hub\./);
+});
+
 // HUB-WS-04 (#1385): ask the owners of older workspaces to update.
 test("HUB-WS-04: an admin can ask the owners to update; it is asked once and then shows when", async () => {
   let asked = 0;
@@ -645,12 +651,6 @@ test("SV-01: every part shows its address; Edge down is called out; no address i
   assert.equal(summary(d).text, "Edge is not answering");
 });
 
-test("P12: after Copy the banner names the person and the exact route", async () => {
-  const out = [connectWorkspaceView({ link: "/join#x", expires_ms: NOW + 1800000 }, { copy: async () => true }, { people: [{ user_id: "u2", name: "Ben Test" }], selected: "u2", self: "u1" })];
-  await clickButton(out, "Copy");
-  assert.match(text(out), /Copied ✓ Send it to Ben Test\. They open their workspace, go to Settings › Hub and press Connect a hub\./);
-});
-
 test("r14 P05: the joined banner for a private workspace has no Open button and names who can open it", async () => {
   const { joinedBannerView } = await import("../../src/orch_hub/web/workspaces.js");
   const opened = [];
@@ -661,4 +661,18 @@ test("r14 P05: the joined banner for a private workspace has no Open button and 
   assert.doesNotMatch(el.textContent, /Open |from here/);
   const plain = joinedBannerView({ workspace_id: "a", name: "Anna" }, {});
   assert.match(plain.textContent, /You can open it from here/);
+});
+
+test("P08: the Workspaces page shows the Restored note at the top until Got it is clicked", () => {
+  let n = 0;
+  const out = workspacesView({ workspaces: [], handoffs: [], restored: { made_ms: NOW - 3600000, restored_ms: NOW, suspended: 1 },
+    actions: { dismissRestored: () => n++ } }, NOW);
+  const t = text(out);
+  assert.match(t, /Restored from the backup of/); assert.match(t, /Check that your workspaces show Online/);
+  assert.match(t, /1 person is switched off/);
+  const got = find(out, (x) => x.tag === "button" && x.textContent === "Got it");
+  assert.equal(got.length, 1);
+  got[0].listeners.click();
+  assert.equal(n, 1);
+  assert.doesNotMatch(text(workspacesView({ workspaces: [], handoffs: [] }, NOW)), /Restored from/);
 });

@@ -1,5 +1,6 @@
 import { emptyState, toast } from "./feel.js";
 // Connected workspaces and their availability.
+import { restoredNotice } from "./pages/hub-settings.js";
 import { ago, chip, h, text } from "./ui.js";
 
 const nameOf = (end) => (end && end.name ? text(end.name) : end && end.owner_name ? text(end.owner_name + "'s workspace") : "Another workspace");
@@ -290,6 +291,7 @@ export function workspacesView(data, now = Date.now()) {
     }
   }
   return [
+    data.restored ? restoredNotice(data.restored, actions) : null,
     h("div", { class: "row" }, h("h1", { class: "grow", text: "Workspaces" }), data.admin != null || data.canConnect ? connect : null),
     connectBox,
     older.length ? h("div", { class: "banner warn" }, h("b", { text: older.length === 1 ? "1 workspace runs an older orch" : older.length + " workspaces run an older orch" }),

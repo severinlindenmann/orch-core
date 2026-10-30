@@ -12,7 +12,7 @@ import { TicketProgress } from './NextStep'
 import { addonActive } from '@/api/addons'
 import { AddonBadge, useAddons, useRunAddonAction } from '@/addon-ui'
 import { canSpawnAgent } from '@/addon-ui/capabilities'
-import { hasFeature, isRealHost } from '@/api/features'
+import { canAct, hasFeature, isRealHost } from '@/api/features'
 import { StartAgentDialog, lastHarness } from '@/app/terminal/real/StartAgentDialog'
 import { StartAgentSplit } from '@/app/terminal/real/StartAgentSplit'
 import { precheckReason } from '@/addon-ui/SpawnConfirm'
@@ -20,6 +20,9 @@ import { useWorkspace } from '@/app/workspace'
 import { workspaceOfTicket } from '@/api/workspaces'
 import { hubQueries, hubServed } from '@/api/hub'
 import { ShareTicketDialog } from './ShareTicketDialog'
+import { ShareFlow } from '../shares/ShareFlow'
+import { TurnOnPublish } from '../shares/TurnOnPublish'
+import { atLeast } from '@/api/permissions'
 import { StopSharing } from '../settings/hub/StopSharing'
 import type { ClosedInfo, TicketDocument } from '@/api/types'
 import { Button } from '@/components/ui/button'
@@ -173,6 +176,39 @@ function useShareTicket(ticket: TicketDocument, viewer: Viewer): ShareTicket {
   return { shown, shared, run: () => setOpen(shared ? 'stop' : 'share'), node }
 }
 
+export interface ShareFiles {
+  /** "Share files…" is part of this ticket's actions: a real host, a member or more, and (when Publish is off) an owner who can turn it on. */
+  shown: boolean
+  run: () => void
+  node: React.ReactNode
+}
+
+/**
+ * Sharing files of this ticket with a link, from the Actions menu (P05). With Publish on it opens the share dialog;
+ * with Publish off it opens the turn-on review first (an owner's signature, as on the Add-ons page) and the share
+ * dialog follows once Publish is on. The ticket page's Shares box keeps its own button for the same dialog.
+ */
+function useShareFiles(ticket: TicketDocument, viewer: Viewer): ShareFiles {
+  const { workspaces } = useWorkspace()
+  const home = workspaceOfTicket(ticket.key, workspaces)
+  const ws = home?.id
+  const role = viewer.role
+  const [open, setOpen] = useState<'turnon' | 'share' | null>(null)
+  const real = isRealHost() && !!home && !!ws && canAct(ws)
+  const on = real && hasFeature('publish', ws)
+  const open_ = ticket.status !== 'done' && ticket.status !== 'closed'
+  const shown = real && open_ && (on ? atLeast(role, 'member') : role === 'owner')
+  const toShare = useCallback(() => setOpen('share'), [])
+  const node = !home
+    ? null
+    : open === 'turnon'
+      ? <TurnOnPublish key="turnon" workspace={home} onOn={toShare} onClose={() => setOpen(null)} />
+      : open === 'share'
+        ? <ShareFlow key="share" ws={home.id} ticket={ticket} onClose={() => setOpen(null)} />
+        : null
+  return { shown, run: () => setOpen(on ? 'share' : 'turnon'), node }
+}
+
 /** A finished ticket, or one nobody has a turn on and with no reason, shows no "Turn:" line (run-11 P06). */
 export function showTurn(ticket: { status: string; turn: { who: string; why: string } }): boolean {
   if (ticket.status === 'done' || ticket.status === 'closed' || ticket.status === 'cancelled') return false
@@ -194,12 +230,12 @@ function Next() {
 }
 
 /** The header's Actions menu lists EVERY action the viewer has, the primary one included (tagged "next"). */
-export function ActionsMenu({ ticket, viewer, sign, jump, start, share, signing = false }: { ticket: TicketDocument; viewer: Viewer; sign: (a: HumanAction) => void; jump: (j: Jump) => void; start: StartAgent; /** Absent: no sharing item (the mock page tests). */ share?: ShareTicket; signing?: boolean }) {
+export function ActionsMenu({ ticket, viewer, sign, jump, start, share, shareFiles, signing = false }: { ticket: TicketDocument; viewer: Viewer; sign: (a: HumanAction) => void; jump: (j: Jump) => void; start: StartAgent; /** Absent: no sharing item (the mock page tests). */ share?: ShareTicket; /** Absent: no Share files item. */ shareFiles?: ShareFiles; signing?: boolean }) {
   const av = availableActions(ticket, viewer)
   const primary = primaryAction(av, { start: start.startable })
   const isNext = (k: string) => (primary?.kind === 'approve' ? `approve:${primary.gate}` : primary?.kind === 'answer' ? `answer:${primary.question}` : primary?.kind) === k
   const needs = av.approve.length > 0 || av.verdict || av.answer.length > 0
-  const other = av.requestChanges.length > 0 || start.shown || !!share?.shown
+  const other = av.requestChanges.length > 0 || start.shown || !!share?.shown || !!shareFiles?.shown
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -257,6 +293,12 @@ export function ActionsMenu({ ticket, viewer, sign, jump, start, share, signing 
           <DropdownMenuItem disabled={!!start.reason} onSelect={start.choose} data-testid="real-start-agent-choose-item">
             <Bot />
             Change agent or model…
+          </DropdownMenuItem>
+        )}
+        {shareFiles?.shown && (
+          <DropdownMenuItem onSelect={shareFiles.run} data-testid="share-files-item">
+            <Share2 />
+            Share files…
           </DropdownMenuItem>
         )}
         {share?.shown && (
@@ -466,6 +508,7 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
   const { run, wait } = useTicketAgent(ticket, home)
   const start = useStartAgent(ticket, viewer)
   const share = useShareTicket(ticket, viewer)
+  const shareFiles = useShareFiles(ticket, viewer)
   const { startable, canStart, run: startPlain, runWith } = start
   // The listener reads the latest start through a ref, so it subscribes once per ticket, not on every render.
   const latest = useRef({ startable, canStart, startPlain, runWith })
@@ -533,9 +576,10 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
         <div className="flex flex-wrap items-center gap-2 sm:shrink-0">
           <FocusButton ticket={ticket.key} />
           <PrimaryButton ticket={ticket} viewer={viewer} jump={jump} start={start} signing={signing} phase={phase} idle={!!wait || !!gapOf(ticket)} />
-          <ActionsMenu ticket={ticket} viewer={viewer} sign={sign} jump={jump} start={start} share={share} signing={signing} />
+          <ActionsMenu ticket={ticket} viewer={viewer} sign={sign} jump={jump} start={start} share={share} shareFiles={shareFiles} signing={signing} />
           {start.node}
           {share.node}
+          {shareFiles.node}
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">

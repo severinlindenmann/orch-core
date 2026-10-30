@@ -124,6 +124,7 @@ h1, h2, h3, p, b, span, td, th, dd, button, summary { overflow-wrap:anywhere; }
 fieldset { min-width:0; margin:16px 0; padding:12px 16px 8px; border:1px solid var(--line); border-radius:9px; }
 legend { padding:0 6px; font-weight:600; font-size:14px; }
 label.check { display:flex; align-items:center; gap:10px; min-height:44px; font-size:14px; font-weight:450; color:inherit; margin:0; }
+.share-list input[type=checkbox] { width:auto; min-height:0; flex:none; margin:0; }
 label.check input { display:inline-block; width:20px; height:20px; min-height:0; margin:0; flex:none; }
 .bad-text { color:var(--bad); }
 .mp-form { grid-template-columns:minmax(0,2fr) minmax(0,1.3fr) minmax(0,1.3fr) auto; }
@@ -319,3 +320,10 @@ details.info[open] > p { position:absolute; z-index:5; top:32px; left:0; width:2
 /* r14 P12: a placeholder is an example, so it is quieter than typed text. */
 input::placeholder { color:var(--text-faint); opacity:1; }
 label .optional { font-weight:400; color:var(--text-faint); }
+
+/* --- P07: the Backup card shows the result of its own buttons (keep this block separate) --- */
+.backup-now { align-items:center; gap:10px; }
+.backup-note { margin:10px 0; }
+.dl-form { margin-top:12px; }
+.backup-now button:disabled { opacity:.45; cursor:not-allowed; }
+/* --- end P07 --- */

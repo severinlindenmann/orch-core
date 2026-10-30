@@ -134,7 +134,12 @@ closed formats `int` (1 to 19 digits), `slug`, `owner_repo_number` (`owner:repo:
 polls only while a follow-up waits on the event, with the runner method `events.poll` (needs `network`), params exactly
 `{kind, ref, settings}`; the answer is exactly `{"state": "pending" | "done" | "failed"}`, and `done` carries
 `"status"`, one of the declared statuses. The event is `{source: "addon", kind: "<addon>.<kind>", ref, status, at}`
-with `at` from the host clock. The declaration is signed in `addon.granted` (`events`, flat: `kind`, `title`,
+with `at` from the host clock. A follow-up binds with `orch follow-up --on <addon>.<kind>:<ref> [--on-status <status>]`; the ref is checked
+against the declared format when it is set and before every poll, and the add-on asked is the one before the FIRST dot
+of the kind. By default any declared status wakes it. Budgets: each ref at its own interval (doubling after a failure, up
+to an hour), at most 5 refs per add-on per tick, 60 calls per add-on and 200 per host per hour; a source whose polls
+fail three times in a row is marked failed (closed code) and the follow-up's deadline wakes it (`addon_silent`). One
+trigger per follow-up. An add-on only says that something finished; the agent verifies the result itself. The declaration is signed in `addon.granted` (`events`, flat: `kind`, `title`,
 `statuses`, `ref` format, `interval_s`).
 
 ## 9. Commands and fields of an add-on at the CLI (AP D5, steps 1 and 1b)

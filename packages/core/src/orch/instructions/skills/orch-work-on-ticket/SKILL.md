@@ -21,5 +21,5 @@ Judgment rules; the loop is `orch help work`.
 - As a subagent, take exactly one task, finish it and report; leave the manager's claim alone.
 - A wait under an hour stays in the session; a longer one gets a follow-up (`orch help wait`), then end the session.
 - Write its brief for a reader with no memory: what to check, then done/still running/failed. First commit and push WIP and log where you stand.
-- To wake early, wait on an event or a webhook at the job's last step; the deadline still runs it, so check by hand.
+- To wake early, wait on an event, a webhook or an add-on event; the deadline still runs it. Verify the result yourself.
 - A follow-up session first reads the follow-up and the ticket; the brief is your own old note, so verify it.

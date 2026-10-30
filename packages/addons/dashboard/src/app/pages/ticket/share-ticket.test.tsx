@@ -114,7 +114,7 @@ describe('the ticket Actions menu and sharing', () => {
     expect(text()).not.toMatch(/Who will see it:|Only me|not signed/)
     // tick one person: the sentence names them and what they see, in one place
     await view.user.click(boxes[0])
-    await waitFor(() => expect(within(dialog).getByTestId('hub-add-sentence')).toHaveTextContent(/will see the title, status, deadline and description\. Later edits are shared too\./), T)
+    await waitFor(() => expect(within(dialog).getByTestId('hub-add-sentence')).toHaveTextContent(/will see the title, status, labels, deadline and description\. Later edits are shared too\./), T)
     expect(within(dialog).getByTestId('hub-add-readers')).not.toHaveTextContent('Only you')
     // P16: one row: Details on the left, Cancel and Share on the right; the warning and the long list are under Details
     const row = within(dialog).getByTestId('hub-add-go').parentElement as HTMLElement
@@ -123,13 +123,13 @@ describe('the ticket Actions menu and sharing', () => {
     expect(within(dialog).getAllByRole('button', { name: 'Share' })).toHaveLength(1)
     expect(within(dialog).getAllByRole('button', { name: 'Cancel' })).toHaveLength(1)
     expect(within(dialog).getByTestId('hub-add-details')).toHaveTextContent('Details')
-    expect(text()).not.toContain('cannot be taken back')
+    expect(text().split('cannot be taken back')).toHaveLength(2) // the caveat stays visible, once
+    expect(within(dialog).getByTestId('hub-add-caveat-visible')).toHaveTextContent('cannot be taken back')
     expect(text()).not.toContain('Comments and files stay private')
     expect(within(dialog).queryByTestId('hub-add-new')).toBeNull()
     expect(within(dialog).queryByTestId('hub-add-leaves')).toBeNull()
     await view.user.click(within(dialog).getByTestId('hub-add-details'))
     expect(await screen.findByTestId('hub-add-new')).toBeTruthy()
-    expect(screen.getByTestId('hub-add-caveat')).toHaveTextContent('cannot be taken back')
     expect(screen.getByTestId('hub-add-leaves')).toHaveTextContent('but never its plan, comments or files')
     expect(screen.getByTestId('hub-add-leaves')).toBeTruthy()
   })

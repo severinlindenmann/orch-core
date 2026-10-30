@@ -19,7 +19,7 @@ REVIEW = {
     "new": {"count": 1, "more": 0, "items": [{"logical": "t", "kind": "ticket", "line": "ticket K-2: Second"}]},
     "leaves": [{"kind": "ticket", "text": "the ticket's title, status, labels and deadline"}],
     "later_edits": "Later edits are shared too, until you stop sharing.",
-    "leaves_short": "the title, status and deadline",
+    "leaves_short": "the title, status, labels and deadline",
     "later_edits_short": "Later edits are shared too.",
 }
 PREVIEW = {"count": 2, "new": 1, "revoked": 0, "more": 0, "items": [], "rules": [], "plan": SHOWN, "review": REVIEW}
@@ -54,7 +54,7 @@ def test_the_review_is_the_hosts_closed_shape(client, token, stub, host):
     assert review["hub_id"] == "ab" * 8 and review["readers"]["people"] == ["Ben Test"]
     assert review["new_count"] == 1 and review["new_items"] == ["ticket K-2: Second"]
     assert review["leaves"] and review["later_edits"].startswith("Later edits")
-    assert review["leaves_short"] == "the title, status and deadline"
+    assert review["leaves_short"] == "the title, status, labels and deadline"
 
 
 def test_a_shown_plan_is_sent_once_as_the_sessions_person(client, token, stub, host, caplog):

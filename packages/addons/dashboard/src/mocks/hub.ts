@@ -107,7 +107,7 @@ function mockPreview(body: { add?: HubRule; remove?: HubRule } | null): HubPrevi
     new_count: added, new_more: 0, new_items: fresh,
     leaves: added ? [withText ? "the ticket's title, status, labels, deadline and description, but never its plan, comments or files" : "the ticket's title, status, labels and deadline, but never its description, comments or files"] : [],
     later_edits: 'Later edits are shared too, until you stop sharing.',
-    leaves_short: added ? (withText ? 'the title, status, deadline and description' : 'the title, status and deadline') : null,
+    leaves_short: added ? (withText ? 'the title, status, labels, deadline and description' : 'the title, status, labels and deadline') : null,
     later_edits_short: 'Later edits are shared too.',
   }
   return { count: items.length, new: added, revoked: removed, more: 0, items, rules: [], plan: 'P'.repeat(42) + String(items.length % 10), review }

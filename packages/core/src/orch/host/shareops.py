@@ -80,11 +80,11 @@ LATER_EDITS = "Later edits are shared too, until you stop sharing."
 #: The short forms for the one-ticket dialog (same facts as LEAVES / LATER_EDITS; the long text stays for the CLI and
 #: the Details drawer). The page words none of it.
 LEAVES_SHORT = {
-    "ticket": "the title, status and deadline",
+    "ticket": "the title, status, labels and deadline",
     "summary": "the type, a one-line title and the deadline",
     "question": "the full question",
 }
-LEAVES_SHORT_DESCRIPTION = "the title, status, deadline and description"
+LEAVES_SHORT_DESCRIPTION = "the title, status, labels, deadline and description"
 LATER_EDITS_SHORT = "Later edits are shared too."
 _MU = threading.Lock()
 _NAMES = {"type": "array", "items": {"type": "string"}, "maxItems": 64}

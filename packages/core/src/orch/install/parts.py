@@ -149,10 +149,6 @@ def _run(argv: list[str]) -> str:
         return ""
 
 
-def hub_link_port() -> int:
-    return HUB_LINK_PORT
-
-
 def command_for(
     part: str,
     *,

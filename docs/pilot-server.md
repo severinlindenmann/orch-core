@@ -43,6 +43,11 @@ address looks like it comes from the internet). Choose one:
 
 Test on a Mac: `curl -sI https://hub.example.com` should answer (not hang, not 403).
 
+The "private network only" rule lets in the real network of your VPN, read from the server's VPN interface (for example
+`100.92.0.0/16`), not the whole 100.64.0.0/10 range. If the server cannot tell, give it with `--vpn-ip 100.92.1.2/16`. The rule
+relies on Caddy being the **first hop from the internet**: do not put a proxy or load balancer in front of it, because
+Caddy would then see the proxy's address instead of the visitor's.
+
 ## 3. The two users and the root steps
 
 You need an administrator login on the server once. Create the two users (no password login needed):
@@ -132,15 +137,29 @@ A Mac that is newer than the server may be refused; the other way round works.
   paper; without them a backup cannot be opened).
 - At 03:40 a timer copies the sealed files into `/home/orch-hub/orch-backup-out/` (the newest 14). The files are sealed:
   the folder holds nothing a thief can read. **The server holds no password or key of your Mac.**
-- The Mac pulls them (this runs on the Mac, e.g. from a nightly job), over the private network:
+- The Mac pulls them over the private network, from the Mac (for example a nightly job):
 
   ```
-  rsync -a --ignore-existing orch-hub@100.x.y.z:orch-backup-out/ ~/orch-backups/
+  rsync -a --ignore-existing backup@100.x.y.z:orch-backup-out/ ~/orch-backups/
   ```
 
-  This needs your Mac's public SSH key in `orch-hub`'s `authorized_keys` and a login shell for `orch-hub` (an administrator
-  adds both, once).
-- Restore on a fresh server: stop the hub, then `orch-hub restore --state <hub data folder> <file.orchbak>` and type the 24 words (`orch-hub restore --help`).
+  **Do not give `orch-hub` a login shell or your Mac a key that can run commands as it.** An administrator makes a separate
+  user `orch-backup` that can only read that folder (add it to a group that may read `/home/orch-hub/orch-backup-out`, or
+  copy the files to a folder it owns). In its `authorized_keys` put your Mac's public key restricted to one read-only command
+  and to the private network, all on one line:
+
+  ```
+  restrict,from="100.64.0.0/10",command="rrsync -ro /home/orch-hub/orch-backup-out" ssh-ed25519 AAAA... mac-backup
+  ```
+
+  (`restrict` switches off shells, port forwarding and agent forwarding; `rrsync -ro` allows only reading that folder. Use your
+  VPN's real network instead of `100.64.0.0/10` if you know it, for example `100.92.0.0/16`.)
+- Restore, for example on a fresh server: (1) as the hub user, run the hub setup first (`orch setup --server --role hub ...`),
+  so the user, the state folder and the services exist; (2) stop the hub:
+  `systemctl --user stop "orch-*-hub.service"` (list the exact name with `systemctl --user list-units 'orch-*'`); (3) copy the
+  chosen `.orchbak` file to the server; (4) run
+  `orch-hub restore --state ~/.config/orch/install/parts/hub/data <file.orchbak>` (the state folder is the `data` folder shown by
+  `orch install status`) and type the 24 words; (5) start the hub again with `systemctl --user start "orch-*-hub.service"`.
 
 ## 9. When something fails
 

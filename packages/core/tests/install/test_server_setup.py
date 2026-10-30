@@ -118,33 +118,73 @@ def test_a_linked_or_foreign_snippet_folder_is_refused(tmp_path):
 # ------------------------------------------------------------------------------------------------------ dns
 
 
-def test_dns_check_ok_missing_and_elsewhere():
-    table = {"a.example.com": [VPS], "b.example.com": [], "c.example.com": ["1.2.3.4"]}
+def test_dns_check_ok_missing_elsewhere_and_mixed():
+    table = {
+        "a.example.com": [VPS],
+        "b.example.com": [],
+        "c.example.com": ["1.2.3.4"],
+        "d.example.com": [VPS, "1.2.3.4"],  # L1: one answer elsewhere is not "ours"
+        "e.example.com": ["10.0.0.5"],
+    }
     res = server.check_dns(
-        {"relay": "a.example.com", "publish": "b.example.com", "hub": "c.example.com"},
+        {
+            "relay": "a.example.com",
+            "publish": "b.example.com",
+            "hub": "c.example.com",
+            "x": "d.example.com",
+            "y": "e.example.com",
+        },
         lambda n: table[n],
-        {VPS, "127.0.0.1"},
+        {VPS, "127.0.0.1", "10.0.0.5"},
     )
-    assert [r.status for r in res] == ["ok", "missing", "elsewhere"]
+    assert [r.status for r in res] == ["ok", "missing", "elsewhere", "elsewhere", "private"]
     assert "no DNS record" in res[1].words() and "run this command again" in res[1].words()
-    assert "1.2.3.4" in res[2].words() and "not at this computer" in res[2].words()
+    assert "1.2.3.4" in res[2].words() and "not (only) this computer" in res[2].words()
+    assert "private address" in res[4].words()
+
+
+def ifaces():
+    return server.local_interfaces(lambda argv: IP_ADDR if argv[0] == "ip" else "")
 
 
 def test_local_addresses_and_vpn_detection():
-    mine = server.local_addresses(lambda argv: IP_ADDR if argv[0] == "ip" else "")
-    assert {VPS, VPN, "127.0.0.1"} <= mine
-    assert server.detect_vpn_ip(mine) == VPN
-    assert server.detect_vpn_ip({"10.0.0.2", VPS}) is None
-    assert server.detect_vpn_ip({"100.63.255.255", "100.128.0.1"}) is None  # just outside 100.64/10
+    mine = ifaces()
+    assert {VPS, VPN, "127.0.0.1"} <= {a.ip for a in mine}
+    got = server.detect_vpn_ip(mine)
+    assert got.ip == VPN and got.prefix == 16 and got.iface == "wt0"
+    assert server.detect_vpn_ip([server.Addr("10.0.0.2"), server.Addr(VPS)]) is None
+    assert server.detect_vpn_ip([server.Addr("100.63.255.255"), server.Addr("100.128.0.1")]) is None
 
 
-def test_vpn_ip_flag_must_be_a_vpn_address_of_this_computer():
-    mine = {VPS, VPN}
-    assert server.check_vpn_ip(VPN, mine) == VPN
-    with pytest.raises(InstallError, match="private network"):
-        server.check_vpn_ip(VPS, mine)
+def test_two_cgnat_addresses_are_refused_unless_one_is_on_a_vpn_interface():
+    two = [server.Addr("100.64.1.1", 10, "eth1"), server.Addr("100.70.2.2", 16, "eth2")]
+    with pytest.raises(InstallError, match="more than one private-network"):
+        server.detect_vpn_ip(two)
+    assert server.detect_vpn_ip([*two, server.Addr("100.90.3.3", 16, "wt0")]).ip == "100.90.3.3"
+
+
+def test_vpn_ip_flag_accepts_only_cgnat_unless_overridden():
+    mine = [server.Addr(VPS, 24, "eth0"), server.Addr(VPN, 16, "wt0"), server.Addr("10.1.1.5", 24, "eth1")]
+    assert server.check_vpn_ip(VPN, mine)[0].ip == VPN
+    with pytest.raises(InstallError, match="100.64"):
+        server.check_vpn_ip("10.1.1.5", mine)
+    assert server.check_vpn_ip("10.1.1.5", mine, allow_non_cgnat=True)[0].ip == "10.1.1.5"
+    with pytest.raises(InstallError, match="100.64"):
+        server.check_vpn_ip(VPS, mine, allow_non_cgnat=True)  # public stays refused
     with pytest.raises(InstallError, match="does not have that address"):
         server.check_vpn_ip("100.64.9.9", mine)
+    assert server.check_vpn_ip("100.64.7.9/16", mine)[1] == 16
+
+
+def test_vpn_gate_uses_the_real_subnet_golden(tmp_path):
+    golden(
+        "hub-vpn-only-16.caddy",
+        server.caddy_snippet("hub", "hub.example.com", 8100, vpn_only=True, vpn_net="100.92.0.0/16"),
+    )
+    assert str(server.vpn_network(server.Addr("100.92.1.2", 16, "wt0"))) == "100.92.0.0/16"
+    assert str(server.vpn_network(server.Addr("100.92.1.2"), 16)) == "100.92.0.0/16"  # --vpn-ip 100.92.1.2/16
+    with pytest.raises(InstallError, match="cannot tell the network"):
+        server.vpn_network(server.Addr("100.92.1.2", 32, "wt0"))
 
 
 # ------------------------------------------------------------------------------------------------ the flow
@@ -163,7 +203,7 @@ def stub_ctx(home, runner=None):
 
 
 def local():
-    return {VPS, VPN, "127.0.0.1"}
+    return ifaces()
 
 
 def test_edge_role_installs_relay_and_publish_only_and_writes_two_snippets(tmp_path):
@@ -263,7 +303,7 @@ def test_hub_role_binds_the_vpn_ip_and_the_card_advertises_it(tmp_path):
     assert argv[argv.index("--relay-url") + 1] == "https://relay.example.com"
     card = json.loads((ctx.layout.data("hub") / "hub-settings.json").read_text())
     assert card["addresses"][0] == {"kind": "private", "web": "https://hub.example.com:443", "link": f"{VPN}:8105"}
-    assert "not remote_ip 100.64.0.0/10" in (caddy / "hub.caddy").read_text()
+    assert "not remote_ip 100.64.0.0/16" in (caddy / "hub.caddy").read_text()
     assert "https://hub.example.com/#setup=TOKEN" in out.getvalue()
     assert f"resolve hub.example.com to {VPN}" in out.getvalue()
     import re
@@ -297,7 +337,13 @@ def test_hub_vpn_only_needs_a_name_and_a_vpn_address(tmp_path):
     with pytest.raises(InstallError, match="needs a name"):
         server_setup(ctx, "hub", names=server.Names(), hub_vpn_only=True, local=local)
     with pytest.raises(InstallError, match="no private-network"):
-        server_setup(ctx, "hub", names=server.derive_names("example.com"), local=lambda: {VPS}, resolve=lambda n: [VPS])
+        server_setup(
+            ctx,
+            "hub",
+            names=server.derive_names("example.com"),
+            local=lambda: [server.Addr(VPS)],
+            resolve=lambda n: [VPS],
+        )
     with pytest.raises(InstallError, match="belongs to --role hub"):
         server_setup(ctx, "edge", names=server.derive_names("example.com"), hub_vpn_only=True, local=local)
 
@@ -661,11 +707,67 @@ def test_no_vpn_address_refuses_the_hub_in_plain_words_with_or_without_names(tmp
     ctx, *_ = stub_ctx(tmp_path)
     for names in (server.Names(), server.derive_names("example.com")):
         with pytest.raises(InstallError, match="no private-network .VPN. address found"):
-            server_setup(ctx, "hub", names=names, local=lambda: {VPS, "127.0.0.1"}, resolve=lambda n: [VPS])
+            server_setup(
+                ctx,
+                "hub",
+                names=names,
+                local=lambda: [server.Addr(VPS), server.Addr("127.0.0.1")],
+                resolve=lambda n: [VPS],
+            )
     assert not ctx.runner.started
 
 
 def test_a_server_hub_refuses_another_address(tmp_path):
     ctx, *_ = stub_ctx(tmp_path)
-    with pytest.raises(InstallError, match="only on the private-network address"):
+    with pytest.raises(InstallError, match="private-network address 100.64.7.9"):
         server_setup(ctx, "hub", names=server.Names(), address="192.168.1.20", local=local)
+
+
+# ----------------------------------------------------------------------- the hub bind is never wider than asked
+
+
+def test_explicit_loopback_is_honoured_and_prints_the_binds(tmp_path):
+    ctx, out, *_ = stub_ctx(tmp_path)
+    server_setup(ctx, "hub", names=server.Names(), address="127.0.0.1", local=local)
+    argv, _ = ctx.runner.started["hub"]
+    assert argv[argv.index("--listen") + 1] == "127.0.0.1:8105" and "--link-listen" not in argv
+    assert argv[argv.index("--web-listen") + 1] == "127.0.0.1:8100"
+    assert "--bind-all" not in argv and VPN not in " ".join(argv)
+    assert "The hub listens on: console 127.0.0.1:8100, link 127.0.0.1:8105 (nothing else)." in out.getvalue()
+
+
+def test_no_address_means_the_vpn_ip_and_the_binds_are_printed(tmp_path):
+    ctx, out, *_ = stub_ctx(tmp_path)
+    server_setup(ctx, "hub", names=server.Names(), local=local)
+    argv, _ = ctx.runner.started["hub"]
+    assert argv[argv.index("--link-listen") + 1] == f"{VPN}:8105"
+    assert f"The hub listens on: console {VPN}:8100, link {VPN}:8105 (nothing else)." in out.getvalue()
+
+
+def test_a_public_address_is_refused_without_anything_started(tmp_path):
+    ctx, *_ = stub_ctx(tmp_path)
+    for bad in (VPS, "0.0.0.0", "192.168.1.20"):
+        with pytest.raises(InstallError, match="127.0.0.1 only"):
+            server_setup(ctx, "hub", names=server.Names(), address=bad, local=local)
+    assert not ctx.runner.started
+
+
+def test_loopback_with_names_or_vpn_only_is_refused(tmp_path):
+    ctx, *_ = stub_ctx(tmp_path)
+    with pytest.raises(InstallError, match="cannot be combined with domain names"):
+        server_setup(ctx, "hub", names=server.derive_names("example.com"), address="127.0.0.1", local=local)
+
+
+def test_runbook_backup_pull_uses_a_restricted_key_and_no_shell():
+    doc = (Path(__file__).resolve().parents[4] / "docs" / "pilot-server.md").read_text()
+    assert "restrict," in doc and "rrsync -ro" in doc and 'from="100.64.0.0/10"' in doc
+    assert "Do not give `orch-hub` a login shell" in doc
+    assert "first hop from the internet" in doc and "orch-hub restore --state" in doc
+
+
+def test_backup_out_folder_is_made_0700_on_every_run(tmp_path):
+    src, dest = tmp_path / "b", tmp_path / "out"
+    src.mkdir()
+    dest.mkdir(mode=0o755)
+    ops.backup_copy(src, dest)
+    assert oct(dest.stat().st_mode & 0o777) == "0o700"

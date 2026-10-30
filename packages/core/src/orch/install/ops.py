@@ -164,6 +164,7 @@ def backup_copy(src: Path, dest: Path, keep: int = BACKUP_KEEP) -> tuple[list[st
     """Copy the sealed ``*.orchbak`` files not yet in ``dest``; keep the newest ``keep`` there. ``(copied, problems)``.
     The files are sealed with the hub's backup key; this folder holds nothing a thief could read."""
     dest.mkdir(parents=True, exist_ok=True, mode=0o700)
+    dest.chmod(0o700)  # on every run, also when the folder was made earlier with another mode
     files = sorted(src.glob("hub-*.orchbak")) if src.is_dir() else []
     if not files:
         return [], ["there is no hub backup yet (set the backup key up in the hub console)"]

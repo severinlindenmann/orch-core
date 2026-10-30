@@ -11,7 +11,7 @@ from typing import Any
 
 from . import ops
 from . import parts as P
-from .cli import Ctx, choose_address, install_part, load, save
+from .cli import Ctx, check_block, choose_address, install_part, load, save
 from .helper import sync_helper
 from .parts import InstallError
 from .server import (
@@ -103,6 +103,7 @@ def server_setup(
         raise InstallError("--hub-vpn-only belongs to --role hub")
     if hub_vpn_only and not names.hub:
         raise InstallError("--hub-vpn-only needs a name for the hub (--domain or --domain-hub)")
+    check_block(ctx, parts)  # --port-base: refuse a busy port before anything is written
     mine = (local or (lambda: local_addresses(lambda argv: ctx.run(argv, dict(ctx.env))[1])))()
     plan = Plan(role=role, parts=tuple(parts), names=names, vpn_only=hub_vpn_only)
     user = user or getpass.getuser()
@@ -209,7 +210,9 @@ def _closing(ctx: Ctx, plan: Plan, wanted: dict[str, str], tls: set[str], user: 
         pub = f"https://{plan.names.publish}"
         ctx.say(f"On each Mac, once: orch publish setup --server {pub} --share {pub}")
     if plan.role == "hub" and plan.vpn_ip:
-        ctx.say(f"The hub link is at {plan.vpn_ip}:{P.HUB_LINK_PORT} (private network only).")
+        ctx.say(
+            f"The hub link is at {plan.vpn_ip}:{load(ctx.layout)['parts']['hub']['link_port']} (private network only)."
+        )
         if plan.vpn_only and plan.names.hub:
             ctx.say(
                 f"Each Mac must resolve {plan.names.hub} to {plan.vpn_ip} (a private-network DNS record, or an "

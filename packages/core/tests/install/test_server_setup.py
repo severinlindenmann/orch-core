@@ -446,3 +446,85 @@ def test_a_part_that_answers_after_five_seconds_passes_and_a_dead_one_fails_in_p
     assert cli.main(["relay", "--address", "127.0.0.1"], env=ctx.env, out=out, err=err, ctx=ctx) == 1
     assert "within 60 seconds" in err.getvalue()
     assert t["now"] >= 65.0
+
+
+# ------------------------------------------------------------------------------------------------ --port-base
+
+
+def test_port_base_gives_one_block_and_the_card_says_the_chosen_link_port(tmp_path):
+    ctx, out, err, _ = stub_ctx(tmp_path)
+    ctx.port_base = 8200
+    cli.full_server(ctx, ["publish", "relay", "hub"], address="100.64.1.2")
+    st = load(ctx.layout)
+    assert {p: st["parts"][p]["port"] for p in st["parts"]} == {"hub": 8200, "relay": 8201, "publish": 8202}
+    assert st["parts"]["hub"]["link_port"] == 8205 and st["port_base"] == 8200
+    card = json.loads((ctx.layout.data("hub") / "hub-settings.json").read_text())
+    assert card["addresses"][0]["link"] == "100.64.1.2:8205" and card["addresses"][0]["web"].endswith(":8200")
+    argv, _ = ctx.runner.started["hub"]
+    assert "100.64.1.2:8205" in argv and "http://100.64.1.2:8202" in argv  # link and the publish default
+    # what a workspace stores comes from this card: hub_where carries the link address
+    from orch.hubclient.where import check_hub_where
+
+    where = {
+        "name": "Hub",
+        "addresses": [{"kind": a["kind"], "link": a["link"]} for a in card["addresses"] if a["link"]],
+    }
+    assert check_hub_where(where)["addresses"][0]["link"] == "100.64.1.2:8205"
+    assert not any(str(p) in out.getvalue() for p in (8100, 8101, 8102, 8105))
+
+
+def test_port_base_default_is_unchanged(tmp_path):
+    ctx, *_ = stub_ctx(tmp_path)
+    cli.full_server(ctx, ["publish", "relay", "hub"], address="100.64.1.2")
+    st = load(ctx.layout)
+    assert [st["parts"][p]["port"] for p in ("hub", "relay", "publish")] == [8100, 8101, 8102]
+    assert st["parts"]["hub"]["link_port"] == 8105 and "port_base" not in st
+
+
+def test_a_busy_port_is_refused_before_anything_is_written_and_nothing_is_killed(tmp_path):
+    ctx, out, err, calls = stub_ctx(tmp_path)
+    ctx.port_free = lambda p, h: p != 8202
+    rc = cli.main(["publish", "--port-base", "8200", "--address", "127.0.0.1"], env=ctx.env, out=out, err=err, ctx=ctx)
+    assert rc == 1
+    assert "port 8202" in err.getvalue() and "already used by another program on this computer" in err.getvalue()
+    assert "pick another --port-base" in err.getvalue()
+    assert not ctx.layout.root.exists() and not calls  # nothing installed, nothing run (no kill either)
+    with pytest.raises(InstallError, match="port 8205"):  # the hub link counts
+        ctx.port_free = lambda p, h: p != 8205
+        server_setup(ctx, "hub", names=server.Names(), local=local)
+    assert not ctx.layout.root.exists()
+
+
+def test_a_rerun_may_use_its_own_ports_and_the_block_must_fit(tmp_path):
+    ctx, out, err, _ = stub_ctx(tmp_path)
+    ctx.port_base = 8200
+    cli.full_server(ctx, ["relay"], address="127.0.0.1")
+    ctx.port_free = lambda p, h: p != 8201  # held by our own relay
+    cli.full_server(ctx, ["relay"], address="127.0.0.1")
+    for bad in (80, 65531):
+        assert cli.main(["relay", "--port-base", str(bad)], env=ctx.env, out=out, err=err, ctx=ctx) == 1
+    assert "must fit in 1024 to 65535" in err.getvalue()
+
+
+def test_caddy_proxies_to_the_chosen_ports(tmp_path):
+    caddy = tmp_path / "orch.d"
+    caddy.mkdir()
+    ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+    ctx.port_base = 8200
+    server_setup(
+        ctx,
+        "edge",
+        names=server.derive_names("example.com"),
+        caddy_dir=str(caddy),
+        resolve=lambda n: [VPS],
+        local=local,
+        user="orch-edge",
+    )
+    assert "reverse_proxy 127.0.0.1:8201" in (caddy / "relay.caddy").read_text()
+    assert "reverse_proxy 127.0.0.1:8202" in (caddy / "publish.caddy").read_text()
+
+
+def test_setup_passes_port_base_to_the_full_server(tmp_path):
+    from orch.setup import flow
+
+    assert "--port-base" in flow.USAGE

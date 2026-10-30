@@ -32,10 +32,12 @@ __all__ = ["Ctx", "main", "add_workspace", "choose_role", "full_server", "defaul
 
 USAGE = (
     "usage: orch install server --role hub|edge [--domain BASE] [--domain-hub N] [--domain-relay N]\n"
-    "                    [--domain-publish N] [--hub-vpn-only] [--vpn-ip IP] [--caddy-dir DIR] [--yes]\n"
+    "                    [--domain-publish N] [--hub-vpn-only] [--vpn-ip IP] [--caddy-dir DIR]\n"
+    "                    [--port-base N] [--yes]\n"
     "usage: orch install phone [--user ID]\n"
     "usage: orch install {hub|relay|publish} [--address A] [--port N] [--domain D] [--source PATH] [--ref REF]\n"
-    "                    [--publish-url U] [--relay-url U] [--dev] [--yes] | status [--json] | remove PART [--purge]\n"
+    "                    [--publish-url U] [--relay-url U] [--port-base N] [--dev] [--yes]\n"
+    "                    | status [--json] | remove PART [--purge]\n"
 )
 # Git ref the parts are installed from. Prototype: develop carries the current work; this moves to release tags later.
 DEFAULT_REF = "develop"  # only when the installed orch-core has no known commit (e.g. an editable dev install)
@@ -115,6 +117,7 @@ class Ctx:
     mint_login: Callable[[list[str], Mapping[str, str]], str | None] = lambda argv, env: _mint_login(argv, env)
     qr: Callable[[str], str | None] = lambda link: _qr(link)
     publish_setup: Callable[[str], str | None] = lambda url: None  # configure the workspace; returns a hint on failure
+    port_base: int | None = None  # --port-base N: hub N, relay N+1, publish N+2, hub link N+5 (None: as before, 8100)
     ready_deadline: float = READY_DEADLINE  # seconds a part gets to answer (polled, not a single check)
     clock: Callable[[], float] = time.monotonic
     sleep: Callable[[float], None] = time.sleep
@@ -259,7 +262,35 @@ def _taken(st: dict[str, Any], skip: str = "") -> set[int]:
     return t | {w["port"] for w in st["workspaces"]}
 
 
+def ports_of(ctx: Ctx, st: dict[str, Any]) -> dict[str, int]:
+    """The port block in force: this run's ``--port-base``, else the one an earlier run saved, else 8100."""
+    return P.port_block(ctx.port_base or st.get("port_base") or P.DEFAULT_PORT_BASE)
+
+
+def check_block(ctx: Ctx, parts: Sequence[str]) -> None:
+    """``--port-base``: validate the block and bind-test the ports of ``parts`` BEFORE anything is installed. A port
+    held by a part of THIS install (a rerun) is fine; one held by anything else is refused, never freed."""
+    if ctx.port_base is None:
+        return
+    st = load(ctx.layout)
+    block = P.port_block(ctx.port_base)
+    ours = {p["port"] for p in st["parts"].values()} | {
+        p["link_port"] for p in st["parts"].values() if p.get("link_port")
+    }
+    need = [(part, block[part]) for part in parts] + ([("hub link", block["link"])] if "hub" in parts else [])
+    for what, port in need:
+        if port not in ours and not ctx.port_free(port, P.ADDRESS_ALL):
+            raise InstallError(
+                f"port {port} ({what}) is already used by another program on this computer; pick another --port-base"
+            )
+
+
 def choose_port(ctx: Ctx, part: str, given: int | None, st: dict[str, Any], address: str) -> int:
+    if given is None and ctx.port_base is not None:  # an explicit block: exactly these ports (check_block tested them)
+        port = ports_of(ctx, st)[part]
+        if port in _taken(st, part):
+            raise InstallError(f"port {port} is already used by another part of this install")
+        return port
     if given is not None:
         port = P.valid_port(given)
         if port in _taken(st, part):
@@ -267,7 +298,7 @@ def choose_port(ctx: Ctx, part: str, given: int | None, st: dict[str, Any], addr
         return port
     if part in st["parts"]:
         return st["parts"][part]["port"]
-    start = P.DEFAULT_PORTS[part]
+    start = ports_of(ctx, st)[part]
     host = address if address not in ("localhost",) else "127.0.0.1"
     return P.free_port(start, _taken(st), lambda p: ctx.port_free(p, host if not _is_domain(host) else "127.0.0.1"))
 
@@ -297,6 +328,7 @@ def write_hub_settings(
     address: str,
     domain: str | None,
     port: int,
+    link_port: int = P.HUB_LINK_PORT,
     web_origin: str | None = None,
     link_host: str | None = None,
     vpn_only: bool = False,
@@ -321,7 +353,7 @@ def write_hub_settings(
             os.close(fd)
     except (OSError, ValueError, AttributeError):
         pass
-    link = P.HUB_LINK_PORT
+    link = link_port
     loop = address in ("localhost", P.ADDRESS_LOOPBACK)
     if link_host:  # server role: the card advertises the VPN address for the link and the https name for the console
         web = f"{web_origin}:443" if web_origin else f"http://{P.ADDRESS_LOOPBACK}:{port}"
@@ -431,6 +463,7 @@ def install_part(
             address=address,
             domain=domain,
             port=port,
+            link_port=ports_of(ctx, st)["link"],
             web_origin=web_origin,
             link_host=link_address,
             vpn_only=vpn_only,
@@ -446,6 +479,8 @@ def install_part(
         dev=dev,
         link_address=link_address,
         public_origin=public_origin,
+        link_port=ports_of(ctx, st)["link"],
+        publish_port=ports_of(ctx, st)["publish"],
     )
     log = lay.logs / f"{part}.log"
     started = ctx.runner.start(part, argv, P.env_for(part, data), log)
@@ -479,7 +514,7 @@ def install_part(
         "started": int(time.time()),
     }
     if part == "hub":
-        rec["link_port"] = P.HUB_LINK_PORT
+        rec["link_port"] = ports_of(ctx, st)["link"]
         if link_address:
             rec["link_host"] = link_address
         if web_origin:
@@ -487,6 +522,8 @@ def install_part(
         rec["setup_token"] = token
     st = load(lay)
     st["address"], st["domain"] = address, domain or st.get("domain")
+    if ctx.port_base is not None:
+        st["port_base"] = ctx.port_base
     st["parts"][part] = rec
     save(lay, st)
     _version(ctx, rec, spec.binary, tool_env)
@@ -771,6 +808,7 @@ def full_server(
     out: dict[str, dict[str, Any]] = {}
     if not parts:  # a workspace-only setup installs no part, so it has no address to ask for
         return out
+    check_block(ctx, parts)
     st = load(ctx.layout)
     address = choose_address(ctx, address, st)
     for p in parts:
@@ -878,6 +916,7 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextI
     p.add_argument("--domain-publish")
     p.add_argument("--hub-vpn-only", action="store_true")
     p.add_argument("--vpn-ip")
+    p.add_argument("--port-base", type=int)
     p.add_argument("--caddy-dir", default=CADDY_DIR)
     try:
         a = p.parse_args(list(argv))
@@ -887,6 +926,8 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextI
     ctx = ctx or default_ctx(env, out, err)
     if a.yes:
         ctx.interactive = False
+    if a.port_base is not None:
+        ctx.port_base = a.port_base
     try:
         if a.cmd == "status":
             return status(ctx, a.json)
@@ -919,6 +960,9 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextI
         if a.rest:
             err.write(USAGE)
             return 2
+        if ctx.port_base is not None:
+            P.port_block(ctx.port_base)
+            check_block(ctx, [a.cmd])
         address = a.address or a.domain
         install_part(
             ctx,

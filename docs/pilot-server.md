@@ -98,6 +98,8 @@ is installed (and, for the hub, the nightly backup copy).
 - If `/etc/caddy/orch.d` does not exist yet, run the root block first and run the command again.
 - The hub link binds the server's private-network address (found by itself; give it with `--vpn-ip 100.x.y.z` if the server
   has several). The hub's card advertises that address and port 8105, plus `https://hub.example.com` for the console.
+- `--port-base N` moves all ports in one block: hub N, relay N+1, publish N+2, hub link N+5 (default N = 8100). A port that
+  another program already holds is refused before anything is installed; nothing is stopped for you.
 - Without `--domain` there is no Caddy and no https: the parts listen on an IP address and a port and the command prints
   them (for a trial on a local network).
 - `orch setup --server ...` and `orch install server ...` are the same command.

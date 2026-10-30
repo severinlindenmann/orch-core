@@ -22,7 +22,7 @@ from types import TracebackType
 from orch import oslock
 from orch.ops.errors import OrchError
 
-from .journal import unfinished
+from .journal import restore_pending, unfinished
 from .steps import CURRENT, atomic_write
 
 __all__ = [
@@ -107,9 +107,14 @@ class RootHandle:
 def lock_root(root: Path, *, exclusive: bool) -> int:
     """The lock fd of ``<root>/format.lock`` (non-blocking). Shared for services, exclusive for a migration."""
     root = Path(root)
-    fd = os.open(
-        root / LOCK_FILE, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0), 0o600
-    )
+    flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    try:
+        fd = os.open(root / LOCK_FILE, flags, 0o600)
+    except OSError as exc:
+        raise OrchError(
+            "migrate.backup_refused",
+            f"the lock file in {root.name} cannot be used ({exc.strerror or exc}); it may be a link",
+        ) from None
     try:
         oslock.flock(fd, (oslock.LOCK_EX if exclusive else oslock.LOCK_SH) | oslock.LOCK_NB)
     except BlockingIOError:
@@ -162,6 +167,8 @@ def open_root(
     path = Path(path)
     if kind not in CURRENT:
         raise ValueError(f"unknown root kind {kind!r}")
+    if msg := restore_pending(path):
+        raise OrchError("update.interrupted", msg)
     if _interrupted(env, quarantine_ok):
         raise OrchError("update.interrupted", "an update was interrupted: run `orch update` to finish or roll back")
     if not path.is_dir():

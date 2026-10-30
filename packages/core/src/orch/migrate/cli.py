@@ -18,6 +18,7 @@ from orch.ops.runtime import state_dir
 
 from . import backup as backup_mod
 from .format import lock_root
+from .journal import restore_pending
 from .runner import Plan, apply, plan
 
 __all__ = ["main"]
@@ -109,8 +110,21 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextI
     code = 0
     for label, kind, root in targets:
         try:
+            pending = restore_pending(root)
+            if pending and mode == "--apply":
+                backup_mod.recover_interrupted(root, warnings.append)
+            elif pending:
+                raise OrchError("update.interrupted", pending)
             p = plan(root, kind)
-        except (OrchError, OSError) as exc:
+        except OrchError as exc:
+            if exc.code in ("migrate.backup_refused", "update.interrupted"):  # a half-done restore: never "skipped, ok"
+                row = {"root": label, "kind": kind, "error": {"code": exc.code, "message": exc.message}}
+                result.append(row)
+                code = max(code, ERRORS[exc.code].exit)
+                continue
+            skipped.append({"root": label, "why": exc.message})
+            continue
+        except OSError as exc:
             skipped.append({"root": label, "why": exc.message if isinstance(exc, OrchError) else str(exc)})
             continue
         row: dict[str, Any] = {"root": label, "kind": kind, **_describe(p)}
@@ -132,7 +146,9 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextI
                 code = max(code, ERRORS["migrate.step_failed"].exit)
             if "error" in row and "backup" in row and fd is not None:
                 try:  # a failed step: put the root back as it was, while we still hold the lock
-                    backup_mod.restore(Path(row["backup"]), root, env, own_failure=True, lock_fd=fd)
+                    backup_mod.restore(
+                        Path(row["backup"]), root, env, own_failure=True, lock_fd=fd, say=warnings.append
+                    )
                     row["restored"] = True
                 except Exception as exc:  # noqa: BLE001
                     row["restore_error"] = str(exc)

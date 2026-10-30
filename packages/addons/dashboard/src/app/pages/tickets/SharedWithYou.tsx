@@ -5,7 +5,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Button } from '@/components/ui/button'
 import { useMe } from '@/app/useMe'
 import { hubQueries, type HubSharedTicket } from '@/api/hub'
-import { Raw } from '@/components/sign/visible'
+import { Name, Raw } from '@/components/sign/visible'
 import { Badge } from '@/components/ui/badge'
 
 /** A ticket that was in the list and is gone from the newest successful read: shown as one quiet line until dismissed. */
@@ -69,15 +69,15 @@ export function SharedWithYou({ ws, limit }: { ws: string; limit?: number }) {
   return <section className="space-y-1" data-testid="shared-with-you" aria-label="Shared with you">
     <h2 className="text-[13px] font-medium text-text-muted">Shared with you</h2>
     {notes.map((e) => <p key={e.id} role="status" data-testid="shared-ended" className="flex items-center justify-between gap-2 rounded border border-dashed border-border px-3 py-2 text-[13px] text-text-muted">
-      <span><Raw>{e.by}</Raw> stopped sharing <Raw>{e.title}</Raw></span>
+      <span><Name>{e.by}</Name> stopped sharing <Name>{e.title}</Name></span>
       <button type="button" className="text-[12px] underline" onClick={() => dismiss(e.id)}>Dismiss</button>
     </p>)}
     {list.length > 0 && <ul className="divide-y divide-border rounded border border-border">
       {items.map(t => <li key={t.workspace_id + t.key} data-testid="shared-row">
         <button type="button" onClick={() => open(idOf(t))} aria-label={`Open ${t.key} ${t.title}`} className="block w-full space-y-0.5 px-3 py-2 text-left hover:bg-surface-hover focus-visible:ring-2 focus-visible:ring-ring">
-        <p className="flex flex-wrap items-center gap-2"><span className="font-mono text-[12px] text-text-faint"><Raw>{t.key}</Raw></span><Raw>{t.title}</Raw>
-          <Badge variant="outline">Shared by <Raw>{t.shared_by}</Raw></Badge></p>
-        {t.description && <p className="whitespace-pre-line text-[13px] text-text-muted"><Raw>{t.description}</Raw></p>}
+        <p className="flex flex-wrap items-center gap-2"><span className="font-mono text-[12px] text-text-faint"><Raw>{t.key}</Raw></span><Name>{t.title}</Name>
+          <Badge variant="outline">Shared by <Name>{t.shared_by}</Name></Badge></p>
+        {t.description && <p className="whitespace-pre-line text-[13px] text-text-muted"><Name>{t.description}</Name></p>}
         <p className="text-[12px] text-text-faint">{t.status.replaceAll('_', ' ')}{t.deadline ? ` · due ${t.deadline}` : ''} · view only</p>
         </button>
       </li>)}
@@ -86,14 +86,14 @@ export function SharedWithYou({ ws, limit }: { ws: string; limit?: number }) {
       <DialogContent data-testid="shared-panel" showCloseButton={false}>
         {panel ? <>
           <DialogHeader>
-            <p className="text-[12px] text-text-faint">Shared by <Raw>{panel.shared_by}</Raw></p>
-            <DialogTitle><Raw>{panel.title}</Raw></DialogTitle>
+            <p className="text-[12px] text-text-faint">Shared by <Name>{panel.shared_by}</Name></p>
+            <DialogTitle><Name>{panel.title}</Name></DialogTitle>
             <DialogDescription>{panel.status.replaceAll('_', ' ')} · {panel.deadline ? `due ${panel.deadline}` : 'no due date'}</DialogDescription>
           </DialogHeader>
-          {panel.description && <p className="whitespace-pre-line text-[13px]"><Raw>{panel.description}</Raw></p>}
-          <p className="rounded border border-border bg-surface px-3 py-2 text-[13px] text-text-muted">This is <Raw>{panel.shared_by}</Raw>'s ticket. You can read it; only <Raw>{panel.shared_by}</Raw> can change it.</p>
+          {panel.description && <p className="whitespace-pre-line text-[13px]"><Name>{panel.description}</Name></p>}
+          <p className="rounded border border-border bg-surface px-3 py-2 text-[13px] text-text-muted">This is <Name>{panel.shared_by}</Name>'s ticket. You can read it; only <Name>{panel.shared_by}</Name> can change it.</p>
         </> : <DialogHeader>
-          <DialogTitle>{goneNote ? <><Raw>{goneNote.by}</Raw> stopped sharing this</> : 'This ticket is no longer shared with you'}</DialogTitle>
+          <DialogTitle>{goneNote ? <><Name>{goneNote.by}</Name> stopped sharing this</> : 'This ticket is no longer shared with you'}</DialogTitle>
           <DialogDescription>It is not in your list any more.</DialogDescription>
         </DialogHeader>}
         <Button variant="outline" size="sm" onClick={close}>Close</Button>

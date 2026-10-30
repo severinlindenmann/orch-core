@@ -30,6 +30,19 @@ describe('SharedWithYou stays current', () => {
     await waitFor(() => expect(screen.queryByTestId('shared-with-you')).toBeNull())
   })
 
+  it('P17: names, titles, text and the ended note use the normal font; only the key is mono; hidden characters stay visible', async () => {
+    vi.spyOn(api, 'getHubShared').mockResolvedValue({ items: [{ ...t('D-7', 'Invoice\u202E export\u200B'), shared_by: 'An\u202Ena', description: 'Body\u2066 text' }] })
+    renderApp('/tickets')
+    const box = await screen.findByTestId('shared-with-you')
+    const mono = [...box.querySelectorAll('.font-mono')]
+    expect(mono.length).toBeGreaterThan(0)
+    for (const e of mono) expect(e.textContent).toBe('D-7')
+    expect(box.textContent).toContain('Invoice\\u{202e} export\\u{200b}')
+    expect(box.textContent).toContain('An\\u{202e}na')
+    expect(box.textContent).toContain('Body\\u{2066} text')
+    expect(box.textContent).not.toMatch(/[\u202E\u200B\u2066]/)
+  })
+
   it('a failed read gives no "stopped sharing" note and keeps the last list', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     const get = vi.spyOn(api, 'getHubShared').mockResolvedValue({ items: [t('D-7', 'Invoice export')] })

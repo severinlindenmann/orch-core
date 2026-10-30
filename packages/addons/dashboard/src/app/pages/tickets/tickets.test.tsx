@@ -66,6 +66,17 @@ describe('Tickets page', () => {
     expect(document.body.textContent).not.toMatch(/No tickets match|orch list/)
     vi.restoreAllMocks()
   })
+  it('P17: no "0 tickets" count above a shared ticket when you have none; the count shows with own tickets, in the normal font', async () => {
+    vi.spyOn(api, 'listTickets').mockResolvedValue([])
+    vi.spyOn(api, 'getHubShared').mockResolvedValue({ items: [{ workspace_id: 'a'.repeat(32), key: 'D-1', title: 'One', shared_by: 'Anna', status: 'open', type: 'feature', deadline: null, description: null }] })
+    renderApp('/tickets')
+    await screen.findByText('You have no tickets of your own yet.')
+    expect(screen.getByRole('heading', { name: 'Tickets' }).parentElement!.textContent).not.toMatch(/\d+ tickets?/)
+    vi.restoreAllMocks()
+    renderApp('/tickets')
+    const count = await screen.findByText(/^\d+ tickets?/)
+    expect(count.className).not.toMatch(/font-mono/)
+  })
   it('opens a ticket with Enter on the focused row', async () => {
     const { user } = renderApp('/tickets')
     await screen.findByRole('table', { name: 'Tickets' })

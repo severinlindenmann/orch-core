@@ -603,7 +603,9 @@ class ClickSigner:
                 seal=sealed.Recipient("in", workspace_id=entry["workspace_id"], request_id=rid)
                 if op in SEALED_OPS
                 else None,
-                vault=op in SEALED_OPS and op not in _REMOTE_PROOF_OPS and self._vault(entry),  # remote: always the typed key
+                vault=op in SEALED_OPS
+                and op not in _REMOTE_PROOF_OPS
+                and self._vault(entry),  # remote: always the typed key
                 images=images or None,
                 image_digests=tuple(sorted({canon.artifact_digest(b) for b in images.values()})) if images else (),
             )
@@ -2382,6 +2384,12 @@ class ClickSigner:
         if name is None and op in ("view", "sign", "cancel"):
             approval = self.approvals.get((args.get("workspace_id"), args.get("request_id")))
             name = approval.op if approval is not None else None
+            if name is None:  # swept from memory: the durable record still names the op
+                try:
+                    rec = self.records.get(args.get("workspace_id"), args.get("request_id"))
+                except (RecordError, TypeError, ValueError):
+                    rec = None
+                name = rec.get("op") if isinstance(rec, dict) else None
         if isinstance(name, str) and name.startswith("remote."):
             self._note("refused", workspace=args.get("workspace_id"), code="remote_kind")
             raise refused("terminal_only", "remote access is changed at this computer, never from a remote session")

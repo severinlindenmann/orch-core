@@ -124,3 +124,14 @@ def test_a_remote_session_cannot_prepare_it_even_with_a_good_signer(click, serve
              "idem": "a_" + "0" * 26, "remote": True},
         )  # fmt: skip
     assert caught.value.reason == "terminal_only" and click.signatures == 0
+
+
+@pytest.mark.parametrize("op", ["view", "sign", "cancel"])
+def test_a_swept_request_of_a_remote_kind_is_still_refused_from_its_record(signer, op):
+    """R2 review L1: the approval is gone from memory (swept), the durable record still names the kind."""
+    signer.records.claim(
+        WID, RID, view_digest=DIGEST, op="remote.set", idem="a_" + "0" * 26, expires_at="2099-01-01T00:00:00Z"
+    )
+    assert (WID, RID) not in signer.approvals
+    exc = refusal(signer, op, {"workspace_id": WID, "request_id": RID, "view_digest": DIGEST, "remote": True})
+    assert exc.code == "human.click_refused" and exc.reason == "terminal_only"

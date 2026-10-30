@@ -4,7 +4,7 @@ import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/re
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/api/client'
 import { ApiError } from '@/api/types'
-import type { OrgShown } from '@/api/org'
+import type { OrgSecrets, OrgShown } from '@/api/org'
 import { resetMockOrg } from '@/mocks/org'
 import { renderApp } from '@/test/renderApp'
 
@@ -38,6 +38,32 @@ describe('the Company tab', () => {
     expect(screen.queryByTestId('company-secret-crm')).toBeNull()
     expect(screen.queryByTestId('company-secret-style-guide')).toBeNull()
     expect(document.body.textContent).not.toMatch(/hub_secret/)
+  })
+
+  it('lists the company secrets with status, expiry and users, and never a value', async () => {
+    page()
+    expect(await screen.findByText('Company secrets', {}, T)).toBeTruthy()
+    expect(await screen.findByTestId('company-secret-row-billing-key', {}, T)).toBeTruthy()
+    expect(screen.getByTestId('company-secret-status-billing-key').textContent).toBe('Ready')
+    expect(screen.getByTestId('company-secret-until-billing-key').textContent).toMatch(/^Until \d{1,2} \w{3}$/)
+    expect(screen.getByTestId('company-secret-usedby-billing-key').textContent).toBe('Used by billing')
+    expect(screen.getByTestId('company-secret-status-crm-token').textContent).toBe('Expired')
+    expect(screen.getByTestId('company-secret-status-old-key').textContent).toBe('Not shared any more')
+    expect(screen.queryByTestId('company-secret-until-old-key')).toBeNull()
+  })
+
+  it('says plainly when no company secret is shared', async () => {
+    const reply: OrgSecrets & { secrets: unknown[] } = { available: true, secrets: [] }
+    vi.spyOn(api, 'getOrgSecrets').mockResolvedValue(reply)
+    page()
+    expect((await screen.findByTestId('company-secrets-empty', {}, T)).textContent).toBe('No company secrets are shared with this workspace.')
+  })
+
+  it('shows no secrets panel on a host without the op', async () => {
+    vi.spyOn(api, 'getOrgSecrets').mockResolvedValue({ available: false, secrets: [] })
+    page()
+    await screen.findByText('Company tools', {}, T)
+    expect(screen.queryByText('Company secrets')).toBeNull()
   })
 
   it('shows skill text as plain text: markdown and HTML stay literal', async () => {

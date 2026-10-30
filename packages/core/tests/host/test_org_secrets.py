@@ -561,6 +561,47 @@ def test_show_reports_the_secret_status_without_a_value(w, iso):
     assert "secret_status" not in ok(req(w.served, "org.show", {"kind": "mcp", "name": "crm"}))["data"]
 
 
+# -- the owner's list of received secrets (#1434) ----------
+
+
+def _list(w):
+    return ok(req(w.served, "org.secrets"))["data"]
+
+
+def test_org_secrets_lists_names_expiry_and_status_but_never_a_value(w, iso, caplog):
+    w.accept_server()
+    got = _list(w)
+    assert got["secrets"] == [{"name": "vault-key", "status": "not_received", "expires_ms": None, "used_by": ["vault"]}]
+    exp = w.now() + 5000
+    w.org.secrets = [w.entry(expires=exp)]
+    with caplog.at_level(logging.DEBUG):
+        sec_sync(w)
+        get(w)
+        got = _list(w)
+    assert got["secrets"] == [{"name": "vault-key", "status": "ready", "expires_ms": exp, "used_by": ["vault"]}]
+    blob = json.dumps(got)
+    assert VALUE not in blob and "sealed" not in blob and "wxk" not in blob and "value" not in blob
+    assert VALUE not in caplog.text
+    w.advance(6000)
+    assert _list(w)["secrets"][0]["status"] == "expired"
+    iso["on"] = False
+    assert _list(w)["secrets"][0]["status"] == "needs_isolation"
+    assert VALUE not in json.dumps(_list(w))
+
+
+def test_org_secrets_is_empty_without_a_secret_server(w):
+    w.org.servers.append(w.org.server("crm"))
+    w.org.versions["mcp"] += 1
+    sec_sync(w)
+    assert _list(w)["secrets"] == []
+
+
+def test_org_secrets_takes_no_arguments(w):
+    from tests.host.dispatch_helpers import err
+
+    assert err(req(w.served, "org.secrets", {"x": 1})) == "invalid.input"
+
+
 # -- the accepted digest covers name, url and auth kind (answer 2) ----------
 
 

@@ -268,8 +268,9 @@ def test_every_served_op_in_every_row_of_the_effective_column_table():
                 "org.offers": ("pg_read", "read"),
                 "org.sync": ("pg_write", "write"),
                 "org.show": ("person_read", "read"),
+                "org.secrets": ("person_read", "read"),
             }.get(op, ("person_write", "write"))
-            assert op in ORG_READS or kind[1] == "write" or op == "org.show"
+            assert op in ORG_READS or kind[1] == "write" or op in ("org.show", "org.secrets")
         elif op in SPACE_OPS:  # V3 C13: list and get for P and G, the rest P only (owner role)
             want = ("pg_read", "read") if op in SPACE_READS else ("person_write", "write")
             assert kind == (("pg_write", "write") if op in SPACE_AGENT_WRITES else want)

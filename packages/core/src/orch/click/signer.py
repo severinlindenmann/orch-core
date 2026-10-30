@@ -31,6 +31,8 @@ from orch.hubclient.wire import REMOTE_PROOF_OPS
 from . import sealed
 from . import view as views
 from .passkeys import action_digest
+from .presence import Presence, b64_exact, digest_bytes
+from .presence import check as presence_check
 from .protocol import (
     CONTRACT,
     CONTRACT_MISMATCH,
@@ -42,6 +44,10 @@ from .protocol import (
     IDEM,
     OP_NAME,
     REASONS,
+    REMOTE_KIND_REFUSED,
+    REMOTE_NO_STREAM,
+    REMOTE_PRESENCE_INVALID,
+    REMOTE_PRESENCE_REQUIRED,
     REQ,
     ROTATE_OP,
     ROTATE_PURPOSES,
@@ -52,6 +58,7 @@ from .protocol import (
     refused,
 )
 from .records import RecordError, Records, is_claim
+from .remote_kinds import ALLOWED, PRESENCE, REFUSED, SIGNER_OPS, classify, secret_arg, sequence_class, strictest
 from .stepup import Stepups
 
 __all__ = ["Approval", "Budget", "ClickSigner"]
@@ -206,6 +213,7 @@ class ClickSigner:
         records: Records | None = None,
         sessions: Any = None,
         stepups: Stepups | None = None,
+        streams: Callable[[dict[str, Any], str], dict[str, Any]] | None = None,
     ) -> None:
         self.state = Path(state_dir)
         self.uid = os.getuid() if uid is None else uid
@@ -249,6 +257,10 @@ class ClickSigner:
         self.sessions = sessions if sessions is not None else Sessions(self.state, wall=wall)
         #: #1198 R1-6: the passkey step-up nonces and the check of a remote session's assertion
         self.stepups = stepups if stepups is not None else Stepups(self.state, mono)
+        #: R3 (#1591): the facts of a remote-device stream come from the host (``remote.stream``), never from the
+        #: caller; a seam for tests. The presence nonces and batches of the streams this signer serves (memory only)
+        self._streams = streams or self._host_stream
+        self.presence = Presence(wall)
         #: the last connection or custody problem per workspace, for ``status`` (it loads no key and connects nowhere)
         self.problems: dict[str, str] = {}
         self.problem_at: dict[str, float] = {}
@@ -2394,6 +2406,176 @@ class ClickSigner:
             self._note("refused", workspace=args.get("workspace_id"), code="remote_kind")
             raise refused("terminal_only", "remote access is changed at this computer, never from a remote session")
 
+    # -- R3 (#1591): calls from a remote-device stream --------------------------------------------------------------
+    _STREAM_IDENTITY = ("hh", "level", "person", "device_id", "presence_pub", "presence_kind")
+    _PRESENCE_OPS = ("presence_nonce", "presence", "presence_take")
+    _LEVELS = ("view", "work", "terminals")
+
+    def _host_stream(self, entry: dict[str, Any], stream_id: str) -> dict[str, Any]:
+        """The facts of an open stream, from the host over this signer's own connection (``remote.stream``): the
+        stream's workspace, device, person, level, handshake hash ``hh`` (b64u), the device's presence key and kind, and
+        the held FIDO2 counter. A closed or unknown stream is ``remote.no_stream``."""
+        return dict(self._call(entry, "remote.stream", {"stream_id": stream_id})["data"])
+
+    def _stream_refuse(self, entry: dict[str, Any] | None, why: str, **kw: Any) -> ClickError:
+        """The one refusal of a stream call: a static text, the reason only in the signer log."""
+        self._note("refused", workspace=None if entry is None else entry["workspace_id"], code=f"remote_{why}", **kw)
+        return ClickError(REMOTE_KIND_REFUSED, "This cannot be done from a remote session.")
+
+    def _stream_facts(self, entry: dict[str, Any], stream_id: str) -> dict[str, Any]:
+        try:
+            facts = self._streams(entry, stream_id)
+        except ClickError as exc:
+            if exc.code == REMOTE_NO_STREAM:
+                self.presence.drop(stream_id)
+            raise
+        try:
+            if (
+                not isinstance(facts, Mapping)
+                or facts.get("workspace_id") != entry["workspace_id"]
+                or facts.get("level") not in self._LEVELS
+                or facts.get("presence_kind") not in ("platform", "fido2")
+                or type(facts.get("counter")) is not int
+                or facts["counter"] < 0
+                or type(facts.get("device_id")) is not str
+            ):
+                raise ValueError("shape")
+            hh = b64_exact(facts.get("hh"), 32)
+            out = {k: facts[k] for k in ("workspace_id", "device_id", "person", "level", "presence_kind", "counter")}
+            out["presence_pub"], out["hh"] = str(facts["presence_pub"]), hh
+        except Exception:  # noqa: BLE001 - a host answer that is not the shape is a refusal, never a guess
+            self.presence.drop(stream_id)
+            raise self._stream_refuse(entry, "facts") from None
+        if out["person"] != self._person(entry):  # the device's person must be the person this signer signs as
+            raise self._stream_refuse(entry, "person")
+        return out
+
+    def _approval_class(self, args: Mapping[str, Any]) -> str:
+        """The class of the request a ``view`` / ``sign`` / ``cancel`` names: its op, its mode and every step of its
+        sequence, from the approval this signer holds (or the durable record's op once swept: that is a replay)."""
+        wid, rid = args.get("workspace_id"), args.get("request_id")
+        approval = self.approvals.get((wid, rid))
+        if approval is not None:
+            op = getattr(approval, "op", None)
+            if getattr(approval, "seal", None) is not None:
+                return REFUSED  # a sealed secret (hub / remote steps)
+            cls = classify(
+                op, {"deposit": getattr(approval, "deposit", False), "reveal": getattr(approval, "reveal", False)}
+            )
+            meta = (getattr(approval, "prepared", None) or {}).get("material") or {}
+            seq = meta.get("sequence") if isinstance(meta, Mapping) else None
+            if seq:
+                cls = strictest(cls, sequence_class(seq.get("intent") or {}))
+            return cls
+        try:
+            rec = self.records.get(wid, rid)
+        except (RecordError, TypeError, ValueError):
+            rec = None
+        if isinstance(rec, dict):
+            return classify(rec.get("op"), {"reveal": rec.get("op") == "grant"})
+        return ALLOWED  # nothing known: the op itself answers not_prepared_here
+
+    def _prepare_class(self, op: str, args: Mapping[str, Any]) -> str:
+        """The class of a ``prepare``: the op as asked (a plain ``grant`` is always shown in the page or deposited, so
+        never a stream's) and, for a sequence, its strictest step."""
+        seq, inner = args.get("sequence"), args.get("args")
+        flags = {"deposit": args.get("deposit"), "reveal_key": args.get("reveal_key"), "args": inner}
+        flags["reveal"] = op == "grant" and not args.get("deposit") and seq is None
+        cls = classify(op, flags)
+        if seq is not None:
+            cls = strictest(cls, sequence_class(seq.get("intent") or {}) if isinstance(seq, Mapping) else REFUSED)
+        return cls
+
+    def _stream_call(self, op: str, args: Mapping[str, Any]) -> dict[str, Any]:
+        """The one branch for a call that comes from a remote-device stream (design I2, I5, I6). The dashboard supplies
+        the stream id only; the device, person, level and ``hh`` are the host's (``remote.stream``), asked now, every
+        call. Anything not listed is refused."""
+        if args.get("remote") is not True:
+            raise ClickError("invalid.input", "a stream call comes with remote: true")
+        sid = args["stream"]
+        if type(sid) is not str or not WS_ID.fullmatch(sid):
+            raise ClickError("invalid.input", "stream is a stream id")
+        args = {k: v for k, v in args.items() if k not in ("remote", "stream")}
+        if any(k in args for k in self._STREAM_IDENTITY):
+            raise ClickError("invalid.input", "a stream call names no device, person, level or handshake")
+        entry = self._entry(args.get("workspace_id"))
+        facts = self._stream_facts(entry, sid)
+        level = facts["level"]
+        if op in self._PRESENCE_OPS:
+            if level == "view":
+                raise self._stream_refuse(entry, "level", op=op)
+            return self._presence_op(entry, sid, facts, op, args)
+        if secret_arg(args) or SIGNER_OPS.get(op, REFUSED) == REFUSED:
+            raise self._stream_refuse(entry, "kind", op=op)
+        if op in ("prepare", "sign", "stash") and level == "view":
+            raise self._stream_refuse(entry, "level", op=op)
+        take: bytes | None = None
+        if op == "prepare":
+            if self._prepare_class(str(args.get("op")), args) == REFUSED:
+                raise self._stream_refuse(entry, "kind", op=str(args.get("op"))[:40])
+        elif op in ("view", "sign", "cancel"):
+            cls = self._approval_class(args)
+            if cls == REFUSED:
+                raise self._stream_refuse(entry, "kind", op=op)
+            if op == "sign" and cls == PRESENCE:
+                vd = args.get("view_digest")
+                approval = self.approvals.get((args.get("workspace_id"), args.get("request_id")))
+                known = getattr(approval, "view_digest", None)
+                if type(vd) is not str or not HASH.fullmatch(vd) or (known is not None and vd != known):
+                    raise ClickError("invalid.input", "view_digest is the digest of the review")
+                take = digest_bytes(vd)
+        if take is not None and not self.presence.take(sid, take):
+            self._note("refused", workspace=entry["workspace_id"], code="remote_presence_required")
+            raise ClickError(REMOTE_PRESENCE_REQUIRED, "Confirm on your device first.")
+        return self._dispatch(op, args)
+
+    def _presence_op(
+        self, entry: dict[str, Any], sid: str, facts: dict[str, Any], op: str, args: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        wid = entry["workspace_id"]
+        if op == "presence_nonce":
+            if set(args) != {"workspace_id"}:
+                raise ClickError("invalid.input", "presence_nonce takes the workspace")
+            return {"nonce": base64.urlsafe_b64encode(self.presence.issue(sid)).rstrip(b"=").decode()}
+        if op == "presence_take":
+            if set(args) != {"workspace_id", "digest"}:
+                raise ClickError("invalid.input", "presence_take takes the workspace and a digest")
+            try:
+                digest = digest_bytes(args["digest"])
+            except Exception:  # noqa: BLE001
+                raise ClickError("invalid.input", "digest is sha256:<hex>") from None
+            if not self.presence.take(sid, digest):
+                self._note("refused", workspace=wid, code="remote_presence_required")
+                raise ClickError(REMOTE_PRESENCE_REQUIRED, "Confirm on your device first.")
+            return {"ok": True}
+        if set(args) != {"workspace_id", "nonce", "digests", "assertion"} or type(args["digests"]) is not list:
+            raise ClickError("invalid.input", "presence takes the workspace, nonce, digests and assertion")
+        try:
+            nonce = b64_exact(args["nonce"], 32)
+            digests = [digest_bytes(d) for d in args["digests"]]
+        except Exception:  # noqa: BLE001
+            raise ClickError("invalid.input", "nonce is 32 bytes and digests are sha256:<hex>") from None
+        issued, now = self.presence.consume(sid, nonce)  # single use, even when the assertion below fails
+        try:
+            count = presence_check(
+                facts, wid, facts["hh"], nonce, digests, args["assertion"], facts["counter"], issued=issued, now_ms=now
+            )
+        except Exception as exc:  # noqa: BLE001 - HubRefused (the contract's code) or a malformed value
+            self._note("refused", workspace=wid, code=f"remote_presence_{getattr(exc, 'code', 'malformed')}")
+            raise ClickError(REMOTE_PRESENCE_INVALID, "That confirmation did not work. Try again.") from None
+        try:  # the host's counter CAS and its H line (never the signature); a replayed counter is not accepted
+            self._call(
+                entry,
+                "remote.presence_used",
+                {"stream_id": sid, "device_id": facts["device_id"], "count": count, "n": len(digests)},
+            )
+        except ClickError as exc:
+            if exc.code == "remote.presence_replay":
+                raise ClickError(REMOTE_PRESENCE_INVALID, "That confirmation did not work. Try again.") from None
+            raise
+        self.presence.store(sid, issued[nonce], digests)
+        return {"ok": True, "n": len(digests)}
+
     def handle(self, op: str, args: Mapping[str, Any]) -> dict[str, Any]:
         if not isinstance(args, Mapping):
             raise ClickError("invalid.input", "args is an object")
@@ -2405,6 +2587,8 @@ class ClickSigner:
                 self._note("refused", workspace=args.get("workspace_id"), code=CONTRACT_MISMATCH)
                 raise ClickError(CONTRACT_MISMATCH, f"this signer speaks click contract {CONTRACT}; update the client")
             args = {k: v for k, v in args.items() if k != "contract"}
+        if "stream" in args:
+            return self._stream_call(op, args)  # R3 (#1591): a call from a remote-device stream
         if "remote" in args or "stepup" in args:
             # #1198 R1-6: the server says the session is a remote one and relays its assertion. The signer decides
             # from the op and the arguments whether this call needs it, and checks it before anything else.
@@ -2420,6 +2604,9 @@ class ClickSigner:
                 except ClickError as exc:
                     self._note("refused", workspace=args.get("workspace_id"), code=exc.code)
                     raise
+        return self._dispatch(op, args)
+
+    def _dispatch(self, op: str, args: Mapping[str, Any]) -> dict[str, Any]:
         if op == "stepup":
             return self.stepup(args)
         fn = {

@@ -61,8 +61,8 @@ OP = operation(
         "brief": S("instructions for the fresh session", **{"x-metavar": "TEXT"}),
         "label": S("optional label", maxLength=200),
         "on_status": S(
-            "with --on <add-on event>: wake only when the add-on reports this status (default: any status it declared); "
-            "another status does not wake it early, the deadline does",
+            "with --on <add-on event>: wake only when the add-on reports this status (default: any status it "
+            "declared); another status does not wake it early, the deadline does",
             **{"x-metavar": "STATUS"},
         ),
         "on": S(

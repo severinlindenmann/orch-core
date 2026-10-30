@@ -39,13 +39,13 @@ it('Open with a link that is no longer good shows the error page', async () => {
   const root = document.createElement('div')
   showSwitchConfirm('Product', root)
   root.querySelector('button')!.click()
-  await vi.waitFor(() => expect(root.textContent).toContain('This link expired'))
+  await vi.waitFor(() => expect(root.textContent).toContain('This link no longer works'))
   expect(confirmSwitch).toHaveBeenCalledTimes(1)
 })
 
 it('the error page opens nothing by itself', () => {
   const root = document.createElement('div')
   showSwitchFailed(root)
-  expect(root.textContent).toContain('This link expired')
+  expect(root.textContent).toContain('This link no longer works')
   expect(confirmSwitch).not.toHaveBeenCalled()
 })

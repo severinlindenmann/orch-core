@@ -38,9 +38,9 @@ export function showSwitchFailed(root: HTMLElement | null = document.getElementB
   box.className = 'boot'
   box.setAttribute('role', 'alert')
   const title = document.createElement('b')
-  title.textContent = 'This link expired'
+  title.textContent = 'This link no longer works'
   const why = document.createElement('span')
-  why.textContent = 'Go back to the hub and click again.'
+  why.textContent = 'Go back to the hub and click Open workspace again.'
   const home = document.createElement('button')
   home.type = 'button'
   home.className = 'boot-retry'

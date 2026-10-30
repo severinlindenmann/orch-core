@@ -54,3 +54,17 @@ describe('Open hub', () => {
     expect(screen.queryByTestId('switcher-open-hub')).toBeNull()
   })
 })
+
+describe('Open hub next to the hub badge', () => {
+  it('shows with a connected hub, not standalone, and takes the ticket', async () => {
+    setHubScenario('selective')
+    renderApp('/w/DEMO')
+    fireEvent.click(await screen.findByTestId('hub-open-chip'))
+    await waitFor(() => expect(assign).toHaveBeenCalledWith('https://hub.example/t/abc'))
+    cleanup()
+    setHubScenario('standalone')
+    renderApp('/w/DEMO')
+    await screen.findByTestId('hub-chip')
+    expect(screen.queryByTestId('hub-open-chip')).toBeNull()
+  })
+})

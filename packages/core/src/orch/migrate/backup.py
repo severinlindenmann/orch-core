@@ -23,6 +23,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from orch import childenv
+from orch.layout import STATE_DIR, WORK_DIR
 from orch.ops.errors import OrchError
 
 from .format import LOCK_FILE, lock_root
@@ -34,7 +35,7 @@ KEEP = 3
 MANIFEST = "manifest.json"
 DATA = "data"
 #: top-level entries left out (derived or runtime), and one nested path
-_SKIP_TOP = frozenset({".state", ".orch-work", LOCK_FILE})
+_SKIP_TOP = frozenset({STATE_DIR, WORK_DIR, LOCK_FILE})
 _SKIP_REL = frozenset({"install/tools"})
 _REVOCATIONS = "revocations.jsonl"
 _SYNC_NAMES = frozenset(

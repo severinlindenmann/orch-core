@@ -26,6 +26,7 @@ from test_labels import V2
 from webapi_helpers import WS, WS_SEL, Web
 
 import orch_hub
+from orch_hub.access import AccessError
 from orch_hub.activity import ActivityLog
 from orch_hub.changes import TTL_MS, ChangeError
 from orch_hub.contract.canon import cj, unb64u
@@ -1434,3 +1435,89 @@ def test_deltas_compare_equal_whatever_their_order():
 
     a = [{"user_id": "b", "role": "edit"}, {"user_id": "a", "role": "read"}]
     assert cj(_canon(a)) == cj(_canon(list(reversed(a))))
+
+
+# --- GA-07: end dates through the same approval path (R3, R4) ----------------------------------------------------------
+
+DAY = 86_400_000
+
+
+def test_ga07_a_later_end_or_none_waits_for_the_owner_even_when_no_role_changes_today(w):
+    acc(w).grant(WS2, "devs", "edit")  # dana is already in devs: she has edit in WS2 (owner olive)
+    soon = w.clock() + 5 * DAY
+    acc(w).add_member("devs", w.dana, ends_ms=soon)
+    r = w.changes.member_add(w.admin, "devs", w.dana, ends_ms=soon + 10 * DAY)
+    assert r is not None and [x["workspace_id"] for x in r["waiting_for"]] == [WS2]
+    assert acc(w).member_end("devs", w.dana) == soon  # nothing applied yet
+    r2 = w.changes.member_add(w.admin, "devs", w.dana, ends_ms=None)  # permanent is also an increase
+    assert r2 is not None and acc(w).member_end("devs", w.dana) == soon
+    body = json.loads(row(w, r["change_id"])["body"])
+    assert body == {"group": "devs", "user_id": w.dana, "ends_ms": soon + 10 * DAY}  # the proof covers the end date
+    otok, osig, och = owner_session(w, w.olive)
+    s, got, _ = approve(w, otok, r["change_id"], osig, och)
+    assert s == 200 and got["state"] == "applied"
+    assert acc(w).member_end("devs", w.dana) == soon + 10 * DAY
+
+
+def test_ga07_a_group_that_reaches_no_workspace_extends_at_once(w):
+    acc(w).add_group("loose")
+    soon = w.clock() + 5 * DAY
+    acc(w).add_member("loose", w.dana, ends_ms=soon)
+    assert w.changes.member_add(w.admin, "loose", w.dana, ends_ms=soon + DAY) is None
+    assert acc(w).member_end("loose", w.dana) == soon + DAY
+
+
+def test_ga07_a_shorter_end_applies_at_once_and_is_audited(w):
+    acc(w).grant(WS2, "devs", "edit")
+    far = w.clock() + 20 * DAY
+    acc(w).add_member("devs", w.dana, ends_ms=far)
+    head = w.env.audit.store.head()
+    assert w.changes.member_add(w.admin, "devs", w.dana, ends_ms=far - 10 * DAY) is None
+    assert acc(w).member_end("devs", w.dana) == far - 10 * DAY
+    assert w.env.audit.store.head() != head
+
+
+def test_ga07_shortening_runs_the_owner_guard_as_if_the_member_were_dropped_now(w):
+    # olive holds admin on WS2 only through "owners": a (shorter) end for her would drop it
+    with pytest.raises(ChangeError) as e:
+        w.changes.member_add(w.admin, "owners", w.olive, ends_ms=w.clock() + 3 * DAY)
+    assert e.value.code == "owner_protected"
+    assert acc(w).member_end("owners", w.olive) is None
+
+
+def test_ga07_a_pending_change_whose_end_has_passed_is_refused(w):
+    acc(w).grant(WS2, "devs", "edit")
+    r = w.changes.member_add(w.admin, "devs", w.newbie, ends_ms=w.clock() + 1000)
+    assert r is not None
+    otok, osig, och = owner_session(w, w.olive)
+    w.clock.advance(5000)
+    s, got, _ = approve(w, otok, r["change_id"], osig, och)
+    assert (s, got) == (409, {"error": "expired"}) or got.get("error") in ("expired", "stale_change"), got
+    assert w.newbie not in acc(w).members("devs")
+
+
+def test_ga07_a_past_end_date_is_refused_up_front(w):
+    with pytest.raises(AccessError) as e:
+        w.changes.member_add(w.admin, "devs", w.dana, ends_ms=w.clock() - 1)
+    assert e.value.code == "end_in_past"
+
+
+def test_ga07_keep_on_an_ended_row_goes_through_owner_approval_on_a_full_workspace(w):
+    acc(w).grant(WS2, "devs", "edit")  # WS2 is owned by olive
+    acc(w).add_member("devs", w.newbie, ends_ms=w.clock() + 1000)
+    w.clock.advance(2000)  # ended, not swept: no role, but the review still lists it
+    assert w.newbie not in acc(w).members("devs") and acc(w).member_end("devs", w.newbie) != "absent"
+    tok = w.login(w.admin)
+    s, o, _ = w.call("POST", "/admin/review/keep", {"group": "devs", "user_id": w.newbie}, token=tok)
+    assert s == 202 and [x["workspace_id"] for x in o["waiting_for"]] == [WS2]  # the role is gained again: ask olive
+    assert w.newbie not in acc(w).members("devs")
+    otok, osig, och = owner_session(w, w.olive)
+    s, got, _ = approve(w, otok, o["change_id"], osig, och)
+    assert s == 200 and got["state"] == "applied"
+    end = acc(w).member_end("devs", w.newbie)
+    assert w.newbie in acc(w).members("devs") and 29 * DAY < end - w.clock() <= 30 * DAY
+
+
+def test_ga07_keep_on_a_row_that_is_gone_is_not_member(w):
+    s, o, _ = w.call("POST", "/admin/review/keep", {"group": "devs", "user_id": w.newbie}, token=w.login(w.admin))
+    assert (s, o) == (404, {"error": "not_member"})

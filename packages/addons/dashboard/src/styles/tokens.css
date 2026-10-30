@@ -6,7 +6,9 @@
 @custom-variant dark (&:is(.dark *));
 
 /* ---------------------------------------------------------------------------
-   Orbit brand tokens. DARK ONLY: there is no light theme and no toggle.
+   Orbit brand tokens. Dark is the :root default; the light set (warm paper, deep teal, #421) overrides it under
+   :root[data-theme="light"] and, for the System choice, under prefers-color-scheme: light. Settings > Theme and the
+   boot script (public/theme-boot.js) set data-theme and the .dark class before first paint.
    Raw values live on :root; Tailwind (@theme inline) and shadcn names map to them.
    --------------------------------------------------------------------------- */
 :root {
@@ -44,6 +46,21 @@
   --danger-soft: rgba(248, 113, 113, 0.14);
   --info: #60a5fa;
   --info-soft: rgba(96, 165, 250, 0.14);
+
+  /* #421: tokens that exist in both themes. Disabled is a colour set, never opacity. */
+  --disabled-bg: #1c2027;
+  --disabled-text: #7d8590;
+  --disabled-border: var(--border);
+  --focus-ring: 0 0 0 2px #0e1014, 0 0 0 4px #2fc6a3;
+  --nav-selected: var(--surface-2);
+  --nav-selected-border: transparent;
+  --brand-chip-text: var(--brand);
+  --addon-text: var(--addon);
+  --risk-bar: #fbbf24;
+  --risk-danger-bar: #f87171;
+  --scrim: rgb(0 0 0 / 0.5);
+  --add-bg: rgba(74, 222, 128, 0.14);
+  --del-bg: rgba(248, 113, 113, 0.14);
 
   /* motion: short, ease-out, never more than 200 ms (see src/lib/motion.ts) */
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
@@ -115,6 +132,18 @@
   --color-danger-soft: var(--danger-soft);
   --color-info: var(--info);
   --color-info-soft: var(--info-soft);
+  --color-disabled-bg: var(--disabled-bg);
+  --color-disabled-text: var(--disabled-text);
+  --color-disabled-border: var(--disabled-border);
+  --color-nav-selected: var(--nav-selected);
+  --color-nav-selected-border: var(--nav-selected-border);
+  --color-brand-chip-text: var(--brand-chip-text);
+  --color-addon-text: var(--addon-text);
+  --color-risk-bar: var(--risk-bar);
+  --color-risk-danger-bar: var(--risk-danger-bar);
+  --color-scrim: var(--scrim);
+  --color-add-bg: var(--add-bg);
+  --color-del-bg: var(--del-bg);
 
   /* shadcn names */
   --color-background: var(--background);
@@ -149,6 +178,7 @@
   --color-sidebar-ring: var(--sidebar-ring);
 
   --shadow-lift: var(--lift-shadow);
+  --shadow-focus: var(--focus-ring);
   --radius-sm: calc(var(--radius) - 2px);
   --radius-md: var(--radius);
   --radius-lg: var(--radius-card);
@@ -297,7 +327,7 @@
   .hub-chip-short { display: inline; }
 }
 
-/* Code token colours (github-dark-default palette) used by the file previews: classes, never inline styles. */
+/* Code token colours (github-dark-default palette; the light set is below, github-light-default) used by the file previews: classes, never inline styles. */
 :root {
   --tok-keyword: #ff7b72;
   --tok-const: #79c0ff;
@@ -316,3 +346,125 @@
 .tok-name { color: var(--tok-name); }
 .tok-comment { color: var(--tok-comment); }
 .tok-invalid { color: var(--tok-invalid); }
+
+/* The light theme (#421). Same values twice: an explicit choice, and System following the browser. */
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  --bg: #faf8f4;
+  --sidebar: #f1ede6;
+  --surface: #ffffff;
+  --surface-2: #f5f2ec;
+  --surface-3: #ebe6dd;
+  --border: #d6cfc2;
+  --border-strong: #7d7468;
+  --text: #1c1917;
+  --text-muted: #57534e;
+  --text-faint: #5f5852;
+  --brand: #0f766e;
+  --on-brand: #ffffff;
+  --brand-strong: #0a5c55;
+  --brand-soft: rgba(15, 118, 110, 0.1);
+  --addon: #c2410c;
+  --on-addon: #ffffff;
+  --addon-soft: rgba(194, 65, 12, 0.09);
+  --addon-border: rgba(194, 65, 12, 0.45);
+  --addon-text: #9a3412;
+  --success: #166534;
+  --success-soft: rgba(22, 101, 52, 0.1);
+  --warning: #7a4407;
+  --warning-soft: rgba(180, 83, 9, 0.16);
+  --danger: #b91c1c;
+  --danger-soft: rgba(185, 28, 28, 0.12);
+  --info: #1e55b3;
+  --info-soft: rgba(30, 85, 179, 0.09);
+  --disabled-bg: #ebe6dd;
+  --disabled-text: #6b645c;
+  --disabled-border: var(--border);
+  --focus-ring: 0 0 0 2px #ffffff, 0 0 0 4px #1c1917;
+  --nav-selected: #ffffff;
+  --nav-selected-border: var(--border);
+  --brand-chip-text: #0a5c55;
+  --risk-bar: #b45309;
+  --risk-danger-bar: #b91c1c;
+  --scrim: rgb(28 25 23 / 0.35);
+  --add-bg: rgba(22, 101, 52, 0.18);
+  --del-bg: rgba(185, 28, 28, 0.16);
+  --lift-shadow: 0 16px 40px -12px rgb(60 40 20 / 0.28), 0 2px 6px rgb(60 40 20 / 0.12);
+  --chart-4: #6f42c1;
+  --tok-keyword: #b31d28;
+  --tok-const: #0550ae;
+  --tok-string: #0a3069;
+  --tok-tag: #116329;
+  --tok-func: #6639ba;
+  --tok-name: #953800;
+  --tok-comment: #57606a;
+  --tok-invalid: #82071e;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) {
+    color-scheme: light;
+
+    --bg: #faf8f4;
+    --sidebar: #f1ede6;
+    --surface: #ffffff;
+    --surface-2: #f5f2ec;
+    --surface-3: #ebe6dd;
+    --border: #d6cfc2;
+    --border-strong: #7d7468;
+    --text: #1c1917;
+    --text-muted: #57534e;
+    --text-faint: #5f5852;
+    --brand: #0f766e;
+    --on-brand: #ffffff;
+    --brand-strong: #0a5c55;
+    --brand-soft: rgba(15, 118, 110, 0.1);
+    --addon: #c2410c;
+    --on-addon: #ffffff;
+    --addon-soft: rgba(194, 65, 12, 0.09);
+    --addon-border: rgba(194, 65, 12, 0.45);
+    --addon-text: #9a3412;
+    --success: #166534;
+    --success-soft: rgba(22, 101, 52, 0.1);
+    --warning: #7a4407;
+    --warning-soft: rgba(180, 83, 9, 0.16);
+    --danger: #b91c1c;
+    --danger-soft: rgba(185, 28, 28, 0.12);
+    --info: #1e55b3;
+    --info-soft: rgba(30, 85, 179, 0.09);
+    --disabled-bg: #ebe6dd;
+    --disabled-text: #6b645c;
+    --disabled-border: var(--border);
+    --focus-ring: 0 0 0 2px #ffffff, 0 0 0 4px #1c1917;
+    --nav-selected: #ffffff;
+    --nav-selected-border: var(--border);
+    --brand-chip-text: #0a5c55;
+    --risk-bar: #b45309;
+    --risk-danger-bar: #b91c1c;
+    --scrim: rgb(28 25 23 / 0.35);
+    --add-bg: rgba(22, 101, 52, 0.18);
+    --del-bg: rgba(185, 28, 28, 0.16);
+    --lift-shadow: 0 16px 40px -12px rgb(60 40 20 / 0.28), 0 2px 6px rgb(60 40 20 / 0.12);
+    --chart-4: #6f42c1;
+    --tok-keyword: #b31d28;
+    --tok-const: #0550ae;
+    --tok-string: #0a3069;
+    --tok-tag: #116329;
+    --tok-func: #6639ba;
+    --tok-name: #953800;
+    --tok-comment: #57606a;
+    --tok-invalid: #82071e;
+  }
+}
+
+/* Light focus (#421): the dark ink ring, not the 50% teal of the dark theme (it is the same teal as the selected input and the primary button). Beats the utilities' ring colour. */
+:root[data-theme='light'] :focus-visible {
+  --tw-ring-color: #1c1917;
+  outline-color: #1c1917;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) :focus-visible {
+    --tw-ring-color: #1c1917;
+    outline-color: #1c1917;
+  }
+}

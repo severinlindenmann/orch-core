@@ -32,10 +32,11 @@ import socket
 import threading
 import time
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Any, Protocol, Self
 
 from ..backup.hubop import FENCE as RESTORE_FENCE
 from ..contract import hub as H
+from ..contract import remote as R
 from ..contract import suite as S
 from ..contract.canon import CanonError, b64u, unb64u, unhex
 from ..contract.hub import Refused
@@ -55,6 +56,36 @@ _log = logging.getLogger("orch_hub.link")
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
+
+
+class StreamSink(Protocol):
+    """R4 (#1592): what the link feeds the remote stream router (``LinkServer(streams=...)``). Every method runs on a
+    link thread, never blocks and never raises (the server also guards each call). ``port`` is the ``_Port`` of the
+    link that carried the frame; the sink must match a frame to its stream by id AND port."""
+
+    def attach(self, ws: str, port: _Port) -> None:
+        """Called once, at the moment the router's ``attach`` is (workspace pinned to this link's key and bound)."""
+
+    def detach(self, ws: str, port: _Port) -> None:
+        """The link is gone, its pin rotated, or the workspace unbound: close every stream of ``port``."""
+
+    def on_frame(self, ws: str, port: _Port, o: dict[str, Any], cost: int) -> None:
+        """A verified w2h ``stream_data`` / ``stream_close`` (exporter-bound, link ``seq`` checked). ``o`` is the
+        message, ``cost`` its :func:`contract.remote.frame_cost`. No reply is ever sent for it."""
+
+    def on_reply(self, ws: str, port: _Port, o: dict[str, Any]) -> None:
+        """A verified w2h reply to a ``stream_open`` (``o["re"]`` = the h2w seq ``port.send_request`` returned; body
+        ``{}`` or ``{"error": code}``)."""
+
+
+class RemoteEndpoint(Protocol):
+    """R4 (#1592): the client side of a connection that negotiated ALPN ``orch-remote/1`` (``LinkServer(remote=...)``).
+    The connection has left the link pools; ``serve`` owns it until it returns and never raises. Optional: call
+    ``conn.signed_in()`` once the client is signed in (frees its slot in the 16-wide "not yet signed in" pool; the
+    server frees it after ``remote_signin_timeout`` regardless). Also on ``conn``: ``recv_exact``, ``send_all``,
+    ``wait_readable``, ``exporter``, ``alpn``, ``close``."""
+
+    def serve(self, conn: tls.TlsConn) -> None: ...
 
 
 class _PreAuth:
@@ -90,9 +121,12 @@ class LinkServer:
         views: Any = None,
         shares: Any = None,
         switch: Any = None,
+        hooks: Any = None,
         activity: Any = None,
         where: Callable[[], dict[str, Any]] | None = None,
         deliveries: Any = None,
+        streams: StreamSink | None = None,
+        remote: RemoteEndpoint | None = None,
         host: str = "127.0.0.1",
         port: int = 0,
         dev_mode: bool,
@@ -105,8 +139,16 @@ class LinkServer:
         unjoined_lifetime: float = 30.0,
         max_connections: int = 64,
         max_unauthenticated: int = 16,
+        max_remote_connections: int = 64,
+        max_remote_unauthenticated: int = 16,
+        remote_signin_timeout: float = 30.0,
     ) -> None:
-        self._ctx = tls.server_context(identity)
+        offered = (
+            *((tls.REMOTE_ALPN,) if remote is not None else ()),
+            *((tls.STREAM_LINK_ALPN,) if streams is not None else ()),
+        )
+        self._ctx = tls.server_context(identity, alpn=offered)
+        self._streams, self._remote = streams, remote
         self._signer, self.hub_id, self._reg = op_signer, hub_id, registry
         self._invites, self._snaps = invites, snapshots
         self._publish = publish or ops.NoPublish()
@@ -119,6 +161,7 @@ class LinkServer:
         self._views = views
         self._shares = shares
         self._switch = switch
+        self._hooks = hooks
         self._activity = activity
         self._where = where
         self._deliveries = deliveries  # custodial.DeliveryQueue: event_deliver out, its replies in (§8.7)
@@ -131,6 +174,10 @@ class LinkServer:
         # D12b G8: connections that have not finished auth (handshake included) hold one of these, so peers that stall
         # the handshake cannot take all the slots from bound hosts.
         self._pre = threading.BoundedSemaphore(min(max_unauthenticated, max_connections))
+        # R4: remote clients take their own pools once the handshake shows the ALPN, so they never starve host links (G8).
+        self._rslots = threading.BoundedSemaphore(max_remote_connections)
+        self._rpre = threading.BoundedSemaphore(min(max_remote_unauthenticated, max_remote_connections))
+        self._t_rsignin = remote_signin_timeout
         self._stop = threading.Event()
         self._listen = socket.socket()
         self._listen.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -212,14 +259,22 @@ class LinkServer:
                 sock.close()
                 self._slots.release()
                 continue
-            t = threading.Thread(target=self._serve, args=(sock, _PreAuth(self._pre)), name="link-conn", daemon=True)
+            t = threading.Thread(
+                target=self._serve,
+                args=(sock, _PreAuth(self._pre), _PreAuth(self._slots)),
+                name="link-conn",
+                daemon=True,
+            )
             self._threads = [x for x in self._threads if x.is_alive()] + [t]
             t.start()
 
-    def _serve(self, sock: socket.socket, pre: _PreAuth) -> None:
+    def _serve(self, sock: socket.socket, pre: _PreAuth, slot: _PreAuth) -> None:
         conn = None
         try:
             conn = tls.accept(self._ctx, sock, time.monotonic() + self._t_hs, self._stop)
+            if self._remote is not None and conn.alpn() == tls.REMOTE_ALPN:
+                self._serve_remote(conn, pre, slot)  # never reaches the link's auth
+                return
             peer_addr = ""
             with contextlib.suppress(OSError):
                 peer_addr = str(sock.getpeername()[0])
@@ -237,7 +292,44 @@ class LinkServer:
             else:
                 sock.close()
             pre.release()
-            self._slots.release()
+            slot.release()
+
+    def _serve_remote(self, conn: tls.TlsConn, pre: _PreAuth, slot: _PreAuth) -> None:
+        """A client connection (ALPN ``orch-remote/1``): leave the link pools, take the remote ones, hand the
+        connection to the endpoint. Pool full: close, nothing is read."""
+        pre.release()
+        slot.release()
+        if not self._rslots.acquire(blocking=False):
+            return
+        try:
+            if not self._rpre.acquire(blocking=False):
+                return
+            rpre = _PreAuth(self._rpre)
+            signed = threading.Event()
+
+            def on_signed_in() -> None:
+                signed.set()
+                rpre.release()
+
+            def deadline() -> None:  # fail closed: a client that never signed in loses its connection and slot
+                if not signed.is_set():
+                    conn.close()
+                    rpre.release()
+
+            conn.on_signed_in = on_signed_in
+            timer = threading.Timer(self._t_rsignin, deadline)
+            timer.daemon = True
+            timer.start()
+            try:
+                assert self._remote is not None
+                self._remote.serve(conn)
+            except Exception as e:  # noqa: BLE001  # the endpoint must not raise; if it does, fail closed
+                _log.warning("remote endpoint raised %s", type(e).__name__)
+            finally:
+                timer.cancel()
+                rpre.release()
+        finally:
+            self._rslots.release()
 
     def _send(self, conn: tls.TlsConn, obj: dict[str, Any]) -> None:
         framing.write_frame(conn, obj, timeout=self._t_rd, max_bytes=self._max)
@@ -297,6 +389,7 @@ class LinkServer:
         ws, wsk = who
         port = _Port(conn, self._signer, self.hub_id, ws, self._now, self._t_rd, self._max, conn.exporter())
         port.wsk = wsk
+        port.stream_link = self._streams is not None and conn.alpn() == tls.STREAM_LINK_ALPN
         port.is_current = lambda: (
             self._bound_seq(ws, wsk) is not None
             and (port.attached_seq is None or self._bound_seq(ws, wsk) == port.attached_seq)
@@ -318,6 +411,19 @@ class LinkServer:
         except Exception:  # noqa: BLE001  # fail closed
             return None
 
+    def _stream_current(self, ws: str, port: _Port) -> bool:
+        """The one gate before every forward to the stream sink (frames and ``stream_open`` replies): the port is
+        attached to the sink AND the workspace is still bound under the ``binding_seq`` it attached under. A stale
+        binding detaches the port (the sink closes its streams) and the caller drops the message. Logs ids only."""
+        if self._streams is None or not port.streams_attached:
+            return False
+        seq = self._bound_seq(ws, port.wsk)
+        if seq is not None and seq == port.attached_seq:
+            return True
+        _log.warning("stream binding changed ws=%s: frame dropped, port detached", ws)
+        self._detach(ws, port)
+        return False
+
     def _detach(self, ws: str, port: _Port) -> None:
         if self._router is not None and port.live is not None:
             self._router.detach(ws, port.live)
@@ -325,6 +431,12 @@ class LinkServer:
         if self._deliveries is not None and port.delivery is not None:
             self._deliveries.detach(ws, port.delivery)
             port.delivery = None
+        if self._streams is not None and port.streams_attached:
+            port.streams_attached = False
+            try:
+                self._streams.detach(ws, port)
+            except Exception as e:  # noqa: BLE001  # a sink fault must not keep the link attached
+                _log.warning("stream sink detach raised %s", type(e).__name__)
         port.attached_seq = None
 
     def _attach(self, ws: str, port: _Port) -> None:
@@ -336,11 +448,18 @@ class LinkServer:
             self._detach(ws, port)
         if seq is None:
             return
-        if self._router is not None and port.live is None:
-            port.live = self._router.attach(ws, port)
-        if self._deliveries is not None and port.delivery is None:
-            port.delivery = self._deliveries.attach(ws, port)
-        if port.live is not None or port.delivery is not None:
+        if not port.stream_link:  # a plain link never carries streams, a stream link never carries anything else
+            if self._router is not None and port.live is None:
+                port.live = self._router.attach(ws, port)
+            if self._deliveries is not None and port.delivery is None:
+                port.delivery = self._deliveries.attach(ws, port)
+        if port.stream_link and not port.streams_attached:
+            port.streams_attached = True
+            try:
+                self._streams.attach(ws, port)
+            except Exception as e:  # noqa: BLE001
+                _log.warning("stream sink attach raised %s", type(e).__name__)
+        if port.live is not None or port.delivery is not None or port.streams_attached:
             port.attached_seq = seq
 
     def _pinned_to(self, ws: str, wsk: bytes) -> bool:
@@ -356,6 +475,9 @@ class LinkServer:
         if self._pinned_to(ws, wsk):
             pre.release()
         started = time.monotonic()
+        if port.stream_link and self._bound_seq(ws, wsk) is None:
+            self._refuse(conn, "not_bound")  # a stream link exists only for a pinned, bound workspace (no join on it)
+            return
         self._attach(ws, port)
         last_seq = 0  # R1: the w2h seq of the previous frame on THIS link (the first frame must be 1)
         exporter = port._exporter  # the port's single copy: auth, h2w signing and w2h verification share it
@@ -381,16 +503,27 @@ class LinkServer:
             )  # unbound: its last mode, so ops get not_bound
             now = self._now()
             try:
-                o = H.verify_link(
-                    signed,
-                    direction="w2h",
-                    hub_id_=self.hub_id,
-                    workspace_id=ws,
-                    mode=mode,
-                    pub=wsk,
-                    now_ms=now,
-                    exporter=exporter,
-                )
+                if _is_stream_frame(signed):  # one-way stream_data / stream_close (and a refused w2h stream_open)
+                    o = R.verify_stream_link(
+                        signed,
+                        direction="w2h",
+                        hub_id_=self.hub_id,
+                        workspace_id=ws,
+                        pub=wsk,
+                        now_ms=now,
+                        exporter=exporter,
+                    )
+                else:
+                    o = H.verify_link(
+                        signed,
+                        direction="w2h",
+                        hub_id_=self.hub_id,
+                        workspace_id=ws,
+                        mode=mode,
+                        pub=wsk,
+                        now_ms=now,
+                        exporter=exporter,
+                    )
             except Refused as e:
                 self._log_refused(ws, signed, e.code, now)
                 self._refuse(conn, e.code)
@@ -404,7 +537,29 @@ class LinkServer:
                 self._refuse(conn, "malformed")
                 return
             last_seq = o["seq"]
+            if port.stream_link and not (
+                o["op"] in R.STREAM_OPS or (o["op"] == "hub_where" and o["re"] is None)
+            ):  # a stream link carries stream frames, stream_open replies and the hub_where keepalive, nothing else
+                self._log_refused(ws, signed, "unknown_op", now)
+                self._refuse(conn, "unknown_op")
+                return
             self._reg.seen(ws, now, peer_addr)
+            if o["re"] is None and o["op"] in R.STREAM_OPS:
+                # R4: a verified one-way stream frame. It gets NO reply, ever (the host would count it as a reply to a
+                # request it never sent); a link with no stream sink drops it.
+                if self._stream_current(ws, port):
+                    try:
+                        self._streams.on_frame(ws, port, o, R.frame_cost(signed))
+                    except Exception as e:  # noqa: BLE001  # the link must survive a sink fault
+                        _log.warning("stream sink on_frame raised %s", type(e).__name__)
+                continue
+            if o["re"] is not None and o["op"] == "stream_open":  # the host's answer to a stream_open we sent
+                if self._stream_current(ws, port):
+                    try:
+                        self._streams.on_reply(ws, port, o)
+                    except Exception as e:  # noqa: BLE001
+                        _log.warning("stream sink on_reply raised %s", type(e).__name__)
+                continue
             if o["re"] is not None:  # a reply to one of our h2w requests (the host's ack of a route_in): no answer
                 if self._router is not None and port.live is not None:
                     self._router.on_reply(ws, port.live, o)
@@ -484,6 +639,7 @@ class LinkServer:
                 views=self._views,
                 shares=self._shares,
                 switch=self._switch,
+                hooks=self._hooks,
                 activity=self._activity,
                 where=self._where,
                 same_computer=same,
@@ -495,6 +651,14 @@ class LinkServer:
             return {"error": "malformed"}
         except Exception:  # noqa: BLE001
             return {"error": "internal"}
+
+
+def _is_stream_frame(signed: Any) -> bool:
+    """A w2h request whose op is a stream op: it verifies through ``remote.verify_stream_link``. Anything else (also a
+    stream op with ``re`` set, which ``verify_link`` refuses as ``unknown_op`` unless it is a ``stream_open`` reply)
+    goes through ``verify_link``."""
+    o = signed.get("o") if type(signed) is dict else None
+    return type(o) is dict and o.get("re") is None and type(o.get("op")) is str and o["op"] in R.STREAM_OPS
 
 
 class _Port:
@@ -509,6 +673,8 @@ class _Port:
         self._seq = 0
         self.live = None
         self.delivery = None
+        self.streams_attached = False
+        self.stream_link = False  # ALPN orch-link-streams/1: attached to the stream sink ONLY, few ops (R4)
         self.wsk = b""
         self.attached_seq: int | None = None
         self.is_current: Callable[[], bool] = lambda: True

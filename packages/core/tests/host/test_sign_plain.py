@@ -1126,16 +1126,36 @@ def test_v4_a_share_approval_leads_with_a_plain_summary_and_keeps_the_signed_tex
     lines = c["summary"]["lines"]
     assert c["summary"]["title"] == "Share these files"
     joined = "\n".join(lines)
-    for needle in ("report.md", "data.csv", "https://pub.example.com", "https://share.example.com", "7 days"):
-        assert needle in joined
-    assert "Anyone who has the link can open the files." in joined
+    # r12-P11: reach words and no duplicated file list on the main lines; names, URLs, who prepared it and the ticket
+    # are whole in the signed text (the "What you sign" fold)
+    assert "Anyone who has the link can open the files, for 7 days." in joined
+    assert "public address" in joined
+    for gone in ("report.md", "https://pub.example.com", "key per host", "Prepared by", "Files:"):
+        assert gone not in joined
+    signed = [s for s in c["sections"] if s["id"] == "share"][0]["text"]
+    for kept in (
+        "report.md",
+        "data.csv",
+        "https://pub.example.com",
+        "https://share.example.com",
+        "Prepared by: you",
+        "Ticket: ",
+    ):
+        assert kept in signed
     assert [s for s in c["sections"] if s["id"] == "share"][0]["text"] == text  # the exact signed text is still there
+
+
+def test_r12_p11_an_agent_prepared_copy_says_so_on_the_main_lines():
+    text = _share_text().replace("Prepared by: you", "Prepared by: an agent")
+    c = _share_build(text)
+    assert "An agent prepared this copy." in c["summary"]["lines"]
+    assert "Prepared by: an agent" in [s for s in c["sections"] if s["id"] == "share"][0]["text"]
 
 
 def test_v4_a_limited_view_link_says_how_many_views():
     c = _share_build(_share_text(kind="once", views=3, days=1))
     joined = "\n".join(c["summary"]["lines"])
-    assert "at most 3 times" in joined and "1 day " in joined
+    assert "at most 3 times" in joined and "for 1 day." in joined
 
 
 @pytest.mark.parametrize(

@@ -284,6 +284,27 @@ def _person(call: Call) -> str:
     return call.viewer
 
 
+def _display(text: Any, limit: int) -> str | None:
+    """One line of display text for the share list: white space collapsed, every character the contract refuses
+    (hidden, bidi, control) dropped, cut to ``limit`` UTF-8 bytes on a character boundary; ``None`` if empty."""
+    from orch.hubclient.sharefmt import text_ok
+
+    if not isinstance(text, str):
+        return None
+    words = ("".join(c for c in word if text_ok(c, 4)) for word in text.split())
+    line = " ".join(w for w in words if w)
+    while line and len(line.encode("utf-8")) > limit:
+        line = line[:-1].rstrip()
+    return line or None
+
+
+def _by_name(call: Call) -> str | None:
+    """The signed-in person's name from the host's own member record (never from the request)."""
+    call.service.store.refresh()
+    member = call.service.store.state.workspace.members.get(call.viewer)
+    return _display(member.name, 60) if member is not None else None
+
+
 def _owner(call: Call) -> None:
     """Registering sends the workspace's delegation to the signed server: the owner's act (the role as it is now)."""
     call.service.store.refresh()
@@ -677,6 +698,10 @@ def _prepare(call: Call, args: dict[str, Any]) -> dict[str, Any]:
         "files": files,
         "share_id": secrets.token_hex(16),
         "by": str(call.viewer),
+        # display members of the server's list (#1636): from the host's own records, never from the request
+        "label": _display(view.title, 80) or view.key,
+        "by_kind": origin,
+        "by_name": _by_name(call),
     }
     _private(service, "stage")
     if len(_stages(service)) >= MAX_STAGED:
@@ -1259,14 +1284,18 @@ def _send(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
             _write(token_path, token.encode())
             _put_json(send_path, send)
         client = _client(service, cfg["server"], plan["hub"])
-        body = flow.meta_bytes(
-            ticket=meta["ticket"]["key"],
-            kind=meta["kind"],
-            expires_ms=send["expires_ms"],
-            view_limit=meta["views"],
-            token_hash_hex=send["token_hash"],
-            files=meta["files"],
-        )
+        meta_args = {
+            "ticket": meta["ticket"]["key"],
+            "kind": meta["kind"],
+            "expires_ms": send["expires_ms"],
+            "view_limit": meta["views"],
+            "token_hash_hex": send["token_hash"],
+            "files": meta["files"],
+            "label": meta.get("label"),
+            "by_kind": meta.get("by_kind"),
+            "by_name": meta.get("by_name"),
+        }
+        body = flow.meta_bytes(**meta_args)
         rec = {
             "id": meta["share_id"],
             "ticket": meta["ticket"]["uid"],
@@ -1286,13 +1315,19 @@ def _send(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
             _save_records(service, [*rows, {**rec, "state": "sending"}])
         if "reg" in plan and not plan.get("registered"):
             _register(call, {**plan, "op": "publish.register"})
-        for attempt in (0, 1):
+        registered_again = relabelled = False
+        while True:
             try:
                 flow.put_meta(client, service.workspace_id, meta["share_id"], body)
                 break
             except (PublishError, HubRefused) as exc:
-                if exc.code == "unknown_workspace" and attempt == 0 and "reg" in plan:
+                if exc.code == "unknown_workspace" and not registered_again and "reg" in plan:
+                    registered_again = True
                     _register(call, {**plan, "op": "publish.register"})  # the server lost the binding: once more
+                    continue
+                if exc.code == "bad_label" and not relabelled:
+                    relabelled = True  # an older server refuses a text the contract allows: the ticket key instead
+                    body = flow.meta_bytes(**{**meta_args, "label": meta["ticket"]["key"]})
                     continue
                 raise
         for entry, data in zip(meta["files"], blobs, strict=True):

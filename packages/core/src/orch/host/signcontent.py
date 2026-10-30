@@ -311,17 +311,24 @@ def _share_summary(text: str) -> dict[str, Any] | None:
         names.append(m.group(1))
     if len(rows) != int(head.group(1)) or not 1 <= len(rows) <= ap.LIMITS["files"]:
         return None
-    n, days = int(head.group(1)), int(works.group(1))
+    days = int(works.group(1))
     who = "Anyone who has the link can open the files"
     if once:
         views = int(once.group(1))
         who += f", at most {views} time{'' if views == 1 else 's'}"
+    # r12-P11: plain and short. The exact signed text (names, sizes, both origins, who prepared it, the
+    # ticket, the staged copy and the manifest) is whole in the "What you sign" fold; the file list is the dashboard's
+    # lead. A person can still tell where it goes: the reach word here, the address in the fold.
+    sent, opens = _reach(server.group(1)), _reach(share.group(1))
+    where = (
+        f"The files go to {sent}; the link opens there too."
+        if sent == opens
+        else f"The files go to {sent}; the link opens at {opens}."
+    )
     out = [
-        f"Files: {n} ({head.group(2)}): " + ", ".join(names),
-        f"Who can open them: {who}.",
-        f"The link works for {days} day{'' if days == 1 else 's'} from the moment it is made.",
-        f"The files are sent to {server.group(1)}; the link opens at {share.group(1)}.",
-        f"Prepared by {prepared.group(1)}. From ticket {ticket.group(1)} (key per host).",
+        f"{who}, for {days} day{'' if days == 1 else 's'}.",
+        where,
+        *(["An agent prepared this copy."] if prepared.group(1) == "an agent" else []),
     ]
     return {"title": "Share these files", "lines": out}
 
@@ -541,8 +548,8 @@ def _reach(origin: str) -> str:
     if len(parts) == 4 and all(p.isdigit() for p in parts):
         a, b = int(parts[0]), int(parts[1])
         if a == 10 or (a == 172 and 16 <= b <= 31) or (a == 192 and b == 168) or (a == 100 and 64 <= b <= 127):
-            return "office network"
-    return "public address"
+            return "the office network"
+    return "a public address"
 
 
 def _leaf_word(v: Any) -> str:

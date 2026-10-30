@@ -158,7 +158,7 @@ export function TicketsTable({
         <TableCell className="px-1.5 py-1.5">
           <div className="truncate text-[13px] text-text" title={t.title}>
             {t.title}
-            {fresh === t.key && <span data-testid={'ticket-new-' + t.key} className="ml-2 rounded-full bg-brand-soft px-1.5 text-[10px] leading-4 font-medium text-brand">New</span>}
+            {fresh === t.key && <span data-testid={'ticket-new-' + t.key} className="ml-2 rounded-full bg-brand-soft px-1.5 text-[10px] leading-4 font-medium text-brand-chip-text">New</span>}
           </div>
           {(t.labels.length > 0 || t.match) && (
             <div className="mt-0.5 flex min-w-0 items-center gap-1 overflow-hidden">

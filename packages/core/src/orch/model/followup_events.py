@@ -29,7 +29,9 @@ KINDS: dict[str, dict[str, tuple[str, ...]]] = {
 ADDON_KIND_RE = re.compile(r"[a-z][a-z0-9-]{0,39}\.[a-z][a-z0-9_]{0,31}(?:\.[a-z][a-z0-9_]{0,31}){1,2}")
 STATUS_RE = re.compile(r"[a-z][a-z0-9_]{0,31}")
 REF_RE = re.compile(r"[A-Za-z0-9._:-]{0,64}")
-HOOK_RE = re.compile(r"hk_[0-7][0-9A-HJKMNP-TV-Z]{25}")
+HOOK_RE = re.compile(r"hk_[0-7][0-9A-HJKMNP-TV-Z]{25}|hh_[A-Za-z0-9_-]{43}")  # direct id | hub token (#1285)
+HUB_TOKEN_RE = re.compile(r"hh_[A-Za-z0-9_-]{43}")
+HUB_SECRET_RE = re.compile(r"hs_[A-Za-z0-9_-]{43}")
 _CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 HOOK_LABEL = b"orch/v2/hook|"
 
@@ -73,6 +75,23 @@ def allowed_text() -> str:
 def new_hook_id() -> str:
     n = secrets.randbits(128)
     return "hk_" + "".join(_CROCKFORD[(n >> (5 * i)) & 31] for i in range(25, -1, -1))
+
+
+def new_hub_token() -> str:
+    """The address of a hook at the hub: ``hh_`` + base64url(32 random bytes) (hub contract 10.11)."""
+    return "hh_" + secrets.token_urlsafe(32)
+
+
+def new_hub_secret() -> str:
+    """The signature secret of a hub hook: ``hs_`` + base64url(32 random bytes). Shown once, kept by the hub."""
+    return "hs_" + secrets.token_urlsafe(32)
+
+
+def hub_token_hash(token: str) -> str:
+    """What the hub keeps of a token: lowercase hex SHA-256 of its text."""
+    if not HUB_TOKEN_RE.fullmatch(token or ""):
+        raise ValueError("not a hub webhook token")
+    return hashlib.sha256(token.encode("ascii")).hexdigest()
 
 
 def secret_key(hook_id: str) -> str:

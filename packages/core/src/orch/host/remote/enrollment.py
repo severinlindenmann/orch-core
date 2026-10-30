@@ -129,6 +129,9 @@ def issue(service: Any, now_ms: int) -> dict[str, Any]:
         code = _Code("rc_" + secrets.token_hex(16), secrets.token_bytes(16), now_ms + CODE_TTL_MS, wrk.wrk_fp(pub))
         append_host(service, "remote.code_issued", code_id=code.code_id, expires_ms=code.expires_ms)
         st.codes[code.code_id] = code
+        from . import linkrun
+
+        linkrun.refresh(service)  # a code is outstanding: the stream link must be up for the enroll stream (D85)
     return {
         "code": code_text(service.workspace_id, code.code_id, code.secret, pub),
         "code_id": code.code_id,

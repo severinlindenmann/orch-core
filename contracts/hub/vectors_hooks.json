@@ -1,0 +1,1097 @@
+{
+ "about": "FAKE secrets, test-only. The public webhook inbox (protocol.md 10.11, orch-core#1285).",
+ "constants": {
+  "sources": [
+   "github",
+   "generic",
+   "databricks"
+  ],
+  "kinds": [
+   "hook.rang"
+  ],
+  "basic_user": "orch",
+  "generic_window_s": 300,
+  "body_cap": 262144,
+  "max_hooks": 64,
+  "max_expiry_ms": 2678400000,
+  "pull_max": 50
+ },
+ "cases": [
+  {
+   "name": "token_hash",
+   "check": "token_hash",
+   "token": "hh_TFaxKhMYXxBbaW9M83XeOshxcWtu_2uuMXofC2x_Jqo",
+   "expect": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e"
+  },
+  {
+   "name": "token_short",
+   "check": "token_hash",
+   "token": "hh_TFaxKhMYXxBbaW9M83XeOshxcWtu_2uuMXofC2x_Jq",
+   "expect": null
+  },
+  {
+   "name": "token_long",
+   "check": "token_hash",
+   "token": "hh_TFaxKhMYXxBbaW9M83XeOshxcWtu_2uuMXofC2x_JqoA",
+   "expect": null
+  },
+  {
+   "name": "token_no_prefix",
+   "check": "token_hash",
+   "token": "TFaxKhMYXxBbaW9M83XeOshxcWtu_2uuMXofC2x_Jqo",
+   "expect": null
+  },
+  {
+   "name": "token_old_hk",
+   "check": "token_hash",
+   "token": "hk_00000000000000000000000000",
+   "expect": null
+  },
+  {
+   "name": "token_pad",
+   "check": "token_hash",
+   "token": "hh_TFaxKhMYXxBbaW9M83XeOshxcWtu_2uuMXofC2x_Jq=",
+   "expect": null
+  },
+  {
+   "name": "token_space",
+   "check": "token_hash",
+   "token": "hh_TFaxKhMYXxBbaW9M83XeOshxcWtu_2uuMXofC2x_Jq ",
+   "expect": null
+  },
+  {
+   "name": "put_ok",
+   "check": "request",
+   "op": "hook_put",
+   "body": {
+    "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+    "followup": "FU-12",
+    "source": "github",
+    "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+    "expires_ms": 1800086400000
+   },
+   "expect": true
+  },
+  {
+   "name": "put_replaces_ok",
+   "check": "request",
+   "op": "hook_put",
+   "body": {
+    "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+    "followup": "FU-12",
+    "source": "github",
+    "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+    "expires_ms": 1800086400000,
+    "replaces": "1ad6518dc0f8c72b1ab81e7bd303341e72c23643f29f9c04e4a728659a2baf8c"
+   },
+   "expect": true
+  },
+  {
+   "name": "put_replaces_self",
+   "check": "request",
+   "op": "hook_put",
+   "body": {
+    "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+    "followup": "FU-12",
+    "source": "github",
+    "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+    "expires_ms": 1800086400000,
+    "replaces": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e"
+   },
+   "expect": false
+  },
+  {
+   "name": "put_source_databricks",
+   "check": "request",
+   "op": "hook_put",
+   "body": {
+    "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+    "followup": "FU-12",
+    "source": "databricks",
+    "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+    "expires_ms": 1800086400000
+   },
+   "expect": true
+  },
+  {
+   "name": "put_source_other",
+   "check": "request",
+   "op": "hook_put",
+   "body": {
+    "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+    "followup": "FU-12",
+    "source": "gitlab",
+    "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+    "expires_ms": 1800086400000
+   },
+   "expect": false
+  },
+  {
+   "name": "put_hash_upper",
+   "check": "request",
+   "op": "hook_put",
+   "body": {
+    "token_hash": "83228F29C7DEF4994C13B57C9C90E1D0BCCD1137993FC524097DDA3A846CE22E",
+    "followup": "FU-12",
+    "source": "github",
+    "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+    "expires_ms": 1800086400000
+   },
+   "expect": false
+  },
+  {
+   "name": "put_hash_short",
+   "check": "request",
+   "op": "hook_put",
+   "body": {
+    "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22",
+    "followup": "FU-12",
+    "source": "github",
+    "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+    "expires_ms": 1800086400000
+   },
+   "expect": false
+  },
+  {
+   "name": "put_secret_short",
+   "check": "request",
+   "op": "hook_put",
+   "body": {
+    "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+    "followup": "FU-12",
+    "source": "github",
+    "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ",
+    "expires_ms": 1800086400000
+   },
+   "expect": false
+  },
+  {
+   "name": "put_followup_slash",
+   "check": "request",
+   "op": "hook_put",
+   "body": {
+    "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+    "followup": "FU/12",
+    "source": "github",
+    "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+    "expires_ms": 1800086400000
+   },
+   "expect": false
+  },
+  {
+   "name": "put_followup_empty",
+   "check": "request",
+   "op": "hook_put",
+   "body": {
+    "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+    "followup": "",
+    "source": "github",
+    "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+    "expires_ms": 1800086400000
+   },
+   "expect": false
+  },
+  {
+   "name": "put_followup_65",
+   "check": "request",
+   "op": "hook_put",
+   "body": {
+    "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+    "followup": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "source": "github",
+    "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+    "expires_ms": 1800086400000
+   },
+   "expect": false
+  },
+  {
+   "name": "put_followup_64",
+   "check": "request",
+   "op": "hook_put",
+   "body": {
+    "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+    "followup": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "source": "github",
+    "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+    "expires_ms": 1800086400000
+   },
+   "expect": true
+  },
+  {
+   "name": "put_expires_zero",
+   "check": "request",
+   "op": "hook_put",
+   "body": {
+    "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+    "followup": "FU-12",
+    "source": "github",
+    "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+    "expires_ms": 0
+   },
+   "expect": false
+  },
+  {
+   "name": "put_expires_bool",
+   "check": "request",
+   "op": "hook_put",
+   "body": {
+    "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+    "followup": "FU-12",
+    "source": "github",
+    "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+    "expires_ms": true
+   },
+   "expect": false
+  },
+  {
+   "name": "put_extra_key",
+   "check": "request",
+   "op": "hook_put",
+   "body": {
+    "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+    "followup": "FU-12",
+    "source": "github",
+    "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+    "expires_ms": 1800086400000,
+    "body": "x"
+   },
+   "expect": false
+  },
+  {
+   "name": "put_missing_secret",
+   "check": "request",
+   "op": "hook_put",
+   "body": {
+    "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+    "followup": "FU-12",
+    "source": "github",
+    "expires_ms": 1800086400000
+   },
+   "expect": false
+  },
+  {
+   "name": "revoke_ok",
+   "check": "request",
+   "op": "hook_revoke",
+   "body": {
+    "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e"
+   },
+   "expect": true
+  },
+  {
+   "name": "revoke_extra",
+   "check": "request",
+   "op": "hook_revoke",
+   "body": {
+    "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+    "x": 1
+   },
+   "expect": false
+  },
+  {
+   "name": "pull_ok",
+   "check": "request",
+   "op": "hook_pull",
+   "body": {
+    "since": 0
+   },
+   "expect": true
+  },
+  {
+   "name": "pull_negative",
+   "check": "request",
+   "op": "hook_pull",
+   "body": {
+    "since": -1
+   },
+   "expect": false
+  },
+  {
+   "name": "ack_ok",
+   "check": "request",
+   "op": "hook_ack",
+   "body": {
+    "seq": 3
+   },
+   "expect": true
+  },
+  {
+   "name": "ack_zero",
+   "check": "request",
+   "op": "hook_ack",
+   "body": {
+    "seq": 0
+   },
+   "expect": false
+  },
+  {
+   "name": "put_reply_ok",
+   "check": "reply",
+   "op": "hook_put",
+   "body": {
+    "url_base": "https://hub.example.com/h/"
+   },
+   "expect": true
+  },
+  {
+   "name": "put_reply_local_ok",
+   "check": "reply",
+   "op": "hook_put",
+   "body": {
+    "url_base": "http://127.0.0.1:8790/h/"
+   },
+   "expect": true
+  },
+  {
+   "name": "put_reply_no_slash",
+   "check": "reply",
+   "op": "hook_put",
+   "body": {
+    "url_base": "https://hub.example.com/h"
+   },
+   "expect": false
+  },
+  {
+   "name": "put_reply_other_path",
+   "check": "reply",
+   "op": "hook_put",
+   "body": {
+    "url_base": "https://hub.example.com/x/h/"
+   },
+   "expect": false
+  },
+  {
+   "name": "put_reply_empty",
+   "check": "reply",
+   "op": "hook_put",
+   "body": {},
+   "expect": false
+  },
+  {
+   "name": "pull_reply_ok",
+   "check": "reply",
+   "op": "hook_pull",
+   "body": {
+    "rings": [
+     {
+      "seq": 1,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     },
+     {
+      "seq": 2,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "databricks",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     }
+    ],
+    "head": 2
+   },
+   "expect": true
+  },
+  {
+   "name": "pull_reply_empty",
+   "check": "reply",
+   "op": "hook_pull",
+   "body": {
+    "rings": [],
+    "head": 0
+   },
+   "expect": true
+  },
+  {
+   "name": "pull_reply_kind",
+   "check": "reply",
+   "op": "hook_pull",
+   "body": {
+    "rings": [
+     {
+      "seq": 1,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.failed",
+      "received_at": 1800000000000
+     }
+    ],
+    "head": 1
+   },
+   "expect": false
+  },
+  {
+   "name": "pull_reply_source",
+   "check": "reply",
+   "op": "hook_pull",
+   "body": {
+    "rings": [
+     {
+      "seq": 1,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "slack",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     }
+    ],
+    "head": 1
+   },
+   "expect": false
+  },
+  {
+   "name": "pull_reply_text",
+   "check": "reply",
+   "op": "hook_pull",
+   "body": {
+    "rings": [
+     {
+      "seq": 1,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000,
+      "followup": "FU-12"
+     }
+    ],
+    "head": 1
+   },
+   "expect": false
+  },
+  {
+   "name": "pull_reply_unsorted",
+   "check": "reply",
+   "op": "hook_pull",
+   "body": {
+    "rings": [
+     {
+      "seq": 2,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     },
+     {
+      "seq": 1,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     }
+    ],
+    "head": 2
+   },
+   "expect": false
+  },
+  {
+   "name": "pull_reply_dup_seq",
+   "check": "reply",
+   "op": "hook_pull",
+   "body": {
+    "rings": [
+     {
+      "seq": 1,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     },
+     {
+      "seq": 1,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     }
+    ],
+    "head": 1
+   },
+   "expect": false
+  },
+  {
+   "name": "pull_reply_51",
+   "check": "reply",
+   "op": "hook_pull",
+   "body": {
+    "rings": [
+     {
+      "seq": 1,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     },
+     {
+      "seq": 2,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     },
+     {
+      "seq": 3,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     },
+     {
+      "seq": 4,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     },
+     {
+      "seq": 5,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     },
+     {
+      "seq": 6,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     },
+     {
+      "seq": 7,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     },
+     {
+      "seq": 8,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     },
+     {
+      "seq": 9,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     },
+     {
+      "seq": 10,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     },
+     {
+      "seq": 11,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     },
+     {
+      "seq": 12,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     },
+     {
+      "seq": 13,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     },
+     {
+      "seq": 14,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     },
+     {
+      "seq": 15,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     },
+     {
+      "seq": 16,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     },
+     {
+      "seq": 17,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     },
+     {
+      "seq": 18,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     },
+     {
+      "seq": 19,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     },
+     {
+      "seq": 20,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     },
+     {
+      "seq": 21,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     },
+     {
+      "seq": 22,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     },
+     {
+      "seq": 23,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     },
+     {
+      "seq": 24,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     },
+     {
+      "seq": 25,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     },
+     {
+      "seq": 26,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     },
+     {
+      "seq": 27,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     },
+     {
+      "seq": 28,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     },
+     {
+      "seq": 29,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     },
+     {
+      "seq": 30,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     },
+     {
+      "seq": 31,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     },
+     {
+      "seq": 32,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     },
+     {
+      "seq": 33,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     },
+     {
+      "seq": 34,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     },
+     {
+      "seq": 35,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     },
+     {
+      "seq": 36,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     },
+     {
+      "seq": 37,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     },
+     {
+      "seq": 38,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     },
+     {
+      "seq": 39,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     },
+     {
+      "seq": 40,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     },
+     {
+      "seq": 41,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     },
+     {
+      "seq": 42,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     },
+     {
+      "seq": 43,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     },
+     {
+      "seq": 44,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     },
+     {
+      "seq": 45,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     },
+     {
+      "seq": 46,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     },
+     {
+      "seq": 47,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     },
+     {
+      "seq": 48,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     },
+     {
+      "seq": 49,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     },
+     {
+      "seq": 50,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     },
+     {
+      "seq": 51,
+      "token_hash": "83228f29c7def4994c13b57c9c90e1d0bccd1137993fc524097dda3a846ce22e",
+      "source": "github",
+      "kind": "hook.rang",
+      "received_at": 1800000000000
+     }
+    ],
+    "head": 51
+   },
+   "expect": false
+  },
+  {
+   "name": "ack_reply_ok",
+   "check": "reply",
+   "op": "hook_ack",
+   "body": {
+    "acked": 3
+   },
+   "expect": true
+  },
+  {
+   "name": "ack_reply_extra",
+   "check": "reply",
+   "op": "hook_ack",
+   "body": {
+    "acked": 3,
+    "x": 1
+   },
+   "expect": false
+  },
+  {
+   "name": "github_ok",
+   "check": "github",
+   "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+   "body_hex": "7b22616374696f6e223a22636f6d706c65746564222c22636865636b5f7375697465223a7b22636f6e636c7573696f6e223a2273756363657373227d7d",
+   "header": "sha256=6b03c31ea6bb5b1da109898ef4ad0b98398e877f74ee1f1272b3e24be79ad58c",
+   "expect": true
+  },
+  {
+   "name": "github_wrong_secret",
+   "check": "github",
+   "secret": "hs_Yxs1vrfivlwuOneGaGDDd7WVqfmXMAwC527HXWah8so",
+   "body_hex": "7b22616374696f6e223a22636f6d706c65746564222c22636865636b5f7375697465223a7b22636f6e636c7573696f6e223a2273756363657373227d7d",
+   "header": "sha256=6b03c31ea6bb5b1da109898ef4ad0b98398e877f74ee1f1272b3e24be79ad58c",
+   "expect": false
+  },
+  {
+   "name": "github_body_changed",
+   "check": "github",
+   "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+   "body_hex": "7b22616374696f6e223a22636f6d706c65746564222c22636865636b5f7375697465223a7b22636f6e636c7573696f6e223a2273756363657373227d7d20",
+   "header": "sha256=6b03c31ea6bb5b1da109898ef4ad0b98398e877f74ee1f1272b3e24be79ad58c",
+   "expect": false
+  },
+  {
+   "name": "github_no_prefix",
+   "check": "github",
+   "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+   "body_hex": "7b22616374696f6e223a22636f6d706c65746564222c22636865636b5f7375697465223a7b22636f6e636c7573696f6e223a2273756363657373227d7d",
+   "header": "6b03c31ea6bb5b1da109898ef4ad0b98398e877f74ee1f1272b3e24be79ad58c",
+   "expect": false
+  },
+  {
+   "name": "github_upper",
+   "check": "github",
+   "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+   "body_hex": "7b22616374696f6e223a22636f6d706c65746564222c22636865636b5f7375697465223a7b22636f6e636c7573696f6e223a2273756363657373227d7d",
+   "header": "SHA256=6B03C31EA6BB5B1DA109898EF4AD0B98398E877F74EE1F1272B3E24BE79AD58C",
+   "expect": false
+  },
+  {
+   "name": "github_sha1",
+   "check": "github",
+   "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+   "body_hex": "7b22616374696f6e223a22636f6d706c65746564222c22636865636b5f7375697465223a7b22636f6e636c7573696f6e223a2273756363657373227d7d",
+   "header": "sha1=6b03c31ea6bb5b1da109898ef4ad0b98398e877f",
+   "expect": false
+  },
+  {
+   "name": "github_missing",
+   "check": "github",
+   "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+   "body_hex": "7b22616374696f6e223a22636f6d706c65746564222c22636865636b5f7375697465223a7b22636f6e636c7573696f6e223a2273756363657373227d7d",
+   "header": null,
+   "expect": false
+  },
+  {
+   "name": "github_empty_body_ok",
+   "check": "github",
+   "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+   "body_hex": "",
+   "header": "sha256=c46e1938f0bb13f023d85532617a7afd1bad22462dc7063d1678129c31023cc3",
+   "expect": true
+  },
+  {
+   "name": "generic_ok",
+   "check": "generic",
+   "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+   "body_hex": "7b22616374696f6e223a22636f6d706c65746564222c22636865636b5f7375697465223a7b22636f6e636c7573696f6e223a2273756363657373227d7d",
+   "header": "t=1799999990,v1=1083fbfd707500f7730856a643e2ae3f27fbf4a3b1825f2081de85545dfe5eef",
+   "now_s": 1800000000,
+   "expect": true
+  },
+  {
+   "name": "generic_wrong_secret",
+   "check": "generic",
+   "secret": "hs_Yxs1vrfivlwuOneGaGDDd7WVqfmXMAwC527HXWah8so",
+   "body_hex": "7b22616374696f6e223a22636f6d706c65746564222c22636865636b5f7375697465223a7b22636f6e636c7573696f6e223a2273756363657373227d7d",
+   "header": "t=1799999990,v1=1083fbfd707500f7730856a643e2ae3f27fbf4a3b1825f2081de85545dfe5eef",
+   "now_s": 1800000000,
+   "expect": false
+  },
+  {
+   "name": "generic_stale",
+   "check": "generic",
+   "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+   "body_hex": "7b22616374696f6e223a22636f6d706c65746564222c22636865636b5f7375697465223a7b22636f6e636c7573696f6e223a2273756363657373227d7d",
+   "header": "t=1799999990,v1=1083fbfd707500f7730856a643e2ae3f27fbf4a3b1825f2081de85545dfe5eef",
+   "now_s": 1800000301,
+   "expect": false
+  },
+  {
+   "name": "generic_edge",
+   "check": "generic",
+   "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+   "body_hex": "7b22616374696f6e223a22636f6d706c65746564222c22636865636b5f7375697465223a7b22636f6e636c7573696f6e223a2273756363657373227d7d",
+   "header": "t=1799999990,v1=1083fbfd707500f7730856a643e2ae3f27fbf4a3b1825f2081de85545dfe5eef",
+   "now_s": 1800000290,
+   "expect": true
+  },
+  {
+   "name": "generic_future",
+   "check": "generic",
+   "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+   "body_hex": "7b22616374696f6e223a22636f6d706c65746564222c22636865636b5f7375697465223a7b22636f6e636c7573696f6e223a2273756363657373227d7d",
+   "header": "t=1799999990,v1=1083fbfd707500f7730856a643e2ae3f27fbf4a3b1825f2081de85545dfe5eef",
+   "now_s": 1799999689,
+   "expect": false
+  },
+  {
+   "name": "generic_t_replaced",
+   "check": "generic",
+   "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+   "body_hex": "7b22616374696f6e223a22636f6d706c65746564222c22636865636b5f7375697465223a7b22636f6e636c7573696f6e223a2273756363657373227d7d",
+   "header": "t=1799999991,v1=1083fbfd707500f7730856a643e2ae3f27fbf4a3b1825f2081de85545dfe5eef",
+   "now_s": 1800000000,
+   "expect": false
+  },
+  {
+   "name": "generic_body_changed",
+   "check": "generic",
+   "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+   "body_hex": "7b22616374696f6e223a22636f6d706c65746564222c22636865636b5f7375697465223a7b22636f6e636c7573696f6e223a2273756363657373227d7d20",
+   "header": "t=1799999990,v1=1083fbfd707500f7730856a643e2ae3f27fbf4a3b1825f2081de85545dfe5eef",
+   "now_s": 1800000000,
+   "expect": false
+  },
+  {
+   "name": "generic_garbage",
+   "check": "generic",
+   "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+   "body_hex": "7b22616374696f6e223a22636f6d706c65746564222c22636865636b5f7375697465223a7b22636f6e636c7573696f6e223a2273756363657373227d7d",
+   "header": "t=1",
+   "now_s": 1800000000,
+   "expect": false
+  },
+  {
+   "name": "basic_ok",
+   "check": "basic",
+   "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+   "header": "Basic b3JjaDpoc19vVWswNnBldlpSWmI0dURCNGpkc25WUDZ1TERzTmlYUzZNQmNCd01LTlE4",
+   "expect": true
+  },
+  {
+   "name": "basic_wrong_user",
+   "check": "basic",
+   "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+   "header": "Basic YWRtaW46aHNfb1VrMDZwZXZaUlpiNHVEQjRqZHNuVlA2dUxEc05pWFM2TUJjQndNS05ROA==",
+   "expect": false
+  },
+  {
+   "name": "basic_wrong_pass",
+   "check": "basic",
+   "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+   "header": "Basic b3JjaDpoc19ZeHMxdnJmaXZsd3VPbmVHYUdERGQ3V1ZxZm1YTUF3QzUyN0hYV2FoOHNv",
+   "expect": false
+  },
+  {
+   "name": "basic_both_wrong",
+   "check": "basic",
+   "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+   "header": "Basic eDp5",
+   "expect": false
+  },
+  {
+   "name": "basic_no_colon",
+   "check": "basic",
+   "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+   "header": "Basic b3JjaA==",
+   "expect": false
+  },
+  {
+   "name": "basic_not_base64",
+   "check": "basic",
+   "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+   "header": "Basic !!!",
+   "expect": false
+  },
+  {
+   "name": "basic_bearer",
+   "check": "basic",
+   "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+   "header": "Bearer b3JjaDpoc19vVWswNnBldlpSWmI0dURCNGpkc25WUDZ1TERzTmlYUzZNQmNCd01LTlE4",
+   "expect": false
+  },
+  {
+   "name": "basic_lower_scheme",
+   "check": "basic",
+   "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+   "header": "basic b3JjaDpoc19vVWswNnBldlpSWmI0dURCNGpkc25WUDZ1TERzTmlYUzZNQmNCd01LTlE4",
+   "expect": false
+  },
+  {
+   "name": "basic_missing",
+   "check": "basic",
+   "secret": "hs_oUk06pevZRZb4uDB4jdsnVP6uLDsNiXS6MBcBwMKNQ8",
+   "header": null,
+   "expect": false
+  }
+ ]
+}

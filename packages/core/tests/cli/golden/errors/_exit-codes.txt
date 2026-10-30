@@ -15,6 +15,7 @@ followup.too_soon 3 retry:false
 followup.too_far 3 retry:false
 followup.bad_brief 3 retry:false
 followup.no_receiver 3 retry:false
+followup.too_many_hooks 3 retry:true
 followup.denied 3 retry:false
 schedule.denied 3 retry:false
 internal 1 retry:false

@@ -216,6 +216,8 @@ def test_r7_p07_an_edit_with_a_title_signs_a_set_title_step_and_the_review_shows
     v = click.view(p["request_id"])
     rows = "\n".join(v["view"]["lines"])
     assert "Add a sequence" in rows and "Add a better sequence" in rows
+    # r12-P11: more than the title changes: the "as it was when you opened it" note is there
+    assert any("Only the ticket as it was when you opened it" in n for n in v["view"]["content"]["notes"])
     click.mono.t += 2
     click.sign(p["request_id"], v["view_digest"])
     assert click.signatures == before + 2  # the title, then the section
@@ -232,6 +234,9 @@ def test_r7_p07_a_title_edit_alone_is_a_sequence_and_a_stale_old_title_is_refuse
     assert [s["args"]["pairs"] for s in sequence.steps(ok_intent)] == [["title=Only the title"]]
     _, p = prepare(click, intent)
     v = click.view(p["request_id"])
+    # r12-P11: a title-only rename does not carry the edit-conflict note (a refusal on conflict says it in plain words)
+    assert not any("Only the ticket as it was" in n for n in v["view"]["content"]["notes"])
+    assert "Add a sequence" in "\n".join(v["view"]["lines"]) and "Only the title" in "\n".join(v["view"]["lines"])
     click.mono.t += 2
     click.sign(p["request_id"], v["view_digest"])
     assert ok(served.client().req("ticket.get", {"ref": key}))["data"]["doc"]["title"] == "Only the title"

@@ -432,13 +432,15 @@ def test_stream_remote_unsigned_pool_is_separate_and_freed_by_signed_in(mk):
         r1.close()
 
 
-def test_stream_remote_unsigned_slot_freed_after_timeout(mk):
+def test_stream_remote_unsigned_closed_at_deadline_and_slot_freed(mk):
     ep = Endpoint(hold=True)
     hub = mk(Sink(), ep, max_remote_unauthenticated=1, remote_signin_timeout=0.3)
     r1 = _dial(hub)
     try:
         ep.wait()
-        time.sleep(0.6)
+        assert r1.recv_exact(1, time.monotonic() + 5) == b"R"
+        with pytest.raises(tls.LinkClosed):  # fail closed: the deadline closes the connection itself
+            r1.recv_exact(1, time.monotonic() + 5)
         r2 = _dial(hub)
         try:
             ep.wait(2)

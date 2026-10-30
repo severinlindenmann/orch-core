@@ -299,8 +299,19 @@ class LinkServer:
             if not self._rpre.acquire(blocking=False):
                 return
             rpre = _PreAuth(self._rpre)
-            conn.on_signed_in = rpre.release
-            timer = threading.Timer(self._t_rsignin, rpre.release)
+            signed = threading.Event()
+
+            def on_signed_in() -> None:
+                signed.set()
+                rpre.release()
+
+            def deadline() -> None:  # fail closed: a client that never signed in loses its connection and slot
+                if not signed.is_set():
+                    conn.close()
+                    rpre.release()
+
+            conn.on_signed_in = on_signed_in
+            timer = threading.Timer(self._t_rsignin, deadline)
             timer.daemon = True
             timer.start()
             try:

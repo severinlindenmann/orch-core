@@ -110,6 +110,10 @@ PLANNED_LABELS: dict[str, str] = {
     "sig_remote_owner_proof": "orch/v2/sig/remote-owner-proof|",
     # R2 (#1590, hub contract 10.2c "The device list"): the WSK's signature over the remote device list.
     "sig_remote_devices": "orch/v2/sig/remote-devices|",
+    # R5 (#1593, hub contract 10.2c "Presence"): the two messages the remote presence key (custody role
+    # ``remote-presence``) signs, and nothing else. Not a person label: a presence key never signs a person event.
+    "sig_remote_open": "orch/v2/remote-open|",
+    "sig_remote_presence": "orch/v2/remote-presence|",
     "aad_hub_share": "orch/v2/hub-share-aad|",
     "h_share_item": "orch/v2/hub-share-item|",
 }

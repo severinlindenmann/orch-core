@@ -640,6 +640,54 @@
       "type": "string",
       "pattern": "^st_[0-9a-f]{32}(?![\\s\\S])",
       "description": "Single-use stage bound to the signed package digest and capabilities."
+    },
+    "events": {
+      "type": "array",
+      "maxItems": 8,
+      "description": "addon-api 1.2 (#718): the wake events the add-on may report to a waiting follow-up, flat and sorted by kind. Absent when it declares none. Replay checks a follow-up's addon event against this, never the manifest.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "title",
+          "statuses",
+          "ref",
+          "interval_s"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/addonEventKind"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
+          },
+          "statuses": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 4,
+            "uniqueItems": true,
+            "items": {
+              "$ref": "https://schemas.orch.dev/v2/common#/$defs/addonEventStatus"
+            }
+          },
+          "ref": {
+            "enum": [
+              "int",
+              "slug",
+              "owner_repo_number",
+              "hex40"
+            ]
+          },
+          "interval_s": {
+            "type": "integer",
+            "minimum": 60,
+            "maximum": 3600
+          }
+        }
+      }
     }
   },
   "required": [

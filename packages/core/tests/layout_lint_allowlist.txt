@@ -63,3 +63,4 @@ cli/dashboard.py 1
 # the ticket field and the addon.list row key "addons" (JSON keys, not store paths; AP D5)
 cli/main.py 1
 ops/plans.py 1
+addons/manifest.py 1

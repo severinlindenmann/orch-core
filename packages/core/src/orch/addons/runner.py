@@ -66,7 +66,7 @@ from orch.addons.package import MANIFEST_FILE, Package, PackageError, check_path
 from orch.market import MarketError
 from orch.model.types import Addon
 
-__all__ = ["METHODS", "PYTHON_ARGV", "Limits", "RunnerError", "call", "child_env", "propose"]
+__all__ = ["METHODS", "PYTHON_ARGV", "Limits", "RunnerError", "call", "child_env", "poll", "propose"]
 
 PATH = "/usr/local/bin:/usr/bin:/bin"
 #: where a Node add-on's ``node`` is looked for (V3 G4): fixed system directories, never a path the add-on or the
@@ -78,7 +78,7 @@ PYTHON_TOKEN = "{python}"
 #: site-packages (so an add-on cannot import orch). Not ``-I``: it would drop the script directory.
 PYTHON_ARGV = (sys.executable, "-B", "-E", "-s", "-S")
 #: the methods an add-on is called with, and the capability each needs in the active grant (``None``: none)
-METHODS: Mapping[str, str | None] = {"propose": None, "launch.model": "choose_model"}
+METHODS: Mapping[str, str | None] = {"propose": None, "launch.model": "choose_model", "events.poll": "network"}
 
 
 class RunnerError(Exception):
@@ -235,6 +235,48 @@ def propose(
         },
     }
     return call(package, granted, "propose", params, limits, env=env, gate=gate)
+
+
+def poll(
+    package: Package,
+    granted: Addon,
+    kind: str,
+    ref: str,
+    *,
+    settings: Any = None,
+    limits: Limits | None = None,
+    credential: Callable[[str], str | None] | None = None,
+    env: envtree.EnvLocation | None = None,
+    gate: Callable[[Addon], None] | None,
+) -> tuple[str, str | None]:
+    """:func:`call` with method ``events.poll`` (addon-api 1.2): has the event ``kind`` (``<addon>.<kind>`` as in a
+    follow-up, so a caller cannot name another add-on's) happened for ``ref``? The params are exactly
+    ``{kind, ref, settings}``; ``kind`` must be declared in the ACTIVE grant and ``ref`` fit its format, checked
+    here at every call. The answer must be exactly ``{"state": "pending"}``, ``{"state": "failed"}`` or
+    ``{"state": "done", "status": <a declared status>}``; the result is ``(state, status)`` and nothing else of the
+    add-on's answer survives. Anything else is ``addon.bad_response``."""
+    from orch.model import followup_events as fe
+
+    decl = fe.declared({granted.name: granted}, kind) if fe.addon_of(kind) == granted.name else None
+    if decl is None:
+        raise RunnerError("addon.bad_request", "the grant does not declare this event")
+    if not fe.addon_fits(decl, ref):
+        raise RunnerError("addon.bad_request", "the reference is not in the declared format")
+    params = {"kind": kind.split(".", 1)[1], "ref": ref, "settings": settings}
+    got = call(package, granted, "events.poll", params, limits, credential=credential, env=env, gate=gate)
+    if (
+        not isinstance(got, dict)
+        or set(got) not in ({"state"}, {"state", "status"})
+        or got["state"] not in ("pending", "done", "failed")
+    ):
+        raise RunnerError("addon.bad_response", "the answer is not a poll result")
+    if got["state"] == "done":
+        if got.get("status") not in decl["statuses"]:
+            raise RunnerError("addon.bad_response", "the status is not one the add-on declared")
+        return "done", got["status"]
+    if "status" in got:
+        raise RunnerError("addon.bad_response", "only a finished event has a status")
+    return got["state"], None
 
 
 def _check_settings(manifest: Any, value: Any) -> None:

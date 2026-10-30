@@ -633,6 +633,7 @@ def _prepare(call: Call, args: dict[str, Any]) -> dict[str, Any]:
         raise HostError("op.not_allowed", "an agent prepares shares only on the ticket its session claims")
     _gate(call)
     cfg = _config(service)
+    _hub_route(service)  # a hub that cannot carry the share is said now, before anything is copied or signed
     kind = args.get("kind", "secret")
     days = args.get("days", 7)
     views = args.get("views", 1 if kind == "once" else 0)
@@ -751,6 +752,7 @@ def facts_for(service: WorkspaceService, args: dict[str, Any], call: Call) -> ap
     _verify_stage(service, meta)
     view = _ticket(call, meta["ticket"]["uid"])
     _may_share(call, view)
+    _hub_route(service)  # refuse BEFORE the person signs when the hub path is not usable: no signature for nothing
     return approval.ApprovalFacts(meta["staged_id"], view.key, _text(service, meta, cfg))
 
 
@@ -938,7 +940,8 @@ def _hub_route(service: WorkspaceService, *, required: bool = True) -> dict[str,
     if route is None and required:
         raise HostError(
             "hub.not_joined",
-            "publishing needs a hub: join a hub first (orch hub join); a workspace alone is local only",
+            "Publishing needs a hub, and this workspace has not joined one. Join a hub in Settings, Hub, then try "
+            "again.",
         )
     return route
 

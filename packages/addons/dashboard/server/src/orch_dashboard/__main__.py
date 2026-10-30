@@ -27,6 +27,7 @@ from contextlib import contextmanager, suppress
 from pathlib import Path
 
 import uvicorn
+from orch import childenv
 
 from .adapters.setup import connect_setup
 from .app import create_app
@@ -783,7 +784,8 @@ def control_or_start(directory, command, kind=None):
     if launch is None:
         stale_socket(ctl)
         child = subprocess.Popen(
-            [sys.executable, "-m", "orch_dashboard", "serve", "--launcher-lock"],
+            [sys.executable, "-P", "-m", "orch_dashboard", "serve", "--launcher-lock"],
+            env=childenv.sanitize(os.environ, absolute_pythonpath=True),
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,

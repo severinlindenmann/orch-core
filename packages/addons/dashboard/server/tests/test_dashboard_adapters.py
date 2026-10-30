@@ -172,7 +172,11 @@ def test_a_gate_that_binds_files_or_addon_fields_is_single_only_for_the_page():
 
 def _claimed_row(status, live):
     return {
-        "key": "DEMO-0001", "uid": "u1", "title": "T", "type": "task", "status": status,
+        "key": "DEMO-0001",
+        "uid": "u1",
+        "title": "T",
+        "type": "task",
+        "status": status,
         "claim": {"session": "s1", "agent": "a", "for": "owner", "since": "2026-10-26T09:00:00Z", "live": live},
     }
 

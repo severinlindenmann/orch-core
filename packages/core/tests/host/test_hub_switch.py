@@ -51,8 +51,8 @@ def hub(monkeypatch, served):
     return h
 
 
-def bound(human, served):
-    human.run("hub.join", join_args())
+def bound(human, served, mode="selective"):
+    human.run("hub.join", join_args(mode=mode))
     ok(served.client().req("hub.connect", connect_args(), idem=True))
 
 
@@ -64,7 +64,7 @@ def test_switch_needs_a_bound_hub(human, served, hub):
 
 
 def test_ticket_redeem_and_rail_relay_exactly_the_closed_bodies(human, served, hub):
-    bound(human, served)
+    bound(human, served, "full")  # D93: a selective hub's redeem is refused (test_remote_switch)
     n = len(hub.sent)
     hub.replies = {
         "switch_ticket": {"ticket": "a" * 32, "url": f"https://hub.example/#t={'a' * 32}"},
@@ -109,7 +109,7 @@ def test_switch_bodies_are_closed(human, served, hub, args):
 
 
 def test_a_hub_refusal_is_a_plain_refusal(human, served, hub):
-    bound(human, served)
+    bound(human, served, "full")
     hub.replies = {"switch_redeem": {"error": "bad_ticket"}}
     assert (
         err(served.client().req("hub.switch", {"kind": "redeem", "ticket": "w." + "c" * 32}, idem=False))

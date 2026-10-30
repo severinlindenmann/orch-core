@@ -1163,6 +1163,8 @@ def _switch(service: Any, plan: dict[str, Any], wsk_pub: bytes, sign: Any) -> di
     hub console made for THIS workspace (single use, 30 s, audience = this authenticated link); ``rail``: the workspace
     list. Nothing here is logged, signed by a person or kept."""
     a = plan["args"]
+    if a["kind"] == "redeem":
+        _refuse_switch(service, plan["state"])  # D93: before the hub is asked, so the ticket stays unused
     hub_link, transport = _snapshot_link(service, plan["state"], wsk_pub, sign, plan["dev"])
     try:
         if a["kind"] == "ticket":
@@ -1176,6 +1178,22 @@ def _switch(service: Any, plan: dict[str, Any], wsk_pub: bytes, sign: Any) -> di
     finally:
         getattr(transport, "close", lambda: None)()
     return r
+
+
+def _refuse_switch(service: Any, state: Any) -> None:
+    """D93 (R2 #1590): a hub console switch into this workspace is refused when the owner said it runs at a customer's
+    place (premises yes) or when the hub is joined selectively (the hub cannot vouch for who opens the dashboard). The
+    answer comes from the model, never from the request; the refusal is plain and nothing is sent to the hub."""
+    from orch.model.remote import hub_mode_of
+
+    ws = service.store.state.workspace
+    premises = (ws.remote or {}).get("premises") == "yes"
+    if premises or getattr(state, "mode", None) != "full" or hub_mode_of(ws) != "full":
+        raise HostError(
+            "switch.refused",
+            "this workspace cannot be opened from another computer through the hub",
+            hint="open it on its own computer",
+        )
 
 
 def _quiesce_logsync(service: Any, plan: dict[str, Any]) -> None:

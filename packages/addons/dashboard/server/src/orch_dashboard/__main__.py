@@ -507,6 +507,7 @@ def _serve(directory, lock_fd=None, port=None, listen=None):
             remote=remote[0] if remote else None,
             remote_problem=remote_problem,
             alt_hosts=(network,) if network else (),
+            remote_streams=True,
         )
     except BaseException:
         listener.close()

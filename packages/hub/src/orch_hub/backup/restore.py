@@ -50,9 +50,23 @@ LOGS = frozenset({"audit.db", "activity.db"})
 #: stores that hold withdrawals and permissions: in place the LIVE store is the truth, a backup's copy would revive what an
 #: admin took away since (guard.py)
 LIVE_WHOLE = frozenset(
-    {"registry.db", "connections.db", "shares.db", "spaces.db", "changes.db", "wk-seal.db", "workspace-view.db"}
+    {
+        "registry.db",
+        "connections.db",
+        "shares.db",
+        "spaces.db",
+        "changes.db",
+        "wk-seal.db",
+        "workspace-view.db",
+        "oidc.db",
+    }
 )
-LIVE_IN_PLACE = LOGS | LIVE_WHOLE | {"hub-settings.json", "tls.key"}
+#: company login (HUB-PE-04): the links (oidc.db) are LIVE_WHOLE above, and its settings, client secret and cookie key stay
+#: the live ones in place: an admin may have unlinked a person, turned it off or replaced the secret since the backup, and a
+#: restore never revives that. On a fresh server all four come from the backup (the backup is sealed like the hub keys) and
+#: company login is switched OFF until an admin tests it again (G.oidc_off).
+COMPANY_LOGIN = frozenset({"oidc.json", "oidc.secret", "oidc.key"})
+LIVE_IN_PLACE = LOGS | LIVE_WHOLE | COMPANY_LOGIN | {"hub-settings.json", "tls.key"}
 #: carried over by name (not in any backup)
 CARRY_FILES = ("setup-token",)
 CARRY_DIRS = ("backups",)
@@ -437,6 +451,7 @@ def _restore(
         admins, removed = _merge_people(new, state if in_place else None, now)
         G.never_widen(new, state if in_place else None)  # one rule for every table: never widen, never revive
         G.credentials(new, state if in_place else None)
+        G.oidc_off(new, in_place)
         recovery = G.recovery_links(new, admins, now_ms) if not in_place else {}
         names = _names(new)
         channels_revoked = _revoke_channels(new, state if in_place else None, removed, actor, now)

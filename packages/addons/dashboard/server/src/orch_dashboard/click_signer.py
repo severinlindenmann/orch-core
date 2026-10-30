@@ -17,6 +17,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from .errors import HostError, fail
+from .remote_identity import REMOTE_STREAM
 
 #: 4 (run 13 C3): the View carries `headline` and `risk_lines` (the signer's own risk lines); 3 was click-only
 #: confirmation (no typed word). This server announces the contract it speaks on `prepare`, `view` and `sign`, and the
@@ -43,7 +44,20 @@ TIMEOUT = {
     "github_token": 30.0,  # a sealed GitHub token is opened and written: memory and one small file
     "rotate": 120.0,  # the recovery code is stretched (scrypt) and the host signs the rotation
     "stepup": 8.0,  # a passkey step-up nonce: memory only
+    # R3 (D88): a stream's presence. The signer holds the nonces and the batches; the device key signs.
+    "presence_nonce": 8.0,
+    "presence": 30.0,
+    "presence_take": 8.0,
 }
+#: The arguments only `Signer._call` may add, and only inside a stream (R3, design I2): a caller that passes any of them
+#: while a stream is running is a bug, and raises instead of being believed.
+STREAM_ARGS = frozenset({"remote", "stream", "stepup"})
+
+
+class CallerSuppliedRemote(RuntimeError):
+    """A handler passed `remote`, `stream` or `stepup` to a signer call made inside a stream."""
+
+
 #: the signer can switch click-to-sign on and off (`custody_on`/`custody_off`, section 0.8.6 item 3a)
 CUSTODY_FEATURE = "custody"
 IMAGES_FEATURE = "images"  # `stash` and `prepare {sequence}` naming pasted screenshots (core R3 part B)
@@ -309,6 +323,14 @@ class Signer:
         outcome is unknown, never "gone")."""
         from orch.click.protocol import ClickError
 
+        stream = REMOTE_STREAM.get()
+        if stream is not None:
+            # THE one place a stream's calls are stamped (design I2): `remote: true` and the stream id, from the
+            # context value only the stream adapter sets. The signer asks the host what the stream is; it takes the
+            # level, device, person and handshake hash from there, never from this process.
+            if STREAM_ARGS & args.keys():
+                raise CallerSuppliedRemote(op)
+            args = {**args, "remote": True, "stream": stream}
         with self.lock:
             if self.suspect and self.client is not None and not self.unsettled():
                 self._drop()  # hung but alive, and nothing could be mid-submit: replace it
@@ -360,10 +382,10 @@ class Signer:
             return {}
         finally:
             self.chan.release()
-        self._last = {
-            w["workspace_id"]: w for w in got.get("workspaces", []) if isinstance(w, dict) and "workspace_id" in w
-        }
-        return self._last
+        rows = {w["workspace_id"]: w for w in got.get("workspaces", []) if isinstance(w, dict) and "workspace_id" in w}
+        if REMOTE_STREAM.get() is None:  # a stream's answer is not the loopback page's cache
+            self._last = rows
+        return rows
 
 
 def refusal(exc) -> HostError:

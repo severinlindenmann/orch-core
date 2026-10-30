@@ -19,7 +19,7 @@ import logging
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, Request
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints
 
 from . import reads
 from .cosmetic_routes import full_session, refused
@@ -27,11 +27,12 @@ from .errors import HostError
 from .gateway import Gateway
 from .market_routes import new_idem
 from .stepup import LOCAL, stepup_required
-from .text import hidden
+from .text import clean, hidden
 
 log = logging.getLogger("orch.dashboard.profile")
 
-Item = Annotated[str, StringConstraints(max_length=80)]
+# refused, never repaired: no hidden, bidi or control character reaches the hub (text.clean)
+Item = Annotated[str, StringConstraints(max_length=80), AfterValidator(clean)]
 LISTS = ("tags", "handles", "not_handled", "accepts")
 LIMITS = {"tags": 24, "handles": 80, "not_handled": 80, "accepts": 24}
 TEXTS = {"description": 300, "contact": 80, "languages": 40, "hours": 40}
@@ -46,10 +47,10 @@ class ProfileBody(BaseModel):
     handles: list[Item] = Field(max_length=8)
     not_handled: list[Item] = Field(max_length=8)
     accepts: list[Item] = Field(max_length=8)
-    description: Annotated[str, StringConstraints(max_length=300)]
-    contact: Annotated[str, StringConstraints(max_length=80)]
-    languages: Annotated[str, StringConstraints(max_length=40)]
-    hours: Annotated[str, StringConstraints(max_length=40)]
+    description: Annotated[str, StringConstraints(max_length=300), AfterValidator(clean)]
+    contact: Annotated[str, StringConstraints(max_length=80), AfterValidator(clean)]
+    languages: Annotated[str, StringConstraints(max_length=40), AfterValidator(clean)]
+    hours: Annotated[str, StringConstraints(max_length=40), AfterValidator(clean)]
 
 
 def profile_view(raw) -> dict:

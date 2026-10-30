@@ -133,3 +133,15 @@ def test_hidden_characters_in_host_text_are_withheld():
     link = Link(profile={**PROFILE, "description": "a‮b", "tags": ["ok", "x​y"]})
     got = client(link).get(URL).json()
     assert got["description"] == "" and got["tags"] == ["ok"]
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [{"description": "a\u202eb"}, {"contact": "x\u200by"}, {"languages": "e\u2066n"}, {"hours": "9\x0017"},
+     {"tags": ["ok", "a\u200db"]}, {"handles": ["x\u202ey"]}, {"not_handled": ["\u2060"]}, {"accepts": ["q\u00adr"]}],
+)
+def test_hidden_or_bidi_characters_are_refused_and_nothing_is_stored(bad):
+    link = Link()
+    assert client(link).put(URL, json={**PROFILE, **bad}).status_code == 422
+    assert not any(call[1] for call in link.calls if call[0] == "hub.profile")
+    assert link.profile == OFF

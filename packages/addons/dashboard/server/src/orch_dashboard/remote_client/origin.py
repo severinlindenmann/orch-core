@@ -75,7 +75,8 @@ GO_JS = "/go.js"
 _GO_PAGE = (
     b'<!doctype html><meta charset="utf-8"><meta name="referrer" content="no-referrer"><script src="/go.js"></script>'
 )
-_GO_SCRIPT = b"location.replace('/' + location.hash)"
+# Only a launch code in the exact shape the client mints (43 url-safe characters) is carried over; nothing else is.
+_GO_SCRIPT = b"if (/^#launch=[A-Za-z0-9_-]{43}$/.test(location.hash)) location.replace('/' + location.hash)"
 
 
 class Origin:
@@ -137,6 +138,20 @@ class Origin:
         ok = False
         for t in self._tokens:
             ok |= hmac.compare_digest(t, given)
+        return ok
+
+    def _ws_bearer_ok(self, scope: dict[str, Any]) -> bool:
+        """The WebSocket carries the per-launch bearer as the sub-protocol ``orch.b.<token>`` (a browser cannot set
+        ``Authorization`` on a WebSocket)."""
+        ok = False
+        offered = scope.get("subprotocols", [])
+        if "orch.b" not in offered:  # the answer must be an offered one
+            return False
+        for proto in offered:
+            if type(proto) is str and proto.startswith("orch.b."):
+                given = proto[7:]
+                for t in self._tokens:
+                    ok |= hmac.compare_digest(t, given)
         return ok
 
     # -- the guard --
@@ -283,7 +298,11 @@ class Origin:
             f = self.static.page(self.kind)  # the single-page app's own routes
         if f is None:
             return await self._json(send, 404, error_doc("not_found", "Not found."))
-        await self._reply(send, 200, [(b"content-type", f.content_type.encode())], b"" if method == "HEAD" else f.body)
+        body = f.body
+        if self.kind == "session" and f is self.static.page("session"):
+            # The page learns it runs behind the remote client (no token sharing between tabs, WebSocket bearer).
+            body = body.replace(b"<head>", b'<head><meta name="orch-nav" content="remote">', 1)
+        await self._reply(send, 200, [(b"content-type", f.content_type.encode())], b"" if method == "HEAD" else body)
 
     # -- the home origin --
 
@@ -353,14 +372,16 @@ class Origin:
             or session is None
             or session.closed is not None
             or self._refusal({**scope, "method": "GET"}, h, single, True) is not None
+            or not self._ws_bearer_ok(scope)
         ):
             return await send({"type": "websocket.close", "code": 1008})
         query = scope.get("query_string", b"").decode("latin-1")
         try:
-            ws = await asyncio.to_thread(session.websocket, path, query, list(h.items()))
+            fwd = [(k, v) for k, v in h.items() if k != "sec-websocket-protocol"]  # never forward the bearer
+            ws = await asyncio.to_thread(session.websocket, path, query, fwd)
         except (WsRefused, ClientError):
             return await send({"type": "websocket.close", "code": 1008})
-        await send({"type": "websocket.accept"})
+        await send({"type": "websocket.accept", "subprotocol": "orch.b"})
         done = asyncio.Event()
 
         async def up() -> None:

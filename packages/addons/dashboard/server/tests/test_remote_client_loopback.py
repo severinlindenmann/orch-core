@@ -222,8 +222,7 @@ def test_service_worker_and_cross_site_fetches_are_refused(session_origin):
     st, _, body = raw(lst.port, "GET", "/go", headers=nav)
     assert st == 200 and b"/go.js" in body and b"orch" not in body.lower()
     assert (
-        raw(lst.port, "GET", "/go.js", headers={"Sec-Fetch-Site": "same-origin"})[2]
-        == b"location.replace('/' + location.hash)"
+        raw(lst.port, "GET", "/go.js", headers={"Sec-Fetch-Site": "same-origin"})[2] == origin_mod._GO_SCRIPT
     )
     assert raw(lst.port, "POST", "/go", headers={**nav, "Origin": "http://evil.example"})[0] == 403
 
@@ -335,28 +334,60 @@ def ws_url(lst, path="/term"):
 
 
 def test_websocket_origin_rules_and_relay(session_origin):
-    from websockets.exceptions import InvalidHandshake, InvalidStatus  # noqa: F401
     from websockets.sync.client import connect
 
     lst, origin, sess = session_origin
+    proto = ["orch.b", f"orch.b.{login(lst, origin)}"]
     for bad in ("http://evil.example", "null", "http://127.0.0.1:1", None):
         with pytest.raises(Exception):  # noqa: B017 - the handshake is refused (403 / closed before accept)
-            with connect(ws_url(lst), origin=bad, open_timeout=5):
+            with connect(ws_url(lst), origin=bad, subprotocols=proto, open_timeout=5):
                 pass
     assert sess.ws_opens == []
-    with connect(ws_url(lst) + "?x=1", origin=origin.origin, open_timeout=5) as ws:
+    with connect(ws_url(lst) + "?x=1", origin=origin.origin, subprotocols=proto, open_timeout=5) as ws:
+        assert ws.subprotocol == "orch.b"  # echoed without the token
         ws.send('{"ticket":"t"}')
         assert ws.recv(timeout=5) == 'echo:{"ticket":"t"}'
     assert sess.ws_opens and sess.ws_opens[0]["path"] == "/term" and sess.ws_opens[0]["query"] == "x=1"
     names = [n for n, _ in sess.ws_opens[0]["headers"]]
     assert "origin" not in names and "host" not in names and "cookie" not in names
+    assert "sec-websocket-protocol" not in names  # the bearer is never forwarded
+    assert not any(proto[1][7:] in str(v) for _, v in sess.ws_opens[0]["headers"])
+
+
+def test_websocket_without_the_bearer_is_closed_before_any_frame(session_origin):
+    from websockets.sync.client import connect
+
+    lst, origin, sess = session_origin
+    good = login(lst, origin)
+    for protos in (None, ["orch.b", "orch.b.nope"], ["orch.b", "orch.b."], ["orch.b"], ["orch.b", f"x.{good}"], ["orch.b", f"orch.b.{good[:-1]}"], [f"orch.b.{good}"]):
+        with pytest.raises(Exception):  # noqa: B017 - right Origin, no / wrong bearer: refused
+            with connect(ws_url(lst), origin=origin.origin, subprotocols=protos, open_timeout=5) as ws:
+                ws.recv(timeout=2)
+        assert sess.ws_opens == []
+    assert sess.requests == []
+
+
+def test_session_page_is_marked_remote(session_origin):
+    lst, origin, sess = session_origin
+    body = raw(lst.port, "GET", "/")[2]
+    assert b'<head><meta name="orch-nav" content="remote">' in body
+
+
+def test_go_page_carries_only_a_well_formed_launch_code():
+    assert b"{43}" in origin_mod._GO_SCRIPT and b"test(location.hash)" in origin_mod._GO_SCRIPT
 
 
 def test_websocket_message_over_the_frame_size_closes_1009(session_origin):
     from websockets.sync.client import connect
 
     lst, origin, sess = session_origin
-    with connect(ws_url(lst), origin=origin.origin, open_timeout=5, max_size=None) as ws:
+    with connect(
+        ws_url(lst),
+        origin=origin.origin,
+        subprotocols=["orch.b", f"orch.b.{login(lst, origin)}"],
+        open_timeout=5,
+        max_size=None,
+    ) as ws:
         ws.send("x" * 70000)
         with pytest.raises(Exception) as ei:  # noqa: B017
             ws.recv(timeout=5)

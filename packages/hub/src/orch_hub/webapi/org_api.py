@@ -48,9 +48,7 @@ class OrgHandlers:
     def _h_a_skill_offer(self, c: Any, p: dict, q: dict, b: dict | None):
         b = _need(b, workspaces=list, shared=str)
         out = org_skills(self.d.access).set_share(p["name"], b["shared"], b["workspaces"], actor=c.user_id)
-        self._record(
-            "skill.offered", actor_id=c.user_id, detail={"skill": p["name"], "count": len(out["offered_to"])}
-        )
+        self._record("skill.offered", actor_id=c.user_id, detail={"skill": p["name"], "count": len(out["offered_to"])})
         return 200, out
 
     # --- remote MCP servers (#1435) -------------------------------------------------------------------------------------
@@ -98,7 +96,5 @@ class OrgHandlers:
     def _h_a_mcp_offer(self, c: Any, p: dict, q: dict, b: dict | None):
         b = _need(b, workspaces=list, shared=str)
         out = org_mcp(self.d.access).set_share(p["name"], b["shared"], b["workspaces"], actor=c.user_id)
-        self._record(
-            "mcp.offered", actor_id=c.user_id, detail={"server": p["name"], "count": len(out["offered_to"])}
-        )
+        self._record("mcp.offered", actor_id=c.user_id, detail={"server": p["name"], "count": len(out["offered_to"])})
         return 200, out

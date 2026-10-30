@@ -44,7 +44,14 @@ class OrgSkillStore:
         for n, w in a._q("SELECT name, workspace_id FROM org_skill_offer ORDER BY workspace_id"):
             offers.setdefault(n, []).append(w)
         return [
-            {"name": n, "text": t, "digest": skill_digest(n, t), "updated_ms": u, "shared": sh, "offered_to": offers.get(n, [])}
+            {
+                "name": n,
+                "text": t,
+                "digest": skill_digest(n, t),
+                "updated_ms": u,
+                "shared": sh,
+                "offered_to": offers.get(n, []),
+            }
             for n, t, u, sh in a._q("SELECT name, text, updated_ms, shared FROM org_skill ORDER BY name")
         ]
 

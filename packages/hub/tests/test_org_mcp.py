@@ -292,7 +292,9 @@ def test_all_is_the_default_and_covers_a_workspace_bound_later(env, reg):
     c = lambda ws: SimpleNamespace(registry=reg, workspace_id=ws, snapshots=snaps, body={})
     assert [s["name"] for s in verify(keys, mcp_servers_get(c(WS))["bundle"])["servers"]] == ["crm"]
     late = "c3" * 16
-    reg.commit_join(late, late, "key", "pk", {"name": "late"}, {"status": "bound", "binding": {"mode": "full"}}, owner_alias=None)
+    reg.commit_join(
+        late, late, "key", "pk", {"name": "late"}, {"status": "bound", "binding": {"mode": "full"}}, owner_alias=None
+    )
     assert [s["name"] for s in verify(keys, mcp_servers_get(c(late))["bundle"], ws=late)["servers"]] == ["crm"]
 
 

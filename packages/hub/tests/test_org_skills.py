@@ -298,7 +298,9 @@ def test_the_admin_routes_save_offer_remove_audit_and_are_admin_only(tmp_path):
         assert s == 400 and o["error"] == "malformed"
         s, o, _ = w.call("PUT", "/admin/skills/invoices", {"text": 5}, token=admin)
         assert s == 400
-        s, o, _ = w.call("PUT", "/admin/skills/invoices/offers", {"shared": "chosen", "workspaces": ["nope"]}, token=admin)
+        s, o, _ = w.call(
+            "PUT", "/admin/skills/invoices/offers", {"shared": "chosen", "workspaces": ["nope"]}, token=admin
+        )
         assert s == 400
         s, o, _ = w.call("PUT", "/admin/skills/ghost/offers", {"shared": "chosen", "workspaces": []}, token=admin)
         assert s == 404 and o["error"] == "unknown_skill"
@@ -332,9 +334,13 @@ def test_all_is_the_default_and_covers_a_workspace_bound_later(env, reg):
     c = lambda ws: SimpleNamespace(registry=reg, workspace_id=ws, snapshots=snaps, body={})
     assert [s["name"] for s in verify(keys, org_skills_get(c(WS))["bundle"])["skills"]] == ["invoices"]
     late = "c3" * 16
-    reg.commit_join(late, late, "key", "pk", {"name": "late"}, {"status": "bound", "binding": {"mode": "full"}}, owner_alias=None)
+    reg.commit_join(
+        late, late, "key", "pk", {"name": "late"}, {"status": "bound", "binding": {"mode": "full"}}, owner_alias=None
+    )
     got = verify(keys, org_skills_get(c(late))["bundle"], ws=late)
-    assert [s["name"] for s in got["skills"]] == ["invoices"] and got["skills"][0]["digest"] == OB.skill_digest("invoices", TEXT)
+    assert [s["name"] for s in got["skills"]] == ["invoices"] and got["skills"][0]["digest"] == OB.skill_digest(
+        "invoices", TEXT
+    )
 
 
 def test_all_stops_at_unbind_and_chosen_narrows_again(env, reg):

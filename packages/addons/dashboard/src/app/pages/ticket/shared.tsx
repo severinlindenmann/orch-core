@@ -48,9 +48,12 @@ export function displayName(members: Member[], id: string | null | undefined): s
   return agentName(id)
 }
 
-/** The harness name when the agent id is one this dashboard knows, else "An agent": ids like "orch-cli" mean nothing to a person (same rule as Activity). */
+/** What an agent with no known harness is called on a ticket. */
+export const UNKNOWN_AGENT = 'Your agent'
+
+/** The harness name when the agent id is one this dashboard knows, else "Your agent": ids like "orch-cli" mean nothing to a person. */
 export function agentName(id: string): string {
-  return findHarness(harnessForAgent(id))?.label ?? 'An agent'
+  return findHarness(harnessForAgent(id))?.label ?? UNKNOWN_AGENT
 }
 
 const AVATAR_TONES = ['bg-brand-soft text-brand', 'bg-info-soft text-info', 'bg-warning-soft text-warning', 'bg-success-soft text-success']

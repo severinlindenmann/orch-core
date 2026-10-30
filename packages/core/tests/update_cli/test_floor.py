@@ -83,3 +83,8 @@ def test_update_refuses_a_stale_list_and_a_lower_min_serial(tmp_path):
     with pytest.raises(OrchError) as e:
         w.updater().update()
     assert e.value.code == "update.unverified" and w.services.events == []
+
+
+def test_a_future_list_is_refused():
+    assert code(v={"issued": "2026-10-24T00:00:00Z"}) == "update.unverified"  # NOW is 22 Oct: more than a day ahead
+    floor.check_revocations(verified("2026-10-22T20:00:00Z"), NOW, stored_issued_at=None, stored_min_serial=None)

@@ -13,7 +13,7 @@ freshness. This module adds, for every update (install.sh enforces the same numb
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from orch.ops.errors import OrchError
 
@@ -43,6 +43,8 @@ def check_revocations(
     if stored_issued_at is not None:
         floor_at = max(floor_at, parse_time(stored_issued_at))
     floor_serial = max(REVOCATIONS_FLOOR_MIN_SERIAL, stored_min_serial or 0)
+    if issued > now + timedelta(days=1):
+        raise OrchError("update.unverified", "the release's revocation list is dated in the future")
     if v.min_serial < floor_serial or issued < floor_at:
         raise OrchError(
             "update.unverified", "the release's revocation list is older than the one this orch already knows"

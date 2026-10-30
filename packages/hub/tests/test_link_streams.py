@@ -183,6 +183,28 @@ def test_stream_open_reply_reaches_sink_by_re_and_port(mk):
     assert "snapshot" in c.request("snapshot_get", {})
 
 
+def test_stream_frame_and_reply_dropped_after_binding_changed(mk):
+    """The binding changes under a live port (a second link of the same workspace raises binding_seq): the NEXT
+    frame and the NEXT stream_open reply are not forwarded and the port is detached from the sink."""
+    sink = Sink()
+    hub = mk(sink)
+    c, port = live(hub, sink)
+    seq = port.send_request("stream_open", {"stream_id": STREAM, "device_id": DEVICE, "kind": "session"})
+    c.recv_reply()
+    c.seq += 1
+    c2 = hub.open()
+    assert c2.request("binding_put", {"object": G.binding(seq=2, mode="full")}) == {}
+    reply = {
+        "v": 2, "suite": 2, "kind": "hub.link", "hv": 0, "hub_id": G.HUB_ID, "workspace_id": G.WS_A,
+        "dir": "w2h", "seq": c.seq, "ts_ms": NOW, "op": "stream_open", "re": seq, "body": {},
+    }  # fmt: skip
+    c.send_raw(c._wsk.sign_link(reply, c._c.exporter()))
+    c.send_raw(c.build("stream_data", data_body()))
+    assert "snapshot" in c.request("snapshot_get", {})  # processed in order: both are behind us
+    assert "reply" not in sink.kinds() and "frame" not in sink.kinds()
+    assert port in [e[2] for e in sink.wait("detach")]
+
+
 def test_stream_open_from_the_host_is_unknown_op(mk):
     sink = Sink()
     c, _ = live(hub := mk(sink), sink)

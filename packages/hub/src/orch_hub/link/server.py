@@ -393,6 +393,19 @@ class LinkServer:
         except Exception:  # noqa: BLE001  # fail closed
             return None
 
+    def _stream_current(self, ws: str, port: _Port) -> bool:
+        """The one gate before every forward to the stream sink (frames and ``stream_open`` replies): the port is
+        attached to the sink AND the workspace is still bound under the ``binding_seq`` it attached under. A stale
+        binding detaches the port (the sink closes its streams) and the caller drops the message. Logs ids only."""
+        if self._streams is None or not port.streams_attached:
+            return False
+        seq = self._bound_seq(ws, port.wsk)
+        if seq is not None and seq == port.attached_seq:
+            return True
+        _log.warning("stream binding changed ws=%s: frame dropped, port detached", ws)
+        self._detach(ws, port)
+        return False
+
     def _detach(self, ws: str, port: _Port) -> None:
         if self._router is not None and port.live is not None:
             self._router.detach(ws, port.live)
@@ -506,14 +519,14 @@ class LinkServer:
             if o["re"] is None and o["op"] in R.STREAM_OPS:
                 # R4: a verified one-way stream frame. It gets NO reply, ever (the host would count it as a reply to a
                 # request it never sent); a link with no stream sink drops it.
-                if self._streams is not None and port.streams_attached:
+                if self._stream_current(ws, port):
                     try:
                         self._streams.on_frame(ws, port, o, R.frame_cost(signed))
                     except Exception as e:  # noqa: BLE001  # the link must survive a sink fault
                         _log.warning("stream sink on_frame raised %s", type(e).__name__)
                 continue
             if o["re"] is not None and o["op"] == "stream_open":  # the host's answer to a stream_open we sent
-                if self._streams is not None and port.streams_attached:
+                if self._stream_current(ws, port):
                     try:
                         self._streams.on_reply(ws, port, o)
                     except Exception as e:  # noqa: BLE001

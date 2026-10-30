@@ -41,6 +41,7 @@ W2H_OPS: dict[str, str | None] = {
     "rail_get": None,
     "owner_get": None,
     "hub_where": None,
+    "agent_events": "full",
     "status_put": None,
     "addon_request": None,
     "profile_put": None,

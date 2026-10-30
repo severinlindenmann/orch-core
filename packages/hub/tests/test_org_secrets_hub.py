@@ -120,6 +120,16 @@ def test_create_stores_one_wrap_per_bound_workspace_and_it_opens_with_the_worksp
     assert s == 200 and sec["name"] == "crm-key" and sec["shared"] == "all"
     assert {k: v["state"] for k, v in sec["state"].items()} == {WS_A: "ready", WS_B: "ready"}
     assert "sealed" not in repr(o)
+    assert all("owner_name" in x for x in o["workspaces"])  # P10: the page names a workspace by its owner, never an id
+
+
+def test_secrets_list_workspaces_carry_the_owner_display_name(w):
+    s, o, _ = w.call("GET", "/admin/secrets", token=w.token)
+    assert s == 200 and o["workspaces"]
+    names = {u["name"] for u in w.api.d.access.users()}
+    for x in o["workspaces"]:
+        assert x["owner_name"] is None or x["owner_name"] in names
+        assert not any(k in x for k in ("owner_alias", "sealed", "value"))
 
 
 def test_only_a_hub_admin_may_use_the_routes(w):

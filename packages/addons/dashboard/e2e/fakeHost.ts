@@ -99,6 +99,8 @@ export class FakeServer {
   clickOn = false
   /** The hub feature (the Hub and Company tabs) and the mock company offers behind it. */
   hubOn = false
+  /** The Publish feature (Share files on a ticket), on or off. */
+  publishOn = false
   clickSigned = new Set<string>()
   /** Settings switches (run 13 UE): Claude Code folder trust and the records timer. */
   trustOn = false
@@ -141,7 +143,7 @@ export class FakeServer {
       return
     }
     if (p === '/api/host') return json({})
-    const features = [...FEATURES, 'remote', ...(this.clickOn ? ['click'] : []), ...(this.hubOn ? ['hub'] : [])]
+    const features = [...FEATURES, 'remote', ...(this.clickOn ? ['click'] : []), ...(this.hubOn ? ['hub'] : []), ...(this.publishOn ? ['publish'] : [])]
     if (p === '/api/session') return json({ features, login: 'local', workspaces: { [WS]: features } })
     if (p === '/api/workspaces') return json([{ id: WS, prefix: 'DEMO', name: 'Dev workspace', members: [{ person: OWNER, name: 'Sev', role: 'owner', devices: 1 }], needs_you: 0, host_state: 'ok', features, click: this.clickOn ? { custody: 'convenience', enabled: true, available: true, switchable: true } : null }])
     if (p === '/api/me') return json([{ person: OWNER, name: 'Sev', role: 'owner', tier: 'A', workspace: WS }])

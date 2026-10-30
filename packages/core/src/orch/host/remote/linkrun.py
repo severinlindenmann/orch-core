@@ -30,7 +30,7 @@ from orch.hubclient.tlslink.client import STREAM_LINK_ALPN, LinkClosed, LinkErro
 from . import policy, pump, session
 
 if TYPE_CHECKING:
-    from orch.host.workspace import WorkspaceService
+    pass
 
 __all__ = ["KEEPALIVE_S", "Runner", "STREAM_LINK_ALPN", "current", "refresh", "stop"]
 

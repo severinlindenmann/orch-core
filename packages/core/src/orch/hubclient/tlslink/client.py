@@ -275,8 +275,8 @@ class LinkClient:
         alpn: bytes | None = None,
     ) -> LinkClient:
         """Open and authenticate. ``alpn``: the link's declared role (``STREAM_LINK_ALPN``); the hub must select it,
-        else the link is closed (``LinkError("unsupported")``: never used as a plain link). ``wsk_pub`` is passed only for the first link of a join (the hub has not pinned the
-        workspace yet); otherwise leave it ``None``. Raises ``PinMismatch`` before anything is sent when the hub's
+        else the link is closed (``LinkError("unsupported")``: never used as a plain link).
+        ``wsk_pub`` is passed only for the first link of a join (the hub has not pinned the workspace yet); otherwise leave it ``None``. Raises ``PinMismatch`` before anything is sent when the hub's
         certificate is not the card's, ``LinkError`` for a refusal, ``LinkClosed`` / ``LinkTimeout`` otherwise."""
         if mode not in MODES:
             raise LinkError("malformed")

@@ -9,7 +9,6 @@ from __future__ import annotations
 import base64
 import logging
 import tempfile
-import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace

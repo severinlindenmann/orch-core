@@ -64,9 +64,7 @@ def main(
     url = ctl.start_home()
     out.write(f"orch remote client: {url.split('#')[0]}\n")
     out.flush()
-    import webbrowser
-
-    webbrowser.open(url)
+    ctl.open_home()  # the browser gets a private redirect file's path; the launch code is never in its argv
     try:
         idle_since = time.monotonic()
         while True:

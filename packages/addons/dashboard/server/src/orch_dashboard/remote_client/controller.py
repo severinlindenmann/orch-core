@@ -17,11 +17,13 @@ import time
 import webbrowser
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from orch.remoteclient import Client, ClientError, PresenceBackend, Prompt, Session
 from orch.remoteclient import enroll as _enroll
 
+from .launcher import Launcher
 from .listener import Listener, bind_loopback
 from .origin import Origin, error_doc
 from .static import StaticSite
@@ -141,9 +143,12 @@ class Controller:
         opener: Callable[[str], object] = webbrowser.open,
         computer_name: str | None = None,
         clock: Callable[[], float] = time.time,
+        launch_dir: Path | None = None,
     ) -> None:
         self.client, self.static, self.gate = client, static, gate
-        self.opener, self._clock = opener, clock
+        self._clock = clock
+        # the browser is opened with the path of a private redirect file, never an address with a code in it (argv)
+        self.launcher = Launcher(opener, launch_dir)
         self.computer_name = computer_name or _computer_name()
         self._mu = threading.Lock()
         self._open: dict[str, Open] = {}
@@ -159,8 +164,13 @@ class Controller:
         sock = bind_loopback()
         lst = Listener(sock)
         self.home = Origin(port=lst.port, kind="home", static=self.static, home_api=self.route)
+        self.home.on_redeem = lambda: self.launcher.redeemed("home")
         self.home_listener = lst.serve(self.home)
         return self.home_url()
+
+    def open_home(self) -> bool:
+        """Open the browser at the home page (through the redirect file)."""
+        return self.launcher.open("home", self.home_url())
 
     def home_url(self) -> str:
         assert self.home is not None
@@ -173,6 +183,7 @@ class Controller:
             self.end(ws)
         if self.home_listener:
             self.home_listener.stop()
+        self.launcher.close()
 
     # -- routes of the home page --
 
@@ -332,6 +343,7 @@ class Controller:
         lst = Listener(sock)
         origin = Origin(port=lst.port, kind="session", static=self.static, session=session)
         lst.serve(origin)
+        origin.on_redeem = lambda ws=ws: self.launcher.redeemed(ws)
         rec = Open(ws, session, lst, origin, int(self._clock() * 1000))
         with self._mu:
             self._open[ws] = rec
@@ -339,7 +351,7 @@ class Controller:
         return {"ok": True}
 
     def _launch(self, rec: Open) -> None:
-        self.opener(f"{rec.origin.origin}/#launch={rec.origin.launch_code()}")
+        self.launcher.open(rec.workspace_id, f"{rec.origin.origin}/#launch={rec.origin.launch_code()}")
 
     def end(self, ws: str) -> None:
         with self._mu:

@@ -405,7 +405,9 @@ def test_open_starts_one_origin_per_workspace_and_end_stops_it(static):
     ctl, api = run_home(client, static, opened=opened)
     try:
         assert api("POST", "/open", {"workspace_id": WS_A})[0] == 200
-        (url,) = opened
+        (uri,) = opened
+        assert "launch" not in uri.split("/")[-1].replace("launch-", "") and "#" not in uri  # no code in argv
+        url = _redirect_target(uri)
         assert url.startswith("http://127.0.0.1:") and "#launch=" in url
         sport = int(url.split(":")[2].split("/")[0])
         assert sport != ctl.home_listener.port
@@ -617,3 +619,60 @@ def test_the_client_refuses_an_agent_environment():
     err = io.StringIO()
     assert main([], env={"ORCH_SESSION": "s"}, err=err) == 3
     assert "never opens it" in err.getvalue()
+
+
+def _redirect_target(uri: str) -> str:
+    """The address inside the private redirect file the browser was given."""
+    from urllib.parse import unquote, urlparse
+
+    text = open(unquote(urlparse(uri).path)).read()
+    return json.loads(text.split("location.replace(")[1].split(");")[0])
+
+
+def test_the_browser_is_given_a_private_redirect_file_never_the_code(static, tmp_path):
+    import os
+    import stat
+
+    opened: list[str] = []
+    ctl = Controller(
+        fake_client(), static, opener=opened.append, computer_name="T", launch_dir=tmp_path / "launch"
+    )
+    try:
+        ctl.start_home()
+        ctl.open_home()
+        (uri,) = opened
+        target = _redirect_target(uri)
+        code = target.split("#launch=")[1]
+        assert code not in uri and uri.startswith("file://")
+        path = tmp_path / "launch" / uri.rsplit("/", 1)[1]
+        assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
+        assert stat.S_IMODE(os.stat(tmp_path / "launch").st_mode) == 0o700
+        port = ctl.home_listener.port
+        st, _, _ = raw(
+            port, "POST", "/auth/session",
+            headers={"Origin": f"http://127.0.0.1:{port}", "Content-Type": "application/json"},
+            body=json.dumps({"code": code}).encode(),
+        )  # fmt: skip
+        assert st == 200
+        assert not path.exists()  # gone once the code is used
+    finally:
+        ctl.stop()
+
+
+def test_a_redirect_file_that_is_never_used_expires_and_stale_ones_are_swept(tmp_path):
+    from orch_dashboard.remote_client.launcher import Launcher
+
+    d = tmp_path / "l"
+    (d).mkdir(mode=0o700)
+    (d / "launch-old.html").write_text("x")
+    lc = Launcher(lambda u: True, d, ttl=0.2)
+    assert not (d / "launch-old.html").exists()  # swept at start
+    lc.open("k", "http://127.0.0.1:1/#launch=abc")
+    (f,) = list(d.glob("launch-*.html"))
+    import time
+
+    time.sleep(0.6)
+    assert not f.exists()
+    d.chmod(0o755)
+    with pytest.raises(RuntimeError):
+        Launcher(lambda u: True, d)

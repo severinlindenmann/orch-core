@@ -91,6 +91,7 @@ class Origin:
         self._codes: dict[str, float] = {}
         self._tokens: list[str] = []
         self.last_seen = clock()
+        self.on_redeem: Callable[[], None] | None = None  # the launcher removes its redirect file
 
     # -- credentials --
 
@@ -112,6 +113,8 @@ class Origin:
         if found is None:
             return None
         expires = self._codes.pop(found)
+        if self.on_redeem is not None:
+            self.on_redeem()
         if expires <= self._clock():
             return None
         token = secrets.token_urlsafe(32)

@@ -108,6 +108,7 @@ def server_setup(
     user: str | None = None,
     allow_non_cgnat: bool = False,
     backup_drop: str | None = None,
+    drop_check: Callable[[str], None] = server.check_drop_path,
 ) -> Plan:
     """Install the parts of ``role`` for this OS user. ``resolve``/``local`` are the DNS seams of the tests."""
     if role not in ROLES:
@@ -118,6 +119,8 @@ def server_setup(
         raise InstallError("--hub-vpn-only belongs to --role hub")
     if hub_vpn_only and not names.hub:
         raise InstallError("--hub-vpn-only needs a name for the hub (--domain or --domain-hub)")
+    if backup_drop:
+        drop_check(backup_drop)
     check_block(ctx, parts)  # --port-base: refuse a busy port before anything is written
     ifaces = (local or (lambda: local_interfaces(lambda argv: ctx.run(argv, dict(ctx.env))[1])))()
     mine = {a.ip for a in ifaces}

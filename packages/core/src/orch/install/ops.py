@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import calendar
 import contextlib
+import hashlib
 import json
 import os
 import pwd
@@ -155,14 +156,13 @@ def run_health(
             problems.append(f"the certificate of {name} expires in {max(days, 0):.0f} days")
     drop = cfg.get("backup_drop")
     if drop:  # a file in the shared drop that this hub did not copy: someone else in the group put it there
-        mine = set(_load_record(Path(cfg["backup_record"])))
-        try:
-            strange = sorted(n for n in os.listdir(drop) if n not in mine)
-        except OSError:
-            strange = []
+        strange = drop_strangers(Path(drop), Path(cfg["backup_record"]))
         if strange:
+            # a foreign name is data, never text we print: only its count and names of the strict shape (via ascii)
+            shown = [ascii(n) for n in strange if _NAME.fullmatch(n)][:3]
             problems.append(
-                f"the backup drop folder holds {len(strange)} file(s) this hub did not copy, such as {strange[0]}"
+                f"the backup drop folder holds {len(strange)} unexpected or changed file(s)"
+                + (f", such as {', '.join(shown)}" if shown else "")
             )
     mem = mem_mb()
     if mem is not None and mem < cfg.get("min_mem_mb", MIN_MEM_MB):
@@ -200,15 +200,57 @@ def _check_dest(dest: Path, shared: bool, owner: str | None) -> str | None:
                 return f"the backup user {owner} does not exist: do the root steps in docs/pilot-server.md"
             if st.st_uid != want:
                 return f"the backup folder {dest} is not owned by {owner}: nothing was copied"
-        if stat.S_IMODE(st.st_mode) != 0o2770:
+        if stat.S_IMODE(st.st_mode) != 0o3770:
             have = f"{stat.S_IMODE(st.st_mode):o}"
-            return f"the backup folder {dest} must have mode 2770 (it has {have}): nothing was copied"
+            return (
+                f"the backup folder {dest} must have mode 3770 (setgid and sticky) (it has {have}): nothing was copied"
+            )
     elif st.st_uid != os.geteuid():
         return f"the backup folder {dest} is not owned by this user: nothing was copied"
     return None
 
 
-def _write_private(dest: Path, name: str, src: Path, mode: int) -> None:
+def _sha256_of(fd: int) -> str:
+    h = hashlib.sha256()
+    with os.fdopen(os.dup(fd), "rb") as fh:
+        fh.seek(0)
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def drop_strangers(drop: Path, record: Path) -> list[str]:
+    """Names in the shared drop that are not exactly what this hub wrote: not in its record, not a regular file
+    owned by this user, or different (size, inode, sha256) from the record. lstat / no-follow open: no link followed."""
+    meta = _load_meta(record)
+    try:
+        names = sorted(os.listdir(drop))
+    except OSError:
+        return []
+    bad = []
+    for n in names:
+        want = meta.get(n)
+        if want is None:
+            bad.append(n)
+            continue
+        try:
+            st = os.lstat(drop / n)
+            ok = stat.S_ISREG(st.st_mode) and st.st_uid == os.geteuid()
+            ok = ok and st.st_size == want["size"] and st.st_ino == want["ino"]
+            if ok:
+                fd = os.open(drop / n, os.O_RDONLY | os.O_NOFOLLOW)
+                try:
+                    ok = _sha256_of(fd) == want["sha256"]
+                finally:
+                    os.close(fd)
+        except OSError:
+            ok = False
+        if not ok:
+            bad.append(n)
+    return bad
+
+
+def _write_private(dest: Path, name: str, src: Path, mode: int) -> dict[str, Any]:
     """The ONE way a file is written into the backup folder: a random O_EXCL temp name (never a predictable one, a link
     planted at any name is never followed), the content copied through file descriptors, the mode set on the descriptor,
     then a rename over the target name (a rename replaces a link, it never writes through it)."""
@@ -217,9 +259,17 @@ def _write_private(dest: Path, name: str, src: Path, mode: int) -> None:
         fd, tmp = tempfile.mkstemp(dir=dest, prefix=".hub-", suffix=".part")
         try:
             os.fchmod(fd, mode)
+            h = hashlib.sha256()
+            size = 0
             with os.fdopen(fd, "wb") as out, os.fdopen(fd_src, "rb", closefd=False) as inp:
-                shutil.copyfileobj(inp, out)
-            os.replace(tmp, dest / name)
+                for chunk in iter(lambda: inp.read(1 << 20), b""):
+                    out.write(chunk)
+                    h.update(chunk)
+                    size += len(chunk)
+                out.flush()
+                ino = os.fstat(out.fileno()).st_ino
+            os.replace(tmp, dest / name)  # a rename keeps the inode
+            return {"size": size, "ino": ino, "sha256": h.hexdigest()}
         except BaseException:
             with contextlib.suppress(OSError):
                 os.unlink(tmp)
@@ -249,12 +299,32 @@ def _load_record(path: Path) -> list[str]:
         return []
 
 
-def _save_record(path: Path, done: list[str]) -> None:
+def _load_meta(path: Path) -> dict[str, dict[str, Any]]:
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        with os.fdopen(fd) as fh:
+            files = json.load(fh).get("files", {})
+        return {
+            n: m
+            for n, m in files.items()
+            if _NAME.fullmatch(n)
+            and isinstance(m, dict)
+            and type(m.get("size")) is int
+            and type(m.get("ino")) is int
+            and isinstance(m.get("sha256"), str)
+        }
+    except (OSError, ValueError, AttributeError):
+        return {}
+
+
+def _save_record(path: Path, done: list[str], meta: dict[str, dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".rec-", suffix=".tmp")
     with os.fdopen(fd, "w") as fh:
         os.fchmod(fd, 0o600)
-        fh.write(json.dumps({"done": done[-RECORD_MAX:]}, sort_keys=True) + "\n")
+        kept = done[-RECORD_MAX:]
+        body = {"done": kept, "files": {n: meta[n] for n in kept if n in meta}}
+        fh.write(json.dumps(body, sort_keys=True) + "\n")
     os.replace(tmp, path)
 
 
@@ -288,7 +358,7 @@ def backup_copy(
     ``(copied, problems)``. The files are sealed with the hub's backup key; the folder holds nothing a thief could read.
 
     ``shared``: ``dest`` is a drop folder an administrator made (owned by ``owner``, the ``orch-backup`` user, mode
-    2770, group-writable for the hub user). It is not created or re-moded here and files are group-readable (0640).
+    3770 (setgid, sticky), group-writable for the hub user). It is not created or re-moded here; files are 0640.
     The folder is checked first (a link, another owner or another mode: a problem is reported, nothing is copied).
 
     What was copied is remembered in ``record`` (hub-owned, 0600), never read back from names in ``dest``: another
@@ -320,6 +390,7 @@ def backup_copy(
     if len(ids) != 1:
         return [], ["the hub's backup folder holds backups of more than one hub id: not copying"]
     done = _load_record(record)
+    meta = _load_meta(record)
     copied, problems = [], []
     for name in sorted(cands):
         if name in done:
@@ -331,10 +402,10 @@ def backup_copy(
         if cur is not None:
             problems.append(f"{dest / name} is there but not from this hub's record: left alone, not overwritten")
             continue
-        _write_private(dest, name, src / name, 0o640 if shared else 0o600)
+        meta[name] = _write_private(dest, name, src / name, 0o640 if shared else 0o600)
         copied.append(name)
         done.append(name)
-    _save_record(record, done)
+    _save_record(record, done, meta)
     _prune(dest, done, keep)
     return copied, problems
 

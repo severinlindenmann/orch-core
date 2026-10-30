@@ -769,7 +769,7 @@ def test_runbook_backup_pull_uses_a_restricted_key_and_no_shell():
     assert doc.count(drop) >= 3
     assert f'rrsync -ro {drop}"' in doc and "--exclude '.*' orch-backup@100.x.y.z: " in doc
     assert "sudo chmod 700 /home/orch-backup" in doc
-    assert f"install -d -m 2770 -o orch-backup -g orch-backup {drop}" in doc
+    assert f"install -d -m 3770 -o orch-backup -g orch-backup {drop}" in doc
     assert "usermod -aG orch-backup orch-hub" in doc and f"--backup-drop {drop}" in doc
     assert "command -v rrsync" in doc
 
@@ -778,11 +778,11 @@ def test_shared_drop_folder_is_not_re_moded_and_files_are_group_readable(tmp_pat
     src, drop = tmp_path / "b", tmp_path / "drop"
     src.mkdir()
     drop.mkdir()
-    drop.chmod(0o2770)
+    drop.chmod(0o3770)
     (src / "hub-abcd1234-20260101T030000Z.orchbak").write_bytes(b"x")
     copied, problems = ops.backup_copy(src, drop, shared=True, record=tmp_path / "rec.json")
     assert len(copied) == 1 and problems == []
-    assert oct(drop.stat().st_mode & 0o7777) == "0o2770"  # untouched
+    assert oct(drop.stat().st_mode & 0o7777) == "0o3770"  # untouched
     assert oct((drop / copied[0]).stat().st_mode & 0o777) == "0o640"
     assert ops.backup_copy(src, tmp_path / "nope", shared=True, record=tmp_path / "rec.json")[1][0].startswith(
         "the backup drop folder"
@@ -840,24 +840,22 @@ def test_allow_non_cgnat_warns_for_a_lan_v4_and_every_ipv6_is_refused(tmp_path):
 
 
 def test_health_warns_about_files_in_the_drop_this_hub_did_not_copy(tmp_path):
-    drop = tmp_path / "drop"
-    drop.mkdir()
+    src, drop = _shared(tmp_path)
     rec = tmp_path / "rec.json"
-    rec.write_text(json.dumps({"done": ["hub-abcd1234-20260101T030000Z.orchbak"]}))
-    (drop / "hub-abcd1234-20260101T030000Z.orchbak").write_bytes(b"x")
+    ops.backup_copy(src, drop, shared=True, record=rec)
     cfg = {"parts": [], "backup_drop": str(drop), "backup_record": str(rec)}
     kw = dict(ntp=lambda: True, mem_mb=lambda: 900.0, disk_free_gb=lambda p: 50.0)
     assert ops.run_health(cfg, **kw)["ok"]
     (drop / "hub-abcd1234-99999999T999999Z.orchbak").write_bytes(b"planted")
     rep = ops.run_health(cfg, **kw)
-    assert not rep["ok"] and "did not copy" in rep["problems"][0] and "99999999" in rep["problems"][0]
+    assert not rep["ok"] and "unexpected or changed" in rep["problems"][0] and "99999999" in rep["problems"][0]
 
 
 def _shared(tmp_path):
     src, drop = tmp_path / "b", tmp_path / "drop"
     src.mkdir()
     drop.mkdir()
-    drop.chmod(0o2770)
+    drop.chmod(0o3770)
     (src / "hub-abcd1234-20260101T030000Z.orchbak").write_bytes(b"real")
     return src, drop
 
@@ -892,8 +890,8 @@ def test_a_symlinked_or_wrong_mode_or_foreign_drop_folder_copies_nothing(tmp_pat
     assert copied == [] and "link or not a folder" in problems[0] and list(drop.iterdir()) == []
     drop.chmod(0o770)
     copied, problems = ops.backup_copy(src, drop, shared=True, record=tmp_path / "rec.json")
-    assert copied == [] and "mode 2770" in problems[0]
-    drop.chmod(0o2770)
+    assert copied == [] and "mode 3770" in problems[0]
+    drop.chmod(0o3770)
     copied, problems = ops.backup_copy(src, drop, shared=True, record=tmp_path / "rec.json", owner="no-such-user-xyz")
     assert copied == [] and "does not exist" in problems[0]
     assert ops.backup_copy(src, drop, shared=True, record=tmp_path / "rec.json", owner=getpass.getuser())[
@@ -909,7 +907,7 @@ def test_names_planted_in_the_shared_folder_change_neither_copy_nor_prune(tmp_pa
     src, drop = tmp_path / "b", tmp_path / "drop"
     src.mkdir()
     drop.mkdir()
-    drop.chmod(0o2770)
+    drop.chmod(0o3770)
     rec = tmp_path / "state" / "rec.json"
     canary = tmp_path / "canary.txt"
     canary.write_text("keep")
@@ -944,3 +942,60 @@ def test_names_planted_in_the_shared_folder_change_neither_copy_nor_prune(tmp_pa
     (src / "hub-abcd1234-20260104T030000Z.orchbak").write_bytes(b"r4")
     ops.backup_copy(src, drop, keep=2, shared=True, record=rec)
     assert victim.read_text() == "v" and (drop / real[1]).is_symlink()
+
+
+def test_backup_drop_needs_root_owned_parents_that_nobody_else_can_write(tmp_path):
+    import os
+
+    def fake(uid, mode):
+        return lambda p: os.stat_result((0o40000 | mode, 1, 1, 1, uid, 0, 0, 0, 0, 0))
+
+    server.check_drop_path("/var/lib/orch-backup-drop", fake(0, 0o755))  # root-owned, not writable by others: fine
+    for bad in ("relative/dir", "/var/../etc/x"):
+        with pytest.raises(InstallError, match="full path"):
+            server.check_drop_path(bad, fake(0, 0o755))
+    with pytest.raises(InstallError, match="must belong to root"):  # a user-owned parent
+        server.check_drop_path("/var/lib/orch-backup-drop", fake(1000, 0o755))
+    with pytest.raises(InstallError, match="must belong to root"):  # group- or world-writable parent
+        server.check_drop_path("/var/lib/orch-backup-drop", fake(0, 0o775))
+    with pytest.raises(InstallError, match="must belong to root"):
+        server.check_drop_path("/var/lib/orch-backup-drop", fake(0, 0o757))
+    # the real filesystem: a temp folder of this user is refused through setup too
+    ctx, *_ = stub_ctx(tmp_path)
+    (tmp_path / "drop").mkdir()
+    with pytest.raises(InstallError, match="must belong to root"):
+        server_setup(ctx, "hub", names=server.Names(), local=local, backup_drop=str(tmp_path / "drop" / "x"))
+    assert not ctx.runner.started
+
+
+def test_a_drop_without_the_sticky_bit_is_refused(tmp_path):
+    src, drop = _shared(tmp_path)
+    drop.chmod(0o2770)
+    copied, problems = ops.backup_copy(src, drop, shared=True, record=tmp_path / "rec.json")
+    assert copied == [] and "3770" in problems[0] and list(drop.iterdir()) == []
+
+
+def test_health_never_shows_a_raw_foreign_name_and_notices_a_replaced_file(tmp_path):
+    src, drop = _shared(tmp_path)
+    rec = tmp_path / "rec.json"
+    copied, _ = ops.backup_copy(src, drop, shared=True, record=rec)
+    cfg = {"parts": [], "backup_drop": str(drop), "backup_record": str(rec)}
+    kw = dict(ntp=lambda: True, mem_mb=lambda: 900.0, disk_free_gb=lambda p: 50.0)
+    assert ops.run_health(cfg, **kw)["ok"]
+    evil = "x\x1b[31mRED\nFAKE: all fine\r.orchbak"
+    (drop / evil).write_bytes(b"p")
+    rep = ops.run_health(cfg, **kw)
+    text = "\n".join(rep["problems"])
+    assert not rep["ok"] and "1 unexpected or changed" in text
+    assert "\x1b" not in text and "FAKE" not in text and "\n" not in rep["problems"][0]
+    (drop / evil).unlink()
+    # a member replaces the recorded file with their own file of the same name (same size, other content)
+    name = copied[0]
+    (drop / name).unlink()
+    (drop / name).write_bytes(b"fake")  # "real" was 4 bytes too
+    rep = ops.run_health(cfg, **kw)
+    assert not rep["ok"] and ascii(name) in rep["problems"][0]
+    # replaced by a symlink: also reported, never followed
+    (drop / name).unlink()
+    (drop / name).symlink_to(tmp_path / "canary")
+    assert not ops.run_health(cfg, **kw)["ok"]

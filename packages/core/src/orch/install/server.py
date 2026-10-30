@@ -29,6 +29,7 @@ __all__ = [
     "DnsResult",
     "Names",
     "caddy_snippet",
+    "check_drop_path",
     "check_dns",
     "derive_names",
     "detect_vpn_ip",
@@ -372,6 +373,24 @@ def root_block(user: str, directory: str = CADDY_DIR, *, caddyfile: str = "/etc/
             "",
         ]
     )
+
+
+def check_drop_path(path: str, lstat: Callable[[str], os.stat_result] = os.lstat) -> None:
+    """``--backup-drop`` must be an absolute path whose every parent folder is owned by root and not writable by its
+    group or by anyone else (a folder an ordinary user can write could be swapped for a link). The drop folder itself is
+    made by root and checked each night by the copy. Raises :class:`InstallError` in plain words."""
+    if not os.path.isabs(path) or ".." in Path(path).parts:
+        raise InstallError(f"--backup-drop {path}: use a full path that starts with / (and has no ..)")
+    for parent in list(Path(path).parents):
+        try:
+            st = lstat(str(parent))
+        except OSError as e:
+            raise InstallError(f"--backup-drop {path}: cannot look at {parent} ({e.strerror})") from None
+        if st.st_uid != 0 or st.st_mode & 0o022:
+            raise InstallError(
+                f"--backup-drop {path}: the folder {parent} must belong to root and not be writable by anyone else; "
+                "use a place such as /var/lib/orch-backup-drop"
+            )
 
 
 def shell_quote(s: str) -> str:

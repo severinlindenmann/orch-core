@@ -143,13 +143,15 @@ A Mac that is newer than the server may be refused; the other way round works.
   ```
   sudo adduser --disabled-password --gecos "" orch-backup
   sudo chmod 700 /home/orch-backup
-  sudo install -d -m 2770 -o orch-backup -g orch-backup /var/lib/orch-backup-drop
+  sudo install -d -m 3770 -o orch-backup -g orch-backup /var/lib/orch-backup-drop
   sudo usermod -aG orch-backup orch-hub
   sudo systemctl restart user@$(id -u orch-hub).service
   ```
 
-  The folder is owned by `orch-backup`, its group `orch-backup` may write (so `orch-hub`, a member, can add and remove the
-  nightly files), and everyone else (including `orch-edge`) has no access. The last line restarts `orch-hub`'s services so
+  The folder is owned by `orch-backup`, its group `orch-backup` may write (so `orch-hub`, a member, can add its nightly
+  files; the sticky bit means members can only remove or rename their own files, so no one can swap the hub's), and
+  everyone else (including `orch-edge`) has no access. The path must be a full path whose parent folders belong to root
+  and are not writable by anyone else (setup refuses otherwise). The last line restarts `orch-hub`'s services so
   the new group membership applies. Then run the hub setup with the drop folder:
   `orch setup --server --role hub ... --backup-drop /var/lib/orch-backup-drop`.
 - The Mac pulls them over the private network, from the Mac (for example a nightly job):

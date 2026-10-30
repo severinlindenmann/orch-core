@@ -170,7 +170,7 @@ describe('P12: Use copied link', () => {
     expect(screen.getByTestId('hub-link-text').getAttribute('placeholder')).toBeNull()
     await view.user.click(await screen.findByRole('button', { name: 'Use copied link' }, T))
     expect((screen.getByTestId('hub-link-text') as HTMLInputElement).value).toBe(LINK)
-    expect((await screen.findByTestId('hub-link-hub', {}, T)).textContent).toContain('Hub')
+    expect((await screen.findByTestId('hub-link-hub', {}, T)).textContent).toContain('Connect to the hub at') // r14 P07: the address is the question; the hub name sits under Details
     expect(navigator.clipboard.readText).toHaveBeenCalledTimes(1)
     expect(join).not.toHaveBeenCalled() // the person still presses Connect
     view.unmount()
@@ -189,7 +189,7 @@ describe('P12: Use copied link', () => {
     await view.user.click(await screen.findByRole('button', { name: 'Use copied link' }, T))
     expect(await screen.findByTestId('hub-link-nocopied', {}, T)).toBeTruthy()
     fireEvent.change(screen.getByTestId('hub-link-text'), { target: { value: LINK } })
-    expect((await screen.findByTestId('hub-link-hub', {}, T)).textContent).toContain('Hub')
+    expect((await screen.findByTestId('hub-link-hub', {}, T)).textContent).toContain('Connect to the hub at') // r14 P07: the address is the question; the hub name sits under Details
     view.unmount()
   })
 })

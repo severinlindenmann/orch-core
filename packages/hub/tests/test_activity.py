@@ -187,3 +187,150 @@ def test_a_failed_revoke_record_does_not_turn_the_revoke_into_an_error(w, monkey
     _, channel_id = w.register_channel(owner_token)
     assert w.call("POST", f"/admin/channels/{channel_id}/revoke", {}, token=w.login(w.admin))[0] == 200
     assert w.env.svc.channel_state(w.ann, channel_id) == "revoked"
+
+
+# --- HUB-AC-03 (#1426): agent events from a workspace (link op agent_events) ------------------------------------------
+
+
+def _ev(**kw):
+    return {"kind": "ticket.updated", "ts_ms": 5, "agent": "sess-1", "ticket": "ACME-12", **kw}
+
+
+def test_agent_events_reach_the_activity_view_as_agent_rows():
+    from conftest import Hub
+
+    from orch_hub.contract import vectorgen as G
+
+    log = ActivityLog(":memory:")
+    hub = Hub(activity=log)
+    try:
+        c = hub.open(first=True)
+        c.request("join", hub.join_body(mode="full"))
+        c.mode = "full"
+        assert c.request("agent_events", {"events": [_ev(), _ev(kind="event", ticket="")]}) == {}
+        rows = log.list(type="agent.event")
+        assert [(r["actor_kind"], r["actor_session"], r["workspace_id"]) for r in rows] == [
+            ("agent", "sess-1", G.WS_A)
+        ] * 2
+        assert {r["detail"]["what"] for r in rows} == {"ticket.updated", "event"}
+        assert any(r["detail"].get("ticket") == "ACME-12" for r in rows)
+    finally:
+        hub.close()
+
+
+@pytest.mark.parametrize(
+    "events",
+    [
+        [],
+        [_ev()] * 51,
+        [{**_ev(), "title": "secret plan"}],
+        [{k: v for k, v in _ev().items() if k != "ticket"}],
+        [_ev(kind="Ticket Updated")],
+        [_ev(kind="ticket.something_new")],
+        [_ev(kind="x" * 41)],
+        [_ev(agent="")],
+        [_ev(agent="a b\nc")],
+        [_ev(agent="a" * 65)],
+        [_ev(ticket="acme-12")],
+        [_ev(ticket="ACME-12 fix the login")],
+        [_ev(ts_ms=-1)],
+        [_ev(ts_ms=True)],
+        "x",
+    ],
+)
+def test_agent_events_malformed_is_refused_and_stores_nothing(events):
+    from conftest import Hub
+
+    from orch_hub.link import LinkError
+
+    log = ActivityLog(":memory:")
+    hub = Hub(activity=log)
+    try:
+        c = hub.open(first=True)
+        c.request("join", hub.join_body(mode="full"))
+        c.mode = "full"
+        with pytest.raises(LinkError) as error:
+            c.request("agent_events", {"events": events})
+        assert error.value.code == "malformed"
+        assert log.list() == []
+    finally:
+        hub.close()
+
+
+def test_agent_events_are_rate_limited_per_workspace_and_need_the_log(monkeypatch):
+    from conftest import Hub
+
+    from orch_hub.link import LinkError, ops
+
+    monkeypatch.setattr(ops, "AGENT_EVENTS_PER_HOUR", 3)
+    ops._AGENT_SEEN.clear()
+    log = ActivityLog(":memory:")
+    hub = Hub(activity=log)
+    bare = Hub()
+    try:
+        c = hub.open(first=True)
+        c.request("join", hub.join_body(mode="full"))
+        c.mode = "full"
+        c.request("agent_events", {"events": [_ev()] * 2})
+        c.request("agent_events", {"events": [_ev()] * 2})  # one over the cap: dropped, still answered
+        assert len(log.list(type="agent.event")) == 3
+        d = bare.open(first=True)
+        d.request("join", bare.join_body(mode="full"))
+        d.mode = "full"
+        with pytest.raises(LinkError) as error:
+            d.request("agent_events", {"events": [_ev()]})
+        assert error.value.code == "unavailable"
+    finally:
+        hub.close()
+        bare.close()
+
+
+def test_agent_event_rows_say_what_happened_in_plain_words(w):
+    token = w.login(w.admin)
+    w.api.d.activity.record(
+        "agent.event", actor_kind="agent", actor_session="sess-1", workspace_id=WS,
+        detail={"what": "ticket.updated", "ticket": "ACME-12"},
+    )  # fmt: skip
+    w.api.d.activity.record(
+        "agent.event", actor_kind="agent", actor_session="sess-1", workspace_id=WS, detail={"what": "odd.kind"}
+    )
+    status, body, _ = w.call("GET", "/admin/activity?type=agent.event", token=token)
+    assert status == 200
+    assert sorted(r["text"] for r in body["rows"]) == ["changed a ticket on ACME-12", "did something"]
+    assert all(r["actor"] == {"kind": "agent", "session": "sess-1"} for r in body["rows"])
+    assert "agent.event" in body["types"]
+
+
+def test_agent_events_refused_from_a_selective_binding_and_filed_under_the_caller():
+    from conftest import Hub
+
+    from orch_hub.contract import vectorgen as G
+    from orch_hub.link import LinkError, ops
+
+    ops._AGENT_SEEN.clear()
+    log = ActivityLog(":memory:")
+    hub = Hub(activity=log)
+    try:
+        sel = hub.open(first=True)
+        sel.request("join", hub.join_body(mode="selective"))
+        sel.send_raw(sel.build("agent_events", {"events": [_ev()]}))  # signed as the hub sees a selective link
+        with pytest.raises(LinkError) as error:
+            sel.recv_reply()
+        assert error.value.code == "wrong_mode"
+        assert log.list() == []
+    finally:
+        hub.close()
+    log = ActivityLog(":memory:")
+    hub = Hub(activity=log)
+    try:
+        a = hub.open(first=True)
+        a.request("join", hub.join_body(mode="full"))
+        a.mode = "full"
+        with pytest.raises(LinkError):  # a body naming another workspace is not a valid body (and closes the link)
+            a.request("agent_events", {"events": [{**_ev(), "workspace_id": G.WS_B}]})
+        a = hub.open()
+        a.mode = "full"
+        a.request("agent_events", {"events": [_ev()]})
+        assert {r["workspace_id"] for r in log.list(type="agent.event")} == {G.WS_A}
+    finally:
+        hub.close()

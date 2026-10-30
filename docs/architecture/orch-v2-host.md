@@ -13367,7 +13367,8 @@ The add-on `publish` ships inside orch-core (capability `network`); `addon.grant
 
 | Op | Column | What |
 |---|---|---|
-| `publish.prepare {ref, artifacts[], kind?, days?, views?}` | P; G only on the ticket it claims | copies the named artifacts (by the ticket manifest and digest) into a host-private stage (`<state>/hosts/<ws>/publish/stage/<id>/`, 0700); returns `staged_id` and the exact words a person signs; tags `origin: agent\|person` |
+| `publish.stage_upload {name, b64}` | P only | a file the person picked on this computer (at most 1 MiB, the name held to the server's rule) is kept aside (0700/0600) and hashed; nothing is shared. Returns `upload_id` (`pu_<hex>`), `size`, `sha256`. At most 20 wait; the oldest makes room |
+| `publish.prepare {ref, artifacts[]?, uploads[]?, kind?, days?, views?}` | P; G only on the ticket it claims | copies the named artifacts (by the ticket manifest and digest) and the named picked files (`uploads`, P only; consumed) into a host-private stage (`<state>/hosts/<ws>/publish/stage/<id>/`, 0700); returns `staged_id` and the exact words a person signs; tags `origin: agent\|person` |
 | `publish.share {staged_id}` (through `human.prepare`/`submit`) | person, signed | one `log.added` note on the ticket whose text the host builds from the stage (ticket, who prepared it, link kind, days, views, **server**, **every file with size and hash**, the manifest hash) |
 | `publish.send {staged_id}` | P only | builds the same words again from the stage and the signed server setting; requires a person-signed note with exactly these words (the caller's, at most an hour old); registers the workspace if needed, uploads the staged bytes (read, hashed, sent), commits, returns the link **once** and wipes the stage |
 | `publish.revoke {share_id}` | P only | `DELETE` on the server, then the record says `revoked` |

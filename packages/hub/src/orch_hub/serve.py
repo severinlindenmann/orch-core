@@ -407,6 +407,7 @@ def serve(
         views=views.service,
         shares=shares,
         switch=switch,
+        activity=activity,
         where=lambda: where_answer(state),
         deliveries=deliveries,
         host="0.0.0.0" if bind_all and link_listen is not None else host,  # the address stays the validated one

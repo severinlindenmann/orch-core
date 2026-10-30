@@ -3,7 +3,7 @@
 Status: design draft, round 3 (29 Oct 2026). Security reviewer (Opus): round 1 rework, round 2 approve with changes;
 all findings taken in (§13). R0 may start. **Amendment A1 (30 Oct 2026, owner decision, answers open question 1 /
 #1597): the browser device class, D94–D99, §6a. Opus design review: approve with changes, all taken in (§13); the
-points marked "pending owner confirmation" are lead decisions on the reviewer's recommended route.** Extends `orch-v2-hub.md` (D67–D83), `orch-v2-host.md` 0.8.6 item 10 (remote mode:
+points from the design review were confirmed on 30 Oct (manager, owner informed).** Extends `orch-v2-hub.md` (D67–D83), `orch-v2-host.md` 0.8.6 item 10 (remote mode:
 passkeys, route gate, step-up 10.5) and `contracts/hub/protocol.md` §10 (the host↔hub link).
 
 ## 1. Why
@@ -321,7 +321,7 @@ its stream branch, from the host's stream identity, never from the dashboard.
 | **Ticket edit** | `POST W/click/prepare`, `W/click/view`, `W/click/state`, `W/click/sign`, `W/click/cancel` (`signed`) | typed `edit_sequence` without `people` and `links`; typed `comment`, `label`; ops `set` (only `title`, `priority`, `size`, `labels`), `section.set` (only the sections `summary`, `context`, `requirements`, `out_of_scope`), `ac.add`, `ac.edit`, `task.add` and `task.edit` (without a `verify` key), `log`, `artifact.add` of a pasted image inside the sequence |
 | **Ticket create** | same click routes (`signed`) | typed `new_sequence` without `agent`, `launch` and `people`; ops `new` (types `feature`, `bug`, `chore`, `spike`; not `epic`), then the edit ops above with the same limits |
 | **Answer an agent question** (only while D98 is on) | same click routes (`signed`); the open questions come with the ticket reads above | typed `answer` → op `answer`, only to a question that is open on that ticket: pick one of the question's offered options, or a message for a question of the text kind; no free-text "Other" on a choice question (v1) |
-| Remove this browser (§12 point d, pending owner) | `POST W/remote/browser/self_remove` (`allowed`, with a browser op signature over its own review) | none; the host writes `remote.browser_removed` reason `self` (reduce-only) |
+| Remove this browser (§12 point d, confirmed 30 Oct) | `POST W/remote/browser/self_remove` (`allowed`, with a browser op signature over its own review) | none; the host writes `remote.browser_removed` reason `self` (reduce-only) |
 
 Self-remove signing: `browser_id` comes from the terminator only; `view_digest` = `SHA-256(cj({"op":"remote.browser_self_remove","browser_id"}))`; nonce flow as §6a.5.
 
@@ -342,7 +342,7 @@ concrete review, each its own R9 test:
   from a browser. The signer decides by the question's `kind`, written by the host when the question was raised, never
   by the agent's text. Only kind `ask` is answerable; an unknown or missing kind → `remote.refused`. No gate, grant,
   permission or charter check ever reads an `answer` event as consent, whatever its `via`.
-- **Free-text answers** (lead decision on the reviewer's recommended route, *pending owner confirmation*; it narrows
+- **Free-text answers** (lead decision on the reviewer's recommended route, *confirmed 30 Oct*; it narrows
   the owner's "answer an agent question"): in v1 a browser may pick an offered option or answer a text-kind
   question, but may not send a free-text "Other" on a choice question (`remote.refused`). The walk tests fail when a route
 or an op kind has no `remote-browser` entry. Ticket reads return what the person may read locally; there is no
@@ -444,7 +444,7 @@ or wants no page trust uses the remote client (§6) or the phone app.
   hacked hub can ignore that, never undo the workspace's removal). A hub can forge such a request only to remove a
   browser or turn answers off: a denial of service it can already cause by not relaying.
 - **From an open §5 remote-device session** of the owner: the same two reduce-only acts, `allowed` in the device column.
-- **From the browser itself** (§12 point d, pending owner): a browser may remove **itself** (a signed
+- **From the browser itself** (§12 point d, confirmed 30 Oct): a browser may remove **itself** (a signed
   `remote.browser_removed` reason `self`, `allowed` in the `remote-browser` column); it may not turn remote access off.
 - Nothing adds a browser, widens D96, or turns D98 or D98a on except the owner at the workspace (D84).
 
@@ -595,7 +595,7 @@ Every step goes through the security reviewer before its PR.
    (e) WebAuthn user verification as an opt-in hardening **at session open** (not per write). Reason: it stops
    background or headless use of the browser key inside the person's own browser profile; it does not stop the
    enrollment swap (the hub's own key, §6a.2) or a lying page (§6a.7).
-4. **Pending owner confirmation from the design review** (lead decisions on the reviewer's recommended routes, which
+4. **Confirmed on 30 Oct (from the design review)** (lead decisions on the reviewer's recommended routes, which
    narrow the owner's 30 Oct decision): H2, no free-text "Other" answer on a choice question from a browser in v1
    (§6a.4); H3, "Browsers allowed" off by default on customer workspaces (D98a).
 
@@ -619,7 +619,7 @@ Every step goes through the security reviewer before its PR.
 - A1 design review (Opus, 30 Oct): approve with changes. Taken in: H1 only four sections writable, no `verify` key,
   writes to agent-worked tickets need D98 (renamed); H2 answers need no presence on a browser (own workspaces only),
   an answer never satisfies a gate, grant or permission, `via: browser` shown in `wait`, no free-text "Other" (pending
-  owner); H3 D98a "Browsers allowed", off by default on customer workspaces (pending owner); H4 the enrollment swap
+  owner); H3 D98a "Browsers allowed", off by default on customer workspaces (confirmed 30 Oct); H4 the enrollment swap
   stated honestly, Remove all, last use and session count, first-session needs-you, code in the URL fragment, no
   service worker; M1 `wbk_fp` and browser fingerprint in the prologue, strict points, x-coordinate ECDH, one `bv`,
   kind/prefix and code-class checks, replay keyed by nonce, high-s accepted, msg3 within 60 s; M2 `request_id` in the

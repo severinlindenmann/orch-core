@@ -37,7 +37,7 @@ MANIFEST = "manifest.json"
 DATA = "data"
 #: top-level entries left out (derived or runtime), and one nested path
 _SKIP_TOP = frozenset({STATE_DIR, WORK_DIR, LOCK_FILE})
-_SKIP_REL = frozenset({"install/tools", "install/update.json"})
+_SKIP_REL = frozenset({"install/tools", "install/current", "install/update.json"})
 _REVOCATIONS = "revocations.jsonl"
 _SYNC_NAMES = frozenset(
     {"mobile documents", "dropbox", "google drive", "googledrive", "onedrive", "icloud drive", "clouddocs"}

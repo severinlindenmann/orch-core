@@ -8,6 +8,8 @@ import subprocess
 import sys
 from collections.abc import Mapping
 
+from orch import childenv
+
 from .client import ClickClient
 
 __all__ = ["start"]
@@ -25,7 +27,7 @@ def start(env: Mapping[str, str] | None = None) -> ClickClient:
             close_fds=True,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
-            env=dict(os.environ if env is None else env),
+            env=childenv.sanitize(os.environ if env is None else env),
         )
     except BaseException:
         parent.close()

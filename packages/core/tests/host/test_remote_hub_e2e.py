@@ -543,7 +543,6 @@ def test_e2e_full_session_and_peer_link_coexist(full_world, hub):
     assert heard == answer
 
 
-@pytest.mark.skip(reason="quarantined: flaky LinkClosed under CI load, see #1740")
 def test_e2e_selective_link_redial_frees_host_streams(world, hub):
     clients = [hub_client(world) for _ in range(3)]
     for c in clients:

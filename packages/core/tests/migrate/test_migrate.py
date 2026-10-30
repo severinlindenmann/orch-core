@@ -1123,16 +1123,20 @@ def test_a_planted_scratch_folder_is_deleted_not_imported(root, env):
 
 
 def test_a_planted_replaced_folder_is_not_swapped_in(root, env):
+    """The root is missing (a half-done swap) and an UNRECORDED ``.replaced-`` folder sits beside it: it must not
+    become the root. It is deleted, and the restore fails because there is no root."""
     b = swap_setup(root, env)
-    os.rename(root, tmp := root.with_name("moved"))
+    os.rename(root, root.with_name("kept"))
     planted = root.with_name(".root.replaced-x")
-    planted.mkdir()
-    (planted / "format.json").write_text("{}")
-    root.mkdir()  # a root exists again but we will see the planted one is only deleted
-    os.rmdir(root)
-    os.rename(tmp, root)
+    (planted / "install/tools/evil").mkdir(parents=True)
+    (planted / "install/tools/evil/bin").write_text("evil")
+    (planted / "format.json").write_text('{"orch": "workspace", "format": 1}')
+    with pytest.raises(OSError):
+        bk.restore(b, root, env)
+    assert not root.exists() and not planted.exists()
+    os.rename(root.with_name("kept"), root)
     bk.restore(b, root, env)
-    assert not planted.exists() and read_format(root, "workspace") == 1
+    assert not (root / "install/tools/evil").exists()
 
 
 @pytest.mark.parametrize("kind", ["group_writable", "symlink"])

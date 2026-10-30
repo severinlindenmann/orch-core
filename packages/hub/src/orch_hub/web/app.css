@@ -328,3 +328,8 @@ label .optional { font-weight:400; color:var(--text-faint); }
 .dl-form { margin-top:12px; }
 .backup-now button:disabled { opacity:.45; cursor:not-allowed; }
 /* --- end P07 --- */
+.ws-steps { padding-left:20px; display:flex; flex-direction:column; gap:14px; }
+.ws-steps code { word-break:break-all; user-select:all; }
+.ws-server input { min-width:140px; }
+.ws-who { display:flex; gap:8px; align-items:center; }
+.ws-who input { flex:1; width:auto; min-width:0; }

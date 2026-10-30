@@ -56,6 +56,7 @@ def test_every_allow_listed_file_is_served_with_the_hard_headers(w):
         "/switch.js",
         "/ui.js",
         "/feel.js",
+        "/serverguide.js",
         "/services.js",
         "/workspaces.js",
         "/phones.js",

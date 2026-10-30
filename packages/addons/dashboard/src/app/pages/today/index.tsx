@@ -63,6 +63,7 @@ function writeSeen(key: string, ids: string[]) {
 function actionRef(a: HumanAction): string {
   if (a.kind === 'answer') return a.question
   if (a.kind === 'verdict') return 'verify'
+  if (a.kind === 'approve_both') return 'requirements'
   return a.gate
 }
 

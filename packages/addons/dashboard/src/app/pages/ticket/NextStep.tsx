@@ -200,6 +200,18 @@ function NextStepCard({ ticket, viewer, sign, jump, signing = false, run, wait, 
   const working = agentWorking(ticket, wait)
   const now = useNow()
   const gate = APPROVE_ORDER.find((g) => av.approve.includes(g))
+  if (av.approveBoth) {
+    return (
+      <Card title="Ready for your approval" text="Read the requirements and the plan, then approve both with one signature.">
+        <Button size="sm" disabled={signing} onClick={(e) => sign({ kind: 'approve_both', pressed: trustedPress(e.nativeEvent) })}>
+          Approve requirements and plan
+        </Button>
+        <Button size="sm" variant="outline" disabled={signing} onClick={() => sign({ kind: 'request_changes', gate: 'requirements' })}>
+          Change something
+        </Button>
+      </Card>
+    )
+  }
   if (gate) {
     const c = APPROVE[gate]
     return (

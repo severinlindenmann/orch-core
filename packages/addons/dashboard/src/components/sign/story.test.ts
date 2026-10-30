@@ -27,6 +27,12 @@ describe('storyOf', () => {
     expect(s.steps.join(' ')).not.toContain('access is given')
   })
 
+  it('approve both: one signature locks the requirements and the plan and may start the build', () => {
+    const s = storyOf({ action: 'approve_both', key: 'DEMO-1', head_seq: 7 })!
+    expect(s.signLabel).toBe('Sign requirements and plan')
+    expect(s.steps).toEqual(['You sign.', 'The requirements and the plan are locked as shown.', 'An agent that waits for this approval may start building.'])
+  })
+
   it('approve requirements: the plan still needs approval', () => {
     const s = storyOf({ action: 'approve', key: 'DEMO-1', gate: 'requirements' })!
     expect(s.signLabel).toBe('Sign requirements')

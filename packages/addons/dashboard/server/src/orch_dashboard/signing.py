@@ -596,6 +596,36 @@ class EditTicket(Action):
             raise fail("invalid.input", f"That edit can't be signed: {exc}", exit=1) from None
 
 
+class ApproveBoth(Action):
+    """R11 P09: approve the requirements AND the plan of an existing ticket with ONE signature. The page sends the key
+    and the `head_seq` it showed. This server reads the ticket and the host's `gate.input` of both gates (now), refuses
+    a ticket that has changed since, and builds the intent from those reads: both full texts, criteria and tasks.
+    The signer signs two ordinary approvals and checks each against that intent (core `orch.host.seqgates`)."""
+
+    action: Literal["approve_both"]
+    key: Key
+    head_seq: Annotated[int, Field(ge=1)]
+
+    def intent(self, data: dict, inputs: dict) -> dict:
+        """`data` is the host's `ticket.get`, `inputs` the host's `gate.input` of both gates, read now."""
+        from orch.host import seqgates, sequence
+
+        head = (data.get("doc") or {}).get("head") or {}
+        if head.get("seq") != self.head_seq:
+            raise fail(
+                "conflict.stale",
+                "This ticket changed after you opened it. Reload it and try again.",
+                exit=5,
+            )
+        try:
+            intent = seqgates.intent_of_ticket(data, inputs)
+            if intent["ticket"]["key"] != self.key:
+                raise sequence.SequenceInvalid("the host answered for another ticket")
+            return sequence.validate_intent(intent)
+        except (sequence.SequenceInvalid, KeyError, TypeError) as exc:
+            raise fail("invalid.input", f"That approval can't be signed as one: {exc}", exit=1) from None
+
+
 class QuickCheck(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     text: Annotated[str, StringConstraints(min_length=1, max_length=200)]
@@ -1129,6 +1159,7 @@ PrepareBody = Annotated[
     | NewTicket
     | NewTicketSequence
     | EditTicket
+    | ApproveBoth
     | QuickStart
     | Details
     | WriteSection
@@ -1293,6 +1324,8 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
             return "new", {"title": intent["title"], "type": "chore"}
         case EditTicket():  # its op comes from the intent, which needs the ticket as read now: see plan()
             raise AssertionError("plan() builds an edit's first step")
+        case ApproveBoth():  # likewise: the requirements approval, from the intent
+            raise AssertionError("plan() builds the first step of both approvals")
         case Details():
             pairs = [f"{k}={v}" for k, v in (("priority", action.priority), ("size", action.size)) if v]
             if action.labels is not None:
@@ -1469,6 +1502,10 @@ def expected(action: Action, person: str | None = None):
             return lambda ev: (
                 one(ev, "ticket.created", title=intent["title"], ticket_type=kind)
                 and (person is None or ev[0].get("owner") == person)
+            )
+        case ApproveBoth():  # the first event is the ordinary approval of the requirements (the signer checks it)
+            return (
+                lambda ev: len(ev) == 1 and ev[0].get("type") == "gate.approved" and ev[0].get("gate") == "requirements"
             )
         case EditTicket():
             # the first event is one ordinary edit (the signer checks it against the intent, head included)
@@ -1695,6 +1732,12 @@ def plan(gateway: Gateway, ws: str, body: Action) -> Plan:
 
         edit_intent = body.intent(data)
         op, args = sequence.step_args(edit_intent, 0, None)  # the first step of the edit, naming the ticket
+    elif isinstance(body, ApproveBoth):
+        from orch.host import sequence
+
+        inputs = {g: gateway.call(ws, "gate.input", {"ref": key, "gate": g}) for g in ("requirements", "plan")}
+        edit_intent = body.intent(data, inputs)
+        op, args = sequence.step_args(edit_intent, 0, None)  # the requirements approval, naming the ticket
     else:
         edit_intent = None
         op, args = host_call(body, labels)  # the only place an op name is chosen
@@ -1733,7 +1776,7 @@ def plan(gateway: Gateway, ws: str, body: Action) -> Plan:
         base = {"addon": body.name, "staged": body.staged}
     person = link.welcome["peer"]["person"]
     meta = None
-    if isinstance(body, NewTicketSequence | QuickStart | EditTicket | MarketGrant):
+    if isinstance(body, NewTicketSequence | QuickStart | EditTicket | ApproveBoth | MarketGrant):
         from orch.host import sequence
 
         intent = edit_intent if edit_intent is not None else body.intent()

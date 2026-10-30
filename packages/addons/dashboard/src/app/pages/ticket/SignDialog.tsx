@@ -18,13 +18,13 @@ import { gateActionName, policyText } from './actions'
 import type { HumanAction } from './shared'
 import { queries } from '@/api/queries'
 import { handoffMode } from '@/api/features'
-import { CommitLine, VerdictEvidence, VerdictPreview } from './EvidenceView'
+import { allChecked, CommitLine, VerdictEvidence, VerdictPreview } from './EvidenceView'
 import { HandoffSignDialog } from './HandoffSignDialog'
 
 type Described = { title: string; gate?: GateName; hash: string; covers: string[]; policy?: string }
 
 /** The dialog title and what the signature covers, in core's words (the answer itself is shown field by field, see Answer). */
-function describe(ticket: TicketDocument, a: HumanAction): Described {
+function describe(ticket: TicketDocument, a: Exclude<HumanAction, { kind: 'approve_both' }>): Described {
   if (a.kind === 'answer') {
     const q = ticket.questions_state.find((x) => x.id === a.question)!
     return { title: `Answer ${q.id}`, hash: q.hash ?? '', covers: ['The question, its options and its current hash', 'Your answer: the option and the text shown above'] }
@@ -145,12 +145,12 @@ function Answer({ ticket, question, option, text }: { ticket: TicketDocument; qu
  * button, keeps the hash in a closed Details, and starts with focus on Cancel (the first radio for a verdict).
  * `onOpenEvidence` lets the ticket page jump to the evidence; without it the dialog closes and opens the ticket.
  */
-function SimulatedSignDialog({ ticket, action, onClose, onOpenEvidence, onOpenChanges, onPending }: { onPending?: (pending: boolean) => void; ticket: TicketDocument; action: HumanAction | null; onClose: () => void; onOpenEvidence?: () => void; onOpenChanges?: () => void }) {
+function SimulatedSignDialog({ ticket, action, onClose, onOpenEvidence, onOpenChanges, onPending }: { onPending?: (pending: boolean) => void; ticket: TicketDocument; action: Exclude<HumanAction, { kind: 'approve_both' }> | null; onClose: () => void; onOpenEvidence?: () => void; onOpenChanges?: () => void }) {
   const qc = useQueryClient()
   const navigate = useNavigate()
   const [phase, setPhase] = useState<'confirm' | 'touch' | 'sending'>('confirm')
   const [text, setText] = useState('')
-  const [result, setResult] = useState<'pass' | 'fail' | null>(null)
+  const [result, setResult] = useState<'pass' | 'fail' | null>(() => (action?.kind === 'verdict' && allChecked(ticket) ? 'pass' : null))
   const [error, setError] = useState<string | null>(null)
   const [preview, setPreview] = useState<{ artifact: Artifact; acId: string } | null>(null)
   const workspaces = useQuery(queries.workspaces())
@@ -168,7 +168,7 @@ function SimulatedSignDialog({ ticket, action, onClose, onOpenEvidence, onOpenCh
   useEffect(() => {
     setPhase('confirm')
     setText('')
-    setResult(null)
+    setResult(action?.kind === 'verdict' && allChecked(opened) ? 'pass' : null)
     setError(null)
     setPreview(null)
   }, [action])
@@ -191,7 +191,7 @@ function SimulatedSignDialog({ ticket, action, onClose, onOpenEvidence, onOpenCh
       ? 'Nothing to approve yet: the requirements have no text or acceptance criteria.'
       : 'Nothing to approve yet: the plan has no text or tasks.'
     : action.kind === 'verdict' && !result
-      ? 'Choose Pass or Send back'
+      ? 'Pick Pass or Send back to continue'
       : needsText && !text.trim()
         ? 'Say what should change to continue'
         : null
@@ -199,10 +199,7 @@ function SimulatedSignDialog({ ticket, action, onClose, onOpenEvidence, onOpenCh
 
   // The commit a verdict or code review signs: the branch head when the dialog opened, in full (owner decision 2026-10-10).
   const head = opened.branch.head
-  const passLabel = `Pass on ${visible(head)} · ${diffstat(opened.branch)}: the evidence is enough`
-  const proven = ticket.acceptance_state.filter((a) => a.state === 'proven').length
-  const receipts = ticket.tasks_state.filter((t) => t.receipt).length
-  const attested = ticket.tasks_state.some((t) => t.receipt?.attested_by)
+  const passLabel = `Pass on ${visible(head)} · ${diffstat(opened.branch)}`
 
   const answerText = action.kind === 'answer' ? action.text?.trim() || undefined : undefined
   const request = (): ActionRequest => {
@@ -295,10 +292,6 @@ function SimulatedSignDialog({ ticket, action, onClose, onOpenEvidence, onOpenCh
         {action.kind === 'verdict' && !preview && (
           <>
             <p className="flex flex-wrap items-center gap-x-3 text-[13px] text-text-muted">
-              <span>
-                AC {proven}/{ticket.acceptance_state.length} evidenced · {receipts} {receipts === 1 ? 'receipt' : 'receipts'}
-                {attested && ' (agent-attested)'}
-              </span>
               <Button type="button" variant="link" size="sm" className="h-auto p-0 text-[13px]" onClick={openEvidence} disabled={busy}>
                 Open evidence
               </Button>
@@ -311,20 +304,20 @@ function SimulatedSignDialog({ ticket, action, onClose, onOpenEvidence, onOpenCh
               <legend className="sr-only">Verdict</legend>
               {(
                 [
-                  ['pass', passLabel],
-                  ['fail', 'Send back · something must change'],
+                  ['pass', passLabel, allChecked(opened) ? "Recommended: the agent's check passed" : 'The evidence is enough'],
+                  ['fail', 'Send back', 'Something must change'],
                 ] as const
-              ).map(([r, label], i) => (
+              ).map(([r, label, reason], i) => (
                 <label
                   key={r}
                   className="flex cursor-pointer items-center gap-2 rounded-md border border-border px-3 py-2 text-[13px] has-[:checked]:border-brand has-[:checked]:bg-brand-soft"
                 >
                   <input ref={i === 0 ? firstRadio : undefined} type="radio" id={`verdict-${r}`} name="verdict" value={r} checked={result === r} onChange={() => setResult(r)} className="accent-[var(--brand)]" />
-                  {label}
+                  <span className="font-medium">{label}</span>
+                  <span className="text-text-muted">{reason}</span>
                 </label>
               ))}
             </fieldset>
-            <p className="text-[12px] text-text-muted">Pass accepts all {ticket.acceptance_state.length} criteria with the files and code shown.</p>
           </>
         )}
 
@@ -374,7 +367,7 @@ function SimulatedSignDialog({ ticket, action, onClose, onOpenEvidence, onOpenCh
   )
 }
 
-type Props = Parameters<typeof SimulatedSignDialog>[0]
+type Props = Omit<Parameters<typeof SimulatedSignDialog>[0], 'action'> & { action: HumanAction | null }
 
 /**
  * A ticket's human action. On a real host the host prepares the request and the person signs it with one click
@@ -383,5 +376,7 @@ type Props = Parameters<typeof SimulatedSignDialog>[0]
 export function SignDialog(props: Props) {
   const workspaces = useQuery(queries.workspaces())
   const ws = workspaceOfTicket(props.ticket.key, workspaces.data ?? [])
-  return handoffMode(ws?.id) ? <HandoffSignDialog {...props} ws={ws?.id} /> : <SimulatedSignDialog {...props} />
+  if (handoffMode(ws?.id)) return <HandoffSignDialog {...props} ws={ws?.id} />
+  // The mockup has no signer: approving both gates with one signature is offered on a real host only (availableActions).
+  return props.action?.kind === 'approve_both' ? null : <SimulatedSignDialog {...props} action={props.action} />
 }

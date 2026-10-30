@@ -34,6 +34,9 @@ import { Raw } from './visible'
 /** Phases in which a changed answer waits: the step in flight ends first (a prepare) or the answer is already on its way. */
 const HOLD = ['preparing', 'signing', 'settling', 'done']
 
+/** Why the Send answer button is grey (P10): shown beside it, never instead of a press. */
+const PICK_HINT = 'Pick an answer to send'
+
 export function AnswerSend({
   ticket,
   question,
@@ -61,6 +64,7 @@ export function AnswerSend({
   onSent?: () => void
 }) {
   const qc = useQueryClient()
+  const hintId = `${question.id}-send-hint`
   const workspaces = useQuery(queries.workspaces())
   const here = workspaceOfTicket(ticket, workspaces.data ?? [])
   const ws = here?.id
@@ -150,8 +154,13 @@ export function AnswerSend({
     // The mockup keeps its simulated dialog; a real host has one plain line.
     if (!isRealHost() && fallback) {
       return (
-        <div className="flex justify-end">
-          <Button type="button" size="sm" disabled={!canSend} onClick={fallback}>
+        <div className="flex items-center justify-end gap-3">
+          {!canSend && (
+            <span id={hintId} data-testid="answer-hint" className="text-[12px] text-text-muted">
+              {PICK_HINT}
+            </span>
+          )}
+          <Button type="button" size="sm" disabled={!canSend} onClick={fallback} aria-describedby={!canSend ? hintId : undefined}>
             Send answer
           </Button>
         </div>
@@ -202,8 +211,13 @@ export function AnswerSend({
           Nothing was signed.
         </p>
       )}
-      <div className="flex justify-end">
-        <Button type="button" size="sm" disabled={!canSend || !action || preparing} onClick={press} aria-busy={preparing}>
+      <div className="flex items-center justify-end gap-3">
+        {!canSend && (
+          <span id={hintId} data-testid="answer-hint" className="text-[12px] text-text-muted">
+            {PICK_HINT}
+          </span>
+        )}
+        <Button type="button" size="sm" disabled={!canSend || !action || preparing} onClick={press} aria-busy={preparing} aria-describedby={!canSend ? hintId : undefined}>
           {preparing ? (
             <>
               <Loader2 className="size-4 animate-spin" aria-hidden /> Preparing…

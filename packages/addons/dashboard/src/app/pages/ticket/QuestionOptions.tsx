@@ -75,6 +75,9 @@ export function QuestionOptions({
               recommended ? 'border-border-strong' : 'border-border',
             )}
           >
+            <span aria-hidden data-testid="option-dot" className={cn('mt-1 flex size-4 shrink-0 items-center justify-center rounded-full border', value === o.key ? 'border-brand' : 'border-border-strong')}>
+              {value === o.key && <span className="size-2 rounded-full bg-brand" />}
+            </span>
             <input type="radio" id={`${idPrefix}-${o.key}`} name={name} value={o.key} checked={value === o.key} disabled={disabled} onChange={() => onChange?.(o.key)} className="sr-only" aria-label={`${o.key.length <= 2 ? `${visible(o.key)}: ` : ''}${visible(o.label)}${recommended ? ', recommended' : ''}${o.cost ? `, ${visible(o.cost)}` : ''}`} />
             {body}
           </label>

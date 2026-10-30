@@ -250,7 +250,7 @@ HOLD_OPS = frozenset({"log", "set", "move", "section.set", "follow_up.reschedule
 
 #: contract 4: the signer-owned words of the View's ``headline`` (see :func:`headline`): one short line per op
 OP_TITLES: dict[str, str] = {
-    "approve": "Approve a gate",
+    "approve": "Approve requirements, plan or code review",
     "request_changes": "Request changes",
     "verdict": "Give a verdict",
     "answer": "Answer a question",
@@ -312,11 +312,16 @@ TICKET_KEY = re.compile(r"[A-Z][A-Z0-9]{0,15}-(?:(?!0000)[0-9]{4}|[1-9][0-9]{4,}
 DETAIL_CHARS = 60
 
 
+#: the signer-owned words of the View's ``headline`` for a sequence that has no op of its own (its ops are ordinary
+#: ones): the approval of the requirements and the plan with one signature
+SEQUENCE_TITLES: dict[str, str] = {"approve_gates": "Approve requirements and plan"}
+
+
 def headline(op: str, key: Any = None) -> str:
     """The View's ``headline``: signer-owned words only, the op's title from :data:`OP_TITLES` and, when the request
     names a ticket, its key (``Close a ticket: DEMO-0043``). Never any free text: a title a person or a host chose goes
     to :func:`headline_detail`. A key that is not a well-formed ticket key is left out."""
-    title = OP_TITLES.get(op, "Sign this change")
+    title = OP_TITLES.get(op) or SEQUENCE_TITLES.get(op, "Sign this change")
     if isinstance(key, str) and TICKET_KEY.fullmatch(key):
         return f"{title}: {key}"
     return title

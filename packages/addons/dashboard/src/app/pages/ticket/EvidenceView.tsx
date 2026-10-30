@@ -20,6 +20,12 @@ export function proofArtifacts(ticket: TicketDocument, ac: AcceptanceStatus): Ar
   return ac.evidence.flatMap((ev) => (ev.kind === 'artifact' ? ticket.artifacts.filter((a) => a.name === ev.ref) : []))
 }
 
+/** A requirement the agent checked: proven (by a file or a finished check) or already accepted by a person. */
+export const isChecked = (ac: AcceptanceStatus): boolean => ac.state === 'proven' || ac.proof === 'accepted'
+
+/** True only when there is at least one requirement and every one is checked: the only case where Pass is preselected. */
+export const allChecked = (ticket: TicketDocument): boolean => ticket.acceptance_state.length > 0 && ticket.acceptance_state.every(isChecked)
+
 /** Whether agent HTML may be drawn in this ticket's workspace (the same switch as the Artifacts tab). */
 function useAgentHtml(ticketKey: string): boolean {
   const workspaces = useQuery(queries.workspaces())
@@ -138,6 +144,7 @@ export function VerdictEvidence({ ticket, dialog = true, onPreview, name = () =>
   // A criterion proved by a finished check (a task receipt) has evidence too, just no file: it is not "missing".
   const byCheck = withProof.filter((x) => x.items.length === 0 && x.ac.evidence.some((ev) => ev.kind === 'task'))
   const without = withProof.filter((x) => x.items.length === 0 && x.ac.proof !== 'accepted' && !byCheck.includes(x))
+  const checked = withProof.filter((x) => isChecked(x.ac)).length
   const total = withProof.reduce((n, x) => n + x.items.length, 0)
   const row = (a: Artifact, acId: string, grouped: boolean) => <EvidenceItem key={a.name + acId} ticket={ticket} artifact={a} acId={acId} compact dialog={dialog} defaultOpen={false} grouped={grouped} onPreview={onPreview} />
   // One group per identity: agents by name, people by id, orch once. Criterion headings sit above their files in the group.
@@ -162,9 +169,9 @@ export function VerdictEvidence({ ticket, dialog = true, onPreview, name = () =>
   return (
     <section aria-label="Evidence" className="space-y-2 rounded-md border border-border bg-bg px-3 py-2">
       <h3 className="text-[12px] font-medium text-text-muted">
-        Evidence · {total} {total === 1 ? 'file' : 'files'} for {withProof.length - without.length} of {withProof.length} {withProof.length === 1 ? 'criterion' : 'criteria'}
+        The agent checked {checked} of {withProof.length} {withProof.length === 1 ? 'requirement' : 'requirements'}
+        {total > 0 && ` · ${total} ${total === 1 ? 'file' : 'files'} attached`}
       </h3>
-      {total === 0 && <p className="text-[12px] text-text-muted">No file is attached as proof yet.</p>}
       <div className="max-h-[40vh] space-y-3 overflow-auto">
         {dialog
           ? ordered.map((g) => {
@@ -195,8 +202,16 @@ export function VerdictEvidence({ ticket, dialog = true, onPreview, name = () =>
               ),
             )}
       </div>
-      {byCheck.length > 0 && <p className="text-[12px] text-text-muted">{byCheck.map((x) => x.ac.id).join(', ')} {byCheck.length === 1 ? 'is' : 'are'} proved by a check the agent ran (see the task receipts), not by a file.</p>}
-      {without.length > 0 && <p data-testid="no-evidence" className="flex items-center gap-1.5 text-[12px] text-text-muted"><FileQuestion className="size-3.5" aria-hidden />No evidence file yet for {without.map((x) => x.ac.id).join(', ')}.</p>}
+      {byCheck.length > 0 && (
+        <ul data-testid="checked-by-agent" className="space-y-1 text-[12px] text-text-muted">
+          {byCheck.map((x) => (
+            <li key={x.ac.id}>
+              <span className="text-text">{visible(x.ac.text)}</span> · Checked by the agent, no file attached
+            </li>
+          ))}
+        </ul>
+      )}
+      {without.length > 0 && <p data-testid="no-evidence" className="flex items-center gap-1.5 text-[12px] text-text-muted"><FileQuestion className="size-3.5" aria-hidden />No check or file yet for: {without.map((x) => visible(x.ac.text)).join('; ')}.</p>}
     </section>
   )
 }

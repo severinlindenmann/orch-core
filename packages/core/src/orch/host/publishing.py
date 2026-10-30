@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import binascii
 import calendar
 import collections
 import contextlib
@@ -58,6 +59,7 @@ if TYPE_CHECKING:
 __all__ = ["PUBLISH_CAPS", "PUBLISH_OPS", "WRITE_OPS", "execute", "facts_for", "serve"]
 
 PUBLISH_OPS: dict[str, int] = {
+    "publish.stage_upload": 1,
     "publish.prepare": 1,
     "publish.send": 1,
     "publish.revoke": 1,
@@ -70,6 +72,7 @@ PUBLISH_OPS: dict[str, int] = {
 REGISTER_PER_MINUTE = 3
 WRITE_OPS = frozenset(
     {
+        "publish.stage_upload",
         "publish.prepare",
         "publish.send",
         "publish.revoke",
@@ -91,6 +94,12 @@ MAX_STAGED = 20
 AGENT_STAGES = 3
 SCAN_CHUNK = 200
 STAGE_BYTES = 200 * 1024 * 1024
+#: P05 (J07-02): a file a person picks from this computer in the dashboard waits (0700, outside any stage) until the
+#: next ``publish.prepare`` takes it into the stage that is hashed and signed. One request carries the whole file
+#: (the host frame is 2 MiB), so a pick is at most this big; the pending room is bounded and the oldest is dropped.
+UPLOAD_BYTES = 1024 * 1024
+MAX_UPLOADS = 20
+_UPLOAD_ID = re.compile(r"pu_[0-9a-f]{32}")
 MAX_RECORDS = 500
 #: a staged copy no one finished with is dropped after this; a signature is good for a shorter time
 STAGE_KEEP = 24 * 3600
@@ -98,7 +107,18 @@ APPROVAL_VALID = 3600
 _REF = {"type": "string", "minLength": 1, "maxLength": 80}
 _STAGED = {"type": "string", "pattern": r"^ps_[0-9a-f]{32}$"}
 _SHARE = {"type": "string", "pattern": r"^[0-9a-f]{32}$"}
+_UPLOAD = {"type": "string", "pattern": r"^pu_[0-9a-f]{32}$"}
 _SCHEMAS = {
+    # a picked file's bytes, base64, in the request itself; the name is checked again by approval.check_name
+    "publish.stage_upload": {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string", "minLength": 1, "maxLength": 128},
+            "b64": {"type": "string", "minLength": 4, "maxLength": (UPLOAD_BYTES + 2) // 3 * 4},
+        },
+        "required": ["name", "b64"],
+        "additionalProperties": False,
+    },
     "publish.prepare": {
         "type": "object",
         "properties": {
@@ -106,15 +126,16 @@ _SCHEMAS = {
             "artifacts": {
                 "type": "array",
                 "items": {"type": "string", "minLength": 1, "maxLength": 128},
-                "minItems": 1,
+                "minItems": 0,
                 "maxItems": approval.LIMITS["files"],
                 "uniqueItems": True,
             },
+            "uploads": {"type": "array", "items": _UPLOAD, "maxItems": approval.LIMITS["files"], "uniqueItems": True},
             "kind": {"enum": list(approval.KINDS)},
             "days": {"enum": list(approval.DAYS)},
             "views": {"enum": list(approval.VIEWS)},
         },
-        "required": ["ref", "artifacts"],
+        "required": ["ref"],
         "additionalProperties": False,
     },
     "publish.send": {
@@ -417,6 +438,125 @@ def _save_records(service: WorkspaceService, rows: list[dict[str, Any]]) -> None
     _put_json(_base(service) / "shares.json", {"v": 1, "shares": rows[-MAX_RECORDS:]})
 
 
+# -- uploads (a file picked on this computer, P05) ---------------------------------------------------------------------
+
+
+def _upload_dir(service: WorkspaceService, upload_id: str) -> Path:
+    if _UPLOAD_ID.fullmatch(upload_id or "") is None:
+        raise HostError("not_found", "no such picked file")
+    return _base(service) / "upload" / upload_id
+
+
+def _load_upload(service: WorkspaceService, upload_id: str) -> dict[str, Any]:
+    meta = _read_json(service, _upload_dir(service, upload_id) / "meta.json")
+    if (
+        not isinstance(meta, dict)
+        or meta.get("upload_id") != upload_id
+        or meta.get("ws") != service.workspace_id
+        or not isinstance(meta.get("size"), int)
+        or not isinstance(meta.get("sha256"), str)
+    ):
+        raise HostError("not_found", "a picked file is gone: pick it again")
+    try:
+        approval.check_name(meta["name"])
+    except (ValueError, KeyError, TypeError):
+        raise HostError("not_found", "a picked file is gone: pick it again") from None
+    return meta
+
+
+def _upload_read(service: WorkspaceService, meta: dict[str, Any], room: int) -> bytes:
+    """A picked file, opened without following a link and held to its recorded size and hash (like a stage file)."""
+    try:
+        fd = os.open(
+            _upload_dir(service, meta["upload_id"]) / "data", os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK
+        )
+    except OSError:
+        raise HostError("not_found", "a picked file is gone: pick it again") from None
+    with os.fdopen(fd, "rb") as handle:
+        info = os.fstat(handle.fileno())
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_nlink != 1
+            or info.st_uid != service.host_uid
+            or info.st_size != meta["size"]
+            or stat.S_IMODE(info.st_mode) & 0o077
+        ):
+            raise HostError("not_found", "a picked file changed: pick it again")
+        if info.st_size > room:
+            raise HostError("quota.host", "the staged copies would use too much room: discard some")
+        data = handle.read(meta["size"] + 1)
+    if len(data) != meta["size"] or hashlib.sha256(data).hexdigest() != meta["sha256"]:
+        raise HostError("not_found", "a picked file changed: pick it again")
+    return data
+
+
+def _uploads(service: WorkspaceService) -> list[tuple[float, str]]:
+    root = _base(service) / "upload"
+    out = []
+    with contextlib.suppress(OSError):
+        for name in os.listdir(root):
+            if _UPLOAD_ID.fullmatch(name):
+                with contextlib.suppress(OSError):
+                    out.append((os.lstat(root / name).st_mtime, name))
+    return sorted(out)
+
+
+def _stage_upload(call: Call, args: dict[str, Any]) -> dict[str, Any]:
+    """``publish.stage_upload {name, b64}``: a person's pick from this computer, kept aside (0700, 0600) and hashed.
+    Nothing is shared: the file goes into the share only when ``publish.prepare`` names it, and it is the stage's copy
+    that the person signs. Column P only; an agent never adds bytes of its own to a share."""
+    service = call.service
+    _person(call)
+    _gate(call)
+    try:
+        name = approval.check_name(args["name"])
+    except ValueError as exc:
+        raise HostError("invalid.input", f"{args['name'][:60]!r}: {exc}"[:300]) from None
+    try:
+        data = base64.b64decode(args["b64"], validate=True)
+    except (binascii.Error, ValueError):
+        raise HostError("invalid.input", "the file is not valid base64") from None
+    if not data:
+        raise HostError("invalid.input", f"{name} is empty")
+    if len(data) > UPLOAD_BYTES:
+        raise HostError("quota.host", f"a file picked here is at most {approval.human_size(UPLOAD_BYTES)}")
+    _rate(call, "upload", 30)
+    with _MU:
+        _private(service, "upload")
+        now = service.clock()
+        pending = _uploads(service)
+        for mtime, old in pending:  # stale ones go; at the cap the oldest makes room
+            if now - mtime > STAGE_KEEP:
+                shutil.rmtree(_upload_dir(service, old), ignore_errors=True)
+        pending = _uploads(service)
+        for _, old in pending[: max(0, len(pending) - MAX_UPLOADS + 1)]:
+            shutil.rmtree(_upload_dir(service, old), ignore_errors=True)
+        upload_id = "pu_" + secrets.token_hex(16)
+        digest = hashlib.sha256(data).hexdigest()
+        tmp = _base(service) / "upload" / f".new-{secrets.token_hex(8)}"
+        try:
+            os.mkdir(tmp, 0o700)
+            _write(tmp / "data", data)
+            _put_json(
+                tmp / "meta.json",
+                {
+                    "v": 1,
+                    "upload_id": upload_id,
+                    "ws": service.workspace_id,
+                    "name": name,
+                    "size": len(data),
+                    "sha256": digest,
+                    "by": str(call.viewer),
+                },
+            )
+            os.rename(tmp, _upload_dir(service, upload_id))
+        except BaseException:
+            shutil.rmtree(tmp, ignore_errors=True)
+            raise
+    _audit(call, "publish.stage_upload", upload=upload_id, size=len(data))
+    return {"upload_id": upload_id, "name": name, "size": len(data), "sha256": digest}
+
+
 # -- prepare -----------------------------------------------------------------------------------------------------------
 
 
@@ -480,12 +620,21 @@ def _prepare(call: Call, args: dict[str, Any]) -> dict[str, Any]:
     if len(stages) >= MAX_STAGED:
         raise HostError("quota.host", f"at most {MAX_STAGED} staged copies wait at once: discard some")
     used = sum(f["size"] for m in stages for f in m.get("files", []))
-    lowered = [n.lower() for n in args["artifacts"]]
+    names = list(args.get("artifacts", []))
+    upload_ids = list(args.get("uploads", []))
+    if not names and not upload_ids:
+        raise HostError("invalid.input", "publish.prepare: pick at least one file")
+    if upload_ids and call.column.name != "P":
+        raise HostError("op.not_allowed", "only a person adds a file from this computer")
+    picked = [_load_upload(service, u) for u in upload_ids]
+    lowered = [n.lower() for n in [*names, *(m["name"] for m in picked)]]
     if len(set(lowered)) != len(lowered):
         raise HostError(
             "invalid.input", "two file names differ only in upper and lower case: the server would merge them"
         )
-    for name in args["artifacts"]:
+    if len(lowered) > approval.LIMITS["files"]:
+        raise HostError("invalid.input", f"a share holds at most {approval.LIMITS['files']} files")
+    for name in names:
         try:
             approval.check_name(name)
         except ValueError as exc:
@@ -498,6 +647,12 @@ def _prepare(call: Call, args: dict[str, Any]) -> dict[str, Any]:
                 "quota.host", f"a share holds at most {approval.human_size(approval.LIMITS['share_bytes'])}"
             )
         files.append({"name": name, "size": len(data), "sha256": digest})
+        blobs.append(data)
+    for meta_up in picked:  # the picked files: read and hashed again now; the stage's hash is what is signed
+        room = min(STAGE_BYTES - used - total, approval.LIMITS["share_bytes"] - total)
+        data = _upload_read(service, meta_up, room)
+        total += len(data)
+        files.append({"name": meta_up["name"], "size": len(data), "sha256": meta_up["sha256"]})
         blobs.append(data)
     _rate(call, "prepare")
     _sweep(service)
@@ -532,6 +687,8 @@ def _prepare(call: Call, args: dict[str, Any]) -> dict[str, Any]:
     except BaseException:
         shutil.rmtree(tmp, ignore_errors=True)
         raise
+    for meta_up in picked:  # taken into the stage: the pending copy is gone
+        shutil.rmtree(_upload_dir(service, meta_up["upload_id"]), ignore_errors=True)
     _audit(call, "publish.prepare", ticket=view.key, staged=staged_id, files=len(files), kind=kind, origin=origin)
     return {
         "staged_id": staged_id,
@@ -628,6 +785,8 @@ def serve(call: Call) -> dict[str, Any]:
     if op in WRITE_OPS and service.state == "degraded":
         raise HostError("workspace.degraded", f"the workspace is read-only: {service.cause}")
     service.store.refresh()
+    if op == "publish.stage_upload":
+        return ok_result(_stage_upload(call, args))
     if op == "publish.prepare":
         return ok_result(_prepare(call, args))
     if op == "publish.list":
@@ -676,9 +835,15 @@ def _plan(call: Call, op: str, args: dict[str, Any]) -> dict[str, Any]:
         )
     _rate(call, "send")
     plan.update(meta=meta, text_hash=hashlib.sha256(text.encode()).hexdigest(), hub=_hub_route(service))
-    if _registered(service, cfg) is None:
+    registered = _registered(service, cfg) is not None
+    try:  # P05: the card is at hand even when registered, so a server that lost the workspace is registered again once
         plan["reg"] = _delegation(call)
         _plan_card(call, plan)
+    except HostError:
+        if not registered:
+            raise
+        plan.pop("reg", None)
+    plan["registered"] = registered
     return plan
 
 
@@ -920,8 +1085,7 @@ def _hub_error(exc: Any) -> HostError:
     reasons = {  # hub code -> (closed detail reason, text); the reasons are the same set as a direct refusal's
         "unknown_workspace": (
             "unknown_workspace",
-            "the server only knows this workspace after its admin allowed it: ask its admin, then run "
-            "orch publish register",
+            "the sharing server does not know this workspace yet: ask the person who runs it to allow it",
         ),
         "owner_not_allowed": ("owner_not_allowed", "the server's admin has not allowed this owner"),
         "workspace_blocked": ("blocked", "the server's admin blocked this workspace"),
@@ -965,8 +1129,7 @@ def _refused(exc: Any) -> HostError:
     elif code == "unknown_workspace":
         reason, text = (
             "unknown_workspace",
-            "the server no longer knows this workspace; ask its admin to allow it again, "
-            "then run orch publish register",
+            "the sharing server no longer knows this workspace; ask the person who runs it to allow it again",
         )
     elif code == "workspace_blocked":
         reason, text = "blocked", "the server's admin blocked this workspace"
@@ -1025,6 +1188,9 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
         )
         raise err from None
     except HubRefused as exc:
+        if exc.code == "unknown_workspace":  # as above: the cached "registered" is stale
+            with contextlib.suppress(OSError):
+                os.unlink(_base(call.service) / "registered.json")
         err = _hub_error(exc)
         _audit(call, "publish.refused", op=plan["op"], code=err.code, reason=exc.code, status=0, via="hub")
         raise err from None
@@ -1055,6 +1221,7 @@ def _token() -> str:
 
 
 def _send(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
+    from orch.hubclient import HubRefused
     from orch.publishclient import PublishError, flow
 
     service = call.service
@@ -1111,13 +1278,13 @@ def _send(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
         with _MU:  # a share can go live from here on (a lost commit answer): revoke must find it, with no token in it
             rows = [r for r in _records(service) if r.get("id") != rec["id"]]
             _save_records(service, [*rows, {**rec, "state": "sending"}])
-        if "reg" in plan:
+        if "reg" in plan and not plan.get("registered"):
             _register(call, {**plan, "op": "publish.register"})
         for attempt in (0, 1):
             try:
                 flow.put_meta(client, service.workspace_id, meta["share_id"], body)
                 break
-            except PublishError as exc:
+            except (PublishError, HubRefused) as exc:
                 if exc.code == "unknown_workspace" and attempt == 0 and "reg" in plan:
                     _register(call, {**plan, "op": "publish.register"})  # the server lost the binding: once more
                     continue

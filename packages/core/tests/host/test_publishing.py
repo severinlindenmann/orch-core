@@ -1026,7 +1026,8 @@ def test_the_audit_file_names_ids_never_a_link_or_a_token(w):
 
 def test_the_ops_are_all_declared_and_versioned():
     assert set(PUBLISH_OPS) == {
-        "publish.prepare", "publish.send", "publish.revoke", "publish.list", "publish.discard", "publish.register",
+        "publish.stage_upload", "publish.prepare", "publish.send", "publish.revoke", "publish.list",
+        "publish.discard", "publish.register",
         "publish.extend", "publish.password",
     }  # fmt: skip
     assert all(v == 1 for v in PUBLISH_OPS.values())
@@ -1165,10 +1166,114 @@ def test_a_server_that_forgot_the_workspace_drops_the_cached_registration(w):
     w.approve(staged)
     w.server.fail.append(("PUT", r"/shares/[0-9a-f]{32}$", 401, "unknown_workspace"))
     res = w.send(staged)
-    assert err(res) == "publish.server_refused" and "ask its admin to allow it again" in res["error"]["message"]
-    assert "orch publish register" in res["error"]["message"]
-    assert not (w.base() / "registered.json").exists()
-    ok(w.send(staged))  # allowed again: the copy goes, registering first
+    # P05: the workspace is registered again and the send is retried once, with no terminal step
+    data = ok(res)["data"]
+    assert LINK.fullmatch(data["link"])
+    assert (w.base() / "registered.json").exists()
+
+
+def test_a_hub_that_forgot_the_workspace_registers_again_once_and_retries(w):
+    """The same through the hub's own refusal (``HubRefused unknown_workspace``), not only the server's 401."""
+    uid, key = w.ticket_with(**{"report.md": REPORT})
+    ok(w.req("publish.register", {}))
+    staged = w.prepare(key, "report.md")["staged_id"]
+    w.approve(staged)
+    w.hub.error = "unknown_workspace"
+    res = w.send(staged)  # still unknown after the one registration: refused in plain words, nothing is sent
+    assert err(res) == "publish.server_refused" and "orch publish" not in res["error"]["message"]
+    assert "orch-publish" not in res["error"]["message"]
+    assert [o for o in w.hub.ops() if o == "card_put"], "the workspace was registered once more"
+    w.hub.error = None
+    ok(w.send(staged))
+
+
+# -- P05: a file picked on this computer -------------------------------------------------------------------------------
+
+
+def b64(data: bytes) -> str:
+    return base64.b64encode(data).decode()
+
+
+def pick(w, name: str, data: bytes, **kw: Any) -> dict[str, Any]:
+    return ok(w.req("publish.stage_upload", {"name": name, "b64": b64(data)}, **kw))["data"]
+
+
+def test_a_picked_file_is_staged_hashed_and_signed_like_a_ticket_file(w):
+    uid, key = w.ticket_with(**{"report.md": REPORT})
+    up = pick(w, "notes.txt", b"hello there\n")
+    assert re.fullmatch(r"pu_[0-9a-f]{32}", up["upload_id"]) and up["size"] == 12
+    assert up["sha256"] == hashlib.sha256(b"hello there\n").hexdigest() and w.server.requests == []
+    got = ok(w.req("publish.prepare", {"ref": key, "artifacts": ["report.md"], "uploads": [up["upload_id"]]}))["data"]
+    assert [(f["name"], f["size"], f["sha256"]) for f in got["files"]] == [
+        ("report.md", len(REPORT), hashlib.sha256(REPORT).hexdigest()),
+        ("notes.txt", 12, up["sha256"]),
+    ]
+    stage = w.stage_dir(got["staged_id"])
+    assert (stage / "files" / "notes.txt").read_bytes() == b"hello there\n"
+    assert oct((stage / "files" / "notes.txt").stat().st_mode & 0o777) == "0o600"
+    assert "notes.txt" in got["words"] and got["staged_id"] in got["words"]  # the one signature covers it
+    assert not (w.base() / "upload" / up["upload_id"]).exists()  # taken into the stage
+    w.approve(got["staged_id"])
+    data = ok(w.send(got["staged_id"]))["data"]
+    (share_id,) = (data["share_id"],)
+    assert w.server.shares[share_id]["files"]["notes.txt"] == b"hello there\n"
+    assert w.server.shares[share_id]["files"]["report.md"] == REPORT
+
+
+def test_only_a_picked_file_is_enough_for_a_share(w):
+    uid, key = w.ticket_with()
+    up = pick(w, "only.txt", b"x" * 100)
+    got = ok(w.req("publish.prepare", {"ref": key, "uploads": [up["upload_id"]]}))["data"]
+    assert [f["name"] for f in got["files"]] == ["only.txt"]
+    assert err(w.req("publish.prepare", {"ref": key})) == "invalid.input"  # nothing picked at all
+
+
+def test_a_picked_file_is_a_persons_act_never_an_agents(w):
+    uid, key = w.ticket_with(**{"report.md": REPORT})
+    assert err(w.req("publish.stage_upload", {"name": "a.txt", "b64": b64(b"abc")}, agent=True)) == "op.not_allowed"
+    up = pick(w, "p.txt", b"person")
+    res = w.req("publish.prepare", {"ref": key, "artifacts": ["report.md"], "uploads": [up["upload_id"]]}, agent=True)
+    assert err(res) == "op.not_allowed"
+    assert (w.base() / "upload" / up["upload_id"]).exists() and not (w.base() / "stage").exists()
+
+
+@pytest.mark.parametrize("name", ["../x.txt", ".hidden", "a/b.txt", "x" * 101, "bad\nname", " lead.txt"])
+def test_a_picked_file_name_is_held_to_the_servers_rule(w, name):
+    assert err(w.req("publish.stage_upload", {"name": name, "b64": b64(b"abc")})) == "invalid.input"
+    assert not list((w.base() / "upload").glob("pu_*")) if (w.base() / "upload").exists() else True
+
+
+def test_a_picked_file_has_a_size_limit_and_is_not_empty_or_garbled(w, monkeypatch):
+    monkeypatch.setattr(publishing, "UPLOAD_BYTES", 100)
+    monkeypatch.setitem(publishing._SCHEMAS["publish.stage_upload"]["properties"]["b64"], "maxLength", 1000)
+    assert err(w.req("publish.stage_upload", {"name": "big.bin", "b64": b64(b"x" * 101)})) == "quota.host"
+    assert err(w.req("publish.stage_upload", {"name": "e.bin", "b64": b64(b"")})) == "invalid.input"
+    assert err(w.req("publish.stage_upload", {"name": "g.bin", "b64": "%%%%"})) == "invalid.input"
+    pick(w, "ok.bin", b"x" * 100)
+
+
+def test_pending_picks_are_bounded_and_the_oldest_makes_room(w, monkeypatch):
+    monkeypatch.setattr(publishing, "MAX_UPLOADS", 3)
+    ids = [pick(w, f"f{i}.txt", b"data%d" % i)["upload_id"] for i in range(5)]
+    left = sorted(p.name for p in (w.base() / "upload").glob("pu_*"))
+    assert len(left) == 3 and set(left) <= set(ids) and ids[-1] in left
+
+
+def test_prepare_refuses_a_missing_or_changed_pick_and_a_name_clash(w):
+    uid, key = w.ticket_with(**{"report.md": REPORT})
+    assert err(w.req("publish.prepare", {"ref": key, "uploads": ["pu_" + "0" * 32]})) == "not_found"
+    clash = pick(w, "REPORT.md", b"other")
+    both = {"ref": key, "artifacts": ["report.md"], "uploads": [clash["upload_id"]]}
+    assert err(w.req("publish.prepare", both)) == "invalid.input"
+    changed = pick(w, "c.txt", b"first")
+    path = w.base() / "upload" / changed["upload_id"] / "data"
+    path.write_bytes(b"swapd")  # same size, other bytes
+    assert err(w.req("publish.prepare", {"ref": key, "uploads": [changed["upload_id"]]})) == "not_found"
+    assert not (w.base() / "stage").exists() or not list((w.base() / "stage").iterdir())
+
+
+def test_a_pick_needs_publish_to_be_on(bare):
+    assert err(bare.req("publish.stage_upload", {"name": "a.txt", "b64": b64(b"abc")})) == "runner.disabled"
 
 
 def test_the_hosts_settings_handler_checks_both_origins_whoever_asks(bare, human):

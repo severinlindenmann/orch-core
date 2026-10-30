@@ -266,3 +266,39 @@ def test_only_the_host_runs_in_quarantine_and_parts_data_is_never_rolled_back(w)
     assert not (backup / "data" / "install" / "parts").exists()
     assert hub_db.read_text() == "hub-state-changed\n"  # the rollback did not touch it either way
 
+
+def test_use_refuses_a_version_newer_than_the_record(w):
+    w.migrate_fail = True
+    w.updater().update()  # rolled back; the new tools dir stays
+    assert w.layout.is_complete(NEW)
+    assert code(w.updater().use, NEW) == "format.newer"
+    assert w.layout.current_version() == OLD
+
+
+def test_use_refuses_while_an_update_is_unfinished_or_quarantined(w):
+    w.updater().update()
+    from orch.migrate.journal import write_journal
+
+    write_journal("stopped", w.env, backups={})
+    assert code(w.updater().use, OLD) == "update.interrupted"
+    from orch.migrate.journal import clear_journal
+
+    clear_journal(w.env)
+    quarantine.activate(w.state)
+    assert code(w.updater().use, OLD) == "update.interrupted"
+
+
+@pytest.mark.parametrize(
+    "out",
+    [
+        '{"ok": true, "roots": [{"steps": ["x"]}], "skipped": []}',
+        '{"ok": true, "roots": [], "skipped": [{"root": "r", "why": "newer"}]}',
+        "not json",
+        '{"ok": false, "roots": []}',
+    ],
+)
+def test_use_needs_a_clean_migrate_check(w, out):
+    w.updater().update()
+    w.check_out = out
+    assert code(w.updater().use, OLD) == "format.newer"
+    assert w.layout.current_version() == NEW

@@ -108,6 +108,7 @@ class World:
         self.migrate_fail = False
         self.migrate_calls = 0
         self.old_cannot_read_new = False
+        self.check_out: str | None = None
         self.out = io.StringIO()
         self.crash_at: str | None = None
         self.phases: list[str] = []
@@ -144,6 +145,8 @@ class World:
             (self.state / "install" / "parts" / "hub" / "data" / "hub.db").write_text("hub-state-changed\n")
             return 0, json.dumps({"ok": True, "roots": []})
         if list(args)[:1] == ["migrate"] and "--check" in args:
+            if self.check_out is not None:
+                return 0, self.check_out
             if self.old_cannot_read_new:
                 return 3, '{"error": {"code": "format.newer"}}'
             return 0, json.dumps({"ok": True, "roots": []})

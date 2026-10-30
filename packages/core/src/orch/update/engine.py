@@ -34,7 +34,7 @@ from typing import Any, Protocol, TextIO
 from orch import oslock
 from orch.migrate import backup as backup_mod
 from orch.migrate.format import lock_root, read_format
-from orch.migrate.journal import clear_journal, read_journal, write_journal
+from orch.migrate.journal import clear_journal, read_journal, unfinished, write_journal
 from orch.migrate.steps import CURRENT, atomic_write
 from orch.ops.errors import OrchError
 from orch.ops.runtime import state_dir
@@ -528,24 +528,49 @@ class Updater:
             return self._fail(exc, doc)
 
     # ------------------------------------------------------------------------------------------ --use
+    @staticmethod
+    def _data_fits(rc: int, out: str) -> bool:
+        """``orch migrate --check --json`` of the OLD version: ok, no root skipped (newer data is skipped), no step
+        waiting."""
+        try:
+            doc = json.loads(out.strip().splitlines()[-1])
+        except (ValueError, IndexError):
+            return False
+        return (
+            rc == 0
+            and isinstance(doc, dict)
+            and doc.get("ok") is True
+            and not doc.get("skipped")
+            and all(not r.get("steps") for r in doc.get("roots") or [])
+        )
+
     def use(self, ver: str) -> Outcome:
         """Select an installed version again (also the way back after a committed update). The data stays."""
         ver = check_version(ver)
         lock = self._lock()
         try:
             self._open_log()
+            if unfinished(self.env) or quarantine.active(self.state):
+                raise OrchError(
+                    "update.interrupted", "an update is unfinished: run `orch update --finish` or `--rollback` first"
+                )
             rec = read_record(self.layout)
             cur = self.installed_version(rec)
+            if version_key(ver) > version_key(rec.version):
+                raise OrchError(
+                    "format.newer",
+                    f"{ver} is newer than the version this update installed ({rec.version}): use `orch update`",
+                )
             if ver == cur:
                 return Outcome(True, "current", cur, cur, f"orch {cur} is already the selected version")
-            if not self.layout.tool_dir(ver).is_dir():
+            if not self.layout.is_complete(ver):
                 have = ", ".join(self.layout.installed_versions()) or "none"
                 raise OrchError("update.no_record", f"version {ver} is not installed here (installed: {have})")
             rc, out = self.s.run_orch(self.layout.tool_bin(ver), ["migrate", "--check", "--json"])
-            if rc != 0 or "format.newer" in out:
+            if not self._data_fits(rc, out):
                 raise OrchError(
                     "format.newer",
-                    f"your data was made by a newer orch than {ver}: it cannot be used with that version",
+                    f"your data does not fit orch {ver} (newer data, or waiting migrations): it cannot be used with it",
                 )
             running = self.s.services.running()
             self.s.services.stop()

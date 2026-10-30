@@ -11,11 +11,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from orch import childenv
+
 from . import claude_folder
 from . import facts as facts_mod
 from . import review as review_mod
 from .protocol import AGENT_HOURS, METHODS, SetupError, validate_profile
 from .steps import STEP_LABELS, Creator, Run, Secrets
+from .tunnel import is_headless, tunnel_line
 
 __all__ = ["Env", "SetupFlow"]
 
@@ -601,7 +604,7 @@ def _open_browser(environ: Mapping[str, str], err: Any, launch: dict[str, Any], 
         try:
             res = subprocess.run(
                 [*cmd, "open", "/setup", "--emit-url-fd", str(write_fd), *(["--no-browser"] if no_browser else [])],
-                env=dict(environ),
+                env=childenv.sanitize(environ, absolute_pythonpath=True),
                 stdin=subprocess.DEVNULL,
                 capture_output=True,
                 timeout=60,
@@ -634,8 +637,16 @@ def _open_browser(environ: Mapping[str, str], err: Any, launch: dict[str, Any], 
     from orch.ops import workspace_init as wi
 
     lead = "If no browser opened, use this link" if browser_opened else "Open this link in your browser"
+    hint = ""
+    if is_headless(
+        environ
+    ):  # no browser here: the person reaches the link through an ssh tunnel from their own computer
+        port = int(line.split("://127.0.0.1:", 1)[1].split("/", 1)[0])
+        hint = (
+            f"On your own computer, first run:\n  {tunnel_line(port, environ)}\nthen open this link in its browser.\n"
+        )
     try:
-        wi.TERMINAL.show(f"{lead} (single use, 5 minutes): {line}\n")
+        wi.TERMINAL.show(hint + f"{lead} (single use, 5 minutes): {line}\n")
     except (NoPrompt, OSError):
         err.write("orch setup: cannot show the link here; run orch setup in your own terminal\n")
         return True if browser_opened else False

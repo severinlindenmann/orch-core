@@ -1,0 +1,415 @@
+# DRAFT of .github/workflows/release.yml. Agents may not push workflow files: the manager copies this file to
+# .github/workflows/release.yml (owner account) once the root ceremony is done. Nothing here runs until then.
+#
+# Signed releases (docs/design/install-update.md, contract: packages/core/tests/vectors/release/CONTRACT.md).
+#   push to main            -> build and sign the version in packages/core/pyproject.toml without ".devN" (for example
+#                              2.0.0), unless the tag v<version> already exists (then nothing happens: bump the
+#                              version to release again). Channel "main".
+#   workflow_dispatch       -> a release candidate on channel test-<name> (version <base>.dev<run number>), signed by
+#                              the TEST key. A production verifier refuses test-* channels, so this can never reach a
+#                              real install.
+#   schedule (every Monday) -> re-sign the published "main" manifest with fresh issued_at/expires_at, because a
+#                              manifest expires after 21 days (weekly leaves three tries before users see "stale").
+# No "develop" channel in the pilot.
+#
+# What a release holds: one wheel each of core, dashboard (with the prebuilt UI), hub, relay and publish, a hash-locked
+# constraints.txt, release.json (the signed envelope). Two release objects per publish: the immutable "v<version>"
+# release (all assets) and the fixed "channel-<channel>" release whose channel.json (= release.json) is replaced.
+#
+# ---- Signing key and the GitHub ENVIRONMENT "release" (owner sets this up once; never in a file) --------------------
+#   Environment `release`  Settings > Environments > release > Deployment branches and tags: "Selected branches",
+#                          allow ONLY `main` and `develop`. Required reviewers: none (no click per release).
+#                          Secret ORCH_RELEASE_KEY (base64 of the 32-byte Ed25519 seed of the CI release key) lives
+#                          in THIS environment, never as a repository secret.
+#   Why the branch policy: a job that references an environment only gets its secrets if the ref passes the policy.
+#   Without it any branch an agent pushes (or any workflow_dispatch from a feature branch) could run this file, edited,
+#   and sign a release. With it only code that was merged into main/develop can reach the key.
+#   Environment `release-test`  secret ORCH_RELEASE_KEY = a separate TEST key whose certificate lists only test-*;
+#                          no branch restriction needed (a test-* envelope is refused by every production verifier).
+#   Repository variables RELEASE_KEY_ID, RELEASE_TEST_KEY_ID (for example rk-1, tk-1): the certificate files
+#   release/keys/<id>.cert.json and release/keys/revocations.json are committed (root-signed, public).
+#   The root key is never on GitHub: the owner certifies the CI key (180 days) and signs revocations off-line.
+#   Also recommended: protect `v*` tags (no update, no delete) so a version tag cannot be moved to another commit.
+#
+# ---- The "signing oracle" finding, re-checked -----------------------------------------------------------------------
+#   Finding (earlier Opus review): a signing step that signs whatever payload it is handed (an input, an artifact, a
+#   downloaded pointer, a file from a pull request) is an oracle: anyone who can influence that content gets a valid
+#   signature. Here nothing is signed that this run did not produce or that was not already signed by us:
+#   1. Release: the manifest is written by manifest.py INSIDE the signing job from the wheels of the build job of the
+#      same run and the same commit (needs: build, ref = plan.sha). No workflow input, comment, PR text or downloaded
+#      third-party file enters the payload; the version, channel and seq come from the plan job, which derives them
+#      from the repository and the run (an input is only accepted if it matches ^test-name$ and then selects the test
+#      key). The changelog is the `git log` subjects of the same checkout, length-capped, as data.
+#   2. Before signing, the signing job re-checks what it is about to sign: exactly the expected file names (no extras),
+#      check_wheels.py (each wheel's embedded stamp names this version, channel and commit; the dashboard wheel carries
+#      the prebuilt page and pins orch-core==version), and sign.py itself refuses a payload that fails the verifier's
+#      own manifest rules (check_manifest). The secret is in the environment of the sign step ONLY, not of the build
+#      or the checks, so build-time code (npm, hatch) never sees it.
+#   3. Refresh (weekly): it signs a manifest that it did not build, so the rule is the strictest: scripts/release/
+#      trusted.py (one function for refresh and for moving the pointer). The current channel.json only counts after it
+#      VERIFIES at now against the embedded production root and the repository's current revocation list (an
+#      expired manifest is accepted only as the reason to refresh), the immutable release of exactly that version must
+#      verify and agree with it, and the git tag must point at the manifest's commit. Refresh then re-signs that
+#      version, seq and commit and nothing else: only issued_at/expires_at change. Anything unverifiable fails the job.
+#   4. The pointer never moves to a lower seq (channel_seq.py uses the same function).
+#   Residual risk (accepted, documented): the build job runs dependency code (npm, uv build) from main/develop; a
+#   compromised dependency could alter a wheel before it is hashed and signed. The constraints file hash-locks the
+#   Python dependencies; the npm tree is locked by package-lock.json (npm ci).
+
+name: release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: 'Release-candidate channel, must look like test-name (signed by the TEST key)'
+        required: true
+        type: string
+  schedule:
+    - cron: '17 4 * * 1'
+
+permissions: {}
+
+env:
+  MIN_FROM: '2.0.0.dev0'
+  EXPIRY_DAYS: '21'
+  WARN_DAYS: '30'
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      mode: ${{ steps.plan.outputs.mode }}
+      channel: ${{ steps.plan.outputs.channel }}
+      version: ${{ steps.plan.outputs.version }}
+      seq: ${{ steps.plan.outputs.seq }}
+      sha: ${{ steps.plan.outputs.sha }}
+      test: ${{ steps.plan.outputs.test }}
+      key_id: ${{ steps.plan.outputs.key_id }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_CHANNEL: ${{ inputs.channel }}
+          RUN_NUMBER: ${{ github.run_number }}
+          SHA: ${{ github.sha }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          KEY_ID_PROD: ${{ vars.RELEASE_KEY_ID }}
+          KEY_ID_TEST: ${{ vars.RELEASE_TEST_KEY_ID }}
+        run: |
+          set -euo pipefail
+          test=false
+          mode=release
+          base=$(python3 -I -c 'import tomllib; print(tomllib.load(open("packages/core/pyproject.toml","rb"))["project"]["version"])')
+          base=${base%%.dev*}
+          [[ "$base" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::bad version in packages/core/pyproject.toml"; exit 1; }
+          case "$EVENT" in
+            push) channel=main; version="$base" ;;
+            workflow_dispatch)
+              channel="$INPUT_CHANNEL"; test=true; version="${base}.dev${RUN_NUMBER}"
+              [[ "$channel" =~ ^test-[a-z0-9][a-z0-9-]{0,30}$ ]] || { echo "::error::the channel must look like test-name"; exit 1; } ;;
+            schedule) channel=main; mode=refresh; version="" ;;
+            *) echo "::error::unexpected event"; exit 1 ;;
+          esac
+          if [ "$mode" = release ] && [ "$test" = false ] && gh release view "v${version}" >/dev/null 2>&1; then
+            echo "::notice::v${version} is already released; bump the version to release again"
+            mode=skip
+          fi
+          key_id="$KEY_ID_PROD"
+          if [ "$test" = true ]; then key_id="$KEY_ID_TEST"; fi
+          [[ "$key_id" =~ ^[a-z][a-z0-9-]{0,31}$ ]] || { echo "::error::the repository variable with the release key id is missing or malformed"; exit 1; }
+          {
+            echo "mode=$mode"
+            echo "channel=$channel"
+            echo "version=$version"
+            echo "seq=${RUN_NUMBER}"
+            echo "sha=${SHA}"
+            echo "test=$test"
+            echo "key_id=$key_id"
+          } >> "$GITHUB_OUTPUT"
+
+  # The certificate is public (it travels in every envelope), so this job needs no secret.
+  cert-check:
+    needs: plan
+    if: needs.plan.outputs.mode != 'skip'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          persist-credentials: false
+      - name: Check the release key certificate
+        env:
+          KEY_ID: ${{ needs.plan.outputs.key_id }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          cert="release/keys/${KEY_ID}.cert.json"
+          if ! out=$(python3 -I scripts/release/cert_expiry.py "$cert"); then
+            echo "::error::the release key certificate ${cert} is expired or unreadable: re-certify it"
+            exit 1
+          fi
+          days=$(sed -n 's/^days_left=//p' <<<"$out")
+          not_after=$(sed -n 's/^not_after=//p' <<<"$out")
+          echo "certificate valid until ${not_after} (${days} days left)"
+          if [ "$days" -lt "$WARN_DAYS" ]; then
+            echo "::warning::release key expires on ${not_after} (${days} days left): re-certify it"
+            title="release key expires on ${not_after}"
+            body="The release key certificate ${cert} expires on ${not_after} (${days} days left). Re-certify it (root key, owner) and swap the ORCH_RELEASE_KEY secret. Releases fail once it has expired."
+            number=$(gh issue list --state open --search "release key expires in:title" --json number --jq '.[0].number // empty')
+            if [ -n "$number" ]; then
+              gh issue edit "$number" --title "$title" --body "$body"
+            else
+              gh issue create --title "$title" --body "$body"
+            fi
+          fi
+
+  # Builds everything. NO secret in this job: it runs npm and build backends.
+  build:
+    needs: [plan, cert-check]
+    if: needs.plan.outputs.mode == 'release'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      CHANNEL: ${{ needs.plan.outputs.channel }}
+      SHA: ${{ needs.plan.outputs.sha }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: packages/addons/dashboard/package-lock.json
+      - name: Build the dashboard page (prebuilt UI goes into the dashboard wheel)
+        working-directory: packages/addons/dashboard
+        run: |
+          npm ci
+          npm run build
+      - name: Stamp the one version into every part
+        run: python3 -I scripts/release/stamp.py "$VERSION" "$CHANNEL" "$SHA"
+      - name: Build the five wheels
+        env:
+          ORCH_DASHBOARD_REQUIRE_PREBUILT: '1'  # packages/addons/dashboard/server/hatch_build.py: never run npm, never skip the UI
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          for p in packages/core packages/addons/dashboard/server packages/hub packages/relay packages/publish; do
+            uv build --wheel --out-dir dist "$p"
+          done
+      - name: Check the wheels
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for n in orch_core orch_dashboard orch_hub orch_relay orch_publish; do
+            w=(dist/"${n}"-"${VERSION}"-*.whl)
+            [ "${#w[@]}" -eq 1 ] || { echo "::error::expected one ${n} wheel at version ${VERSION}"; ls dist; exit 1; }
+          done
+          python3 -I scripts/release/check_wheels.py --core dist/orch_core-"${VERSION}"-*.whl --dashboard dist/orch_dashboard-"${VERSION}"-*.whl \
+            --version "$VERSION" --channel "$CHANNEL" --commit "$SHA"
+          unzip -p dist/orch_dashboard-"${VERSION}"-*.whl '*.dist-info/METADATA' | grep -qx "Requires-Dist: orch-core==${VERSION}" \
+            || { echo "::error::the dashboard wheel does not pin orch-core==${VERSION}"; exit 1; }
+      - name: Smoke test core and dashboard
+        run: |
+          set -euo pipefail
+          tmp=$(mktemp -d)
+          export HOME="$tmp/home" UV_TOOL_DIR="$tmp/tools" UV_TOOL_BIN_DIR="$tmp/bin"
+          mkdir -p "$HOME"
+          uv tool install --find-links dist dist/orch_core-"${VERSION}"-*.whl --with dist/orch_dashboard-"${VERSION}"-*.whl
+          "$tmp/bin/orch" --version --json | grep -q "$VERSION" || { echo "::error::orch --version does not name ${VERSION}"; exit 1; }
+      - name: Hash-locked constraints (constraints.txt)
+        run: |
+          set -euo pipefail
+          # ONE resolution over all five wheels (they are installed side by side and must agree on versions), with
+          # sha256 pins for every dependency; the five orch wheels themselves are not in the file (their own hashes
+          # are in the manifest). constraints.py refuses an unhashed or unpinned line and normalizes the file.
+          uv pip compile --generate-hashes --universal --python-version 3.11 --quiet --no-header \
+            --no-emit-package orch-core --no-emit-package orch-dashboard --no-emit-package orch-hub \
+            --no-emit-package orch-relay --no-emit-package orch-publish \
+            dist/orch_core-"${VERSION}"-*.whl dist/orch_dashboard-"${VERSION}"-*.whl dist/orch_hub-"${VERSION}"-*.whl \
+            dist/orch_relay-"${VERSION}"-*.whl dist/orch_publish-"${VERSION}"-*.whl -o resolved.txt
+          python3 -I scripts/release/constraints.py --out dist/constraints.txt resolved.txt
+          test -s dist/constraints.txt
+      - name: Changelog since the previous release
+        run: |
+          set -euo pipefail
+          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/channel-${CHANNEL}/channel.json"
+          prev=""
+          if curl -fsSL --max-time 30 -o prev.json "$url"; then
+            prev=$(python3 -I -c 'import base64, json; print(json.loads(base64.b64decode(json.load(open("prev.json"))["payload"]))["commit"])' 2>/dev/null || true)
+          fi
+          if [[ "$prev" =~ ^[0-9a-f]{40}$ ]] && git cat-file -e "${prev}^{commit}" 2>/dev/null; then
+            git log --no-merges --pretty='- %s' -n 40 "${prev}..${SHA}" > raw.txt || true
+          else
+            git log --no-merges --pretty='- %s' -n 20 "${SHA}" > raw.txt
+          fi
+          python3 -I -c 'import sys; sys.stdout.write(sys.stdin.buffer.read()[:3800].decode("utf-8", "ignore"))' < raw.txt > dist/changelog.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-dist
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
+
+  # Holds the key. Everything it signs it writes itself, here, from the build job's wheels of this same commit.
+  publish:
+    needs: [plan, build]
+    runs-on: ubuntu-latest
+    environment: ${{ needs.plan.outputs.test == 'true' && 'release-test' || 'release' }}
+    concurrency:
+      group: release-${{ needs.plan.outputs.channel }}
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      CHANNEL: ${{ needs.plan.outputs.channel }}
+      SEQ: ${{ needs.plan.outputs.seq }}
+      SHA: ${{ needs.plan.outputs.sha }}
+      KEY_ID: ${{ needs.plan.outputs.key_id }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-dist
+          path: dist
+      - name: Re-check what is about to be signed (no secret in this step)
+        run: |
+          set -euo pipefail
+          expected=$(printf '%s\n' "orch_core-${VERSION}-py3-none-any.whl" "orch_dashboard-${VERSION}-py3-none-any.whl" \
+            "orch_hub-${VERSION}-py3-none-any.whl" "orch_relay-${VERSION}-py3-none-any.whl" \
+            "orch_publish-${VERSION}-py3-none-any.whl" constraints.txt changelog.txt | sort)
+          actual=$(ls dist | sort)
+          [ "$expected" = "$actual" ] || { echo "::error::the build artifact is not exactly the expected file set"; ls dist; exit 1; }
+          python3 -I scripts/release/check_wheels.py --core dist/orch_core-"${VERSION}"-*.whl --dashboard dist/orch_dashboard-"${VERSION}"-*.whl \
+            --version "$VERSION" --channel "$CHANNEL" --commit "$SHA"
+      - name: Write the manifest
+        run: |
+          set -euo pipefail
+          issued=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          expires=$(date -u -d "+${EXPIRY_DAYS} days" +%Y-%m-%dT%H:%M:%SZ)
+          python3 -I scripts/release/manifest.py core \
+            --channel "$CHANNEL" --version "$VERSION" --seq "$SEQ" --commit "$SHA" \
+            --issued-at "$issued" --expires-at "$expires" \
+            --file core=dist/orch_core-"${VERSION}"-py3-none-any.whl \
+            --file dashboard=dist/orch_dashboard-"${VERSION}"-py3-none-any.whl \
+            --file hub=dist/orch_hub-"${VERSION}"-py3-none-any.whl \
+            --file relay=dist/orch_relay-"${VERSION}"-py3-none-any.whl \
+            --file publish=dist/orch_publish-"${VERSION}"-py3-none-any.whl \
+            --file constraints=dist/constraints.txt \
+            --base-url "https://github.com/${GH_REPO}/releases/download/v${VERSION}" \
+            --changelog-file dist/changelog.txt --min-from "$MIN_FROM" --out manifest.json
+      - name: Sign the manifest (the only step that sees the key)
+        env:
+          ORCH_RELEASE_SIGNING_KEY: ${{ secrets.ORCH_RELEASE_KEY }}
+        run: |
+          uv run --project packages/core --frozen python -I scripts/release/sign.py \
+            --purpose core --payload manifest.json --key-id "$KEY_ID" \
+            --key-cert "release/keys/${KEY_ID}.cert.json" --revocations release/keys/revocations.json \
+            --out release.json
+      - name: Pointer guard (never move to a lower or unverified state)
+        run: |
+          set -uo pipefail
+          uv run --project packages/core --frozen python -I scripts/release/channel_seq.py \
+            --channel "$CHANNEL" --revocations release/keys/revocations.json --new-seq "$SEQ" \
+            --exclude-tag "v${VERSION}" \
+            --pointer-url "https://github.com/${GH_REPO}/releases/download/channel-${CHANNEL}/channel.json"
+          rc=$?
+          case "$rc" in
+            0|3) ;;
+            *) echo "::error::channel-${CHANNEL} did not verify or is newer: nothing was published"; exit 1 ;;
+          esac
+      - name: Publish the immutable version release
+        run: |
+          set -euo pipefail
+          prerelease=""
+          if [ "$CHANNEL" != main ]; then prerelease="--prerelease"; fi
+          gh release create "v${VERSION}" $prerelease --target "$SHA" \
+            --title "orch ${VERSION} (${CHANNEL})" --notes-file dist/changelog.txt \
+            dist/orch_*-"${VERSION}"-py3-none-any.whl dist/constraints.txt release.json
+      - name: Move the channel pointer (asset channel.json of the fixed release channel-<channel>)
+        run: |
+          set -euo pipefail
+          if ! gh release view "channel-${CHANNEL}" >/dev/null 2>&1; then
+            gh release create "channel-${CHANNEL}" --prerelease --latest=false --target "$SHA" \
+              --title "channel ${CHANNEL}" --notes "Fixed pointer release: channel.json is replaced on every publish."
+          fi
+          cp release.json channel.json
+          gh release upload "channel-${CHANNEL}" channel.json --clobber
+
+  # Weekly: the same payload with new issued_at/expires_at, signed again. Rebuilds nothing, never changes seq.
+  refresh:
+    needs: [plan, cert-check]
+    if: needs.plan.outputs.mode == 'refresh'
+    runs-on: ubuntu-latest
+    environment: release
+    concurrency:
+      group: release-main
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    env:
+      CHANNEL: main
+      KEY_ID: ${{ needs.plan.outputs.key_id }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+      - name: Verify the current channel and rebuild its payload (no secret in this step)
+        id: retime
+        run: |
+          set -uo pipefail
+          issued=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          expires=$(date -u -d "+${EXPIRY_DAYS} days" +%Y-%m-%dT%H:%M:%SZ)
+          uv run --project packages/core --frozen python -I scripts/release/refresh.py \
+            --channel "$CHANNEL" --revocations release/keys/revocations.json \
+            --pointer-url "https://github.com/${GH_REPO}/releases/download/channel-${CHANNEL}/channel.json" \
+            --issued-at "$issued" --expires-at "$expires" --out manifest.json
+          rc=$?
+          case "$rc" in
+            0) echo "exists=true" >> "$GITHUB_OUTPUT" ;;
+            3) echo "::notice::channel ${CHANNEL} has never been published; nothing to refresh"; echo "exists=false" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::refresh refused: the current channel state did not verify, nothing was signed"; exit 1 ;;
+          esac
+      - name: Sign the manifest (the only step that sees the key)
+        if: steps.retime.outputs.exists == 'true'
+        env:
+          ORCH_RELEASE_SIGNING_KEY: ${{ secrets.ORCH_RELEASE_KEY }}
+        run: |
+          uv run --project packages/core --frozen python -I scripts/release/sign.py \
+            --purpose core --payload manifest.json --key-id "$KEY_ID" \
+            --key-cert "release/keys/${KEY_ID}.cert.json" --revocations release/keys/revocations.json \
+            --out channel.json
+      - name: Replace channel.json
+        if: steps.retime.outputs.exists == 'true'
+        run: gh release upload "channel-${CHANNEL}" channel.json --clobber

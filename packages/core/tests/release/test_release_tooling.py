@@ -466,3 +466,33 @@ def test_cli_refuses_a_duplicate_role(tmp_path):
     ]  # fmt: skip
     assert manifest.main(args) == 1
     assert not (tmp_path / "m.json").exists()
+
+
+# --- constraints.txt (hash-locked) --------------------------------------------------------------------------------
+
+import constraints  # noqa: E402
+
+H1, H2, H3 = ("a" * 64, "b" * 64, "c" * 64)
+
+
+def test_constraints_merge_unions_hashes_and_dedupes():
+    one = (
+        f"# comment\nfoo==1.0 \\\n    --hash=sha256:{H1}\nbar==2 ; sys_platform == 'win32' \\\n    --hash=sha256:{H2}\n"
+    )
+    two = f"foo==1.0 \\\n    --hash=sha256:{H3} \\\n    --hash=sha256:{H1}\n"
+    out = constraints.merge([one, two])
+    assert out.count("foo==1.0") == 1 and f"--hash=sha256:{H3}" in out and "bar==2 ; sys_platform == 'win32'" in out
+    assert constraints.merge([out]) == out  # stable: a merged file is a valid input
+
+
+@pytest.mark.parametrize(
+    "texts",
+    [
+        [f"foo==1 \\\n  --hash=sha256:{H1}\n", f"foo==2 \\\n  --hash=sha256:{H2}\n"],  # two versions
+        ["foo==1\n"],  # no hash
+        [f"foo>=1 \\\n  --hash=sha256:{H1}\n"],  # not a pin
+    ],
+)
+def test_constraints_merge_refuses_conflicts_unhashed_and_unpinned(texts):
+    with pytest.raises(ValueError):
+        constraints.merge(texts)

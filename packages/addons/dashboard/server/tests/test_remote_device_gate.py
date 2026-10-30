@@ -474,7 +474,8 @@ CLASSIFY_ALLOWLIST: dict[str, str] = {
     "term.open": "terminals/open: the TERMINALS rule, level-gated by the row",
     "remote.off": "remote/off: a VIEW write that ends the stream's own session",
 }  # fmt: skip
-#: the same kind of false positive, but only on a PRESENCE row: the op deletes the person's own files for good, so a remote device needs a covering presence batch for the exact request (the host also writes an audit line).
+#: the same kind of false positive, but only on a PRESENCE row: the op deletes the person's own files for good,
+#: so a remote device needs a covering presence batch for the exact request (the host also writes an audit line).
 PRESENCE_GATED_OPS: dict[str, str] = {
     "workdir.delete": "workdir/delete: permanent deletion of the person's work folder; presence, level work",
 }

@@ -28,6 +28,7 @@ from .published_api import PublishedHandlers, published_routes
 from .secrets_api import SecretHandlers, secret_routes
 from .settings_api import SettingsHandlers, settings_routes
 from .spaces_api import SpaceHandlers, space_routes
+from .update_request_api import UpdateRequestHandlers, update_request_routes
 
 
 @dataclass(frozen=True)
@@ -47,6 +48,7 @@ FEATURES: tuple[Feature, ...] = (
     Feature(mixin=SpaceHandlers, routes=space_routes),
     Feature(mixin=AskPhoneHandlers, routes=ask_phone_routes, status=ASK_PHONE_STATUS),
     Feature(mixin=InviteStatusHandlers, routes=invite_status_routes, status=INVITE_STATUS),
+    Feature(mixin=UpdateRequestHandlers, routes=update_request_routes),
 )
 
 FEATURE_MIXINS: tuple[type, ...] = tuple(f.mixin for f in FEATURES)

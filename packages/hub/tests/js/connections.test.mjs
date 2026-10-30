@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 class Node {
   constructor(tag) { this.tag = tag; this.nodeType = 1; this.children = []; this.attrs = {}; this.listeners = {}; this._text = ""; }
+  remove() {}
   append(...children) { this.children.push(...children); }
   replaceChildren(...children) { this.children = children; this._text = ""; }
   setAttribute(key, value) { this.attrs[key] = value; }
@@ -11,8 +12,11 @@ class Node {
   get textContent() { return this._text + this.children.map((c) => c.textContent).join(""); }
   all() { return [this, ...this.children.flatMap((c) => c.all())]; }
 }
+const toastNodes = [];
 globalThis.document = {
-  createElement: (tag) => new Node(tag),
+  body: new Node("body"), getElementById: (id) => toastNodes.find((n) => n.attrs.id === id),
+  createElement: (tag) => { const n = new Node(tag); toastNodes.push(n); return n; },
+  createTextNode: (t) => ({ nodeType: 3, textContent: t, all: () => [] }),
   createElementNS: (namespace, tag) => { assert.equal(namespace, "http://www.w3.org/2000/svg"); return new Node(tag); },
 };
 const { connectionsView } = await import("../../src/orch_hub/web/pages/connections.js");
@@ -77,8 +81,24 @@ test("cells offer Ask to allow and a confirmed Close; pending, stored-only and c
   assert.match(cells[7], /waiting for approval/);             // c -> b: asked, nothing to click
   assert.doesNotMatch(cells[7], /Ask to allow|Close/);
   const button = (label) => all.find((n) => n.tag === "button" && n.attrs["aria-label"] === label);
-  button("Ask to allow Alpha to <img onerror=bad>").listeners.click();
-  assert.deepEqual(calls, [["a", "c", true]]);
+  const timers = [], saved = [globalThis.setTimeout, globalThis.clearTimeout];
+  globalThis.setTimeout = (fn, ms) => { timers.push({ fn, ms }); return timers.length; };
+  globalThis.clearTimeout = () => {};
+  try {
+    const ask = button("Ask to allow Alpha to <img onerror=bad>");
+    ask.listeners.click();
+    assert.deepEqual(calls, []);                                // nothing is sent during the Undo window
+    assert.equal(ask.disabled, true);
+    const undo = toastNodes.filter((n) => n.tag === "button" && n._text === "Undo").at(-1);
+    undo.listeners.click();                                     // Undo: nothing was sent, the button is back
+    assert.equal(ask.disabled, false);
+    timers.at(-1).fn();
+    assert.deepEqual(calls, []);
+    ask.listeners.click();
+    assert.equal(timers.at(-1).ms, 5000);
+    timers.at(-1).fn();                                         // the window ends: now it is sent
+    assert.deepEqual(calls, [["a", "c", true]]);
+  } finally { [globalThis.setTimeout, globalThis.clearTimeout] = saved; }
   const close = button("Close Alpha to Beta");
   close.listeners.click();                                      // the first click only asks "Sure?"
   assert.equal(calls.length, 1);

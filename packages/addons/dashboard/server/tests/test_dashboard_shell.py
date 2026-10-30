@@ -164,6 +164,7 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/workspace/cosmetic",
         "/api/w/{ws}/add-ons/{name}/settings",
         "/api/w/{ws}/hub/link",  # run-9 feedback 6: read a connect link
+        "/api/w/{ws}/hub/profile",  # HUB-WS-09: the owner's workspace profile (GET and PUT)
         "/api/w/{ws}/runner",
         "/api/w/{ws}/runner/deposits/{deposit_id}",
         "/api/w/{ws}/runner/forget",

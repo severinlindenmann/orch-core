@@ -97,9 +97,13 @@ const WORDS = {
   self_disable: "You cannot disable yourself.",
   conflict: "That is not possible in the person's current state.",
   bad_invite: "This link does not work. It may have been used already or it has expired.",
+  wrong_mode: "None of these workspaces can start the space yet. Pick one that is ready, or ask an owner to accept first.",
+  unknown_workspace: "One of these workspaces is no longer connected. Reload the page and pick again.",
+  exists: "That workspace is already in this space.",
+  not_accepted: "Its owner has to accept first. Nothing was changed.",
   proof_required: "Open this link in a browser where you already approve, or ask your admin for a recovery link.",
 };
-const say = (code) => WORDS[code] ?? "Refused (" + renderText(code) + ").";
+const say = (code) => WORDS[code] ?? "That did not work. Please try again.";
 
 // --- views -------------------------------------------------------------------------------------------------------------
 function loginView(err) {
@@ -456,6 +460,11 @@ async function workspaces(joined = [], known = null) {
           const r = await api("POST", "/admin/connect", ownerUser ? { owner_user: ownerUser } : {});
           if (r.status < 200 || r.status >= 300 || typeof r.body.link !== "string" || !Number.isFinite(r.body.expires_ms)) throw new Error("connect failed");
           if (ownerUser) rememberName(ownerUser, peopleNames.get(ownerUser)); // the /c page says whose workspace (display only)
+          return r.body;
+        },
+        askUpdate: async () => { // HUB-WS-04: the owners of older workspaces are asked (the request carries only the version)
+          const r = await api("POST", "/admin/workspaces/update-request", {});
+          if (r.status < 200 || r.status >= 300) throw new Error("ask failed");
           return r.body;
         },
         remove: async (w) => {

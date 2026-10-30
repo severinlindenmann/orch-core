@@ -195,3 +195,24 @@ def test_status_is_plain_and_cancel_returns_the_hub_to_open(w):
     _no_state(w)
     assert w.closing.active() is False
     assert w.call("GET", "/admin/hub/remove/status", token=tok)[1]["state"] == "open"
+
+
+def test_a_channel_factor_below_password_and_totp_is_refused_with_no_state(w, monkeypatch):
+    from orch_hub.contract import hub as H
+    from orch_hub.custodial import engine as E
+
+    weak = "password"  # not a factor of the ranking at all (password+totp is the lowest there is): rank -1
+    assert weak not in H.FACTOR_RANK
+    real = E.verified_channel
+
+    def lowered(*a, **k):
+        cert, ch = real(*a, **k)
+        return cert, {**ch, "factor": weak}
+
+    monkeypatch.setattr(E, "verified_channel", lowered)
+    with_backup_key(w)
+    tok, signer, ch = admin_with_key(w)
+    _s, prep, _ = prepare(w, tok, ch)
+    s, o, _ = w.call("POST", "/admin/hub/remove/confirm", confirm_body(w, signer, prep), token=tok)
+    assert (s, o) == (403, {"error": "factor_too_weak"})
+    _no_state(w)

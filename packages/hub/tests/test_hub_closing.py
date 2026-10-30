@@ -267,3 +267,28 @@ def test_f2_a_cancelled_run_cannot_move_the_new_one(w, monkeypatch):
     assert w.closing.phase() in ("closing", "preflight_ok", "backed_up", "withdrawing", "withdrawn", "notified", "ordered")
     # the old worker did not skip the new run's preflight: it either left the doc at 'closing' or the new run took over
     assert w.closing._doc["state"] == "closing" or any(c[0] == "dry_run" for c in w.launcher.calls)
+
+
+@pytest.mark.parametrize("state", ["closing", "preflight_ok", "backed_up", "withdrawing", "withdrawn", "notified"])
+def test_resume_goes_on_from_every_state(w, state):
+    """A restart in ANY non-final state resumes to ``ordered`` (forward only; a backed_up hub withdraws, never reopens)."""
+    _seed_secret(w)
+    _begin(w)
+    w.closing._doc["state"] = state
+    w.closing._save()
+    again = Closing(keys=w.env.keys, access=w.env.acc, registry=w.reg, channels=w.env.svc, now_ms=w.clock,
+                    launcher=w.launcher, activity=w._act, audit=w.env.audit, spawn=lambda fn: fn())
+    again.push = lambda ws, n: True
+    assert again.phase() == state
+    again.resume()
+    assert again.phase() == "ordered"
+    if state in ("closing", "preflight_ok", "backed_up", "withdrawing"):
+        assert _wraps(w) == 0
+
+
+def test_resume_leaves_ordered_and_failed_runs_alone(w):
+    _begin(w)
+    w.closing.run_sync()
+    n = len(w.launcher.calls)
+    w.closing.resume()
+    assert len(w.launcher.calls) == n  # an ordered hub is not ordered a second time

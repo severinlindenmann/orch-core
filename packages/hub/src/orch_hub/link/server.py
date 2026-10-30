@@ -441,7 +441,7 @@ class LinkServer:
         sent = False
         for port in ports:
             try:
-                if port.attached_seq is not None and self._bound_seq(ws, port.wsk) == port.attached_seq:
+                if self._bound_seq(ws, port.wsk) is not None and port.is_current():  # the current pin, still bound
                     port.send_request("closing_notice", {"notice": notice})
                     sent = True
             except Exception:  # noqa: BLE001  # a dead link: the host pulls it

@@ -18,6 +18,7 @@ decides what it may sign. Nothing here logs keys, signatures or message bodies."
 
 from __future__ import annotations
 
+import re
 import threading
 import time
 from collections.abc import Callable
@@ -109,6 +110,16 @@ _REPLY: dict[str, Callable[[dict[str, Any]], bool]] = {
         set(b) == {"hub", "user_id", "workspaces"} and type(b["hub"]) is dict and type(b["workspaces"]) is list
     ),
     "hub_where": lambda b: set(b) == {"addresses", "name"} and type(b["addresses"]) is list and type(b["name"]) is str,
+    "status_put": lambda b: (  # HUB-WS-04: `{}` or the optional update request (the version only, never text)
+        b == {}
+        or (
+            set(b) == {"update_requested"}
+            and type(b["update_requested"]) is dict
+            and set(b["update_requested"]) == {"target_version"}
+            and type(b["update_requested"]["target_version"]) is str
+            and re.fullmatch(r"[0-9A-Za-z.+-]{1,32}", b["update_requested"]["target_version"]) is not None
+        )
+    ),
     "owner_get": lambda b: set(b) == {"user_id"} and type(b["user_id"]) is str,
     "shared_get": lambda b: set(b) == {"items"} and type(b["items"]) is list,
     "audience_get": lambda b: set(b) == {"people", "teams"} and type(b["people"]) is list and type(b["teams"]) is list,

@@ -229,6 +229,12 @@ def _int(value, high=10**9):
     return value if type(value) is int and 0 <= value <= high else None
 
 
+def _update_target(notice) -> str | None:
+    """HUB-WS-04: the version a hub admin asks this workspace to update to; only a plain version string is shown."""
+    v = notice.get("target_version") if isinstance(notice, dict) else None
+    return v if isinstance(v, str) and re.fullmatch(r"[0-9A-Za-z.+-]{1,32}", v) else None
+
+
 def status_view(raw) -> dict:
     """Of `hub.status` only the closed fields, each checked. An unknown mode is `unknown` (fail closed in the page)."""
     raw = raw if isinstance(raw, dict) else {}
@@ -252,6 +258,7 @@ def status_view(raw) -> dict:
         "reseal_needed": raw.get("reseal_needed") is True,
         "key_change_pending": raw.get("rotation") == "pending",
         "log_sync_stuck": isinstance(raw.get("log_sync"), dict) and bool(raw["log_sync"].get("stuck")),
+        "update_target": _update_target(raw.get("update_notice")),
         "groups": counts if snap else None,  # from the hub, not signed
         "snapshot_version": _int(snap.get("version")) if snap else None,
         "hub_card": json.dumps(raw["hub_card"], separators=(",", ":")) if isinstance(raw.get("hub_card"), dict)

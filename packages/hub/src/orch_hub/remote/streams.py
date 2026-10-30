@@ -55,7 +55,10 @@ class Limits:
     per_user: int = 8
     hub_wide: int = 256
     opens_per_device_min: int = 10
-    enroll_opens_per_ws_min: int = 3
+    #: Invariant: every shared limit a client can consume has a per-user cap BELOW it. Enroll opens: the shared per
+    #: workspace rate counts host-accepted opens only; each user's own attempts (accepted or not) are capped lower.
+    enroll_opens_per_ws_min: int = 6
+    enroll_opens_per_user_ws_min: int = 3
     opens_per_user_min: int = 20
     life_bytes: int = R.BYTE_BUDGET["life"]
     min_bytes: int = R.BYTE_BUDGET["per_min"]
@@ -294,7 +297,13 @@ class StreamRouter:
                 raise Refused("remote.busy")
             rates = [("dev", ws + device_id, lim.opens_per_device_min), ("usr", user, lim.opens_per_user_min)]
             if kind == "enroll":
-                rates.append(("enr", ws, lim.enroll_opens_per_ws_min))
+                rates.append(("enu", user + ws, lim.enroll_opens_per_user_ws_min))
+                q = self._opens.setdefault(("enr", ws), deque())  # host-accepted enroll opens (appended on accept)
+                while q and now - q[0] >= WINDOW_S:
+                    q.popleft()
+                inflight = sum(1 for s in streams if s.ws == ws and s.kind == "enroll" and s.state == "opening")
+                if len(q) + inflight >= lim.enroll_opens_per_ws_min:
+                    raise Refused("remote.busy")
             qs = []
             for k, key, cap in rates:
                 q = self._opens.setdefault((k, key), deque())
@@ -337,6 +346,9 @@ class StreamRouter:
             raise Refused("unavailable")  # the link went away between the answer and now
         if s.result:
             raise Refused(s.result)
+        if kind == "enroll":
+            with self._mu:  # only an open the host accepted uses up the shared per-workspace enroll rate
+                self._opens.setdefault(("enr", ws), deque()).append(self._now())
         return sid
 
     def send(self, stream_id: str, data: bytes) -> None:

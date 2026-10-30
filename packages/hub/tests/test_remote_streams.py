@@ -336,6 +336,36 @@ def test_stream_limit_enroll_opens_per_workspace_per_minute():
     open_stream(r, WS_A, a, dev=DEV)  # sessions are not limited by the enroll rate
 
 
+def test_stream_enroll_rate_is_per_user_and_workspace_and_counts_only_accepted_opens():
+    r, a, _ = make()
+    for i in range(3):  # user A burns the per-(user, workspace) enroll rate with opens the host refuses
+        n = len(a.ops("stream_open")) + 1
+        out: dict = {}
+        t = threading.Thread(
+            target=lambda i=i, out=out: out.update(r_=open_async_result(r, "uA", f"rc_{i:032x}")), daemon=True
+        )
+        t.start()
+        answer(r, WS_A, a, {"error": "remote.no_code"}, n)
+        t.join(5)
+        assert out["r_"] == "remote.no_code"
+    assert open_async_result(r, "uA", CODE) == "remote.busy"  # A is capped ...
+    open_stream(
+        r, WS_A, a, user="uB", dev=CODE, kind="enroll"
+    )  # ... B's enroll open still goes through (A's did not count)
+    # the shared per-workspace rate (6) counts accepted opens only: B and C fill it, then D is busy
+    for i, u in enumerate(("uB", "uB", "uC", "uC", "uC")):
+        open_stream(r, WS_A, a, user=u, dev=f"rc_{i + 1:032x}", kind="enroll")
+    assert open_async_result(r, "uD", CODE) == "remote.busy"
+
+
+def open_async_result(r, user, dev):
+    try:
+        r.open(WS_A, user, dev, "enroll", FakeSink())
+    except Refused as e:
+        return e.code
+    return "ok"
+
+
 def test_stream_limit_opens_per_user_per_minute():
     r, a, _ = make(limits=Limits(per_device=99, per_user=99, opens_per_device_min=99))
     for i in range(20):

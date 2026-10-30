@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 
 import pytest
 from remote_helpers import CODE, DEV, DEV2, HUB, WS_A, WS_B, FakeConn, FakePort, answer, data_frame
@@ -368,6 +369,32 @@ def test_stream_connection_pool_limits(w):
     c4 = rig.connect()  # connection cap (2) reached
     with pytest.raises(Exception):  # noqa: B017
         c4.get(1)
+
+
+def test_stream_one_user_cannot_hold_all_connections_without_opening(w):
+    rig = Rig(w, max_idle_per_user=3)
+    tok = remote_token(w)
+    held = []
+    for _ in range(3):
+        c = rig.connect()
+        c.put({"t": "hello", "v": 1, "token": tok})
+        assert c.get()["t"] == "ready"
+        held.append(c)  # signed in, no open sent yet
+    c = rig.connect()
+    c.put({"t": "hello", "v": 1, "token": tok})
+    assert c.get() == {"t": "error", "error": "remote.busy"}
+    other = rig.connect()  # another user is not affected
+    other.put({"t": "hello", "v": 1, "token": remote_token(w, w.admin)})
+    assert other.get()["t"] == "ready"
+    held[0].close()  # a slot frees when the connection goes
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline:
+        c = rig.connect()
+        c.put({"t": "hello", "v": 1, "token": tok})
+        if c.get()["t"] == "ready":
+            break
+    else:
+        pytest.fail("slot not freed")
 
 
 def test_stream_signed_in_hook_called_after_hello(w):

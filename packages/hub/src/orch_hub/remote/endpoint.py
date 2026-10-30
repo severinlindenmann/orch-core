@@ -104,6 +104,7 @@ class RemoteEndpoint:
         *,
         max_connections: int = 64,
         max_unauthenticated: int = 16,
+        max_idle_per_user: int = 8,
         setup_timeout: float = 30.0,
         write_timeout: float = 10.0,
         read_timeout: float = 10.0,
@@ -114,6 +115,7 @@ class RemoteEndpoint:
         self._conns = threading.BoundedSemaphore(max_connections)
         self._pre = threading.BoundedSemaphore(min(max_unauthenticated, max_connections))
         self._t_setup, self._t_w, self._t_r, self._poll = setup_timeout, write_timeout, read_timeout, idle_poll
+        self._idle_cap, self._idle_users, self._idle_mu = max_idle_per_user, {}, threading.Lock()
         self._queue = queue_frames if queue_frames is not None else router.lim.queue_frames
 
     def serve(self, conn: Any) -> None:
@@ -135,6 +137,22 @@ class RemoteEndpoint:
             pre.release()
             self._conns.release()
             conn.close()
+
+    def _idle_take(self, user: str) -> bool:
+        with self._idle_mu:
+            n = self._idle_users.get(user, 0)
+            if n >= self._idle_cap:
+                return False
+            self._idle_users[user] = n + 1
+            return True
+
+    def _idle_release(self, user: str) -> None:
+        with self._idle_mu:
+            n = self._idle_users.get(user, 0) - 1
+            if n > 0:
+                self._idle_users[user] = n
+            else:
+                self._idle_users.pop(user, None)
 
     def _recheck(self, token: str, user: str, ws: str) -> Callable[[], bool]:
         """The router sweep's question for one stream: the token that opened it is still live for the same user, and that
@@ -189,44 +207,53 @@ class RemoteEndpoint:
         except AuthzError as e:
             self._fail(conn, e.code)
             return
-        self._send(conn, {"t": "ready", "hub_id": self._router.hub_id})
-        pre.release()  # signed in: out of the not-yet-authenticated pool
-        signed_in = getattr(conn, "signed_in", None)
-        if signed_in is not None:
-            signed_in()  # the link server's own slot too (idempotent)
+        if not self._idle_take(user):  # per-user cap on signed-in connections that have not opened a stream yet
+            self._fail(conn, "remote.busy")
+            return
+        idle_user, sid = user, ""
+        sink: _Sink | None = None
         try:
-            op = self._read(conn, deadline)
-        except framing.FrameError:
-            self._refuse(conn, "malformed")
-            return
-        if set(op) != {"t", "workspace_id", "device_id", "kind"} or op["t"] != "open":
-            self._refuse(conn, "malformed")
-            return
-        ws, dev, kind = op["workspace_id"], op["device_id"], op["kind"]
-        want = R.DEVICE_ID if kind == "session" else R.CODE_ID
-        if (
-            type(ws) is not str
-            or _WS.fullmatch(ws) is None
-            or kind not in ("session", "enroll")
-            or type(dev) is not str
-            or want.fullmatch(dev) is None
-        ):
-            self._refuse(conn, "malformed")
-            return
-        try:
-            user = self._authz.authenticate(hello["token"])  # re-checked at every open (removed users, sign-out)
-        except AuthzError as e:
-            self._fail(conn, e.code)
-            return
-        if not self._authz.may_open(user, ws):
-            self._refuse(conn, "not_allowed")
-            return
-        sink = _Sink(conn, self._queue, self._t_w)
-        try:
-            sid = self._router.open(ws, user, dev, kind, sink, self._recheck(hello["token"], user, ws))
-        except Refused as r:
-            self._refuse(conn, r.code)
-            return
+            self._send(conn, {"t": "ready", "hub_id": self._router.hub_id})
+            pre.release()  # signed in: out of the not-yet-authenticated pool
+            signed_in = getattr(conn, "signed_in", None)
+            if signed_in is not None:
+                signed_in()  # the link server's own slot too (idempotent)
+            try:
+                op = self._read(conn, deadline)
+            except framing.FrameError:
+                self._refuse(conn, "malformed")
+                return
+            if set(op) != {"t", "workspace_id", "device_id", "kind"} or op["t"] != "open":
+                self._refuse(conn, "malformed")
+                return
+            ws, dev, kind = op["workspace_id"], op["device_id"], op["kind"]
+            want = R.DEVICE_ID if kind == "session" else R.CODE_ID
+            if (
+                type(ws) is not str
+                or _WS.fullmatch(ws) is None
+                or kind not in ("session", "enroll")
+                or type(dev) is not str
+                or want.fullmatch(dev) is None
+            ):
+                self._refuse(conn, "malformed")
+                return
+            try:
+                user = self._authz.authenticate(hello["token"])  # re-checked at every open (removed users, sign-out)
+            except AuthzError as e:
+                self._fail(conn, e.code)
+                return
+            if not self._authz.may_open(user, ws):
+                self._refuse(conn, "not_allowed")
+                return
+            sink = _Sink(conn, self._queue, self._t_w)
+            try:
+                sid = self._router.open(ws, user, dev, kind, sink, self._recheck(hello["token"], user, ws))
+            except Refused as r:
+                self._refuse(conn, r.code)
+                return
+        finally:
+            self._idle_release(idle_user)
+        assert sink is not None
         sink.on_fail = lambda: self._router.close(sid, "closed", by="client")
         try:
             self._send(conn, {"t": "opened", "stream_id": sid})

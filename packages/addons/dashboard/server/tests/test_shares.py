@@ -161,6 +161,36 @@ def test_a_host_without_publish_says_unavailable(client, token, stub, host):
     assert host.calls == []
 
 
+@pytest.mark.parametrize(
+    ("code", "rows", "reason", "can_fix"),
+    [
+        # `publish.list` answers runner.disabled when Publish is off, and the same code while the hub pauses it
+        ("runner.disabled", [{"name": "publish", "state": "disabled"}], "off", True),
+        ("runner.disabled", [{"name": "publish", "state": "paused"}], "paused", False),
+        ("runner.disabled", None, "off", True),
+        ("publish.not_configured", [], "not_configured", True),
+        # run 14 (J08-01, J07-03): a workspace joined in full mode, or joined and not yet connected
+        ("hub.state_mismatch", [], "hub_mode", False),
+        ("hub.not_joined", [], "hub_not_connected", False),
+    ],
+)
+def test_a_refusal_that_says_why_sharing_is_unavailable_is_an_answer_not_an_error(
+    client, token, stub, host, monkeypatch, gateway, code, rows, reason, can_fix
+):
+    host.answers["publish.list"] = HostError({"code": code, "message": code, "retryable": False}, 3)
+    monkeypatch.setattr(
+        gateway, "addon_rows", lambda link: rows if rows is not None else (_ for _ in ()).throw(KeyError())
+    )
+    res = client.get(url(stub, "/shares"), headers=hdr(token))
+    assert res.status_code == 200, res.text
+    assert res.json() == {"available": False, "reason": reason, "can_fix": can_fix}
+
+
+def test_any_other_refusal_stays_an_error(client, token, stub, host):
+    host.answers["publish.list"] = HostError({"code": "workspace.unavailable", "message": "x", "retryable": False}, 3)
+    assert client.get(url(stub, "/shares"), headers=hdr(token)).status_code == 503
+
+
 def test_list_for_one_ticket_names_the_ticket(client, token, stub, host):
     host.answers["publish.list"] = LIST
     assert client.get(url(stub, "/shares?ticket=DEMO-1"), headers=hdr(token)).status_code == 200

@@ -251,6 +251,27 @@ def register(app: FastAPI, gateway: Gateway) -> None:
     def supported(link) -> bool:
         return all(link.supports(op, "publish/1") for op in OPS)
 
+    def unavailable(link, code):
+        """Why the host cannot list shares, when that is an expected state and not a failure: `reason` for the page's
+        one line, `can_fix` whether one click on the page can change it. Seen in run 14 (J08-01, J07-03): a workspace
+        joined to a hub in full mode answers `hub.state_mismatch`, a joined one not yet connected `hub.not_joined`."""
+        if code == "runner.disabled":  # off, or paused by the hub: the host uses one code for both
+            try:
+                row = next(
+                    (a for a in gateway.addon_rows(link) if isinstance(a, dict) and a.get("name") == "publish"), {}
+                )
+            except (HostError, KeyError, TypeError):
+                row = {}
+            paused = row.get("state") == "paused"
+            return {"available": False, "reason": "paused" if paused else "off", "can_fix": not paused}
+        if code == "publish.not_configured":
+            return {"available": False, "reason": "not_configured", "can_fix": True}
+        if code == "hub.state_mismatch":
+            return {"available": False, "reason": "hub_mode", "can_fix": False}
+        if code == "hub.not_joined":
+            return {"available": False, "reason": "hub_not_connected", "can_fix": False}
+        return None
+
     def titles(ws, wanted):
         from .adapters import board_statuses
 
@@ -268,7 +289,13 @@ def register(app: FastAPI, gateway: Gateway) -> None:
         if not supported(link):
             return {"available": False}
         args = {"live": True, **({"ref": query.ticket} if query.ticket else {})}
-        data = link.call("publish.list", args)
+        try:
+            data = link.call("publish.list", args)
+        except HostError as exc:
+            why = unavailable(link, exc.error.get("code"))
+            if why is None:
+                raise
+            return why
         got = listing(data)
         names = titles(ws, {r["ticket"] for r in got["shares"] if r["ticket"]}) if not query.ticket else {}
         if names:

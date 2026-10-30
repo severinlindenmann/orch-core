@@ -12,7 +12,7 @@ import { activityView } from "./activity.js";
 import { accountFromWorkspaceView, accountView } from "./account.js";
 import { adminView } from "./admin.js";
 import { changesView, checkChange, sentence as changeSentence } from "./changes.js";
-import { totpPanel } from "./totp.js";
+import { KEY_GONE_NOTE, totpPanel } from "./totp.js";
 import { inviteView } from "./invite.js";
 import { rememberDashboard, rememberName } from "./connect.js";
 import { servicesView } from "./services.js";
@@ -73,7 +73,7 @@ async function api(method, path, body) {
 }
 const WORDS = {
   no_session: "Your sign-in ended. Sign in again.",
-  bad_credentials: "Wrong user id, password or code. A code works once; wait for the next one.",
+  bad_credentials: "Wrong name, password or code. A code works once; wait for the next one.",
   rate_limited: "Too many tries. Wait a moment.",
   event_changed: "The request changed while you were deciding.",
   prepared_expired: "Time ran out.",
@@ -140,7 +140,8 @@ function setupView(token, err) {
         h("h2", { text: "Add your sign-in code to your phone" }),
         h("p", { class: "muted", text: "Scan this with your authenticator app. You will need the app's 6-digit code each time you sign in." }),
         totpPanel(r.body.totp_uri, r.body.totp_secret),
-        h("div", { class: "row top" }, h("button", { class: "pri", id: "open-hub", text: "Open the hub", onclick: () => afterLogin() })),
+        h("p", { class: "small muted top", id: "key-gone", text: KEY_GONE_NOTE }),
+        h("div", { class: "row top" }, h("button", { class: "pri", id: "open-hub", text: "I've added it, open the hub", onclick: () => afterLogin() })),
       );
     },
   }, field("Your name", name), field("Choose a password (10 or more characters)", pw), h("div", { class: "row top" }, h("button", { class: "pri", type: "submit", text: "Create the admin" })));
@@ -177,20 +178,23 @@ function shell(active, ...nodes) {
   const tab = (id, label, cls) => h("a", { href: "#/" + id, "data-tab": id, class: cls + (active === id ? " on" : ""), "aria-current": active === id ? "page" : null, text: label, onclick: (e) => { e.preventDefault(); navigate("#/" + id); } });
   // The section tabs: orch's own, with every page module of pages/ slotted in after the tab it names (PAGES is generated
   // from the folder by the server; nothing here lists a page).
-  const items = [["home", "Home"], ["approvals", "Approvals"], ["workspaces", "Workspaces"], ["phones", "Phones"], ["handoffs", "Hand-offs"], ["account", "Account"], ["services", "Services", true], ["activity", "Activity", true], ["admin", "Admin", true]].map(([id, label, admin]) => ({ id, label, admin: !!admin }));
+  // P14: an empty hub shows only what is useful; the entries marked `later` appear once a workspace is connected (routes still open by URL).
+  const items = [["home", "Home"], ["approvals", "Approvals", false, true], ["workspaces", "Workspaces"], ["phones", "Phones"], ["handoffs", "Hand-offs", false, true], ["account", "Account"], ["services", "Services", true, true], ["activity", "Activity", true, true], ["admin", "Admin", true]].map(([id, label, admin, later]) => ({ id, label, admin: !!admin, later: !!later }));
   for (let todo = [...PAGES].sort((x, y) => (x.path < y.path ? -1 : 1)), moved = true; todo.length && moved;) {
     moved = false;
     for (const pg of [...todo]) {
       const at = items.findIndex((t) => t.id === pg.nav.after);
       if (at < 0) continue;
-      items.splice(at + 1, 0, { id: pg.path, label: pg.nav.label, admin: pg.nav.admin });
+      items.splice(at + 1, 0, { id: pg.path, label: pg.nav.label, admin: pg.nav.admin, later: !!pg.nav.needsWorkspace });
       todo.splice(todo.indexOf(pg), 1); moved = true;
     }
   }
-  for (const pg of PAGES) if (!items.some((t) => t.id === pg.path)) items.push({ id: pg.path, label: pg.nav.label, admin: pg.nav.admin }); // an unresolved nav.after is still reachable (pages.test.mjs fails on it)
-  const tabs = (cls) => items.filter((t) => !t.admin || state.user?.is_admin).map((t) => tab(t.id, t.label, cls));
+  for (const pg of PAGES) if (!items.some((t) => t.id === pg.path)) items.push({ id: pg.path, label: pg.nav.label, admin: pg.nav.admin, later: !!pg.nav.needsWorkspace }); // an unresolved nav.after is still reachable (pages.test.mjs fails on it)
+  const empty = state.rail.ready === true && !state.rail.rows.length; // a rail that could not be read hides nothing
+  const tabs = (cls) => items.filter((t) => (!t.admin || state.user?.is_admin) && !(t.later && empty)).map((t) => tab(t.id, t.label, cls));
   const name = renderText(state.user?.name ?? "");
   const hubName = renderText(state.rail.hubName);
+  const topNav = h("nav", { class: "navtabs top-nav", "aria-label": "Sections" }, ...tabs("nav"));
   const side = h("aside", { class: "side", "aria-label": "Hub" },
     h("div", { class: "logo" }, h("i"), h("span", { text: "orch" })),
     h("div", { class: "hubbox" }, h("span", { text: hubName })),
@@ -198,7 +202,7 @@ function shell(active, ...nodes) {
     h("div", { class: "sp" }), h("div", { class: "who" }, h("span", { text: name })));
   if (!frame) {
     const top = h("header", { class: "topbar" }, h("span", { class: "t breadcrumb", text: hubName }),
-      h("nav", { class: "navtabs top-nav", "aria-label": "Sections" }, ...tabs("nav")),
+      topNav,
       h("span", { class: "grow" }), h("button", { text: "Search ⌘K", onclick: () => openSearch() }), h("button", { text: "?", "aria-label": "Keyboard shortcuts", onclick: () => openShortcuts() }), h("span", { class: "small muted", text: name }), signOutMenu());
     show(h("div", { class: "app" }, railView(), side, h("div", { class: "main" }, top, h("div", { class: "content", id: "main-content", tabindex: "-1" }, nodes.flat(2)))));
     root.classList.add("shelled");
@@ -209,6 +213,7 @@ function shell(active, ...nodes) {
     replaceContent(frame.querySelector(".content"), nodes.flat(2).filter(Boolean), sameRoute);
     if (railSnapshot !== JSON.stringify(state.rail)) {
       frame.querySelector(".rail").replaceChildren(...railView().childNodes);
+      frame.querySelector(".top-nav")?.replaceWith(topNav);
       railSnapshot = JSON.stringify(state.rail);
     }
   }
@@ -265,6 +270,7 @@ async function loadRail() {
   if (r.status !== 200) r = await api("GET", "/me/workspaces"); // older hub without the rail: the plain list, nothing openable
   if (!user || state.user !== user) return;
   state.rail.rows = r.status === 200 ? railRows(r.body) : [];
+  state.rail.ready = r.status === 200;
   const n = r.status === 200 ? r.body.hub?.name : null;
   state.rail.hubName = typeof n === "string" && n ? n : "Hub";
 }

@@ -9,12 +9,12 @@ let pendingSwitch: string | null = null
 export const getPendingSwitch = () => pendingSwitch
 export const declineSwitch = () => { pendingSwitch = null }
 
-// D93 (run-15 J02): the host refused the switch on purpose (the hub is joined for chosen items only, or the computer runs
-// at a customer's place). The error page then says so instead of "This link no longer works".
-let refusedByDesign = false
-export const switchWasRefused = () => refusedByDesign
+// Why the last redeem failed (switch.refused, session.required, origin.bad, rate.limited ...). The failure page says the
+// real reason in plain words (D93 run-15 J02: a workspace joined for chosen items only never opens from the hub).
+let failureCode: string | null = null
+export const switchFailureCode = () => failureCode
 
-type Redeemed = { ok: true; to: string | null } | { ok: false; unverified: boolean }
+type Redeemed = { ok: true; to: string | null } | { ok: false; unverified: boolean; code: string | null }
 
 async function redeem(t: string, proof: { key_id: string; sig: string } | null, fetcher: typeof fetch): Promise<Redeemed> {
   const response = await fetcher('/auth/switch', {
@@ -23,8 +23,8 @@ async function redeem(t: string, proof: { key_id: string; sig: string } | null, 
   })
   if (!response.ok) {
     const code = await response.json().then((b: { error?: { code?: unknown } }) => b?.error?.code, () => null)
-    refusedByDesign = response.status === 403 && code === 'switch.refused'  // D93: this workspace never opens from the hub
-    return { ok: false, unverified: response.status === 401 && code === 'switch.unverified' }
+    failureCode = typeof code === 'string' ? code : null
+    return { ok: false, unverified: response.status === 401 && code === 'switch.unverified', code: failureCode }
   }
   const body = await response.json() as { token?: string; return_to?: string; signed_out?: boolean }
   if (body.signed_out) {
@@ -33,28 +33,28 @@ async function redeem(t: string, proof: { key_id: string; sig: string } | null, 
     clearSession()
     return { ok: true, to: null }
   }
-  if (typeof body.token !== 'string') return { ok: false, unverified: false }
+  if (typeof body.token !== 'string') return { ok: false, unverified: false, code: null }
   remember(body.token)
   return { ok: true, to: safeDestination(body.return_to ?? '/') }
 }
 
 /** What a hub switch link leads to: a landing (`to`, `null` after a sign-out ticket), the one "Open <name>?" confirm
  * (the ticket is still unused), or an error page (the link is not good: expired, used, not for this person). */
-export type SwitchLanding = { kind: 'landed'; to: string | null } | { kind: 'confirm'; name: string | null } | { kind: 'failed' }
+export type SwitchLanding = { kind: 'landed'; to: string | null } | { kind: 'confirm'; name: string | null } | { kind: 'failed'; code: string | null }
 
 /** E4: right after boot. This browser proves its enrolled key for this origin BEFORE the ticket is used; the server
  * then redeems and opens a full session in one step. No key, or a proof the server refuses: the ticket stays unused
  * and the person is asked once. */
 export async function landSwitch(fetcher: typeof fetch = fetch): Promise<SwitchLanding> {
   const t = pendingSwitch
-  if (!t) return { kind: 'failed' }
+  if (!t) return { kind: 'failed', code: null }
   const { name, proof } = await switchProof(t, fetcher)
   if (!proof) return { kind: 'confirm', name }
-  const got = await redeem(t, proof, fetcher).catch((): Redeemed => ({ ok: false, unverified: true }))
+  const got = await redeem(t, proof, fetcher).catch((): Redeemed => ({ ok: false, unverified: true, code: null }))
   if (got.ok) { pendingSwitch = null; return { kind: 'landed', to: got.to } }
   if (got.unverified) return { kind: 'confirm', name }
   pendingSwitch = null
-  return { kind: 'failed' }
+  return { kind: 'failed', code: got.code }
 }
 
 /** The person clicked Open: the server (and the hub behind it) uses the ticket once, with no proof: a read-mostly

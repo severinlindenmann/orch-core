@@ -1,4 +1,4 @@
-import { confirmSwitch, switchWasRefused } from './bootstrap'
+import { confirmSwitch, switchFailureCode } from './bootstrap'
 
 /**
  * A hub switch link was opened here and this browser could not prove its key for this dashboard (a fresh profile, a
@@ -31,23 +31,46 @@ export function showSwitchConfirm(name: string | null, root: HTMLElement | null 
   root.replaceChildren(box)
 }
 
-/** The link is not good (expired, already used, or not for this dashboard's person): an error page, nothing opened. */
-export function showSwitchFailed(root: HTMLElement | null = document.getElementById('root'), refused = switchWasRefused()) {
+const FAILED_WHY: Record<string, string> = {
+  'switch.refused': 'Open this workspace on its own computer. It shares only chosen items with the hub, or it runs at a customer\'s place.',
+  'rate.limited': 'Too many tries. Wait a minute, then open it from the hub again.',
+}
+const FAILED_DEFAULT = 'This link was already used or has expired. Nothing was changed.'
+
+/** Where the person came from, when that was another website (the hub): its origin only, never a path or a query. */
+function hubOrigin(): string | null {
+  try {
+    const u = new URL(document.referrer)
+    return (u.protocol === 'https:' || u.protocol === 'http:') && u.origin !== location.origin ? u.origin : null
+  } catch { return null }
+}
+
+/** The link is not good (expired, already used, refused on purpose): an error page that says the real reason and always
+ * offers a way on. Nothing is opened and nobody is signed in. */
+export function showSwitchFailed(root: HTMLElement | null = document.getElementById('root'), code: string | null = switchFailureCode()) {
   if (!root) return
   const box = document.createElement('div')
   box.className = 'boot'
   box.setAttribute('role', 'alert')
   const title = document.createElement('b')
-  title.textContent = refused ? 'Open this workspace on its own computer' : 'This link no longer works'
+  title.textContent = 'This workspace did not open'
   const why = document.createElement('span')
-  why.textContent = refused
-    ? 'This workspace does not open from the hub: it shares only chosen items with the hub, or it runs at a customer\'s place.'
-    : 'Go back to the hub and click Open workspace again.'
-  const home = document.createElement('button')
-  home.type = 'button'
-  home.className = 'boot-retry'
-  home.textContent = 'Open the dashboard'
-  home.addEventListener('click', () => location.replace('/'))
-  box.append(title, why, home)
+  why.textContent = (code && FAILED_WHY[code]) || FAILED_DEFAULT
+  box.append(title, why)
+  const hub = hubOrigin()
+  if (hub) {
+    const back = document.createElement('button')
+    back.type = 'button'
+    back.className = 'boot-retry'
+    back.textContent = 'Back to the hub'
+    back.addEventListener('click', () => location.assign(hub + '/'))
+    box.append(back)
+  }
+  const again = document.createElement('button')
+  again.type = 'button'
+  again.className = 'boot-retry'
+  again.textContent = 'Sign in again'
+  again.addEventListener('click', () => location.replace('/'))
+  box.append(again)
   root.replaceChildren(box)
 }

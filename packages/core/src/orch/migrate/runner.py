@@ -15,7 +15,7 @@ from pathlib import Path
 from orch.ops.errors import OrchError
 
 from .format import lock_root, read_format, write_format
-from .steps import DEFAULT, Registry, Step, StepContext
+from .steps import DEFAULT, Registry, Step, StepContext, protected_snapshot
 
 __all__ = ["Plan", "apply", "plan"]
 
@@ -58,11 +58,12 @@ def apply(
     reg: Registry = DEFAULT,
     *,
     after_step: Callable[[Step], None] | None = None,
+    lock_fd: int | None = None,
 ) -> list[str]:
     """Run the pending steps of ``root``; returns the names applied (empty when there was nothing to do).
     ``after_step`` is called after each step's ``format.json`` is written (a seam for crash tests and progress)."""
     root = Path(root)
-    fd = lock_root(root, exclusive=True)
+    fd = lock_root(root, exclusive=True) if lock_fd is None else lock_fd
     try:
         done: list[str] = []
         while True:
@@ -70,7 +71,12 @@ def apply(
             if not p.steps:
                 return done
             step = p.steps[0]
-            step.apply(StepContext(root))
+            before = protected_snapshot(root)
+            step.apply(StepContext(root, step.writes))
+            if protected_snapshot(root) != before:
+                raise OrchError(
+                    "migrate.signed_path", f"step {step.name} changed signed data; the format was not moved"
+                )
             if step.verify is not None:
                 step.verify(root)
             write_format(root, kind, step.to_n)
@@ -78,4 +84,5 @@ def apply(
             if after_step is not None:
                 after_step(step)
     finally:
-        os.close(fd)
+        if lock_fd is None:
+            os.close(fd)

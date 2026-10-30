@@ -17,6 +17,7 @@ from orch.ops.errors import ERRORS, OrchError
 from orch.ops.runtime import state_dir
 
 from . import backup as backup_mod
+from .format import lock_root
 from .runner import Plan, apply, plan
 
 __all__ = ["main"]
@@ -114,16 +115,24 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextI
             continue
         row: dict[str, Any] = {"root": label, "kind": kind, **_describe(p)}
         if mode == "--apply" and p.pending:
+            fd = None
             try:
+                fd = lock_root(root, exclusive=True)  # ONE exclusive lock for the backup and the steps
+                p = plan(root, kind)  # re-read under the lock
+                row.update(_describe(p))
                 b = backup_mod.create_backup(root, kind, p.at, p.target, env)
                 row["backup"] = str(b)
-                row["applied"] = apply(root, kind)
+                row["applied"] = apply(root, kind, lock_fd=fd)
+                backup_mod.prune_backups(env, root, pin_from=p.at)  # only after success
             except OrchError as exc:
                 row["error"] = {"code": exc.code, "message": exc.message}
                 code = max(code, ERRORS[exc.code].exit if exc.code in ERRORS else 1)
             except Exception as exc:  # noqa: BLE001 - one root failing is reported, never a traceback
                 row["error"] = {"code": "migrate.step_failed", "message": f"{exc}"}
                 code = max(code, ERRORS["migrate.step_failed"].exit)
+            finally:
+                if fd is not None:
+                    os.close(fd)
         result.append(row)
         project = projects.get(label)
         if project is not None and _may_be_committed(project):

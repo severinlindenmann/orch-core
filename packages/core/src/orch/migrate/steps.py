@@ -14,25 +14,31 @@ revocation list, a card or the remote device list. A new shape of signed data is
 from __future__ import annotations
 
 import fnmatch
+import hashlib
 import os
+import secrets
 import sqlite3
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from orch.layout import STATE_DIR, WORK_DIR
 from orch.ops.errors import OrchError
 
 __all__ = [
     "CURRENT",
     "DEFAULT",
     "KINDS",
+    "PROTECTED_NAMES",
+    "PROTECTED_PATHS",
     "SIGNED_DENY",
     "Registry",
     "Step",
     "StepContext",
     "atomic_write",
     "is_signed_path",
+    "protected_snapshot",
     "register",
 ]
 
@@ -40,21 +46,61 @@ __all__ = [
 CURRENT: dict[str, int] = {"host": 1, "workspace": 1}
 KINDS = tuple(CURRENT)
 
-#: path-component globs of signed or chained data (event logs, checkpoints, revocations, cards, the remote device
-#: list, key logs, every ``*.jsonl`` append-only log). Any component of a relative path matching one is refused.
-SIGNED_DENY: tuple[str, ...] = ("event*", "checkpoint*", "revocations*", "*card*", "devices*", "*.jsonl")
+#: Signed, chained or key data a migration may never touch (matched on the casefolded, symlink-resolved relative path).
+#: ``PROTECTED_PATHS`` are globs on the whole relative path, ``PROTECTED_NAMES`` globs on any one component.
+PROTECTED_PATHS: tuple[str, ...] = (
+    "events/*", "membership/head.json", "membership/keys/*", "keys/*", "*/keys/*", "local-epochs.json",
+    "*/local-epochs.json", "sign-ledger.json", "*/sign-ledger.json", "*/checkpoints/*", "checkpoints/*",
+)  # fmt: skip
+PROTECTED_NAMES: tuple[str, ...] = (
+    "events", "event*", "checkpoint*", "revocations*", "*card*", "devices*", "*.jsonl", "genesis*", "keys",
+    "wsk", "*.key", "*.pem",
+)  # fmt: skip
+#: kept for callers that named the old list
+SIGNED_DENY = PROTECTED_NAMES
 
 
 def is_signed_path(rel: str | os.PathLike[str]) -> bool:
-    parts = PurePosixPath(Path(rel).as_posix()).parts
-    return any(fnmatch.fnmatchcase(p, pat) for p in parts for pat in SIGNED_DENY)
+    folded = PurePosixPath(Path(rel).as_posix().casefold())
+    parts = folded.parts
+    if any(fnmatch.fnmatchcase(p, pat) for p in parts for pat in PROTECTED_NAMES):
+        return True
+    return any(fnmatch.fnmatchcase(folded.as_posix(), pat) for pat in PROTECTED_PATHS)
+
+
+def protected_snapshot(root: Path) -> dict[str, str | None]:
+    """sha256 of every protected file below ``root`` (symlinks are recorded by their target text, never followed)."""
+    snap: dict[str, str | None] = {}
+    for dirpath, dirnames, filenames in os.walk(root):
+        rel_dir = Path(dirpath).relative_to(root)
+        if rel_dir.parts[:1] and rel_dir.parts[0] in (STATE_DIR, WORK_DIR):
+            dirnames.clear()
+            continue
+        for name in filenames:
+            rel = (rel_dir / name).as_posix()
+            if not is_signed_path(rel):
+                continue
+            p = Path(dirpath) / name
+            if p.is_symlink():
+                snap[rel] = "link:" + os.readlink(p)
+                continue
+            h = hashlib.sha256()
+            try:
+                with open(p, "rb") as f:
+                    for chunk in iter(lambda: f.read(1 << 20), b""):
+                        h.update(chunk)
+                snap[rel] = h.hexdigest()
+            except OSError:
+                snap[rel] = None
+    return snap
 
 
 def atomic_write(path: Path, data: bytes, mode: int = 0o600) -> None:
     """tmp in the same directory, fsync, rename, fsync of the directory."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + f".tmp{os.getpid()}")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_CLOEXEC", 0), mode)
+    tmp = path.with_name(path.name + f".tmp{os.getpid()}-{secrets.token_hex(4)}")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    fd = os.open(tmp, flags, mode)
     try:
         with os.fdopen(fd, "wb") as f:
             f.write(data)
@@ -76,10 +122,11 @@ def atomic_write(path: Path, data: bytes, mode: int = 0o600) -> None:
 
 
 class StepContext:
-    """What a step may touch: files and sqlite DBs below ``root``, never a signed path."""
+    """What a step may touch: only the paths it declared (``Step.writes``), below ``root``, never a protected path."""
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, writes: Iterable[str] = ()) -> None:
         self.root = Path(root)
+        self.writes = tuple(writes)
 
     def path(self, rel: str) -> Path:
         p = PurePosixPath(rel)
@@ -87,7 +134,18 @@ class StepContext:
             raise OrchError("migrate.signed_path", f"a step may only touch files inside the data folder: {rel}")
         if is_signed_path(rel):
             raise OrchError("migrate.signed_path", f"a step may never change signed data: {rel}")
-        return self.root / rel
+        target = self.root / rel
+        real_root = Path(os.path.realpath(self.root))
+        real = Path(os.path.realpath(target))
+        try:
+            real_rel = real.relative_to(real_root).as_posix()
+        except ValueError:
+            raise OrchError("migrate.signed_path", f"a step may not leave the data folder: {rel}") from None
+        if real_rel != "." and is_signed_path(real_rel):
+            raise OrchError("migrate.signed_path", f"a step may never change signed data: {rel}")
+        if not any(fnmatch.fnmatchcase(p.as_posix(), g) for g in self.writes):
+            raise OrchError("migrate.signed_path", f"the step did not declare that it writes {rel}")
+        return target
 
     def write_file(self, rel: str, data: bytes, mode: int = 0o600) -> None:
         atomic_write(self.path(rel), data, mode)
@@ -117,6 +175,8 @@ class Step:
     name: str
     apply: Callable[[StepContext], None]
     verify: Callable[[Path], None] | None = None
+    #: the relative paths or globs this step writes (default deny: nothing else can be written)
+    writes: tuple[str, ...] = ()
 
 
 class Registry:

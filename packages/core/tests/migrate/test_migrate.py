@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import io
 import json
 import os
@@ -27,8 +28,14 @@ from orch.migrate import (
 from orch.migrate import backup as bk
 from orch.migrate import cli as mcli
 from orch.migrate import journal as jr
+from orch.migrate.format import lock_root
 from orch.migrate.steps import DEFAULT, atomic_write, is_signed_path
 from orch.ops.errors import OrchError
+
+
+@pytest.fixture(autouse=True)
+def _no_time_machine(monkeypatch):
+    monkeypatch.setattr(bk, "_exclude_from_time_machine", lambda p: None)
 
 
 def code_of(fn, *a, **k) -> str:
@@ -61,7 +68,8 @@ def two_steps(log=None, fail_at=None):
 
         return run
 
-    steps = [Step("workspace", 1, 2, "one", mk(2)), Step("workspace", 2, 3, "two", mk(3))]
+    w = ("made-*.txt",)
+    steps = [Step("workspace", 1, 2, "one", mk(2), writes=w), Step("workspace", 2, 3, "two", mk(3), writes=w)]
     return Registry(steps, {"host": 1, "workspace": 3}), log
 
 
@@ -223,7 +231,7 @@ def test_sqlite_step_bumps_user_version_in_the_same_transaction(root):
     def good(ctx):
         ctx.sqlite("x.sqlite3", lambda c: c.execute("CREATE TABLE t(a)"), user_version=5)
 
-    ctx = StepContext(root)
+    ctx = StepContext(root, ("x.sqlite3",))
     good(ctx)
     c = sqlite3.connect(db)
     assert c.execute("PRAGMA user_version").fetchone()[0] == 5
@@ -258,7 +266,7 @@ def test_sqlite_step_bumps_user_version_in_the_same_transaction(root):
 )
 def test_a_step_cannot_write_signed_data(root, rel):
     assert is_signed_path(rel)
-    ctx = StepContext(root)
+    ctx = StepContext(root, ("*",))
     with pytest.raises(OrchError) as e:
         ctx.write_file(rel, b"x")
     assert e.value.code == "migrate.signed_path" and not (root / rel).exists()
@@ -268,11 +276,11 @@ def test_a_step_cannot_write_signed_data(root, rel):
 
 @pytest.mark.parametrize("rel", ["../out.txt", "/etc/x", "a/../../b"])
 def test_a_step_cannot_leave_the_root(root, rel):
-    assert code_of(StepContext(root).write_file, rel, b"x") == "migrate.signed_path"
+    assert code_of(StepContext(root, ("*",)).write_file, rel, b"x") == "migrate.signed_path"
 
 
 def test_a_step_may_write_an_ordinary_file(root):
-    StepContext(root).write_file("tickets/T/ticket.json", b"{}")
+    StepContext(root, ("tickets/*/ticket.json",)).write_file("tickets/T/ticket.json", b"{}")
     assert (root / "tickets/T/ticket.json").read_bytes() == b"{}"
     assert not is_signed_path("tickets/T/ticket.json")
 
@@ -327,6 +335,8 @@ def test_backup_keeps_the_last_three_per_root(root, env, tmp_path):
     init_root(other, "workspace")
     ob = bk.create_backup(other, "workspace", 1, 2, env, ts="20261030T090000Z")
     made = [bk.create_backup(root, "workspace", 1, 2, env, ts=f"20261030T10000{i}Z") for i in range(5)]
+    assert len(bk.list_backups(env, root)) == 5
+    bk.prune_backups(env, root)
     left = bk.list_backups(env, root)
     assert [p.name for p in left] == [p.name for p in reversed(made[2:])]
     assert not made[0].exists() and not made[1].exists() and ob.exists()  # the other root is not pruned
@@ -382,7 +392,8 @@ def test_restore_puts_the_data_back_and_merges_revocations(root, env):
     (root / "hosts/z/revocations.jsonl").write_text("z1\n")
     (root / "format.json").write_text(json.dumps({"orch": "workspace", "format": 2}))
     (root / ".state/index.sqlite").write_text("kept")
-    bk.restore(b, root)
+    jr.write_journal("stopped", env, roots=[str(root.resolve())])
+    bk.restore(b, root, env)
     assert (root / "hosts/w/revocations.jsonl").read_text().splitlines() == ["r1", "r2", "r3"]  # r3 is never lost
     assert (root / "hosts/z/revocations.jsonl").read_text() == "z1\n"
     assert not (root / "hosts/w/new.txt").exists()
@@ -396,18 +407,29 @@ def test_restore_never_replaces_revocations_with_older_lines(root, env):
     (root / "revocations.jsonl").write_text("a\nb\n")
     b = bk.create_backup(root, "workspace", 1, 2, env)
     (root / "revocations.jsonl").write_text("b\nc\n")  # a differs from the backup: union, backup order first
-    bk.restore(b, root)
+    jr.write_journal("stopped", env, roots=[str(root.resolve())])
+    bk.restore(b, root, env)
     assert sorted((root / "revocations.jsonl").read_text().splitlines()) == ["a", "b", "c"]
 
 
 def test_restore_is_refused_while_orch_runs_and_for_a_foreign_backup(root, env, tmp_path):
     b = bk.create_backup(root, "workspace", 1, 2, env)
-    with open_root(root, "workspace", env):
-        assert code_of(bk.restore, b, root) == "migrate.running"
+    jr.write_journal("stopped", env, roots=[str(root.resolve())])
+    with lock_shared(root):
+        assert code_of(bk.restore, b, root, env) == "migrate.running"
     other = tmp_path / "other"
     init_root(other, "workspace")
-    assert code_of(bk.restore, b, other) == "migrate.backup_refused"
-    assert code_of(bk.restore, tmp_path, root) == "migrate.backup_refused"
+    assert code_of(bk.restore, b, other, env) == "migrate.backup_refused"
+    assert code_of(bk.restore, tmp_path, root, env) == "migrate.backup_refused"
+
+
+@contextlib.contextmanager
+def lock_shared(root):
+    fd = lock_root(root, exclusive=False)
+    try:
+        yield
+    finally:
+        os.close(fd)
 
 
 # ------------------------------------------------------------------------------------------------------ journal
@@ -419,7 +441,7 @@ def test_an_interrupted_journal_refuses_open(root, env):
         open_root(root, "workspace", env)
     assert e.value.code == "update.interrupted"
     for phase in ("backed-up", "installed", "migrated:/some/ws"):
-        jr.write_journal(phase, env)
+        jr.write_journal(phase, env, roots=[str(root)])
         assert code_of(open_root, root, "workspace", env) == "update.interrupted"
     jr.write_journal("committed", env)
     open_root(root, "workspace", env).close()
@@ -431,7 +453,10 @@ def test_a_damaged_journal_fails_closed(root, env):
     p.parent.mkdir(parents=True)
     p.write_text("{garbage")
     assert code_of(open_root, root, "workspace", env) == "update.interrupted"
-    jr.write_journal("committed", env)  # writing replaces a damaged journal
+    with pytest.raises(OrchError):
+        jr.write_journal("installed", env)  # only a new update replaces a damaged journal
+    jr.write_journal("stopped", env)
+    jr.write_journal("committed", env)
     open_root(root, "workspace", env).close()
 
 
@@ -484,7 +509,7 @@ def test_check_and_apply_on_a_workspace(env, tmp_path, monkeypatch):
     init_root(store, "workspace")
     reg, _ = two_steps()
     monkeypatch.setattr("orch.migrate.cli.plan", lambda r, k: plan(r, k, reg))
-    monkeypatch.setattr("orch.migrate.cli.apply", lambda r, k: apply(r, k, reg))
+    monkeypatch.setattr("orch.migrate.cli.apply", lambda r, k, **kw: apply(r, k, reg, **kw))
     code, out, _ = run_cli(["--check", "--workspace", str(project)], env, tmp_path)
     assert code == 0 and "2 step(s) waiting (one, two)" in out
     assert read_format(store, "workspace") == 1 and not bk.backups_dir(env).exists()
@@ -503,7 +528,7 @@ def test_a_failing_step_reports_the_backup(env, tmp_path, monkeypatch):
     init_root(project / ".orch", "workspace")
     reg, _ = two_steps(fail_at=2)
     monkeypatch.setattr("orch.migrate.cli.plan", lambda r, k: plan(r, k, reg))
-    monkeypatch.setattr("orch.migrate.cli.apply", lambda r, k: apply(r, k, reg))
+    monkeypatch.setattr("orch.migrate.cli.apply", lambda r, k, **kw: apply(r, k, reg, **kw))
     code, out, _ = run_cli(["--apply", "--workspace", str(project)], env, tmp_path)
     assert code == 5 and "backed up first" in out and "boom" in out
 
@@ -531,7 +556,8 @@ def test_a_git_project_that_does_not_ignore_the_store_warns(env, tmp_path):
 
 
 def test_migrate_never_runs_the_projects_git(env, tmp_path, monkeypatch):
-    """A project's .git/config can name a program (core.fsmonitor): migrate must not run git at all."""
+    """A project's .git/config can name a program (core.fsmonitor): migrate must not run git at all, also with a
+    pending step (so a backup and a migration really run)."""
     import subprocess
 
     project = tmp_path / "proj"
@@ -542,8 +568,225 @@ def test_migrate_never_runs_the_projects_git(env, tmp_path, monkeypatch):
     script.chmod(0o755)
     subprocess.run(["git", "init", "-q", str(project)], check=True)
     subprocess.run(["git", "-C", str(project), "config", "core.fsmonitor", str(script)], check=True)
+    reg, _ = two_steps()
+    monkeypatch.setattr("orch.migrate.cli.plan", lambda r, k: plan(r, k, reg))
+    monkeypatch.setattr("orch.migrate.cli.apply", lambda r, k, **kw: apply(r, k, reg, **kw))
+    monkeypatch.setattr(sys, "platform", "linux")  # the clone path would legitimately spawn cp
     spawned = []
-    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: spawned.append(a) or (_ for _ in ()).throw(OSError))
+
+    def refuse(*a, **k):
+        spawned.append(a)
+        raise OSError("no spawning")
+
+    for name in ("Popen",):
+        monkeypatch.setattr(subprocess, name, refuse)
+    for name in ("posix_spawn", "posix_spawnp", "system", "execv", "execve", "execvp", "execvpe"):
+        monkeypatch.setattr(os, name, refuse)
     for mode in ("--check", "--apply"):
         assert run_cli([mode, "--workspace", str(project)], env, tmp_path)[0] == 0
+    assert read_format(project / ".orch", "workspace") == 3
     assert not marker.exists() and spawned == []
+
+
+# ------------------------------------------------------------------------------- review round: H1, H2, M1-M3, L
+
+
+PROTECTED_CASES = [
+    "events/a.json", "EVENTS/a.json", "membership/head.json", "Membership/Head.JSON", "membership/keys/k1",
+    "keys/wsk", "hosts/w/keys/wsk", "hosts/w/Keys/WSK", "local-epochs.json", "hosts/w/local-epochs.json",
+    "sign-ledger.json", "hosts/w/Sign-Ledger.json", "x/revocations.jsonl", "x/Revocations.JSONL", "remote/devices.json",
+    "genesis.json", "hosts/w/Genesis-pin.json", "cards/p.json", ".state/checkpoints/a.json",
+]  # fmt: skip
+
+
+@pytest.mark.parametrize("rel", PROTECTED_CASES)
+def test_protected_paths_are_refused_even_when_declared(root, rel):
+    assert is_signed_path(rel)
+    assert code_of(StepContext(root, ("*",)).write_file, rel, b"x") == "migrate.signed_path"
+
+
+def test_a_step_may_write_only_what_it_declared(root):
+    ctx = StepContext(root, ("made-*.txt",))
+    ctx.write_file("made-1.txt", b"x")
+    assert code_of(ctx.write_file, "other.txt", b"x") == "migrate.signed_path"
+    assert code_of(StepContext(root).write_file, "made-1.txt", b"x") == "migrate.signed_path"  # nothing declared
+
+
+def test_a_symlink_into_protected_data_is_refused(root):
+    (root / "membership").mkdir()
+    (root / "membership/head.json").write_text("h")
+    (root / "alias.txt").symlink_to(root / "membership/head.json")
+    assert code_of(StepContext(root, ("*",)).write_file, "alias.txt", b"x") == "migrate.signed_path"
+    (root / "outside").symlink_to(root.parent)
+    assert code_of(StepContext(root, ("*",)).write_file, "outside/f.txt", b"x") == "migrate.signed_path"
+
+
+@pytest.mark.parametrize("rel", ["membership/head.json", "Membership/HEAD.json", "hosts/w/keys/wsk"])
+def test_a_step_that_bypasses_the_helper_is_caught_and_the_format_stays(root, rel):
+    target = root / rel
+
+    def sneaky(ctx):
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with open(target, "w") as f:  # a plain open(), not the helper
+            f.write("tampered")
+
+    reg = Registry([Step("workspace", 1, 2, "sneaky", sneaky)], {"workspace": 2})
+    with pytest.raises(OrchError) as e:
+        apply(root, "workspace", reg)
+    assert e.value.code == "migrate.signed_path" and read_format(root, "workspace") == 1
+
+
+def test_a_step_that_edits_an_existing_signed_file_is_caught(root):
+    (root / "events").mkdir()
+    (root / "events/a.jsonl").write_text("e1\n")
+
+    def sneaky(ctx):
+        (root / "events/a.jsonl").write_text("e1\ne2\n")
+
+    reg = Registry([Step("workspace", 1, 2, "sneaky", sneaky)], {"workspace": 2})
+    with pytest.raises(OrchError):
+        apply(root, "workspace", reg)
+    assert read_format(root, "workspace") == 1
+
+
+def committed(env, root, phase="stopped"):
+    jr.write_journal(phase, env, roots=[str(root.resolve())])
+
+
+def test_restore_is_refused_after_the_commit_point_or_without_a_journal(root, env):
+    b = bk.create_backup(root, "workspace", 1, 2, env)
+    assert code_of(bk.restore, b, root, env) == "migrate.backup_refused"  # no journal
+    jr.write_journal("stopped", env, roots=[str(root.resolve())])
+    jr.write_journal("committed", env)
+    assert code_of(bk.restore, b, root, env) == "migrate.backup_refused"
+    jr.write_journal("stopped", env, roots=[str(root.parent / "elsewhere")])
+    assert code_of(bk.restore, b, root, env) == "migrate.backup_refused"  # the journal names another root
+    bk.restore(b, root, env, own_failure=True)  # orch migrate's own failure path needs no journal
+
+
+def test_restore_keeps_what_the_backup_left_out(root, env):
+    make_data(root)
+    b = bk.create_backup(root, "workspace", 1, 2, env)
+    (root / "install/tools/orch-2").mkdir()
+    (root / "install/tools/orch-2/bin").write_text("new tool")
+    (root / "install/update.json").write_text("journal")
+    committed(env, root)
+    (root / "install/update.json").unlink()
+    bk.restore(b, root, env)
+    assert (root / "install/tools/orch-1/bin").read_text() == "tool"
+    assert (root / "install/tools/orch-2/bin").read_text() == "new tool"
+    assert (root / ".orch-work/x").read_text() == "work" and (root / ".state/index.sqlite").read_text() == "derived"
+
+
+def tree_digest(root):
+    out = {}
+    for p in sorted(root.rglob("*")):
+        if p.name == "format.lock":
+            continue
+        out[p.relative_to(root).as_posix()] = p.read_bytes() if p.is_file() and not p.is_symlink() else None
+    return out
+
+
+def test_an_error_during_restore_leaves_the_original_untouched(root, env, monkeypatch):
+    make_data(root)
+    b = bk.create_backup(root, "workspace", 1, 2, env)
+    (root / "hosts/w/revocations.jsonl").write_text("r1\nr2\nr3\n")
+    committed(env, root)
+    before = tree_digest(root)
+
+    def boom(src, dst, *a, **k):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(bk.shutil, "copytree", boom)
+    with pytest.raises(OSError):
+        bk.restore(b, root, env)
+    assert tree_digest(root) == before
+    assert [p.name for p in root.parent.iterdir() if p.name.startswith(".root.")] == []
+
+
+def test_restore_rejects_a_backup_with_a_link(root, env):
+    b = bk.create_backup(root, "workspace", 1, 2, env)
+    (b / "data" / "evil").symlink_to("/etc")
+    committed(env, root)
+    assert code_of(bk.restore, b, root, env) == "migrate.backup_refused"
+
+
+def test_apply_with_a_shared_holder_makes_no_backup(env, tmp_path, monkeypatch):
+    project = tmp_path / "proj"
+    store = project / ".orch"
+    init_root(store, "workspace")
+    reg, _ = two_steps()
+    monkeypatch.setattr("orch.migrate.cli.plan", lambda r, k: plan(r, k, reg))
+    monkeypatch.setattr("orch.migrate.cli.apply", lambda r, k, **kw: apply(r, k, reg, **kw))
+    with lock_shared(store):
+        code, out, _ = run_cli(["--apply", "--workspace", str(project)], env, tmp_path)
+    assert code == 4 and "orch is running" in out and not bk.backups_dir(env).exists()
+    assert read_format(store, "workspace") == 1
+
+
+def test_failed_attempts_never_prune_the_original(root, env):
+    first = bk.create_backup(root, "workspace", 1, 2, env, ts="20261030T090000Z")
+    for i in range(4):  # four failed attempts: backups only, nothing is pruned
+        bk.create_backup(root, "workspace", 1, 2, env, ts=f"20261030T10000{i}Z")
+    assert first.exists() and len(bk.list_backups(env, root)) == 5
+    removed = bk.prune_backups(env, root, pin_from=1)
+    assert first.exists() and first not in removed and len(bk.list_backups(env, root)) == 4  # 3 newest + the pin
+    bk.prune_backups(env, root)
+    assert not first.exists()  # no pin: plain keep-3
+
+
+@pytest.mark.parametrize(
+    "parts",
+    [("Library", "CloudStorage", "OneDrive-x", "o"), ("Library", "Mobile Documents", "x")],
+)
+def test_more_synced_places_are_refused(root, tmp_path, parts):
+    base = tmp_path / Path(*parts)
+    assert code_of(
+        bk.create_backup, root, "workspace", 1, 2, {"XDG_DATA_HOME": str(base)}
+    ) == "migrate.backup_refused" or (parts[0] == "Sync")
+
+
+def test_a_stfolder_marker_and_documents_on_macos_are_refused(root, tmp_path, monkeypatch):
+    (tmp_path / "st").mkdir()
+    (tmp_path / "st/.stfolder").mkdir()
+    env = {"XDG_DATA_HOME": str(tmp_path / "st/d")}
+    assert code_of(bk.create_backup, root, "workspace", 1, 2, env) == "migrate.backup_refused"
+    monkeypatch.setattr(sys, "platform", "darwin")
+    home = tmp_path / "h"
+    for d in ("Documents", "Desktop"):
+        e = {"HOME": str(home), "XDG_DATA_HOME": str(home / d / "x")}
+        assert code_of(bk.create_backup, root, "workspace", 1, 2, e) == "migrate.backup_refused"
+
+
+def test_backup_tree_has_no_group_or_other_access(root, env):
+    make_data(root)
+    os.chmod(root / "events/a.jsonl", 0o644)
+    b = bk.create_backup(root, "workspace", 1, 2, env)
+    for p in [b, *b.rglob("*")]:
+        if not p.is_symlink():
+            assert stat.S_IMODE(p.stat().st_mode) & 0o077 == 0, p
+
+
+def test_backups_are_ordered_by_the_manifest_time(root, env):
+    old = bk.create_backup(root, "workspace", 1, 2, env, ts="99990101T000000Z")  # a name that sorts last
+    new = bk.create_backup(root, "workspace", 1, 2, env, ts="20000101T000000Z")
+    assert bk.list_backups(env, root) == [new, old]
+
+
+def test_journal_phases_only_move_forward(env):
+    jr.write_journal("installed", env)
+    with pytest.raises(ValueError):
+        jr.write_journal("backed-up", env)
+    jr.write_journal("migrated:/a", env)
+    jr.write_journal("migrated:/b", env)
+    jr.write_journal("committed", env)
+    with pytest.raises(ValueError):
+        jr.write_journal("installed", env)
+    jr.write_journal("stopped", env)  # a new update
+
+
+def test_the_lock_file_is_not_followed_through_a_link(root, tmp_path):
+    (root / "format.lock").symlink_to(tmp_path / "victim")
+    with pytest.raises(OSError):
+        lock_root(root, exclusive=False)
+    assert not (tmp_path / "victim").exists()

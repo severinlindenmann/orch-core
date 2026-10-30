@@ -904,3 +904,10 @@ costs a person their data.
    a plain copy otherwise. Derived data (`.state/`, `.orch-work/`, `install/tools`) is left out. A workspace that
    cannot be reached is skipped and listed; it refuses to open until `orch migrate` reaches it, the others keep working.
    `orch migrate` warns when the project's `.orch` is tracked by git.
+9. **Restore rules.** A restore is refused once the journal says `committed` (or names no such root), except on
+   `orch migrate`'s own failure path. It never touches what the backup left out (`.state`, `.orch-work`,
+   `install/tools`, the update journal): it builds the result in a staging folder next to the root and swaps it in, so an
+   error leaves the original as it was. A backup that holds a link is not restored. Nothing is pruned until the
+   migration has succeeded, and the oldest backup of the format being migrated is kept. A step may write only the
+   paths it declares (default deny), never a protected path, and the runner compares hashes of every protected file
+   before and after each step and refuses to move the format if one changed.

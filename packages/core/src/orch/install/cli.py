@@ -34,6 +34,7 @@ USAGE = (
     "usage: orch install server --role hub|edge [--domain BASE] [--domain-hub N] [--domain-relay N]\n"
     "                    [--domain-publish N] [--hub-vpn-only] [--vpn-ip IP[/PREFIX]]\n"
     "                    [--allow-non-cgnat] [--caddy-dir DIR]\n"
+    "                    [--backup-drop DIR]\n"
     "                    [--port-base N] [--yes]\n"
     "usage: orch install phone [--user ID]\n"
     "usage: orch install {hub|relay|publish} [--address A] [--port N] [--domain D] [--source PATH] [--ref REF]\n"
@@ -922,6 +923,7 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextI
     p.add_argument("--allow-non-cgnat", action="store_true")
     p.add_argument("--port-base", type=int)
     p.add_argument("--caddy-dir", default=CADDY_DIR)
+    p.add_argument("--backup-drop")
     try:
         a = p.parse_args(list(argv))
     except SystemExit:
@@ -952,6 +954,7 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextI
                 allow_non_cgnat=a.allow_non_cgnat,
                 address=a.address,
                 caddy_dir=a.caddy_dir,
+                backup_drop=a.backup_drop,
                 source=a.source,
                 ref=a.ref,
                 dev=a.dev,

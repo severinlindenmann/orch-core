@@ -761,8 +761,48 @@ def test_loopback_with_names_or_vpn_only_is_refused(tmp_path):
 def test_runbook_backup_pull_uses_a_restricted_key_and_no_shell():
     doc = (Path(__file__).resolve().parents[4] / "docs" / "pilot-server.md").read_text()
     assert "restrict," in doc and "rrsync -ro" in doc and 'from="100.64.0.0/10"' in doc
-    assert "Do not give `orch-hub` a login shell" in doc
+    assert "**Do not give `orch-hub` a login" in doc
     assert "first hop from the internet" in doc and "orch-hub restore --state" in doc
+    # one design, one user name, one path, used the same way in every command
+    assert " backup@" not in doc and "orch-backup-out" not in doc
+    drop = "/var/lib/orch-backup-drop"
+    assert doc.count(drop) >= 3
+    assert f'rrsync -ro {drop}"' in doc and "orch-backup@100.x.y.z:/ " in doc
+    assert f"install -d -m 2770 -o orch-backup -g orch-backup {drop}" in doc
+    assert "usermod -aG orch-backup orch-hub" in doc and f"--backup-drop {drop}" in doc
+    assert "command -v rrsync" in doc
+
+
+def test_shared_drop_folder_is_not_re_moded_and_files_are_group_readable(tmp_path):
+    src, drop = tmp_path / "b", tmp_path / "drop"
+    src.mkdir()
+    drop.mkdir(mode=0o2770)
+    drop.chmod(0o2770)
+    (src / "hub-abcd1234-20260101T030000Z.orchbak").write_bytes(b"x")
+    copied, problems = ops.backup_copy(src, drop, shared=True)
+    assert len(copied) == 1 and problems == []
+    assert oct(drop.stat().st_mode & 0o7777) == "0o2770"  # untouched
+    assert oct((drop / copied[0]).stat().st_mode & 0o777) == "0o640"
+    assert ops.backup_copy(src, tmp_path / "nope", shared=True)[1][0].startswith("the backup drop folder")
+    assert "--shared" in ops.backup_unit_files("/p", src, drop, True)["orch-hub-backup.service"]
+    assert "--shared" not in ops.backup_unit_files("/p", src, drop)["orch-hub-backup.service"]
+
+
+def test_backup_drop_flag_reaches_the_unit(tmp_path):
+    (tmp_path / "orch.d" / "orch-hub").mkdir(parents=True)
+    ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+    server_setup(
+        ctx,
+        "hub",
+        names=server.derive_names("example.com"),
+        caddy_dir=str(tmp_path / "orch.d"),
+        resolve=lambda n: [VPS],
+        local=local,
+        user="orch-hub",
+        backup_drop="/var/lib/orch-backup-drop",
+    )
+    unit = (tmp_path / ".config/systemd/user/orch-hub-backup.service").read_text()
+    assert "--dest /var/lib/orch-backup-drop" in unit and "--shared" in unit
 
 
 def test_backup_out_folder_is_made_0700_on_every_run(tmp_path):

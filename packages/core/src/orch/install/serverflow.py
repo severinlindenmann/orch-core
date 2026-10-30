@@ -54,7 +54,9 @@ def _install_timers(ctx: Ctx, files: dict[str, str], timers: list[str]) -> None:
         ctx.run(["systemctl", "--user", "enable", "--now", t], dict(ctx.env))
 
 
-def _ops(ctx: Ctx, role: str, parts: list[str], names: Names, ports: dict[str, int]) -> None:
+def _ops(
+    ctx: Ctx, role: str, parts: list[str], names: Names, ports: dict[str, int], backup_drop: str | None = None
+) -> None:
     """The health timer for every role; the nightly backup copy for the hub."""
     lay = ctx.layout
     ops_dir = lay.root / "ops"
@@ -72,13 +74,13 @@ def _ops(ctx: Ctx, role: str, parts: list[str], names: Names, ports: dict[str, i
     files = ops.health_unit_files(sys.executable, cfg_file)
     timers = ["orch-health.timer"]
     if role == "hub":
-        out = lay.home / BACKUP_OUT
-        files |= ops.backup_unit_files(sys.executable, lay.data("hub") / "backups", out)
+        out = Path(backup_drop) if backup_drop else lay.home / BACKUP_OUT
+        files |= ops.backup_unit_files(sys.executable, lay.data("hub") / "backups", out, shared=bool(backup_drop))
         timers.append("orch-hub-backup.timer")
     _install_timers(ctx, files, timers)
     ctx.say(f"  health check every 5 minutes: the status is in {cfg['status_file']}, warnings go to the journal")
     if role == "hub":
-        ctx.say(f"  nightly backup copy: {lay.home / BACKUP_OUT} (sealed files; the hub itself makes the backup)")
+        ctx.say(f"  nightly backup copy: {out} (sealed files; the hub itself makes the backup)")
 
 
 def server_setup(
@@ -97,6 +99,7 @@ def server_setup(
     local: Callable[[], list[Addr]] | None = None,
     user: str | None = None,
     allow_non_cgnat: bool = False,
+    backup_drop: str | None = None,
 ) -> Plan:
     """Install the parts of ``role`` for this OS user. ``resolve``/``local`` are the DNS seams of the tests."""
     if role not in ROLES:
@@ -192,7 +195,7 @@ def server_setup(
     save(ctx.layout, st)
 
     _caddy(ctx, plan, caddy_dir, user)
-    _ops(ctx, role, parts, names, ports)
+    _ops(ctx, role, parts, names, ports, backup_drop)
     _closing(ctx, plan, wanted, tls, user, caddy_dir)
     _say_binds(
         ctx,

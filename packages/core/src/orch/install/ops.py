@@ -54,9 +54,10 @@ def health_unit_files(python: str, config: Path) -> dict[str, str]:
     }
 
 
-def backup_unit_files(python: str, src: Path, dest: Path) -> dict[str, str]:
+def backup_unit_files(python: str, src: Path, dest: Path, shared: bool = False) -> dict[str, str]:
     """``orch-hub-backup.service`` + ``.timer`` (every night 03:40): copy the sealed hub backups to the pull folder."""
     argv = [python, "-P", "-m", "orch.install.ops", "backup-copy", "--src", str(src), "--dest", str(dest)]
+    argv += ["--shared"] if shared else []
     return {
         "orch-hub-backup.service": _service("copy the sealed hub backups to the pull folder", argv),
         "orch-hub-backup.timer": (
@@ -160,11 +161,19 @@ def _write_status(path: Path, report: dict[str, Any]) -> None:
 # ------------------------------------------------------------------------------------------------- backup copy
 
 
-def backup_copy(src: Path, dest: Path, keep: int = BACKUP_KEEP) -> tuple[list[str], list[str]]:
+def backup_copy(src: Path, dest: Path, keep: int = BACKUP_KEEP, *, shared: bool = False) -> tuple[list[str], list[str]]:
     """Copy the sealed ``*.orchbak`` files not yet in ``dest``; keep the newest ``keep`` there. ``(copied, problems)``.
-    The files are sealed with the hub's backup key; this folder holds nothing a thief could read."""
-    dest.mkdir(parents=True, exist_ok=True, mode=0o700)
-    dest.chmod(0o700)  # on every run, also when the folder was made earlier with another mode
+    The files are sealed with the hub's backup key; this folder holds nothing a thief could read.
+
+    ``shared``: ``dest`` is a drop folder an administrator made (owned by the ``orch-backup`` user, group-writable and
+    setgid for its group, of which the hub user is a member): it is not created or re-moded here, and the files are
+    group-readable (0640) so that user can read them."""
+    if shared:
+        if not dest.is_dir():
+            return [], [f"the backup drop folder {dest} does not exist: do the root steps in docs/pilot-server.md"]
+    else:
+        dest.mkdir(parents=True, exist_ok=True, mode=0o700)
+        dest.chmod(0o700)  # on every run, also when the folder was made earlier with another mode
     files = sorted(src.glob("hub-*.orchbak")) if src.is_dir() else []
     if not files:
         return [], ["there is no hub backup yet (set the backup key up in the hub console)"]
@@ -178,7 +187,7 @@ def backup_copy(src: Path, dest: Path, keep: int = BACKUP_KEEP) -> tuple[list[st
             continue  # already there, or older than what was pruned: not copied back
         tmp = dest / f".{f.name}.part"
         shutil.copyfile(f, tmp)
-        tmp.chmod(0o600)
+        tmp.chmod(0o640 if shared else 0o600)
         tmp.replace(target)
         copied.append(f.name)
     for old in sorted(dest.glob("hub-*.orchbak"))[:-keep] if keep > 0 else []:
@@ -197,6 +206,7 @@ def main(argv: Sequence[str]) -> int:
     b.add_argument("--src", required=True)
     b.add_argument("--dest", required=True)
     b.add_argument("--keep", type=int, default=BACKUP_KEEP)
+    b.add_argument("--shared", action="store_true")
     a = p.parse_args(list(argv))
     if a.cmd == "health":
         cfg = json.loads(Path(a.config).read_text())
@@ -205,7 +215,7 @@ def main(argv: Sequence[str]) -> int:
         for line in report["problems"]:
             print(f"orch health: WARNING: {line}", file=sys.stderr)
         return 0 if report["ok"] else 1
-    copied, problems = backup_copy(Path(a.src), Path(a.dest), a.keep)
+    copied, problems = backup_copy(Path(a.src), Path(a.dest), a.keep, shared=a.shared)
     for name in copied:
         print(f"orch backup: copied {name}")
     for line in problems:

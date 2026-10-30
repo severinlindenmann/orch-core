@@ -135,25 +135,42 @@ A Mac that is newer than the server may be refused; the other way round works.
 
 - The hub makes its own sealed backup every day, once you set the backup key in the hub console (write the 24 words down on
   paper; without them a backup cannot be opened).
-- At 03:40 a timer copies the sealed files into `/home/orch-hub/orch-backup-out/` (the newest 14). The files are sealed:
-  the folder holds nothing a thief can read. **The server holds no password or key of your Mac.**
+- At 03:40 a timer (running as `orch-hub`) copies the sealed files (the newest 14) into a **drop folder** that belongs to a
+  separate user, `orch-backup`. The files are sealed: they hold nothing a thief can read. **The server holds no password or
+  key of your Mac**, and `orch-edge` cannot read the folder.
+- One-time root steps (an administrator; `orch-hub` needs no login shell and `orch-backup` gets no password):
+
+  ```
+  sudo adduser --disabled-password --gecos "" orch-backup
+  sudo install -d -m 2770 -o orch-backup -g orch-backup /var/lib/orch-backup-drop
+  sudo usermod -aG orch-backup orch-hub
+  sudo systemctl restart user@$(id -u orch-hub).service
+  ```
+
+  The folder is owned by `orch-backup`, its group `orch-backup` may write (so `orch-hub`, a member, can add and remove the
+  nightly files), and everyone else (including `orch-edge`) has no access. The last line restarts `orch-hub`'s services so
+  the new group membership applies. Then run the hub setup with the drop folder:
+  `orch setup --server --role hub ... --backup-drop /var/lib/orch-backup-drop`.
 - The Mac pulls them over the private network, from the Mac (for example a nightly job):
 
   ```
-  rsync -a --ignore-existing backup@100.x.y.z:orch-backup-out/ ~/orch-backups/
+  rsync -a --ignore-existing orch-backup@100.x.y.z:/ ~/orch-backups/
   ```
 
-  **Do not give `orch-hub` a login shell or your Mac a key that can run commands as it.** An administrator makes a separate
-  user `orch-backup` that can only read that folder (add it to a group that may read `/home/orch-hub/orch-backup-out`, or
-  copy the files to a folder it owns). In its `authorized_keys` put your Mac's public key restricted to one read-only command
-  and to the private network, all on one line:
+  The path is `/` because the server limits `orch-backup` to that one folder. In `/home/orch-backup/.ssh/authorized_keys`
+  put your Mac's public key restricted to a single read-only command and to the private network, all on one line:
 
   ```
-  restrict,from="100.64.0.0/10",command="rrsync -ro /home/orch-hub/orch-backup-out" ssh-ed25519 AAAA... mac-backup
+  restrict,from="100.64.0.0/10",command="rrsync -ro /var/lib/orch-backup-drop" ssh-ed25519 AAAA... mac-backup
   ```
 
   (`restrict` switches off shells, port forwarding and agent forwarding; `rrsync -ro` allows only reading that folder. Use your
-  VPN's real network instead of `100.64.0.0/10` if you know it, for example `100.92.0.0/16`.)
+  VPN's real network instead of `100.64.0.0/10` if you know it, for example `100.92.0.0/16`.) **Do not give `orch-hub` a login
+  shell or put your Mac's key on it.**
+- `rrsync` comes with the `rsync` package on current Ubuntu (`/usr/bin/rrsync`; check with `command -v rrsync`). If it is
+  missing, install the package (`sudo apt install rsync`); on an older package the script is `/usr/share/doc/rsync/scripts/rrsync`
+  (`.gz`: `gunzip -c ... | sudo tee /usr/local/bin/rrsync >/dev/null && sudo chmod 755 /usr/local/bin/rrsync`). Use the full path
+  in `command=` if it is not in the default path.
 - Restore, for example on a fresh server: (1) as the hub user, run the hub setup first (`orch setup --server --role hub ...`),
   so the user, the state folder and the services exist; (2) stop the hub:
   `systemctl --user stop "orch-*-hub.service"` (list the exact name with `systemctl --user list-units 'orch-*'`); (3) copy the

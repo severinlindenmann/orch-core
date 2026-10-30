@@ -406,6 +406,13 @@ export function clickProblem(e: unknown, minLeadS?: number): ClickProblem {
       return { title: 'The host does not answer', body: 'Nothing was signed. Try again in a moment.', next: 'retry' }
     case 'not_found':
       return { title: 'Not found', body: 'The dashboard server does not know this request any more. Prepare it again.', next: 'prepare' }
+    case 'invalid.input':
+      // P02: the server's catch-all for a body it could not use; the code is never the sentence. A host refusal with
+      // real words ("a feature ticket has no section nope") says them; only a bare code becomes the plain sentence.
+      if (e.message && e.message !== e.code && e.message !== PLAIN_INVALID) {
+        return { title: 'That could not be used', body: e.message, next: e.retryable ? 'retry' : 'unavailable' }
+      }
+      return { title: 'That could not be used', body: PLAIN_INVALID, next: 'retry' }
     case 'schedule.denied': {
       // run 13: the host's raw words ("first occurrence must be after the minimum scheduling lead") stay folded
       const lead = scheduleDenial(e.code, e.message, minLeadS)
@@ -413,6 +420,16 @@ export function clickProblem(e: unknown, minLeadS?: number): ClickProblem {
       return { title: 'Refused', body: e.message || `The host refused this (${e.code}). Nothing was signed.`, next: 'unavailable' }
     }
     default:
+      // a message that is only its own code ("some.new_code") says nothing: one plain sentence and Try again instead
+      // (Opus P02 L2: the sentence changes, the retry decision does not: a non-retryable code never offers Try again)
+      if (e.message === e.code) {
+        return e.retryable
+          ? { title: 'That could not be used', body: PLAIN_INVALID, next: 'retry' }
+          : { title: 'Refused', body: PLAIN_REFUSED, next: 'unavailable' }
+      }
       return { title: 'Refused', body: e.message || `The host refused this (${e.code}). Nothing was signed.`, next: e.retryable ? 'retry' : 'unavailable' }
   }
 }
+
+const PLAIN_INVALID = 'That could not be used. Check it and try again.'
+const PLAIN_REFUSED = 'This could not be done here. Nothing was signed.'

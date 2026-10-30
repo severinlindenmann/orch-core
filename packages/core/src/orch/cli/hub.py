@@ -49,7 +49,8 @@ _USAGE = (
     "| join INVITE --hub-card FILE [--hub-id HEX32] [--hub-addr HOST:PORT] [--mode selective|full] "
     "[--owner-user-id HEX32] | mode full --hub-card FILE [--hub-addr HOST:PORT] | leave "
     "| connect [INVITE] --hub-card FILE [--hub-addr HOST:PORT] | unbind "
-    "| address --link LINK | directory [--query Q] | status [--refresh [--hub-card FILE]] "
+    "| address --link LINK | network [set-proxy URL [--proxy-user U] | clear-proxy] "
+    "| directory [--query Q] | status [--refresh [--hub-card FILE]] "
     "| share people | share rule list "
     "| share rule add|remove RULE [--with PERSON] [--team NAME] [--description] | share revoke REF "
     "| share sync} [--json]"
@@ -77,9 +78,11 @@ def _parser() -> argparse.ArgumentParser:
             "history",
             "directory",
             "address",
+            "network",
         ),
     )
     p.add_argument("--query")
+    p.add_argument("--proxy-user", dest="proxy_user")
     p.add_argument("--tag")
     p.add_argument("--type", dest="ttype")
     p.add_argument("--ticket")
@@ -147,7 +150,15 @@ def _check_shape(a: argparse.Namespace) -> None:
         "rotate": 0,
         "history": 0,
         "address": 0,
+        "network": 2,
     }[a.cmd]
+    if a.cmd == "network":  # R6: show | set-proxy URL [--proxy-user U] | clear-proxy
+        words = a.rest
+        if words not in ([], ["clear-proxy"]) and not (len(words) == 2 and words[0] == "set-proxy"):
+            raise PubError("invalid.input", "orch hub network [set-proxy URL [--proxy-user U] | clear-proxy]", 2)
+        if a.proxy_user is not None and words[:1] != ["set-proxy"]:
+            raise PubError("invalid.input", "--proxy-user belongs to: orch hub network set-proxy URL", 2)
+        return
     if a.cmd == "address":  # M4: move to the address a connect link of the SAME hub names (no card file, no invite)
         if a.link is None or a.rest or a.hub_card or a.hub_id or a.hub_addr or a.refresh:
             raise PubError("invalid.input", "orch hub address --link LINK", 2)
@@ -319,6 +330,46 @@ def _unbind(target: Any, env: Mapping[str, str], a: argparse.Namespace, out: Tex
     return 0
 
 
+def _network_text(d: Mapping[str, Any]) -> str:
+    if d.get("broken"):
+        return "the network settings of this computer cannot be used; hub links wait until you fix or clear them"
+    if not d.get("proxy"):
+        return "no proxy: this computer reaches the hub directly"
+    who = f" as {clean_line(str(d['user']))}" if d.get("user") else ""
+    pw = " (a password is kept)" if d.get("has_password") else ""
+    return f"hub links go through the proxy {clean_line(str(d['proxy']))}{who}{pw}"
+
+
+def _network(target: Any, env: Mapping[str, str], a: argparse.Namespace, out: TextIO, as_json: bool) -> int:
+    """``orch hub network``: show, set or clear the proxy for hub links (R6). The password is asked at the terminal
+    (hidden) or read from stdin, never taken from the command line, and is never printed."""
+    words = a.rest
+    if not words:
+        d = _call(target, "hub.network", {}, env)
+        _emit(out, as_json, d, _network_text(d))
+        return 0
+    if words == ["clear-proxy"]:
+        d = _call(target, "hub.network_set", {"proxy": None}, env)
+        _emit(out, as_json, d, "ok proxy removed: " + _network_text(d))
+        return 0
+    args: dict[str, Any] = {"proxy": words[1], "user": a.proxy_user}
+    if a.proxy_user is not None:
+        args["password"] = _read_password()
+    d = _call(target, "hub.network_set", args, env)
+    _emit(out, as_json, d, "ok " + _network_text(d))
+    if words[1].startswith("http://") and a.proxy_user is not None:
+        out.write("note: this proxy is reached over plain http: its password crosses the office network readable.\n")
+    return 0
+
+
+def _read_password() -> str:
+    import getpass
+
+    if sys.stdin.isatty():
+        return getpass.getpass("Proxy password: ")
+    return sys.stdin.readline().rstrip("\r\n")
+
+
 def main(
     argv: list[str],
     *,
@@ -351,6 +402,8 @@ def main(
         a.card_obj = None
         _check_shape(a)
         target = _target(env)
+        if a.cmd == "network":
+            return _network(target, env, a, out, as_json)
         if a.cmd == "address":
             got = _call(target, "hub.address", {"link": a.link}, env)
             _emit(out, as_json, got, f"ok this workspace now dials the hub at {clean_line(str(got.get('addr')))}")

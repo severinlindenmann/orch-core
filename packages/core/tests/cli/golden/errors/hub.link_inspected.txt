@@ -1,0 +1,1 @@
+err hub.link_inspected something on this network opens encrypted connections, so the hub cannot be trusted from here · retry:false · next: ask your IT team to let the hub's name through without inspection · fix: orch hub status

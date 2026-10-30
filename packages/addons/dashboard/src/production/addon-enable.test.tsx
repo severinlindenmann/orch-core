@@ -37,9 +37,9 @@ const prepared = () => state.host.clickPrepares().map((c) => c.body)
 const trusted = () => vi.spyOn(gesture, 'takeTrustedPress').mockReturnValue(true)
 afterEach(() => vi.restoreAllMocks())
 
-const setup = (name: 'publish', on = false, setUp: boolean | null = false) => {
+const setup = (name: 'publish', on = false, setUp: boolean | null = false, suggest: string | null = null) => {
   route(null, on)
-  state.host.workspaces[0].addOns = { available: true, add_ons: [{ id: name, title: 'Publish', desc: 'Settings for this workspace.', state: on ? 'on' : 'off', locked: null, blocked: null, needs: 'publish', set_up: setUp }] } as never
+  state.host.workspaces[0].addOns = { available: true, add_ons: [{ id: name, title: 'Publish', desc: 'Settings for this workspace.', state: on ? 'on' : 'off', locked: null, blocked: null, needs: 'publish', set_up: setUp, suggest }] } as never
 }
 
 it.each(['publish'] as const)('off %s opens settings; Turn on prepares one enable action with One click', async (name) => {
@@ -78,6 +78,41 @@ it('one valid address enables Turn on and signs server equal to share; a bad add
   await user.click(form.getByRole('button', { name: 'Turn on' }))
   await screen.findByTestId('click-panel', {}, T)
   expect(prepared()).toEqual([{ action: 'addon_enable', name: 'publish', publish: { server: 'http://127.0.0.1:8102', share: 'http://127.0.0.1:8102' } }])
+})
+
+it('a suggested address makes Turn on one click, and Change shows the field', async () => {
+  setup('publish', false, false, 'http://127.0.0.1:8102')
+  const user = userEvent.setup()
+  show('/w/DEMO/addons')
+  await user.click(await screen.findByRole('switch', { name: 'Publish' }, T))
+  const form = within(await screen.findByRole('dialog', { name: 'Turn on Publish' }, T))
+  expect(form.getByText(/Files and links use the Publish server on this computer/)).toHaveTextContent('http://127.0.0.1:8102')
+  expect(form.queryByLabelText('Publish server address')).toBeNull()
+  expect(form.getByRole('button', { name: 'Turn on' })).toBeEnabled()
+  trusted()
+  await user.click(form.getByRole('button', { name: 'Turn on' }))
+  await screen.findByTestId('click-panel', {}, T)
+  expect(prepared()).toEqual([{ action: 'addon_enable', name: 'publish', publish: { server: 'http://127.0.0.1:8102', share: 'http://127.0.0.1:8102' } }])
+})
+
+it('Change on a suggested address reveals the field, filled with the suggestion', async () => {
+  setup('publish', false, false, 'http://127.0.0.1:8102')
+  const user = userEvent.setup()
+  show('/w/DEMO/addons')
+  await user.click(await screen.findByRole('switch', { name: 'Publish' }, T))
+  const form = within(await screen.findByRole('dialog', { name: 'Turn on Publish' }, T))
+  await user.click(form.getByRole('button', { name: 'Change' }))
+  expect(form.getByLabelText('Publish server address')).toHaveValue('http://127.0.0.1:8102')
+})
+
+it('with nothing suggested the field shows and has no example in it', async () => {
+  setup('publish')
+  const user = userEvent.setup()
+  show('/w/DEMO/addons')
+  await user.click(await screen.findByRole('switch', { name: 'Publish' }, T))
+  const form = within(await screen.findByRole('dialog', { name: 'Turn on Publish' }, T))
+  expect(form.getByLabelText('Publish server address')).not.toHaveAttribute('placeholder')
+  expect(form.getByRole('button', { name: 'Turn on' })).toBeDisabled()
 })
 
 it.each(['publish'] as const)('on %s without settings signs settings only', async (name) => {

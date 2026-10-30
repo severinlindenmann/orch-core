@@ -1,5 +1,6 @@
 /* The first paint, before any script runs: a dark page with the logo and "Loading…". A separate file because the
    server's CSP (style-src 'self') blocks inline <style> and style="" attributes. React replaces #root's content. */
+html { background: #0e1014; color-scheme: dark; }
 html, body { margin: 0; background: #0e1014; color: #e8eaed; }
 .boot { display: flex; height: 100vh; flex-direction: column; align-items: center; justify-content: center; gap: 12px; font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; color: #9aa3ad; }
 .boot img { width: 40px; height: 40px; }
@@ -9,3 +10,7 @@ html, body { margin: 0; background: #0e1014; color: #e8eaed; }
 @media (prefers-reduced-motion: reduce) { .boot span { animation: none; } }
 .boot[role="alert"] span { animation: none; max-width: 420px; text-align: center; }
 .boot-retry { font: inherit; color: #e8eaed; background: #1a1d24; border: 1px solid #343944; border-radius: 6px; padding: 8px 14px; cursor: pointer; }
+/* the switch confirm/failed pages fade in calmly instead of snapping (the page is already dark, so there is no flash either way) */
+.boot[role="dialog"], .boot[role="alert"] { animation: boot-in 0.25s ease-out; }
+@keyframes boot-in { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .boot[role="dialog"], .boot[role="alert"] { animation: none; } }

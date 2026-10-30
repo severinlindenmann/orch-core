@@ -35,6 +35,7 @@ from .tls import LinkClosed, LinkTimeout, PinMismatch
 
 __all__ = [
     "LINK_WINDOW_MS",
+    "STREAM_LINK_ALPN",
     "W2H_OPS",
     "LinkClient",
     "LinkError",
@@ -49,6 +50,10 @@ SIG_LINK = b"orch/v2/sig/hub-link|"
 SIG_ROUTE = b"orch/v2/hub-route|"
 SIG_LINK_AUTH = b"orch/v2/sig/hub-link-auth|"
 HV = 0
+#: R4 (#1592): the ALPN protocol of a host's dedicated stream link (protocol 10.2c). The hub attaches such a link to its
+#: stream router only and accepts on it stream frames, ``stream_open`` replies and ``hub_where``; a plain link never
+#: carries streams.
+STREAM_LINK_ALPN = b"orch-link-streams/1"
 #: Most h2w requests (``route_in``, ``event_deliver``) kept per queue while the host drains only the other one.
 MAX_QUEUED = 64
 LINK_WINDOW_MS = 120_000
@@ -203,6 +208,23 @@ def _code(x: Any) -> str:
     return x if type(x) is str and 0 < len(x) <= 40 else "malformed"
 
 
+class _FairLock:
+    """A mutex whose waiters are served in turn. The link's readers (``next_route_in``, ``next_stream``, ...) wait for
+    the socket WHILE holding the lock; with a plain ``threading.Lock`` the thread that just released it takes it
+    again at once and a second reader (the remote stream pump beside the ws->ws loop) can starve for seconds. A waiter
+    holds ``_gate`` while it waits for ``_lock``, so the releasing thread has to queue behind it."""
+
+    def __init__(self) -> None:
+        self._gate, self._lock = threading.Lock(), threading.Lock()
+
+    def __enter__(self) -> None:
+        with self._gate:
+            self._lock.acquire()
+
+    def __exit__(self, *exc: object) -> None:
+        self._lock.release()
+
+
 class LinkClient:
     """An authenticated link. Use :meth:`open`; one request is in flight at a time."""
 
@@ -220,7 +242,8 @@ class LinkClient:
     ) -> None:
         self._c, self.hub_id, self.workspace_id, self._hk_op = conn, hub_id, workspace_id, hk_op_pub
         self.mode, self._now, self._t, self._max = mode, now_ms, timeout, max_frame
-        self._lock = threading.Lock()
+        self._lock = _FairLock()
+        self._ov_mu = threading.Lock()  # guards ``_overflow`` alone: the pump reads it without waiting on the link
         self._open = True
         self._sign: Callable[[bytes], bytes] | None = None
         self._seq = 0  # the highest w2h seq used on this link (requests carry the caller's, acks continue from here)
@@ -229,6 +252,7 @@ class LinkClient:
         self._events: list[dict[str, Any]] = []  # verified h2w ``event_deliver`` requests (custodial events, p4)
         self._pending_ev: dict[str, Any] | None = None
         self._streams: list[dict[str, Any]] = []  # verified h2w stream_open / stream_data / stream_close (R2)
+        self._overflow: list[str] = []  # streams that lost an h2w frame to a full queue (F3)
         self._open_reqs: set[int] = set()  # handed-out stream_open requests (by h2w seq) awaiting their answer
         self._cb = conn.exporter()  # this connection's TLS exporter: every signature of the link binds it (R1)
         self._last_in = 0  # the h2w seq of the last frame accepted (replies and pushes share the hub's counter)
@@ -248,10 +272,13 @@ class LinkClient:
         timeout: float = 10.0,
         max_frame: int = framing.MAX_FRAME,
         now_ms: Callable[[], int] = lambda: int(time.time() * 1000),
+        alpn: bytes | None = None,
     ) -> LinkClient:
-        """Open and authenticate. ``wsk_pub`` is passed only for the first link of a join (the hub has not pinned the
-        workspace yet); otherwise leave it ``None``. Raises ``PinMismatch`` before anything is sent when the hub's
-        certificate is not the card's, ``LinkError`` for a refusal, ``LinkClosed`` / ``LinkTimeout`` otherwise."""
+        """Open and authenticate. ``alpn``: the link's declared role (``STREAM_LINK_ALPN``); the hub must select it,
+        else the link is closed (``LinkError("unsupported")``): it is never used as a plain link.
+        ``wsk_pub`` is passed only for the first link of a join (the hub has not pinned the workspace yet);
+        otherwise leave it ``None``. Raises ``PinMismatch`` before anything is sent when the hub's certificate is
+        not the card's, ``LinkError`` for a refusal, ``LinkClosed`` / ``LinkTimeout`` otherwise."""
         if mode not in MODES:
             raise LinkError("malformed")
         end = time.monotonic() + timeout  # one overall deadline for dial, handshake, challenge and auth
@@ -259,8 +286,10 @@ class LinkClient:
         def left() -> float:
             return max(end - time.monotonic(), 0.001)
 
-        conn = tls.connect_pinned(host, port, tls_spki_sha256, timeout=timeout)
+        conn = tls.connect_pinned(host, port, tls_spki_sha256, timeout=timeout, alpn=(alpn,) if alpn else ())
         try:
+            if alpn is not None and conn.alpn() != alpn:
+                raise LinkError("unsupported")
             ch = framing.read_frame(conn, timeout=left(), max_bytes=max_frame)
             if ch.get("t") == "error":
                 raise LinkError(_code(ch.get("error")))
@@ -380,6 +409,16 @@ class LinkClient:
             queue = self._streams
         else:
             raise LinkError("malformed")
+        if queue is self._streams and len(queue) >= MAX_QUEUED:
+            # F3 (R4): a stream frame cannot be redelivered, so the link is NOT closed for it (log_sync, handoffs and
+            # approvals share this link). The frame is dropped and only THAT stream ends (``remote.busy``, by the pump).
+            if o["op"] == "stream_open" and self._sign is not None:
+                self._write_w2h("stream_open", {"error": "remote.busy"}, reply_to=o["seq"])  # the hub is waiting for it
+            else:
+                with self._ov_mu:
+                    if body["stream_id"] not in self._overflow and len(self._overflow) < MAX_QUEUED * 4:
+                        self._overflow.append(body["stream_id"])
+            return True
         if len(queue) >= MAX_QUEUED:
             # L2-C3-5: REFUSE, never drop. The hub resends what was not acknowledged after a reconnect, so closing
             # loses nothing; dropping the oldest would silently discard a request the hub still holds as undelivered.
@@ -532,6 +571,13 @@ class LinkClient:
             except (LinkError, LinkClosed, LinkTimeout):
                 self.close()
                 raise
+
+    def take_stream_overflow(self) -> list[str]:
+        """The ids of streams that lost an h2w frame to a full queue since the last call (F3). The pump closes each
+        ``remote.busy``: the host cannot know what the lost frame was, so the stream cannot go on."""
+        with self._ov_mu:
+            out, self._overflow = self._overflow, []
+            return out
 
     def answer_stream_open(self, seq: int, error: str | None = None) -> None:
         """Answer the handed-out ``stream_open`` ``seq`` (a w2h reply: same op, ``re`` = its seq, body ``{}`` or

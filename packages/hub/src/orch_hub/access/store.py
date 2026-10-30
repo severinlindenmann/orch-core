@@ -29,6 +29,15 @@ from ..contract.hub import ROLES
 from ..fsutil import PrivateFileError, open_private_db
 
 ADMIN_GROUP = "hub-admin"
+DAY_MS = 86_400_000
+END_MAX_MS = 400 * DAY_MS  # an end date is at most this far ahead of the hub clock
+SWEEP_AFTER_MS = (
+    DAY_MS  # an ended membership row is deleted this long after its end (the review list shows it until then)
+)
+REVIEW_AFTER_MS = 90 * DAY_MS  # a permanent member not confirmed for this long is offered for review
+REVIEW_SOON_MS = 14 * DAY_MS
+EXTEND_MS = 30 * DAY_MS
+_KEEP: Any = object()  # "leave the end date as it is"
 _HEX16 = re.compile(r"[0-9a-f]{32}")
 _GROUP = re.compile(r"[a-z0-9][a-z0-9-]{0,39}")
 _SCHEMA = """
@@ -40,6 +49,7 @@ CREATE TABLE IF NOT EXISTS members (
   user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
   PRIMARY KEY (grp, user_id)
 );
+CREATE TABLE IF NOT EXISTS default_group (id INTEGER PRIMARY KEY CHECK (id = 1), grp TEXT REFERENCES groups(name) ON DELETE SET NULL);
 CREATE TABLE IF NOT EXISTS grants (
   workspace_id TEXT NOT NULL,
   grp TEXT NOT NULL REFERENCES groups(name) ON DELETE CASCADE,
@@ -65,6 +75,15 @@ CREATE TABLE IF NOT EXISTS recovery_notes (
   user_id TEXT PRIMARY KEY REFERENCES users(user_id) ON DELETE CASCADE,
   by_user TEXT NOT NULL, at_ms INTEGER NOT NULL
 );
+CREATE TRIGGER IF NOT EXISTS default_group_no_admin_set BEFORE UPDATE OF grp ON default_group
+WHEN NEW.grp IS NOT NULL AND EXISTS (SELECT 1 FROM grants WHERE grp = NEW.grp AND role = 'admin')
+BEGIN SELECT RAISE(ABORT, 'default_group_admin'); END;
+CREATE TRIGGER IF NOT EXISTS grants_no_admin_for_default_ins BEFORE INSERT ON grants
+WHEN NEW.role = 'admin' AND NEW.grp = (SELECT grp FROM default_group WHERE id = 1)
+BEGIN SELECT RAISE(ABORT, 'default_group_admin'); END;
+CREATE TRIGGER IF NOT EXISTS grants_no_admin_for_default_upd BEFORE UPDATE ON grants
+WHEN NEW.role = 'admin' AND NEW.grp = (SELECT grp FROM default_group WHERE id = 1)
+BEGIN SELECT RAISE(ABORT, 'default_group_admin'); END;
 """
 
 
@@ -131,6 +150,11 @@ class Access:
             if "must_recover" not in {r[1] for r in self._db.execute("PRAGMA table_info(users)")}:
                 # set by an enabling: the old password and TOTP stay dead until a recovery link is redeemed
                 self._db.execute("ALTER TABLE users ADD COLUMN must_recover INTEGER NOT NULL DEFAULT 0")
+            mcols = {r[1] for r in self._db.execute("PRAGMA table_info(members)")}
+            for col in ("ends_ms", "added_ms", "confirmed_ms"):  # NULL ends_ms = no end date
+                if col not in mcols:
+                    self._db.execute(f"ALTER TABLE members ADD COLUMN {col} INTEGER")
+            self._db.execute("INSERT OR IGNORE INTO default_group(id, grp) VALUES (1, NULL)")
             self._db.execute("INSERT OR IGNORE INTO groups(name, created_ms) VALUES (?,?)", (ADMIN_GROUP, self._now()))
             d = MP.default_policy()  # a new hub trusts the official marketplace only (D14)
             self._db.execute(
@@ -195,7 +219,14 @@ class Access:
                 # the cascade removes the user's group memberships: each one is a membership change and is audited
                 for (g,) in db.execute("SELECT grp FROM members WHERE user_id=? ORDER BY grp", (user_id,)).fetchall():
                     self._observe(
-                        {"kind": "membership", "group": g, "user_id": user_id, "added": False, "actor_user_id": actor}
+                        {
+                            "kind": "membership",
+                            "group": g,
+                            "user_id": user_id,
+                            "added": False,
+                            "ends_ms": None,
+                            "actor_user_id": actor,
+                        }
                     )
                 db.execute("DELETE FROM users WHERE user_id=?", (user_id,))
         except sqlite3.Error as e:
@@ -322,7 +353,14 @@ class Access:
                     )
                 for (u,) in db.execute("SELECT user_id FROM members WHERE grp=? ORDER BY user_id", (name,)).fetchall():
                     self._observe(
-                        {"kind": "membership", "group": name, "user_id": u, "added": False, "actor_user_id": actor}
+                        {
+                            "kind": "membership",
+                            "group": name,
+                            "user_id": u,
+                            "added": False,
+                            "ends_ms": None,
+                            "actor_user_id": actor,
+                        }
                     )
                 db.execute("DELETE FROM groups WHERE name=?", (name,))
         except sqlite3.Error as e:
@@ -330,15 +368,43 @@ class Access:
 
     def groups(self) -> list[dict[str, Any]]:
         return [
-            {"name": g, "members": self.members(g), "grants": self.grants_of_group(g)}
+            {"name": g, "members": self.members(g), "ends": self.member_ends(g), "grants": self.grants_of_group(g)}
             for (g,) in self._q("SELECT name FROM groups ORDER BY name")
         ]
 
-    def members(self, group: str) -> list[str]:
+    #: THE active-membership condition (alias ``m``): no end date, or the end is still ahead. Every read that turns a
+    #: membership into access uses it; the ``*_all`` variants exist for clean-up paths only (disable/enable/restore).
+    _ACTIVE = "(m.ends_ms IS NULL OR m.ends_ms > ?)"
+
+    def members(self, group: str, at_ms: int | None = None) -> list[str]:
+        """The members whose membership is active at ``at_ms`` (default: now)."""
+        at = self._now() if at_ms is None else at_ms
+        return [
+            u
+            for (u,) in self._q(
+                f"SELECT m.user_id FROM members m WHERE m.grp=? AND {self._ACTIVE} ORDER BY m.user_id",
+                (_grp(group), at),
+            )
+        ]
+
+    def members_all(self, group: str) -> list[str]:
         return [u for (u,) in self._q("SELECT user_id FROM members WHERE grp=? ORDER BY user_id", (_grp(group),))]
 
-    def groups_of(self, user_id: str) -> list[str]:
+    def groups_of(self, user_id: str, at_ms: int | None = None) -> list[str]:
+        at = self._now() if at_ms is None else at_ms
+        return [
+            g
+            for (g,) in self._q(
+                f"SELECT m.grp FROM members m WHERE m.user_id=? AND {self._ACTIVE} ORDER BY m.grp", (user_id, at)
+            )
+        ]
+
+    def groups_of_all(self, user_id: str) -> list[str]:
         return [g for (g,) in self._q("SELECT grp FROM members WHERE user_id=? ORDER BY grp", (user_id,))]
+
+    def member_ends(self, group: str) -> dict[str, int]:
+        """``{user_id: ends_ms}`` of the members of ``group`` that have an end date (ended ones too, until swept)."""
+        return dict(self._q("SELECT user_id, ends_ms FROM members WHERE grp=? AND ends_ms IS NOT NULL", (_grp(group),)))
 
     def is_hub_admin(self, user_id: str) -> bool:
         """A member of the hub-admin group who is not disabled."""
@@ -356,17 +422,36 @@ class Access:
         member = bool(self._q("SELECT 1 FROM members WHERE grp=? AND user_id=?", (ADMIN_GROUP, user_id)))
         return actor is not None and member and not self.is_hub_admin(actor)
 
-    def add_member(self, group: str, user_id: str, *, actor: str | None = None) -> None:
-        self._set_member(group, user_id, actor, add=True)
+    def add_member(self, group: str, user_id: str, *, actor: str | None = None, ends_ms: Any = _KEEP) -> None:
+        """Add a member. ``ends_ms`` (a future time, at most 400 days out) makes the membership end then; ``None`` makes it
+        permanent; left out, a new member is permanent and an existing one keeps what it had. The hub-admin group takes none."""
+        self._set_member(group, user_id, actor, add=True, ends_ms=ends_ms)
 
     def remove_member(self, group: str, user_id: str, *, actor: str | None = None) -> None:
         self._set_member(group, user_id, actor, add=False)
 
-    def _set_member(self, group: str, user_id: str, actor: str | None, *, add: bool) -> None:
+    def check_end(self, ends_ms: object, group: str | None = None) -> int | None:
+        """A valid end date: ``None`` or an int in ``(now, now + 400 days]`` (UTC ms). Never for the hub-admin group."""
+        if ends_ms is None:
+            return None
+        if type(ends_ms) is not int or isinstance(ends_ms, bool):
+            raise AccessError("malformed", "ends_ms")
+        now = self._now()
+        if ends_ms <= now:
+            raise AccessError("end_in_past")
+        if ends_ms > now + END_MAX_MS:
+            raise AccessError("malformed", "ends_ms too far ahead")
+        if group == ADMIN_GROUP:
+            raise AccessError("reserved_group", "the hub-admin group has no end dates")
+        return ends_ms
+
+    def _set_member(self, group: str, user_id: str, actor: str | None, *, add: bool, ends_ms: Any = _KEEP) -> None:
         _grp(group)
         _hex(user_id, "user_id")
         if actor is not None:
             _hex(actor, "actor")
+        if ends_ms is not _KEEP:
+            ends_ms = self.check_end(ends_ms, group)
         try:
             with self.tx() as db:
                 if group == ADMIN_GROUP and actor is not None and not self.is_hub_admin(actor):
@@ -376,13 +461,158 @@ class Access:
                 if not db.execute("SELECT 1 FROM users WHERE user_id=?", (user_id,)).fetchone():
                     raise AccessError("unknown_user")
                 if add:
-                    db.execute("INSERT OR IGNORE INTO members VALUES (?,?)", (group, user_id))
+                    now = self._now()
+                    # an ended row that was not swept yet counts as missing: it is replaced, so the audit and the access agree
+                    db.execute(
+                        "DELETE FROM members WHERE grp=? AND user_id=? AND ends_ms IS NOT NULL AND ends_ms <= ?",
+                        (group, user_id, now),
+                    )
+                    db.execute(
+                        "INSERT OR IGNORE INTO members(grp, user_id, ends_ms, added_ms, confirmed_ms) VALUES (?,?,?,?,?)",
+                        (group, user_id, None if ends_ms is _KEEP else ends_ms, now, now),
+                    )
+                    if ends_ms is not _KEEP:  # an existing row takes the new end date (or becomes permanent)
+                        db.execute(
+                            "UPDATE members SET ends_ms=?, confirmed_ms=? WHERE grp=? AND user_id=?",
+                            (ends_ms, now, group, user_id),
+                        )
+                    ends_now = db.execute(
+                        "SELECT ends_ms FROM members WHERE grp=? AND user_id=?", (group, user_id)
+                    ).fetchone()[0]
                 else:
                     db.execute("DELETE FROM members WHERE grp=? AND user_id=?", (group, user_id))
+                    ends_now = None
                 self._observe(
-                    {"kind": "membership", "group": group, "user_id": user_id, "added": add, "actor_user_id": actor}
+                    {
+                        "kind": "membership",
+                        "group": group,
+                        "user_id": user_id,
+                        "added": add,
+                        "ends_ms": ends_now,
+                        "actor_user_id": actor,
+                    }
                 )
         except sqlite3.Error as e:
+            raise AccessError("store_error", type(e).__name__) from None
+
+    def member_end(self, group: str, user_id: str) -> int | None | str:
+        """The stored end date of a membership: an int, ``None`` (permanent) or ``"absent"`` (no such row)."""
+        rows = self._q("SELECT ends_ms FROM members WHERE grp=? AND user_id=?", (_grp(group), _hex(user_id, "user_id")))
+        return rows[0][0] if rows else "absent"
+
+    def set_member_end(self, group: str, user_id: str, ends_ms: object, *, actor: str | None = None) -> None:
+        """Change the end date of an existing, still active membership (``None`` = permanent). One conditional UPDATE of
+        the ACTIVE row: if the member was removed or ended in between, nothing is written (``not_member``); this path never
+        inserts. Policy (owner approval for a later end, owner/last-admin guards for a shorter one) is ``ChangeService``."""
+        _grp(group)
+        _hex(user_id, "user_id")
+        if actor is not None:
+            _hex(actor, "actor")
+        ends = self.check_end(ends_ms, group)
+        try:
+            with self.tx() as db:
+                now = self._now()
+                n = db.execute(
+                    "UPDATE members SET ends_ms=?, confirmed_ms=? WHERE grp=? AND user_id=? "
+                    "AND (ends_ms IS NULL OR ends_ms > ?)",
+                    (ends, now, group, user_id, now),
+                ).rowcount
+                if n == 0:
+                    raise AccessError("not_member")
+                self._observe(
+                    {
+                        "kind": "membership",
+                        "group": group,
+                        "user_id": user_id,
+                        "added": True,
+                        "ends_ms": ends,
+                        "actor_user_id": actor,
+                    }
+                )
+        except sqlite3.Error as e:
+            raise AccessError("store_error", type(e).__name__) from None
+
+    def is_member(self, group: str, user_id: str) -> bool:
+        """An ACTIVE membership of ``group``."""
+        return user_id in self.members(group)
+
+    def confirm_member(self, group: str, user_id: str, *, actor: str | None = None) -> None:
+        """Mark a permanent membership as still needed (the review's one click)."""
+        self._w(
+            "UPDATE members SET confirmed_ms=? WHERE grp=? AND user_id=?",
+            (self._now(), _grp(group), _hex(user_id, "user_id")),
+        )
+
+    def review(self) -> list[dict[str, Any]]:
+        """The "still needed?" list: memberships ending within 14 days or ended in the last 7 (not the hub-admin group), and
+        permanent ones not confirmed for 90 days. Display data; the writes go through the normal paths."""
+        now = self._now()
+        out = []
+        for g, u, ends, conf, added in self._q(
+            "SELECT m.grp, m.user_id, m.ends_ms, m.confirmed_ms, m.added_ms FROM members m JOIN users x ON x.user_id=m.user_id "
+            "WHERE m.grp<>? AND x.disabled_ms IS NULL ORDER BY m.grp, m.user_id",
+            (ADMIN_GROUP,),
+        ):
+            if ends is not None:
+                if now - 7 * DAY_MS <= ends <= now + REVIEW_SOON_MS:
+                    out.append({"group": g, "user_id": u, "ends_ms": ends, "ended": ends <= now})
+            elif now - (conf if conf is not None else (added if added is not None else 0)) > REVIEW_AFTER_MS:
+                out.append({"group": g, "user_id": u, "ends_ms": None, "ended": False})
+        return out
+
+    def sweep(self) -> int:
+        """Delete memberships that ended more than a day ago and audit each as a removal (actor None). Correctness never
+        depends on this: an ended membership grants nothing from its end on."""
+        cutoff = self._now() - SWEEP_AFTER_MS
+        n = 0
+        try:
+            with self.tx() as db:
+                for g, u in db.execute(
+                    "SELECT grp, user_id FROM members WHERE ends_ms IS NOT NULL AND ends_ms <= ?", (cutoff,)
+                ).fetchall():
+                    db.execute("DELETE FROM members WHERE grp=? AND user_id=?", (g, u))
+                    self._observe(
+                        {
+                            "kind": "membership",
+                            "group": g,
+                            "user_id": u,
+                            "added": False,
+                            "ends_ms": None,
+                            "actor_user_id": None,
+                        }
+                    )
+                    n += 1
+        except sqlite3.Error as e:
+            raise AccessError("store_error", type(e).__name__) from None
+        return n
+
+    # --- the default group for new people ------------------------------------------------------------------------
+
+    def default_group(self) -> str | None:
+        rows = self._q("SELECT grp FROM default_group WHERE id=1")
+        return rows[0][0] if rows else None
+
+    def set_default_group(self, group: str | None, *, actor: str) -> None:
+        """Hub admin only. Never ``hub-admin`` and never a group that holds an admin grant anywhere (R5). Every check and
+        the write are ONE transaction; triggers on ``grants`` and ``default_group`` hold the rule for any other writer."""
+        _hex(actor, "actor")
+        if group is not None:
+            _grp(group)
+            if group == ADMIN_GROUP:
+                raise AccessError("reserved_group")
+        try:
+            with self.tx() as db:
+                if not self.is_hub_admin(actor):
+                    raise AccessError("forbidden_role", "only a hub-admin sets the default group")
+                if group is not None:
+                    if not db.execute("SELECT 1 FROM groups WHERE name=?", (group,)).fetchone():
+                        raise AccessError("unknown_group")
+                    if db.execute("SELECT 1 FROM grants WHERE grp=? AND role='admin'", (group,)).fetchone():
+                        raise AccessError("default_group_admin", "a group with admin access cannot be the default")
+                db.execute("UPDATE default_group SET grp=? WHERE id=1", (group,))
+        except sqlite3.Error as e:
+            if "default_group_admin" in str(e):
+                raise AccessError("default_group_admin") from None
             raise AccessError("store_error", type(e).__name__) from None
 
     # --- grants --------------------------------------------------------------------------------------------------
@@ -403,6 +633,8 @@ class Access:
             with self.tx() as db:
                 if not db.execute("SELECT 1 FROM groups WHERE name=?", (group,)).fetchone():
                     raise AccessError("unknown_group")
+                if role == "admin" and self.default_group() == group:
+                    raise AccessError("default_group_admin", "the default group cannot hold an admin grant")
                 db.execute(
                     "INSERT INTO grants VALUES (?,?,?) ON CONFLICT(workspace_id, grp) DO UPDATE SET role=excluded.role",
                     (workspace_id, group, role),
@@ -417,6 +649,8 @@ class Access:
                     }
                 )
         except sqlite3.Error as e:
+            if "default_group_admin" in str(e):
+                raise AccessError("default_group_admin") from None
             raise AccessError("store_error", type(e).__name__) from None
 
     def revoke(self, workspace_id: str, group: str, *, actor: str | None = None) -> None:
@@ -469,6 +703,7 @@ class Access:
         drop_member: tuple[str, str] | None = None,
         add_member: tuple[str, str] | None = None,
         include_disabled: bool = False,
+        at_ms: int | None = None,
     ) -> dict[str, str]:
         """THE role computation: what :meth:`roles` answers, optionally as it WOULD be after one hypothetical edit (a
         grant set or dropped, a group, user or member removed, a member added). With no edit it is :meth:`roles` itself,
@@ -476,6 +711,7 @@ class Access:
         role anywhere (these are the hub-derived roles only); ``include_disabled`` is for the simulation alone: it names the
         disabled members a change would reach, so an owner sees everyone who could ever regain access."""
         _hex(workspace_id, "workspace_id")
+        at = self._now() if at_ms is None else at_ms  # memberships that ended by ``at`` give nothing
         with self.lock:  # one consistent read
             grants = {g: r for g, r in self._q("SELECT grp, role FROM grants WHERE workspace_id=?", (workspace_id,))}
             if set_grant is not None:
@@ -491,8 +727,9 @@ class Access:
                     u
                     for (u,) in self._q(
                         "SELECT m.user_id FROM members m JOIN users x ON x.user_id = m.user_id "
-                        "WHERE m.grp=?" + ("" if include_disabled else " AND x.disabled_ms IS NULL"),
-                        (group,),
+                        f"WHERE m.grp=? AND {self._ACTIVE}"
+                        + ("" if include_disabled else " AND x.disabled_ms IS NULL"),
+                        (group, at),
                     )
                 }
                 if drop_member is not None and drop_member[0] == group:
@@ -512,6 +749,31 @@ class Access:
                 for u in members(group):
                     if role_rank(role) > role_rank(out.get(u)):
                         out[u] = role
+        return dict(sorted(out.items()))
+
+    def ends_for(self, workspace_id: str, now: int | None = None) -> dict[str, int]:
+        """``{user_id: ends_ms}`` for the signed snapshot: for each user who has a role now, the first moment their role
+        would fall (rank lower than now) because a membership ends. Users whose role never falls are absent."""
+        _hex(workspace_id, "workspace_id")
+        now = self._now() if now is None else now
+        with self.lock:
+            cur = self.roles_overlay(workspace_id, at_ms=now)
+            points = sorted(
+                {
+                    e
+                    for (e,) in self._q(
+                        "SELECT DISTINCT ends_ms FROM members WHERE ends_ms > ? AND grp IN "
+                        "(SELECT grp FROM grants WHERE workspace_id=? UNION SELECT ?)",
+                        (now, workspace_id, ADMIN_GROUP),
+                    )
+                }
+            )
+            out: dict[str, int] = {}
+            for t in points:
+                later = self.roles_overlay(workspace_id, at_ms=t)
+                for u, r in cur.items():
+                    if u not in out and role_rank(later.get(u)) < role_rank(r):
+                        out[u] = t
         return dict(sorted(out.items()))
 
     def role_of(self, user_id: str, workspace_id: str) -> str | None:
@@ -610,19 +872,22 @@ class Access:
             or any(type(i) is not str or not _ADDON_ID.fullmatch(i) for i in ids)
         ):
             raise AccessError("malformed", "add-on ids")
-        with self.lock:
-            if not self.is_hub_admin(actor):
-                raise AccessError("forbidden_role", "only a hub-admin sets an allowlist")
-            if ids is None:
-                self._w("DELETE FROM workspace_addon_allow WHERE workspace_id=?", (workspace_id,))
-                return None
-            clean = sorted(set(ids))
-            self._w(
-                "INSERT INTO workspace_addon_allow(workspace_id, ids) VALUES (?,?) "
-                "ON CONFLICT(workspace_id) DO UPDATE SET ids=excluded.ids",
-                (workspace_id, cj(clean).decode()),
-            )
-            return clean
+        try:
+            with self.tx() as db:
+                if not self.is_hub_admin(actor):
+                    raise AccessError("forbidden_role", "only a hub-admin sets an allowlist")
+                if ids is None:
+                    db.execute("DELETE FROM workspace_addon_allow WHERE workspace_id=?", (workspace_id,))
+                    return None
+                clean = sorted(set(ids))
+                db.execute(
+                    "INSERT INTO workspace_addon_allow(workspace_id, ids) VALUES (?,?) "
+                    "ON CONFLICT(workspace_id) DO UPDATE SET ids=excluded.ids",
+                    (workspace_id, cj(clean).decode()),
+                )
+                return clean
+        except sqlite3.Error as e:
+            raise AccessError("store_error", type(e).__name__) from None
 
     def effective_market_policy(self, workspace_id: str) -> dict[str, Any]:
         """The policy THIS workspace's snapshot carries: the hub-wide one with ``addons.allow`` INTERSECTED with the

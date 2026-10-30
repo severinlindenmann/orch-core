@@ -44,7 +44,7 @@ from typing import Any, Protocol
 from .. import __version__ as hub_version
 from ..access import Access, AccessError
 from ..access.orgcleanup import org_cleanup
-from ..access.store import ADMIN_GROUP, check_name
+from ..access.store import ADMIN_GROUP, DAY_MS, EXTEND_MS, check_name
 from ..activity.feed import feed as activity_feed
 from ..backup.hubop import FENCE as RESTORE_FENCE
 from ..changes import ChangeError
@@ -453,6 +453,13 @@ ROUTES: tuple[Route, ...] = (
     _r("DELETE", "/admin/groups/{group}", "admin", "a_group_remove", "Remove a group"),
     _r("PUT", "/admin/groups/{group}/members/{user_id}", "admin", "a_member_add", "Add a user to a group"),
     _r("DELETE", "/admin/groups/{group}/members/{user_id}", "admin", "a_member_remove", "Remove a user from a group"),
+    _r(
+        "GET", "/admin/review", "admin", "a_review", "People whose access ends soon or has not been checked for a while"
+    ),
+    _r(
+        "POST", "/admin/review/keep", "admin", "a_review_keep", "Still needed: extend a dated membership or confirm one"
+    ),
+    _r("PUT", "/admin/default-group", "admin", "a_default_group", "Set (or clear) the group new people join"),
     _r("GET", "/admin/grants", "admin", "a_grants", "List workspace grants (optional ?workspace_id=)"),
     _r("PUT", "/admin/grants", "admin", "a_grant", "Grant a group a role in a workspace"),
     _r("POST", "/admin/grants/revoke", "admin", "a_grant_revoke", "Remove a group's grant on a workspace"),
@@ -556,6 +563,8 @@ ROUTES: tuple[Route, ...] = (
 #: handler -> the session scopes that may call it (protocol §6.4). ``full`` is the browser's cookie session; ``pairing``
 #: (password + TOTP from the app) may only read the card, register a phone, bind and sign out; ``channel`` is bound to
 #: one channel and never registers a channel or reaches an admin route. A route not listed here is ``full`` only.
+#: A ``remote`` session (R4, the stream router's token) reaches exactly one web route, ``sign_out`` (so a client can end its
+#: own token); every other route answers it ``forbidden_role``.
 _PAIR = frozenset({"sign_out", "reg_begin", "reg_complete", "bind"})
 _CHAN = frozenset(
     {
@@ -578,6 +587,7 @@ SCOPE_ROUTES: dict[str, frozenset[str]] = {
         ({"full"} if h not in _FULL_NOT else set())
         | ({"pairing"} if h in _PAIR else set())
         | ({"channel"} if h in _CHAN else set())
+        | ({"remote"} if h == "sign_out" else set())
     )
     for h in {rt.handler for rt in ROUTES}
 }
@@ -1019,13 +1029,13 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
     def _h_sign_in(self, c: Ctx, p: dict, q: dict, b: dict | None):
         b = _need(b, user_id=str, password=str, totp=str)
         client = b.get("client", "browser")
-        if client not in ("browser", "app"):
+        if client not in ("browser", "app", "remote"):
             raise ApiError("malformed")
         if client == "browser" and c.origin is None:  # a cookie is only ever set for a request the browser labelled
             raise ApiError("not_allowed")
         who = b["user_id"].strip()[:64]
         cands: list[str] = []
-        scope = "full" if client == "browser" else "pairing"
+        scope = {"browser": "full", "app": "pairing", "remote": "remote"}[client]
 
         def attempt() -> Any:  # run inside the caps: they are charged before any lookup
             failure: ChannelError | None = None
@@ -1044,7 +1054,7 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
 
         s = self._guarded_credentials(c, resolve, attempt)
         out: dict[str, Any] = {"user_id": s["user_id"], "expires_ms": s["expires_ms"]}
-        if client == "app":  # the phone keeps the token itself and sends it as a bearer
+        if client != "browser":  # the phone / a remote client keeps the token itself
             out["token"] = s["token"]
             return 200, out, []
         ttl = max(0, (s["expires_ms"] - self.d.now_ms()) // 1000)
@@ -1978,6 +1988,7 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
             self.d.channels.set_password(uid, password)
             t = self.d.channels.new_totp(uid)
             self._record("invite.redeemed", actor_id=uid, subject_user=uid, detail={"invite_id": row.id})
+            self._join_default_group(row, uid)
         except BaseException:  # leave nothing behind: no user, no orphan UK
             try:
                 self.d.access.remove_user(uid)
@@ -1994,6 +2005,18 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
             "totp_secret": t["secret"],
             "totp_uri": t["uri"],
         }
+
+    def _join_default_group(self, row: Invite, uid: str) -> None:
+        """GA-07: a new person joins the hub's default group (if one is set) through the normal ``member_add`` path with the
+        inviter as the actor, so a workspace owner is still asked (the person then waits). Only while the inviter is still an
+        active hub admin; never fails the redeem (a skipped join is the safe direction: the person has no access yet)."""
+        try:
+            group = self.d.access.default_group()
+            if group is None or not self.d.access.is_hub_admin(row.created_by):
+                return
+            self._chg().member_add(row.created_by, group, uid)
+        except AccessError, ChangeError:
+            return
 
     def _proof_ok(self, th: str, live: dict[str, dict[str, Any]], proof: Any) -> bool:
         """A signature of one of the person's LIVE channel keys over :func:`proof_digest` (the challenge peek gave out, this
@@ -2014,7 +2037,7 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
             return False
 
     def _h_a_groups(self, c: Ctx, p: dict, q: dict, b: dict | None):
-        return 200, {"groups": self.d.access.groups()}
+        return 200, {"groups": self.d.access.groups(), "default_group": self.d.access.default_group()}
 
     def _h_a_group_add(self, c: Ctx, p: dict, q: dict, b: dict | None):
         self.d.access.add_group(_need(b, name=str)["name"])
@@ -2026,8 +2049,45 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
         return 200, {"ok": True}
 
     def _h_a_member_add(self, c: Ctx, p: dict, q: dict, b: dict | None):
-        # an increase: a pending change (202) when a workspace owner must approve, else applied (changes/rules.py)
+        # an increase: a pending change (202) when a workspace owner must approve, else applied (changes/rules.py).
+        # ``ends_ms`` (optional; null = no end) is the end of the membership, UTC ms, exclusive (GA-07).
+        if b is not None and "ends_ms" in b:
+            return self._increase_answer(
+                self._chg().member_add(c.user_id, p["group"], p["user_id"], ends_ms=b["ends_ms"], confirm=confirmed(b))
+            )
         return self._increase_answer(self._chg().member_add(c.user_id, p["group"], p["user_id"]))
+
+    def _h_a_review(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        """The "still needed?" list (GA-07): who, in which group, when it ends. Also tidies memberships that ended a while ago."""
+        self.d.access.sweep()
+        names = {u["user_id"]: u["name"] for u in self.d.access.users()}
+        items = [{**r, "name": names.get(r["user_id"], "")} for r in self.d.access.review() if r["user_id"] in names]
+        return 200, {"items": items, "default_group": self.d.access.default_group()}
+
+    def _h_a_review_keep(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        """One click on "Still needed". A dated membership is extended by 30 days (never past a year from now) through the
+        normal path, so a workspace owner is asked when the group reaches theirs; a permanent one is marked as checked."""
+        b = _need(b, group=str, user_id=str)
+        acc = self.d.access
+        cur = acc.member_end(b["group"], b["user_id"])
+        if cur == "absent":  # an ended row that was not swept yet is still listed, so it may be kept (it is re-added)
+            raise ApiError("not_member")
+        if cur is None:
+            acc.confirm_member(b["group"], b["user_id"], actor=c.user_id)
+            return 200, {"ok": True}
+        now = self.d.now_ms()
+        new = min(max(cur, now) + EXTEND_MS, now + 365 * DAY_MS)
+        if new <= cur:
+            return 200, {"ok": True}
+        return self._increase_answer(self._chg().member_add(c.user_id, b["group"], b["user_id"], ends_ms=new))
+
+    def _h_a_default_group(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        b = _need(b)
+        group = b.get("group")
+        if group is not None and type(group) is not str:
+            raise ApiError("malformed")
+        self.d.access.set_default_group(group, actor=c.user_id)
+        return 200, {"ok": True, "default_group": group}
 
     def _h_a_member_remove(self, c: Ctx, p: dict, q: dict, b: dict | None):
         with self._chg().reducing("member_remove", confirm=confirmed(b), group=p["group"], user_id=p["user_id"]):

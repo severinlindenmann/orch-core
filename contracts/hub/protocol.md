@@ -561,8 +561,17 @@ Signed by `HK_op` under `orch/v2/hub-snapshot|`.
 | `issued_ms` | integer |
 | `roles` | object `{user_id hex: "read" \| "edit" \| "admin"}`; a user without a role is absent |
 | `revoked_channels` | sorted list of unique `channel_id` hex |
+| `ends_ms` | object `{user_id hex: integer}` (GA-07, **required**, `{}` when nobody has an end date): the time (UTC ms, **exclusive**) from which the user's role in `roles` no longer holds. Only users that have a role are listed; each value is an integer strictly after `issued_ms` and below 2^53. The hub lists a user when a membership that gives their role ends and the role would fall |
 | `market_policy` | the hub marketplace policy of §7.1; **required, never `null`** |
 | `dev` | boolean |
+
+**`role_at(snapshot, user, now_ms)`** is the one rule for every role decision (hub and host, including the custodial check
+and the replay at the event's time): `roles[user]`, except `none` when `user` is in `ends_ms` and `now_ms >= ends_ms[user]`
+(fail closed: the true role may only have been lowered; a fresher snapshot says), or when `issued_ms > now_ms + 300000`
+(a snapshot issued more than 5 minutes ahead of the verifier's clock gives no role to any user listed in `ends_ms`).
+The hub re-issues (version + 1) at the first request after an end, because its roles are computed at read time.
+A host keeps the highest snapshot version it ever pinned from a hub (also across a rebind or mode switch) and refuses
+a lower one with `stale_snapshot`.
 
 **SHORTCUT** `Snapshots by version only (no generations)` (#910): `generation` is present and MUST be `0`; any other
 value is `malformed`. Hardening (#910) defines `HK_root`-signed generations (spec §6) as a new `hv`.
@@ -570,7 +579,7 @@ value is `malformed`. Hardening (#910) defines `HK_root`-signed generations (spe
 **Verification by the host** (the newest snapshot it holds is `pinned`):
 
 1. §2.2 steps 1–3 under the card's `HK_op`; `hub_id` → `other_hub`; `op_cert_id` → `stale_op_cert`; dev marker;
-2. `roles` keys and values, `revoked_channels` sorted and unique, `market_policy` valid (§7.1) → `malformed`;
+2. `roles` keys and values, `revoked_channels` sorted and unique, `ends_ms` (keys in `roles`, values after `issued_ms`), `market_policy` valid (§7.1) → `malformed`;
 3. `workspace_id` is this workspace → `other_workspace`;
 4. `version < pinned.version` → `stale_snapshot` (a replayed snapshot cannot bring back a removed user);
 5. `version == pinned.version`: identical `cj(o)` is a no-op; anything else → `snapshot_conflict`;
@@ -1656,6 +1665,22 @@ and opened only with a **presence signature** by a device the owner enrolled **a
 hub to sign anything, and no hub key, `UK`, channel certificate, hub session or switch ticket grants anything (D87).
 Reference: `orch_hub.contract.remote`; vectors `vectors_remote.json` (§15).
 
+**The stream link (R4 follow-up, decision 69).** Streams travel only on a host's **dedicated stream link**: a link the
+host dials with the TLS ALPN protocol `orch-link-streams/1` (same pinned SPKI, same `WSK` auth over the exporter; the
+exporter covers the handshake transcript, so the role is authenticated and no new signed op exists). The hub attaches
+such a link to the stream router and to nothing else (no ws->ws router, no custodial deliveries), and accepts on it
+only the one-way `stream_data` / `stream_close`, the host's `stream_open` replies and `hub_where` (the host's keepalive,
+every 120 s; the hub drops a link after 300 s without a w2h frame). Any other op on it is `unknown_op` and the link
+closes; a stream link for a workspace that is not pinned and bound is `not_bound` and closes (no `join` on it). A
+**plain** link (no ALPN) is never attached to the stream router: the hub never sends it a `stream_open`, and stream
+frames on it are dropped, so a short per-op link (status, shares, approvals, publish) can neither carry a stream nor
+replace the route of the stream link. A new stream link of a workspace replaces the old one (its streams end `closed`).
+A hub without a stream router does not select the protocol; the host then closes the link (never used as a plain one).
+The host runs the link while the workspace is bound to the hub and remote access is on, or an enrollment code is
+outstanding (§7.1 enrollment); in both hub modes. So a workspace with remote off and no code has no stream link at
+all, and a client that opens a stream to it is refused `not_allowed` (the hub cannot say `remote.off`); `remote.off`
+still reaches a client whose open session is closed by the owner's off.
+
 **The three ops** (rows above). Same signing (`WSK` w2h, `HK_op` h2w), same steps 1–6 and the same `ts` window
 (`|now − ts_ms| ≤ 120 s` → `stale_timestamp`) as every link message; both modes.
 
@@ -2156,7 +2181,7 @@ hub.audit {v, suite, kind: "hub.audit", hv, hub_id, op_cert_id, seq ≥ 1, prev:
   otherwise (vectors `audit_share_*`); `channel` (p4) `{channel_id, user_id, change: register | revoke | renew, factor,
   actor_user_id | null, nonce}`, hub-wide (`scope_tag` null; `actor_user_id` null = the operator at the hub terminal,
   there is no `unrevoke`, §6.2; `renew` = a new certificate for the same channel key, the factor unchanged, recorded BEFORE it is issued and refusing the renewal when the chain cannot be written. **Contract text only in V3: no hub renews**, the certificate lasts 31 days and then the phone pairs again); `grant` `{group, workspace_id, role | null, actor_user_id, nonce}`; `membership`
-  `{group, user_id, added, actor_user_id, nonce}`; `market_policy` (D14, §7.1) `{version ≥ 1, policy_hash: b64u(32), actor_user_id, nonce}`, hub-wide (`scope_tag` null; the version the change produced and the hash of the new policy, the actor is always a hub-admin); `hub_settings` (M4, #1461) `{change: general | addresses, actor_user_id, nonce}`, hub-wide (`scope_tag` null; an admin changed the hub's name or company, or the addresses it advertises: it names which setting and who, never the value; written BEFORE the change is saved, and the change is refused when the chain cannot be written); `hub_backup` (M4 S5, §17) `{change: key_set | key_confirmed | made | downloaded, actor_user_id: hex16 | null, nonce}`, hub-wide (`scope_tag` null; the backup key was set or replaced, a backup was made, or one was handed out; `actor_user_id` null = the schedule or the hub terminal; never a key, a word or a file name); `hub_restore` (M4 S6, §17.8) `{backup_made_ms, gap_ms ≥ 0, op_seq ≥ 1, actor_user_id: hex16 | null, nonce}`, hub-wide (`scope_tag` null; the hub is restored from a backup made at `backup_made_ms`, `gap_ms` ago, issuing `op_seq`; written before the swap); `space` `{space_id, epoch, change: create | add | remove | unbind | delete,
+  `{group, user_id, added, ends_ms: int ≥ 1 | null, actor_user_id, nonce}` (GA-07: `ends_ms` is the UTC time, exclusive, at which the person's membership of the group ends, null = no end date, always null on a removal; every change of an end date is one `added: true` record); `market_policy` (D14, §7.1) `{version ≥ 1, policy_hash: b64u(32), actor_user_id, nonce}`, hub-wide (`scope_tag` null; the version the change produced and the hash of the new policy, the actor is always a hub-admin); `hub_settings` (M4, #1461) `{change: general | addresses, actor_user_id, nonce}`, hub-wide (`scope_tag` null; an admin changed the hub's name or company, or the addresses it advertises: it names which setting and who, never the value; written BEFORE the change is saved, and the change is refused when the chain cannot be written); `hub_backup` (M4 S5, §17) `{change: key_set | key_confirmed | made | downloaded, actor_user_id: hex16 | null, nonce}`, hub-wide (`scope_tag` null; the backup key was set or replaced, a backup was made, or one was handed out; `actor_user_id` null = the schedule or the hub terminal; never a key, a word or a file name); `hub_restore` (M4 S6, §17.8) `{backup_made_ms, gap_ms ≥ 0, op_seq ≥ 1, actor_user_id: hex16 | null, nonce}`, hub-wide (`scope_tag` null; the hub is restored from a backup made at `backup_made_ms`, `gap_ms` ago, issuing `op_seq`; written before the swap); `space` `{space_id, epoch, change: create | add | remove | unbind | delete,
   workspace_id | null, actor_user_id | null, nonce}`. The acting admin's `UK` signature on a grant or membership change is
   the custodial event it came from (spec §10); the audit record points at it, it does not replace it. **Every event of every type carries `nonce`, 32 random bytes
   inside the event; no type is exempt.** Records carry the event's hash to every tenant, so an event without a nonce
@@ -3240,7 +3265,7 @@ handshake hash, split keys, the first transport message each way, plain and seal
 `custodial_cannot`, and `required` naming the cases an implementation must not lose (replays into another stream,
 workspace or device; early data; a flipped byte; UP-only FIDO2; tampered and rolled-back device lists; `stream_open`
 w2h; the gate while off; every "no custodial type can" item). The hub replays every case against its reference
-(`tests/test_remote_vectors.py`, which also rebuilds the file byte for byte); **orch-core replays every case** with an
+(`tests/test_remote_vectors.py`, which also rebuilds the file byte for byte; R4: every `stream_link` case carries the connection's `exporter` (hex, `ids.link_exporter_hex`) and a stream frame signed in the pre-R1 form `label || cj(o)` is `bad_signature`, with no fallback); **orch-core replays every case** with an
 independent test-side port (`tests/host/test_remote_vectors.py`, `tests/host/remote_port.py`) and the custodial cases
 against its real `check_custodial_role` and `check_custodial_payload`; R2–R5 replay them against the real paths. The
 Noise of the reference was cross-checked once against the `noiseprotocol` package (both directions, byte-equal
@@ -3367,6 +3392,7 @@ transport in the action).
 | 66 | `route_digest` (R3) | label `orch/v2/remote-route\|`, length-prefixed method, template, concrete path and query, then `SHA-256(body)`; covers the concrete target; the adapter 404s a path whose `{ws}` is not the stream's workspace (the design's template-only form would let one confirmed attach authorize every run) | D88 "fixed list" |
 | 67 | Remote owner proof (R2) | the §9.6 proof object under its own kind `remote.owner_proof` and its own label `orch/v2/sig/remote-owner-proof\|`, ops `remote.set` and `remote.device_confirm`; signed payload includes `remote_v` (the replay counter), single-use `request_id`; core only | spec D84, D93; a hub proof can never stand in for a remote one or the reverse |
 | 68 | Remote code text and fingerprint words (R2) | the code text is `orch-rc1.<workspace_id>.<b64u(code_id raw 16 ‖ secret 16 ‖ wrk_fp 16)>.<b64u(WRK_pub, 32)>`; the owner and the device show `device_fp` as the first 66 bits, six BIP-39 English words of 11 bits each (the all-zero fingerprint is `abandon` six times) | spec §5 "fingerprint", R5 renders and parses the same |
+| 69 | Dedicated stream link (R4) | ALPN `orch-link-streams/1` marks a host's stream link; the hub attaches it to the stream router only and accepts on it stream frames, `stream_open` replies and the `hub_where` keepalive (120 s; hub idle drop 300 s); plain links never carry or replace streams; the link exists while remote is on or a code is outstanding, in both modes, so an opted-out selective workspace answers a client `not_allowed` (no link) | spec D85 (the hub sees when remote is on), §7.1, §9 |
 
 ## 17. Hub backup (M4, #1462; design `m4-settings-design.md` 4.2-4.3 and the Opus conditions 9-17)
 

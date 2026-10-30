@@ -133,7 +133,7 @@ def _hub_state(service: WorkspaceService, *, full: bool = True) -> Any:
     return state
 
 
-def _open_link(service: WorkspaceService) -> Any:
+def _open_link(service: WorkspaceService, alpn: bytes | None = None) -> Any:
     from orch.crypto.encoding import unb64u
     from orch.hubclient.tlsadapter import parse_addr
     from orch.hubclient.tlslink.client import LinkClient
@@ -158,7 +158,7 @@ def _open_link(service: WorkspaceService) -> Any:
             return LinkClient.open(
                 host, port, tls_spki_sha256=state.tls_spki, hub_id=state.hub_id, workspace_id=service.workspace_id,
                 sign=sign, hk_op_pub=unb64u(state.hk_op_pub, 65), mode=state.mode, timeout=10.0,
-                now_ms=lambda: int(service.clock() * 1000),
+                now_ms=lambda: int(service.clock() * 1000), alpn=alpn,
             )  # fmt: skip
         except (OSError, PinMismatch) as exc:  # unreachable or not the pinned certificate: the next verified address
             last = exc

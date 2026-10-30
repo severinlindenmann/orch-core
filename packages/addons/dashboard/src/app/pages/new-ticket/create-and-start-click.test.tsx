@@ -97,6 +97,22 @@ describe('the real click path', () => {
     // P09: the signing step is a centred dialog, not a small popover in the corner
     expect(dialog.hasAttribute('data-sign-popover')).toBe(false)
     expect(dialog.hasAttribute('data-sign-sheet')).toBe(true)
+    // r14-P03: only the sign box's own Cancel and Create ticket are usable; the form's copies are hidden, not greyed
+    expect(within(sheet).queryByRole('button', { name: 'Cancel' })).toBeNull()
+    expect(within(sheet).queryByRole('button', { name: 'Create ticket' })).toBeNull()
+    expect(within(dialog).getAllByRole('button', { name: 'Cancel' })).toHaveLength(1)
+    expect(within(dialog).getAllByRole('button', { name: 'Create ticket' })).toHaveLength(1)
+  })
+
+  it('r14-P03: in hand-off mode the panel does not promise one line and the title says where Enter goes', async () => {
+    const r = renderApp('/board')
+    await waitFor(() => expect(screen.getByTestId('topbar-title')).not.toHaveTextContent(/^$/), T)
+    await r.user.click(await screen.findByRole('button', { name: /New ticket/ }, T))
+    const sheet = await screen.findByRole('dialog', { name: 'New ticket' }, T)
+    expect(sheet).toHaveAccessibleDescription('Describe the ticket, then press Create ticket.')
+    expect(sheet).not.toHaveTextContent(/one line/i)
+    expect(within(sheet).queryByRole('textbox', { name: 'Quick ticket' })).toBeNull()
+    expect(within(sheet).getByTestId('nt-title-hint')).toHaveTextContent('Press Enter to continue with the requirements.')
   })
 
   it('stopped at the agent access: the ticket exists, no second ticket can be made, nothing starts, the failure is marked', async () => {

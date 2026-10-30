@@ -508,6 +508,9 @@ class WorkspaceService:
         from . import peerops
 
         peerops.stop(self)  # V3 C12: the ws->ws receive thread, before the store goes
+        from .remote import linkrun
+
+        linkrun.stop(self)  # R4: the remote access stream link and its runner, before the store goes
         shareauto.stop(self)  # V3 C6: the share pass thread, before the store goes
         from . import logsyncops
 

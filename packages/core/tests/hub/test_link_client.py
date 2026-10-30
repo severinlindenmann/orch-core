@@ -472,3 +472,14 @@ def test_a_queue_at_its_limit_still_hands_out_every_entry(make_hub) -> None:
             got.append(link.next_event_deliver(0)[1]["n"])
             link.ack_event_deliver()
         assert got == list(range(MAX_QUEUED))
+
+
+def test_stream_alpn_not_selected_by_the_hub_is_unsupported_and_nothing_is_attached(make_hub):
+    """R4: a link declared as the stream link must not be used when the hub does not select that ALPN (a hub with no
+    stream router): the client closes before it answers the challenge, so it never authenticates or attaches."""
+    hub = make_hub()  # this test hub negotiates no ALPN at all
+    with pytest.raises(LinkError) as e:
+        open_link(hub, alpn=C.STREAM_LINK_ALPN)
+    assert e.value.code == "unsupported"
+    assert hub.conn_done.wait(3)  # the hub saw the connection end without an auth frame
+    assert hub.auth_frames == [] and not hub.auth_verified.is_set() and hub.requests == []

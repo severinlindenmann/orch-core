@@ -406,3 +406,19 @@ it.each(['requirements', 'plan'] as const)('single_only on the %s gate: no combi
   expect(screen.getByRole('button', { name: 'Approve requirements' })).toBeInTheDocument()
   setFeatures(null)
 })
+
+it('the combined approval could not be prepared: the separate approve cards come back with one plain line', async () => {
+  const { setFeatures } = await import('@/api/features')
+  const { blockBoth, unblockBoth } = await import('./actions')
+  const doc = await both()
+  blockBoth(doc.key)
+  try {
+    show(doc)
+    const card = screen.getByTestId('next-step')
+    expect(card).toHaveTextContent('Approve them one at a time instead.')
+    expect(card).toHaveTextContent('Requirements ready')
+    expect(within(card).getByRole('button', { name: 'Approve requirements' })).toBeInTheDocument()
+    expect(within(card).queryByRole('button', { name: 'Approve requirements and plan' })).toBeNull()
+    expect(card).not.toHaveTextContent('internal')
+  } finally { unblockBoth(doc.key); setFeatures(null) }
+})

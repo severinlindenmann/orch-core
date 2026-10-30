@@ -5,6 +5,13 @@ import { can } from '@/api/permissions'
 import { isRealHost } from '@/api/features'
 import type { Viewer } from './shared'
 
+/** Tickets whose combined approval could not be prepared (the host refused or failed): their cards fall back to the two
+ * separate approvals, so the combined card is never a dead end. Per page load; a reload tries the combined card again. */
+const bothBlocked = new Set<string>()
+export const blockBoth = (key: string) => void bothBlocked.add(key)
+export const bothIsBlocked = (key: string) => bothBlocked.has(key)
+export const unblockBoth = (key: string) => void bothBlocked.delete(key)
+
 /** Mirrors the gate policy the mock host enforces: who may approve a gate. */
 export function canApproveGate(t: TicketDocument, gate: GateName, viewer: Viewer): boolean {
   const g = t.gates[gate]
@@ -103,6 +110,7 @@ export function availableActions(t: TicketDocument, viewer: Viewer): Available {
   const planGate = t.gates.plan
   const approveBoth =
     isRealHost() &&
+    !bothBlocked.has(t.key) &&
     t.status !== 'done' &&
     !!t.head?.seq &&
     !t.gates.requirements.single_only &&

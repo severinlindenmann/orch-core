@@ -403,3 +403,74 @@ def test_remote_identity_is_checked():
             RemoteIdentity(**args)
     with pytest.raises(AttributeError):
         RemoteIdentity(STREAM, "a" * 32, DEVICE, PERSON, "work").level = "terminals"  # frozen
+
+
+# --- invariant A: a row that lets a stream in is true about its handler ---
+def _sources(route):
+    """The source of the endpoint and of every dependency callable of a route."""
+    import inspect
+
+    calls = [route.endpoint]
+    stack = list(route.dependant.dependencies)
+    while stack:
+        dep = stack.pop()
+        calls.append(dep.call)
+        stack.extend(dep.dependencies)
+    out = []
+    for call in calls:
+        try:
+            out.append(inspect.getsource(inspect.unwrap(call)))
+        except (OSError, TypeError):
+            continue
+    return out
+
+
+def _route_for(app, method, template):
+    for route in app.routes:
+        if isinstance(route, APIRoute) and route.path == template and method in route.methods:
+            return route
+    return None
+
+
+#: handlers that read the kind of the session without needing a full one (checked by hand): the session report shows the
+#: kind, and the prepare only refuses a hub-switch session (a stream is none) and keeps remote changes on this computer
+LOGIN_KIND_READS = {("GET", "/api/session"), ("POST", "/api/w/{ws}/click/prepare")}
+
+
+def test_a_row_that_admits_a_stream_is_true_about_its_handler(app):
+    """A non-REFUSED REMOTE_DEVICE row must not name a handler that needs a full session (a stream never is one: the
+    row would be a lie that ends in a refusal), unless the handler reads the stream's own person; and the handler must
+    name no signer op the signer refuses from a stream."""
+    import ast
+
+    from orch.click import remote_kinds
+
+    refused_ops = {op for op, cls in remote_kinds.TABLE.items() if cls == remote_kinds.REFUSED}
+    lies = []
+    checked = 0
+    for (method, template), (rule, _level) in COLUMN.items():
+        if rule == REFUSED or method == "WEBSOCKET":
+            continue
+        route = _route_for(app, method, template)
+        if route is None:
+            continue  # a T4 row whose handler is the host's/adapter's own
+        checked += 1
+        for src in _sources(route):
+            import textwrap
+
+            tree = ast.parse(textwrap.dedent(src))
+            calls = {
+                n.func.attr if isinstance(n.func, ast.Attribute) else getattr(n.func, "id", "")
+                for n in ast.walk(tree)
+                if isinstance(n, ast.Call)
+            }
+            needs = ("full_session" in calls or "login_kind" in calls) and "stream_person" not in calls
+            if needs and (method, template) not in LOGIN_KIND_READS:
+                lies.append((method, template, "needs a full session"))
+            if method == "GET":
+                continue  # a read calls no signer op
+            lits = {n.value for n in ast.walk(tree) if isinstance(n, ast.Constant) and isinstance(n.value, str)}
+            for op in sorted(lits & refused_ops):
+                lies.append((method, template, f"signer op {op} is refused from a stream"))
+    assert checked > 20
+    assert not lies, f"rows that admit a stream but whose handler would refuse it: {lies}"

@@ -57,7 +57,7 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 def _http(method: str, url: str, body: bytes | None, headers: dict[str, str]) -> tuple[int, bytes]:
-    opener = urllib.request.build_opener(_NoRedirect)
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect)  # never the environment's proxy
     req = urllib.request.Request(url, data=body, method=method, headers=headers)  # noqa: S310
     try:
         with opener.open(req, timeout=10) as r:  # noqa: S310

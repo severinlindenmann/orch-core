@@ -412,3 +412,30 @@ def test_a_loopback_or_sensitive_current_address_unlocks_nothing() -> None:
     assert not hubaddr.is_internal("127.0.0.1:7443") and not hubaddr.is_internal("hub.internal:7443")
     assert not hubaddr.is_internal("169.254.1.1:80") and not hubaddr.is_internal("hub.example.com:7443")
     assert hubaddr.is_internal("100.64.0.7:7443") and not hubaddr.is_internal("kube.localdomain:7443")
+
+
+# -- Opus R6 review L3: no environment proxy on the plain HTTP paths ---------------------------------------------------
+
+
+def test_http_paths_ignore_the_environment_proxy(monkeypatch) -> None:
+    import urllib.request
+
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:1")
+    monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:1")
+    made: list[object] = []
+    real = urllib.request.build_opener
+
+    def spy(*handlers):
+        o = real(*handlers)
+        made.append(o)
+        raise OSError("stop")
+
+    monkeypatch.setattr(urllib.request, "build_opener", spy)
+    from orch.hubclient import connectlink
+    from orch.remoteclient import client as rc
+
+    with pytest.raises(OSError):
+        rc._http("GET", "http://127.0.0.1:9/x", None, {})
+    assert made and not any(isinstance(h, urllib.request.ProxyHandler) and h.proxies for h in made[-1].handlers)
+    src = Path(connectlink.__file__).read_text()
+    assert "ProxyHandler({})" in src

@@ -1412,3 +1412,23 @@ def test_the_label_is_cleaned_and_capped():
     assert clean("x" * 200, 80) == "x" * 80
     assert len(clean("é" * 100, 80).encode()) <= 80 and set(clean("é" * 100, 80)) == {"é"}
     assert clean("‮​\x07", 80) is None and clean(None, 80) is None
+
+
+def test_a_server_that_refuses_the_label_gets_the_ticket_key_once(w):
+    uid, key = w.ticket_with(**{"report.md": REPORT})
+    staged = w.prepare(key, "report.md")["staged_id"]
+    w.approve(staged)
+    w.server.fail.append(("PUT", r"/shares/[0-9a-f]{32}$", 400, "bad_label"))
+    share_id = LINK.fullmatch(ok(w.send(staged))["data"]["link"]).group(1)
+    assert w.server.shares[share_id]["meta"]["label"] == key
+    puts = [r for r in w.server.requests if r["method"] == "PUT" and r["target"].endswith(f"shares/{share_id}")]
+    assert len(puts) == 2 and json.loads(puts[0]["body"])["label"] != key
+
+
+def test_a_label_refused_again_is_not_retried_forever(w):
+    uid, key = w.ticket_with(**{"report.md": REPORT})
+    staged = w.prepare(key, "report.md")["staged_id"]
+    w.approve(staged)
+    w.server.fail.extend([("PUT", r"/shares/[0-9a-f]{32}$", 400, "bad_label")] * 2)
+    assert err(w.send(staged))
+    assert len([r for r in w.server.requests if r["method"] == "PUT"]) == 2

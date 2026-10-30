@@ -1284,17 +1284,18 @@ def _send(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
             _write(token_path, token.encode())
             _put_json(send_path, send)
         client = _client(service, cfg["server"], plan["hub"])
-        body = flow.meta_bytes(
-            ticket=meta["ticket"]["key"],
-            kind=meta["kind"],
-            expires_ms=send["expires_ms"],
-            view_limit=meta["views"],
-            token_hash_hex=send["token_hash"],
-            files=meta["files"],
-            label=meta.get("label"),
-            by_kind=meta.get("by_kind"),
-            by_name=meta.get("by_name"),
-        )
+        meta_args = {
+            "ticket": meta["ticket"]["key"],
+            "kind": meta["kind"],
+            "expires_ms": send["expires_ms"],
+            "view_limit": meta["views"],
+            "token_hash_hex": send["token_hash"],
+            "files": meta["files"],
+            "label": meta.get("label"),
+            "by_kind": meta.get("by_kind"),
+            "by_name": meta.get("by_name"),
+        }
+        body = flow.meta_bytes(**meta_args)
         rec = {
             "id": meta["share_id"],
             "ticket": meta["ticket"]["uid"],
@@ -1314,13 +1315,19 @@ def _send(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
             _save_records(service, [*rows, {**rec, "state": "sending"}])
         if "reg" in plan and not plan.get("registered"):
             _register(call, {**plan, "op": "publish.register"})
-        for attempt in (0, 1):
+        registered_again = relabelled = False
+        while True:
             try:
                 flow.put_meta(client, service.workspace_id, meta["share_id"], body)
                 break
             except (PublishError, HubRefused) as exc:
-                if exc.code == "unknown_workspace" and attempt == 0 and "reg" in plan:
+                if exc.code == "unknown_workspace" and not registered_again and "reg" in plan:
+                    registered_again = True
                     _register(call, {**plan, "op": "publish.register"})  # the server lost the binding: once more
+                    continue
+                if exc.code == "bad_label" and not relabelled:
+                    relabelled = True  # an older server refuses a text the contract allows: the ticket key instead
+                    body = flow.meta_bytes(**{**meta_args, "label": meta["ticket"]["key"]})
                     continue
                 raise
         for entry, data in zip(meta["files"], blobs, strict=True):

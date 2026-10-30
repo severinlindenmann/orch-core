@@ -74,14 +74,48 @@ def _step(name: str) -> None:
         raise Ceremony(f"injected failure at {name}")
 
 
-def run(argv: list[str], stdin: bytes = b"", timeout: int = 120) -> tuple[int, bytes]:
-    """The ONLY way to start a program: argv plus stdin bytes, sanitized env, no shell. Returns (exit code, stdout).
+#: Per tool: the exact environment variables it may inherit on top of ``childenv.minimal`` (HOME, USER, LOGNAME, TMPDIR,
+#: LANG, LC_ALL and a fixed PATH). Proxy, CA bundle, debug and log variables are never passed on.
+_ALLOW_EXACT = {"pass-cli": (), "gh": ("GH_TOKEN", "GH_CONFIG_DIR")}
+_ALLOW_PREFIX = {"pass-cli": ("PROTON_PASS_",), "gh": ()}
+_BINS: dict[str, str] = {}
 
-    stderr is captured and dropped, so a child can never leak a value through our stderr either."""
-    env = childenv.sanitize(os.environ)
-    env["PROTON_PASS_AGENT_REASON"] = REASON
+
+def _resolve_tools() -> None:
+    """Resolve both binaries once, to absolute paths, from the PATH this process started with."""
+    for name in _ALLOW_EXACT:
+        found = shutil.which(name)
+        if found is None or not os.path.isabs(found):
+            raise Ceremony(f"{name} was not found on PATH")
+        _BINS[name] = found
+
+
+def _child_env(tool: str) -> dict[str, str]:
+    env = childenv.minimal(os.environ)
+    for k, v in os.environ.items():
+        if k in _ALLOW_EXACT[tool] or k.startswith(_ALLOW_PREFIX[tool]):
+            env[k] = v
+    if tool == "pass-cli":
+        env["PROTON_PASS_AGENT_REASON"] = REASON
+    return env
+
+
+def run(argv: list[str], stdin: bytes = b"", timeout: int = 120) -> tuple[int, bytes]:
+    """The ONLY way to start a program: argv plus stdin bytes, a per-tool allowlisted env, no shell.
+
+    Returns (exit code, stdout). stderr is captured and dropped, so a child can never leak a value through ours."""
+    tool = argv[0]
+    if tool not in _BINS:
+        raise Ceremony(f"{tool} was not resolved")
     try:
-        p = subprocess.run(argv, input=stdin, capture_output=True, env=env, shell=False, timeout=timeout)  # noqa: S603
+        p = subprocess.run(  # noqa: S603
+            [_BINS[tool], *argv[1:]],
+            input=stdin,
+            capture_output=True,
+            env=_child_env(tool),
+            shell=False,
+            timeout=timeout,
+        )
     except (OSError, subprocess.TimeoutExpired):
         return 127, b""
     return p.returncode, p.stdout
@@ -553,6 +587,7 @@ def main(argv: list[str]) -> int:
         signal.signal(sig, _on_signal)
     tmp = Path(tempfile.mkdtemp(prefix="orch-ceremony-"))
     try:
+        _resolve_tools()
         os.chmod(tmp, 0o700)
         fn = cmd_init if a.command == "init" else cmd_resign
         return fn(a.repo_root, a.gh_repo, tmp)

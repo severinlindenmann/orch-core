@@ -277,6 +277,35 @@ def test_init_succeeds_without_leaking_and_prints_only_the_allowed_lines(lab, ca
     ).read_text() == "ORCH_ROOT_SIGNING_KEY=pass://Agents/orch release root key/password\n"
 
 
+def test_each_tool_gets_only_its_own_env_allowlist(lab, capsys, monkeypatch):
+    noise = [
+        "GH_TOKEN", "GH_CONFIG_DIR", "PROTON_PASS_X", "HTTPS_PROXY", "ALL_PROXY", "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE",
+        "RUST_LOG", "GH_DEBUG", "PYTHONPATH", "LD_PRELOAD", "SOME_SECRET",
+    ]  # fmt: skip
+    for k in noise:
+        monkeypatch.setenv(k, "/x")
+    assert run_main(lab, capsys, "init")[0] == 0
+    base = {"HOME", "USER", "LOGNAME", "TMPDIR", "LANG", "LC_ALL", "PATH", "__CF_USER_TEXT_ENCODING"}
+    seen = {"pass-cli": set(), "gh": set()}
+    for c in lab.calls():
+        seen[c["tool"]] |= set(c["env"])
+    assert seen["gh"] <= base | {"GH_TOKEN", "GH_CONFIG_DIR"} and {"GH_TOKEN", "GH_CONFIG_DIR"} <= seen["gh"]
+    assert seen["pass-cli"] <= base | {"PROTON_PASS_X", "PROTON_PASS_AGENT_REASON"}
+    assert {"PROTON_PASS_X", "PROTON_PASS_AGENT_REASON"} <= seen["pass-cli"]
+
+
+def test_the_binaries_are_resolved_once_to_absolute_paths(lab, capsys):
+    assert run_main(lab, capsys, "init")[0] == 0
+    assert set(ceremony._BINS) == {"pass-cli", "gh"} and all(os.path.isabs(p) for p in ceremony._BINS.values())
+    assert ceremony._BINS["gh"] == str(lab.base / "fake/bin/gh")
+
+
+def test_a_missing_tool_refuses(lab, capsys, monkeypatch):
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    rc, out, err = run_main(lab, capsys, "init")
+    assert rc == 1 and "not found on PATH" in err and lab.tmp_left() == []
+
+
 def test_init_secrets_only_travel_on_stdin_and_the_env_is_sanitized(lab, capsys, monkeypatch):
     monkeypatch.setenv("PYTHONPATH", "/evil")
     monkeypatch.setenv("LD_PRELOAD", "/evil.so")

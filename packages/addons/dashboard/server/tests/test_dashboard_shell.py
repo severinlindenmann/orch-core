@@ -70,6 +70,7 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/org/decline",  # one click: turn it off (owner, full session)
         "/api/w/{ws}/org/sync",  # one click: get the latest from the hub
         "/api/w/{ws}/org/tool",  # one click: a tool On (local) or Off (owner, full session)
+        "/api/w/{ws}/org/tools",  # one click: the reading tools On (owner, full LOCAL session)
         "/api/w/{ws}/hub/switch",
         "/api/w/{ws}/hub/rail",
         "/auth/switch",

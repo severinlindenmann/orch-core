@@ -337,3 +337,11 @@ def test_presence_sequence_sign_needs_presence(world):
     world.present([digest])
     assert world.sign(rid, digest)
     assert world.click.signatures >= 1
+
+
+def test_a_held_sign_from_a_stream_is_refused_and_keeps_the_presence(world, human):
+    rid, digest = prepared_approval(world, human)
+    world.present([digest])
+    assert world.refusal("sign", request_id=rid, view_digest=digest, delay_s=10).code == "remote.kind_refused"
+    assert world.click.signatures == 0
+    assert world.sign(rid, digest)  # the batch still holds its digest

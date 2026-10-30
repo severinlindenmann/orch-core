@@ -2507,6 +2507,9 @@ class ClickSigner:
             return self._presence_op(entry, sid, facts, op, args)
         if secret_arg(args) or SIGNER_OPS.get(op, REFUSED) == REFUSED:
             raise self._stream_refuse(entry, "kind", op=op)
+        if op == "sign" and (type(args.get("delay_s", 0)) is not int or args.get("delay_s", 0) != 0):
+            # a held sign (delay_s) is a terminal/dashboard-session feature: refuse before any presence is taken
+            raise self._stream_refuse(entry, "kind", op=op)
         if op in ("prepare", "sign", "stash") and level == "view":
             raise self._stream_refuse(entry, "level", op=op)
         take: bytes | None = None

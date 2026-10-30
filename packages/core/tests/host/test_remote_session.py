@@ -592,6 +592,21 @@ def test_a_lapsed_lease_closes_the_open_sessions(human, served):
     assert w.link.closes(c.sid) == ["closed"]
 
 
+def test_a_session_of_a_replaced_adapter_is_closed_by_the_sweep(human, served):
+    w = World(human, served)
+    c = w.client()
+    c.connect()
+    assert w.sess(c.sid).state == "live"
+    old = w.ad
+    w.keep_lease = False
+    w.advance(16)  # the first dashboard's lease ran out ...
+    w.ad = adapter.claim(w.service, w.person, None)  # ... and another one took the slot
+    assert w.ad is not old
+    w.pump()
+    assert w.link.closes(c.sid) == ["closed"]
+    assert w.sess(c.sid) is None
+
+
 @pytest.fixture
 def no_commit_close(monkeypatch):
     """The commit hook normally closes the stream first; here only the per-request check may stop a request."""

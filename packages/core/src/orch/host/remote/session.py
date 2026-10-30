@@ -565,6 +565,8 @@ def sweep(service: Any, now_ms: int) -> None:
             t.close(s.sid, "idle")
         elif not has_adapter and state != "pending":
             t.close(s.sid, "closed")
+        elif state == "live" and s.adapter is not ad.current(service):
+            t.close(s.sid, "closed")  # a lease that lapsed and was claimed again: the old adapter's sessions end
 
 
 def flush_out(service: Any, link: Any) -> int:

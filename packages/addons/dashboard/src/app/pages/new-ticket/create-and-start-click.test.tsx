@@ -93,6 +93,8 @@ describe('the real click path', () => {
     await r.user.click(await within(sheet).findByRole('button', { name: 'Create ticket' }, T))
     const dialog = (await screen.findAllByRole('dialog', {}, T)).find((d) => d.hasAttribute('data-handoff-dialog'))!
     expect(await within(dialog).findByText('No agent starts. You can start one later.', {}, T)).toBeInTheDocument()
+    expect(within(dialog).queryByTestId('what-next')).toBeNull()
+    expect(within(dialog).queryByText(/You sign\./)).toBeNull()
     expect(within(dialog).getByRole('button', { name: 'Create ticket' })).toBeInTheDocument()
     // P09: the signing step is a centred dialog, not a small popover in the corner
     expect(dialog.hasAttribute('data-sign-popover')).toBe(false)

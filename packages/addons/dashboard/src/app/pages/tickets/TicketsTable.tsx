@@ -102,8 +102,8 @@ export function TicketsTable({
   const navigate = useNavigate()
   const { workspace } = useWorkspace()
   const hub = useHub(workspace?.id)
-  const hubShare = useQuery({ ...hubQueries.share(workspace?.id ?? ''), enabled: !!workspace && hubServed(workspace.id) && hub.data?.mode === 'selective' })
-  const showHub = hub.data?.mode === 'selective' && hubShare.data?.tickets_complete === true
+  const hubShare = useQuery({ ...hubQueries.share(workspace?.id ?? ''), enabled: !!workspace && hubServed(workspace.id) && (hub.data?.mode === 'selective' || hub.data?.mode === 'full') })
+  const showHub = (hub.data?.mode === 'selective' || hub.data?.mode === 'full') && hubShare.data?.tickets_complete === true
   const hubMark = (key: string) => <Badge variant="outline" data-testid={'ticket-hub-' + key} className={hubShare.data?.tickets.includes(key) ? 'border-chart-4/40 bg-chart-4/10 text-chart-4' : 'border-border bg-surface-2 text-text-muted'}>{hubShare.data?.tickets.includes(key) ? 'Shared' : 'Only here'}</Badge>
   // With Estimate on the list has its own Points column (the chip is not repeated in the add-on column).
   const hasPoints = estimateOn(workspace)

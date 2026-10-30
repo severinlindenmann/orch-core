@@ -2,11 +2,11 @@
 
 Status: **draft, 21 Oct 2026** (orch-core #714, #715-#720; orch-relay #81). Written from the Opus design check of
 21 Oct 2026 and the owner decisions of 19 Oct 2026. The pure rules (§3) are built in `orch/model/followups.py`; the
-engine, ops/CLI (`orch follow-up`), runner one-run grant slot and host runner (time triggers) are built (parts 1 and 2); event/webhook triggers, add-on events, the skill, the dashboard and the relay inbox are not. The owner answered Q1, Q2, Q5 and Q7 on 21 Oct 2026 (the recommended answers, §9); the numbers are named constants
+engine, ops/CLI (`orch follow-up`), runner one-run grant slot and host runner (time triggers) are built (parts 1 and 2); event, webhook and add-on triggers and the skill are built (below); the relay inbox is not. The owner answered Q1, Q2, Q5 and Q7 on 21 Oct 2026 (the recommended answers, §9); the numbers are named constants
 in the code.
 
 **Built (27 Oct 2026, #717/#719):** the event shape `{source, kind, ref, status, at}` (`model/followup_events.py`: orch kinds
-question.asked/answered, ticket.changed/closed, gate.approved/changes_requested, task.done; webhook hook.rang; `addon` stays refused until #718),
+question.asked/answered, ticket.changed/closed, gate.approved/changes_requested, task.done; webhook hook.rang; add-on events `<addon>.<kind>` are built in #718: addon-api 1.2, the host polls only while a follow-up waits),
 `orch follow-up --on question.answered | ticket.changed:testing | webhook:<id>` (`--in/--at` is then the deadline), `orch webhook new`
 (a doorbell address, shown once; only `H(id)` is stored), the host receiver (`host/hooks.py`), the deadline fallback with `follow-up show`
 printing the reason before the brief, and the work-skill text (`orch help wait`). Laptop delivery through the relay is #1285.

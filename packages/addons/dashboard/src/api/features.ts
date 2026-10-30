@@ -2,6 +2,8 @@
 // everything (`null`) except optional Focus, which follows its workspace grant. A production page asks `hasFeature` before it draws a
 // control: hiding is a courtesy, the server and the host still refuse what is not allowed.
 
+import { isRemoteLogin, REMOTE_HIDDEN_FEATURES } from './remoteMode'
+
 let enabled: ReadonlySet<string> | null = null
 let perWorkspace: Readonly<Record<string, readonly string[]>> = {}
 let login: string | null = null
@@ -38,6 +40,7 @@ export function refreshFeatures(rows: readonly { id: string; features: readonly 
 
 /** Is `name` on? With a workspace id, the features of that workspace's host (a host that is too old lacks some). */
 export function hasFeature(name: string, workspace?: string): boolean {
+  if (inRemoteSession() && REMOTE_HIDDEN_FEATURES.has(name)) return false // the workspace would refuse every action
   if (enabled === null) {
     // Focus is optional even in the demo; its workspace grant controls the placeholder.
     if (name === 'focus') {
@@ -48,6 +51,9 @@ export function hasFeature(name: string, workspace?: string): boolean {
   if (workspace && perWorkspace[workspace]) return perWorkspace[workspace].includes(name)
   return enabled.has(name)
 }
+
+/** Is this page running inside a remote session (reached through the remote client)? See `remoteMode.ts`. */
+export const inRemoteSession = (): boolean => enabled !== null && isRemoteLogin(login)
 
 /** Was this session opened on this computer (a launch code)? Remote access is changed only from here. */
 export const onThisComputer = (): boolean => login === 'local'

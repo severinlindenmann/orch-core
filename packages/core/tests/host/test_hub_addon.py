@@ -360,3 +360,23 @@ def test_schedules_is_turned_on_through_the_hub_like_wiki(env):
     assert got["summary"]["name"] == "schedules"
     assert env.deliver(request(env, terms_of(ev, prepared["request"]["id"])), "workspace") is None
     assert granted(env)[-1]["name"] == "schedules"
+
+
+def test_the_hub_summary_names_the_events_in_words_and_the_signed_terms_keep_their_shape(env, monkeypatch):
+    from orch.host import hubhandoff
+
+    prepared, ev = prepare_handoff(env)
+    rid = prepared["request"]["id"]
+    plain = ok(env.served.client().req("hub.handoff", {"kind": "addon", "request": rid}))["data"]
+    assert "events" not in plain["summary"]  # an add-on without events: nothing new
+    decl = [{"kind": "run.finished", "title": "Run finished", "statuses": ["failed"], "ref": "int", "interval_s": 300}]
+    real = hubhandoff.prepared_event
+    monkeypatch.setattr(
+        hubhandoff,
+        "prepared_event",
+        lambda r: {**real(r), "events": decl},
+    )
+    got = ok(env.served.client().req("hub.handoff", {"kind": "addon", "request": rid}))["data"]
+    (line,) = got["summary"]["events"]
+    assert "Run finished" in line and "every 5 min" in line and "can reach the internet" in line
+    assert got["url"] == plain["url"]  # the link (the signed terms) is exactly what it was

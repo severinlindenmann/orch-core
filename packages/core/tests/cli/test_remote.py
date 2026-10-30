@@ -270,13 +270,13 @@ def test_enable_runs_the_root_copy_through_sudo_then_writes_remote_json_then_res
     assert directory.stat().st_mode & 0o777 == 0o700
     assert f"https://{NAME}" in out
     assert "stays down until the dashboard is started" in out
-    assert f"ssh -o ExitOnForwardFailure=yes -L 9000:127.0.0.1:9000 {PERSON}@{NAME}" in out  # the way back in
+    assert f"ssh -o ExitOnForwardFailure=yes -L 127.0.0.1:9000:127.0.0.1:9000 {PERSON}@{NAME}" in out  # the way back in
     assert "orch dashboard open --print-url" in out and "orch remote reset" in out
 
 
 def test_without_a_port_the_fallback_line_uses_the_headless_port(rig):
     out = rig.go("enable", "--name", NAME, "--yes")[1]
-    assert f"-L {remote.HEADLESS_PORT}:127.0.0.1:{remote.HEADLESS_PORT} " in out
+    assert f"-L 127.0.0.1:{remote.HEADLESS_PORT}:127.0.0.1:{remote.HEADLESS_PORT} " in out
 
 
 def test_the_root_step_failing_leaves_the_dashboard_and_remote_json_alone(rig):

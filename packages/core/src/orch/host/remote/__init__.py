@@ -50,6 +50,10 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
     op: {"type": "object", "properties": {}, "additionalProperties": False} for op in REMOTE_OPS
 }
 _SID = {"type": "string", "pattern": "^[0-9a-f]{32}$"}
+#: R3 T4: ``remote.off`` from an owner's own open session names it; the host takes the device from its session table
+_SCHEMAS["remote.off"] = {
+    "type": "object", "properties": {"stream_id": _SID}, "additionalProperties": False,
+}
 _B64 = {"type": "string", "minLength": 1, "maxLength": 87400, "pattern": "^[A-Za-z0-9_-]+$"}
 _SCHEMAS["remote.attach"] = {
     "type": "object",
@@ -241,7 +245,7 @@ def serve(call: Call) -> dict[str, Any]:
     if op in ("remote.attach", "remote.stream", "remote.presence_used", "remote.session_end"):
         return _session_op(call, op, args, now_ms)
     if op == "remote.off":
-        out = {"changed": policy.turn_off(service, "owner")}
+        out = {"changed": _turn_off(call, args.get("stream_id"))}
     elif op == "remote.code":
         out = enrollment.issue(service, now_ms)
     elif op == "remote.device_remove":
@@ -251,6 +255,19 @@ def serve(call: Call) -> dict[str, Any]:
     _audit(call, op, **({"device_id": args["device_id"]} if "device_id" in args else {}))
     service.sync()
     return ok_result(out)
+
+
+def _turn_off(call: Call, sid: str | None) -> bool:
+    """The owner's off, or (``stream_id``) the off of an owner's open session: the device and the person come from the
+    host's own session table, never from the request. A closed, unknown or another person's stream is ``no_stream``."""
+    from . import policy, session
+
+    if sid is None:
+        return policy.turn_off(call.service, "owner")
+    s = session.registry(call.service).get(sid)
+    if s is None or s.state == "closed" or s.opened_ms is None or s.person != call.viewer:
+        raise HostError("remote.no_stream", "no such remote session")
+    return policy.turn_off(call.service, "device", device=s.ident)
 
 
 def session_rows(service: Any) -> list[dict[str, Any]]:

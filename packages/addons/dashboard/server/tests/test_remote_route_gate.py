@@ -187,7 +187,11 @@ def test_loopback_is_not_gated(loop, local, stub):
 def test_the_device_column_refuses_what_the_front_refuses_or_steps_up():
     """A stream holds no passkey and answers nothing before login: whatever the front refuses, asks a step-up for, or
     answers before login stays refused in a stream. (Its own walk is `test_remote_device_gate.py`.)"""
+    stream_only = {  # R3 T4: a presence exists inside a stream only; the front refuses it, a stream answers it
+        ("POST", routegate.W + "/remote/presence/nonce"),
+        ("POST", routegate.W + "/remote/presence"),
+    }
     for key, (rule, _) in TABLE.items():
-        if rule in (REFUSED, STEP_UP, PRE_LOGIN) and key not in routegate.VIEW_WRITES:
+        if rule in (REFUSED, STEP_UP, PRE_LOGIN) and key not in routegate.VIEW_WRITES | stream_only:
             assert routegate.REMOTE_DEVICE[key][0] == REFUSED, key
     assert set(TABLE) <= set(routegate.REMOTE_DEVICE)

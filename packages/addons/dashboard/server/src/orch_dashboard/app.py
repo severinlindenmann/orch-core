@@ -54,6 +54,7 @@ from .explorer import routes as explorer_routes
 from .gateway import Gateway, state_dir
 from .hostlink import REQUEST_MEMO
 from .live import Live, SessionStream
+from .remote_device import RemoteDevices
 from .policy import LOOPBACK, loopback_policy, remote_device_policy
 from .security import Security, log_internal
 from .wiki import routes as wiki_routes
@@ -170,6 +171,7 @@ def create_app(
     remote_problem=None,
     passkeys=None,
     alt_hosts=(),
+    remote_streams=False,
 ):
     """``remote``: the front listener's policy (`remote_policy`), or None when remote access is off. One app serves both
     listeners; the server that accepted the connection says which policy applies (`scope["orch_listener"]`, set by
@@ -184,7 +186,11 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app):
+        if remote_streams:  # R3 (#1591): the in-process adapter of remote sessions (no listener; only the host's frames)
+            app.state.remote_devices.start(asyncio.get_running_loop())
         yield
+        if remote_streams:
+            await asyncio.to_thread(app.state.remote_devices.stop)
         await live.close()
         gateway.close()
 
@@ -196,6 +202,7 @@ def create_app(
     app.state.live = live
     app.state.term_tickets = tickets
     app.state.remote_problem = remote_problem
+    app.state.remote_devices = RemoteDevices(app, gateway)
     # the stream policy is always there: only the in-process stream adapter can name it (`scope["orch_listener"]`)
     app.state.policies = {
         p.name: p for p in (loopback_policy(port, alt_hosts), *([remote] if remote else []), remote_device_policy())

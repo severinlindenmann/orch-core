@@ -6,6 +6,12 @@
 | POST   | /api/w/{ws}/remote/off                 | remote.off           | turning off: one click, no signature     |
 | POST   | /api/w/{ws}/remote/code                | remote.code          | a one-time code, shown once              |
 | POST   | /api/w/{ws}/remote/devices/{id}/remove | remote.device_remove | removing: one click, no signature        |
+| POST   | /api/w/{ws}/remote/sessions/{sid}/end  | remote.session_end   | End: one click, on this computer only    |
+| POST   | /api/w/{ws}/remote/presence/nonce      | signer presence_nonce| inside a stream only (R3, D88)           |
+| POST   | /api/w/{ws}/remote/presence            | signer presence      | inside a stream only (R3, D88)           |
+
+`remote/off` is also answered inside a stream (an owner's own remote session turns remote access off, D84): then the
+host takes the device and person from its session table (`remote.off {stream_id}`), never from the request.
 
 Turning remote access ON and confirming a device are NOT here: they are person ops with the owner proof, signed by click
 through `click/prepare` (`signing.RemoteSet`, `signing.RemoteDeviceConfirm`, the backup key sealed to the signer).
@@ -19,10 +25,10 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Request
-from pydantic import BaseModel, ConfigDict, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from . import reads
 from .adapters.addons import display
@@ -30,12 +36,14 @@ from .cosmetic_routes import full_session, refused
 from .errors import HostError
 from .gateway import Gateway
 from .market_routes import new_idem
+from .remote_identity import REMOTE_STREAM
 from .stepup import LOCAL
 
 log = logging.getLogger("orch_dashboard.security")
 
 LEVELS = ("view", "work", "terminals")
 DEVICE_ID = re.compile(r"^rd_[0-9a-f]{32}$")
+STREAM_ID = re.compile(r"^[0-9a-f]{32}$")
 PENDING_ID = re.compile(r"^rp_[0-9a-f]{32}$")
 MAX_DEVICES = 64
 MAX_SESSIONS = 64
@@ -46,6 +54,16 @@ class Empty(BaseModel):
 
 
 DeviceId = Annotated[str, StringConstraints(pattern=DEVICE_ID.pattern)]
+StreamId = Annotated[str, StringConstraints(pattern=STREAM_ID.pattern)]
+
+
+class Presence(BaseModel):
+    """A device's presence signature over a batch of digests (D88); the signer checks every field."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    nonce: Annotated[str, StringConstraints(min_length=1, max_length=64)]
+    digests: Annotated[list[Annotated[str, StringConstraints(min_length=71, max_length=71)]], Field(min_length=1, max_length=16)]
+    assertion: dict[str, Any]
 
 
 def _int(v, high=10**15) -> int | None:
@@ -102,9 +120,19 @@ def view(status, pending, sessions) -> dict:
         "devices": devices,
         "pending": [p for p in (_pending(r) for r in (rows if isinstance(rows, list) else [])[:8]) if p],
         "sessions": [
-            {"device": names.get(r.get("device_id"), "A device"), "device_id": r.get("device_id")}
+            {
+                "device": names.get(r.get("device_id"), "A device"),
+                "device_id": r.get("device_id"),
+                "stream_id": r["stream_id"],
+                "level": r["level"] if r.get("level") in LEVELS else None,
+                "since_ms": _int(r.get("since_ms")),
+            }
             for r in (open_ if isinstance(open_, list) else [])[:MAX_SESSIONS]
-            if isinstance(r, dict) and isinstance(r.get("device_id"), str) and DEVICE_ID.fullmatch(r["device_id"])
+            if isinstance(r, dict)
+            and isinstance(r.get("device_id"), str)
+            and DEVICE_ID.fullmatch(r["device_id"])
+            and isinstance(r.get("stream_id"), str)
+            and STREAM_ID.fullmatch(r["stream_id"])
         ],
     }
 
@@ -137,6 +165,11 @@ def register(app: FastAPI, gateway: Gateway):
 
     @app.post("/api/w/{ws}/remote/off")
     def remote_off(_body: Empty, request: Request, ws: str = Depends(reads.workspace)):
+        stream = REMOTE_STREAM.get()
+        if stream is not None:  # an owner's own remote session: the host knows the device, we name only the stream
+            got = gateway.enabled(ws).call("remote.off", {"stream_id": stream}, write=True, idem=new_idem())
+            log.warning("remote access turned off from a remote session")
+            return {"changed": isinstance(got, dict) and got.get("changed") is True}
         link, person = owner_link(ws, request, "turn it off")
         got = link.call("remote.off", {}, write=True, idem=new_idem())
         log.warning("remote access turned off from the dashboard by %s", person)
@@ -158,3 +191,31 @@ def register(app: FastAPI, gateway: Gateway):
         link.call("remote.device_remove", {"device_id": device_id}, write=True, idem=new_idem())
         log.warning("remote access: a device was removed from the dashboard by %s", person)
         return {"removed": True}
+
+    @app.post("/api/w/{ws}/remote/sessions/{stream_id}/end")
+    def remote_session_end(stream_id: StreamId, _body: Empty, request: Request, ws: str = Depends(reads.workspace)):
+        link, person = owner_link(ws, request, "end a session")
+        link.call("remote.session_end", {"stream_id": stream_id}, write=True, idem=new_idem())
+        log.warning("remote access: a session was ended from the dashboard by %s", person)
+        return {"ended": True}
+
+    def in_stream() -> str:
+        stream = REMOTE_STREAM.get()
+        if stream is None:  # the column refuses these on every listener but a stream; this is the second wall
+            raise refused("A presence is given on the remote device.")
+        return stream
+
+    @app.post("/api/w/{ws}/remote/presence/nonce")
+    def remote_presence_nonce(_body: Empty, ws: str = Depends(reads.workspace)):
+        in_stream()
+        got = app.state.presence_nonce(ws)  # the signer client stamps the stream itself
+        nonce = got.get("nonce") if isinstance(got, dict) else None
+        if not isinstance(nonce, str) or not 1 <= len(nonce) <= 64:
+            raise HostError({"code": "internal", "message": "The signer gave no nonce.", "retryable": True}, 1)
+        return {"nonce": nonce}
+
+    @app.post("/api/w/{ws}/remote/presence")
+    def remote_presence(body: Presence, ws: str = Depends(reads.workspace)):
+        in_stream()
+        got = app.state.presence(ws, body.nonce, body.digests, body.assertion)
+        return {"ok": True, "n": got.get("n") if isinstance(got, dict) and type(got.get("n")) is int else None}

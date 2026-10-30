@@ -306,7 +306,7 @@ def test_presence_route_without_batch_428(app, auth, ws, fake):
     assert error["code"] == "remote.presence_required" and error["template"] == "/api/w/{ws}/agents/start"
     raw = json.dumps(body).encode()
     sent = fake.calls[-1]
-    assert sent[0] == "presence_take" and sent[1]["view_digest"] == error["view_digest"]
+    assert sent[0] == "presence_take" and sent[1]["digest"] == error["view_digest"]
     assert sent[1]["remote"] is True and sent[1]["stream"] == STREAM  # the signer client stamped it, not this route
 
     # the digest covers the concrete path, query and body, and nothing else
@@ -319,7 +319,7 @@ def test_presence_route_without_batch_428(app, auth, ws, fake):
     }
     # another body, another digest: a batch for one start never authorizes another
     client.post(f"/api/w/{ws}/agents/start?a=1", json={**body, "ticket": "DEMO-2"})
-    assert fake.calls[-1][1]["view_digest"] != error["view_digest"]
+    assert fake.calls[-1][1]["digest"] != error["view_digest"]
 
 
 def _compact(body):
@@ -351,7 +351,7 @@ def test_a_websocket_terminal_needs_its_own_presence(app, auth, ws, fake):
     with pytest.raises(WebSocketDisconnect), client.websocket_connect("/term", headers={"host": "orch-remote"}):
         pass
     taken = [c for c in fake.calls if c[0] == "presence_take"][-1][1]
-    assert taken["view_digest"] == "sha256:" + route_digest(ws, "WEBSOCKET", "/term", "/term", "", b"").hex()
+    assert taken["digest"] == "sha256:" + route_digest(ws, "WEBSOCKET", "/term", "/term", "", b"").hex()
 
 
 def test_work_level_cannot_open_the_terminal_socket(app, auth, ws, fake):

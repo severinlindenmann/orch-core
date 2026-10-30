@@ -479,9 +479,19 @@ def register(app: FastAPI, gateway: Gateway):
     def take_presence(workspace_id: str, view_digest: str) -> dict:
         """D88: a stream's presence route asks the signer to take its digest from the stream's batch (once). The
         signer client stamps `remote` and the stream id itself; a refusal is `remote.presence_required` & co."""
-        return signer.call("presence_take", {"workspace_id": workspace_id, "view_digest": view_digest})
+        return signer.call("presence_take", {"workspace_id": workspace_id, "digest": view_digest})
+
+    def presence_nonce(workspace_id: str) -> dict:
+        return signer.call("presence_nonce", {"workspace_id": workspace_id})
+
+    def presence(workspace_id: str, nonce: str, digests: list, assertion: dict) -> dict:
+        return signer.call(
+            "presence", {"workspace_id": workspace_id, "nonce": nonce, "digests": digests, "assertion": assertion}
+        )
 
     app.state.take_presence = take_presence
+    app.state.presence_nonce = presence_nonce  # R3 T4: the stream's presence routes (remote_routes.py) go through here
+    app.state.presence = presence
     failed_bumps: dict[str, int] = {}
     hold_gate = threading.Lock()  # serialize admission only; logout never waits for it
     held: dict[str, tuple[str, str]] = {}  # request -> (workspace, preparing session); no signed bytes
@@ -536,6 +546,9 @@ def register(app: FastAPI, gateway: Gateway):
                 lease_workers.discard(token)
 
     def start_renewing(token: str) -> None:
+        if app.state.auth.stream_of(token) is not None:
+            return  # a stream's signer calls are the stream's (stamped from its context, which a thread does not have),
+            # and `session_alive` is refused over a stream: a held intent of a stream lapses with its lease (fail closed)
         with app.state.auth.lock:
             if token in lease_workers:
                 return

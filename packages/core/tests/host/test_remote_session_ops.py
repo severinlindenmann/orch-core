@@ -267,3 +267,17 @@ def test_wrk_never_leaves_host_in_ops_and_attach_frames(human, served):
         blob += repr(ok(call(served, op, a))).encode()
     for needle in (scalar, scalar.hex().encode(), b64u(scalar).encode()):
         assert needle not in blob
+
+
+def test_off_from_an_owners_own_session_names_the_stream(human, served):
+    """R3 T4: ``remote.off {stream_id}`` turns remote access off as the session's device (the host takes the device
+    from its table); the stream closes; an unknown stream is ``no_stream`` and changes nothing."""
+    w, c = live(human, served)
+    w.ad.take(10)
+    assert err(call(served, "remote.off", {"stream_id": "b" * 32})) == "remote.no_stream"
+    assert ok(call(served, "remote.off", {"stream_id": c.sid}))["data"] == {"changed": True}
+    w.pump()
+    assert w.link.closes(c.sid)
+    disabled = w.log("remote.disabled")
+    assert len(disabled) == 1 and disabled[0]["by"] == "device" and disabled[0]["device"] == w.did
+    assert err(call(served, "remote.off", {"stream_id": c.sid})) == "remote.no_stream"  # closed now

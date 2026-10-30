@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from orch import canon
+from orch.hubclient.wire import REMOTE_PROOF_OPS
 
 from . import sealed
 from . import view as views
@@ -55,6 +56,8 @@ from .stepup import Stepups
 
 __all__ = ["Approval", "Budget", "ClickSigner"]
 
+#: R2: the remote power changes; their owner proof always carries the typed backup key (never the kept person key)
+_REMOTE_PROOF_OPS = frozenset(REMOTE_PROOF_OPS)
 KEY_ID = "dk"
 #: the ops a passkey step-up is for, and those whose call names a request (host spec §0.8.6 10.5)
 STEPUP_OPS = frozenset({"custody_on", "custody_off", "rotate", "runner", "sign", "github_token"})
@@ -600,7 +603,7 @@ class ClickSigner:
                 seal=sealed.Recipient("in", workspace_id=entry["workspace_id"], request_id=rid)
                 if op in SEALED_OPS
                 else None,
-                vault=op in SEALED_OPS and self._vault(entry),
+                vault=op in SEALED_OPS and op not in _REMOTE_PROOF_OPS and self._vault(entry),  # remote: always the typed key
                 images=images or None,
                 image_digests=tuple(sorted({canon.artifact_digest(b) for b in images.values()})) if images else (),
             )
@@ -1278,6 +1281,8 @@ class ClickSigner:
         from orch.custody.personkey import PersonMismatch, TypedCodeSource
         from orch.host import signer as host_signer
 
+        if envelope is None and approval.op in _REMOTE_PROOF_OPS:  # a remote power change always needs the typed key
+            raise ClickError("invalid.input", "this review needs the backup key sealed for this request")
         if envelope is None:  # the person key kept by setup (run-9 feedback 6): no backup key typed
             from orch.custody import pkvault
             from orch.custody.base import CustodyError

@@ -46,7 +46,7 @@ def test_d9_ok_list_is_empty_while_pending_even_for_the_owner(shub):
     c = h.join()
     c.request("share_put", body())
     h.svc._on_change = _down
-    c.request("binding_put", {"object": G.binding(seq=2, mode="full")})  # switch away from selective, purge fails
+    c.request("binding_put", {"object": G.unbound(seq=1)})  # unbind, purge fails (a mode switch keeps items since r15)
     assert h.share_store.usage(G.WS_A)[0] == 1 and h.share_store.pending() == {G.WS_A}
     assert h.svc.list_shared(OWNER, G.WS_A) == []
 

@@ -133,3 +133,12 @@ def test_bad_bodies_reach_nothing(client, token, stub, host):
                  {"rule": {"kind": "tag"}, "expect": SHOWN}):  # fmt: skip
         assert client.post(url, json=body, headers=hdr(token)).status_code == 400
     assert writes(host) == []
+
+
+def test_the_full_mode_review_passes_its_mode_and_scope_words_through(client, token, stub, host):
+    scope = "The hub already holds this workspace. These people will see this ticket in their own workspace: x."
+    host.answers["share.preview"] = {**PREVIEW, "review": {**REVIEW, "mode": "full", "scope_short": scope}}
+    review = show(client, stub, token)["review"]
+    assert review["mode"] == "full" and review["scope_short"] == scope
+    host.answers["share.preview"] = {**PREVIEW, "review": {**REVIEW, "mode": "weird"}}
+    assert show(client, stub, token)["review"]["mode"] is None

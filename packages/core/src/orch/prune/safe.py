@@ -10,6 +10,8 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from orch import childenv
+
 __all__ = [
     "RUNNER_ENV",
     "agent_reason",
@@ -47,7 +49,7 @@ def agent_reason(env: Mapping[str, str], euid: int | None = None) -> str | None:
 
 
 def scrubbed_env(env: Mapping[str, str], path: str) -> dict[str, str]:
-    out = {k: v for k, v in env.items() if not k.startswith(_DROP_PREFIXES)}
+    out = {k: v for k, v in childenv.sanitize(env).items() if not k.startswith(_DROP_PREFIXES)}
     out["PATH"] = path
     return out
 

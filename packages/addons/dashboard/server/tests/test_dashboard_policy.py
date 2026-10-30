@@ -592,4 +592,4 @@ def test_websocket_upgrade_is_tied_to_the_accepting_socket(tmp_path):
     assert run(("127.0.0.1", PORT), lan)[0] is True  # network Host never upgrades
     assert run(("192.168.1.20", PORT), lan)[0] is True
     closed, passed = run(("127.0.0.1", PORT), own)  # loopback socket / ssh tunnel
-    assert passed == 1 or closed is False  # not closed by the tie: it went on to the (stub) route check
+    assert not closed  # the tunnel case is not closed by the tie; it went on to the (stub) route check

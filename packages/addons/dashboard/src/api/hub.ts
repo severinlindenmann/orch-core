@@ -117,6 +117,9 @@ export interface HubShareReview {
   /** Short forms for the one-ticket dialog (the host words them too). */
   leaves_short?: string | null
   later_edits_short?: string | null
+  /** The hub mode this review was made in; in full mode `scope_short` says what the hub already holds. */
+  mode?: 'selective' | 'full'
+  scope_short?: string | null
 }
 
 /** `POST /hub/share/rule-add` and `/hub/share/sync`: sharing more. `synced: false`: saved, sent when the hub is back. */

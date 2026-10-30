@@ -33,7 +33,12 @@ describe('the Company tab', () => {
   it('explains company secrets and marks the tools that use one', async () => {
     page()
     await screen.findByText('Company tools', {}, T)
-    expect(screen.getByTestId('company-intro').textContent).toMatch(/company secret.*You never see it.*separate agent user/)
+    const intro = screen.getByTestId('company-intro')
+    expect(intro.textContent).toBe('Skills and tools your company offers. All are off until you turn them on.')
+    expect(intro.textContent).not.toMatch(/secret|agent user/i)
+    expect(screen.queryByTestId('company-intro-more')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'More about this' }))
+    expect(screen.getByTestId('company-intro-more').textContent).toMatch(/password your hub keeps safe.*never see it.*separate user/)
     expect(screen.getByTestId('company-secret-billing').textContent).toBe('Uses a company secret from your hub')
     expect(screen.queryByTestId('company-secret-crm')).toBeNull()
     expect(screen.queryByTestId('company-secret-style-guide')).toBeNull()

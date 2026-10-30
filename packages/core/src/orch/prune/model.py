@@ -19,6 +19,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TextIO
 
+from orch import childenv
+
 from .safe import real_keychain, safe_run, tty_ask
 
 __all__ = ["Ctx", "Fence", "Inventory", "Item", "PruneError", "WorkspaceInv", "human_size", "measure"]
@@ -101,7 +103,7 @@ def _leave(root: Path, env: Mapping[str, str]) -> tuple[bool, str]:
     Isolated interpreter (``-I``: no current directory, no PYTHONPATH on ``sys.path``) started from a neutral folder;
     the workspace is named by ``ORCH_WORKSPACE``, so a file in the workspace (``orch.py``) is never imported."""
     home = env.get("HOME") or env.get("USERPROFILE") or os.path.expanduser("~")
-    child = {k: v for k, v in env.items() if k not in ("PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP")}
+    child = childenv.sanitize(env)
     child["ORCH_WORKSPACE"] = os.fspath(root)
     try:
         r = subprocess.run([sys.executable, "-I", "-m", "orch", "hub", "leave"], cwd=home, env=child, timeout=600)
@@ -127,7 +129,7 @@ def _hub_joined(root: Path, env: Mapping[str, str]) -> bool | None:
     import json
 
     home = env.get("HOME") or env.get("USERPROFILE") or os.path.expanduser("~")
-    child = {k: v for k, v in env.items() if k not in ("PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP")}
+    child = childenv.sanitize(env)
     child["ORCH_WORKSPACE"] = os.fspath(root)
     try:
         r = subprocess.run(

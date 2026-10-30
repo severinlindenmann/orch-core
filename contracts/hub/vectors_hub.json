@@ -22217,9 +22217,13 @@
    },
    "check": "link",
    "expect": {
-    "error": "wrong_mode"
+    "ok": {
+     "op": "share_put",
+     "seq": 7
+    }
    },
-   "name": "link_share_put_in_full",
+   "name": "link_share_put_in_full_ok",
+   "note": "r15: sharing a ticket with named people works in both modes (the hub accepts ticket items only in full)",
    "phase": 2
   },
   {

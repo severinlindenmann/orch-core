@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Info } from 'lucide-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type { Workspace } from '@/api/types'
 import { hubServed } from '@/api/hub'
@@ -38,6 +39,7 @@ export function CompanyTab({ workspace, isOwner }: { workspace: Workspace; isOwn
   const [open, setOpen] = useState<{ kind: OrgKind; name: string }>()
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState('')
+  const [more, setMore] = useState(false)
   const refresh = () => qc.invalidateQueries({ queryKey: ['org', ws] })
   if (!hubServed(ws)) return <Panel title="Company"><p>This host does not serve a hub yet.</p></Panel>
   if (!isOwner) return <Panel title="Company"><p data-testid="company-owner-only">Only the workspace owner decides which company skills and tools are on.</p></Panel>
@@ -68,9 +70,15 @@ export function CompanyTab({ workspace, isOwner }: { workspace: Workspace; isOwn
 
   return <div className="space-y-4" data-testid="company-tab">
     <div className="flex flex-wrap items-center gap-3">
-      <p className="min-w-0 flex-1 text-sm text-text-muted" data-testid="company-intro">Skills and tools your company hub offers. Everything is off until you turn it on. Some tools use a company secret, like a password kept safely by your hub. You never see it. These tools work only when agents run as a separate agent user.</p>
+      <p className="min-w-0 flex-1 text-sm text-text-muted" data-testid="company-intro">
+        Skills and tools your company offers. All are off until you turn them on.
+        <button type="button" className="ml-1.5 inline-flex align-middle text-text-faint hover:text-text" aria-label="More about this" aria-expanded={more} aria-controls="company-intro-more" onClick={() => setMore((m) => !m)}>
+          <Info className="size-4" aria-hidden />
+        </button>
+      </p>
       <Action id="company-sync" disabled={busy} onClick={sync}>Get the latest from your hub</Action>
     </div>
+    {more && <p id="company-intro-more" className="text-sm text-text-muted" data-testid="company-intro-more">Some tools use a password your hub keeps safe; you never see it. They only work when agents run as a separate user on this computer.</p>}
     {note && <p role="status" className="text-sm" data-testid="company-note">{note}</p>}
     <Panel title="Company skills">{list('skill', o.skills, 'Your hub offers no skills.')}</Panel>
     <Panel title="Company tools">{list('mcp', o.mcp, 'Your hub offers no tools.')}</Panel>

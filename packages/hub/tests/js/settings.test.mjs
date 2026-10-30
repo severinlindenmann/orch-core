@@ -180,3 +180,44 @@ test("r14 P12: Company and Hub name boxes have an example; Company says optional
   nodes.find((n) => n.tag === "button" && n.textContent === "Save").listeners.click();
   assert.equal(saved[0].company, "");
 });
+
+test("#1461: company login lives inside the one Sign-in card, with the always-on line and no second card", () => {
+  const company = { configured: true, provider: "google", client_id: "c", tenant: "", domain: "acme.example", mode: "company", idp_mfa: false, enabled: true, tested: true, has_secret: true, redirect_uri: "https://h.example/oidc/callback", secure_address: true };
+  const view = hubSettingsView({ ...DEMO, company_login: company }, { company: {} });
+  const cards = view.all().filter((n) => n.attrs && n.attrs["data-card"] === "sign-in");
+  assert.equal(cards.length, 1);
+  const t = cards[0].textContent;
+  assert.match(t, /Name \+ password \+ 6-digit code/);
+  assert.match(t, /cannot be turned off/);
+  assert.match(t, /Company login/); assert.match(t, /Anyone at acme\.example/); assert.match(t, /Only people I already added/);
+  assert.equal(view.all().filter((n) => n.attrs && n.attrs["data-card"] === "company-login").length, 1);
+  assert.doesNotMatch(view.textContent, /Passkey/i);
+});
+
+test("run-15 blocker: the page opens with BOTH a company name and company login set up (they no longer share a key)", async () => {
+  const OIDC = { configured: true, provider: "google", client_id: "c", tenant: "", domain: "acme.example", mode: "invited", idp_mfa: false,
+    enabled: true, tested: true, has_secret: true, redirect_uri: "https://h.example/oidc/callback", secure_address: true };
+  let shownView = null;
+  const d = dev({ is_admin: true }, async (m, p) => p === "/admin/oidc" ? { status: 200, body: OIDC }
+    : p === "/admin/backup" ? { status: 404, body: { error: "not_found" } } : { status: 200, body: DEMO },
+  { shell: (id, notice, view) => { shownView = view; } });
+  await hubSettingsPage(d);
+  assert.ok(shownView, "the settings page rendered (it used to throw and fall back to the sign-in form)");
+  const company = shownView.all().find((n) => n.attrs && n.attrs.id === "hub-company");
+  assert.equal(company.value, "Acme AG");   // the company NAME
+  assert.equal(shownView.all().filter((n) => n.attrs && n.attrs["data-card"] === "company-login").length, 1);   // the login card
+  // the view on its own, with both set, does not throw either
+  assert.doesNotThrow(() => hubSettingsView({ ...DEMO, company: "Acme AG", company_login: OIDC }));
+});
+
+test("run-15 blocker: a page that throws says it did not open and offers Try again; it never falls back to the sign-in form", async () => {
+  const src = (await import("node:fs")).readFileSync(new URL("../../src/orch_hub/web/app.js", import.meta.url), "utf8");
+  const start = src.indexOf("async function renderRoute()");
+  const fn = src.slice(start, src.indexOf("\n}\n", start));
+  const handler = fn.slice(fn.lastIndexOf("} catch"));
+  assert.match(handler, /This page did not open/);
+  assert.match(handler, /Try again/);
+  assert.match(handler, /still signed in/);
+  assert.match(handler, /console\.error/);
+  assert.doesNotMatch(handler, /loginView/);
+});

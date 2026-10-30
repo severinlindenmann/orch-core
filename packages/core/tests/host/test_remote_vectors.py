@@ -52,7 +52,12 @@ CHECKS = {
     "request_head",
     "app_seq",
     "route_digest",
+    # R5: the client endpoint (§10.2d), replayed by tests/host/test_remote_client_vectors.py
+    "client_frame",
+    "client_rail",
+    "client_seq",
 }
+HOST_CASES = [c for c in DOC["cases"] if not c["check"].startswith("client_")]
 
 
 def test_vector_remote_host_knows_every_check_and_required_case() -> None:
@@ -91,11 +96,13 @@ def test_vector_remote_host_labels_and_constants() -> None:
 def test_vector_remote_labels_prefix_free_with_core_tables() -> None:
     """The remote labels are new and prefix-free with every live core label (crypto, planned and canon)."""
     devices = DOC["labels"]["sig_remote_devices"]  # R2 T2a: the one remote label the host itself signs under
+    presence = {DOC["labels"]["sig_remote_open"], DOC["labels"]["sig_remote_presence"]}  # R5: presence domains
     remote = set(DOC["labels"].values())
     live = {v for v in {**crypto_labels.LABELS, **crypto_labels.PLANNED_LABELS}.values() if v.endswith("|")}
     live |= {v for v in CANON_LABELS.values() if isinstance(v, str) and v.endswith("|")}
-    assert remote & live == {devices} and crypto_labels.L["sig_remote_devices"].decode() == devices
-    live -= {devices}
+    assert remote & live == {devices} | presence and crypto_labels.L["sig_remote_devices"].decode() == devices
+    assert {crypto_labels.L["sig_remote_open"].decode(), crypto_labels.L["sig_remote_presence"].decode()} == presence
+    live -= {devices} | presence
     for a, b in itertools.permutations(remote | live, 2):
         if a in remote or b in remote:
             assert not b.startswith(a), (a, b)
@@ -232,7 +239,7 @@ def _run(c: dict[str, Any]) -> dict[str, Any]:
     raise AssertionError(f"unhandled check {c['check']!r}")
 
 
-@pytest.mark.parametrize("c", DOC["cases"], ids=[c["name"] for c in DOC["cases"]])
+@pytest.mark.parametrize("c", HOST_CASES, ids=[c["name"] for c in HOST_CASES])
 def test_vector_remote_host_case(c: dict[str, Any]) -> None:
     assert _run(c) == c["expect"], c.get("note")
 

@@ -861,8 +861,8 @@ LINK_OPS: dict[str, tuple[str, str | None, dict[str, Check]]] = {
             "sealed": _b64u_any,
         },
     ),
-    "share_put": ("w2h", "selective", {"item_id": _hex16, "sealed": _b64u_any}),
-    "share_revoke": ("w2h", "selective", {"item_id": _hex16}),
+    "share_put": ("w2h", None, {"item_id": _hex16, "sealed": _b64u_any}),
+    "share_revoke": ("w2h", None, {"item_id": _hex16}),
 }
 
 

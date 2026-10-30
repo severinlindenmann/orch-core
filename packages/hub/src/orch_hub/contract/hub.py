@@ -1676,8 +1676,8 @@ LINK_OPS: dict[str, tuple[str, str | None, dict[str, Check]]] = {
         },
     ),
     "audit_ack": ("w2h", None, {"seq": _int_min(1), "head": _b64u_n(32)}),
-    "share_put": ("w2h", "selective", {"item_id": _hex16, "sealed": _b64u_any}),
-    "share_revoke": ("w2h", "selective", {"item_id": _hex16}),
+    "share_put": ("w2h", None, {"item_id": _hex16, "sealed": _b64u_any}),
+    "share_revoke": ("w2h", None, {"item_id": _hex16}),
     # D4 audit (§10.5): the hub's chain is global; a workspace pulls it and acknowledges the head it verified
     "audit_get": ("w2h", None, {"since": _int_min(0)}),
     # V3-D8 shared spaces (§10.4): both modes; what a selective workspace may put is its owner's share rules (host side)

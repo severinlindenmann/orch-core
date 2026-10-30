@@ -473,8 +473,9 @@ export function hubSettingsView(data, actions = {}) {
     addressCard(data, actions),
     data.backup ? backupCard(data.backup, actions) : null,
     h("div", { class: "card", "data-card": "sign-in" }, h("h2", { text: "Sign-in" }),
-      (data.sign_in ?? []).map((m) => row(m.label, m.on ? m.note : null, m.on))),
-    data.company ? companyCard(data.company, actions.company ?? {}) : null,
+      (data.sign_in ?? []).map((m) => row(m.label, m.on ? m.note : null, m.on)),
+      h("p", { class: "small muted", text: "Always on: the password and the code make the key that approves things, so they cannot be turned off." }),
+      data.company_login ? companyCard(data.company_login, actions.company ?? {}, { inside: true }) : null),
     data.remove ? removeCard(data.remove, actions.remove ?? {}) : null);
 }
 
@@ -500,7 +501,7 @@ export async function hubSettingsPage(d, detected = [], words = null) {
     if (r.status === 403 && r.body.error === "reauth_required") return d.reauthView();
     if (r.status !== 200) return d.shell("hub-settings", h("h1", { text: "Hub settings" }), h("p", { role: "alert", text: "Cannot read the settings. " + d.say(r.body.error) }));
     const co = await d.api("GET", "/admin/oidc");
-    if (co.status === 200 && typeof co.body?.has_secret === "boolean") r.body.company = co.body; // the company login card, when the hub has the routes
+    if (co.status === 200 && typeof co.body?.has_secret === "boolean") r.body.company_login = co.body; // the company login card (its own key: `company` is the company name), when the hub has the routes
     const bk = await d.api("GET", "/admin/backup");
     if (bk.status === 200) r.body.backup = bk.body;
     const rv = await d.api("GET", "/admin/hub/remove/preview");

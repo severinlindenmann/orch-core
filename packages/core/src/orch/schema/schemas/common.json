@@ -1154,6 +1154,10 @@
     "addonEventStatus": {
       "type": "string",
       "pattern": "^(?:[a-z][a-z0-9_]{0,31})(?![\\s\\S])"
+    },
+    "addonFollowupKind": {
+      "type": "string",
+      "pattern": "^(?:[a-z][a-z0-9-]{0,39}\\.[a-z][a-z0-9_]{0,31}(?:\\.[a-z][a-z0-9_]{0,31}){1,2})(?![\\s\\S])"
     }
   }
 }

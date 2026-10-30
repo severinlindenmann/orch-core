@@ -87,7 +87,8 @@ def view_state(core: Core, t: TCore, rec: FollowupRec, now: int) -> tuple[str, s
         chain=grant_chain(ws, rec.parent_grant),
         root_person_active=active(ws, rec.person),
         member_removed=identity.member_role(ws, rec.person) is None,
-        addon_enabled=enabled(ws),
+        addon_enabled=enabled(ws)
+        and (rec.trigger != "addon" or fe.declared(ws.addons, (rec.on or {}).get("kind")) is not None),
         # The set's chain verdict is recorded by set_state. Later sets replace it explicitly;
         # counting this set again would incorrectly cancel the last permitted pending set.
         chain_needs_person=chain_state(ws, t, now, before=ts(rec.set_at)).needs_person,
@@ -127,15 +128,33 @@ def admit(core: Core, t: TCore, rec: FollowupRec, e: dict[str, Any], *, becomes:
     return None
 
 
+def addon_match_denied(ws: WsCore, match: Any, status: str | None = None) -> Refusal | None:
+    """An add-on follow-up (or the event that wakes it) must fit what the ACTIVE grant declared (addon-api 1.2): the
+    add-on is on, the kind is declared, the ref is in the declared format, the status (when named) is declared.
+    Replay checks the signed grant, never the manifest."""
+    if not isinstance(match, dict) or match.get("source") != "addon" or not fe.valid_match(match):
+        return Refusal(Code.FOLLOWUP_DENIED, "bad_trigger: the event match does not fit the trigger")
+    decl = fe.declared(ws.addons, match["kind"])
+    if decl is None:
+        return Refusal(Code.FOLLOWUP_DENIED, "bad_trigger: that add-on is off or does not declare this event")
+    if not fe.addon_fits(decl, match["ref"], match.get("status") if status is None else status):
+        return Refusal(Code.FOLLOWUP_DENIED, "bad_trigger: the reference or status is not one the add-on declared")
+    return None
+
+
 def set_event(core: Core, t: TCore, e: dict[str, Any]) -> Refusal | None:
     ws, a, now = core.ws, e["actor"], ts(e["at"])
     if e["followup"] in t.followups:
         return Refusal(Code.FOLLOWUP_DENIED, "duplicate follow-up id")
     if e.get("trigger") == "addon":
-        return Refusal(Code.FOLLOWUP_DENIED, "bad_trigger: addon follow-ups are not built yet")
+        if (r := addon_match_denied(ws, e.get("on"))) is not None or "hook" in e:
+            return r or Refusal(Code.FOLLOWUP_DENIED, "bad_trigger: an add-on follow-up has no webhook")
     if e.get("trigger") == "time":
         if "on" in e or "hook" in e:
             return Refusal(Code.FOLLOWUP_DENIED, "bad_trigger: a time follow-up has no event match")
+    elif e.get("trigger") == "addon":
+        if "on" not in e or e["on"].get("source") != "addon":
+            return Refusal(Code.FOLLOWUP_DENIED, "bad_trigger: the event match does not fit the trigger")
     elif not fe.valid_match(e.get("on")) or e["on"]["source"] != e["trigger"]:
         return Refusal(Code.FOLLOWUP_DENIED, "bad_trigger: the event match does not fit the trigger")
     elif (e["trigger"] == "webhook") != ("hook" in e) or (e["trigger"] == "webhook" and e["hook"] != e["on"]["hook"]):
@@ -208,6 +227,13 @@ def fired_event(core: Core, t: TCore, e: dict[str, Any]) -> Refusal | None:
     wake = e.get("event")
     if wake is not None and (e["trigger"] in ("time", "deadline") or not fe.matches(rec.on or {}, wake)):
         return Refusal(Code.FOLLOWUP_DENIED, "bad_trigger: the event does not match the follow-up")
+    if e["trigger"] == "addon" and wake is not None:
+        # the event must be one the add-on named in the match still declares (on, ref format, status); the host signs
+        # it with its own clock, so the add-on's word is only a status from its declared list
+        if (r := addon_match_denied(ws, {**rec.on, "status": wake["status"]}, wake["status"])) is not None:
+            return r
+    if e["trigger"] == "addon" and wake is None and not e.get("fallback"):
+        return Refusal(Code.FOLLOWUP_DENIED, "bad_trigger: an add-on wake carries its event")
     assert chain
     from .schedules_wire import root_valid
 

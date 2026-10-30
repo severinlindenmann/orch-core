@@ -178,4 +178,4 @@ export async function secretsPage(d) {
 }
 
 // The registry entry: the console's router, tabs and file list are built from this one export (no other file names a page).
-export const page = { path: "secrets", nav: { label: "Secrets", admin: true, after: "mcp" }, render: secretsPage };
+export const page = { path: "secrets", nav: { label: "Secrets", admin: true, needsWorkspace: true, after: "mcp" }, render: secretsPage };

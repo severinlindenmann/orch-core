@@ -124,6 +124,7 @@ PERSON_KEY_LABELS: tuple[bytes, ...] = (  # PK: certificates, revocations, deleg
     _p("sig_cert_rejection"),
     _p("sig_device_rotate"),  # #1097: a device rotation, bound to one workspace, old and new device and roster_v
     _p("sig_hub_owner_proof"),  # #1198 C9: the owner proof of a hub join, mode switch or leave (hub contract 9.6)
+    _p("sig_remote_owner_proof"),  # R2: the owner proof of a remote policy change or a device confirmation (10.2c)
 )
 DEVICE_KEY_LABELS: tuple[bytes, ...] = (  # dk_sig: person events and device requests
     _e("sig_ticket_event"),
@@ -160,6 +161,7 @@ HOST_LABELS: tuple[bytes, ...] = (  # WSK: host events and workspace-signed obje
     _p("sig_space_item"),  # V3 C13: an item the workspace puts into a shared space (hub contract 10.4)
     _p("sig_space_accept"),  # V3 C13: the owner's consent to join a space (hub contract 10.4)
     _p("sig_share_item"),  # V3 C6: an item a selective workspace shares with its hub (hub contract 10.2b)
+    _p("sig_remote_devices"),  # R2 #1590: the remote device list (hub contract 10.2c)
 )
 PRIMARY_SIG_LABELS: tuple[bytes, ...] = (_p("sig_relay_auth"),)
 """The primary's ``dk_sig`` (orch-v2-host 11A.15.1): it only logs in to the relay as the account's device (protocol

@@ -153,3 +153,40 @@ describe('a connect link in the address fragment', () => {
     view.unmount()
   })
 })
+
+// P12: "Use copied link" reads the clipboard only on a click, validates it with LINK and never signs by itself.
+describe('P12: Use copied link', () => {
+  const clip = (read: () => Promise<string>) => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { readText: vi.fn(read) } })
+  const open = async () => { const view = renderApp('/w/DEMO/settings/hub'); await view.user.click(await screen.findByTestId('hub-connect', {}, T)); return view }
+  afterEach(() => { Reflect.deleteProperty(navigator, 'clipboard') })
+  it('does not read the clipboard until the button is pressed, then fills the link and looks the hub up, without signing', async () => {
+    const join = vi.spyOn(api, 'connectHub')
+    const view = await open()
+    clip(async () => LINK) // after render: user-event installs its own clipboard stub in renderApp
+    expect(navigator.clipboard.readText).not.toHaveBeenCalled()
+    expect(screen.getByTestId('hub-link-text').getAttribute('placeholder')).toBeNull()
+    await view.user.click(await screen.findByRole('button', { name: 'Use copied link' }, T))
+    expect((screen.getByTestId('hub-link-text') as HTMLInputElement).value).toBe(LINK)
+    expect((await screen.findByTestId('hub-link-hub', {}, T)).textContent).toContain('Hub')
+    expect(navigator.clipboard.readText).toHaveBeenCalledTimes(1)
+    expect(join).not.toHaveBeenCalled() // the person still presses Connect
+    view.unmount()
+  })
+  it('junk on the clipboard fills nothing and says so in plain words', async () => {
+    const view = await open()
+    clip(async () => 'javascript:alert(1)')
+    await view.user.click(await screen.findByRole('button', { name: 'Use copied link' }, T))
+    expect((await screen.findByTestId('hub-link-nocopied', {}, T)).textContent).toBe('There is no connect link copied yet.')
+    expect((screen.getByTestId('hub-link-text') as HTMLInputElement).value).toBe('')
+    view.unmount()
+  })
+  it('a refused clipboard read leaves the paste field as the way in', async () => {
+    const view = await open()
+    clip(async () => { throw new Error('denied') })
+    await view.user.click(await screen.findByRole('button', { name: 'Use copied link' }, T))
+    expect(await screen.findByTestId('hub-link-nocopied', {}, T)).toBeTruthy()
+    fireEvent.change(screen.getByTestId('hub-link-text'), { target: { value: LINK } })
+    expect((await screen.findByTestId('hub-link-hub', {}, T)).textContent).toContain('Hub')
+    view.unmount()
+  })
+})

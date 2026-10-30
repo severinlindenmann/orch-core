@@ -48,7 +48,7 @@ __all__ = [
 ENVELOPE = frozenset({"v", "id", "type", "actor", "auth", "hash_v", "roster_v", "based_on", "sig"})
 #: #1198 C9: the hub events whose ``owner_proof`` the signer fills after the review (like a grant's ``secret_hash``).
 #: It is not in the review payload or the fingerprint; the review shows a derived line instead.
-OWNER_PROOF_TYPES = frozenset({"hub.joined", "hub.left"})
+OWNER_PROOF_TYPES = frozenset({"hub.joined", "hub.left", "remote.changed", "remote.device_added"})
 OWNER_PROOF_LINE = "signed with your backup key"
 #: the decision types whose ``gate_gen`` is an envelope key of the review: shown on its own line, labelled a host
 #: attestation (v1.5 "Bound hashes"); on any other type an unexpected ``gate_gen`` stays in the payload, so it is shown
@@ -100,6 +100,9 @@ HOST_PERSON_OPS: dict[str, frozenset[str]] = {
     "device.mark_exposed": frozenset({"device.exposed"}),  # #1097: written before a key enters convenience custody
     "device.rotate": frozenset({"device.rotated"}),  # #1097: the new device replaces the old (recovery code)
     "device.remove": frozenset({"device.removed"}),  # #1198 C15: one click, with lockout guards
+    # R2 (#1590): the owner's remote policy and the confirmation of one remote device, each with the remote owner proof
+    "remote.set": frozenset({"remote.changed"}),
+    "remote.device_confirm": frozenset({"remote.device_added"}),
 }
 _NOT_PERSON = frozenset({"import.v1"})  # import v1 is direct mode
 

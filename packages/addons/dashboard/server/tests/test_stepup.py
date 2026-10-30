@@ -138,11 +138,27 @@ class _World:
         assert res.status_code == 200, res.text
         return res
 
+    def prepared(self, token=None):
+        """A real request of this session (an unprepared id is `not_found` before any step-up check, R2). Its set-up
+        prepare is not counted by `signer_calls`: the tests ask what the checked call itself sent."""
+        if getattr(self, "rid", None) is None:
+            before = [(cl, len(cl.calls)) for cl in self.script.clients]
+            body = {"action": "approve", "key": "DEMO-0001", "gate": "requirements"}
+            made = self.front.post(f"/api/w/{self.stub.ws}/click/prepare", json=body, headers=self.headers(token))
+            assert made.status_code == 200, made.text
+            self.rid = made.json()["request_id"]
+            self.setup = {id(c) for cl in self.script.clients for c in cl.calls}
+            self.setup -= {id(c) for cl, n in before for c in cl.calls[:n]}
+        return self.rid
+
     def post(self, route, body, token=None):
+        if route == "sign" and not getattr(self, "own", False):  # no request of the test's own: make one
+            body = {**body, "request_id": self.prepared(token)}
         return self.front.post(f"/api/w/{self.stub.ws}/click/{route}", json=body, headers=self.headers(token))
 
     def signer_calls(self):
-        return [c for cl in self.script.clients for c in cl.calls if c[0] != "status"]
+        skip = getattr(self, "setup", set())
+        return [c for cl in self.script.clients for c in cl.calls if c[0] != "status" and id(c) not in skip]
 
 
 def refused_for_stepup(res):
@@ -380,6 +396,12 @@ def first_statement(endpoint):
     body = tree.body[0].body
     if isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):  # the docstring
         body = body[1:]
+    while (  # R2: `authorize(...)` (unknown id -> not_found) comes before the step-up check; nothing else may
+        isinstance(body[0], ast.Expr)
+        and isinstance(body[0].value, ast.Call)
+        and getattr(body[0].value.func, "id", None) == "authorize"
+    ):
+        body = body[1:]
     return body[0]
 
 
@@ -483,6 +505,7 @@ def test_a_real_sign_carries_the_assertion_to_the_signer_and_a_replay_never_does
     prepared = w.post("prepare", t.hub_join())
     assert prepared.status_code == 200, prepared.text
     rid = prepared.json()["request_id"]
+    w.own = True  # this test signs its own request, not the one the variants set up
     body = {"request_id": rid, "view_digest": HASH, "sealed": {"hub.backup_key": t.BACKUP_ENV}}
     assert refused_for_stepup(w.post("sign", body))
     assert t.sent_of(w.script, "sign") == []

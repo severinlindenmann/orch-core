@@ -3,6 +3,7 @@ import { screen, waitFor, within } from '@testing-library/react'
 import { api, mockStore } from '@/api/client'
 import { renderApp } from '@/test/renderApp'
 import { COLD } from '@/test/cold'
+import { markJustCreated } from '@/app/pages/new-ticket/justCreated'
 
 describe('Tickets page', () => {
   it('shows what others shared through the hub as read-only "Shared by" rows, and nothing without a hub', async () => {
@@ -65,6 +66,26 @@ describe('Tickets page', () => {
     expect(await screen.findByText('You have no tickets of your own yet.')).toBeInTheDocument()
     expect(document.body.textContent).not.toMatch(/No tickets match|orch list/)
     vi.restoreAllMocks()
+  })
+  it('P17: no "0 tickets" count above a shared ticket when you have none; the count shows with own tickets, in the normal font', async () => {
+    vi.spyOn(api, 'listTickets').mockResolvedValue([])
+    vi.spyOn(api, 'getHubShared').mockResolvedValue({ items: [{ workspace_id: 'a'.repeat(32), key: 'D-1', title: 'One', shared_by: 'Anna', status: 'open', type: 'feature', deadline: null, description: null }] })
+    renderApp('/tickets')
+    await screen.findByText('You have no tickets of your own yet.')
+    expect(screen.getByRole('heading', { name: 'Tickets' }).parentElement!.textContent).not.toMatch(/\d+ tickets?/)
+    vi.restoreAllMocks()
+    renderApp('/tickets')
+    const count = await screen.findByText(/^\d+ tickets?/)
+    expect(count.className).not.toMatch(/font-mono/)
+  })
+  it('P19: the ticket just created is highlighted with a New tag in the list', async () => {
+    markJustCreated('DEMO-0043')
+    renderApp('/tickets')
+    const table = await screen.findByRole('table', { name: 'Tickets' })
+    const tag = await within(table).findByTestId('ticket-new-DEMO-0043', {}, COLD)
+    expect(tag).toHaveTextContent('New')
+    expect(tag.closest('tr')).toHaveClass('bg-brand-soft')
+    expect(within(table).queryByTestId('ticket-new-DEMO-0042')).toBeNull()
   })
   it('opens a ticket with Enter on the focused row', async () => {
     const { user } = renderApp('/tickets')

@@ -565,3 +565,26 @@ body:has(> #root > .setup) {
   font-size: 13px;
   text-decoration: underline;
 }
+
+/* r12-P15: the agents step: the recommendation in one block, the switches behind "Change these settings" */
+.setup .agents-summary {
+  margin: 12px 0 4px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+.setup .agents-summary small {
+  display: block;
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.setup .segments button.done {
+  border-color: var(--success);
+  color: var(--success);
+  background: var(--success-soft);
+}
+.setup p.state {
+  font-size: 13px;
+  color: var(--success);
+}

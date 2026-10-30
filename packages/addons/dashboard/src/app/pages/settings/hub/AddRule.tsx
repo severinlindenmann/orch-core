@@ -67,7 +67,7 @@ function ruleWords(rule: HubRule, n: number, title?: string): React.ReactNode {
   return <Raw>{rule.kind}</Raw>
 }
 
-export function AddRuleReview({ ws, workspace, rule, after, onDone, title, compact }: { ws: string; workspace: HubWorkspace; rule: HubRule; after: HubPreview | undefined; /** The share went through (the message was shown): the caller closes the dialog. */ onDone?: () => void; /** The ticket's title when the rule names one ticket. */ title?: string; /** One ticket from the ticket page: one sentence, one caveat, one button; the counts and lists are behind Details. */ compact?: boolean }) {
+export function AddRuleReview({ ws, workspace, rule, after, onDone, onCancel, title, compact }: { ws: string; workspace: HubWorkspace; rule: HubRule; after: HubPreview | undefined; /** The share went through (the message was shown): the caller closes the dialog. */ onDone?: () => void; /** Compact only: Cancel sits in the same row as Details and Share. */ onCancel?: () => void; /** The ticket's title when the rule names one ticket. */ title?: string; /** One ticket from the ticket page: one sentence, one caveat, one button; the counts and lists are behind Details. */ compact?: boolean }) {
   const qc = useQueryClient()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -90,7 +90,7 @@ export function AddRuleReview({ ws, workspace, rule, after, onDone, title, compa
     ).finally(() => setBusy(false))
   }
   const names = whoWill(review.readers)
-  const details = <InfoDrawer testId="hub-add-details">{compact && <p>{review.readers.note ?? 'Names from the hub, not signed.'}</p>}{compact && review.readers.info && <p>{review.readers.info}</p>}{compact && readerNames(review.readers).length > SHOWN_NAMES && <p data-testid="hub-add-readers-all">Everyone who will see it: <Raw>{readerNames(review.readers).join(', ')}</Raw></p>}<p data-testid="hub-add-rule">Tickets: <Raw>{rule.kind}</Raw>{rule.value !== null && <> · <Raw>{rule.value}</Raw></>}{rule.value !== null && rule.description ? ' · with description' : ''}</p><WorkspaceLine workspace={{ id: workspace.id, name: workspace.name, prefix: workspace.prefix }} many testId="hub-review-workspace" /><p data-testid="hub-add-hub">Hub: <Raw>{review.hub_id ?? 'unknown'}</Raw></p>{cut && <div data-testid="hub-add-widened-all">{review.widened.map((w, i) => <p key={i}>Reaches more now: <Raw>{widenedText(w, true)}</Raw></p>)}</div>}{after.plan && <p>Plan: <Raw>{after.plan}</Raw></p>}<p data-testid="hub-add-new">{review.new_count} new {review.new_count === 1 ? 'item leaves' : 'items leave'} this computer.</p>{review.leaves.map((t, i) => <p key={i} data-testid="hub-add-leaves">What leaves: <Raw>{t}</Raw></p>)}{review.new_items.length > 0 && <>
+  const details = <InfoDrawer testId="hub-add-details" text={compact ? 'Details' : undefined}>{compact && <p>{review.readers.note ?? 'Names from the hub, not signed.'}</p>}{compact && review.readers.info && <p>{review.readers.info}</p>}{compact && readerNames(review.readers).length > SHOWN_NAMES && <p data-testid="hub-add-readers-all">Everyone who will see it: <Raw>{readerNames(review.readers).join(', ')}</Raw></p>}<p data-testid="hub-add-rule">Tickets: <Raw>{rule.kind}</Raw>{rule.value !== null && <> · <Raw>{rule.value}</Raw></>}{rule.value !== null && rule.description ? ' · with description' : ''}</p><WorkspaceLine workspace={{ id: workspace.id, name: workspace.name, prefix: workspace.prefix }} many testId="hub-review-workspace" /><p data-testid="hub-add-hub">Hub: <Raw>{review.hub_id ?? 'unknown'}</Raw></p>{cut && <div data-testid="hub-add-widened-all">{review.widened.map((w, i) => <p key={i}>Reaches more now: <Raw>{widenedText(w, true)}</Raw></p>)}</div>}{after.plan && <p>Plan: <Raw>{after.plan}</Raw></p>}<p data-testid="hub-add-new">{review.new_count} new {review.new_count === 1 ? 'item leaves' : 'items leave'} this computer.</p>{review.leaves.map((t, i) => <p key={i} data-testid="hub-add-leaves">What leaves: <Raw>{t}</Raw></p>)}{review.new_items.length > 0 && <>
       <button type="button" className="text-[13px] text-text-muted underline" onClick={() => setList(v => !v)}>{list ? 'Hide list' : 'Show list'}</button>
       {list && <ul className="space-y-1" data-testid="hub-add-list">{review.new_items.slice(0, 20).map((l, i) => <li key={i}><Raw>{l}</Raw></li>)}
         {review.new_count > 20 && <li>and {review.new_count - 20} more</li>}</ul>}
@@ -101,13 +101,16 @@ export function AddRuleReview({ ws, workspace, rule, after, onDone, title, compa
   </>
   if (compact) return <div className="space-y-2" data-testid="hub-add-review">
     <p data-testid="hub-add-sentence">{names
-      ? <><span data-testid="hub-add-readers"><bdi>{names}</bdi></span> will see {review.leaves.join('; ') || 'this ticket'}.</>
-      : <span data-testid="hub-add-readers">{nothingNew(review) ? 'Nobody new will see it.' : 'Only you will see it.'}</span>}{review.later_edits && names ? <> <span data-testid="hub-add-later">{review.later_edits}</span></> : null}</p>
+      ? <><span data-testid="hub-add-readers"><bdi>{names}</bdi></span> will see {review.leaves_short || review.leaves.join('; ') || 'this ticket'}.</>
+      : <span data-testid="hub-add-readers">{nothingNew(review) ? 'Nobody new will see it.' : 'Only you will see it.'}</span>}{(review.later_edits_short ?? review.later_edits) && names ? <> <span data-testid="hub-add-later">{review.later_edits_short ?? review.later_edits}</span></> : null}</p>
     {widened}
-    <p className="text-text-muted text-[13px]">{caveat}</p>
+    <p className="text-text-muted text-[13px]" data-testid="hub-add-caveat-visible">{caveat}</p>
     <div className="flex items-center justify-between gap-2">
       {details}
-      <Button data-testid="hub-add-go" size="sm" disabled={busy || !after.plan} onClick={go}>{busy ? 'Sharing…' : 'Share'}</Button>
+      <div className="flex items-center gap-2">
+        {onCancel && <Button data-testid="hub-add-cancel" variant="outline" size="sm" onClick={onCancel}>Cancel</Button>}
+        <Button data-testid="hub-add-go" size="sm" disabled={busy || !after.plan} onClick={go}>{busy ? 'Sharing…' : 'Share'}</Button>
+      </div>
     </div>
     {error && <p role="alert" className="text-danger">{error}</p>}
   </div>

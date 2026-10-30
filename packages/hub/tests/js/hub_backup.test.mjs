@@ -279,3 +279,42 @@ test("P08: on an address that is not private neither file nor paste is offered",
   button(c, "Restore").listeners.click();
   assert.equal(fileInput(c), undefined); assert.equal(button(c, "Paste"), undefined); assert.equal(button(c, "Choose the file"), undefined);
 });
+
+test("P08 review: no 'Save as a file' when the page is on a loopback address; Copy stays", () => {
+  const view = () => card(hubSettingsView({ ...BASE, backup: SET }, { wordsMayShow: true, words: W24, wordsSaved() {} }));
+  try {
+    for (const hostname of ["localhost", "127.0.0.1", "127.8.9.1", "[::1]", "::1"]) {
+      globalThis.location = { hostname };
+      const c = view();
+      assert.equal(button(c, "Save as a file"), undefined, hostname);
+      assert.ok(button(c, "Copy"), hostname);
+    }
+    for (const hostname of ["hub.example.com", "100.64.1.2", "192.168.1.5", "127.example.com"]) {
+      globalThis.location = { hostname };
+      assert.ok(button(view(), "Save as a file"), hostname);
+    }
+  } finally { delete globalThis.location; }
+});
+
+test("P08 review: the object URL is revoked after a tick, not right after the click", async () => {
+  const revoked = [];
+  globalThis.Blob = class {};
+  globalThis.URL = { createObjectURL: () => "blob:y", revokeObjectURL: (u) => revoked.push(u) };
+  const c = card(hubSettingsView({ ...BASE, backup: SET }, { wordsMayShow: true, words: W24, wordsSaved() {} }));
+  button(c, "Save as a file").listeners.click();
+  assert.deepEqual(revoked, []);
+  await new Promise((r) => setTimeout(r, 5));
+  assert.ok(revoked.includes("blob:y"));
+});
+
+test("P08 review: submitting the restore form also clears the file picker", async () => {
+  const c = card(hubSettingsView({ ...BASE, backup: SET }, { wordsMayShow: true, restore: async () => {} }));
+  button(c, "Restore").listeners.click();
+  const f = fileInput(c);
+  await f.listeners.change({ target: { files: [{ name: "w.txt", size: 200, text: async () => W24 }] } });
+  f.value = "C:\\fakepath\\w.txt";
+  const [pw, code] = inputs(c);
+  pw.value = "pw"; code.value = "111222";
+  await button(c, "Restore this backup").listeners.click();
+  assert.equal(f.value, "");
+});

@@ -177,7 +177,7 @@ function wordsInput(id) {
   return { node, get: () => {
     const typedWords = String(area.value ?? "").trim();
     const w = typedWords || fromFile;
-    area.value = ""; fromFile = ""; status.textContent = "";
+    area.value = ""; file.value = ""; fromFile = ""; status.textContent = "";
     return w;
   } };
 }
@@ -214,15 +214,17 @@ function wordsPanel(words, actions) {
     try {
       const url = URL.createObjectURL(new Blob([list.join(" ") + "\n"], { type: "text/plain" }));
       h("a", { href: url, download: "orch-hub-backup-words.txt" }).click?.();
-      URL.revokeObjectURL?.(url);
+      setTimeout(() => URL.revokeObjectURL?.(url), 0);
       save.textContent = "Saved";
     } catch { save.textContent = "Could not save"; }
   } });
+  const host = String(globalThis.location?.hostname ?? "").replace(/^\[|\]$/g, "");
+  const onServer = host === "localhost" || host === "::1" || /^127\.\d+\.\d+\.\d+$/.test(host);   // the browser runs on the hub machine: a file would land on the server
   return h("div", { class: "banner ok", role: "status", "data-words": "1" },
     h("b", { text: "Write these 24 words down" }),
     h("p", { class: "small", text: "They are shown only now. Keep them somewhere safe, away from this server. Without them a backup cannot be opened, and nobody can get them back for you." }),
     h("p", { class: "small", text: "A file with the words is a copy of the backup key. Keep it on your own computer or a USB stick, away from this server." }),
-    grid, h("div", { class: "row" }, copy, save, h("button", { type: "button", class: "primary", text: "I have saved it", onclick: () => actions.wordsSaved?.() })));
+    grid, h("div", { class: "row" }, copy, onServer ? null : save, h("button", { type: "button", class: "primary", text: "I have saved it", onclick: () => actions.wordsSaved?.() })));
 }
 
 function backupRows(b, actions) {

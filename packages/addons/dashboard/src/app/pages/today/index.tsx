@@ -24,7 +24,7 @@ import { QueueGroup } from './groups'
 import { acceptOrder, buildGroups, foldLabel, pruneOrder, reconcile, toEntries, type Entry, type Row } from './queue'
 import { ReloginGroup } from './relogin'
 import { FollowupCards, useTodayFollowups } from '../schedules/TodayFollowups'
-import { ApprovalRow, DecisionRow, FoldRow, NewItemContext, NoticeRow, SigningContext, QuestionRow, TerminalWaitRow, VerdictRow } from './rows'
+import { ApprovalRow, DecisionRow, FoldRow, NewItemContext, NoticeRow, SigningContext, QuestionRow, TerminalWaitRow, VerdictRow, WritingRow } from './rows'
 import { AgentsBar, AgentsPanel, Glance, GLANCE_TILES, Recently } from './side'
 import { displayName, useSessionState, useTodayWide, type Directory } from './shared'
 import { queries } from '@/api/queries'
@@ -141,7 +141,7 @@ export function TodayPage() {
     <TodayInbox
       key={`${ws}:${me.data.person}:${readOnly}:${ds}:${generation}`}
       generation={`${ds}:${generation}`}
-      items={readOnly ? today.data.read_only_open : today.data.needs_you}
+      items={readOnly ? today.data.read_only_open : attention.items}
       decisions={decisionsQ.data}
       readOnly={readOnly}
       canAddon={can(role, 'addon.action')}
@@ -364,6 +364,16 @@ function TodayInbox({ items, decisions, readOnly, locked, canAddon, viewer, atte
         )}
       </div>
       <ReloginGroup now={now} />
+      {!readOnly && attention.writing.length > 0 && (
+        <section aria-label="Now" className="overflow-hidden rounded-lg border border-border bg-surface">
+          <h2 className="border-b border-border px-3 py-2 text-xs font-medium text-text-muted">Now (agent is writing the plan)</h2>
+          <ul>
+            {attention.writing.map((w) => (
+              <WritingRow key={`${w.ticket}:${w.ref}`} item={w} now={now} />
+            ))}
+          </ul>
+        </section>
+      )}
       {!readOnly && <FollowupCards today={followups} />}
       {readOnly ? [...byPerson].map(([person, personEntries]) => (
         <PersonSummary key={person} person={person} entries={personEntries} scope={scope} renderRow={renderRow} />

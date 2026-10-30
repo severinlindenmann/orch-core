@@ -8,6 +8,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { MoreHorizontal, PanelBottomClose, X, PanelRightClose, Plus, SquareTerminal, Square } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { hasFeature } from '@/api/features'
+import { queries } from '@/api/queries'
+import { agentFinished } from '@/app/pages/ticket/progress'
 import { cleanupDoubt, exitText, outputGone, runQueries, runsApi, type Run } from '@/api/runs'
 import { ApiError } from '@/api/types'
 import { AddonBadge } from '@/addon-ui/AddonBadge'
@@ -36,7 +38,8 @@ export { EXECUTION_LINE }
 export { runName }
 
 /** One line above an agent's raw terminal (P15): what it is doing and since when, in the 24-hour clock of the rest of the app. */
-function agentSummary(r: Run): string {
+function agentSummary(r: Run, finished = false): string {
+  if (finished) return 'Agent finished · ticket is done'
   if (r.state === 'starting') return 'Agent is starting'
   if (r.state === 'running') return `Agent is working · started ${fmtClock(r.started_at)}`
   return `Agent ended · started ${fmtClock(r.started_at)}`
@@ -50,6 +53,9 @@ export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits
   const right = side === 'right'
   const list = useQuery({ ...runQueries.list(ws ?? ''), enabled: !!ws })
   const runs = list.data?.runs ?? []
+  // Only an agent that still runs and names a ticket needs the ticket's status (shared rule: agentFinished).
+  const tickets = useQuery({ ...queries.ticketsAll(ws ?? ''), enabled: !!ws && runs.some((r) => r.kind === 'agent' && r.state === 'running' && !!r.ticket) })
+  const statusOf = new Map((tickets.data ?? []).map((t) => [t.key, t.status]))
   // Ended terminals can be cleared from the dock (this browser only; the run itself stays in the host's list).
   const [dismissed, setDismissed] = useState<ReadonlySet<string>>(new Set())
   const ended = (r: Run) => r.state !== 'running' && r.state !== 'starting'
@@ -163,7 +169,7 @@ export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits
               <p>{runName(current) === current.label ? <Inline>{current.label}</Inline> : runName(current)} ended{current.exit?.code != null ? ` with code ${current.exit.code}` : ''}. Its output is no longer kept.</p>
             </div>
           ) : ws ? <div className="flex h-full min-h-0 flex-col">
-            {current.kind === 'agent' && <p data-testid="dock-summary" className="shrink-0 border-b border-border bg-surface px-3 py-1 text-xs text-text-muted">{agentSummary(current)}</p>}
+            {current.kind === 'agent' && <p data-testid="dock-summary" className="shrink-0 border-b border-border bg-surface px-3 py-1 text-xs text-text-muted">{agentSummary(current, agentFinished(current, current.ticket ? statusOf.get(current.ticket) : null))}</p>}
             <div className="min-h-0 flex-1"><RealTerminal key={current.run} ws={ws} run={current} initial={opened === current.run ? 'write' : 'read'} /></div>
           </div> : null}
       </div>

@@ -2,10 +2,11 @@
 // (kept for the tab). Reads are fixed by the scenario. Stopping sharing (a ticket, a rule) is a plain owner click; a
 // join and a leave are signed by One click with the backup key and change the scenario (see the click routes below).
 import type { HubAudienceList, HubSharedTicket, HubPreview, HubRule, HubShare, HubStatus } from '@/api/hub'
+import type { ProfileFields } from '@/api/profile' // type only: a runtime import would loop through api/client
 import { BACKUP_KEY_LINE, CLICK_RISK, type ClickViewAnswer } from '@/api/click'
 import { fail, ok, type MockRouter } from './router'
 
-export const HUB_SCENARIOS = ['standalone', 'selective', 'full', 'offline', 'nottold'] as const
+export const HUB_SCENARIOS = ['standalone', 'selective', 'full', 'offline', 'nottold', 'update'] as const
 export type HubScenario = (typeof HUB_SCENARIOS)[number]
 const KEY = 'orch.mock.hub'
 
@@ -42,6 +43,7 @@ export function mockHubStatus(s: HubScenario = scenario()): HubStatus {
   switch (s) {
     case 'selective': return { ...joined, mode: 'selective', hub_card: JSON.stringify({ o: { hub_id: HUB_ID }, sig: 'x' }) }
     case 'full': return { ...joined, mode: 'full', member: true }
+    case 'update': return { ...joined, mode: 'full', member: true, update_target: '0.2.0' }
     case 'offline': return { ...joined, mode: 'selective', reachable: false }
     case 'nottold': return { ...BASE, hub_id: HUB_ID, link: 'unbound', not_told: true, owed: 1 }
     default: return BASE
@@ -107,8 +109,25 @@ function mockPreview(body: { add?: HubRule; remove?: HubRule } | null): HubPrevi
     new_count: added, new_more: 0, new_items: fresh,
     leaves: added ? [withText ? "the ticket's title, status, labels, deadline and description, but never its plan, comments or files" : "the ticket's title, status, labels and deadline, but never its description, comments or files"] : [],
     later_edits: 'Later edits are shared too, until you stop sharing.',
+    leaves_short: added ? (withText ? 'the title, status, labels, deadline and description' : 'the title, status, labels and deadline') : null,
+    later_edits_short: 'Later edits are shared too.',
   }
   return { count: items.length, new: added, revoked: removed, more: 0, items, rules: [], plan: 'P'.repeat(42) + String(items.length % 10), review }
+}
+
+/** The owner's profile (HUB-WS-09): kept in memory; `pushed` only when the scenario has a hub the host could reach. */
+const EMPTY_PROFILE: ProfileFields = { listed: false, tags: [], handles: [], not_handled: [], accepts: [], description: '', contact: '', languages: '', hours: '' }
+let mockProfile: ProfileFields = { ...EMPTY_PROFILE }
+export const resetMockProfile = () => { mockProfile = { ...EMPTY_PROFILE } }
+function registerHubProfileRoutes(r: MockRouter) {
+  r.add('GET', '/api/w/:ws/hub/profile', () => ok({ ...mockProfile, pushed: false }))
+  r.add('PUT', '/api/w/:ws/hub/profile', (_s, c) => {
+    const b = c.body as Partial<ProfileFields> | null
+    if (!b || typeof b.listed !== 'boolean' || typeof b.description !== 'string') return fail(400, 'invalid.input', 'Body must be a profile')
+    mockProfile = { ...EMPTY_PROFILE, ...b }
+    const s = scenario()
+    return ok({ ...mockProfile, pushed: s === 'selective' || s === 'full' })
+  })
 }
 
 export function registerHubRoutes(r: MockRouter) {
@@ -139,6 +158,7 @@ export function registerHubRoutes(r: MockRouter) {
     if (typeof (c.body as { expect?: unknown } | null)?.expect !== 'string') return fail(400, 'invalid.input', 'Body must be {expect}')
     return ok({ synced: true, pending: null, put: 0 })
   })
+  registerHubProfileRoutes(r)
   registerHubClickRoutes(r)
 }
 

@@ -4,7 +4,8 @@
 import { sha256, unb64u, utf8 } from "./cj.js";
 import { loadChannel, signProof } from "./channel.js";
 import { h, text } from "./ui.js";
-import { SIGN_IN_NOTE, totpPanel } from "./totp.js";
+import { KEY_GONE_NOTE, SIGN_IN_NOTE, totpPanel } from "./totp.js";
+import { providerName, safeLoginUrl } from "./oidc.js";
 
 export const PROOF_LABEL = "orch/v2/invite-proof|";
 export const MIN_PASSWORD = 10;
@@ -55,7 +56,34 @@ export function inviteView(token, d) {
     const info = r.body;
     const me = info.needs_proof ? await (d.loadChannel ?? loadChannel)() : null;
     const canProve = !info.needs_proof || (me?.userId === info.user_id && !!me?.pair);
+    if (info.company) return companyForm(info, note);
     form(info, me, canProve, note);
+  }
+
+  // "Sign in with your company account" (HUB-PE-04): no password form. The token goes only in this POST body; the hub keeps
+  // it (as a hash) in its sealed login cookie, so the company's sign-in address carries no trace of it.
+  function companyForm(info, note) {
+    const status = h("div", { "aria-live": "polite" });
+    const go = h("button", { class: "pri", type: "button", id: "invite-company", text: "Continue with " + providerName(info.provider) });
+    go.addEventListener("click", async () => {
+      go.disabled = true;
+      let r;
+      try { r = await d.api("POST", "/oidc/invite/start", { token }); } catch { r = { status: 0, body: { error: "unavailable" } }; }
+      const url = r.status === 200 ? safeLoginUrl(r.body?.url) : null;
+      if (!url) {
+        go.disabled = false;
+        const code = r.body?.error;
+        if (code === "bad_invite") return paint(h("h1", { text: "This link does not work" }), banner("bad", DEAD_LINK));
+        return status.replaceChildren(banner("bad", code === "oidc_rate_limited" ? say("rate_limited") : say(code ?? "unavailable")));
+      }
+      (d.assign ?? ((u) => globalThis.location.assign(u)))(url);
+    });
+    paint(
+      h("h1", { text: "Welcome, " + text(info.name ?? "") }),
+      h("p", { class: "muted", text: "Your admin invited you. Sign in with your " + providerName(info.provider) + " company account. You do not need a hub password." }),
+      note ? banner("bad", note) : null,
+      status, h("div", { class: "row top" }, go),
+    );
   }
 
   function form(info, me, canProve, note) {
@@ -111,8 +139,9 @@ export function inviteView(token, d) {
       done.kind === "join" ? h("p", { class: "muted", text: "You do not have access to any workspace yet. Your admin adds you to groups afterwards." }) : null,
       done.recovery ? h("p", { class: "muted", text: "Your devices were removed. Set them up again once you are signed in." }) : null,
       // A new person is already signed in by the redeem; a reset or recovery signs in with the new password and code.
+      h("p", { class: "small muted", id: "key-gone", text: KEY_GONE_NOTE }),
       done.kind === "join" && !done.recovery && d.openHub
-        ? h("div", { class: "row top" }, h("button", { class: "pri", type: "button", id: "open-hub", text: "Open the hub", onclick: () => d.openHub() }), h("span", { class: "small muted", text: "You are already signed in." }))
+        ? h("div", { class: "row top" }, h("button", { class: "pri", type: "button", id: "open-hub", text: "I've added it, open the hub", onclick: () => d.openHub() }), h("span", { class: "small muted", text: "You are already signed in." }))
         : h("div", { class: "row top" }, h("button", { class: "pri", type: "button", text: "Continue to sign in", onclick: () => d.signIn?.() })),
     );
   }

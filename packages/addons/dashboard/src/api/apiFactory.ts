@@ -169,6 +169,14 @@ export function createApi(transport: Transport) {
     syncOrg: (ws: string) => call<{ result: Record<string, string> }>('POST', `/api/w/${ws}/org/sync`, {}),
     setOrgTool: (ws: string, server: string, tool: string, on: boolean, pin?: string) =>
       call<{ server: string; tool: string; on: boolean }>('POST', `/api/w/${ws}/org/tool`, { server, tool, on, ...(on ? { pin } : {}) }),
+    /** R2 T4: remote access (loopback only): the view, a plain turn-off, a one-time device code, removing a device. */
+    getRemote: (ws: string) => call<import('./remote').RemoteView>('GET', `/api/w/${ws}/remote`),
+    remoteOff: (ws: string) => call<{ changed: boolean }>('POST', `/api/w/${ws}/remote/off`, {}),
+    remoteCode: (ws: string) => call<import('./remote').RemoteCode>('POST', `/api/w/${ws}/remote/code`, {}),
+    endRemoteSession: (ws: string, streamId: string) => call<{ ended: boolean }>('POST', `/api/w/${ws}/remote/sessions/${streamId}/end`, {}),
+    removeRemoteDevice: (ws: string, id: string) => call<{ removed: boolean }>('POST', `/api/w/${ws}/remote/devices/${id}/remove`, {}),
+    getHubProfile: (ws: string) => call<import('./profile').WorkspaceProfile>('GET', `/api/w/${ws}/hub/profile`),
+    putHubProfile: (ws: string, profile: import('./profile').ProfileFields) => call<import('./profile').WorkspaceProfile>('PUT', `/api/w/${ws}/hub/profile`, profile),
     refreshHub: (ws: string) => call<import('./hub').HubRefreshed>('POST', `/api/w/${ws}/hub/refresh`, {}),
     connectHub: (ws: string, body: import('./hub').HubConnectRequest) => call<import('./hub').HubConnected>('POST', `/api/w/${ws}/hub/connect`, body),
     cancelClick: (ws: string, requestId: string) => call<{ id: string; state: string }>('POST', `/api/w/${ws}/click/cancel`, { request_id: requestId }),

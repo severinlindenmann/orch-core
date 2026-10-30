@@ -18,7 +18,7 @@ export function until(ms, now = Date.now()) {
   return "in " + n + (n === 1 ? " day" : " days");
 }
 const tag = (label, kind = "") => h("span", { class: "chip " + kind, text: label });
-const who = (r) => (r.by_name ? text(r.by_name) : r.by_kind === "agent" ? "an agent" : "a person");
+const who = (r) => r.by_kind === "agent" ? (r.by_name ? text(r.by_name) + "'s agent" : "an agent") : r.by_name ? text(r.by_name) : "a person";
 const ACCESS = { public: "Public", password: "Password", company: "Company only", group: "A group" };
 const KIND = { page: "Page", app: "Web app", form: "Form" };
 const live = (r) => r.state === "live" || r.state === "running";
@@ -102,4 +102,4 @@ export async function publishedPage(d) {
   } finally { finish(); }
 }
 
-export const page = { path: "published", nav: { label: "Published", admin: true, after: "services" }, render: publishedPage };
+export const page = { path: "published", nav: { label: "Published", admin: true, needsWorkspace: true, after: "services" }, render: publishedPage };

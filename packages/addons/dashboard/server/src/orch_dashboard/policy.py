@@ -12,6 +12,10 @@ from dataclasses import dataclass
 #: The two listeners, by name: a session, a terminal ticket and a request's `scope["orch_listener"]` all use these.
 LOOPBACK = "loopback"
 REMOTE = "remote"
+#: R3 (D89): a stream of a remote device, answered in-process (no socket). Set by the stream adapter, never a header.
+REMOTE_DEVICE = "remote-device"
+#: the one Host a stream answers to: the adapter REPLACES the device's, there is no real name behind it
+STREAM_HOST = "orch-remote"
 
 # §0.8.6 item 7: the required directives (default-src, script-src, object-src, base-uri, frame-ancestors, form-action)
 # plus the narrow extras this app needs (its own styles, connections and inline-free images).
@@ -70,6 +74,9 @@ class ListenerPolicy:
     asset_hosts: tuple = ()
     # Further Hosts that always answer (the dev network address ``serve --listen``; plain http, prototype).
     alt_hosts: tuple = ()
+    # R3: a stream of a remote device. No header carries its session (the token and identity come from the scope the
+    # adapter built), no route answers before login, and there is NO Origin (the device's own client enforced it).
+    stream: bool = False
 
     # -- Host and Origin --
     def hosts_for(self, setup_host: bool) -> tuple[str, ...]:
@@ -84,14 +91,18 @@ class ListenerPolicy:
 
     # -- WebSocket --
     def websocket_ok(self, path: str, hosts: list[str], origins: list[str]) -> bool:
-        """Only `/term`; Host and Origin exactly this listener's (a missing or `null` Origin refused)."""
-        return self.terminals and path == TERM_PATH and hosts == [self.host] and origins == [self.origin_for(self.host)]
+        """Only `/term`; Host and Origin exactly this listener's (a missing or `null` Origin refused). A stream has no
+        Origin at all (its Host is the adapter's)."""
+        wanted = [] if self.stream else [self.origin_for(self.host)]
+        return self.terminals and path == TERM_PATH and hosts == [self.host] and origins == wanted
 
     # -- Pre-login routes --
     def pre_login(self, path: str, raw_path: bytes | None = None, method: str = "GET") -> bool:
         """May this path answer without a session? Loopback: every route checks its own credential, so True. Remote:
         only the app shell, its assets, `/auth/passkey/*` and `/auth/enroll/*`, matched exactly and case-sensitively
         on the decoded path AND on the raw bytes (which must be the same string: no escape of any kind)."""
+        if self.stream:
+            return False  # D89: every pre-login route is refused inside a stream
         if not self.pre_login_only:
             return True
         if raw_path is not None:
@@ -166,4 +177,24 @@ def remote_policy(name: str) -> ListenerPolicy:
         route_gate=True,
         session_kinds=frozenset({"remote", "switch"}),  # the session kind, not the listener
         extra_headers=(HSTS,),
+    )
+
+
+def remote_device_policy() -> ListenerPolicy:
+    """A stream of a remote device (R3): Host `orch-remote` only, no Origin, no launch codes, no frames, no setup
+    page; the session kind is `remote-device` and nothing else; terminals are on here but the route column decides per
+    access level (`routegate.REMOTE_DEVICE`: the Terminals level, each open with a presence signature)."""
+    return ListenerPolicy(
+        name=REMOTE_DEVICE,
+        scheme="https",
+        host=STREAM_HOST,
+        csp_template=_CSP_REMOTE,
+        port=443,  # nothing binds it
+        terminals=True,
+        widget_frames=False,
+        pre_login_only=True,
+        launch_codes=False,
+        route_gate=True,
+        session_kinds=frozenset({"remote-device"}),
+        stream=True,
     )

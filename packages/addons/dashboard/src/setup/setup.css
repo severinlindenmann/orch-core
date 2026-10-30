@@ -456,16 +456,6 @@ body:has(> #root > .setup) {
   opacity: 0.6;
   cursor: default;
 }
-.setup .toggle:has(input[type='radio']) {
-  border: 1px solid var(--border-strong);
-  border-radius: 8px;
-  margin: 10px 0;
-  padding: 12px;
-  justify-content: flex-start;
-}
-.setup .toggle:has(input[type='radio']:checked) {
-  border-color: var(--brand);
-}
 .setup .reason {
   display: block;
   color: var(--text-muted);
@@ -564,4 +554,32 @@ body:has(> #root > .setup) {
   cursor: pointer;
   font-size: 13px;
   text-decoration: underline;
+}
+
+/* r12-P15: the agents step: the recommendation in one block, the switches behind "Change these settings" */
+.setup .agents-summary {
+  margin: 12px 0 4px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+.setup .agents-summary small {
+  display: block;
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.setup .segments button.done {
+  border-color: var(--success);
+  color: var(--success);
+  background: var(--success-soft);
+}
+.setup p.state {
+  font-size: 13px;
+  color: var(--success);
+}
+
+.setup .sub-note {
+  font-size: 13px;
+  margin: -0.25rem 0 0.5rem;
 }

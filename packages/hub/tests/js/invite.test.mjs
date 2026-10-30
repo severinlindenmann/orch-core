@@ -84,13 +84,14 @@ test("join: two passwords, one request, the secret on the person's own screen, t
   assert.equal(d.finishedCount, 1);
   assert.equal(byId(box, "invite-secret").textContent, "JBSWY3DPEHPK3PXP");
   assert.match(box.textContent, /6-digit code each time you sign in/);
-  assert.equal(box.textContent.match(/only once/g)?.length, 1, "'only once' is said one time");
+  assert.equal(box.textContent.match(/will not see this key again/g)?.length, 1, "the key-gone note is said one time");
+  assert.ok(!box.all().some((n) => n.tag === "details"), "the key is not folded");
   assert.equal(box.all().filter((n) => n.tag === "button" && /^Copy/.test(n.textContent)).length, 1, "one Copy button");
   assert.match(box.textContent, /groups afterwards/);
   assert.equal(pw.value, "", "the typed password is wiped");
   assert.match(box.textContent, /already signed in/);
   assert.ok(!button(box, "Continue to sign in"), "a new person is not asked to sign in again (r10-P09)");
-  await button(box, "Open the hub").listeners.click();
+  await button(box, "I've added it, open the hub").listeners.click();
   assert.equal(d.opened, 1);
   assert.equal(d.signedIn, 0);
 });
@@ -240,6 +241,7 @@ async function admin(extra = {}) {
 test("People: Invite a person shows the link, the promise and the group hint; the old add form is gone", async () => {
   const { calls, panel } = await admin();
   assert.ok(button(panel, "Invite a person"));
+  assert.match(panel.textContent, /With a workspace\? Use Workspaces › Connect a workspace\./);
   assert.ok(!button(panel, "Add person"));
   byId(panel, "invite-name").value = "  Dora ";
   await find(panel, (n) => n.tag === "form" && byId(n, "invite-name")).listeners.submit({ preventDefault() {} });
@@ -357,4 +359,28 @@ test("no notice when nothing was recovered, and a removed admin is named plainly
 
 test("app.js dispatches #invite= with one line and keeps the link out of the address bar after use", () => {
   assert.match(appSource, /route\.kind === "invite"\) show\(inviteView\(route\.token, \{ api, say, signIn: \(\) => loginView\(\), openHub: \(\) => afterLogin\(\), finished: \(\) => history\.replaceState\(null, "", location\.pathname\) \}\)\)/);
+});
+
+test("a company invitation shows one button, no password form, and sends the token only in the start POST body", async () => {
+  const calls = []; const went = [];
+  const d = { api: async (m, p, b) => { calls.push([m, p, b]); return p === "/invite/peek" ? { status: 200, body: { kind: "join", name: "Julia", needs_proof: false, company: true, provider: "google" } } : { status: 200, body: { url: "https://accounts.google.com/o/oauth2/v2/auth?state=x" } }; }, assign: (u) => went.push(u) };
+  const view = inviteView(TOKEN, d);
+  await view.ready;
+  const all = view[0].all();
+  assert.equal(all.filter((n) => n.tag === "input").length, 0); // no password field
+  const btn = all.find((n) => n.attrs.id === "invite-company");
+  assert.equal(btn.textContent, "Continue with Google");
+  await btn.listeners.click();
+  assert.deepEqual(calls.at(-1), ["POST", "/oidc/invite/start", { token: TOKEN }]);
+  assert.deepEqual(went, ["https://accounts.google.com/o/oauth2/v2/auth?state=x"]);
+  assert.ok(!went[0].includes(TOKEN));
+});
+
+test("a company invitation does not follow an unsafe address", async () => {
+  const went = [];
+  const d = { api: async (m, p) => (p === "/invite/peek" ? { status: 200, body: { kind: "join", name: "J", needs_proof: false, company: true, provider: "entra" } } : { status: 200, body: { url: "javascript:alert(1)" } }), assign: (u) => went.push(u) };
+  const view = inviteView(TOKEN, d);
+  await view.ready;
+  await view[0].all().find((n) => n.attrs.id === "invite-company").listeners.click();
+  assert.deepEqual(went, []);
 });

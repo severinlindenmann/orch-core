@@ -468,6 +468,10 @@ class HumanOps:
             from . import publishing
 
             capture.publish = publishing.facts_for(service, inner, call)
+        if name in ("remote.set", "remote.device_confirm"):  # R2: the host's own facts, never the request's
+            from . import remotefacts
+
+            capture.remote = remotefacts.facts_for(service, inner.get("pending"))
         if name in ("hub.join", "hub.mode"):  # V3 C2a: the host's clock and dev state, never the request's
             from . import hubops
 
@@ -1149,6 +1153,11 @@ class HumanOps:
                         service, person=record["person"], op=record["op"], request_id=record["id"],
                         event=e, proof=e.get("owner_proof"),
                     )  # fmt: skip
+            if record["op"] == "remote.device_confirm":  # R2 review L2: the waiting device, again under the lock
+                from .remote import enrollment
+
+                if not all(enrollment.still_pending(service, e.get("code_id")) for e in events):
+                    raise HostError("remote.no_pending", "no device is waiting to be added (it may have disconnected)")
             if any(e.get("auth") == "convenience" for e in events):  # §0.8.6: the condition, again at submit
                 convenience.check(
                     service,

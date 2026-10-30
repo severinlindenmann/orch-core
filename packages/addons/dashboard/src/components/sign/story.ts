@@ -20,11 +20,15 @@ export interface SignStory {
   compact?: boolean
   /** A quick task: what was typed, so the review can fold the derived rows under "Also signed". */
   quick?: QuickTyped
-  /** The workspace line (prefix, id, name) sits under "Details" instead of on the main surface: a dialog opened from inside that workspace's own page (hub join). The line is folded, never dropped; a risk state shows it anyway. */
+  /** The workspace line (prefix, id, name) sits under "Details" instead of on the main surface: a dialog opened from inside that workspace's own page (hub join, starting an agent). With several workspaces it stays on the main surface. The line is folded, never dropped; a risk state shows it anyway. */
   foldWorkspace?: boolean
+  /** With foldWorkspace: also fold in the risk state and while armed (only the hub join; every other story shows the line there). */
+  foldInRisk?: boolean
 }
 
 /** What agents may do with the access, in the words of the review (the same for every grant the dashboard signs). */
+/** The same grant in one sentence after the length (the length and who may use it stay in the line before it). */
+export const AGENT_MAY_SHORT = 'They can read and change files in the project folder and run its commands.'
 export const AGENT_MAY = 'Agents (Claude Code) may read and change files in the project folder and run its commands.'
 
 export interface StoryContext {
@@ -51,7 +55,7 @@ export function storyOf(action: ClickAction | null | undefined, ctx: StoryContex
         signLabel: ctx.startsAgent ? 'Sign and start task' : 'Sign and create task',
         access,
         quick: { title: action.title, details: action.description ?? '', checks: action.checks ?? [], signer: ctx.person },
-        steps: ['You sign.', 'The task is created, with the requirements and the plan you see here approved.', ...(hours ? [`Access is given for ${accessLength(hours)}.`] : []), ...(ctx.startsAgent ? ['An agent starts and does the work.'] : ['Nothing starts yet: an agent starts only when you press Start agent.'])],
+        steps: ['You sign.', 'The task is created, with the requirements and the plan you see here approved.', ...(hours ? [`Agents may work for you for ${accessLength(hours)}.`] : []), ...(ctx.startsAgent ? ['An agent starts and does the work.'] : ['Nothing starts yet: an agent starts only when you press Start agent.'])],
       }
     }
     case 'approve_both':
@@ -71,17 +75,21 @@ export function storyOf(action: ClickAction | null | undefined, ctx: StoryContex
       return { signLabel: 'Sign and show the secret', access: { length }, steps: ['You sign.', `The secret is shown once on this page. Agents that hold it may work for you for ${length} from now.`] }
     }
     case 'hub_join':
-      return { signLabel: 'Connect', foldWorkspace: true, steps: ['You sign.', 'This workspace is joined to the hub as shown.'] }
+      return { signLabel: 'Connect', foldWorkspace: true, foldInRisk: true, steps: ['You sign.', 'This workspace is joined to the hub as shown.'] }
     case 'hub_mode_full':
       return { signLabel: 'Sign and let the hub read everything', steps: ['You sign.', 'The hub can read everything in this workspace.'] }
     case 'hub_leave':
       return { signLabel: 'Leave hub', danger: true, steps: ['You sign.', 'This workspace leaves the hub.'] }
+    case 'remote_set':
+      return { signLabel: 'Turn on remote access', steps: ['You sign.', 'Devices you add can use this workspace from afar, as shown.'] }
+    case 'remote_device_confirm':
+      return { signLabel: 'Add this device', steps: ['You sign.', 'This device can use this workspace from afar, as shown.'] }
     case 'runner_grant': {
       const length = accessLength(action.hours)
       return action.extend
         ? { signLabel: 'Sign and extend', access: { length }, steps: ['You sign.', `The old access ends and the new one starts, for ${length} from now.`, 'Running agents stop. Start them again to use the new access.'] }
         : ctx.startsAgent
-          ? { signLabel: 'Sign and start agent', access: { length }, steps: ['You sign.', `Agents may work for you for ${length} from now.`, 'The agent starts.'] }
+          ? { signLabel: 'Sign and start agent', access: { length }, foldWorkspace: true, steps: ['You sign.', `Agents may work for you for ${length} from now.`, 'The agent starts.'] }
           : { signLabel: 'Sign and allow access', access: { length }, steps: ['You sign.', `Agents may work for you for ${length} from now.`] }
     }
     default:
@@ -94,6 +102,7 @@ function agentCreate(hours: number): SignStory {
   return {
     signLabel: 'Sign and start agent',
     access: { length },
-    steps: ['You sign.', `The ticket is created and access is given for ${length}.`, 'An agent starts and writes the requirements and a plan for you.', 'It stops and waits: nothing is built until you approve the plan.'],
+    foldWorkspace: true,
+    steps: ['You sign.', `The ticket is created and agents may work for you for ${length}.`, 'An agent starts and writes the requirements and a plan for you.', 'It stops and waits: nothing is built until you approve the plan.'],
   }
 }

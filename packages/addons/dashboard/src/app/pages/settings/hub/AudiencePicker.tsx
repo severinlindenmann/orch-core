@@ -26,6 +26,6 @@ export function AudiencePicker({ ws, enabled = true, compact = false, users, gro
         {!compact && <p className="text-xs text-text-muted" data-testid="hub-rule-only-me">{users.length || groups.length ? 'Names from the hub, not signed.' : 'Nobody else sees it until you pick someone.'}</p>}
       </>}
     </fieldset>
-    <label className="flex items-start gap-2"><input type="checkbox" data-testid="hub-rule-description" checked={withText} onChange={e => onWithText(e.target.checked)} /><span>Include the description <span className="block text-xs text-text-muted">Comments and files stay private.</span></span></label>
+    <label className="flex items-start gap-2"><input type="checkbox" data-testid="hub-rule-description" checked={withText} onChange={e => onWithText(e.target.checked)} /><span>Include the description{!compact && <span className="block text-xs text-text-muted">Comments and files stay private.</span>}</span></label>
   </>
 }

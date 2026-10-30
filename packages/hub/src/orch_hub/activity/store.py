@@ -59,6 +59,12 @@ ACTIVITY_TYPES = (
     "hub.backup.downloaded",
     "hub.backup.restored",
     "hub.restore.confirmed",
+    "oidc.signed_in",
+    "oidc.member_created",
+    "oidc.linked",
+    "oidc.unlinked",
+    "oidc.settings_changed",
+    "agent.event",
 )
 # Only structured references, never request bodies, credentials, or free-form notes.
 DETAIL_FIELDS = frozenset(
@@ -83,6 +89,8 @@ DETAIL_FIELDS = frozenset(
         "secret",
         "link",  # a shared link id (32 hex)
         "app",  # an app id (32 hex)
+        "what",  # agent.event: the event type word a workspace reported (never content)
+        "ticket",  # agent.event: a ticket key such as ACME-12
     }
 )
 REASON_MAX_BYTES = 800  # 200 characters of UTF-8

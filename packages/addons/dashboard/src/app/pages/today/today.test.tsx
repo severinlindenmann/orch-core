@@ -42,6 +42,26 @@ describe('Today: a calm, grouped queue', () => {
     expect(n).toBe(mockStore.needsYou(ws).length + mockStore.addonDecisions(ws).length + relogin)
   })
 
+  it('R12 P03: the requirements approval is held back while the agent writes the plan (quiet line, not counted), and comes back when it stops', async () => {
+    const real = api.getTicket.bind(api)
+    let working = true
+    const spy = vi.spyOn(api, 'getTicket').mockImplementation(async (key: string, ws?: string) => {
+      const t = await real(key, ws)
+      if (key !== 'DEMO-0047') return t
+      return { ...t, claim: working ? ({ agent: 'a', for: 'p_sev', session: 's', since: t.updated_at, expires: '2099-01-01T00:00:00Z', live: true } as never) : null, gates: { ...t.gates, plan: { ...t.gates.plan, missing: ['plan'] } } }
+    })
+    renderApp('/', { viewer: 'p_sev' })
+    const ws = mockStore.workspaces[0].id
+    expect(await screen.findByTestId('card-writing:DEMO-0047', {}, T)).toHaveTextContent('The agent is writing the plan')
+    expect(screen.queryByTestId('card-approval:DEMO-0047:requirements')).toBeNull()
+    const line = await screen.findByText(/· (?:\d+ need you|Nothing needs you) · \d+ agents? working$/, {}, T)
+    const n = Number(/· (\d+) need you/.exec(line.textContent!)?.[1] ?? 0)
+    const relogin = reloginItems(mockStore.conn.connections(ws)).length
+    expect(n).toBe(mockStore.needsYou(ws).length - 1 + mockStore.addonDecisions(ws).length + relogin) // the held-back item is not counted
+    working = false
+    spy.mockRestore()
+  })
+
   it('opens the first blocking question; picking an option posts nothing, "Send answer" opens core\'s dialog', async () => {
     const post = vi.spyOn(api, 'postAction')
     const { user } = renderApp('/', { viewer: 'p_sev' })
@@ -72,7 +92,7 @@ describe('Today: a calm, grouped queue', () => {
     await user.click(screen.getByRole('button', { name: 'Cancel' }))
     const verdicts = await group(/^Verdicts · \d+/)
     await user.click(within(verdicts).getByRole('button', { name: 'Give verdict' }))
-    const dialog = await screen.findByRole('dialog', { name: /Verify/ })
+    const dialog = await screen.findByRole('dialog', { name: /Give verdict/ })
     expect(within(dialog).getByRole('radio', { name: /Pass/ })).toBeInTheDocument()
     await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
     expect(within(verdicts).getByRole('link', { name: 'Evidence' })).toBeInTheDocument()

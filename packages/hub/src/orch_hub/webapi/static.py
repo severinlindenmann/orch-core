@@ -20,6 +20,10 @@ _JS = "text/javascript; charset=utf-8"
 FILES: dict[str, tuple[str, str]] = {
     "/": ("index.html", "text/html; charset=utf-8"),
     "/c": ("connect.html", "text/html; charset=utf-8"),
+    "/oidc/callback": (
+        "index.html",
+        "text/html; charset=utf-8",
+    ),  # the company login returns here; the page finishes it
     "/favicon.svg": ("favicon.svg", "image/svg+xml"),
     "/app.css": ("app.css", "text/css; charset=utf-8"),
     "/app.js": ("app.js", _JS),
@@ -42,7 +46,9 @@ FILES: dict[str, tuple[str, str]] = {
     "/handoffs.js": ("handoffs.js", _JS),
     "/workspaces.js": ("workspaces.js", _JS),
     "/phones.js": ("phones.js", _JS),
+    "/service_actions.js": ("service_actions.js", _JS),
     "/invite.js": ("invite.js", _JS),
+    "/oidc.js": ("oidc.js", _JS),
     "/qr.js": ("qr.js", _JS),
     "/totp.js": ("totp.js", _JS),
     "/seal.js": ("seal.js", _JS),

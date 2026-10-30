@@ -1337,6 +1337,13 @@ def test_the_hosts_settings_handler_checks_both_origins_whoever_asks(bare, human
     assert good["ok"]
 
 
+def test_one_address_for_both_server_and_share_is_accepted(bare, human):
+    """P06: the publish server's run mode serves uploads and links from one address, so equal addresses are valid."""
+    bare.addon()
+    res = human.prepare_res("settings.set", {"set": {"publish": {"server": SERVER, "share": SERVER}}})
+    assert res["ok"]
+
+
 def test_register_is_the_owners_act_three_a_minute_and_never_an_agents(w):
     assert err(w.req("publish.register", {}, agent=True)) in ("op.not_allowed", "human_only")
     for _ in range(3):
@@ -1443,3 +1450,67 @@ def test_the_signing_review_refuses_when_the_hub_is_joined_but_not_connected_and
     assert err(res) == "hub.not_joined" and "Settings" in res["error"]["message"]
     assert "events" not in res.get("data", {}) and w.server.requests == []  # nothing to sign, nothing sent
     assert err(w.send(staged)) in ("publish.not_approved", "hub.not_joined")
+
+
+# -- the display members of the share list (#1636) ---------------------------------------------------------------------
+
+
+def _member_name(w) -> str:
+    w.served.service.store.refresh()
+    owners = [m.name for m in w.served.service.store.state.workspace.members.values() if m.role == "owner"]
+    assert len(owners) == 1  # the test human is the one owner
+    return owners[0]
+
+
+def test_the_share_meta_names_the_signed_in_person_and_the_ticket(w):
+    uid, key = w.ticket_with(**{"report.md": REPORT})
+    staged = w.prepare(key, "report.md")["staged_id"]
+    w.approve(staged)
+    share_id = LINK.fullmatch(ok(w.send(staged))["data"]["link"]).group(1)
+    meta = w.server.shares[share_id]["meta"]
+    assert meta["by_kind"] == "person" and meta["by_name"] == _member_name(w)
+    assert meta["label"] == w.served.service.store.ticket(uid).title
+
+
+def test_an_agent_that_claims_to_be_a_person_is_stored_as_an_agent(w):
+    uid, key = w.ticket_with(**{"report.md": REPORT})
+    agent = w.served.client()
+    ok(agent.req("claim", {"ref": key}, grant=w.served.grant, session=SESSION, idem=True))
+    for extra in ({"by_kind": "person"}, {"by_name": "The Owner"}, {"label": "Payroll"}):
+        res = agent.req("publish.prepare", {"ref": key, "artifacts": ["report.md"], **extra},
+                        grant=w.served.grant, session=SESSION)  # fmt: skip
+        assert err(res) == "invalid.input", extra  # the schema takes no such member
+    staged = ok(agent.req("publish.prepare", {"ref": key, "artifacts": ["report.md"]}, grant=w.served.grant,
+                          session=SESSION))["data"]["staged_id"]  # fmt: skip
+    w.approve(staged)
+    share_id = LINK.fullmatch(ok(w.send(staged))["data"]["link"]).group(1)
+    meta = w.server.shares[share_id]["meta"]
+    assert meta["by_kind"] == "agent" and meta["by_name"] == _member_name(w)
+
+
+def test_the_label_is_cleaned_and_capped():
+    clean = publishing._display
+    assert clean("  Q3 ‮report​ \n final ", 80) == "Q3 report final"  # bidi, zero width, white space
+    assert clean("x" * 200, 80) == "x" * 80
+    assert len(clean("é" * 100, 80).encode()) <= 80 and set(clean("é" * 100, 80)) == {"é"}
+    assert clean("‮​\x07", 80) is None and clean(None, 80) is None
+
+
+def test_a_server_that_refuses_the_label_gets_the_ticket_key_once(w):
+    uid, key = w.ticket_with(**{"report.md": REPORT})
+    staged = w.prepare(key, "report.md")["staged_id"]
+    w.approve(staged)
+    w.server.fail.append(("PUT", r"/shares/[0-9a-f]{32}$", 400, "bad_label"))
+    share_id = LINK.fullmatch(ok(w.send(staged))["data"]["link"]).group(1)
+    assert w.server.shares[share_id]["meta"]["label"] == key
+    puts = [r for r in w.server.requests if r["method"] == "PUT" and r["target"].endswith(f"shares/{share_id}")]
+    assert len(puts) == 2 and json.loads(puts[0]["body"])["label"] != key
+
+
+def test_a_label_refused_again_is_not_retried_forever(w):
+    uid, key = w.ticket_with(**{"report.md": REPORT})
+    staged = w.prepare(key, "report.md")["staged_id"]
+    w.approve(staged)
+    w.server.fail.extend([("PUT", r"/shares/[0-9a-f]{32}$", 400, "bad_label")] * 2)
+    assert err(w.send(staged))
+    assert len([r for r in w.server.requests if r["method"] == "PUT"]) == 2

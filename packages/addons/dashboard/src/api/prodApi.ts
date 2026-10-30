@@ -380,6 +380,12 @@ const click = {
   syncOrg: (ws: string) => call<{ result: Record<string, string> }>(`${w(ws)}/org/sync`, 'POST', {}),
   setOrgTool: (ws: string, server: string, tool: string, on: boolean, pin?: string) =>
     call<{ server: string; tool: string; on: boolean }>(`${w(ws)}/org/tool`, 'POST', { server, tool, on, ...(on ? { pin } : {}) }),
+  /** R2 T4: remote access (loopback only): the view, a plain turn-off, a one-time device code, removing a device. */
+  getRemote: (ws: string) => call<import('./remote').RemoteView>(`${w(ws)}/remote`),
+  remoteOff: (ws: string) => call<{ changed: boolean }>(`${w(ws)}/remote/off`, 'POST', {}),
+  remoteCode: (ws: string) => call<import('./remote').RemoteCode>(`${w(ws)}/remote/code`, 'POST', {}),
+  endRemoteSession: (ws: string, streamId: string) => call<{ ended: boolean }>(`${w(ws)}/remote/sessions/${streamId}/end`, 'POST', {}),
+  removeRemoteDevice: (ws: string, id: string) => call<{ removed: boolean }>(`${w(ws)}/remote/devices/${encodeURIComponent(id)}/remove`, 'POST', {}),
   refreshHub: (ws: string) => call<import('./hub').HubRefreshed>(`${w(ws)}/hub/refresh`, 'POST', {}),
   connectHub: (ws: string, body: import('./hub').HubConnectRequest) => call<import('./hub').HubConnected>(`${w(ws)}/hub/connect`, 'POST', body),
   cancelClick: (ws: string, requestId: string) => call<{ id: string; state: string }>(`${w(ws)}/click/cancel`, 'POST', { request_id: requestId }),
@@ -406,6 +412,9 @@ const click = {
  */
 const cosmetic = {
   setCosmetic: (ws: string, body: CosmeticBody) => call<Cosmetic>(`${w(ws)}/workspace/cosmetic`, 'PUT', body),
+  /** HUB-WS-09: the owner's workspace profile (the host pushes it to a bound hub; `pushed` says whether it has). */
+  getHubProfile: (ws: string) => call<import('./profile').WorkspaceProfile>(`${w(ws)}/hub/profile`),
+  putHubProfile: (ws: string, profile: import('./profile').ProfileFields) => call<import('./profile').WorkspaceProfile>(`${w(ws)}/hub/profile`, 'PUT', profile),
 }
 
 const implemented: Record<string, unknown> = { ...reads, ...empty, ...repos, ...click, ...records, ...cosmetic }

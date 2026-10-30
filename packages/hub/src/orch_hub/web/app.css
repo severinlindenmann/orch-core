@@ -124,6 +124,7 @@ h1, h2, h3, p, b, span, td, th, dd, button, summary { overflow-wrap:anywhere; }
 fieldset { min-width:0; margin:16px 0; padding:12px 16px 8px; border:1px solid var(--line); border-radius:9px; }
 legend { padding:0 6px; font-weight:600; font-size:14px; }
 label.check { display:flex; align-items:center; gap:10px; min-height:44px; font-size:14px; font-weight:450; color:inherit; margin:0; }
+.share-list input[type=checkbox] { width:auto; min-height:0; flex:none; margin:0; }
 label.check input { display:inline-block; width:20px; height:20px; min-height:0; margin:0; flex:none; }
 .bad-text { color:var(--bad); }
 .mp-form { grid-template-columns:minmax(0,2fr) minmax(0,1.3fr) minmax(0,1.3fr) auto; }
@@ -171,6 +172,12 @@ main#app.shelled { max-width:none; padding:0; margin:0; }
 .menu button:hover { background:var(--surface-3); }
 .menu .hd { font:600 10px "Geist Mono",ui-monospace,monospace; letter-spacing:.12em; color:var(--text-faint); padding:6px 10px 2px; }
 .plain { max-width:520px; margin:12vh auto 0; }
+/* "Opening <workspace>…": the calm in-page state while the hub asks for a ticket and the browser moves to the workspace */
+.opening { display:flex; flex-direction:column; align-items:center; gap:10px; text-align:center; min-height:50vh; justify-content:center; }
+.opening b { font-size:20px; letter-spacing:-.02em; }
+.opening span { animation:opening-pulse 1.4s ease-in-out infinite; }
+@keyframes opening-pulse { 50% { opacity:.45; } }
+@media (prefers-reduced-motion: reduce) { .opening span { animation:none; } }
 @media (max-width:760px) {
   .app { grid-template-columns:minmax(0,1fr); grid-template-rows:auto 1fr; }
   .side { display:none; }
@@ -306,4 +313,24 @@ button[aria-busy="true"]::before { content:""; display:inline-block; width:12px;
 .qr { width:176px; height:176px; border-radius:8px; overflow:hidden; background:#fff; }
 .qr svg { display:block; width:100%; height:100%; }
 .totp-key { margin-top:8px; }
+.totp-key p { margin:0 0 6px; }
 .prewrap{white-space:pre-line}
+.logs { white-space:pre-wrap; overflow-wrap:anywhere; max-height:50vh; overflow:auto; margin:6px 0; padding:10px; border:1px solid var(--line); border-radius:8px; background:var(--bg); }
+
+/* r14 P11: the small round "i" button with a popover note; the global details rule does not apply to it. */
+details.info { position:relative; display:inline-block; border-top:0; padding:0; margin:0 0 0 8px; vertical-align:middle; }
+details.info > summary { list-style:none; width:26px; height:26px; border-radius:50%; border:1px solid var(--border-strong); display:inline-flex; align-items:center; justify-content:center; font:italic 600 13px Georgia,serif; color:var(--text-muted); cursor:pointer; margin:0; }
+details.info > summary::-webkit-details-marker { display:none; }
+details.info[open] > summary { margin:0; color:var(--text); }
+details.info[open] > p { position:absolute; z-index:5; top:32px; left:0; width:260px; margin:0; padding:10px 12px; background:var(--card); border:1px solid var(--border-strong); border-radius:9px; box-shadow:0 6px 18px rgba(0,0,0,.35); }
+
+/* r14 P12: a placeholder is an example, so it is quieter than typed text. */
+input::placeholder { color:var(--text-faint); opacity:1; }
+label .optional { font-weight:400; color:var(--text-faint); }
+
+/* --- P07: the Backup card shows the result of its own buttons (keep this block separate) --- */
+.backup-now { align-items:center; gap:10px; }
+.backup-note { margin:10px 0; }
+.dl-form { margin-top:12px; }
+.backup-now button:disabled { opacity:.45; cursor:not-allowed; }
+/* --- end P07 --- */

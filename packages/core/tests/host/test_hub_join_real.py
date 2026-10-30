@@ -454,3 +454,19 @@ def test_a_refused_install_is_reported_to_the_bound_hub_with_the_actor(monkeypat
     state.status = "unbound"  # not bound: nothing is sent
     hubops.report_addon_request(service, "wiki")
     assert len([c for c in calls if c[0] == "addon_request"]) == 2
+
+
+def test_hub_leave_and_connect_drop_the_agent_events_position(human, served, monkeypatch):
+    """HUB-AC-03: the real ops forget the position, so deleting the hubops calls fails this test."""
+    hub = fake_for(served)
+    monkeypatch.setattr(hubops, "TRANSPORT", lambda service, hub_id: hub)
+    card = copy.deepcopy(V["objects"]["card"])
+    human.run("hub.join", {"hub_card": card, "mode": "selective"})
+    pos = served.service.__dict__.setdefault("_agent_events_pos", {})
+    pos["old"] = {"init": True, "logs": {"workspace": 9}}
+    ok(served.client().req("hub.connect", {"invite": "invite-1", "hub_card": card}, idem=True))
+    assert "old" not in pos  # a (re)connect starts the agent events at the end of every log
+    pos["old"] = {"init": True, "logs": {"workspace": 9}}
+    human.run("hub.leave", {})
+    ok(served.client().req("hub.unbind", {}, idem=True))
+    assert "old" not in pos

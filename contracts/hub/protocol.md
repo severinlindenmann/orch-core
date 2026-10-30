@@ -218,6 +218,13 @@ keep the union with every label above, every v2 label and core's live tables pre
 | `h_remote_prologue` | `orch/v2/remote-prologue\|` | hash input | the Noise prologue | 10.2c |
 | `h_remote_wrk` | `orch/v2/remote-wrk\|` | hash | the `WRK` fingerprint an enrollment code carries | 10.2c |
 | `h_remote_device_fp` | `orch/v2/remote-device-fp\|` | hash | the device fingerprint the owner confirms | 10.2c |
+| `h_remote_route` | `orch/v2/remote-route\|` | hash | `route_digest`: the `view_digest` of a presence route (R3) | 10.2c |
+
+**Core-only label of the remote owner proof (R2, #1590).** `orch/v2/sig/remote-owner-proof|` (`sig_remote_owner_proof`,
+signed by the owner's person key `PK`, §10.2c "The owner proof of a remote step") is a core-internal label like
+`sig_hub_owner_proof`: no hub object carries it and the hub never sees such a proof, so it is not a row of the table above
+and not in `vectors_remote.json`. Core's tests check that it is new, ends in `|` and keeps the union with every label
+above prefix-free.
 
 **The presence key signs under exactly `remote-open|` and `remote-presence|`** (spec §5: the D64 backend kind
 `remote-presence` is never a person signer); `WSK` gains `sig/remote-devices|`. Neither the hub's keys nor `UK` nor a
@@ -534,6 +541,7 @@ dev marker; `push_pub` is not the channel key (`malformed`); `issued_ms` newer t
 | GET | `/hub/card` | none | → `{card, api_origin}` (the held, signed card and the signed `hub.api_origin`) |
 | POST | `/session/channel` | pairing | `{auth: <signed hub.channel_auth>}` → `{token, user_id, channel_id, expires_ms, channel_cert, card}` |
 | PUT | `/channels/{channel_id}/push` | channel (that channel) | `{env, topic, token, push_key: <signed hub.channel_push> \| null}` → `{registered: true}`; `null` keeps the held push key (an APNs token change needs no new key; without a held key it is `malformed`). The hub then registers the target at the relay (§10.8.1) |
+| POST | `/workspaces/{workspace_id}/items/{item_id}/ask-phone` | browser cookie only (HUB-AP05, #1381) | no body → `{asked: n}`: a `needs_you` hint (§10.8.2) to the caller's own `n` live phone channels (`n = 0` sends nothing). It carries no action, outcome or text and signs nothing: the phone opens, prepares for its OWN channel (§8.4) and signs with its device key. The item must be one the person can read and that waits on them (`signable`, in the `needs-you` list); a workspace they are not in, a foreign, missing, summary-only or not-pending item all answer `unknown_item`. 6 a minute per person, 1 per 10 s per (person, item) (`rate_limited`); a switch-ticket session gets `reauth_required`. No new signed bytes, no new vector |
 
 **Not here.** App Attest (SHORTCUT of §6.3 stays). Renewing a channel certificate for the same key (the `renew` audit change exists, §10.5, but no hub renews in V3: the certificate lasts 31 days, then the phone pairs again). Admin-floor custodial types from a phone (spec §7 wants
 a sign-in within 5 min for them; a V3 phone offers only the four decision types).
@@ -1452,7 +1460,8 @@ unknown `op` is `unknown_op`.
 | `rail_get` | w2h | both | `{"origin"}` | `{"hub": {name, origin, network_origin}, "user_id", "workspaces": [{workspace_id, name, role, online, badge, origin, current}]}` (hub one-app) |
 | `profile_put` | w2h | both | `{listed, tags, description, handles, not_handled, accepts, contact, languages, hours}` | `{}` |
 | `directory_get` | w2h | both | `{query?: string}` | `{entries: [...]}` (at most 50) |
-| `status_put` | w2h | both | `{"version", "commit", "host", "name"}` | `{}` |
+| `status_put` | w2h | both | `{"version", "commit", "host", "name"}` | `{}`, or `{"update_requested": {"target_version"}}` |
+| `agent_events` | w2h | full | `{"events": [{"kind", "ts_ms", "agent", "ticket"}]}` (1-50) | `{}` (HUB-AC-03 #1426) |
 | `addon_request` | w2h | both | `{"name", "version", "actor"}` | `{}` (M3 #1450) |
 | `owner_get` | w2h | both | `{}` | `{"user_id"}`: the hub user this hub names as the owner of the calling workspace (V3-D19 owner alias; FB15 §8.8b) |
 | `log_sync` | w2h | full | `{"epoch", "log", "from_seq", "count", "head", "reset", "sealed": b64u}` | `{"seq", "head"}` (p4, §10.7) |
@@ -1465,6 +1474,14 @@ built in D5/C5 against this table). Phases: `snapshot_get`, `publish_out` and th
 carry needs-you summaries only until C6); `route_*`, `wk_seal`, `audit_ack` in phase 3; `event_deliver`, `log_sync`, `space_proposals` in phase 4.
 `log_sync` carries the workspace's own log **to** the hub; like every other op it asks the hub to sign nothing, and
 nothing in it can become signed bytes: the hub builds custodial events only from an action a channel started (§8.4).
+
+`agent_events` tells the hub what agents did in the workspace, for the admin's Activity page, four references per event and
+nothing else: `kind` is one of a closed set of event type words (`ticket.created`, `ticket.updated`, `gate.approved`, ... and `event` for any other; the list is `AGENT_EVENT_KINDS` in the hub contract), `ts_ms` a
+non-negative integer, `agent` the agent session name (`[0-9A-Za-z][0-9A-Za-z._:@-]*`, at most 64) and `ticket` a ticket key
+(`ACME-12`) or `""`. Every member is required, no other member is allowed, and one bad event refuses the call
+(`malformed`). It carries no title, comment, prompt, path or secret, and the hub has no op to ask for more. Full mode only: a selective binding is refused `wrong_mode` (the hub must not learn of tickets that were not shared, D80), and the host sends nothing in selective mode. The hub needs a
+bound, pinned workspace that is not pending (else the usual refusals), keeps at most 500 events per workspace per hour (the
+rest are dropped, the reply is still `{}`) and stamps rows with its own clock. It grants nothing and signs nothing.
 
 `profile_put` replaces the pinned, bound workspace's display profile (exact keys): `listed` is boolean;
 `tags` and `accepts` are lists of at most 8 strings of at most 24 characters; `handles` and `not_handled`
@@ -1488,6 +1505,13 @@ Its exact body has a version matching `[0-9A-Za-z.+-]+` (at most 32 characters),
 possibly empty), a host string (at most 80) and the workspace display name `name` (at most 80, from `config.json`); a selective-mode workspace sends `host` and `name` empty and the hub stores them empty (the hub console then shows a friendly fallback, never an id); bad shapes are `malformed`, unknown pins `unknown_workspace`.
 The hub sanitizes these fields and records its own last-seen clock and socket peer address. These values never
 influence authorization, routing, signing or mode, and are not written to the workspace log.
+HUB-WS-04 (#1385): when a hub admin asked the owners of older workspaces to update, the reply is
+`{"update_requested": {"target_version"}}` instead of `{}` for as long as the workspace's reported `version` is lower
+than `target_version` (the hub's own version, `[0-9A-Za-z.+-]+`, at most 32 characters; never free text). The field is
+optional: a host MUST accept both shapes (a host from before HUB-WS-04 refuses the reply as a malformed link reply, which
+for this display-only op is only a logged, retried failure). A hub sends the field only on a `status_put` reply. A host shows a plain notice to its
+human owner while its own version is lower than `target_version` and drops it once it is not. The host learns of it only when its hub link is used (the status is sent again at most every 10 minutes) and keeps it in memory until then, so a notice can lag or be lost on a restart until the next link use. The request grants
+nothing and changes no key, trust, mode or signing rule; the update itself stays the owner's own action.
 
 **Hub one-app ops (27 Oct, prototype).** `switch_ticket`, `switch_redeem` and `rail_get` let the workspace dashboard and the
 hub console feel like one app. The hub names the user itself: always the link workspace's owner alias (`no_owner_alias`
@@ -1632,6 +1656,22 @@ and opened only with a **presence signature** by a device the owner enrolled **a
 hub to sign anything, and no hub key, `UK`, channel certificate, hub session or switch ticket grants anything (D87).
 Reference: `orch_hub.contract.remote`; vectors `vectors_remote.json` (§15).
 
+**The stream link (R4 follow-up, decision 69).** Streams travel only on a host's **dedicated stream link**: a link the
+host dials with the TLS ALPN protocol `orch-link-streams/1` (same pinned SPKI, same `WSK` auth over the exporter; the
+exporter covers the handshake transcript, so the role is authenticated and no new signed op exists). The hub attaches
+such a link to the stream router and to nothing else (no ws->ws router, no custodial deliveries), and accepts on it
+only the one-way `stream_data` / `stream_close`, the host's `stream_open` replies and `hub_where` (the host's keepalive,
+every 120 s; the hub drops a link after 300 s without a w2h frame). Any other op on it is `unknown_op` and the link
+closes; a stream link for a workspace that is not pinned and bound is `not_bound` and closes (no `join` on it). A
+**plain** link (no ALPN) is never attached to the stream router: the hub never sends it a `stream_open`, and stream
+frames on it are dropped, so a short per-op link (status, shares, approvals, publish) can neither carry a stream nor
+replace the route of the stream link. A new stream link of a workspace replaces the old one (its streams end `closed`).
+A hub without a stream router does not select the protocol; the host then closes the link (never used as a plain one).
+The host runs the link while the workspace is bound to the hub and remote access is on, or an enrollment code is
+outstanding (§7.1 enrollment); in both hub modes. So a workspace with remote off and no code has no stream link at
+all, and a client that opens a stream to it is refused `not_allowed` (the hub cannot say `remote.off`); `remote.off`
+still reaches a client whose open session is closed by the owner's off.
+
 **The three ops** (rows above). Same signing (`WSK` w2h, `HK_op` h2w), same steps 1–6 and the same `ts` window
 (`|now − ts_ms| ≤ 120 s` → `stale_timestamp`) as every link message; both modes.
 
@@ -1727,13 +1767,15 @@ with 1 ≤ n ≤ 16 digests, sorted ascending and unique (`malformed` otherwise)
 nothing else. The signer accepts it once: the nonce must be one it issued, unused, at most 5 min old (`replay`
 otherwise; it is deleted in the same step), then the assertion as above. A verified batch authorizes exactly its
 listed digests until 5 min after its nonce was issued, on that stream only. `view_digest` is the signer's own digest of
-the prepared action it shows (R3 fixes its bytes); the contract fixes only its length. An open signature is never a
+the prepared action it shows: for a signed op the signer's review digest, for a presence route `route_digest`
+("Inside a session" below). An open signature is never a
 presence signature and the other way round (two labels).
 
 **Enrollment** (spec §5; `kind: "enroll"`). The owner makes a code at the workspace: `code_id` (16 bytes, shown as
 `rc_` + hex), a `secret` of 16 random bytes (128 bits), single use, 15 min, 5 wrong tries burn it, and the fingerprint
 `wrk_fp = SHA-256("orch/v2/remote-wrk|" || WRK_pub)[0:16]`. The code stands for the 48 bytes `code_id ‖ secret ‖
-wrk_fp` (its text form is R2's); it is handed over out of band, never through a hub channel. The device accepts a
+wrk_fp`; its text form is `orch-rc1.<workspace_id>.<b64u(those 48 bytes)>.<b64u(WRK_pub)>` (§16 row 68); it is handed
+over out of band, never through a hub channel. The device accepts a
 `WRK_pub` (from wherever it got it) only if it hashes to `wrk_fp`, then runs the same handshake with the code id in the
 prologue. Its first transport message is
 
@@ -1777,9 +1819,137 @@ exact fields and the rules above (`malformed`), `workspace_id` (`other_workspace
 `now < expires_ms` (`remote.device`). The FIDO2 sign counter is mutable state kept beside the list, not in it.
 Vectors `device_list_*`, `device_lookup_*`.
 
+**The owner proof of a remote step** (R2, #1590; core only, the hub never sees it). The remote policy and the device list
+are folded by the workspace model from two person lines of the workspace log, `remote.changed` and
+`remote.device_added`; every other `remote.*` line (`disabled`, `code_issued`, `code_burned`, `device_removed`,
+`key_rotated`, `session_opened`, `session_closed`) is the host's record and can only reduce power. A `device_removed` line carries `reason` `owner`, `expired`, `key_rotated` or `member` (its person was removed or is no longer an owner); a device of a person who is not a current owner of the workspace never passes the stream gate, whatever the list says. A person line of this
+kind carries the §9.6 proof object under its own kind `remote.owner_proof` and label `orch/v2/sig/remote-owner-proof|`,
+made by the acting owner's `PK` (the backup key) over the exact event payload without `owner_proof`, bound to the
+workspace, the op (`remote.set` for `remote.changed`, `remote.device_confirm` for `remote.device_added`) and the host
+request, valid for at most 10 minutes, with the dev marker of §2.4. A hub proof never verifies for a remote step and a
+remote proof never for a hub step (kind, label and op set are all different). The model checks it for every such line
+it appends or replays, whatever its `auth` and whoever delivered it, against the roster's `PK` and the host-signed append
+time of the line; there is no hub-style place rule; instead the signed payload carries `remote_v`, the model's remote counter at that position, and the line applies only at exactly that value (every state-changing `remote.*` line raises it), the proof's `request_id` is single-use, and a `device_id` or `code_id` seen in any earlier `remote.device_added` is refused for ever. An old valid proof therefore cannot be replayed. No `remote.*` type is custodial (§8.5): a line
+with `auth: "hub"` is `not_custodial`. A full `hub.joined` (a switch to full, a leave and rejoin, another hub) turns
+remote access off in the model whatever the premises answer, and `remote.changed` with `premises: "yes"` while the hub
+mode is `full` is refused. The device fingerprint the owner confirms is `device_fp` below; the device and the owner
+show it as the same six words (§16 row 68).
+
 **What R0 leaves to the steps** (spec §11): the runtime link tables take these ops with their handlers in R2 (host)
 and R4 (hub) (until then `orch_hub.contract.hub.LINK_OPS` does not list them and the live hub answers `unknown_op`);
 the L7 replay store, both directions, comes in R1 before any stream is accepted.
+
+**Inside a session** (R3, #1591; spec §7.4, D88–D90; reference `app_frame_parse`, `AppStream`, `check_request_head`,
+`route_digest`; vectors `app_frame_*`, `app_seq_*`, `request_head_*`, `route_digest_*`, `presence_route_*`). After
+`opened`, every Noise transport plaintext of a session stream, in both directions, is exactly one **app frame**; the
+first transport message of each direction stays the JSON `open` / `opened` above (by position, never by sniffing). An
+enroll stream carries no app frames: anything the device sends after `enroll` is `malformed`.
+
+```
+app_frame = kind (1) || id (4, big-endian) || payload          5 … 65519 bytes (65535 − the 16-byte AEAD tag)
+```
+
+| kind | name | dir | id | payload |
+|---|---|---|---|---|
+| 1 | `HEAD` | d→h | new | cj request head `{"headers", "method", "path", "query"}`, ≤ 16384 bytes |
+| 1 | `HEAD` | h→d | open | cj response head `{"headers", "status"}`, ≤ 16384 bytes |
+| 2 | `BODY` | both | open | 1 … 65514 raw bytes |
+| 3 | `END` | both | open | empty: this direction of the exchange is complete |
+| 4 | `RESET` | both | open | ASCII reset code: `cancelled`, `timeout`, `too_large`, `remote.busy` |
+| 5 | `WS_OPEN` | d→h | new | cj `{"headers", "path", "query"}`, ≤ 16384 bytes |
+| 6 | `WS_TEXT` | both | open | 0 … 65514 bytes of UTF-8: one whole WebSocket text message |
+| 7 | `WS_BINARY` | both | open | 0 … 65514 bytes: one whole WebSocket binary message |
+| 8 | `WS_CLOSE` | both | open | exactly 2 bytes, big-endian close code: 1000–1003, 1007–1011 or 3000–4999 |
+| 9 | `PING` | both | 0 | empty |
+| 10 | `PONG` | both | 0 | empty, answers the other side's outstanding `PING` |
+
+Any other kind byte, a frame shorter than 5 or longer than 65519 bytes, a payload outside its row, `id` 0 on an exchange
+frame or a non-zero `id` on `PING`/`PONG` is `malformed`. A head is exact (its keys and no others) and is the
+canonical form of its own strict parse (`cj(loads_strict(p)) == p`), else `malformed`:
+
+- `method` is one of `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE`; `status` an integer, 101 or 200 … 599;
+- `path` (1 … 2048 bytes) is plain, as the dashboard's `clean_path`: starts with `/`, bytes 0x21–0x7E without `%`,
+  `\`, `;`, `?`, `#`, no empty, `.` or `..` segment; `query` (0 … 4096 bytes) the raw query string without `?`, bytes
+  `A–Z a–z 0–9 - . _ ~ ! $ & ' ( ) * + , ; = : @ % / ?`;
+- `headers` is a list of at most 64 `[name, value]` pairs, in order, duplicates allowed: `name` 1 … 64 bytes of
+  RFC 9110 `tchar` without upper case (`a–z`, `0–9` and ``!#$%&'*+-.^_`|~``), `value` 0 … 4096 bytes of 0x20–0x7E without
+  a leading or trailing space;
+- framing belongs to the frames, so these names are `malformed` in every head: `content-length`, `transfer-encoding`,
+  `connection`, `upgrade`, `keep-alive`, `te`, `trailer`, `proxy-connection`, `sec-websocket-key`,
+  `sec-websocket-version`, `sec-websocket-extensions`, `sec-websocket-accept`; in a request head and `WS_OPEN` also
+  `host` and `origin` (the terminator sets `Host: orch-remote` and no Origin; the remote client already enforced Origin
+  on its own loopback server, spec §6); in a response head also `set-cookie` (a stream credential never leaves the
+  dashboard process; the device closes the stream).
+
+**Outside bearers** (D89): a well-formed request head or `WS_OPEN` that carries `authorization`, `cookie`,
+`x-setup-token` or any `x-orch-` name is answered 400 with `remote.bearer` (an ordinary response; the stream
+stays): refused, never stripped (`check_request_head`, vectors `request_head_*`).
+
+**Exchanges and ordering.** The device opens every exchange with `HEAD` or `WS_OPEN` under an `id` greater than every id
+it used before on this stream (ids rise strictly from 1 to 2^32 − 1; a reused or lower id is `malformed`); the host
+never opens one. Per exchange and direction:
+
+- HTTP: device `HEAD`, `BODY`*, `END`; host `HEAD` (not 101; it may come before the request's `END`), `BODY`*, `END`.
+  The exchange ends when both directions sent `END`, or at a `RESET` from either side.
+- WebSocket: device `WS_OPEN`; host `HEAD` 101 (accepted) or a refusing status followed by `BODY`* and `END` (an
+  ordinary response, then the exchange ends). After 101 both sides send `WS_TEXT` / `WS_BINARY` until their own
+  `WS_CLOSE`; the exchange ends when both sent `WS_CLOSE`, or at a `RESET`. A message over 65514 bytes is not sent (the
+  sender closes its WebSocket 1009). No `END` on a WebSocket.
+- A frame for an id above the highest opened that is not an opener, a frame out of its state (a `BODY` before its
+  `HEAD`, anything after its direction's `END` or `WS_CLOSE`, a second response `HEAD`, 101 to an HTTP request, a
+  non-101 head followed by WebSocket frames, `WS_TEXT` before 101), or a `PONG` with no outstanding `PING` (or a
+  second `PING` before its `PONG`) is `malformed`. A frame for an exchange that already ended (an id at or below the
+  highest, no longer open) is **dropped** silently: the peer may have sent it before it saw a `RESET`.
+- A request body is complete only at its `END`. A stream closed (`stream_close`, or any other end) before a request's
+  `END` means the client disconnected: the route never acts on a partial request. The device treats a response without
+  its `END` as failed.
+- Order is the Noise nonce order (per direction, from the first transport message) and so the link's `seq`; app frames
+  carry no counter of their own, and a lost, repeated or reordered message has already closed the stream (§10.2c
+  transport rule).
+
+**Limits** (the receiver resets the one exchange; the stream stays): at most 8 open HTTP exchanges and 2 open WebSockets
+per stream (one more is `RESET remote.busy` at once); a request body (the sum of its `BODY` frames) over 1 MiB is `RESET
+too_large` (a route may set a lower limit and answer 413); a request without its `END` 60 s after its `HEAD` is `RESET
+timeout`. A response body has no size limit (event streams), but every frame is charged on the outbound byte budget and
+the terminator holds at most 64 unsent frames per stream: a device that stops reading closes the stream `remote.busy`.
+Owed R3 adapter test: `stream_closed_before_request_end_never_dispatches_body`. A frame error is a stream error: the receiver closes the stream `malformed` (host: `stream_close`; device: through its
+hub). There is no in-session close frame: a session ends with the link's `stream_close`.
+
+**Timeouts** (host terminator): handshake 60 s from `stream_open` to `open`; stream life 12 h (`expired`); 2 h with no
+accepted (`ok`) inbound device frame other than `PING`/`PONG` (`idle`; keepalives never keep a session alive, and
+dropped frames do not count). A remote-device `/term`
+WebSocket closes 1000 after 10 min with no inbound `WS_TEXT`/`WS_BINARY` from the device.
+
+**How a request is bound to its stream** (D89). The host reads only the kind byte and the id of each frame (it counts
+exchanges and stamps identity); it hands each frame to the dashboard's in-process adapter together with the stream id,
+and on every `HEAD`/`WS_OPEN` it adds `{workspace_id, device_id, person, level}` computed from its model at that moment
+(remote on, device listed for a current owner, level = min(device cap, policy level); any failure closes the stream
+`revoked` / `remote.off` and the request is never forwarded). The adapter answers on the same stream and id only, and refuses with 404 any request path whose `{ws}` segment is
+not the stream's `workspace_id` (owed R3 runtime test `remote_device_other_workspace_path_refused`).
+Nothing in a frame (header, query, body, token) names or changes the identity; a credential the dashboard mints inside
+a stream is bound to its stream id.
+
+**Presence for a route, `route_digest`** (D88, D90 `presence` rows). For a presence route (an agent start, each
+terminal open and each attach, …) the action's `view_digest` is
+
+```
+route = "orch/v2/remote-route|" || workspace_id (16) || u8 len(method) || method || u16 len(template) || template
+        || u16 len(path) || path || u16 len(query) || query || SHA-256(body) (32)
+route_digest = SHA-256(route)                                         (lengths big-endian)
+```
+
+`method` as in the head, or `WEBSOCKET` for a `WS_OPEN`; `template` (1 … 1024 bytes, 0x21–0x7E) the dashboard's route
+template that matched (for example `/api/w/{ws}/runs/{run}/attach`); `path` and `query` exactly as in the head; `body`
+the whole request body (empty for a WebSocket). The concrete path and body are covered, so a batch that lists the attach
+to one run never authorizes the attach to another. A signed op's `view_digest` stays the signer's
+`SHA-256(cj(view))`, with `view` the review view whose checks' `at` times are removed (`click/view.py` `digest`): its input starts with `{`, a route's with the label, so no route digest is an op digest. Both kinds
+may share one batch (`presence_bytes` above binds the batch to `hh`, so a batch is never valid on another stream).
+Flow: the request without a covering batch is answered `428` with the dashboard's error envelope
+`{"ok": false, "error": {"code": "remote.presence_required", "message", "view_digest": "sha256:<hex>", "template"}}`
+(the digest and the template are read from `error`); the remote client recomputes the digest from the request it sent and that template (and
+refuses to prompt on a mismatch), asks the dashboard for a nonce (`remote/presence/nonce`), draws the prompt naming
+the workspace and the actions, posts the presence (`remote/presence`) and retries; each digest of a verified batch
+authorizes one request (it is taken when used).
 
 ### 10.3 Routing (`route_out`, `route_in`; phase 3, V3-D8)
 
@@ -3086,7 +3256,7 @@ handshake hash, split keys, the first transport message each way, plain and seal
 `custodial_cannot`, and `required` naming the cases an implementation must not lose (replays into another stream,
 workspace or device; early data; a flipped byte; UP-only FIDO2; tampered and rolled-back device lists; `stream_open`
 w2h; the gate while off; every "no custodial type can" item). The hub replays every case against its reference
-(`tests/test_remote_vectors.py`, which also rebuilds the file byte for byte); **orch-core replays every case** with an
+(`tests/test_remote_vectors.py`, which also rebuilds the file byte for byte; R4: every `stream_link` case carries the connection's `exporter` (hex, `ids.link_exporter_hex`) and a stream frame signed in the pre-R1 form `label || cj(o)` is `bad_signature`, with no fallback); **orch-core replays every case** with an
 independent test-side port (`tests/host/test_remote_vectors.py`, `tests/host/remote_port.py`) and the custodial cases
 against its real `check_custodial_role` and `check_custodial_payload`; R2–R5 replay them against the real paths. The
 Noise of the reference was cross-checked once against the `noiseprotocol` package (both directions, byte-equal
@@ -3204,6 +3374,16 @@ transport in the action).
 | 56 | Device ids (R0) | `rd_` + 32 hex (codes `rc_`), so no hub `device.excluded` (`d_`) can name a remote device | D93 "touch the devices" |
 | 57 | Device list (R0) | `remote.device_list`, `hv: 0`, a rising `version` (rollback refused), `name` added for the session list, `presence_kind` added; the sign counter kept beside it | spec §5, D91 |
 | 58 | Remote labels (R0) | their own table (like the backup labels), so `vectors_hub.json` stays unchanged | §3 |
+| 59-60 | (not used) | R2's two rows became 67 and 68 because R3's contract merged first | |
+| 61 | In-session app frames (R3) | one Noise transport plaintext = one frame `kind (1) ‖ id (4) ‖ payload`, ten kinds; heads as cj JSON (parsed only by the dashboard's adapter, the host reads kind and id); no in-session close frame (the link's `stream_close`) | spec §7.4, D89; R3 design §2 |
+| 62 | Exchange ids (R3) | chosen by the device, strictly rising per stream (not merely unique while open), so a late frame of an ended exchange is told from a new one with one integer; such late frames are dropped, every other state error is `malformed` | a `RESET` and a frame cross on the wire |
+| 63 | Ordering and counters (R3) | no app-level counter: the Noise nonce and the link `seq` already order and number every frame per direction | §10.2c transport rule |
+| 64 | Heads (R3) | exact keys, canonical; framing and WebSocket handshake headers `malformed`; `host`/`origin` from the device `malformed` (the terminator sets Host `orch-remote`, no Origin); `set-cookie` never to the device; outside bearers `400 remote.bearer` (refused, never stripped) | D89; the design's "replaced" Host/Origin made strict |
+| 65 | Exchange limits (R3) | 8 HTTP, 2 WebSockets open per stream (`RESET remote.busy`), request body 1 MiB (`RESET too_large`), 60 s to the request `END` (`RESET timeout`), a WebSocket message fits one frame (else 1009); only accepted (`ok`) device frames other than `PING`/`PONG` reset the 2 h idle timer (dropped frames and keepalives do not); a request body is complete only at its `END` (a stream closed before it never dispatches a partial request) | D88 terminal idle, D91 |
+| 66 | `route_digest` (R3) | label `orch/v2/remote-route\|`, length-prefixed method, template, concrete path and query, then `SHA-256(body)`; covers the concrete target; the adapter 404s a path whose `{ws}` is not the stream's workspace (the design's template-only form would let one confirmed attach authorize every run) | D88 "fixed list" |
+| 67 | Remote owner proof (R2) | the §9.6 proof object under its own kind `remote.owner_proof` and its own label `orch/v2/sig/remote-owner-proof\|`, ops `remote.set` and `remote.device_confirm`; signed payload includes `remote_v` (the replay counter), single-use `request_id`; core only | spec D84, D93; a hub proof can never stand in for a remote one or the reverse |
+| 68 | Remote code text and fingerprint words (R2) | the code text is `orch-rc1.<workspace_id>.<b64u(code_id raw 16 ‖ secret 16 ‖ wrk_fp 16)>.<b64u(WRK_pub, 32)>`; the owner and the device show `device_fp` as the first 66 bits, six BIP-39 English words of 11 bits each (the all-zero fingerprint is `abandon` six times) | spec §5 "fingerprint", R5 renders and parses the same |
+| 69 | Dedicated stream link (R4) | ALPN `orch-link-streams/1` marks a host's stream link; the hub attaches it to the stream router only and accepts on it stream frames, `stream_open` replies and the `hub_where` keepalive (120 s; hub idle drop 300 s); plain links never carry or replace streams; the link exists while remote is on or a code is outstanding, in both modes, so an opted-out selective workspace answers a client `not_allowed` (no link) | spec D85 (the hub sees when remote is on), §7.1, §9 |
 
 ## 17. Hub backup (M4, #1462; design `m4-settings-design.md` 4.2-4.3 and the Opus conditions 9-17)
 

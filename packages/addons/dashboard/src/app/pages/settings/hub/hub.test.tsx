@@ -150,6 +150,19 @@ describe('leaving (A3.5 / A3.6)', () => {
   })
 })
 
+describe('the hub admin asks for an update (HUB-WS-04)', () => {
+  it('shows a plain notice with the version and the human-only way, and none without a request', async () => {
+    hubPage('update', '/w/DEMO')
+    const banner = await screen.findByTestId('hub-update-banner', {}, T)
+    expect(within(banner).getByText('Your hub admin asks you to update orch to 0.2.0')).toBeTruthy()
+    expect(within(banner).getByText('orch update')).toBeTruthy()
+    cleanup()
+    hubPage('full', '/w/DEMO')
+    await screen.findByTestId('hub-chip', {}, T)
+    expect(screen.queryByTestId('hub-update-banner')).toBeNull()
+  })
+})
+
 describe('stopping sharing one ticket', () => {
   it('reviews what stops and offers one Stop sharing button: no terminal command, no typed word, no backup key', async () => {
     const view = hubPage('selective')
@@ -319,12 +332,12 @@ describe('by click (#1198 C11)', () => {
     await pasteLink()
     expect((await screen.findByTestId('hub-link-hub', {}, T)).textContent).toContain('10.0.0.5:8106')
     expect(screen.getByTestId('hub-link-hub').textContent).not.toContain('9f3c')
-    // The hub id is behind the i: hidden by default, there on press.
-    expect(screen.queryByText('9f3c1ab277de40c8aa11bb22cc33dd44')).toBeNull()
-    await view.user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'More information' }))
-    expect(within(await screen.findByTestId('info-drawer-content', {}, T)).getByText('9f3c1ab277de40c8aa11bb22cc33dd44')).toBeTruthy()
-    await view.user.keyboard('{Escape}')
-    await waitFor(() => expect(screen.queryByTestId('info-drawer-content')).toBeNull(), T)
+    // The hub id is behind Details: hidden by default, there on press.
+    expect(screen.getByTestId('hub-link-details').textContent).not.toContain('9f3c1ab277de40c8aa11bb22cc33dd44')
+    await view.user.click(within(screen.getByTestId('hub-link-details')).getByText('Details'))
+    expect(screen.getByTestId('hub-link-details').textContent).toContain('9f3c1ab277de40c8aa11bb22cc33dd44')
+    await view.user.click(within(screen.getByTestId('hub-link-details')).getByText('Details'))
+    await waitFor(() => expect(screen.getByTestId('hub-link-details').textContent).not.toContain('9f3c1ab277de40c8aa11bb22cc33dd44'), T)
     expect(screen.getByTestId('hub-link-hub').textContent).not.toContain('Only what I choose')
     expect(screen.queryByText(/Notes that need your attention and full questions are always shared/)).toBeNull() // the long mode text is behind the i of the mode choice
     expect(screen.queryByText(/Review it here/)).toBeNull()

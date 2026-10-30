@@ -209,7 +209,7 @@ const CASES: Case[] = [
     path: '/ticket/DEMO-0041',
     open: async (user) => {
       const dialog = await ticketAction(user, /Give verdict/)
-      expect(dialog).toHaveAccessibleName('Give verdict (Verify)')
+      expect(dialog).toHaveAccessibleName('Give verdict')
       await user.click(within(dialog).getByRole('radio', { name: /^Pass on / }))
       return dialog
     },
@@ -740,7 +740,7 @@ describe('start agent', () => {
     expect(panel.textContent).toContain(DEPOSIT_LINE)
     expect(panel.textContent).toContain(DEPOSIT_RISK)
     expect(within(panel).queryByRole('textbox')).toBeNull() // nothing is typed
-    expect(within(panel).getByTestId('access-length')).toHaveTextContent('Let agents work for you for 8 h.')
+    expect(within(panel).getByTestId('access-length')).toHaveTextContent('Agents (Claude Code) may work for you for 8 h.')
     expect(screen.getByRole('button', { name: extend ? 'Sign and extend' : 'Sign and start agent' })).toBeDisabled() // until armed
     expect(prepare.mock.calls[0][1]).toEqual({ action: 'runner_grant', hours: 8, scope: 'workable', ...(extend ? { extend: 'gr_old' } : {}) })
     vi.restoreAllMocks()

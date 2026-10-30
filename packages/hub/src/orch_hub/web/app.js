@@ -12,14 +12,16 @@ import { activityView } from "./activity.js";
 import { accountFromWorkspaceView, accountView } from "./account.js";
 import { adminView } from "./admin.js";
 import { changesView, checkChange, sentence as changeSentence } from "./changes.js";
-import { totpPanel } from "./totp.js";
+import { KEY_GONE_NOTE, totpPanel } from "./totp.js";
 import { inviteView } from "./invite.js";
+import { INVITE_WORDS, KEY_WORDS, WELCOME, WHY as COMPANY_WHY, accountCard as companyAccountCard, begin as beginCompany, finishCallback, signInButton as companyButton } from "./oidc.js";
 import { rememberDashboard, rememberName } from "./connect.js";
 import { servicesView } from "./services.js";
+import { VERBS, checkServiceAction, resultWords, needsConfirm, hubStopConfirm, logsDialog } from "./service_actions.js";
 import { handoffsView } from "./handoffs.js";
 import { phonesView } from "./phones.js";
-import { workspacesView, workspaceDetailsView, newWorkspaces } from "./workspaces.js";
-import { OPEN_FIRST, colour, initials, landing, landingPlan, railRows, safeUrl } from "./switch.js";
+import { workspacesView, workspaceDetailsView, newWorkspaces, privateRows } from "./workspaces.js";
+import { OPEN_FIRST, colour, initials, landing, landingPlan, openingState, railRows, safeUrl } from "./switch.js";
 import { Refusal, grantTermsOk, grantSentence, grantFacts, addonFacts, addonTermsOk, settingsFacts, settingsTermsOk, checkBindings, checkPrepared, describe, renderMulti, renderText, shortHash, verifyQuestion, DECISIONS } from "./render.js";
 
 const root = document.getElementById("app");
@@ -73,7 +75,7 @@ async function api(method, path, body) {
 }
 const WORDS = {
   no_session: "Your sign-in ended. Sign in again.",
-  bad_credentials: "Wrong user id, password or code. A code works once; wait for the next one.",
+  bad_credentials: "Wrong name, password or code. A code works once; wait for the next one.",
   rate_limited: "Too many tries. Wait a moment.",
   event_changed: "The request changed while you were deciding.",
   prepared_expired: "Time ran out.",
@@ -83,6 +85,13 @@ const WORDS = {
   forbidden_role: "Your role does not allow this.",
   too_many_channels: "You have the maximum number of devices. Remove one first.",
   bad_channel_proof: "The signature was not accepted.",
+  busy: "Another action is running. Try again in a moment.",
+  helper_unavailable: "The service helper does not answer. Ask your IT person to start it on the server.",
+  not_set_up: "The service helper is not set up on this server.",
+  unknown_part: "This service is not managed from here.",
+  bad_action: "That action is not allowed.",
+  update_unavailable: "Updates from here need signed releases, which do not exist yet.",
+  action_failed: "The server refused the command.",
   malformed: "The answer could not be read safely.",
   unavailable: "The hub cannot be reached.",
   bad_ticket: "This link expired. Go back and click again.",
@@ -97,9 +106,13 @@ const WORDS = {
   self_disable: "You cannot disable yourself.",
   conflict: "That is not possible in the person's current state.",
   bad_invite: "This link does not work. It may have been used already or it has expired.",
+  wrong_mode: "None of these workspaces can start the space yet. Pick one that is ready, or ask an owner to accept first.",
+  unknown_workspace: "One of these workspaces is no longer connected. Reload the page and pick again.",
+  exists: "That workspace is already in this space.",
+  not_accepted: "Its owner has to accept first. Nothing was changed.",
   proof_required: "Open this link in a browser where you already approve, or ask your admin for a recovery link.",
 };
-const say = (code) => WORDS[code] ?? "Refused (" + renderText(code) + ").";
+const say = (code) => WORDS[code] ?? "That did not work. Please try again.";
 
 // --- views -------------------------------------------------------------------------------------------------------------
 function loginView(err) {
@@ -116,7 +129,12 @@ function loginView(err) {
       await afterLogin();
     },
   }, field("Your name", id), field("Password", pw), field("6-digit code", code), h("div", { class: "row top" }, h("button", { class: "pri", type: "submit", text: "Sign in" })));
-  show(h("h1", { text: "Sign in to your hub" }), err ? banner("bad", "Not signed in", err) : null, form);
+  show(h("h1", { text: "Sign in to your hub" }), err ? banner("bad", "Not signed in", err) : null, h("div", { id: "company-slot" }), form);
+  void api("GET", "/oidc/options").then((o) => { // company login (HUB-PE-04): a button only when the admin turned it on
+    const btn = o.status === 200 ? companyButton(o.body, async () => { const r = await beginCompany(api, "signin"); if (!r.ok) loginView(COMPANY_WHY[r.error] ?? say(r.error)); }) : null;
+    const slot = document.getElementById("company-slot");
+    if (btn && slot) slot.append(btn);
+  });
 }
 
 // First admin (prototype): the installer's one-time link opens this page; the hub shows the authenticator QR once and signs the new admin in.
@@ -126,17 +144,20 @@ function setupView(token, err) {
   const form = h("form", {
     onsubmit: async (ev) => {
       ev.preventDefault();
-      const r = await api("POST", "/setup", { token, name: name.value.trim(), password: pw.value });
+      const typedName = name.value.trim();
+      const r = await api("POST", "/setup", { token, name: typedName, password: pw.value });
       pw.value = "";
       if (r.status !== 200) return setupView(token, r.body.error === "bad_credentials" ? "This setup link was already used or is wrong." : say(r.body.error));
       history.replaceState(null, "", location.pathname);
       show(
         h("h1", { text: "Admin created" }),
         banner("ok", "You are signed in"),
+        h("dl", { class: "facts" }, h("dt", { text: "Your name for signing in" }), h("dd", { id: "setup-name", text: renderText(r.body.name ?? typedName) })),
         h("h2", { text: "Add your sign-in code to your phone" }),
-        h("p", { class: "muted", text: "Scan this with your authenticator app. You will need the app's 6-digit code each time you sign in." }),
+        h("p", { class: "muted", text: "Scan this with your authenticator app. You will need the app's 6-digit code each time you sign in, together with your name and password." }),
         totpPanel(r.body.totp_uri, r.body.totp_secret),
-        h("div", { class: "row top" }, h("button", { class: "pri", id: "open-hub", text: "Open the hub", onclick: () => afterLogin() })),
+        h("p", { class: "small muted top", id: "key-gone", text: KEY_GONE_NOTE }),
+        h("div", { class: "row top" }, h("button", { class: "pri", id: "open-hub", text: "I've added it, open the hub", onclick: () => afterLogin() })),
       );
     },
   }, field("Your name", name), field("Choose a password (10 or more characters)", pw), h("div", { class: "row top" }, h("button", { class: "pri", type: "submit", text: "Create the admin" })));
@@ -173,20 +194,23 @@ function shell(active, ...nodes) {
   const tab = (id, label, cls) => h("a", { href: "#/" + id, "data-tab": id, class: cls + (active === id ? " on" : ""), "aria-current": active === id ? "page" : null, text: label, onclick: (e) => { e.preventDefault(); navigate("#/" + id); } });
   // The section tabs: orch's own, with every page module of pages/ slotted in after the tab it names (PAGES is generated
   // from the folder by the server; nothing here lists a page).
-  const items = [["home", "Home"], ["approvals", "Approvals"], ["workspaces", "Workspaces"], ["phones", "Phones"], ["handoffs", "Hand-offs"], ["account", "Account"], ["services", "Services", true], ["activity", "Activity", true], ["admin", "Admin", true]].map(([id, label, admin]) => ({ id, label, admin: !!admin }));
+  // P14: an empty hub shows only what is useful; the entries marked `later` appear once a workspace is connected (routes still open by URL).
+  const items = [["home", "Home"], ["approvals", "Approvals", false, true], ["workspaces", "Workspaces"], ["phones", "Phones"], ["handoffs", "Hand-offs", false, true], ["account", "Account"], ["services", "Services", true, true], ["activity", "Activity", true, true], ["admin", "Admin", true]].map(([id, label, admin, later]) => ({ id, label, admin: !!admin, later: !!later }));
   for (let todo = [...PAGES].sort((x, y) => (x.path < y.path ? -1 : 1)), moved = true; todo.length && moved;) {
     moved = false;
     for (const pg of [...todo]) {
       const at = items.findIndex((t) => t.id === pg.nav.after);
       if (at < 0) continue;
-      items.splice(at + 1, 0, { id: pg.path, label: pg.nav.label, admin: pg.nav.admin });
+      items.splice(at + 1, 0, { id: pg.path, label: pg.nav.label, admin: pg.nav.admin, later: !!pg.nav.needsWorkspace });
       todo.splice(todo.indexOf(pg), 1); moved = true;
     }
   }
-  for (const pg of PAGES) if (!items.some((t) => t.id === pg.path)) items.push({ id: pg.path, label: pg.nav.label, admin: pg.nav.admin }); // an unresolved nav.after is still reachable (pages.test.mjs fails on it)
-  const tabs = (cls) => items.filter((t) => !t.admin || state.user?.is_admin).map((t) => tab(t.id, t.label, cls));
+  for (const pg of PAGES) if (!items.some((t) => t.id === pg.path)) items.push({ id: pg.path, label: pg.nav.label, admin: pg.nav.admin, later: !!pg.nav.needsWorkspace }); // an unresolved nav.after is still reachable (pages.test.mjs fails on it)
+  const empty = state.rail.ready === true && !state.rail.rows.length; // a rail that could not be read hides nothing
+  const tabs = (cls) => items.filter((t) => (!t.admin || state.user?.is_admin) && !(t.later && empty)).map((t) => tab(t.id, t.label, cls));
   const name = renderText(state.user?.name ?? "");
   const hubName = renderText(state.rail.hubName);
+  const topNav = h("nav", { class: "navtabs top-nav", "aria-label": "Sections" }, ...tabs("nav"));
   const side = h("aside", { class: "side", "aria-label": "Hub" },
     h("div", { class: "logo" }, h("i"), h("span", { text: "orch" })),
     h("div", { class: "hubbox" }, h("span", { text: hubName })),
@@ -194,7 +218,7 @@ function shell(active, ...nodes) {
     h("div", { class: "sp" }), h("div", { class: "who" }, h("span", { text: name })));
   if (!frame) {
     const top = h("header", { class: "topbar" }, h("span", { class: "t breadcrumb", text: hubName }),
-      h("nav", { class: "navtabs top-nav", "aria-label": "Sections" }, ...tabs("nav")),
+      topNav,
       h("span", { class: "grow" }), h("button", { text: "Search ⌘K", onclick: () => openSearch() }), h("button", { text: "?", "aria-label": "Keyboard shortcuts", onclick: () => openShortcuts() }), h("span", { class: "small muted", text: name }), signOutMenu());
     show(h("div", { class: "app" }, railView(), side, h("div", { class: "main" }, top, h("div", { class: "content", id: "main-content", tabindex: "-1" }, nodes.flat(2)))));
     root.classList.add("shelled");
@@ -205,6 +229,7 @@ function shell(active, ...nodes) {
     replaceContent(frame.querySelector(".content"), nodes.flat(2).filter(Boolean), sameRoute);
     if (railSnapshot !== JSON.stringify(state.rail)) {
       frame.querySelector(".rail").replaceChildren(...railView().childNodes);
+      frame.querySelector(".top-nav")?.replaceWith(topNav);
       railSnapshot = JSON.stringify(state.rail);
     }
   }
@@ -261,11 +286,14 @@ async function loadRail() {
   if (r.status !== 200) r = await api("GET", "/me/workspaces"); // older hub without the rail: the plain list, nothing openable
   if (!user || state.user !== user) return;
   state.rail.rows = r.status === 200 ? railRows(r.body) : [];
+  state.rail.ready = r.status === 200;
   const n = r.status === 200 ? r.body.hub?.name : null;
   state.rail.hubName = typeof n === "string" && n ? n : "Hub";
 }
 
 async function openWorkspace(w) {
+  const o = openingState(w.name); // at once, before the request and the navigation: the same dark page, no white frame
+  plain(h("div", { class: "opening", role: "status" }, h("b", { text: o.title }), h("span", { class: "muted", text: o.note })));
   const r = await api("POST", "/switch/ticket", { workspace_id: w.id, return_to: "/", kind: "open" });
   const url = r.status === 200 ? safeUrl(r.body.url) : null;
   if (!url) { state.notice = banner("bad", "Cannot open " + renderText(w.name), say(r.status === 200 ? "malformed" : r.body.error)); return home(); }
@@ -427,12 +455,16 @@ async function workspaces(joined = [], known = null) {
       await loadRail();
       const [ws, ho, admin] = await Promise.all([api("GET", "/me/workspaces"), api("GET", "/me/handoffs"), canAdmin() ? api("GET", "/admin/workspaces") : Promise.resolve({ status: 0, body: {} })]);
       const adminRows = admin.status === 200 ? admin.body.workspaces ?? [] : null;
+      // P08: after a restore, an admin sees the same short "Restored" note here until they dismiss it.
+      const bk = canAdmin() ? await api("GET", "/admin/backup") : { status: 0, body: {} };
+      const restored = bk.status === 200 ? bk.body.restored ?? null : null;
       const hub = ws.body?.hub;
       const peopleNames = new Map();
       let pageRev = -1; // r11 P12: the Connect panel's people watch runs only while this drawing of the page is current
       const actions = {
         alive: () => pageRev === viewRevision,
         open: (w) => { closeDialog(); return openWorkspace({ id: w.workspace_id, name: w.name ?? "Workspace" }); },
+        dismissRestored: async () => { await api("POST", "/admin/backup/restored/dismiss", {}); await workspaces(); },
         copy: copyText,
         openLink: (link) => { window.open(link, "_blank", "noopener"); },
         signInToConnect: signInToAddWorkspace,
@@ -458,6 +490,11 @@ async function workspaces(joined = [], known = null) {
           if (ownerUser) rememberName(ownerUser, peopleNames.get(ownerUser)); // the /c page says whose workspace (display only)
           return r.body;
         },
+        askUpdate: async () => { // HUB-WS-04: the owners of older workspaces are asked (the request carries only the version)
+          const r = await api("POST", "/admin/workspaces/update-request", {});
+          if (r.status < 200 || r.status >= 300) throw new Error("ask failed");
+          return r.body;
+        },
         remove: async (w) => {
           const r = await api("DELETE", "/admin/workspaces/" + encodeURIComponent(w.workspace_id));
           if (r.status < 200 || r.status >= 300) throw new Error("remove failed");
@@ -471,12 +508,13 @@ async function workspaces(joined = [], known = null) {
         },
       };
       const rows = ws.status === 200 ? ws.body.workspaces ?? [] : [];
-      shell("workspaces", workspacesView({ workspaces: rows, handoffs: ho.status === 200 ? ho.body.handoffs ?? [] : [], admin: adminRows, hub, actions, joined, self: state.user.user_id,
+      shell("workspaces", workspacesView({ workspaces: rows, handoffs: ho.status === 200 ? ho.body.handoffs ?? [] : [], admin: adminRows, restored, hub, actions, joined, self: state.user.user_id,
         canConnect: !!state.user.is_admin, needsSignIn: !!state.user.needs_sign_in }));
       // Watch for joins while this page is open (3 s, paused while the tab is hidden, stopped by leaving the route).
       clearInterval(workspacesTimer);
       // Diff only against a successful first read: a failed one must not make every workspace look newly joined.
-      let seen = known ?? (ws.status === 200 ? new Set(rows.map((w) => w.workspace_id)) : null);
+      // For an admin the set includes the private workspaces that only the admin list shows (selective mode).
+      let seen = known ?? (ws.status === 200 ? new Set([...rows, ...privateRows(rows, adminRows)].map((w) => w.workspace_id)) : null);
       const mine = ++viewRevision;
       pageRev = mine;
       let checking = false;
@@ -484,10 +522,13 @@ async function workspaces(joined = [], known = null) {
         if (document.hidden || checking || mine !== viewRevision) return;
         checking = true;
         try {
-          const r = await api("GET", "/me/workspaces");
+          const [r, ar] = await Promise.all([api("GET", "/me/workspaces"), canAdmin() ? api("GET", "/admin/workspaces") : Promise.resolve(null)]);
           if (mine !== viewRevision || r.status !== 200) return;
           if (seen === null) return void (await workspaces([], null)); // the first good read: draw it, nothing is "joined"
-          const fresh = newWorkspaces(seen, r.body.workspaces);
+          // A failed admin read falls back to /me/workspaces only: it never marks anything as joined.
+          const now = r.body.workspaces ?? [];
+          const merged = [...now, ...privateRows(now, ar?.status === 200 ? ar.body.workspaces ?? [] : null)];
+          const fresh = newWorkspaces(seen, merged);
           if (!fresh.length) return;
           for (const w of fresh) seen.add(w.workspace_id);
           void pollLive();
@@ -555,7 +596,7 @@ async function services(silent = false) {
     if (revision !== viewRevision) return;
     if (r.status === 403 && r.body.error === "reauth_required") return reauthView();
     if (r.status !== 200) return shell("services", h("h1", { text: "Services" }), banner("bad", "Cannot read the services", say(r.body.error)));
-    shell("services", servicesView({ ...r.body, workspaces_list: ws.status === 200 ? ws.body.workspaces : undefined }, { check: () => services(), open: () => navigate("#/workspaces"), copy: copyText }));
+    shell("services", servicesView({ ...r.body, workspaces_list: ws.status === 200 ? ws.body.workspaces : undefined }, { check: () => services(), open: () => navigate("#/workspaces"), copy: copyText, service: serviceAction, logs: openLogs }));
     clearInterval(servicesTimer);
     let checking = false;
     servicesTimer = setInterval(async () => {
@@ -587,7 +628,12 @@ async function account() {
       copy: copyText,
       signInAgain: async () => { await api("DELETE", "/session"); clearSession(); loginView(); },
     };
-    shell("account", state.notice, accountView({ user: state.user, channels: r.body.channels, thisBrowserId: state.me?.channelId, needsSignIn: !!state.user.needs_sign_in }, { remove: removeChannel, security }));
+    const me = await api("GET", "/oidc/me");
+    const company = me.status === 200 ? companyAccountCard(me.body, {
+      link: (c) => beginCompany(api, "link", c),
+      unlink: async () => { const x = await api("DELETE", "/oidc/link"); if (x.status === 200) void account(); return x; },
+    }) : null;
+    shell("account", state.notice, accountView({ user: state.user, channels: r.body.channels, thisBrowserId: state.me?.channelId, needsSignIn: !!state.user.needs_sign_in }, { remove: removeChannel, security }), company);
     state.notice = null;
   } finally { finishLoading(); }
 }
@@ -598,7 +644,18 @@ async function approvals(filter = {}) {
   const [ws, needs, chg] = await Promise.all([api("GET", "/me/workspaces"), api("GET", "/me/needs-you"), api("GET", "/me/changes")]);
   if (ws.status !== 200 || needs.status !== 200) return shell("approvals", banner("bad", "Cannot read approvals", "Please try again."));
   const changes = chg.status === 200 ? changesView(chg.body, { approve: approveChange, reject: rejectChange, canSign: !!state.me }, Date.now()) : [];
-  shell("approvals", changes, inboxView({ ...needs.body, workspaces: ws.body.workspaces, channels: state.channels, filter }, { review: reviewItem, open: openWorkspace, filter: approvals }));
+  shell("approvals", changes, inboxView({ ...needs.body, workspaces: ws.body.workspaces, channels: state.channels, filter }, { review: reviewItem, open: openWorkspace, filter: approvals, askPhone }));
+}
+
+// The phone does the review and the signing; this only sends a hint (no action, no text). The list refreshes on its own
+// when the item is gone.
+async function askPhone(it) {
+  const r = await api("POST", "/workspaces/" + encodeURIComponent(it.workspace_id) + "/items/" + encodeURIComponent(it.item_id) + "/ask-phone", {});
+  state.notice = r.status === 200 && r.body.asked > 0 ? banner("ok", "Sent to your phone", "Open it on your phone, check what you are signing and confirm with Face ID.")
+    : r.status === 200 ? banner("warn", "No phone to ask", "Pair a phone first: Phones & browsers.")
+    : r.status === 429 ? banner("warn", "Already sent", "Give it a few seconds.")
+    : banner("bad", "Could not ask your phone", "Reload the list and try again.");
+  return approvals();
 }
 
 // An access change that waits for me as the workspace owner: prepare, check the digest here, sign with this browser's key.
@@ -643,6 +700,79 @@ async function approveChange(change, ap) {
     h("details", {}, h("summary", { text: "What exactly is signed" }), factsList([["Change", change.id], ["Workspace", ap.workspace_id], ["Access version it was based on", String(r.body.ctx.base_snapshot_version)], ["Lapses on", new Date(change.expires_ms).toLocaleString()]])),
     h("div", { class: "row" }, h("button", { text: "Cancel", onclick: done }), sign));
   sign.arm();
+}
+// Start, stop or restart a part: the helper makes the request, this page checks the digest, the admin signs with this browser's key.
+const svcPath = (name, tail) => "/admin/services/" + encodeURIComponent(name) + tail;
+function serviceFailed(code, detail) {
+  dialog(banner("bad", "Nothing was changed", say(code) + (detail ? " (" + renderText(detail) + ")" : "")), h("div", { class: "row" }, h("button", { text: "Close", onclick: closeDialog })));
+}
+async function serviceAction(name, verb, confirmed = false) {
+  if (needsConfirm(name, verb) && !confirmed) { // a second plain click (no typed word) before the hub stops itself
+    dialog(...hubStopConfirm({ onCancel: closeDialog, onYes: () => { closeDialog(); void serviceAction(name, verb, true); } }));
+    return;
+  }
+  if (!state.me) { state.notice = banner("warn", "Register this browser first", null); return home(); }
+  const me = state.me;
+  const r = await api("POST", svcPath(name, "/prepare"), { action: verb, channel_id: me.channelId });
+  if (r.status === 401) return loginView(say("no_session"));
+  if (r.status !== 200) return serviceFailed(r.body.error);
+  let digest;
+  try { digest = await checkServiceAction(r.body, { part: name, action: verb, userId: state.user.user_id, channelId: me.channelId }); } catch (e) { return serviceFailed(e.message === "event_changed" ? "event_changed" : "malformed"); }
+  const sign = h("button", { class: verb === "stop" ? "dan" : "pri", id: "sign", "data-sign": "", disabled: true, text: "Please review…" });
+  const label = VERBS[verb] + " " + (r.body.text.match(/^\w+ (\w+)/)?.[1] ?? name);
+  sign.arm = () => arm(sign, label);
+  const onVis = () => sign.arm();
+  document.addEventListener("visibilitychange", onVis);
+  window.addEventListener("focus", onVis);
+  const done = () => { document.removeEventListener("visibilitychange", onVis); window.removeEventListener("focus", onVis); closeDialog(); };
+  sign.addEventListener("click", async (ev) => {
+    if (!ev.isTrusted || sign.disabled || offline || sign.getAttribute("aria-busy") === "true") return;
+    sign.disabled = true;
+    sign.setAttribute("aria-busy", "true");
+    try {
+      const proof = await signProof(me.pair.privateKey, digest);
+      const a = await api("POST", svcPath(name, "/run"), { channel_id: me.channelId, nonce: r.body.ctx.nonce, proof });
+      done();
+      if (a.status !== 200) {
+        if (a.body.error === "channel_revoked") await deleteChannel().catch(() => {});
+        return serviceFailed(a.body.error, a.body.error === "action_failed" ? a.body.detail : undefined);
+      }
+      if (a.body.will_restart) return waitForHub(verb);
+      toast(renderText(r.body.ctx.part) + " " + resultWords[verb]);
+      await services(true);
+    } catch {
+      done();
+      serviceFailed("unavailable");
+    }
+  });
+  dialog(h("h1", { text: VERBS[verb] + " " + (r.body.text.match(/^\w+ (\w+)/)?.[1] ?? name) + "?" }),
+    h("p", { class: "sentence", text: r.body.text }),
+    h("p", { class: "small muted", text: "The hub signs this with this browser's key. Nothing else is changed." }),
+    h("div", { class: "row" }, h("button", { text: "Cancel", onclick: done }), sign));
+  sign.arm();
+}
+// The last hour of a part's log. The helper redacted it; it is shown as text only (textContent), never as HTML.
+async function openLogs(name) {
+  if (!state.me) { state.notice = banner("warn", "Register this browser first", null); return home(); }
+  const r = await api("GET", svcPath(name, "/logs") + "?channel_id=" + encodeURIComponent(state.me.channelId));
+  if (r.status !== 200) return serviceFailed(r.body.error);
+  dialog(...logsDialog(renderText(name), r.body.text, { copy: copyText, onClose: closeDialog }));
+}
+// The hub restarts or stops itself: this page cannot ask it anything while it is down, so it polls and says what to do if it stays away.
+async function waitForHub(verb) {
+  const cmd = "systemctl start orch-hub";
+  const box = h("div", { class: "card" });
+  const show = (...nodes) => { box.replaceChildren(...nodes); };
+  show(banner("warn", verb === "stop" ? "The hub is stopping" : "The hub is restarting…", "This page cannot reach it for a moment."));
+  dialog(box);
+  if (verb === "stop") return show(banner("warn", "The hub is stopped", "Workspaces keep working on their own. To start it again, run this on the server:"), h("div", { class: "cmd" }, h("code", { text: cmd })), h("div", { class: "row" }, h("button", { text: "Copy", onclick: () => copyText(cmd) }), h("button", { text: "Close", onclick: closeDialog })));
+  const until = Date.now() + 60000;
+  while (Date.now() < until) {
+    await new Promise((res) => setTimeout(res, 2000));
+    const r = await api("GET", "/admin/services").catch(() => null);
+    if (r?.status === 200 || r?.status === 401 || r?.status === 403) { closeDialog(); return services(true); }
+  }
+  show(banner("bad", "The hub did not come back", "Run this on the server:"), h("div", { class: "cmd" }, h("code", { text: cmd })), h("div", { class: "row" }, h("button", { text: "Copy", onclick: () => copyText(cmd) }), h("button", { text: "Close", onclick: closeDialog })));
 }
 async function rejectChange(change, ap) {
   const r = await api("POST", changePath(change, "/reject"), { workspace_id: ap.workspace_id });
@@ -770,7 +900,7 @@ async function registerBrowser(label, password, totp) {
     gen = await generateKey();
     const me0 = { keyPub: gen.keyPub, userId: state.user.user_id, hubId: state.me?.hubId ?? null };
     const begun = await api("POST", "/channels/register/begin", { kind: "browser", key_pub: gen.keyPub, label, password, totp });
-    if (begun.status !== 200) return say(begun.body.error);
+    if (begun.status !== 200) return state.user?.company_login ? KEY_WORDS : say(begun.body.error); // no hub password: a set-up link from an admin, never a dead end
     const signed = await signRegistration(gen.pair.privateKey, begun.body.challenge, me0, Date.now());
     const done = await api("POST", "/channels/register/complete", { challenge_id: begun.body.challenge_id, signed });
     if (done.status !== 200) return say(done.body.error);
@@ -1304,4 +1434,16 @@ async function renderRoute() {
   finally { routing = false; }
 }
 window.addEventListener("hashchange", renderRoute);
-renderRoute();
+if (location.pathname === "/oidc/callback") { // the company's sign-in page sent the browser back: finish, then leave this address
+  const search = location.search;
+  history.replaceState(null, "", "/");
+  finishCallback(api, search).then(async (r) => {
+    if (r.ok && r.purpose === "invite") state.notice = banner("ok", "Your account is ready", WELCOME); // a company-login invitation: signed in, a session only
+    if (r.ok) { if (r.where) location.hash = r.where; await renderRoute(); return; }
+    if (r.purpose === "invite") { show(h("h1", { text: "This link does not work" }), banner("bad", INVITE_WORDS[r.body?.error] ?? INVITE_WORDS.bad_invite)); return; }
+    if (r.purpose === "signin") { loginView(COMPANY_WHY[r.body?.error] ?? say(r.body?.error)); return; }
+    state.notice = banner("bad", "Company login did not finish", r.body?.reason ?? COMPANY_WHY[r.body?.error] ?? say(r.body?.error));
+    if (r.where) location.hash = r.where;
+    await renderRoute();
+  });
+} else renderRoute();

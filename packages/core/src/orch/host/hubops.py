@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, Any
 
 from jsonschema import Draft202012Validator
 
+from . import agentevents
 from .errors import HostError
 
 if TYPE_CHECKING:
@@ -921,6 +922,7 @@ def serve(call: Call) -> dict[str, Any]:
                 "reachable": up,
                 **hublinkprobe.peer_view(service),  # peer_outbox, link_error
                 "log_sync": _log_sync_status(service),
+                "update_notice": _update_notice(service, state),  # HUB-WS-04: hub admin asks for an update
                 "addrs": [] if state is None else [a for a in [state.addr, *state.addrs] if a],
                 # what the hub says of itself (hub_where): its own words, a hint; never part of a workspace's own text
                 "hub_says": None if state is None or not state.hub_name else {"name": state.hub_name, "from": "hub"},
@@ -1077,6 +1079,7 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
             }
             service.__dict__.pop("_hub_profile_sent", None)
             service.__dict__.pop("_hub_status_sent", None)  # a (re)connect: tell the hub again
+            agentevents.forget_position(service)  # and start the agent events at the end of every log
             transport = _transport(service, model["hub_id"], link)
             try:
                 r = _connect(state, plan, model, service, wsk_pub, sign, now, save, transport, aliases)
@@ -1090,6 +1093,7 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
             return ok_result(out)
         if plan["op"] == "hub.refresh":
             return ok_result(_refresh(call, plan, state, wsk_pub, sign, now, save))
+        agentevents.forget_position(service)  # before anything can fail: the time not joined is never uploaded
         out = _unbind(call, plan, state, sign, wsk_pub, now, save, leave, flush_outbox)
         from . import orgmcp, orgsecrets, orgstate
 
@@ -1171,6 +1175,8 @@ def _switch(service: Any, plan: dict[str, Any], wsk_pub: bytes, sign: Any) -> di
     hub console made for THIS workspace (single use, 30 s, audience = this authenticated link); ``rail``: the workspace
     list. Nothing here is logged, signed by a person or kept."""
     a = plan["args"]
+    if a["kind"] == "redeem":
+        _refuse_switch(service, plan["state"])  # D93: before the hub is asked, so the ticket stays unused
     hub_link, transport = _snapshot_link(service, plan["state"], wsk_pub, sign, plan["dev"])
     try:
         if a["kind"] == "ticket":
@@ -1184,6 +1190,22 @@ def _switch(service: Any, plan: dict[str, Any], wsk_pub: bytes, sign: Any) -> di
     finally:
         getattr(transport, "close", lambda: None)()
     return r
+
+
+def _refuse_switch(service: Any, state: Any) -> None:
+    """D93 (R2 #1590): a hub console switch into this workspace is refused when the owner said it runs at a customer's
+    place (premises yes) or when the hub is joined selectively (the hub cannot vouch for who opens the dashboard). The
+    answer comes from the model, never from the request; the refusal is plain and nothing is sent to the hub."""
+    from orch.model.remote import hub_mode_of
+
+    ws = service.store.state.workspace
+    premises = (ws.remote or {}).get("premises") == "yes"
+    if premises or getattr(state, "mode", None) != "full" or hub_mode_of(ws) != "full":
+        raise HostError(
+            "switch.refused",
+            "this workspace cannot be opened from another computer through the hub",
+            hint="open it on its own computer",
+        )
 
 
 def _quiesce_logsync(service: Any, plan: dict[str, Any]) -> None:
@@ -1208,6 +1230,7 @@ def _send_status(service: Any, state: Any, hub_link: Any) -> None:
     DELIVERED: a failure is logged (no secret in it) and retried on the next link use, a changed name or mode is
     sent again, and a (re)connect clears the mark (R14b: it was one attempt, errors swallowed)."""
     import logging
+    import re
     import socket
 
     import orch
@@ -1221,16 +1244,55 @@ def _send_status(service: Any, state: Any, hub_link: Any) -> None:
     sent = service.__dict__.setdefault("_hub_status_sent", {})
     if type(sent) is not dict:
         sent = service.__dict__["_hub_status_sent"] = {}
-    if sent.get(state.hub_id) == body:
+    at = service.__dict__.setdefault("_hub_status_at", {})
+    now = service.clock()
+    # the same body is sent again after STATUS_POLL_S: the reply is how the hub's "please update" request arrives (pull)
+    if sent.get(state.hub_id) == body and now - at.get(state.hub_id, 0) < STATUS_POLL_S:
         return
     try:
-        hub_link.call("status_put", body)
+        reply = hub_link.call("status_put", body)
     except Exception as exc:  # noqa: BLE001 - display only: never fails the op, but is not silent either
         logging.getLogger("orch.host.hubops").warning(
             "hub status not delivered (%s); will retry on the next hub link", getattr(exc, "code", type(exc).__name__)
         )
         return
     sent[state.hub_id] = body
+    at[state.hub_id] = now
+    asks = service.__dict__.setdefault("_hub_update_req", {})
+    req = reply.get("update_requested") if type(reply) is dict else None
+    target = req.get("target_version") if type(req) is dict else None
+    if type(target) is str and re.fullmatch(r"[0-9A-Za-z.+-]{1,32}", target):
+        asks[state.hub_id] = target
+    else:
+        asks.pop(state.hub_id, None)
+
+
+STATUS_POLL_S = 600
+
+
+def _version_tuple(v: Any) -> tuple[int, ...] | None:
+    import re
+
+    m = re.match(r"^(\d+(?:\.\d+)*)", v) if isinstance(v, str) else None
+    if m is None:
+        return None
+    nums = [int(n) for n in m[1].split(".")]
+    while nums and nums[-1] == 0:
+        nums.pop()
+    return tuple(nums)
+
+
+def _update_notice(service: Any, state: Any) -> dict[str, str] | None:
+    """HUB-WS-04: the hub's admin asked this workspace's owner to update. Only while this host's own version is lower
+    than the asked one (so it clears itself); the version string is all the hub sends, never text."""
+    import orch
+
+    asks = service.__dict__.get("_hub_update_req")
+    target = asks.get(state.hub_id) if type(asks) is dict and state is not None else None
+    have, want = _version_tuple(orch.__version__), _version_tuple(target)
+    if have is None or want is None or have >= want:
+        return None
+    return {"target_version": target}
 
 
 def _snapshot_link(
@@ -1258,6 +1320,7 @@ def _snapshot_link(
         mode=state.mode, now_ms=lambda: int(service.clock() * 1000),
     )  # fmt: skip
     _send_status(service, state, hub_link)
+    agentevents.send(service, state, hub_link)  # HUB-AC-03: four references per agent action, never content
     try:
         if send_profile:
             profile = _load_profile(service)

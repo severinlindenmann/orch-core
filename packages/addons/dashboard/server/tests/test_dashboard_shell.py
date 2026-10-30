@@ -36,6 +36,13 @@ def test_closed_route_allowlist():
         "/api/me",
         "/api/w/{ws}/identity",
         "/api/w/{ws}/today",
+        "/api/w/{ws}/remote",  # R2: remote access (loopback only; refused on every remote listener in routegate)
+        "/api/w/{ws}/remote/code",
+        "/api/w/{ws}/remote/devices/{device_id}/remove",
+        "/api/w/{ws}/remote/sessions/{stream_id}/end",
+        "/api/w/{ws}/remote/presence/nonce",
+        "/api/w/{ws}/remote/presence",
+        "/api/w/{ws}/remote/off",
         "/api/w/{ws}/tickets",
         "/api/w/{ws}/board",
         "/api/w/{ws}/tickets/{key}",
@@ -165,6 +172,7 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/workspace/cosmetic",
         "/api/w/{ws}/add-ons/{name}/settings",
         "/api/w/{ws}/hub/link",  # run-9 feedback 6: read a connect link
+        "/api/w/{ws}/hub/profile",  # HUB-WS-09: the owner's workspace profile (GET and PUT)
         "/api/w/{ws}/runner",
         "/api/w/{ws}/runner/deposits/{deposit_id}",
         "/api/w/{ws}/runner/forget",

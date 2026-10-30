@@ -150,7 +150,7 @@ test("connect link is copied unchanged, shows expiry, and Copy says what to do n
   const withOpen = [connectWorkspaceView({ link: "/join#one-time", expires_ms: NOW + 1800000 }, { openLink: (l) => { opened = l; } }, { selected: "u1", self: "u1" })];
   clickButton(withOpen, "Open link");
   assert.equal(opened, "/join#one-time");
-  assert.match(text(out), /Send this link to the workspace owner, or open it on their computer\./);
+  assert.match(text(out), /Copied ✓ Send it to the workspace owner\. They open their workspace, go to Settings › Hub and press Connect a hub\./);
 });
 
 test("r11 P03: Open link is offered only for the signed-in person's own workspace, Copy for everyone", async () => {
@@ -216,7 +216,8 @@ test("details Open passes the plain workspace with no pending mode or deep-link 
   assert.deepEqual(args, [w]);
   const { readFile } = await import("node:fs/promises");
   const app = await readFile(new URL("../../src/orch_hub/web/app.js", import.meta.url), "utf8");
-  const open = app.slice(app.indexOf("async function openWorkspace(w)"), app.indexOf("async function openWorkspace(w)") + 230);
+  const start = app.indexOf("async function openWorkspace(w)");
+  const open = app.slice(start, app.indexOf("\n}\n", start)); // the whole function, not a fixed length
   assert.match(open, /workspace_id: w.id, return_to: "\/", kind: "open"/);
   assert.doesNotMatch(open, /pending|mode|return_to: "[^" ]*[?#]/);
 });
@@ -348,7 +349,7 @@ test("workspaces are named after their owner and connect asks whose workspace it
   assert.deepEqual(sent, []); // r9 P04: with several people nothing is preselected
   assert.match(text(out), /Whose workspace is this\?/);
   const select = find(out, (n) => n.tag === "select")[0];
-  assert.deepEqual(find([select], (n) => n.tag === "option").map((o) => o.textContent), ["Choose…", "Anna Test", "Ben Test", "Someone new…"]);
+  assert.deepEqual(find([select], (n) => n.tag === "option").map((o) => o.textContent), ["Choose…", "Anna Test", "Ben Test", "Someone new (add them now)"]);
   select.value = "u2";
   await select.listeners.change({ target: select });
   assert.deepEqual(sent, ["u2"]);
@@ -404,7 +405,7 @@ test("P04: with several people nothing is preselected and no workspace link is m
   assert.deepEqual(connected, [], "no link before a person is chosen");
   const select = find(out, (n) => n.tag === "select")[0];
   const options = find([select], (n) => n.tag === "option");
-  assert.deepEqual(options.map((o) => o.textContent), ["Choose…", "Admin", "Ben", "Someone new…"]);
+  assert.deepEqual(options.map((o) => o.textContent), ["Choose…", "Admin", "Ben", "Someone new (add them now)"]);
   assert.ok(options.every((o) => o.getAttribute("selected") === null || o === options[0]));
   assert.equal(find(out, (n) => n.className === "ws-link")[0].hidden, true, "the link is hidden until a person is chosen");
   select.value = "b".repeat(32);
@@ -594,6 +595,47 @@ test("P05: the Home count includes private workspaces for a hub admin and nobody
   assert.equal(line({ adminWorkspaces: null }), "1 workspace online, 0 offline");
 });
 
+test("P12: after Copy the banner names the person and the exact route", async () => {
+  const out = [connectWorkspaceView({ link: "/join#x", expires_ms: NOW + 1800000 }, { copy: async () => true }, { people: [{ user_id: "u2", name: "Ben Test" }], selected: "u2", self: "u1" })];
+  await clickButton(out, "Copy");
+  assert.match(text(out), /Copied ✓ Send it to Ben Test\. They open their workspace, go to Settings › Hub and press Connect a hub\./);
+});
+
+// HUB-WS-04 (#1385): ask the owners of older workspaces to update.
+test("HUB-WS-04: an admin can ask the owners to update; it is asked once and then shows when", async () => {
+  let asked = 0;
+  const rows = [workspace(), workspace({ workspace_id: "b", name: "Legal", version_state: "older" })];
+  const out = workspacesView({ workspaces: rows, handoffs: [], admin: [], hub: { version: "0.3.0", min_supported: "0.1.0" },
+    actions: { askUpdate: async () => { asked += 1; return { asked: 1, at_ms: NOW }; } } }, NOW);
+  assert.match(text(out), /Ask owners to update/);
+  await clickButton(out, "Ask owners to update");
+  assert.equal(asked, 1);
+  assert.match(text(out), /Asked/);
+  assert.doesNotMatch(text(out), /Ask owners to update/);
+  // a later visit (the hub remembers the first time): no button, only when it was asked
+  const later = workspacesView({ workspaces: [workspace({ workspace_id: "b", version_state: "older", update_asked_ms: NOW - 120000, update_asked_target: "0.3.0" })],
+    handoffs: [], admin: [], hub: { version: "0.3.0" }, actions: { askUpdate: async () => { asked += 1; } } }, NOW);
+  assert.match(text(later), /Asked 2 min ago/);
+  assert.doesNotMatch(text(later), /Ask owners to update/);
+});
+
+test("HUB-WS-04: only admins see the button, and a failed ask says so and can be repeated", async () => {
+  const rows = [workspace({ version_state: "older" })];
+  const member = workspacesView({ workspaces: rows, handoffs: [], admin: null, hub: { version: "0.3.0" }, actions: { askUpdate: async () => ({}) } }, NOW);
+  assert.doesNotMatch(text(member), /Ask owners to update/);
+  const out = workspacesView({ workspaces: rows, handoffs: [], admin: [], hub: { version: "0.3.0" }, actions: { askUpdate: async () => { throw new Error("x"); } } }, NOW);
+  await clickButton(out, "Ask owners to update");
+  assert.match(text(out), /Could not send the request/);
+  assert.match(text(out), /Ask owners to update/);
+});
+
+test("HUB-WS-04 L1: 'Asked' shows only for the hub's current version; an older ask shows the button again", () => {
+  const row = (target) => workspace({ workspace_id: "b", version_state: "older", update_asked_ms: NOW - 60000, update_asked_target: target });
+  const mk = (r) => workspacesView({ workspaces: [r], handoffs: [], admin: [], hub: { version: "0.3.0" }, actions: { askUpdate: async () => ({}) } }, NOW);
+  assert.match(text(mk(row("0.3.0"))), /Asked 1 min ago/);
+  assert.match(text(mk(row("0.2.0"))), /Ask owners to update/);
+});
+
 test("SV-01: every part shows its address; Edge down is called out; no address is said plainly", () => {
   const d = base();
   d.hub.url = "http://192.168.1.5:8100";
@@ -608,4 +650,30 @@ test("SV-01: every part shows its address; Edge down is called out; no address i
   assert.match(row("edge"), /Not answering/);
   assert.match(row("edge"), /Address https:\/\/hub\.test/);
   assert.equal(summary(d).text, "Edge is not answering");
+});
+
+test("r14 P05: the joined banner for a private workspace has no Open button and names who can open it", async () => {
+  const { joinedBannerView } = await import("../../src/orch_hub/web/workspaces.js");
+  const opened = [];
+  const row = { workspace_id: "b".repeat(32), name: "Ben Test's workspace", owner_name: "Ben Test", private: true };
+  const el = joinedBannerView(row, { open: (x) => opened.push(x) });
+  assert.match(el.textContent, /Ben Test's workspace joined/);
+  assert.match(el.textContent, /It is online now\. Only Ben Test can open it\./);
+  assert.doesNotMatch(el.textContent, /Open |from here/);
+  const plain = joinedBannerView({ workspace_id: "a", name: "Anna" }, {});
+  assert.match(plain.textContent, /You can open it from here/);
+});
+
+test("P08: the Workspaces page shows the Restored note at the top until Got it is clicked", () => {
+  let n = 0;
+  const out = workspacesView({ workspaces: [], handoffs: [], restored: { made_ms: NOW - 3600000, restored_ms: NOW, suspended: 1 },
+    actions: { dismissRestored: () => n++ } }, NOW);
+  const t = text(out);
+  assert.match(t, /Restored from the backup of/); assert.match(t, /Check that your workspaces show Online/);
+  assert.match(t, /1 person is switched off/);
+  const got = find(out, (x) => x.tag === "button" && x.textContent === "Got it");
+  assert.equal(got.length, 1);
+  got[0].listeners.click();
+  assert.equal(n, 1);
+  assert.doesNotMatch(text(workspacesView({ workspaces: [], handoffs: [] }, NOW)), /Restored from/);
 });

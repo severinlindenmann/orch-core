@@ -6,6 +6,7 @@ import { emptyState, loading } from "../feel.js";
 import { chip, h, text, when, withNames } from "../ui.js";
 
 export const STATEMENT = "The hub and its admins can read this space.";
+export const NO_START = "This workspace shares only selected items, so it can't start a space. Tick a workspace that joins now. You can add the others later, once their owners accept.";
 export const RESTORE_LINE = "To get an older version back, restore it from the workspace.";
 const TYPES = [["wiki", "Wiki", "Pages people write together"], ["files", "Files", "Documents everyone starts from"], ["board", "Board", "Cards that move from planned to done"]];
 const typeName = (t) => (TYPES.find((x) => x[0] === t) ?? [t, ""])[1];
@@ -48,7 +49,15 @@ export function newSpaceDialog(workspaces, done, close) {
   const tick = h("input", { type: "checkbox", id: "space-understood", "aria-label": "I understand" });
   const create = h("button", { type: "button", class: "pri", text: "Create" });
   const next = h("button", { type: "button", class: "pri", text: "Next" });
-  const ready = () => { create.disabled = !(form.understood === true && form.members.size > 0); };
+  // The hub adds only 'full' workspaces now; a 'selective' one waits for its owner. A space needs at least one that joins now.
+  const joinsNow = () => workspaces.some((w) => w.mode === "full" && form.members.has(w.workspace_id));
+  const noStart = h("p", { class: "banner warn", id: "space-no-start", role: "note", text: NO_START });
+  const ready = () => {
+    const stuck = form.members.size > 0 && !joinsNow();
+    noStart.hidden = !stuck;
+    create.disabled = !(form.understood === true && joinsNow());
+    if (stuck) create.setAttribute("aria-describedby", "space-no-start"); else create.removeAttribute("aria-describedby");
+  };
   tick.addEventListener("change", () => { form.understood = tick.checked === true; ready(); });
   nameIn.addEventListener("input", () => { form.name = nameIn.value; });
   purposeIn.addEventListener("input", () => { form.purpose = purposeIn.value; });
@@ -59,7 +68,7 @@ export function newSpaceDialog(workspaces, done, close) {
     step += 1; draw();
   });
   create.addEventListener("click", () => {
-    if (form.understood !== true || !form.members.size) return; // the tick is required, here and at the hub
+    if (form.understood !== true || !joinsNow()) return; // the tick is required, here and at the hub
     done({ type: form.type, name: form.name.trim(), purpose: form.purpose.trim(), members: [...form.members], understood: true });
   });
   const cancel = h("button", { type: "button", text: "Cancel", onclick: close });
@@ -78,9 +87,9 @@ export function newSpaceDialog(workspaces, done, close) {
           box.checked = form.members.has(w.workspace_id);
           box.addEventListener("change", () => { box.checked ? form.members.add(w.workspace_id) : form.members.delete(w.workspace_id); ready(); });
           return h("label", { class: "check" }, box, h("span", { class: "grow", text: nameOf(w) }),
-            w.mode === "selective" ? h("span", { class: "small muted", text: "its owner has to accept first" }) : null);
+            h("span", { class: "small muted", text: w.mode === "full" ? "joins now" : "shares only selected items" }));
         }) : [h("p", { class: "small muted", text: "No workspace is connected yet." })]),
-        h("p", { class: "banner warn", role: "note", text: STATEMENT }),
+        noStart,
         h("label", { class: "check" }, tick, h("span", { text: "I understand: " + STATEMENT }))],
     };
     body.replaceChildren(h("h1", { text: "New shared space (step " + step + " of 3)" }), ...steps[step],
@@ -126,7 +135,7 @@ export function spacesView(data, actions = {}, now = Date.now()) {
     const memberIds = new Set((s.members ?? []).map((m) => m.workspace_id));
     const free = candidates.filter((w) => !memberIds.has(w.workspace_id));
     const pick = h("select", { "aria-label": "Add a workspace" }, h("option", { value: "", text: "Add a workspace" }),
-      free.map((w) => h("option", { value: w.workspace_id, text: nameOf(w) + (w.mode === "selective" ? " (its owner accepts first)" : "") })));
+      free.map((w) => h("option", { value: w.workspace_id, text: nameOf(w) + (w.mode === "selective" ? " (shares only selected items; its owner accepts first)" : "") })));
     const add = h("button", { type: "button", text: "Add", onclick: () => { if (pick.value) actions.addMember?.(s, pick.value); } });
     return h("article", { class: "card space", "data-space": s.space_id },
       h("div", { class: "row" }, h("h3", { class: "grow", text: text(s.name) || "Space" }), meta.type ? chip(typeName(meta.type)) : null, s.archived_ms != null ? chip("Archived") : null,
@@ -156,7 +165,7 @@ export function spacesView(data, actions = {}, now = Date.now()) {
     h("div", { class: "row" }, h("h1", { class: "grow", text: "Shared spaces" }),
       h("button", { type: "button", id: "new-space", class: "pri", text: "New shared space", onclick: open }),
       info("About shared spaces", "Workspaces put documents into a shared space and read each other's. A workspace set to Reads only can read but not add or remove. Archiving stops new additions; reading goes on.")),
-    h("p", { class: "banner warn", role: "note", text: STATEMENT }),
+    all.length ? h("p", { class: "banner warn", role: "note", text: STATEMENT }) : null,
     toggle, list, dialogHost);
   if (toggle) toggle.addEventListener("click", () => { showArchived = !showArchived; draw(); });
   draw();
@@ -194,4 +203,4 @@ export async function spacesPage(d) {
 }
 
 // The registry entry: the console's router, tabs and file list are built from this one export (no other file names a page).
-export const page = { path: "spaces", nav: { label: "Spaces", admin: true, after: "mcp" }, render: spacesPage };
+export const page = { path: "spaces", nav: { label: "Spaces", admin: true, needsWorkspace: true, after: "mcp" }, render: spacesPage };

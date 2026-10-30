@@ -145,12 +145,21 @@ TABLE: dict[tuple[str, str], tuple[str, str]] = {
     (POST, W + "/hub/share/rule-remove"): (ALLOWED, "turning off: owner, plain click, no signature, full session only"),
     (POST, W + "/hub/share/rule-add"): (REFUSED, "sharing more is decided on this computer"),
     (POST, W + "/hub/share/sync"): (REFUSED, "sharing more is decided on this computer"),
+    (GET, W + "/remote"): (REFUSED, "R2: remote access is changed and read on this computer only"),
+    (POST, W + "/remote/off"): (REFUSED, "R2: on this computer only; an owner's remote session ends it in R3"),
+    (POST, W + "/remote/code"): (REFUSED, "R2: a device code is shown on this computer only"),
+    (POST, W + "/remote/devices/{device_id}/remove"): (REFUSED, "R2: devices are managed on this computer"),
+    (POST, W + "/remote/sessions/{stream_id}/end"): (REFUSED, "R3: a session is ended on this computer"),
+    (POST, W + "/remote/presence/nonce"): (REFUSED, "R3: a presence is given inside a stream only"),
+    (POST, W + "/remote/presence"): (REFUSED, "R3: a presence is given inside a stream only"),
     (GET, W + "/org"): (ALLOWED, "company offers: names and status"),
     (GET, W + "/org/item"): (ALLOWED, "a read; the host answers the owner only"),
     (POST, W + "/org/accept"): (REFUSED, "turning a company item on is decided on this computer"),
     (POST, W + "/org/decline"): (ALLOWED, "turning off: owner, plain click, full session only"),
     (POST, W + "/org/sync"): (ALLOWED, "fetches the offers; grants nothing"),
     (POST, W + "/org/tool"): (ALLOWED, "owner, plain click; turning ON is refused unless the session is local"),
+    (GET, W + "/hub/profile"): (ALLOWED, "a read; the host answers the owner only"),
+    (PUT, W + "/hub/profile"): (ALLOWED, "owner, plain click; listing ON is refused from a remote session"),
     (POST, W + "/hub/link"): (ALLOWED, "reads the link's hub card; nothing is signed or kept"),
     (POST, W + "/hub/connect"): (STEP_UP, "the second half of a hub join"),
     (POST, W + "/hub/refresh"): (
@@ -223,7 +232,7 @@ TABLE: dict[tuple[str, str], tuple[str, str]] = {
     # --- worktrees
     (POST, W + "/worktrees/create"): (ALLOWED, "admin action, plain click"),
     (POST, W + "/worktrees/remove"): (ALLOWED, "turning off"),
-    (POST, W + "/workdir/delete"): (ALLOWED, "turning off"),
+    (POST, W + "/workdir/delete"): (ALLOWED, "permanently deletes the person's files: presence for a remote device"),
     # --- shares
     (GET, W + "/shares"): (ALLOWED, ""),
     (POST, W + "/shares/upload"): (ALLOWED, "a file picked for a share, kept aside by the host; nothing is shared"),
@@ -234,6 +243,291 @@ TABLE: dict[tuple[str, str], tuple[str, str]] = {
     (POST, W + "/shares/register"): (REFUSED, "connecting to the publish server is decided on this computer"),
 }
 assert all(rule in RULES for rule, _ in TABLE.values())
+
+
+# --- the `remote-device` column (R3, orch-core #1591; spec D89/D90) -------------------------------------------------
+#
+# A stream of a remote device is answered in-process (no listener). Its routes are a SECOND column beside `TABLE`:
+# every route has a rule and the least access level that may use it, and a route that is not listed is refused.
+# Enforced in ONE place, `Security.route_check`; `tests/test_remote_device_gate.py` walks the app's real routes.
+#
+# Rules: ALLOWED (reads, and plain writes that only turn something off or are small), PRESENCE (a fresh presence
+# signature of the device covers this very request, D88), BY_KIND (`click/prepare`, `click/sign`, ...: the click signer
+# decides from the signed op kind, `core click/remote_kinds.py`), REFUSED. Levels, least to most: view (reads only),
+# work (writes and presence routes), terminals (shell on the server).
+PRESENCE, BY_KIND = "presence", "by_kind"
+DEVICE_RULES = (ALLOWED, PRESENCE, BY_KIND, REFUSED)
+VIEW, WORK, TERMINAL_LEVEL = "view", "work", "terminals"
+LEVELS = (VIEW, WORK, TERMINAL_LEVEL)  # in order: a higher level may do everything a lower one may
+READ_METHODS = ("GET", "HEAD")
+
+
+def _rows(rule, level, method, *templates):
+    assert rule in DEVICE_RULES and level in LEVELS
+    return {(method, t): (rule, level) for t in templates}
+
+
+REMOTE_DEVICE: dict[tuple[str, str], tuple[str, str]] = {
+    # the hub profile (who this workspace is on the hub) is changed and shown on this computer only
+    **_rows(REFUSED, VIEW, GET, W + "/hub/profile"),
+    **_rows(REFUSED, VIEW, PUT, W + "/hub/profile"),
+    # asked of this computer's hub link and folders by an owner on the computer itself (a dry-run prepare of a repo
+    # change, the hub's view of a sharing rule): a stream has no such session, so the route is not offered
+    **_rows(REFUSED, VIEW, POST, W + "/repos/check", W + "/hub/share/preview"),
+    # turning sharing off is the owner's plain click from a FULL session (reduce -> owner_link -> full_session): never
+    # true for a stream, so the row is a refusal, not an offer that ends in one (rule-remove also needs the preview)
+    **_rows(REFUSED, VIEW, POST, W + "/hub/share/revoke", W + "/hub/share/rule-remove"),
+    # a file picked for a share is written to this computer's disk by the upload; a stream does not offer it
+    **_rows(REFUSED, VIEW, POST, W + "/shares/upload"),
+    **_rows(
+        ALLOWED,
+        VIEW,
+        GET,
+        "/api/session",
+        "/api/events",
+        "/api/workspaces",
+        "/api/host",
+        "/api/me",
+        W + "/head",
+        W + "/identity",
+        W + "/hub/rail",
+        W + "/today",
+        W + "/tickets",
+        W + "/board",
+        W + "/tickets/{key}",
+        W + "/tickets/{key}/events",
+        W + "/tickets/{key}/changes",
+        W + "/tickets/{key}/artifacts/{name}",
+        W + "/tickets/{key}/workdir",
+        W + "/settings",
+        W + "/members",
+        W + "/readers",
+        W + "/grants",
+        W + "/versions",
+        W + "/add-ons",
+        W + "/add-ons/{name}/settings",
+        W + "/quick",
+        W + "/activity",
+        W + "/usage",
+        W + "/followups",
+        W + "/schedules",
+        W + "/worktrees",
+        W + "/explorer",
+        W + "/explorer/tree",
+        W + "/explorer/file",
+        W + "/explorer/names",
+        W + "/explorer/search",
+        W + "/explorer/history",
+        W + "/explorer/commit",
+        W + "/explorer/compare",
+        W + "/explorer/ticket/{key}",
+        W + "/addons",
+        W + "/view/{name}",
+        W + "/wiki",
+        W + "/wiki/page",
+        W + "/wiki/search",
+        W + "/wiki/backlinks",
+        W + "/widgets/catalog",
+        W + "/model-routing",
+        W + "/click/status",
+        W + "/hub",
+        W + "/hub/share",
+        W + "/hub/share/audience",
+        W + "/hub/shared",
+        W + "/org",
+        W + "/org/item",
+        W + "/me/risk_notices",
+        W + "/records",
+        W + "/records/current",
+        W + "/runs",
+        W + "/runs/{run}/transcript",
+        W + "/runs/{run}/sources",
+        W + "/runs/{run}/sources/{source_id}",
+        W + "/tickets/{key}/delegations",
+        W + "/tickets/{key}/worktree-diff",
+        W + "/runner",
+        W + "/shares",
+    ),
+    **_rows(
+        ALLOWED,
+        WORK,
+        POST,
+        W + "/wiki/create",
+        W + "/click/images",
+        W + "/me/risk_notices",
+        W + "/records/commit",
+        W + "/records/auto-off",
+        W + "/runs/{run}/stop",
+        W + "/agents/preview",
+        W + "/runner/forget",
+        W + "/worktrees/remove",
+        W + "/shares/revoke",
+        W + "/shares/discard",
+    ),
+    **_rows(
+        ALLOWED,
+        WORK,
+        PUT,
+        W + "/workspace/cosmetic",
+    ),
+    **_rows(
+        ALLOWED,
+        VIEW,
+        POST,
+        W + "/remote/off",
+    ),
+    **_rows(
+        PRESENCE,
+        WORK,
+        POST,
+        W + "/runs/{run}/link",
+        W + "/runs/{run}/detach",
+        W + "/agents/start",
+        W + "/workdir/delete",
+    ),
+    **_rows(
+        PRESENCE,
+        TERMINAL_LEVEL,
+        POST,
+        W + "/runs/{run}/attach",
+        W + "/terminals/open",
+        W + "/terminals/preview",
+    ),
+    **_rows(
+        BY_KIND,
+        WORK,
+        POST,
+        W + "/click/prepare",
+        W + "/click/view",
+        W + "/click/state",
+        W + "/click/sign",
+        W + "/click/cancel",
+    ),
+    **_rows(
+        REFUSED,
+        VIEW,
+        GET,
+        "/{path:path}",
+        "/auth/probe",
+        "/api/trusted",
+        "/api/setup/{route:path}",
+        "/widget-frame/{rest:path}",
+        W + "/click/github",
+        W + "/hub/approve/{request_id}",
+        W + "/remote",
+        "/api/passkeys",
+        W + "/phone/available",
+        W + "/phone/status/{id}",
+        W + "/claude-trust",
+        W + "/market",
+        W + "/market/installed",
+        W + "/runner/deposits/{deposit_id}",
+        "/api/testrun/{run}",
+        "/api/testrun/{run}/previous",
+        "/api/testrun/{run}/images/{name}",
+        "/api/testrun/{run}/screenshots.zip",
+    ),
+    **_rows(
+        REFUSED,
+        VIEW,
+        POST,
+        "/auth/session",
+        "/auth/logout",
+        W + "/hub/switch",
+        "/api/trusted/enrol",
+        "/auth/switch/challenge",
+        "/auth/switch",
+        "/auth/passkey/options",
+        "/auth/passkey/login",
+        "/auth/enroll/options",
+        "/auth/enroll/register",
+        "/auth/setup",
+        "/api/setup/{route:path}",
+        W + "/click/custody/seal",
+        W + "/click/rotate/seal",
+        W + "/click/rotate",
+        W + "/click/github/seal",
+        W + "/click/github",
+        W + "/click/github/remove",
+        W + "/click/custody",
+        W + "/click/runner/review",
+        W + "/click/runner",
+        W + "/hubsign",
+        W + "/hub/approve/prepare",
+        W + "/hub/share/rule-add",
+        W + "/hub/share/sync",
+        W + "/remote/code",
+        W + "/remote/devices/{device_id}/remove",
+        W + "/org/accept",
+        W + "/org/decline",
+        W + "/org/sync",
+        W + "/org/tool",
+        W + "/hub/link",
+        W + "/hub/connect",
+        W + "/hub/refresh",
+        W + "/stepup/options",
+        "/api/stepup/options",
+        "/api/stepup/verify",
+        "/api/passkeys/enroll-link",
+        W + "/phone/request",
+        W + "/phone/cancel",
+        W + "/records/init",
+        W + "/records/remote",
+        W + "/records/push-initial",
+        W + "/records/auto-on",
+        W + "/claude-trust",
+        W + "/market/stage",
+        W + "/market/uninstall",
+        W + "/market/add",
+        W + "/market/refresh",
+        "/api/testrun/{run}/steps/{step}/images",
+        W + "/worktrees/create",
+        W + "/shares/prepare",
+        W + "/shares/send",
+        W + "/shares/register",
+    ),
+    **_rows(
+        REFUSED,
+        VIEW,
+        PUT,
+        "/api/testrun/{run}/steps/{step}",
+    ),
+    **_rows(
+        REFUSED,
+        VIEW,
+        DELETE,
+        "/api/trusted/{kid}",
+        "/api/passkeys/{credential_id}",
+        W + "/market/stage/{stage_id}",
+        "/api/testrun/{run}/images/{name}",
+    ),
+    **_rows(PRESENCE, TERMINAL_LEVEL, WEBSOCKET, "/term"),
+    # R3 T4 adds these handlers: the in-stream presence routes (the device key signs, the signer checks; neither route
+    # needs a batch itself), and the owner's End button (a loopback act, never from a stream).
+    **_rows(ALLOWED, WORK, POST, W + "/remote/presence/nonce", W + "/remote/presence"),
+    **_rows(REFUSED, VIEW, POST, W + "/remote/sessions/{stream_id}/end"),
+}
+#: Writes that stay open at the `view` level: turning remote access off needs no more than turning it on (D84).
+VIEW_WRITES = frozenset({(POST, W + "/remote/off")})
+assert all(
+    rule == REFUSED or method in READ_METHODS or level != VIEW or (method, t) in VIEW_WRITES
+    for (method, t), (rule, level) in REMOTE_DEVICE.items()
+), "a write that the view level may call"
+
+
+def rule_device(method: str, template: str, level: str) -> tuple[str, str | None]:
+    """(rule, refusal) of a route for a stream of this access level: refusal is None when the level may use it,
+    ``"remote.level"`` when only a higher level may and ``"remote.refused"`` when no level may (or the route is not
+    listed, or the level is not one of ours). The ONE decision: `Security.route_check` asks nothing else."""
+    row = REMOTE_DEVICE.get((method, template))
+    if row is None or level not in LEVELS:
+        return REFUSED, "remote.refused"
+    rule, least = row
+    if rule == REFUSED:
+        return REFUSED, "remote.refused"
+    if method not in READ_METHODS and (method, template) not in VIEW_WRITES:
+        least = max(least, WORK, key=LEVELS.index)  # a write is never a view-level act
+    return rule, None if LEVELS.index(level) >= LEVELS.index(least) else "remote.level"
 
 
 def rule_of(method: str, template: str) -> str:

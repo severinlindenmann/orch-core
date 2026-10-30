@@ -114,7 +114,11 @@ class Human:
     def sign(self, prepared: dict[str, Any], *, proof: Any = "auto") -> signer.Signed:
         self.check(prepared)
         if proof == "auto":
-            proof = self.owner_proof(prepared) if prepared["op"] in ("hub.join", "hub.mode", "hub.leave") else None
+            proof = (
+                self.owner_proof(prepared)
+                if prepared["op"] in ("hub.join", "hub.mode", "hub.leave", "remote.set", "remote.device_confirm")
+                else None
+            )
         return signer.sign(prepared, backend=self.backend, key_id="dk", workspace_id=self.served.wid, owner_proof=proof)
 
     def submit_res(self, request_id: str, events: list[dict[str, Any]], idem: str | bool = True) -> dict[str, Any]:

@@ -1,5 +1,6 @@
-import { emptyState } from "./feel.js";
+import { emptyState, toast } from "./feel.js";
 // Connected workspaces and their availability.
+import { restoredNotice } from "./pages/hub-settings.js";
 import { ago, chip, h, text } from "./ui.js";
 
 const nameOf = (end) => (end && end.name ? text(end.name) : end && end.owner_name ? text(end.owner_name + "'s workspace") : "Another workspace");
@@ -57,7 +58,10 @@ export function workspaceDetailsView(w, { roles = null, owner = null, hub, actio
 export function connectWorkspaceView(link, actions = {}, { people = [], selected = null, self = null } = {}) {
   const NEW = "__new__";
   const next = h("p", { class: "small muted", "aria-live": "polite" });
-  const NEXT = "Send this link to the workspace owner, or open it on their computer.";
+  const ROUTE = "open their workspace, go to Settings › Hub and press Connect a hub.";
+  // P12: after Copy, say where the link goes next, in the words of the screens the person will see.
+  const nextWords = (who) => who === "you" ? "Open your workspace, go to Settings › Hub and press Connect a hub." : "Send it to " + who + ". They " + ROUTE;
+  const ownerName = () => (self && select.value === self) ? "you" : text(known.find((p) => p.user_id === select.value)?.name ?? "the workspace owner");
   const clock = (ms) => { const d = new Date(ms); return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"); };
   const input = h("input", { class: "grow", readonly: true, value: link?.link ?? "", "aria-label": "Connect link" });
   let current = link?.link ?? "";
@@ -65,7 +69,8 @@ export function connectWorkspaceView(link, actions = {}, { people = [], selected
     let ok = false;
     try { ok = !!(await actions.copy?.(current)); } catch { ok = false; }
     copy.textContent = ok ? "Copied ✓" : "Could not copy. Select the link to copy it.";
-    next.textContent = ok ? NEXT : "";
+    next.textContent = ok ? "Copied ✓ " + nextWords(ownerName()) : "";
+    next.className = ok ? "banner ok" : "small muted";
   });
   const openLink = button("Open link", () => actions.openLink?.(current));
   // r11 P03: "Open link" opens the link in THIS browser, so only for the signed-in person's own workspace; anyone else's
@@ -83,7 +88,7 @@ export function connectWorkspaceView(link, actions = {}, { people = [], selected
     select.textContent = "";
     if (!chosen) select.append(h("option", { value: "", text: "Choose…" }));
     for (const p of known) select.append(h("option", { value: p.user_id, selected: p.user_id === chosen ? true : null, text: text(p.name ?? "Unnamed") }));
-    select.append(h("option", { value: NEW, text: "Someone new…" }));
+    select.append(h("option", { value: NEW, text: "Someone new (add them now)" }));
     select.value = chosen ?? "";
   };
   // "Someone new...": name + Create sign-in link (POST /admin/invites). The workspace link waits until they have signed in.
@@ -146,7 +151,7 @@ export function connectWorkspaceView(link, actions = {}, { people = [], selected
         signedIn.textContent = "✓ " + who + " has signed in";
         signedIn.hidden = false;
         await choose(st.user_id);
-        if (!linkRow.hidden) next.textContent = "Send this link to " + who + ", or open it on their computer.";
+        if (!linkRow.hidden) next.textContent = nextWords(who);
       } catch { /* try again on the next tick */ }
       finally { busy = false; }
     }, 3000);
@@ -206,10 +211,12 @@ export const newWorkspaces = (known, rows) => (rows ?? []).filter((w) => w.works
 
 /** The green message that replaces the used link box once a workspace has joined. */
 export function joinedBannerView(row, actions = {}) {
+  // A private (selective-mode) workspace: only its owner can open it, so no Open button and nothing else about it.
+  const note = row.private ? "It is online now. Only " + (row.owner_name || "its owner") + " can open it." : "It is online now. You can open it from here.";
   return h("div", { class: "banner ok ws-joined", role: "status", "data-joined": row.workspace_id },
     h("div", { class: "row" },
-      h("div", { class: "grow" }, h("b", { text: "✓ " + nameOf(row) + " joined" }), small("It is online now. You can open it from here.")),
-      button("Open " + nameOf(row), () => actions.open?.(row), { class: "pri" })));
+      h("div", { class: "grow" }, h("b", { text: "✓ " + nameOf(row) + " joined" }), small(note)),
+      row.private ? null : button("Open " + nameOf(row), () => actions.open?.(row), { class: "pri" })));
 }
 
 /** data: {workspaces, handoffs, admin: rows|null, hub, actions, joined?: rows that joined while the page was open}. */
@@ -263,11 +270,33 @@ export function workspacesView(data, now = Date.now()) {
       return h("article", { class: "list-row" }, h("div", { class: "row" }, h("b", { class: "grow", text: nameOf(w) }), chip("Left"), remove),
         small(Number.isFinite(w.left_ms) ? "Left " + new Date(w.left_ms).toLocaleDateString() : "Left on an unknown date"), error);
     })) : null;
+  // HUB-WS-04: a hub admin asks the owners to update; the request carries only the version, the owner clicks in Mission Control
+  const askedAt = Math.max(0, ...older.filter((w) => w.update_asked_target === data.hub?.version).map((w) => w.update_asked_ms).filter(Number.isFinite));
+  const askBox = h("div", { class: "row" });
+  const showAsked = (at) => { askBox.textContent = ""; askBox.append(small("Asked " + ago(at, Math.max(now, at)))); };
+  if (data.admin != null && actions.askUpdate && older.length) {
+    if (askedAt > 0) showAsked(askedAt);
+    else {
+      const error = h("p", { role: "alert" });
+      const ask = button("Ask owners to update", async () => {
+        ask.disabled = true;
+        error.textContent = "";
+        try {
+          const r = await actions.askUpdate();
+          showAsked(Number.isFinite(r?.at_ms) ? r.at_ms : now);
+          try { toast("Each owner now sees an update request in Mission Control."); } catch { /* no page to show it on */ }
+        } catch { error.textContent = "Could not send the request. Please try again."; ask.disabled = false; }
+      });
+      askBox.append(ask, error);
+    }
+  }
   return [
+    data.restored ? restoredNotice(data.restored, actions) : null,
     h("div", { class: "row" }, h("h1", { class: "grow", text: "Workspaces" }), data.admin != null || data.canConnect ? connect : null),
     connectBox,
     older.length ? h("div", { class: "banner warn" }, h("b", { text: older.length === 1 ? "1 workspace runs an older orch" : older.length + " workspaces run an older orch" }),
-      small(older.map(nameOf).join(", ")), data.hub?.min_supported ? small("The hub still works with " + text(data.hub.min_supported) + " and newer.") : null) : null,
+      small(older.map(nameOf).join(", ")), data.hub?.min_supported ? small("The hub still works with " + text(data.hub.min_supported) + " and newer.") : null,
+      data.admin != null && actions.askUpdate ? askBox : null) : null,
     h("section", { class: "card", "aria-labelledby": "ws-h" }, h("h2", { id: "ws-h", text: "Connected workspaces" }), list, leftView),
   ].filter(Boolean);
 }

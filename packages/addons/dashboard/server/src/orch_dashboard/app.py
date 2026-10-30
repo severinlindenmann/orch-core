@@ -28,7 +28,9 @@ from . import (
     org_routes,
     passkey_routes,
     phone,
+    profile_routes,
     reads,
+    remote_routes,
     riskack,
     schedules,
     settings,
@@ -52,7 +54,8 @@ from .explorer import routes as explorer_routes
 from .gateway import Gateway, state_dir
 from .hostlink import REQUEST_MEMO
 from .live import Live, SessionStream
-from .policy import LOOPBACK, loopback_policy
+from .policy import LOOPBACK, loopback_policy, remote_device_policy
+from .remote_device import RemoteDevices
 from .security import Security, log_internal
 from .wiki import routes as wiki_routes
 
@@ -71,6 +74,7 @@ SETTINGS_TABS = (
     "gates",
     "grants",
     "devices",
+    "profile",
     "hub",
     "company",
 )  # HOST_TABS (settings/tabs.ts)
@@ -167,6 +171,7 @@ def create_app(
     remote_problem=None,
     passkeys=None,
     alt_hosts=(),
+    remote_streams=False,
 ):
     """``remote``: the front listener's policy (`remote_policy`), or None when remote access is off. One app serves both
     listeners; the server that accepted the connection says which policy applies (`scope["orch_listener"]`, set by
@@ -181,7 +186,13 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app):
+        if (
+            remote_streams
+        ):  # R3 (#1591): the in-process adapter of remote sessions (no listener; only the host's frames)
+            app.state.remote_devices.start(asyncio.get_running_loop())
         yield
+        if remote_streams:
+            await asyncio.to_thread(app.state.remote_devices.stop)
         await live.close()
         gateway.close()
 
@@ -193,9 +204,18 @@ def create_app(
     app.state.live = live
     app.state.term_tickets = tickets
     app.state.remote_problem = remote_problem
-    app.state.policies = {p.name: p for p in (loopback_policy(port, alt_hosts), *([remote] if remote else []))}
+    app.state.remote_devices = RemoteDevices(app, gateway)
+    # the stream policy is always there: only the in-process stream adapter can name it (`scope["orch_listener"]`)
+    app.state.policies = {
+        p.name: p for p in (loopback_policy(port, alt_hosts), *([remote] if remote else []), remote_device_policy())
+    }
     app.add_middleware(
-        Security, auth=auth, policy=app.state.policies[LOOPBACK], registry=app.state.policies, router=app.router
+        Security,
+        auth=auth,
+        policy=app.state.policies[LOOPBACK],
+        registry=app.state.policies,
+        router=app.router,
+        presence=lambda workspace, digest: app.state.take_presence(workspace, digest),
     )
     app.add_middleware(RequestMemo)
 
@@ -255,7 +275,7 @@ def create_app(
 
     def bound_only(request: Request, rows):
         """A session opened by a hub switch sees only the workspace its ticket was for (H1)."""
-        bound = auth.switch_workspace(request.state.token)
+        bound = auth.bound_workspace(request.state.token)
         return rows if bound is None else [ws for ws in rows if ws.id == bound]
 
     @app.get("/api/session")
@@ -282,7 +302,7 @@ def create_app(
     @app.get("/api/host")
     def host(request: Request):
         info = gateway.host_info()
-        bound = auth.switch_workspace(request.state.token)
+        bound = auth.bound_workspace(request.state.token)
         if bound is None:
             return info
         # A hub-made session knows ONE workspace: the dev marker, and only the alarms of that workspace.
@@ -328,6 +348,8 @@ def create_app(
     stepup_routes.register(app, gateway)
     hubapprove.register(app, gateway)
     hub.register(app, gateway)
+    remote_routes.register(app, gateway)
+    profile_routes.register(app, gateway)
     org_routes.register(app, gateway)
     switch.register(app, gateway, auth)
     trust_routes.register(app, auth, gateway)

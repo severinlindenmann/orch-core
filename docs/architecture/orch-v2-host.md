@@ -475,6 +475,9 @@ Codes from P1 (`orch.ops.errors`, F1 §10.4a) keep their exit codes and retryabi
 | `term.not_attachable` | 3 | no | stays | `term.attach` on a run that is `starting` or `lost`, or `exited` with no ring kept; `detail.state` names it | — |
 | `run.limit` | 9 | yes | stays | a run limit of §0.11; `detail.which` is `agent_ws`, `agent_person`, `shell_person` or `runner` | when a run ends |
 | `attach.limit` | 9 | yes | stays | an attachment limit (4 per run, 16 per person, 64 per runner) | when one ends |
+| `remote.no_stream` | 3 | no | stays | the remote session is closed, unknown or another person's (R3, `remote.stream`, `remote.presence_used`, `remote.session_end`) | never |
+| `remote.presence_replay` | 3 | no | stays | a remote presence batch whose FIDO2 signature counter did not rise (R3, `remote.presence_used`) | never |
+| `remote.busy` | 3 | no | stays | another dashboard is attached to the workspace's remote access (R3, `remote.attach`) | when its lease ends |
 | `term.writer_busy` | 3 | no | stays | a write attach while another attachment holds the lease and `take` is false (the term socket's `{t:"end", reason:"writer_busy"}` has the same meaning) | — |
 | `host.limit` | 3 | no | stays | `relay.link` above the relay-linked workspace cap (8 per host, §11A.7; H12a). Not retryable: a slot frees only when another workspace is unlinked | — |
 | `relay.not_linked` | 3 | no | stays | `host.relay_unlink` on a workspace with no `relay/link.json` (R5, §11A.6; 11A.15.9 lists it for R6's ops too) | — |
@@ -12680,7 +12683,8 @@ attach.allow  {att:AttId, ticket_hash:Hash,            // sha256 of the 32-byte 
    ticket**: 128 random bits, stored hashed, single use, bound to the workspace, run, mode, take, from, the bearer
    session and the server generation, valid at most 30 s (the dashboard server's choice), 10 attempts per minute. It
    calls nothing on the host. (React StrictMode's double mount leaves one unused ticket that simply expires.)
-2. The browser opens the WebSocket `GET /term` and sends `{"ticket":"…"}`.
+2. The browser opens the WebSocket `GET /term` and sends `{"ticket":"…"}`. There is no query on `/term` (the ticket is
+   the first message); a socket with a query string is closed 1008 before presence.
 3. Only then the server calls `term.attach`, verifies the runner (§12.6.1), connects and presents the host ticket at
    once. So the 10 s host capability and the runner's lockout can never be burned by a slow browser.
 

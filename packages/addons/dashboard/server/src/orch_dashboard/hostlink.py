@@ -42,6 +42,7 @@ CAPS = [
     "workdir/1",
     "publish/1",
     "focus/1",
+    "remote/1",  # R3 (#1591): the stream adapter's `remote.attach` and the owner's `remote.session_end`
 ]
 MARKET_READS = ("market.list", "market.installed")
 MARKET_WRITES = ("market.stage", "market.unstage", "market.uninstall", "market.refresh", "market.add")
@@ -140,6 +141,20 @@ OPS = {
         # the two share writes that only take sharing away: one click as the session's person, owner only (hub.py)
         "share.revoke",
         "share.rule_remove",
+        # R2 (#1590) remote access, the loopback page: reads, and the three owner clicks that only take power away or
+        # hand out a one-time code (remote.off, remote.code, remote.device_remove). Turning ON and confirming a device
+        # are signed by click (signing.RemoteSet), never sent here.
+        "remote.status",
+        "remote.pending",
+        "remote.sessions",
+        "remote.off",
+        "remote.code",
+        "remote.device_remove",
+        # R3 T4 (#1591): the in-process stream adapter (cap `remote/1`). `remote.attach` is a long poll on a host
+        # connection of its own (`Gateway.new_link`), `remote.session_end` the owner's End button. Never
+        # `remote.stream` or `remote.presence_used`: those are the signer's, on its own host connection.
+        "remote.attach",
+        "remote.session_end",
         # M3 H-5 company skills and tools: the owner's tab. org.offers and org.show are reads; the rest are owner
         # clicks (org_routes.py).
         "org.offers",
@@ -181,6 +196,7 @@ PUBLISH_OPS = {
     "publish.register",
 }
 TERM_OPS = {"term.preview", "term.open", "term.attach", "attach.cancel"}
+REMOTE_SESSION_OPS = {"remote.attach", "remote.session_end"}
 
 QUERY_OPS = {"ticket.query", "ticket.get", "grant.list", "needs", "workspace.show", "member.list"}
 
@@ -406,6 +422,8 @@ class HostLink:
             if op in WORKDIR_OPS
             else "publish/1"
             if op in PUBLISH_OPS
+            else "remote/1"
+            if op in REMOTE_SESSION_OPS
             else "reader/1"
             if op == "reader.list"
             else "query/1"

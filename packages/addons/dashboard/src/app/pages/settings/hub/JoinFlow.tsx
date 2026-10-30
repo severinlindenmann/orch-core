@@ -43,8 +43,20 @@ export function JoinFlow({ ws, onClose, initialLink }: { ws: string; onClose: ()
   const [signed, setSigned] = useState(false)
   const [mode, setMode] = useState<'selective' | 'full'>('selective')
   const [choosing, setChoosing] = useState(false)
+  const [noCopied, setNoCopied] = useState(false)
   const link = text.trim()
+  const [detailsOpen, setDetailsOpen] = useState(false)
   const valid = LINK.test(link)
+  // P12: the clipboard is read only on this click (a user gesture), checked with LINK, and only fills the field and starts
+  // the lookup. Nothing is signed: the person still reads the hub and presses Connect.
+  const canRead = typeof navigator !== 'undefined' && typeof navigator.clipboard?.readText === 'function'
+  const useCopied = async () => {
+    setNoCopied(false)
+    try {
+      const got = ((await navigator.clipboard.readText()) ?? '').trim()
+      if (LINK.test(got)) { setText(got); setArmed(true) } else setNoCopied(true)
+    } catch { setNoCopied(true) }
+  }
 
   // The hub is looked up as soon as the pasted text is a link: nothing to click before the hub is shown.
   useEffect(() => {
@@ -54,38 +66,45 @@ export function JoinFlow({ ws, onClose, initialLink }: { ws: string; onClose: ()
     setLooking(true)
     api.getHubLink(ws, link).then(
       got => { if (alive) setInfo(got) },
-      e => { if (alive) setProblem(e instanceof ApiError && e.message ? e.code + ': ' + e.message : 'Could not reach the hub named by this link.') },
+      e => { if (alive) setProblem(e instanceof ApiError && e.message ? e.message : 'Could not reach the hub named by this link.') },
     ).finally(() => { if (alive) setLooking(false) })
     return () => { alive = false }
   }, [ws, link, valid, armed])
 
+  // the hub is named by the address the link points to (what is really dialled); its own name and id sit under Details
+  const hubAt = (valid && link.replace(/^https?:\/\/([^/]+).*$/, '$1')) || info?.name || ''
   if (signed && info) return <Flow title="Connect a hub" onClose={leave} finish="here"><ConnectStage ws={ws} info={info} mode={mode} onClose={leave} /></Flow>
 
   return <Flow title="Connect a hub" onClose={onClose} finish="here">
     {!failed && <div className="space-y-1">
       <label htmlFor="hub-link-text" className="sr-only">Connect link</label>
       <p id="hub-link-hint" className="text-sm text-text-muted">Paste the connect link from your hub admin.</p>
+      {canRead && !valid && <Action id="hub-link-use-copied" onClick={() => { void useCopied() }}>Use copied link</Action>}
+      {noCopied && <p role="status" data-testid="hub-link-nocopied" className="text-sm text-text-muted">There is no connect link copied yet.</p>}
       <input id="hub-link-text" data-testid="hub-link-text" autoFocus value={text} onChange={e => { setText(e.target.value); setArmed(true) }} autoComplete="off" spellCheck={false} aria-describedby="hub-link-hint"
-        placeholder="https://hub.example/c#h1...." className="min-h-11 w-full rounded-md border border-border bg-bg px-3 font-mono text-xs" />
+        className="min-h-11 w-full rounded-md border border-border bg-bg px-3 font-mono text-xs" />
     </div>}
     {link && !valid && <p role="alert" data-testid="hub-link-bad" className="text-danger">This does not look like a connect link. Paste all of it, from https:// to the end.</p>}
     {valid && !armed && <div className="space-y-1"><p data-testid="hub-link-from">This link points to <Raw>{link.replace(/^(https?:\/\/[^/]+).*$/, '$1')}</Raw></p><Action id="hub-link-lookup" onClick={() => setArmed(true)}>Look up this hub</Action></div>}
     {looking && <p role="status" data-testid="hub-link-looking">Looking up the hub…</p>}
     {problem && <p role="alert" data-testid="hub-link-problem" className="text-danger">{problem}</p>}
     {info && <>
-      {!failed && <><div className="rounded-md border border-border p-3" data-testid="hub-link-hub">
-        <div className="flex items-center gap-1"><p className="font-bold">Hub <Raw>{info.name}</Raw></p><InfoDrawer><p>Hub id: <Raw>{info.hub_id}</Raw></p></InfoDrawer></div>
-        {initialLink && <p className="text-sm text-text-muted" data-testid="hub-link-origin">at <Raw>{link.replace(/^(https?:\/\/[^/]+).*$/, '$1')}</Raw></p>}
+      {!failed && <><div className="space-y-2 rounded-md border border-border p-3" data-testid="hub-link-hub">
+        <p className="font-bold">Connect to the hub at <Raw>{hubAt}</Raw>?</p>
+        {choosing && !signed
+          ? <ModeChoice mode={mode} onChange={setMode} />
+          : <div className={'rounded-md border p-2 ' + violet} data-testid="hub-mode-box">
+            <p className="text-sm">{mode === 'full' ? 'The hub can read every ticket and file.' : 'The hub sees the tickets you pick, notes that need you, and this workspace\'s name.'}{!signed && <> <button type="button" data-testid="hub-mode-other" className="underline" onClick={() => setChoosing(true)}>Change</button></>}</p>
+          </div>}
+        <details className="text-sm text-text-muted" data-testid="hub-link-details" onToggle={e => setDetailsOpen(e.currentTarget.open)}>
+          <summary className="cursor-pointer">Details</summary>
+          {detailsOpen && <>
+            <p>Hub <Raw>{info.name}</Raw></p>
+            <p>Hub id: <Raw>{info.hub_id}</Raw></p>
+            {initialLink && <p data-testid="hub-link-origin">at <Raw>{link.replace(/^(https?:\/\/[^/]+).*$/, '$1')}</Raw></p>}
+          </>}
+        </details>
       </div>
-      {choosing && !signed
-        ? <ModeChoice mode={mode} onChange={setMode} />
-        : <div className="space-y-1" data-testid="hub-mode-box">
-          <div className={'rounded-md border p-3 ' + violet}>
-            <p className="font-semibold">{mode === 'full' ? 'Everything' : 'Only what I choose'}{mode !== 'full' && <span className="font-normal text-text-muted"> · recommended</span>}</p>
-            <p className="text-sm text-text-muted">{mode === 'full' ? 'The hub can read every ticket and file.' : 'You pick the tickets. The hub also sees this workspace\'s name; everything else stays on this computer.'}</p>
-            {!signed && <button type="button" data-testid="hub-mode-other" className="text-sm underline" onClick={() => setChoosing(true)}>Change</button>}
-          </div>
-        </div>}
       {mode === 'full' && !info.owner_user && <p role="alert" data-testid="hub-link-old" className="text-warning">This link does not name you on the hub, so your agents could not work in this mode. Make a new connect link in the hub and paste that one.</p>}
       {mode === 'full' && <p className="text-warning">{caveat}</p>}</>}
       {oneClick !== 'on'

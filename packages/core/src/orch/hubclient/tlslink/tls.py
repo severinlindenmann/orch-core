@@ -124,6 +124,10 @@ class TlsConn:
         """The TLS 1.3 exporter: label ``EXPORTER-orch-hub-link``, empty context, 32 bytes (section 10.1)."""
         return self._c.export_keying_material(EXPORTER_LABEL, EXPORTER_LEN, b"")
 
+    def alpn(self) -> bytes:
+        """The ALPN protocol negotiated in the handshake, ``b""`` if none."""
+        return self._c.get_alpn_proto_negotiated() or b""
+
     def peer_spki_sha256(self) -> str:
         cert = self._c.get_peer_certificate(as_cryptography=True)
         if cert is None:
@@ -137,8 +141,10 @@ class TlsConn:
             pass
 
 
-def client_context() -> SSL.Context:
+def client_context(alpn: tuple[bytes, ...] = ()) -> SSL.Context:
     ctx = SSL.Context(SSL.TLS_CLIENT_METHOD)
+    if alpn:
+        ctx.set_alpn_protos(list(alpn))
     ctx.set_min_proto_version(SSL.TLS1_3_VERSION)
     ctx.set_max_proto_version(SSL.TLS1_3_VERSION)
     ctx.set_verify(SSL.VERIFY_NONE)  # trust is the SPKI pin, compared by connect_pinned before anything is sent
@@ -188,7 +194,9 @@ def _dial(host: str, port: int, deadline: float) -> socket.socket:
     raise LinkClosed(type(r).__name__)
 
 
-def connect_pinned(host: str, port: int, pinned_spki_sha256: str, *, timeout: float = 10.0) -> TlsConn:
+def connect_pinned(
+    host: str, port: int, pinned_spki_sha256: str, *, timeout: float = 10.0, alpn: tuple[bytes, ...] = ()
+) -> TlsConn:
     """Dial, handshake TLS 1.3 and compare the peer certificate's SPKI hash with the pin. Raises
     :class:`PinMismatch` (connection closed, nothing sent) on any difference; a malformed pin is refused before
     dialling. No pin, a malformed pin or the placeholder pin is :class:`NoPin`: the host never dials without a real
@@ -202,7 +210,7 @@ def connect_pinned(host: str, port: int, pinned_spki_sha256: str, *, timeout: fl
     deadline = time.monotonic() + timeout
     sock = _dial(host, port, deadline)
     sock.setblocking(False)
-    c = SSL.Connection(client_context(), sock)
+    c = SSL.Connection(client_context(alpn), sock)
     c.set_connect_state()
     t = TlsConn(c, sock)
     try:

@@ -17,6 +17,8 @@ What is here:
   key signing the bytes; a FIDO2 credential through plain CTAP2 ``getAssertion`` with user verification);
 - the enrollment MAC and the device fingerprint;
 - the ``WSK``-signed device list;
+- R3, inside a session: the app frames (:func:`app_frame_parse`, :func:`app_frame`), the request-head bearer check
+  (:func:`check_request_head`), the per-stream exchange state (:class:`AppStream`) and :func:`route_digest`;
 - the host's ``stream_open`` gate (``remote.off`` / ``remote.device`` / ``remote.busy`` / ``remote.no_code``) and the
   version check of the open message (``remote.version``) as pure decision functions.
 
@@ -38,9 +40,9 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X
 from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
 
 from . import suite as S
-from .canon import CanonError, cj, unb64u
+from .canon import CanonError, cj, loads_strict, unb64u
 from .canon import unhex as _canon_unhex
-from .hub import LINK_WINDOW_MS, Refused, _envelope, _fields, _signature, link_label
+from .hub import LINK_WINDOW_MS, Refused, _envelope, _fields, link_signed_bytes
 from .phase4 import text_ok
 
 # --- labels (protocol.md §3, "Remote access labels") ---------------------------------------------------------------
@@ -58,6 +60,8 @@ REMOTE_LABELS: dict[str, str] = {
     "h_remote_prologue": "orch/v2/remote-prologue|",
     "h_remote_wrk": "orch/v2/remote-wrk|",
     "h_remote_device_fp": "orch/v2/remote-device-fp|",
+    # R3: the view digest of a presence route (``route_digest``)
+    "h_remote_route": "orch/v2/remote-route|",
 }
 RL: dict[str, bytes] = {k: v.encode("ascii") for k, v in REMOTE_LABELS.items()}
 
@@ -155,12 +159,19 @@ STREAM_OPS: dict[str, tuple[str, dict[str, Any]]] = {
 
 
 def verify_stream_link(
-    signed: Any, *, direction: str, hub_id_: str, workspace_id: str, pub: bytes, now_ms: int
+    signed: Any, *, direction: str, hub_id_: str, workspace_id: str, pub: bytes, now_ms: int, exporter: bytes
 ) -> dict[str, Any]:
     """The §10.2 receiver steps for a stream op (both modes). ``pub``: WSK for w2h (the hub checks), the card's
-    HK_op for h2w (the host checks). A non-stream op is ``unknown_op`` here (``hub.verify_link`` handles those)."""
+    HK_op for h2w (the host checks). ``exporter``: the TLS exporter of the connection the frame arrived on (§10.2, R1:
+    the signature covers ``label || exporter || cj(o)``; there is no exporter-less form). A non-stream op is
+    ``unknown_op`` here (``hub.verify_link`` handles those)."""
     o = _envelope(signed, "hub.link")
-    _signature(signed, link_label(direction), pub)
+    try:
+        sig = unb64u(signed["sig"], S.SIG_LEN)
+    except CanonError:
+        raise Refused("malformed") from None
+    if not S.verify(pub, sig, link_signed_bytes(direction, exporter, o)):
+        raise Refused("bad_signature")
     _fields(o, "hub.link")
     if o["dir"] != direction:
         raise Refused("malformed")
@@ -497,6 +508,341 @@ def _pub65(v: Any) -> bytes:
     if not S.valid_public_key(pub):
         raise Refused("malformed")
     return pub
+
+
+# --- inside a session: app frames (R3, §10.2c "Inside a session") ---------------------------------------------------
+
+APP_KINDS: dict[str, int] = {
+    "HEAD": 1,
+    "BODY": 2,
+    "END": 3,
+    "RESET": 4,
+    "WS_OPEN": 5,
+    "WS_TEXT": 6,
+    "WS_BINARY": 7,
+    "WS_CLOSE": 8,
+    "PING": 9,
+    "PONG": 10,
+}
+APP_KIND_NAMES = {v: k for k, v in APP_KINDS.items()}
+APP_PLAIN_MAX = FRAME_MAX - 16  # one Noise transport plaintext: the message minus the AEAD tag
+APP_HEADER = 5  # kind (1) || id (4)
+APP_PAYLOAD_MAX = APP_PLAIN_MAX - APP_HEADER  # 65514
+APP_ID_MAX = 2**32 - 1
+HEAD_MAX = 16384
+HEADERS_MAX = 64
+HEADER_NAME_MAX = 64
+HEADER_VALUE_MAX = 4096
+PATH_MAX = 2048
+QUERY_MAX = 4096
+TEMPLATE_MAX = 1024
+METHODS = ("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE")
+ROUTE_METHODS = (*METHODS, "WEBSOCKET")
+RESET_CODES = ("cancelled", "timeout", "too_large", "remote.busy")
+EXCHANGES_MAX = 8  # open HTTP exchanges per stream
+WEBSOCKETS_MAX = 2  # open WebSockets per stream
+REQUEST_BODY_MAX = 1 << 20
+REQUEST_END_MS = 60_000
+#: framing belongs to the frames: never in any head
+FRAMING_HEADERS = frozenset(
+    {
+        "content-length",
+        "transfer-encoding",
+        "connection",
+        "upgrade",
+        "keep-alive",
+        "te",
+        "trailer",
+        "proxy-connection",
+        "sec-websocket-key",
+        "sec-websocket-version",
+        "sec-websocket-extensions",
+        "sec-websocket-accept",
+    }
+)
+REQUEST_ONLY_REFUSED = frozenset({"host", "origin"})  # the terminator sets Host ``orch-remote`` and no Origin
+RESPONSE_ONLY_REFUSED = frozenset({"set-cookie"})  # a stream credential never leaves the dashboard process
+BEARER_HEADERS = frozenset({"authorization", "cookie", "x-setup-token"})
+BEARER_PREFIX = "x-orch-"
+
+_TCHAR_LOWER = re.compile(r"[a-z0-9!#$%&'*+\-.^_`|~]+")
+_HEADER_VALUE = re.compile(r"(?:[\x21-\x7e](?:[\x20-\x7e]*[\x21-\x7e])?)?")
+_PATH = re.compile(r"/[\x21-\x7e]*")
+_QUERY = re.compile(r"[A-Za-z0-9\-._~!$&'()*+,;=:@%/?]*")
+_TEMPLATE = re.compile(r"[\x21-\x7e]+")
+
+
+def _ws_close_ok(code: int) -> bool:
+    return 1000 <= code <= 1003 or 1007 <= code <= 1011 or 3000 <= code <= 4999
+
+
+@dataclass(frozen=True)
+class AppFrame:
+    """A parsed app frame. ``value``: the head (dict) for ``HEAD``/``WS_OPEN``, the raw bytes for ``BODY`` and
+    ``WS_BINARY``, the text for ``WS_TEXT``, the code for ``RESET`` (str) and ``WS_CLOSE`` (int), None otherwise."""
+
+    kind: str
+    id: int
+    value: Any
+
+
+def app_frame(kind: str, ident: int, payload: bytes = b"") -> bytes:
+    """``kind (1) || id (4, big-endian) || payload``; builds bytes only, :func:`app_frame_parse` checks them."""
+    return bytes([APP_KINDS[kind]]) + ident.to_bytes(4, "big") + payload
+
+
+def _clean_path(p: Any) -> bool:
+    if type(p) is not str or not 1 <= len(p) <= PATH_MAX or _PATH.fullmatch(p) is None:
+        return False
+    if any(c in p for c in "%\\;?#"):
+        return False
+    return p == "/" or all(seg not in ("", ".", "..") for seg in p[1:].split("/"))
+
+
+def _headers_ok(h: Any, refused: frozenset[str]) -> bool:
+    if type(h) is not list or len(h) > HEADERS_MAX:
+        return False
+    for pair in h:
+        if type(pair) is not list or len(pair) != 2 or not all(type(x) is str for x in pair):
+            return False
+        name, value = pair
+        if not 1 <= len(name) <= HEADER_NAME_MAX or _TCHAR_LOWER.fullmatch(name) is None:
+            return False
+        if len(value) > HEADER_VALUE_MAX or _HEADER_VALUE.fullmatch(value) is None:
+            return False
+        if name in FRAMING_HEADERS or name in refused:
+            return False
+    return True
+
+
+def _head(payload: bytes, keys: set[str]) -> dict[str, Any]:
+    if len(payload) > HEAD_MAX:
+        raise Refused("malformed")
+    try:
+        head = loads_strict(payload)
+    except CanonError:
+        raise Refused("malformed") from None
+    if type(head) is not dict or set(head) != keys or cj(head) != payload:
+        raise Refused("malformed")
+    return head
+
+
+def _request_head(payload: bytes, *, ws: bool) -> dict[str, Any]:
+    head = _head(payload, {"headers", "path", "query"} if ws else {"headers", "method", "path", "query"})
+    if not ws and head["method"] not in METHODS:
+        raise Refused("malformed")
+    q = head["query"]
+    if not _clean_path(head["path"]) or type(q) is not str or len(q) > QUERY_MAX or _QUERY.fullmatch(q) is None:
+        raise Refused("malformed")
+    if not _headers_ok(head["headers"], REQUEST_ONLY_REFUSED):
+        raise Refused("malformed")
+    return head
+
+
+def _response_head(payload: bytes) -> dict[str, Any]:
+    head = _head(payload, {"headers", "status"})
+    st = head["status"]
+    if type(st) is not int or not (st == 101 or 200 <= st <= 599):
+        raise Refused("malformed")
+    if not _headers_ok(head["headers"], RESPONSE_ONLY_REFUSED):
+        raise Refused("malformed")
+    return head
+
+
+def app_frame_parse(direction: str, pt: bytes) -> AppFrame:
+    """One app frame as its receiver checks it, without stream state (that is :class:`AppStream`). ``direction``:
+    ``d2h`` (device to host: request heads, ``WS_OPEN``) or ``h2d`` (response heads). Anything outside the table is
+    ``malformed`` and closes the stream."""
+    if direction not in ("d2h", "h2d"):
+        raise ValueError(direction)
+    if type(pt) is not bytes or not APP_HEADER <= len(pt) <= APP_PLAIN_MAX:
+        raise Refused("malformed")
+    kind = APP_KIND_NAMES.get(pt[0])
+    ident = int.from_bytes(pt[1:5], "big")
+    p = pt[5:]
+    if kind is None:
+        raise Refused("malformed")
+    if (ident == 0) != (kind in ("PING", "PONG")):
+        raise Refused("malformed")
+    value: Any = None
+    if kind == "HEAD":
+        value = _request_head(p, ws=False) if direction == "d2h" else _response_head(p)
+    elif kind == "WS_OPEN":
+        if direction != "d2h":
+            raise Refused("malformed")
+        value = _request_head(p, ws=True)
+    elif kind == "BODY":
+        if not p:
+            raise Refused("malformed")
+        value = p
+    elif kind == "WS_BINARY":
+        value = p
+    elif kind == "WS_TEXT":
+        try:
+            value = p.decode("utf-8")
+        except UnicodeDecodeError:
+            raise Refused("malformed") from None
+    elif kind == "RESET":
+        try:
+            value = p.decode("ascii")
+        except UnicodeDecodeError:
+            raise Refused("malformed") from None
+        if value not in RESET_CODES:
+            raise Refused("malformed")
+    elif kind == "WS_CLOSE":
+        if len(p) != 2 or not _ws_close_ok(int.from_bytes(p, "big")):
+            raise Refused("malformed")
+        value = int.from_bytes(p, "big")
+    elif p:  # END, PING, PONG
+        raise Refused("malformed")
+    return AppFrame(kind, ident, value)
+
+
+def check_request_head(head: Mapping[str, Any]) -> None:
+    """D89: an outside bearer in a (well-formed) request head or ``WS_OPEN`` is ``remote.bearer``, answered ``400``;
+    refused, never stripped."""
+    for name, _value in head["headers"]:
+        if name in BEARER_HEADERS or name.startswith(BEARER_PREFIX):
+            raise Refused("remote.bearer")
+
+
+@dataclass
+class _Exchange:
+    ws: bool
+    req: str  # "body" (HTTP request open), "done"
+    resp: str = "head"  # "head" (no response head yet), "body", "ws" (101 sent), "done"
+    req_bytes: int = 0
+    ws_closed: set[str] = field(default_factory=set)
+
+
+@dataclass
+class AppStream:
+    """The exchange state of one session stream, checked frame by frame (both directions in one
+    place: each side feeds its sent and received frames, in its local order, into the same state machine).
+
+    :meth:`feed` returns ``"ok"``, ``"drop"`` (a frame of an exchange that already ended) or ``"reset:<code>"`` (the
+    receiver resets this exchange and the stream stays), and raises ``malformed`` for a frame error (the stream
+    closes). Timeouts (60 s to the request ``END``, idle, life) are the terminator's sweep, not here."""
+
+    high: int = 0
+    open: dict[int, _Exchange] = field(default_factory=dict)
+    ping: dict[str, bool] = field(default_factory=lambda: {"d2h": False, "h2d": False})
+
+    def feed(self, direction: str, pt: bytes) -> str:
+        f = app_frame_parse(direction, pt)
+        if f.kind == "PING":
+            if self.ping[direction]:
+                raise Refused("malformed")
+            self.ping[direction] = True
+            return "ok"
+        if f.kind == "PONG":
+            other = "h2d" if direction == "d2h" else "d2h"
+            if not self.ping[other]:
+                raise Refused("malformed")
+            self.ping[other] = False
+            return "ok"
+        if direction == "d2h" and f.kind in ("HEAD", "WS_OPEN") and f.id not in self.open:
+            return self._start(f)
+        ex = self.open.get(f.id)
+        if ex is None:
+            if f.id > self.high:
+                raise Refused("malformed")  # an exchange the device never opened
+            return "drop"  # it ended (END both ways, WS_CLOSE both ways, RESET); a late frame
+        if f.kind == "RESET":
+            del self.open[f.id]
+            return "ok"
+        if direction == "d2h":
+            return self._request(f, ex)
+        return self._response(f, ex)
+
+    def _start(self, f: AppFrame) -> str:
+        if f.id <= self.high:
+            raise Refused("malformed")  # ids rise strictly: reused or lower
+        self.high = f.id
+        ws = f.kind == "WS_OPEN"
+        if sum(1 for e in self.open.values() if e.ws == ws) >= (WEBSOCKETS_MAX if ws else EXCHANGES_MAX):
+            return "reset:remote.busy"
+        self.open[f.id] = _Exchange(ws=ws, req="done" if ws else "body")
+        return "ok"
+
+    def _request(self, f: AppFrame, ex: _Exchange) -> str:
+        if f.kind == "BODY" and not ex.ws and ex.req == "body":
+            ex.req_bytes += len(f.value)
+            if ex.req_bytes > REQUEST_BODY_MAX:
+                del self.open[f.id]
+                return "reset:too_large"
+            return "ok"
+        if f.kind == "END" and not ex.ws and ex.req == "body":
+            ex.req = "done"
+            return self._maybe_done(f.id, ex)
+        return self._ws_frame("d2h", f, ex)
+
+    def _response(self, f: AppFrame, ex: _Exchange) -> str:
+        if f.kind == "HEAD" and ex.resp == "head":
+            if f.value["status"] == 101:
+                if not ex.ws:
+                    raise Refused("malformed")
+                ex.resp = "ws"
+            else:
+                ex.resp = "body"
+            return "ok"
+        if f.kind == "BODY" and ex.resp == "body":
+            return "ok"
+        if f.kind == "END" and ex.resp == "body":
+            ex.resp = "done"
+            return self._maybe_done(f.id, ex)
+        return self._ws_frame("h2d", f, ex)
+
+    def _ws_frame(self, direction: str, f: AppFrame, ex: _Exchange) -> str:
+        if not (ex.ws and ex.resp == "ws" and f.kind in ("WS_TEXT", "WS_BINARY", "WS_CLOSE")):
+            raise Refused("malformed")
+        if direction in ex.ws_closed:
+            raise Refused("malformed")
+        if f.kind == "WS_CLOSE":
+            ex.ws_closed.add(direction)
+            if len(ex.ws_closed) == 2:
+                del self.open[f.id]
+        return "ok"
+
+    def _maybe_done(self, ident: int, ex: _Exchange) -> str:
+        if ex.req == "done" and ex.resp == "done":
+            del self.open[ident]
+        return "ok"
+
+
+# --- route_digest: the view digest of a presence route (R3) ---------------------------------------------------------
+
+
+def route_bytes(workspace_id: str, method: str, template: str, path: str, query: str, body: bytes) -> bytes:
+    """``remote-route| || workspace_id (16) || u8 len || method || u16 len || template || u16 len || path || u16 len
+    || query || SHA-256(body)``. The concrete path, query and body are covered, not only the template."""
+    if method not in ROUTE_METHODS or type(template) is not str or _TEMPLATE.fullmatch(template) is None:
+        raise Refused("malformed")
+    if len(template) > TEMPLATE_MAX or not _clean_path(path):
+        raise Refused("malformed")
+    if type(query) is not str or len(query) > QUERY_MAX or _QUERY.fullmatch(query) is None:
+        raise Refused("malformed")
+    if type(body) is not bytes or (method == "WEBSOCKET" and body):
+        raise Refused("malformed")
+
+    def u16(s: str) -> bytes:
+        return len(s).to_bytes(2, "big") + s.encode("ascii")
+
+    return (
+        RL["h_remote_route"]
+        + unhex(workspace_id, 16)
+        + bytes([len(method)])
+        + method.encode("ascii")
+        + u16(template)
+        + u16(path)
+        + u16(query)
+        + hashlib.sha256(body).digest()
+    )
+
+
+def route_digest(workspace_id: str, method: str, template: str, path: str, query: str, body: bytes) -> bytes:
+    """The 32-byte ``view_digest`` of a presence route (shown as ``sha256:<hex>``)."""
+    return hashlib.sha256(route_bytes(workspace_id, method, template, path, query, body)).digest()
 
 
 # --- enrollment (§5) ------------------------------------------------------------------------------------------------

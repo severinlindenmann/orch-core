@@ -16,7 +16,7 @@ import './setup.css'
 const clickRiskCopy = 'Faster, less safe: anything using this computer as you, including your agents, could approve for you. Choose this only on your own computer.'
 /** The plain meaning of One click, behind "What does this mean?"; the full risk sentence stays in the review step. */
 const clickMeaningCopy =
-  'Anything running as you on this computer, including your agents, could approve for you. Choose a passphrase if the computer is shared.'
+  'Anything running as you on this computer, including your agents, could approve for you. Choose a password if the computer is shared.'
 const terminalStepCopy = "One step needs your terminal: you'll press Enter once."
 const voidCopy =
   'If setup stops before it finishes, you get new words next time.'
@@ -115,7 +115,7 @@ export function summarize(review: Review): { lines: string[]; unknown: boolean; 
   }
   for (const flag of review.flags) {
     if (flag.id === 'custody' || flag.id === 'terminal' || flag.id === 'records' || flag.id === 'trust' || flag.id === 'perms') lines.push(flag.text)
-    else if (flag.id === 'git') continue // shown as the 'Work copies' row on the card; its detail stays in the fold
+    else if (flag.id === 'git') continue // shown as the 'Own copy per ticket' row on the card; its detail stays in the fold
     else if (flag.id !== 'runner' && flag.id !== 'terminals') odd(flag.text) // a flag this page does not know is shown
   }
   if (addons.length) lines.push(`Add-ons: ${addons.join(', ')}`)
@@ -135,7 +135,7 @@ export function reviewFacts(review: Review): Fact[] {
   }
   const has = (id: string) => review.flags.some((f) => f.id === id)
   if (has('custody')) facts.push({ icon: '◈', label: 'How you approve', value: 'One click on this computer' })
-  else if (has('terminal') || review.tty_confirm) facts.push({ icon: '◈', label: 'How you approve', value: 'In a terminal, with your passphrase' })
+  else if (has('terminal') || review.tty_confirm) facts.push({ icon: '◈', label: 'How you approve', value: 'In a terminal, with your password' })
   let agents: string | undefined
   for (const item of review.items) {
     const f = item.fields
@@ -151,8 +151,8 @@ export function reviewFacts(review: Review): Fact[] {
   }
   if (agents !== undefined) facts.push({ icon: '✦', label: 'Agents', value: agents })
   const addons = review.items.filter((i) => i.type === 'addon.granted' && i.id !== 'addon:dashboard').map((i) => i.title)
-  if (addons.length) facts.push({ icon: '⊞', label: 'Add-ons', value: addons })
-  if (has('git')) facts.push({ icon: '⧉', label: 'Work copies', value: 'Each ticket gets its own copy of this folder. Your files are not changed.' })
+  if (addons.length) facts.push({ icon: '⊞', label: 'Features', value: addons })
+  if (has('git')) facts.push({ icon: '⧉', label: 'Own copy per ticket', value: 'Each ticket gets its own copy of this folder. Your files are not changed.' })
   if (has('records')) facts.push({ icon: '◷', label: 'History', value: 'Tickets are saved on this computer only' })
   return facts
 }
@@ -183,7 +183,7 @@ export function approvalSummary(
         : `Agents can work on their own for ${duration(profile.agent_hours)}.`,
   ]
   if (opts.records) out.push(profile.records !== false ? 'Your history stays on this computer.' : 'No history is kept.')
-  if (opts.trust !== undefined) out.push(opts.trust ? 'Claude Code opens this folder without asking.' : 'Claude Code asks before it opens this folder.')
+  if (opts.trust !== undefined) out.push(opts.trust ? 'AI helpers open this folder without asking.' : 'AI helpers ask before they open this folder.')
   return out.join(' ')
 }
 const statusWord = { todo: 'Waiting', doing: 'Running', done: 'Done', failed: 'Failed', skipped: 'Skipped' }
@@ -191,12 +191,12 @@ const statusIcon = { todo: '•', doing: '◔', done: '✓', failed: '✕', skip
 /** Roll up display rows only; setup still uses the original server steps. */
 export function groupProgress(steps: Progress['steps']): Progress['steps'] {
   const groups = [
-    { id: 'perms', label: 'Folders made private', ids: ['perms'] },
-    { id: 'key', label: 'Your key', ids: ['keys', 'genesis', 'custody'] },
+    { id: 'perms', label: 'Your files are private', ids: ['perms'] },
+    { id: 'key', label: 'Your way to approve', ids: ['keys', 'genesis', 'custody'] },
     { id: 'workspace', label: 'Your workspace', ids: ['git', 'settings', 'records', 'trust'] },
     { id: 'services', label: 'Starting orch', ids: ['register', 'runner', 'runner_grant'] },
-    { id: 'addons', label: 'Add-ons', ids: [] },
-    { id: 'approval', label: 'Approval', ids: ['flags'] },
+    { id: 'addons', label: 'Features', ids: [] },
+    { id: 'approval', label: 'Your choices saved', ids: ['flags'] },
   ]
   return groups.flatMap(({ id, label, ids }) => {
     const members = steps.filter((step) => ids.includes(step.id) || (id === 'addons' && step.id.startsWith('addon:')))
@@ -341,7 +341,7 @@ function FinishChoices({
             <label className="toggle">
               <span>
                 <strong>Approve with one click on this computer</strong>
-                <small>Instead of the terminal. Your key is kept in a key file only you can read on this computer. You keep your passphrase.</small>
+                <small>Instead of the terminal. It is kept in a key file only you can read on this computer. You keep your password.</small>
               </span>
               <input
                 type="checkbox"
@@ -435,6 +435,8 @@ export function Setup({ api }: { api: SetupAPI }) {
   const [error, setError] = useState('')
   const [ended, setEnded] = useState(false)
   const [notice, setNotice] = useState('')
+  // display only: which way the words were kept on this page. Never sent, never stored, never skips the step.
+  const [savedHow, setSavedHow] = useState<'copy' | 'file' | 'print' | null>(null)
   const [reason, setReason] = useState('')
   const [openFailed, setOpenFailed] = useState(false) // Finish answered but the dashboard did not open: "Try again"
   // "No agent access" is a choice of its own (B11 finding 21); it keeps the workspace default time and no runner grant.
@@ -644,10 +646,18 @@ export function Setup({ api }: { api: SetupAPI }) {
       drop()
     }
   }, [api])
-  // Work copies need a git repository: a new workspace in a folder without git offers to make one (nothing is committed)
+  // Own copy per ticket needs a git repository: a new workspace in a folder without git offers to make one (nothing is committed)
   const offersTrust = state?.mode === 'new' && state.claude?.available === true
   const parentConfig = state?.claude?.parent_config ?? ''
   const offersGit = state?.mode === 'new' && state.git?.repo === false && profile.addons.includes('worktrees')
+  // Print: the tick comes from the browser's own afterprint event (display only)
+  useEffect(() => {
+    const done = () => setSavedHow('print')
+    window.addEventListener('afterprint', done)
+    return () => window.removeEventListener('afterprint', done)
+  }, [])
+  // the recommendation no longer applies: a switch is not at its default
+  const agentsDiffer = !!state?.addons?.some((a) => a.kind !== 'flag' && !a.required && a.default !== profile.addons.includes(a.id))
   const update = (value: Partial<Profile>) => {
     setProfile((p) => ({ ...p, ...value }))
     setReview(undefined)
@@ -684,11 +694,13 @@ export function Setup({ api }: { api: SetupAPI }) {
     a.remove()
     setTimeout(() => URL.revokeObjectURL(url), 0)
     setNotice('Recovery words saved as a file. Keep it somewhere safe.')
+    setSavedHow('file')
   }
   async function copyRecovery() {
     try {
       await navigator.clipboard.writeText(secrets!.recovery_words.join(' '))
       setNotice('Recovery words copied. We will try to clear your clipboard in 60 seconds.')
+      setSavedHow('copy')
       // Do not retain the secret in a timer closure, or read unrelated clipboard contents.
       setTimeout(clearClipboard, 60_000)
     } catch {
@@ -728,12 +740,12 @@ export function Setup({ api }: { api: SetupAPI }) {
       />
       <span>
         <strong>
-          {method === 'click' ? 'One click on this computer' : 'Passphrase'}
+          {method === 'click' ? 'One click on this computer' : 'Password'}
           {method === 'click' && state.click_available && <span className="badge">Recommended</span>}
         </strong>
         <small>
           {method === 'terminal'
-            ? 'Type your passphrase each time. Safest if others use this computer.'
+            ? 'Type your password each time. Safest if others use this computer.'
             : state.click_available
               ? 'No typing. Best on your own computer.'
               : clickOffText(state.click_reason)}
@@ -843,9 +855,10 @@ export function Setup({ api }: { api: SetupAPI }) {
           {step === 0 && (
             <>
               <p>orch keeps a to-do list of tickets that you and your AI helpers work on.</p>
-              <p>Folder: <Inline>{state.dir_name}</Inline></p>
+              <p>We will set this up in your project folder.</p>
               <details className="welcome-technical">
-                <summary>Technical details</summary>
+                <summary>Details</summary>
+                <p><Inline>{state.dir_name}</Inline></p>
                 <Raw>{state.dir}</Raw>
               </details>
               {profile.method === 'terminal' && <p>{terminalStepCopy}</p>}
@@ -951,15 +964,14 @@ export function Setup({ api }: { api: SetupAPI }) {
           )}
           {step === 2 && (
             <>
-              <p>A starting point. You can change these choices in Settings.</p>
-              <label className="toggle">
-                <span>
-                  <strong>Dashboard</strong>
-                  <small>Your workspace in the browser · required</small>
-                </span>
-                <input type="checkbox" role="switch" checked disabled />
-              </label>
-              {state.addons
+              <div className="agents-summary" data-testid="agents-summary">
+                <strong>Recommended for most people</strong>
+                <small>Agents can start from the dashboard, open a terminal, get their own copy of each ticket&apos;s files, and run quick tasks. Your files are not changed.</small>
+              </div>
+              {/* the fold opens by itself when the recommendation does not apply (a switch differs from its default, or the folder question was answered Skip) */}
+              <details className="approval-more" data-testid="agents-more" open={agentsDiffer || undefined}>
+                <summary>Change these settings</summary>
+                            {state.addons
                 .filter((a) => a.id !== 'dashboard')
                 .map((a) =>
                   a.kind === 'flag' ? (
@@ -972,7 +984,8 @@ export function Setup({ api }: { api: SetupAPI }) {
                       <span className="always">Always on</span>
                     </div>
                   ) : (
-                  <label className="toggle" key={a.id}>
+                  <Fragment key={a.id}>
+                  <label className="toggle">
                     <span>
                       <strong>{a.title}</strong>
                       <small>{a.desc}</small>
@@ -987,52 +1000,26 @@ export function Setup({ api }: { api: SetupAPI }) {
                           addons: e.target.checked
                             ? [...profile.addons, a.id]
                             : profile.addons.filter((id) => id !== a.id),
-                          // ticking Work copies again asks the git question again
+                          // ticking Own copy per ticket again asks the git question again
                           ...(a.id === 'worktrees' ? { git_init: undefined } : {}),
                         })
                       }
                     />
                   </label>
-                  ),
-                )}
-              {offersGit && (
-                <div className="note" role="group" aria-label="Work copies">
-                  <p>
-                    <strong>Your project folder is not set up for work copies yet.</strong> Agents work best when
-                    each ticket gets its own copy. We can do it for you; your files stay as they are.
-                  </p>
-                  <label className="toggle">
-                    <span>
-                      <strong>Set it up for me (recommended)</strong>
-                      <small>Each ticket gets its own copy. Your files are not changed.</small>
+                  {a.id === 'worktrees' && offersGit && (
+                    <small className="reason sub-note" data-testid="git-note">
+                      We will set your project folder up for this. Your files stay as they are.
                       <details className="info">
                         <summary>Details</summary>
                         <small>orch adds two lines to your .gitignore (.orch/ and .orch-work/) so the copies stay out of your project history.</small>
                       </details>
-                    </span>
-                    <input
-                      type="radio"
-                      name="git"
-                      checked={profile.git_init !== false}
-                      onChange={() => update({ git_init: true })}
-                    />
-                  </label>
-                  <label className="toggle">
-                    <span>
-                      <strong>Skip this</strong>
-                      <small>Agents work one ticket at a time.</small>
-                    </span>
-                    <input
-                      type="radio"
-                      name="git"
-                      checked={profile.git_init === false}
-                      onChange={() =>
-                        update({ git_init: false, addons: profile.addons.filter((id) => id !== 'worktrees') })
-                      }
-                    />
-                  </label>
-                </div>
-              )}
+                    </small>
+                  )}
+                  </Fragment>
+                  ),
+                )}
+              </details>
+              <small>You can change this later in Settings.</small>
               <SetupFooter cancel={cancel}>
                 <button onClick={() => setStep(1)}>Back</button>
                 {next(3)}
@@ -1052,7 +1039,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                 </details>
               )}
               {/* r11-P16: the safe defaults in one line; every other choice behind one click (forced open when a choice
-                  must be seen: no One click here, or a parent Claude Code setting asks for "Trust anyway") */}
+                  must be seen: no One click here, or a parent AI helper setting asks for "Trust anyway") */}
               <p className="approval-summary" data-testid="approval-summary">
                 {approvalSummary(profile, access, { records: state.mode !== 'finish', trust: offersTrust ? (parentConfig ? profile.trust_parent === true : profile.trust_folder !== false) : undefined })}
               </p>
@@ -1103,7 +1090,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                     />
                   </label>
                   {profile.method === 'click' && (
-                    <p>Phone approvals are not available with One click yet. Choose Passphrase to use them.</p>
+                    <p>Phone approvals are not available with One click yet. Choose Password to use them.</p>
                   )}
                 </>
               )}
@@ -1126,8 +1113,8 @@ export function Setup({ api }: { api: SetupAPI }) {
                   <span>
                     Trust anyway
                     <small>
-                      Found Claude Code settings in {parentConfig}: they would apply to this folder too. Off means
-                      Claude Code asks each time.
+                      Found AI helper settings in {parentConfig}: they would apply to this folder too. Off means
+                      AI helpers ask each time.
                     </small>
                   </span>
                   <input
@@ -1141,8 +1128,8 @@ export function Setup({ api }: { api: SetupAPI }) {
               {offersTrust && !parentConfig && (
                 <label className="toggle">
                   <span>
-                    Let Claude Code trust this folder
-                    <small>Claude Code will open this folder without asking. It only holds orch’s files.</small>
+                    Let your AI helpers open this folder without asking
+                    <small>They will not stop to ask first. This folder only holds orch’s files.</small>
                   </span>
                   <input
                     type="checkbox"
@@ -1168,9 +1155,9 @@ export function Setup({ api }: { api: SetupAPI }) {
                 <>
                   {secrets.passphrase && (
                     <section className="passphrase">
-                      <h2>Your passphrase</h2>
+                      <h2>Your password</h2>
                       <p className="inset">{secrets.passphrase}</p>
-                      <p>Never type your passphrase into this page.</p>
+                      <p>Never type your password into this page.</p>
                     </section>
                   )}
                   <section className="recovery-print">
@@ -1184,11 +1171,13 @@ export function Setup({ api }: { api: SetupAPI }) {
                     </ol>
                   </section>
                   <div className="segments">
-                    <button onClick={() => void copyRecovery()}>Copy</button>
-                    <button onClick={saveRecovery}>Save as file</button>
-                    <button onClick={() => window.print()}>Print</button>
+                    <button className={savedHow === 'copy' ? 'done' : undefined} onClick={() => void copyRecovery()}>{savedHow === 'copy' ? 'Copied ✓' : 'Copy'}</button>
+                    <button className={savedHow === 'file' ? 'done' : undefined} onClick={saveRecovery}>{savedHow === 'file' ? 'Saved ✓' : 'Save as file'}</button>
+                    <button className={savedHow === 'print' ? 'done' : undefined} onClick={() => window.print()}>{savedHow === 'print' ? 'Printed ✓' : 'Print'}</button>
                   </div>
-                  <p role="status">{notice}</p>
+                  <p role="status" className={savedHow ? 'state' : undefined}>
+                    {savedHow ? `✓ ${notice}` : 'Not saved yet. Copy, save or print your words, then continue.'}
+                  </p>
                   <p className="warning">{voidCopy}</p>
                   <SetupFooter cancel={cancel}>
                     <button className="primary" onClick={() => void act(confirm)}>
@@ -1379,9 +1368,9 @@ export function Setup({ api }: { api: SetupAPI }) {
             </p>
             )
           )}
-          {state?.os === 'darwin' && !progress?.done && !progress?.error && (
+          {state?.os === 'darwin' && !progress?.done && !progress?.error && groupProgress(progress?.steps ?? []).some((g) => g.id === 'services' && g.status === 'doing') && (
             // only while the steps run (the Mac asks then); never on the ready or the error screen
-            <p><small>Your Mac may say “orch added items that run in the background”. That is fine; leave it on.</small></p>
+            <p><small>Your Mac may show a note that orch runs in the background. That is fine; leave it on.</small></p>
           )}
           <ol className="progress">
             {groupProgress(progress?.steps ?? []).map((s) => (
@@ -1396,8 +1385,8 @@ export function Setup({ api }: { api: SetupAPI }) {
           {progress?.steps.some((s) => s.id === 'trust' && s.status === 'skipped') && (
             <div className="progress-note" role="note">
               {progress.reason_codes?.trust === 'not_installed' || progress.reason_codes?.trust === 'not_started'
-                ? 'Claude Code will ask once to trust this folder. Say yes there.'
-                : 'Claude Code will ask once about this folder. See why below.'}
+                ? 'Your AI helper will ask once to trust this folder. Say yes there.'
+                : 'Your AI helper will ask once about this folder. See why below.'}
               {progress.reasons?.trust && (
                 <details>
                   <summary>Why?</summary>

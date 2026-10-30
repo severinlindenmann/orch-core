@@ -35,6 +35,7 @@ from .tls import LinkClosed, LinkTimeout, PinMismatch
 
 __all__ = [
     "LINK_WINDOW_MS",
+    "STREAM_LINK_ALPN",
     "W2H_OPS",
     "LinkClient",
     "LinkError",
@@ -49,6 +50,10 @@ SIG_LINK = b"orch/v2/sig/hub-link|"
 SIG_ROUTE = b"orch/v2/hub-route|"
 SIG_LINK_AUTH = b"orch/v2/sig/hub-link-auth|"
 HV = 0
+#: R4 (#1592): the ALPN protocol of a host's dedicated stream link (protocol 10.2c). The hub attaches such a link to its
+#: stream router only and accepts on it stream frames, ``stream_open`` replies and ``hub_where``; a plain link never
+#: carries streams.
+STREAM_LINK_ALPN = b"orch-link-streams/1"
 #: Most h2w requests (``route_in``, ``event_deliver``) kept per queue while the host drains only the other one.
 MAX_QUEUED = 64
 LINK_WINDOW_MS = 120_000
@@ -267,8 +272,10 @@ class LinkClient:
         timeout: float = 10.0,
         max_frame: int = framing.MAX_FRAME,
         now_ms: Callable[[], int] = lambda: int(time.time() * 1000),
+        alpn: bytes | None = None,
     ) -> LinkClient:
-        """Open and authenticate. ``wsk_pub`` is passed only for the first link of a join (the hub has not pinned the
+        """Open and authenticate. ``alpn``: the link's declared role (``STREAM_LINK_ALPN``); the hub must select it,
+        else the link is closed (``LinkError("unsupported")``: never used as a plain link). ``wsk_pub`` is passed only for the first link of a join (the hub has not pinned the
         workspace yet); otherwise leave it ``None``. Raises ``PinMismatch`` before anything is sent when the hub's
         certificate is not the card's, ``LinkError`` for a refusal, ``LinkClosed`` / ``LinkTimeout`` otherwise."""
         if mode not in MODES:
@@ -278,8 +285,10 @@ class LinkClient:
         def left() -> float:
             return max(end - time.monotonic(), 0.001)
 
-        conn = tls.connect_pinned(host, port, tls_spki_sha256, timeout=timeout)
+        conn = tls.connect_pinned(host, port, tls_spki_sha256, timeout=timeout, alpn=(alpn,) if alpn else ())
         try:
+            if alpn is not None and conn.alpn() != alpn:
+                raise LinkError("unsupported")
             ch = framing.read_frame(conn, timeout=left(), max_bytes=max_frame)
             if ch.get("t") == "error":
                 raise LinkError(_code(ch.get("error")))

@@ -1,8 +1,9 @@
 """``python -P -m orch_dashboard.remote_client``: the remote client on this computer (R5 design section 1).
 
 Starts the home page on its own ``127.0.0.1`` port, opens the person's browser at it with a single-use launch code and
-keeps running until nothing has used it for 30 minutes (no open workspace, no request). One per OS user is the aim; a
-second start simply makes a second home page (no shared state beyond the client's files).
+keeps running until nothing has used it for 30 minutes (no open workspace, no request). One per OS user: a second
+start hands over to the running client (``instance.py``), which opens its home page again, instead of starting
+another.
 
 The presence key: on a Mac the signed helper (``<client state>/helper/OrchRemoteKey.app/...``) when it is installed, a
 security key (FIDO2 over USB) otherwise. There is no software fallback."""

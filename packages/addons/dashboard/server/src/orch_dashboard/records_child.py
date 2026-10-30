@@ -11,6 +11,7 @@ import sys
 import threading
 import time
 
+from orch import childenv
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .adapters.addons import prose, records
@@ -256,7 +257,7 @@ class RecordsChild:
         try:
             proc = subprocess.Popen(
                 argv,
-                env=env,
+                env=childenv.sanitize(env, absolute_pythonpath=True),
                 cwd=env["ORCH_STATE_DIR"],
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,

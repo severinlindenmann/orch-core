@@ -56,6 +56,8 @@ from typing import TYPE_CHECKING, Any
 
 from jsonschema import Draft202012Validator
 
+from orch import childenv
+
 from . import frames
 from ._socket import pidfd_pid_now
 from .custody import ensure_private_dir, read_json, write_private
@@ -135,7 +137,7 @@ def _user_query(argv: list[str]) -> Any:
     if os.environ.get("PYTEST_CURRENT_TEST") or os.environ.get("ORCH_NO_SERVICE_MANAGER") == "1":
         raise OSError(f"{argv[0]} refused: the service manager is off (a test, or ORCH_NO_SERVICE_MANAGER=1)")
     return subprocess.run(  # noqa: S603 - fixed binary, fixed arguments
-        argv, capture_output=True, text=True, timeout=SYSTEMCTL_SECONDS, check=False
+        argv, capture_output=True, text=True, timeout=SYSTEMCTL_SECONDS, check=False, env=childenv.sanitize(os.environ)
     )
 
 

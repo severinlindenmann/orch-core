@@ -172,6 +172,7 @@ def _allow_on_local_server(info: Mapping[str, Any], env: Mapping[str, str]) -> b
     workspace on it, as its admin would. False when no publish server is installed here or the admin tool fails."""
     import subprocess
 
+    from orch import childenv
     from orch.install.state import Layout, load
 
     ws, owner = info.get("workspace"), info.get("owner")
@@ -180,9 +181,10 @@ def _allow_on_local_server(info: Mapping[str, Any], env: Mapping[str, str]) -> b
     if not rec or not ws or not owner:
         return False
     base = [str(rec["binary"]), "admin", "--data", str(lay.data("publish"))]
+    child = childenv.sanitize(env)  # the admin tool is a program of the person's: no loader variable reaches it
     for tail in (["owners", "add", str(owner)], ["ws", "allow", str(ws), str(owner)]):
         try:
-            if subprocess.run([*base, *tail], capture_output=True, timeout=30).returncode != 0:
+            if subprocess.run([*base, *tail], capture_output=True, timeout=30, env=child).returncode != 0:
                 return False
         except (OSError, subprocess.SubprocessError):
             return False

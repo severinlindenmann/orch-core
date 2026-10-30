@@ -1,13 +1,15 @@
 """H1: the hub switch routes. The hub is the authority for a ticket; this process only relays the host's answer and
 opens a `switch` session (not `local`) for an `open` ticket."""
 
+import json
+
 import pytest
 from conftest import ORIGIN, PORT
 from fastapi.testclient import TestClient
 
 from orch_dashboard.app import create_app
 from orch_dashboard.auth import Auth
-from orch_dashboard.errors import fail
+from orch_dashboard.errors import HostError, fail
 from orch_dashboard.gateway import Gateway
 
 WS = "a" * 32
@@ -223,3 +225,124 @@ def test_a_switch_session_also_works_on_loopback_but_only_as_a_reader(client, li
     link.answers["rail"] = {"hub": {"name": "Acme", "origin": None}, "user_id": "u", "workspaces": []}
     assert client.get(f"/api/w/{WS}/hub/rail", headers=h).status_code == 200
     assert client.post(f"/api/w/{WS}/settings", json={}, headers=h).status_code == 403
+
+
+def test_p01_the_403_on_a_hub_switch_is_never_an_origin_problem_of_the_configured_address(client, link):
+    """run-15 J02-02 reproduced: a POST /auth/switch whose Origin is this dashboard's own origin opens (no origin.bad).
+    A tunnel or another address in the Host is refused as host.bad (421) before any origin test, and an Origin that is
+    not the Host's own is origin.bad (403): both stay refused on purpose, the guard is unchanged. The 403 the tester
+    saw is the host's own refusal `switch.refused` (D93), which the failure page now says in plain words."""
+    link.answers["redeem"] = {"user_id": "u", "name": "Ann", "return_to": "/", "kind": "open"}
+    assert client.post("/auth/switch", json={"t": TICKET}, headers=H).status_code == 200
+    via_tunnel = {"Origin": "http://127.0.0.1:47821", "Host": "127.0.0.1:47821"}
+    tunnel = client.post("/auth/switch", json={"t": TICKET}, headers=via_tunnel)
+    assert tunnel.status_code == 421 and tunnel.json()["error"]["code"] == "host.bad"
+    foreign = client.post("/auth/switch", json={"t": TICKET}, headers={"Origin": "http://127.0.0.1:47821"})
+    assert foreign.status_code == 403 and foreign.json()["error"]["code"] == "origin.bad"
+
+
+def _rail_read(client, link, auth, origin="https://hub.test"):
+    """The authenticated rail read that fills the host-state cache."""
+    link.answers["rail"] = {"hub": {"name": "Acme", "origin": origin}, "workspaces": []}
+    token = _switch_token(client, link)
+    link.calls.clear()
+    assert client.get(f"/api/w/{WS}/hub/rail", headers={"Authorization": "Bearer " + token}).status_code == 200
+
+
+def _refuse(client, link):
+    link.answers["redeem"] = HostError({"code": "switch.refused", "message": "x", "retryable": False})
+    link.calls.clear()
+    return client.post("/auth/switch", json={"t": TICKET}, headers=H)
+
+
+def test_p01_without_a_cached_hub_origin_the_failure_has_none_and_makes_no_link_call_for_it(client, link):
+    refused = _refuse(client, link)
+    assert refused.status_code == 403 and "hub_origin" not in refused.json()["error"]
+    assert [c["kind"] for c in link.calls] == ["redeem"]  # no rail call on a pre-login request
+
+
+def test_p01_loopback_failure_names_the_hub_from_the_cached_rail_read_only(client, link, auth):
+    _rail_read(client, link, auth)
+    refused = _refuse(client, link)
+    assert refused.json()["error"]["hub_origin"] == "https://hub.test"
+    assert [c["kind"] for c in link.calls] == ["redeem"]  # cached: still no rail call
+    link.answers["redeem"] = HostError({"code": "ticket.used", "message": "x", "retryable": False})
+    assert (
+        client.post("/auth/switch", json={"t": TICKET}, headers=H).json()["error"]["hub_origin"] == "https://hub.test"
+    )
+
+
+def test_p01_only_a_closed_http_origin_is_ever_cached(client, link, auth):
+    for bad in ("javascript:alert(1)", "https://hub.test/path", "https://a b", None):
+        _rail_read(client, link, auth, origin=bad)
+        link.calls.clear()
+        assert "hub_origin" not in _refuse(client, link).json()["error"]
+
+
+def test_p01_remote_listeners_never_carry_the_hub_origin():
+    from orch_dashboard.policy import LOOPBACK, REMOTE
+    from orch_dashboard.switch import switch_failure
+
+    assert json.loads(switch_failure("switch.refused", 403, "x", "https://hub.test", LOOPBACK).body)["error"][
+        "hub_origin"
+    ]
+    for listener in (REMOTE, "remote-device"):
+        res = switch_failure("switch.refused", 403, "x", "https://hub.test", listener)
+        assert "hub_origin" not in json.loads(res.body)["error"] and res.status_code == 403
+
+
+def _asgi_post(app, server, host, origin=None):
+    """A real ASGI call with the accepting socket's address in the scope (what uvicorn sets)."""
+    import asyncio
+
+    body = json.dumps({"t": TICKET}).encode()
+    headers = [
+        (b"host", host.encode()),
+        (b"content-type", b"application/json"),
+        (b"content-length", str(len(body)).encode()),
+    ]
+    if origin:
+        headers.append((b"origin", origin.encode()))
+    scope = {"type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1", "method": "POST", "scheme": "http",
+             "path": "/auth/switch", "raw_path": b"/auth/switch", "query_string": b"", "headers": headers,
+             "server": server, "client": ("192.168.1.99", 5555), "root_path": ""}  # fmt: skip
+    out = {"status": None, "body": b""}
+
+    async def receive():
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    async def send(m):
+        if m["type"] == "http.response.start":
+            out["status"] = m["status"]
+        elif m["type"] == "http.response.body":
+            out["body"] += m.get("body", b"")
+
+    asyncio.run(app(scope, receive, send))
+    return out["status"], json.loads(out["body"] or b"{}")
+
+
+def test_p01_locality_comes_from_the_accepting_socket_not_the_host_header(link, auth, tmp_path):
+    """`serve --listen` is a second socket of the loopback policy. A network client may send any Host."""
+    lan = "192.168.1.20:8151"
+    own = f"127.0.0.1:{PORT}"
+    state = tmp_path / "state"
+    state.mkdir(mode=0o700)
+    static = tmp_path / "static"
+    (static / "assets").mkdir(parents=True)
+    (static / "index.html").write_text("<html></html>")
+    app = create_app(PORT, Gw(link, state), auth, static, alt_hosts=(lan,))
+    with TestClient(app, base_url=ORIGIN) as c:
+        _rail_read(c, link, auth)
+        link.answers["redeem"] = HostError({"code": "switch.refused", "message": "x", "retryable": False})
+        # accepted on the loopback socket with the loopback Host: refused by the host, hub_origin included
+        status, got = _asgi_post(app, ("127.0.0.1", PORT), own, ORIGIN)
+        assert status == 403 and got["error"]["hub_origin"] == "https://hub.test"
+        # accepted on the network socket but claiming the loopback Host: 421 host.bad, nothing learned
+        status, got = _asgi_post(app, ("192.168.1.20", PORT), own, ORIGIN)
+        assert status == 421 and "hub_origin" not in got.get("error", {})
+        # the network address on the network socket: served, but never with the hub origin
+        status, got = _asgi_post(app, ("192.168.1.20", PORT), lan, "http://" + lan)
+        assert status == 403 and "hub_origin" not in got["error"]
+        # an alt host claimed on the loopback socket (an ssh tunnel with a forged Host): 421
+        status, got = _asgi_post(app, ("127.0.0.1", PORT), lan, "http://" + lan)
+        assert status == 421

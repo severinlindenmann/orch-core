@@ -43,7 +43,7 @@ from pydantic import BaseModel, ConfigDict, StringConstraints
 from . import adapters, reads
 from .errors import HostError, fail, response
 from .gateway import Gateway
-from .policy import LOOPBACK, REMOTE
+from .policy import LOOPBACK, REMOTE, accepted_on_loopback
 from .text import hidden
 
 TICKET = re.compile(r"^([0-9a-f]{32})\.[0-9a-f]{32}$")
@@ -123,8 +123,26 @@ def rail_view(raw) -> dict:
     }
 
 
+def switch_failure(code: str, http: int, message: str, hub_origin: str | None, listener: str):
+    """The error body of a failed switch. P01: it may carry the joined hub's origin for "Back to the hub", but only on
+    the loopback listener and only from a value an authenticated rail read already cached: this pre-login answer never
+    makes a link call and never leaks the hub to the network or remote listener."""
+    error = {"code": code, "message": message, "retryable": False}
+    if hub_origin and listener == LOOPBACK:
+        error["hub_origin"] = hub_origin
+    return JSONResponse({"ok": False, "error": error}, status_code=http)
+
+
 def register(app: FastAPI, gateway: Gateway, auth=None, clock=time.monotonic):
     cache: dict[str, tuple[float, dict]] = {}
+
+    hub_origins: dict[str, str] = {}  # ws -> the joined hub's origin, filled only by the authenticated rail read below
+
+    def failed(code: str, http: int, message: str, ws: str, listener: str, request: Request):
+        # The network address (`serve --listen`) is a second socket of the LOOPBACK policy, not a listener of its own,
+        # and a Host header proves nothing: only a connection accepted on a loopback socket counts as this computer.
+        own = accepted_on_loopback(request.scope)
+        return switch_failure(code, http, message, hub_origins.get(ws) if own else None, listener)
 
     def link_for(ws: str):
         link = gateway.enabled(ws)
@@ -191,12 +209,10 @@ def register(app: FastAPI, gateway: Gateway, auth=None, clock=time.monotonic):
             got = link.call("hub.switch", {"kind": "redeem", "ticket": body.t})
         except HostError as exc:
             if exc.error["code"] == "switch.refused":  # D93 (R2): the host refused before the hub: the ticket is unused
-                return JSONResponse(
-                    {"ok": False, "error": {"code": "switch.refused", "message": SWITCH_REFUSED, "retryable": False}},
-                    status_code=403,
-                )
+                return failed("switch.refused", 403, SWITCH_REFUSED, ws, listener, request)
             a.switch_attempt(client)  # a refused ticket costs its source a second charge
-            return response("session.required", 401)  # one answer for a bad, used, expired or foreign ticket
+            # one answer for a bad, used, expired or foreign ticket
+            return failed("session.required", 401, "session.required", ws, listener, request)
         if got.get("kind") == "signout":
             return JSONResponse({"signed_out": True})
         minted = a.open_keyed(body.key_id, ws) if keyed else None
@@ -226,8 +242,14 @@ def register(app: FastAPI, gateway: Gateway, auth=None, clock=time.monotonic):
             raw = link_for(ws).call("hub.switch", {"kind": "rail", "origin": browser_origin(request)})
         except HostError as exc:
             if exc.error["code"] in _NO_HUB or exc.error["code"] == "hub.refused":
+                hub_origins.pop(ws, None)
                 return {"hub": None, "workspaces": []}
             raise
         out = rail_view(raw)
         cache[ws] = (clock(), out)
+        origin = (out["hub"] or {}).get("origin")
+        if origin:
+            hub_origins[ws] = origin
+        else:
+            hub_origins.pop(ws, None)
         return out

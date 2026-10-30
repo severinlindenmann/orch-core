@@ -17,10 +17,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TextIO
 
+from orch import childenv
 from orch.wsproto import wire
 from orch.wsproto.localdial import dial_host
 
 from . import parts as P
+from .helper import remove_helper, sync_helper, wait_for_socket
 from .parts import InstallError
 from .service import Runner, pick_runner
 from .state import Layout, load, save
@@ -38,7 +40,8 @@ AGENT_ENV = ("ORCH_GRANT", "ORCH_SESSION")
 
 
 def _run(argv: Sequence[str], env: Mapping[str, str] | None = None) -> tuple[int, str]:
-    r = subprocess.run(list(argv), env=dict(env) if env else None, capture_output=True, text=True)
+    r = subprocess.run(list(argv), env=childenv.sanitize(env if env else os.environ, absolute_pythonpath=True),
+                       capture_output=True, text=True)  # fmt: skip
     return r.returncode, (r.stdout + r.stderr)
 
 
@@ -94,6 +97,9 @@ class Ctx:
     mint_login: Callable[[list[str], Mapping[str, str]], str | None] = lambda argv, env: _mint_login(argv, env)
     qr: Callable[[str], str | None] = lambda link: _qr(link)
     publish_setup: Callable[[str], str | None] = lambda url: None  # configure the workspace; returns a hint on failure
+    helper_ready: Callable[[Path], bool] = (
+        wait_for_socket  # the service helper's socket shows up (seconds, not forever)
+    )
     layout: Layout = field(init=False)
 
     def __post_init__(self) -> None:
@@ -113,11 +119,13 @@ def _dashboard_entry() -> list[str] | None:
 
 def _mint_login(argv: list[str], env: Mapping[str, str]) -> str | None:
     """Run ``orch-dashboard open --no-browser --emit-url-fd N`` and return the single-use login URL it writes."""
+    from orch.childenv import sanitize
+
     r, w = os.pipe()
     try:
         proc = subprocess.run(
             [*argv, "open", "--no-browser", "--emit-url-fd", str(w)],
-            env=dict(env), pass_fds=(w,), capture_output=True, timeout=30,
+            env=sanitize(env, absolute_pythonpath=True), pass_fds=(w,), capture_output=True, timeout=30,
         )  # fmt: skip
         os.close(w)
         w = -1
@@ -186,7 +194,11 @@ def default_ctx(env: Mapping[str, str], out: TextIO, err: TextIO) -> Ctx:
 
 def _publish_setup(url: str) -> str | None:
     """Sign the workspace's publish settings (server = share = the part's address): the person's terminal signs."""
-    rc, out = _run([sys.executable, "-m", "orch", "publish", "setup", "--server", url, "--share", url])
+    from orch.cli import dashboard
+
+    # -P: the current directory is not on sys.path; PYTHONPATH reduced to absolute entries (the launcher's sanitizer)
+    env = dashboard.launch_env(os.environ)
+    rc, out = _run([sys.executable, "-P", "-m", "orch", "publish", "setup", "--server", url, "--share", url], env)
     return None if rc == 0 else (out.strip().splitlines() or ["failed"])[-1]
 
 
@@ -310,6 +322,7 @@ def install_part(
     publish_url: str | None = None,
     relay_url: str | None = None,
     dev: bool = False,
+    sync: bool = True,  # False: the caller (full_server) syncs the service helper once at the end
 ) -> dict[str, Any]:
     spec = P.PARTS[part]
     source = source or ctx.env.get(f"ORCH_INSTALL_SOURCE_{part.upper()}")  # a local checkout (dev machines, tests)
@@ -424,6 +437,8 @@ def install_part(
             ctx.say(f"  publish settings: not set yet ({hint}); run: orch publish setup --server {url} --share {url}")
         else:
             ctx.say(f"  publish settings: server = share = {url}")
+    if sync:
+        sync_helper(ctx)
     return rec
 
 
@@ -562,11 +577,15 @@ def remove(ctx: Ctx, part: str, purge: bool) -> int:
     if part not in st["parts"]:
         ctx.say(f"{part} is not installed")
         return 0
+    if part == "hub":
+        remove_helper(ctx, st)  # first: its helper.json lists this hub; the helper only exists for a hub
     ctx.runner.stop(part)
     env = {**ctx.env, "UV_TOOL_DIR": str(ctx.layout.tools), "UV_TOOL_BIN_DIR": str(ctx.layout.bin)}
     ctx.run(["uv", "tool", "uninstall", P.PARTS[part].binary], env)
     del st["parts"][part]
     save(ctx.layout, st)
+    if part != "hub":
+        sync_helper(ctx)  # drops this part from the helper's list
     if purge:
         shutil.rmtree(ctx.layout.root / "parts" / part, ignore_errors=True)
         ctx.say(f"removed {part} and its data")
@@ -640,7 +659,7 @@ def _qr(link: str) -> str | None:
     exe = shutil.which("qrencode")
     if not exe:
         return None
-    r = subprocess.run([exe, "-t", "ANSIUTF8", link], capture_output=True, text=True)
+    r = subprocess.run([exe, "-t", "ANSIUTF8", link], capture_output=True, text=True, env=childenv.minimal(os.environ))
     return r.stdout if r.returncode == 0 else None
 
 
@@ -686,7 +705,8 @@ def full_server(
     st = load(ctx.layout)
     address = choose_address(ctx, address, st)
     for p in parts:
-        out[p] = install_part(ctx, p, address=address, source=(source_for or {}).get(p), ref=ref, dev=dev)
+        out[p] = install_part(ctx, p, address=address, source=(source_for or {}).get(p), ref=ref, dev=dev, sync=False)
+    sync_helper(ctx)
     return out
 
 

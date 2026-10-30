@@ -332,12 +332,12 @@ describe('by click (#1198 C11)', () => {
     await pasteLink()
     expect((await screen.findByTestId('hub-link-hub', {}, T)).textContent).toContain('10.0.0.5:8106')
     expect(screen.getByTestId('hub-link-hub').textContent).not.toContain('9f3c')
-    // The hub id is behind the i: hidden by default, there on press.
-    expect(screen.queryByText('9f3c1ab277de40c8aa11bb22cc33dd44')).toBeNull()
-    await view.user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'More information' }))
-    expect(within(await screen.findByTestId('info-drawer-content', {}, T)).getByText('9f3c1ab277de40c8aa11bb22cc33dd44')).toBeTruthy()
-    await view.user.keyboard('{Escape}')
-    await waitFor(() => expect(screen.queryByTestId('info-drawer-content')).toBeNull(), T)
+    // The hub id is behind Details: hidden by default, there on press.
+    expect(screen.getByTestId('hub-link-details').textContent).not.toContain('9f3c1ab277de40c8aa11bb22cc33dd44')
+    await view.user.click(within(screen.getByTestId('hub-link-details')).getByText('Details'))
+    expect(screen.getByTestId('hub-link-details').textContent).toContain('9f3c1ab277de40c8aa11bb22cc33dd44')
+    await view.user.click(within(screen.getByTestId('hub-link-details')).getByText('Details'))
+    await waitFor(() => expect(screen.getByTestId('hub-link-details').textContent).not.toContain('9f3c1ab277de40c8aa11bb22cc33dd44'), T)
     expect(screen.getByTestId('hub-link-hub').textContent).not.toContain('Only what I choose')
     expect(screen.queryByText(/Notes that need your attention and full questions are always shared/)).toBeNull() // the long mode text is behind the i of the mode choice
     expect(screen.queryByText(/Review it here/)).toBeNull()

@@ -61,7 +61,7 @@ A design change that breaks this rule is a reopened decision, not an implementat
 | # | Name | Decision |
 |---|---|---|
 | D84 | Opt-in at the workspace | Remote access is **off** for every workspace, also after `hub join`. Only the workspace's owner turns it on, **at the workspace**: a click in Mission Control in a session opened on that computer (loopback) or `orch remote on` at the host terminal, signed by the owner's local key and carrying the owner proof of #1198 C8 (person key `PK`). It is a human-only verb. A remote session, the hub, a hub admin, a channel or an agent can never turn it on, widen it, change its level or end date, or enroll a device. Turning it **off** works from the same places and also from any open remote session of the owner (turning off never needs more than turning on). |
-| D85 | Opted out still dials out | Off means: **no remote session can be opened into the workspace.** The link stays up and everything the workspace starts itself keeps working: `log_sync`, handoffs it sends, shares, custodial approvals within its hub mode, publish, the phone. Handoffs it receives arrive as `from-peer` tickets and start on their own only where the workspace's charter has an `auto_start` peer rule, under a Dark-style profile (D13, D28, `orch-v2.md` §9 "Receiving"), unchanged. The host refuses every `stream_open` (§7) with `remote.off` before any byte reaches the dashboard. The hub cannot tell an opted-out workspace to open one. Device enrollment (§5) is the one stream kind allowed while off, and it only adds a device the owner confirms at the workspace. |
+| D85 | Opted out still dials out | Off means: **no remote session can be opened into the workspace.** The workspace's links stay up (the dedicated stream link only while remote is on or a code is outstanding, §7.1 "Which link") and everything the workspace starts itself keeps working: `log_sync`, handoffs it sends, shares, custodial approvals within its hub mode, publish, the phone. Handoffs it receives arrive as `from-peer` tickets and start on their own only where the workspace's charter has an `auto_start` peer rule, under a Dark-style profile (D13, D28, `orch-v2.md` §9 "Receiving"), unchanged. The host refuses every `stream_open` (§7) with `remote.off` before any byte reaches the dashboard. The hub cannot tell an opted-out workspace to open one. Device enrollment (§5) is the one stream kind allowed while off, and it only adds a device the owner confirms at the workspace. |
 | D86 | End to end, the hub forwards ciphertext | A remote session is an end-to-end encrypted, mutually authenticated channel between the person's **remote client** (§6) and the workspace host. The hub and the relay machine forward opaque bytes. The hub never holds a key of the session, never sees the content, and cannot inject or change a byte without the session failing. |
 | D87 | Keys the hub cannot make | A session is opened with a **remote device** enrolled directly at the workspace (§5) and verified by the workspace against its own `WSK`-signed device list. Hub users, hub roles, `UK` certificates, channel certificates, hub sessions and switch tickets grant nothing here. A hub role can hide a workspace from a person, never grant access. |
 | D88 | Presence for every agent-work action | Opening a session needs a fresh **presence signature** (§5) over a host challenge bound to the session transcript. On a `remote-device` session the same presence signature is needed for every request that starts or changes agent work (the `presence` rule of D90), not only for host 10.5's step-up list. A batch is a fixed list of `view_digest`s confirmed in one prompt; it authorizes nothing else and expires 5 min after the touch. The prompt, drawn by the remote client, names the workspace and the actions. Each terminal open or attach needs its own presence signature, and a remote terminal closes after 10 min idle. |
@@ -464,6 +464,15 @@ anything for a person. Frames are at most 64 KiB; the per-frame signature cost i
 2. passes `stream_data` bytes only to its stream terminator (§7.2), never to a socket;
 3. after the handshake and the presence signature, hands the decrypted stream to the dashboard app in-process (D89).
 
+**Which link.** Streams run on a dedicated **stream link** per workspace (ALPN `orch-link-streams/1`, protocol §10.2c), in
+both hub modes, never on the short links the workspace dials for status, shares or approvals, and never on the ws->ws
+link: one of those used to be able to cut every open session. The host runs the stream link while the workspace is
+bound to the hub and remote access is on, or an enrollment code is outstanding (an enroll stream is allowed while off,
+D85). So the hub can see **when remote access is on** (the stream link exists only then), plus the stream metadata above.
+A client that opens a stream to a workspace with remote off and no code gets `not_allowed` from the hub (there is no
+stream link to ask), not `remote.off`; `remote.off` reaches a client only as the close reason of a session the owner's
+off ended. The host keeps the link alive with a `hub_where` every 120 s.
+
 The hub sees stream ids, sizes and timing, and the device or enrollment-code id (`stream_open` carries `device_id` or `rc_…` in clear), and nothing more.
 
 ### 7.2 Handshake
@@ -506,12 +515,12 @@ charter and permissions as for every local action. None of these checks asks the
 
 | Thing | Off | On |
 |---|---|---|
-| Link to the hub | up | up |
+| Link to the hub | up (the stream link only while a code is outstanding, or on) | up |
 | `log_sync`, status, needs-you on the hub | yes | yes |
 | Handoffs the workspace sends | yes | yes |
 | Handoffs to the workspace | `from-peer` tickets, run only under its own peer rule (D28) | same |
 | Shares, spaces, publish, phone, custodial approvals | as the hub mode allows | same |
-| `stream_open` session | `remote.off`, nothing reaches the dashboard | checked as in §7 |
+| `stream_open` session | no stream link: the client is told `not_allowed` by the hub; if one arrives anyway, `remote.off`, nothing reaches the dashboard | checked as in §7 |
 | `stream_open` enroll | allowed, adds a device only after the owner confirms at the workspace | same |
 | Mission Control from elsewhere | only where the network reaches the workspace directly (its own remote mode, host 10.x) | also through the hub |
 

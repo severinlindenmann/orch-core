@@ -86,3 +86,12 @@ test("the key has a Copy button where the clipboard exists, and none where it do
     if (old) Object.defineProperty(globalThis, "navigator", old); else delete globalThis.navigator;
   }
 });
+
+test("r14 P10: the Admin created page shows the sign-in name from the response, falling back to the typed one, and no id", async () => {
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("../../src/orch_hub/web/app.js", import.meta.url), "utf8");
+  const setup = src.slice(src.indexOf("function setupView"), src.indexOf("async function refresh"));
+  assert.match(setup, /h\("dt", \{ text: "Your name for signing in" \}\), h\("dd", \{ id: "setup-name", text: renderText\(r\.body\.name \?\? typedName\) \}\)/);
+  assert.match(setup, /together with your name and password/);
+  assert.ok(!/user_id/.test(setup), "no id on the page");
+});

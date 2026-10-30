@@ -224,7 +224,7 @@ class FollowupRunner:
         return {
             n: (a, thaw(held[n]) if held is not None and n in held else None)
             for n, a in granted.items()
-            if a.enabled and not a.purged
+            if hubpolicy.running(self.service, n)  # granted, on, and not paused by the hub policy now
         }
 
     def _poll_one(self, item, granted, settings):

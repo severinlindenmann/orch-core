@@ -47,9 +47,38 @@ def flush_closing(service: WorkspaceService, link: Any) -> int:
     return n
 
 
+_LINK_ATTR = "_remote_pump_link"
+
+
+def link_changed(service: WorkspaceService, link: Any) -> bool:
+    """F4 (R4): streams belong to the link that carried their ``stream_open``. When the link the pump is given is not
+    the one it served last (a redial, a rebind), every stream of the old link is closed ``closed`` at once, freeing
+    the per-device and per-workspace limits. NO frame is sent for them (the old link is gone, the hub closed its side
+    too, and the new link must not carry ids it never opened); frames the sessions still owed are discarded."""
+    prev = getattr(service, _LINK_ATTR, None)
+    if prev is link:
+        return False
+    setattr(service, _LINK_ATTR, link)
+    if prev is None:
+        return False
+    _drop_streams(service)
+    return True
+
+
+def _drop_streams(service: WorkspaceService) -> None:
+    gate.table(service).close_all("closed")
+    gate.table(service).take_closing()
+    for s in session.registry(service).all():
+        s.drain()
+
+
 def pump(service: WorkspaceService, link: Any, wait: float = 0.0) -> bool:
     """Take one stream frame off ``link`` (if any) and handle it. ``True`` when one was handled."""
     now_ms = int(service.clock() * 1000)
+    link_changed(service, link)
+    overflow = getattr(link, "take_stream_overflow", None)  # F3: a full queue lost a frame of these streams
+    for sid in overflow() if overflow is not None else ():
+        gate.table(service).close(sid, "remote.busy")
     session.sweep(service, now_ms)
     flush_closing(service, link)  # a revocation that happened between two frames goes out now
     session.log_ended(service)
@@ -83,6 +112,9 @@ def run(service: WorkspaceService, get_link: Any, stop: threading.Event, wait: f
     while not stop.is_set():
         try:
             link = get_link()
+            if link is None and getattr(service, _LINK_ATTR, None) is not None:  # link gone: its streams too (F4)
+                _drop_streams(service)
+                setattr(service, _LINK_ATTR, None)
             if link is None or not pump(service, link, wait):
                 stop.wait(0.05 if link is not None else 1.0)
         except Exception as exc:  # noqa: BLE001 - the link failed: the owner of the link redials; never die

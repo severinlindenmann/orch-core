@@ -246,9 +246,19 @@ class StreamRouter:
             sid = self._open(ws, user, device_id, kind, sink)
         except Refused as r:
             _log.info("stream_open ws=%s stream=- kind=%s user=%s result=%s", ws, kind, user, r.code)
+            self._counted(ws, False)
             raise
         _log.info("stream_open ws=%s stream=%s kind=%s user=%s result=ok", ws, sid, kind, user)
+        self._counted(ws, True)
         return sid
+
+    def _counted(self, ws: str, accepted: bool) -> None:
+        """The registry's aggregate op counter (``orch-hub inspect``); never raises into the open path."""
+        if self._count is not None:
+            try:
+                self._count(ws, "stream_open", accepted)
+            except Exception:  # noqa: BLE001, S110
+                pass
 
     def _open(self, ws: str, user: str, device_id: str, kind: str, sink: ClientSink) -> str:
         if RESTORE_FENCE.is_set():

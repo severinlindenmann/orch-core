@@ -47,6 +47,7 @@ from .publish import HttpPublishSync, HubPublish, PublishConfig
 from .reconcile import reconcile_full_only, reconcile_relay_purge
 from .relay import PushNotifier, RelayClient, RelayError
 from .relay.client import Transport
+from .remote import Authz, RemoteEndpoint, StreamRouter
 from .restart import exec_self
 from .router import AccessAuthz, RouteQueue, Router
 from .services import Services
@@ -389,6 +390,11 @@ def serve(
                 loop_origin = f"http://127.0.0.1:{web.address[1]}"
                 switch.set_loopback_origin(lambda: loop_origin)
     fw = HubPublish(keys, HttpPublishSync(publish_url), PublishConfig(publish_url, api_host))
+    # R4 (#1592): remote access streams. The hub forwards opaque Noise frames and judges only abuse limits (D87); the
+    # rail rule and the remote-scope token decide who may open. Registry counts every stream_open by outcome.
+    remote_authz = Authz.from_hub(channels, registry, access)
+    stream_router = StreamRouter(hub_id=keys.hub_id, allowed=remote_authz.may_open, count_op=registry.count_op)
+    remote_endpoint = RemoteEndpoint(stream_router, remote_authz)
     server = LinkServer.from_keys(
         keys,
         snapshots=AccessSnapshots(access, keys),
@@ -407,6 +413,8 @@ def serve(
         activity=activity,
         where=lambda: where_answer(state),
         deliveries=deliveries,
+        streams=stream_router,
+        remote=remote_endpoint,
         host="0.0.0.0" if bind_all and link_listen is not None else host,  # the address stays the validated one
         port=port,
         dev_mode=cfg.dev,
@@ -441,6 +449,7 @@ def serve(
 
         threading.Thread(target=_retry, name="state-retry", daemon=True).start()
         deliveries.start()
+        stream_router.start()  # the 60 s sweep: users who lost access, expired streams
         server.start()
         if web is not None:
             web.start()
@@ -465,6 +474,7 @@ def serve(
         failed = False
         for close in (
             web.close if web is not None else None,
+            stream_router.close_all,  # every client connection ends before the link server goes
             server.close,
             deliveries.close,
             channels.close,

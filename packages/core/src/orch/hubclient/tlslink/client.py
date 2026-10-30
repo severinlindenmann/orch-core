@@ -229,6 +229,7 @@ class LinkClient:
         self._events: list[dict[str, Any]] = []  # verified h2w ``event_deliver`` requests (custodial events, p4)
         self._pending_ev: dict[str, Any] | None = None
         self._streams: list[dict[str, Any]] = []  # verified h2w stream_open / stream_data / stream_close (R2)
+        self._overflow: list[str] = []  # streams whose h2w frame found the queue full: frame dropped, the pump closes them
         self._open_reqs: set[int] = set()  # handed-out stream_open requests (by h2w seq) awaiting their answer
         self._cb = conn.exporter()  # this connection's TLS exporter: every signature of the link binds it (R1)
         self._last_in = 0  # the h2w seq of the last frame accepted (replies and pushes share the hub's counter)
@@ -380,6 +381,14 @@ class LinkClient:
             queue = self._streams
         else:
             raise LinkError("malformed")
+        if queue is self._streams and len(queue) >= MAX_QUEUED:
+            # F3 (R4): a stream frame cannot be redelivered, so the link is NOT closed for it (log_sync, handoffs and
+            # approvals share this link). The frame is dropped and only THAT stream ends (``remote.busy``, by the pump).
+            if o["op"] == "stream_open" and self._sign is not None:
+                self._write_w2h("stream_open", {"error": "remote.busy"}, reply_to=o["seq"])  # the hub is waiting for it
+            elif body["stream_id"] not in self._overflow and len(self._overflow) < MAX_QUEUED * 4:
+                self._overflow.append(body["stream_id"])
+            return True
         if len(queue) >= MAX_QUEUED:
             # L2-C3-5: REFUSE, never drop. The hub resends what was not acknowledged after a reconnect, so closing
             # loses nothing; dropping the oldest would silently discard a request the hub still holds as undelivered.
@@ -532,6 +541,13 @@ class LinkClient:
             except (LinkError, LinkClosed, LinkTimeout):
                 self.close()
                 raise
+
+    def take_stream_overflow(self) -> list[str]:
+        """The ids of streams that lost an h2w frame to a full queue since the last call (F3). The pump closes each
+        ``remote.busy``: the host cannot know what the lost frame was, so the stream cannot go on."""
+        with self._lock:
+            out, self._overflow = self._overflow, []
+            return out
 
     def answer_stream_open(self, seq: int, error: str | None = None) -> None:
         """Answer the handed-out ``stream_open`` ``seq`` (a w2h reply: same op, ``re`` = its seq, body ``{}`` or

@@ -63,3 +63,20 @@ describe('click contract 4', () => {
     }
   })
 })
+
+describe('P02: a code is never the sentence', () => {
+  const PLAIN = 'That could not be used. Check it and try again.'
+  it.each([
+    ['invalid.input', 'invalid.input'],
+    ['invalid.input', 'That could not be used. Check it and try again.'],
+    ['some.new_code', 'some.new_code'], // a message equal to its own code, whatever the code
+  ])('%s with message %j says one plain sentence and offers Try again', (code, message) => {
+    const p = clickProblem(new ApiError(400, { code, message, retryable: false }))
+    expect(p.body).toBe(PLAIN)
+    expect(p.next).toBe('retry')
+    expect(`${p.title} ${p.body}`).not.toContain(code)
+  })
+  it('keeps a real message of an unknown code', () => {
+    expect(clickProblem(new ApiError(400, { code: 'some.new_code', message: 'The folder is gone.', retryable: false })).body).toBe('The folder is gone.')
+  })
+})

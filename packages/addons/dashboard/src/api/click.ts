@@ -406,6 +406,9 @@ export function clickProblem(e: unknown, minLeadS?: number): ClickProblem {
       return { title: 'The host does not answer', body: 'Nothing was signed. Try again in a moment.', next: 'retry' }
     case 'not_found':
       return { title: 'Not found', body: 'The dashboard server does not know this request any more. Prepare it again.', next: 'prepare' }
+    case 'invalid.input':
+      // P02: the server's catch-all for a body it could not use; the code is never the sentence
+      return { title: 'That could not be used', body: PLAIN_INVALID, next: 'retry' }
     case 'schedule.denied': {
       // run 13: the host's raw words ("first occurrence must be after the minimum scheduling lead") stay folded
       const lead = scheduleDenial(e.code, e.message, minLeadS)
@@ -413,6 +416,10 @@ export function clickProblem(e: unknown, minLeadS?: number): ClickProblem {
       return { title: 'Refused', body: e.message || `The host refused this (${e.code}). Nothing was signed.`, next: 'unavailable' }
     }
     default:
+      // a message that is only its own code ("some.new_code") says nothing: one plain sentence and Try again instead
+      if (e.message === e.code) return { title: 'That could not be used', body: PLAIN_INVALID, next: 'retry' }
       return { title: 'Refused', body: e.message || `The host refused this (${e.code}). Nothing was signed.`, next: e.retryable ? 'retry' : 'unavailable' }
   }
 }
+
+const PLAIN_INVALID = 'That could not be used. Check it and try again.'

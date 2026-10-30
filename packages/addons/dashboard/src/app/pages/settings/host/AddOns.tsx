@@ -44,7 +44,7 @@ export interface AddOnListProps {
 }
 
 export function BuiltInAddOns({ workspace, rows, tag, actions, empty, label = 'Add-ons', browse, only }: AddOnListProps) {
-  const [setup, setSetup] = useState<{ name: 'publish'; enabling: boolean } | null>(null)
+  const [setup, setSetup] = useState<{ name: 'publish'; enabling: boolean; suggest?: string | null } | null>(null)
   const data = useQuery({ ...queries.addOns(workspace.id), enabled: !rows })
   const full = rows ? { available: true, add_ons: rows } : data.data
   const list = full && browse ? { ...full, add_ons: full.add_ons.filter((r) => r.state !== 'on' && r.locked === null && (!only || only.includes(r.id))) } : full
@@ -74,7 +74,7 @@ export function BuiltInAddOns({ workspace, rows, tag, actions, empty, label = 'A
     const name = row.id
     const turningOn = row.state !== 'on'
     if (turningOn && row.needs && row.set_up !== true && name === 'publish') {
-      setSetup({ name: 'publish', enabling: true })
+      setSetup({ name: 'publish', enabling: true, suggest: row.suggest })
       return
     }
     setBusy({ id: row.id, turningOn, stage: 'review' })
@@ -136,7 +136,7 @@ export function BuiltInAddOns({ workspace, rows, tag, actions, empty, label = 'A
                         <p className="text-[12px] text-text-muted">Its files changed since you approved it. Turn it on again to approve what it is now.</p>
                       )}
                     </div>
-                    {needsSetup && <Button size="sm" variant="secondary" onClick={() => setSetup({ name: 'publish', enabling: false })}>Set up</Button>}
+                    {needsSetup && <Button size="sm" variant="secondary" onClick={() => setSetup({ name: 'publish', enabling: false, suggest: row.suggest })}>Set up</Button>}
                     {mine && mine.stage !== 'review' && (
                       <span role="status" data-testid={`addon-${row.id}-pending`} className="inline-flex items-center gap-1.5 text-[12px] text-text-muted">
                         <Loader2 className="size-3.5 animate-spin" aria-hidden /> {mine.turningOn ? 'Turning on…' : 'Turning off…'}
@@ -172,7 +172,7 @@ export function BuiltInAddOns({ workspace, rows, tag, actions, empty, label = 'A
           </ul>
         )
       }
-      {setup && <AddonSetup name={setup.name} enabling={setup.enabling} close={() => setSetup(null)} submit={(title, action) => { setSetup(null); ask({ title, action,  }) }} />}
+      {setup && <AddonSetup name={setup.name} enabling={setup.enabling} suggested={setup.suggest} close={() => setSetup(null)} submit={(title, action) => { setSetup(null); ask({ title, action,  }) }} />}
       {dialog}
     </div>
   )

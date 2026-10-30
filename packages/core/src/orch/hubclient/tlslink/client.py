@@ -29,6 +29,8 @@ from orch.canon.jcs import dumps as cj
 from orch.crypto import suite
 from orch.crypto.encoding import EncodingError, b64u, unb64u, unhex
 
+from ..linkaddr import LinkAddr
+from ..netconfig import NetSettings
 from . import framing, tls
 from .framing import FrameError
 from .tls import LinkClosed, LinkTimeout, PinMismatch
@@ -304,8 +306,13 @@ class LinkClient:
         max_frame: int = framing.MAX_FRAME,
         now_ms: Callable[[], int] = lambda: int(time.time() * 1000),
         alpn: bytes | None = None,
+        addr: LinkAddr | None = None,
+        net: NetSettings,
     ) -> LinkClient:
-        """Open and authenticate. ``alpn``: the link's declared role (``STREAM_LINK_ALPN``); the hub must select it,
+        """Open and authenticate. ``host``/``port`` are where to connect (a checked IP for a name); ``addr`` is the
+        parsed address (``ws(s)://`` forms included) that names the transport and the server name, ``net`` the host's
+        proxy settings (:func:`~orch.hubclient.tlslink.tls.dial_link`).
+        ``alpn``: the link's declared role (``STREAM_LINK_ALPN``); the hub must select it,
         else the link is closed (``LinkError("unsupported")``): it is never used as a plain link.
         ``wsk_pub`` is passed only for the first link of a join (the hub has not pinned the workspace yet);
         otherwise leave it ``None``. Raises ``PinMismatch`` before anything is sent when the hub's certificate is
@@ -317,7 +324,11 @@ class LinkClient:
         def left() -> float:
             return max(end - time.monotonic(), 0.001)
 
-        conn = tls.connect_pinned(host, port, tls_spki_sha256, timeout=timeout, alpn=(alpn,) if alpn else ())
+        a = addr or LinkAddr("tcp", host, port, f"{host}:{port}")
+        conn = tls.dial_link(
+            a, tls_spki_sha256, timeout=timeout, alpn=(alpn,) if alpn else (), net=net,
+            connect_host=host if host != a.host else None,
+        )  # fmt: skip
         try:
             if alpn is not None and conn.alpn() != alpn:
                 raise LinkError("unsupported")

@@ -15,6 +15,7 @@ import pytest
 
 from orch.crypto import suite
 from orch.crypto.encoding import unb64u
+from orch.hubclient.netconfig import NetSettings
 from orch.hubclient.tlslink.client import LinkClient, LinkError
 
 HUB_SRC = os.environ.get("ORCH_HUB_SRC", "")
@@ -63,6 +64,7 @@ def test_real_hub_join_then_snapshot(hub: dict) -> None:
             hk_op_pub=unb64u(hub["hk_op_pub"], 65),
             timeout=10,
             **kw,
+            net=NetSettings(),
         )
 
     with link(wsk_pub=wsk_pub) as c:  # first link of a join
@@ -82,6 +84,7 @@ def test_real_hub_join_then_snapshot(hub: dict) -> None:
             sign=lambda m: suite.sign(other, m),
             hk_op_pub=unb64u(hub["hk_op_pub"], 65),
             timeout=10,
+            net=NetSettings(),
         )
     assert e.value.code == "auth_failed"
 
@@ -97,7 +100,7 @@ def test_real_hub_refuses_a_join_without_the_owner_proof_and_with_a_forged_one(h
         return LinkClient.open(
             "127.0.0.1", hub["port"], tls_spki_sha256=hub["spki"], hub_id=hub["hub_id"],
             workspace_id=hub["workspace_id"], sign=sign, hk_op_pub=unb64u(hub["hk_op_pub"], 65), timeout=10,
-            wsk_pub=suite.public_bytes(wsk),
+            wsk_pub=suite.public_bytes(wsk), net=NetSettings(),
         )  # fmt: skip
 
     forged = dict(hub["join"]["owner_proof"], sig=hub["join"]["owner_proof"]["sig"][:-2] + "AA")

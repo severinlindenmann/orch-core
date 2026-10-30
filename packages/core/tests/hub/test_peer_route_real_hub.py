@@ -17,6 +17,7 @@ from orch.crypto import suite
 from orch.crypto.encoding import unb64u
 from orch.hubclient import wsenvelope as W
 from orch.hubclient.errors import HubRefused
+from orch.hubclient.netconfig import NetSettings
 from orch.hubclient.peerservice import PeerService
 from orch.hubclient.tlslink.client import LinkClient
 
@@ -80,7 +81,7 @@ class Host:
         return LinkClient.open(
             "127.0.0.1", self.hub["port"], tls_spki_sha256=self.hub["spki"], hub_id=self.hub["hub_id"],
             workspace_id=self.ws, sign=lambda m: suite.sign(self.wsk, m), hk_op_pub=unb64u(self.hub["hk_op_pub"], 65),
-            wsk_pub=suite.public_bytes(self.wsk) if first else None, timeout=10,
+            wsk_pub=suite.public_bytes(self.wsk) if first else None, timeout=10, net=NetSettings(),
         )  # fmt: skip
 
     def do_join(self) -> None:

@@ -33,6 +33,13 @@ PLAIN: dict[str, str] = {
     "too_large": "Too much data was sent.",
     # the client's own
     "remote_client.hub_key_changed": "The hub's key changed. Connect again on the office network.",
+    "remote_client.link_inspected": (
+        "Something on this network opens encrypted connections (often a company proxy). "
+        "Ask your IT team to let the hub through without inspection."
+    ),
+    "remote_client.proxy_auth": "The proxy did not accept the sign-in, or needs one this computer cannot give.",
+    "remote_client.proxy_refused": "The proxy refused the connection to the hub.",
+    "remote_client.proxy_unreachable": "The proxy could not be reached.",
     "remote_client.no_pin": "Use the connect link from your hub admin.",
     "remote_client.hub_mismatch": "This is not the hub you connected to.",
     "remote_client.alpn": "The hub does not offer remote access.",

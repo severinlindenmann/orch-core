@@ -1493,7 +1493,7 @@ HUB-WS-04 (#1385): when a hub admin asked the owners of older workspaces to upda
 than `target_version` (the hub's own version, `[0-9A-Za-z.+-]+`, at most 32 characters; never free text). The field is
 optional: a host MUST accept both shapes (a host from before HUB-WS-04 refuses the reply as a malformed link reply, which
 for this display-only op is only a logged, retried failure). A hub sends the field only on a `status_put` reply. A host shows a plain notice to its
-human owner while its own version is lower than `target_version` and drops it once it is not. The request grants
+human owner while its own version is lower than `target_version` and drops it once it is not. The host learns of it only when its hub link is used (the status is sent again at most every 10 minutes) and keeps it in memory until then, so a notice can lag or be lost on a restart until the next link use. The request grants
 nothing and changes no key, trust, mode or signing rule; the update itself stays the owner's own action.
 
 **Hub one-app ops (27 Oct, prototype).** `switch_ticket`, `switch_redeem` and `rail_get` let the workspace dashboard and the

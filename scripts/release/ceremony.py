@@ -28,6 +28,7 @@ import subprocess
 import sys
 import tempfile
 from datetime import UTC, datetime, timedelta
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -295,10 +296,31 @@ def _secret_present(repo: str) -> bool:
 # --- preflight ------------------------------------------------------------------------------------------------------
 
 
+def _check_clock(headers: str) -> None:
+    """Refuse when this machine's clock is more than 5 minutes from GitHub's (it sets every issued_at / not_before)."""
+    date = next(
+        (v.strip() for k, _, v in (ln.partition(":") for ln in headers.splitlines()) if k.lower() == "date"), ""
+    )
+    try:
+        theirs = parsedate_to_datetime(date)
+    except (TypeError, ValueError):
+        raise Ceremony("GitHub's answer has no usable Date header: cannot check the clock, refusing") from None
+    if theirs.tzinfo is None or abs((_now() - theirs).total_seconds()) > 300:
+        raise Ceremony("this machine's clock differs from GitHub's by more than 5 minutes: fix the clock first")
+
+
 def _check_environment(repo: str) -> None:
-    env = _gh_json(["api", f"repos/{repo}/environments/{ENV_NAME}"])
+    rc, raw = run(["gh", "api", "-i", f"repos/{repo}/environments/{ENV_NAME}"])
+    head, sep, body = raw.decode(errors="replace").replace("\r\n", "\n").partition("\n\n")
+    try:
+        env = json.loads(body) if rc == 0 and sep else None
+    except ValueError:
+        env = None
     if not isinstance(env, dict):
         raise Ceremony(f"the {ENV_NAME!r} environment does not exist (or gh cannot read it): create it first")
+    _check_clock(head)
+    if env.get("can_admins_bypass", False) is not False:
+        raise Ceremony(f"the {ENV_NAME!r} environment lets admins bypass its protection rules: refusing")
     pol = env.get("deployment_branch_policy")
     if not isinstance(pol, dict) or pol.get("custom_branch_policies") is not True or pol.get("protected_branches"):
         raise Ceremony(f"the {ENV_NAME!r} environment is not restricted to a custom branch policy")
@@ -512,6 +534,7 @@ def cmd_init(root: Path, repo: str, tmp: Path) -> int:
 
     print(f"root key id: {ROOT_ID}")
     print(f"fingerprint: {fp}")
+    print(f"issued_at: {_stamp(now)}")
     print("changed files:")
     for rel in changed:
         print(f"  {rel}")

@@ -102,10 +102,19 @@ FAKE_GH = (
 if argv[:2] == ["auth", "status"]:
     sys.exit(0)
 if argv[:1] == ["api"]:
-    name = "env" if argv[1].endswith("/release") else "policies"
+    path = argv[-1]
+    name = "env" if path.endswith("/release") else "policies"
     p = SIM / f"gh-{name}.json"
     if not p.exists():
         sys.exit(1)
+    if "-i" in argv:
+        from email.utils import formatdate
+
+        d = (SIM / "gh-date").read_text() if (SIM / "gh-date").exists() else formatdate(usegmt=True)
+        if not (SIM / "gh-nodate").exists():
+            print("HTTP/2.0 200 OK\\r\\nDate: " + d + "\\r\\nContent-Type: application/json\\r\\n\\r\\n")
+        else:
+            print("HTTP/2.0 200 OK\\r\\nContent-Type: application/json\\r\\n\\r\\n")
     print(p.read_text())
     sys.exit(0)
 if argv[:2] == ["secret", "set"]:
@@ -120,7 +129,10 @@ sys.exit(2)
 """
 )
 
-GOOD_ENV = {"deployment_branch_policy": {"protected_branches": False, "custom_branch_policies": True}}
+GOOD_ENV = {
+    "can_admins_bypass": False,
+    "deployment_branch_policy": {"protected_branches": False, "custom_branch_policies": True},
+}
 GOOD_POLICIES = {"total_count": 1, "branch_policies": [{"name": "main", "type": "branch"}]}
 
 
@@ -140,6 +152,7 @@ class Lab:
             (self.repo / rel).write_text((ROOT / rel).read_text())
         (self.repo / ".gitignore").write_text((ROOT / ".gitignore").read_text())
         self.original = self.snapshot()
+        (self.sim / "gh-date").write_text("Mon, 02 Nov 2026 09:00:00 GMT")  # matches the patched clock T0
         (self.sim / "gh-env.json").write_text(json.dumps(GOOD_ENV))
         (self.sim / "gh-policies.json").write_text(json.dumps(GOOD_POLICIES))
 
@@ -251,15 +264,19 @@ def verify(lab: Lab, monkeypatch, envelope: bytes, channel: str = "main", when: 
 
 def test_init_succeeds_without_leaking_and_prints_only_the_allowed_lines(lab, capsys):
     rc, out, err = run_main(lab, capsys, "init")
-    assert rc == 0 and err == ""
+    assert rc == 0 and err == "", err
     pub = json.loads((lab.repo / "release/keys/root-1.pub.json").read_text())
     lines = out.splitlines()
     assert [x.split(":")[0] for x in lines[:2]] == ["proton item id (root)", "proton item id (ci)"]
-    assert lines[2:4] == ["root key id: root-1", f"fingerprint: {pub['fingerprint']}"]
+    assert lines[2:5] == [
+        "root key id: root-1",
+        f"fingerprint: {pub['fingerprint']}",
+        "issued_at: 2026-11-02T09:00:00Z",
+    ]
     assert pub["fingerprint"].startswith("sha256:") and len(pub["fingerprint"]) == 71
-    assert lines[4] == "changed files:"
+    assert lines[5] == "changed files:"
     assert lines[-1] == "ORCH_RELEASE_KEY in environment release: present"
-    changed = {x.strip() for x in lines[5:-1]}
+    changed = {x.strip() for x in lines[6:-1]}
     assert changed == {
         ".gitignore",
         "install.sh",
@@ -340,6 +357,7 @@ def test_init_secrets_only_travel_on_stdin_and_the_env_is_sanitized(lab, capsys,
 
 
 def test_init_runs_under_python_dash_I_as_a_real_process(lab):
+    (lab.sim / "gh-date").unlink()  # the real clock runs here: the fake answers with the real time
     p = subprocess.run(
         [sys.executable, "-I", str(TOOLS / "ceremony.py"), "init", "--repo-root", str(lab.repo), "--gh-repo", REPO],
         env=lab.env(),
@@ -512,6 +530,28 @@ def test_refuses_when_the_environment_has_no_custom_branch_policy(lab, capsys, e
     _assert_refused_cleanly(lab, capsys, "custom branch policy")
 
 
+@pytest.mark.parametrize("date", ["Mon, 02 Nov 2026 09:06:00 GMT", "Mon, 02 Nov 2026 08:54:00 GMT", "garbage"])
+def test_refuses_a_clock_that_differs_from_githubs(lab, capsys, date):
+    (lab.sim / "gh-date").write_text(date)
+    _assert_refused_cleanly(lab, capsys, "Date header" if date == "garbage" else "clock differs")
+
+
+def test_a_small_clock_difference_is_fine(lab, capsys):
+    (lab.sim / "gh-date").write_text("Mon, 02 Nov 2026 09:04:00 GMT")
+    assert run_main(lab, capsys, "init")[0] == 0
+
+
+def test_refuses_when_github_sends_no_date(lab, capsys):
+    (lab.sim / "gh-nodate").write_text("")
+    _assert_refused_cleanly(lab, capsys, "Date header")
+
+
+@pytest.mark.parametrize("bypass", [True, "yes"])
+def test_refuses_when_admins_can_bypass(lab, capsys, bypass):
+    (lab.sim / "gh-env.json").write_text(json.dumps({**GOOD_ENV, "can_admins_bypass": bypass}))
+    _assert_refused_cleanly(lab, capsys, "bypass")
+
+
 def test_refuses_to_run_init_twice(lab, capsys):
     assert run_main(lab, capsys, "init")[0] == 0
     (lab.sim / "gh-secret").unlink()
@@ -587,7 +627,7 @@ def test_resign_keeps_serials_raises_issued_at_and_bumps_the_floor(lab, capsys, 
     revs = lab.repo / "release/keys/revocations.json"
     before = _list(revs)
     rc, out, err = run_main(lab, capsys, "resign-revocations")
-    assert rc == 0 and err == ""
+    assert rc == 0 and err == "", err
     after = _list(revs)
     assert after["min_serial"] == before["min_serial"] and after["revoked"] == before["revoked"]
     assert after["issued_at"] == "2026-11-16T09:00:00Z" > before["issued_at"]

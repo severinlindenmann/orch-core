@@ -364,6 +364,12 @@ class WorkspaceService:
             except Exception:  # noqa: BLE001 - the tick still learns it
                 LOG.warning("learning follow-up hooks failed", exc_info=True)
 
+    def _register_hub_hook(self, **kw: Any) -> str:
+        """The handlers' only way to a hub hook (``Capabilities.hub_hooks``): registers it at the bound hub (#1285)."""
+        from . import hubhooks
+
+        return hubhooks.register(self, **kw)
+
     def _prepared(self, record: dict[str, Any]) -> dict[str, Any] | str:
         from .human import outcome_prepared
 
@@ -465,6 +471,7 @@ class WorkspaceService:
                 env={"ORCH_HOOK_BASE": self.hook_base} if self.hook_base else {},
                 clock=self.clock,
                 git=git,
+                hub_hooks=self._register_hub_hook,
             )
         return self.caps
 
@@ -508,6 +515,9 @@ class WorkspaceService:
         from . import peerops
 
         peerops.stop(self)  # V3 C12: the ws->ws receive thread, before the store goes
+        from .remote import linkrun
+
+        linkrun.stop(self)  # R4: the remote access stream link and its runner, before the store goes
         shareauto.stop(self)  # V3 C6: the share pass thread, before the store goes
         from . import logsyncops
 

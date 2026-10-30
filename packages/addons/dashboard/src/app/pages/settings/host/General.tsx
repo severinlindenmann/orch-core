@@ -1,4 +1,5 @@
 import { versionQueries, vLabel } from '@/api/versions'
+import { ThemeSection } from '../ThemeSection'
 import { RunnerSwitch } from '@/components/RunnerSwitch'
 import { AccessLength } from '../AccessLength'
 import { useQuery } from '@tanstack/react-query'
@@ -106,6 +107,8 @@ export function HostGeneral({ workspace }: { workspace: Workspace }) {
         </div>
       </header>
       {workspace.click !== undefined && <SigningCard workspace={workspace} owner={role === 'owner'} />}
+      <ThemeSection />
+
       <Section title="Agents">
         {!data ? <p className="text-[13px] text-text-muted">Reading the settings…</p> : !data.available ?
           <p data-testid="settings-unavailable" className="text-[13px] text-text-muted">This host does not say what the settings are, so none is shown.</p> : <>

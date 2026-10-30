@@ -54,6 +54,11 @@ WORDS = {
     "channel.revoked": "removed a phone or browser",
     "pairing.issued": "made a code to pair a phone",
     "pairing.used": "paired a phone",
+    "oidc.signed_in": "signed in with the company login",
+    "oidc.member_created": "joined through the company login",
+    "oidc.linked": "linked the company login",
+    "oidc.unlinked": "removed the company login",
+    "oidc.settings_changed": "changed the company login settings",
     "agent.event": "worked in a workspace",
 }
 assert set(WORDS) == set(ACTIVITY_TYPES), "every activity type needs plain words"
@@ -84,6 +89,14 @@ AGENT_WORDS = {
     "followup.fired": "ran a follow-up",
     "followup.cancelled": "cancelled a follow-up",
 }
+
+
+def _day(ends_ms: int) -> str:
+    """The last day of an end-dated membership as "14 Nov" (UTC; ``ends_ms`` is the exclusive end)."""
+    import time
+
+    t = time.gmtime(max(ends_ms - 1, 0) / 1000)
+    return f"{t.tm_mday} {time.strftime('%b', t)}"
 
 
 def _agent_text(detail):
@@ -216,7 +229,12 @@ def feed(deps, query):
                     "membership": ("added " if ev.get("added") else "removed ")
                     + names.get(ev.get("user_id"), render_text(ev.get("user_id", "person")))
                     + (" to " if ev.get("added") else " from ")
-                    + render_text(ev.get("group", "group")),
+                    + render_text(ev.get("group", "group"))
+                    + (
+                        ", access until " + _day(ev["ends_ms"])
+                        if ev.get("added") and type(ev.get("ends_ms")) is int
+                        else ""
+                    ),
                     "space": "changed a space",
                     "channel": "removed a device" if ev.get("change") == "revoke" else "registered a device",
                     "share": "changed shared information",

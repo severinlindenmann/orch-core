@@ -19,12 +19,23 @@ class InviteStatusHandlers:
         st = self._inv().status(p["invite"], c.user_id)
         if st is None:
             raise ApiError("unknown_invite")
+        company = {"company": True} if st.get("company") else {}
         if st["state"] != "joined":
-            return 200, {"state": st["state"]}
+            return 200, {"state": st["state"], **company}
         uid = st["user_id"]
         if not self.d.access.has_user(uid):
-            return 200, {"state": "ended"}  # redeemed, then removed: nobody to connect
-        return 200, {"state": "joined", "user_id": uid, "name": self._user_name(uid)}
+            return 200, {"state": "ended", **company}  # redeemed, then removed: nobody to connect
+        out = {"state": "joined", "user_id": uid, "name": self._user_name(uid), **company}
+        if (
+            company
+        ):  # what the company login said, as display text for the maker only; the invite's name is the one in use
+            idp = st.get("company_name", "")
+            out.update(
+                company_email=st.get("company_email", ""),
+                company_name=idp,
+                name_differs=bool(idp) and idp != out["name"],
+            )
+        return 200, out
 
 
 def invite_status_routes(r: Any) -> tuple[Any, ...]:

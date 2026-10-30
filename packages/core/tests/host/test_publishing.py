@@ -1365,6 +1365,73 @@ def test_the_review_tags_each_address_in_plain_words():
     from orch.host.signcontent import _reach
 
     assert _reach("http://127.0.0.1:8103") == "this computer" and _reach("http://localhost") == "this computer"
-    assert _reach("http://192.168.1.5:8103") == "office network" and _reach("http://100.64.0.9") == "office network"
-    assert _reach("http://172.16.0.1") == "office network" and _reach("http://172.32.0.1") == "public address"
-    assert _reach("https://files.example.org:8443") == "public address"
+    assert (
+        _reach("http://192.168.1.5:8103") == "the office network"
+        and _reach("http://100.64.0.9") == "the office network"
+    )
+    assert _reach("http://172.16.0.1") == "the office network" and _reach("http://172.32.0.1") == "a public address"
+    assert _reach("https://files.example.org:8443") == "a public address"
+
+
+# -- the display members of the share list (#1636) ---------------------------------------------------------------------
+
+
+def _member_name(w) -> str:
+    w.served.service.store.refresh()
+    owners = [m.name for m in w.served.service.store.state.workspace.members.values() if m.role == "owner"]
+    assert len(owners) == 1  # the test human is the one owner
+    return owners[0]
+
+
+def test_the_share_meta_names_the_signed_in_person_and_the_ticket(w):
+    uid, key = w.ticket_with(**{"report.md": REPORT})
+    staged = w.prepare(key, "report.md")["staged_id"]
+    w.approve(staged)
+    share_id = LINK.fullmatch(ok(w.send(staged))["data"]["link"]).group(1)
+    meta = w.server.shares[share_id]["meta"]
+    assert meta["by_kind"] == "person" and meta["by_name"] == _member_name(w)
+    assert meta["label"] == w.served.service.store.ticket(uid).title
+
+
+def test_an_agent_that_claims_to_be_a_person_is_stored_as_an_agent(w):
+    uid, key = w.ticket_with(**{"report.md": REPORT})
+    agent = w.served.client()
+    ok(agent.req("claim", {"ref": key}, grant=w.served.grant, session=SESSION, idem=True))
+    for extra in ({"by_kind": "person"}, {"by_name": "The Owner"}, {"label": "Payroll"}):
+        res = agent.req("publish.prepare", {"ref": key, "artifacts": ["report.md"], **extra},
+                        grant=w.served.grant, session=SESSION)  # fmt: skip
+        assert err(res) == "invalid.input", extra  # the schema takes no such member
+    staged = ok(agent.req("publish.prepare", {"ref": key, "artifacts": ["report.md"]}, grant=w.served.grant,
+                          session=SESSION))["data"]["staged_id"]  # fmt: skip
+    w.approve(staged)
+    share_id = LINK.fullmatch(ok(w.send(staged))["data"]["link"]).group(1)
+    meta = w.server.shares[share_id]["meta"]
+    assert meta["by_kind"] == "agent" and meta["by_name"] == _member_name(w)
+
+
+def test_the_label_is_cleaned_and_capped():
+    clean = publishing._display
+    assert clean("  Q3 ‮report​ \n final ", 80) == "Q3 report final"  # bidi, zero width, white space
+    assert clean("x" * 200, 80) == "x" * 80
+    assert len(clean("é" * 100, 80).encode()) <= 80 and set(clean("é" * 100, 80)) == {"é"}
+    assert clean("‮​\x07", 80) is None and clean(None, 80) is None
+
+
+def test_a_server_that_refuses_the_label_gets_the_ticket_key_once(w):
+    uid, key = w.ticket_with(**{"report.md": REPORT})
+    staged = w.prepare(key, "report.md")["staged_id"]
+    w.approve(staged)
+    w.server.fail.append(("PUT", r"/shares/[0-9a-f]{32}$", 400, "bad_label"))
+    share_id = LINK.fullmatch(ok(w.send(staged))["data"]["link"]).group(1)
+    assert w.server.shares[share_id]["meta"]["label"] == key
+    puts = [r for r in w.server.requests if r["method"] == "PUT" and r["target"].endswith(f"shares/{share_id}")]
+    assert len(puts) == 2 and json.loads(puts[0]["body"])["label"] != key
+
+
+def test_a_label_refused_again_is_not_retried_forever(w):
+    uid, key = w.ticket_with(**{"report.md": REPORT})
+    staged = w.prepare(key, "report.md")["staged_id"]
+    w.approve(staged)
+    w.server.fail.extend([("PUT", r"/shares/[0-9a-f]{32}$", 400, "bad_label")] * 2)
+    assert err(w.send(staged))
+    assert len([r for r in w.server.requests if r["method"] == "PUT"]) == 2

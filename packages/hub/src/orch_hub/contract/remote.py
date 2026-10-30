@@ -42,7 +42,7 @@ from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
 from . import suite as S
 from .canon import CanonError, cj, loads_strict, unb64u
 from .canon import unhex as _canon_unhex
-from .hub import LINK_WINDOW_MS, Refused, _envelope, _fields, _signature, link_label
+from .hub import LINK_WINDOW_MS, Refused, _envelope, _fields, link_signed_bytes
 from .phase4 import text_ok
 
 # --- labels (protocol.md §3, "Remote access labels") ---------------------------------------------------------------
@@ -159,12 +159,19 @@ STREAM_OPS: dict[str, tuple[str, dict[str, Any]]] = {
 
 
 def verify_stream_link(
-    signed: Any, *, direction: str, hub_id_: str, workspace_id: str, pub: bytes, now_ms: int
+    signed: Any, *, direction: str, hub_id_: str, workspace_id: str, pub: bytes, now_ms: int, exporter: bytes
 ) -> dict[str, Any]:
     """The §10.2 receiver steps for a stream op (both modes). ``pub``: WSK for w2h (the hub checks), the card's
-    HK_op for h2w (the host checks). A non-stream op is ``unknown_op`` here (``hub.verify_link`` handles those)."""
+    HK_op for h2w (the host checks). ``exporter``: the TLS exporter of the connection the frame arrived on (§10.2, R1:
+    the signature covers ``label || exporter || cj(o)``; there is no exporter-less form). A non-stream op is
+    ``unknown_op`` here (``hub.verify_link`` handles those)."""
     o = _envelope(signed, "hub.link")
-    _signature(signed, link_label(direction), pub)
+    try:
+        sig = unb64u(signed["sig"], S.SIG_LEN)
+    except CanonError:
+        raise Refused("malformed") from None
+    if not S.verify(pub, sig, link_signed_bytes(direction, exporter, o)):
+        raise Refused("bad_signature")
     _fields(o, "hub.link")
     if o["dir"] != direction:
         raise Refused("malformed")

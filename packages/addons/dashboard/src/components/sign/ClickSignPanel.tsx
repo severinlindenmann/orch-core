@@ -23,7 +23,7 @@ import { WorkspaceLine } from './WorkspaceLine'
 
 function RiskLine({ text }: { text: string }) {
   return (
-    <p role="note" data-testid="click-risk" className="flex items-start gap-2 rounded-md border border-warning/50 bg-warning/10 px-3 py-2 text-[13px] font-medium text-text">
+    <p role="note" data-testid="click-risk" className="flex items-start gap-2 rounded-md border border-warning/50 border-l-[3px] border-l-risk-bar bg-warning-soft px-3 py-2 text-[13px] font-medium text-text">
       <ShieldAlert className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />
       <span>{text}</span>
     </p>
@@ -101,7 +101,7 @@ export function SignerHeadline({ view, fallback }: { view: Pick<ClickViewAnswer[
 }
 
 /** C3: the signer's risk lines, under the button, never folded. Each line carries `RISK_LINE` (counted before a press counts). */
-export function RiskLines({ lines, box, testId = 'sign-risk-lines' }: { lines: readonly string[]; box?: (el: HTMLElement | null) => void; testId?: string }) {
+export function RiskLines({ lines, box, testId = 'sign-risk-lines', danger = false }: { lines: readonly string[]; box?: (el: HTMLElement | null) => void; testId?: string; /** A destructive or data-leaving action: the same line in red (#421). */ danger?: boolean }) {
   // Sign only counts once the whole warning is on screen: bring it into view by itself when it appears (run 14: Sign
   // looked stuck while the line sat below the fold).
   const ref = useCallback(
@@ -113,10 +113,10 @@ export function RiskLines({ lines, box, testId = 'sign-risk-lines' }: { lines: r
   )
   if (lines.length === 0) return null
   return (
-    <ul ref={ref} role="note" data-testid={testId} className="space-y-1 rounded-md border border-warning/50 bg-warning/10 px-3 py-2 text-[13px] font-medium text-text">
+    <ul ref={ref} role="note" data-testid={testId} data-tone={danger ? 'danger' : 'warning'} className={danger ? 'space-y-1 rounded-md border border-danger/50 border-l-[3px] border-l-risk-danger-bar bg-danger-soft px-3 py-2 text-[13px] font-medium text-text' : 'space-y-1 rounded-md border border-warning/50 border-l-[3px] border-l-risk-bar bg-warning-soft px-3 py-2 text-[13px] font-medium text-text'}>
       {lines.map((line, i) => (
         <li key={i} {...{ [RISK_LINE]: '' }} className="flex items-start gap-2">
-          <ShieldAlert className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />
+          <ShieldAlert className={danger ? 'mt-0.5 size-4 shrink-0 text-danger' : 'mt-0.5 size-4 shrink-0 text-warning'} aria-hidden />
           <span><Inline>{line}</Inline></span>
         </li>
       ))}
@@ -224,10 +224,15 @@ function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil
   // A compact review (a summary, or a quick task shown folded) says what happens in its own lines: no step list under it.
   const lean = !!view.content?.summary || (!!story?.quick && !!view.content && alsoSigned(view.content, story.quick) !== null)
   const danger = !!story?.danger
+  // r14-P07: with one workspace and a review that has its own fold, the workspace line sits inside that fold (still one click
+  // away, still naming the workspace); with several workspaces it stays on the main surface (D6).
+  const folded = !!story?.foldWorkspace && !manyWorkspaces && (!!story.foldInRisk || (!auto && risk.length === 0))
+  const inFold = folded && !!view.content
+  const wsLine = <WorkspaceLine workspace={view.workspace} many={manyWorkspaces} always={auto || risk.length > 0 || inFold} folded={folded && !inFold} target={view.content?.ticket?.key} />
   return (
     <section ref={setBox} data-testid="click-panel" aria-label="Review before signing" className="space-y-3">
-      <WorkspaceLine workspace={view.workspace} many={manyWorkspaces} always={auto || risk.length > 0} folded={!!story?.foldWorkspace && !manyWorkspaces} target={view.content?.ticket?.key} />
-      {view.content && <SignContent content={view.content} ws={view.workspace?.id} technical={technical} compact={story?.compact} quick={story?.quick} />}
+      {!inFold && wsLine}
+      {view.content && <SignContent content={view.content} ws={view.workspace?.id} technical={technical} compact={story?.compact} quick={story?.quick} workspaceLine={inFold ? wsLine : undefined} />}
       {/* authority stays in the default view, never folded: the scope, the agent access length, what happens next */}
       {story?.scope && <p data-testid="sign-scope" className="text-[13px] text-text">{story.scope}</p>}
       <AgentAccess story={story ?? null} />
@@ -278,7 +283,7 @@ function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil
           </Button>
         </div>
         {/* C3: the signer's risk lines, under the button and never folded; the second press counts only once they are on screen */}
-        <RiskLines lines={risk} box={press.riskBox} />
+        <RiskLines lines={risk} box={press.riskBox} danger={danger} />
       </div></SignFooter>
     </section>
   )

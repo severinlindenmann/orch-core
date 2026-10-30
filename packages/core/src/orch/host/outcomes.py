@@ -164,7 +164,7 @@ def request_idem(op: str, opts: Mapping[str, Any] | None) -> str | None:
     return None
 
 
-_HOOK_ID = re.compile(r"hk_[0-7][0-9A-HJKMNP-TV-Z]{25}")
+_HOOK_ID = re.compile(r"hk_[0-7][0-9A-HJKMNP-TV-Z]{25}|h[hs]_[A-Za-z0-9_-]{43}")  # id, hub token, hub secret
 
 
 def _mask(value: Any) -> Any:

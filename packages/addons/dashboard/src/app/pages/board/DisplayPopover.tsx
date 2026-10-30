@@ -46,10 +46,10 @@ export function DisplayPopover({ display, onChange }: { display: BoardDisplay; o
             aria-label="Density"
             className="w-full"
           >
-            <ToggleGroupItem value="comfortable" className="h-8 flex-1 text-[12px] data-[state=on]:bg-brand-soft data-[state=on]:text-brand">
+            <ToggleGroupItem value="comfortable" className="h-8 flex-1 text-[12px] data-[state=on]:bg-brand-soft data-[state=on]:text-brand-chip-text">
               Comfortable
             </ToggleGroupItem>
-            <ToggleGroupItem value="compact" className="h-8 flex-1 text-[12px] data-[state=on]:bg-brand-soft data-[state=on]:text-brand">
+            <ToggleGroupItem value="compact" className="h-8 flex-1 text-[12px] data-[state=on]:bg-brand-soft data-[state=on]:text-brand-chip-text">
               Compact
             </ToggleGroupItem>
           </ToggleGroup>
@@ -65,10 +65,10 @@ export function DisplayPopover({ display, onChange }: { display: BoardDisplay; o
             aria-label="Group by"
             className="w-full"
           >
-            <ToggleGroupItem value="epic" className="h-8 flex-1 text-[12px] data-[state=on]:bg-brand-soft data-[state=on]:text-brand">
+            <ToggleGroupItem value="epic" className="h-8 flex-1 text-[12px] data-[state=on]:bg-brand-soft data-[state=on]:text-brand-chip-text">
               Epic
             </ToggleGroupItem>
-            <ToggleGroupItem value="none" className="h-8 flex-1 text-[12px] data-[state=on]:bg-brand-soft data-[state=on]:text-brand">
+            <ToggleGroupItem value="none" className="h-8 flex-1 text-[12px] data-[state=on]:bg-brand-soft data-[state=on]:text-brand-chip-text">
               None
             </ToggleGroupItem>
           </ToggleGroup>

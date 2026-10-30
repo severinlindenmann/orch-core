@@ -35,6 +35,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, TextIO
 
+from orch import childenv
 from orch.host.errors import HostError
 from orch.posixmod import posixmod
 from orch.setup import osfront
@@ -87,7 +88,9 @@ def _port_busy(port: int) -> bool:
 
 def _run(argv: Sequence[str], env: Mapping[str, str]) -> int:
     """Run ``argv`` with this terminal's stdin, stdout and stderr (sudo's password prompt, the dashboard's link)."""
-    return subprocess.run(list(argv), env=dict(env), check=False).returncode
+    from orch.childenv import sanitize
+
+    return subprocess.run(list(argv), env=sanitize(env, absolute_pythonpath=True), check=False).returncode
 
 
 def _sleep(seconds: float) -> None:
@@ -520,6 +523,36 @@ def _reset(args: argparse.Namespace, env: Mapping[str, str], out: TextIO, err: T
     return 0 if rc == 0 else 1
 
 
+def client_env(env: Mapping[str, str]) -> dict[str, str]:
+    """The client holds the person's keys and runs as them: no loader variable reaches it, not even an absolute
+    ``PYTHONPATH`` (the dashboard launcher keeps those; the client does not need them). One sanitizer: ``childenv``."""
+    return childenv.sanitize(env)
+
+
+def _exec(argv: list[str], env: Mapping[str, str]) -> None:  # a seam: tests replace it
+    os.execve(argv[0], argv, dict(env))
+
+
+def _client(args: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextIO) -> int:
+    """``orch remote open``: start the remote client (``orch_dashboard.remote_client``, in the dashboard addon) and open
+    the person's browser at it. Same refusals as ``orch dashboard``: an agent's environment, an addon that is not
+    installed."""
+    from orch.cli import dashboard
+
+    refusal = dashboard.agent_refusal(list(args), env)
+    if refusal:
+        err.write(f"orch remote open: human_only: {refusal}\n")
+        return EXIT_REFUSED
+    env = client_env(env)  # one sanitized environment for the probe AND the exec
+    if not dashboard._module_installed(env):  # noqa: SLF001 - the launcher's own probe
+        err.write(f"orch remote open: {dashboard.INSTALL_HINT}\n")
+        return 1
+    out.flush()
+    err.flush()
+    _exec([sys.executable, "-P", "-m", "orch_dashboard.remote_client", *args], env)
+    return 1  # pragma: no cover - execve does not return
+
+
 def main(
     args: Sequence[str],
     *,
@@ -529,6 +562,8 @@ def main(
 ) -> int:
     from orch.cli import remote_access
 
+    if args and args[0] in ("open", "client"):  # R5 (#1593): the remote client on THIS computer (the person's terminal)
+        return _client(args[1:], env=env, out=out, err=err)
     if (
         args and args[0] in remote_access.VERBS
     ):  # R2 (#1590): remote access to the workspace itself, signed by the owner

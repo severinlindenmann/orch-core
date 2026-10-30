@@ -37,6 +37,7 @@ from typing import TYPE_CHECKING, Any, Protocol, Self
 from ..backup.hubop import FENCE as RESTORE_FENCE
 from ..closing import LINK_ALLOWED as CLOSING_ALLOWED_OPS
 from ..contract import hub as H
+from ..contract import linkws as W
 from ..contract import remote as R
 from ..contract import suite as S
 from ..contract.canon import CanonError, b64u, unb64u, unhex
@@ -44,7 +45,7 @@ from ..contract.hub import Refused
 from ..contract.keystore import OpSigner
 from ..keys import HubKeys, KeysError
 from ..keys.store import PLACEHOLDER_TLS
-from . import framing, ops, tls
+from . import framing, ops, tls, wsaccept
 from .registry import Registry
 from .tls import LinkClosed, LinkTimeout
 from .wkseal import WkSeals
@@ -148,6 +149,11 @@ class LinkServer:
         max_remote_connections: int = 64,
         max_remote_unauthenticated: int = 16,
         remote_signin_timeout: float = 30.0,
+        ws_host: str | None = None,
+        ws_port: int = 0,
+        ws_head_timeout: float = wsaccept.HEAD_TIMEOUT,
+        ws_ping_after: float = W.PING_AFTER_S,
+        ws_idle_close: float = W.IDLE_CLOSE_S,
     ) -> None:
         offered = (
             *((tls.REMOTE_ALPN,) if remote is not None else ()),
@@ -195,8 +201,30 @@ class LinkServer:
         self._listen.bind((host, port))
         self._listen.listen(64)
         self._listen.settimeout(0.2)
+        # R6 (#1594, protocol 10.10.7): the WebSocket listener is its own socket (never a sniff of the link port) and
+        # shares the pools above. ``ws_host=None``: no WebSocket accept at all.
+        self._ws_t = (ws_head_timeout, ws_ping_after, ws_idle_close)
+        self._ws_listen: socket.socket | None = None
+        if ws_host is not None:
+            self._ws_listen = socket.socket(socket.AF_INET6 if ":" in ws_host else socket.AF_INET)
+            self._ws_listen.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                self._ws_listen.bind((ws_host, ws_port))
+            except OSError:
+                self._ws_listen.close()
+                self._listen.close()
+                raise
+            self._ws_listen.listen(64)
+            self._ws_listen.settimeout(0.2)
         self._threads: list[threading.Thread] = []
-        self._accept_thread = threading.Thread(target=self._accept_loop, name="link-accept", daemon=True)
+        self._accept_thread = threading.Thread(
+            target=self._accept_loop, args=(self._listen, False), name="link-accept", daemon=True
+        )
+        self._ws_accept_thread = (
+            threading.Thread(target=self._accept_loop, args=(self._ws_listen, True), name="link-ws-accept", daemon=True)
+            if self._ws_listen is not None
+            else None
+        )
 
     @classmethod
     def from_keys(
@@ -236,16 +264,27 @@ class LinkServer:
     def address(self) -> tuple[str, int]:
         return self._listen.getsockname()[:2]
 
+    @property
+    def ws_address(self) -> tuple[str, int] | None:
+        """Where the WebSocket listener answers, ``None`` when there is none."""
+        return None if self._ws_listen is None else self._ws_listen.getsockname()[:2]
+
     def start(self) -> LinkServer:
         self._accept_thread.start()
+        if self._ws_accept_thread is not None:
+            self._ws_accept_thread.start()
         return self
 
     def close(self) -> None:
         self._stop.set()
         self._accept_thread.join(5)
+        if self._ws_accept_thread is not None:
+            self._ws_accept_thread.join(5)
         for t in list(self._threads):
             t.join(5)
         self._listen.close()
+        if self._ws_listen is not None:
+            self._ws_listen.close()
 
     def __enter__(self) -> Self:
         return self.start()
@@ -255,10 +294,10 @@ class LinkServer:
 
     # --- connections ------------------------------------------------------------------------------------------
 
-    def _accept_loop(self) -> None:
+    def _accept_loop(self, listen: socket.socket, via_ws: bool) -> None:
         while not self._stop.is_set():
             try:
-                sock, _ = self._listen.accept()
+                sock, _ = listen.accept()
             except TimeoutError:
                 continue
             except OSError:
@@ -272,23 +311,36 @@ class LinkServer:
                 continue
             t = threading.Thread(
                 target=self._serve,
-                args=(sock, _PreAuth(self._pre), _PreAuth(self._slots)),
-                name="link-conn",
+                args=(sock, _PreAuth(self._pre), _PreAuth(self._slots), via_ws),
+                name="link-ws-conn" if via_ws else "link-conn",
                 daemon=True,
             )
             self._threads = [x for x in self._threads if x.is_alive()] + [t]
             t.start()
 
-    def _serve(self, sock: socket.socket, pre: _PreAuth, slot: _PreAuth) -> None:
+    def _serve(self, sock: socket.socket, pre: _PreAuth, slot: _PreAuth, via_ws: bool = False) -> None:
         conn = None
         try:
-            conn = tls.accept(self._ctx, sock, time.monotonic() + self._t_hs, self._stop)
+            if via_ws:  # the pool slots are held already: the head is read under them (slow upgrades cannot pile up)
+                head_t, ping_after, idle_close = self._ws_t
+                conn = wsaccept.accept_ws(
+                    self._ctx,
+                    sock,
+                    time.monotonic() + self._t_hs,
+                    self._stop,
+                    head_timeout=head_t,
+                    ping_after=ping_after,
+                    idle_close=idle_close,
+                )
+            else:
+                conn = tls.accept(self._ctx, sock, time.monotonic() + self._t_hs, self._stop)
             if self._remote is not None and conn.alpn() == tls.REMOTE_ALPN:
                 self._serve_remote(conn, pre, slot)  # never reaches the link's auth
                 return
-            peer_addr = ""
-            with contextlib.suppress(OSError):
-                peer_addr = str(sock.getpeername()[0])
+            peer_addr = ""  # a WebSocket link has none: the socket peer is the front, and no header is believed
+            if not via_ws:
+                with contextlib.suppress(OSError):
+                    peer_addr = str(sock.getpeername()[0])
             self._link(conn, pre, peer_addr)
         except framing.FrameError:
             if conn is not None:

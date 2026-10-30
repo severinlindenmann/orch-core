@@ -37,12 +37,18 @@ def test_first_step_and_expected(name, fields):
         {"name": "publish", "publish": PUBLISH, "models": {"codex": {"work": "gpt-5.4"}}},
         {"name": "publish"},
         {"name": "publish", "publish": {**PUBLISH, "extra": "x"}},
-        {"name": "publish", "publish": {"server": PUBLISH["server"], "share": PUBLISH["server"]}},
     ],
 )
 def test_invalid_input(fields):
     with pytest.raises(ValidationError):
         parse(**fields)
+
+
+def test_one_address_for_files_and_links_is_accepted():
+    """The form's default and what `orch install` signs (server = share = url): equal addresses are valid."""
+    one = {"server": "https://pub.example.test", "share": "https://pub.example.test"}
+    body = parse(name="publish", publish=one)
+    assert host_call(body) == ("settings.set", {"set": {"publish": one}})
 
 
 class Link:
@@ -123,6 +129,40 @@ def test_rows_report_setup(client, token, stub, gateway, monkeypatch, settings, 
     assert rows["quick"]["needs"] is None and rows["quick"]["set_up"] is True
     assert rows["usage"]["needs"] is None and rows["usage"]["set_up"] is True
     assert reads == ["workspace.settings"]
+
+
+@pytest.mark.parametrize(
+    "state,want",
+    [
+        ({"parts": {"publish": {"url": "http://127.0.0.1:8102"}}}, "http://127.0.0.1:8102"),
+        ({"parts": {"publish": {"url": "https://pub.example.org"}}}, None),  # not "on this computer": never suggested
+        ({"parts": {"publish": {"url": "http://192.168.1.5:8102"}}}, None),
+        ({"parts": {"publish": {"url": "http://localhost:8102"}}}, "http://localhost:8102"),
+        ({"parts": {"publish": {"url": "http://example.com"}}}, None),  # not an address core accepts
+        ({"parts": {"publish": {"url": "https://pub.example.org/x"}}}, None),
+        ({"parts": {"publish": {}}}, None),
+        ({"parts": {}}, None),
+        (None, None),  # no installer state at all (Publish hosted elsewhere)
+    ],
+)
+def test_rows_suggest_the_publish_server_installed_here(
+    client, token, stub, gateway, monkeypatch, tmp_path, state, want
+):
+    import json
+
+    from test_addon_switches import _get, _VersionLink
+
+    (tmp_path / "install").mkdir()
+    if state is not None:
+        (tmp_path / "install" / "install.json").write_text(json.dumps(state))
+    monkeypatch.setenv("ORCH_STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(gateway, "enabled", lambda ws: _VersionLink())
+    monkeypatch.setattr(
+        gateway, "call", lambda ws, op, args=None: {"runner": None} if op == "whoami" else {"publish": None}
+    )
+    rows = {r["id"]: r for r in _get(client, token, stub, "add-ons").json()["add_ons"]}
+    assert rows["publish"]["suggest"] == want
+    assert "suggest" not in rows["quick"] or rows["quick"]["suggest"] is None
 
 
 @pytest.mark.parametrize("name,fields", [("publish", {"publish": PUBLISH})])

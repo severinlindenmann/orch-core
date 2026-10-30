@@ -5,7 +5,7 @@
 
 const HEX32 = /^[0-9a-f]{32}$/;
 const CODE = /^[A-Za-z0-9_-]{1,64}$/;
-const ENDPOINT = /^(local|(\[[0-9a-fA-F:.]{2,45}\]|[A-Za-z0-9.-]{1,253}):[0-9]{1,5})$/;
+const ENDPOINT = /^(local|(\[[0-9a-fA-F:.]{2,45}\]|[A-Za-z0-9.-]{1,253}):[0-9]{1,5}|wss?:\/\/(\[[0-9a-fA-F:.]{2,45}\]|[A-Za-z0-9.-]{1,253})(:[0-9]{1,5})?)$/;
 // r11 P03: remembered PER PERSON (hub user id -> {o: loopback origin, n: display name}). A link is only ever offered to the
 // dashboard remembered for the person it was minted for; there is no default port and no "last opened" origin.
 const KEY = "orch.connect_people";

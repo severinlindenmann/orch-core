@@ -149,17 +149,30 @@ def _open_link(service: WorkspaceService, alpn: bytes | None = None) -> Any:
     wsk_pub, sign = hubops._wsk_sign(service)  # noqa: SLF001
     del wsk_pub
     last: Exception | None = None
-    from . import hubaddr
+    from orch.hubclient.tlsadapter import LinkInspectedError
+    from orch.hubclient.tlslink.tls import LinkInspected
 
+    from . import hubaddr, hubnet
+
+    net = hubnet.load(service.state_dir)  # raises ProxyRefused (an OSError) when unusable: never a direct dial
     for one in dict.fromkeys([addr, *hubops._more_addrs(state, dev)]):  # noqa: SLF001 - current first, then verified
-        host, port = parse_addr(one)
+        a = parse_addr(one)
+        block = hubnet.inspected(service.state_dir, one)
+        if block.active():  # an inspected mismatch: this address waits out its five minutes
+            last = LinkInspectedError("the network inspects encrypted connections")
+            continue
         try:
-            host = hubaddr.checked_ip(host, allow_loopback=hubaddr.is_loopback(addr))  # resolve once, policy, that IP
+            host = hubaddr.dial_host(
+                a, net, allow_loopback=hubaddr.is_loopback(addr), allow_internal=hubaddr.is_internal(addr)
+            )
             return LinkClient.open(
-                host, port, tls_spki_sha256=state.tls_spki, hub_id=state.hub_id, workspace_id=service.workspace_id,
-                sign=sign, hk_op_pub=unb64u(state.hk_op_pub, 65), mode=state.mode, timeout=10.0,
-                now_ms=lambda: int(service.clock() * 1000), alpn=alpn,
+                host, a.port, addr=a, net=net, tls_spki_sha256=state.tls_spki, hub_id=state.hub_id,
+                workspace_id=service.workspace_id, sign=sign, hk_op_pub=unb64u(state.hk_op_pub, 65),
+                mode=state.mode, timeout=10.0, now_ms=lambda: int(service.clock() * 1000), alpn=alpn,
             )  # fmt: skip
+        except LinkInspected:
+            block.start()
+            last = LinkInspectedError("the network inspects encrypted connections")
         except (OSError, PinMismatch) as exc:  # unreachable or not the pinned certificate: the next verified address
             last = exc
     assert last is not None
@@ -300,6 +313,13 @@ def _loop(service: WorkspaceService, rt: _Runtime) -> None:
     rt.svc.close()
 
 
+#: R6: the link failures that have a host code of their own (what Mission Control turns into plain words)
+_NET_ERRORS = {
+    "LinkInspected": "hub.link_inspected", "LinkInspectedError": "hub.link_inspected",
+    "ProxyAuth": "hub.proxy_auth", "ProxyRefused": "hub.proxy_refused", "ProxyUnreachable": "hub.proxy_unreachable",
+}  # fmt: skip
+
+
 def status_fields(service: WorkspaceService) -> dict[str, Any]:
     """For ``hub.status``: how many ws->ws envelopes wait in the outbox, and the receive loop's last error. Starts no
     runtime; an unreadable mailbox reads as empty here (status must answer)."""
@@ -310,7 +330,8 @@ def status_fields(service: WorkspaceService) -> dict[str, Any]:
         n = len(box.outbox)
     except Exception:  # noqa: BLE001
         n = 0
-    return {"peer_outbox": n, "link_error": None if rt is None else rt.last_error}
+    err = None if rt is None else rt.last_error
+    return {"peer_outbox": n, "link_error": err, "link_error_code": _NET_ERRORS.get(err or "")}
 
 
 def _deliveries(service: WorkspaceService, rt: _Runtime) -> None:

@@ -555,6 +555,13 @@ ROUTES: tuple[Route, ...] = (
     _r("PUT", "/admin/skills/{name}", "admin", "a_skill_put", "Create or replace a company skill (new digest)"),
     _r("DELETE", "/admin/skills/{name}", "admin", "a_skill_delete", "Remove a company skill"),
     _r("PUT", "/admin/skills/{name}/offers", "admin", "a_skill_offer", "Set the workspaces a skill is offered to"),
+    _r(
+        "GET",
+        "/admin/needs-attention",
+        "admin",
+        "a_attention",
+        "What needs attention in company skills, tools and secrets",
+    ),
     _r("GET", "/admin/mcp-servers", "admin", "a_mcp", "Remote MCP servers and the workspaces they are offered to"),
     _r("PUT", "/admin/mcp-servers/{name}", "admin", "a_mcp_put", "Create or replace a remote MCP server (new digest)"),
     _r("DELETE", "/admin/mcp-servers/{name}", "admin", "a_mcp_delete", "Remove a remote MCP server"),

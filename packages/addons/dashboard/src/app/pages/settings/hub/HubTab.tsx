@@ -11,6 +11,7 @@ import { FullSwitch } from './FullSwitch'
 import { LeaveFlow } from './LeaveFlow'
 import { ShareRules, AlwaysShared } from './ShareRules'
 import { NotTold } from './NotTold'
+import { Network } from './Network'
 import { HubBanner } from '@/app/shell/HubBanner'
 import { useOpenHub, useRail } from '@/app/shell/CompanyRail'
 
@@ -59,6 +60,7 @@ export function HubTab({ workspace }: { workspace: Workspace }) {
       {(s.mode === 'selective' || s.mode === 'full') && <OpenHub ws={ws} />}
       {s.mode === 'selective' && <SelectivePage ws={ws} fullAllowed={fullAllowed} onShare={() => setFlow('share')} onFull={() => setFlow('full')} onLeave={() => setFlow('leave')} />}
       {s.mode === 'full' && <FullPage status={s} onLeave={() => setFlow('leave')} />}
+      <Network workspace={workspace} />
       {hubName && <p className="text-sm font-semibold">Hub <Raw>{hubName}</Raw></p>}
       {s.hub_id && <InfoDrawer testId="hub-status-details"><p className="break-words text-sm">Hub id (from the hub, not signed): <Raw>{s.hub_id}</Raw></p></InfoDrawer>}
     </>}

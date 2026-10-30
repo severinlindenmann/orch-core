@@ -179,6 +179,9 @@ def serve(
     link_listen: str | None = None,
     dev_shared_machine: bool = False,
     bind_all: bool = False,
+    link_ws_listen: str | None = None,
+    link_ws_public: str | None = None,
+    link_ws_behind_front: bool = False,
     accounts: CO.Accounts | None = None,
     assigned: Callable[[str], bool] = CO.locally_assigned,
     api_host: str | None = None,
@@ -207,6 +210,22 @@ def serve(
     else:
         assert link_listen is not None
         host, port = CO.parse_link_listen(link_listen, assigned=assigned)  # raises BindRefused (a ValueError)
+    ws_bind: tuple[str, int] | None = None
+    if (
+        link_ws_listen is not None
+    ):  # R6: refused before any state is opened (a public bind needs --link-ws-behind-front)
+        ws_bind = CO.parse_link_ws_listen(
+            link_ws_listen, assigned=assigned, bind_all=bind_all, behind_front=link_ws_behind_front
+        )
+    if link_ws_public is not None:
+        from .contract.hub import Refused
+        from .contract.linkws import parse_link_address
+
+        try:
+            if parse_link_address(link_ws_public).scheme == "tcp":
+                raise Refused("malformed")
+        except Refused:
+            raise ValueError("--link-ws-public must be ws://host[:port] or wss://host[:port]") from None
     gate = FixedInvites(invites)  # a bad invite refuses before any state is opened
     u = urllib.parse.urlsplit(publish_url)
     api_host = api_host or u.netloc
@@ -234,7 +253,8 @@ def serve(
         api_origin=api_origin,
     )
     bind_warn: str | None = None
-    if link_listen is not None:
+    ws_net = ws_bind is not None and not ipaddress.ip_address(ws_bind[0]).is_loopback
+    if link_listen is not None or ws_net:  # the same machine rules as the link port for any non-loopback bind
         acc = accounts if accounts is not None else CO.Accounts.load()
         bind_warn = CO.check_bind_allowed(
             acc, hub_user=CO.current_user(acc), card_dev=cfg.dev, dev_shared_machine=dev_shared_machine
@@ -452,13 +472,15 @@ def serve(
         switch=switch,
         hooks=hook_inbox,
         activity=activity,
-        where=lambda: where_answer(state),
+        where=lambda: where_answer(state, extra_public=link_ws_public),
         closing=closing,
         deliveries=deliveries,
         streams=stream_router,
         remote=remote_endpoint,
         host="0.0.0.0" if bind_all and link_listen is not None else host,  # the address stays the validated one
         port=port,
+        ws_host=ws_bind[0] if ws_bind is not None else None,
+        ws_port=ws_bind[1] if ws_bind is not None else 0,
         dev_mode=cfg.dev,
     )
     closing.push = server.push_closing
@@ -510,6 +532,8 @@ def serve(
             file=out,
             flush=True,
         )
+        if server.ws_address is not None:
+            print(f"orch-hub link-ws port={server.ws_address[1]}", file=out, flush=True)
         if web is not None:
             print(f"orch-hub web port={web.address[1]}", file=out, flush=True)
         if hook_listener is not None:

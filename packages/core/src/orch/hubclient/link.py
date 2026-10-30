@@ -67,6 +67,10 @@ class HubTransport(Protocol):
         ...
 
 
+#: link failures that carry their own code (``hub.`` + one of these): see :mod:`orch.hubclient.tlslink.errors`
+NET_CODES = frozenset({"hub.link_inspected", "hub.proxy_auth", "hub.proxy_refused", "hub.proxy_unreachable"})
+
+
 class HubLink:
     def __init__(
         self,
@@ -104,8 +108,9 @@ class HubLink:
 
         try:
             reply = self._t.send_next(op, build)  # the link's ONE counter numbers every frame (calls and acks alike)
-        except OSError:
-            raise HubRefused("hub_unreachable") from None
+        except OSError as exc:
+            net = getattr(exc, "code", None)  # R6: why the network failed (inspected, proxy), not just "unreachable"
+            raise HubRefused(net[4:] if net in NET_CODES else "hub_unreachable") from None
         r = self._open(reply, sent["o"], sent["cb"])
         if "error" in r["body"]:
             code = r["body"]["error"]

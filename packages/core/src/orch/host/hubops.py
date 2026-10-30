@@ -59,7 +59,7 @@ __all__ = [
 HUB_OPS: dict[str, int] = {
     "hub.connect": 1, "hub.link": 1, "hub.unbind": 1, "hub.status": 1, "hub.refresh": 1, "hub.handoff": 1,
     "hub.profile": 1, "hub.directory": 1, "hub.shared": 1,
-    "hub.history": 1, "keys.rotate": 1, "hub.switch": 1, "hub.address": 1,
+    "hub.history": 1, "keys.rotate": 1, "hub.switch": 1, "hub.address": 1, "hub.network": 1, "hub.network_set": 1,
 }  # fmt: skip
 NETWORK_OPS = frozenset(
     {
@@ -123,6 +123,17 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
         "type": "object",
         "properties": {"link": {"type": "string", "minLength": 8, "maxLength": 1024}},
         "required": ["link"],
+        "additionalProperties": False,
+    },
+    "hub.network": {"type": "object", "properties": {}, "additionalProperties": False},  # R6: a read
+    "hub.network_set": {  # R6 (#1594): the owner's proxy for the hub link; ``proxy: null`` clears it
+        "type": "object",
+        "properties": {
+            "proxy": {"type": ["string", "null"], "maxLength": 300},
+            "user": {"type": ["string", "null"], "maxLength": 255},
+            "password": {"type": ["string", "null"], "maxLength": 1000},
+        },
+        "required": ["proxy"],
         "additionalProperties": False,
     },
     "hub.address": {  # M4 #1461: move to the address a connect link of the SAME hub names (a person; no invite used)
@@ -452,6 +463,16 @@ class _NoLink:
         raise ConnectionRefusedError("no hub link")
 
 
+class _Down:
+    """The network settings cannot be used: every send fails with their code (an ``OSError``), nothing is dialled."""
+
+    def __init__(self, exc: OSError) -> None:
+        self._exc = exc
+
+    def send_next(self, op: str, build: Any) -> dict[str, Any]:
+        raise self._exc
+
+
 def _transport(service: WorkspaceService, hub_id: str, link: dict[str, Any] | None = None) -> Any:
     """The seam first (tests, C5's replacements); else a TLS link to ``link["addr"]`` pinned to the card's SPKI hash;
     without an address or pin the hub is simply unreachable."""
@@ -460,14 +481,20 @@ def _transport(service: WorkspaceService, hub_id: str, link: dict[str, Any] | No
     if not link or not link.get("addr") or not link.get("spki"):
         return _NoLink()
     from orch.hubclient.tlsadapter import FailoverTransport, TlsTransport
+    from orch.hubclient.tlslink.errors import ProxyError
 
-    from . import hubaddr
+    from . import hubaddr, hubnet
 
-    check = hubaddr.dial_resolver(link["addr"])  # every dial: resolve once, policy, connect to that IP
+    try:
+        net = hubnet.load(service.state_dir)  # the host's own proxy settings; a broken file never means "direct"
+    except ProxyError as exc:
+        return _Down(exc)
+    check = hubaddr.dial_resolver(link["addr"], net=net)  # every dial: resolve once, policy, connect to that IP
 
     def to(addr: str) -> TlsTransport:
         return TlsTransport(
-            addr=addr, resolve=check, tls_spki_sha256=link["spki"], hub_id=hub_id, workspace_id=service.workspace_id,
+            addr=addr, resolve=check, net=net, inspected=hubnet.inspected(service.state_dir, addr),
+            tls_spki_sha256=link["spki"], hub_id=hub_id, workspace_id=service.workspace_id,
             hk_op_pub=link["hk_op"], wsk_pub=link["wsk_pub"], sign=link["sign"], mode=link.get("mode", "selective"),
             now_ms=lambda: int(service.clock() * 1000), timeout=float(link.get("timeout", 10.0)),
         )  # fmt: skip
@@ -760,7 +787,32 @@ def _owner(call: Call) -> str:
     return call.viewer
 
 
+#: R6 (#1594): why the link did not come up, in words a person can act on (no product names)
+NET_MESSAGES: dict[str, tuple[str, str]] = {
+    "hub.link_inspected": (
+        "something on this network opens encrypted connections, so the hub cannot be trusted from here",
+        "ask your IT team to let the hub's name through without inspection",
+    ),
+    "hub.proxy_auth": (
+        "the company proxy did not accept the sign-in",
+        "check the proxy user and password in Network settings",
+    ),
+    "hub.proxy_refused": (
+        "the company proxy refused the connection to the hub",
+        "ask your IT team to allow the hub's address through the proxy",
+    ),
+    "hub.proxy_unreachable": (
+        "the company proxy could not be reached",
+        "check the proxy address in Network settings",
+    ),
+}  # fmt: skip
+
+
 def _refused(code: str) -> HostError:
+    full = code if code.startswith("hub.") else f"hub.{code}"
+    if full in NET_MESSAGES:
+        text, hint = NET_MESSAGES[full]
+        return HostError(full, text, hint=hint, retry_after_ms=300000 if full == "hub.link_inspected" else 2000)
     if code == "hub_unreachable":
         return HostError("hub.unreachable", "the hub could not be reached; nothing was lost", retry_after_ms=2000)
     if code == "hub_address_changed":
@@ -786,6 +838,52 @@ def _refused(code: str) -> HostError:
             fix=["orch", "hub", "leave"],
         )
     return HostError("hub.refused", f"the hub is refused: {code}")
+
+
+NET_BROKEN_NOTE = "The network settings of this computer can't be read, so the hub is not contacted. Fix or clear them."
+
+
+def _reachable(service: WorkspaceService, state: Any) -> tuple[bool | None, bool]:
+    """``(up, net_broken)`` for ``hub.status``. Network settings that exist but cannot be used (a corrupt file, loose
+    permissions) are fail-closed: no connect of any kind (a direct probe would go around the owner's proxy), ``up`` is
+    ``None``. No settings file at all is a normal direct setup."""
+    from orch.hubclient.tlslink.errors import ProxyError
+
+    from . import hublinkprobe, hubnet
+
+    try:
+        net = hubnet.load(service.state_dir)
+    except ProxyError:
+        return None, True
+    scope = f"{service.state_dir}:{service.workspace_id}"
+    return hublinkprobe.reachable(scope, _addr({}, state, workspace_dev(service)), net=net), False
+
+
+def _network(call: Call, op: str, args: dict[str, Any]) -> dict[str, Any]:
+    """R6 (#1594, design section 3): the owner's proxy for hub links. Owner at this workspace only (``_owner`` ran: an
+    agent is ``op.not_allowed``; the dashboard route is in the remote refused lists). The hub never reaches this. The
+    password goes to its 0600 file and is never in an answer, the audit line or an error."""
+    from orch.hubclient.netconfig import NetConfigError
+
+    from . import hubnet
+
+    state_dir = call.service.state_dir
+    if op == "hub.network_set":
+        try:
+            if args["proxy"] is None:
+                hubnet.clear_proxy(state_dir)
+            else:
+                hubnet.set_proxy(state_dir, args["proxy"], args.get("user"), args.get("password"))
+        except NetConfigError as exc:
+            what = {
+                "user": "the proxy user name has characters it cannot have",
+                "password": "the proxy password has characters it cannot have",
+            }.get(str(exc), "the proxy address must look like http://name:3128 or https://name:3128")
+            raise HostError("invalid.input", what) from None
+        except OSError:
+            raise HostError("workspace.unavailable", "the network settings could not be saved here") from None
+        _audit(call, "hub.network", proxy_set=args["proxy"] is not None, password_set=bool(args.get("password")))
+    return hubnet.view(state_dir)
 
 
 def _audit(call: Call, event: str, **more: Any) -> None:
@@ -857,6 +955,8 @@ def serve(call: Call) -> dict[str, Any]:
         out = breakglass.rotate(call, epochs_for(service))
         _audit(call, "keys.rotate")
         return out
+    if op in ("hub.network", "hub.network_set"):
+        return ok_result(_network(call, op, args))
     if op == "hub.link":
         return {"plan": {"op": "hub.link", "link": args["link"], "dev": workspace_dev(service)}}
     if op == "hub.address":
@@ -900,11 +1000,9 @@ def serve(call: Call) -> dict[str, Any]:
         from . import hubclosing, hublinkprobe
 
         binding = None if state is None else state.status
-        up = None
+        up, net_broken = None, False
         if binding == "bound":
-            up = hublinkprobe.reachable(
-                f"{service.state_dir}:{service.workspace_id}", _addr({}, state, workspace_dev(service))
-            )
+            up, net_broken = _reachable(service, state)
         return ok_result(
             {
                 "snapshot": snapshot.pinned_view(state, int(service.clock() * 1000)),
@@ -925,6 +1023,8 @@ def serve(call: Call) -> dict[str, Any]:
                 "binding": binding,
                 "hub_card": None if state is None else state.card,  # public; the dashboard's one-click mode switch
                 "reachable": up,
+                # R6: settings that cannot be read mean no probe and no dial at all, said in plain words
+                "network": {"broken": net_broken, "note": NET_BROKEN_NOTE if net_broken else None},
                 **hublinkprobe.peer_view(service),  # peer_outbox, link_error
                 "log_sync": _log_sync_status(service),
                 "update_notice": _update_notice(service, state),  # HUB-WS-04: hub admin asks for an update

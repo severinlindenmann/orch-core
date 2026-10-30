@@ -86,8 +86,8 @@ def catalog(manifest: Callable[[str], bytes] | None = None, *, optional: bool = 
         ),
         "terminals": ("Terminals", "Open a terminal on this computer from the dashboard. It runs as you.", True, True),
         "worktrees": (
-            "Work copies",
-            "Each ticket gets its own copy of your project, so agents do not overwrite each other.",
+            "Own copy per ticket",
+            "Each ticket gets its own copy of your project so agents do not overwrite each other.",
             True,
             False,
         ),

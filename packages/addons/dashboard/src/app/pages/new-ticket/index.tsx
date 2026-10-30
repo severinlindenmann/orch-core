@@ -14,6 +14,8 @@ import { can, roleOf } from '@/api/permissions'
 import { trustedPress } from '@/components/sign/trustedPress'
 import { SignPopover, type SignedHow } from '@/components/sign/SignPopover'
 import { Inline } from '@/components/sign/visible'
+import { markJustCreated } from './justCreated'
+import { useCreatedToast } from './useQuickCreate'
 import { SignButton } from '@/components/sign/SignButton'
 import { AccessSelect } from '@/components/sign/AccessSelect'
 import { hasFeature } from '@/api/features'
@@ -329,12 +331,15 @@ export interface NewTicketFormProps {
   footerExtra?: ReactNode
   /** Focus promote: a prefilled draft that wins over a remembered one (the person edits it before creating). */
   initial?: Partial<Draft>
+  /** The New ticket sheet: after a signed create stay where you were (a toast offers Open). Other hosts (Focus) navigate themselves. */
+  stayOnCreate?: boolean
 }
 
-export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, onCreated, onClosed, onCancel, footerExtra, initial }: NewTicketFormProps) {
+export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, onCreated, onClosed, onCancel, footerExtra, initial, stayOnCreate }: NewTicketFormProps) {
   const overlay = variant === 'overlay'
   const navigate = useNavigate()
   const qc = useQueryClient()
+  const signedToast = useCreatedToast()
   const key = draftKey(me.person, workspace.id)
   const restored = useMemo(() => readDraft(key), [key])
   const [draft, setDraft] = useState<Draft>(initial ? { ...EMPTY, ...initial } : restored ?? EMPTY)
@@ -480,8 +485,9 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
     onDirtyChange?.(false)
   }
   /** The signer's event is in the log: the ticket exists. */
-  const handoffDone = (another: boolean, ticketKey: string | null, start: StartSnapshot | null, deposit?: string, how?: SignedHow, requestId?: string) => {
+  const handoffDone = (another: boolean, ticketKey: string | null, start: StartSnapshot | null, made: { title: string; type: string }, deposit?: string, how?: SignedHow, requestId?: string) => {
     ticketExists()
+    if (ticketKey) markJustCreated(ticketKey)
     setHandoffNew(null)
     // One click signed the agent access too: only a confirmed hand-over to the runner counts as access given.
     if (start && ticketKey && start.withAccess && deposit !== undefined && deposit !== 'confirmed') {
@@ -490,7 +496,11 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
     }
     // Only the key of this form's own `new` request starts anything; without it the ticket is just created.
     if (start && ticketKey) return void beginStart(ticketKey, start, noticeSeen(start, how), requestId)
-    afterCreate(another, ticketKey)
+    // A signed ticket without an agent: say what was created, with Open (no Undo: that would need a second signature).
+    // The sheet closes and the person stays where they were; the full page opens the ticket as before.
+    if (ticketKey) signedToast({ key: ticketKey, type: made.type as TicketType, title: made.title }, workspace.id, { undo: false })
+    else toast.success('Ticket created')
+    afterCreate(another, ticketKey, { toasted: true, stay: overlay && !!stayOnCreate })
   }
   /** The notice counts as read only when the person saw it: the review's slot showed it next to the one-click review
    * they signed from in that same popover. The terminal, the hub, or a review where the slot was not on screen: not read. */
@@ -501,18 +511,18 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
     void startInBackground(qc, { ws: workspace.id, key: ticketKey, requestId, reviewed: snap.reviewed, idem: snap.idem, priorGrantIds: snap.priorGrantIds, noticeRead })
     afterCreate(false, ticketKey)
   }
-  const afterCreate = (another: boolean, ticketKey: string | null) => {
+  const afterCreate = (another: boolean, ticketKey: string | null, opts: { toasted?: boolean; stay?: boolean } = {}) => {
     if (another) {
       setDraft({ ...EMPTY, type: draft.type, priority: draft.priority })
       setAttempted(false)
-      toast.success(`Created ${ticketKey ?? 'the ticket'}`)
+      if (!opts.toasted) toast.success(`Created ${ticketKey ?? 'the ticket'}`)
       titleRef.current?.focus()
       return
     }
     leaving.current = true
     setDraft(EMPTY)
     if (overlay) (onClosed ?? onCancel)?.()
-    if (ticketKey) void navigate({ to: '/ticket/$key', params: { key: ticketKey } })
+    if (ticketKey && !opts.stay) void navigate({ to: '/ticket/$key', params: { key: ticketKey } })
   }
   // A refused submit: focus the first invalid field (title, then the sections in page order).
   useEffect(() => {
@@ -710,7 +720,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
           summary={<div className="space-y-1 text-[13px]" data-testid="nt-summary"><p><span className="text-text-muted">Title </span><Inline>{handoffNew.draft.title.trim()}</Inline></p>{handoffNew.draft.sections.requirements?.trim() && <p className="line-clamp-3 whitespace-pre-line"><span className="text-text-muted">Should be true </span><Inline>{handoffNew.draft.sections.requirements.trim()}</Inline></p>}</div>}
           anchor={handoffNew.anchor}
           controls={handoffNew.start?.withAccess ? <AccessSelect hours={plan.hours} onHours={plan.setHours} lengths={plan.lengths} prefix={workspace.prefix} agentName={harnessName(handoffNew.start.reviewed.choice.harness)} /> : undefined}
-          doneToast={handoffNew.start ? '' : 'Ticket created'}
+          doneToast=""
           onSigning={setSigning}
           onOpenExisting={ticketExists} // the same text is saved there: leaving for it must not ask to discard the draft
           unsigned={handoffNew.start ? <NotSignedBlock plan={handoffNew.start.view} coreSaysSo={handoffNew.start.withAccess} notice={handoffNew.start.notice} /> : undefined}
@@ -723,7 +733,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
           }}
           onSettled={(phase, state, request, how) => {
             const ticketKey = ownKey(state, request)
-            if (phase === 'done') return handoffDone(handoffNew.another, ticketKey, handoffNew.start, state?.deposit, how, request?.id)
+            if (phase === 'done') return handoffDone(handoffNew.another, ticketKey, handoffNew.start, { title: handoffNew.draft.title.trim(), type: handoffNew.draft.type }, state?.deposit, how, request?.id)
             const p = state?.progress
             if (handoffNew.start && ticketKey && p?.last === 'grant' && p.done === p.of - 1) {
               partialKey.current = { key: ticketKey, initial: initialOf(handoffNew.start) }

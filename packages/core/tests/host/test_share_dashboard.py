@@ -246,10 +246,31 @@ def test_the_review_of_an_adding_change_comes_from_the_host_and_lists_only_new_i
     assert review["leaves"] == [{"kind": "ticket", "text": shareops.LEAVES["ticket"]}]
     assert (
         review["later_edits"] == shareops.LATER_EDITS
+        and review["leaves_short"] == shareops.LEAVES_SHORT["ticket"]
+        and review["later_edits_short"] == shareops.LATER_EDITS_SHORT
         and "hub_id" in review
         and "readers" in review
         and "widened" in review
     )
+
+
+def test_every_field_named_in_the_long_leaves_text_is_in_the_short_text():
+    import re
+
+    words = ("title", "status", "labels", "deadline", "description", "type")
+    for long, short in (
+        (shareops.LEAVES["ticket"], shareops.LEAVES_SHORT["ticket"]),
+        (shareops._leaves("ticket", []), shareops.LEAVES_SHORT["ticket"]),
+        (
+            "the ticket's title, status, labels, deadline and description, but never its plan, comments or files",
+            shareops.LEAVES_SHORT_DESCRIPTION,
+        ),
+        (shareops.LEAVES["summary"], shareops.LEAVES_SHORT["summary"]),
+    ):
+        named = long.split(", but never")[0]
+        for w in words:
+            if re.search(rf"\b{w}\b", named):
+                assert re.search(rf"\b{w}\b", short), (w, long, short)
 
 
 def test_five_adding_changes_a_minute_and_each_leaves_a_log_line(served, selective, log):

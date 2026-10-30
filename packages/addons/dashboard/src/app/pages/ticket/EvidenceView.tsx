@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { visible } from '@/components/sign/visible'
 import { commitCover } from '@/api/gates'
-import { agentName, fmtBytes, Pill } from './shared'
+import { agentName, fmtBytes, Pill, UNKNOWN_AGENT } from './shared'
 import { Viewer } from './Artifacts'
 
 /** The artifacts a criterion lists as its proof (tasks are receipts, shown by the task rows). */
@@ -59,7 +59,7 @@ function Provenance({ a, inDialog, grouped = false }: { a: Artifact; inDialog: b
       </p>
     )
   const name = agentName(a.added_by)
-  const by = name === 'An agent' ? 'an agent' : `agent ${visible(name)}`
+  const by = name === UNKNOWN_AGENT ? 'your agent' : `agent ${visible(name)}`
   const note = a.label ? <> Agent&apos;s note: &ldquo;{visible(a.label)}&rdquo;</> : null
   if (!inDialog)
     return (
@@ -182,8 +182,8 @@ export function VerdictEvidence({ ticket, dialog = true, onPreview, name = () =>
                 </div>
               ))
               return g.kind === 'agent' ? (
-                <div key={g.id} role="group" aria-label={g.who === 'An agent' ? 'Written by the agent' : `Written by the agent ${visible(g.who)}`} data-testid="agent-region" className="space-y-2 rounded-md border border-info/30 bg-info-soft/40 p-2">
-                  <p className="text-[12px] text-text-muted">Added by {g.who === 'An agent' ? 'an agent' : visible(g.who)}. Your verdict covers these files exactly as they are now. Their content and any quoted notes are the agent&apos;s own words.</p>
+                <div key={g.id} role="group" aria-label={g.who === UNKNOWN_AGENT ? 'Written by the agent' : `Written by the agent ${visible(g.who)}`} data-testid="agent-region" className="space-y-2 rounded-md border border-info/30 bg-info-soft/40 p-2">
+                  <p className="text-[12px] text-text-muted">Added by {g.who === UNKNOWN_AGENT ? 'your agent' : visible(g.who)}. Your verdict covers these files exactly as they are now. Their content and any quoted notes are the agent&apos;s own words.</p>
                   {body}
                 </div>
               ) : (

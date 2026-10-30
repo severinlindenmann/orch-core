@@ -4,7 +4,7 @@
 import { sha256, unb64u, utf8 } from "./cj.js";
 import { loadChannel, signProof } from "./channel.js";
 import { h, text } from "./ui.js";
-import { SIGN_IN_NOTE, totpPanel } from "./totp.js";
+import { KEY_GONE_NOTE, SIGN_IN_NOTE, totpPanel } from "./totp.js";
 
 export const PROOF_LABEL = "orch/v2/invite-proof|";
 export const MIN_PASSWORD = 10;
@@ -111,8 +111,9 @@ export function inviteView(token, d) {
       done.kind === "join" ? h("p", { class: "muted", text: "You do not have access to any workspace yet. Your admin adds you to groups afterwards." }) : null,
       done.recovery ? h("p", { class: "muted", text: "Your devices were removed. Set them up again once you are signed in." }) : null,
       // A new person is already signed in by the redeem; a reset or recovery signs in with the new password and code.
+      h("p", { class: "small muted", id: "key-gone", text: KEY_GONE_NOTE }),
       done.kind === "join" && !done.recovery && d.openHub
-        ? h("div", { class: "row top" }, h("button", { class: "pri", type: "button", id: "open-hub", text: "Open the hub", onclick: () => d.openHub() }), h("span", { class: "small muted", text: "You are already signed in." }))
+        ? h("div", { class: "row top" }, h("button", { class: "pri", type: "button", id: "open-hub", text: "I've added it, open the hub", onclick: () => d.openHub() }), h("span", { class: "small muted", text: "You are already signed in." }))
         : h("div", { class: "row top" }, h("button", { class: "pri", type: "button", text: "Continue to sign in", onclick: () => d.signIn?.() })),
     );
   }

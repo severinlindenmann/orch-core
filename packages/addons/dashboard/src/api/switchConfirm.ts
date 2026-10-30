@@ -14,13 +14,14 @@ export function showSwitchConfirm(name: string | null, root: HTMLElement | null 
   const title = document.createElement('b')
   title.textContent = `Open ${name ?? 'this workspace'}?`
   const why = document.createElement('span')
-  why.textContent = 'This browser could not be verified here.'
+  why.textContent = 'This is the first time this browser opens it. One click and you are in.'
   const go = document.createElement('button')
   go.type = 'button'
   go.className = 'boot-retry'
-  go.textContent = 'Open'
+  go.textContent = 'Open workspace'
   go.addEventListener('click', () => {
     go.disabled = true
+    go.textContent = 'Opening…'
     void confirmSwitch().then((to) => {
       if (to === undefined) showSwitchFailed(root)
       else location.replace(to ?? '/')
@@ -37,9 +38,9 @@ export function showSwitchFailed(root: HTMLElement | null = document.getElementB
   box.className = 'boot'
   box.setAttribute('role', 'alert')
   const title = document.createElement('b')
-  title.textContent = 'This link expired'
+  title.textContent = 'This link no longer works'
   const why = document.createElement('span')
-  why.textContent = 'Go back to the hub and click again.'
+  why.textContent = 'Go back to the hub and click Open workspace again.'
   const home = document.createElement('button')
   home.type = 'button'
   home.className = 'boot-retry'

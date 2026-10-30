@@ -80,8 +80,11 @@ class _Cipher:
     def __init__(self, k: bytes | None) -> None:
         self.k: bytearray | None = None if k is None else bytearray(k)
         self.n = 0
+        self.wiped = False
 
     def go(self, ad: bytes, data: bytes, enc: bool) -> bytes:
+        if self.wiped:  # a wiped cipher must never fall back to "no key yet" (plaintext)
+            raise ClientError("handshake")
         if self.k is None:
             return data
         nonce = bytes(4) + self.n.to_bytes(8, "little")
@@ -98,6 +101,7 @@ class _Cipher:
             for i in range(len(self.k)):
                 self.k[i] = 0
         self.k = None
+        self.wiped = True
         self.n = 1 << 64
 
 

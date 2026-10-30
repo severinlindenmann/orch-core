@@ -143,3 +143,14 @@ def test_device_fp(c):
         a["presence_kind"], bytes.fromhex(a["transport_pub_hex"]), unb64u(a["presence_pub"], 65)
     )
     assert fp.hex() == c["expect"]["hex"]
+
+
+def test_a_wiped_cipher_never_falls_back_to_plaintext():
+    from orch.remoteclient.noise_init import _Cipher
+
+    c = _Cipher(b"k" * 32)
+    c.wipe()
+    for enc in (True, False):
+        with pytest.raises(ClientError):
+            c.go(b"", b"secret", enc)
+    assert _Cipher(None).go(b"", b"x", True) == b"x"  # before the first key: the handshake's empty cipher

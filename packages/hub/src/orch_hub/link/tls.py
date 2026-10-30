@@ -12,7 +12,6 @@ server shut its connection threads down.
 
 from __future__ import annotations
 
-import select
 import socket
 import threading
 import time
@@ -20,6 +19,7 @@ from collections.abc import Callable
 
 from OpenSSL import SSL
 
+from .. import fdwait
 from ..tlsid import TlsIdentity, spki_sha256
 
 EXPORTER_LABEL = b"EXPORTER-orch-hub-link"
@@ -83,9 +83,11 @@ class TlsConn:
             left = deadline - time.monotonic()
             if left <= 0:
                 raise LinkTimeout
-            r, w, _ = select.select([] if write else [self._s], [self._s] if write else [], [], min(left, 0.2))
-            if r or w:
-                return
+            try:
+                if (fdwait.writable if write else fdwait.readable)(self._s, min(left, 0.2)):
+                    return
+            except (ValueError, OSError) as e:  # closed under us (fd -1): the connection is over, not a crash
+                raise LinkClosed(type(e).__name__) from None
 
     def _run(self, fn, deadline: float):
         while True:
@@ -130,8 +132,10 @@ class TlsConn:
         with self._io:
             if self._c.pending():
                 return True
-        r, _, _ = select.select([self._s], [], [], max(0.0, timeout))
-        return bool(r)
+        try:
+            return fdwait.readable(self._s, max(0.0, timeout))
+        except ValueError, OSError:  # closed under us: let the read report it
+            return True
 
     def exporter(self) -> bytes:
         """The TLS 1.3 exporter, label ``EXPORTER-orch-hub-link``, empty context, 32 bytes (§10.1)."""

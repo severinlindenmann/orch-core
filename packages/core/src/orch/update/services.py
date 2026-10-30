@@ -21,7 +21,7 @@ from orch.lifecycle.units import ORDER_START, ORDER_STOP, Env, LifecycleError, S
 from orch.ops.errors import OrchError
 
 from .layout import InstallLayout, Record, requirements_text
-from .uvenv import install_argv, uv_env, venv_argv
+from .uvenv import check_uv, install_argv, uv_env, venv_argv
 
 __all__ = ["GithubSource", "LifecycleServices", "run_orch", "uv_install"]
 
@@ -50,9 +50,7 @@ def uv_install(layout: InstallLayout, ver: str, files: Mapping[str, Path], rec: 
     import hashlib
     import shutil
 
-    uv = rec.uv.get("path") or ""
-    if not uv or not os.access(uv, os.X_OK):
-        raise OrchError("update.no_record", "the uv that install.sh pinned is gone: run the installer again")
+    uv = check_uv(layout.data, rec.uv.get("path") or "")
     tool = layout.tool_dir(ver)
     if tool.exists():
         shutil.rmtree(tool)  # an unfinished earlier try (no .complete)

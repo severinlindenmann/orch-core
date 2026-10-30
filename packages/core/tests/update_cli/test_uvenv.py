@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from orch.ops.errors import OrchError
 from orch.update import uvenv
 from orch.update.layout import InstallLayout, Record
 from orch.update.services import uv_install
@@ -70,6 +71,7 @@ def test_uv_install_runs_a_stub_uv_with_the_pinned_argv_and_env(tmp_path, monkey
     monkeypatch.setenv("PIP_INDEX_URL", "http://evil")
     lay = InstallLayout.of({"HOME": str(tmp_path), "ORCH_STATE_DIR": str(tmp_path / "s")})
     lay.ensure()
+    monkeypatch.setattr("orch.update.services.check_uv", lambda *a, **k: str(uv))
     for n in ("c.whl", "constraints.txt"):
         (tmp_path / n).write_text("x==1\n")
     rec = Record("main", "2.0.0", {}, None, 1, "r", "k", [], "t", "/x", {"path": str(uv), "version": "0.13.3"}, [])
@@ -79,3 +81,51 @@ def test_uv_install_runs_a_stub_uv_with_the_pinned_argv_and_env(tmp_path, monkey
     assert "UV_PYTHON_DOWNLOADS_JSON_URL" not in out and "UV_NO_VERIFY_HASHES" not in out and "PIP_INDEX_URL" not in out
     assert "UV_PYTHON_PREFERENCE=only-managed" in out
     assert (lay.tool_dir("2.0.0") / ".complete").is_file() and os.access(uv, os.X_OK)
+
+
+def test_check_uv_accepts_only_the_pinned_binary_at_the_pinned_path(tmp_path, monkeypatch):
+    data = tmp_path / "orch"
+    good = data / "uv" / f"uv-{uvenv.UV_VERSION}" / "uv"
+    good.parent.mkdir(parents=True)
+    good.write_text("#!/bin/sh\necho uv 0.13.3\n")
+    good.chmod(0o755)
+    other = tmp_path / "evil-uv"
+    other.write_text(good.read_text())
+    other.chmod(0o755)
+    monkeypatch.setitem(
+        uvenv.UV_BIN_SHA256, uvenv.triple(), __import__("hashlib").sha256(good.read_bytes()).hexdigest()
+    )
+    assert uvenv.check_uv(data, str(good)) == str(good)
+    for recorded in (str(other), "/usr/bin/true", ""):  # a record pointing at a stub / another path
+        with pytest.raises(OrchError) as e:
+            uvenv.check_uv(data, recorded)
+        assert e.value.code == "update.no_record"
+    good.write_text("#!/bin/sh\necho uv 0.13.3 changed\n")  # same path, other bytes
+    with pytest.raises(OrchError):
+        uvenv.check_uv(data, str(good))
+
+
+def test_check_uv_wrong_version_and_link(tmp_path, monkeypatch):
+    data = tmp_path / "orch"
+    good = data / "uv" / f"uv-{uvenv.UV_VERSION}" / "uv"
+    good.parent.mkdir(parents=True)
+    good.write_text("x")
+    good.chmod(0o755)
+    monkeypatch.setitem(uvenv.UV_BIN_SHA256, uvenv.triple(), __import__("hashlib").sha256(b"x").hexdigest())
+    with pytest.raises(OrchError):
+        uvenv.check_uv(data, str(good), version_of=lambda p: "uv 0.99.0")
+    real = tmp_path / "real"
+    real.write_text("x")
+    real.chmod(0o755)
+    good.unlink()
+    good.symlink_to(real)
+    with pytest.raises(OrchError):
+        uvenv.check_uv(data, str(good), version_of=lambda p: "uv 0.13.3")
+
+
+@pytest.mark.skipif(not INSTALL_SH.exists(), reason="install.sh lives on feat/pilot-p2c-install until it merges")
+def test_pinned_uv_constants_equal_install_sh():
+    text = INSTALL_SH.read_text()
+    assert re.search(rf'^UV_VERSION="{re.escape(uvenv.UV_VERSION)}"$', text, re.M)
+    for t, sha in uvenv.UV_BIN_SHA256.items():
+        assert re.search(rf'^UV_BIN_SHA256_{t.replace("-", "_")}="{sha}"$', text, re.M), t

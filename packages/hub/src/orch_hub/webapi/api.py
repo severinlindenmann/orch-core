@@ -268,6 +268,7 @@ class WebDeps:
     settings_ctl: Any = (
         None  # webapi.settings_api.SettingsControl (restart hook, bind-all, detector); None = no address writes
     )
+    oidc: Any = None  # orch_hub.oidc.service.OidcService (company login); None = those routes answer ``unavailable``
     user_invites: Any = (
         None  # orch_hub.invites.Invites (join / reset / recovery links); None = those routes are ``unavailable``
     )
@@ -626,6 +627,15 @@ class Ctx:
     via_switch: bool = False  # the session came from a switch ticket, not a password sign-in
     cookie_value: str = ""  # the session cookie the browser sent, if any (auth-none routes may use it, never trust it)
     fetch_site: str | None = None  # the browser's Sec-Fetch-Site label, when it sent one
+    via: str = ""  # how the session began: "" (password), switch, setup, invite, oidc (company login)
+    cookie_header: str = ""  # the raw Cookie header (auth-none routes read their own cookie, e.g. the company login's)
+
+    def cookie_of(self, name: str) -> str:
+        for part in self.cookie_header.split(";"):
+            k, _, v = part.strip().partition("=")
+            if k == name:
+                return v
+        return ""
 
 
 class _Limiter:
@@ -858,6 +868,7 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
             source=source,
             cookie_value=cookie_token,
             fetch_site=headers.get("sec-fetch-site"),
+            cookie_header=headers.get("cookie", ""),
         )
         if route.auth != "none":
             ctx.token, ctx.cookie = (bearer, False) if bearer else (cookie_token, True)
@@ -866,6 +877,7 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
             info = self.d.channels.session_info(ctx.token)
             ctx.user_id, ctx.scope, ctx.channel_id = info["user_id"], info["scope"], info["channel_id"]
             ctx.via_switch = info["via"] == "switch"
+            ctx.via = info["via"] or ""
             # a session is for the carrier it was issued for (cookie = browser: ``full``; bearer = app: ``pairing`` or
             # ``channel``); the scope is stored with the session, so it also holds across a restart
             if (ctx.scope == "full") != ctx.cookie:
@@ -1159,6 +1171,7 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
                 "user_id": c.user_id,
                 "name": name,
                 "is_admin": self.d.access.is_hub_admin(c.user_id),
+                "company_login": c.via == "oidc",  # no hub password was used: keys need a set-up link from an admin
                 "needs_sign_in": c.via_switch,  # admin pages need a password sign-in (a workspace vouched for this one)
                 "recovery": self._recovery_notice(c.user_id),
             },
@@ -1713,6 +1726,8 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
     def _h_a_user_remove(self, c: Ctx, p: dict, q: dict, b: dict | None):
         with self._chg().reducing("user_remove", confirm=confirmed(b), user_id=p["user_id"]):
             self.d.channels.remove_user(p["user_id"], actor=c.user_id)  # revokes and purges the user's channels too
+        if self.d.oidc is not None:  # the company-login link and its sessions go with the person
+            self.d.oidc.store.unlink(p["user_id"])
         if self.d.user_invites is not None:  # the links they made and the links made for them die with the account
             self.d.user_invites.void_created_by(p["user_id"])
             self.d.user_invites.void_for_user(p["user_id"])

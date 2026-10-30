@@ -11,13 +11,13 @@ Plain HTTP/1.1 on the hub side: an outer TLS, if there is one, belongs to the fr
 
 from __future__ import annotations
 
-import select
 import socket
 import threading
 import time
 
 from OpenSSL import SSL
 
+from .. import fdwait
 from ..contract import linkws as W
 from . import tls
 from .tls import LinkClosed, LinkTimeout
@@ -121,7 +121,7 @@ class WsPipe:
                 off += self._s.send(view[off:])
             except BlockingIOError, InterruptedError:
                 try:
-                    select.select([], [self._s], [], min(left, 0.2))
+                    fdwait.writable(self._s, min(left, 0.2))
                 except OSError, ValueError:
                     raise LinkClosed("write") from None
             except OSError, ValueError:
@@ -184,7 +184,7 @@ class WsPipe:
             data, self._pending = self._pending, b""
             return self._feed(data)
         try:
-            r, _, _ = select.select([self._s], [], [], max(0.0, timeout))
+            r = fdwait.readable(self._s, max(0.0, timeout))
         except OSError, ValueError:
             raise LinkClosed("read") from None
         now = time.monotonic()

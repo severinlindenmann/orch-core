@@ -120,7 +120,7 @@ def as_addons(view: Mapping[str, Any]) -> dict[str, Addon]:
                 enabled=bool(a["enabled"]),
                 purged=bool(a["purged"]),
                 runtime=None if a.get("runtime") is None else dict(a["runtime"]),
-                events=[dict(x) for x in a.get("events", ())],
+                events=[dict(x) for x in a.get(EVENTS_KEY, ())],
             )
     return out
 

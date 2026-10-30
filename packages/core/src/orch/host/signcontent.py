@@ -37,6 +37,7 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from orch import canon
+from orch.addons.manifest import EVENTS_KEY
 from orch.addons.settings_value import KEY as ADDONS_KEY
 
 from .review import OWNER_PROOF_LINE
@@ -77,7 +78,7 @@ SHOWN: dict[str, frozenset[str]] = {
             "fields",
             "sections",
             "runtime",
-            "events",
+            EVENTS_KEY,
             "staged",
         }
     ),
@@ -1571,7 +1572,7 @@ def _addon(typ: str, ev: Mapping[str, Any], out: dict[str, Any]) -> str:
         return f"Purge the add-on {name}"
     version = ev.get("version")
     words = _capability_words(ev.get("capabilities"))
-    keys = ("fields", "sections", "artifact_kinds", "runtime", "events")
+    keys = ("fields", "sections", "artifact_kinds", "runtime", EVENTS_KEY)
     declares = any(ev.get(k) not in (None, [], {}) for k in keys)
     if named and words is not None and not declares and isinstance(version, str) and _VERSION.fullmatch(version):
         _row(out, "add-on", name)
@@ -1601,9 +1602,9 @@ def _addon(typ: str, ev: Mapping[str, Any], out: dict[str, Any]) -> str:
     for k in ("capabilities", "artifact_kinds", "fields", "sections"):
         if ev.get(k) is not None:
             _row(out, k.replace("_", " "), ev[k])
-    if ev.get("events"):
-        _row(out, "events", ev["events"])
-        out.setdefault("notes", []).append(_events_words(ev["events"]))
+    if ev.get(EVENTS_KEY):
+        _row(out, "can wake", ev[EVENTS_KEY])
+        out.setdefault("notes", []).append(_events_words(ev[EVENTS_KEY]))
     if ev.get("runtime") is not None:
         runtime = ev["runtime"]
         _row(out, "dependencies", runtime)

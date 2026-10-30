@@ -5,6 +5,7 @@ go to the host as the session's person; turning ON and confirming a device are c
 # ruff: noqa: F811
 
 import logging
+import time
 
 import pytest
 from remote_kit import HTTPS, app, bearer, front, passkey_store, remote  # noqa: F401
@@ -175,18 +176,90 @@ def test_turning_on_and_confirming_are_clicks_with_the_host_op_fixed_here():
             signing.RemoteSet(**bad)
 
 
-def test_the_prepared_event_must_be_exactly_what_was_asked():
+def envelope(person=OWNER):
+    return {"v": 1, "id": "e", "actor": {"kind": "person", "id": person}, "auth": "x", "hash_v": 1, "roster_v": 1,
+            "based_on": None, "sig": "s"}  # fmt: skip
+
+
+def changed_event(days=3, **over):
+    now = int(time.time() * 1000)
+    return {
+        **envelope(), "type": "remote.changed", "on": True, "level": "work", "premises": "no",
+        "until_ms": None if days is None else now + days * 86_400_000, "agents_risk": False, "hub_mode": "none",
+        "remote_v": 0, "owner_proof": None, **over,
+    }  # fmt: skip
+
+
+def added_event(days=7, **over):
+    from orch.hubclient import wire
+
+    fp = bytes(range(32))
+    return {
+        **envelope(), "type": "remote.device_added", "device_id": DEV, "name": "Anna's phone", "person": OWNER,
+        "presence_kind": "platform", "transport_pub": "t", "presence_pub": "p", "level_cap": "view",
+        "expires_ms": int(time.time() * 1000) + days * 86_400_000, "fingerprint": fp.hex(), "code_id": "rc_" + "c" * 32,
+        "remote_v": 0, "owner_proof": None, "_words": wire.fingerprint_words(fp), **over,
+    }  # fmt: skip
+
+
+def confirm_action():
+    a = signing.RemoteDeviceConfirm(action="remote_device_confirm", pending=PENDING, level_cap="view", days=7)
+    ev = added_event()
+    a._seen = {"name": "Anna's phone", "words": ev.pop("_words")}  # noqa: SLF001
+    return a
+
+
+def test_the_prepared_remote_set_must_carry_exactly_every_field_chosen():
     on = signing.RemoteSet(action="remote_set", level="work", premises="no", days=3)
-    ok = {"type": "remote.changed", "on": True, "level": "work", "premises": "no", "until_ms": 9,
-          "actor": {"kind": "person", "id": OWNER}}  # fmt: skip
     check = signing.expected(on, OWNER)
-    assert check([ok])
-    assert not check([{**ok, "level": "terminals"}])  # a stronger level than the one reviewed
-    assert not check([{**ok, "until_ms": None}])  # "until I turn it off" when days were chosen
-    assert not check([{**ok, "actor": {"kind": "person", "id": MEMBER}}])
-    assert not check([ok, ok])
+    assert check([changed_event()])
+    mutations = {
+        "level": "terminals", "premises": "yes", "on": False, "type": "remote.disabled",
+        "until_ms": None, "agents_risk": True, "hub_mode": "other", "remote_v": "1", "owner_proof": {"x": 1},
+        "extra": 1, "actor": {"kind": "person", "id": MEMBER},
+    }  # fmt: skip
+    for field, value in mutations.items():
+        assert not check([changed_event(**{field: value})]), field
+    day = 86_400_000
+    now = int(time.time() * 1000)
+    for ms in (now + 4 * day, now + 2 * day, now + 3 * day + signing.REMOTE_SKEW_MS * 2):
+        assert not check([changed_event(until_ms=ms)]), ms
+    assert check([changed_event(until_ms=now + 3 * day + signing.REMOTE_SKEW_MS // 2)])
+    gone = changed_event()
+    del gone["agents_risk"]
+    assert not check([gone]) and not check([changed_event(), changed_event()])
+    assert not signing.expected(on, None)([changed_event()])
+
+
+def test_remote_set_until_off_and_the_agents_risk_are_checked_both_ways():
     forever = signing.RemoteSet(action="remote_set", level="view", premises="no")
-    assert not signing.expected(forever, OWNER)([ok])
+    assert signing.expected(forever, OWNER)([changed_event(days=None, level="view")])
+    assert not signing.expected(forever, OWNER)([changed_event(days=3, level="view")])
+    risky = signing.RemoteSet(action="remote_set", level="work", premises="no", days=3, agents_risk=True)
+    assert signing.expected(risky, OWNER)([changed_event(agents_risk=True)])
+    assert not signing.expected(risky, OWNER)([changed_event(agents_risk=False)])
+
+
+def test_the_prepared_device_must_be_the_one_shown_with_exactly_the_choices():
+    check = signing.expected(confirm_action(), OWNER)
+    good = added_event()
+    good.pop("_words")
+    assert check([good])
+    mutations = {
+        "name": "Eve", "person": MEMBER, "level_cap": "terminals", "fingerprint": bytes(32).hex(),
+        "device_id": "rd_xyz", "code_id": "rc_x", "presence_kind": "usb", "remote_v": "0", "owner_proof": {"x": 1},
+        "extra": 1, "type": "remote.changed", "expires_ms": None,
+    }  # fmt: skip
+    for field, value in mutations.items():
+        bad = {**good, field: value}
+        assert not check([bad]), field
+    day = 86_400_000
+    now = int(time.time() * 1000)
+    for ms in (now + 8 * day, now + 6 * day, now + 7 * day + signing.REMOTE_SKEW_MS * 2):
+        assert not check([{**good, "expires_ms": ms}]), ms
+    assert not check([good, good])
+    unseen = signing.RemoteDeviceConfirm(action="remote_device_confirm", pending=PENDING, level_cap="view", days=7)
+    assert not signing.expected(unseen, OWNER)([good])  # never looked up on the host: nothing matches
 
 
 def test_a_remote_session_cannot_prepare_a_remote_access_change(front, auth, stub, host):

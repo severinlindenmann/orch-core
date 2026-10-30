@@ -403,6 +403,19 @@ class Clicks:
     def __init__(self):
         self.lock = threading.Lock()
         self.ops: OrderedDict[str, tuple[str, str, object, int]] = OrderedDict()
+        self.tokens: OrderedDict[str, str] = (
+            OrderedDict()
+        )  # request id -> the session token that prepared a REMOTE_STEP
+
+    def bind(self, request_id: str, token: str) -> None:
+        with self.lock:
+            self.tokens[request_id] = token
+            while len(self.tokens) > REMEMBERED:
+                self.tokens.popitem(last=False)
+
+    def bound(self, request_id: str) -> str | None:
+        with self.lock:
+            return self.tokens.get(request_id)
 
     def add(self, ws: str, request_id: str, op: str, body: object, epoch: int) -> None:
         with self.lock:
@@ -519,6 +532,15 @@ def register(app: FastAPI, gateway: Gateway):
             clicks.forget(rid)
             handoffs.settle_all(rid)
             handoffs.disown(rid)
+
+    def remote_step_only_here(request: Request, request_id: str) -> None:
+        """R2: a remote-access change is viewed and signed only by the loopback session that prepared it (every step,
+        not only prepare). Any other session, a remote one included, gets `not_found`, as for another's request."""
+        if not isinstance(clicks.get(request_id)[2], REMOTE_STEPS):
+            return
+        token = request.state.token
+        if app.state.auth.login_kind(token) != LOCAL or clicks.bound(request_id) != token:
+            raise fail("not_found", exit=2)
 
     def mine(ws: str, request_id: str) -> None:
         """A request of this PERSON in this workspace (any of their sessions); another's, or none, is `not_found`."""
@@ -984,6 +1006,8 @@ def register(app: FastAPI, gateway: Gateway):
         clicks.forget(rid)  # adopted by the new signer; it is no longer an orphan
         sweep()
         clicks.add(ws, rid, planned.op, body, signer.restarts)
+        if isinstance(body, REMOTE_STEPS):
+            clicks.bind(rid, token)
         if planned.sequence:  # a display aid for `state` (how far a stopped run got); it decides nothing
             handoffs.note_intent(planned.person, rid, planned.sequence["intent"])
         handoffs.own(planned.person, ws, rid, TTL)
@@ -994,8 +1018,9 @@ def register(app: FastAPI, gateway: Gateway):
         return answer
 
     @app.post("/api/w/{ws}/click/view", dependencies=[Depends(contract)])
-    def view(body: Step, ws: str = Depends(workspace)):
+    def view(body: Step, request: Request, ws: str = Depends(workspace)):
         mine(ws, body.request_id)
+        remote_step_only_here(request, body.request_id)
         rid = body.request_id
         _, op, wanted, _ = clicks.get(rid)
         # The hand-off's gate on the host's own record: it must be the action that was asked for (the ticket, the exact
@@ -1144,6 +1169,7 @@ def register(app: FastAPI, gateway: Gateway):
 
     @app.post("/api/w/{ws}/click/sign", dependencies=[Depends(contract)])
     def sign(body: Sign, request: Request, ws: str = Depends(workspace)):
+        remote_step_only_here(request, body.request_id)  # first: a remote change is the preparing session's only
         step = refuse_step_up(app.state.auth, request, "sign", body, ws)  # where a typed key arrives: fail closed
         step = ready(step)
         mine(ws, body.request_id)

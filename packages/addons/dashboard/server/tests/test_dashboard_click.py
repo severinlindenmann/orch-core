@@ -1771,9 +1771,7 @@ def test_an_unknown_outcome_ends_only_when_the_host_answer_is_known():
 # -- M7b: the runner grant, a click request in the deposit-only grant mode (D-P2-27, section 0.8.6 item 6) ------------
 
 DEPOSIT_LINE = "The secret goes to your orch runner on this machine and is never shown"
-DEPOSIT_RISK = (
-    "Whoever controls this dashboard could use this access while it lasts. You can stop it any time."
-)
+DEPOSIT_RISK = "Whoever controls this dashboard could use this access while it lasts. You can stop it any time."
 SECRET = "demo-not-a-real-secret-tail"
 GRANT = "gr_01M4Y46B485AXD4CBEJZ15Z1TV"
 
@@ -3964,3 +3962,36 @@ def test_d5_background_renews_only_live_holds(client, token, stub, script, auth)
     renewed.clear()
     assert not renewed.wait(2.5)
     auth.logout(token)
+
+
+# -- R2 T4: a remote-access change is viewed and signed only by the loopback session that prepared it ---------------
+
+REMOTE_SET = {"action": "remote_set", "level": "view", "premises": "no", "days": 1}
+
+
+def view_of(client, token, stub):
+    return client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token))
+
+
+def test_a_remote_change_is_viewed_and_signed_only_by_the_session_that_prepared_it(
+    client, token, stub, backup, auth, monkeypatch
+):
+    assert prepare(client, token, stub, REMOTE_SET).status_code == 200
+    backup.view = backup_view(op="remote.set")
+    assert view_of(client, token, stub).status_code == 200  # the preparing loopback session passes
+    other = other_session(client, auth)  # another loopback session of the same person
+    for step in (view_of(client, other, stub), sign_hub(client, other, stub, sealed={"hub.backup_key": BACKUP_ENV})):
+        assert step.status_code == 404 and step.json()["error"]["code"] == "not_found"
+    real = client_login_kind().login_kind
+    monkeypatch.setattr(
+        client_login_kind(), "login_kind", lambda self, t: "remote" if t == other else real(self, t), raising=False
+    )
+    for step in (view_of(client, other, stub), sign_hub(client, other, stub)):  # a remote session
+        assert step.status_code == 404
+    assert [c for c in sent_of(backup, "sign")] == []  # nothing reached the signer
+
+
+def test_a_remote_session_cannot_even_prepare_a_remote_change(client, token, stub, backup, monkeypatch):
+    monkeypatch.setattr(client_login_kind(), "login_kind", lambda self, t: "remote", raising=False)
+    res = prepare(client, token, stub, REMOTE_SET)
+    assert res.status_code == 403 and res.json()["error"]["code"] == "op.not_allowed"

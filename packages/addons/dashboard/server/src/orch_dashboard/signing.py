@@ -24,7 +24,16 @@ from datetime import datetime
 from typing import Annotated, Any, Literal
 
 from fastapi import Depends, FastAPI, Request
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 from . import adapters
 from .errors import HostError, fail
@@ -1159,6 +1168,21 @@ class RemoteDeviceConfirm(Action):
     pending: Annotated[str, StringConstraints(pattern=r"^rp_[0-9a-f]{32}$")]
     level_cap: Literal["view", "work", "terminals"]
     days: Annotated[int, Field(ge=1, le=366)]
+    #: what the host's `remote.pending` said about this id when the request was made (name, fingerprint words): set by
+    #: `plan()` on this server, never by the browser; the prepared event must carry exactly these
+    _seen: dict | None = PrivateAttr(default=None)
+
+
+#: How far the host's end date may differ from the dashboard's own clock plus the chosen days (same computer; a few
+#: minutes cover the time between the click and the host preparing the request).
+REMOTE_SKEW_MS = 5 * 60 * 1000
+_DAY_MS = 86_400_000
+_EVENT_ENVELOPE = set(adapters.handoff.ENVELOPE)
+
+
+def _within(value, days: int) -> bool:
+    now = int(time.time() * 1000)
+    return type(value) is int and abs(value - (now + days * _DAY_MS)) <= REMOTE_SKEW_MS
 
 
 PrepareBody = Annotated[
@@ -1701,24 +1725,70 @@ def expected(action: Action, person: str | None = None):
                 and ev[0]["actor"].get("id") == person
             )
         case RemoteSet():
-            # exactly one `remote.changed`: the level and answer the person chose, on, from this person
-            return lambda ev: (
-                one(ev, "remote.changed", on=True, level=action.level, premises=action.premises)
-                and (ev[0].get("until_ms") is None) == (action.days is None)
-                and person is not None
-                and isinstance(ev[0].get("actor"), dict)
-                and ev[0]["actor"].get("kind") == "person"
-                and ev[0]["actor"].get("id") == person
-            )
+            # exactly one `remote.changed` with every field the person chose (the host's own facts, hub_mode and
+            # remote_v, are checked for shape only) and nothing else
+            keys = _EVENT_ENVELOPE | {
+                "on",
+                "level",
+                "until_ms",
+                "premises",
+                "agents_risk",
+                "hub_mode",
+                "remote_v",
+                "owner_proof",
+            }
+
+            def changed(ev: list) -> bool:
+                if not one(ev, "remote.changed", on=True, level=action.level, premises=action.premises):
+                    return False
+                e = ev[0]
+                return (
+                    set(e) == keys
+                    and (e["until_ms"] is None if action.days is None else _within(e["until_ms"], action.days))
+                    and e["agents_risk"] is action.agents_risk
+                    and e["hub_mode"] in ("none", "selective", "full")
+                    and type(e["remote_v"]) is int
+                    and e["owner_proof"] is None
+                    and person is not None
+                    and isinstance(e.get("actor"), dict)
+                    and e["actor"].get("kind") == "person"
+                    and e["actor"].get("id") == person
+                )
+
+            return changed
         case RemoteDeviceConfirm():
-            return lambda ev: (
-                one(ev, "remote.device_added", level_cap=action.level_cap)
-                and person is not None
-                and ev[0].get("person") == person
-                and isinstance(ev[0].get("actor"), dict)
-                and ev[0]["actor"].get("kind") == "person"
-                and ev[0]["actor"].get("id") == person
-            )
+            from orch.hubclient import wire
+
+            keys = _EVENT_ENVELOPE | set(wire.REMOTE_ADDED_KEYS) | {"owner_proof"}
+
+            def added(ev: list) -> bool:
+                seen = action._seen
+                if seen is None or not one(ev, "remote.device_added", level_cap=action.level_cap, name=seen["name"]):
+                    return False
+                e = ev[0]
+                try:
+                    words = wire.fingerprint_words(bytes.fromhex(e["fingerprint"]))
+                except (ValueError, TypeError, KeyError):
+                    return False
+                return (
+                    set(e) == keys
+                    and words == seen["words"]
+                    and _within(e["expires_ms"], action.days)
+                    and isinstance(e["device_id"], str)
+                    and re.fullmatch(r"rd_[0-9a-f]{32}", e["device_id"]) is not None
+                    and isinstance(e["code_id"], str)
+                    and re.fullmatch(r"rc_[0-9a-f]{32}", e["code_id"]) is not None
+                    and e["presence_kind"] in ("platform", "fido2")
+                    and type(e["remote_v"]) is int
+                    and e["owner_proof"] is None
+                    and person is not None
+                    and e["person"] == person
+                    and isinstance(e.get("actor"), dict)
+                    and e["actor"].get("kind") == "person"
+                    and e["actor"].get("id") == person
+                )
+
+            return added
         case HubLeave():
             return lambda ev: (
                 one(ev, "hub.left")
@@ -1864,6 +1934,12 @@ def plan(gateway: Gateway, ws: str, body: Action) -> Plan:
         digest = sequence.digest_of(ws, person, intent)
         meta = {"step": 0, "of": 2, "digest": digest, "intent": intent}
         base = {"sequence": digest, "addon": switch_base}
+    if isinstance(body, RemoteDeviceConfirm):
+        rows = link.call("remote.pending").get("pending") or []
+        row = next((r for r in rows if isinstance(r, dict) and r.get("pending") == body.pending), None)
+        if row is None:
+            raise fail("not_found", "That device is no longer waiting. Make a new code.", exit=2)
+        body._seen = {"name": row.get("name"), "words": row.get("words")}  # noqa: SLF001
     if isinstance(body, HubJoin | HubModeFull | HubLeave | RemoteSet | RemoteDeviceConfirm):
         base = hub_base(link)  # join, leave, join again with the same card is a new request each time
     if isinstance(body, AgentAccess):

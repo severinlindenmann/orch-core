@@ -19,7 +19,7 @@ reference verifier written from this file.
 - **base64** is RFC 4648 §4 with padding, no whitespace, and must re-encode to the same string. Ed25519 public keys
   are 32 raw bytes, signatures 64 raw bytes.
 - **Times** are `YYYY-MM-DDTHH:MM:SSZ` (UTC, seconds). **Key ids** match `[a-z][a-z0-9-]{0,31}`.
-  **Channels** match `main|develop|test-[a-z0-9][a-z0-9-]{0,30}`. **Versions** match `\d+\.\d+\.\d+(\.dev\d+)?`.
+  **Channels** match `main|develop|test-[a-z0-9][a-z0-9-]{0,30}` (the pilot releases publish only `main` and `test-*`; a production verifier refuses `test-*`). **Versions** match `\d+\.\d+\.\d+(\.dev\d+)?`.
 - The outer envelope is not signed: it must be strict JSON with the exact key set, but need not be canonical.
 
 ## 2. Formats
@@ -34,9 +34,12 @@ cert       {"format":"orch.release-key/1","key_id","public_key":"<b64 32>","seri
             "purpose":"core"|"addon-catalog","channels":[unique channel | "test-*"],"not_before","not_after"}
 revocations {"format":"orch.revocations/1","min_serial":int>=1,"revoked":[sorted unique ints],"issued_at"}
 manifest   {"format":"orch.release/1","channel","version","seq":int>=1,"commit":"<40 lowercase hex>",
-            "issued_at","expires_at","files":[3 x file],"changelog":"<= 4096 UTF-8 bytes","min_from":"<version>"}
-file       {"role":"core"|"dashboard"|"constraints" (each once),"name":"[A-Za-z0-9][A-Za-z0-9._+-]{0,127}",
+            "issued_at","expires_at","files":[file list, 2..6 entries],"changelog":"<= 4096 UTF-8 bytes","min_from":"<version>"}
+file       {"role":"core"|"dashboard"|"hub"|"relay"|"publish"|"constraints","name":"[A-Za-z0-9][A-Za-z0-9._+-]{0,127}",
             "sha256":"<64 lowercase hex>","size":int>=1,"url":"https://… (<= 512 chars, printable, no spaces)"}
+           The file list: every role at most once (duplicate role is `malformed`), no other role (unknown role is
+           `malformed`), and `core` and `constraints` are mandatory (missing is `malformed`). `constraints` is the
+           hash-locked pin file the installer uses with `--require-hashes`. File names are unique, also ignoring case (`malformed`). More than 6 entries, or a role that is not a string, is `malformed`.
 catalog    {"format":"orch.addon-catalog/1","channel","seq":int>=1,"issued_at","expires_at","addons":{…}}
 ```
 
@@ -69,6 +72,9 @@ none). Run in this order; the first failing rule gives the reason. Every rule fa
    `seq >= seq_seen` → `rollback` (equal is fine: reruns and weekly refreshes).
 7. Core only, when files are downloaded (absent in a case = `--check`, no files yet): for each manifest file, the
    file with that `name` has `size` → `size_mismatch` (also when missing), then `sha256` → `hash_mismatch`.
+
+**Callers install ONLY the files the manifest lists** (by verified name and bytes); anything else in the download
+location or the release is unsigned and must be ignored.
 
 On success the caller stores `seq_seen = max(seq_seen, seq)`, the revocation list's `issued_at` and `min_serial`.
 

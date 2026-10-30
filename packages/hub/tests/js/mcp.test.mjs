@@ -19,20 +19,20 @@ const find = (n, pred) => n.all().filter(pred);
 const A = "a".repeat(32), B = "b".repeat(32);
 const data = {
   workspaces: [{ workspace_id: A, name: "Product" }, { workspace_id: B, name: null }],
-  servers: [{ name: "crm", url: "https://tools.example.com/mcp", auth: "hub_secret", secret: "crm-key", description: "Our <b>CRM</b>", offered_to: [A] }],
+  servers: [{ name: "crm", url: "https://tools.example.com/mcp", auth: "hub_secret", secret: "crm-key", description: "Our <b>CRM</b>", shared: "chosen", offered_to: [A] }],
 };
 const clickText = (view, label) => find(view, (n) => n.tag === "button" && n.textContent === label)[0].listeners.click();
 
 test("a server shows as text, offer boxes reflect who has it, and nothing is on until the owner accepts", () => {
   const calls = [];
-  const view = mcpView(data, { save: (n, b) => calls.push(["save", n, b]), offer: (n, ws) => calls.push(["offer", n, ws]), remove: (s) => calls.push(["remove", s.name]) });
+  const view = mcpView(data, { save: (n, b) => calls.push(["save", n, b]), offer: (n, sh, ws) => calls.push(["offer", n, sh, ws]), remove: (s) => calls.push(["remove", s.name]) });
   assert.match(view.textContent, /Nothing is switched on for anyone until their workspace owner accepts it\./);
   assert.match(view.textContent, /Agents never see the sign-in secret/);
   const boxes = find(view, (n) => n.tag === "input" && n.attrs["data-ws"]);
   assert.deepEqual(boxes.map((b) => b.checked), [true, false]);
   boxes[1].checked = true;
   clickText(view, "Save who gets it");
-  assert.deepEqual(calls[0], ["offer", "crm", [A, B]]);
+  assert.deepEqual(calls[0], ["offer", "crm", "chosen", [A, B]]);
   clickText(view, "Save");
   assert.deepEqual(calls[1], ["save", "crm", { url: "https://tools.example.com/mcp", auth: "hub_secret", secret: "crm-key", description: "Our <b>CRM</b>" }]);
   const remove = find(view, (n) => n.tag === "button" && n.textContent === "Remove")[0];
@@ -73,4 +73,12 @@ test("each server shows one plain status word and a Check now button (#1439)", a
   clickText(view, "Check now");
   assert.deepEqual(calls, ["crm"]);
   assert.equal(find(mcpView(data), (n) => n.attrs["data-status"])[0].textContent, "Not checked yet");
+});
+
+test("who gets a server defaults to all workspaces and saves no list", () => {
+  const calls = [];
+  const view = mcpView({ ...data, servers: [{ ...data.servers[0], shared: undefined, offered_to: [] }] }, { offer: (n, sh, ws) => calls.push([n, sh, ws]) });
+  assert.equal(find(view, (n) => n.tag === "select" && n.attrs["aria-label"] === "Who gets it")[0].value, "all");
+  clickText(view, "Save who gets it");
+  assert.deepEqual(calls[0], ["crm", "all", []]);
 });

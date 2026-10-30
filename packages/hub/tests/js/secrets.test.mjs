@@ -225,3 +225,14 @@ test("P10: no Enter-the-value button, hint or warning when every row is ready", 
   assert.ok(!/Waiting for you|Needs the value|Enter the value/.test(view.textContent));
   assert.match(view.textContent, /Ready/);
 });
+
+test("#1431: per-workspace use is behind a small click, in plain words, with the expiry shown", () => {
+  const view = secretsView(data, {});
+  const note = find(view, (n) => n.attrs["data-use"] === "crm-key")[0];
+  assert.equal(note.hidden, true);
+  assert.equal(note.textContent, "Used this week: Product 12, A workspace 0");
+  const btn = find(view, (n) => n.attrs["data-use-toggle"] === "crm-key")[0];
+  btn.listeners.click();
+  assert.equal(note.hidden, false);
+  assert.match(view.textContent, /Expires on /);
+});

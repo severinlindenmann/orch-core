@@ -120,7 +120,8 @@ def reads_label(raw: dict[str, Any]) -> bool:
 def tool_view(raw: object) -> tuple[dict[str, Any] | None, str | None]:
     """``(view, problem)`` for one tool definition from a company server.
 
-    ``view`` is the canonical entry ``{"name", "description", "inputSchema", "reads"}`` (+ ``"title"`` when non-empty) with
+    ``view`` is the canonical entry ``{"name", "description", "inputSchema", "reads"}`` (+ ``"title"`` when non-empty)
+    with
     :func:`plain` applied to every string. Problems: ``"shape"`` (not a tool: no view), ``"text"`` (hidden or odd
     characters in any text, also in outputSchema or annotations: no view), ``"too_long"`` (a limit is passed: the view
     is ``{"name": name}`` only, nothing is cut). A tool with a problem is never pinned."""

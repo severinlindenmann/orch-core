@@ -289,6 +289,35 @@ def offers_view(service: WorkspaceService, *, detail: bool = False) -> dict[str,
     return out
 
 
+def secrets_view(service: WorkspaceService) -> dict[str, Any]:
+    """The company secrets this workspace was given, for the owner's list: ``{name, status, expires_ms, used_by}``.
+    NEVER a value, a length or a digest of one (the wraps are read for ``name`` and ``expires_ms`` only). A secret is
+    listed when an offered company server names it or a stored wrap carries it; ``used_by`` are server names. Status:
+    ``ready``, ``expired``, ``not_received`` (not shared any more) or ``needs_isolation``."""
+    from . import orgsecrets
+
+    state = _state(service)
+    used: dict[str, list[str]] = {}
+    for item in current_offers(service, state)["mcp"]:
+        if item["auth"] == "hub_secret" and item.get("secret"):
+            used.setdefault(item["secret"], []).append(item["name"])
+    try:
+        wraps, _ = orgsecrets._wraps(service, state)  # noqa: SLF001
+    except Exception:  # noqa: BLE001 - an unreadable file is "nothing received"
+        wraps = []
+    expiry = {w["name"]: w["expires_ms"] for w in wraps}
+    rows = []
+    for name in sorted(used.keys() | expiry.keys()):
+        status = orgsecrets.secret_status(service, state, name)
+        rows.append({
+            "name": name,
+            "status": status,
+            "expires_ms": expiry.get(name) if status in ("ready", "expired") else None,
+            "used_by": sorted(used.get(name, [])),
+        })  # fmt: skip
+    return {"hub_id": state.hub_id, "secrets": rows}
+
+
 def show(service: WorkspaceService, kind: str, name: str) -> dict[str, Any]:
     """Everything the owner needs to decide: the full text or the exact address, sign-in, secret name and
     description."""

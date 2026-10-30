@@ -243,8 +243,8 @@ def test_a_top_level_reads_field_from_the_server_is_ignored():
 
 
 def test_the_cli_review_text_says_reads_or_changes_things():
-    for annotations, word in (({"readOnlyHint": True}, "kind: reads"), ({}, "kind: changes things")):
-        view, _ = tool_view(raw(annotations=annotations))
+    for ann, word in (({"readOnlyHint": True}, "kind: reads"), ({}, "kind: changes things")):
+        view, _ = tool_view(raw(annotations=ann))
         assert word in cli_org._tool_text({**view, "pin": tool_pin(view)}, "crm")  # noqa: SLF001
 
 

@@ -112,7 +112,17 @@ FAKE_GH = (
 if argv[:2] == ["auth", "status"]:
     sys.exit(0)
 if argv[:1] == ["api"]:
-    path = argv[-1]
+    path = "user" if "user" in argv else argv[-1]
+    if path == "user":
+        if "--jq" in argv:
+            print("owner")
+            sys.exit(0)
+        from email.utils import formatdate
+
+        d = (SIM / "gh-date").read_text() if (SIM / "gh-date").exists() else formatdate(usegmt=True)
+        print("HTTP/2.0 200 OK\\r\\nDate: " + d + "\\r\\n\\r\\n")
+        print(json.dumps({"login": "owner"}))
+        sys.exit(0)
     name = "env" if path.endswith("/release") else "policies"
     p = SIM / f"gh-{name}.json"
     if not p.exists():
@@ -277,6 +287,8 @@ def test_init_succeeds_without_leaking_and_prints_only_the_allowed_lines(lab, ca
     assert rc == 0 and err == "", err
     pub = json.loads((lab.repo / "release/keys/root-1.pub.json").read_text())
     lines = out.splitlines()
+    assert lines[:3] == [f"pass-cli: {lab.base}/fake/bin/pass-cli", f"gh: {lab.base}/fake/bin/gh", "gh account: owner"]
+    lines = lines[3:]
     assert [x.split(":")[0] for x in lines[:2]] == ["proton item id (root)", "proton item id (ci)"]
     assert lines[2:5] == [
         "root key id: root-1",
@@ -446,7 +458,7 @@ def test_the_leak_scan_really_detects_a_leak(lab, capsys):
 
 def _assert_refused_cleanly(lab, capsys, expect: str):
     rc, out, err = run_main(lab, capsys, "init")
-    assert rc == 1 and out == "" and expect in err
+    assert rc == 1 and "fingerprint" not in out and "proton item id" not in out and expect in err
     assert lab.snapshot() == lab.original
     assert lab.tmp_left() == []
     forbidden = [c for c in lab.calls() if "--from-template" in c["argv"] or c["argv"][:2] == ["secret", "set"]]
@@ -612,7 +624,7 @@ def test_refuses_when_the_policy_is_not_main_only(lab, capsys, policies):
     ],
 )
 def test_refuses_when_the_environment_has_no_custom_branch_policy(lab, capsys, env):
-    (lab.sim / "gh-env.json").write_text(json.dumps(env))
+    (lab.sim / "gh-env.json").write_text(json.dumps({"can_admins_bypass": False, **env}))
     _assert_refused_cleanly(lab, capsys, "custom branch policy")
 
 
@@ -632,10 +644,13 @@ def test_refuses_when_github_sends_no_date(lab, capsys):
     _assert_refused_cleanly(lab, capsys, "Date header")
 
 
-@pytest.mark.parametrize("bypass", [True, "yes"])
-def test_refuses_when_admins_can_bypass(lab, capsys, bypass):
-    (lab.sim / "gh-env.json").write_text(json.dumps({**GOOD_ENV, "can_admins_bypass": bypass}))
-    _assert_refused_cleanly(lab, capsys, "bypass")
+@pytest.mark.parametrize("bypass", [True, "yes", None, "missing"])
+def test_refuses_unless_admins_bypass_is_present_and_false(lab, capsys, bypass):
+    env = {k: v for k, v in GOOD_ENV.items() if k != "can_admins_bypass"}
+    if bypass != "missing":
+        env["can_admins_bypass"] = bypass
+    (lab.sim / "gh-env.json").write_text(json.dumps(env))
+    _assert_refused_cleanly(lab, capsys, "can_admins_bypass")
 
 
 def test_refuses_to_run_init_twice(lab, capsys):
@@ -644,7 +659,7 @@ def test_refuses_to_run_init_twice(lab, capsys):
     for p in (lab.sim / "vault").glob("*.json"):
         p.unlink()
     rc, out, err = run_main(lab, capsys, "init")
-    assert rc == 1 and "already exists" in err and out == ""
+    assert rc == 1 and "already exists" in err and "fingerprint" not in out
 
 
 # ---- cleanup after an injected failure at each step ---------------------------------------------------------------
@@ -702,6 +717,9 @@ def _init_then(lab, capsys, monkeypatch, later: timedelta = timedelta(days=14)):
     assert run_main(lab, capsys, "init")[0] == 0
     capsys.readouterr()
     monkeypatch.setattr(ceremony, "_now", lambda: T0 + later)
+    from email.utils import format_datetime
+
+    (lab.sim / "gh-date").write_text(format_datetime(T0 + later, usegmt=True))  # GitHub's clock moves with ours
 
 
 def _list(path: Path) -> dict:
@@ -717,9 +735,11 @@ def test_resign_keeps_serials_raises_issued_at_and_bumps_the_floor(lab, capsys, 
     after = _list(revs)
     assert after["min_serial"] == before["min_serial"] and after["revoked"] == before["revoked"]
     assert after["issued_at"] == "2026-11-16T09:00:00Z" > before["issued_at"]
-    assert out.splitlines()[0] == "re-signing: min_serial 1, revoked []"
-    assert out.splitlines()[1] == "issued_at: 2026-11-16T09:00:00Z"
-    assert {x.strip() for x in out.splitlines()[3:]} == {"install.sh", "release/keys/revocations.json"}
+    lines = out.splitlines()
+    assert lines[2] == "gh account: owner"
+    assert lines[3] == "re-signing: min_serial 1, revoked []"
+    assert lines[4] == "issued_at: 2026-11-16T09:00:00Z"
+    assert {x.strip() for x in lines[6:]} == {"install.sh", "release/keys/revocations.json"}
     sh = (lab.repo / "install.sh").read_text()
     assert floor.read_floor(sh) == floor.read_list(revs) == ("2026-11-16T09:00:00Z", 1)  # manager condition 4
     assert floor.main(["--check", str(lab.repo / "install.sh"), str(revs)]) == 0
@@ -752,6 +772,23 @@ def test_resign_refuses_a_clock_that_is_not_after_the_current_list(lab, capsys, 
     snap = lab.snapshot()
     rc, out, err = run_main(lab, capsys, "resign-revocations")
     assert rc == 1 and "not after" in err and lab.snapshot() == snap and lab.tmp_left() == []
+
+
+@pytest.mark.parametrize("date", ["Mon, 16 Nov 2026 09:07:00 GMT", "Mon, 16 Nov 2026 08:53:00 GMT", "nonsense"])
+def test_resign_refuses_a_clock_that_differs_from_githubs_before_reading_the_root(lab, capsys, monkeypatch, date):
+    _init_then(lab, capsys, monkeypatch)
+    (lab.sim / "gh-date").write_text(date)
+    snap = lab.snapshot()
+    n = _root_reads(lab)
+    rc, out, err = run_main(lab, capsys, "resign-revocations")
+    assert rc == 1 and ("clock differs" in err or "Date header" in err)
+    assert lab.snapshot() == snap and _root_reads(lab) == n and lab.tmp_left() == []
+
+
+def test_resign_accepts_a_small_clock_difference(lab, capsys, monkeypatch):
+    _init_then(lab, capsys, monkeypatch)
+    (lab.sim / "gh-date").write_text("Mon, 16 Nov 2026 09:03:00 GMT")
+    assert run_main(lab, capsys, "resign-revocations")[0] == 0
 
 
 def test_resign_refuses_a_root_that_is_not_the_published_one(lab, capsys, monkeypatch):
@@ -788,9 +825,12 @@ def test_resign_reads_the_root_from_proton_and_never_creates_anything(lab, capsy
         ["item", "list"],
         ["item", "view"],
     ]
-    assert all(c["tool"] == "pass-cli" for c in new)  # no gh call at all
+    gh = [c["argv"] for c in new if c["tool"] == "gh"]  # only read-only identity / clock calls, never a secret call
+    assert gh == [["api", "user", "--jq", ".login"], ["api", "-i", "user"]]
+    first_view = next(i for i, c in enumerate(new) if c["argv"][:2] == ["item", "view"])
+    assert new.index(next(c for c in new if c["argv"] == ["api", "-i", "user"])) < first_view  # clock before the root
     assert not any("--item-title" in c["argv"] for c in lab.calls())
-    assert new[3]["argv"][-2:] == ["--field", "password"]
+    assert new[first_view]["argv"][-2:] == ["--field", "password"]
 
 
 # ---- the current list is verified before the root key is fetched ---------------------------------------------------

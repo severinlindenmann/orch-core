@@ -305,8 +305,8 @@ def _check_environment(repo: str) -> None:
     if not isinstance(env, dict):
         raise Ceremony(f"the {ENV_NAME!r} environment does not exist (or gh cannot read it): create it first")
     _check_clock(head)
-    if env.get("can_admins_bypass", False) is not False:
-        raise Ceremony(f"the {ENV_NAME!r} environment lets admins bypass its protection rules: refusing")
+    if env.get("can_admins_bypass") is not False:  # a missing key refuses too
+        raise Ceremony(f"the {ENV_NAME!r} environment does not say can_admins_bypass is false: refusing")
     pol = env.get("deployment_branch_policy")
     if not isinstance(pol, dict) or pol.get("custom_branch_policies") is not True or pol.get("protected_branches"):
         raise Ceremony(f"the {ENV_NAME!r} environment is not restricted to a custom branch policy")
@@ -462,7 +462,26 @@ def _gitignore(root: Path) -> str:
 # --- commands -------------------------------------------------------------------------------------------------------
 
 
+def _announce() -> None:
+    """Print which binaries run and which GitHub account they act as, so the person sees it before any secret."""
+    rc, out = run(["gh", "api", "user", "--jq", ".login"])
+    login = out.decode(errors="replace").strip()
+    if rc != 0 or re.fullmatch(r"[A-Za-z0-9-]{1,39}", login) is None:
+        raise Ceremony("gh is not authenticated (could not read the account)")
+    print(f"pass-cli: {_BINS['pass-cli']}")
+    print(f"gh: {_BINS['gh']}")
+    print(f"gh account: {login}")
+
+
+def _check_clock_with_github() -> None:
+    rc, raw = run(["gh", "api", "-i", "user"])
+    if rc != 0:
+        raise Ceremony("gh could not reach GitHub to check the clock: refusing")
+    _check_clock(raw.decode(errors="replace").replace("\r\n", "\n").partition("\n\n")[0])
+
+
 def cmd_init(root: Path, repo: str, tmp: Path) -> int:
+    _announce()
     _step("preflight")
     tpl = _preflight_init(repo, root)
     now = _now()
@@ -572,10 +591,12 @@ def _verified_current(root: Path, revs_path: Path, embedded: bytes) -> dict:
 
 
 def cmd_resign(root: Path, repo: str, tmp: Path) -> int:
+    _announce()
     _step("preflight")
     rc, _ = run(["pass-cli", "info"])
     if rc != 0:
         raise Ceremony("pass-cli info failed: log in first (scripts/pass-login.sh)")
+    _check_clock_with_github()  # before anything is verified or read: issued_at comes from this clock
     revs_path = root / "release" / "keys" / "revocations.json"
     if not revs_path.exists():
         raise Ceremony("release/keys/revocations.json is missing: run init first")

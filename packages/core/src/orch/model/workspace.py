@@ -14,7 +14,7 @@ from typing import Any
 from orch.addons.settings_value import KEY as ADDONS_KEY
 from orch.canon import HashError, check_repo_identity, event_head, same_repo_identity
 
-from . import addon_rules, authz, generations, hubledger, identity, policies
+from . import addon_rules, authz, generations, hubledger, identity, policies, remote
 from .codes import Code, Refusal
 from .types import GATES, WORKSPACE, Addon, Core, Device, Grant, LogCore, Member, TCore, WsCore, ts
 from .verifier import SigContext, Verifier
@@ -824,6 +824,8 @@ def hub_joined(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
         **({"joined_at": e["at"]} if "at" in e else {}),  # C8 P2-b: nothing made before this binding lands under it
         **({"member": {"kind": "hub", "hub_id": e["hub_id"]}} if e["mode"] == "full" else {}),
     }
+    if e["mode"] == "full":
+        remote.hub_full(ws)  # D93: a full hub ends remote access, whatever the premises answer (R2)
     return None
 
 

@@ -1771,9 +1771,7 @@ def test_an_unknown_outcome_ends_only_when_the_host_answer_is_known():
 # -- M7b: the runner grant, a click request in the deposit-only grant mode (D-P2-27, section 0.8.6 item 6) ------------
 
 DEPOSIT_LINE = "The secret goes to your orch runner on this machine and is never shown"
-DEPOSIT_RISK = (
-    "Whoever controls this dashboard could use this access while it lasts. You can stop it any time."
-)
+DEPOSIT_RISK = "Whoever controls this dashboard could use this access while it lasts. You can stop it any time."
 SECRET = "demo-not-a-real-secret-tail"
 GRANT = "gr_01M4Y46B485AXD4CBEJZ15Z1TV"
 
@@ -3964,3 +3962,109 @@ def test_d5_background_renews_only_live_holds(client, token, stub, script, auth)
     renewed.clear()
     assert not renewed.wait(2.5)
     auth.logout(token)
+
+
+# -- R2 T4: a remote-access change is viewed and signed only by the loopback session that prepared it ---------------
+
+REMOTE_SET = {"action": "remote_set", "level": "view", "premises": "no", "days": 1}
+
+
+def view_of(client, token, stub):
+    return client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token))
+
+
+def test_a_remote_session_cannot_even_prepare_a_remote_change(client, token, stub, backup, monkeypatch):
+    monkeypatch.setattr(client_login_kind(), "login_kind", lambda self, t: "remote", raising=False)
+    res = prepare(client, token, stub, REMOTE_SET)
+    assert res.status_code == 403 and res.json()["error"]["code"] == "op.not_allowed"
+
+
+STATES = (
+    "prepared",
+    "viewed",
+    "signed",
+    "cancelled",
+    "forgotten",
+    "expired",
+    "record_dropped",
+    "record_replaced",
+    "unknown",
+)
+TOKENS = ("same", "other_loopback", "remote", "none")
+STEPS = ("view", "sign", "state")
+
+
+def put_in_state(client, token, stub, backup, state):
+    """A remote change prepared by `token`, then brought into `state` the way the code does it."""
+    clicks = client.app.state.clicks
+    if state == "unknown":
+        return
+    prepared_ok = prepare(client, token, stub, REMOTE_SET).status_code == 200
+    assert prepared_ok
+    backup.view = backup_view(op="remote.set")
+    if state == "viewed":
+        assert view_of(client, token, stub).status_code == 200
+    elif state in ("signed", "cancelled", "forgotten"):
+        clicks.forget(REQ)  # every end of a request goes through forget: it tombstones the binding
+    elif state == "expired":
+        clicks.forget(REQ)
+        clicks.clock = lambda t=clicks.clock(): t + 10_000  # past BINDING_KEEP: purged (and the record is long gone)
+    elif state == "record_dropped":
+        clicks.ops.pop(REQ, None)
+    elif state == "record_replaced":
+        ws, _, _, epoch = clicks.ops[REQ]
+        clicks.ops[REQ] = (ws, "approve", None, epoch)
+
+
+@pytest.mark.parametrize("step", STEPS)
+@pytest.mark.parametrize("who", TOKENS)
+@pytest.mark.parametrize("state", STATES)
+def test_authorize_table_over_states_tokens_and_steps(client, token, stub, backup, auth, monkeypatch, state, who, step):
+    put_in_state(client, token, stub, backup, state)
+    other = other_session(client, auth)
+    caller = {"same": token, "other_loopback": other, "remote": other, "none": None}[who]
+    if who == "remote":
+        real = client_login_kind().login_kind
+        monkeypatch.setattr(
+            client_login_kind(), "login_kind", lambda self, t: "remote" if t == other else real(self, t), raising=False
+        )
+    headers = hdr(caller) if caller else {"Origin": ORIGIN}
+    if step in ("view", "state"):
+        res = client.post(url(stub, step), json={"request_id": REQ}, headers=headers)
+    else:
+        res = client.post(
+            url(stub, "sign"),
+            json={"request_id": REQ, "view_digest": HASH, "sealed": {"hub.backup_key": BACKUP_ENV}},
+            headers=headers,
+        )
+    open_gate = who == "same" and state in ("prepared", "viewed", "record_dropped", "record_replaced")
+    if not open_gate:
+        assert res.status_code in (401, 403, 404), (state, who, step, res.status_code)
+        if who != "none":
+            assert res.status_code == 404, (state, who, step)
+        assert sent_of(backup, "sign") == []  # nothing reached the signer
+    else:
+        blind = step == "sign" and state in ("record_dropped", "record_replaced")  # never signed without the action
+        assert res.status_code != 404 or blind, (state, who, step)
+
+
+def test_a_bound_request_cannot_be_taken_over_by_preparing_it_again_from_another_session(
+    client, token, stub, backup, auth
+):
+    assert prepare(client, token, stub, REMOTE_SET).status_code == 200
+    other = other_session(client, auth)
+    res = prepare(client, other, stub, REMOTE_SET)
+    assert res.status_code in (404, 409), res.text
+    assert client.app.state.clicks.binding(REQ)[0] == token
+
+
+def test_a_tombstone_is_kept_for_its_lifetime_and_purged_after(client, token, stub, backup):
+    assert prepare(client, token, stub, REMOTE_SET).status_code == 200
+    clicks = client.app.state.clicks
+    clicks.forget(REQ)
+    assert clicks.binding(REQ) == (token, True)  # tombstoned, not deleted
+    start = clicks.clock()
+    clicks.clock = lambda: start + 1
+    assert clicks.binding(REQ) is not None
+    clicks.clock = lambda: start + 10_000
+    assert clicks.binding(REQ) is None

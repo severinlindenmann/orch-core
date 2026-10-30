@@ -77,6 +77,8 @@ def held_secrets(service: WorkspaceService, grant: str | None = None) -> list[by
                     add_text(text)
     for text in _walk(_json(ws_dir / "hub" / "card-keys.json", service.host_uid), frozenset({"wxk", "ck"})):
         add_text(text)
+    for text in _walk(_json(ws_dir / "remote" / "wrk.json", service.host_uid), frozenset({"wrk"})):
+        add_text(text)  # R2 #1590: the remote access key (WRK), host custody only
     spaces = _json(ws_dir / "hub" / "spaces.json", service.host_uid)
     if isinstance(spaces, dict):
         for slot in (spaces.get("spaces") or {}).values():

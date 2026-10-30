@@ -17,6 +17,10 @@ credential: it asks its own host, and the host asks the hub over the authenticat
                                 local person in the workspace and the ticket's user (the workspace owner) are the same
                                 person. Any failure: 401 `switch.unverified` and the ticket is NOT used (the page asks
                                 "Open <name>?"). Success: redeem and a full `local` session in one step.
+                                D93 (remote access, R2): the host may refuse the redeem (`switch.refused`: the owner
+                                said the computer runs at a customer's place, or the hub is joined selectively):
+                                403 with the plain line "Open this workspace on its own computer."; the ticket
+                                stays unused.
 * `POST /api/w/{ws}/hub/switch` `{return_to, kind}`: a ticket to open the hub console (`open`) or to sign out of it
                                 (`signout`); answers the URL to navigate to (`<hub origin>/#t=<ticket>`).
 * `GET  /api/w/{ws}/hub/rail`   the company rail: the hub and the owner's workspaces (name, role, online, badge),
@@ -47,6 +51,7 @@ KEY_ID = r"^[0-9a-f]{32}$"
 SIG = r"^[A-Za-z0-9_-]{86}$"
 RETURN_TO = re.compile(r"^/(?!/)[A-Za-z0-9._~!$&'()*+,;=:@%/-]{0,255}$")  # a path only, like the hub's
 RAIL_TTL = 15.0  # seconds a rail answer is reused (per workspace): a page load must not hit the hub every time
+SWITCH_REFUSED = "Open this workspace on its own computer."
 _NO_HUB = {"hub.not_joined", "hub.state_mismatch", "hub.unreachable"}
 
 
@@ -184,7 +189,12 @@ def register(app: FastAPI, gateway: Gateway, auth=None, clock=time.monotonic):
                 return response("switch.unverified", 401)
         try:
             got = link.call("hub.switch", {"kind": "redeem", "ticket": body.t})
-        except HostError:
+        except HostError as exc:
+            if exc.error["code"] == "switch.refused":  # D93 (R2): the host refused before the hub: the ticket is unused
+                return JSONResponse(
+                    {"ok": False, "error": {"code": "switch.refused", "message": SWITCH_REFUSED, "retryable": False}},
+                    status_code=403,
+                )
             a.switch_attempt(client)  # a refused ticket costs its source a second charge
             return response("session.required", 401)  # one answer for a bad, used, expired or foreign ticket
         if got.get("kind") == "signout":

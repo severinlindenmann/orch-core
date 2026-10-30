@@ -98,6 +98,7 @@ class World:
         self.source = FakeSource()
         self.services = FakeServices(self.state, self.layout)
         self.install_old()
+        self.now = NOW
         self.free = 10**12
         self.runs: list = []
         self.migrate_fail = False
@@ -158,7 +159,7 @@ class World:
             run_orch=self.run_orch,
             free_bytes=lambda p: self.free,
             live_runs=lambda state: self.runs,
-            now=lambda: NOW,
+            now=lambda: self.now,
             after_phase=self.after_phase,
             roots=lambda: ([("this computer's orch data", "host", self.state)], []),
             health_wait=0.0,

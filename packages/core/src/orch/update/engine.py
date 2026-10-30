@@ -41,6 +41,7 @@ from orch.ops.runtime import state_dir
 
 from . import quarantine
 from .envelope import parse_envelope
+from .floor import check_revocations
 from .keys import embedded_roots
 from .layout import (
     InstallLayout,
@@ -182,6 +183,9 @@ class Updater:
             )
         except UpdateRefused as exc:
             raise OrchError(exc.code, f"the release was refused ({exc.reason.value}); nothing was changed") from None
+        check_revocations(
+            ver, self.s.now(), stored_issued_at=rec.revocations_issued_at, stored_min_serial=rec.min_serial
+        )
         self._envelope = env_bytes
         return rec, ch, ver
 

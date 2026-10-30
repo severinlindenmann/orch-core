@@ -48,3 +48,14 @@ def test_a_weekly_refresh_exists_and_signs_only_the_verified_pointer():
     assert "cron:" in DRAFT and "mode == 'refresh'" in DRAFT
     refresh = DRAFT.split("\n  refresh:\n", 1)[1]
     assert "scripts/release/refresh.py" in refresh and "scripts/release/manifest.py" not in refresh
+
+
+def test_no_install_or_build_work_in_a_step_that_holds_the_key():
+    keyed = [(n, t) for n, t in _steps() if "ORCH_RELEASE_SIGNING_KEY" in t]
+    assert len(keyed) == 2
+    for name, text in keyed:
+        assert "--no-sync" in text, name
+        assert not re.search(r"uv sync|uv build|uv pip|npm |pip install", text), name
+    # the environment those steps run with is installed earlier, without the secret
+    assert DRAFT.count("uv sync --frozen --project packages/core --no-dev") == 2
+    assert not re.search(r"uv run (?!--no-sync)", DRAFT)

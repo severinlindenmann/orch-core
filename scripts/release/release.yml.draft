@@ -295,6 +295,8 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+      - name: Install the verifier environment (no secret in this step)
+        run: uv sync --frozen --project packages/core --no-dev
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: release-dist
@@ -329,14 +331,14 @@ jobs:
         env:
           ORCH_RELEASE_SIGNING_KEY: ${{ secrets.ORCH_RELEASE_KEY }}
         run: |
-          uv run --project packages/core --frozen python -I scripts/release/sign.py \
+          uv run --no-sync --project packages/core --frozen python -I scripts/release/sign.py \
             --purpose core --payload manifest.json --key-id "$KEY_ID" \
             --key-cert "release/keys/${KEY_ID}.cert.json" --revocations release/keys/revocations.json \
             --out release.json
       - name: Pointer guard (never move to a lower or unverified state)
         run: |
           set -uo pipefail
-          uv run --project packages/core --frozen python -I scripts/release/channel_seq.py \
+          uv run --no-sync --project packages/core --frozen python -I scripts/release/channel_seq.py \
             --channel "$CHANNEL" --revocations release/keys/revocations.json --new-seq "$SEQ" \
             --exclude-tag "v${VERSION}" \
             --pointer-url "https://github.com/${GH_REPO}/releases/download/channel-${CHANNEL}/channel.json"
@@ -386,13 +388,15 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+      - name: Install the verifier environment (no secret in this step)
+        run: uv sync --frozen --project packages/core --no-dev
       - name: Verify the current channel and rebuild its payload (no secret in this step)
         id: retime
         run: |
           set -uo pipefail
           issued=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           expires=$(date -u -d "+${EXPIRY_DAYS} days" +%Y-%m-%dT%H:%M:%SZ)
-          uv run --project packages/core --frozen python -I scripts/release/refresh.py \
+          uv run --no-sync --project packages/core --frozen python -I scripts/release/refresh.py \
             --channel "$CHANNEL" --revocations release/keys/revocations.json \
             --pointer-url "https://github.com/${GH_REPO}/releases/download/channel-${CHANNEL}/channel.json" \
             --issued-at "$issued" --expires-at "$expires" --out manifest.json
@@ -407,7 +411,7 @@ jobs:
         env:
           ORCH_RELEASE_SIGNING_KEY: ${{ secrets.ORCH_RELEASE_KEY }}
         run: |
-          uv run --project packages/core --frozen python -I scripts/release/sign.py \
+          uv run --no-sync --project packages/core --frozen python -I scripts/release/sign.py \
             --purpose core --payload manifest.json --key-id "$KEY_ID" \
             --key-cert "release/keys/${KEY_ID}.cert.json" --revocations release/keys/revocations.json \
             --out channel.json

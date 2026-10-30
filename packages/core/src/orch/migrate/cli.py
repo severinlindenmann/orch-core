@@ -130,9 +130,14 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextI
             except Exception as exc:  # noqa: BLE001 - one root failing is reported, never a traceback
                 row["error"] = {"code": "migrate.step_failed", "message": f"{exc}"}
                 code = max(code, ERRORS["migrate.step_failed"].exit)
-            finally:
-                if fd is not None:
-                    os.close(fd)
+            if "error" in row and "backup" in row and fd is not None:
+                try:  # a failed step: put the root back as it was, while we still hold the lock
+                    backup_mod.restore(Path(row["backup"]), root, env, own_failure=True, lock_fd=fd)
+                    row["restored"] = True
+                except Exception as exc:  # noqa: BLE001
+                    row["restore_error"] = str(exc)
+            if fd is not None:
+                os.close(fd)
         result.append(row)
         project = projects.get(label)
         if project is not None and _may_be_committed(project):
@@ -147,8 +152,12 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextI
     for row in result:
         if "error" in row:
             out.write(f"{row['root']}: could not migrate ({row['error']['message']}).")
-            if "backup" in row:
+            if row.get("restored"):
+                out.write(f" Your data was put back as it was (backup: {row['backup']}).")
+            elif "backup" in row:
                 out.write(f" Your data was backed up first: {row['backup']}")
+            if "restore_error" in row:
+                out.write(f" Putting it back failed too ({row['restore_error']}).")
             out.write("\n")
         elif row.get("applied"):
             out.write(f"{row['root']}: migrated ({', '.join(row['applied'])}). Backup: {row['backup']}\n")

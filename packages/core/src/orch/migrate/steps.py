@@ -39,6 +39,8 @@ __all__ = [
     "atomic_write",
     "is_signed_path",
     "protected_snapshot",
+    "is_derived",
+    "DERIVED_NAMES",
     "register",
 ]
 
@@ -51,6 +53,8 @@ KINDS = tuple(CURRENT)
 PROTECTED_PATHS: tuple[str, ...] = (
     "events/*", "membership/head.json", "membership/keys/*", "keys/*", "*/keys/*", "local-epochs.json",
     "*/local-epochs.json", "sign-ledger.json", "*/sign-ledger.json", "*/checkpoints/*", "checkpoints/*",
+    ".state/checkpoints/*", ".state/abandoned/*", ".state/pending/*", "land/*/key", "known_hosts", "*/known_hosts",
+    "git-pins.json", "*/git-pins.json", "secret-pins.json", "*/secret-pins.json", "counters.json", "*/counters.json",
 )  # fmt: skip
 PROTECTED_NAMES: tuple[str, ...] = (
     "events", "event*", "checkpoint*", "revocations*", "*card*", "devices*", "*.jsonl", "genesis*", "keys",
@@ -68,12 +72,22 @@ def is_signed_path(rel: str | os.PathLike[str]) -> bool:
     return any(fnmatch.fnmatchcase(folded.as_posix(), pat) for pat in PROTECTED_PATHS)
 
 
+#: the only files under ``.state`` that orch rebuilds (the index, the head cache, the lock): everything else there,
+#: checkpoints, abandoned logs and pending intents included, is real data
+DERIVED_NAMES: tuple[str, ...] = ("index.sqlite*", "heads.sqlite*", "lock")
+
+
+def is_derived(rel: str) -> bool:
+    parts = PurePosixPath(rel).parts
+    return len(parts) == 2 and parts[0] == STATE_DIR and any(fnmatch.fnmatchcase(parts[1], g) for g in DERIVED_NAMES)
+
+
 def protected_snapshot(root: Path) -> dict[str, str | None]:
     """sha256 of every protected file below ``root`` (symlinks are recorded by their target text, never followed)."""
     snap: dict[str, str | None] = {}
     for dirpath, dirnames, filenames in os.walk(root):
         rel_dir = Path(dirpath).relative_to(root)
-        if rel_dir.parts[:1] and rel_dir.parts[0] in (STATE_DIR, WORK_DIR):
+        if rel_dir.parts[:1] and rel_dir.parts[0] == WORK_DIR:
             dirnames.clear()
             continue
         for name in filenames:

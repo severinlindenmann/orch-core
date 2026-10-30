@@ -28,7 +28,7 @@ from orch.layout import STATE_DIR, WORK_DIR
 from orch.ops.errors import OrchError
 
 from .format import LOCK_FILE, lock_root
-from .steps import atomic_write
+from .steps import atomic_write, is_derived
 
 __all__ = ["KEEP", "backups_dir", "create_backup", "list_backups", "prune_backups", "restore"]
 
@@ -36,7 +36,7 @@ KEEP = 3
 MANIFEST = "manifest.json"
 DATA = "data"
 #: top-level entries left out (derived or runtime), and one nested path
-_SKIP_TOP = frozenset({STATE_DIR, WORK_DIR, LOCK_FILE})
+_SKIP_TOP = frozenset({WORK_DIR, LOCK_FILE})
 _SKIP_REL = frozenset({"install/tools", "install/current", "install/update.json"})
 _REVOCATIONS = "revocations.jsonl"
 _SYNC_NAMES = frozenset(
@@ -90,7 +90,7 @@ def _exclude_from_time_machine(path: Path) -> None:
 
 
 def _excluded(rel: str) -> bool:
-    return rel.split("/")[0] in _SKIP_TOP or rel in _SKIP_REL
+    return rel.split("/")[0] in _SKIP_TOP or rel in _SKIP_REL or is_derived(rel)
 
 
 def _copy(src: Path, dst: Path, clone: bool, rel: str = "") -> bool:
@@ -103,7 +103,9 @@ def _copy(src: Path, dst: Path, clone: bool, rel: str = "") -> bool:
         if _excluded(erel):
             continue
         target = dst / entry.name
-        if entry.is_dir(follow_symlinks=False) and (erel in nested or any(r.startswith(erel + "/") for r in _SKIP_REL)):
+        if entry.is_dir(follow_symlinks=False) and (
+            erel in nested or erel == STATE_DIR or any(r.startswith(erel + "/") for r in _SKIP_REL)
+        ):
             all_cloned = _copy(Path(entry.path), target, clone, erel) and all_cloned
             continue
         if clone and _clone(entry.path, target):
@@ -256,7 +258,9 @@ def _revocation_files(top: Path) -> dict[str, list[str]]:
     return found
 
 
-def _journal_allows(root: Path, env: Mapping[str, str] | None) -> bool:
+def _journal_allows(backup: Path, manifest: dict, env: Mapping[str, str] | None) -> bool:
+    """The current, unfinished journal lists THIS backup (``backups``: {path: format it was taken at}) and the format
+    matches the backup's ``from``: a backup left by an earlier update is never restored by a later one."""
     from .journal import read_journal
 
     try:
@@ -265,8 +269,48 @@ def _journal_allows(root: Path, env: Mapping[str, str] | None) -> bool:
         return False
     if doc is None or doc["phase"] == "committed":
         return False
-    roots = doc.get("roots")
-    return doc["phase"] == f"migrated:{root}" or (isinstance(roots, list) and str(root) in roots)
+    listed = doc.get("backups")
+    if not isinstance(listed, dict):
+        return False
+    want = listed.get(str(backup.resolve()))
+    return type(want) is int and want == manifest.get("from")
+
+
+def _exchange(a: Path, b: Path) -> bool:
+    """Atomically swap two paths (macOS renamex_np RENAME_SWAP, Linux renameat2 RENAME_EXCHANGE). False if the system
+    cannot: the caller then falls back to two renames."""
+    try:
+        import ctypes
+
+        libc = ctypes.CDLL(None, use_errno=True)
+        if sys.platform == "darwin":
+            return libc.renamex_np(os.fsencode(a), os.fsencode(b), 2) == 0  # RENAME_SWAP
+        if sys.platform.startswith("linux"):
+            at_fdcwd = -100
+            return libc.renameat2(at_fdcwd, os.fsencode(a), at_fdcwd, os.fsencode(b), 2) == 0  # RENAME_EXCHANGE
+    except (OSError, AttributeError):
+        pass
+    return False
+
+
+_SCRATCH = (".restore-", ".replaced-")
+
+
+def _scratch_dirs(root: Path) -> list[Path]:
+    return [p for p in root.parent.iterdir() if any(p.name.startswith(f".{root.name}{m}") for m in _SCRATCH)]
+
+
+def _recover(root: Path) -> None:
+    """A crash between the two renames of a swap leaves no root but a ``.replaced-`` folder: put it back. Leftover
+    scratch folders of an earlier restore are removed (each by its exact path)."""
+    scratch = _scratch_dirs(root) if root.parent.is_dir() else []
+    if not root.exists():
+        replaced = sorted(p for p in scratch if f".{root.name}.replaced-" in p.name)
+        if replaced:
+            os.rename(replaced[-1], root)
+            scratch.remove(replaced[-1])
+    for p in scratch:
+        shutil.rmtree(p, ignore_errors=True)
 
 
 def restore(
@@ -275,12 +319,15 @@ def restore(
     env: Mapping[str, str] | None = None,
     *,
     own_failure: bool = False,
+    lock_fd: int | None = None,
 ) -> None:
-    """Put ``backup`` back into ``root``. Allowed only before the commit point: the update journal must name this root
-    with a phase before ``committed`` (``own_failure``: ``orch migrate``'s own failure path, no journal). Takes the
-    exclusive lock. Builds the result in a staging folder next to the root and swaps it in; whatever the backup left
-    out (``.state``, ``.orch-work``, ``install/tools``, the journal) is carried over untouched, and every
-    ``revocations.jsonl`` is the union of the backup's lines and the current ones."""
+    """Put ``backup`` back into ``root``. Allowed only before the commit point: the unfinished update journal must list
+    this backup (``own_failure``: ``orch migrate``'s own failure path, no journal). Takes the exclusive lock (or uses
+    ``lock_fd``, the caller's). The result is built in a staging folder next to the root: the backup, merged
+    ``revocations.jsonl`` (union of lines), and everything the backup left out carried over from the current root. It is
+    then swapped in atomically where the system can. The journal is marked first, so a crash never reopens the root."""
+    from .journal import clear_journal, read_journal, write_journal
+
     backup, root = Path(backup), Path(root).resolve()
     manifest = _manifest(backup)
     src = backup / DATA
@@ -291,36 +338,59 @@ def restore(
     for dirpath, dirnames, filenames in os.walk(src):
         if any(os.path.islink(os.path.join(dirpath, n)) for n in [*dirnames, *filenames]):
             raise OrchError("migrate.backup_refused", "the backup holds a link; it is not restored")
-    if not own_failure and not _journal_allows(root, env):
+    if not own_failure and not _journal_allows(backup, manifest, env):
         raise OrchError(
-            "migrate.backup_refused", "restore is only possible before an update is committed, for a root it names"
+            "migrate.backup_refused",
+            "restore is only possible before an update is committed, and only for a backup this update made",
         )
-    fd = lock_root(root, exclusive=True)
+    _recover(root)
+    fd = lock_root(root, exclusive=True) if lock_fd is None else lock_fd
     staging = root.with_name(f".{root.name}.restore-{secrets.token_hex(4)}")
+    aside = root.with_name(f".{root.name}.replaced-{secrets.token_hex(4)}")
+    created = read_journal(env) is None  # no journal yet: this restore makes one, and removes it again
     old = os.umask(0o077)
     try:
+        write_journal(
+            (read_journal(env) or {"phase": "stopped"})["phase"], env, restoring=str(root)
+        )  # an unfinished journal from here on: a crash never reopens the root
         saved, current = _revocation_files(src), _revocation_files(root)
         shutil.copytree(src, staging, symlinks=True)
         for rel in set(saved) | set(current):
             have = saved.get(rel, [])
             merged = have + [x for x in current.get(rel, []) if x not in set(have)]
             atomic_write(staging / rel, ("\n".join(merged) + "\n").encode() if merged else b"")
-        keep_rel = [*sorted(_SKIP_TOP), *sorted(_SKIP_REL)]
-        aside = root.with_name(f".{root.name}.replaced-{secrets.token_hex(4)}")
-        os.rename(root, aside)
-        try:
-            os.rename(staging, root)
-        except BaseException:
-            os.rename(aside, root)
-            raise
-        for rel in keep_rel:  # what the backup never held stays exactly as it was
-            have = aside / rel
-            if have.exists() or have.is_symlink():
-                (root / rel).parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-                os.rename(have, root / rel)
-        shutil.rmtree(aside, ignore_errors=True)
+        carry = [*sorted(_SKIP_TOP), *sorted(_SKIP_REL)]
+        st = root / STATE_DIR
+        if st.is_dir():
+            carry += [f"{STATE_DIR}/{n}" for n in sorted(os.listdir(st)) if is_derived(f"{STATE_DIR}/{n}")]
+        for rel in carry:  # into staging BEFORE the swap; the journal file is copied, the original stays until the swap
+            have = root / rel
+            if not (have.exists() or have.is_symlink()):
+                continue
+            (staging / rel).parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            if rel == "install/update.json":
+                shutil.copy2(have, staging / rel)
+            else:
+                os.rename(have, staging / rel)
+        if _exchange(staging, root):  # now ``staging`` holds the old data
+            shutil.rmtree(staging, ignore_errors=True)
+        else:
+            os.rename(root, aside)
+            try:
+                os.rename(staging, root)
+            except BaseException:
+                os.rename(aside, root)
+                raise
+            shutil.rmtree(aside, ignore_errors=True)
+        doc = read_journal(env)
+        if doc is not None:
+            if created:
+                clear_journal(env)
+            else:
+                write_journal(doc["phase"], env, restoring=None)
     finally:
         os.umask(old)
-        os.close(fd)
+        if lock_fd is None:
+            os.close(fd)
         if staging.exists():
             shutil.rmtree(staging, ignore_errors=True)

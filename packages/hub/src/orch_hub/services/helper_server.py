@@ -26,8 +26,8 @@ from typing import Any
 from . import helper_proto as P
 from .helper_backends import ACTION_TIMEOUT_S, Config, Part, Runner, run_argv
 from .helper_proto import HEX32, HelperError
-from .redact import redact
 from .helper_verify import ReadOnlyAuth
+from .redact import redact
 
 SOCK_FILE = "helper.sock"
 AUDIT_FILE = "helper-audit.log"

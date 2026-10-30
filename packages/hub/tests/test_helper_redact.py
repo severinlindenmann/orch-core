@@ -131,6 +131,12 @@ TRICKY = [
     ('{"password": "a\\"b,c\\"d", "x": 1}', ['a\\"b', "b,c", 'c\\"d']),
     ("password='it''s, ok' tail", ["it''s", "s, ok"]),
     ('password="unterminated, secret', ["unterminated", "secret"]),
+    ("secret is hunter2 and more", ["hunter2", "and more"]),
+    ("setting password to hunter2, then ok", ["hunter2", "then ok"]),
+    ("mysql -uroot -phunter2 db", ["hunter2"]),
+    ("pwd=hunter2 x=1", ["hunter2"]),
+    ("pw: hunter2", ["hunter2"]),
+    ("sid=ABCD1234efgh", ["ABCD1234"]),
     ("API_KEY=ab cd ef", ["ab cd", "cd ef"]),
     ("session_token=é€ü,ñ", ["é€ü", "ü,ñ"]),
 ]
@@ -161,6 +167,9 @@ def test_fuzz_no_secret_of_four_chars_survives():
         ("flag_sp", "--password {s} --next 1", True),
         ("flag_eq", "--token={s} x=1", False),
         ("word_sp", "token {s}", True),
+        ("pwd", "pwd={s} x=1", False),
+        ("free", "secret is {s}", True),
+        ("glued", "mysql -uroot -p{s} db", True),
         ("json", '{{"password": {j}, "k": 1}}', None),
         ("url", "connect https://user:{s}@host.example/path?x=1", True),
     ]
@@ -173,7 +182,7 @@ def test_fuzz_no_secret_of_four_chars_survives():
             s = s.replace("=", "")  # unquoted, may hold spaces and everything but a following key=
             if rnd.random() < 0.5:
                 s = s[: n // 2] + " " + s[n // 2 :]
-        if name in ("flag_sp", "word_sp", "url", "flag_eq"):
+        if name in ("flag_sp", "word_sp", "url", "flag_eq", "free", "glued"):
             s = s.replace(" ", "")
         if name == "url":
             s = s.replace("/", "/") + "@x" * rnd.randint(0, 2)  # several @ in the password

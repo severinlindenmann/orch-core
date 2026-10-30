@@ -56,15 +56,21 @@ _PEM = re.compile(r"-----BEGIN [A-Z0-9 ]+-----.*?(?:-----END [A-Z0-9 ]+-----|\Z)
 _HEADER_LINE = re.compile(r"(?i)\b(authorization|proxy-authorization|cookie|set-cookie|x-api-key)\b\s*[:=].*")
 _BEARER = re.compile(r"(?i)\b(bearer|basic|token)\s+[A-Za-z0-9._~+/=-]{8,}")
 _NAME = (
-    r"(?:passw\w*|pass|passphrase|secret|token|api[_-]?key|key|auth\w*|cookie|session|credential\w*|private|"
+    r"(?:passw\w*|pwd|pw|sid|pass|passphrase|secret|token|api[_-]?key|key|auth\w*|cookie|session|credential\w*|private|"
     r"totp|otp|sigs?|signature|proof|cert|seed|nonce|salt|digest)"
 )
 _KV = re.compile(rf"(?i)(?<![\w.-])([\w.-]*{_NAME}[\w.-]*)([\"']?)(\s*[:=]\s*)")
 #: ``password value``, ``--token value``: the next word only (a space-separated form names no end)
 _SP = re.compile(
-    r"(?i)(?<![\w.-])((?:--)?(?:password|passwd|pass|passphrase|secret|token|api[_-]?key|authorization|cookie|credentials?))"
+    r"(?i)(?<![\w.-])((?:--)?(?:password|passwd|pwd|pw|sid|pass|passphrase|secret|token|api[_-]?key|authorization|cookie|credentials?))"
     r"(?![\w.-])(\s+)"
 )
+#: free text: ``secret is hunter2``, ``setting password to hunter2``: everything after goes, to the end of the line
+_FREE = re.compile(
+    r"(?i)(?<![\w.-])((?:password|passwd|pwd|pw|sid|pass|passphrase|secret|token|api[_-]?key|key|credentials?)"
+    r"\s+(?:is|to|are|was|set to|equals))(?![\w.-]).*"
+)
+_P_GLUED = re.compile(r"(?<!\S)-p(?=\S)\S+")
 _NEXT_KEY = re.compile(r"\s[\w.-]+=")
 #: every character between ``scheme://`` and the LAST ``@`` of that word, whatever it holds (a password may hold : / @)
 _URL_USERINFO = re.compile(r"(?i)(\b[a-z][a-z0-9+.-]*://)\S*@")
@@ -124,6 +130,8 @@ def clean_line(line: str) -> str:
     line = _BEARER.sub(lambda m: f"{m.group(1)} {R}", line)
     line = _URL_USERINFO.sub(lambda m: m.group(1) + R + "@", line)
     line = _URL_QS.sub(lambda m: m.group(1) + "?" + R, line)
+    line = _FREE.sub(lambda m: m.group(1) + " " + R, line)
+    line = _P_GLUED.sub("-p" + R, line)
     line = _secret_pairs(line)
     line = _JWT.sub(R, line)
     line = _LONG.sub(R, line)

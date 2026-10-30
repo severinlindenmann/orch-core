@@ -1,5 +1,5 @@
-"""R6 T-C (#1594): ``hub.network`` / ``hub.network_set``, the owner's proxy for hub links. Owner at the workspace only; an
-agent is refused; the password is never returned or logged; the hub cannot reach these files."""
+"""R6 T-C (#1594): ``hub.network`` / ``hub.network_set``, the owner's proxy for hub links. Owner at the workspace
+only; an agent is refused; the password is never returned or logged; the hub cannot reach these files."""
 
 from __future__ import annotations
 

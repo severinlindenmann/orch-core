@@ -403,3 +403,31 @@ def test_hub_history_golden(host):
     )  # L2-C8i-6: no JSON pretending to be a command
     code, out = run(["history"], {}, as_json=True)
     assert code == 0 and json.loads(out)["data"] == HIST
+
+
+# --- R6 (#1594): orch hub network ---------------------------------------------------------------------------------
+
+
+def test_network_show_set_and_clear(host, monkeypatch):
+    host.reply["hub.network"] = {"proxy": None, "user": None, "has_password": False, "broken": False}
+    code, out = run(["network"], {})
+    assert code == 0 and "directly" in out and host.called == [("hub.network", {})]
+    host.reply["hub.network_set"] = {
+        "proxy": "https://p.office:3128",
+        "user": "a",
+        "has_password": True,
+        "broken": False,
+    }
+    monkeypatch.setattr(hub, "_read_password", lambda: "pw")
+    code, out = run(["network", "set-proxy", "https://p.office:3128", "--proxy-user", "a"], {})
+    assert code == 0 and "pw" not in out and "p.office:3128" in out
+    assert host.called[-1] == ("hub.network_set", {"proxy": "https://p.office:3128", "user": "a", "password": "pw"})
+    run(["network", "clear-proxy"], {})
+    assert host.called[-1] == ("hub.network_set", {"proxy": None})
+
+
+def test_network_refuses_agents_and_bad_shapes(host):
+    code, out = run(["network"], {"ORCH_SESSION": "x"})
+    assert code != 0 and host.called == []
+    for bad in (["network", "set-proxy"], ["network", "x"], ["network", "--proxy-user", "a"]):
+        assert run(bad, {})[0] == 2

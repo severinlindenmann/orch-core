@@ -20,6 +20,8 @@ import { isRealHost } from '@/api/features'
 import { HostGates } from './host/Gates'
 import { HostGeneral } from './host/General'
 import { HostDevices } from './host/Devices'
+import { RemoteAccess } from './host/RemoteAccess'
+import { remoteServed } from '@/api/remote'
 import { HostGrants } from './host/Grants'
 import { HostMembers } from './host/Members'
 import { CopyLinkButton } from '../../shell/CopyLinkButton'
@@ -46,6 +48,7 @@ function HostPhone({ workspace }: { workspace: Workspace }) {
         </div>
       </section>
       <HostDevices workspace={workspace} />
+      {remoteServed(workspace.id) && <RemoteAccess ws={workspace.id} />}
     </div>
   )
 }

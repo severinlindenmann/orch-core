@@ -34,8 +34,21 @@ async function limited<T>(run: () => Promise<T>): Promise<T> {
 
 const ext = (name: string) => /\.([A-Za-z0-9]+)$/.exec(name)?.[1].toLowerCase() ?? ''
 
+/** A check result: the stored output of a task's check (`task done --run`), named `<task>-receipt.log` (run 15c P10). */
+export const isCheck = (a: Pick<Artifact, 'name' | 'kind'>): boolean => a.kind === 'receipt' || /^[^/]+-receipt\.[A-Za-z0-9]+$/.test(a.name)
+
+/** What the card calls a check result: "Check of T1", not the file name. Other files keep their name. */
+export function cardTitle(a: Pick<Artifact, 'name' | 'kind' | 'task'>): string {
+  if (!isCheck(a)) return a.name
+  const task = a.task ?? /^(.+)-receipt\.[A-Za-z0-9]+$/.exec(a.name)?.[1]
+  return task ? `Check of ${task}` : 'Check result'
+}
+
+export const CHECK_QUIET = 'The check ran and printed nothing. That is normal when it passes.'
+
 /** The type word that is always written on the badge (colour is only a second cue). */
 export function typeBadge(a: Pick<Artifact, 'name' | 'kind'>): { label: string; tone: string } {
+  if (isCheck(a)) return { label: 'CHECK', tone: 'text-success' }
   const e = ext(a.name)
   const by: Record<string, [string, string]> = {
     json: ['JSON', 'text-warning'], jsonl: ['JSON', 'text-warning'], py: ['PY', 'text-info'], md: ['MD', 'text-info'], markdown: ['MD', 'text-info'],
@@ -98,6 +111,18 @@ function TextThumb({ text, name }: { text: string; name: string }) {
   )
 }
 
+/** A file with no bytes: say so, never an empty box. */
+function EmptyThumb({ a }: { a: Pick<Artifact, 'name' | 'kind'> }) {
+  return isCheck(a) ? (
+    <div data-testid="thumb-empty" className="flex h-full flex-col items-center justify-center gap-1 text-center text-[12px]">
+      <span className="font-medium text-success">Check passed</span>
+      <span className="text-text-muted">{CHECK_QUIET}</span>
+    </div>
+  ) : (
+    <div data-testid="thumb-empty" className="flex h-full items-center justify-center text-[12px] text-text-muted">This file is empty</div>
+  )
+}
+
 export function EvidenceThumb({ a, ticket }: { a: Artifact; ticket: string }) {
   const [ref, seen] = useInView()
   const workspaces = useQuery(queries.workspaces())
@@ -114,7 +139,8 @@ export function EvidenceThumb({ a, ticket }: { a: Artifact; ticket: string }) {
       // Only PNG, JPEG and WebP are pictures here; SVG and GIF stay icons.
       const url = m.type === 'png' || m.type === 'jpeg' || m.type === 'webp' ? verifiedMedia(m, a.sha256) : undefined
       if (url) body = <img src={url} alt={`Picture ${visible(a.name)}`} referrerPolicy="no-referrer" className="size-full object-cover" />
-    } else if (!d.binary && d.text != null && !looksBinary(d.text)) body = <TextThumb text={d.text} name={a.name} />
+    } else if (!d.binary && d.text === '') body = <EmptyThumb a={a} />
+    else if (!d.binary && d.text != null && !looksBinary(d.text)) body = <TextThumb text={d.text} name={a.name} />
   }
   // The demo (no host) carries the text inline; a real host's file is only ever shown from the digest-checked read above.
   if (!body && !isRealHost() && a.preview && !NO_THUMB.test(e)) body = <TextThumb text={a.preview} name={a.name} />

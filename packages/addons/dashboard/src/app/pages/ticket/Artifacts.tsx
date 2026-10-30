@@ -31,7 +31,7 @@ import { atLeast } from '@/api/permissions'
 import { unshareable } from '@/api/shares'
 import { ShareFlow } from '../shares/ShareFlow'
 import { TurnOnPublish } from '../shares/TurnOnPublish'
-import { EvidenceThumb, TypeBadge } from './EvidenceThumb'
+import { cardTitle, CHECK_QUIET, EvidenceThumb, isCheck, TypeBadge } from './EvidenceThumb'
 
 export const KIND_ICON: Record<Artifact['kind'], typeof FileText> = {
   screenshot: ImageIcon,
@@ -452,6 +452,7 @@ function RemotePreview({ a, ticket, unavailable, holdPictures = false }: { a: Ar
   if (d.binary || d.text == null || looksBinary(d.text)) {
     return <NoPreviewCard a={a} why={ext === 'pdf' ? 'PDF documents are not previewed here: a PDF viewer would run inside this page. Open the file from the ticket on the host.' : `Binary file${ext ? ` (type .${ext})` : ''}: there is no text to show.`} />
   }
+  if (d.text === '') return <NoPreviewCard a={a} quiet why={isCheck(a) ? CHECK_QUIET : 'This file is empty.'} />
   const { shown, cut, bytes } = capText(d.text.replace(/\r\n/g, '\n'))
   // HTML evidence goes through the same viewer as an inline page (inert sandboxed frame). A page cut at 64 KiB
   // would be a different document from the one the digest names: not previewed.
@@ -631,8 +632,13 @@ function Meta({ a, jump }: { a: Artifact; jump: (j: Jump) => void }) {
           From {a.task}
         </button>
       )}
-      <Mono className="text-[11px] text-text-faint">{shortHash(a.sha256, 8)}</Mono>
       {!!a.bytes && <span>{fmtBytes(a.bytes)}</span>}
+      <details className="text-[11px]">
+        <summary className="cursor-pointer">Details</summary>
+        <p className="mt-0.5">
+          {a.name} · sha256 <Mono className="text-[11px] text-text-faint">{shortHash(a.sha256, 8)}</Mono>
+        </p>
+      </details>
     </div>
   )
 }
@@ -686,7 +692,7 @@ export function Artifacts({ ticket, viewer, jump, focus }: TabProps & { focus?: 
                 <div className="mt-2 flex items-center gap-1.5">
                   <Icon className="size-3.5 shrink-0 text-text-muted" aria-hidden />
                   <span className="min-w-0 flex-1 truncate text-[13px] font-medium" title={a.name}>
-                    {a.name}
+                    {cardTitle(a)}
                   </span>
                   <TypeBadge a={a} />
                 </div>

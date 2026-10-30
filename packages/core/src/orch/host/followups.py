@@ -22,6 +22,8 @@ from .runners import LIVE
 
 LOG = logging.getLogger(__name__)
 
+POLL_BUDGET_S = 15.0  # one tick spends at most this long asking add-ons; due follow-ups are handled first
+
 
 class FollowupRunner:
     def __init__(self, service, *, clock, mono, tick_s=30):
@@ -36,7 +38,9 @@ class FollowupRunner:
         # addon-api 1.2 (#718): polling of add-on events; only refs a pending follow-up waits on are ever asked
         self.polls_path = self.path.with_name("addon-polls.json")
         self.poller = addonpoll.Poller(
-            saved=custody.read_json(self.polls_path, service.host_uid), save=self._save_polls
+            saved=custody.read_json(self.polls_path, service.host_uid),
+            save=self._save_polls,
+            host=addonpoll.HostBudget(service.state_dir / "addon-polls-host.json", service.host_uid),
         )
         self.addon_done = {}  # (kind, ref) -> the closed event shape of a finished poll
         self.intents.pop("_rings", None)  # rings used to live here; they have their own file now
@@ -161,7 +165,6 @@ class FollowupRunner:
                         "failed" if failed or not wrote else "ran",
                         "harness_failed" if failed else "no_writes" if not wrote else None,
                     )
-            await self._poll_addons(rows, now)
             pending = sorted((r for r in rows if r[2].state == "pending"), key=lambda r: ts(r[2].due or r[2].deadline))
             for uid, key, rec in pending:
                 if now > ts(rec.deadline or rec.due) + rules.FU_LATE_S:
@@ -182,6 +185,9 @@ class FollowupRunner:
                 if await self.fire(uid, key, rec, hub, *wake):
                     live += 1
                 today += 1
+            # last: a slow add-on never delays a follow-up that is already due (its answer wakes it on the next tick)
+            if await self._poll_addons(rows, now):
+                self._wake.set()
 
     # -- what wakes a pending follow-up: (trigger, fallback, event) or None
     async def _wake_reason(self, uid, rec, now, early):
@@ -236,7 +242,11 @@ class FollowupRunner:
 
     async def _poll_addons(self, rows, now):
         waiting = [r[2] for r in rows if r[2].trigger == "addon" and r[2].state == "pending"]
-        snap = await self.service.call(self._addon_snapshot, waiting) if waiting else {}
+        if not waiting:
+            self.poller.forget([])
+            self.addon_done = {}
+            return False
+        snap = await self.service.call(self._addon_snapshot, waiting)
         items = []
         for rec in waiting:
             kind, ref = rec.on["kind"], rec.on["ref"]
@@ -249,7 +259,14 @@ class FollowupRunner:
         self.addon_done = {k: v for k, v in self.addon_done.items() if k in wanted}
         mono = self.mono()
         loop = asyncio.get_running_loop()
-        for item in self.poller.plan([i for i in items if (i[1], i[2]) not in self.addon_done], mono, now):
+        end = mono + POLL_BUDGET_S  # total time one tick may spend on add-on polls
+        found = False
+        planned = self.poller.plan([i for i in items if (i[1], i[2]) not in self.addon_done], mono, now)
+        for n, item in enumerate(planned):
+            if self.mono() >= end:  # out of time: the rest keep their place and are not charged
+                for rest in planned[n:]:
+                    self.poller.refund(rest, now)
+                break
             granted, settings = snap[item[0]]
             try:
                 state, status = await loop.run_in_executor(None, self._poll_one, item, granted, settings)
@@ -262,10 +279,12 @@ class FollowupRunner:
                 at = datetime.fromtimestamp(now, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
                 self.addon_done[(item[1], item[2])] = fe.addon_event(item[1], item[2], status, at)
                 self.poller.done(item)
+                found = True
             elif state == "pending":
                 self.poller.pending(item, self.mono())
             else:
                 self.poller.failed(item, "reported", self.mono(), now)
+        return found
 
     def _scan(self, uid, rec):
         """The first ticket-log event after the set that matches the follow-up's `on`; only its closed shape leaves."""

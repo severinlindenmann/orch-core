@@ -34,7 +34,7 @@ def polls(env, monkeypatch):  # noqa: F811
 
     def fake(self, item, granted, settings):
         env.calls.append(item[1:3])
-        got = env.answers.get(item[2], ("pending", None))
+        got = env.answers.get((item[1], item[2]), env.answers.get(item[2], ("pending", None)))
         if isinstance(got, Exception):
             raise got
         return got
@@ -68,6 +68,8 @@ def test_done_wakes_the_follow_up_with_the_closed_event_signed_by_the_host(polls
     uid, _, fid, _ = e.schedule_on(on("8812"), "addon")
     e.answers["8812"] = ("done", "failed")  # any declared status wakes a follow-up that filters on none
     e.tick()
+    assert e.view(uid)["state"] == "pending" and e.runner._wake.is_set()  # the answer wakes it on the very next tick
+    e.tick()
     rec = e.view(uid)
     assert rec["state"] == "fired" and rec["trigger"] == "addon"
     assert rec["event"]["source"] == "addon" and rec["event"]["kind"] == DBX
@@ -79,21 +81,19 @@ def test_another_addons_answer_does_not_wake_this_follow_up(polls):
     e = polls
     uid, *_ = e.schedule_on(on("8812"), "addon")
     other, *_ = e.schedule_on(on("8812", kind="other.run.finished"), "addon")
-    e.answers["8812"] = ("pending", None)
+    e.answers[("databricks.run.finished", "8812")] = ("pending", None)
+    e.answers[("other.run.finished", "8812")] = ("pending", None)
     e.tick()
     assert sorted(e.calls) == [("databricks.run.finished", "8812"), ("other.run.finished", "8812")]
     assert e.view(uid)["state"] == "pending" and e.view(other)["state"] == "pending"
-    e.answers["8812"] = ("done", "succeeded")
-    later(e, 301)
-    e.tick()
-    assert e.view(uid)["state"] == "fired" and e.view(other)["state"] == "fired"
-    # but a done of one never fires the other: each is asked by its own kind (the calls above carry the kind)
+    assert e.view(uid)["state"] == "pending" and e.view(other)["state"] == "pending"
 
 
 def test_a_status_filter_waits_for_that_status(polls):
     e = polls
     uid, *_ = e.schedule_on(on("8812", status="succeeded"), "addon")
     e.answers["8812"] = ("done", "failed")
+    e.tick()
     e.tick()
     assert e.view(uid)["state"] == "pending"
     n = len(e.calls)
@@ -125,3 +125,79 @@ def test_turning_the_addon_off_stops_the_polling(polls):
     e.w.person_event("addon.disabled", "workspace", name="databricks")
     e.tick()
     assert e.calls == [] and e.view(uid)["state"] == "cancelled"
+
+
+def test_another_addons_done_never_fires_this_follow_up(polls):
+    e = polls
+    uid, *_ = e.schedule_on(on("8812"), "addon")
+    other, *_ = e.schedule_on(on("8812", kind="other.run.finished"), "addon")
+    e.answers[("other.run.finished", "8812")] = ("done", "failed")  # only the other add-on says it is finished
+    e.tick()
+    e.tick()
+    assert e.view(other)["state"] == "fired" and e.view(other)["event"]["kind"] == "other.run.finished"
+    assert e.view(uid)["state"] == "pending"  # databricks said pending (the default): still waiting
+
+
+def test_a_slow_addon_never_delays_a_due_time_follow_up(polls):
+    e = polls
+    t_uid, _, due = e.schedule()
+    e.schedule_on(on("8812"), "addon")
+    e.w.lab.ws.clock[0] = due
+    seen = []
+
+    def slow(self, item, granted, settings):
+        seen.append(e.view(t_uid)["state"])  # the time follow-up is handled before the add-on is asked
+        e.mono[0] += 20
+        return ("pending", None)
+
+    mp = pytest.MonkeyPatch()
+    mp.setattr(type(e.runner), "_poll_one", slow)
+    try:
+        e.tick()
+    finally:
+        mp.undo()
+    assert seen == ["fired"] and e.view(t_uid)["state"] == "fired"
+
+
+def test_one_tick_spends_at_most_the_poll_budget_and_unpolled_refs_keep_their_turn(polls):
+    e = polls
+    for ref in ("1", "2", "3", "4"):
+        e.schedule_on(on(ref), "addon")
+    asked = []
+
+    def slow(self, item, granted, settings):
+        asked.append(item[2])
+        e.mono[0] += 10
+        return ("pending", None)
+
+    mp = pytest.MonkeyPatch()
+    mp.setattr(type(e.runner), "_poll_one", slow)
+    try:
+        e.tick()
+        assert len(asked) == 2  # 15 s budget, 10 s per call
+        calls = len(e.runner.poller.calls)
+        assert calls == 2  # the unasked ones were not charged
+        later(e, 0)
+        e.tick()
+        assert sorted(asked[2:]) == sorted({"1", "2", "3", "4"} - set(asked[:2]))  # the rest go first
+    finally:
+        mp.undo()
+
+
+def test_the_host_cap_is_shared_by_every_workspace_and_survives_a_restart(tmp_path):
+    from orch.host import addonpoll as ap
+
+    path = tmp_path / "addon-polls-host.json"
+    import os
+
+    uid = os.getuid()
+    a, b = ap.HostBudget(path, uid, limit=3), ap.HostBudget(path, uid, limit=3)
+    pa = ap.Poller(host=a, host_hour=3)
+    pb = ap.Poller(host=b, host_hour=3)
+    xs = [("x", "x.run.finished", str(i), 300) for i in range(4)]
+    ys = [("y", "y.run.finished", str(i), 300) for i in range(4)]
+    got = pa.plan(xs[:2], 0.0, 100.0) + pb.plan(ys, 0.0, 100.0)
+    assert len(got) == 3  # two workspaces, one cap
+    restarted = ap.Poller(host=ap.HostBudget(path, uid, limit=3), host_hour=3)  # a new process: counts are on disk
+    assert restarted.plan(xs, 0.0, 200.0) == []
+    assert len(restarted.plan(xs, 0.0, 100.0 + 3601)) > 0

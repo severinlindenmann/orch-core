@@ -10,10 +10,13 @@ code; the follow-up's deadline then wakes it as usual. Nothing an add-on says is
 
 from __future__ import annotations
 
+import fcntl
+import os
 from collections.abc import Callable, Iterable
+from pathlib import Path
 from typing import Any
 
-__all__ = ["ADDON_HOUR", "CODES", "FAILS", "HOST_HOUR", "MAX_S", "MIN_S", "PER_TICK", "Poller", "code_of"]
+__all__ = ["ADDON_HOUR", "HostBudget", "CODES", "FAILS", "HOST_HOUR", "MAX_S", "MIN_S", "PER_TICK", "Poller", "code_of"]
 
 MIN_S, MAX_S = 60, 3600
 PER_TICK = 5
@@ -30,6 +33,45 @@ _ERRORS = {
 }
 
 Item = tuple[str, str, str, int]  # (add-on name, full kind "<addon>.<kind>", ref, declared interval_s)
+
+
+class HostBudget:
+    """The host-wide hourly call count, shared by every workspace of this host (one file under the state dir, a file
+    lock around read-modify-write). It survives a restart; an unreadable file counts as full (fail closed)."""
+
+    def __init__(self, path: Path, host_uid: int, limit: int = HOST_HOUR) -> None:
+        self.path, self.host_uid, self.limit = Path(path), host_uid, limit
+
+    def _locked(self, wall: float, take: int, give: int = 0) -> bool:
+        from . import custody
+
+        custody.ensure_private_dir(self.path.parent, self.host_uid)
+        fd = os.open(self.path.with_suffix(".lock"), os.O_RDWR | os.O_CREAT | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            try:
+                saved = custody.read_json(self.path, self.host_uid)
+            except Exception:  # noqa: BLE001 - fail closed: unreadable counts as full
+                return False
+            calls = [
+                float(c) for c in (saved or {}).get("calls", []) if isinstance(c, (int, float)) and wall - c < 3600
+            ]
+            if give:
+                calls = sorted(calls)[: max(len(calls) - give, 0)]
+            if take:
+                if len(calls) + take > self.limit:
+                    return False
+                calls += [wall] * take
+            custody.write_private(self.path, {"calls": calls})
+            return True
+        finally:
+            os.close(fd)
+
+    def take(self, wall: float) -> bool:
+        return self._locked(wall, 1)
+
+    def give_back(self, wall: float) -> None:
+        self._locked(wall, 0, 1)
 
 
 def code_of(runner_code: str) -> str:
@@ -50,7 +92,9 @@ class Poller:
         per_tick: int = PER_TICK,
         saved: dict[str, Any] | None = None,
         save: Callable[[dict[str, Any]], None] | None = None,
+        host: HostBudget | None = None,
     ) -> None:
+        self.host = host
         self.addon_hour, self.host_hour, self.per_tick = addon_hour, host_hour, per_tick
         self._save = save
         saved = saved if isinstance(saved, dict) else {}
@@ -79,7 +123,7 @@ class Poller:
             key=lambda it: self._next.get(key_of(it), 0.0),
         )
         per_addon: dict[str, int] = {}
-        host = len(self.calls)
+        host = len(self.calls)  # only without a shared budget
         used = {}
         for _, name in self.calls:
             used[name] = used.get(name, 0) + 1
@@ -89,9 +133,11 @@ class Poller:
             if (
                 per_addon.get(name, 0) >= self.per_tick
                 or used.get(name, 0) >= self.addon_hour
-                or host >= self.host_hour
+                or (self.host is None and host >= self.host_hour)
             ):
                 continue  # over budget: it keeps its place and goes first next tick
+            if self.host is not None and not self.host.take(wall):
+                break  # the host-wide hour is used up: nothing else this tick
             per_addon[name] = per_addon.get(name, 0) + 1
             used[name] = used.get(name, 0) + 1
             host += 1
@@ -100,6 +146,16 @@ class Poller:
         if out:
             self._persist()
         return out
+
+    def refund(self, item: Item, wall: float) -> None:
+        """Give back the call planned for an item that was not asked (the tick ran out of time)."""
+        for i in range(len(self.calls) - 1, -1, -1):
+            if self.calls[i][1] == item[0]:
+                del self.calls[i]
+                break
+        if self.host is not None:
+            self.host.give_back(wall)
+        self._persist()
 
     # -- outcomes
     def done(self, item: Item) -> None:

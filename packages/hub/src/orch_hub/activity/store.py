@@ -59,6 +59,11 @@ ACTIVITY_TYPES = (
     "hub.backup.downloaded",
     "hub.backup.restored",
     "hub.restore.confirmed",
+    "oidc.signed_in",
+    "oidc.member_created",
+    "oidc.linked",
+    "oidc.unlinked",
+    "oidc.settings_changed",
     "agent.event",
 )
 # Only structured references, never request bodies, credentials, or free-form notes.

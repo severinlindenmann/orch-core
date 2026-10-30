@@ -54,6 +54,8 @@ GOOGLE_DISCOVERY = "https://accounts.google.com/.well-known/openid-configuration
 
 #: what the sign-in page says for the refusals a person can act on (everything else: "Company login did not work.")
 PLAIN = {
+    "not_allowed": "This company account is not set up for this hub. Ask your hub admin.",
+    "failed": "Company login did not work. Try again, or sign in with your password.",
     "rate_limited": "Too many tries. Try again in a minute.",
 }
 
@@ -265,10 +267,14 @@ class Oidc:
             tx = json.loads(AESGCM(self._box).decrypt(raw[:12], raw[12:], self._aad))
         except Exception:  # noqa: BLE001 - tampered, foreign, truncated: all the same refusal
             return None
-        ok = isinstance(tx, dict) and all(type(tx.get(k)) is str for k in ("state", "nonce", "verifier"))
+        ok = isinstance(tx, dict) and all(
+            type(tx.get(k)) is str for k in ("state", "nonce", "verifier", "purpose", "bind")
+        )
         return tx if ok and type(tx.get("exp")) in (int, float) and type(tx.get("fresh")) is bool else None
 
-    def start(self, *, fresh: bool = False, source: str = "") -> tuple[str, str]:
+    def start(
+        self, *, fresh: bool = False, source: str = "", purpose: str = "signin", bind: str = ""
+    ) -> tuple[str, str]:
         """``(authorization url, tx cookie value)``. ``fresh`` asks the IdP to re-authenticate the person. No server state:
         state, nonce and the PKCE verifier live in the sealed cookie (AES-GCM under the hub's key), so unauthenticated
         starts cost nothing to keep and can never block anyone."""
@@ -279,7 +285,15 @@ class Oidc:
         meta = self._discover()
         state, nonce, verifier = (secrets.token_urlsafe(32) for _ in range(3))
         cookie = self._seal(
-            {"state": state, "nonce": nonce, "verifier": verifier, "fresh": fresh, "exp": self._now() + TX_TTL_S}
+            {
+                "state": state,
+                "nonce": nonce,
+                "verifier": verifier,
+                "fresh": fresh,
+                "exp": self._now() + TX_TTL_S,
+                "purpose": purpose,
+                "bind": bind,
+            }
         )
         q = {
             "response_type": "code",
@@ -308,7 +322,17 @@ class Oidc:
                 self._done.popitem(last=False)
             self._done[nonce] = exp
 
-    def finish(self, cookie: str, state: str, code: str, client_secret: str, source: str = "") -> Identity:
+    def finish(
+        self,
+        cookie: str,
+        state: str,
+        code: str,
+        client_secret: str,
+        source: str = "",
+        *,
+        purpose: str = "signin",
+        bind: str = "",
+    ) -> Identity:
         """Check the callback, swap the code, verify the id_token. Raises :class:`OidcError`; never returns a half result.
         The caller clears the cookie whatever happens. Replay protection: the IdP's single-use code and the nonce in the
         id_token; here an in-flight lock per login (no parallel finishes) and a set of completed ones."""
@@ -321,6 +345,10 @@ class Oidc:
             raise OidcError("bad_state")
         if not isinstance(state, str) or not secrets.compare_digest(state.encode(), tx["state"].encode()):
             raise OidcError("bad_state")  # URL and cookie must be the same login
+        if (
+            tx["purpose"] != purpose or tx["bind"] != bind
+        ):  # a link / test login cannot be used to sign in, or by another person
+            raise OidcError("bad_state")
         if not isinstance(code, str) or not (0 < len(code) <= 2048):
             raise OidcError("bad_code")
         nonce = tx["nonce"]

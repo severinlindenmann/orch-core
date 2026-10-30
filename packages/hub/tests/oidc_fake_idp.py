@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
 from typing import Any
 
 from joserfc import jwt
@@ -37,6 +39,7 @@ class FakeIdp(Http):
         self.header_extra: dict[str, Any] = {}
         self.last_form: dict[str, str] = {}
         self.nonce = ""
+        self.challenge: str | None = None  # when set, the token endpoint checks PKCE like a real IdP
 
     def get_json(self, url: str) -> dict[str, Any]:
         if url.endswith("openid-configuration"):
@@ -79,6 +82,12 @@ class FakeIdp(Http):
 
     def post_form(self, url: str, data: dict[str, str]) -> dict[str, Any]:
         self.last_form = data
+        if self.challenge is not None:
+            got = (
+                base64.urlsafe_b64encode(hashlib.sha256(data["code_verifier"].encode()).digest()).rstrip(b"=").decode()
+            )
+            if got != self.challenge:
+                raise OSError("invalid_grant: PKCE verification failed")
         return {"id_token": self.token(), "access_token": "x"}
 
 

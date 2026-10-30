@@ -18,8 +18,8 @@ class T(Oidc):
     def start(self, *, fresh=False, source="t"):
         return super().start(fresh=fresh, source=source)
 
-    def finish(self, cookie, state, code, secret, source="t"):
-        return super().finish(cookie, state, code, secret, source)
+    def finish(self, cookie, state, code, secret, source="t", **kw):
+        return super().finish(cookie, state, code, secret, source, **kw)
 
 
 def make(cfg=None, clock=None):

@@ -283,3 +283,22 @@ def test_logs_are_admin_only_audited_and_part_closed(rig):
     os.chmod(rig.state / HS.AUDIT_FILE, 0o400)  # an audit line that cannot be written refuses the read
     r = rig.svc.handle({"op": "logs", "user_id": rig.admin, "channel_id": rig.chan, "part": "relay"})
     assert r["code"] == "unavailable" and len((rig.state / HS.AUDIT_FILE).read_text().splitlines()) == n
+
+
+def test_client_over_the_real_socket(rig, short):
+    from orch_hub.services.helper_client import HelperClient
+
+    path = short / "c.sock"
+    cl = HelperClient(path)
+    assert cl.info() == {"state": "not_set_up", "parts": []}  # no socket file yet
+    srv = HS.HelperServer(rig.svc, path)
+    srv.bind()
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        assert cl.info()["state"] == "up" and cl.info()["host_id"] == "vps1"
+        with pytest.raises(P.HelperError) as e:
+            cl.call("prepare", user_id=rig.admin, channel_id=rig.chan, part="../x", action="stop")
+        assert e.value.code == "unknown_part"
+    finally:
+        srv.stop()
+    assert cl.info()["state"] == "not_set_up"  # the socket file is gone with the server

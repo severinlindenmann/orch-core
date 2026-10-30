@@ -34,7 +34,7 @@ import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
-from orch import childenv, oslock
+from orch import childenv, oslock, privdir
 from orch.layout import STATE_DIR, WORK_DIR
 from orch.ops.errors import OrchError
 
@@ -338,12 +338,14 @@ def _put_back(staging: Path, root: Path) -> None:
 
 
 def _trusted(p: Path) -> bool:
-    """Ours, not a link, not writable by group or others (checked with lstat: nothing is followed)."""
+    """Ours, not a link, not writable by anyone else (checked with lstat: nothing is followed). The write rule is
+    orch.privdir's one answer for person-owned paths."""
     try:
         st = os.lstat(p)
     except OSError:
         return False
-    return stat.S_ISDIR(st.st_mode) and st.st_uid == os.getuid() and not st.st_mode & 0o022
+    uid = os.getuid()
+    return stat.S_ISDIR(st.st_mode) and st.st_uid == uid and not privdir.others_can_write(st, uid)
 
 
 def _remove(p: Path) -> None:
@@ -384,7 +386,13 @@ class _Sidecar:
         else:
             os.mkdir(self.dir, 0o700)
         flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
-        fd = os.open(self.dir / "lock", flags, 0o600)
+        try:
+            fd = os.open(self.dir / "lock", flags, 0o600)
+        except OSError as exc:
+            raise OrchError(
+                "migrate.backup_refused",
+                f"the restore lock in {self.dir.name} cannot be used ({exc.strerror or exc}); it may be a link",
+            ) from None
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid():
             os.close(fd)
@@ -618,7 +626,7 @@ def _swap_in(
 def recover_interrupted(root: Path, say: Callable[[str], None] | None = None) -> bool:
     """Finish or refuse a restore of ``root`` that was killed. True if there was one to recover. Takes the sidecar lock
     (so a restore that is still running is never touched) and raises plain-worded errors when it cannot be sure."""
-    root = Path(root).resolve() if root.exists() else root.parent.resolve() / root.name
+    root = Path(os.path.realpath(root))
     if journal_restore_pending(root) is None:
         return False
     side = _Sidecar(root)

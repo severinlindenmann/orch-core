@@ -117,7 +117,11 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextI
                 raise OrchError("update.interrupted", pending)
             p = plan(root, kind)
         except OrchError as exc:
-            if exc.code in ("migrate.backup_refused", "update.interrupted"):  # a half-done restore: never "skipped, ok"
+            if exc.code in (
+                "migrate.backup_refused",
+                "update.interrupted",
+                "migrate.running",
+            ):  # a half-done restore: never "skipped, ok"
                 row = {"root": label, "kind": kind, "error": {"code": exc.code, "message": exc.message}}
                 result.append(row)
                 code = max(code, ERRORS[exc.code].exit)

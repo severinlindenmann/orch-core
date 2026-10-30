@@ -1333,3 +1333,45 @@ def test_a_carried_folder_on_another_disk_is_refused_in_plain_words(root, env, m
         bk.restore(b, root, env)
     monkeypatch.setattr(bk.os, "rename", real)
     assert (root / "install/tools/orch-1/bin").read_text() == "tool"
+
+
+def test_a_symlinked_host_root_killed_between_the_renames_is_found_and_recovered(tmp_path, monkeypatch):
+    real = tmp_path / "data" / "orch"
+    link = tmp_path / "state"
+    real.parent.mkdir()
+    link.symlink_to(real)  # e.g. ~/.config/orch -> /data/orch
+    env = {"HOME": str(tmp_path / "home"), "ORCH_STATE_DIR": str(link)}
+    init_root(real, "host")
+    key = _parts(real)
+    b = bk.create_backup(real, "host", 1, 2, env)
+    jr.write_journal("installed", env, backups={str(b.resolve()): 1})
+    _killed_restore(b, link, env, monkeypatch, "between")
+    code, out, _ = run_cli(["--check", "--json"], env, tmp_path)
+    doc = json.loads(out)
+    assert code != 0 and doc["ok"] is False and "stopped while putting back" in doc["roots"][0]["error"]["message"]
+    assert code_of(open_root, link, "host", env) == "update.interrupted"
+    code, out, _ = run_cli(["--apply", "--json"], env, tmp_path)
+    assert code == 0 and key.read_text() == "K" and read_format(real, "host") == 1
+
+
+def test_a_busy_sidecar_is_an_error_not_a_skip(tmp_path):
+    env = {"HOME": str(tmp_path / "home"), "ORCH_STATE_DIR": str(tmp_path / "state")}
+    store = tmp_path / "proj" / ".orch"
+    init_root(store, "workspace")
+    plant_record(store, store.with_name(".orch.restore-aaaaaaaa"), store.with_name(".orch.replaced-aaaaaaaa"))
+    side = bk._Sidecar(store.resolve())
+    side.open()
+    try:
+        code, out, _ = run_cli(["--apply", "--workspace", str(tmp_path / "proj")], env, tmp_path)
+    finally:
+        side.close()
+    assert code != 0 and "already running" in out and "skipped" not in out
+
+
+def test_a_symlinked_sidecar_lock_fails_in_plain_words(root, tmp_path):
+    side = root.with_name(".root.restore")
+    side.mkdir(mode=0o700)
+    (side / "lock").symlink_to(tmp_path / "victim")
+    with pytest.raises(OrchError, match="cannot be used"):
+        bk._Sidecar(root.resolve()).open()
+    assert not (tmp_path / "victim").exists()

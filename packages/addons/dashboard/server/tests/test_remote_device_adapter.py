@@ -140,6 +140,24 @@ def test_bad_frame_closes_malformed(app, auth, ws):
     run(main())
 
 
+def test_socket_frames_before_the_101_or_on_a_plain_request_close_malformed(app, auth, ws):
+    async def main():
+        w = Wire(App(spy_app([]), auth), auth, ws)
+        w.open()
+        w.send(WS_OPEN, 1, ws_head("/term"))
+        w.send(WS_TEXT, 1, b"early")  # the app has not accepted: no 101 has left
+        await w.until(lambda: w.closes)
+        assert w.closes == [(STREAM, "malformed")]
+        w2 = Wire(App(spy_app([]), auth), auth, ws)
+        w2.open(OTHER)
+        w2.request(1, "GET", "/x", sid=OTHER, end=False)
+        w2.send(WS_TEXT, 1, b"x", sid=OTHER)  # a socket frame on a plain request
+        await w2.until(lambda: w2.closes)
+        assert w2.closes == [(OTHER, "malformed")]
+
+    run(main())
+
+
 def test_a_frame_that_is_not_base64_or_too_short_closes_malformed(app, auth, ws):
     async def main():
         w = Wire(app, auth, ws)

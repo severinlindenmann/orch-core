@@ -199,7 +199,7 @@ class Tracker:
                 if kind == END:
                     x["down"] = True
         else:  # WS_TEXT, WS_BINARY, WS_CLOSE
-            if not x["ws"] or d in x["shut"] or not x["acc"]:
+            if not x["ws"] or d in x["shut"] or (d == "h2d" and not x["head"]) or (kind != WS_CLOSE and not x["acc"]):
                 raise _Fail("malformed")
             if kind == WS_CLOSE:
                 x["shut"].add(d)

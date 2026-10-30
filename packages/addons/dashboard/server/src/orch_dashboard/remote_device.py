@@ -177,6 +177,8 @@ class Exchange:
     gone: asyncio.Event = field(default_factory=asyncio.Event)  # the device or the stream ended this exchange
     device_closed: bool = False
     our_close: bool = False
+    req_end: bool = False  # the request's END came
+    accepted: bool = False  # the 101 left for the device: WebSocket frames flow only after it, in both directions
 
 
 @dataclass
@@ -189,6 +191,7 @@ class Stream:
     unsent: int = 0
     room: asyncio.Event = field(default_factory=asyncio.Event)
     dead: bool = False
+    top: int = 0  # the highest exchange id opened: ids only rise
 
     def open_counts(self) -> tuple[int, int]:
         http = sum(1 for e in self.exchanges.values() if not e.ws)
@@ -277,27 +280,39 @@ class Terminator:
         kind, ident, payload = pt[0], int.from_bytes(pt[1:5], "big"), pt[5:]
         if kind in (PING, PONG):
             return
+        if not HEAD <= kind <= PONG:
+            raise Malformed("kind")
         ex = st.exchanges.get(ident)
         if kind in (HEAD, WS_OPEN):
-            if ex is not None or ident == 0:
-                raise Malformed("id")
+            if ex is not None or ident <= st.top:
+                raise Malformed("id")  # ids rise strictly: a reused or lower one is malformed
+            st.top = ident
             self.on_open_exchange(st, ident, kind == WS_OPEN, payload, msg)
         elif ex is None:
+            if ident > st.top:
+                raise Malformed("id")  # a frame for an exchange the device never opened
             return  # an exchange that ended: the peer sent it before it saw our RESET
         elif kind == BODY:
-            if ex.ws or ex.state != "collecting":
+            if ex.ws or ex.req_end:
+                raise Malformed("body")
+            if ex.state != "collecting":
                 return
             if len(ex.buf) + len(payload) > REQUEST_BODY_MAX:
                 self.reset(st, ex, "too_large")
                 return
             ex.buf.extend(payload)
         elif kind == END:
-            if not ex.ws and ex.state == "collecting":
+            if ex.ws or ex.req_end:
+                raise Malformed("end")
+            ex.req_end = True
+            if ex.state == "collecting":
                 self.dispatch(st, ex)
         elif kind == RESET:
             self.end_exchange(st, ex)
         elif kind in (WS_TEXT, WS_BINARY):
-            if ex.ws and ex.inbox is not None:
+            if not ex.ws or not ex.accepted or ex.device_closed:
+                raise Malformed("ws_frame")  # not a socket, before the 101 (or after a refusal), or after its close
+            if ex.inbox is not None:
                 self.to_inbox(
                     st,
                     ex,
@@ -306,7 +321,9 @@ class Terminator:
                     else {"type": "websocket.receive", "bytes": payload},
                 )
         elif kind == WS_CLOSE:
-            if ex.ws and ex.inbox is not None:
+            if not ex.ws or ex.device_closed:
+                raise Malformed("ws_close")
+            if ex.inbox is not None:
                 ex.device_closed = True
                 code = int.from_bytes(payload, "big")
                 self.to_inbox(st, ex, {"type": "websocket.disconnect", "code": code})
@@ -556,7 +573,7 @@ class Terminator:
             if ex.state == "done":
                 return
             if kind == "websocket.accept" and not accepted and not answered:
-                accepted = True
+                accepted = ex.accepted = True
                 await self.emit(st, frame(HEAD, ex.id, response_head(101, [])))
             elif kind in ("websocket.send",) and accepted and not ex.our_close:
                 if message.get("text") is not None:

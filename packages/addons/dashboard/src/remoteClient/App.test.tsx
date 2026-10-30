@@ -8,7 +8,7 @@ afterEach(cleanup)
 const row = (o: Partial<Row>): Row => ({ workspace_id: 'a'.repeat(32), online: true, added: true, name: 'Website', name_from_hub: false, hub_name: 'Website', open: false, ended: null, ...o })
 const state = (o: Partial<State> = {}): State => ({
   signed_in: true, hub: { id: 'f'.repeat(32), address: 'hub.acme.example:8443' },
-  presence: { available: true, method: 'touch_id', tied: false }, prompt: null, open: [], ended: {}, computer: 'Anna Mac', ...o,
+  presence: { available: true, method: 'touch_id', tied: false }, prompt: null, pin: null, open: [], ended: {}, computer: 'Anna Mac', ...o,
 })
 function fakeApi(o: Partial<Api> = {}): Api {
   return {
@@ -21,6 +21,7 @@ function fakeApi(o: Partial<Api> = {}): Api {
     open: vi.fn(async () => undefined),
     end: vi.fn(async () => undefined),
     answer: vi.fn(async () => undefined),
+    pin: vi.fn(async () => undefined),
     ...o,
   }
 }
@@ -141,6 +142,29 @@ describe('confirm', () => {
     expect(await screen.findByRole('button', { name: 'Confirm with your key' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
     await waitFor(() => expect(api.answer).toHaveBeenCalledWith('p1', false))
+  })
+})
+
+describe('security key PIN', () => {
+  it('is not asked unless the key asks, and then on its own screen, sent once', async () => {
+    const quiet = fakeApi()
+    mount(quiet)
+    await screen.findByRole('heading', { name: 'Workspaces' })
+    expect(screen.queryByLabelText('PIN')).toBeNull()
+    cleanup()
+    const api = fakeApi({ state: vi.fn(async () => state({ pin: 'q1', presence: { available: true, method: 'key', tied: null } })) })
+    mount(api)
+    expect(await screen.findByRole('heading', { name: "Enter your security key's PIN" })).toBeInTheDocument()
+    expect(screen.getByText('Your key asks for it. It is used once and not saved.')).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('PIN'), { target: { value: '4821' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+    await waitFor(() => expect(api.pin).toHaveBeenCalledWith('q1', '4821'))
+  })
+  it('Cancel sends nothing to the key', async () => {
+    const api = fakeApi({ state: vi.fn(async () => state({ pin: 'q1' })) })
+    mount(api)
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(api.pin).toHaveBeenCalledWith('q1', null))
   })
 })
 

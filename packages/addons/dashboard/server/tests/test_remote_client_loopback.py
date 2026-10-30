@@ -718,3 +718,51 @@ def test_stop_ends_the_enrollment_and_adds_nothing(static):
     finally:
         C._enroll.parse_code = orig
         ctl.stop()
+
+
+def test_the_security_key_pin_is_asked_on_the_home_page_and_used_once(static):
+    import threading
+    import time
+
+    from orch_dashboard.remote_client import PinAsker
+
+    pin = PinAsker(wait_s=5)
+    ctl, api = run_home(fake_client(), static)
+    ctl.pin = pin
+    got = []
+    t = threading.Thread(target=lambda: got.append(pin.ask()))
+    try:
+        assert api("GET", "/state")[1]["pin"] is None  # nothing asks: no PIN screen
+        t.start()
+        for _ in range(100):
+            ident = api("GET", "/state")[1]["pin"]
+            if ident:
+                break
+            time.sleep(0.02)
+        assert ident
+        assert api("POST", "/pin", {"id": "wrong", "pin": "1234"})[1] == {"ok": False}
+        assert api("POST", "/pin", {"id": ident, "pin": "1234"})[1] == {"ok": True}
+        t.join(5)
+        assert got == ["1234"]
+        assert api("GET", "/state")[1]["pin"] is None and pin._pin is None  # nothing is kept
+        assert api("POST", "/pin", {"id": ident, "pin": 12})[0] == 400
+    finally:
+        ctl.stop()
+
+
+def test_cancelling_the_pin_prompt_gives_the_key_nothing(static):
+    import threading
+
+    from orch_dashboard.remote_client import PinAsker
+
+    pin = PinAsker(wait_s=5)
+    got = []
+    t = threading.Thread(target=lambda: got.append(pin.ask()))
+    t.start()
+    import time
+
+    while not pin.current():
+        time.sleep(0.01)
+    assert pin.answer(pin.current(), None)
+    t.join(5)
+    assert got == [None]

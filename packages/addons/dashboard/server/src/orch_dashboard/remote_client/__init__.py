@@ -7,7 +7,7 @@ open workspace."""
 
 from orch.remoteclient import REMOTE_API
 
-from .controller import Controller, GatedPresence, workspace_label
+from .controller import Controller, GatedPresence, PinAsker, workspace_label
 from .origin import Origin
 from .static import StaticSite, installed_static_dir
 
@@ -16,6 +16,7 @@ __all__ = [
     "Controller",
     "GatedPresence",
     "Origin",
+    "PinAsker",
     "StaticSite",
     "installed_static_dir",
     "workspace_label",

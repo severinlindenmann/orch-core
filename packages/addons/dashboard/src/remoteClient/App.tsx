@@ -50,6 +50,7 @@ export function App({ api, pollMs = 1500 }: { api: Api | null; pollMs?: number }
 
   if (!api) return <Shell><h1>Open this page from orch</h1><p>Run <b>orch remote open</b> to get a new link.</p></Shell>
   if (!state) return <Shell><p>{failed ? 'The client is not running. Start it again with orch remote open.' : 'Loading…'}</p></Shell>
+  if (state.pin) return <Shell><PinScreen key={state.pin} api={api} id={state.pin} onDone={refresh} /></Shell>
   if (state.prompt) return <Shell><Confirm key={state.prompt.id} api={api} prompt={state.prompt} method={state.presence.method} onDone={refresh} /></Shell>
   if (!state.signed_in) return <Shell><Connect api={api} onDone={refresh} /></Shell>
   if (screen.name === 'add') return <Shell><Add api={api} onBack={() => setScreen({ name: 'list' })} pollMs={Math.min(pollMs, 700)} /></Shell>
@@ -222,5 +223,30 @@ function Confirm({ api, prompt, method, onDone }: { api: Api; prompt: Prompt; me
             <button className="btn" onClick={() => void answer(true)}>{method === 'key' ? 'Confirm with your key' : 'Confirm with Touch ID'}</button>
           </div>}
     </>
+  )
+}
+
+/** Shown only when the security key asks for its PIN (a key with a PIN, not Touch ID). It is the key's own secret, not a
+ * confirm word: it is sent to this client only, kept in memory until the key has used it, never stored. */
+function PinScreen({ api, id, onDone }: { api: Api; id: string; onDone: () => void }) {
+  const [pin, setPin] = useState('')
+  const [sent, setSent] = useState(false)
+  const send = async (value: string | null) => {
+    setSent(true)
+    try { await api.pin(id, value) } finally { onDone() }
+  }
+  return (
+    <form onSubmit={(e) => { e.preventDefault(); if (pin) void send(pin) }}>
+      <h2>Enter your security key's PIN</h2>
+      <p className="muted">Your key asks for it. It is used once and not saved.</p>
+      <label htmlFor="rc-pin">PIN</label>
+      <input id="rc-pin" type="password" value={pin} onChange={(e) => setPin(e.target.value)} autoComplete="off" autoFocus disabled={sent} />
+      {sent
+        ? <p><span className="spin" />Touch your key…</p>
+        : <div className="gap">
+            <button type="button" className="btn sec" onClick={() => void send(null)}>Cancel</button>
+            <button className="btn" disabled={!pin}>Continue</button>
+          </div>}
+    </form>
   )
 }

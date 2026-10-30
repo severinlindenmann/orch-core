@@ -21,14 +21,14 @@ AGENT_ENV = ("ORCH_GRANT", "ORCH_SESSION")
 HELPER = Path("helper/OrchRemoteKey.app/Contents/MacOS/orch-remote-key")
 
 
-def _presence(root: Path, store):  # noqa: ANN001
+def _presence(root: Path, store, pin=None):  # noqa: ANN001
     from orch.remoteclient import Fido2Backend, HidAuthenticator, SecureEnclaveBackend
 
     if sys.platform == "darwin" and (root / HELPER).is_file():
         be = SecureEnclaveBackend(root / HELPER, store=root / "helper-keys")
         if be.available():
             return be
-    return Fido2Backend(HidAuthenticator(), store)
+    return Fido2Backend(HidAuthenticator(pin=pin), store)
 
 
 def main(
@@ -66,10 +66,11 @@ def main(
 def _run(root, single, out, err, sleep, stop) -> int:  # noqa: ANN001
     from orch.remoteclient import Client, Store
 
-    from . import Controller, GatedPresence, StaticSite, installed_static_dir
+    from . import Controller, GatedPresence, PinAsker, StaticSite, installed_static_dir
 
     store = Store(root)
-    gate = GatedPresence(_presence(root, store))
+    pin = PinAsker()  # the security key's PIN, asked on the home page only when the key needs one
+    gate = GatedPresence(_presence(root, store, pin.ask))
     client = Client(store, presence=gate)
     try:
         static = StaticSite.load(installed_static_dir())
@@ -79,7 +80,7 @@ def _run(root, single, out, err, sleep, stop) -> int:  # noqa: ANN001
     if static.page("home") is None:
         err.write("orch remote open: this dashboard build has no remote client page. Update orch.\n")
         return 1
-    ctl = Controller(client, static, gate=gate)
+    ctl = Controller(client, static, gate=gate, pin=pin)
     url = ctl.start_home()
     out.write(f"orch remote client: {url.split('#')[0]}\n")
     out.flush()

@@ -19,6 +19,8 @@ export type State = {
   hub: { id: string; address: string } | null
   presence: { available: boolean; method: 'touch_id' | 'key'; tied: boolean | null }
   prompt: Prompt | null
+  /** Set only while the security key itself asks for its PIN. */
+  pin: string | null
   open: string[]
   ended: Record<string, string>
   computer: string
@@ -42,6 +44,8 @@ export type Api = {
   open(workspaceId: string): Promise<void>
   end(workspaceId: string): Promise<void>
   answer(id: string, approve: boolean): Promise<void>
+  /** The key's PIN, or null to cancel. Held in memory by the client until the key has used it. */
+  pin(id: string, pin: string | null): Promise<void>
 }
 
 const STORAGE = 'orch-remote-home'
@@ -85,5 +89,6 @@ export function createApi(token: string, fetcher: typeof fetch = fetch): Api {
     open: async (workspaceId) => { await call('POST', '/open', { workspace_id: workspaceId }) },
     end: async (workspaceId) => { await call('POST', '/end', { workspace_id: workspaceId }) },
     answer: async (id, approve) => { await call('POST', '/answer', { id, approve }) },
+    pin: async (id, pin) => { await call('POST', '/pin', { id, pin }) },
   }
 }

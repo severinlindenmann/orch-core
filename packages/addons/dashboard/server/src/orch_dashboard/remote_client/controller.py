@@ -28,7 +28,7 @@ from .listener import Listener, bind_loopback
 from .origin import Origin, error_doc
 from .static import StaticSite
 
-__all__ = ["Controller", "GatedPresence", "workspace_label"]
+__all__ = ["Controller", "GatedPresence", "PinAsker", "workspace_label"]
 
 PROMPT_WAIT_S = 120.0
 HEX32 = re.compile(r"[0-9a-f]{32}")
@@ -112,6 +112,53 @@ class GatedPresence:
         self.closed = True
 
 
+class PinAsker:
+    """The security key's PIN, asked of the person on the home page only when the key itself asks for one. The PIN is
+    held in memory from the moment it is typed until the key has used it; it is never written, logged or reused."""
+
+    def __init__(self, wait_s: float = PROMPT_WAIT_S) -> None:
+        self.wait_s = wait_s
+        self._mu = threading.Lock()
+        self._req: tuple[str, threading.Event] | None = None
+        self._pin: str | None = None
+        self.closed = False
+
+    def ask(self) -> str | None:
+        """Called by the key backend (its own thread): block until the person typed the PIN or cancelled."""
+        ev = threading.Event()
+        ident = secrets.token_urlsafe(9)
+        with self._mu:
+            self._req, self._pin = (ident, ev), None
+        end = time.monotonic() + self.wait_s
+        try:
+            while not ev.wait(0.1):
+                if self.closed or time.monotonic() > end:
+                    return None
+            with self._mu:
+                pin, self._pin = self._pin, None
+            return pin
+        finally:
+            with self._mu:
+                if self._req and self._req[0] == ident:
+                    self._req, self._pin = None, None
+
+    def current(self) -> str | None:
+        with self._mu:
+            return self._req[0] if self._req else None
+
+    def answer(self, ident: str, pin: str | None) -> bool:
+        with self._mu:
+            if not self._req or self._req[0] != ident:
+                return False
+            self._pin = pin if isinstance(pin, str) and 0 < len(pin) <= 63 else None
+            ev = self._req[1]
+        ev.set()
+        return True
+
+    def shut(self) -> None:
+        self.closed = True
+
+
 def workspace_label(client: Client, ws: str | None) -> str:
     """What a prompt calls a workspace: the name it gave through the end-to-end session, else its short id."""
     if ws is None:
@@ -153,7 +200,9 @@ class Controller:
         computer_name: str | None = None,
         clock: Callable[[], float] = time.time,
         launch_dir: Path | None = None,
+        pin: PinAsker | None = None,
     ) -> None:
+        self.pin = pin
         self.client, self.static, self.gate = client, static, gate
         self._clock = clock
         # the browser is opened with the path of a private redirect file, never an address with a code in it (argv)
@@ -188,6 +237,8 @@ class Controller:
     def stop(self) -> None:
         if self.gate:
             self.gate.shut()
+        if self.pin:
+            self.pin.shut()
         for ws in list(self._open):
             self.end(ws)
         if self.home_listener:
@@ -226,6 +277,11 @@ class Controller:
         if method == "POST" and p == "/end":
             self.end(_ws(body))
             return 200, {"ok": True}
+        if method == "POST" and p == "/pin":
+            ident, pin = body.get("id"), body.get("pin")
+            if type(ident) is not str or (pin is not None and type(pin) is not str) or self.pin is None:
+                return 400, error_doc("malformed", "That did not look right.")
+            return 200, {"ok": self.pin.answer(ident, pin)}
         if method == "POST" and p == "/answer":
             ident, ok = body.get("id"), body.get("approve")
             if type(ident) is not str or type(ok) is not bool or self.gate is None:
@@ -245,6 +301,7 @@ class Controller:
                 "tied": getattr(self.gate.inner, "bound", None) if self.gate else None,
             },
             "prompt": None if pend is None else self._prompt_view(pend),
+            "pin": self.pin.current() if self.pin else None,
             "open": sorted(self._open),
             "ended": dict(self._ended),
             "computer": self.computer_name,

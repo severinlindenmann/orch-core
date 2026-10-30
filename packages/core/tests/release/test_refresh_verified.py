@@ -174,7 +174,7 @@ def test_never_published_is_the_only_exit_3_case():
     with pytest.raises(refresh.NothingToRefresh):
         current(None, {})
     with pytest.raises(refresh.Refused, match="no channel.json"):
-        current(None, {}, listed=["v2.0.0.dev7"])
+        current(None, {"v2.0.0.dev7": envelope(manifest(7))}, listed=["v2.0.0.dev7"])
 
 
 def test_unexpected_exceptions_become_refused():
@@ -293,21 +293,41 @@ def test_a_kept_tag_whose_release_is_retitled_or_deleted_is_refused():
         current(old, {"v2.0.0.dev7": old}, listed=["v2.0.0.dev7", "v2.0.0.dev9"])
 
 
-def test_main_is_anchored_by_plain_version_tags_only():
+def test_main_skips_test_candidate_tags_that_a_production_verifier_cannot_check():
     env = envelope(manifest(7, channel="main", version="2.0.0"))
+    cand = envelope(manifest(3, channel="test-x"))  # the test cert lists no test-*: unverifiable here, like in prod
     t = trusted.trusted_current(
         "main", revocations(), ref_verify, NOW,
-        get_pointer=lambda: env, get_release=lambda tag: {"v2.0.0": env}.get(tag),
+        get_pointer=lambda: env, get_release=lambda tag: {"v2.0.0": env, "v2.0.0.dev3": cand}.get(tag),
         tag_commit=lambda tag: SHA, releases_for_channel=lambda: ["v2.0.0", "v2.0.0.dev3"],
     )  # fmt: skip
-    assert t.tag == "v2.0.0"  # the test-candidate tag (no release here) does not anchor main
+    assert t.tag == "v2.0.0"
 
 
-def test_a_tag_of_another_channel_is_refused_not_ignored_silently():
+def test_a_verified_release_of_another_channel_is_skipped():
     other = envelope(manifest(9, channel="develop"))
-    with pytest.raises(trusted.Refused):
+    mine = envelope(manifest(7, channel="main", version="2.0.0"))
+    t = trusted.trusted_current(
+        "main", revocations(), ref_verify, NOW,
+        get_pointer=lambda: mine, get_release=lambda tag: {"v2.0.0": mine, "v2.0.0.dev9": other}.get(tag),
+        tag_commit=lambda tag: SHA, releases_for_channel=lambda: ["v2.0.0", "v2.0.0.dev9"],
+    )  # fmt: skip
+    assert t.seq == 7  # the higher seq belongs to develop: not an anchor of main
+
+
+def test_the_first_publish_of_a_new_channel_works_after_a_main_release():
+    """Tags of other channels exist, this channel has no pointer yet: NothingToRefresh, not a refusal."""
+    main = envelope(manifest(7, channel="main", version="2.0.0"))
+    with pytest.raises(trusted.NothingToRefresh):
         trusted.trusted_current(
-            "test-x", revocations(), ref_verify, NOW,
-            get_pointer=lambda: envelope(manifest(7, channel="test-x")), get_release=lambda tag: other,
-            tag_commit=lambda tag: SHA, releases_for_channel=lambda: ["v2.0.0.dev9"],
+            "develop", revocations(), ref_verify, NOW,
+            get_pointer=lambda: None, get_release=lambda tag: {"v2.0.0": main}.get(tag),
+            tag_commit=lambda tag: SHA, releases_for_channel=lambda: ["v2.0.0"],
         )  # fmt: skip
+
+
+def test_an_unverifiable_release_still_refuses():
+    bad = envelope(manifest(9, channel="develop"), key=Ed25519PrivateKey.from_private_bytes(bytes(range(40, 72))))
+    mine = envelope(manifest(7))
+    with pytest.raises(trusted.Refused):
+        current(mine, {"v2.0.0.dev7": mine, "v2.0.0.dev9": bad})

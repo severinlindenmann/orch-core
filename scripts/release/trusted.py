@@ -146,16 +146,32 @@ def _claimed_channel(raw: bytes) -> str:
     return c
 
 
-def _channel_tags(channel: str, tags: list[str]) -> list[str]:
-    """Release tags that can anchor ``channel``: main takes plain versions (v2.0.0); a test channel takes the
-    ``.dev<seq>`` candidates. A production verifier refuses test channels, so those never anchor main."""
-    return [t for t in tags if channel != "main" or ".dev" not in t]
+def _anchors(channel, tags, extra, revocations, verify, now, get_release):  # type: ignore[no-untyped-def]
+    """``{tag: verified doc}`` of every release that belongs to ``channel``. Each tag is verified under the channel its
+    release CLAIMS; the signature proves where it belongs, and a verified release of another channel is skipped. A tag
+    whose release is missing, or does not verify, is a Refused (fail closed). One exception, documented: for ``main``
+    a ``.dev`` tag that claims a ``test-*`` channel is skipped unverified, because the production verifier refuses
+    test channels by design, so such a release could never verify there (and never anchors main)."""
+    out: dict[str, dict[str, Any]] = {}
+    for t in sorted({*tags, *extra}):
+        raw = get_release(t)
+        if raw is None:
+            raise Refused(f"{t}: a git tag exists but its immutable release is missing or was retitled/deleted")
+        claimed = _claimed_channel(raw)
+        if channel == "main" and ".dev" in t and claimed.startswith("test-"):
+            continue
+        rdoc = verify_published(raw, claimed, revocations, verify, now, allow_expired=True)
+        if f"v{rdoc['version']}" != t:
+            raise Refused(f"{t}: the release names another version")
+        if rdoc["channel"] == channel:
+            out[t] = rdoc
+    return out
 
 
 def _trusted_current(channel, revocations, verify, now, get_pointer, get_release, tag_commit, releases_for_channel):  # type: ignore[no-untyped-def]
     pointer = get_pointer()
     if pointer is None:
-        if _channel_tags(channel, releases_for_channel()):
+        if _anchors(channel, releases_for_channel(), (), revocations, verify, now, get_release):
             raise Refused(f"channel-{channel} has version releases but no channel.json")
         raise NothingToRefresh(channel)
     doc = verify_published(pointer, channel, revocations, verify, now, allow_expired=True)
@@ -167,17 +183,12 @@ def _trusted_current(channel, revocations, verify, now, get_pointer, get_release
         raise Refused(f"{tag}: commit does not match the git tag")
     # Anchor in immutable data: the pointer is mutable and never picks the release. Every immutable version release of
     # the channel must verify (fail closed), and the pointer must name the one with the highest seq.
-    best_tag, best = tag, None
-    for t in sorted({tag, *_channel_tags(channel, releases_for_channel())}):
-        raw = get_release(t)
-        if raw is None:
-            raise Refused(f"{t}: a git tag exists but its immutable release is missing or was retitled/deleted")
-        rdoc = verify_published(raw, _claimed_channel(raw), revocations, verify, now, allow_expired=True)
-        if rdoc["channel"] != channel:
-            raise Refused(f"{t}: the verified release belongs to channel {rdoc['channel']}")
-        if f"v{rdoc['version']}" != t:
-            raise Refused(f"{t}: the release names another version")
-        if best is None or rdoc["seq"] > best["seq"] or (rdoc["seq"] == best["seq"] and t == tag):
+    anchors = _anchors(channel, releases_for_channel(), (tag,), revocations, verify, now, get_release)
+    if tag not in anchors:
+        raise Refused(f"{tag}: the pointer's release does not belong to channel {channel}")
+    best_tag, best = tag, anchors[tag]
+    for t, rdoc in anchors.items():
+        if rdoc["seq"] > best["seq"]:
             best_tag, best = t, rdoc
     if best_tag != tag or best["seq"] != doc["seq"]:
         raise Refused(f"channel pointer is {tag} (seq {doc['seq']}) but the highest verified release is {best_tag}: rollback?")

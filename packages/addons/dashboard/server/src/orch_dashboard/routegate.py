@@ -270,6 +270,9 @@ REMOTE_DEVICE: dict[tuple[str, str], tuple[str, str]] = {
     # the hub profile (who this workspace is on the hub) is changed and shown on this computer only
     **_rows(REFUSED, VIEW, GET, W + "/hub/profile"),
     **_rows(REFUSED, VIEW, PUT, W + "/hub/profile"),
+    # asked of this computer's hub link and folders by an owner on the computer itself (a dry-run prepare of a repo
+    # change, the hub's view of a sharing rule): a stream has no such session, so the route is not offered
+    **_rows(REFUSED, VIEW, POST, W + "/repos/check", W + "/hub/share/preview"),
     **_rows(
         ALLOWED,
         VIEW,
@@ -344,9 +347,7 @@ REMOTE_DEVICE: dict[tuple[str, str], tuple[str, str]] = {
         WORK,
         POST,
         W + "/wiki/create",
-        W + "/repos/check",
         W + "/click/images",
-        W + "/hub/share/preview",
         W + "/hub/share/revoke",
         W + "/hub/share/rule-remove",
         W + "/me/risk_notices",

@@ -86,12 +86,25 @@ def fake_hub_http(rig):
     return http
 
 
+def fake_hub_tls(rig):
+    """The same web API over the pinned-TLS seam: with a pin the client never uses plain http, loopback or not."""
+    http = fake_hub_http(rig)
+
+    def tls(host, port, pin, req):
+        assert pin == rig.spki  # the pin came from the connect link's signed card
+        method, path, _ = req.split(b" ", 2)
+        status, body = http(method.decode(), f"https://{host}:{port}{path.decode()}", None, {})
+        return f"HTTP/1.1 {status} X\r\nConnection: close\r\n\r\n".encode() + body
+
+    return tls
+
+
 @pytest.fixture
 def stack(world, hub, human, served, tmp_path, monkeypatch):  # noqa: F811
     soft = SoftPresence()
     gate = GatedPresence(soft, wait_s=30)
     client = Client(
-        Store(tmp_path / "rc"), presence=gate, http=fake_hub_http(hub), dev_mode=True,
+        Store(tmp_path / "rc"), presence=gate, http=fake_hub_http(hub), tls_request=fake_hub_tls(hub), dev_mode=True,
         connector=lambda h, p, s: dial(h, p, s), batch_window=0.2,
     )  # fmt: skip
     link = SimpleLink()
@@ -118,7 +131,7 @@ def stack(world, hub, human, served, tmp_path, monkeypatch):  # noqa: F811
 
 class SimpleLink:
     def __init__(self) -> None:
-        self.origin = "http://127.0.0.1:9"
+        self.origin = "https://127.0.0.1:9"
 
 
 def _static(tmp_path: Path) -> Path:

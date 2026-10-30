@@ -149,6 +149,9 @@ class Channels:
         self._dev = dev_mode
         #: called with the channel id after a revocation is final (the relay cleanup, orch_hub.relay); never raises out
         self.on_revoke = on_revoke
+        #: called with the user id after every session of that user ended (``end_all_sessions``); the stream router
+        #: closes that user's remote streams at once. Never raises out.
+        self.on_sessions_ended: Callable[[str], None] | None = None
         self.audit = audit  # orch_hub.audit.AuditLog; None = no chain (tests of other things)
         self._now = now_ms or (lambda: int(time.time() * 1000))
         self.max_channels = max_channels
@@ -675,7 +678,13 @@ class Channels:
     def end_all_sessions(self, user_id: str) -> int:
         """Every session of the user, the caller's too. Channel keys stay. Returns how many ended."""
         u = self._known_user(user_id)
-        return self._guard(lambda: self.db.w("DELETE FROM sessions WHERE user_id=?", (u,)))
+        n = self._guard(lambda: self.db.w("DELETE FROM sessions WHERE user_id=?", (u,)))
+        if self.on_sessions_ended is not None:
+            try:
+                self.on_sessions_ended(u)
+            except Exception as e:  # noqa: BLE001  # the sweep still closes them; name only the type
+                log.warning("sessions_ended_hook_error type=%s", type(e).__name__)
+        return n
 
     # --- registration ----------------------------------------------------------------------------------------------
 

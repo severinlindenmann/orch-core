@@ -122,6 +122,8 @@ class _Stream:
     done: threading.Event = field(default_factory=threading.Event)
     result: str = ""  # "" = host accepted; else the code the client sees
     abandoned: bool = False
+    #: the sweep's per-stream question: "is whatever authorised this stream still true?" (token live, user active, rail)
+    recheck: Callable[[], bool] | None = None
 
 
 class StreamRouter:
@@ -239,11 +241,23 @@ class StreamRouter:
 
     # --- the client side -------------------------------------------------------------------------------------------
 
-    def open(self, ws: str, user: str, device_id: str, kind: str, sink: ClientSink) -> str:
+    def open(
+        self,
+        ws: str,
+        user: str,
+        device_id: str,
+        kind: str,
+        sink: ClientSink,
+        recheck: Callable[[], bool] | None = None,
+    ) -> str:
         """Open a stream to ``ws`` for hub user ``user`` (already authorized by the caller). Blocks up to the open timeout
-        for the host's answer. Returns the stream id; raises :class:`Refused` with the code the client sees."""
+        for the host's answer. Returns the stream id; raises :class:`Refused` with the code the client sees.
+
+        Invariant: a remote stream lives only while the token that opened it is live. ``recheck`` is the caller's closure
+        for that (token still valid for ``user``, user still allowed to reach ``ws``); the sweep is the ONE place that
+        calls it, in addition to the router's own ``allowed`` rail check."""
         try:
-            sid = self._open(ws, user, device_id, kind, sink)
+            sid = self._open(ws, user, device_id, kind, sink, recheck)
         except Refused as r:
             _log.info("stream_open ws=%s stream=- kind=%s user=%s result=%s", ws, kind, user, r.code)
             self._counted(ws, False)
@@ -260,7 +274,9 @@ class StreamRouter:
             except Exception:  # noqa: BLE001, S110
                 pass
 
-    def _open(self, ws: str, user: str, device_id: str, kind: str, sink: ClientSink) -> str:
+    def _open(
+        self, ws: str, user: str, device_id: str, kind: str, sink: ClientSink, recheck: Callable[[], bool] | None
+    ) -> str:
         if RESTORE_FENCE.is_set():
             raise Refused("unavailable")
         lim, now = self.lim, self._now()
@@ -292,7 +308,7 @@ class StreamRouter:
             sid = os.urandom(16).hex()
             while sid in self._streams:
                 sid = os.urandom(16).hex()
-            s = _Stream(sid, ws, st, user, kind, device_id, sink, now)
+            s = _Stream(sid, ws, st, user, kind, device_id, sink, now, recheck=recheck)
             self._streams[sid] = s
         try:
             with st.lock:
@@ -448,7 +464,7 @@ class StreamRouter:
                 self._close(s, "expired", by="hub")
                 continue
             try:
-                ok = self._allowed(s.user, s.ws)
+                ok = self._allowed(s.user, s.ws) and (s.recheck is None or bool(s.recheck()))
             except Exception:  # noqa: BLE001  # fail closed
                 ok = False
             if not ok:

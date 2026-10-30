@@ -552,7 +552,8 @@ ROUTES: tuple[Route, ...] = (
 #: handler -> the session scopes that may call it (protocol §6.4). ``full`` is the browser's cookie session; ``pairing``
 #: (password + TOTP from the app) may only read the card, register a phone, bind and sign out; ``channel`` is bound to
 #: one channel and never registers a channel or reaches an admin route. A route not listed here is ``full`` only.
-#: A ``remote`` session (R4, the stream router's token) is in no set below: it reaches NO web route, not even sign-out.
+#: A ``remote`` session (R4, the stream router's token) reaches exactly one web route, ``sign_out`` (so a client can end its
+#: own token); every other route answers it ``forbidden_role``.
 _PAIR = frozenset({"sign_out", "reg_begin", "reg_complete", "bind"})
 _CHAN = frozenset(
     {
@@ -575,6 +576,7 @@ SCOPE_ROUTES: dict[str, frozenset[str]] = {
         ({"full"} if h not in _FULL_NOT else set())
         | ({"pairing"} if h in _PAIR else set())
         | ({"channel"} if h in _CHAN else set())
+        | ({"remote"} if h == "sign_out" else set())
     )
     for h in {rt.handler for rt in ROUTES}
 }

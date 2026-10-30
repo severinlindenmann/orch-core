@@ -47,7 +47,7 @@ from .publish import HttpPublishSync, HubPublish, PublishConfig
 from .reconcile import reconcile_full_only, reconcile_relay_purge
 from .relay import PushNotifier, RelayClient, RelayError
 from .relay.client import Transport
-from .remote import Authz, RemoteEndpoint, StreamRouter
+from .remote import wire_remote
 from .restart import exec_self
 from .router import AccessAuthz, RouteQueue, Router
 from .services import Services
@@ -392,9 +392,9 @@ def serve(
     fw = HubPublish(keys, HttpPublishSync(publish_url), PublishConfig(publish_url, api_host))
     # R4 (#1592): remote access streams. The hub forwards opaque Noise frames and judges only abuse limits (D87); the
     # rail rule and the remote-scope token decide who may open. Registry counts every stream_open by outcome.
-    remote_authz = Authz.from_hub(channels, registry, access)
-    stream_router = StreamRouter(hub_id=keys.hub_id, allowed=remote_authz.may_open, count_op=registry.count_op)
-    remote_endpoint = RemoteEndpoint(stream_router, remote_authz)
+    stream_router, remote_endpoint = wire_remote(
+        channels, registry, access, hub_id=keys.hub_id, count_op=registry.count_op
+    )
     server = LinkServer.from_keys(
         keys,
         snapshots=AccessSnapshots(access, keys),

@@ -19,6 +19,7 @@ import re
 import threading
 import time
 from collections import deque
+from collections.abc import Callable
 from typing import Any
 
 from ..contract import remote as R
@@ -135,6 +136,18 @@ class RemoteEndpoint:
             self._conns.release()
             conn.close()
 
+    def _recheck(self, token: str, user: str, ws: str) -> Callable[[], bool]:
+        """The router sweep's question for one stream: the token that opened it is still live for the same user, and that
+        user may still reach ``ws``. Fails closed."""
+
+        def alive() -> bool:
+            try:
+                return self._authz.authenticate(token) == user and self._authz.may_open(user, ws)
+            except AuthzError:
+                return False
+
+        return alive
+
     # --- one connection ----------------------------------------------------------------------------------------
 
     def _read(self, conn: Any, deadline: float) -> dict[str, Any]:
@@ -210,7 +223,7 @@ class RemoteEndpoint:
             return
         sink = _Sink(conn, self._queue, self._t_w)
         try:
-            sid = self._router.open(ws, user, dev, kind, sink)
+            sid = self._router.open(ws, user, dev, kind, sink, self._recheck(hello["token"], user, ws))
         except Refused as r:
             self._refuse(conn, r.code)
             return

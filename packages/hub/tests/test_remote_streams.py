@@ -482,7 +482,7 @@ def test_stream_sweep_expires_old_streams():
     assert sink.ended == ["expired"] and a.ops("stream_close")[-1][1]["reason"] == "expired"
 
 
-def test_stream_user_removed_closes_streams_revoked():
+def test_stream_sweep_closes_streams_whose_user_left_the_rail():
     live = {"u1": True, "u2": True}
     r, a, _ = make(allowed=lambda u, ws: live[u])
     _s1, k1 = open_stream(r, WS_A, a, user="u1")
@@ -490,7 +490,27 @@ def test_stream_user_removed_closes_streams_revoked():
     live["u1"] = False
     r.sweep()
     assert k1.ended == ["revoked"] and k2.ended == []
-    assert r.revoke_user("u2") == 1 and k2.ended == ["revoked"]
+    assert r.revoke_user("u2") == 1 and k2.ended == [
+        "revoked"
+    ]  # the production wiring is tested in test_remote_endpoint
+
+
+def test_stream_sweep_runs_each_streams_own_recheck():
+    ok = {"a": True, "b": True}
+    r, a, _ = make()
+    ka, kb = FakeSink(), FakeSink()
+    for sink, key, dev in ((ka, "a", DEV), (kb, "b", DEV2)):
+        n = len(a.ops("stream_open")) + 1
+        t = threading.Thread(
+            target=lambda sink=sink, key=key, dev=dev: r.open(WS_A, "u1", dev, "session", sink, lambda: ok[key]),
+            daemon=True,
+        )
+        t.start()
+        answer(r, WS_A, a, None, n)
+        t.join(5)
+    ok["a"] = False
+    r.sweep()
+    assert ka.ended == ["revoked"] and kb.ended == []
 
 
 def test_stream_sweep_fails_closed_when_the_check_raises():

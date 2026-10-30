@@ -12,7 +12,7 @@ from webapi_helpers import Web
 from orch_hub.channels.service import REMOTE_SESSION_TTL_MS
 from orch_hub.contract import remote as R
 from orch_hub.contract.canon import b64u
-from orch_hub.remote import Authz, AuthzError, RemoteEndpoint, StreamRouter
+from orch_hub.remote import Authz, AuthzError, RemoteEndpoint, StreamRouter, wire_remote
 from orch_hub.webapi.api import ROUTES, SCOPE_ROUTES
 
 
@@ -65,6 +65,50 @@ class Rig:
         return c, sid
 
 
+class RealRig(Rig):
+    """The production wiring (``wire_remote``) on the real Channels, Access and rail rule; WS (full mode, ann edits)."""
+
+    def __init__(self, w, **ep):
+        self.w = w
+        w.reg.add(WS_A, "full")
+        w.env.acc.grant(WS_A, "team", "edit")
+        self.router, endpoint = wire_remote(w.env.svc, w.reg, w.env.acc, hub_id=HUB)
+        self.port = FakePort()
+        self.router.attach(WS_A, self.port)
+        self.ep = RemoteEndpoint(self.router, endpoint._authz, setup_timeout=3, idle_poll=0.2, **ep)
+        self.threads = []
+
+
+def test_stream_sign_out_everywhere_closes_remote_streams_revoked_at_once(w):
+    rig = RealRig(w)
+    c, sid = rig.session(remote_token(w))
+    assert c.get() == {"t": "opened", "stream_id": sid}
+    w.env.svc.end_all_sessions(w.ann)
+    assert c.get() == {"t": "close", "reason": "revoked"}
+    assert rig.router.open_count() == 0 and rig.port.wait_op("stream_close")[0][1]["reason"] == "revoked"
+
+
+def test_stream_disabled_user_closed_at_the_next_sweep(w):
+    rig = RealRig(w)
+    c, _sid = rig.session(remote_token(w))
+    c.get()
+    rig.router.sweep()
+    assert rig.router.open_count() == 1  # nothing changed: still allowed
+    w.env.acc.remove_user(w.ann)
+    rig.router.sweep()
+    assert c.get() == {"t": "close", "reason": "revoked"} and rig.router.open_count() == 0
+
+
+def test_stream_signed_out_token_closed_at_the_next_sweep(w):
+    rig = RealRig(w)
+    tok = remote_token(w)
+    c, _sid = rig.session(tok)
+    c.get()
+    w.env.svc.sign_out(tok)  # the token that opened the stream is gone: the stream must not outlive it
+    rig.router.sweep()
+    assert c.get() == {"t": "close", "reason": "revoked"}
+
+
 # --- sign-in scope ----------------------------------------------------------------------------------------------
 
 
@@ -81,8 +125,10 @@ def test_stream_remote_sign_in_makes_a_seven_day_bearer_token(w):
 
 def test_stream_remote_token_refused_on_every_web_route(w):
     tok = remote_token(w)
-    assert all("remote" not in v for v in SCOPE_ROUTES.values())
+    assert {h for h, v in SCOPE_ROUTES.items() if "remote" in v} == {"sign_out"}  # the one route: ending its own token
     for rt in ROUTES:
+        if rt.handler == "sign_out":
+            continue
         path = rt.pattern if hasattr(rt, "pattern") and isinstance(rt.pattern, str) else None
         path = path or getattr(rt, "path", "/")
         path = "/".join(x if not x.startswith("{") else "x" * 32 for x in path.split("/"))
@@ -90,6 +136,14 @@ def test_stream_remote_token_refused_on_every_web_route(w):
             s, o, _ = w.call(rt.method, path, {} if rt.method != "GET" else None, token=tok, cookie=cookie)
             assert s in (401, 403, 404, 405) and s != 200, (rt.method, path, s, o)
             assert s != 404 or o == {"error": "unknown_op"}
+
+
+def test_stream_remote_token_can_sign_itself_out_only(w):
+    tok = remote_token(w)
+    s, _, _ = w.call("DELETE", "/session", None, token=tok, cookie=False)
+    assert s == 200
+    with pytest.raises(AuthzError):
+        Authz(w.env.svc, lambda u: ()).authenticate(tok)
 
 
 def test_stream_full_scope_token_refused_on_endpoint(w):

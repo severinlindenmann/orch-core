@@ -1138,6 +1138,29 @@ class HubLeave(Action):
     action: Literal["hub_leave"]
 
 
+class RemoteSet(Action):
+    """R2 (#1590), turn remote access on. Click only, with the backup key sealed (see HubJoin): ``remote.set``. The
+    level, the answer to "does this computer run at a customer's place" and the days are what the person chose; the
+    host's own facts (clock, hub mode, isolation) come from the host, never from here. ``days`` is absent only for
+    "until I turn it off" (the host refuses that for a customer's place and for Terminals)."""
+
+    action: Literal["remote_set"]
+    level: Literal["view", "work", "terminals"]
+    premises: Literal["yes", "no"]
+    days: Annotated[int, Field(ge=1, le=365)] | None = None
+    agents_risk: bool = False
+
+
+class RemoteDeviceConfirm(Action):
+    """R2 (#1590), add the device that is waiting (``remote.pending``), at a level, until a date. Click only, with the
+    backup key sealed. The name and keys are the host's pending record, never this request's."""
+
+    action: Literal["remote_device_confirm"]
+    pending: Annotated[str, StringConstraints(pattern=r"^rp_[0-9a-f]{32}$")]
+    level_cap: Literal["view", "work", "terminals"]
+    days: Annotated[int, Field(ge=1, le=366)]
+
+
 PrepareBody = Annotated[
     Approve
     | RequestChanges
@@ -1185,7 +1208,9 @@ PrepareBody = Annotated[
     | AgentAccess
     | HubJoin
     | HubModeFull
-    | HubLeave,
+    | HubLeave
+    | RemoteSet
+    | RemoteDeviceConfirm,
     Field(discriminator="action"),
 ]
 
@@ -1401,6 +1426,14 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
             return "hub.mode", {"hub_card": _strict_json_object(action.hub_card), "mode": "full"}
         case HubLeave():
             return "hub.leave", {}
+        case RemoteSet():
+            return "remote.set", {"level": action.level, "premises": action.premises} | (
+                {"days": action.days} if action.days is not None else {}
+            ) | ({"agents_risk": True} if action.agents_risk else {})
+        case RemoteDeviceConfirm():
+            return "remote.device_confirm", {
+                "pending": action.pending, "level_cap": action.level_cap, "days": action.days,
+            }  # fmt: skip
     raise AssertionError("closed allowlist")  # pragma: no cover
 
 
@@ -1667,6 +1700,25 @@ def expected(action: Action, person: str | None = None):
                 and ev[0]["actor"].get("kind") == "person"
                 and ev[0]["actor"].get("id") == person
             )
+        case RemoteSet():
+            # exactly one `remote.changed`: the level and answer the person chose, on, from this person
+            return lambda ev: (
+                one(ev, "remote.changed", on=True, level=action.level, premises=action.premises)
+                and (ev[0].get("until_ms") is None) == (action.days is None)
+                and person is not None
+                and isinstance(ev[0].get("actor"), dict)
+                and ev[0]["actor"].get("kind") == "person"
+                and ev[0]["actor"].get("id") == person
+            )
+        case RemoteDeviceConfirm():
+            return lambda ev: (
+                one(ev, "remote.device_added", level_cap=action.level_cap)
+                and person is not None
+                and ev[0].get("person") == person
+                and isinstance(ev[0].get("actor"), dict)
+                and ev[0]["actor"].get("kind") == "person"
+                and ev[0]["actor"].get("id") == person
+            )
         case HubLeave():
             return lambda ev: (
                 one(ev, "hub.left")
@@ -1812,7 +1864,7 @@ def plan(gateway: Gateway, ws: str, body: Action) -> Plan:
         digest = sequence.digest_of(ws, person, intent)
         meta = {"step": 0, "of": 2, "digest": digest, "intent": intent}
         base = {"sequence": digest, "addon": switch_base}
-    if isinstance(body, HubJoin | HubModeFull | HubLeave):
+    if isinstance(body, HubJoin | HubModeFull | HubLeave | RemoteSet | RemoteDeviceConfirm):
         base = hub_base(link)  # join, leave, join again with the same card is a new request each time
     if isinstance(body, AgentAccess):
         base = {

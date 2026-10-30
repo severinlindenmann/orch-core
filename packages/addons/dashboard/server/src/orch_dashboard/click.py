@@ -44,6 +44,8 @@ from .signing import (
     NewTicketSequence,
     PrepareBody,
     QuickStart,
+    RemoteDeviceConfirm,
+    RemoteSet,
     RepoSet,
     RequestId,
     RunnerGrant,
@@ -55,7 +57,7 @@ from .signing import (
     send_prepare,
     sequence_progress,
 )
-from .stepup import refusal_check, refuse_step_up
+from .stepup import LOCAL, refusal_check, refuse_step_up
 
 # The card text, verbatim (owner decision, 12 Oct 2026). A View that carries anything else is not shown.
 RISK = "Convenience signing: agents running as you, or anything that takes over this dashboard, could sign."
@@ -70,9 +72,7 @@ SUBMITTED = "the request is submitted"  # cancelled/expired never get here: send
 # M7b, the runner grant (D-P2-27, section 0.8.6 item 6): a click request of its own action. The texts are core's
 # constants (orch.click.protocol); a View of a deposit grant that lacks either is not shown.
 DEPOSIT_LINE = "The secret goes to your orch runner on this machine and is never shown"
-DEPOSIT_RISK = (
-    "Whoever controls this dashboard could use this access while it lasts. You can stop it any time."
-)
+DEPOSIT_RISK = "Whoever controls this dashboard could use this access while it lasts. You can stop it any time."
 #: core's constants (orch.click.protocol REVEAL_LINE, REVEAL_RISK): a shown-secret View that lacks either is not shown
 REVEAL_LINE = "The secret is shown once, on this page, only to you. orch keeps only a fingerprint of it"
 REVEAL_RISK = "The secret will be shown once in this browser. Anyone who controls this dashboard could read it."
@@ -216,7 +216,8 @@ def reveal_view_ok(view: dict, ws: str, reveal_key: str) -> bool:
 RUNNER_LINE = "Agents may run commands on this computer as you when you start them."
 #: core's constant (orch.click.protocol BACKUP_KEY_LINE): a hub step's View that lacks it is not shown
 BACKUP_KEY_LINE = "This step also needs your backup key. You type it once here; orch does not keep it"
-HUB_STEPS = (HubJoin, HubModeFull, HubLeave)
+REMOTE_STEPS = (RemoteSet, RemoteDeviceConfirm)
+HUB_STEPS = (HubJoin, HubModeFull, HubLeave, *REMOTE_STEPS)
 B64URL = r"[A-Za-z0-9_-]"
 
 
@@ -835,6 +836,10 @@ def register(app: FastAPI, gateway: Gateway):
         token = request.state.token
         if app.state.auth.login_kind(token) == "switch":
             raise fail("session.readonly", "Open a full session to sign.", exit=3)
+        if isinstance(body, REMOTE_STEPS) and app.state.auth.login_kind(token) != LOCAL:
+            # R2: remote access is changed only from a session opened on this computer (design note 2); the signer
+            # refuses it for a remote session as well
+            raise fail("op.not_allowed", "Change remote access on the computer itself.", exit=3)
         gateway.enabled(ws)  # pinned workspace, dashboard addon enabled in it (the hand-off's `human()` does this)
         with handoffs.lock:
             handoffs.reserve(token)  # check and take a slot in one step (shared with the hand-off)

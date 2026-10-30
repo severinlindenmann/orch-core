@@ -55,6 +55,8 @@ READONLY_REFUSED = (
     "/org/decline",
     "/org/sync",
     "/org/tool",
+    "/remote/off",
+    "/remote/code",
 )
 
 

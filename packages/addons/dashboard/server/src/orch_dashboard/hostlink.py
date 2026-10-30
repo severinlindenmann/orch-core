@@ -137,6 +137,15 @@ OPS = {
         # the two share writes that only take sharing away: one click as the session's person, owner only (hub.py)
         "share.revoke",
         "share.rule_remove",
+        # R2 (#1590) remote access, the loopback page: reads, and the three owner clicks that only take power away or
+        # hand out a one-time code (remote.off, remote.code, remote.device_remove). Turning ON and confirming a device
+        # are signed by click (signing.RemoteSet), never sent here.
+        "remote.status",
+        "remote.pending",
+        "remote.sessions",
+        "remote.off",
+        "remote.code",
+        "remote.device_remove",
         # M3 H-5 company skills and tools: the owner's tab. org.offers and org.show are reads; the rest are owner
         # clicks (org_routes.py).
         "org.offers",

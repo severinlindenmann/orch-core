@@ -29,6 +29,7 @@ from . import (
     passkey_routes,
     phone,
     reads,
+    remote_routes,
     riskack,
     schedules,
     settings,
@@ -325,6 +326,7 @@ def create_app(
     stepup_routes.register(app, gateway)
     hubapprove.register(app, gateway)
     hub.register(app, gateway)
+    remote_routes.register(app, gateway)
     org_routes.register(app, gateway)
     switch.register(app, gateway, auth)
     trust_routes.register(app, auth, gateway)

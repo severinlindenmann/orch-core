@@ -273,6 +273,9 @@ REMOTE_DEVICE: dict[tuple[str, str], tuple[str, str]] = {
     # asked of this computer's hub link and folders by an owner on the computer itself (a dry-run prepare of a repo
     # change, the hub's view of a sharing rule): a stream has no such session, so the route is not offered
     **_rows(REFUSED, VIEW, POST, W + "/repos/check", W + "/hub/share/preview"),
+    # turning sharing off is the owner's plain click from a FULL session (reduce -> owner_link -> full_session): never
+    # true for a stream, so the row is a refusal, not an offer that ends in one (rule-remove also needs the preview)
+    **_rows(REFUSED, VIEW, POST, W + "/hub/share/revoke", W + "/hub/share/rule-remove"),
     **_rows(
         ALLOWED,
         VIEW,
@@ -348,8 +351,6 @@ REMOTE_DEVICE: dict[tuple[str, str], tuple[str, str]] = {
         POST,
         W + "/wiki/create",
         W + "/click/images",
-        W + "/hub/share/revoke",
-        W + "/hub/share/rule-remove",
         W + "/me/risk_notices",
         W + "/records/commit",
         W + "/records/auto-off",

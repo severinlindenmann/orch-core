@@ -201,8 +201,11 @@ def test_a_bad_address_is_malformed(bad):
 
     with pytest.raises(HubRefused):
         parse_addr(bad)
-    assert parse_addr("hub.dev.example:8443") == ("hub.dev.example", 8443)
-    assert parse_addr("[::1]:9") == ("::1", 9)
+    assert (parse_addr("hub.dev.example:8443").host, parse_addr("hub.dev.example:8443").port) == (
+        "hub.dev.example",
+        8443,
+    )
+    assert (parse_addr("[::1]:9").host, parse_addr("[::1]:9").port) == ("::1", 9)
 
 
 # --- C3: the group snapshot is fetched, pinned and readable on the host ---------------------------------------------

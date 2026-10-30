@@ -354,6 +354,15 @@ def test_a_websocket_terminal_needs_its_own_presence(app, auth, ws, fake):
     assert taken["digest"] == "sha256:" + route_digest(ws, "WEBSOCKET", "/term", "/term", "", b"").hex()
 
 
+def test_a_websocket_with_a_query_is_closed_before_any_presence(app, auth, ws, fake):
+    """The socket takes no query at all (closed first); and a presence digest is made over the real query string, so
+    were a query ever allowed it could not borrow the digest of the bare path."""
+    client = stream_client(app, auth, ws, level="terminals", stream="aa" * 16)[0]
+    with pytest.raises(WebSocketDisconnect), client.websocket_connect("/term?x=1", headers={"host": "orch-remote"}):
+        pass
+    assert not [c for c in fake.calls if c[0] == "presence_take"]
+
+
 def test_work_level_cannot_open_the_terminal_socket(app, auth, ws, fake):
     client = stream_client(app, auth, ws, level="work", stream="bb" * 16)[0]
     with pytest.raises(WebSocketDisconnect), client.websocket_connect("/term", headers={"host": "orch-remote"}):

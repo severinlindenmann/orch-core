@@ -473,7 +473,13 @@ class Security:
             # each terminal open and each attach is its own presence request (D88); a WebSocket has no body
             try:
                 missing = await run_in_threadpool(
-                    self.take_presence, identity, "WEBSOCKET", template, scope["path"], "", b""
+                    self.take_presence,
+                    identity,
+                    "WEBSOCKET",
+                    template,
+                    scope["path"],
+                    scope.get("query_string", b"").decode("latin1"),
+                    b"",
                 )
             except HostError:
                 missing = "refused"

@@ -2158,7 +2158,7 @@ def build() -> dict[str, Any]:
         "D80: no WK_e for the hub in selective mode",
     )
     case(
-        "link_share_put_in_full",
+        "link_share_put_in_full_ok",
         "link",
         {
             **ln,
@@ -2167,8 +2167,9 @@ def build() -> dict[str, Any]:
             "direction": "w2h",
             "pub": K.b("wsk_a"),
         },
-        {"error": "wrong_mode"},
+        {"ok": {"op": "share_put", "seq": 7}},
         2,
+        "r15: sharing a ticket with named people works in both modes (the hub accepts ticket items only in full)",
     )
     case(
         "link_w2h_signed_under_route_label",

@@ -8,6 +8,7 @@ class Node_ {
   append(...kids) { for (const k of kids) this.children.push(k && k.nodeType ? k : new Node_("#text", String(k))); }
   replaceChildren(...kids) { this.children = []; this.append(...kids); }
   setAttribute(k, v) { this.attrs[k] = v; }
+  removeAttribute(k) { delete this.attrs[k]; }
   getAttribute(k) { return this.attrs[k] ?? null; }
   addEventListener(k, f) { this.listeners[k] = f; }
   set textContent(v) { this._text = String(v); this.children = []; }
@@ -23,7 +24,8 @@ const NAME = "hub-0123abcd-20261029T030000Z.orchbak";
 const SET = { key_set: true, key_set_ms: 1, backups: [{ name: NAME, size: 20480, made_ms: Date.now() - 3600000 }, { name: "../../etc/passwd", size: 1, made_ms: 1 }], keep: 7, schedule: "daily", cli_line: "orch-hub backup-key" };
 const card = (v) => v.all().find((n) => n.attrs["data-card"] === "backup");
 const button = (root, label) => root.all().find((n) => n.tag === "button" && n.textContent === label);
-const inputs = (root) => root.all().filter((n) => n.tag === "input");
+const inputs = (root) => root.all().filter((n) => n.tag === "input" && n.attrs.type !== "file");
+const fileInput = (root) => root.all().find((n) => n.tag === "input" && n.attrs.type === "file");
 
 test("no key yet: one 'Set up backups' step with password and code, plain words, no product name", () => {
   const c = card(hubSettingsView({ ...BASE, backup: NONE }, { wordsMayShow: true }));
@@ -110,6 +112,7 @@ test("Restore asks for the words, the password and a code, in plain words, and s
   button(c, "Restore").listeners.click();
   assert.match(c.textContent, /Everything changed since then is lost/); assert.match(c.textContent, /switched off/);
   assert.doesNotMatch(c.textContent, /NetBird|WireGuard|Tailscale|VPN/i);
+  button(c, "Type them instead").listeners.click();
   const area = c.all().find((n) => n.tag === "textarea");
   const [pw, code] = inputs(c);
   area.value = "a b c"; pw.value = "pw"; code.value = " 111222 ";
@@ -128,7 +131,7 @@ test("on an address that is not private the restore shows the server command ins
 test("after a restore the card says what happened and what to check, with a way to dismiss it", () => {
   let n = 0;
   const c = card(hubSettingsView({ ...BASE, backup: { ...SET, restored: { made_ms: 1, restored_ms: 2, suspended: 2 } } }, { wordsMayShow: true, dismissRestored: () => n++ }));
-  assert.match(c.textContent, /Restored from the backup of/); assert.match(c.textContent, /Check People and Workspaces/); assert.match(c.textContent, /2 people are switched off/);
+  assert.match(c.textContent, /Restored from the backup of/); assert.match(c.textContent, /Check that your workspaces show Online/); assert.match(c.textContent, /2 people are switched off/);
   button(c, "Got it").listeners.click();
   assert.equal(n, 1);
 });
@@ -216,4 +219,106 @@ test("P07: the page puts a refused Back up now (429) in the card with the Backup
   const n = card(view).all().find((x) => x.attrs["data-backup-note"]);
   assert.equal(n.attrs["data-backup-note"], "bad");
   assert.match(n.textContent, /A backup was made a moment ago\. Try again in a few minutes\./);
+});
+
+
+const W24 = Array.from({ length: 24 }, (_, i) => "word" + i).join(" ");
+
+test("P08: the words panel offers 'Save as a file' (text only, never sent) and shows the keep-it-safe line", () => {
+  const made = [];
+  globalThis.Blob = class { constructor(parts, o) { made.push([parts.join(""), o]); } };
+  globalThis.URL = { createObjectURL: () => "blob:x", revokeObjectURL() {} };
+  const c = card(hubSettingsView({ ...BASE, backup: SET }, { wordsMayShow: true, words: W24, wordsSaved() {} }));
+  const b = button(c, "Save as a file");
+  assert.ok(b);
+  b.listeners.click();
+  assert.equal(made.length, 1);
+  assert.equal(made[0][0].trim(), W24);
+  assert.match(made[0][1].type, /^text\/plain/);
+  assert.ok(c.textContent.includes("Keep this file somewhere safe and offline. Anyone with it and your password can restore your hub."));
+  assert.ok(!c.textContent.includes("orch-hub-backup-words"));
+});
+
+test("P08: Restore offers 'Choose the file' and 'Paste' instead of a words box; the request body still carries the words", async () => {
+  const sent = [];
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: { clipboard: { readText: async () => "  " + W24.replace(/ /g, "\n") + "\n" } } });
+  const c = card(hubSettingsView({ ...BASE, backup: SET }, { wordsMayShow: true, restore: async (n, b) => sent.push([n, b]) }));
+  button(c, "Restore").listeners.click();
+  assert.ok(button(c, "Choose the file")); assert.ok(button(c, "Paste")); assert.ok(button(c, "Type them instead"));
+  assert.equal(c.all().filter((n) => n.tag === "textarea" && !("hidden" in n.attrs)).length, 0);   // no words box until asked for
+  const f = fileInput(c);
+  assert.match(f.attrs.accept, /text/);
+  await f.listeners.change({ target: { files: [{ name: "w.txt", size: 200, text: async () => W24 + "\n" }] } });
+  assert.match(c.textContent, /w\.txt/);
+  const [pw, code] = inputs(c);
+  pw.value = "pw"; code.value = "111222";
+  await button(c, "Restore this backup").listeners.click();
+  assert.deepEqual(sent, [[NAME, { password: "pw", totp: "111222", words: W24 }]]);
+  // Paste path
+  button(c, "Paste") && await button(c, "Paste").listeners.click();
+  pw.value = "pw"; code.value = "333444";
+  await button(c, "Restore this backup").listeners.click();
+  assert.equal(sent[1][1].words, W24);
+});
+
+test("P08: a file or paste that is not 24 words is refused in plain words and nothing is sent as words", async () => {
+  const sent = [];
+  const c = card(hubSettingsView({ ...BASE, backup: SET }, { wordsMayShow: true, restore: async (n, b) => sent.push([n, b]) }));
+  button(c, "Restore").listeners.click();
+  await fileInput(c).listeners.change({ target: { files: [{ name: "x.txt", size: 20, text: async () => "only three words" }] } });
+  assert.match(c.textContent, /not the 24 words/);
+  await fileInput(c).listeners.change({ target: { files: [{ name: "big.bin", size: 10_000_000, text: async () => W24 }] } });
+  assert.match(c.textContent, /not the 24 words/);
+  const [pw, code] = inputs(c);
+  pw.value = "pw"; code.value = "111222";
+  await button(c, "Restore this backup").listeners.click();
+  assert.equal(sent[0][1].words, "");                      // the hub refuses empty words; the password and code are still required
+});
+
+test("P08: on an address that is not private neither file nor paste is offered", () => {
+  const c = card(hubSettingsView({ ...BASE, backup: SET }, { wordsMayShow: false, restore: async () => {} }));
+  button(c, "Restore").listeners.click();
+  assert.equal(fileInput(c), undefined); assert.equal(button(c, "Paste"), undefined); assert.equal(button(c, "Choose the file"), undefined);
+});
+
+test("P08 review: no 'Save as a file' when the page is on a loopback address; Copy stays", () => {
+  const view = () => card(hubSettingsView({ ...BASE, backup: SET }, { wordsMayShow: true, words: W24, wordsSaved() {} }));
+  try {
+    for (const hostname of ["localhost", "127.0.0.1", "127.8.9.1", "[::1]", "::1"]) {
+      globalThis.location = { hostname };
+      const c = view();
+      assert.equal(button(c, "Save as a file"), undefined, hostname);
+      assert.ok(!c.textContent.includes("Keep this file somewhere safe"), hostname);  // no advice about a file you cannot get
+      assert.ok(button(c, "Copy"), hostname);
+    }
+    for (const hostname of ["hub.example.com", "100.64.1.2", "192.168.1.5", "127.example.com"]) {
+      globalThis.location = { hostname };
+      const c = view();
+      assert.ok(button(c, "Save as a file"), hostname);
+      assert.ok(c.textContent.includes("Keep this file somewhere safe"), hostname);
+    }
+  } finally { delete globalThis.location; }
+});
+
+test("P08 review: the object URL is revoked after a tick, not right after the click", async () => {
+  const revoked = [];
+  globalThis.Blob = class {};
+  globalThis.URL = { createObjectURL: () => "blob:y", revokeObjectURL: (u) => revoked.push(u) };
+  const c = card(hubSettingsView({ ...BASE, backup: SET }, { wordsMayShow: true, words: W24, wordsSaved() {} }));
+  button(c, "Save as a file").listeners.click();
+  assert.deepEqual(revoked, []);
+  await new Promise((r) => setTimeout(r, 5));
+  assert.ok(revoked.includes("blob:y"));
+});
+
+test("P08 review: submitting the restore form also clears the file picker", async () => {
+  const c = card(hubSettingsView({ ...BASE, backup: SET }, { wordsMayShow: true, restore: async () => {} }));
+  button(c, "Restore").listeners.click();
+  const f = fileInput(c);
+  await f.listeners.change({ target: { files: [{ name: "w.txt", size: 200, text: async () => W24 }] } });
+  f.value = "C:\\fakepath\\w.txt";
+  const [pw, code] = inputs(c);
+  pw.value = "pw"; code.value = "111222";
+  await button(c, "Restore this backup").listeners.click();
+  assert.equal(f.value, "");
 });

@@ -1,9 +1,8 @@
 """The shared spaces this workspace is in, read-only (run-15c P03).
 
-| Method | Path                       | Host op                  | Shape                                                        |
-|--------|----------------------------|--------------------------|--------------------------------------------------------------|
-| GET    | /api/w/{ws}/spaces         | space.list               | `{"spaces": [{id, name, kind, members}], "note"}`            |
-| GET    | /api/w/{ws}/spaces/{id}    | space.list {space_id}    | `{"id", "items": [{name, size}], "refused", "note"}`         |
+* `GET /api/w/{ws}/spaces`: `space.list`, answered as `{"spaces": [{id, name, kind, members}], "note"}`.
+* `GET /api/w/{ws}/spaces/{id}`: `space.list {space_id}`, answered as
+  `{"id", "items": [{name, size}], "refused", "note"}`.
 
 Reads only: no signature, no write. Adding or editing is done in the hub. The space name and kind are the hub's own
 display data (the signed `hub.space` record has none), so the answer says "from the hub, not signed". The items are

@@ -81,8 +81,16 @@ def test_an_unreachable_hub_still_surfaces():
 
 def test_items_are_names_and_sizes_only_never_content_or_authors():
     rows = [
-        {"item_id": "1" * 32, "seq": 1, "epoch": 1, "revoked": False, "name": "plan.md", "author": "c" * 32, "size": 12,
-         "data": "SECRET"},
+        {
+            "item_id": "1" * 32,
+            "seq": 1,
+            "epoch": 1,
+            "revoked": False,
+            "name": "plan.md",
+            "author": "c" * 32,
+            "size": 12,
+            "data": "SECRET",
+        },
         {"item_id": "2" * 32, "seq": 2, "epoch": 1, "revoked": True},
         {"item_id": "3" * 32, "seq": 3, "epoch": 1, "revoked": False, "name": "<img src=x onerror=1>", "size": "9"},
         {"item_id": "4" * 32, "seq": 4, "epoch": 1, "revoked": False, "name": "hid​den", "size": 1},

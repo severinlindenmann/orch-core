@@ -140,8 +140,11 @@ TABLE: dict[tuple[str, str], tuple[str, str]] = {
     (GET, W + "/hub/share"): (ALLOWED, ""),
     (GET, W + "/hub/share/audience"): (ALLOWED, "a read: hub people and teams, display names only"),
     (GET, W + "/hub/shared"): (ALLOWED, "a read-only list of tickets others shared with this owner"),
-    (GET, W + "/spaces"): (ALLOWED, "a read: the shared spaces this workspace is in, from the hub, unsigned"),
-    (GET, W + "/spaces/{sid}"): (ALLOWED, "a read: the item names of one shared space (names and sizes, never content)"),
+    (GET, W + "/spaces"): (ALLOWED, "a read: the shared spaces of this workspace (from the hub, unsigned)"),
+    (GET, W + "/spaces/{sid}"): (
+        ALLOWED,
+        "a read: the item names of one shared space (names and sizes, never content)",
+    ),
     (POST, W + "/hub/share/preview"): (ALLOWED, "a read-only preview"),
     (POST, W + "/hub/share/revoke"): (ALLOWED, "turning off: owner, plain click, no signature, full session only"),
     (POST, W + "/hub/share/rule-remove"): (ALLOWED, "turning off: owner, plain click, no signature, full session only"),

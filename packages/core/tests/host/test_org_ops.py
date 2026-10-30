@@ -686,3 +686,12 @@ def test_bulk_is_owner_only_and_on_only(served, org):
         err(req(served, "org.tool", {"server": "crm", "on": True, "tool": "get_a", "tools": pins})) == "invalid.input"
     )
     assert orgstate.tool_policy(svc(served), "crm") == {}
+
+
+def test_the_org_tool_schema_itself_refuses_off_with_a_list():
+    v = orgops._VALIDATORS["org.tool"]  # noqa: SLF001
+    pins = [{"tool": "a", "pin": "sha256:" + "0" * 64}]
+    assert v.is_valid({"server": "crm", "on": True, "tools": pins})
+    assert not v.is_valid({"server": "crm", "on": False, "tools": pins})
+    assert not v.is_valid({"server": "crm", "on": True, "tool": "a", "tools": pins})
+    assert v.is_valid({"server": "crm", "on": False, "tool": "a"})

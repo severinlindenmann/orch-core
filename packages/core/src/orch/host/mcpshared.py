@@ -114,7 +114,8 @@ def reads_label(raw: dict[str, Any]) -> bool:
     ann = raw.get("annotations")
     if not isinstance(ann, dict):
         return False
-    return ann.get("readOnlyHint") is True and ann.get("destructiveHint") is not True
+    destructive = ann.get("destructiveHint")
+    return ann.get("readOnlyHint") is True and (destructive is None or destructive is False)
 
 
 def tool_view(raw: object) -> tuple[dict[str, Any] | None, str | None]:

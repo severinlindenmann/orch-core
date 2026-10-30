@@ -12,7 +12,10 @@ Contract for orch-core (`hub join --link`). Code: `src/orch_hub/connect.py` (`bu
   Path is exactly `/c`, no query. The page at `/c` is a static landing text; the fragment never reaches the server.
 - `h1`: literal version tag. `hub_id`: 32 lowercase hex (the hub id of protocol section 2.3).
 - `code`: single-use invite, `[A-Za-z0-9_-]{1,64}` (no dots). Valid 30 minutes.
-- `endpoint` (optional): where the host dials the hub link: `host:port`, `[v6]:port` or the word `local`.
+- `endpoint` (optional): where the host dials the hub link: the word `local` or a link address of protocol.md
+  §10.10.1 (`host:port`, `[v6]:port`, and from R6 `ws://host[:port]` / `wss://host[:port]`; no path, query, user info
+  or proxy). It is a hint: the host dials it only with the card's pinned TLS. Vectors: `connect_*` in
+  `contracts/hub/vectors_link_ws.json`.
   It may contain dots, so split the fragment with at most 3 splits (`fragment.split(".", 3)`).
 
 Test vector:

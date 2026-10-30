@@ -13,6 +13,7 @@ from collections.abc import Callable
 from typing import Any
 
 from .errors import HubRefused
+from .linkaddr import parse_link_address
 from .tlslink.client import LinkClient, LinkError
 from .tlslink.tls import PinMismatch
 
@@ -20,16 +21,13 @@ __all__ = ["FailoverTransport", "TlsTransport", "parse_addr"]
 
 
 def parse_addr(text: object) -> tuple[str, int]:
-    """``host:port`` (host a name, an IPv4 address or ``[v6]``), port 1..65535; anything else is ``malformed``."""
-    import re
-
-    if type(text) is not str or len(text) > 300:
+    """A direct ``host:port`` (host a name, an IPv4 address or ``[v6]``), port 1..65535: the grammar of
+    :func:`orch.hubclient.linkaddr.parse_link_address` without the ``ws(s)://`` forms (R6 T-A adds those transports);
+    anything else is ``malformed``."""
+    a = parse_link_address(text)
+    if a.scheme != "tcp":
         raise HubRefused("malformed")
-    m = re.fullmatch(r"(\[[0-9a-fA-F:.]+\]|[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?):([1-9][0-9]{0,4})", text)
-    port = int(m.group(3)) if m else 0
-    if m is None or port > 65535:
-        raise HubRefused("malformed")
-    return m.group(1).strip("[]"), port
+    return a.host, a.port
 
 
 class TlsTransport:

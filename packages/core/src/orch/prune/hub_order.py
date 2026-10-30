@@ -200,7 +200,10 @@ class Ledger:
 
 
 def _write_result(hubdir: Path, ctx: Ctx, code: str, message: str) -> None:
-    """``remove-result.json`` (0600) in the hub folder, if there is one; never raises."""
+    """``remove-result.json`` (0600) in the hub folder, if there is one; never raises. A ``no_order`` run (the job came
+    back after the order was used) never replaces the result an earlier run wrote."""
+    if code == "no_order" and os.path.lexists(os.path.join(os.path.realpath(hubdir), RESULT_NAME)):
+        return
     doc = json.dumps({"ok": False, "code": code, "message_plain": message, "ms": _now_ms(ctx)}) + "\n"
     with contextlib.suppress(OSError):
         d = os.path.realpath(hubdir)
@@ -251,12 +254,13 @@ def _utc(ctx: Ctx) -> str:
     return time.strftime("%Y%m%dT%H%M%SZ", time.gmtime(ctx.clock()))
 
 
-def _preflight(ctx: Ctx, dry: bool) -> Plan:
-    """Every check, nothing changed. Raises :class:`Refused`."""
+def _preflight(ctx: Ctx, dry: bool, plan: Plan | None = None) -> Plan:
+    """Every check, nothing changed. Raises :class:`Refused`. ``plan`` is filled as the checks go, so a caller that gets a
+    refusal still sees the order id once it was read."""
     from orch.install.state import Layout, load
     from orch.ops.runtime import state_dir
 
-    plan = Plan()
+    plan = plan if plan is not None else Plan()
     why = agent_reason(ctx.env, ctx.euid)
     if why:
         raise Refused("agent", f"Removing the hub is a person's job; an agent never does it ({why}).", 3)
@@ -366,10 +370,17 @@ def _sha(path: str) -> str:
     return h.hexdigest()
 
 
-def _move_backups(plan: Plan, ledger: Ledger) -> None:
+def _move_backups(ctx: Ctx, plan: Plan, ledger: Ledger) -> None:
+    try:
+        with os.scandir(plan.backup_src) as it:  # a backup written after the pre-flight must be kept too
+            now_names = [e.name for e in it if e.name.endswith(".orchbak") and e.is_file(follow_symlinks=False)]
+    except FileNotFoundError:
+        now_names = []
+    plan.backups = sorted(set(plan.backups) | set(now_names))
     if not plan.backups:
         return
-    dest = plan.backup_dest
+    dest = plan.backup_dest or ctx.home / f"orch-hub-backup-{plan.hub_id[:8]}-{_utc(ctx)}"
+    plan.backup_dest = dest
     os.mkdir(dest, 0o700)  # fails when it exists
     ledger.add(f"backup folder {dest}")
     for name in plan.backups:
@@ -445,7 +456,7 @@ def _remove(ctx: Ctx, plan: Plan, ledger: Ledger) -> None:
         ledger.add(f"stopped {it.data.get('part', it.label)} service")
     if res.failed is not None:
         raise PruneError(res.error or "a service could not be stopped")
-    _move_backups(plan, ledger)
+    _move_backups(ctx, plan, ledger)
     steps = [Item("hub", "tree", "part folder or program", os.fspath(t)) for t in plan.trees]
     res = execute(ctx, inv, steps)
     for it in res.done:
@@ -461,7 +472,28 @@ def _remove(ctx: Ctx, plan: Plan, ledger: Ledger) -> None:
 # ---------------------------------------------------------------------------------------------------- main
 
 
+LAUNCHD_LABEL = "io.orch.hub-remove."
+
+
+def _launchd_forget(ctx: Ctx, order_id: str | None) -> None:
+    """macOS: a job made with ``launchctl submit`` stays and runs again after a failure. On every path of a real run the
+    job is removed (best effort; ``removal_id`` is hex, so the label is built from nothing else)."""
+    if ctx.platform != "darwin" or not order_id or not all(c in "0123456789abcdef" for c in order_id):
+        return
+    with contextlib.suppress(Exception):
+        ctx.exec(["launchctl", "remove", LAUNCHD_LABEL + order_id])
+
+
 def main(ctx: Ctx, *, dry_run: bool) -> int:
+    plan = Plan()
+    try:
+        return _main(ctx, dry_run, plan)
+    finally:
+        if not dry_run:
+            _launchd_forget(ctx, (plan.order or {}).get("removal_id") if isinstance(plan.order, dict) else None)
+
+
+def _main(ctx: Ctx, dry_run: bool, plan: Plan) -> int:
     try:
         from orch.install.state import Layout
 
@@ -469,7 +501,7 @@ def main(ctx: Ctx, *, dry_run: bool) -> int:
     except Exception:  # noqa: BLE001
         hubdir = ctx.home / ".nothing"
     try:
-        plan = _preflight(ctx, dry_run)
+        plan = _preflight(ctx, dry_run, plan)
         if dry_run:
             ctx.say("orch host prune --hub-order --dry-run: every check passed; nothing was changed.")
             return 0

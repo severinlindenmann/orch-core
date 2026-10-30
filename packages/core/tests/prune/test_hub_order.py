@@ -374,8 +374,8 @@ def test_a_spent_order_cannot_run_twice(b):
     assert (b.hub / H.USED_NAME).exists() and not (b.hub / H.ORDER_NAME).exists()
     assert b.result()["code"] == "remove_failed"
     assert REMOVAL in b.ledger.read_text()
-    assert b.run() != 0  # no order any more
-    assert b.result()["code"] == "no_order"
+    assert b.run() != 0  # no order any more; the earlier real result stays (F3)
+    assert b.result()["code"] == "remove_failed"
     # a new order file with the same removal id is refused by the ledger
     b.write_order()
     assert b.run() != 0 and b.result()["code"] == "replayed"
@@ -437,3 +437,50 @@ def test_a_bad_copy_keeps_the_trees(b, monkeypatch):
     assert b.run() == 1
     assert os.path.lexists(b.install / "parts" / "hub" / "data" / "backups")  # nothing deleted
     assert b.result()["code"] == "remove_failed"
+
+
+# ------------------------------------------------------------------- Opus review F3 / F5
+
+
+def test_f3_launchd_job_is_removed_on_success_and_on_refusal(b):
+    calls: list[list[str]] = []
+    run = lambda argv, env=None: (calls.append(list(argv)), (0, ""))[1]  # noqa: E731
+    assert b.run(platform="darwin", run=run) == 0, b.err.getvalue()
+    assert calls[-1] == ["launchctl", "remove", "io.orch.hub-remove." + REMOVAL]
+    b2 = Box(b.home.parent / "second")
+    b2.write_order(hub_id="d1" * 16)
+    calls2: list[list[str]] = []
+    run2 = lambda argv, env=None: (calls2.append(list(argv)), (0, ""))[1]  # noqa: E731
+    assert b2.run(platform="darwin", run=run2) != 0
+    assert ["launchctl", "remove", "io.orch.hub-remove." + REMOVAL] in calls2  # a refusal does not leave the job to re-run
+
+
+def test_f3_dry_run_and_linux_never_call_launchctl(b):
+    calls: list[list[str]] = []
+    run = lambda argv, env=None: (calls.append(list(argv)), (0, ""))[1]  # noqa: E731
+    assert b.run("--dry-run", platform="darwin", run=run) == 0
+    assert not any(c[:1] == ["launchctl"] for c in calls)
+
+
+def test_f3_a_second_run_without_an_order_does_not_overwrite_the_real_result(b):
+    b.write_order(hub_id="d1" * 16)
+    assert b.run() != 0
+    first = b.result()
+    assert first["code"] == "other_hub"
+    (b.hub / H.ORDER_NAME).unlink()
+    assert b.run() != 0  # the job came back: no order
+    assert b.result() == first
+
+
+def test_f5_a_backup_written_after_the_preflight_is_kept(b, monkeypatch):
+    files = _bak(b)
+    real = H._backups
+
+    def late(ctx, plan):
+        real(ctx, plan)
+        (b.hub / "backups" / "hub-aaaaaaaa-20260101T000000Z.orchbak").write_text("late")
+
+    monkeypatch.setattr(H, "_backups", late)
+    assert b.run() == 0, b.err.getvalue()
+    kept = {p.name: p.read_text() for p in _kept(b).iterdir()}
+    assert kept == {**files, "hub-aaaaaaaa-20260101T000000Z.orchbak": "late"}

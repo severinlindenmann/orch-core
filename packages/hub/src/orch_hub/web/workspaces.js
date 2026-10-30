@@ -2,6 +2,7 @@ import { emptyState, toast } from "./feel.js";
 // Connected workspaces and their availability.
 import { restoredNotice } from "./pages/hub-settings.js";
 import { ago, chip, h, text } from "./ui.js";
+import { OPEN_ON_ITS_COMPUTER } from "./switch.js";
 
 const nameOf = (end) => (end && end.name ? text(end.name) : end && end.owner_name ? text(end.owner_name + "'s workspace") : "Another workspace");
 
@@ -49,7 +50,7 @@ export function workspaceDetailsView(w, { roles = null, owner = null, hub, actio
         h("dt", { text: key }), h("dd", { text: JSON.stringify(value) })]))) : null,
     w.private ? null : h("h3", { text: "Change mode" }),
     w.private ? null : h("p", { text: "To change what this workspace shares, open it and use Settings > Hub. The workspace owner confirms with one click on their dashboard." }),
-    w.private ? small("Only " + personName(w.owner_name) + " can open it.") : button("Open " + nameOf(w), () => actions.open?.(w), { class: "pri" })].filter(Boolean);
+    w.private ? small("Only " + personName(w.owner_name) + " can open it.") : w.mode === "selective" ? small(OPEN_ON_ITS_COMPUTER) : button("Open " + nameOf(w), () => actions.open?.(w), { class: "pri" })].filter(Boolean);
 }
 
 /** The link is copied unchanged; after Copy the page says what to do next.
@@ -212,11 +213,13 @@ export const newWorkspaces = (known, rows) => (rows ?? []).filter((w) => w.works
 /** The green message that replaces the used link box once a workspace has joined. */
 export function joinedBannerView(row, actions = {}) {
   // A private (selective-mode) workspace: only its owner can open it, so no Open button and nothing else about it.
-  const note = row.private ? "It is online now. Only " + (row.owner_name || "its owner") + " can open it." : "It is online now. You can open it from here.";
+  const note = row.private ? "It is online now. Only " + (row.owner_name || "its owner") + " can open it."
+    : row.mode === "selective" ? "It is online now. It shares only chosen items with the hub, so open it on its own computer."
+    : "It is online now. You can open it from here.";
   return h("div", { class: "banner ok ws-joined", role: "status", "data-joined": row.workspace_id },
     h("div", { class: "row" },
       h("div", { class: "grow" }, h("b", { text: "✓ " + nameOf(row) + " joined" }), small(note)),
-      row.private ? null : button("Open " + nameOf(row), () => actions.open?.(row), { class: "pri" })));
+      row.private || row.mode === "selective" ? null : button("Open " + nameOf(row), () => actions.open?.(row), { class: "pri" })));
 }
 
 /** data: {workspaces, handoffs, admin: rows|null, hub, actions, joined?: rows that joined while the page was open}. */
@@ -253,7 +256,8 @@ export function workspacesView(data, now = Date.now()) {
           n ? small(n + (n === 1 ? " hand-off is" : " hand-offs are") + " waiting for this workspace") : null),
         h("td", {}, statusView(w, now)), h("td", {}, versionView(w, data.hub)), h("td", {}, w.private ? small("Not shown") : hostView(w)),
         h("td", {}, h("div", { class: "ws-actions" }, button("Details", () => actions.details?.(w)),
-          w.private ? small("Only " + text(w.owner_name ?? "its owner") + " can open it") : button("Open", () => actions.open?.(w)))));
+          w.private ? small("Only " + text(w.owner_name ?? "its owner") + " can open it")
+            : w.mode === "selective" ? small("Open it on its own computer") : button("Open", () => actions.open?.(w)))));
     })))) : emptyState(data.admin != null || data.canConnect ? "workspaces" : "workspaces-member");
   const older = data.workspaces.filter((w) => ["older", "unsupported"].includes(w.version_state));
   const left = (data.admin ?? []).filter((w) => w.status === "unbound");

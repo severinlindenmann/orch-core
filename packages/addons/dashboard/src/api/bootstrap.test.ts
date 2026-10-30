@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as boot from './bootstrap'
-import { bootstrap, clearSession, confirmSwitch, declineSwitch, getPendingSwitch, getToken, landSwitch, safeDestination } from './bootstrap'
+import { bootstrap, clearSession, confirmSwitch, declineSwitch, getPendingSwitch, getToken, landSwitch, safeDestination, switchWasRefused } from './bootstrap'
 
 beforeEach(() => {
   sessionStorage.clear()
@@ -68,6 +68,17 @@ describe('hub switch link, E4: the key proves itself before the ticket is used',
   })
   it('the upgrade path is gone', () => {
     expect('adoptToken' in boot).toBe(false)
+  })
+})
+
+describe('run-15 J02: a switch the workspace refuses by design (D93)', () => {
+  it('is remembered as refused, so the error page can say to open it on its own computer', async () => {
+    history.replaceState(null, '', `/#t=${TICKET}`)
+    await bootstrap(vi.fn())
+    vi.mocked(switchProof).mockResolvedValueOnce({ name: 'Product', proof: PROOF })
+    const fetcher = vi.fn(async () => Response.json({ ok: false, error: { code: 'switch.refused' } }, { status: 403 })) as unknown as typeof fetch
+    expect(await landSwitch(fetcher)).toEqual({ kind: 'failed' })
+    expect(switchWasRefused()).toBe(true)
   })
 })
 

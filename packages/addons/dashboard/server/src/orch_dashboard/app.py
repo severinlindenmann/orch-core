@@ -72,6 +72,7 @@ SETTINGS_TABS = (
     "gates",
     "grants",
     "devices",
+    "profile",
     "hub",
     "company",
 )  # HOST_TABS (settings/tabs.ts)

@@ -2,7 +2,7 @@
 // (kept for the tab). Reads are fixed by the scenario. Stopping sharing (a ticket, a rule) is a plain owner click; a
 // join and a leave are signed by One click with the backup key and change the scenario (see the click routes below).
 import type { HubAudienceList, HubSharedTicket, HubPreview, HubRule, HubShare, HubStatus } from '@/api/hub'
-import { EMPTY_PROFILE, type ProfileFields } from '@/api/profile'
+import type { ProfileFields } from '@/api/profile' // type only: a runtime import would loop through api/client
 import { BACKUP_KEY_LINE, CLICK_RISK, type ClickViewAnswer } from '@/api/click'
 import { fail, ok, type MockRouter } from './router'
 
@@ -113,6 +113,7 @@ function mockPreview(body: { add?: HubRule; remove?: HubRule } | null): HubPrevi
 }
 
 /** The owner's profile (HUB-WS-09): kept in memory; `pushed` only when the scenario has a hub the host could reach. */
+const EMPTY_PROFILE: ProfileFields = { listed: false, tags: [], handles: [], not_handled: [], accepts: [], description: '', contact: '', languages: '', hours: '' }
 let mockProfile: ProfileFields = { ...EMPTY_PROFILE }
 export const resetMockProfile = () => { mockProfile = { ...EMPTY_PROFILE } }
 function registerHubProfileRoutes(r: MockRouter) {

@@ -552,6 +552,7 @@ ROUTES: tuple[Route, ...] = (
 #: handler -> the session scopes that may call it (protocol §6.4). ``full`` is the browser's cookie session; ``pairing``
 #: (password + TOTP from the app) may only read the card, register a phone, bind and sign out; ``channel`` is bound to
 #: one channel and never registers a channel or reaches an admin route. A route not listed here is ``full`` only.
+#: A ``remote`` session (R4, the stream router's token) is in no set below: it reaches NO web route, not even sign-out.
 _PAIR = frozenset({"sign_out", "reg_begin", "reg_complete", "bind"})
 _CHAN = frozenset(
     {
@@ -1004,13 +1005,13 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
     def _h_sign_in(self, c: Ctx, p: dict, q: dict, b: dict | None):
         b = _need(b, user_id=str, password=str, totp=str)
         client = b.get("client", "browser")
-        if client not in ("browser", "app"):
+        if client not in ("browser", "app", "remote"):
             raise ApiError("malformed")
         if client == "browser" and c.origin is None:  # a cookie is only ever set for a request the browser labelled
             raise ApiError("not_allowed")
         who = b["user_id"].strip()[:64]
         cands: list[str] = []
-        scope = "full" if client == "browser" else "pairing"
+        scope = {"browser": "full", "app": "pairing", "remote": "remote"}[client]
 
         def attempt() -> Any:  # run inside the caps: they are charged before any lookup
             failure: ChannelError | None = None
@@ -1029,7 +1030,7 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
 
         s = self._guarded_credentials(c, resolve, attempt)
         out: dict[str, Any] = {"user_id": s["user_id"], "expires_ms": s["expires_ms"]}
-        if client == "app":  # the phone keeps the token itself and sends it as a bearer
+        if client != "browser":  # the phone / a remote client keeps the token itself (the remote one only for the stream router)
             out["token"] = s["token"]
             return 200, out, []
         ttl = max(0, (s["expires_ms"] - self.d.now_ms()) // 1000)

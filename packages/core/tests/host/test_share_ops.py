@@ -130,12 +130,67 @@ def test_without_a_hub_every_share_op_is_hub_not_joined(served):
     assert err(req(served, "share.rules")) == "hub.not_joined"
 
 
-def test_full_mode_refuses_every_share_op(served, full):
-    for op, args in (("share.rules", {}), ("share.rule_add", {"rule": {"kind": "tag", "tag": "x"}, "expect": "p" * 43}),
-                     ("share.sync", {}), ("share.revoke", {"ref": "K-1"})):  # fmt: skip
-        res = req(served, op, args)
-        assert err(res) == "hub.refused" and "wrong_mode" in res["error"]["message"], op
+def test_full_mode_shares_a_ticket_with_named_people(served, full):
+    uid, key = labelled(served, "Public note", "public")
+    served.ticket("Plain list")
+    rule = {"kind": "ticket", "ticket": key, "audience": {"users": ["b" * 32], "groups": []}}
+    prev = ok(req(served, "share.preview", {"add": rule}))["data"]
+    assert prev["review"]["mode"] == "full" and "already holds this workspace" in prev["review"]["scope_short"]
+    got = ok(req(served, "share.rule_add", {"rule": rule, "expect": prev["plan"]}))["data"]
+    assert got["synced"] is True and got["put"] == 1 and full.count("share_put") == 1
+    (item,) = full.opened
+    assert item["item_kind"] == "ticket" and item["audience"]["users"] == ["b" * 32] and item["chain"]["log"] == uid
+    assert ok(req(served, "share.revoke", {"ref": key}))["data"]["revoke"] == 1 and full.count("share_revoke") == 1
+
+
+def test_full_mode_refuses_summaries_and_a_plan_that_was_not_shown(served, full):
+    for kind in ("needs_you", "questions"):
+        res = req(served, "share.preview", {"add": {"kind": kind}})
+        assert err(res) == "invalid.input" and "already sees what needs you" in res["error"]["message"]
+    _, key = labelled(served, "Public note", "public")
+    rule = {"kind": "ticket", "ticket": key}
+    assert err(req(served, "share.rule_add", {"rule": rule, "expect": "p" * 43})) == "invalid.input"
     assert full.ops == []
+    rules = ok(req(served, "share.rules"))["data"]["rules"]
+    assert all(r["kind"] != "needs_you" for r in rules)
+
+
+def test_full_mode_default_rule_sends_no_summary(served, full):
+    served.ticket("Plain list")
+    assert ok(req(served, "share.sync"))["data"]["put"] == 0 and full.ops == []
+
+
+def test_a_member_and_an_agent_cannot_share_in_full_mode(served, full):
+    _, key = labelled(served, "Public note", "public")
+    res = agent(served, "share.rule_add", {"rule": {"kind": "ticket", "ticket": key}})
+    assert not res["ok"] and full.ops == []
+
+
+def test_a_hub_log_mode_mismatch_is_refused(served, selective, monkeypatch):
+    from orch.host import peerops, shareops
+
+    real = peerops._hub_state
+
+    def lying(service, **kw):
+        st = real(service, **kw)
+        st.mode = "full"  # hub.json says full, the signed log says selective
+        return st
+
+    monkeypatch.setattr(peerops, "_hub_state", lying)
+    assert err(req(served, "share.rules")) == "hub.state_mismatch"
+    assert shareops
+
+
+def test_a_selective_to_full_switch_sends_only_tickets_and_unbind_forgets_sent(served, selective):
+    from orch.host import shareops
+
+    _, key = labelled(served, "Public note", "public")
+    ok(rule_op(served, "share.rule_add", {"kind": "ticket", "ticket": key}))
+    svc = served.h.host.services[served.wid]
+    assert shareops._load(svc).sent  # noqa: SLF001
+    shareops.forget_sent(svc)
+    st = shareops._load(svc)  # noqa: SLF001
+    assert not st.sent and st.confirmed is None and st.rules
 
 
 def test_an_agent_cannot_read_or_change_the_rules(served, selective):
@@ -486,15 +541,15 @@ def test_an_item_that_left_and_comes_back_needs_a_new_confirm(served, selective,
     assert selective.count("share_put") == 1 and selective.count("share_revoke") == 1
 
 
-def test_full_mode_never_sends_even_when_the_thread_runs(served, full, quick_auto):
+def test_full_mode_default_rule_pass_sends_nothing_when_the_thread_runs(served, full, quick_auto):
     from orch.host import shareauto
 
     svc = served.h.host.services[served.wid]
     _, key = labelled(served, "Public note", "public")
-    shareauto.arm(svc)  # as if a leftover share state armed it
+    shareauto.arm(svc)
     ok(agent(served, "set", {"ref": key, "pairs": ["title=Renamed note"]}))
-    a = settle(served, quick_auto)
-    assert a.parked and str(a.last).startswith("parked:") and full.ops == []
+    settle(served, quick_auto)
+    assert full.ops == []  # the default needs-you rule never leaves in full mode
 
 
 def test_no_pass_before_a_selective_join(served, quick_auto):

@@ -1107,6 +1107,9 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
         orgmcp.revoke_workspace(service, service.workspace_id)  # also drops the values the proxy held
         orgsecrets.drop_cache(service)  # then the opened values (condition 14), then the files
         orgstate.purge(service)  # M3: the company skills and servers of that binding go with it (nothing stays served)
+        from . import shareops
+
+        shareops.forget_sent(service)  # the hub purged its copies on unbind: no ghost "shared" state after a rejoin
         _stop_peers(service)  # unbound: the ws->ws link and receive thread end here
         return ok_result(out)
     except HubRefused as exc:

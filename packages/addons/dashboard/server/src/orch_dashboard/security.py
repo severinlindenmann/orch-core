@@ -34,6 +34,7 @@ _FRAME_OWN = frozenset(
 # Bodies of the sign routes are tiny (ids, a hash, the switch's passphrase of at most 1024 characters);
 # everything else keeps the general bound.
 CLICK_BODY_LIMIT = 16_384
+SHARE_UPLOAD_LIMIT = 1_398_104 + 4096  # the base64 of 1 MiB and the small JSON around it (shares.py UPLOAD_B64_MAX)
 CLICK_STEP = ("/view", "/sign", "/cancel", "/state", "/custody")
 
 
@@ -237,6 +238,8 @@ class Security:
             if click_step or path.startswith(("/auth/passkey/", "/auth/enroll/"))  # pre-login, from the internet
             else 1_048_576
         )
+        if method == "POST" and path.startswith("/api/w/") and path.endswith("/shares/upload"):
+            limit = SHARE_UPLOAD_LIMIT  # a file picked for a share (P05): 1 MiB as base64, plus the JSON around it
         if method == "POST" and path.startswith("/api/testrun/") and path.endswith("/images"):
             limit = UPLOAD_LIMIT  # a screenshot of the tester's checklist (base64 of at most 5 MB)
         if setup:

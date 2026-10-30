@@ -294,3 +294,27 @@ def test_a_closed_stream_loses_its_batch(world, human):
     assert world.refusal("sign", request_id=rid, view_digest=digest).code == "remote.no_stream"
     world.streams.add(SID)  # even if the id came back, the batch is gone
     assert world.refusal("sign", request_id=rid, view_digest=digest).code == "remote.presence_required"
+
+
+def test_wrong_or_missing_digest_leaves_presence_unchanged(world, human):
+    rid, digest = prepared_approval(world, human)
+    world.present([digest])
+    for bad in ("sha256:" + "a" * 64, None):
+        kw = {} if bad is None else {"view_digest": bad}
+        assert world.refusal("sign", request_id=rid, **kw).code == "invalid.input"
+    unknown = "hr_" + "9" * 26
+    assert world.refusal("sign", request_id=unknown, view_digest=digest).code == "invalid.input"
+    assert world.sign(rid, digest)  # the batch entry was never touched
+
+
+def test_failed_sign_restores_presence(world, human):
+    _, key = human.ticket()
+    p = world.prepare("close", {"ref": key, "resolution": "other"})
+    rid = p["request_id"]
+    digest = world.call("view", request_id=rid)["view_digest"]  # no dwell yet: the sign is refused (too_soon)
+    world.present([digest])
+    assert world.refusal("sign", request_id=rid, view_digest=digest).code == "human.click_refused"
+    assert world.click.signatures == 0
+    world.click.mono.t += 2
+    assert world.sign(rid, digest)  # the same presence still covers it
+    assert world.refusal("sign", request_id=rid, view_digest=digest).code == "remote.presence_required"

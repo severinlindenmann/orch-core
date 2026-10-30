@@ -53,7 +53,7 @@ def test_op_catalog_walk_every_kind_classified():
         "task.mark_done", "people.set", "grant", "schedule.add", "follow_up.reschedule", "follow_up.undo",
     }  # fmt: skip
     assert {o for o, c in K.SIGNER_OPS.items() if c == K.ALLOWED} == {
-        "prepare", "view", "sign", "cancel", "status", "session_alive", "stash",
+        "prepare", "view", "sign", "cancel", "status", "stash",
     }  # fmt: skip
 
 
@@ -226,3 +226,28 @@ def test_a_plain_grant_is_never_a_streams(world, human):
     for kw in ({}, {"deposit": True}, {"reveal_key": "A" * 43}):
         exc = world.refusal("prepare", op="grant", args={"agent": "claude"}, idem="a_" + "0" * 26, **kw)
         assert exc.code == "remote.kind_refused", kw
+
+
+def test_stream_status_returns_only_own_workspace(world):
+    other = {**world.click.entry, "workspace_id": "cd" * 16, "prefix": "o"}
+    world.signer._workspaces = lambda: [world.click.entry, other]  # noqa: SLF001
+    both = world.signer.handle("status", {})
+    assert {r["workspace_id"] for r in both["workspaces"]} == {world.wid, other["workspace_id"]}
+    got = world.call("status")
+    assert [r["workspace_id"] for r in got["workspaces"]] == [world.wid]
+    assert world.refusal("status", workspace_id=other["workspace_id"]).code in (
+        "remote.kind_refused",
+        "remote.no_stream",
+    )
+
+
+def test_stream_session_alive_refused_or_bound(world):
+    """Chosen: refused. A lease belongs to the preparing dashboard session; a stream has none."""
+    assert world.refusal("session_alive", session="s1").code == "remote.kind_refused"
+
+
+def test_stream_unlisted_op_refused(world):
+    handled = set(re.findall(r'"(\w+)": self\.', inspect.getsource(ClickSigner._dispatch)))  # noqa: SLF001
+    listed = {o for o, c in K.SIGNER_OPS.items() if c == K.ALLOWED}
+    for op in sorted((handled | {"stepup", "nope"}) - listed):
+        assert world.refusal(op).code == "remote.kind_refused", op

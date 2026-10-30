@@ -151,15 +151,24 @@ class Presence:
             raise ClickError("rate.limited", "too many presence batches", retry_after_ms=10_000, retryable=True)
         batches.append(_Batch(issued_ms + BATCH_MS, set(digests)))
 
-    def take(self, stream: str, digest: bytes) -> bool:
-        """Remove ``digest`` from a live batch of THIS stream; True when it was there (each digest, one action)."""
+    def take(self, stream: str, digest: bytes) -> _Batch | None:
+        """Remove ``digest`` from a live batch of THIS stream; the batch when it was there (each digest, one action)."""
         now = self._now()
         self._prune(now)
         for batch in self._batches.get(stream, []):
             if digest in batch.digests:
                 batch.digests.discard(digest)
-                return True
-        return False
+                return batch
+        return None
+
+    def give_back(self, stream: str, batch: _Batch, digest: bytes) -> None:
+        """Return a taken digest whose action did not happen (a refused or failed sign); never after expiry."""
+        if self._now() >= batch.expires_ms:
+            return
+        batch.digests.add(digest)
+        live = self._batches.setdefault(stream, [])
+        if batch not in live:
+            live.append(batch)
 
     def drop(self, stream: str) -> None:
         self._nonces.pop(stream, None)

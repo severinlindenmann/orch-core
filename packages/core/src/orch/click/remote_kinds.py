@@ -50,15 +50,16 @@ TABLE: dict[str, str] = {
 #: the families that are refused whatever the table says (an op added under one of them is refused too)
 _REFUSED_FAMILIES = ("remote.", "device.", "hub.", "member.", "addon.", "import.")
 
-#: the signer's own ops (``ClickSigner.handle``): only these five and ``stash`` are reachable from a stream;
-#: ``custody_on|off``, ``rotate``, ``runner``, ``github_token``, ``stepup``, ``cancel_holds`` are not
+#: the signer's own ops (``ClickSigner.handle``): the ONE allowlist of a stream: prepare, view, sign, cancel, status
+#: (own workspace only) and stash; ``session_alive``, ``custody_*``, ``rotate``, ``runner``, ``github_token``,
+#: ``stepup`` and ``cancel_holds`` are not
 SIGNER_OPS: dict[str, str] = {
     "prepare": ALLOWED,
     "view": ALLOWED,
     "sign": ALLOWED,
     "cancel": ALLOWED,
     "status": ALLOWED,
-    "session_alive": ALLOWED,
+    "session_alive": REFUSED,  # a lease of the preparing dashboard session; a stream has none
     "stash": ALLOWED,
     "custody_on": REFUSED,
     "custody_off": REFUSED,

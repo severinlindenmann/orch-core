@@ -2518,16 +2518,37 @@ class ClickSigner:
             if cls == REFUSED:
                 raise self._stream_refuse(entry, "kind", op=op)
             if op == "sign" and cls == PRESENCE:
+                # the digest must be the review this signer built, checked BEFORE any presence is touched
                 vd = args.get("view_digest")
                 approval = self.approvals.get((args.get("workspace_id"), args.get("request_id")))
                 known = getattr(approval, "view_digest", None)
-                if type(vd) is not str or not HASH.fullmatch(vd) or (known is not None and vd != known):
+                if type(vd) is not str or not HASH.fullmatch(vd) or known is None or vd != known:
                     raise ClickError("invalid.input", "view_digest is the digest of the review")
                 take = digest_bytes(vd)
-        if take is not None and not self.presence.take(sid, take):
+        if op == "status":
+            return self._stream_status(entry, args)
+        if take is None:
+            return self._dispatch(op, args)
+        batch = self.presence.take(sid, take)
+        if batch is None:
             self._note("refused", workspace=entry["workspace_id"], code="remote_presence_required")
             raise ClickError(REMOTE_PRESENCE_REQUIRED, "Confirm on your device first.")
-        return self._dispatch(op, args)
+        try:
+            return self._dispatch(op, args)
+        except BaseException:
+            # give the presence back unless a signature may exist: a refused or failed sign consumes nothing
+            held = self.approvals.get((args.get("workspace_id"), args.get("request_id")))
+            if held is not None and held.signed is None and (held.workspace_id, held.request_id) not in self._attempted:
+                self.presence.give_back(sid, batch, take)
+            raise
+
+    def _stream_status(self, entry: dict[str, Any], args: Mapping[str, Any]) -> dict[str, Any]:
+        """``status`` over a stream: this stream's workspace only, never the person's other workspaces."""
+        if args.get("request_id"):
+            return self.hold_status(args)
+        from orch import __version__ as core
+
+        return {"core": str(core), "contract": CONTRACT, "features": list(FEATURES), "workspaces": [self._row(entry)]}
 
     def _presence_op(
         self, entry: dict[str, Any], sid: str, facts: dict[str, Any], op: str, args: Mapping[str, Any]

@@ -316,6 +316,6 @@ describe('F8: agent names on the ticket', () => {
     const { agentName } = await import('./shared')
     expect(agentName('claude-code')).toBe('Claude Code')
     expect(agentName('codex')).toBe('Codex')
-    expect(agentName('orch-cli')).toBe('An agent')
+    expect(agentName('orch-cli')).toBe('Your agent')
   })
 })

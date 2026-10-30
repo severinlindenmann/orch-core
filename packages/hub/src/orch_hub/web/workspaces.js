@@ -58,7 +58,10 @@ export function workspaceDetailsView(w, { roles = null, owner = null, hub, actio
 export function connectWorkspaceView(link, actions = {}, { people = [], selected = null, self = null } = {}) {
   const NEW = "__new__";
   const next = h("p", { class: "small muted", "aria-live": "polite" });
-  const NEXT = "Send this link to the workspace owner, or open it on their computer.";
+  const ROUTE = "open their workspace, go to Settings › Hub and press Connect a hub.";
+  // P12: after Copy, say where the link goes next, in the words of the screens the person will see.
+  const nextWords = (who) => who === "you" ? "Open your workspace, go to Settings › Hub and press Connect a hub." : "Send it to " + who + ". They " + ROUTE;
+  const ownerName = () => (self && select.value === self) ? "you" : text(known.find((p) => p.user_id === select.value)?.name ?? "the workspace owner");
   const clock = (ms) => { const d = new Date(ms); return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"); };
   const input = h("input", { class: "grow", readonly: true, value: link?.link ?? "", "aria-label": "Connect link" });
   let current = link?.link ?? "";
@@ -66,7 +69,8 @@ export function connectWorkspaceView(link, actions = {}, { people = [], selected
     let ok = false;
     try { ok = !!(await actions.copy?.(current)); } catch { ok = false; }
     copy.textContent = ok ? "Copied ✓" : "Could not copy. Select the link to copy it.";
-    next.textContent = ok ? NEXT : "";
+    next.textContent = ok ? "Copied ✓ " + nextWords(ownerName()) : "";
+    next.className = ok ? "banner ok" : "small muted";
   });
   const openLink = button("Open link", () => actions.openLink?.(current));
   // r11 P03: "Open link" opens the link in THIS browser, so only for the signed-in person's own workspace; anyone else's
@@ -84,7 +88,7 @@ export function connectWorkspaceView(link, actions = {}, { people = [], selected
     select.textContent = "";
     if (!chosen) select.append(h("option", { value: "", text: "Choose…" }));
     for (const p of known) select.append(h("option", { value: p.user_id, selected: p.user_id === chosen ? true : null, text: text(p.name ?? "Unnamed") }));
-    select.append(h("option", { value: NEW, text: "Someone new…" }));
+    select.append(h("option", { value: NEW, text: "Someone new (add them now)" }));
     select.value = chosen ?? "";
   };
   // "Someone new...": name + Create sign-in link (POST /admin/invites). The workspace link waits until they have signed in.
@@ -147,7 +151,7 @@ export function connectWorkspaceView(link, actions = {}, { people = [], selected
         signedIn.textContent = "✓ " + who + " has signed in";
         signedIn.hidden = false;
         await choose(st.user_id);
-        if (!linkRow.hidden) next.textContent = "Send this link to " + who + ", or open it on their computer.";
+        if (!linkRow.hidden) next.textContent = nextWords(who);
       } catch { /* try again on the next tick */ }
       finally { busy = false; }
     }, 3000);

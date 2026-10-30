@@ -232,6 +232,7 @@ export function adminView(d) {
     return [h("h2", { text: "People & groups" }),
       h("div", { class: "admin-grid" },
         h("section", { class: "card" }, h("h3", { text: "Invite a person" }),
+          h("p", { class: "small muted", id: "invite-pointer", text: "With a workspace? Use Workspaces › Connect a workspace." }),
           h("form", { onsubmit: async (ev) => {
             ev.preventDefault();
             const made = await postLink(ev.submitter ?? inviteBtn, "/admin/invites", { name: inviteName.value.trim() });

@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { hubQueries } from '@/api/hub'
-import { Raw } from '@/components/sign/visible'
+import { Name } from '@/components/sign/visible'
 
 /** Today's small "Shared with you" card: up to 3 tickets other people shared through the hub, "See all" opens the Tickets
  * page. Same quiet rule as the Tickets section (SharedWithYou): nothing without a hub, with the hub away or when nothing
@@ -17,8 +17,8 @@ export function SharedToday({ ws }: { ws: string | undefined }) {
         {items.slice(0, 3).map((t) => (
           <li key={t.workspace_id + t.key} className="flex items-center justify-between gap-2 py-1.5" data-testid="shared-today-row">
             <span className="min-w-0">
-              <span className="block truncate text-[13px]"><Raw>{t.title}</Raw></span>
-              <span className="block text-[12px] text-text-faint"><Raw>{t.shared_by}</Raw> · {t.status.replaceAll('_', ' ')}</span>
+              <span className="block truncate text-[13px]"><Name>{t.title}</Name></span>
+              <span className="block text-[12px] text-text-faint"><Name>{t.shared_by}</Name> · {t.status.replaceAll('_', ' ')}</span>
             </span>
             <Link to="/tickets" search={{ shared: `${t.workspace_id}:${t.key}` }} className="shrink-0 rounded border border-border px-2 py-0.5 text-[12px] hover:bg-surface-hover focus-visible:ring-2 focus-visible:ring-ring">Read</Link>
           </li>

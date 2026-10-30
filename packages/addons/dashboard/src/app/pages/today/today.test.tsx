@@ -92,7 +92,7 @@ describe('Today: a calm, grouped queue', () => {
     await user.click(screen.getByRole('button', { name: 'Cancel' }))
     const verdicts = await group(/^Verdicts · \d+/)
     await user.click(within(verdicts).getByRole('button', { name: 'Give verdict' }))
-    const dialog = await screen.findByRole('dialog', { name: /Verify/ })
+    const dialog = await screen.findByRole('dialog', { name: /Give verdict/ })
     expect(within(dialog).getByRole('radio', { name: /Pass/ })).toBeInTheDocument()
     await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
     expect(within(verdicts).getByRole('link', { name: 'Evidence' })).toBeInTheDocument()

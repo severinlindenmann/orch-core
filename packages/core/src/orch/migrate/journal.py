@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import secrets
 import time
 from collections.abc import Mapping
 from pathlib import Path
@@ -80,6 +81,8 @@ def write_journal(phase: str, env: Mapping[str, str] | None = None, **fields: An
         raise ValueError(f"update phase {phase!r} cannot follow {old!r}")
     if old == "committed" and phase != "stopped" and phase != "committed":
         raise ValueError(f"update phase {phase!r} cannot follow 'committed'")
+    if phase == "stopped" and (old is None or old == "committed" or not doc.get("update_id")):
+        doc["update_id"] = secrets.token_hex(16)  # a new update has its own id (the quarantine marker names it)
     doc.update(fields)
     doc.update({"v": 1, "phase": phase, "at": int(time.time())})
     path = journal_path(env)
@@ -93,7 +96,7 @@ def unfinished(env: Mapping[str, str] | None = None) -> bool:
         doc = read_journal(env)
     except OrchError:
         return True
-    return doc is not None and doc["phase"] != "committed"
+    return doc is not None and (doc["phase"] != "committed" or bool(doc.get("restoring")))
 
 
 def clear_journal(env: Mapping[str, str] | None = None) -> None:

@@ -708,7 +708,7 @@ def test_an_error_during_restore_leaves_the_original_untouched(root, env, monkey
     with pytest.raises(OSError):
         bk.restore(b, root, env)
     assert tree_digest(root) == before
-    assert [p.name for p in root.parent.iterdir() if p.name.startswith(".root.")] == []
+    assert [p.name for p in root.parent.iterdir() if p.name.startswith(".root.") and not p.name.endswith(".lock")] == []
 
 
 def test_restore_rejects_a_backup_with_a_link(root, env):
@@ -886,7 +886,7 @@ def test_restore_swaps_in_and_carries_what_was_left_out(root, env, monkeypatch, 
     assert (root / "events/a.jsonl").read_text() == "e1\n"
     assert (root / ".state/index.sqlite").read_text() == "kept-index"
     assert (root / "install/tools/orch-1/bin").read_text() == "tool"
-    assert [p.name for p in root.parent.iterdir() if p.name.startswith(".root.")] == []
+    assert [p.name for p in root.parent.iterdir() if p.name.startswith(".root.") and not p.name.endswith(".lock")] == []
     assert jr.read_journal(env)["phase"] == "installed" and not jr.read_journal(env).get("restoring")
 
 
@@ -919,12 +919,236 @@ def test_a_crash_inside_restore_never_leaves_the_root_open_or_without_its_journa
     # the next run cleans up and can restore again
     bk.restore(b, root, env)
     assert (root / "events/a.jsonl").read_text() == "e1\n"
-    assert [p.name for p in root.parent.iterdir() if p.name.startswith(".root.")] == []
+    assert [p.name for p in root.parent.iterdir() if p.name.startswith(".root.") and not p.name.endswith(".lock")] == []
 
 
 def test_a_crash_between_the_two_renames_is_recovered_on_the_next_run(root, env, monkeypatch):
     b = swap_setup(root, env)
     aside = root.with_name(".root.replaced-dead")
     os.rename(root, aside)  # the state a crash between the renames leaves
+    jr.write_journal("installed", env, restoring=str(root), restore_aside=str(aside))
     bk.restore(b, root, env)
     assert (root / "events/a.jsonl").read_text() == "e1\n" and not aside.exists()
+
+
+@pytest.mark.parametrize(
+    "rel",
+    ["hosts/w/heads.sqlite", "hosts/w/heads.sqlite-wal", "hosts/w/transitions/t1"]
+    + ["hosts/w/pending-transitions/p", ".state/applied", ".state/intents/i"],
+)  # fmt: skip
+def test_the_remaining_durable_host_files_are_protected(root, rel):
+    assert is_signed_path(rel)
+    assert not bk.is_derived(".state/heads.sqlite")
+
+
+def test_a_step_that_wipes_heads_sqlite_is_caught(root):
+    (root / "hosts/w").mkdir(parents=True)
+    (root / "hosts/w/heads.sqlite").write_text("ancestry")
+
+    def wipe(ctx):
+        (root / "hosts/w/heads.sqlite").unlink()
+
+    reg = Registry([Step("workspace", 1, 2, "wipe", wipe)], {"workspace": 2})
+    with pytest.raises(OrchError):
+        apply(root, "workspace", reg)
+    assert read_format(root, "workspace") == 1 and (root / "hosts/w/heads.sqlite").exists() is False  # the step ran
+
+
+@pytest.mark.parametrize("phase", ["committed", "installed"])
+def test_restoring_always_counts_as_unfinished(root, env, phase):
+    jr.write_journal("stopped", env)
+    jr.write_journal(phase, env, restoring=str(root))
+    assert jr.unfinished(env) and code_of(open_root, root, "workspace", env) == "update.interrupted"
+    jr.write_journal(phase, env, restoring=None)
+    assert jr.unfinished(env) is (phase != "committed")
+
+
+def test_a_crash_in_restore_after_commit_marks_still_refuses_open(root, env, monkeypatch):
+    b = swap_setup(root, env)
+    jr.write_journal("committed", env, backups={str(b.resolve()): 1})
+    assert code_of(bk.restore, b, root, env) == "migrate.backup_refused"  # allowed only before commit
+    jr.write_journal("stopped", env, backups={str(b.resolve()): 1})
+    monkeypatch.setattr(bk.shutil, "copytree", lambda *a, **k: (_ for _ in ()).throw(OSError("crash")))
+    with pytest.raises(OSError):
+        bk.restore(b, root, env)
+    assert jr.read_journal(env)["restoring"] and code_of(open_root, root, "workspace", env) == "update.interrupted"
+
+
+def test_a_refused_second_restore_touches_nothing_of_the_first(root, env):
+    b = swap_setup(root, env)
+    leftover = root.with_name(".root.restore-other")
+    leftover.mkdir()
+    (leftover / "x").write_text("first run's staging")
+    with lock_shared(root):
+        assert code_of(bk.restore, b, root, env) == "migrate.running"
+    assert (leftover / "x").read_text() == "first run's staging"
+
+
+@pytest.mark.parametrize("fallback", [False, True])
+def test_a_failed_restore_puts_carried_entries_back(root, env, monkeypatch, fallback):
+    b = swap_setup(root, env)
+    monkeypatch.setattr(bk, "_exchange", lambda a, c: False)
+    real = os.rename
+
+    def flaky(src, dst, *a, **k):
+        if (fallback and str(src) == str(root.resolve()) and ".replaced-" in str(dst)) or (
+            not fallback and ".restore-" in str(src) and "tools" in str(src) is False
+        ):
+            raise OSError("crash")
+        if not fallback and str(dst) == str(root.resolve()) and ".restore-" in str(src):
+            raise OSError("crash")
+        return real(src, dst, *a, **k)
+
+    monkeypatch.setattr(bk.os, "rename", flaky)
+    with pytest.raises(OSError):
+        bk.restore(b, root, env)
+    monkeypatch.setattr(bk.os, "rename", real)
+    assert (root / "install/tools/orch-1/bin").read_text() == "tool"
+    assert (root / ".state/index.sqlite").read_text() == "kept-index"
+
+
+def test_state_rejected_and_body_are_data_not_derived(root, env):
+    for rel in (".state/rejected/T-1.md", ".state/body/uid.md"):
+        assert is_signed_path(rel) and not bk.is_derived(rel)
+    (root / ".state/rejected").mkdir(parents=True)
+    (root / ".state/rejected/a.md").write_text("prose")
+    b = bk.create_backup(root, "workspace", 1, 2, env)
+    assert (b / "data/.state/rejected/a.md").read_text() == "prose"
+
+
+def _parts(root):
+    p = root / "install/parts/hub/data"
+    p.mkdir(parents=True)
+    (p / "hub.key").write_text("K")
+    return p / "hub.key"
+
+
+def test_a_killed_restore_never_loses_carried_folders(root, env):
+    key = _parts(root)
+    b = bk.create_backup(root, "workspace", 1, 2, env)
+    jr.write_journal("installed", env, backups={str(b.resolve()): 1})
+    stg = root.with_name(".root.restore-dead")  # what a restore killed after the carry loop leaves
+    (stg / "install").mkdir(parents=True)
+    os.rename(root / "install/parts", stg / "install/parts")
+    jr.write_journal("installed", env, backups={str(b.resolve()): 1}, restoring=str(root), restore_staging=str(stg))
+    bk.restore(b, root, env)
+    assert key.read_text() == "K" and not stg.exists()
+
+
+def test_both_renames_failing_keeps_staging_and_the_next_run_recovers(root, env, monkeypatch):
+    key = _parts(root)
+    b = bk.create_backup(root, "workspace", 1, 2, env)
+    jr.write_journal("installed", env, backups={str(b.resolve()): 1})
+    monkeypatch.setattr(bk, "_exchange", lambda a, c: False)
+    real = os.rename
+    n = {"aside": 0}
+
+    def r(s, d, *a, **k):
+        if ".restore-" in str(s) and Path(d) == root.resolve():
+            raise OSError("swap fail")
+        if ".replaced-" in str(s) and Path(d) == root.resolve():
+            n["aside"] += 1
+            if n["aside"] == 1:
+                raise OSError("put back fail")
+        return real(s, d, *a, **k)
+
+    monkeypatch.setattr(bk.os, "rename", r)
+    with pytest.raises(OSError):
+        bk.restore(b, root, env)
+    monkeypatch.setattr(bk.os, "rename", real)
+    assert not root.exists() and [p for p in root.parent.iterdir() if ".restore-" in p.name]  # staging was kept
+    bk.restore(b, root, env)
+    assert key.read_text() == "K"
+
+
+def test_the_restore_lock_lives_in_the_state_dir_not_the_project(root, env):
+    b = bk.create_backup(root, "workspace", 1, 2, env)
+    jr.write_journal("stopped", env, backups={str(b.resolve()): 1})
+    bk.restore(b, root, env)
+    assert [p.name for p in root.parent.iterdir() if p.name.endswith(".lock")] == []
+    locks = list((Path(env["ORCH_STATE_DIR"]) / "locks").glob("restore-*.lock"))
+    assert len(locks) == 1 and stat.S_IMODE(locks[0].stat().st_mode) == 0o600
+
+
+def marker(env, content=None, link=False):
+    q = Path(env["ORCH_STATE_DIR"]) / "install"
+    q.mkdir(parents=True, exist_ok=True)
+    m = q / "quarantine"
+    if m.is_symlink() or m.exists():
+        m.unlink()
+    if link:
+        m.symlink_to("/nonexistent")
+    else:
+        m.write_text(content if content is not None else jr.read_journal(env)["update_id"] + "\n")
+
+
+def test_quarantine_passes_only_its_own_update(root, env):
+    jr.write_journal("stopped", env)
+    jr.write_journal("installed", env)
+    assert code_of(open_root, root, "workspace", env, quarantine_ok=True) == "update.interrupted"  # no marker
+    marker(env)
+    open_root(root, "workspace", env, quarantine_ok=True).close()
+    assert code_of(open_root, root, "workspace", env) == "update.interrupted"  # not asked for
+    marker(env, "someotherupdate")
+    assert code_of(open_root, root, "workspace", env, quarantine_ok=True) == "update.interrupted"
+    marker(env, link=True)
+    assert code_of(open_root, root, "workspace", env, quarantine_ok=True) == "update.interrupted"
+
+
+def test_quarantine_never_passes_a_restore(root, env):
+    jr.write_journal("stopped", env)
+    jr.write_journal("installed", env, restoring=str(root))
+    marker(env)
+    assert code_of(open_root, root, "workspace", env, quarantine_ok=True) == "update.interrupted"
+
+
+def test_a_marker_of_an_earlier_update_does_not_pass_the_next(root, env):
+    jr.write_journal("stopped", env)
+    old_id = jr.read_journal(env)["update_id"]
+    jr.write_journal("committed", env)
+    jr.write_journal("stopped", env)
+    assert jr.read_journal(env)["update_id"] != old_id
+    marker(env, old_id)
+    assert code_of(open_root, root, "workspace", env, quarantine_ok=True) == "update.interrupted"
+
+
+def test_a_planted_scratch_folder_is_deleted_not_imported(root, env):
+    b = swap_setup(root, env)
+    planted = root.with_name(".root.restore-x")
+    (planted / "install/tools/evil").mkdir(parents=True)
+    (planted / "install/tools/evil/bin").write_text("evil")
+    bk.restore(b, root, env)
+    assert not planted.exists() and not (root / "install/tools/evil").exists()
+    assert (root / "install/tools/orch-1/bin").read_text() == "tool"
+
+
+def test_a_planted_replaced_folder_is_not_swapped_in(root, env):
+    """The root is missing (a half-done swap) and an UNRECORDED ``.replaced-`` folder sits beside it: it must not
+    become the root. It is deleted, and the restore fails because there is no root."""
+    b = swap_setup(root, env)
+    os.rename(root, root.with_name("kept"))
+    planted = root.with_name(".root.replaced-x")
+    (planted / "install/tools/evil").mkdir(parents=True)
+    (planted / "install/tools/evil/bin").write_text("evil")
+    (planted / "format.json").write_text('{"orch": "workspace", "format": 1}')
+    with pytest.raises(OSError):
+        bk.restore(b, root, env)
+    assert not root.exists() and not planted.exists()
+    os.rename(root.with_name("kept"), root)
+    bk.restore(b, root, env)
+    assert not (root / "install/tools/evil").exists()
+
+
+@pytest.mark.parametrize("kind", ["group_writable", "symlink"])
+def test_a_recorded_staging_folder_that_is_not_ours_is_refused(root, env, tmp_path, kind):
+    b = swap_setup(root, env)
+    stg = root.with_name(".root.restore-rec")
+    if kind == "symlink":
+        (tmp_path / "elsewhere").mkdir()
+        stg.symlink_to(tmp_path / "elsewhere")
+    else:
+        stg.mkdir()
+        os.chmod(stg, 0o770)
+    jr.write_journal("installed", env, backups={str(b.resolve()): 1}, restoring=str(root), restore_staging=str(stg))
+    assert code_of(bk.restore, b, root, env) == "migrate.backup_refused"
+    assert stg.exists() or stg.is_symlink()

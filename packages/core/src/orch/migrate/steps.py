@@ -53,6 +53,9 @@ KINDS = tuple(CURRENT)
 PROTECTED_PATHS: tuple[str, ...] = (
     "events/*", "membership/head.json", "membership/keys/*", "keys/*", "*/keys/*", "local-epochs.json",
     "*/local-epochs.json", "sign-ledger.json", "*/sign-ledger.json", "*/checkpoints/*", "checkpoints/*",
+    "hosts/*/heads.sqlite*", "hosts/*/transitions/*", "hosts/*/pending-transitions/*", ".state/applied",
+    ".state/rejected/*", ".state/body/*",
+    ".state/applied/*", ".state/intents/*",
     ".state/checkpoints/*", ".state/abandoned/*", ".state/pending/*", "land/*/key", "known_hosts", "*/known_hosts",
     "git-pins.json", "*/git-pins.json", "secret-pins.json", "*/secret-pins.json", "counters.json", "*/counters.json",
 )  # fmt: skip
@@ -72,9 +75,9 @@ def is_signed_path(rel: str | os.PathLike[str]) -> bool:
     return any(fnmatch.fnmatchcase(folded.as_posix(), pat) for pat in PROTECTED_PATHS)
 
 
-#: the only files under ``.state`` that orch rebuilds (the index, the head cache, the lock): everything else there,
-#: checkpoints, abandoned logs and pending intents included, is real data
-DERIVED_NAMES: tuple[str, ...] = ("index.sqlite*", "heads.sqlite*", "lock")
+#: the only files under ``.state`` that orch rebuilds (the index and the lock; the heads
+#: database is durable evidence, not derived): everything else there is real data
+DERIVED_NAMES: tuple[str, ...] = ("index.sqlite*", "lock")
 
 
 def is_derived(rel: str) -> bool:

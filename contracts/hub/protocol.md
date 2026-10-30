@@ -204,6 +204,25 @@ end in `|` and keep the union with every label above prefix-free. `HK_root` may 
 `hub.op_revoked` and `hub.backup` (the hub key store gains that one signer method in M4 S5; no "sign these bytes").
 HKDF infos (outside the table): `orch/v2/hub-backup-auth` (the MAC key), `orch/v2/seal|hub-backup|<hub_id>` (the seal).
 
+**Remote access labels (R0, §10.2c; spec `orch-v2-hub-remote.md`, #1588).** Kept in their own table
+(`orch_hub.contract.remote.REMOTE_LABELS`, the `labels` of `vectors_remote.json`) so the H0 vector file does not move;
+`tests/test_remote_vectors.py` (hub) and `tests/host/test_remote_vectors.py` (core) check that they are new, end in `|` and
+keep the union with every label above, every v2 label and core's live tables prefix-free.
+
+| Name | Label | Signer / use | Covers | § |
+|---|---|---|---|---|
+| `sig_remote_open` | `orch/v2/remote-open\|` | device presence key | opening a session or an enrollment stream | 10.2c |
+| `sig_remote_presence` | `orch/v2/remote-presence\|` | device presence key | one action or a fixed batch of actions (D88) | 10.2c |
+| `sig_remote_devices` | `orch/v2/sig/remote-devices\|` | `WSK` | `cj(o)` of `remote.device_list` | 10.2c |
+| `mac_remote_enroll` | `orch/v2/remote-enroll\|` | HMAC key = the code secret | the enrollment proof | 10.2c |
+| `h_remote_prologue` | `orch/v2/remote-prologue\|` | hash input | the Noise prologue | 10.2c |
+| `h_remote_wrk` | `orch/v2/remote-wrk\|` | hash | the `WRK` fingerprint an enrollment code carries | 10.2c |
+| `h_remote_device_fp` | `orch/v2/remote-device-fp\|` | hash | the device fingerprint the owner confirms | 10.2c |
+
+**The presence key signs under exactly `remote-open|` and `remote-presence|`** (spec §5: the D64 backend kind
+`remote-presence` is never a person signer); `WSK` gains `sig/remote-devices|`. Neither the hub's keys nor `UK` nor a
+channel key ever sign under a `remote-*` label.
+
 HKDF labels (not signed bytes, so outside the prefix-free table; `info` = label followed by `|` fields, v2 §3): `orch/v2/space-item` (item key of a space and epoch), `orch/v2/space-item-msg` (one item), `orch/v2/hub-view` (the view key of a workspace and epoch, §10.7) and `orch/v2/hub-view-msg` (one view page) and `orch/v2/hub-share-msg` (one shared item under its item key). Reused unchanged: `orch/v2/sig/host-event|` and `orch/v2/event|` (ticket-format §5.5, verified by the hub in §10.7, never signed by it), `orch/v2/seal-aad|`, `orch/v2/publish|` (`WSK`, v2 §12.1, the direct path only), `orch/v2/sig/ws-event|` (owner device, ticket-format §5.3),
 `orch/v2/sig/device-cert|` (`PK`, v2 §6.1).
 
@@ -932,6 +951,32 @@ valid signed event per custodial type (`custodial_event_<type>`, the payload exa
 smuggling cases `custodial_event_base_rev_*`, `…_ticket_updated_with_sections`, `…_set_of_ticket_tasks`,
 `…_question_with_sig`, `…_gate_payload_under_people_changed`, … (all `malformed`).
 
+**No custodial type can (D93, normative; R0 #1588).** In every hub mode, whatever the role, no custodial type, alone or
+together with any other custodial event, can:
+
+1. **create a usable grant.** `grant.issued` is not custodial; `grant.requested` carries no secret, grant id, stream,
+   device or `remote` field (`malformed`), and its secret reaches the runner only through a pending **local** hand-off
+   (§8.8). A hand-off recorded from a `remote-device` session (§10.2c) is never such a hand-off: an agent started
+   remotely is started by the click signer with the device's presence signature (spec D88), never by a hub-requested
+   grant. Without a local hand-off the grant is inert;
+2. **start a run or an agent.** `claim.taken`, `task.*` and every run or agent type are not custodial;
+3. **open a terminal or send it input.** No terminal type is custodial; a terminal exists only inside a local session
+   or a `remote-device` stream with its own presence signature (D88);
+4. **touch the remote policy or the devices.** Every `remote.*` type, `device.added` and `device.revoked` are not
+   custodial; `device.excluded` names only `d_` devices, never a remote device `rd_…` (`malformed`); `settings.changed`
+   and `policy.changed` have closed key sets with no remote key (`malformed`). The remote policy and the device list
+   change only through the owner's local act at the workspace (D84), never through the link.
+
+The table above lists none of these types; a host refuses each with `auth: "hub"` (`not_custodial` for an unlisted
+type, `malformed` for a listed type with a remote field). Vectors: `vectors_remote.json` `custodial_cannot_*`, each
+checked as a channel action (`check_action`) and as a delivered event (the host's role table, then its exact-payload
+check); hub and core also assert on their own closed tables that no `remote.`, `run.`, `agent.`, `terminal.`, `task.`,
+`claim.taken`, `grant.issued`, `device.added`, `device.revoked` or `keys.` type is listed. Host conformance owed by R2/R3
+(core tests): `remote_handoff_never_releases_hub_grant`, `remote_handoff_never_answers_addon_requested`,
+`hub_policy_or_device_change_refused`.
+
+A hand-off prepared from a `remote-device` session is never a live `addon.grant` hand-off (it never answers an `addon.requested`).
+
 ### 8.6 Selective custodial events (C3b addendum; D9 hub, C6 core)
 
 A selective hub holds no `WK_e` view (§10.7 is full mode only). It builds a custodial event from **one shared item**
@@ -1409,6 +1454,9 @@ unknown `op` is `unknown_op`.
 | `addon_request` | w2h | both | `{"name", "version", "actor"}` | `{}` (M3 #1450) |
 | `owner_get` | w2h | both | `{}` | `{"user_id"}`: the hub user this hub names as the owner of the calling workspace (V3-D19 owner alias; FB15 §8.8b) |
 | `log_sync` | w2h | full | `{"epoch", "log", "from_seq", "count", "head", "reset", "sealed": b64u}` | `{"seq", "head"}` (p4, §10.7) |
+| `stream_open` | h2w | both | `{"stream_id", "device_id", "kind": "session"\|"enroll"}` (§10.2c) | `{}` or `{"error"}`: `remote.off`, `remote.device`, `remote.busy`, `remote.no_code`, `replay` |
+| `stream_data` | both (one-way) | both | `{"stream_id", "seq", "bytes": b64u}` (§10.2c) | none |
+| `stream_close` | both (one-way) | both | `{"stream_id", "reason"}` (§10.2c) | none |
 
 A reply's body is either the reply body above or `{"error": <code>}`; H0 fixes request bodies only (reply bodies are
 built in D5/C5 against this table). Phases: `snapshot_get`, `publish_out` and the selective ops in phase 2 (share ops
@@ -1454,7 +1502,9 @@ WITHOUT being used; one presented at another workspace's link is spent. `return_
 
 1. §2.2 steps 1–3 under the direction's key and label → `bad_signature` / `malformed`; `dir` is the expected one →
    `malformed`;
-2. `op` in the table, and `re == null` exactly when `dir` is the op's request direction → `unknown_op`;
+2. `op` in the table, and `re == null` exactly when `dir` is the op's request direction → `unknown_op`; the one-way
+   stream frames (`stream_data`, `stream_close`) have `re == null` in both directions and get no reply, and
+   `stream_open` is h2w only (§10.2c);
 3. the op exists in this workspace's mode → `wrong_mode` (no `wk_seal` in selective mode, D80; no share ops in full
    mode);
 4. `hub_id` → `other_hub`; `workspace_id` is the link's → `other_workspace`;
@@ -1569,6 +1619,163 @@ in its private `wk-seal.db`. Per workspace epochs only grow: the same epoch with
 the same epoch with other bytes `bad_wrap`, a lower epoch `bad_epoch`. On `hub.unbound` or a switch to selective the
 stored wraps are retired (kept, never served, not counted); a later full binding may seal any epoch again. The hub never
 logs key material; `orch-hub inspect` shows `wk_epochs` (numbers only) per workspace.
+
+#### 10.2c Remote access streams (R0, #1588; spec `orch-v2-hub-remote.md` §5, §7, D84–D93)
+
+Mission Control of a workspace, used from a person's **remote device** (spec §6) through the link the workspace already
+dials out. The hub forwards opaque bytes between the device and the host; the session inside is end to end (Noise IK)
+and opened only with a **presence signature** by a device the owner enrolled **at the workspace**. Nothing here asks the
+hub to sign anything, and no hub key, `UK`, channel certificate, hub session or switch ticket grants anything (D87).
+Reference: `orch_hub.contract.remote`; vectors `vectors_remote.json` (§15).
+
+**The three ops** (rows above). Same signing (`WSK` w2h, `HK_op` h2w), same steps 1–6 and the same `ts` window
+(`|now − ts_ms| ≤ 120 s` → `stale_timestamp`) as every link message; both modes.
+
+- `stream_open {stream_id, device_id, kind}` (h2w only; a w2h `stream_open` is `unknown_op`). `stream_id` is 32 lower
+  hex (16 bytes) the hub draws per stream; `kind: "session"` names a device `rd_` + 32 hex, `kind: "enroll"` an
+  enrollment code id `rc_` + 32 hex, the other pairing is `malformed`. Its reply is `{}` (the host takes the stream) or
+  `{"error"}` with the gate's code below.
+- `stream_data {stream_id, seq, bytes}` (both directions, one-way, no reply): `seq` ≥ 1 per stream and direction,
+  exactly the previous + 1 (else `malformed` and the stream closes); `bytes` is canonical b64u of **1 to 65535 bytes**
+  (one Noise message; larger is `malformed`).
+- `stream_close {stream_id, reason}` (both directions, one-way): `reason` is one of `closed`, `idle`, `expired`,
+  `revoked`, `handshake`, `presence`, `too_large`, `malformed`, `remote.off`, `remote.device`, `remote.busy`,
+  `remote.no_code`, `remote.version`. A receiver drops every later frame of a closed stream.
+
+**Byte budget.** Each frame costs `max(1024, len(cj(signed frame)))` bytes, the whole signed message with its
+signature and base64 (vectors `frame_cost_*`), so a flood of small frames pays for its signature checks. Per stream and
+direction: 1 GiB over the stream's life and 64 MiB per rolling minute (host config may lower them, never raise them in
+hv 0); over either → `stream_close` `remote.busy`. Hub (R4) and host (R2/R3) count the same way.
+
+**The host's gate on `stream_open`** (§7.1 step 1; after steps 1–6, before any byte reaches the dashboard; reference
+`stream_open_gate`, vectors `gate_*`), in this order:
+
+1. a `stream_id` the host has seen in the last 12 h → `replay`;
+2. `kind: "enroll"`: the code id is outstanding and unexpired → else `remote.no_code`; at most 3 enroll streams per
+   minute per workspace → else `remote.busy`. Allowed while remote access is off (D85);
+3. `kind: "session"`: remote access on and its end date not reached → else `remote.off` (answered first: an opted-out
+   workspace says nothing about its devices); the device listed and unexpired → else `remote.device`; fewer than 4
+   open streams of the device, 16 of the workspace, and 10 handshakes of the device in the last minute → else
+   `remote.busy`.
+
+**Handshake.** `Noise_IK_25519_ChaChaPoly_SHA256` (Noise rev 34; the protocol name is exactly 32 bytes and is the
+initial `h` and `ck`), initiator = the device's **transport key** (X25519), responder = the workspace's **remote key
+`WRK`** (X25519, used only here, separate from `WSK`/`WXK`; rotated by the owner, which ends every session). Each Noise
+message is the `bytes` of one `stream_data`.
+
+```
+prologue = "orch/v2/remote-prologue|" || rv (1 byte, 1) || kind (1 byte: 1 session, 2 enroll)
+           || workspace_id (16) || device id or code id (16, the hex after rd_/rc_) || stream_id (16) || hub_id (16)
+msg1 (device → host, 96 bytes)  = e || enc(s) || enc(empty payload)          -> e, es, s, ss
+msg2 (host → device, 80 bytes)  = e || enc(challenge, 32 bytes)               <- e, ee, se
+handshake_hash (hh) = h after msg2; Split(): first key device → host, second host → device
+```
+
+- Message 1 has **no payload** (no early data): any length other than 96 is `malformed`; a message 1 replayed under
+  another prologue (stream, workspace, device, hub, kind) or to another `WRK` does not open (`handshake`). A replayed
+  message 1 costs only handshake budget: the host answers with a fresh ephemeral and a fresh challenge.
+- On a session the host compares the device's Noise static key (from message 1) with the entry's `transport_pub`
+  before it answers; another key closes the stream with `handshake` (a pin, not an authenticator; vectors
+  `session_static_*`).
+- The challenge is 32 random bytes, **single use, valid 60 s** from message 2.
+- After the handshake every frame is a Noise transport message; nonces count from 0 per direction; a changed,
+  reflected, reordered or replayed frame fails the AEAD and closes the stream (`handshake`). Neither side rekeys in hv
+  0 (a stream lives at most 12 h).
+- A finished handshake is **never a login** (if `WRK` leaks, the static-static term falls to key-compromise
+  impersonation): the presence signature is the only authenticator.
+
+**The device's first transport message.** On a session stream: `cj({"t": "open", "api": [min, max], "presence"})`;
+the host refuses an API range that does not overlap its own with `remote.version` (`api` integers 1 … 2^31 − 1,
+`min ≤ max`, else `malformed`) and uses the highest common version. It then verifies `presence` over
+
+```
+open = "orch/v2/remote-open|" || workspace_id (16) || device_id (16) || hh (32) || challenge (32)
+```
+
+against the device list entry; on success it answers `{"t": "opened", "api": n}` and hands the stream to the dashboard
+app in-process (D89). On failure it closes with `presence`. Nothing the device sends names its level, person or expiry;
+those come from the device list only (an extra key is `malformed`).
+
+**Presence assertions** (an exact object, `malformed` otherwise; the form must match the entry's `presence_kind`,
+else `factor_mismatch`):
+
+- `{"form": "p256", "sig"}` for `presence_kind: "platform"` (Secure Enclave with `.userPresence`, TPM behind Windows
+  Hello): ECDSA P-256/SHA-256 over the bytes themselves, raw `r || s` (§2.1; the client converts DER).
+- `{"form": "ctap2", "auth_data", "sig"}` for `presence_kind: "fido2"`: plain CTAP2 `getAssertion` with
+  `rpId = "orch-remote"` and `clientDataHash = SHA-256(bytes)`; `auth_data` is exactly 37 bytes (`rpIdHash ‖ flags ‖
+  signCount`, big-endian, no extensions); `sig` (raw `r || s`) is over `auth_data ‖ SHA-256(bytes)`. Order: signature
+  and `rpIdHash` (`bad_signature`), AT/ED flags set (`malformed`), UP **and** UV set (`factor_too_weak`: a touch
+  without user verification is not enough; so is BE 0x08 or BS 0x10 set: a presence key must stay on one device, so
+  synced or backup-eligible passkeys are refused), then the counter: when the held counter or the new one is non-zero, the
+  new one must be greater (`replay`); the host records it.
+- A key file has no form (`malformed`). Whether a `platform` key really lives in hardware is not provable without
+  attestation; the remote client (R5) refuses to make one in software, and attestation is a hardening item.
+
+**Presence for actions (D88, §7.3 of the spec).** The click signer issues a 32-byte nonce, the stream terminator gives
+it the stream's `hh`, and the device signs
+
+```
+presence = "orch/v2/remote-presence|" || workspace_id (16) || device_id (16) || hh (32) || nonce (32)
+           || n (1 byte) || view_digest[0..n-1] (32 bytes each)
+```
+
+with 1 ≤ n ≤ 16 digests, sorted ascending and unique (`malformed` otherwise): the fixed list a batch authorizes, and
+nothing else. The signer accepts it once: the nonce must be one it issued, unused, at most 5 min old (`replay`
+otherwise; it is deleted in the same step), then the assertion as above. A verified batch authorizes exactly its
+listed digests until 5 min after its nonce was issued, on that stream only. `view_digest` is the signer's own digest of
+the prepared action it shows (R3 fixes its bytes); the contract fixes only its length. An open signature is never a
+presence signature and the other way round (two labels).
+
+**Enrollment** (spec §5; `kind: "enroll"`). The owner makes a code at the workspace: `code_id` (16 bytes, shown as
+`rc_` + hex), a `secret` of 16 random bytes (128 bits), single use, 15 min, 5 wrong tries burn it, and the fingerprint
+`wrk_fp = SHA-256("orch/v2/remote-wrk|" || WRK_pub)[0:16]`. The code stands for the 48 bytes `code_id ‖ secret ‖
+wrk_fp` (its text form is R2's); it is handed over out of band, never through a hub channel. The device accepts a
+`WRK_pub` (from wherever it got it) only if it hashes to `wrk_fp`, then runs the same handshake with the code id in the
+prologue. Its first transport message is
+
+```
+{"t": "enroll", "name", "presence_kind", "presence_pub": b64u(65), "mac": b64u(32), "presence"}
+mac      = HMAC-SHA256(secret, "orch/v2/remote-enroll|" || hh || transport_pub (32) || presence_pub (65) || kind (1))
+presence = an assertion over open(workspace_id, code_id, hh, challenge)
+```
+
+`transport_pub` is the Noise static key of this handshake, `kind` is 1 (`platform`) or 2 (`fido2`); `name` follows the
+§8.5 text rule, at most 64 bytes. The host checks shape (`malformed`), the MAC (`bad_signature`, a wrong try), then the
+presence assertion, and **stores nothing and shows nothing before all three pass**. It then shows "Add device <name>,
+fingerprint <words>?" at the workspace, where
+
+```
+device_fp = SHA-256("orch/v2/remote-device-fp|" || kind (1) || transport_pub (32) || presence_pub (65))
+```
+
+and the device shows the same words (both render the 32 bytes the same way; R2/R5); the host answers the device
+`{"t": "pending", "fingerprint": hex}`. Only the owner's confirmation **at
+the workspace** (loopback session or host terminal) adds the device; it sets the level cap and expiry there, assigns
+`device_id = "rd_" + 32 random hex`, and the host answers `{"t": "added", "device_id"}`. Vectors `enroll_*`.
+
+**The device list** (host state, mode 0600, out of every agent's reach once #1198 H1 is active; read by the stream
+terminator and the click signer, never sent on the link):
+
+```
+{"o": {"v": 2, "suite": 2, "kind": "remote.device_list", "hv": 0, "workspace_id", "version", "issued_ms",
+       "devices": [{"device_id", "name", "person", "transport_pub", "presence_pub", "presence_kind", "level_cap",
+                    "expires_ms", "added_ms", "confirmed_by"}]},
+ "sig": b64u(Sign(WSK, "orch/v2/sig/remote-devices|" || cj(o)))}
+```
+
+`device_id` `rd_` + 32 hex; `name` text rule ≤ 64 bytes; `person` and `confirmed_by` `p_` + 32 hex (the device's person
+and the owner who confirmed it); `transport_pub` b64u of 32 bytes; `presence_pub` a suite-2 public key;
+`presence_kind` `platform` | `fido2`; `level_cap` `view` | `work` | `terminals`; `added_ms < expires_ms ≤ added_ms +
+366 d`; at most 64 entries, sorted by `device_id`, ids unique and no key used twice; `version` ≥ 1 rises with every
+change. Verification order (§2.2): envelope (`malformed` / `wrong_suite`), the `WSK` signature (`bad_signature`),
+exact fields and the rules above (`malformed`), `workspace_id` (`other_workspace`), `version` below the held one
+(`stale_version`, so a removed device cannot come back by rollback). A lookup finds the entry only while
+`now < expires_ms` (`remote.device`). The FIDO2 sign counter is mutable state kept beside the list, not in it.
+Vectors `device_list_*`, `device_lookup_*`.
+
+**What R0 leaves to the steps** (spec §11): the runtime link tables take these ops with their handlers in R2 (host)
+and R4 (hub) (until then `orch_hub.contract.hub.LINK_OPS` does not list them and the live hub answers `unknown_op`);
+the L7 replay store, both directions, comes in R1 before any stream is accepted.
 
 ### 10.3 Routing (`route_out`, `route_in`; phase 3, V3-D8)
 
@@ -2770,6 +2977,12 @@ v2 codes keep their meaning (v2 §14). New in H0:
 | `approval_required`, `bad_approval` (403) | publish | §11.3 |
 | `other_origin` (p4, B) | phone, local | §6.4: the hub's signed API origin is not the pairing link's; nothing is sent |
 | `bad_channel_signature` (401) (p4, B) | relay, §10.8.4 | a channel request whose signature does not verify under its certificate's key. Reused there: `malformed`, `stale_timestamp`, `unknown_hub`, the §6.2 certificate codes, `other_user`, `channel_revoked` (403, revoked by the hub's mailbox purge), `replay`, `not_found` |
+| `remote.off` | `stream_open` reply, `stream_close` | §10.2c: remote access is off or past its end date at the workspace (a session; an enroll stream is allowed while off) |
+| `remote.device` | `stream_open` reply, `stream_close` | §10.2c: the device is not on the workspace's device list, or its entry expired |
+| `remote.busy` | `stream_open` reply, `stream_close` | §10.2c: a stream, handshake, enroll or byte limit |
+| `remote.no_code` | `stream_open` reply | §10.2c: an enroll stream naming no outstanding, unexpired code; no state, no prompt |
+| `remote.version` | `stream_close` | §10.2c: the remote client's API range and the host's do not overlap |
+| `handshake` (R0) | `stream_close`, local | §10.2c: a Noise message that does not open, or comes out of order. Reused there: `malformed`, `bad_signature` (open, presence, MAC, device list), `replay` (stream id, nonce, FIDO2 counter), `factor_mismatch` and `factor_too_weak` (presence form, user verification), `stale_version` (device list), `other_workspace`, `unknown_op`, `stale_timestamp`, `not_custodial` (§8.5 "No custodial type can") |
 
 Hub web API (local, `/api/v1`, V3-D13; answers are `{"error": code}`; none of these travel on the link):
 
@@ -2859,6 +3072,22 @@ and tar) and `cases` with `check` one of `bk_key`, `open_backup`, `tar`, `file_l
 `expect` `{"ok": …}` or `{"error": code, "reason"?}`. The hub replays every case and fails on an unknown check or a missing
 required case; orch-core replays `hub_where`. Expected values are written by hand in the generator, not computed by the code
 under test; the BK / K_auth / seal values are computed there from first principles and compared with the module.
+
+`vectors_remote.json` (R0, #1588; `make_vectors_remote.py`; FAKE keys `SHA-256("FAKE orch v2 test vector: remote/" ||
+label)`, X25519 keys as is, P-256 by the §15 map, RFC 6979 signatures): `labels`, `constants`, `keys`, `ids`, the signed
+`device_list`, two full `transcripts` (a session and an enrollment: prologue, both handshake messages, challenge,
+handshake hash, split keys, the first transport message each way, plain and sealed) and `cases` with `check` one of
+`prologue`, `msg1`, `msg2_build`, `msg2_read`, `transport`, `open`, `presence_bytes`, `presence`, `enroll`, `wrk_fp`,
+`code_bytes`, `device_fp`, `session_static`, `open_msg`, `device_list`, `device_lookup`, `stream_link`, `frame_cost`, `gate`,
+`custodial_cannot`, and `required` naming the cases an implementation must not lose (replays into another stream,
+workspace or device; early data; a flipped byte; UP-only FIDO2; tampered and rolled-back device lists; `stream_open`
+w2h; the gate while off; every "no custodial type can" item). The hub replays every case against its reference
+(`tests/test_remote_vectors.py`, which also rebuilds the file byte for byte); **orch-core replays every case** with an
+independent test-side port (`tests/host/test_remote_vectors.py`, `tests/host/remote_port.py`) and the custodial cases
+against its real `check_custodial_role` and `check_custodial_payload`; R2–R5 replay them against the real paths. The
+Noise of the reference was cross-checked once against the `noiseprotocol` package (both directions, byte-equal
+messages, handshake hash and transport) when R0 was written; core's port is a second hand-written implementation and replays the transcripts on every run. Relay, publish
+and mobile do not read these shapes (the relay and the public passthrough see TLS only).
 
 ## 16. Decided here, and open points for L2
 
@@ -2962,6 +3191,15 @@ transport in the action).
 | 47 | Backup MAC covers `cj(header)` only, not the signature | the signature is verified separately and the header already holds the root key, so a swapped root changes the MAC input | Opus condition 12 |
 | 48 | Backup payload nonce | all-zero, safe because every seal draws a fresh ephemeral key (as `seal_sk`) | v2 §5.3 |
 | 49 | Required files and `snapshot_seq` | `hk_root.key`, `hxk.key`, `meta.json` must be listed; the header carries `snapshot_seq` besides `op_seq` and `card_seq` (condition 14 raises all three) | design 4.2, conditions 13-14 |
+| 50 | Remote stream frames (R0) | `stream_data`/`stream_close` one-way in both directions (`re` always null, no reply); `stream_open` h2w with a reply; per-stream `seq` consecutive | spec §7.1 |
+| 51 | Frame size and cost (R0) | ≤ 65535 decoded bytes (one Noise message); cost `max(1024, len(cj(frame)))`; 1 GiB per stream life, 64 MiB per minute, per direction | spec §7.1 "per-frame signature cost" |
+| 52 | Noise binding (R0) | prologue adds the kind byte (session/enroll) to the spec's fields, ids as raw 16 bytes; message 2's payload is exactly the 32-byte challenge | spec §7.2; kind keeps a code id and a device id apart |
+| 53 | Presence forms (R0) | `p256` (platform) and `ctap2` (FIDO2, `rpId "orch-remote"`, `clientDataHash = SHA-256(bytes)`, UP+UV, counter); form fixed per device | spec §5 (FIDO2 signs `authData ‖ clientDataHash`, not the bytes) |
+| 54 | Presence bytes (R0) | fixed-length fields, a count byte, 1–16 sorted unique digests; `view_digest` bytes left to R3 | spec §7.3, D88 "fixed list" |
+| 55 | Enrollment (R0) | code = 16-byte id ‖ 16-byte secret ‖ 16-byte `WRK` fingerprint; MAC under a label and also over the presence kind; the enroll open signature reuses `remote-open` with the code id (the prologue's kind keeps it apart) | spec §5 |
+| 56 | Device ids (R0) | `rd_` + 32 hex (codes `rc_`), so no hub `device.excluded` (`d_`) can name a remote device | D93 "touch the devices" |
+| 57 | Device list (R0) | `remote.device_list`, `hv: 0`, a rising `version` (rollback refused), `name` added for the session list, `presence_kind` added; the sign counter kept beside it | spec §5, D91 |
+| 58 | Remote labels (R0) | their own table (like the backup labels), so `vectors_hub.json` stays unchanged | §3 |
 
 ## 17. Hub backup (M4, #1462; design `m4-settings-design.md` 4.2-4.3 and the Opus conditions 9-17)
 

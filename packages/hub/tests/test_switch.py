@@ -544,6 +544,7 @@ def test_run15_p03_a_switch_session_registers_a_browser_key_only_with_password_a
     """P03: reg_begin/reg_complete are open to a workspace-vouched session, but reg_begin re-proves password + a fresh code
     and refuses every kind but browser; the rest of the closed list stays closed."""
     from channels_helpers import new_channel, prove
+
     from orch_hub.contract.canon import b64u
     from orch_hub.webapi.api import SWITCH_HANDLERS, SWITCH_REGISTER_HANDLERS
 
@@ -553,16 +554,28 @@ def test_run15_p03_a_switch_session_registers_a_browser_key_only_with_password_a
     w.browser_tokens.add(tok)
     k = new_channel()
     pub = b64u(k.public)
-    s, o, _ = w.call("POST", "/channels/register/begin", {"kind": "phone", "key_pub": pub, "pairing_code": "x"}, token=tok)
+    s, o, _ = w.call(
+        "POST", "/channels/register/begin", {"kind": "phone", "key_pub": pub, "pairing_code": "x"}, token=tok
+    )
     assert (s, o["error"]) == (403, "reauth_required")
     s, o, _ = w.call("POST", "/channels/register/begin", {"kind": "browser", "key_pub": pub}, token=tok)
     assert (s, o["error"]) == (400, "malformed")  # no password and code: nothing is registered
     bad = {"kind": "browser", "key_pub": pub, "password": "wrong password", "totp": w.env.next_code(w.ann)}
     s, o, _ = w.call("POST", "/channels/register/begin", bad, token=tok)
     assert s != 200 and w.env.svc.db.q("SELECT COUNT(*) FROM channels WHERE user_id=?", (w.ann,))[0][0] == 0
-    s, begun, _ = w.call("POST", "/channels/register/begin", {"kind": "browser", "key_pub": pub, "label": "B", **w.creds(w.ann)}, token=tok)
+    s, begun, _ = w.call(
+        "POST",
+        "/channels/register/begin",
+        {"kind": "browser", "key_pub": pub, "label": "B", **w.creds(w.ann)},
+        token=tok,
+    )
     assert s == 200, begun
-    s, got, _ = w.call("POST", "/channels/register/complete", {"challenge_id": begun["challenge_id"], "signed": prove(k, begun)}, token=tok)
+    s, got, _ = w.call(
+        "POST",
+        "/channels/register/complete",
+        {"challenge_id": begun["challenge_id"], "signed": prove(k, begun)},
+        token=tok,
+    )
     assert s == 200 and got["channel_cert"]["o"]["factor"] == "password+totp"
     # still a switch session: the closed list stays closed
     s, o, _ = w.call("GET", "/admin/users", token=tok)

@@ -128,6 +128,7 @@ def test_a_row_of_a_selective_workspace_is_never_shown_and_the_workspace_is_list
 
 
 def test_run15c_p08_a_hidden_workspace_names_who_to_ask_through_render_text(w):
+    w.api.d.published = FakeReader([link()])
     w.reg.ws[WS_SEL]["owner"] = w.ann
     _, o, _ = get(w)
     assert o["hidden"] == [{"workspace_id": WS_SEL, "name": "Marketing", "owner_name": "ann"}]
@@ -180,7 +181,9 @@ def test_cached_answer_drops_a_workspace_that_was_unbound(w):
 def test_cached_answer_drops_a_workspace_that_switched_to_selective(w):
     _s, o, _ = _stale_after(w, lambda: w.reg.add(WS_SEL, "selective", name="Marketing"))
     assert [x["label"] for x in o["links"]] == ["Q3 report"]
-    assert "Plans" not in json.dumps(o) and o["hidden"] == [{"workspace_id": WS_SEL, "name": "Marketing"}]
+    assert "Plans" not in json.dumps(o) and o["hidden"] == [
+        {"workspace_id": WS_SEL, "name": "Marketing", "owner_name": None}
+    ]
 
 
 def test_cached_answer_drops_a_workspace_whose_binding_changed(w):

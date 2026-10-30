@@ -909,7 +909,9 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
                     raise ApiError("cert_expired")
                 if state != "active":
                     raise ApiError("no_session")
-            if ctx.via_switch and route.handler not in SWITCH_HANDLERS | SWITCH_REGISTER_HANDLERS:  # a workspace vouched for this session
+            if (
+                ctx.via_switch and route.handler not in SWITCH_HANDLERS | SWITCH_REGISTER_HANDLERS
+            ):  # a workspace vouched for this session
                 raise ApiError("reauth_required")
             if route.auth == "admin" and not self.d.access.is_hub_admin(ctx.user_id):
                 raise ApiError("forbidden_role")
@@ -1593,7 +1595,9 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
     def _h_reg_begin(self, c: Ctx, p: dict, q: dict, b: dict | None):
         b = _need(b, kind=str, key_pub=str)
         if c.via_switch and b["kind"] != "browser":
-            raise ApiError("reauth_required")  # a workspace-vouched session registers a browser key (password + code), nothing else
+            raise ApiError(
+                "reauth_required"
+            )  # a workspace-vouched session registers a browser key (password + code), nothing else
         if c.scope == "pairing" and b["kind"] != "phone":
             raise ApiError("forbidden_role")  # a pairing session registers a phone, nothing else
         label = b.get("label", "")

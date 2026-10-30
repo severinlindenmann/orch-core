@@ -30,6 +30,10 @@ HUB_MODES = ("none", "selective", "full")
 #: contract 10.2c "The device list": ``added_ms < expires_ms <= added_ms + 366 d``, at most 64 entries
 DEVICE_LIFE_MAX_MS = 366 * 86_400_000
 DEVICES_MAX = 64
+ADDED_KEYS = frozenset(
+    {"device_id", "name", "person", "presence_kind", "transport_pub", "presence_pub", "level_cap", "expires_ms",
+     "fingerprint", "code_id", "remote_v"}
+)  # fmt: skip
 _FP_LABEL = b"orch/v2/remote-device-fp|"
 _KIND_BYTE = {"platform": 1, "fido2": 2}
 
@@ -44,6 +48,17 @@ def device_fp(presence_kind: str, transport_pub: bytes, presence_pub: bytes) -> 
     except Exception as exc:  # noqa: BLE001 - any invalid point
         raise ValueError("malformed") from exc
     return suite.sha256(_FP_LABEL + bytes([_KIND_BYTE[presence_kind]]) + transport_pub + presence_pub)
+
+
+def fingerprint_words(fp: bytes) -> str:
+    """Contract 16 row 60: the first 66 bits of the 32-byte ``device_fp`` as six BIP-39 English words (11 bits each),
+    space separated. The owner at the workspace and the device show the same six words."""
+    from orch.identity._wordlist import WORDS
+
+    if type(fp) is not bytes or len(fp) != 32:
+        raise ValueError("malformed")
+    bits = int.from_bytes(fp[:9], "big") >> 6  # 72 bits, keep the first 66
+    return " ".join(WORDS[(bits >> (11 * (5 - i))) & 0x7FF] for i in range(6))
 
 
 def _no(why: str) -> Refusal:

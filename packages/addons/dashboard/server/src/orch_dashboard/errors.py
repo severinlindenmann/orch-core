@@ -196,6 +196,10 @@ DETAIL_KEYS: dict[str, dict[str, tuple[str, ...] | str]] = {
     },
     # core C9 (#1198): why the owner proof of a hub step (join, switch to full, leave) was refused
     "hub.proof_invalid": {"reason": ("proof_invalid", "proof_expired", "proof_missing", "dev_mismatch", "dev_refused")},
+    # R2: why the owner proof of a remote-access step (switch, enroll a device) was refused
+    "remote.proof_invalid": {
+        "reason": ("proof_invalid", "proof_expired", "proof_missing", "dev_mismatch", "dev_refused")
+    },
     # core P5 (orch-v2-host 12.15): why the publish server said no
     "publish.server_refused": {
         "reason": (

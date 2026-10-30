@@ -45,10 +45,7 @@ REMOTE_PRESENCE_KINDS = _remote.PRESENCE_KINDS
 REMOTE_PREMISES = _remote.PREMISES
 REMOTE_HUB_MODES = _remote.HUB_MODES
 REMOTE_CHANGED_KEYS = frozenset({"on", "level", "until_ms", "premises", "agents_risk", "hub_mode", "remote_v"})
-REMOTE_ADDED_KEYS = frozenset(
-    {"device_id", "name", "person", "presence_kind", "transport_pub", "presence_pub", "level_cap", "expires_ms",
-     "fingerprint", "code_id", "remote_v"}
-)  # fmt: skip
+REMOTE_ADDED_KEYS = _remote.ADDED_KEYS
 #: contract 10.2c "The device list": ``added_ms < expires_ms <= added_ms + 366 d``
 REMOTE_DEVICE_LIFE_MAX_MS = _remote.DEVICE_LIFE_MAX_MS
 REMOTE_DEVICES_MAX = _remote.DEVICES_MAX
@@ -798,14 +795,11 @@ def device_fp(presence_kind: str, transport_pub: bytes, presence_pub: bytes) -> 
 
 
 def fingerprint_words(fp: bytes) -> str:
-    """Contract 16 row 60: the first 66 bits of the 32-byte ``device_fp`` as six BIP-39 English words (11 bits each),
-    space separated. The owner at the workspace and the device show the same six words."""
-    from orch.identity._wordlist import WORDS
-
-    if type(fp) is not bytes or len(fp) != 32:
-        raise HubRefused("malformed")
-    bits = int.from_bytes(fp[:9], "big") >> 6  # 72 bits, keep the first 66
-    return " ".join(WORDS[(bits >> (11 * (5 - i))) & 0x7FF] for i in range(6))
+    """Contract 16 row 60 (see :func:`orch.model.remote.fingerprint_words`); ``malformed`` on any error."""
+    try:
+        return _remote.fingerprint_words(fp)
+    except ValueError:
+        raise HubRefused("malformed") from None
 
 
 def _family(op: str) -> tuple[str, bytes]:

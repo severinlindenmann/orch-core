@@ -1757,9 +1757,9 @@ def expected(action: Action, person: str | None = None):
 
             return changed
         case RemoteDeviceConfirm():
-            from orch.hubclient import wire
+            from orch.model import remote as wire
 
-            keys = _EVENT_ENVELOPE | set(wire.REMOTE_ADDED_KEYS) | {"owner_proof"}
+            keys = _EVENT_ENVELOPE | set(wire.ADDED_KEYS) | {"owner_proof"}
 
             def added(ev: list) -> bool:
                 seen = action._seen

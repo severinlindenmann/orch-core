@@ -81,6 +81,14 @@ def _parser() -> argparse.ArgumentParser:
     )
     sv.add_argument("--web-origin", action="append", default=[], help="exact origin of the console (repeatable)")
     sv.add_argument("--api-origin", help="the public API origin the phone pairs with: one of the --web-origin values")
+    sv.add_argument(
+        "--hooks-listen",
+        help="host:port of the public webhook listener (/h/<token> only; the edge fronts it). Needs --public-hooks-url; default: off",
+    )
+    sv.add_argument(
+        "--public-hooks-url",
+        help="the origin senders use for webhooks, e.g. https://hub.example.com (https; http only for a dev hub). Needs --hooks-listen",
+    )
     ins = sub.add_parser(
         "inspect", help="dev only: read-only JSON view of the registry (pins, mode, binding, op counts)"
     )
@@ -203,6 +211,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 behind_edge=args.behind_edge,
                 web_origins=frozenset(args.web_origin),
                 api_origin=args.api_origin,
+                hooks_listen=args.hooks_listen,
+                public_hooks_url=args.public_hooks_url,
             )
         except (ValueError, KeysError) as e:
             print(f"orch-hub: refused: {e}", file=sys.stderr)

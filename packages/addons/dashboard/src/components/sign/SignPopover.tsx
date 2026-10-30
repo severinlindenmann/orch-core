@@ -72,6 +72,8 @@ export interface SignPopoverProps {
   onSigning?: (signing: boolean) => void
   /** A click signature was rejected or cancelled. */
   onInterrupted?: () => void
+  /** The request could not be prepared at all (no request exists, nothing is open): the caller offers another way. */
+  onPrepareFailed?: () => void
   /** The ONE toast after a signature (default: "<title>: signed"). An empty string: the caller says the outcome itself once its follow-up step is done. */
   doneToast?: string
   /** The button this review belongs to. Default: the button that was pressed last. */
@@ -158,6 +160,7 @@ export function SignPopover(p: SignPopoverProps) {
   useEffect(() => {
     if (click.phase === 'cancelled' || (click.phase === 'failed' && ['prepare', 'retry', 'again', 'review'].includes(click.problem?.next ?? ''))) p.onInterrupted?.()
   }, [click.phase, click.problem, p.onInterrupted])
+  useEffect(() => { if (click.phase === 'failed' && !click.prepared) callbacks.current.onPrepareFailed?.() }, [click.phase, click.prepared])
   useEffect(() => { callbacks.current.onPending?.(['preparing', 'viewing', 'ready', 'signing', 'settling'].includes(click.phase)) }, [click.phase])
   useEffect(() => { callbacks.current.onSigning?.(click.phase === 'signing') }, [click.phase])
   useEffect(() => () => callbacks.current.onSigning?.(false), [])

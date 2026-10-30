@@ -20,9 +20,31 @@ from .tlslink import transport
 from .tlslink.client import LinkClient, LinkError
 from .tlslink.tls import LinkInspected, PinMismatch
 
-__all__ = ["INSPECTED_WAIT_S", "FailoverTransport", "LinkInspectedError", "TlsTransport", "parse_addr"]
+__all__ = [
+    "INSPECTED_WAIT_S",
+    "FailoverTransport",
+    "InspectedBlock",
+    "LinkInspectedError",
+    "TlsTransport",
+    "parse_addr",
+]
 
 INSPECTED_WAIT_S = 300.0  # after a pin mismatch behind a proxy or front, no new dial of that address for this long
+
+
+class InspectedBlock:
+    """The no-dial window after an inspected mismatch. One per hub address, owned by whoever outlives a transport (the
+    host keeps them by address, so re-creating a :class:`TlsTransport` does not shorten the wait)."""
+
+    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
+        self._clock = clock
+        self._until = 0.0
+
+    def active(self) -> bool:
+        return self._clock() < self._until
+
+    def start(self) -> None:
+        self._until = self._clock() + INSPECTED_WAIT_S
 
 
 class LinkInspectedError(ConnectionError):
@@ -55,11 +77,12 @@ class TlsTransport:
         resolve: Callable[[str], str] | None = None,
         net: NetSettings | None = None,
         clock: Callable[[], float] = time.monotonic,
+        inspected: InspectedBlock | None = None,
     ) -> None:
         self._addr = parse_addr(addr)
         self._net = net  # the host's own proxy settings; never anything the hub said
         self._clock = clock
-        self._blocked_until = 0.0
+        self._inspected = inspected if inspected is not None else InspectedBlock(clock)
         self._resolve = resolve  # host -> the checked IP to dial (raises OSError); None: dial the host as is
         self._kw: dict[str, Any] = dict(
             tls_spki_sha256=tls_spki_sha256, hub_id=hub_id, workspace_id=workspace_id, sign=sign,
@@ -79,13 +102,13 @@ class TlsTransport:
 
     def _run(self, op: object, go: Callable[[LinkClient], dict[str, Any]]) -> dict[str, Any]:
         with self._lock:
-            if self._clock() < self._blocked_until:
+            if self._inspected.active():
                 raise LinkInspectedError("the network inspects encrypted connections")  # no dial: next try later
             try:
                 return go(self._open(op))
             except LinkInspected:
                 self._drop()
-                self._blocked_until = self._clock() + INSPECTED_WAIT_S
+                self._inspected.start()
                 raise LinkInspectedError("the network inspects encrypted connections") from None
             except PinMismatch:
                 self._drop()

@@ -22,7 +22,7 @@ _MU = threading.Lock()
 _CACHE: dict[tuple[str, str], tuple[float, bool]] = {}
 
 
-def reachable(scope: str, addr: str | None, *, now: float | None = None) -> bool | None:
+def reachable(scope: str, addr: str | None, *, now: float | None = None, net: Any = None) -> bool | None:
     """``True`` / ``False`` for the hub address, ``None`` when it is unusable. Cached ``CACHE_S`` seconds."""
     if not addr:
         return None
@@ -34,6 +34,10 @@ def reachable(scope: str, addr: str | None, *, now: float | None = None) -> bool
         host, port = a.host, a.port  # a ws(s):// address is probed at its TCP host:port
     except HubRefused:
         return None
+    from orch.hubclient.tlslink import transport
+
+    if transport.proxy_applies(a, net) is not None:
+        return None  # behind the host's proxy a direct connect says nothing (and is not a route the link may take)
     t = time.monotonic() if now is None else now
     key = (scope, addr)
     with _MU:

@@ -65,6 +65,7 @@ def main(
 
 
 def _run(root, single, out, err, sleep, stop) -> int:  # noqa: ANN001
+    from orch.hubclient.netconfig import NetConfigError, load_net
     from orch.remoteclient import Client, Store
 
     from . import Controller, GatedPresence, PinAsker, StaticSite, installed_static_dir
@@ -72,7 +73,12 @@ def _run(root, single, out, err, sleep, stop) -> int:  # noqa: ANN001
     store = Store(root)
     pin = PinAsker()  # the security key's PIN, asked on the home page only when the key needs one
     gate = GatedPresence(_presence(root, store, pin.ask))
-    client = Client(store, presence=gate)
+    try:
+        net = load_net(root)  # this computer's own proxy settings (hub-net.json under its root); never the hub's
+    except NetConfigError:
+        err.write("orch remote open: the network settings of this computer cannot be used. Nothing was dialled.\n")
+        return 1
+    client = Client(store, presence=gate, net=net)
     try:
         static = StaticSite.load(installed_static_dir())
     except (OSError, ValueError):

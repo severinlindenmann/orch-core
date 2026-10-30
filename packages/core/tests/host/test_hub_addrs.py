@@ -503,7 +503,7 @@ def test_the_policy_applies_to_the_current_address_at_every_dial(monkeypatch):
     from types import SimpleNamespace
 
     _no_dial(monkeypatch)
-    service = SimpleNamespace(workspace_id="w" * 32, clock=lambda: 0.0)
+    service = SimpleNamespace(workspace_id="w" * 32, clock=lambda: 0.0, state_dir="/nonexistent-state")
     link = {"addr": "hub.example:8105", "spki": PIN, "hk_op": b"", "wsk_pub": b"", "sign": lambda m: b""}
     t = hubops._transport(service, HUB_ID, link)  # noqa: SLF001
     with pytest.raises(OSError, match="refused by policy"):
@@ -522,7 +522,7 @@ def test_the_peer_link_applies_the_policy_to_the_current_address_too(monkeypatch
     )  # fmt: skip
     monkeypatch.setattr(peerops, "_hub_state", lambda service, full: state)
     monkeypatch.setattr(hubops, "_wsk_sign", lambda service: (b"", lambda m: b""))
-    service = SimpleNamespace(workspace_id="w" * 32, clock=lambda: 0.0)
+    service = SimpleNamespace(workspace_id="w" * 32, clock=lambda: 0.0, state_dir="/nonexistent-state")
     with pytest.raises(OSError, match="refused by policy"):
         peerops._open_link(service)  # noqa: SLF001
 

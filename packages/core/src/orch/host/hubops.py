@@ -452,6 +452,16 @@ class _NoLink:
         raise ConnectionRefusedError("no hub link")
 
 
+class _Down:
+    """The network settings cannot be used: every send fails with their code (an ``OSError``), nothing is dialled."""
+
+    def __init__(self, exc: OSError) -> None:
+        self._exc = exc
+
+    def send_next(self, op: str, build: Any) -> dict[str, Any]:
+        raise self._exc
+
+
 def _transport(service: WorkspaceService, hub_id: str, link: dict[str, Any] | None = None) -> Any:
     """The seam first (tests, C5's replacements); else a TLS link to ``link["addr"]`` pinned to the card's SPKI hash;
     without an address or pin the hub is simply unreachable."""
@@ -460,14 +470,20 @@ def _transport(service: WorkspaceService, hub_id: str, link: dict[str, Any] | No
     if not link or not link.get("addr") or not link.get("spki"):
         return _NoLink()
     from orch.hubclient.tlsadapter import FailoverTransport, TlsTransport
+    from orch.hubclient.tlslink.errors import ProxyError
 
-    from . import hubaddr
+    from . import hubaddr, hubnet
 
+    try:
+        net = hubnet.load(service.state_dir)  # the host's own proxy settings; a broken file never means "direct"
+    except ProxyError as exc:
+        return _Down(exc)
     check = hubaddr.dial_resolver(link["addr"])  # every dial: resolve once, policy, connect to that IP
 
     def to(addr: str) -> TlsTransport:
         return TlsTransport(
-            addr=addr, resolve=check, tls_spki_sha256=link["spki"], hub_id=hub_id, workspace_id=service.workspace_id,
+            addr=addr, resolve=check, net=net, inspected=hubnet.inspected(service.state_dir, addr),
+            tls_spki_sha256=link["spki"], hub_id=hub_id, workspace_id=service.workspace_id,
             hk_op_pub=link["hk_op"], wsk_pub=link["wsk_pub"], sign=link["sign"], mode=link.get("mode", "selective"),
             now_ms=lambda: int(service.clock() * 1000), timeout=float(link.get("timeout", 10.0)),
         )  # fmt: skip
@@ -748,7 +764,32 @@ def _owner(call: Call) -> str:
     return call.viewer
 
 
+#: R6 (#1594): why the link did not come up, in words a person can act on (no product names)
+NET_MESSAGES: dict[str, tuple[str, str]] = {
+    "hub.link_inspected": (
+        "something on this network opens encrypted connections, so the hub cannot be trusted from here",
+        "ask your IT team to let the hub's name through without inspection",
+    ),
+    "hub.proxy_auth": (
+        "the company proxy did not accept the sign-in",
+        "check the proxy user and password in Network settings",
+    ),
+    "hub.proxy_refused": (
+        "the company proxy refused the connection to the hub",
+        "ask your IT team to allow the hub's address through the proxy",
+    ),
+    "hub.proxy_unreachable": (
+        "the company proxy could not be reached",
+        "check the proxy address in Network settings",
+    ),
+}  # fmt: skip
+
+
 def _refused(code: str) -> HostError:
+    full = code if code.startswith("hub.") else f"hub.{code}"
+    if full in NET_MESSAGES:
+        text, hint = NET_MESSAGES[full]
+        return HostError(full, text, hint=hint, retry_after_ms=300000 if full == "hub.link_inspected" else 2000)
     if code == "hub_unreachable":
         return HostError("hub.unreachable", "the hub could not be reached; nothing was lost", retry_after_ms=2000)
     if code == "hub_address_changed":
@@ -890,8 +931,14 @@ def serve(call: Call) -> dict[str, Any]:
         binding = None if state is None else state.status
         up = None
         if binding == "bound":
+            from . import hubnet
+
+            try:
+                net: Any = hubnet.load(service.state_dir)
+            except OSError:
+                net = None
             up = hublinkprobe.reachable(
-                f"{service.state_dir}:{service.workspace_id}", _addr({}, state, workspace_dev(service))
+                f"{service.state_dir}:{service.workspace_id}", _addr({}, state, workspace_dev(service)), net=net
             )
         return ok_result(
             {

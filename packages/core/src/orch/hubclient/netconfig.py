@@ -18,7 +18,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 __all__ = [
-    "NET_FILE", "SECRET_FILE", "NetConfigError", "NetSettings", "ProxySettings", "load_net", "parse_proxy_url",
+    "NET_FILE", "SECRET_FILE", "NetConfigError", "NetSettings", "ProxySettings", "clear_net", "load_net",
+    "parse_proxy_url", "write_net",
 ]  # fmt: skip
 
 NET_FILE = "hub-net.json"
@@ -118,3 +119,44 @@ def load_net(directory: Path | str) -> NetSettings:
             if "\n" in password or "\r" in password or "\x00" in password:
                 raise NetConfigError("password")
     return NetSettings(ProxySettings(scheme, host, port, user, password))
+
+
+def _write_private(path: Path, data: bytes) -> None:
+    tmp = path.with_name(path.name + ".tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    try:
+        os.write(fd, data)
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    os.replace(tmp, path)
+
+
+def write_net(directory: Path | str, proxy: str, user: str | None, password: str | None) -> None:
+    """The owner's setting (T-C route and CLI only; nothing the hub says ever reaches here). Both files are 0600 and
+    written atomically; the result must pass :func:`load_net` or nothing stays. No ``user``: a stored password is
+    removed. A ``user`` without a new ``password`` keeps the stored one. Raises :class:`NetConfigError`."""
+    parse_proxy_url(proxy)
+    if user is not None and (type(user) is not str or _TEXT.fullmatch(user) is None or ":" in user):
+        raise NetConfigError("user")
+    if password is not None and (
+        user is None or "\n" in password or "\r" in password or "\x00" in password or not 0 < len(password) <= 1000
+    ):
+        raise NetConfigError("password")
+    d = Path(directory)
+    if user is None:
+        (d / SECRET_FILE).unlink(missing_ok=True)
+    elif password is not None:
+        _write_private(d / SECRET_FILE, password.encode("utf-8"))
+    _write_private(d / NET_FILE, json.dumps({"proxy": proxy, "proxy_user": user}).encode())
+    try:
+        load_net(d)
+    except NetConfigError:
+        (d / NET_FILE).unlink(missing_ok=True)
+        raise
+
+
+def clear_net(directory: Path | str) -> None:
+    d = Path(directory)
+    (d / NET_FILE).unlink(missing_ok=True)
+    (d / SECRET_FILE).unlink(missing_ok=True)

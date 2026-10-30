@@ -144,7 +144,17 @@ def dial_resolver(current_addr: str | None) -> Callable[[str], str]:
     return lambda host: checked_ip(host, allow_loopback=allow)
 
 
-def handshake_ok(addr: str, spki: str | None, *, allow_loopback: bool = False) -> bool:
+def dial_host(a: Any, net: Any, *, allow_loopback: bool) -> str:
+    """The host to hand to the dial of link address ``a``: the policy-checked IP, except a NAME behind the host's
+    proxy, which is the proxy's to resolve (sent as text; no local lookup, the pin decides who answers)."""
+    from orch.hubclient.tlslink import transport
+
+    if a.sni is not None and transport.proxy_applies(a, net) is not None:
+        return a.host  # type: ignore[no-any-return]
+    return checked_ip(a.host, allow_loopback=allow_loopback)
+
+
+def handshake_ok(addr: str, spki: str | None, *, allow_loopback: bool = False, net: Any = None) -> bool:
     """True when a TLS handshake AT ``addr`` presents the held pin ``spki``. The name is resolved once, the IP checked
     (:func:`checked_ip`), and that exact IP is dialled. Nothing is sent over the connection and it is closed at once.
     No pin, no handshake. Nothing about the outcome is ever reported to the hub."""
@@ -156,20 +166,20 @@ def handshake_ok(addr: str, spki: str | None, *, allow_loopback: bool = False) -
         return False
     try:
         a = parse_addr(addr)
-        ip = checked_ip(a.host, allow_loopback=allow_loopback)
+        ip = dial_host(a, net, allow_loopback=allow_loopback)
     except (HubRefused, OSError):
         return False
     try:
         if PROBE is not None:
             PROBE(ip, a.port, spki)
-        else:
-            tls.dial_link(a, spki, timeout=PROBE_TIMEOUT_S, connect_host=ip).close()
+        else:  # ws(s):// and a proxy included: the same dial as the link, then the pinned handshake
+            tls.dial_link(a, spki, timeout=PROBE_TIMEOUT_S, connect_host=ip, net=net).close()
     except Exception:  # noqa: BLE001 - refused, timed out, wrong certificate: all the same answer, "not verified"
         return False
     return True
 
 
-def _probe_new(scope: str, state: Any, links: list[str]) -> list[str]:
+def _probe_new(scope: str, state: Any, links: list[str], net: Any = None) -> list[str]:
     """Probe ``links`` (at most :data:`MAX_PROBES` attempts) and return the ones that passed. A link the policy
     refuses still counts as an attempt (no dial happens); one that failed within the backoff is skipped."""
     allow_lo = is_loopback(state.addr)
@@ -187,12 +197,19 @@ def _probe_new(scope: str, state: Any, links: list[str]) -> list[str]:
         if at is not None and now - at < FAIL_BACKOFF_S:
             continue
         tried += 1
-        if handshake_ok(link, state.tls_spki, allow_loopback=allow_lo):
+        if handshake_ok(link, state.tls_spki, allow_loopback=allow_lo, net=net):
             passed.append(link)
         else:
             with _MU:
                 _FAILED[(scope, link)] = time.monotonic()
     return passed
+
+
+def _net(service: Any) -> Any:
+    """The host's proxy settings. Unusable files raise ``ProxyRefused`` (an ``OSError``): nothing is dialled direct."""
+    from . import hubnet
+
+    return hubnet.load(service.state_dir)
 
 
 def known(state: Any) -> list[str]:
@@ -217,7 +234,13 @@ def apply_where(service: WorkspaceService, state: Any, answer: dict[str, Any]) -
     handshake passed the held pin. True when ``hub.json`` changed."""
     have = set(known(state))
     fresh = [e["link"] for e in answer["addresses"] if e["link"] not in have]
-    passed = _probe_new(f"{service.workspace_id}:{state.hub_id}", state, fresh)
+    passed: list[str] = []
+    if fresh:
+        try:
+            net = _net(service)
+        except OSError:
+            return False  # settings unusable: no probe, nothing stored, nothing dialled
+        passed = _probe_new(f"{service.workspace_id}:{state.hub_id}", state, fresh, net)
     return _store(service, state, passed, [e["link"] for e in answer["addresses"]], answer["name"])
 
 
@@ -316,7 +339,13 @@ def move(call: Call, link_text: str, *, now_ms: int, dev: bool) -> dict[str, Any
         raise other
     new = link.endpoint
     assert new is not None
-    if new not in known(state) and not handshake_ok(new, state.tls_spki, allow_loopback=is_loopback(state.addr)):
+    try:
+        net = _net(service)
+    except OSError as exc:
+        raise hubops._refused(getattr(exc, "code", "hub.proxy_refused").removeprefix("hub.")) from None  # noqa: SLF001
+    if new not in known(state) and not handshake_ok(
+        new, state.tls_spki, allow_loopback=is_loopback(state.addr), net=net
+    ):
         raise HostError(
             "hub.unreachable",
             "no hub answers at that address with the certificate this workspace trusts; nothing was changed",

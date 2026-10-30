@@ -68,12 +68,14 @@ def _http(method: str, url: str, body: bytes | None, headers: dict[str, str]) ->
         raise ClientError("unavailable") from None
 
 
-def _pinned_tls_request(host: str, port: int, pin: str, req: bytes) -> bytes:
+def _pinned_tls_request(host: str, port: int, pin: str, req: bytes, net: NetSettings | None = None) -> bytes:
     """One HTTP/1.1 request over TLS 1.3 pinned to ``pin`` (the SPKI hash); the whole answer until the peer closes."""
     from orch.hubclient.tlslink import tls
 
     try:
-        conn = tls.connect_pinned(host, port, pin, timeout=10.0)
+        conn = tls.connect_pinned(host, port, pin, timeout=10.0, net=net)  # this computer's proxy, if any
+    except tls.LinkInspected:
+        raise ClientError("remote_client.link_inspected") from None
     except tls.PinMismatch:
         raise ClientError("remote_client.hub_key_changed") from None
     except (tls.LinkClosed, tls.LinkTimeout, OSError):
@@ -114,7 +116,7 @@ class Client:
         self._connector = connector
         self._clock, self._dev, self.api, self._rand = clock, dev_mode, api, rand
         self._batch_window = batch_window
-        self._tls_request = tls_request or _pinned_tls_request
+        self._tls_request = tls_request or (lambda h, p, pin, req: _pinned_tls_request(h, p, pin, req, net))
 
     def _now_ms(self) -> int:
         return int(self._clock() * 1000)

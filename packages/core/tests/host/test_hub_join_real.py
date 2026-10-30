@@ -372,7 +372,7 @@ def test_hub_snapshot_status_once_when_delivered_and_retried_when_not(monkeypatc
     monkeypatch.setattr(socket, "gethostname", lambda: "h" * 100)
     monkeypatch.setattr(hubops, "_workspace_name", lambda service: "Acme")
     state = SimpleNamespace(hk_op_pub=crypto.b64u(b"x" * 65), tls_spki="unused", mode="full", hub_id="one")
-    service = SimpleNamespace(workspace_id="ws", clock=lambda: 0)
+    service = SimpleNamespace(workspace_id="ws", clock=lambda: 0, state_dir="/nonexistent-state")
     for _ in range(2):
         assert hubops._snapshot_link(service, state, b"", None, True)[1] is transport
     body = {"version": orch.__version__, "commit": "", "host": "h" * 80, "name": "Acme"}
@@ -393,7 +393,7 @@ def test_hub_snapshot_status_once_when_delivered_and_retried_when_not(monkeypatc
     state.hub_id = "two"
     hubops._snapshot_link(service, state, b"", None, True)
     assert len(calls) == 1
-    service = SimpleNamespace(workspace_id="ws", clock=lambda: 0)
+    service = SimpleNamespace(workspace_id="ws", clock=lambda: 0, state_dir="/nonexistent-state")
     hubops._snapshot_link(service, state, b"", None, True)
     assert len(calls) == 2
 
@@ -417,7 +417,7 @@ def test_selective_status_sends_the_workspace_name_but_no_host_name(monkeypatch)
     monkeypatch.setattr(hubops, "_addr", lambda *args: "unused")
     monkeypatch.setattr(hubops, "_workspace_name", lambda service: "Anna Test's workspace")
     state = SimpleNamespace(hk_op_pub=crypto.b64u(b"x" * 65), tls_spki="unused", mode="selective", hub_id="one")
-    hubops._snapshot_link(SimpleNamespace(workspace_id="ws", clock=lambda: 0), state, b"", None, True)
+    hubops._snapshot_link(SimpleNamespace(workspace_id="ws", clock=lambda: 0, state_dir="/nonexistent-state"), state, b"", None, True)
     assert calls and calls[0]["host"] == "" and calls[0]["version"]
     assert calls[0]["name"] == "Anna Test's workspace"
 
@@ -446,7 +446,7 @@ def test_a_refused_install_is_reported_to_the_bound_hub_with_the_actor(monkeypat
         hk_op_pub=crypto.b64u(b"x" * 65), tls_spki="unused", mode="full", hub_id="one", status="bound"
     )
     monkeypatch.setattr(hubops, "_load_state", lambda service: state)
-    service = SimpleNamespace(workspace_id="ws", clock=lambda: 0)
+    service = SimpleNamespace(workspace_id="ws", clock=lambda: 0, state_dir="/nonexistent-state")
     hubops.report_addon_request(service, "wiki", "1.2.0", "agent")
     hubops.report_addon_request(service, "Not A Name")  # a malformed name is never sent
     hubops.report_addon_request(service, "wiki", "x" * 40)  # a malformed version is sent empty

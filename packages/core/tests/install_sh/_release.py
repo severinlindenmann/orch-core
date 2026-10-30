@@ -48,8 +48,16 @@ def root_b64() -> str:
 
 def trusting_test_root(text: str, *, allow_test_channels: bool = False) -> str:
     """install.sh (or its verifier) with the public TEST root embedded instead of the production roots."""
-    out = text.replace("ROOTS_B64 = {}", f'ROOTS_B64 = {{"root-1": "{root_b64()}"}}')
-    assert out != text
+    # REPLACE whatever is embedded (the production root once the ceremony has run) with the public TEST root only
+    out, n = re.subn(r"^ROOTS_B64 = \{.*\}$", f'ROOTS_B64 = {{"test-root-1": "{root_b64()}"}}', text, flags=re.M)
+    assert n == 1
+    # the shipped floor is the real, current one: the test releases are older, so the copy gets the test baseline floor
+    out, n = re.subn(
+        r'^REVOCATIONS_FLOOR_ISSUED_AT = ".*"$', 'REVOCATIONS_FLOOR_ISSUED_AT = "2026-10-20T00:00:00Z"', out, flags=re.M
+    )
+    assert n == 1
+    out, n = re.subn(r"^REVOCATIONS_FLOOR_MIN_SERIAL = \d+$", "REVOCATIONS_FLOOR_MIN_SERIAL = 1", out, flags=re.M)
+    assert n == 1
     if allow_test_channels:
         out2 = out.replace("ALLOW_TEST_CHANNELS = False", "ALLOW_TEST_CHANNELS = True")
         assert out2 != out

@@ -21,7 +21,7 @@ PRODUCTION_ROOTS: Mapping[str, bytes] = {
 
 # TEST ONLY (public seed, see the module docstring): never copy into PRODUCTION_ROOTS.
 TEST_ROOTS: Mapping[str, bytes] = {
-    "root-1": base64.b64decode("/f5l4aGiNAveBGbZW+bAnbg7JJ3KpBc2d2YfyvZy/2k="),
+    "test-root-1": base64.b64decode("/f5l4aGiNAveBGbZW+bAnbg7JJ3KpBc2d2YfyvZy/2k="),
 }
 
 _test_hook_depth = 0

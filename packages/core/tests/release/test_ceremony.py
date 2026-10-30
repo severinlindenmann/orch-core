@@ -171,10 +171,24 @@ class Lab:
             (self.repo / rel).parent.mkdir(parents=True, exist_ok=True)
             (self.repo / rel).write_text((ROOT / rel).read_text())
         (self.repo / ".gitignore").write_text((ROOT / ".gitignore").read_text())
+        self.unembed()
         self.original = self.snapshot()
         (self.sim / "gh-date").write_text("Mon, 02 Nov 2026 09:00:00 GMT")  # matches the patched clock T0
         (self.sim / "gh-env.json").write_text(json.dumps(GOOD_ENV))
         (self.sim / "gh-policies.json").write_text(json.dumps(GOOD_POLICIES))
+
+    def unembed(self) -> None:
+        """Start from the tree as it was before the ceremony: the real checkout has the production root embedded."""
+        import re
+
+        keys_py, sh, gi = self.repo / ceremony.KEYS_PY, self.repo / ceremony.INSTALL_SH, self.repo / ".gitignore"
+        keys_py.write_text(
+            re.sub(r"^PRODUCTION_ROOTS: Mapping\[str, bytes\] = \{.*?^\}", "PRODUCTION_ROOTS: Mapping[str, bytes] = {}",
+                   keys_py.read_text(), flags=re.M | re.S)
+        )  # fmt: skip
+        sh.write_text(re.sub(r"^ROOTS_B64 = \{.*\}$", "ROOTS_B64 = {}", sh.read_text(), flags=re.M))
+        gi.write_text("".join(x for x in gi.read_text().splitlines(True) if x.strip() != "release/keys/root.env"))
+        self.original = self.snapshot()
 
     def env(self) -> dict[str, str]:
         return {

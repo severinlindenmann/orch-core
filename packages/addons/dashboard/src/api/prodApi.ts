@@ -371,6 +371,7 @@ const click = {
   getHubLink: (ws: string, link: string) => call<import('./hub').HubLinkInfo>(`${w(ws)}/hub/link`, 'POST', { link }),
   /** M3 H-5: company skills and tools offered by the hub (the owner's Company tab). */
   getOrgOffers: (ws: string) => call<import('./org').OrgOffers>(`${w(ws)}/org`),
+  getOrgSecrets: (ws: string) => call<import('./org').OrgSecrets>(`${w(ws)}/org/secrets`),
   getOrgItem: (ws: string, kind: import('./org').OrgKind, name: string) =>
     call<import('./org').OrgShown>(`${w(ws)}/org/item?kind=${kind}&name=${encodeURIComponent(name)}`),
   acceptOrgItem: (ws: string, kind: import('./org').OrgKind, name: string, digest: string) =>

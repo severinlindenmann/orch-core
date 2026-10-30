@@ -255,7 +255,7 @@ def test_refresh_flags_belong_to_status(host, argv):
 
 @pytest.fixture
 def share_host(monkeypatch):
-    log = SimpleNamespace(called=[], asked=[], yes=True)
+    log = SimpleNamespace(called=[], asked=[], yes=True, answers={})
     preview = {"count": 1, "new": 1, "revoked": 0, "more": 0, "plan": "p" * 43,
                "items": [{"logical": "ticket:t", "kind": "ticket", "line": "ticket K-1: Public note"}]}  # fmt: skip
     reply = {
@@ -264,6 +264,14 @@ def share_host(monkeypatch):
         "share.rule_remove": {"note": "changed", "synced": True, "put": 0, "revoke": 1, "kept": 0},
         "share.revoke": {"note": "withdrawn", "synced": True, "put": 0, "revoke": 1, "kept": 0},
         "share.sync": {"synced": False, "pending": "hub_unreachable"},
+        "share.audience": {
+            "people": [
+                {"user_id": "a" * 32, "name": "Ben"},
+                {"user_id": "b" * 32, "name": "Ben"},
+                {"user_id": "c" * 32, "name": "Cleo"},
+            ],
+            "teams": [{"group": "team-b", "members": 2}],
+        },
         "share.rules": {
             "rules": [{"kind": "tag", "tag": "x", "count": 1, "describes": "d"}],
             "shared": 1,
@@ -271,7 +279,9 @@ def share_host(monkeypatch):
         },  # fmt: skip
     }
     monkeypatch.setattr(hub, "_target", lambda env: object())
-    monkeypatch.setattr(hub, "_call", lambda t, op, args, env: (log.called.append((op, args)), reply[op])[1])
+    monkeypatch.setattr(
+        hub, "_call", lambda t, op, args, env: (log.called.append((op, args)), log.answers.get(op, reply[op]))[1]
+    )
 
     monkeypatch.setattr(
         __import__("orch.ops.human", fromlist=["review_prompt"]),
@@ -431,3 +441,66 @@ def test_network_refuses_agents_and_bad_shapes(host):
     assert code != 0 and host.called == []
     for bad in (["network", "set-proxy"], ["network", "x"], ["network", "--proxy-user", "a"]):
         assert run(bad, {})[0] == 2
+
+
+def test_share_people_lists_the_hub_people(share_host):
+    code, out = run(["share", "people"], {})
+    assert code == 0 and "Cleo" in out and "team team-b" in out and share_host.called == [("share.audience", {})]
+
+
+def test_with_resolves_a_name_or_id_into_the_signed_audience(share_host):
+    code, _ = run(["share", "rule", "add", "--ticket", "K-1", "--with", "Cleo", "--team", "team-b"], {}, as_json=True)
+    rule = {"kind": "ticket", "ticket": "K-1", "audience": {"users": ["c" * 32], "groups": ["team-b"]}}
+    assert code == 0 and ("share.rule_add", {"rule": rule, "expect": "p" * 43}) in share_host.called
+
+
+def test_an_ambiguous_or_unknown_person_reaches_no_rule_change(share_host):
+    for who in ("Ben", "Nobody"):
+        code, _ = run(["share", "rule", "add", "--ticket", "K-1", "--with", who], {}, as_json=True)
+        assert code == 5
+    assert all(op != "share.rule_add" for op, _ in share_host.called)
+
+
+def test_the_hubs_people_are_cleaned_before_anything_is_printed(share_host):
+    share_host.answers["share.audience"] = {
+        "people": [{"user_id": "a" * 32, "name": "\x1b[31mBen\u202e\nEvil"}, {"user_id": "zz\x1b[2J", "name": "X"}],
+        "teams": [
+            {"group": "t\x1b[0m", "members": 7},
+            {"group": "ok", "members": True},
+            {"group": "fine", "members": 3},
+            {"group": "x" * 60, "members": 1},
+        ],
+    }
+    code, out = run(["share", "people"], {})
+    assert code == 0 and "\x1b" not in out and "\u202e" not in out and "Evil" in out and "zz" not in out
+    assert "team fine (3 people)" in out and "team ok" not in out and "7" not in out and "xxxx" not in out
+
+
+def test_two_people_with_one_name_are_refused_with_both_ids_listed(share_host):
+    code, out = run(["share", "rule", "add", "--ticket", "K-1", "--with", "Ben"], {}, as_json=True)
+    assert code == 5 and "a" * 32 in out and "b" * 32 in out and "--with ID" in out
+    assert all(op != "share.rule_add" for op, _ in share_host.called)
+
+
+def test_one_name_shows_the_short_id_in_the_review_and_signs_only_the_id(share_host):
+    share_host.answers["share.preview"] = {
+        **share_host.answers.get(
+            "share.preview", {"count": 1, "new": 1, "revoked": 0, "more": 0, "plan": "p" * 43, "items": []}
+        ),
+        "review": {"readers": {"people": ["Cleo"], "teams": []}},
+    }
+    code, _ = run(["share", "rule", "add", "--ticket", "K-1", "--with", "Cleo"], {}, as_json=True)
+    prompt = share_host.asked[0]
+    assert code == 0 and "You chose: Cleo (..." + "c" * 8 + ")" in prompt
+    assert prompt.index("You chose") < prompt.index("Readers (from the hub, not signed): Cleo")
+    rule = {"kind": "ticket", "ticket": "K-1", "audience": {"users": ["c" * 32], "groups": []}}
+    assert ("share.rule_add", {"rule": rule, "expect": "p" * 43}) in share_host.called
+
+
+def test_a_team_is_matched_on_its_raw_safe_name_and_an_unsafe_one_is_never_signed(share_host):
+    code, _ = run(["share", "rule", "add", "--ticket", "K-1", "--team", "team-b"], {}, as_json=True)
+    rule = {"kind": "ticket", "ticket": "K-1", "audience": {"users": [], "groups": ["team-b"]}}
+    assert code == 0 and ("share.rule_add", {"rule": rule, "expect": "p" * 43}) in share_host.called
+    share_host.answers["share.audience"] = {"people": [], "teams": [{"group": "x" * 60, "members": 1}]}
+    code, _ = run(["share", "rule", "add", "--ticket", "K-1", "--team", "x" * 40], {}, as_json=True)
+    assert code == 5 and len([1 for op, _ in share_host.called if op == "share.rule_add"]) == 1

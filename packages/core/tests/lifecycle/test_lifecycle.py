@@ -66,6 +66,22 @@ def test_start_all_reverses_the_order_and_workspace_start_skips_server_parts():
     assert [k for _, k in keys(plan_start("workspace", ALL))] == ["host", "runner", "records", "dashboard"]
 
 
+def test_the_service_helper_stops_before_the_hub_and_starts_after_it():
+    svcs = [*ALL, svc("helper", name="hub-helper")]
+    assert [k for _, k in keys(plan_stop("all", svcs, set()))] == [
+        "runner", "dashboard", "host", "records", "helper", "hub", "relay", "publish",
+    ]  # fmt: skip
+    assert [k for _, k in keys(plan_start("all", svcs))] == [
+        "publish", "relay", "hub", "helper", "host", "runner", "records", "dashboard",
+    ]  # fmt: skip
+    assert [k for _, k in keys(plan_stop("workspace", svcs, set(), other_workspaces=0))][1:] == [
+        "runner",
+        "dashboard",
+        "host",
+        "records",
+    ]  # the helper is a server part: untouched by a workspace stop
+
+
 # ---------------------------------------------------------------------------------------------- a fake machine
 
 
@@ -164,6 +180,19 @@ def machine(tmp_path, platform):
 def run_cli(e, argv, cmd, cwd=None):
     e.out.truncate(0), e.out.seek(0)
     return cli.main(argv, env=e.env, out=e.out, err=e.err, cmd=cmd, e=e, cwd=cwd)
+
+
+def test_discover_lists_the_helper_the_installer_made_by_its_runner_part_name(tmp_path):
+    e, m, runner, out, err = machine(tmp_path, "linux")
+    layout = Layout(e.env)
+    st = json.loads(layout.file.read_text())
+    st["helper"] = {"service": "orch-ab12cd-hub-helper.service", "runner": "systemd"}
+    save(layout, st)
+    runner.up["hub-helper"] = True
+    row = next(s for s in discover(e) if s.key == "helper")
+    assert (row.name, row.state, row.group, row.installed) == ("hub-helper", "running", "server", True)
+    assert run_cli(e, ["all"], "stop") == 0, err.getvalue()
+    assert ("pause", "hub-helper") in runner.calls and runner.up["hub-helper"] is False
 
 
 @pytest.mark.parametrize("platform", ["darwin", "linux"])

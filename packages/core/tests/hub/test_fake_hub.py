@@ -163,14 +163,14 @@ def test_wk_seal_is_wrong_mode_in_selective(joined: HostLink, hub: FakeHub):
     assert hub.workspaces[WS].wk_seals == []
 
 
-def test_share_ops_work_in_selective_only(joined: HostLink, hub: FakeHub):
+def test_share_ops_work_in_both_modes(joined: HostLink, hub: FakeHub):
     item = "11" * 16
     assert joined.call("share_put", {"item_id": item, "sealed": "AAAA"}) == {}
     assert hub.workspaces[WS].shares == {item: "AAAA"}
     assert joined.call("share_revoke", {"item_id": item}) == {}
     assert hub.workspaces[WS].shares == {}
     assert joined.call("binding_put", {"object": binding(2, "full")}) == {}
-    assert code(joined, "share_put", {"item_id": item, "sealed": "AAAA"}) == "wrong_mode"
+    assert joined.call("share_put", {"item_id": item, "sealed": "AAAA"}) == {}
 
 
 def test_full_mode_takes_wk_seal_and_audit_ack(joined: HostLink, hub: FakeHub):

@@ -45,6 +45,16 @@ def test_everyone_else_gets_nothing_not_even_an_error(w):
     assert get(w, w.ben, "?workspace_id=" + "ee" * 16)[:2] == (200, {"items": []})  # unknown
 
 
+def test_a_full_mode_workspace_lists_its_shared_tickets_to_the_named_reader_only(w):
+    item = shared_item("33" * 16, "ticket", "Full-mode ticket")
+    item["item"]["audience"] = {"users": [w.ben], "groups": []}
+    w.shares.items[(w.ben, WS)] = [item]
+    s, o, _ = get(w, w.ben, "?workspace_id=" + WS)
+    assert s == 200 and [(i["title"], i["mode"]) for i in o["items"]] == [("Full-mode ticket", "full")]
+    assert get(w, w.admin, "?workspace_id=" + WS)[:2] == (200, {"items": []})  # a hub admin has no part by role
+    assert get(w, w.env.user("carl"), "?workspace_id=" + WS)[:2] == (200, {"items": []})
+
+
 def test_malformed_workspace_and_no_session(w):
     assert get(w, w.ben, "?workspace_id=zz")[:2] == (400, {"error": "malformed"})
     assert w.call("GET", "/me/shared")[0] == 401

@@ -342,7 +342,7 @@ def op_kind(name: str) -> tuple[OpKind, Phase] | None:
         return (
             ("pg_write", "write")
             if name == "org.sync"
-            else (("person_read", "read") if name == "org.show" else ("person_write", "write"))
+            else (("person_read", "read") if name in ("org.show", "org.secrets") else ("person_write", "write"))
         )
     if name in MARKET_OPS:  # V3 G2: P and G; the op itself refuses an agent's add and --commit (market.actor_refused)
         return ("pg_read", "read") if name in MARKET_READS else ("pg_write", "write")

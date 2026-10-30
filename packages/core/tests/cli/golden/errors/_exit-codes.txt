@@ -67,6 +67,8 @@ gate.stale 5 retry:false
 artifact.mismatch 5 retry:false
 gate.already_approved 5 retry:false
 source.missing 5 retry:false
+update.unverified 5 retry:false
+update.stale 5 retry:false
 parse.json 6 retry:false
 parse.text 6 retry:false
 wait.timeout 7 retry:true

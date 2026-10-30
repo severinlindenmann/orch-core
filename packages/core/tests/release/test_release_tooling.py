@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import zipfile
@@ -517,3 +518,9 @@ def test_signing_side_refuses_the_file_list_vectors(name):
     payload = json.loads(base64.b64decode(json.loads(CORE[name]["envelope"])["payload"]))
     with pytest.raises(Malformed):
         check_manifest(payload)
+
+
+def test_rootkey_pops_the_root_seed_variable_after_loading(monkeypatch):
+    monkeypatch.setenv("ORCH_TEST_ROOT_POP", seed_b64("root-1"))
+    assert rootkey.take_key("ORCH_TEST_ROOT_POP") is not None
+    assert "ORCH_TEST_ROOT_POP" not in os.environ

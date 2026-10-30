@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """Root-key operations for the key ceremony (CONTRACT.md §2): `certify` and `revoke`.
 
-    ORCH_ROOT_SIGNING_KEY=<base64 seed> rootkey.py certify --root-key-id root-1 --key-id rk-3 --public-key <b64 32> \
-        --serial 3 --purpose core --channels develop,main --not-before … --not-after … --out key_cert.json
-    ORCH_ROOT_SIGNING_KEY=<base64 seed> rootkey.py revoke --root-key-id root-1 --min-serial 2 --revoked 4 \
-        --issued-at … --out revocations.json
+    pass-cli run --env-file release/keys/root.env -- python3 -I scripts/release/rootkey.py certify \
+        --root-key-id root-1 --key-id rk-3 --public-key <b64 32> --serial 3 --purpose core --channels main \
+        --not-before … --not-after … --out key_cert.json
+    pass-cli run --env-file release/keys/root.env -- python3 -I scripts/release/rootkey.py revoke \
+        --root-key-id root-1 --min-serial 2 --revoked 4 --initial --issued-at … --out revocations.json
 
+(`root.env` holds only a secret REFERENCE to the vault item, never the key; it is not committed.)
 The root key comes from an environment variable ONLY (`--root-key-env` names it) and is never printed; the ceremony
-runs these through `pass-cli run`. The outputs are the `key_cert` / `revocations` objects of the envelope.
+runs these through `pass-cli run`. The variable is removed from the process environment right after
+the key is loaded. The outputs are the `key_cert` / `revocations` objects of the envelope.
 """
 
 from __future__ import annotations
@@ -15,6 +18,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -96,6 +100,13 @@ def revoke(root: Ed25519PrivateKey, root_key_id: str, doc: dict[str, Any]) -> di
     return {"doc": b64(body), "root_key_id": root_key_id, "sig": b64(root.sign(REVOCATIONS_DOMAIN + body))}
 
 
+def take_key(env_name: str):
+    """load_key, then pop the variable so nothing later in this process (or a child) can read the root seed."""
+    key = load_key(env_name)
+    os.environ.pop(env_name, None)
+    return key
+
+
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -131,7 +142,7 @@ def main(argv: list[str]) -> int:
                 not_before=a.not_before,
                 not_after=a.not_after,
             )
-            out = certify(load_key(a.root_key_env), a.root_key_id, doc)
+            out = certify(take_key(a.root_key_env), a.root_key_id, doc)
         else:
             doc = build_revocations(
                 min_serial=a.min_serial,
@@ -141,7 +152,7 @@ def main(argv: list[str]) -> int:
             need((a.previous is None) != (not a.initial), "give exactly one of --previous FILE or --initial")
             if a.previous is not None:
                 check_successor(doc, load_previous(a.previous))
-            out = revoke(load_key(a.root_key_env), a.root_key_id, doc)
+            out = revoke(take_key(a.root_key_env), a.root_key_id, doc)
     except (ValueError, KeyError, OSError) as exc:
         print(f"rootkey: {exc}", file=sys.stderr)
         return 1

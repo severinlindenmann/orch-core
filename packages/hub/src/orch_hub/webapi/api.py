@@ -1030,7 +1030,7 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
 
         s = self._guarded_credentials(c, resolve, attempt)
         out: dict[str, Any] = {"user_id": s["user_id"], "expires_ms": s["expires_ms"]}
-        if client != "browser":  # the phone / a remote client keeps the token itself (the remote one only for the stream router)
+        if client != "browser":  # the phone / a remote client keeps the token itself
             out["token"] = s["token"]
             return 200, out, []
         ttl = max(0, (s["expires_ms"] - self.d.now_ms()) // 1000)

@@ -178,6 +178,9 @@ class RemoteEndpoint:
             return
         self._send(conn, {"t": "ready", "hub_id": self._router.hub_id})
         pre.release()  # signed in: out of the not-yet-authenticated pool
+        signed_in = getattr(conn, "signed_in", None)
+        if signed_in is not None:
+            signed_in()  # the link server's own slot too (idempotent)
         try:
             op = self._read(conn, deadline)
         except framing.FrameError:

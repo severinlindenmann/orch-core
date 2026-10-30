@@ -56,8 +56,24 @@ function appsTable(apps, act) {
         h("div", { class: "small muted", "data-approve": r.id, text: "Start again or change who can open it: approve in " + text(r.workspace) })] : null))))));
 }
 
+/** P08: one line per workspace that keeps its links to itself, saying what to do. `rows` are the rail rows (role, openable);
+ * `openSettings(id)` opens that workspace's hub settings (offered only for the person's own, openable workspace). The words
+ * a workspace wrote go in through `text` and textContent only. */
+function hiddenRow(w, rows, openSettings) {
+  const row = rows.find((r) => r.id === w.workspace_id);
+  const own = row?.role === "owner";
+  const who = typeof w.owner_name === "string" && w.owner_name ? text(w.owner_name) : "its owner";
+  const todo = own
+    ? (row.online && row.canOpen && openSettings ? null : "Open it on its own computer, then choose Share everything in Settings > Hub.")
+    : "Ask " + who + " to share them.";
+  return h("div", { class: "row published-hidden", "data-hidden": w.workspace_id },
+    h("div", { class: "grow small" }, h("b", { text: text(w.name) }), h("span", { text: " keeps its links and apps to itself, so they are not listed here." }),
+      todo ? h("div", { class: "muted", text: todo }) : null),
+    own && !todo ? h("button", { type: "button", class: "pri", "data-share-hub": w.workspace_id, text: "Let the hub see them", onclick: () => openSettings(w.workspace_id) }) : null);
+}
+
 /** `act(path, doneWords)`: POST /admin/published/<path>; absent in a read-only view (the buttons are then not drawn). */
-export function publishedView(data, { now = Date.now(), tab, act } = {}) {
+export function publishedView(data, { now = Date.now(), tab, act, rows = [], openSettings } = {}) {
   const links = data.links ?? [], apps = data.apps ?? [], hidden = data.hidden ?? [];
   let current = tab ?? (apps.length ? "apps" : "links");
   const body = h("div", { class: "published-body" });
@@ -77,7 +93,7 @@ export function publishedView(data, { now = Date.now(), tab, act } = {}) {
     h("p", { class: "lead", text: "Everything workspaces put out through Publish: apps and pages people can use, and files shared by link." }),
     data.stale_ms != null ? h("p", { class: "banner warn", role: "status", text: "Publish does not answer right now. This is what it said " + Math.max(1, Math.round(data.stale_ms / 60000)) + " min ago." }) : null,
     tabs, body,
-    hidden.map((w) => h("p", { class: "small muted", "data-hidden": w.workspace_id, text: text(w.name) + " shares no details with the hub, so its links and apps are not listed." })));
+    hidden.map((w) => hiddenRow(w, rows, openSettings)));
 }
 
 export async function publishedPage(d) {
@@ -97,7 +113,7 @@ export async function publishedPage(d) {
       d.state.notice = x.status === 200 ? d.banner("ok", x.body.result === "unchanged" ? "Already ended" : done, null) : d.banner("bad", "Not changed", d.say(x.body.error ?? "unavailable"));
       await publishedPage(d);
     };
-    d.shell("published", d.state.notice, publishedView(r.body, { act }));
+    d.shell("published", d.state.notice, publishedView(r.body, { act, rows: d.state.rail.rows, openSettings: d.openSettings }));
     d.state.notice = null;
   } finally { finish(); }
 }

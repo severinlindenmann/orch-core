@@ -13,6 +13,7 @@ from orch.canon.jcs import JcsError
 from orch.canon.jcs import dumps as cj
 from orch.crypto import suite as _suite
 from orch.crypto.encoding import EncodingError, b64u, unb64u, unhex
+from orch.hubroles import SNAPSHOT_SKEW_MS, role_at  # noqa: F401  (the one role rule, shared with the model)
 from orch.model import remote as _remote
 
 from .errors import HubRefused
@@ -190,6 +191,9 @@ _FIELDS: dict[str, dict[str, Callable[[Any], bool]]] = {
         "issued_ms": _int_min(0),
         "roles": lambda x: type(x) is dict,
         "revoked_channels": lambda x: type(x) is list,
+        "ends_ms": lambda x: (
+            type(x) is dict
+        ),  # GA-07 (hub protocol 7): {user_id: ms}, checked in snapshot.verify_snapshot
         "market_policy": _policy_ok,  # D14: required, never null (hub protocol 7.1)
         "dev": lambda x: type(x) is bool,
     },

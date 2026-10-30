@@ -33,7 +33,7 @@ def card(n: int = 1, hub: str = HUB) -> dict:
 
 def snap(version: int, channels: tuple[str, ...] = (), hub: str = HUB) -> dict:
     return {"o": {"kind": "hub.snapshot", "hub_id": hub, "version": version, "revoked_channels": list(channels),
-                  "roles": {U1: "admin"}}, "sig": sig(f"snap{version}")}  # fmt: skip
+                  "roles": {U1: "admin"}, "ends_ms": {}}, "sig": sig(f"snap{version}")}  # fmt: skip
 
 
 def revoked(n: int, hub: str = HUB) -> dict:

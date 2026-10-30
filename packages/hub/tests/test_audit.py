@@ -187,10 +187,14 @@ def test_the_chain_continues_after_a_restart(tmp_path):
 
     s1 = AuditStore(path)
     l1 = log(s1)
-    r1 = l1.append("membership", {"group": "g", "user_id": G.U_BOB, "added": True, "actor_user_id": OPERATOR})
+    r1 = l1.append(
+        "membership", {"group": "g", "user_id": G.U_BOB, "added": True, "ends_ms": None, "actor_user_id": OPERATOR}
+    )
     s1.close()
     s2 = AuditStore(path)
-    r2 = log(s2).append("membership", {"group": "g", "user_id": G.U_BOB, "added": False, "actor_user_id": OPERATOR})
+    r2 = log(s2).append(
+        "membership", {"group": "g", "user_id": G.U_BOB, "added": False, "ends_ms": None, "actor_user_id": OPERATOR}
+    )
     assert r2["o"]["seq"] == 2 and r2["o"]["prev"] == AU.chain_hash(r1)
     s2.close()
 
@@ -200,7 +204,7 @@ def test_concurrent_appends_stay_contiguous_and_linked():
     log = AuditLog(
         store, KS.OpSigner(G.K.priv["hk_op"]), G.HUB_ID, lambda: G.OP_CERT_ID, now_ms=lambda: NOW, dev_mode=True
     )
-    ev = {"group": "g", "user_id": G.U_BOB, "added": True, "actor_user_id": OPERATOR}
+    ev = {"group": "g", "user_id": G.U_BOB, "added": True, "ends_ms": None, "actor_user_id": OPERATOR}
 
     def work():
         for _ in range(20):
@@ -220,7 +224,7 @@ def test_timestamps_never_go_back_even_if_the_clock_does():
     log = AuditLog(
         store, KS.OpSigner(G.K.priv["hk_op"]), G.HUB_ID, lambda: G.OP_CERT_ID, now_ms=lambda: next(clock), dev_mode=True
     )
-    ev = {"group": "g", "user_id": G.U_BOB, "added": True, "actor_user_id": OPERATOR}
+    ev = {"group": "g", "user_id": G.U_BOB, "added": True, "ends_ms": None, "actor_user_id": OPERATOR}
     ts = [log.append("membership", ev)["o"]["ts_ms"] for _ in range(3)]
     assert ts == [NOW, NOW, NOW + 10]
 
@@ -251,7 +255,7 @@ def test_every_event_type_carries_a_fresh_32_byte_nonce_so_hashes_are_not_guessa
     log = AuditLog(
         store, KS.OpSigner(G.K.priv["hk_op"]), G.HUB_ID, lambda: G.OP_CERT_ID, now_ms=lambda: NOW, dev_mode=True
     )
-    ev = {"group": "ops", "user_id": G.U_BOB, "added": True, "actor_user_id": OPERATOR}
+    ev = {"group": "ops", "user_id": G.U_BOB, "added": True, "ends_ms": None, "actor_user_id": OPERATOR}
     r1, r2 = log.append("membership", ev), log.append("membership", ev)  # the very same change twice
     assert r1["o"]["event_hash"] != r2["o"]["event_hash"]
     # a tenant who guesses the fields cannot confirm the hash without the nonce
@@ -278,7 +282,7 @@ def test_every_event_type_carries_a_fresh_32_byte_nonce_so_hashes_are_not_guessa
 def test_an_event_handed_in_without_a_valid_nonce_is_refused_by_the_contract_checker():
     from orch_hub.contract.hub import Refused
 
-    ev = {"group": "ops", "user_id": G.U_BOB, "added": True, "actor_user_id": OPERATOR}
+    ev = {"group": "ops", "user_id": G.U_BOB, "added": True, "ends_ms": None, "actor_user_id": OPERATOR}
     with pytest.raises(Refused):
         AU.check_event("membership", ev)  # no nonce
     with pytest.raises(Refused):
@@ -393,3 +397,26 @@ def test_an_accept_is_dropped_only_after_the_audit_record_is_in(shub):
     with pytest.raises(RuntimeError):
         h.svc.remove(sid, G.WS_B, ADMIN)
     assert h.store.accept(sid, G.WS_B) is not None and h.store.current_epoch(sid) == 2  # nothing half-done
+
+
+def test_membership_event_needs_ends_ms_int_or_null():
+    from orch_hub.contract.hub import Refused
+
+    ev = {
+        "group": "ops",
+        "user_id": G.U_BOB,
+        "added": True,
+        "ends_ms": None,
+        "actor_user_id": G.U_ALICE,
+        "nonce": G.b64u(bytes(32)),
+    }
+    AU.check_event("membership", ev)
+    AU.check_event("membership", {**ev, "ends_ms": 1_800_000_000_000})
+    no_ends = {k: v for k, v in ev.items() if k != "ends_ms"}
+    for bad in (no_ends, {**ev, "ends_ms": "1"}, {**ev, "ends_ms": 0}, {**ev, "ends_ms": True}, {**ev, "ends_ms": 1.5}):
+        with pytest.raises(Refused):
+            AU.check_event("membership", bad)
+
+    with pytest.raises(Refused):
+        AU.check_event("membership", {**ev, "added": False, "ends_ms": 1_800_000_000_000})  # a removal has no end date
+    AU.check_event("membership", {**ev, "added": False})

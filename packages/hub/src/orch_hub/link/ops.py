@@ -95,6 +95,7 @@ class StubSnapshots:
             "issued_ms": self._now(),
             "roles": {},
             "revoked_channels": [],
+            "ends_ms": {},
             "market_policy": default_policy(),
             "dev": True,
         }

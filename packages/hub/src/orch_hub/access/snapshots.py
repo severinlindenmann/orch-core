@@ -43,7 +43,9 @@ class AccessSnapshots:
         op_cert_id = self._keys.op_cert()["o"]["cert_id"]
         a = self._a
         with a.tx() as db:  # roles, channels, the stored row and the new row are one consistent step
-            roles = a.roles(workspace_id)
+            now = self._now()  # ONE clock reading: the roles, the end dates and issued_ms agree
+            roles = a.roles_overlay(workspace_id, at_ms=now)
+            ends = a.ends_for(workspace_id, now)
             revoked = a.revoked_channels()
             mp = a.effective_market_policy(workspace_id)  # the hub-wide policy plus this workspace's add-on extras
             fp = hashlib.sha256(
@@ -51,6 +53,7 @@ class AccessSnapshots:
                     {
                         "roles": roles,
                         "revoked": revoked,
+                        "ends": ends,
                         "op": op_cert_id,
                         "policy": mp["hash"],
                         "dev": dev_of(self._keys),
@@ -70,9 +73,10 @@ class AccessSnapshots:
                 "workspace_id": workspace_id,
                 "generation": 0,
                 "version": max(row[0] if row else 0, a.version_floor()) + 1,
-                "issued_ms": self._now(),
+                "issued_ms": now,
                 "roles": roles,
                 "revoked_channels": revoked,
+                "ends_ms": ends,
                 "market_policy": mp["policy"],
                 "dev": dev_of(self._keys),
             }

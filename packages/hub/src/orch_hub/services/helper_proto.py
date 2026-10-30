@@ -27,6 +27,7 @@ from ..fsutil import open_private_db
 
 TAG = "orch.hub.service.action/v1"
 ACTIONS = ("start", "stop", "restart", "update")
+VERBS_RUN = ("start", "stop", "restart")  # what ``run`` may execute today ("update" waits for signed releases)
 PART_RE = re.compile(r"[a-z][a-z0-9]{0,15}")
 HEX32 = re.compile(r"[0-9a-f]{32}")
 HOST_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,39}")

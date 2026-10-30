@@ -8,7 +8,7 @@ import pytest
 from orch.model import Code
 from orch.model import followup_events as fe
 from tests.model.test_followups_engine import _fire_with  # noqa: PLC2701
-from tests.model.world import World, digest, stamp
+from tests.model.world import World, digest, refused, stamp
 
 DECL = {
     "kind": "run.finished",
@@ -152,3 +152,28 @@ def test_the_cli_parses_an_addon_event_with_an_optional_status_filter(env):
     ad = addons(w)
     assert fe.parse_on(DBX + ":8812", w.state()._core.ws.workspace_id, ad)["ref"] == "8812"
     assert fe.parse_on(DBX + ":8812", "w", ad, only="succeeded")["status"] == "succeeded"
+
+
+@pytest.mark.parametrize(
+    "events",
+    [
+        [DECL, dict(DECL)],  # the same kind twice
+        [{**DECL, "title": "Run \u202efinished"}],  # a bidi control in the title
+        [{**DECL, "title": "Run\nfinished"}],  # a newline
+        [{**DECL, "title": " Run finished "}],  # padded
+    ],
+)
+def test_a_replayed_grant_refuses_duplicate_kinds_and_titles_that_are_not_plain_text(env, events):
+    w, *_ = env
+    code = refused(
+        w, "workspace", "addon.granted", "sev", name="newone", version="1.0.0", package_sha256=digest("newone"),
+        capabilities=["network"], fields={}, sections=[], artifact_kinds=[], events=events,
+    )  # fmt: skip
+    assert code == Code.ADDON_VALUE_INVALID
+    assert (
+        refused(
+            w, "workspace", "addon.granted", "sev", name="okay", version="1.0.0", package_sha256=digest("okay"),
+            capabilities=["network"], fields={}, sections=[], artifact_kinds=[], events=[DECL],
+        )
+        is None
+    )  # fmt: skip

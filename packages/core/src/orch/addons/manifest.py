@@ -31,6 +31,25 @@ __all__ = [
 ADDON_API = "1.2"  # the add-on API this core implements, major.minor (docs/architecture/addon-api.md)
 #: the manifest key and the ``addon.granted`` key of the declared wake events (one literal: the layout lint counts them)
 EVENTS_KEY = "events"
+
+
+def events_problem(events: Any) -> tuple[int, str, str] | None:
+    """The one rule for declared events that does not depend on a schema: kinds are unique and a title is plain
+    printable text (no bidi or control characters, no padding). ``(index, field, message)`` or ``None``. Used by the
+    manifest check and by the replay of ``addon.granted`` (a log line never goes through the manifest check)."""
+    from orch.canon import suspicious
+
+    seen: set[str] = set()
+    for i, ev in enumerate(events if isinstance(events, list) else ()):
+        kind, title = ev.get("kind"), ev.get("title")
+        if kind in seen:
+            return i, "kind", f"event {kind!r} is declared twice"
+        seen.add(kind)
+        if not isinstance(title, str) or suspicious(title) or not title.isprintable() or title != title.strip():
+            return i, "title", "a title is plain printable text"
+    return None
+
+
 LEGACY_API = ">=1.0,<2"  # what an orch.addon/2 manifest (no api key) is read as
 
 # the closed list (§11.4; addon-api 1.1 adds choose_model and credential; credential needs network)

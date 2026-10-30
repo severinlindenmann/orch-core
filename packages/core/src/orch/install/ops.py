@@ -8,6 +8,7 @@ the journal and the status file are the warning. The unit generators are pure an
 from __future__ import annotations
 
 import json
+import os
 import shlex
 import shutil
 import socket
@@ -20,6 +21,8 @@ import urllib.request
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
+
+from orch import childenv
 
 __all__ = ["backup_copy", "health_unit_files", "backup_unit_files", "run_health", "main"]
 
@@ -81,7 +84,11 @@ def _http_ok(url: str) -> str | None:
 def _ntp_synced() -> bool | None:
     try:
         r = subprocess.run(
-            ["timedatectl", "show", "-p", "NTPSynchronized", "--value"], capture_output=True, text=True, timeout=5
+            ["timedatectl", "show", "-p", "NTPSynchronized", "--value"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            env=childenv.sanitize(os.environ),
         )
     except (OSError, subprocess.SubprocessError):
         return None

@@ -52,7 +52,9 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
 _SID = {"type": "string", "pattern": "^[0-9a-f]{32}$"}
 #: R3 T4: ``remote.off`` from an owner's own open session names it; the host takes the device from its session table
 _SCHEMAS["remote.off"] = {
-    "type": "object", "properties": {"stream_id": _SID}, "additionalProperties": False,
+    "type": "object",
+    "properties": {"stream_id": _SID},
+    "additionalProperties": False,
 }
 _B64 = {"type": "string", "minLength": 1, "maxLength": 87400, "pattern": "^[A-Za-z0-9_-]+$"}
 _SCHEMAS["remote.attach"] = {

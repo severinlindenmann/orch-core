@@ -54,8 +54,8 @@ from .explorer import routes as explorer_routes
 from .gateway import Gateway, state_dir
 from .hostlink import REQUEST_MEMO
 from .live import Live, SessionStream
-from .remote_device import RemoteDevices
 from .policy import LOOPBACK, loopback_policy, remote_device_policy
+from .remote_device import RemoteDevices
 from .security import Security, log_internal
 from .wiki import routes as wiki_routes
 
@@ -186,7 +186,9 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app):
-        if remote_streams:  # R3 (#1591): the in-process adapter of remote sessions (no listener; only the host's frames)
+        if (
+            remote_streams
+        ):  # R3 (#1591): the in-process adapter of remote sessions (no listener; only the host's frames)
             app.state.remote_devices.start(asyncio.get_running_loop())
         yield
         if remote_streams:

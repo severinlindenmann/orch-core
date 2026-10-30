@@ -547,8 +547,9 @@ def register(app: FastAPI, gateway: Gateway):
 
     def start_renewing(token: str) -> None:
         if app.state.auth.stream_of(token) is not None:
-            return  # a stream's signer calls are the stream's (stamped from its context, which a thread does not have),
-            # and `session_alive` is refused over a stream: a held intent of a stream lapses with its lease (fail closed)
+            # a stream's signer calls are stamped from its context, which a thread does not have, and `session_alive`
+            # is refused over a stream: a held intent of a stream lapses with its lease (fail closed)
+            return
         with app.state.auth.lock:
             if token in lease_workers:
                 return

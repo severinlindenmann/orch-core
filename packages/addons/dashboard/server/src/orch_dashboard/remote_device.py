@@ -13,8 +13,8 @@ Two halves:
   (`stream_closed_before_request_end_never_dispatches_body`). Limits: HEAD <= 16 KiB, <= 8 open HTTP and <= 2 WebSocket
   exchanges (`remote.busy` RESET past them), a request without its END in 60 s is RESET `timeout`, a body over 1 MiB
   RESET `too_large`, <= 64 unsent frames per stream (a device that stops reading closes the stream `remote.busy`).
-  A frame error is a stream error (`malformed`). Outside bearers (`authorization`, `cookie`, `x-setup-token`, `x-orch-*`)
-  are answered 400 `remote.bearer`; `set-cookie` is never sent to the device.
+  A frame error is a stream error (`malformed`). Outside bearers (`authorization`, `cookie`, `x-setup-token`,
+  `x-orch-*`) are answered 400 `remote.bearer`; `set-cookie` is never sent to the device.
 * :class:`Attachment` (one thread per workspace): the `remote.attach` long poll on a host connection of its own, handing
   frames to the loop and taking the loop's answers.
 
@@ -198,7 +198,9 @@ class Stream:
 class Terminator:
     """App frames <-> ASGI for one workspace's streams. Everything but :meth:`take_outbound` runs on the event loop."""
 
-    def __init__(self, app, auth, loop: asyncio.AbstractEventLoop, *, busy_s: float = BUSY_S, request_s: float = REQUEST_END_S):
+    def __init__(
+        self, app, auth, loop: asyncio.AbstractEventLoop, *, busy_s: float = BUSY_S, request_s: float = REQUEST_END_S
+    ):
         self.app, self.auth, self.loop = app, auth, loop
         self.busy_s, self.request_s = busy_s, request_s
         self.streams: dict[str, Stream] = {}
@@ -431,7 +433,9 @@ class Terminator:
         with self.mu:
             self.out.append((st.sid, pt))
 
-    def take_outbound(self, max_send: int = 64, max_close: int = 16) -> tuple[list[dict[str, str]], list[dict[str, str]], dict[str, int]]:
+    def take_outbound(
+        self, max_send: int = 64, max_close: int = 16
+    ) -> tuple[list[dict[str, str]], list[dict[str, str]], dict[str, int]]:
         """(thread-safe) What the poll sends next, and how many frames per stream it took (`sent`)."""
         send, close, counts = [], [], {}
         with self.mu:
@@ -526,7 +530,9 @@ class Terminator:
             log.warning("remote stream request failed")
             if not started and ex.state != "done":
                 with contextlib.suppress(Gone, Malformed):
-                    await self.emit(st, frame(HEAD, ex.id, response_head(500, [(b"content-type", b"application/json")])))
+                    await self.emit(
+                        st, frame(HEAD, ex.id, response_head(500, [(b"content-type", b"application/json")]))
+                    )
                     await self.emit(st, frame(BODY, ex.id, b'{"ok":false,"error":{"code":"internal"}}'))
                     await self.emit(st, frame(END, ex.id))
                     finished = True
@@ -581,9 +587,12 @@ class Terminator:
         try:
             if ex.refuse is not None:
                 answered = True
-                await self.emit(st, frame(HEAD, ex.id, response_head(ex.refuse[0], [(b"content-type", b"application/json")])))
                 await self.emit(
-                    st, frame(BODY, ex.id, b'{"ok":false,"error":{"code":"%s","retryable":false}}' % ex.refuse[1].encode())
+                    st, frame(HEAD, ex.id, response_head(ex.refuse[0], [(b"content-type", b"application/json")]))
+                )
+                await self.emit(
+                    st,
+                    frame(BODY, ex.id, b'{"ok":false,"error":{"code":"%s","retryable":false}}' % ex.refuse[1].encode()),
                 )
                 await self.emit(st, frame(END, ex.id))
             else:
@@ -630,10 +639,18 @@ GIVE_UP_S = 60.0  # a refusal that will not change soon (not an owner, an old ho
 
 
 class Attachment(threading.Thread):
-    """One workspace's `remote.attach` long poll on a host connection of its own. A refusal or a lost connection ends the
-    attachment (the host closes the sessions of a lapsed lease) and the manager starts another when it is time."""
+    """One workspace's `remote.attach` long poll on a host connection of its own. A refusal or a lost connection ends
+    the attachment (the host closes the sessions of a lapsed lease) and the manager starts another when it is time."""
 
-    def __init__(self, ws: str, terminator: Terminator, link_factory, *, wait_ms: int = IDLE_WAIT_MS, active_ms: int = ACTIVE_WAIT_MS):
+    def __init__(
+        self,
+        ws: str,
+        terminator: Terminator,
+        link_factory,
+        *,
+        wait_ms: int = IDLE_WAIT_MS,
+        active_ms: int = ACTIVE_WAIT_MS,
+    ):
         super().__init__(name=f"remote-attach-{ws[:8]}", daemon=True)
         self.ws, self.terminator, self.link_factory = ws, terminator, link_factory
         self.wait_ms, self.active_ms = wait_ms, active_ms
@@ -701,7 +718,9 @@ class RemoteDevices:
         link = self.gateway.new_link(ws)
         if not link.supports("remote.attach", "remote/1"):
             link.close()
-            raise HostError({"code": "op.unsupported", "message": "this host has no remote sessions", "retryable": False}, 1)
+            raise HostError(
+                {"code": "op.unsupported", "message": "this host has no remote sessions", "retryable": False}, 1
+            )
         return link
 
     def workspaces(self) -> list[str]:

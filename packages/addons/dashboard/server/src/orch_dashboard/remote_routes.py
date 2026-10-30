@@ -62,7 +62,9 @@ class Presence(BaseModel):
 
     model_config = ConfigDict(extra="forbid", strict=True)
     nonce: Annotated[str, StringConstraints(min_length=1, max_length=64)]
-    digests: Annotated[list[Annotated[str, StringConstraints(min_length=71, max_length=71)]], Field(min_length=1, max_length=16)]
+    digests: Annotated[
+        list[Annotated[str, StringConstraints(min_length=71, max_length=71)]], Field(min_length=1, max_length=16)
+    ]
     assertion: dict[str, Any]
 
 

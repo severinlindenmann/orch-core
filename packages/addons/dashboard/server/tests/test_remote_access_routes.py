@@ -45,7 +45,9 @@ def link_of(person, role):
         "pending": [{"pending": PENDING, "name": "Anna's phone", "words": "a b c d e f", "presence_kind": "fido2",
                      "expires_ms": 77}]
     }  # fmt: skip
-    fake.answers["remote.sessions"] = {"sessions": [{"stream_id": "5e" * 16, "device_id": DEV, "level": "work", "since_ms": 7}]}
+    fake.answers["remote.sessions"] = {
+        "sessions": [{"stream_id": "5e" * 16, "device_id": DEV, "level": "work", "since_ms": 7}]
+    }
     fake.answers["remote.off"] = {"changed": True}
     fake.answers["remote.code"] = {"code": CODE, "code_id": "rc_" + "c" * 32, "expires_ms": 900}
     fake.answers["remote.device_remove"] = {"removed": True}
@@ -79,7 +81,9 @@ def test_the_page_gets_the_closed_view_of_the_three_reads(client, token, stub, h
         "devices": [{"device_id": DEV, "name": "Anna's laptop", "level_cap": "view", "added_ms": 1, "expires_ms": 9000,
                      "words": "one two three four five six"}],
         "pending": [{"pending": PENDING, "name": "Anna's phone", "words": "a b c d e f", "expires_ms": 77}],
-        "sessions": [{"device": "Anna's laptop", "device_id": DEV, "stream_id": "5e" * 16, "level": "work", "since_ms": 7}],
+        "sessions": [
+            {"device": "Anna's laptop", "device_id": DEV, "stream_id": "5e" * 16, "level": "work", "since_ms": 7}
+        ],
     }  # fmt: skip
     assert [c[0] for c in host.calls] == ["member.list", "remote.status", "remote.pending", "remote.sessions"]
     assert writes(host) == []

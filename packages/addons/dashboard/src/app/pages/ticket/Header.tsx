@@ -154,7 +154,7 @@ export interface ShareTicket {
 
 /**
  * Sharing this one ticket with the hub, from the ticket itself. Only the owner of the ticket's workspace, only in
- * "share only what I choose" mode (full shares everything, standalone has no hub). It opens the same review as
+ * a joined hub, in either mode (full: only named people see the ticket; standalone has no hub). It opens the same review as
  * Settings (`ShareTicketDialog`, `StopSharing`); the Actions menu holds the item, so there is one dialog and one rule.
  */
 function useShareTicket(ticket: TicketDocument, viewer: Viewer): ShareTicket {
@@ -163,10 +163,10 @@ function useShareTicket(ticket: TicketDocument, viewer: Viewer): ShareTicket {
   const ws = home?.id
   const served = !!ws && viewer.role === 'owner' && hubServed(ws)
   const status = useQuery({ ...hubQueries.status(ws ?? ''), enabled: served })
-  const selective = served && status.data?.mode === 'selective' && status.data.joined
-  const share = useQuery({ ...hubQueries.share(ws ?? ''), enabled: selective })
+  const hubbed = served && (status.data?.mode === 'selective' || status.data?.mode === 'full') && !!status.data.joined
+  const share = useQuery({ ...hubQueries.share(ws ?? ''), enabled: hubbed })
   const [open, setOpen] = useState<'share' | 'stop' | null>(null)
-  const shown = selective && !!share.data?.available && ticket.status !== 'closed'
+  const shown = hubbed && !!share.data?.available && ticket.status !== 'closed'
   const shared = !!share.data?.tickets.includes(ticket.key)
   const node = open && home ? (
     open === 'share'

@@ -347,7 +347,7 @@ export function hubSettingsView(data, actions = {}) {
     data.backup ? backupCard(data.backup, actions) : null,
     h("div", { class: "card", "data-card": "sign-in" }, h("h2", { text: "Sign-in" }),
       (data.sign_in ?? []).map((m) => row(m.label, m.on ? m.note : null, m.on))),
-    data.company ? companyCard(data.company, actions.company ?? {}) : null);
+    data.company_login ? companyCard(data.company_login, actions.company ?? {}) : null);
 }
 
 // Wait until the restarted hub answers again (it keeps its port), at most about 30 seconds.
@@ -372,7 +372,7 @@ export async function hubSettingsPage(d, detected = [], words = null) {
     if (r.status === 403 && r.body.error === "reauth_required") return d.reauthView();
     if (r.status !== 200) return d.shell("hub-settings", h("h1", { text: "Hub settings" }), h("p", { role: "alert", text: "Cannot read the settings. " + d.say(r.body.error) }));
     const co = await d.api("GET", "/admin/oidc");
-    if (co.status === 200 && typeof co.body?.has_secret === "boolean") r.body.company = co.body; // the company login card, when the hub has the routes
+    if (co.status === 200 && typeof co.body?.has_secret === "boolean") r.body.company_login = co.body; // the company login card (its own key: `company` is the company name), when the hub has the routes
     const bk = await d.api("GET", "/admin/backup");
     if (bk.status === 200) r.body.backup = bk.body;
     const say = (ok, x) => { d.state.notice = x.status < 300 ? d.banner("ok", ok, null) : d.banner("bad", "Not changed", WHY[x.body.error] ?? d.say(x.body.error ?? "unavailable")); };

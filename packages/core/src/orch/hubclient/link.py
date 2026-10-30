@@ -52,8 +52,8 @@ W2H_OPS: dict[str, str | None] = {
     "directory_get": None,
     "audience_get": None,
     "shared_get": None,
-    "share_put": "selective",
-    "share_revoke": "selective",
+    "share_put": None,
+    "share_revoke": None,
     "wk_seal": "full",
     "log_sync": "full",
 }

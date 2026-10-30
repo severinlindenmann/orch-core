@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, expect, test, vi } from 'vitest'
-import { groupProgress, plainReason, Setup, reviewFacts, summarize } from './Setup'
+import { answers, groupProgress, plainReason, Setup, reviewFacts, summarize } from './Setup'
 import { SetupAPI, SetupError, bootstrapSetup, isSetupPage, type SetupState, type Review } from '../api/setup'
 
 const state: SetupState = {
@@ -96,6 +96,7 @@ function fake(
     claudeAvailable?: boolean
     noGit?: boolean
     complete?: boolean
+    finishUrl?: string
     defaults?: boolean
     suggested?: Record<string, unknown>
     os?: string
@@ -162,7 +163,7 @@ function fake(
           : {}),
         ...(options.noTty ? { tty_confirm: false, fingerprint: null } : {}),
       }
-    if (path === 'finish') result = { url: '/', workspace_id: 'ws-new-2' }
+    if (path === 'finish') result = { url: options.finishUrl ?? '/', workspace_id: 'ws-new-2' }
     if (path === 'create') result = { run_id: 'demo-run' }
     if (path.startsWith('progress'))
       result = {
@@ -859,7 +860,7 @@ test('the summary comes from the review core returned, not from the choices on t
   expect(summary).toHaveTextContent('In a terminal, with your password')
 })
 
-test('the git flag is the Own copy per ticket row, no Also row; its signed text and the git words are in Everything you approve', async () => {
+test('P06: the git flag is no row on the short card (no Also row either); its signed text and the git words are in Details', async () => {
   const { api } = withReview({
     flags: [{ id: 'git', text: 'Keep a history of changes in this folder. Your files stay as they are.', detail: 'This runs git init, keeps .orch/ and .orch-work/ out of the repository, and makes one empty first commit.' }],
   })
@@ -870,8 +871,7 @@ test('the git flag is the Own copy per ticket row, no Also row; its signed text 
   await check()
   await screen.findByRole('heading', { name: 'Review your setup' })
   const summary = document.querySelector('.review-summary')!
-  expect(summary).toHaveTextContent('Own copy per ticketEach ticket gets its own copy of this folder. Your files are not changed.')
-  expect(summary).not.toHaveTextContent(/Also|git init|\.orch/)
+  expect(summary).not.toHaveTextContent(/Own copy per ticket|Also|git init|\.orch/)
   const fold = document.querySelector('.review-technical') as HTMLDetailsElement
   expect(fold.open).toBe(false)
   expect(fold).toHaveTextContent('Keep a history of changes in this folder. Your files stay as they are.')
@@ -1027,7 +1027,7 @@ test('N7: the review names the workspace from what core returned, not from the t
   const box = container.querySelector('.review-facts')!
   expect(box).toHaveTextContent('Marketing')
   expect(box).not.toHaveTextContent('RA-0001') // r11-P15: the ticket prefix is in Details, not on the card
-  expect(box).toHaveTextContent('orch-run2-a')
+  expect(box).not.toHaveTextContent('orch-run2-a') // P06: the folder name is in Details, not on the card
   expect(box).not.toHaveTextContent('/demo/')
   expect(box.textContent).not.toContain('Demo')
 })
@@ -1040,6 +1040,79 @@ test('N9: finish on a complete workspace says Setup is complete and opens the da
   expect(screen.queryByRole('button', { name: 'Finish setup later' })).toBeNull()
   expect(screen.queryByText(/paused/i)).toBeNull()
   expect(screen.getByRole('button', { name: 'Open dashboard →' })).toBeEnabled()
+})
+
+test('P06: a complete workspace shows one sentence and Open dashboard; the table sits behind What is set up', async () => {
+  const f = fake({ finish: true, complete: true })
+  const { container } = render(<Setup api={f.api} />)
+  await screen.findByRole('heading', { name: 'Setup is complete' })
+  expect(page(container)).toContain('is ready.')
+  // no welcome text, no repeats, no short code, no "Nothing is missing."
+  expect(page(container)).not.toMatch(/to-do list of tickets|We will set this up|Everything stays on this computer|Nothing is missing|Short name/)
+  const fold = screen.getByText('What is set up').closest('details')!
+  expect(fold).not.toHaveAttribute('open')
+  expect(fold).toHaveTextContent('Features')
+  expect(fold).toHaveTextContent('Agents can start here')
+  expect(fold).not.toHaveTextContent('Short name')
+  expect(fold).not.toHaveTextContent('Add-ons on')
+})
+
+test('P01: an unreachable dashboard address keeps the page, shows only the address and no navigation', async () => {
+  const assign = vi.fn()
+  vi.stubGlobal('location', { origin: 'http://127.0.0.1:47821', assign })
+  vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch') }))
+  const f = fake({ finish: true, done: true, finishUrl: 'http://127.0.0.1:8151/#launch=' + 'a'.repeat(30) + '&to=%2F' })
+  render(<Setup api={f.api} />)
+  await screen.findByRole('heading', { name: 'Finish setting up your workspace' })
+  fireEvent.click(screen.getByLabelText(/Own copy per ticket/))
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  await screen.findByRole('heading', { name: 'Review your setup' })
+  fireEvent.click(screen.getByRole('button', { name: 'Finish setup' }))
+  await screen.findByRole('heading', { name: 'Your workspace is ready' })
+  fireEvent.click(await screen.findByRole('button', { name: 'Open your workspace →' }))
+  const box = await screen.findByTestId('unreachable')
+  expect(box).toHaveTextContent('It runs on the computer where you ran setup.')
+  expect(box).toHaveTextContent('http://127.0.0.1:8151/')
+  expect(document.body.textContent).not.toContain('launch=') // the single-use login link is never shown
+  expect(box).toHaveTextContent('Copy address')
+  expect(assign).not.toHaveBeenCalled()
+  // Try again asks the same address once more; when it answers the page goes there
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(null)))
+  fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
+  await vi.waitFor(() => expect(assign).toHaveBeenCalledTimes(1))
+  expect(assign.mock.calls[0][0]).toMatch(/^http:\/\/127\.0\.0\.1:8151\/#launch=/)
+  vi.unstubAllGlobals()
+})
+
+test('P01 (Opus): answers() is true for an answering address, false when nothing listens, and true (fail open) when the page CSP blocked the probe', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(null)))
+  expect(await answers('http://127.0.0.1:8151')).toBe(true)
+  vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch') }))
+  expect(await answers('http://127.0.0.1:8151')).toBe(false)
+  // the browser rejects the fetch AND queues a securitypolicyviolation event: the answer is unknown, so it opens as before
+  vi.stubGlobal('fetch', vi.fn(async () => {
+    setTimeout(() => document.dispatchEvent(new Event('securitypolicyviolation')), 0)
+    throw new TypeError('Failed to fetch')
+  }))
+  expect(await answers('http://192.168.1.5:8151')).toBe(true)
+  vi.unstubAllGlobals()
+})
+
+test('P01: a reachable dashboard address is opened as before', async () => {
+  const assign = vi.fn()
+  vi.stubGlobal('location', { origin: 'http://127.0.0.1:47821', assign })
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(null)))
+  const f = fake({ finish: true, done: true, finishUrl: 'http://127.0.0.1:8151/#launch=' + 'a'.repeat(30) + '&to=%2F' })
+  render(<Setup api={f.api} />)
+  await screen.findByRole('heading', { name: 'Finish setting up your workspace' })
+  fireEvent.click(screen.getByLabelText(/Own copy per ticket/))
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  await screen.findByRole('heading', { name: 'Review your setup' })
+  fireEvent.click(screen.getByRole('button', { name: 'Finish setup' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'Open your workspace →' }))
+  await vi.waitFor(() => expect(assign).toHaveBeenCalledTimes(1))
+  expect(screen.queryByTestId('unreachable')).toBeNull()
+  vi.unstubAllGlobals()
 })
 
 test('N8: leaving the page after ready tells the setup it is finished', async () => {
@@ -1191,11 +1264,12 @@ test('reviewFacts builds the short card in plain words from the review', () => {
     ],
   } as unknown as Review
   const facts = reviewFacts(review)
-  expect(facts.map((f) => f.label)).toEqual(['Workspace', 'Owner', 'Your project', 'How you approve', 'Agents', 'History'])
+  expect(facts.map((f) => f.label)).toEqual(['Workspace', 'Agents', 'How you approve'])
   expect(facts.find((f) => f.label === 'Workspace')!.value).toBe('Marketing') // r11-P15: no ticket prefix on the card
   expect(facts.find((f) => f.label === 'Agents')!.value).toBe('may work for 3 days')
   expect(facts.find((f) => f.label === 'Features')).toBeUndefined()
-  expect(facts.find((f) => f.label === 'Your project')!.value).toBe('p')
+  // P06: owner, folder, own copy and history are Details, not decisions
+  for (const gone of ['Owner', 'Your project', 'Own copy per ticket', 'History']) expect(facts.find((f) => f.label === gone)).toBeUndefined()
 })
 
 

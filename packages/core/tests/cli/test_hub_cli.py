@@ -462,7 +462,9 @@ def test_one_name_shows_the_short_id_in_the_review_and_signs_only_the_id(share_h
         "review": {"readers": {"people": ["Cleo"], "teams": []}},
     }
     code, _ = run(["share", "rule", "add", "--ticket", "K-1", "--with", "Cleo"], {}, as_json=True)
-    assert code == 0 and "Readers (from the hub, not signed): Cleo" in share_host.asked[0]
+    prompt = share_host.asked[0]
+    assert code == 0 and "You chose: Cleo (..." + "c" * 8 + ")" in prompt
+    assert prompt.index("You chose") < prompt.index("Readers (from the hub, not signed): Cleo")
     rule = {"kind": "ticket", "ticket": "K-1", "audience": {"users": ["c" * 32], "groups": []}}
     assert ("share.rule_add", {"rule": rule, "expect": "p" * 43}) in share_host.called
 

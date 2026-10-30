@@ -457,6 +457,8 @@ def _with_audience(a: argparse.Namespace, rule: dict[str, Any], target: Any, env
         raise PubError("invalid.input", "--with, --team and --description go with --ticket, --tag or --type", 2)
     users: list[str] = []
     teams: list[str] = []
+    chose: list[str] = []
+    a.chose = chose
     if a.with_people or a.teams:
         people, team_rows = _audience(_call(target, "share.audience", {}, env))
         known = {t["group"] for t in team_rows}
@@ -469,10 +471,12 @@ def _with_audience(a: argparse.Namespace, rule: dict[str, Any], target: Any, env
                                   "nobody by that name: orch hub share people: ")
                                + names, 5)  # fmt: skip
             users.append(hit[0]["user_id"])
+            chose.append(f"{hit[0]['name']} (...{hit[0]['user_id'][-8:]})")
         for t in a.teams:
             if t not in known:
                 raise PubError("invalid.input", f"no team {clean_line(t[:60])!r} on the hub: orch hub share people", 5)
             teams.append(t)
+            chose.append(f"team {t}")
     out = dict(rule)
     if users or teams:
         out["audience"] = {"users": sorted(set(users)), "groups": sorted(set(teams))}
@@ -571,6 +575,8 @@ def _share(a: argparse.Namespace, env: Mapping[str, str], out: TextIO, as_json: 
     rv = (prev.get("review") or {}).get("readers") or {}
     names = [*rv.get("people", ()), *(f"team {t}" for t in rv.get("teams", ()))]
     readers = f"Readers (from the hub, not signed): {', '.join(clean_line(str(n)) for n in names)}\n" if names else ""
+    if getattr(a, "chose", None):
+        readers = f"You chose: {', '.join(a.chose)}\n" + readers
 
     if not review_prompt(
         f"The hub {verb}: {describe(rule)}.\n{readers}After this change the hub sees {prev['count']} item(s) "

@@ -46,6 +46,9 @@ class Registry:
             ("own_name", "TEXT"),
             ("last_seen_ms", "INTEGER"),
             ("peer_addr", "TEXT"),
+            ("update_target", "TEXT"),
+            ("update_asked_ms", "INTEGER"),
+            ("update_asked_by", "TEXT"),
         ):
             if name not in columns:
                 self._db.execute(f'ALTER TABLE workspace ADD COLUMN "{name}" {kind}')
@@ -235,6 +238,26 @@ class Registry:
                     ws,
                 ),
             )
+
+    def ask_update(self, ws: str, target: str, now_ms: int, by: str) -> bool:
+        """Remember that an admin asked this workspace's owner to update to ``target`` (the hub's own version).
+        A second ask for the same target keeps the first time. True when it was newly recorded."""
+        with self.lock, self._db:
+            row = self._db.execute("SELECT update_target FROM workspace WHERE workspace_id=?", (ws,)).fetchone()
+            if row is None or row[0] == target:
+                return False
+            self._db.execute(
+                "UPDATE workspace SET update_target=?, update_asked_ms=?, update_asked_by=? WHERE workspace_id=?",
+                (target, now_ms, by, ws),
+            )
+            return True
+
+    def update_ask(self, ws: str) -> dict[str, Any] | None:
+        with self.lock:
+            row = self._db.execute(
+                "SELECT update_target, update_asked_ms FROM workspace WHERE workspace_id=?", (ws,)
+            ).fetchone()
+        return {"target_version": row[0], "asked_ms": row[1]} if row and row[0] else None
 
     def _mode_locked(self, ws: str) -> bool:
         return self.last_mode(ws) == "selective"

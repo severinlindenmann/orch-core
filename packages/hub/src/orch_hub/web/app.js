@@ -97,9 +97,13 @@ const WORDS = {
   self_disable: "You cannot disable yourself.",
   conflict: "That is not possible in the person's current state.",
   bad_invite: "This link does not work. It may have been used already or it has expired.",
+  wrong_mode: "None of these workspaces can start the space yet. Pick one that is ready, or ask an owner to accept first.",
+  unknown_workspace: "One of these workspaces is no longer connected. Reload the page and pick again.",
+  exists: "That workspace is already in this space.",
+  not_accepted: "Its owner has to accept first. Nothing was changed.",
   proof_required: "Open this link in a browser where you already approve, or ask your admin for a recovery link.",
 };
-const say = (code) => WORDS[code] ?? "Refused (" + renderText(code) + ").";
+const say = (code) => WORDS[code] ?? "That did not work. Please try again.";
 
 // --- views -------------------------------------------------------------------------------------------------------------
 function loginView(err) {
@@ -458,6 +462,11 @@ async function workspaces(joined = [], known = null) {
           if (ownerUser) rememberName(ownerUser, peopleNames.get(ownerUser)); // the /c page says whose workspace (display only)
           return r.body;
         },
+        askUpdate: async () => { // HUB-WS-04: the owners of older workspaces are asked (the request carries only the version)
+          const r = await api("POST", "/admin/workspaces/update-request", {});
+          if (r.status < 200 || r.status >= 300) throw new Error("ask failed");
+          return r.body;
+        },
         remove: async (w) => {
           const r = await api("DELETE", "/admin/workspaces/" + encodeURIComponent(w.workspace_id));
           if (r.status < 200 || r.status >= 300) throw new Error("remove failed");
@@ -598,7 +607,18 @@ async function approvals(filter = {}) {
   const [ws, needs, chg] = await Promise.all([api("GET", "/me/workspaces"), api("GET", "/me/needs-you"), api("GET", "/me/changes")]);
   if (ws.status !== 200 || needs.status !== 200) return shell("approvals", banner("bad", "Cannot read approvals", "Please try again."));
   const changes = chg.status === 200 ? changesView(chg.body, { approve: approveChange, reject: rejectChange, canSign: !!state.me }, Date.now()) : [];
-  shell("approvals", changes, inboxView({ ...needs.body, workspaces: ws.body.workspaces, channels: state.channels, filter }, { review: reviewItem, open: openWorkspace, filter: approvals }));
+  shell("approvals", changes, inboxView({ ...needs.body, workspaces: ws.body.workspaces, channels: state.channels, filter }, { review: reviewItem, open: openWorkspace, filter: approvals, askPhone }));
+}
+
+// The phone does the review and the signing; this only sends a hint (no action, no text). The list refreshes on its own
+// when the item is gone.
+async function askPhone(it) {
+  const r = await api("POST", "/workspaces/" + encodeURIComponent(it.workspace_id) + "/items/" + encodeURIComponent(it.item_id) + "/ask-phone", {});
+  state.notice = r.status === 200 && r.body.asked > 0 ? banner("ok", "Sent to your phone", "Open it on your phone, check what you are signing and confirm with Face ID.")
+    : r.status === 200 ? banner("warn", "No phone to ask", "Pair a phone first: Phones & browsers.")
+    : r.status === 429 ? banner("warn", "Already sent", "Give it a few seconds.")
+    : banner("bad", "Could not ask your phone", "Reload the list and try again.");
+  return approvals();
 }
 
 // An access change that waits for me as the workspace owner: prepare, check the digest here, sign with this browser's key.

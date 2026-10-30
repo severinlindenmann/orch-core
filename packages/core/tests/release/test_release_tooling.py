@@ -496,3 +496,24 @@ def test_constraints_merge_unions_hashes_and_dedupes():
 def test_constraints_merge_refuses_conflicts_unhashed_and_unpinned(texts):
     with pytest.raises(ValueError):
         constraints.merge(texts)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "malformed_duplicate_role",
+        "malformed_unknown_role",
+        "malformed_missing_core",
+        "malformed_missing_constraints",
+        "malformed_case_colliding_names",
+        "malformed_more_than_six_files",
+        "malformed_role_not_a_string",
+    ],
+)
+def test_signing_side_refuses_the_file_list_vectors(name):
+    """sign.py runs the verifier's manifest rules before signing: it must refuse each malformed file-list vector."""
+    from orch.update.envelope import Malformed, check_manifest
+
+    payload = json.loads(base64.b64decode(json.loads(CORE[name]["envelope"])["payload"]))
+    with pytest.raises(Malformed):
+        check_manifest(payload)

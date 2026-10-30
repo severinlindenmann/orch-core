@@ -444,7 +444,19 @@ def core_cases() -> list[dict[str, Any]]:
     def no_constraints(fs):
         del fs[-1]
 
+    def case_names(fs):
+        fs[1]["name"] = fs[0]["name"].upper()  # collides on a case-insensitive file system (APFS, NTFS)
+
+    def seven_files(fs):
+        fs.append({**fs[0], "name": "extra-" + fs[0]["name"]})  # more than the 6 roles
+
+    def role_not_string(fs):
+        fs[3]["role"] = 5
+
     for name, pins, mutate in (
+        ("malformed_case_colliding_names", "two file names that differ only in case", case_names),
+        ("malformed_more_than_six_files", "seven file entries (one role twice)", seven_files),
+        ("malformed_role_not_a_string", "a file entry whose role is an integer", role_not_string),
         ("malformed_duplicate_role", "two file entries with the role hub", dup_role),
         ("malformed_unknown_role", "a file entry with a role that is not in the role set", unknown_role),
         ("malformed_missing_core", "the file list has no core wheel", no_core),

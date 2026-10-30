@@ -39,7 +39,7 @@ file       {"role":"core"|"dashboard"|"hub"|"relay"|"publish"|"constraints","nam
             "sha256":"<64 lowercase hex>","size":int>=1,"url":"https://… (<= 512 chars, printable, no spaces)"}
            The file list: every role at most once (duplicate role is `malformed`), no other role (unknown role is
            `malformed`), and `core` and `constraints` are mandatory (missing is `malformed`). `constraints` is the
-           hash-locked pin file the installer uses with `--require-hashes`. File names are unique, also ignoring case.
+           hash-locked pin file the installer uses with `--require-hashes`. File names are unique, also ignoring case (`malformed`). More than 6 entries, or a role that is not a string, is `malformed`.
 catalog    {"format":"orch.addon-catalog/1","channel","seq":int>=1,"issued_at","expires_at","addons":{…}}
 ```
 

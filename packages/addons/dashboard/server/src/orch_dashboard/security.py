@@ -62,6 +62,7 @@ READONLY_REFUSED = (
     "/hub/approve/prepare",
     "/market/add",
     "/hub/share/revoke",
+    "/hub/profile",
     "/hub/share/rule-remove",
     "/shares/register",
     "/hub/share/rule-add",

@@ -71,8 +71,9 @@ def test_uv_install_runs_a_stub_uv_with_the_pinned_argv_and_env(tmp_path, monkey
         f'echo "$@" >> {log}\n'
         f"env | sort >> {log}\n"
         'if [ "$1" = python ]; then echo /usr/bin/python3; exit 0; fi\n'
-        'if [ "$1" = venv ]; then mkdir -p "${@: -1}/bin"; printf "#!/bin/sh\\nexit 0\\n" > "${@: -1}/bin/orch";'
-        ' chmod +x "${@: -1}/bin/orch"; fi\n'
+        "for last; do :; done\n"
+        'if [ "$1" = venv ]; then mkdir -p "$last/bin"; printf "#!/bin/sh\\nexit 0\\n" > "$last/bin/orch";'
+        ' chmod +x "$last/bin/orch"; fi\n'
     )
     uv.chmod(uv.stat().st_mode | stat.S_IXUSR)
     monkeypatch.setenv("UV_PYTHON_DOWNLOADS_JSON_URL", "http://evil")

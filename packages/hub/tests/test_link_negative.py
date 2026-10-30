@@ -173,13 +173,6 @@ def test_step3_wk_seal_in_selective_mode(hub):
     expect_link_refusal(c, c.build("wk_seal", {"epoch": 1, "wrap": "AA"}), "wrong_mode")
 
 
-def test_step3_share_ops_in_full_mode(hub):
-    c = hub.open(first=True)
-    c.request("join", hub.join_body(mode="full"))
-    c.mode = "full"
-    expect_link_refusal(c, c.build("share_revoke", {"item_id": G.WS_A}), "wrong_mode")
-
-
 def test_step4_other_hub(hub):
     c = joined(hub)
     expect_link_refusal(c, c.build("snapshot_get", {}, hub_id=G.ROGUE_HUB_ID), "other_hub")

@@ -132,14 +132,13 @@ A Mac that is newer than the server may be refused; the other way round works.
 
   This needs your Mac's public SSH key in `orch-hub`'s `authorized_keys` and a login shell for `orch-hub` (an administrator
   adds both, once).
-- Restore on a fresh server: `orch-hub restore <file.orchbak>` and type the 24 words (see `orch-hub restore --help`).
+- Restore on a fresh server: stop the hub, then `orch-hub restore --state <hub data folder> <file.orchbak>` and type the 24 words (`orch-hub restore --help`).
 
 ## 9. When something fails
 
 - `systemctl --user status orch-health.timer` and `journalctl --user -u orch-health.service -n 50` as the same user show the
   health warnings: a part not answering, less than 2 GB disk, the clock not synchronised, a certificate expiring within 14
-  days, less than 200 MB of free memory. The latest result is also in `~/.local/state/orch/install/ops/health-status.json`
-  (or under your orch state folder).
+  days, less than 200 MB of free memory. The latest result is also in `install/ops/health-status.json` inside your orch state folder.
 - `orch install status` shows each part. `journalctl --user -n 100` shows the services.
 - "No DNS record" or "points at ...": fix the record, wait, run the setup command again.
 - Browser says 403 on the hub: you are not on the private network, or the Mac resolves the name to the public address

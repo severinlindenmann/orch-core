@@ -142,7 +142,11 @@ class LinkServer:
         max_remote_unauthenticated: int = 16,
         remote_signin_timeout: float = 30.0,
     ) -> None:
-        self._ctx = tls.server_context(identity, alpn=(tls.REMOTE_ALPN,) if remote is not None else ())
+        offered = (
+            *((tls.REMOTE_ALPN,) if remote is not None else ()),
+            *((tls.STREAM_LINK_ALPN,) if streams is not None else ()),
+        )
+        self._ctx = tls.server_context(identity, alpn=offered)
         self._streams, self._remote = streams, remote
         self._signer, self.hub_id, self._reg = op_signer, hub_id, registry
         self._invites, self._snaps = invites, snapshots
@@ -383,6 +387,7 @@ class LinkServer:
         ws, wsk = who
         port = _Port(conn, self._signer, self.hub_id, ws, self._now, self._t_rd, self._max, conn.exporter())
         port.wsk = wsk
+        port.stream_link = self._streams is not None and conn.alpn() == tls.STREAM_LINK_ALPN
         port.is_current = lambda: (
             self._bound_seq(ws, wsk) is not None
             and (port.attached_seq is None or self._bound_seq(ws, wsk) == port.attached_seq)
@@ -441,11 +446,12 @@ class LinkServer:
             self._detach(ws, port)
         if seq is None:
             return
-        if self._router is not None and port.live is None:
-            port.live = self._router.attach(ws, port)
-        if self._deliveries is not None and port.delivery is None:
-            port.delivery = self._deliveries.attach(ws, port)
-        if self._streams is not None and not port.streams_attached:
+        if not port.stream_link:  # a plain link never carries streams, a stream link never carries anything else
+            if self._router is not None and port.live is None:
+                port.live = self._router.attach(ws, port)
+            if self._deliveries is not None and port.delivery is None:
+                port.delivery = self._deliveries.attach(ws, port)
+        if port.stream_link and not port.streams_attached:
             port.streams_attached = True
             try:
                 self._streams.attach(ws, port)
@@ -467,6 +473,9 @@ class LinkServer:
         if self._pinned_to(ws, wsk):
             pre.release()
         started = time.monotonic()
+        if port.stream_link and self._bound_seq(ws, wsk) is None:
+            self._refuse(conn, "not_bound")  # a stream link exists only for a pinned, bound workspace (no join on it)
+            return
         self._attach(ws, port)
         last_seq = 0  # R1: the w2h seq of the previous frame on THIS link (the first frame must be 1)
         exporter = port._exporter  # the port's single copy: auth, h2w signing and w2h verification share it
@@ -526,6 +535,12 @@ class LinkServer:
                 self._refuse(conn, "malformed")
                 return
             last_seq = o["seq"]
+            if port.stream_link and not (
+                o["op"] in R.STREAM_OPS or (o["op"] == "hub_where" and o["re"] is None)
+            ):  # a stream link carries stream frames, stream_open replies and the hub_where keepalive, nothing else
+                self._log_refused(ws, signed, "unknown_op", now)
+                self._refuse(conn, "unknown_op")
+                return
             self._reg.seen(ws, now, peer_addr)
             if o["re"] is None and o["op"] in R.STREAM_OPS:
                 # R4: a verified one-way stream frame. It gets NO reply, ever (the host would count it as a reply to a
@@ -656,6 +671,7 @@ class _Port:
         self.live = None
         self.delivery = None
         self.streams_attached = False
+        self.stream_link = False  # ALPN orch-link-streams/1: attached to the stream sink ONLY, few ops (R4)
         self.wsk = b""
         self.attached_seq: int | None = None
         self.is_current: Callable[[], bool] = lambda: True

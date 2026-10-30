@@ -27,6 +27,10 @@ EXPORTER_LEN = 32
 #: R4 (#1592, protocol 10.2c): the ALPN protocol of a remote-access client connection. The link server offers it only
 #: when a remote endpoint is configured; a connection that negotiated nothing is a host link, as before.
 REMOTE_ALPN = b"orch-remote/1"
+#: R4 (#1592, protocol 10.2c): the ALPN protocol of a host's dedicated stream link. Offered when a stream sink is
+#: configured. A link that negotiated it is attached ONLY to the stream router and accepts only stream frames,
+#: ``stream_open`` replies and ``hub_where``; every other (plain) link is never attached to the stream router.
+STREAM_LINK_ALPN = b"orch-link-streams/1"
 
 
 __all__ = ["TlsIdentity", "spki_sha256"]

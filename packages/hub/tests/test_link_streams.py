@@ -120,16 +120,24 @@ def refused(c, code):
         framing.read_frame(c._c, first_timeout=2, rest_timeout=2)
 
 
+def ping(c) -> None:
+    """A ``hub_where`` round trip (the one request a stream link answers): every frame sent before it was processed."""
+    try:
+        c.request("hub_where", {})
+    except LinkError as e:  # the test hub has no addresses to advertise: the signed refusal is still the reply
+        assert e.code == "unavailable"
+
+
 def data_body(seq: int = 1, payload: bytes = b"\x01" * 40) -> dict:
     return {"stream_id": STREAM, "seq": seq, "bytes": b64u(payload)}
 
 
 def live(hub: Hub, sink: Sink):
-    """A bound workspace with a second link that is attached to the sink (join, drop, reconnect)."""
+    """A bound workspace with a stream link (ALPN ``orch-link-streams/1``) attached to the sink. The plain join link
+    before it never attaches to the sink."""
     joined(hub).close()
+    c = hub.open(alpn=(tls.STREAM_LINK_ALPN,))
     sink.wait("attach")
-    c = hub.open()
-    sink.wait("attach", 2)
     return c, sink.ports[-1]
 
 
@@ -144,10 +152,10 @@ def test_stream_one_way_frames_get_no_reply(mk):
     c.send_raw(f1)
     c.send_raw(c.build("stream_close", {"stream_id": STREAM, "reason": "closed"}))
     # the very next frame the hub writes is the reply to the request below: nothing was answered before it
-    req = c.build("snapshot_get", {})
+    req = c.build("hub_where", {})
     c.send_raw(req)
     r = c.recv_reply()
-    assert r["op"] == "snapshot_get" and r["re"] == req["o"]["seq"] and r["seq"] == 1
+    assert r["op"] == "hub_where" and r["re"] == req["o"]["seq"] and r["seq"] == 1
     frames = [e for e in sink.events if e[0] == "frame"]
     assert [e[3]["op"] for e in frames] == ["stream_data", "stream_close"]
     assert frames[0][4] == R.frame_cost(f1)  # the exact cost of the signed frame
@@ -180,7 +188,7 @@ def test_stream_open_reply_reaches_sink_by_re_and_port(mk):
     ev = sink.wait("reply")[0]
     assert ev[1] == G.WS_A and ev[2] is port and ev[3]["re"] == seq and ev[3]["body"] == {"error": "remote.off"}
     # the link stays up and a reply is not answered
-    assert "snapshot" in c.request("snapshot_get", {})
+    ping(c)
 
 
 def test_stream_frame_and_reply_dropped_after_binding_changed(mk):
@@ -200,7 +208,7 @@ def test_stream_frame_and_reply_dropped_after_binding_changed(mk):
     }  # fmt: skip
     c.send_raw(c._wsk.sign_link(reply, c._c.exporter()))
     c.send_raw(c.build("stream_data", data_body()))
-    assert "snapshot" in c.request("snapshot_get", {})  # processed in order: both are behind us
+    ping(c)  # processed in order: both are behind us
     assert "reply" not in sink.kinds() and "frame" not in sink.kinds()
     assert port in [e[2] for e in sink.wait("detach")]
 
@@ -234,7 +242,7 @@ def test_stream_frames_without_a_sink_are_dropped_silently(mk):
     joined(hub).close()
     c = hub.open()
     c.send_raw(c.build("stream_data", data_body()))
-    assert "snapshot" in c.request("snapshot_get", {})
+    ping(c)
 
 
 # --- the signature form (F1) and replay (R1) --------------------------------------------------------------------------
@@ -300,10 +308,12 @@ def test_stream_attach_once_per_link_and_detach_at_end(mk):
     sink = Sink()
     hub = mk(sink)
     c, port = live(hub, sink)
-    c.request("snapshot_get", {})
-    assert sink.kinds().count("attach") == 2  # the join link and this one, once each
+    c.send_raw(c.build("stream_close", {"stream_id": STREAM, "reason": "closed"}))
+    c.send_raw(c.build("stream_close", {"stream_id": STREAM, "reason": "closed"}))
+    sink.wait("frame", 2)
+    assert sink.kinds().count("attach") == 1  # the stream link attached once; the plain join link never did
     c.close()
-    ev = sink.wait("detach", 2)
+    ev = sink.wait("detach")
     assert port in [e[2] for e in ev]
 
 
@@ -312,7 +322,7 @@ def test_stream_sink_fault_does_not_kill_the_link(mk):
     sink.raise_on_frame = True
     c, _ = live(mk(sink), sink)
     c.send_raw(c.build("stream_data", data_body()))
-    assert "snapshot" in c.request("snapshot_get", {})
+    ping(c)
     assert sink.kinds().count("frame") == 1
 
 
@@ -450,3 +460,120 @@ def test_stream_remote_unsigned_closed_at_deadline_and_slot_freed(mk):
     finally:
         ep.release.set()
         r1.close()
+
+
+# --- the dedicated stream link (ALPN orch-link-streams/1; protocol 10.2c) ----------------------------------------------
+
+
+def stream_link(hub: Hub):
+    return hub.open(alpn=(tls.STREAM_LINK_ALPN,))
+
+
+def test_stream_alpn_port_attaches_only_to_streams(mk):
+    sink = Sink()
+    hub = mk(sink)
+    joined(hub).close()
+    c = stream_link(hub)
+    (ev,) = sink.wait("attach")
+    port = ev[2]
+    assert port.stream_link and port.streams_attached and port.live is None and port.delivery is None
+    ping(c)
+    assert sink.kinds() == ["attach"]
+
+
+def test_plain_port_never_gets_stream_open(mk):
+    sink = Sink()
+    hub = mk(sink)
+    joined(hub).close()
+    c = hub.open()
+    for _ in range(3):
+        ping(c)
+    c.send_raw(c.build("stream_data", data_body()))  # a stream frame on a plain link is dropped, not forwarded
+    ping(c)
+    assert sink.kinds() == []  # never attached: the router cannot route a stream_open to it
+
+
+def test_short_plain_link_does_not_detach_stream_port(mk):
+    """G1b: any host link used to steal the stream route (newest attach replaces) and its end detached the pump's."""
+    sink = Sink()
+    hub = mk(sink)
+    joined(hub).close()
+    c = stream_link(hub)
+    (ev,) = sink.wait("attach")
+    for _ in range(3):
+        short = hub.open()
+        assert "snapshot" in short.request("snapshot_get", {})
+        short.close()
+    ping(c)
+    time.sleep(0.2)
+    assert sink.kinds() == ["attach"]  # no detach, no second attach
+    c.send_raw(c.build("stream_data", data_body()))
+    assert len(sink.wait("frame")) == 1 and sink.wait("frame")[0][2] is ev[2]
+
+
+@pytest.mark.parametrize("op", ["snapshot_get"])
+def test_stream_port_refuses_other_ops(mk, op):
+    sink = Sink()
+    hub = mk(sink)
+    joined(hub).close()
+    c = stream_link(hub)
+    body = {
+        "snapshot_get": {},
+    }[op]
+    c.send_raw(c.build(op, body))
+    refused(c, "unknown_op")
+    sink.wait("detach")  # the link is over, its streams with it
+
+
+def test_stream_port_allows_hub_where(mk):
+    sink = Sink()
+    hub = mk(sink, where=lambda: {"addresses": [], "name": "hub"})
+    joined(hub).close()
+    c = stream_link(hub)
+    sink.wait("attach")
+    for _ in range(2):  # the keepalive repeats on the same link
+        c.send_raw(c.build("hub_where", {}))
+        assert c.recv_reply()["op"] == "hub_where"
+    assert "detach" not in sink.kinds()
+
+
+def test_stream_port_unpinned_refused(mk):
+    sink = Sink()
+    hub = mk(sink)
+    c = hub.open(first=True, alpn=(tls.STREAM_LINK_ALPN,))  # nothing joined: no join on a stream link
+    refused(c, "not_bound")
+    assert sink.kinds() == [] and hub.registry.pin(G.WS_A) is None
+
+
+def test_stream_alpn_without_sink_is_not_offered(mk):
+    hub = mk(None)
+    conn = _dial(hub, alpn=(tls.STREAM_LINK_ALPN,))
+    try:
+        assert conn.alpn() == b""  # the host sees no negotiated protocol and must not use the link as a stream link
+    finally:
+        conn.close()
+
+
+def test_new_stream_port_replaces_old_closes_streams(mk):
+    from orch_hub.remote import StreamRouter
+
+    router = StreamRouter(hub_id=G.HUB_ID, allowed=lambda *a: True, count_op=lambda *a: None).start()
+    try:
+        hub = mk(router)
+        joined(hub).close()
+        c1 = stream_link(hub)
+        deadline = time.monotonic() + 5
+        while G.WS_A not in router._ports and time.monotonic() < deadline:
+            time.sleep(0.02)
+        first = router._ports[G.WS_A].port
+        c2 = stream_link(hub)
+        while router._ports.get(G.WS_A) is None or router._ports[G.WS_A].port is first:
+            assert time.monotonic() < deadline
+            time.sleep(0.02)
+        second = router._ports[G.WS_A].port
+        c1.close()  # the replaced link ends: it must not detach its successor
+        time.sleep(0.3)
+        assert router._ports[G.WS_A].port is second
+        ping(c2)
+    finally:
+        router.close_all()

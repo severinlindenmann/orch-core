@@ -419,7 +419,7 @@ def test_print_url_tunnel_line_falls_back_to_the_host_name(monkeypatch):
 
 def test_print_url_tunnel_line_shows_a_placeholder_for_odd_names():
     line = launcher.tunnel_line(1234, {}, user="bob", host="x; rm -rf ~")
-    assert line.endswith(" bob@<server>") and "rm" not in line
+    assert line.endswith(" bob@SERVER") and "rm" not in line
 
 
 def test_print_url_tunnel_code_lives_5_minutes_and_stays_single_use():
@@ -485,7 +485,7 @@ def test_print_url_text_follows_the_servers_expiry_not_the_kind(tmp_path, monkey
 @pytest.mark.parametrize("user,host", [("-oProxyCommand=x", "box"), ("bob", "-oFoo"), ("bob", "-x.example")])
 def test_print_url_tunnel_line_never_passes_a_leading_dash(user, host):
     line = launcher.tunnel_line(1234, {}, user=user, host=host)
-    assert "<user>" in line or "<server>" in line
+    assert "USER@" in line or "@SERVER" in line
     assert not any(part.startswith("-o") and "Proxy" in part for part in line.split())
 
 

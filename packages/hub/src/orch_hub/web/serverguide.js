@@ -16,6 +16,7 @@ export function tunnelCommand(user, server, port = SETUP_PORT) {
   return "ssh -o ExitOnForwardFailure=yes -L 127.0.0.1:" + port + ":127.0.0.1:" + port + " " + user + "@" + server;
 }
 /** The installer command, only for an https URL on the official release origin that the caller says verifies signed releases. */
+// TODO(install.sh): pin the official repo path (owner/repo/branch) too, once install.sh ships; today only the host is checked.
 export const OFFICIAL_INSTALLER_HOST = "raw.githubusercontent.com";
 export function installerCommand(installerUrl, verified) {
   if (verified !== true || typeof installerUrl !== "string" || !/^[A-Za-z0-9:/._-]+$/.test(installerUrl)) return null;

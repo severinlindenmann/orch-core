@@ -1,9 +1,9 @@
 """The ssh tunnel line for a headless machine (HUB-WS-07). One place in core builds it; the hub guide shows the same.
 
-``ssh -o ExitOnForwardFailure=yes -L 127.0.0.1:<port>:127.0.0.1:<port> <user>@<server>``
+``ssh -o ExitOnForwardFailure=yes -L 127.0.0.1:<port>:127.0.0.1:<port> USER@SERVER``
 
 User and server are checked against closed patterns (ASCII, never a leading ``-``) so a name can never become an ssh
-option or shell syntax; a name that fails (or is unknown) is replaced by the ``<user>`` / ``<server>`` placeholders
+option or shell syntax; a name that fails (or is unknown) is replaced by the ``USER`` / ``SERVER`` placeholders (no angle brackets: a shell reads them as redirection)
 instead of failing. The line carries no secret: the single-use launch link is shown on /dev/tty only.
 """
 
@@ -40,7 +40,7 @@ def is_headless(environ: Mapping[str, str], platform: str | None = None) -> bool
 
 def tunnel_line(port: int, environ: Mapping[str, str], *, user: str | None = None, server: str | None = None) -> str:
     """The command for the person's own computer. The server is the address this SSH session reached us on when there
-    is one, else this machine's name; either that fails the patterns becomes ``<server>``."""
+    is one, else this machine's name; either that fails the patterns becomes ``SERVER``."""
     if server is None:
         parts = (environ.get("SSH_CONNECTION") or "").split()
         server = parts[2] if len(parts) == 4 else ""
@@ -54,8 +54,8 @@ def tunnel_line(port: int, environ: Mapping[str, str], *, user: str | None = Non
             user = getpass.getuser()
         except (OSError, KeyError, ImportError):
             user = ""
-    user = user if valid_user(user) else "<user>"
-    server = server if valid_server(server) else "<server>"
+    user = user if valid_user(user) else "USER"
+    server = server if valid_server(server) else "SERVER"
     if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
         raise ValueError("port")
     return f"ssh -o ExitOnForwardFailure=yes -L 127.0.0.1:{port}:127.0.0.1:{port} {user}@{server}"

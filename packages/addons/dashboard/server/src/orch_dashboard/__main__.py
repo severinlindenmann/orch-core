@@ -381,8 +381,8 @@ class FrontServer(uvicorn.Server):
 
 def tunnel_line(port, environ=None, user=None, host=None):
     """The command to run on the person's own computer, the same one core prints (orch.setup.tunnel):
-    ``ssh -o ExitOnForwardFailure=yes -L 127.0.0.1:<port>:127.0.0.1:<port> <user>@<server>``. A name that fails the
-    closed patterns (or is unknown) shows as the ``<user>`` / ``<server>`` placeholder, never as part of the command."""
+    ``ssh -o ExitOnForwardFailure=yes -L 127.0.0.1:<port>:127.0.0.1:<port> USER@SERVER``. A name that fails the
+    closed patterns (or is unknown) shows as the ``USER`` / ``SERVER`` placeholder, never as part of the command."""
     from orch.setup.tunnel import tunnel_line as core_tunnel_line
 
     return core_tunnel_line(port, os.environ if environ is None else environ, user=user, server=host)

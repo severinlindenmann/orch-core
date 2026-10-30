@@ -537,7 +537,7 @@ def test_tunnel_line_placeholders_and_closed_patterns():
 
     ok = tunnel_line(47821, {"SSH_CONNECTION": "a 1 srv.example.com 22"}, user="alice")
     assert ok == "ssh -o ExitOnForwardFailure=yes -L 127.0.0.1:47821:127.0.0.1:47821 alice@srv.example.com"
-    assert tunnel_line(1234, {}, user="-oProxyCommand=x", server="a b").endswith(" <user>@<server>")
+    assert tunnel_line(1234, {}, user="-oProxyCommand=x", server="a b").endswith(" USER@SERVER")
     assert tunnel_line(1234, {}, user="bob", server="::1").endswith(" bob@::1")
     for bad in ("a;b", "a$(x)", "a`x`", "a b", "a\nb", "-oProxyCommand=x", "", "é"):
         assert not valid_user(bad) and not valid_server(bad)

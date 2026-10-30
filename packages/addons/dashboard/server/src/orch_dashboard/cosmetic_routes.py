@@ -60,6 +60,8 @@ def full_session(auth, token) -> bool:
     kind = auth.login_kind(token)
     if kind == "local":
         return auth.listener_of(token) == LOOPBACK
+    if kind == "remote-device":  # R3: a stream's own credential; the route column and the host decide the rest
+        return auth.listener_of(token) == "remote-device"
     return kind == "remote" and auth.passkey_session(token)
 
 

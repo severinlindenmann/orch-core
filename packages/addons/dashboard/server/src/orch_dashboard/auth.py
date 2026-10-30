@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from . import trusted as trust
-from .policy import LOOPBACK, REMOTE
+from .policy import LOOPBACK, REMOTE, REMOTE_DEVICE
 
 # A launch code lives 30 s; its redirect file lives exactly as long (#542 item 3). Redemption and the expiry timer
 # both go through `_forget` under the lock: the code is invalidated and the file unlinked exactly once, by whichever
@@ -27,10 +27,16 @@ TUNNEL_CODE_TTL = 300
 #: Session lifetimes in seconds, (absolute, idle), by how the session was opened. A kind this table does not know gets
 #: the local numbers (fail closed on the route gates, not here: an unknown kind is never "local" anywhere else).
 # remote: 12 h absolute, 2 h idle (host spec 0.8.6 10.3); switch (H1): the same
-LIFETIMES = {"local": (86400, 43200), "remote": (43200, 7200), "switch": (43200, 7200)}
+# remote-device (R3): a credential minted INSIDE a stream, for that stream only; the stream's own life is 12 h / 2 h
+LIFETIMES = {
+    "local": (86400, 43200),
+    "remote": (43200, 7200),
+    "switch": (43200, 7200),
+    "remote-device": (43200, 7200),
+}
 #: The listener a kind of session belongs to. A session works only on the listener that opened it (#1198 R1-4): a
 #: remote bearer presented on loopback (or a local one on the front) is as unknown as a made-up token.
-KIND_LISTENER = {"local": LOOPBACK, "remote": REMOTE}
+KIND_LISTENER = {"local": LOOPBACK, "remote": REMOTE, "remote-device": REMOTE_DEVICE}
 #: Kinds a launch code can open: a launch code is made on this computer and is a loopback credential.
 LAUNCH_KINDS = frozenset({"local"})
 #: A passkey step-up (verified by `/api/stepup/verify`) stays usable this long, once, for the op it was made for (owner
@@ -115,6 +121,9 @@ class Auth:
         # The listener each session was opened on; Security refuses the token on any other (see KIND_LISTENER).
         self.listeners: dict[str, str] = {}
         self.switch_ws: dict[str, str] = {}  # switch session -> the one workspace its ticket was for (H1)
+        #: remote-device session (R3) -> (stream id, workspace id, person): the credential works on that stream only
+        self.streams: dict[str, tuple[str, str, str]] = {}
+        self.stream_tokens: dict[str, str] = {}  # stream id -> its one credential
         self.session_sources: dict[str, str] = {}  # remote session -> the source bucket that opened it
         #: remote session -> {(action, digest of the op) -> (verified at, the proof the signer checks again, the
         #: credential that made it)}; single use
@@ -281,6 +290,46 @@ class Auth:
         with self._locked():
             return self.switch_ws.get(token) if token in self.sessions else None
 
+    # --- credentials inside a stream of a remote device (R3, D89) ---
+
+    def open_stream(self, stream_id, workspace_id, person):
+        """The credential of one stream: kind ``remote-device``, listener ``remote-device``, bound to ``stream_id``. It
+        goes into the scope the stream adapter builds and NEVER into an answer, a header or a log. One per stream: a
+        second call for a live stream is a bug in the adapter and raises."""
+        if not all(isinstance(v, str) and v for v in (stream_id, workspace_id, person)):
+            raise ValueError("a stream credential is made of ids")
+        with self._locked():
+            self._drop_dead(self.clock())
+            if stream_id in self.stream_tokens:
+                raise ValueError("this stream already has its credential")
+            minted = self._mint(self.clock(), "remote-device")
+            token = minted["token"]
+            self.streams[token] = (stream_id, workspace_id, person)
+            self.stream_tokens[stream_id] = token
+            return token
+
+    def stream_of(self, token):
+        """The stream a credential was minted for, or None (unknown, ended, or not a stream credential)."""
+        with self._locked():
+            return self.streams[token][0] if token in self.sessions and token in self.streams else None
+
+    def drop_stream(self, stream_id):
+        """The stream is over (the host said so): its credential, and with it the tickets, step-up holds and
+        hand-off reservations of that session (`on_session_end`), end now."""
+        with self._locked():
+            token = self.stream_tokens.get(stream_id)
+            if token is not None:
+                self._drop(token)
+
+    def bound_workspace(self, token):
+        """The one workspace a session may see: a switch session's ticket workspace, or a stream's workspace."""
+        with self._locked():
+            if token not in self.sessions:
+                return None
+            if token in self.streams:
+                return self.streams[token][1]
+            return self.switch_ws.get(token)
+
     # --- trusted browsers (run 12) ---
 
     def enrol_key(self, token, jwk, origin, people=None):
@@ -433,6 +482,9 @@ class Auth:
             self.keyed,
         ):
             table.pop(token, None)
+        info = self.streams.pop(token, None)
+        if info is not None and self.stream_tokens.get(info[0]) == token:
+            del self.stream_tokens[info[0]]
 
     def _drop_dead(self, now):
         """Hold ``self.lock``. Forget sessions past their lifetime (bounded state even if tabs never return)."""
@@ -447,9 +499,12 @@ class Auth:
             self.credentials,
             self.switch_ws,
             self.keyed,
+            self.streams,
         ):
             for token in [t for t in table if t not in self.sessions]:
                 del table[token]
+        for stream_id in [i for i, t in self.stream_tokens.items() if t not in self.streams]:
+            del self.stream_tokens[stream_id]
 
     def _mint(self, now, kind, listener=None):
         """Hold ``self.lock``."""

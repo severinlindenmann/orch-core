@@ -23,6 +23,18 @@ const p = (text) => h("p", { class: "small muted", text });
 const chip = (text, kind = "") => h("span", { class: "chip " + kind, text });
 const field = (name, input) => h("label", {}, name, input);
 const roleName = (role) => ({ read: "Read", edit: "Edit", admin: "Admin" }[role] ?? txt(role));
+/** An end date picked as a day: access lasts through that whole day (the admin's own time) and ends at the start of the next. */
+export const endOfDayMs = (value) => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value ?? "");
+  return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]) + 1).getTime() : null;
+};
+const lastDay = (ends) => new Date(ends - 1).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+/** "ends in 3 days", "ends today", "ended 2 days ago": plain words for the review list. */
+export function endsWords(ends, now = Date.now()) {
+  const days = Math.ceil((ends - now) / 86_400_000);
+  if (ends <= now) { const ago = Math.floor((now - ends) / 86_400_000); return ago < 1 ? "ended today" : "ended " + ago + (ago === 1 ? " day" : " days") + " ago"; }
+  return days <= 1 ? "ends today or tomorrow" : "ends in " + days + " days";
+}
 const select = (rows) => h("select", { required: true }, rows.map(([value, name]) => h("option", { value, text: txt(name) })));
 function table(headers, rows, label) {
   return h("div", { class: "scroll", tabindex: "0", role: "region", "aria-label": label },
@@ -62,13 +74,15 @@ export function adminView(d) {
     if (!data) panels.replaceChildren(skeleton("admin"));
     try {
       const keys = ["users", "groups", "grants", "workspaces", "channels", "market-policy", "audit"];
-      const [responses, waiting] = await Promise.all([Promise.all(keys.map((key) => d.api("GET", "/admin/" + key))), d.api("GET", "/admin/changes")]);
+      const [responses, waiting, review] = await Promise.all([Promise.all(keys.map((key) => d.api("GET", "/admin/" + key))), d.api("GET", "/admin/changes"), d.api("GET", "/admin/review")]);
       if (current !== generation) return;
       const failed = responses.find((r) => r.status !== 200);
       if (failed) { error(failed.body?.error ?? "unavailable"); panels.replaceChildren(h("button", { text: "Try again", onclick: load })); return; }
       data = Object.fromEntries(keys.map((key, i) => [key, key === "audit" || key === "market-policy" ? responses[i].body : responses[i].body[key]]));
       data.policy = data["market-policy"];
       data.changes = waiting?.status === 200 ? waiting.body?.changes ?? [] : []; // a failed list only hides the waiting changes
+      data.review = review?.status === 200 ? review.body?.items ?? [] : []; // so does a failed review list
+      data.defaultGroup = responses[keys.indexOf("groups")].body.default_group ?? null;
       syncMp();
       if (data.audit.head?.seq > Math.max(0, ...(data.audit.records ?? []).map((r) => r.seq))) {
         const recent = await d.api("GET", "/admin/audit?since=" + Math.max(0, data.audit.head.seq - 100));
@@ -209,6 +223,11 @@ export function adminView(d) {
       if (g.name === "hub-admin") effects.push("hub administration");
       preview.textContent = "Adding " + personName(person.value) + " to " + txt(g.name) + " gives " + (effects.join("; ") || "no workspace access yet") + ".";
     };
+    const until = h("input", { type: "date", id: "member-ends", "aria-describedby": "member-ends-hint" });
+    const untilField = h("label", {}, "Access ends (optional)", until);
+    const untilHint = h("span", { class: "small muted", id: "member-ends-hint", text: "Access lasts through that day, then stops by itself." });
+    const showUntil = () => { untilField.hidden = untilHint.hidden = group.value === "hub-admin"; if (untilField.hidden) until.value = ""; };
+    group.addEventListener("change", showUntil); showUntil();
     person.addEventListener("change", updatePreview); group.addEventListener("change", updatePreview); updatePreview();
     return [h("h2", { text: "People & groups" }),
       h("div", { class: "admin-grid" },
@@ -222,7 +241,7 @@ export function adminView(d) {
               [p("Add them to groups afterwards. A new person has no access to any workspace until you do.")]);
           } }, h("div", { class: "form-grid" }, field("Their name", inviteName), inviteBtn)), linkBox),
         h("section", { class: "card" }, h("h3", { text: "Add to group" }),
-          form("Add to group", [field("Person", person), field("Group", group)], "PUT", () => "/admin/groups/" + enc(group.value) + "/members/" + enc(person.value), () => undefined), preview)),
+          form("Add to group", [field("Person", person), field("Group", group), untilField, untilHint], "PUT", () => "/admin/groups/" + enc(group.value) + "/members/" + enc(person.value), () => (until.value ? { ends_ms: endOfDayMs(until.value) } : undefined)), preview)),
       h("section", { class: "card" }, h("h3", { text: "People" }), data.users.length ? data.users.map((u) => h("article", { class: "list-row row" },
         h("div", { class: "grow" }, h("b", { text: txt(u.name) }), data.users.filter((o) => o.name === u.name).length > 1 ? h("details", { class: "info" }, h("summary", { "aria-label": "More about " + txt(u.name), text: "i" }), p(txt(u.user_id))) : null,
           h("div", { class: "row" }, u.disabled ? chip("Disabled", "warn") : null, data.groups.filter((g) => g.members.includes(u.user_id)).map((g) => chip(txt(g.name)))),
@@ -230,10 +249,33 @@ export function adminView(d) {
         personControls(u))) : p("No people yet.")),
       h("section", { class: "card" }, h("h3", { text: "Groups" }),
         form("Create group", [field("Group name", groupName)], "POST", "/admin/groups", () => ({ name: groupName.value.trim() })),
+        defaultGroupBox(),
         data.groups.map((g) => h("article", { class: "list-row" }, h("div", { class: "row" }, h("b", { class: "grow", text: txt(g.name) }),
           g.name !== "hub-admin" ? remove("Remove group", "DELETE", "/admin/groups/" + enc(g.name)) : chip("Hub administrators")),
-          g.members.length ? g.members.map((id) => h("div", { class: "row top" }, h("span", { class: "grow", text: personName(id) }),
+          g.members.length ? g.members.map((id) => h("div", { class: "row top" }, h("span", { class: "grow", text: personName(id) + (g.ends?.[id] ? " · until " + lastDay(g.ends[id]) : "") }),
             remove("Remove from group", "DELETE", "/admin/groups/" + enc(g.name) + "/members/" + enc(id)))) : p("No members"))))];
+  }
+  // New people join this group when they accept an invitation. Never the administrators' group.
+  function defaultGroupBox() {
+    const pick = h("select", { id: "default-group", "aria-describedby": "default-group-hint" },
+      h("option", { value: "", text: "Nobody (they have no access until you add them)" }),
+      data.groups.filter((g) => g.name !== "hub-admin").map((g) => h("option", { value: g.name, text: txt(g.name) })));
+    pick.value = data.defaultGroup ?? "";
+    const save = h("button", { type: "button", text: "Save", onclick: () => void change(save, "PUT", "/admin/default-group", { group: pick.value || null }, false) });
+    return h("div", { class: "form-grid" }, field("New people join", pick), save,
+      h("span", { class: "small muted", id: "default-group-hint", text: "New people never become administrators this way." }));
+  }
+  // "Review access": people whose access ends soon (or ended) and people nobody has looked at for a while.
+  function reviewAccess() {
+    const items = data.review ?? [];
+    return h("section", { class: "card", id: "review-access" }, h("h3", { text: "Review access" }),
+      items.length ? items.map((r) => {
+        const keep = h("button", { type: "button", class: "pri", text: "Still needed", onclick: () => void change(keep, "POST", "/admin/review/keep", { group: r.group, user_id: r.user_id }, false, "Kept") });
+        return h("article", { class: "list-row row" },
+          h("div", { class: "grow" }, h("b", { text: txt(r.name || personName(r.user_id)) }),
+            p(txt(r.group) + " · " + (r.ends_ms ? endsWords(r.ends_ms) : "no end date, not checked for a while"))),
+          keep, remove("Remove", "DELETE", "/admin/groups/" + enc(r.group) + "/members/" + enc(r.user_id)));
+      }) : p("Nothing to review."));
   }
   // Increases the owner has not answered yet: the admin can withdraw one, or (with a written reason) apply it anyway.
   function waitingChanges() {
@@ -272,6 +314,7 @@ export function adminView(d) {
       h("section", { class: "card" }, h("h3", { text: "Grant access" }),
         form("Grant access", [field("Workspace", workspace), field("Group", group), field("Permission", role)], "PUT", "/admin/grants",
           () => ({ workspace_id: workspace.value, group: group.value, role: role.value }))),
+      reviewAccess(),
       waitingChanges(),
       h("div", { class: "ws-segment", role: "group", "aria-label": "Show access" }, ["workspace", "group"].map((by) => h("button", {
         type: "button", id: "access-by-" + by, text: by === "workspace" ? "By workspace" : "By group", "aria-pressed": String(accessBy === by),

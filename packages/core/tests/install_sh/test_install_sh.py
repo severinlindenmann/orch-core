@@ -11,10 +11,7 @@ import re
 import shutil
 import subprocess
 import tarfile
-import threading
 from datetime import UTC, datetime, timedelta
-from functools import partial
-from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
@@ -40,7 +37,8 @@ pytestmark = pytest.mark.skipif(shutil.which("uv") is None or shutil.which("curl
 
 @pytest.fixture
 def script(tmp_path: Path) -> Path:
-    return write_test_script(tmp_path / "install-test.sh")
+    (tmp_path / "scripts").mkdir()
+    return write_test_script(tmp_path / "scripts" / "install.sh")
 
 
 @pytest.fixture
@@ -233,7 +231,9 @@ def test_a_stale_revocation_list_is_refused_with_plain_guidance(tmp_path, script
 @pytest.mark.slow
 def test_the_shipped_installer_has_no_key_yet_and_trusts_nothing(tmp_path, bin_dir):
     rel = build_release(tmp_path / "rel")
-    res = run_install(tmp_path, INSTALL_SH, "--from", str(rel.dir), path_dirs=[bin_dir])
+    shipped = tmp_path / "shipped.sh"
+    shutil.copy(INSTALL_SH, shipped)  # the production roots (none yet), not the TEST root
+    res = run_install(tmp_path, shipped, "--from", str(rel.dir), path_dirs=[bin_dir])
     assert_untouched(tmp_path, res)
     assert "no release key" in res.stderr
 
@@ -304,7 +304,7 @@ def test_server_with_linger_off_prints_the_sudo_line_and_stops(tmp_path, script)
     commands = [ln.strip() for ln in res.stderr.splitlines() if ln.strip().startswith("sudo ")]
     assert commands == [f"sudo loginctl enable-linger {getpass.getuser()}"]  # exactly one command line
     assert not installed_anything(tmp_path)
-    assert not (tmp_path / "home" / ".local" / "share").exists()  # not even uv was fetched
+    assert not state(tmp_path).exists()  # nothing was fetched or written
 
 
 def test_server_without_loginctl_stops(tmp_path, script):
@@ -339,16 +339,6 @@ def _triple() -> str:
     }[(run("-s"), run("-m"))]
 
 
-def _serve(directory: Path):
-    class Quiet(SimpleHTTPRequestHandler):
-        def log_message(self, *a):
-            pass
-
-    srv = ThreadingHTTPServer(("127.0.0.1", 0), partial(Quiet, directory=str(directory)))
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
-    return srv
-
-
 def _uv_tarball(dest: Path, triple: str, body: str) -> str:
     dest.mkdir(parents=True, exist_ok=True)
     stage = dest / "stage" / f"uv-{triple}"
@@ -362,19 +352,15 @@ def _uv_tarball(dest: Path, triple: str, body: str) -> str:
 
 
 def test_uv_with_the_wrong_sha256_is_not_used(tmp_path, script):
-    srv = _serve(tmp_path / "uvsrv")
-    try:
-        _uv_tarball(tmp_path / "uvsrv", _triple(), "#!/bin/sh\necho 'uv 0.0.0'\n")
-        res = run_install(
-            tmp_path,
-            script,
-            "--from",
-            str(tmp_path),
-            path_dirs=[],
-            env_extra={"ORCH_INSTALL_UV_BASE": f"http://127.0.0.1:{srv.server_address[1]}"},
-        )
-    finally:
-        srv.shutdown()
+    _uv_tarball(tmp_path / "uvsrv", _triple(), "#!/bin/sh\necho 'uv 0.0.0'\n")
+    res = run_install(
+        tmp_path,
+        script,
+        "--from",
+        str(tmp_path),
+        path_dirs=[],
+        env_extra={"ORCH_INSTALL_UV_BASE": str(tmp_path / "uvsrv")},
+    )
     assert res.returncode == 1
     assert "checksum" in res.stderr and "Nothing was installed" in res.stderr
     assert not (data(tmp_path) / "uv").exists()
@@ -382,47 +368,41 @@ def test_uv_with_the_wrong_sha256_is_not_used(tmp_path, script):
 
 
 def test_uv_with_the_pinned_sha256_is_unpacked_and_version_checked(tmp_path):
-    srv = _serve(tmp_path / "uvsrv")
     triple = _triple()
-    try:
-        sha = _uv_tarball(tmp_path / "uvsrv", triple, f"#!/bin/sh\necho 'uv {pinned_uv_version()}'\n")
-        var = "UV_SHA256_" + triple.replace("-", "_")
-        patched = write_test_script(tmp_path / "t.sh")
-        text = patched.read_text()
-        old = next(line for line in text.splitlines() if line.startswith(var + "="))
-        patched.write_text(text.replace(old, f'{var}="{sha}"'))
-        res = run_install(
-            tmp_path,
-            patched,
-            "--from",
-            str(tmp_path / "nothing"),
-            path_dirs=[],
-            env_extra={"ORCH_INSTALL_UV_BASE": f"http://127.0.0.1:{srv.server_address[1]}"},
-        )
-    finally:
-        srv.shutdown()
-    # uv was accepted and unpacked; the run then stops later (the stub uv cannot find Python), which is fine here
-    uv = data(tmp_path) / "uv" / f"uv-{pinned_uv_version()}" / "uv"
-    assert uv.is_file(), res.stderr
+    sha = _uv_tarball(tmp_path / "uvsrv", triple, f"#!/bin/sh\necho 'uv {pinned_uv_version()}'\n")
+    var = "UV_SHA256_" + triple.replace("-", "_")
+    patched = write_test_script(tmp_path / "t.sh")
+    text = patched.read_text()
+    old = next(line for line in text.splitlines() if line.startswith(var + "="))
+    patched.write_text(text.replace(old, f'{var}="{sha}"'))
+    res = run_install(
+        tmp_path,
+        patched,
+        "--from",
+        str(tmp_path / "nothing"),
+        env_extra={"ORCH_INSTALL_UV_BASE": str(tmp_path / "uvsrv")},
+    )
+    # uv was accepted and unpacked; the run then stops later (no release there), which is fine here
+    assert (data(tmp_path) / "uv" / f"uv-{pinned_uv_version()}" / "uv").is_file(), res.stderr
     assert "checksum" not in res.stderr
 
 
-def test_a_uv_of_another_version_is_not_reused(tmp_path, script):
-    other = fake_bin(tmp_path, pinned_uv=False, uv='echo "uv 0.0.1"')
-    srv = _serve(tmp_path / "uvsrv")
-    try:
-        _uv_tarball(tmp_path / "uvsrv", _triple(), "#!/bin/sh\n")
-        res = run_install(
-            tmp_path,
-            script,
-            "--from",
-            str(tmp_path),
-            path_dirs=[other],
-            env_extra={"ORCH_INSTALL_UV_BASE": f"http://127.0.0.1:{srv.server_address[1]}"},
-        )
-    finally:
-        srv.shutdown()
-    assert "checksum" in res.stderr  # it went to download the pinned one instead of using 0.0.1
+def test_a_uv_on_path_or_with_other_bytes_is_never_reused(tmp_path, script):
+    on_path = fake_bin(tmp_path, pinned_uv=False, uv=f'echo "uv {pinned_uv_version()}"')  # right version, on PATH
+    dest = data(tmp_path) / "uv" / f"uv-{pinned_uv_version()}"
+    dest.mkdir(parents=True)
+    (dest / "uv").write_text(f'#!/bin/sh\necho "uv {pinned_uv_version()}"\n')  # right version, not the pinned bytes
+    (dest / "uv").chmod(0o755)
+    _uv_tarball(tmp_path / "uvsrv", _triple(), "#!/bin/sh\n")
+    res = run_install(
+        tmp_path,
+        script,
+        "--from",
+        str(tmp_path),
+        path_dirs=[on_path],
+        env_extra={"ORCH_INSTALL_UV_BASE": str(tmp_path / "uvsrv")},
+    )
+    assert "checksum" in res.stderr  # it went to fetch the pinned one instead of trusting either
 
 
 # --- pins ------------------------------------------------------------------------------------------------------------
@@ -462,3 +442,79 @@ def test_layout_constants_agree_with_orch_update_layout():
         from orch.update import layout  # noqa: F401
     except ImportError:
         pytest.skip("orch/update/layout.py (P2-D) is not in this branch yet")
+
+
+# --- review fixes: wheels only, https only, future revocations, record before flip ------------------------------------
+
+
+@pytest.mark.slow
+def test_a_dependency_without_a_wheel_stops_the_install_and_leaves_no_tool_dir(tmp_path, script, bin_dir):
+    # a hash-pinned dependency that has no usable wheel (it exists nowhere): uv must not try to build or guess
+    pin = "sdistonly-xyz==1.0 \\\n    --hash=sha256:" + "ab" * 32 + "\n"
+    rel = build_release(tmp_path / "rel", constraints=pin)
+    res = go(tmp_path, script, bin_dir, rel.dir, env_extra={"UV_OFFLINE": "1"})
+    assert_untouched(tmp_path, res)
+    assert "Installing the verified files failed" in res.stderr
+    assert not list((state(tmp_path) / "install" / "tools").glob("orch-*"))
+
+
+def test_install_uses_no_build_and_https_only():
+    text = INSTALL_SH.read_text()
+    assert "--require-hashes --no-build --no-deps" in text
+    fetch_body = text[text.index("fetch() {") : text.index("get_uv() {")]
+    assert "--proto '=https' --tlsv1.2" in fetch_body and "http" not in fetch_body.replace("=https", "")
+    assert text.count("--proto") == text.count("--proto '=https' --tlsv1.2")
+
+
+def test_from_plain_http_is_refused(tmp_path, script, bin_dir):
+    res = run_install(tmp_path, script, "--from", "http://127.0.0.1:1", path_dirs=[bin_dir])
+    assert res.returncode == 1 and "plain http" in res.stderr
+    assert not installed_anything(tmp_path)
+
+
+@pytest.mark.slow
+def test_a_revocation_list_dated_in_the_future_is_refused(tmp_path, script, bin_dir):
+    rel = build_release(tmp_path / "rel", revs_issued=datetime.now(UTC) + timedelta(days=2))
+    res = go(tmp_path, script, bin_dir, rel.dir)
+    assert_untouched(tmp_path, res)
+    assert "future" in res.stderr
+
+
+@pytest.mark.slow
+def test_the_environment_cannot_redirect_uv(tmp_path, script, bin_dir):
+    rel = build_release(tmp_path / "rel")
+    bad = {
+        "UV_INDEX_URL": "http://127.0.0.1:1/evil",
+        "PIP_INDEX_URL": "http://127.0.0.1:1/evil",
+        "UV_NO_VERIFY_HASHES": "1",
+    }
+    res = go(tmp_path, script, bin_dir, rel.dir, env_extra={**bad, "UV_PYTHON_PREFERENCE": "system"})
+    assert res.returncode == 0, res.stderr
+
+
+@pytest.mark.slow
+def test_an_unwritable_record_stops_before_the_flip(tmp_path, script, bin_dir):
+    assert go(tmp_path, script, bin_dir, build_release(tmp_path / "r1", seq=5, version="2.0.0").dir).returncode == 0
+    current = state(tmp_path) / "install" / "current"
+    before = current.resolve()
+    d = data(tmp_path)
+    d.chmod(0o500)  # the record cannot be written any more
+    try:
+        res = go(tmp_path, script, bin_dir, build_release(tmp_path / "r2", seq=6, version="2.0.1").dir)
+    finally:
+        d.chmod(0o700)
+    assert res.returncode == 1 and "install record" in res.stderr and "not changed" in res.stderr
+    assert current.resolve() == before
+    assert not (state(tmp_path) / "install" / "tools" / "orch-2.0.1").exists()  # the half-done build was removed
+    assert (state(tmp_path) / "install" / "tools" / "orch-2.0.0" / ".complete").exists()  # the old one is untouched
+
+
+def test_the_sha256_is_printed_only_for_a_real_install_sh(tmp_path, script, bin_dir):
+    # run as `sh < install.sh` ($0 is "sh"): no checksum line, and the script still works up to the release fetch
+    res = subprocess.run(
+        ["env", "-i", f"HOME={tmp_path}", "PATH=/usr/bin:/bin", "sh", "-s", "--", "--nope"],
+        input=INSTALL_SH.read_text(),
+        capture_output=True,
+        text=True,
+    )
+    assert res.returncode == 1 and "sha256" not in res.stdout + res.stderr

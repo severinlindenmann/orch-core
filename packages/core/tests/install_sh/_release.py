@@ -113,6 +113,7 @@ def build_release(
     expires: datetime | None = None,
     revs_issued: datetime | None = None,
     revs_min_serial: int | None = None,
+    constraints: str = "# no third-party dependencies in this test release\n",
     **over: Any,
 ) -> Release:
     """A release folder: channel.json (the signed envelope), two wheels and a constraints file."""
@@ -122,7 +123,7 @@ def build_release(
         "core": make_wheel(out, "orch_core", version, entry="orch"),
         "dashboard": make_wheel(out, "orch_dashboard", version),
     }
-    (out / "constraints.txt").write_text("# no third-party dependencies in this test release\n", encoding="utf-8")
+    (out / "constraints.txt").write_text(constraints, encoding="utf-8")
     files = [
         *(
             {
@@ -183,18 +184,60 @@ def real_uv() -> str:
 
 
 def fake_bin(tmp: Path, *, pinned_uv: bool = True, **stubs: str) -> Path:
-    """A PATH folder: a `uv` that reports the pinned version and otherwise is the real uv, plus stub commands."""
+    """A PATH folder with stub commands. With ``pinned_uv`` a wrapper `uv` that reports the pinned version and otherwise
+    is the real uv is prepared in ``tmp/uvw``; ``run_install`` puts it where install.sh looks for its own uv."""
     b = tmp / "bin"
     b.mkdir(exist_ok=True)
     if pinned_uv:
+        (tmp / "uvw").mkdir(exist_ok=True)
         version_line = f'if [ "$1" = "--version" ]; then echo "uv {pinned_uv_version()} (test)"; exit 0; fi'
-        script = f'#!/bin/sh\n{version_line}\nexec "{real_uv()}" "$@"\n'
-        (b / "uv").write_text(script)
-        (b / "uv").chmod(0o755)
+        (tmp / "uvw" / "uv").write_text(f'#!/bin/sh\n{version_line}\nexec "{real_uv()}" "$@"\n')
+        (tmp / "uvw" / "uv").chmod(0o755)
     for name, body in stubs.items():
         (b / name).write_text("#!/bin/sh\n" + body + "\n")
         (b / name).chmod(0o755)
     return b
+
+
+def place_uv(tmp: Path, script: Path) -> None:
+    """Install the wrapper uv as install.sh's own uv and pin its sha256 in this TEST copy of the script."""
+    wrapper = tmp / "uvw" / "uv"
+    dest = data(tmp) / "uv" / f"uv-{pinned_uv_version()}"
+    if not dest.exists():
+        dest.mkdir(parents=True, mode=0o700)
+        shutil.copy(wrapper, dest / "uv")
+    sha = hashlib.sha256((dest / "uv").read_bytes()).hexdigest()
+    text = re.sub(r'^(UV_BIN_SHA256_\w+)="[0-9a-f]{64}"$', rf'\1="{sha}"', script.read_text(), flags=re.M)
+    script.write_text(text)
+
+
+def managed_python(tmp: Path) -> Path:
+    """A uv "managed Python" folder holding a link to the Python running the tests (3.14), so no download is needed."""
+    d = tmp / "pyinstall"
+    d.mkdir(exist_ok=True)
+    real = Path(sys.executable).resolve()
+    info = json.loads(
+        subprocess.run(
+            [
+                str(real),
+                "-c",
+                "import json,platform,sys;print(json.dumps([platform.system(),platform.machine(),"
+                "sys.version.split()[0]]))",
+            ],
+            capture_output=True,
+            text=True,
+        ).stdout
+    )
+    system, machine, ver = info
+    osname = {"Darwin": "macos", "Linux": "linux"}[system]
+    arch = {"arm64": "aarch64", "aarch64": "aarch64", "x86_64": "x86_64"}[machine]
+    libc = "none" if osname == "macos" else "gnu"
+    name = f"cpython-{ver}-{osname}-{arch}-{libc}"
+    if not (d / name).exists():
+        (d / name / "bin").mkdir(parents=True)
+        for exe in ("python", "python3", f"python{ver.rsplit('.', 1)[0]}"):
+            (d / name / "bin" / exe).symlink_to(real)
+    return d
 
 
 def run_install(
@@ -202,6 +245,9 @@ def run_install(
 ) -> subprocess.CompletedProcess[str]:
     home = tmp / "home"
     home.mkdir(exist_ok=True)
+    if (tmp / "uvw" / "uv").exists():
+        assert script.resolve() != INSTALL_SH.resolve(), "never rewrite the shipped installer"
+        place_uv(tmp, script)
     (tmp / "tmp").mkdir(exist_ok=True)
     py_dir = str(Path(sys.executable).resolve().parent)
     path = ":".join([*(str(p) for p in (path_dirs or [])), py_dir, "/usr/bin", "/bin"])
@@ -209,11 +255,8 @@ def run_install(
         "HOME": str(home),
         "PATH": path,
         "TMPDIR": str(tmp / "tmp"),
-        "UV_PYTHON_PREFERENCE": "system",
         "UV_PYTHON_DOWNLOADS": "never",
-        "UV_PYTHON_INSTALL_DIR": subprocess.run(
-            [real_uv(), "python", "dir"], capture_output=True, text=True
-        ).stdout.strip(),
+        "UV_PYTHON_INSTALL_DIR": str(managed_python(tmp)),
         "LC_ALL": "C",
     }
     env.update(env_extra or {})

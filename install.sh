@@ -19,7 +19,7 @@
 #   <data>/install.json                       install record (data = $XDG_DATA_HOME/orch, else ~/.local/share/orch)
 #   <data>/uv/uv-<pinned version>/uv          the pinned uv, when none of that version was found
 #
-# Test knob: ORCH_INSTALL_UV_BASE overrides where the uv archive is fetched from; its sha256 is still checked.
+# Test knob: ORCH_INSTALL_UV_BASE (a folder, or an https URL) overrides where the uv archive is fetched from; its sha256 is still checked.
 #
 # Everything runs inside main, called on the last line: a download cut short runs nothing.
 
@@ -30,14 +30,19 @@ UV_SHA256_aarch64_apple_darwin="bf1e4fb6f5f5079a2902ad3f3a9e2d337575b226a1378f24
 UV_SHA256_x86_64_apple_darwin="5c35634957db7ebd9c2e4cc6c66b8979fb2c26a6b0dbd1d214d6acbac4033a89"
 UV_SHA256_x86_64_unknown_linux_gnu="e4f169ec380f1793b898a6f1fcbacd22db25cf7ca0349a6e96ffb85b69998d04"
 UV_SHA256_aarch64_unknown_linux_gnu="611ff684f193a84d2fdad29c5f12505d02ece94984c7c982cdde950eba5c95b9"
+# sha256 of the extracted uv binary itself: the only thing that lets an already-installed uv be reused
+UV_BIN_SHA256_aarch64_apple_darwin="9e1c4b0585ee3042fa8624229fb2897231edf8194fe64577be31087b210e367d"
+UV_BIN_SHA256_x86_64_apple_darwin="5c0532bffe173c7f21d45b8e89fc6604e5143348ee447e5d6df4ce75bd7013e1"
+UV_BIN_SHA256_x86_64_unknown_linux_gnu="90c2ff84aa2a76a1ae70454ede3c6a9a4a40c786ccbf777148341a05cb583018"
+UV_BIN_SHA256_aarch64_unknown_linux_gnu="0bbbc387a140ee29a80ef14a556368f8bcdacfb4320a4aca9ce48eb239760511"
 PYTHON_VERSION="3.14"
 RELEASE_REPO="severinlindenmann/orch-core"
 HOST_FORMAT="1" # the host data format this release writes (orch.migrate.steps.CURRENT["host"]); a test pins it
 TAB=$(printf '\t')
 
 T=""        # private temp dir of this run
-VDIR=""     # version directory being built (removed again if the run fails before it is complete)
-KEEP_VDIR=""
+VDIR=""     # version directory of this run
+BUILT=""    # the version directory THIS run is building (removed again if the run fails before the flip)
 
 say() { printf '%s\n' "$*"; }
 note() { printf '%s\n' "$*" >&2; }
@@ -46,7 +51,7 @@ die() { note "$*"; exit 1; }
 cleanup() {
   status=$?
   trap - EXIT INT TERM
-  if [ -n "$VDIR" ] && [ -z "$KEEP_VDIR" ] && [ -d "$VDIR" ]; then rm -rf "$VDIR"; fi
+  if [ -n "$BUILT" ] && [ -d "$BUILT" ]; then rm -rf "$BUILT"; fi
   if [ -n "$T" ] && [ -d "$T" ]; then rm -rf "$T"; fi
   exit "$status"
 }
@@ -68,6 +73,7 @@ explain() {
     wrong_channel) echo "it belongs to a different channel" ;;
     expired) echo "it has expired" ;;
     rollback | revocations_rollback) echo "it is older than what this computer has already seen" ;;
+    revocations_from_future) echo "its revocation list is dated in the future; check this computer's clock" ;;
     revocations_below_floor) echo "its revocation list is older than this installer accepts: get a newer install.sh" ;;
     revocations_stale) echo "this release's revocation list is too old; try again later or tell the person who runs orch releases" ;;
     size_mismatch | hash_mismatch) echo "a downloaded file does not match what was signed" ;;
@@ -514,6 +520,8 @@ def cmd_check():
         REVOCATIONS_FLOOR_ISSUED_AT
     ):
         fail("REFUSED revocations_below_floor", 1)
+    if (parse_time(v["revocations_issued_at"]) - now).total_seconds() > 86400:
+        fail("REFUSED revocations_from_future", 1)
     if (now - parse_time(v["revocations_issued_at"])).days >= REVOCATIONS_MAX_AGE_DAYS:
         fail("REFUSED revocations_stale", 1)
     doc = v["document"]
@@ -666,27 +674,25 @@ check_linger() {
 }
 
 fetch() { # fetch URL OUT
-  curl -fsSL --retry 2 --connect-timeout 20 --max-time 900 --proto '=https,http' "$1" -o "$2" </dev/null
+  curl -fsSL --retry 2 --connect-timeout 20 --max-time 900 --proto '=https' --tlsv1.2 "$1" -o "$2" </dev/null
 }
 
 get_uv() {
-  UV=""
-  for cand in "$(command -v uv 2>/dev/null || true)" "$DATA/uv/uv-$UV_VERSION/uv"; do
-    [ -n "$cand" ] && [ -x "$cand" ] || continue
-    have=$("$cand" --version 2>/dev/null | cut -d ' ' -f 2 || true)
-    if [ "$have" = "$UV_VERSION" ]; then UV="$cand"; break; fi
-  done
-  if [ -n "$UV" ]; then return 0; fi
   case "$TRIPLE" in
-    aarch64-apple-darwin) want=$UV_SHA256_aarch64_apple_darwin ;;
-    x86_64-apple-darwin) want=$UV_SHA256_x86_64_apple_darwin ;;
-    x86_64-unknown-linux-gnu) want=$UV_SHA256_x86_64_unknown_linux_gnu ;;
-    aarch64-unknown-linux-gnu) want=$UV_SHA256_aarch64_unknown_linux_gnu ;;
+    aarch64-apple-darwin) want=$UV_SHA256_aarch64_apple_darwin; want_bin=$UV_BIN_SHA256_aarch64_apple_darwin ;;
+    x86_64-apple-darwin) want=$UV_SHA256_x86_64_apple_darwin; want_bin=$UV_BIN_SHA256_x86_64_apple_darwin ;;
+    x86_64-unknown-linux-gnu) want=$UV_SHA256_x86_64_unknown_linux_gnu; want_bin=$UV_BIN_SHA256_x86_64_unknown_linux_gnu ;;
+    aarch64-unknown-linux-gnu) want=$UV_SHA256_aarch64_unknown_linux_gnu; want_bin=$UV_BIN_SHA256_aarch64_unknown_linux_gnu ;;
     *) die "No pinned uv for $TRIPLE. Nothing was installed." ;;
   esac
+  # Reuse only OUR copy, and only when its bytes are exactly the pinned binary. A uv found on PATH is never trusted.
+  UV="$DATA/uv/uv-$UV_VERSION/uv"
+  if [ -f "$UV" ] && [ ! -L "$UV" ] && [ -x "$UV" ] && [ "$(sha256_of "$UV")" = "$want_bin" ]; then return 0; fi
+  UV=""
   base="${ORCH_INSTALL_UV_BASE:-https://github.com/astral-sh/uv/releases/download/$UV_VERSION}"
   say "Fetching uv $UV_VERSION (the tool that installs orch) ..."
-  fetch "$base/uv-$TRIPLE.tar.gz" "$T/uv.tar.gz" || die "Could not download uv. Nothing was installed."
+  if [ -d "$base" ]; then cp "$base/uv-$TRIPLE.tar.gz" "$T/uv.tar.gz" 2>/dev/null || die "Could not read uv from $base. Nothing was installed."
+  else fetch "$base/uv-$TRIPLE.tar.gz" "$T/uv.tar.gz" || die "Could not download uv. Nothing was installed."; fi
   got=$(sha256_of "$T/uv.tar.gz")
   if [ "$got" != "$want" ]; then
     die "The uv download does not match the checksum built into this installer, so it was not used. Nothing was installed."
@@ -694,7 +700,6 @@ get_uv() {
   mkdir -p "$T/uvx"
   tar -xzf "$T/uv.tar.gz" -C "$T/uvx" --strip-components=1 "uv-$TRIPLE/uv" || die "Could not unpack uv. Nothing was installed."
   mkdir -p "$DATA/uv/uv-$UV_VERSION"
-  chmod 700 "$DATA" "$DATA/uv" "$DATA/uv/uv-$UV_VERSION" 2>/dev/null || true
   cp "$T/uvx/uv" "$DATA/uv/uv-$UV_VERSION/uv.new"
   chmod 755 "$DATA/uv/uv-$UV_VERSION/uv.new"
   mv -f "$DATA/uv/uv-$UV_VERSION/uv.new" "$DATA/uv/uv-$UV_VERSION/uv"
@@ -703,7 +708,6 @@ get_uv() {
 }
 
 get_python() {
-  export UV_PYTHON_PREFERENCE="${UV_PYTHON_PREFERENCE:-only-managed}"
   PY=$("$UV" python find --no-config "$PYTHON_VERSION" 2>/dev/null || true)
   if [ -z "$PY" ]; then
     say "Fetching Python $PYTHON_VERSION ..."
@@ -737,9 +741,16 @@ main() {
       *) usage >&2; die "Unknown option: $1" ;;
     esac
   done
+  # A speed bump, not a boundary: an agent with the same user id could run uv itself. It keeps honest agents out.
   if [ -n "${ORCH_GRANT:-}" ] || [ -n "${ORCH_SESSION:-}" ]; then
     die "The installer is for people, not for agents. Nothing was installed."
   fi
+  # uv must behave the same everywhere: managed Python only, default index, hashes verified, no mirrors
+  export UV_PYTHON_PREFERENCE=only-managed
+  unset UV_PYTHON_DOWNLOADS_JSON_URL UV_PYTHON_INSTALL_MIRROR UV_INDEX_URL UV_EXTRA_INDEX_URL UV_DEFAULT_INDEX UV_INDEX \
+    UV_FIND_LINKS UV_NO_INDEX UV_NO_VERIFY_HASHES UV_INSECURE_HOST UV_INSECURE_NO_ZIP_VALIDATION \
+    PIP_INDEX_URL PIP_EXTRA_INDEX_URL PIP_FIND_LINKS PIP_NO_INDEX PIP_TRUSTED_HOST
+  case "$FROM" in http:*) die "--from over plain http is not allowed: use https or a local folder. Nothing was installed." ;; esac
   printf '%s' "$CHANNEL" | grep -Eq '^(main|develop|test-[a-z0-9][a-z0-9-]{0,30})$' || die "Unknown channel: $CHANNEL"
   [ -n "${HOME:-}" ] || die "HOME is not set."
   for tool in curl tar mktemp uname sed grep cut tr; do
@@ -802,32 +813,38 @@ main() {
   "$PY" -I "$T/verify.py" check --channel "$CHANNEL" --envelope "$T/channel.json" --record "$RECORD" --files "$T/files" \
     --json-out "$T/check.json" > "$T/check2.out" 2> "$T/check.err" || stop_unverified "$T/check.err"
 
-  # 3. install from the verified local files only (no URL is ever handed to uv)
+  # 3. install the verified local files (no URL is ever handed to uv for orch itself). Their dependencies DO come from
+  #    the package index, but only the exact versions in the signed constraints, by hash, and only as wheels (--no-build:
+  #    no setup.py or build backend of a dependency ever runs).
   mkdir -p "$STATE/install/tools" "$DATA"
-  chmod 700 "$STATE" "$STATE/install" "$STATE/install/tools" "$DATA" 2>/dev/null || true
   VDIR="$STATE/install/tools/orch-$VERSION"
   if [ ! -f "$VDIR/.complete" ]; then
     rm -rf "$VDIR"
+    BUILT="$VDIR"
     mkdir -m 700 "$VDIR"
     say "Installing orch $VERSION ..."
     "$UV" venv --no-config --quiet --python "$PY" "$VDIR/venv" >&2 || die "Could not create the environment. Nothing was installed."
     "$PY" -I "$T/verify.py" reqs --files "$T/files" --check-json "$T/check.json" > "$T/requirements.txt"
-    "$UV" pip install --no-config --quiet --require-hashes --no-deps --python "$VDIR/venv/bin/python" -r "$T/requirements.txt" >&2 \
-      || die "Installing the verified files failed. Nothing was installed."
+    "$UV" pip install --no-config --quiet --require-hashes --no-build --no-deps --python "$VDIR/venv/bin/python" -r "$T/requirements.txt" >&2 \
+      || die "Installing the verified files failed (a dependency may have no ready-made wheel). Nothing was installed."
     "$VDIR/venv/bin/orch" --version >/dev/null 2>&1 || die "The installed orch does not start. Nothing was installed."
     : > "$VDIR/.complete"
   fi
-  KEEP_VDIR=1
 
-  # 4. flip: the A/B switch, the PATH shim, the record, the host format
-  "$PY" -I "$T/verify.py" flip --link "$STATE/install/current" --target "tools/orch-$VERSION"
+  # 4. record first, then flip (the A/B switch), the PATH shim and the host format
+  "$PY" -I "$T/verify.py" record --record "$RECORD" --check-json "$T/check.json" --tool-dir "$VDIR" --uv "$UV" --uv-version "$UV_VERSION" \
+    2>/dev/null || die "Could not write the install record ($RECORD). The version in use was not changed."
+  "$PY" -I "$T/verify.py" flip --link "$STATE/install/current" --target "tools/orch-$VERSION" 2>/dev/null \
+    || die "Could not switch to the new version. The version in use was not changed."
+  BUILT=""
   if [ -e "$BIN/orch" ] && [ ! -L "$BIN/orch" ]; then
     note "Note: $BIN/orch is a file that orch did not create, so it was left alone. Run orch with $STATE/install/current/venv/bin/orch."
   else
-    "$PY" -I "$T/verify.py" flip --link "$BIN/orch" --target "$STATE/install/current/venv/bin/orch"
+    "$PY" -I "$T/verify.py" flip --link "$BIN/orch" --target "$STATE/install/current/venv/bin/orch" 2>/dev/null \
+      || note "Could not create $BIN/orch. Run orch with $STATE/install/current/venv/bin/orch."
   fi
-  "$PY" -I "$T/verify.py" record --record "$RECORD" --check-json "$T/check.json" --tool-dir "$VDIR" --uv "$UV" --uv-version "$UV_VERSION"
-  "$PY" -I "$T/verify.py" hostformat --state "$STATE" --format "$HOST_FORMAT"
+  "$PY" -I "$T/verify.py" hostformat --state "$STATE" --format "$HOST_FORMAT" 2>/dev/null \
+    || note "Could not write $STATE/format.json; orch will say so when it starts."
 
   say "orch $VERSION is installed."
   case ":$PATH:" in
@@ -839,7 +856,7 @@ main() {
   else
     say "Next:  orch setup"
   fi
-  if [ -f "${0:-}" ]; then say "This installer's sha256: $(sha256_of "$0")"; fi
+  if [ "$(basename "${0:-}")" = install.sh ] && [ -f "${0:-}" ]; then say "This installer's sha256: $(sha256_of "$0")"; fi
 }
 
 main "$@"

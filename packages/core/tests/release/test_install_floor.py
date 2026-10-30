@@ -48,6 +48,16 @@ def test_cli_bump_then_check(tmp_path):
     assert floor.read_floor(sh.read_text()) == ("2099-01-01T00:00:00Z", 9)
 
 
+def _roots_embedded() -> bool:
+    return "ROOTS_B64 = {}" not in INSTALL_SH.read_text()
+
+
+def test_revocations_json_must_exist_once_a_root_is_embedded():
+    assert REVS.exists() or not _roots_embedded(), (
+        "install.sh embeds a root key but release/keys/revocations.json is missing"
+    )
+
+
 @pytest.mark.skipif(not REVS.exists(), reason="no release/keys/revocations.json before the root ceremony")
 def test_install_sh_floor_is_not_older_than_the_current_revocation_list():
     issued_at, min_serial = floor.read_list(REVS)
@@ -55,3 +65,8 @@ def test_install_sh_floor_is_not_older_than_the_current_revocation_list():
         "install.sh's revocations floor is older than release/keys/revocations.json: "
         "run `python3 scripts/release/floor.py install.sh release/keys/revocations.json`"
     )
+
+
+def test_the_release_draft_compiles_wheels_only():
+    draft = (ROOT / "scripts" / "release" / "release.yml.draft").read_text()
+    assert "uv pip compile wheels.in" in draft and "--only-binary :all:" in draft  # no wheel: the release run fails

@@ -8,6 +8,10 @@ the caller stores the values of :class:`Verified` only on success.
 verifier, ``orch update``) MUST persist the highest verified seq per channel and pass it back, or a rolled-back
 channel pointer is accepted as long as its old envelope is still unexpired. ``None`` means "first install, nothing
 seen" and is only correct then (P2-C/P2-D persist it in the install record).
+
+Caller contract for files: install ONLY the files the verified manifest lists, by the verified ``name``, with the
+verified bytes (``files=`` makes this checker hash exactly those). Never install, unpack or execute anything else that
+sits next to them in a download directory or release: an unlisted file is unsigned.
 """
 
 from __future__ import annotations

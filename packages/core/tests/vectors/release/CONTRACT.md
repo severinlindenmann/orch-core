@@ -73,6 +73,9 @@ none). Run in this order; the first failing rule gives the reason. Every rule fa
 7. Core only, when files are downloaded (absent in a case = `--check`, no files yet): for each manifest file, the
    file with that `name` has `size` → `size_mismatch` (also when missing), then `sha256` → `hash_mismatch`.
 
+**Callers install ONLY the files the manifest lists** (by verified name and bytes); anything else in the download
+location or the release is unsigned and must be ignored.
+
 On success the caller stores `seq_seen = max(seq_seen, seq)`, the revocation list's `issued_at` and `min_serial`.
 
 ## 4. Reasons and catalog codes

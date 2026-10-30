@@ -5,4 +5,4 @@ Everything that changes the server arrives through the forced SSH command (bin/o
 unprivileged user orch-apps-web and only reads.
 """
 
-__version__ = "0.1.0"
+__version__ = "2.0.0.dev0"

@@ -89,7 +89,7 @@ def main(
         if "--check" in rest:
             return _check(u, channel, as_json, out, env)
         assume = "finish" if "--finish" in rest else "rollback" if "--rollback" in rest else None
-        if channel is not None and "--yes" not in rest and not _confirm(channel, ask, out):
+        if channel is not None and "--yes" not in rest and not _switch_agreed(channel, ask, out):
             err.write("orch update: not changed\n")
             return 3
         return _report(u.update(channel, assume=assume), as_json, out, err)
@@ -97,7 +97,7 @@ def main(
         return _fail(exc, as_json, out, err)
 
 
-def _confirm(channel: str, ask: Any, out: TextIO) -> bool:
+def _switch_agreed(channel: str, ask: Any, out: TextIO) -> bool:
     if ask is None:
         return False  # no way to ask: the person says --yes
     return bool(ask(f"Switch to the '{channel}' channel and update? [y/N] "))

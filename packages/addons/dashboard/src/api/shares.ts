@@ -21,6 +21,14 @@ export interface StagedFile {
   sha256: string
 }
 
+/** A file picked on this computer: kept aside by the host until Review; nothing is shared. */
+export interface Picked {
+  upload_id: string
+  name: string
+  size: number
+  sha256: string
+}
+
 export interface Share {
   id: string
   ticket: string | null
@@ -82,7 +90,9 @@ const w = (ws: string) => `/api/w/${encodeURIComponent(ws)}`
 
 export const sharesApi = {
   list: (ws: string, ticket?: string) => call<SharesData>('GET', `${w(ws)}/shares${ticket ? `?ticket=${encodeURIComponent(ticket)}` : ''}`),
-  prepare: (ws: string, body: { ticket: string; artifacts: string[]; kind: ShareKind; days: Days; views?: Views }, idem: string) =>
+  /** One picked file (P05): its bytes as base64. At most `PICK_MAX_BYTES`. */
+  upload: (ws: string, body: { name: string; data: string }, idem: string) => call<Picked>('POST', `${w(ws)}/shares/upload`, { ...body, idem }),
+  prepare: (ws: string, body: { ticket: string; artifacts: string[]; uploads?: string[]; kind: ShareKind; days: Days; views?: Views }, idem: string) =>
     call<{ staged: Staged; server: string | null; share: string | null }>('POST', `${w(ws)}/shares/prepare`, { ...body, idem }),
   /** The one answer with a link. Do not store the result anywhere but the component that shows it. */
   send: (ws: string, staged_id: string, idem: string) => call<Sent>('POST', `${w(ws)}/shares/send`, { staged_id, idem }),
@@ -122,6 +132,25 @@ export const viewsText = (s: Pick<Share, 'kind' | 'views' | 'view_limit'>): stri
 /** What a ticket's file needs to be shareable: a real file whose name the server takes, within the limits. */
 export const LIMITS = { files: 20, file_bytes: 25 * 1024 * 1024, share_bytes: 50 * 1024 * 1024 }
 const NAME = /^[A-Za-z0-9][A-Za-z0-9._ -]{0,99}$/
+/** The most a file picked on this computer may hold (the host holds the same limit). */
+export const PICK_MAX_BYTES = 1024 * 1024
+
+/** Why a file picked on this computer cannot be added, or null. Checked before any byte is read. */
+export function unpickable(file: { name: string; size: number }, taken: readonly string[]): string | null {
+  if (!NAME.test(file.name) || file.name.includes('..') || file.name !== file.name.trim()) return 'The name has characters the server does not take (letters, digits, space, dot, dash and underscore only).'
+  if (file.size === 0) return 'This file is empty.'
+  if (file.size > PICK_MAX_BYTES) return 'Larger than 1 MB. Add it to the ticket first, or pick a smaller file.'
+  if (taken.some((n) => n.toLowerCase() === file.name.toLowerCase())) return 'A file with this name is already in the list.'
+  return null
+}
+
+/** The bytes of a File as base64, in pieces so a large string is never spread into one call. */
+export async function fileBase64(file: Blob): Promise<string> {
+  const bytes = new Uint8Array(await file.arrayBuffer())
+  let bin = ''
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
+  return btoa(bin)
+}
 
 export function unshareable(a: { name: string; kind: string; bytes: number | null; addon?: string; url?: string }): string | null {
   if (a.kind === 'link' || a.url || a.addon) return 'This is a link or an add-on item, not a file.'
@@ -148,7 +177,7 @@ const CODE_TEXT: Record<string, string> = {
   'publish.not_configured': 'No publish server is set up yet. Set one up on the Add-ons page.',
   'publish.not_approved': 'A signature for exactly these files and this server is missing or too old. Sign it again.',
   'publish.changed': 'The prepared copy changed or is gone. Prepare the share again.',
-  'publish.unreachable': 'The publish server could not be reached. Nothing was shared.',
+  'publish.unreachable': 'Sharing is not reachable right now. Nothing was shared.',
   'publish.no_link': 'The files were shared but no link came back. Revoke this share and share again.',
   'runner.disabled': 'Publish is switched off for this workspace. Turn it on in Settings, Add-ons.',
   'rate.limited': 'Too many publish requests in a minute. Wait a little and try again.',
@@ -168,6 +197,8 @@ export function shareError(e: unknown): string {
   if (e.code === 'publish.server_refused') return (reason && REASON_TEXT[reason]) || REASON_TEXT.rejected
   return CODE_TEXT[e.code] ?? 'That did not work. Reload and try again.'
 }
+
+export const isUnreachable = (e: unknown): boolean => e instanceof ApiError && e.code === 'publish.unreachable'
 
 export const isUnknownWorkspace = (e: unknown): boolean => e instanceof ApiError && e.code === 'publish.server_refused' && (e.detail as { reason?: string } | undefined)?.reason === 'unknown_workspace'
 

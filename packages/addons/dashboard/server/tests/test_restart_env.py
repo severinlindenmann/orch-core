@@ -3,7 +3,6 @@
 import os
 import subprocess
 import sys
-import textwrap
 
 import pytest
 
@@ -50,14 +49,30 @@ def test_signer_child_env_has_no_loader_variable(tmp_path, monkeypatch):
     assert env["ORCH_STATE_DIR"] == str(tmp_path)
 
 
-def test_a_module_in_the_current_directory_is_not_imported_by_dash_p(tmp_path):
-    (tmp_path / "orch_dashboard.py").write_text("raise SystemExit('shadow imported')\n")
-    code = textwrap.dedent("import sys; sys.exit(7 if any(p in ('', '.') for p in sys.path) else 0)")
-    r = subprocess.run(
-        [sys.executable, "-P", "-c", code],
-        cwd=tmp_path,
-        env={"PATH": "/usr/bin:/bin"},
-        capture_output=True,
-        check=False,
-    )
-    assert r.returncode == 0
+def test_a_shadow_module_in_the_current_directory_is_not_imported_by_the_restart(tmp_path, monkeypatch):
+    """Run OUR restart argv prefix and env (captured from control_or_start) in a folder holding ``orch_dashboard.py``,
+    with PYTHONPATH=":" (an empty entry: the current directory) in the parent: the shadow must not be imported."""
+    seen = {}
+    real_run = subprocess.run
+
+    def popen(argv, **kw):
+        seen["argv"], seen["env"] = argv, kw["env"]
+        raise _Started
+
+    monkeypatch.setattr(launcher.subprocess, "Popen", popen)
+    monkeypatch.setattr(launcher, "stale_socket", lambda _p: None)
+    monkeypatch.setattr(launcher, "_running_release", lambda _p: None)
+    monkeypatch.setattr(os, "environ", {**os.environ, "PYTHONPATH": ":"})
+    with pytest.raises(_Started):
+        launcher.control_or_start(tmp_path / "state", "hello")
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / "orch_dashboard.py").write_text("raise SystemExit('shadow imported')\n")
+    prefix = seen["argv"][: seen["argv"].index("-m")]  # [python, -P]: the launcher's own interpreter flags
+    monkeypatch.undo()  # the real Popen again
+    r = real_run(
+        [*prefix, "-c", "import orch_dashboard; print(orch_dashboard.__file__)"],
+        cwd=work, env=seen["env"], capture_output=True, text=True, check=False,
+    )  # fmt: skip
+    assert r.returncode == 0, r.stderr
+    assert str(work) not in r.stdout

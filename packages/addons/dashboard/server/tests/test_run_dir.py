@@ -85,3 +85,23 @@ def test_devhost_resolution_and_advertised_socket(tmp_path, monkeypatch, stub, o
     monkeypatch.setenv("ORCH_RUN_DIR", str(state / "wrong"))
     with pytest.raises(RunDirectoryError):
         dev_directories()
+
+
+def test_serve_refuses_while_an_update_is_unfinished_and_starts_on_a_fresh_machine(tmp_path, monkeypatch):
+    from orch.migrate import init_root
+    from orch.migrate.journal import write_journal
+    from orch.ops.errors import OrchError
+    from orch_dashboard import __main__ as cli
+
+    state = tmp_path / "state"
+    env = {"ORCH_STATE_DIR": str(state)}
+    init_root(state, "host")
+    write_journal("stopped", env, backups={})
+    monkeypatch.setenv("ORCH_STATE_DIR", str(state))
+    monkeypatch.setenv("ORCH_HOST_RUN_DIR", str(tmp_path / "run"))
+    monkeypatch.delenv("ORCH_RUN_DIR", raising=False)
+    monkeypatch.setattr(cli, "refuse_agent", lambda: None)
+    monkeypatch.setattr(cli, "run_dir", lambda s: tmp_path / "run")
+    with pytest.raises(OrchError) as e:
+        cli.serve()
+    assert e.value.code == "update.interrupted"

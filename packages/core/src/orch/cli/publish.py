@@ -3,6 +3,7 @@
     orch publish setup   --server ADDRESS --share ADDRESS     a person: where files go (signed)
     orch publish register                                      a person: tell the server this workspace exists
     orch publish prepare REF FILE... [--once [N]] [--days D]   copy artifacts of a ticket aside; nothing leaves
+    (D for prepare: 1, 3, 7 or 30 days; default 7)
     orch publish share   STAGED                                a person: sign, then send; the link shows once
     orch publish send    STAGED                                a person: send a copy that is already signed
     orch publish revoke  SHARE [--yes]                          a person: the link stops working at once (asks first)
@@ -40,6 +41,7 @@ _USAGE = (
     "[--days D] | share STAGED | send STAGED | revoke SHARE | extend SHARE --days D | password SHARE | "
     "list [REF] [--live] | discard STAGED} [--json]"
 )
+_PREPARE_DAYS = (1, 3, 7, 30)  # the same set the host and the dashboard offer (approval.DAYS)
 _AGENT_OK = frozenset({"prepare", "list", "discard"})
 _PERSON_ONLY_MESSAGE = "a person does this; an agent only prepares (orch publish prepare)"
 
@@ -425,6 +427,8 @@ def _check_shape(a: argparse.Namespace) -> None:
         raise PubError("invalid.input", _USAGE, 2)
     if a.cmd == "setup":
         _check_setup(a)
+    if a.cmd == "prepare" and a.days is not None and a.days not in _PREPARE_DAYS:
+        raise PubError("invalid.input", "a link works for 1, 3, 7 or 30 days: use --days 1, 3, 7 or 30\n" + _USAGE, 2)
     if a.cmd == "extend" and (a.days is None or not 1 <= a.days <= 30):
         raise PubError("invalid.input", "extend needs --days D with D from 1 to 30\n" + _USAGE, 2)
 

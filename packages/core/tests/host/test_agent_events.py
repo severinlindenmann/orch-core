@@ -132,3 +132,18 @@ def test_unknown_event_types_are_reported_as_event():
     store.add("T1", "something.private_word", {"kind": "agent", "id": "a"})
     agentevents.send(service, state, link)
     assert link.calls[0][1]["events"][0]["kind"] == "event"
+
+
+def test_going_selective_drops_the_position_so_the_selective_period_is_never_uploaded():
+    store, link = FakeStore(), Link()
+    service = SimpleNamespace(store=store)
+    full, sel = SimpleNamespace(hub_id="h1", mode="full"), SimpleNamespace(hub_id="h1", mode="selective")
+    agentevents.send(service, full, link)
+    store.add("T1", "ticket.updated", {"kind": "agent", "id": "a"})
+    agentevents.send(service, sel, link)
+    store.add("T1", "ticket.updated", {"kind": "agent", "id": "b"})
+    agentevents.send(service, full, link)  # re-initialises at the end of each log
+    assert link.calls == []
+    store.add("T1", "ticket.updated", {"kind": "agent", "id": "c"})
+    agentevents.send(service, full, link)
+    assert [e["agent"] for e in link.calls[0][1]["events"]] == ["c"]

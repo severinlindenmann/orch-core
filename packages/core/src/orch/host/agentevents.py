@@ -118,8 +118,11 @@ def collect(store: Any, position: dict[str, Any]) -> tuple[list[dict[str, Any]],
 def send(service: Any, state: Any, hub_link: Any) -> None:
     """Best effort, never raises. ``state`` is the hub binding (``hub_id``)."""
     try:
+        if getattr(state, "mode", None) != "full":  # selective: never reveal unshared tickets (D80)
+            service.__dict__.get("_agent_events_pos", {}).pop(state.hub_id, None)  # a later full pass starts at the end
+            return
         store = getattr(service, "store", None)
-        if store is None or getattr(state, "mode", None) != "full":  # selective: never reveal unshared tickets (D80)
+        if store is None:
             return
         pos = service.__dict__.setdefault("_agent_events_pos", {})
         mine = pos.setdefault(state.hub_id, {"init": False, "logs": {}})

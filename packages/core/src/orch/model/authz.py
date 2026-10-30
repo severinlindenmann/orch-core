@@ -95,6 +95,7 @@ ACTOR_RULES: dict[str, str] = {
     "remote.key_rotated": "H",
     "remote.session_opened": "H",
     "remote.session_closed": "H",
+    "remote.presence": "H",
 }
 OPERATE = frozenset(
     {

@@ -182,9 +182,10 @@ def test_remote_sessions_lists_the_open_streams(human, served):
     table = remote.streams(served.service)
     table.register("b" * 32, "rd_" + "2" * 32)
     table.register("a" * 32, "rd_" + "1" * 32)
+    none = {"name": None, "person": None, "level": None, "since_ms": None}  # not opened: nothing is known yet
     rows = [
-        {"stream_id": "a" * 32, "device_id": "rd_" + "1" * 32},
-        {"stream_id": "b" * 32, "device_id": "rd_" + "2" * 32},
+        {"stream_id": "a" * 32, "device_id": "rd_" + "1" * 32, **none},
+        {"stream_id": "b" * 32, "device_id": "rd_" + "2" * 32, **none},
     ]
     assert ok(call(served, "remote.sessions"))["data"] == {"sessions": rows}
 

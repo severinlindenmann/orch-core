@@ -74,6 +74,7 @@ WORKSPACE_ONLY = {
     "remote.key_rotated",
     "remote.session_opened",
     "remote.session_closed",
+    "remote.presence",
 }
 
 
@@ -636,6 +637,7 @@ _SPEC = {
         5,
     ),
     "remote.session_closed": (HOST, {"stream_id": DID2, "device_id": "rd_" + DID, "reason": "closed"}, 5),
+    "remote.presence": (HOST, {"stream_id": DID2, "device_id": "rd_" + DID, "n": 3}, 5),
     "hub.pinned": (
         HOST,
         {

@@ -242,4 +242,4 @@ def remote_apply(ws: WsCore, e: dict[str, Any], v: Verifier, *, dev: bool) -> Re
         # R2 review L3: a new key removes every device in the SAME line (they pinned the old one): no window
         _set(ws, wrk_fp=e["wrk_fp"], devices={}, device_version=ws.remote.get("device_version", 0) + 1)
         return None
-    return None  # code_issued, code_burned, session_opened, session_closed: records, no state
+    return None  # code_issued, code_burned, session_opened, session_closed, presence: records, no state

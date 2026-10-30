@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "remote.no_stream",
+    "message": "that remote session is not open any more",
+    "hint": "look at the open sessions again",
+    "fix": {
+      "argv": [
+        "orch",
+        "remote",
+        "sessions"
+      ]
+    },
+    "retryable": false
+  }
+}

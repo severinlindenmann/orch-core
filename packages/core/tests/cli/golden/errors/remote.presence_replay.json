@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "remote.presence_replay",
+    "message": "that remote confirmation was already used",
+    "hint": "confirm again on the remote device",
+    "fix": {
+      "argv": [
+        "orch",
+        "remote",
+        "sessions"
+      ]
+    },
+    "retryable": false
+  }
+}

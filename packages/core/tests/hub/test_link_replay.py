@@ -161,3 +161,45 @@ def test_failed_ack_signing_closes_the_link_and_takes_no_seq(make_hub) -> None: 
             link.ack_route_in()
         assert not link.is_open  # fail closed: no frame was written, no number skipped on an open link
         assert link._seq == 0  # noqa: SLF001
+
+
+def test_a_push_from_the_test_thread_never_overlaps_the_hub_threads_ssl_calls(make_hub) -> None:  # noqa: F811
+    """Root cause of the ack-signing flake: the test thread's push and the hub thread's read hit one pyOpenSSL
+    connection at the same time (not thread-safe), now and then killing the link with ``LinkClosed: Error``. The
+    overlap is a timing accident, so this widens it: every SSL call of the hub connection sleeps briefly, and the
+    test counts calls that ran concurrently. The hub's connection must serialise them."""
+    import threading
+
+    hub = make_hub(on_request=lambda h, o: b"" if o["op"] == "route_in" else h.reply(o))  # an ack gets no reply
+    state = {"in": 0, "overlap": 0}
+    guard = threading.Lock()
+
+    class Slow:
+        def __init__(self, c: Any) -> None:
+            self._c = c
+
+        def __getattr__(self, name: str) -> Any:
+            fn = getattr(self._c, name)
+            if name not in {"recv", "send"}:
+                return fn
+
+            def call(*a: Any, **k: Any) -> Any:
+                with guard:
+                    state["in"] += 1
+                    state["overlap"] += state["in"] > 1
+                try:
+                    time.sleep(0.002)
+                    return fn(*a, **k)
+                finally:
+                    with guard:
+                        state["in"] -= 1
+
+            return call
+
+    with open_link(hub) as link:
+        hub._conns[-1]._c = Slow(hub._conns[-1]._c)  # noqa: SLF001
+        for _ in range(20):
+            _push(hub, hub.next_seq())
+            assert link.next_route_in(wait=3.0) == b"env"
+            link.ack_route_in()
+    assert state["overlap"] == 0

@@ -593,3 +593,19 @@ test("P05: the Home count includes private workspaces for a hub admin and nobody
   assert.equal(line({ adminWorkspaces: [ben] }), "2 workspaces online, 0 offline");
   assert.equal(line({ adminWorkspaces: null }), "1 workspace online, 0 offline");
 });
+
+test("SV-01: every part shows its address; Edge down is called out; no address is said plainly", () => {
+  const d = base();
+  d.hub.url = "http://192.168.1.5:8100";
+  d.relay.url = "http://100.64.0.2:8101";
+  d.publish.url = null; d.publish.state = "up";
+  d.edge = { state: "down", url: "https://hub.test", last_ok_ms: null };
+  const out = servicesView(d, actions, NOW);
+  const row = (n) => find(out, (x) => x.attrs.id === "svc-" + n)[0].textContent;
+  assert.match(row("hub"), /Address http:\/\/192\.168\.1\.5:8100/);
+  assert.match(row("relay"), /Address http:\/\/100\.64\.0\.2:8101/);
+  assert.match(row("publish"), /No address/);
+  assert.match(row("edge"), /Not answering/);
+  assert.match(row("edge"), /Address https:\/\/hub\.test/);
+  assert.equal(summary(d).text, "Edge is not answering");
+});

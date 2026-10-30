@@ -95,21 +95,80 @@ def test_handoffs_without_a_queue_is_an_empty_list(w):
 
 
 @pytest.mark.parametrize(
-    ("behind_edge", "url", "expected"),
+    ("behind_edge", "url", "state", "edge_url"),
     [
-        (False, None, {"state": "not_set_up", "url": None}),
-        (False, "https://hub.test", {"state": "not_set_up", "url": None}),
-        (True, None, {"state": "up", "url": None}),
-        (True, "https://hub.test", {"state": "up", "url": "https://hub.test"}),
+        (False, None, "not_set_up", None),
+        (False, "https://hub.test", "not_set_up", None),
+        (True, None, "up", None),
+        (True, "https://hub.test", "up", "https://hub.test"),
     ],
 )
-def test_services_edge_uses_configuration_without_a_probe(w, behind_edge, url, expected):
-    def no_probe(*args):
-        pytest.fail("Edge must not trigger a network call")
+def test_services_edge_without_an_address_or_when_not_behind_one_is_not_probed(w, behind_edge, url, state, edge_url):
+    calls = []
 
-    w.api.d.services = Services(relay_url=None, publish_url=None, behind_edge=behind_edge, edge_url=url, probe=no_probe)
+    def probe(u, path, t):
+        calls.append(u)
+        return 200, None
+
+    w.api.d.services = Services(relay_url=None, publish_url=None, behind_edge=behind_edge, edge_url=url, probe=probe)
     status, body, _ = w.call("GET", "/admin/services", token=w.login(w.admin))
     assert status == 200
-    assert body["edge"] == expected
+    assert (body["edge"]["state"], body["edge"]["url"]) == (state, edge_url)
+    assert calls == ([edge_url] if edge_url else [])
     assert body["hub"]["state"] == "up"
     assert body["relay"]["state"] == body["publish"]["state"] == "not_set_up"
+
+
+@pytest.mark.parametrize(
+    ("result", "state"),
+    [((200, None), "up"), ((302, None), "up"), ((502, None), "down"), (OSError("refused"), "down")],
+)
+def test_edge_is_probed_read_only_and_reports_only_up_or_down(result, state):
+    seen = []
+
+    def probe(url, path, timeout):
+        seen.append((url, path, timeout))
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    svc = Services(
+        relay_url=None,
+        publish_url=None,
+        behind_edge=True,
+        edge_url="https://hub.test",
+        probe=probe,
+        hub_url="http://100.1.2.3:8100",
+        timeout_s=1.5,
+    )
+    snap = svc.snapshot()
+    assert seen == [("https://hub.test", "/", 1.5)]
+    assert snap["edge"]["state"] == state and snap["edge"]["url"] == "https://hub.test"
+    assert snap["hub"]["url"] == "http://100.1.2.3:8100"
+
+
+def test_the_http_probe_does_not_follow_a_redirect_to_another_host():
+    import http.server
+    import threading
+
+    from orch_hub.services import http_probe
+
+    hits = []
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            hits.append(self.headers.get("Host"))
+            self.send_response(302)
+            self.send_header("Location", "http://other.invalid/")
+            self.end_headers()
+
+        def log_message(self, *a):
+            pass
+
+    srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        status, _ = http_probe(f"http://127.0.0.1:{srv.server_address[1]}", "/", 2.0)
+    finally:
+        srv.shutdown()
+    assert status == 302 and len(hits) == 1

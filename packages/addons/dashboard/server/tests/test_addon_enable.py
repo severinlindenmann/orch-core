@@ -37,12 +37,18 @@ def test_first_step_and_expected(name, fields):
         {"name": "publish", "publish": PUBLISH, "models": {"codex": {"work": "gpt-5.4"}}},
         {"name": "publish"},
         {"name": "publish", "publish": {**PUBLISH, "extra": "x"}},
-        {"name": "publish", "publish": {"server": PUBLISH["server"], "share": PUBLISH["server"]}},
     ],
 )
 def test_invalid_input(fields):
     with pytest.raises(ValidationError):
         parse(**fields)
+
+
+def test_one_address_for_files_and_links_is_accepted():
+    """The form's default and what `orch install` signs (server = share = url): equal addresses are valid."""
+    one = {"server": "https://pub.example.test", "share": "https://pub.example.test"}
+    body = parse(name="publish", publish=one)
+    assert host_call(body) == ("settings.set", {"set": {"publish": one}})
 
 
 class Link:

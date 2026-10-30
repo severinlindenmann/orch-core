@@ -420,6 +420,38 @@ class Channels:
         self._guard(go)
         return {"token": token, "user_id": u, "expires_ms": now + SESSION_TTL_MS}
 
+    def open_company_session(self, user_id: str) -> dict[str, Any]:
+        """A ``full`` (browser) session for a person the company's identity provider has just signed in (HUB-PE-04). ``via``
+        is ``oidc``. It is a SESSION only: registering a signing key still needs the hub password and a TOTP code
+        (``reauth``), which a company-login-only person does not have, so this can never mint a key (decision C)."""
+        u = self._known_user(user_id)
+        try:
+            if not self.acc.is_live(u):
+                raise ChannelError("unknown_user")
+        except AccessError as e:
+            raise ChannelError("store_error", e.code) from None
+        token = secrets.token_urlsafe(32)
+        now = self._now()
+
+        def go() -> None:
+            with self._tx() as db:
+                db.execute("DELETE FROM sessions WHERE expires_ms <= ?", (now,))
+                db.execute(
+                    "INSERT INTO sessions(token_hash, user_id, created_ms, expires_ms, scope, login_ms, via) "
+                    "VALUES (?,?,?,?,?,?,?)",
+                    (_sha(token), u, now, now + SESSION_TTL_MS, "full", now, "oidc"),
+                )
+
+        self._guard(go)
+        return {"token": token, "user_id": u, "expires_ms": now + SESSION_TTL_MS}
+
+    def end_company_sessions(self, user_id: str | None = None) -> int:
+        """Every company-login session of this person, or of everybody (the provider changed). Other sessions stay."""
+        if user_id is None:
+            return self._guard(lambda: self.db.w("DELETE FROM sessions WHERE via='oidc'"))
+        u = self._user(user_id)
+        return self._guard(lambda: self.db.w("DELETE FROM sessions WHERE via='oidc' AND user_id=?", (u,)))
+
     def open_invite_session(self, user_id: str) -> dict[str, Any]:
         """A ``full`` (browser) session for a person who has just created their account from a join invitation: the
         one-time link proved them and they chose the password in this same request. Never for a recovery or reset (those

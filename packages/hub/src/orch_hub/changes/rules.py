@@ -78,7 +78,7 @@ def end_change(access: Access, body: dict[str, Any]) -> str | None:
         return None
     cur = access.member_end(body["group"], body["user_id"])
     new = body["ends_ms"]
-    if cur == "absent" or (cur is not None and cur <= access._now()):  # noqa: SLF001 - the model's clock
+    if cur == "absent" or (cur is not None and cur <= access._now()):
         return None
     if cur is None:
         return None if new is None else "earlier"

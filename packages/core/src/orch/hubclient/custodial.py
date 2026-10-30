@@ -491,8 +491,11 @@ def _lowers(new: Mapping[str, Any], old: Mapping[str, Any]) -> bool:
     "wider")."""
     rank = {r: i for i, r in enumerate(ROLES)}
     o_roles, n_roles = old["roles"], new["roles"]
-    return bool(set(new["revoked_channels"]) - set(old["revoked_channels"])) or any(
-        u not in n_roles or rank[n_roles[u]] < rank[r] for u, r in o_roles.items()
+    o_ends, n_ends = old["ends_ms"], new["ends_ms"]
+    return (
+        bool(set(new["revoked_channels"]) - set(old["revoked_channels"]))
+        or any(u not in n_roles or rank[n_roles[u]] < rank[r] for u, r in o_roles.items())
+        or any(u not in o_ends or t < o_ends[u] for u, t in n_ends.items())  # an end date added or earlier (GA-07)
     )
 
 

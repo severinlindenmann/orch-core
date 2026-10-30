@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import base64
 import copy
+import dataclasses
 from dataclasses import dataclass
 from typing import Any
 
@@ -216,6 +217,11 @@ def _scratch(core: Core, log: str, e: dict[str, Any]) -> Core:
         created_at=dict(core.created_at) if typ == "ticket.created" else core.created_at,
         logs=core.logs,
     )
+    # the time this event is judged at (hub end dates, identity.role_of): on a COPY of the workspace core, never on the
+    # one an earlier State shares (a shallow copy is enough where the handler only reads it)
+    at_ms = ts(e["at"]) * 1000 if "at" in e else core.ws.at_ms  # (an event always has one; a bare test event may not)
+    sc.ws = dataclasses.replace(sc.ws, at_ms=at_ms) if sc.ws is core.ws else sc.ws
+    sc.ws.at_ms = at_ms
     if is_ws and typ in CROSS_TICKETS:
         sc.tickets = copy.deepcopy(core.tickets)
     elif not is_ws and log in core.tickets:

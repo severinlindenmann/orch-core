@@ -1373,6 +1373,14 @@ def build() -> dict[str, Any]:
         "exclusive end: now == ends_ms is already over",
     )
     case(
+        "custodial_access_ended_before_now",
+        "custodial",
+        {**cus, "event": ev, "snapshot": ends_snap(NOW - 1)},
+        {"error": "forbidden_role"},
+        4,
+        "role_at just before (ends_ms = now + 1: a role), at (ends_ms = now: none) and after the end (none)",
+    )
+    case(
         "custodial_snapshot_issued_far_ahead_with_end",
         "custodial",
         {**cus, "event": ev, "snapshot": ends_snap(NOW + 10**9, issued_ms=NOW + 300_001)},

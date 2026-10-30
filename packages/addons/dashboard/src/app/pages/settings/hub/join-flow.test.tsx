@@ -117,8 +117,11 @@ describe('P10: a short join dialog', () => {
     const view = await open()
     fireEvent.change(await screen.findByTestId('hub-link-text', {}, T), { target: { value: LINK } })
     const box = await screen.findByTestId('hub-mode-box', {}, T)
-    expect(box.textContent).toContain('recommended')
-    expect(box.textContent).toContain("The hub also sees this workspace's name")
+    expect(box.textContent).toContain("The hub sees the tickets you pick, notes that need you, and this workspace's name.")
+    // one question naming the hub by its address, one Details fold in the hub box; Connect stays the only way on
+    expect(screen.getByTestId('hub-link-hub').textContent).toContain('Connect to the hub at')
+    expect(screen.getByTestId('hub-link-hub').querySelectorAll('details')).toHaveLength(1)
+    expect(screen.queryByTestId('hub-link-hub')!.contains(box)).toBe(true)
     expect(screen.queryByTestId('hub-mode-full')).toBeNull()
     expect(screen.queryByText('What the hub has already read cannot be taken back.')).toBeNull()
     expect(screen.queryByText('You choose what to share.')).toBeNull()
@@ -140,8 +143,8 @@ describe('a connect link in the address fragment', () => {
     expect((await screen.findByTestId('hub-link-text', {}, T) as HTMLInputElement).value).toBe(LINK)
     expect(screen.getByTestId('hub-link-from').textContent).toContain('http://10.0.0.5:8106') // no lookup yet: the target is named
     await view.user.click(await screen.findByRole('button', { name: 'Look up this hub' }, T))
-    expect((await screen.findByTestId('hub-link-hub', {}, T)).textContent).toContain('Hub')
-    expect(screen.getByTestId('hub-link-origin').textContent).toContain('http://10.0.0.5:8106')
+    expect((await screen.findByTestId('hub-link-hub', {}, T)).textContent).toContain('Connect to the hub at')
+    expect(screen.getByTestId('hub-link-hub').textContent).toContain('Connect to the hub at 10.0.0.5:8106?')
     await waitFor(() => expect(view.address()).not.toContain('connect'), T)
     view.unmount()
   })
@@ -167,7 +170,7 @@ describe('P12: Use copied link', () => {
     expect(screen.getByTestId('hub-link-text').getAttribute('placeholder')).toBeNull()
     await view.user.click(await screen.findByRole('button', { name: 'Use copied link' }, T))
     expect((screen.getByTestId('hub-link-text') as HTMLInputElement).value).toBe(LINK)
-    expect((await screen.findByTestId('hub-link-hub', {}, T)).textContent).toContain('Hub')
+    expect((await screen.findByTestId('hub-link-hub', {}, T)).textContent).toContain('Connect to the hub at') // r14 P07: the address is the question; the hub name sits under Details
     expect(navigator.clipboard.readText).toHaveBeenCalledTimes(1)
     expect(join).not.toHaveBeenCalled() // the person still presses Connect
     view.unmount()
@@ -186,7 +189,7 @@ describe('P12: Use copied link', () => {
     await view.user.click(await screen.findByRole('button', { name: 'Use copied link' }, T))
     expect(await screen.findByTestId('hub-link-nocopied', {}, T)).toBeTruthy()
     fireEvent.change(screen.getByTestId('hub-link-text'), { target: { value: LINK } })
-    expect((await screen.findByTestId('hub-link-hub', {}, T)).textContent).toContain('Hub')
+    expect((await screen.findByTestId('hub-link-hub', {}, T)).textContent).toContain('Connect to the hub at') // r14 P07: the address is the question; the hub name sits under Details
     view.unmount()
   })
 })

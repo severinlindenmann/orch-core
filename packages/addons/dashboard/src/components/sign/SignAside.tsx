@@ -1,6 +1,6 @@
 // The parts of the simpler sign dialog that sit around the signed content (variant B): the agent access terms, "What happens next", and the footer lines (how you sign, the quiet phone link). The content itself is
 // still the host's review, shown in full; nothing here replaces it and nothing here is signed.
-import { AGENT_MAY, type SignStory } from './story'
+import { AGENT_MAY_SHORT, type SignStory } from './story'
 
 export function WhatNext({ story }: { story: SignStory }) {
   if (!story.steps.length) return null
@@ -16,10 +16,8 @@ export function WhatNext({ story }: { story: SignStory }) {
 export function AgentAccess({ story }: { story: SignStory | null }) {
   if (!story?.access) return null
   return (
-    <section data-testid="agent-access" aria-label="Agent access" className="space-y-2 rounded-md border border-border p-3 text-[13px]">
-      <h3 className="font-medium text-text">Agent access</h3>
-      <p data-testid="access-length">Let agents work for you for {story.access.length}.</p>
-      <p><strong className="font-medium text-text">What agents may do</strong><br />{AGENT_MAY}</p>
+    <section data-testid="agent-access" aria-label="Agent access" className="rounded-md border border-border p-3 text-[13px]">
+      <p data-testid="access-length">Agents (Claude Code) may work for you for {story.access.length}. {AGENT_MAY_SHORT}</p>
     </section>
   )
 }

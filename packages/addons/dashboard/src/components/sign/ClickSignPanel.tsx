@@ -224,10 +224,15 @@ function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil
   // A compact review (a summary, or a quick task shown folded) says what happens in its own lines: no step list under it.
   const lean = !!view.content?.summary || (!!story?.quick && !!view.content && alsoSigned(view.content, story.quick) !== null)
   const danger = !!story?.danger
+  // r14-P07: with one workspace and a review that has its own fold, the workspace line sits inside that fold (still one click
+  // away, still naming the workspace); with several workspaces it stays on the main surface (D6).
+  const folded = !!story?.foldWorkspace && !manyWorkspaces && (!!story.foldInRisk || (!auto && risk.length === 0))
+  const inFold = folded && !!view.content
+  const wsLine = <WorkspaceLine workspace={view.workspace} many={manyWorkspaces} always={auto || risk.length > 0 || inFold} folded={folded && !inFold} target={view.content?.ticket?.key} />
   return (
     <section ref={setBox} data-testid="click-panel" aria-label="Review before signing" className="space-y-3">
-      <WorkspaceLine workspace={view.workspace} many={manyWorkspaces} always={auto || risk.length > 0} folded={!!story?.foldWorkspace && !manyWorkspaces} target={view.content?.ticket?.key} />
-      {view.content && <SignContent content={view.content} ws={view.workspace?.id} technical={technical} compact={story?.compact} quick={story?.quick} />}
+      {!inFold && wsLine}
+      {view.content && <SignContent content={view.content} ws={view.workspace?.id} technical={technical} compact={story?.compact} quick={story?.quick} workspaceLine={inFold ? wsLine : undefined} />}
       {/* authority stays in the default view, never folded: the scope, the agent access length, what happens next */}
       {story?.scope && <p data-testid="sign-scope" className="text-[13px] text-text">{story.scope}</p>}
       <AgentAccess story={story ?? null} />

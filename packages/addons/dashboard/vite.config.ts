@@ -97,6 +97,8 @@ export default defineConfig(({ command }) => ({
   },
   build: {
     rolldownOptions: {
+      // Two pages: the dashboard, and the remote client's own screens (served by orch_dashboard.remote_client on 127.0.0.1).
+      input: { main: path.resolve(import.meta.dirname, 'index.html'), 'remote-client': path.resolve(import.meta.dirname, 'remote-client.html') },
       output: {
         // Stable vendor chunks: the entry stays small and the framework code caches across page-chunk changes.
         codeSplitting: {

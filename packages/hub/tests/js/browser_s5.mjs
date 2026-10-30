@@ -43,20 +43,20 @@ try {
     await shot("home-first-run");
     await page.goto(HUB_URL + "/#/register");
   } else {
-    await page.getByText("This browser cannot sign yet").waitFor();
+    await page.getByText("Approvals need a signing key in this browser").waitFor();
     await shot("home-unregistered");
     // register: needs password + a later code again
-    await page.getByRole("button", { name: "Register this browser" }).click();
+    await page.getByRole("button", { name: "Set up signing" }).click();
   }
-  await page.getByRole("heading", { name: "Register this browser" }).waitFor();
+  await page.getByRole("heading", { name: "Set up signing" }).waitFor();
   await page.fill("#pw2", HUB_PW);
   await page.fill("#code2", CODE_SIGNIN); // the code that signed us in must be refused
-  await page.getByRole("button", { name: "Register this browser" }).click();
+  await page.getByRole("button", { name: "Set up signing" }).click();
   await page.getByText("Browser not registered").waitFor();
   await page.fill("#pw2", HUB_PW);
   await page.fill("#code2", CODE_REGISTER);
   await shot("register");
-  await page.getByRole("button", { name: "Register this browser" }).click();
+  await page.getByRole("button", { name: "Set up signing" }).click();
   await page.getByText("This browser is ready").waitFor({ timeout: 3000 }); // the success banner is shown, not just the card below it
   await page.getByText("This browser holds a signing key for you").waitFor();
 

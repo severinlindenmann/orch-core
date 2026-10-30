@@ -18,12 +18,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TextIO
 
+from orch import childenv
+
 __all__ = ["Env", "LifecycleError", "Svc", "clear_stopped", "discover", "start_svc", "stop_svc", "stopped_by_orch"]
 
 PERSON = "person"
 SERVER = "server"
-ORDER_STOP = ("runner", "dashboard", "host", "records", "hub", "relay", "publish")
-ORDER_START = ("publish", "relay", "hub", "host", "runner", "records", "dashboard")
+ORDER_STOP = ("runner", "dashboard", "host", "records", "helper", "hub", "relay", "publish")
+ORDER_START = ("publish", "relay", "hub", "helper", "host", "runner", "records", "dashboard")
 PERSON_KEYS = ("host", "runner", "records", "dashboard")
 #: how long a service gets to end its work (the runner stops every agent first) before it counts as still stopping
 UNLOAD_WAIT = 45.0
@@ -35,7 +37,7 @@ class LifecycleError(Exception):
 
 def _run(argv: list[str]) -> tuple[int, str]:
     try:
-        r = subprocess.run(argv, capture_output=True, text=True, timeout=60)
+        r = subprocess.run(argv, capture_output=True, text=True, timeout=60, env=childenv.sanitize(os.environ))
     except (OSError, subprocess.SubprocessError) as e:
         return 127, str(e)
     return r.returncode, (r.stdout or "") + (r.stderr or "")
@@ -160,6 +162,9 @@ def discover(e: Env) -> list[Svc]:
             out.append(Svc(key, labels[key], SERVER, "part", name=key, installed=False))
             continue
         out.append(_part(e, key, labels[key], SERVER, rec))
+    helper = st.get("helper")
+    if isinstance(helper, dict):  # the hub's service helper, when the installer made one (orch.install.helper)
+        out.append(_part(e, "helper", "the service helper", SERVER, helper, name="hub-helper"))
     if isinstance(dash, dict):
         out.append(_part(e, "dashboard", "the dashboard", PERSON, dash))
     elif os.path.lexists(e.state / "dashboard" / "ctl.sock") and e.answers(e.state / "dashboard" / "ctl.sock"):
@@ -229,18 +234,19 @@ def _unit_state(e: Env, s: Svc) -> str:
     return "running" if word in ("active", "activating", "reloading") else "stopped"
 
 
-def _part(e: Env, key: str, label: str, group: str, rec: dict[str, Any]) -> Svc:
+def _part(e: Env, key: str, label: str, group: str, rec: dict[str, Any], name: str | None = None) -> Svc:
+    name = name or key
     kind = rec.get("runner") if isinstance(rec.get("runner"), str) else None
     ver = rec.get("version") if isinstance(rec.get("version"), str) else ""
     if not ver and key == "dashboard":
         ver = _dist_version("orch-dashboard")
-    s = Svc(key, label, group, "part", name=key, detail=str(rec.get("url") or ""), runner_kind=kind, version=ver)
+    s = Svc(key, label, group, "part", name=name, detail=str(rec.get("url") or ""), runner_kind=kind, version=ver)
     try:
-        s.state = "running" if _runner(e, kind).info(key).get("running") else "stopped"
+        s.state = "running" if _runner(e, kind).info(name).get("running") else "stopped"
         label_of = getattr(_runner(e, kind), "label", None)
         if s.state != "running" and kind == "launchd" and label_of is not None:
             # `orch stop` records a part by its name, not its launchd label: a part it stopped is stopped, not blocked
-            s.blocked = key not in stopped_by_orch(e.state) and blocked_by_macos(e, label_of(key))
+            s.blocked = name not in stopped_by_orch(e.state) and blocked_by_macos(e, label_of(name))
     except Exception:  # noqa: BLE001 - a broken service manager must not hide the other rows
         s.state = "unknown"
     return s

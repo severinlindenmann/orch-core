@@ -30,7 +30,7 @@ import stat
 from pathlib import Path
 from typing import Any, Protocol
 
-from orch import canon, crypto
+from orch import canon, childenv, crypto
 from orch.privdir import others_can_write
 
 from .base import (
@@ -271,7 +271,11 @@ def _restrict_windows(path: Path, *, directory: bool) -> None:  # pragma: no cov
     user = f"{os.environ.get('USERDOMAIN', '')}\\{os.environ['USERNAME']}".lstrip("\\")
     grant = f"{user}:(OI)(CI)F" if directory else f"{user}:F"
     r = subprocess.run(
-        ["icacls", str(path), "/inheritance:r", "/grant:r", grant], capture_output=True, text=True, check=False
+        ["icacls", str(path), "/inheritance:r", "/grant:r", grant],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=childenv.sanitize(os.environ),
     )
     if r.returncode != 0:
         raise CustodyError(f"cannot restrict {path.name} to its owner: {r.stdout.strip() or r.stderr.strip()}")

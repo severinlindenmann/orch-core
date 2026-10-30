@@ -1455,8 +1455,8 @@ unknown `op` is `unknown_op`.
 | `binding_put` | w2h | both | `{"object", "owner_proof"}`: a `hub.binding` or `hub.unbound`, forwarded as is; `owner_proof` is always present: the proof (§9.6) for a binding that is new or switches the mode, else `null` | `{}` |
 | `audit_ack` | w2h | both | `{"seq", "head": b64u(32)}` | `{"acked": seq}` (§10.5) |
 | `audit_get` | w2h | both | `{"since"}` | `{"records": [{"record": <hub.audit>, "event"?}], "head", "op_certs": [<hub.op_cert>]}` (D4, §10.5; added) |
-| `share_put` | w2h | selective | `{"item_id", "sealed": b64u}` | `{}` |
-| `share_revoke` | w2h | selective | `{"item_id"}` | `{}` |
+| `share_put` | w2h | both | `{"item_id", "sealed": b64u}` | `{}` |
+| `share_revoke` | w2h | both | `{"item_id"}` | `{}` |
 | `space_list` | w2h | both | `{}` | `{"spaces": [<hub.space>]}` (V3-D8, §10.4) |
 | `space_accept` | w2h | both | `{"accept": <space.accept>}` | `{}` (L2P-2) |
 | `space_put` | w2h | both | `{"space_id", "epoch", "item_id", "sealed": b64u}` | `{"seq"}` |
@@ -1544,8 +1544,8 @@ WITHOUT being used; one presented at another workspace's link is spent. `return_
 2. `op` in the table, and `re == null` exactly when `dir` is the op's request direction → `unknown_op`; the one-way
    stream frames (`stream_data`, `stream_close`) have `re == null` in both directions and get no reply, and
    `stream_open` is h2w only (§10.2c);
-3. the op exists in this workspace's mode → `wrong_mode` (no `wk_seal` in selective mode, D80; no share ops in full
-   mode);
+3. the op exists in this workspace's mode → `wrong_mode` (no `wk_seal` in selective mode, D80). `share_put` / `share_revoke` work in both modes;
+   in full mode the hub accepts only `item_kind: ticket` (`wrong_mode` otherwise);
 4. `hub_id` → `other_hub`; `workspace_id` is the link's → `other_workspace`;
 5. `|now − ts_ms| ≤ 120 s` → `stale_timestamp`;
 6. the request body has exactly the table's fields with their types → `malformed`;
@@ -1560,7 +1560,11 @@ Reply rules:
 - After the link is authenticated, a request is accepted only while the link's key is the workspace's current pinned `WSK`; a link opened before the pin (the first link of a join) is closed with `wsk_mismatch` as soon as another link pinned a different key.
 - After `hub.unbound`, every op except `join` and `binding_put` is refused with `not_bound`.
 
-#### 10.2b The content of a selective `share_put` (phase 4, C6/D9)
+#### 10.2b The content of a `share_put` (phase 4, C6/D9; both modes since r15)
+
+In full mode the hub accepts only `item_kind: ticket` (`wrong_mode` otherwise); the item gives its named `audience` read
+access and nothing else; hub roles still grant nothing on a shared item. A selective-to-full switch keeps the items; the
+hub serves only ticket items of a full workspace, and the host's next pass revokes the rest.
 
 The `share_put {item_id, sealed}` body of H0 left `sealed` opaque. Its content, merged from C6 (orch-core #1022) and D9
 (orch-hub #23) (DECIDED HERE where they differed):
@@ -1963,6 +1967,127 @@ Flow: the request without a covering batch is answered `428` with the dashboard'
 refuses to prompt on a mismatch), asks the dashboard for a nonce (`remote/presence/nonce`), draws the prompt naming
 the workspace and the actions, posts the presence (`remote/presence`) and retries; each digest of a verified batch
 authorizes one request (it is taken when used).
+
+#### 10.2d The remote-client endpoint (R4 #1592, R5 #1593; spec `orch-v2-hub-remote.md` §5–§7, D87, D92)
+
+How a remote device (the R5 client on a computer, the phone later) reaches the stream router of §10.2c. The hub only
+checks who may knock and forwards opaque Noise messages; everything that grants anything stays end to end (D87).
+Reference `orch_hub.contract.remote` (`client_frame_payload`, `client_msg_check`, `ClientConn`, `rail_message`); the
+hub's runtime is `orch_hub.remote.endpoint.RemoteEndpoint`; vectors `vectors_remote.json` `client_*` (§15).
+
+**Transport.** One TLS 1.3 connection to the hub's **link address** (`hub_where`, §10.9; the same port the hosts dial,
+reached by SNI through the public passthrough or on the private network), pinned to the hub card's SPKI like a host
+link, with the ALPN protocol **`orch-remote/1`**. A client refuses a connection where that protocol was not selected
+(a hub without a stream router does not select it). A connection that negotiated it never becomes a host link and
+the reverse. The hub keeps remote connections in their own pools (at most 64 at once, 16 of them not yet past
+`hello`): a full pool closes the new connection without a frame. **One stream per connection**: the stream ends when
+the connection ends and the reverse; the client never names a stream id, so there is nothing to guess or attach to.
+
+**Framing.** Every message is one frame: a 4-byte big-endian payload length `n`, `1 ≤ n ≤ 98304` (96 KiB), then `n`
+bytes of one JSON object. A receiver refuses `n = 0` or `n > 98304` from the length alone, before it reads or
+allocates the payload. The payload is parsed with the strict parser of v2 §2.3 (UTF-8, no duplicate key, no float,
+no NaN, integers within ±(2^53 − 1), nesting ≤ 16); senders write `cj`, receivers do not insist on canonical key order.
+Every message has **exactly** the keys below, else `malformed`.
+
+| dir | message | keys and rules |
+|---|---|---|
+| c→h | `hello` | `{"t": "hello", "v": 1, "token"}`: `v` the integer 1 (a later version is a new ALPN name, never negotiated here); `token` a string, a hub session token of scope `remote` (below) |
+| h→c | `ready` | `{"t": "ready", "hub_id"}`: 32 lower hex, the hub's id (§2) |
+| h→c | `error` | `{"t": "error", "error"}`: `malformed`, `no_session`, `remote.busy` or `unavailable`; then the hub closes the connection |
+| c→h | `rail` | `{"t": "rail"}`, nothing else (R5, decision 72) |
+| h→c | `rail` | `{"t": "rail", "workspaces": [{"workspace_id", "name", "online"}], "more"}` (below) |
+| c→h | `open` | `{"t": "open", "workspace_id", "device_id", "kind"}`: `workspace_id` 32 lower hex; `kind: "session"` with `device_id` `rd_` + 32 lower hex, `kind: "enroll"` with an enrollment code id `rc_` + 32 lower hex; the other pairing, another kind or any other key (a `stream_id` too) is `malformed` |
+| h→c | `opened` | `{"t": "opened", "stream_id"}`: 32 lower hex, drawn by the hub (§10.2c) |
+| h→c | `refused` | `{"t": "refused", "error"}`: one of the open codes below; then the hub closes the connection |
+| both | `data` | `{"t": "data", "b"}`: canonical unpadded base64url of **1 to 65535 bytes**, exactly one Noise message of §10.2c (msg1, msg2, then transport messages); a `b` longer than 87380 characters or decoding to more than 65535 bytes is `too_large`, an empty, padded, non-canonical or non-string `b` is `malformed` |
+| both | `close` | `{"t": "close", "reason"}`: one of the §10.2c `stream_close` reasons, nothing else |
+
+**Order** (reference `ClientConn`, vectors `client_seq_*`):
+
+```
+c→h hello                  h→c ready | error·end
+c→h rail        (optional, at most once)      h→c rail | error·end
+c→h open                   h→c opened | refused·end | error·end
+c↔h data*                  c→h close (then h→c data* dropped, h→c close)  |  h→c close·end
+```
+
+- The client sends nothing before `ready`, and `open` only after `ready` (it needs `hub_id` for the prologue). It
+  compares `hub_id` with the hub id of the card it pinned and closes the connection on a difference.
+- Any frame out of this order, out of its shape, or a second `hello`, `rail` or `open` is a protocol error. **What the
+  hub answers to a bad client frame** depends on where it is: before `ready` `{"t": "error", "error": "malformed"}`;
+  after `ready` and before `opened` (also after a `rail`) `{"t": "refused", "error": "malformed"}` (a `data` or
+  `close` before `opened` is such a frame); after `opened` it closes the stream with `malformed` or `too_large`
+  (`stream_close` to the host, `{"t": "close", "reason"}` to the client). Then it closes the connection. Nothing of a
+  refused `open` reaches the host.
+- **What the client does with a bad hub frame**: before `opened` it closes the connection; after `opened` it sends
+  `{"t": "close", "reason": "malformed"}` (or `too_large`) and closes. A `refused` or `error` after `opened`, a second
+  `opened`, a `rail` it did not ask for, a `data` before `opened`, a hub frame before `hello` are all bad.
+- After the client's own `close` the hub answers with a `close` (the same reason) and ends the connection; `data`
+  frames the host sent before it saw the close may still arrive first and are **dropped**, not an error. After a hub
+  `close` the hub sends nothing more and the client sends nothing more.
+- Closing the connection without `close` is the same as `close` `closed`.
+
+**Who may knock** (R4; reference `orch_hub.remote.authz`). The token is a hub session of scope **`remote`**, made by
+the person's sign-in on the hub's private-network web API with `client: "remote"` (7 days); a browser or phone session
+token is `no_session` here, and a `remote` token opens no web route except its own sign-out. The hub re-checks the
+token for the same live, active user at `hello`, at `rail` and at `open`, and its stream sweep closes a stream
+`revoked` when that token is signed out or the user may no longer reach the workspace. The user may open to workspace
+W iff W is in the user's **rail** (`orch_hub.switch.workspace_rows`: the owner alias of a selective workspace, or a role
+in a full one) **and** W has a live stream link (§10.2c, decision 69). An unknown workspace, one outside the rail, an
+unbound one, an offline one and one whose remote access is off with no code outstanding all answer the same
+`not_allowed`. The device's person is never compared to the hub user (the hub has no such mapping): the host's gate
+and the presence signature decide.
+
+**`rail`** (R5, decision 72). Lets the client list the person's workspaces with the `remote` token alone (the token has
+no web route). Allowed once per connection, after `ready` and before `open`; the hub re-checks the token
+(`no_session`) and answers `{"t": "rail", "workspaces", "more"}` built from exactly the rows the hub console's rail
+shows that user (`rail_message`, vectors `client_rail_*`):
+
+- each row is `{"workspace_id", "name", "online"}` and nothing else (no mode, role, owner, `hub_reads` or start right;
+  nothing about workspaces outside the rail and nothing the rail does not show);
+- `workspace_id` 32 lower hex, rows sorted ascending by it and unique; at most 100 rows (the first 100 by id) and
+  `more: true` exactly when rows were left out (then the list holds 100), otherwise `false`;
+- `name` is the rail's display text (already rendered by the hub's text rule, `render_text`), made one line (LF →
+  space), trimmed, cut to at most 200 UTF-8 bytes on a character boundary and trimmed again; `null` when the rail has no
+  name or the result is empty or fails the §8.5 text rule (1 … 200 bytes, no control, format, bidi or ignorable
+  character, no leading or trailing space). It comes **from the hub**: a client shows it as "name from the hub" and
+  never in a presence prompt before it has read the workspace's own name through the session (R5 design §3.2). Clients render it as plain text only (never markup, links or HTML), escaped for their UI. An unnamed (`null`) full-mode
+  workspace falls back to the console's "<owner>'s workspace" text, nothing beyond what the console shows;
+- `online` is `true` iff the workspace's binding is live (as the rail's dot). It does not promise that an `open`
+  succeeds (no stream link, remote off: `not_allowed`).
+
+The client may send `open` on the same connection after the `rail` answer, within the same setup deadline; a client
+that only wanted the list closes the connection. A rail store failure is `{"t": "error", "error": "unavailable"}`,
+never a partial or made-up list. A `rail` never reaches a host.
+
+**Codes the client shows** (plain words in the R5 UI; the codes are stable):
+
+| where | code | meaning |
+|---|---|---|
+| `error` | `malformed` | the client broke this contract |
+| `error` | `no_session` | token unknown, expired, signed out, not of scope `remote`, or its user removed or inactive: sign in again |
+| `error` | `remote.busy` | the user already has 8 signed-in connections that have not opened a stream |
+| `error` | `unavailable` | the rail could not be read |
+| `refused` | `malformed` | a bad `open`, or a bad frame between `ready` and `opened` |
+| `refused` | `not_allowed` | not in the rail, unknown, unbound, offline, or no stream link (remote off and no code) |
+| `refused` | `unavailable` | the hub is restoring, the link broke under the open, the host did not answer within 30 s, or it answered something other than `{}` or one of its gate codes |
+| `refused` | `remote.busy` | a hub limit (R4 defaults, a hub may only lower them: 256 streams hub-wide, 8 per user, the host's 4 per device and 16 per workspace; 10 opens per device and 20 per user per minute; enroll opens 3 per user and workspace, 6 per workspace per minute) or the host's gate limit |
+| `refused` | `remote.off`, `remote.device`, `remote.no_code`, `replay` | the **host's gate code, verbatim** (§10.2c gate); any other host answer becomes `unavailable` |
+| `close` | every §10.2c `stream_close` reason | from the host verbatim (`handshake`, `presence`, `remote.version`, `remote.off`, `revoked`, `idle`, `expired`, …) or from the hub (`malformed`, `too_large`, `remote.busy` for a client that does not read or overruns the byte budget, `revoked` from the sweep, `closed` when the stream link goes) |
+
+`remote.version` is never an `open` answer: the host checks the API range in the first transport message and closes
+the stream with it.
+
+**Deadlines and limits** (hub). 30 s from the TLS handshake to a complete `open` (`hello`, optional `rail`, `open`);
+on expiry the hub closes the connection without a frame. Then up to 30 s for the host's `stream_open` answer
+(`refused` `unavailable`). A frame must arrive whole within 10 s of its first byte; a hub write that does not finish
+within 10 s ends the stream. In a stream there is no keepalive frame: a silent client is kept while the stream lives
+(the host's idle and life timers of §10.2c end it). The hub holds at most 64 frames for a client that does not read
+(then `close` `remote.busy`); client frames are back-pressured (the hub forwards each before it reads the next) and
+charged on the §10.2c byte budget. At most 8 signed-in, not-yet-opened connections per user (`error` `remote.busy`).
+
+**Logging.** The hub never logs a frame's bytes, the token or the device id; it logs per stream the workspace, the
+stream id, the kind, the hub user, the result and the frame and byte counts (§10.2c).
 
 ### 10.3 Routing (`route_out`, `route_in`; phase 3, V3-D8)
 
@@ -3201,7 +3326,7 @@ v2 codes keep their meaning (v2 §14). New in H0:
 | `foreign_user` (p4, C3b) | custodial, `event_deliver` reply | the event's `user_id` belongs to another hub of this workspace (aliased there, or first recorded under it) and not to the signing hub: a hub may not present another hub's user ids (§9.1, L2P4-C1, L2-C3-2). Checked after the certificates |
 | `not_custodial` (p4) | action, custodial | §8.5: the type is not in the custodial table for that log |
 | `event_changed` (p4) | channel, hub `sign` | §8.4: the digest does not match the shown context, or the hub's view moved since `prepare` |
-| `stale_version`, `too_many_items` (p4) | selective `share_put` | §10.2b: an equal or lower `item_version` (other bytes, or a revoked one); over 1000 live items. Reused there: `bad_wrap`, `too_large`, `other_hub`, `other_workspace` |
+| `stale_version`, `too_many_items` (p4) | `share_put` | §10.2b: an equal or lower `item_version` (other bytes, or a revoked one); over 1000 live items. Reused there: `bad_wrap`, `too_large`, `other_hub`, `other_workspace` |
 | `no_session`, `key_in_use` (p4) | channel registration | §6.3: the challenge was not opened inside a live session of the user; the key is registered to another user. Reused: `channel_revoked` (a revoked key never registers again) |
 | `unknown_channel` (p4) | hub CLI/API, local | §6.3: a revocation of a channel id this hub never registered |
 | `challenge_invalid` (p4) | channel registration | §6.3: not the challenge the hub issued, or expired. Reused there: `factor_mismatch` (the attestation is not the gate the hub checked), `other_user`, `other_hub` |
@@ -3315,11 +3440,19 @@ label)`, X25519 keys as is, P-256 by the §15 map, RFC 6979 signatures): `labels
 handshake hash, split keys, the first transport message each way, plain and sealed) and `cases` with `check` one of
 `prologue`, `msg1`, `msg2_build`, `msg2_read`, `transport`, `open`, `presence_bytes`, `presence`, `enroll`, `wrk_fp`,
 `code_bytes`, `device_fp`, `session_static`, `open_msg`, `device_list`, `device_lookup`, `stream_link`, `frame_cost`, `gate`,
-`custodial_cannot`, and `required` naming the cases an implementation must not lose (replays into another stream,
+`custodial_cannot`, from R3 `app_frame`, `request_head`, `app_seq`, `route_digest`, and from R5 (§10.2d) `client_frame`
+(one endpoint frame on the wire: `wire_hex`, or `frame` encoded as length ‖ `cj`, with a long `b` given as `b_repeat`
+`{unit, n, tail}` = `unit × n ‖ tail`), `client_rail` (the hub's rail projection) and `client_seq` (a connection's
+frames in arrival order: `results` and the final state, or the bad frame's `error`, `index` and the receiver's
+`answer`), and `required` naming the cases an implementation must not lose (replays into another stream,
 workspace or device; early data; a flipped byte; UP-only FIDO2; tampered and rolled-back device lists; `stream_open`
 w2h; the gate while off; every "no custodial type can" item). The hub replays every case against its reference
-(`tests/test_remote_vectors.py`, which also rebuilds the file byte for byte; R4: every `stream_link` case carries the connection's `exporter` (hex, `ids.link_exporter_hex`) and a stream frame signed in the pre-R1 form `label || cj(o)` is `bad_signature`, with no fallback); **orch-core replays every case** with an
-independent test-side port (`tests/host/test_remote_vectors.py`, `tests/host/remote_port.py`) and the custodial cases
+(`tests/test_remote_vectors.py`, which also rebuilds the file byte for byte; R4: every `stream_link` case carries the connection's `exporter` (hex, `ids.link_exporter_hex`) and a stream frame signed in the pre-R1 form `label || cj(o)` is `bad_signature`, with no fallback; R5: every `client_seq` case with `endpoint: true` is also played into the real `RemoteEndpoint` in the
+world `client_env` (tokens, the user's rail rows, live links; per case `env.host` is the host's answer, `env.rail:
+"fail"` a failing rail store, `env.signed_out_after_ready` a token signed out before `rail`), `tests/test_remote_endpoint.py`);
+**orch-core replays every case** with an
+independent test-side port (`tests/host/test_remote_vectors.py`, `tests/host/remote_port.py`; the `client_*` cases with a separate client-side
+port in `tests/host/test_remote_client_vectors.py`, the reference for the R5 client) and the custodial cases
 against its real `check_custodial_role` and `check_custodial_payload`; R2–R5 replay them against the real paths. The
 Noise of the reference was cross-checked once against the `noiseprotocol` package (both directions, byte-equal
 messages, handshake hash and transport) when R0 was written; core's port is a second hand-written implementation and replays the transcripts on every run. Relay, publish
@@ -3446,6 +3579,10 @@ transport in the action).
 | 67 | Remote owner proof (R2) | the §9.6 proof object under its own kind `remote.owner_proof` and its own label `orch/v2/sig/remote-owner-proof\|`, ops `remote.set` and `remote.device_confirm`; signed payload includes `remote_v` (the replay counter), single-use `request_id`; core only | spec D84, D93; a hub proof can never stand in for a remote one or the reverse |
 | 68 | Remote code text and fingerprint words (R2) | the code text is `orch-rc1.<workspace_id>.<b64u(code_id raw 16 ‖ secret 16 ‖ wrk_fp 16)>.<b64u(WRK_pub, 32)>`; the owner and the device show `device_fp` as the first 66 bits, six BIP-39 English words of 11 bits each (the all-zero fingerprint is `abandon` six times) | spec §5 "fingerprint", R5 renders and parses the same |
 | 69 | Dedicated stream link (R4) | ALPN `orch-link-streams/1` marks a host's stream link; the hub attaches it to the stream router only and accepts on it stream frames, `stream_open` replies and the `hub_where` keepalive (120 s; hub idle drop 300 s); plain links never carry or replace streams; the link exists while remote is on or a code is outstanding, in both modes, so an opted-out selective workspace answers a client `not_allowed` (no link) | spec D85 (the hub sees when remote is on), §7.1, §9 |
+| 70 | Remote-client endpoint (R4 protocol, written down in R5) | §10.2d: ALPN `orch-remote/1` on the link port with its own pools; one stream per connection, the stream id drawn by the hub and learnt in `opened`; exact keys; 4-byte length + strict JSON, ≤ 96 KiB; the answer to a bad client frame by stage (`error` before `ready`, `refused` until `opened`, then `close`); 30 s to `open`, 30 s for the host's answer | R4 design §1; the R5 client and the phone (R5i) need it in the contract, not only in `endpoint.py` |
+| 71 | Client codes (R5) | `error` ∈ `malformed`, `no_session`, `remote.busy`, `unavailable`; `refused` ∈ `malformed`, `not_allowed`, `unavailable`, `remote.busy` and the host's gate codes verbatim (`remote.off`, `remote.device`, `remote.no_code`, `replay`); any other host answer is `unavailable`; unknown, outside the rail, unbound, offline and no stream link are all `not_allowed` | a client learns nothing about workspaces outside its rail; a host cannot push free text to the client |
+| 72 | `rail` on the endpoint (R5) | `{"t": "rail"}` once per connection, after `ready`, before `open`; token re-checked; the answer is the user's console rail rows cut to `workspace_id`, `name` (one line, ≤ 200 UTF-8 bytes, text rule, else `null`) and `online`, sorted, ≤ 100 with `more`; a store failure is `unavailable`; it never reaches a host | lead decision 30 Oct (R5 design §9.3): a `remote` token has no web route; a second web-scope token would work only on the office network |
+| 73 | Client-side order rules (R5) | the client waits for `ready`, checks `hub_id` against its pinned card, refuses every out-of-order or extra hub frame (`close malformed` once a stream is open); hub `data` after the client's own `close` is dropped; a closed connection is `close closed`; receivers parse strictly but do not require canonical key order | vectors `client_seq_*` (reference `ClientConn`, core's own port) |
 
 ## 17. Hub backup (M4, #1462; design `m4-settings-design.md` 4.2-4.3 and the Opus conditions 9-17)
 

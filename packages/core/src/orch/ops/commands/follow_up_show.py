@@ -20,6 +20,8 @@ def handle(ctx, args):
             + (
                 f"webhook (hook {rec['hook_prefix']})"
                 if on["source"] == "webhook"
+                else f"{on['kind']}:{on['ref']}" + (f" (only when {on['status']})" if on.get("status") else "")
+                if on["source"] == "addon"
                 else f"{on['kind']}.{on['status']}" + (f":{on['ref']}" if on.get("ref") else "")
             )
         ]

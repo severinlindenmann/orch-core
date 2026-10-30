@@ -338,7 +338,7 @@ describe('by click (#1198 C11)', () => {
     expect(screen.getByTestId('hub-link-details').textContent).toContain('9f3c1ab277de40c8aa11bb22cc33dd44')
     await view.user.click(within(screen.getByTestId('hub-link-details')).getByText('Details'))
     await waitFor(() => expect(screen.getByTestId('hub-link-details').textContent).not.toContain('9f3c1ab277de40c8aa11bb22cc33dd44'), T)
-    expect(screen.getByTestId('hub-link-hub').textContent).not.toContain('Only what I choose')
+    expect(screen.getByTestId('hub-link-hub').textContent).toContain('Only what I choose') // both choices are visible at once
     expect(screen.queryByText(/Notes that need your attention and full questions are always shared/)).toBeNull() // the long mode text is behind the i of the mode choice
     expect(screen.queryByText(/Review it here/)).toBeNull()
     expect(screen.queryByTestId('hub-card-text')).toBeNull() // no card file, no separate invite, no mode step
@@ -357,7 +357,6 @@ describe('by click (#1198 C11)', () => {
     const view = hubPage('standalone')
     await view.user.click(await screen.findByTestId('hub-connect', {}, T))
     await pasteLink()
-    await view.user.click(await screen.findByTestId('hub-mode-other', {}, T))
     await view.user.click(await screen.findByTestId('hub-mode-full', {}, T))
     const btn = await screen.findByRole('button', { name: 'Connect' }, T)
     expect(screen.queryByTestId('hub-backup-input')).toBeNull()

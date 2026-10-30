@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.orch.dev/v2/event.followup.set",
   "title": "followup.set event",
-  "description": "Follow-ups FU1\u2013FU16. followup is the follow-up ID; id remains the unique event ID.",
+  "description": "Follow-ups FU1–FU16. followup is the follow-up ID; id remains the unique event ID.",
   "type": "object",
   "properties": {
     "v": {
@@ -325,48 +325,82 @@
       "maxLength": 200
     },
     "on": {
-      "type": "object",
-      "properties": {
-        "source": {
-          "enum": [
-            "orch",
-            "webhook"
-          ]
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "source": {
+              "enum": [
+                "orch",
+                "webhook"
+              ]
+            },
+            "kind": {
+              "enum": [
+                "question",
+                "ticket",
+                "gate",
+                "task",
+                "hook"
+              ]
+            },
+            "status": {
+              "enum": [
+                "asked",
+                "answered",
+                "changed",
+                "closed",
+                "approved",
+                "changes_requested",
+                "done",
+                "rang"
+              ]
+            },
+            "ref": {
+              "$ref": "https://schemas.orch.dev/v2/common#/$defs/eventRef"
+            },
+            "hook": {
+              "$ref": "https://schemas.orch.dev/v2/common#/$defs/hex64"
+            }
+          },
+          "required": [
+            "source",
+            "kind",
+            "status"
+          ],
+          "additionalProperties": false
         },
-        "kind": {
-          "enum": [
-            "question",
-            "ticket",
-            "gate",
-            "task",
-            "hook"
-          ]
-        },
-        "status": {
-          "enum": [
-            "asked",
-            "answered",
-            "changed",
-            "closed",
-            "approved",
-            "changes_requested",
-            "done",
-            "rang"
-          ]
-        },
-        "ref": {
-          "$ref": "https://schemas.orch.dev/v2/common#/$defs/eventRef"
-        },
-        "hook": {
-          "$ref": "https://schemas.orch.dev/v2/common#/$defs/hex64"
+        {
+          "type": "object",
+          "properties": {
+            "source": {
+              "const": "addon"
+            },
+            "kind": {
+              "$ref": "https://schemas.orch.dev/v2/common#/$defs/addonFollowupKind"
+            },
+            "ref": {
+              "allOf": [
+                {
+                  "$ref": "https://schemas.orch.dev/v2/common#/$defs/eventRef"
+                },
+                {
+                  "minLength": 1
+                }
+              ]
+            },
+            "status": {
+              "$ref": "https://schemas.orch.dev/v2/common#/$defs/addonEventStatus"
+            }
+          },
+          "required": [
+            "source",
+            "kind",
+            "ref"
+          ],
+          "additionalProperties": false
         }
-      },
-      "required": [
-        "source",
-        "kind",
-        "status"
-      ],
-      "additionalProperties": false
+      ]
     },
     "hook": {
       "$ref": "https://schemas.orch.dev/v2/common#/$defs/hex64"

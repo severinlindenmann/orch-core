@@ -26,7 +26,12 @@ import { prose, visible } from '@/components/sign/visible'
 import { verifiedMedia } from '@/api/evidenceMedia'
 import { SafeMarkdownView } from '@/addon-ui/SafeMarkdownView'
 import { NoPreviewCard } from './EvidenceCard'
-import { EvidenceThumb, TypeBadge } from './EvidenceThumb'
+import { canAct, hasFeature, isRealHost } from '@/api/features'
+import { atLeast } from '@/api/permissions'
+import { unshareable } from '@/api/shares'
+import { ShareFlow } from '../shares/ShareFlow'
+import { TurnOnPublish } from '../shares/TurnOnPublish'
+import { cardTitle, checkOf, EvidenceThumb, TypeBadge } from './EvidenceThumb'
 
 export const KIND_ICON: Record<Artifact['kind'], typeof FileText> = {
   screenshot: ImageIcon,
@@ -447,6 +452,7 @@ function RemotePreview({ a, ticket, unavailable, holdPictures = false }: { a: Ar
   if (d.binary || d.text == null || looksBinary(d.text)) {
     return <NoPreviewCard a={a} why={ext === 'pdf' ? 'PDF documents are not previewed here: a PDF viewer would run inside this page. Open the file from the ticket on the host.' : `Binary file${ext ? ` (type .${ext})` : ''}: there is no text to show.`} />
   }
+  if (d.text === '') return <NoPreviewCard a={a} quiet why="This file is empty." />
   const { shown, cut, bytes } = capText(d.text.replace(/\r\n/g, '\n'))
   // HTML evidence goes through the same viewer as an inline page (inert sandboxed frame). A page cut at 64 KiB
   // would be a different document from the one the digest names: not previewed.
@@ -626,8 +632,13 @@ function Meta({ a, jump }: { a: Artifact; jump: (j: Jump) => void }) {
           From {a.task}
         </button>
       )}
-      <Mono className="text-[11px] text-text-faint">{shortHash(a.sha256, 8)}</Mono>
       {!!a.bytes && <span>{fmtBytes(a.bytes)}</span>}
+      <details className="text-[11px]">
+        <summary className="cursor-pointer">Details</summary>
+        <p className="mt-0.5">
+          {a.name} · sha256 <Mono className="text-[11px] text-text-faint">{shortHash(a.sha256, 8)}</Mono>
+        </p>
+      </details>
     </div>
   )
 }
@@ -639,8 +650,16 @@ export function Artifacts({ ticket, viewer, jump, focus }: TabProps & { focus?: 
   /** The Preview button that opened the drawer; closing returns focus to it. */
   const opener = useRef<HTMLElement | null>(null)
   const workspaces = useQuery(queries.workspaces())
-  const agentHtml = addonActive(workspaceOfTicket(ticket.key, workspaces.data ?? []), 'widgets')
+  const home = workspaceOfTicket(ticket.key, workspaces.data ?? [])
+  const agentHtml = addonActive(home, 'widgets')
   const addonPage = useAddonPages()
+  // Publish as link (run-14 P01): on a real host, a member or more with Publish on; an owner can turn it on first.
+  const [publishing, setPublishing] = useState<{ name: string; step: 'turnon' | 'share' } | null>(null)
+  const real = isRealHost() && !!home && canAct(home.id)
+  const publishOn = real && hasFeature('publish', home.id)
+  // Who may sign a share (host rule, publishing._may_share): the ticket owner (a member or more), workspace owners and maintainers.
+  const mayShare = atLeast(viewer.role, 'maintainer') || (atLeast(viewer.role, 'member') && !!viewer.person && ticket.people.owner === viewer.person)
+  const mayPublish = real && (publishOn ? mayShare : viewer.role === 'owner')
   useEffect(() => {
     if (!focus) return
     const a = ticket.artifacts.find((x) => `artifact-${x.name}` === focus)
@@ -661,6 +680,7 @@ export function Artifacts({ ticket, viewer, jump, focus }: TabProps & { focus?: 
         <ul className="grid grid-cols-1 gap-3 @[28rem]/cards:grid-cols-2 @[44rem]/cards:grid-cols-3" aria-label="Artifacts">
           {ticket.artifacts.map((a) => {
             const Icon = KIND_ICON[a.kind]
+            const check = checkOf(a, ticket.tasks_state)
             return (
               <li
                 key={a.name}
@@ -669,20 +689,20 @@ export function Artifacts({ ticket, viewer, jump, focus }: TabProps & { focus?: 
                 aria-current={open?.name === a.name ? 'true' : undefined}
                 className={cn('flex scroll-mt-4 flex-col rounded-lg border bg-surface p-2.5', a.addon ? addonHairline : 'border-border')}
               >
-                <EvidenceThumb a={a} ticket={ticket.key} />
+                <EvidenceThumb a={a} ticket={ticket.key} check={check} />
                 <div className="mt-2 flex items-center gap-1.5">
                   <Icon className="size-3.5 shrink-0 text-text-muted" aria-hidden />
                   <span className="min-w-0 flex-1 truncate text-[13px] font-medium" title={a.name}>
-                    {a.name}
+                    {cardTitle(a, check)}
                   </span>
-                  <TypeBadge a={a} />
+                  <TypeBadge a={a} check={check} />
                 </div>
                 {a.label && <p className="mt-0.5 line-clamp-2 text-[12px] text-text-muted">{a.label}</p>}
                 <p className="mt-1 truncate text-[11px] text-text-faint">
                   by {viewer.name(a.added_by)} · <Ago at={a.at} />
                 </p>
                 <Meta a={a} jump={jump} />
-                <div className="mt-auto pt-2">
+                <div className="mt-auto flex flex-wrap items-center gap-2 pt-2">
                   <ArtifactAction
                     a={a}
                     addonPage={addonPage}
@@ -693,6 +713,12 @@ export function Artifacts({ ticket, viewer, jump, focus }: TabProps & { focus?: 
                       setOpen(a)
                     }}
                   />
+                  {mayPublish && openMode(a) === 'preview' && !unshareable(a) && (
+                    <Button type="button" variant="outline" size="sm" className={ACTION} aria-label={`Publish ${a.name} as a link`} onClick={() => setPublishing({ name: a.name, step: publishOn ? 'share' : 'turnon' })}>
+                      <Link2 aria-hidden />
+                      Publish as link
+                    </Button>
+                  )}
                 </div>
               </li>
             )
@@ -701,6 +727,9 @@ export function Artifacts({ ticket, viewer, jump, focus }: TabProps & { focus?: 
       </div>
 
       <ArtifactDrawer artifact={open} ticket={ticket.key} agentHtml={agentHtml} holdPictures={byJump} onClose={() => setOpen(null)} opener={opener} />
+      {/* Rendered whatever the feature flags say meanwhile: a refetch must never unmount the dialog that holds the link. */}
+      {home && publishing?.step === 'turnon' && <TurnOnPublish key="turnon" workspace={home} onOn={() => setPublishing({ name: publishing.name, step: 'share' })} onClose={() => setPublishing(null)} />}
+      {home && publishing?.step === 'share' && <ShareFlow key={publishing.name} ws={home.id} ticket={ticket} only={publishing.name} onClose={() => setPublishing(null)} />}
     </>
   )
 }

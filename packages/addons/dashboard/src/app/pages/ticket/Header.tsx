@@ -55,7 +55,7 @@ export function CopyButton({ text, label }: { text: string; label: string }) {
 }
 
 /** Who is working on the ticket, in one line. Claiming is the agents' job, so people get no Claim/Release here. */
-export function AgentStatus({ ticket, viewer, wait }: { ticket: TicketDocument; viewer: Viewer; /** the agent is idle at its prompt (run-9 J04) */ wait?: string }) {
+export function AgentStatus({ ticket, viewer, wait, needsYou = false }: { ticket: TicketDocument; viewer: Viewer; /** the agent is idle at its prompt (run-9 J04) */ wait?: string; /** the ticket waits for the person (phase 'needs'): the line says so, like the card and the pill (run 15 P05) */ needsYou?: boolean }) {
   // A claim the host marks not live (ended by Done or Close, lapsed, grant over) is history: nobody is working (run 8, 8).
   const c = ticket.claim?.live === false ? null : ticket.claim
   const subagents = new Set(ticket.tasks_state.flatMap((t) => (t.lease && t.lease.session !== c?.session ? [t.lease.session] : []))).size
@@ -65,7 +65,16 @@ export function AgentStatus({ ticket, viewer, wait }: { ticket: TicketDocument; 
       <span className="min-w-0 truncate">
         {c ? (
           <>
-            <span className="text-text">{agentName(c.agent)}</span> {agentWorking(ticket, wait) ? 'is working' : 'may be waiting for the next step'} for <span className="text-text">{viewer.name(c.for)}</span>
+            <span className="text-text">{agentName(c.agent)}</span>{' '}
+            {needsYou ? (
+              <>
+                is waiting for <span className="text-text">you</span>
+              </>
+            ) : (
+              <>
+                {agentWorking(ticket, wait) ? 'is working' : 'may be waiting for the next step'} for <span className="text-text">{viewer.name(c.for)}</span>
+              </>
+            )}
             {' · '}since {fmtClock(c.since)}
             {subagents > 0 && ` · ${subagents} ${subagents === 1 ? 'subagent' : 'subagents'}`}
           </>
@@ -154,7 +163,7 @@ export interface ShareTicket {
 
 /**
  * Sharing this one ticket with the hub, from the ticket itself. Only the owner of the ticket's workspace, only in
- * "share only what I choose" mode (full shares everything, standalone has no hub). It opens the same review as
+ * a joined hub, in either mode (full: only named people see the ticket; standalone has no hub). It opens the same review as
  * Settings (`ShareTicketDialog`, `StopSharing`); the Actions menu holds the item, so there is one dialog and one rule.
  */
 function useShareTicket(ticket: TicketDocument, viewer: Viewer): ShareTicket {
@@ -163,10 +172,10 @@ function useShareTicket(ticket: TicketDocument, viewer: Viewer): ShareTicket {
   const ws = home?.id
   const served = !!ws && viewer.role === 'owner' && hubServed(ws)
   const status = useQuery({ ...hubQueries.status(ws ?? ''), enabled: served })
-  const selective = served && status.data?.mode === 'selective' && status.data.joined
-  const share = useQuery({ ...hubQueries.share(ws ?? ''), enabled: selective })
+  const hubbed = served && (status.data?.mode === 'selective' || status.data?.mode === 'full') && !!status.data.joined
+  const share = useQuery({ ...hubQueries.share(ws ?? ''), enabled: hubbed })
   const [open, setOpen] = useState<'share' | 'stop' | null>(null)
-  const shown = selective && !!share.data?.available && ticket.status !== 'closed'
+  const shown = hubbed && !!share.data?.available && ticket.status !== 'closed'
   const shared = !!share.data?.tickets.includes(ticket.key)
   const node = open && home ? (
     open === 'share'
@@ -625,7 +634,7 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
       )}
 
       <BlockedByConnection ticket={ticket} />
-      {phase.kind !== 'starting' && phase.kind !== 'failed' && <AgentStatus ticket={ticket} viewer={viewer} wait={wait} />}
+      {phase.kind !== 'starting' && phase.kind !== 'failed' && <AgentStatus ticket={ticket} viewer={viewer} wait={wait} needsYou={phase.kind === 'needs'} />}
     </header>
   )
 }

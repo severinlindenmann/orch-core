@@ -23,7 +23,7 @@ if (setup) {
       history.replaceState(null, '', landing.to)
     } else {
       const { showSwitchConfirm, showSwitchFailed } = await import('./api/switchConfirm')
-      return landing.kind === 'confirm' ? showSwitchConfirm(landing.name) : showSwitchFailed()
+      return landing.kind === 'confirm' ? showSwitchConfirm(landing.name) : showSwitchFailed(undefined, landing.code)
     }
   }
   const { mount } = await import('./production/Shell')

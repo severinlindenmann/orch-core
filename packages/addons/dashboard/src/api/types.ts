@@ -242,7 +242,7 @@ export type TaskState = 'todo' | 'doing' | 'done' | 'blocked' | 'skipped'
 export interface TaskStatus extends TaskDef {
   state: TaskState
   lease: { session: string; agent: string; since: string } | null
-  receipt: { exit: number; ms: number; commit?: string; attested_by?: 'agent' | 'unknown' } | null
+  receipt: { exit: number; ms: number; commit?: string; attested_by?: 'agent' | 'host' | 'unknown' } | null
   done_at: string | null
 }
 
@@ -830,10 +830,21 @@ export interface AddonDecision {
 
 export type AddonStatus = 'active' | 'disabled' | 'needs_grant'
 
+/** One declared wake event of an addon (addon-api 1.2): what the host polls for while a follow-up waits. */
+export interface AddonEventDecl {
+  kind: string
+  title: string
+  statuses: string[]
+  ref: string
+  interval_s: number
+}
+
 /** The owner's signed addon.granted: what an addon may do at one version, bound to its package hash. */
 export interface AddonGrant {
   version: string
   capabilities: string[]
+  /** addon-api 1.2: the events the addon may wake a waiting follow-up with; signed with the grant. */
+  events?: AddonEventDecl[]
   package_sha256: string
   at: string
   by: string
@@ -903,6 +914,7 @@ export interface AddonUpdate {
   capabilities: string[]
   package_sha256: string
   changelog: string
+  events?: AddonEventDecl[]
   /** The update's action manifest, when it differs from the installed package's (viewer-level actions are part of the grant). */
   actions?: Record<string, ActionMeta>
 }
@@ -917,6 +929,8 @@ export interface AddonPackage {
   capabilities: string[]
   first_party: boolean
   package_sha256: string
+  /** addon-api 1.2: the wake events the published version declares. */
+  events?: AddonEventDecl[]
   /** A newer published version, if any. */
   update: AddonUpdate | null
   /** A preview: core draws a "Preview" chip wherever the title appears (nav, page title, addon manager). Never addon-authored markup. */

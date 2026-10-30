@@ -1124,7 +1124,14 @@ def test_v4_a_share_approval_leads_with_a_plain_summary_and_keeps_the_signed_tex
     for gone in ("report.md", "https://pub.example.com", "key per host", "Prepared by", "Files:"):
         assert gone not in joined
     signed = [s for s in c["sections"] if s["id"] == "share"][0]["text"]
-    for kept in ("report.md", "data.csv", "https://pub.example.com", "https://share.example.com", "Prepared by: you", "Ticket: "):
+    for kept in (
+        "report.md",
+        "data.csv",
+        "https://pub.example.com",
+        "https://share.example.com",
+        "Prepared by: you",
+        "Ticket: ",
+    ):
         assert kept in signed
     assert [s for s in c["sections"] if s["id"] == "share"][0]["text"] == text  # the exact signed text is still there
 

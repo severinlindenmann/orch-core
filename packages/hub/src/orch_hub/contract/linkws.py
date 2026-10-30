@@ -86,7 +86,7 @@ class LinkAddress:
 
 _REST = re.compile(r"(\[[0-9A-Fa-f:.]{2,45}\]|[A-Za-z0-9.-]{1,253})(?::([1-9][0-9]{0,4}))?")
 _LABEL = re.compile(r"[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?")
-_DIGITS = re.compile(r"[0-9]+")
+_DIGITS = re.compile(r"[0-9]")  # a last label that STARTS with a digit
 
 
 def _is_ip(host: str) -> bool:
@@ -108,7 +108,7 @@ def _check_host(h: str) -> str:
     labels = h.split(".")
     if not all(_LABEL.fullmatch(lb) for lb in labels):
         raise Refused("malformed")
-    if _DIGITS.fullmatch(labels[-1]):  # a numeric last label: only a canonical dotted-quad IPv4 address
+    if _DIGITS.match(labels[-1]):  # a numeric last label: only a canonical dotted-quad IPv4 address
         try:
             if str(ipaddress.IPv4Address(h)) != h:
                 raise ValueError

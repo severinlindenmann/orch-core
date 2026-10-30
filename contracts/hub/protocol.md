@@ -2865,8 +2865,8 @@ At most 300 characters, ASCII only. The scheme is lower case. **Refused (`malfor
 (`u@`, `u:p@`, a bare `@`), any path (also a lone `/`; the WebSocket path is fixed, §10.10.3), query, fragment,
 percent-escapes, white space or control characters, any other scheme (`http`, `https`, `tcp`, `tls`, `wss+unix`, upper
 case), a direct address without a port, port 0, over 65535 or with a leading zero, an unbracketed or zoned IPv6, a
-numeric last label that is not a whole canonical IPv4 address (`1.2.3`, `127.1`, `010.0.0.1`, `0x7f.0.0.1`,
-`2130706433`), an empty label, a label over 63 or a name over 253 characters, and an internationalised name in Unicode
+last label that starts with a digit when the host is not a whole canonical IPv4 address (`1.2.3`, `127.1`, `010.0.0.1`,
+`0x7f.0.0.1`, `169.254.169.0xfe`, `0x7f000001`, `2130706433`), an empty label, a label over 63 or a name over 253 characters, and an internationalised name in Unicode
 (only its `xn--` form is accepted). Two addresses are the same when scheme, lower-case host and port are (so `wss://h`
 equals `wss://h:443`, and `h:443` is a different address from `wss://h`).
 

@@ -984,6 +984,57 @@
    }
   },
   {
+   "name": "addr_ipv4_hex_last_label",
+   "check": "address",
+   "args": {
+    "text": "wss://169.254.169.0xfe"
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "note": "a last label that starts with a digit is a whole IPv4 address"
+  },
+  {
+   "name": "addr_ipv4_hex_last_label_ws",
+   "check": "address",
+   "args": {
+    "text": "ws://127.0.0.0x1:8080"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_ipv4_hex_direct",
+   "check": "address",
+   "args": {
+    "text": "0x7f.0.0.0x1:7443"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_ipv4_hex_integer",
+   "check": "address",
+   "args": {
+    "text": "ws://0x7f000001"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_ipv4_hex_zero",
+   "check": "address",
+   "args": {
+    "text": "ws://0.0.0.0x0"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
    "name": "addr_ipv6_unbracketed",
    "check": "address",
    "args": {

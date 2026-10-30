@@ -68,7 +68,7 @@ def _host_ok(raw: str) -> str | None:
     labels = raw.split(".")
     if any(_LABEL.fullmatch(x) is None for x in labels):
         return None
-    if re.fullmatch(r"[0-9]+", labels[-1]):  # numeric: a whole, canonical dotted quad only
+    if re.match(r"[0-9]", labels[-1]):  # starts with a digit (0x7f, 1e3, 12): a whole, canonical dotted quad only
         try:
             return raw if str(ipaddress.IPv4Address(raw)) == raw else None
         except ValueError:

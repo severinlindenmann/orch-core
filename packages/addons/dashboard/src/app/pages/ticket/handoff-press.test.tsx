@@ -80,3 +80,23 @@ it('a failed prepare of another action does not block the combined card', async 
   ;(last() as unknown as { onPrepareFailed: () => void }).onPrepareFailed()
   expect(bothIsBlocked('T-1')).toBe(false)
 })
+
+// R14 P04: the dialog is mounted before it opens; Pass is derived when the verdict opens, and a pick of the person wins.
+it('verdict: mounted closed, then opened on a fully proven ticket -> Pass is preselected, nothing started', () => {
+  const t = withAc(['proven'])
+  const view = (action: HumanAction | null) => <QueryClientProvider client={new QueryClient()}><HandoffSignDialog ticket={t} action={action} ws="w" onClose={() => {}} /></QueryClientProvider>
+  const r = render(view(null))
+  expect(seen.props.length).toBe(0)
+  r.rerender(view({ kind: 'verdict' }))
+  const p = last() as Prop
+  expect(p.action).toMatchObject({ action: 'verdict', outcome: 'pass' })
+  expect(p.confirmLabel).toBe('Pass')
+  expect(p.autoStart).toBeUndefined()
+})
+it('verdict: mounted closed, then opened with an unproven requirement -> nothing preselected', () => {
+  const t = withAc(['proven', 'unproven'])
+  const r = render(<QueryClientProvider client={new QueryClient()}><HandoffSignDialog ticket={t} action={null} ws="w" onClose={() => {}} /></QueryClientProvider>)
+  r.rerender(<QueryClientProvider client={new QueryClient()}><HandoffSignDialog ticket={t} action={{ kind: 'verdict' }} ws="w" onClose={() => {}} /></QueryClientProvider>)
+  expect((last() as Prop).action).toBeNull()
+})
+

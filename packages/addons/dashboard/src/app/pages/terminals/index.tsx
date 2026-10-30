@@ -7,6 +7,8 @@ import { Link } from '@tanstack/react-router'
 import { Plus } from 'lucide-react'
 import { useState } from 'react'
 import { hasFeature } from '@/api/features'
+import { queries } from '@/api/queries'
+import { agentFinished } from '@/app/pages/ticket/progress'
 import { cleanupDoubt, exitText, runQueries, runsApi, type Run } from '@/api/runs'
 import { ApiError } from '@/api/types'
 import { LoadFailed } from '@/components/LoadFailed'
@@ -27,15 +29,15 @@ const kindText = (r: Run) => (r.kind === 'agent' ? 'Agent' : 'Terminal')
 /** Who may type right now: the write lease is held by one tab or device; every other viewer reads. */
 const controlText = (r: Run) => (!live(r) ? '' : r.writer ? 'Controlled' : 'Read only')
 
-function Row({ r, onStop, doubt }: { r: Run; onStop: (r: Run) => void; doubt: boolean }) {
+function Row({ r, onStop, doubt, finished }: { r: Run; onStop: (r: Run) => void; doubt: boolean; finished: boolean }) {
   const name = r.label ? <Inline>{r.label}</Inline> : runName(r)
   return (
-    <li className="flex flex-wrap items-center gap-x-3 gap-y-1 py-3 text-[13px]" data-run={r.run} data-state={live(r) ? 'live' : 'ended'}>
-      <span aria-hidden="true" className={cn('size-2 shrink-0 rounded-full', live(r) ? 'bg-success' : 'bg-text-faint')} />
+    <li className="flex flex-wrap items-center gap-x-3 gap-y-1 py-3 text-[13px]" data-run={r.run} data-state={live(r) ? 'live' : 'ended'} data-finished={finished ? 'true' : undefined}>
+      <span aria-hidden="true" className={cn('size-2 shrink-0 rounded-full', live(r) && !finished ? 'bg-success' : 'bg-text-faint')} />
       <span className="min-w-0 flex-1 basis-48">
         <span className="block truncate font-medium">{name}</span>
         <span className="block text-[12px] text-text-muted">
-          {kindText(r)} · started {fmtDateTime(r.started_at)}
+          {kindText(r)} · started {fmtDateTime(r.started_at)}{finished ? ' · Ticket is done' : ''}
           {doubt ? ' · some processes may still be running' : ''}
         </span>
         {!live(r) && exitText(r) && <span className="block text-[12px] text-text-muted" data-testid="run-exit">{exitText(r)}</span>}
@@ -45,15 +47,15 @@ function Row({ r, onStop, doubt }: { r: Run; onStop: (r: Run) => void; doubt: bo
           {r.ticket}
         </Link>
       )}
-      <span className={cn('rounded-full border px-2 py-px text-[11px]', live(r) ? 'border-success/50 text-success' : 'border-border text-text-muted')}>{live(r) ? 'Live' : 'Ended'}</span>
-      <span className="w-24 text-[12px] text-text-muted">{controlText(r)}</span>
+      <span className={cn('rounded-full border px-2 py-px text-[11px]', live(r) && !finished ? 'border-success/50 text-success' : 'border-border text-text-muted')}>{finished ? 'Finished' : live(r) ? 'Live' : 'Ended'}</span>
+      <span className="w-24 text-[12px] text-text-muted">{finished ? '' : controlText(r)}</span>
       <span className="flex gap-1">
         <Button size="sm" variant="outline" className="h-7 text-[12px]" aria-label={`Open ${runName(r)}`} onClick={() => openDockOn(r.run)}>
           Open
         </Button>
         {live(r) && (
-          <Button size="sm" variant="ghost" className="h-7 text-[12px]" aria-label={`Stop ${runName(r)}`} onClick={() => onStop(r)}>
-            Stop
+          <Button size="sm" variant="ghost" className="h-7 text-[12px]" aria-label={`${finished ? 'Close' : 'Stop'} ${runName(r)}`} onClick={() => onStop(r)}>
+            {finished ? 'Close' : 'Stop'}
           </Button>
         )}
       </span>
@@ -68,6 +70,9 @@ export function TerminalsPage() {
   const qc = useQueryClient()
   const served = !!ws && hasFeature('terminals_page', ws)
   const list = useQuery({ ...runQueries.list(ws ?? ''), enabled: served })
+  // Same tickets list the rest of the dashboard reads; while it loads, a row keeps showing what the process does.
+  const tickets = useQuery({ ...queries.ticketsAll(ws ?? ''), enabled: served })
+  const statusOf = new Map((tickets.data ?? []).map((t) => [t.key, t.status]))
   const [error, setError] = useState('')
   const [doubt, setDoubt] = useState<Record<string, boolean>>({})
   const terminal = useOpenTerminal(ws ?? '')
@@ -137,7 +142,7 @@ export function TerminalsPage() {
       ) : (
         <ul aria-label="Terminals" className="divide-y divide-border rounded-lg border border-border bg-surface px-3">
           {runs.map((r) => (
-            <Row key={r.run} r={r} onStop={(x) => void stop(x)} doubt={!!doubt[r.run] || (!!r.exit && cleanupDoubt(r.exit.cleanup))} />
+            <Row key={r.run} r={r} onStop={(x) => void stop(x)} finished={agentFinished(r, r.ticket ? statusOf.get(r.ticket) : null)} doubt={!!doubt[r.run] || (!!r.exit && cleanupDoubt(r.exit.cleanup))} />
           ))}
         </ul>
       )}

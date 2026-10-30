@@ -215,6 +215,7 @@ class WorkspaceView:
     frozen: bool
     needs: tuple[Need, ...]
     hub: Mapping[str, Any] = MappingProxyType({})  # the workspace's hub (hub contract 9.1); empty if it never joined
+    remote: Mapping[str, Any] = MappingProxyType({})  # remote access policy and devices (R2); empty until the first
 
 
 def _gate_view(ws: WsCore, t: TCore, g: str) -> GateView:
@@ -455,4 +456,5 @@ def workspace_view(core: Core, now: int) -> WorkspaceView:
         frozen,
         tuple(needs.workspace_needs(ws, frozen)),
         freeze(ws.hub),
+        freeze(ws.remote),
     )

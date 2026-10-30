@@ -897,7 +897,7 @@ def serve(call: Call) -> dict[str, Any]:
     if op == "hub.status":
         from orch.hubclient import snapshot
 
-        from . import hublinkprobe
+        from . import hubclosing, hublinkprobe
 
         binding = None if state is None else state.status
         up = None
@@ -930,6 +930,7 @@ def serve(call: Call) -> dict[str, Any]:
                 "update_notice": _update_notice(service, state),  # HUB-WS-04: hub admin asks for an update
                 "addrs": [] if state is None else [a for a in [state.addr, *state.addrs] if a],
                 # what the hub says of itself (hub_where): its own words, a hint; never part of a workspace's own text
+                "closing": None if state is None else hubclosing.view(state),  # #1463: {since_ms, ends_ms} | None
                 "hub_says": None if state is None or not state.hub_name else {"name": state.hub_name, "from": "hub"},
                 "unbound_pending": state is not None and bool(state.outbox),
                 "owed": [] if state is None else sorted(state.outbox),
@@ -1115,6 +1116,13 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
 
 
 _SWITCH_OPS = {"ticket": "switch_ticket", "redeem": "switch_redeem", "rail": "rail_get"}
+
+
+def on_closing_notice(service: WorkspaceService, signed: Any) -> str | None:
+    """A pushed ``closing_notice`` (protocol 9.7): ``None`` = acknowledge with ``{}``, else the refusal code."""
+    from . import hubclosing
+
+    return hubclosing.on_closing_notice(service, signed)
 
 
 def owner_user(service: Any, state: Any) -> str | None:
@@ -1348,6 +1356,8 @@ def _refresh(
 ) -> dict[str, Any]:
     from orch.hubclient import snapshot
 
+    from . import hubclosing
+
     service = call.service
     adopted = False
     if plan.get("hub_card") is not None:  # a rotated card first: the link below dials its pin and trusts its op key
@@ -1362,6 +1372,7 @@ def _refresh(
             save=lambda fetched: _save_snapshot(service, fetched), card_adopted=adopted,
         )  # fmt: skip
         where = hubaddr.fetch_where(hub_link)  # M4: only the question is asked inside the session
+        hubclosing.pull(service, state, hub_link)  # #1463: the hub's closing notice, if it is being removed
     finally:
         getattr(transport, "close", lambda: None)()
     if where is not None:  # probes run after the link is closed and off this thread: no timing for the hub to read

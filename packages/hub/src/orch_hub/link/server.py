@@ -12,11 +12,15 @@ Wire summary (all frames per :mod:`orch_hub.link.framing`: 4-byte big-endian len
 4. hub -> host  ``{"t":"ready","hub_id"}`` or ``{"t":"error","error":code}`` and close.
 5. Then signed ``hub.link`` messages (``{"o","sig"}``): w2h requests answered by h2w replies (``re`` = request
    ``seq``, signed with the hub's ``HK_op``), one reply per request, in order. A request that fails the receiver
-   verification (§10.2 steps 1-6) gets ``{"t":"error","error":code}`` and the link is closed. An op that fails on its
+   verification (§10.2 steps 1-7) gets ``{"t":"error","error":code}`` and the link is closed. An op that fails on its
    own terms gets a signed reply with body ``{"error": code}`` and the link stays open.
 
-Fail closed: any read timeout, oversize or malformed frame closes the link. SHORTCUT (L7): ``seq`` is carried and
-type-checked, there is no replay store.
+Every message signature binds this connection's TLS exporter (``label || exporter || cj(o)``, the exporter is never
+sent), and ``seq`` is strictly consecutive per direction and connection, from 1 (R1, #1589): a frame is valid on one
+connection, at one position, once. The counter lives in memory for the life of the connection; nothing is persisted.
+
+Fail closed: any read timeout, oversize or malformed frame closes the link. SHORTCUT (L7): the transport is TLS with the
+pinned SPKI only (no socket peer-UID transport).
 """
 
 from __future__ import annotations
@@ -289,7 +293,7 @@ class LinkServer:
         if who is None:
             return
         ws, wsk = who
-        port = _Port(conn, self._signer, self.hub_id, ws, self._now, self._t_rd, self._max)
+        port = _Port(conn, self._signer, self.hub_id, ws, self._now, self._t_rd, self._max, conn.exporter())
         port.wsk = wsk
         port.is_current = lambda: (
             self._bound_seq(ws, wsk) is not None
@@ -351,7 +355,8 @@ class LinkServer:
             pre.release()
         started = time.monotonic()
         self._attach(ws, port)
-        last_seq: int | None = None  # D12b G7: the w2h seq of the previous frame on THIS link
+        last_seq = 0  # R1: the w2h seq of the previous frame on THIS link (the first frame must be 1)
+        exporter = port._exporter  # the port's single copy: auth, h2w signing and w2h verification share it
         while not self._stop.is_set():
             first = self._t_idle
             if not self._pinned_to(ws, wsk):  # unjoined, or pinned to another key: a hard lifetime no peer frame resets
@@ -375,16 +380,24 @@ class LinkServer:
             now = self._now()
             try:
                 o = H.verify_link(
-                    signed, direction="w2h", hub_id_=self.hub_id, workspace_id=ws, mode=mode, pub=wsk, now_ms=now
+                    signed,
+                    direction="w2h",
+                    hub_id_=self.hub_id,
+                    workspace_id=ws,
+                    mode=mode,
+                    pub=wsk,
+                    now_ms=now,
+                    exporter=exporter,
                 )
             except Refused as e:
                 self._log_refused(ws, signed, e.code, now)
                 self._refuse(conn, e.code)
                 return
-            # G7: one counter per direction and link, requests and replies alike. The first frame sets the baseline (a
-            # host numbers across reconnects); then every frame is exactly the previous + 1. A repeat or a skip closes
-            # the link before any side effect. Not bound to the link (no cross-link replay protection: L7 SHORTCUT).
-            if last_seq is not None and o["seq"] != last_seq + 1:
+            # §10.2 step 7: one counter per direction and connection, requests and replies alike. The first frame is 1,
+            # then every frame is exactly the previous + 1. A repeat, a skip or a wrong start closes the link before
+            # any side effect. The signature binds the connection's exporter (step 1), so a frame is accepted on one
+            # connection, at one position, once.
+            if o["seq"] != last_seq + 1:
                 self._log_refused(ws, signed, "malformed", now)
                 self._refuse(conn, "malformed")
                 return
@@ -485,8 +498,9 @@ class _Port:
     """Writes the hub's signed h2w messages on one link. Replies (from the link's own thread) and ``route_in`` requests
     (from the router, on any thread) share the h2w ``seq`` counter and the write lock."""
 
-    def __init__(self, conn, signer, hub_id, ws, now_ms, timeout, max_bytes) -> None:
+    def __init__(self, conn, signer, hub_id, ws, now_ms, timeout, max_bytes, exporter) -> None:
         self._c, self._signer, self._hub, self._ws = conn, signer, hub_id, ws
+        self._exporter = exporter  # this connection's TLS exporter: every h2w signature binds it (§10.2)
         self._now, self._t, self._max = now_ms, timeout, max_bytes
         self._lock = threading.Lock()
         self._seq = 0
@@ -514,7 +528,9 @@ class _Port:
                 "body": body,
             }
             try:
-                framing.write_frame(self._c, self._signer.sign_object(o), timeout=self._t, max_bytes=self._max)
+                framing.write_frame(
+                    self._c, self._signer.sign_link(o, self._exporter), timeout=self._t, max_bytes=self._max
+                )
             except BaseException:
                 self._c.close()  # a half-written frame corrupts the stream: the link is over
                 raise

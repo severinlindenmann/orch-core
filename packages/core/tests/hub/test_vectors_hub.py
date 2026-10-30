@@ -67,7 +67,8 @@ def test_ids_and_labels():
 @pytest.mark.parametrize("e", V["signatures"], ids=[e["name"] for e in V["signatures"]])
 def test_signatures_verify_under_core_suite(e):
     signed_hex = bytes.fromhex(e["signed_hex"])
-    assert signed_hex == e["label"].encode() + bytes.fromhex(e["canonical_hex"])
+    binding = bytes.fromhex(e["exporter_hex"]) if "exporter_hex" in e else b""  # a link message binds the exporter (R1)
+    assert signed_hex == e["label"].encode() + binding + bytes.fromhex(e["canonical_hex"])
     assert S.verify(pub(e["signer"]), unb64u(e["sig"], 64), signed_hex)
 
 

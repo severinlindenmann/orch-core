@@ -259,6 +259,26 @@ def _envelope(signed: Any, kind: str, extra: tuple[str, ...] = ()) -> dict[str, 
     return o
 
 
+def link_signed_bytes(label: bytes, exporter: bytes, o: Mapping[str, Any]) -> bytes:
+    """What a ``hub.link`` signature covers (protocol 10.2, R1): ``label || exporter || cj(o)``. ``exporter`` is the
+    connection's 32-byte TLS exporter; it is never sent, so a message is valid on one connection only."""
+    if type(exporter) is not bytes or len(exporter) != 32:
+        raise HubRefused("malformed")
+    try:
+        return label + exporter + cj(o)
+    except _CanonError:
+        raise HubRefused("malformed") from None
+
+
+def _link_signature(signed: Mapping[str, Any], label: bytes, exporter: bytes, pub: bytes) -> None:
+    try:
+        sig = unb64u(signed["sig"], _suite.SIG_LEN)
+    except _CanonError:
+        raise HubRefused("malformed") from None
+    if not _suite.verify(pub, sig, link_signed_bytes(label, exporter, signed["o"])):
+        raise HubRefused("bad_signature")
+
+
 def _signature(signed: Mapping[str, Any], label: bytes, pub: bytes) -> None:
     try:
         sig = unb64u(signed["sig"], _suite.SIG_LEN)

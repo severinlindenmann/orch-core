@@ -16,7 +16,6 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.x509.oid import NameOID
 from OpenSSL import SSL
 
-from orch.canon.jcs import dumps as cj
 from orch.canon.jcs import loads_strict
 from orch.crypto import suite
 from orch.crypto.encoding import b64u, unb64u
@@ -57,6 +56,9 @@ class TlsHub:
         self.requests: list[dict[str, Any]] = []
         self.handshake_failed = threading.Event()
         self.conn_done = threading.Event()  # the last connection ended (closed by either side)
+        self.exporter = b""  # the TLS exporter of the CURRENT connection (every link signature binds it, R1)
+        self.h2w_seq = 0  # the h2w counter of the CURRENT connection: replies and pushes share it, first frame is 1
+        self._seq_lock = threading.Lock()
         ctx = SSL.Context(SSL.TLS_SERVER_METHOD)
         ctx.set_min_proto_version(SSL.TLS1_2_VERSION if max_tls else SSL.TLS1_3_VERSION)
         ctx.set_max_proto_version(max_tls or SSL.TLS1_3_VERSION)
@@ -89,7 +91,18 @@ class TlsHub:
 
     # -- building replies ------------------------------------------------------------------------------------------
 
+    def next_seq(self) -> int:
+        with self._seq_lock:
+            self.h2w_seq += 1
+            return self.h2w_seq
+
+    def sign_frame(self, o: dict[str, Any], *, key: Any = None, exporter: bytes | None = None) -> dict[str, Any]:
+        """An h2w frame signed over this connection's exporter (or ``exporter``)."""
+        sig = suite.sign(key or self.hk_op, C.link_signed_bytes(C.SIG_ROUTE, exporter or self.exporter, o))
+        return {"o": o, "sig": b64u(sig)}
+
     def reply(self, req: dict[str, Any], *, key: Any = None, body: Any = None, **fields: Any) -> dict[str, Any]:
+        exporter = fields.pop("exporter", None)
         o = {
             "v": 2,
             "suite": 2,
@@ -98,15 +111,14 @@ class TlsHub:
             "hub_id": self.hub_id,
             "workspace_id": self.workspace_id,
             "dir": "h2w",
-            "seq": 1,
+            "seq": self.next_seq(),
             "ts_ms": int(time.time() * 1000),
             "op": req["op"],
             "re": req["seq"],
             "body": {"snapshot": {"stub": 1}} if body is None and req["op"] == "snapshot_get" else (body or {}),
         }
         o.update(fields)
-        sig = suite.sign(key or self.hk_op, C.SIG_ROUTE + cj(o))
-        return {"o": o, "sig": b64u(sig)}
+        return self.sign_frame(o, key=key, exporter=exporter)
 
     # -- the server ------------------------------------------------------------------------------------------------
 
@@ -137,6 +149,9 @@ class TlsHub:
             conn.close()
             self.conn_done.set()
             return
+        self.exporter = conn.exporter()
+        with self._seq_lock:
+            self.h2w_seq = 0
         # the pin check happens in the client right after the handshake; record anything it sends afterwards
         try:
             self._stop.wait(self.challenge_delay)

@@ -273,9 +273,9 @@ def _share_summary(text: str) -> dict[str, Any] | None:
     if once:
         views = int(once.group(1))
         who += f", at most {views} time{'' if views == 1 else 's'}"
-    # r12-P11: plain and short. The exact signed text (names, sizes, both origins, who prepared it, the ticket, the
-    # staged copy and the manifest) is whole in the "What you sign" fold; the file list is the dashboard's lead. A person
-    # can still tell where it goes: the reach word here, the address in the fold.
+    # r12-P11: plain and short. The exact signed text (names, sizes, both origins, who prepared it, the
+    # ticket, the staged copy and the manifest) is whole in the "What you sign" fold; the file list is the dashboard's
+    # lead. A person can still tell where it goes: the reach word here, the address in the fold.
     sent, opens = _reach(server.group(1)), _reach(share.group(1))
     where = (
         f"The files go to {sent}; the link opens there too."

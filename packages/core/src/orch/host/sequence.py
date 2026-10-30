@@ -1442,7 +1442,7 @@ def _addon_content(content: dict[str, Any], intent: Mapping[str, Any], n: int) -
     publish = (intent.get("settings") or {}).get("publish")
     if isinstance(publish, Mapping) and set(publish) == {"server", "share"}:
         # r12-P11: Publish says it in one plain line; the addresses (both rows) and the add-on's identity and
-        # capabilities stay in the review, folded under the technical details. The line names where files go, in reach words.
+        # capabilities stay in the review, folded under the technical details. The line names where files go.
         from orch.host.signcontent import _reach
 
         sent, opens = _reach(str(publish["server"])), _reach(str(publish["share"]))

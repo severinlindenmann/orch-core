@@ -1197,6 +1197,7 @@ def _send_status(service: Any, state: Any, hub_link: Any) -> None:
     DELIVERED: a failure is logged (no secret in it) and retried on the next link use, a changed name or mode is
     sent again, and a (re)connect clears the mark (R14b: it was one attempt, errors swallowed)."""
     import logging
+    import re
     import socket
 
     import orch
@@ -1226,8 +1227,9 @@ def _send_status(service: Any, state: Any, hub_link: Any) -> None:
     at[state.hub_id] = now
     asks = service.__dict__.setdefault("_hub_update_req", {})
     req = reply.get("update_requested") if type(reply) is dict else None
-    if type(req) is dict and type(req.get("target_version")) is str:
-        asks[state.hub_id] = req["target_version"]
+    target = req.get("target_version") if type(req) is dict else None
+    if type(target) is str and re.fullmatch(r"[0-9A-Za-z.+-]{1,32}", target):
+        asks[state.hub_id] = target
     else:
         asks.pop(state.hub_id, None)
 

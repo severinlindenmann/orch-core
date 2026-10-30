@@ -124,3 +124,21 @@ def test_the_status_put_reply_accepts_only_the_version_and_no_text():
     assert not ok_reply({"update_requested": {"target_version": "click <b>here</b>"}})
     assert not ok_reply({"update_requested": {"target_version": "1" * 33}})
     assert not ok_reply({"other": 1})
+
+
+@pytest.mark.parametrize("target", ["click <b>here</b>", "1" * 33, "", "9.9\n9", 7])
+def test_the_host_rejects_a_hostile_update_target_even_if_the_transport_let_it_through(monkeypatch, target):
+    """HUB-WS-04 L5: the host re-checks the version pattern itself; it does not rely only on the transport's check."""
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(hubops, "_workspace_name", lambda service: "n")
+    service = SimpleNamespace(clock=lambda: 1000.0)
+    state = SimpleNamespace(hub_id="h1", mode="full")
+
+    class Link:
+        def call(self, op, body):
+            return {"update_requested": {"target_version": target}}
+
+    hubops._send_status(service, state, Link())
+    assert hubops._update_notice(service, state) is None
+    assert service.__dict__["_hub_update_req"] == {}

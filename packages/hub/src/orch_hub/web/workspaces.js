@@ -264,7 +264,7 @@ export function workspacesView(data, now = Date.now()) {
         small(Number.isFinite(w.left_ms) ? "Left " + new Date(w.left_ms).toLocaleDateString() : "Left on an unknown date"), error);
     })) : null;
   // HUB-WS-04: a hub admin asks the owners to update; the request carries only the version, the owner clicks in Mission Control
-  const askedAt = Math.max(0, ...older.map((w) => w.update_asked_ms).filter(Number.isFinite));
+  const askedAt = Math.max(0, ...older.filter((w) => w.update_asked_target === data.hub?.version).map((w) => w.update_asked_ms).filter(Number.isFinite));
   const askBox = h("div", { class: "row" });
   const showAsked = (at) => { askBox.textContent = ""; askBox.append(small("Asked " + ago(at, Math.max(now, at)))); };
   if (data.admin != null && actions.askUpdate && older.length) {

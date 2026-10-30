@@ -606,7 +606,7 @@ test("HUB-WS-04: an admin can ask the owners to update; it is asked once and the
   assert.match(text(out), /Asked/);
   assert.doesNotMatch(text(out), /Ask owners to update/);
   // a later visit (the hub remembers the first time): no button, only when it was asked
-  const later = workspacesView({ workspaces: [workspace({ workspace_id: "b", version_state: "older", update_asked_ms: NOW - 120000 })],
+  const later = workspacesView({ workspaces: [workspace({ workspace_id: "b", version_state: "older", update_asked_ms: NOW - 120000, update_asked_target: "0.3.0" })],
     handoffs: [], admin: [], hub: { version: "0.3.0" }, actions: { askUpdate: async () => { asked += 1; } } }, NOW);
   assert.match(text(later), /Asked 2 min ago/);
   assert.doesNotMatch(text(later), /Ask owners to update/);
@@ -620,4 +620,11 @@ test("HUB-WS-04: only admins see the button, and a failed ask says so and can be
   await clickButton(out, "Ask owners to update");
   assert.match(text(out), /Could not send the request/);
   assert.match(text(out), /Ask owners to update/);
+});
+
+test("HUB-WS-04 L1: 'Asked' shows only for the hub's current version; an older ask shows the button again", () => {
+  const row = (target) => workspace({ workspace_id: "b", version_state: "older", update_asked_ms: NOW - 60000, update_asked_target: target });
+  const mk = (r) => workspacesView({ workspaces: [r], handoffs: [], admin: [], hub: { version: "0.3.0" }, actions: { askUpdate: async () => ({}) } }, NOW);
+  assert.match(text(mk(row("0.3.0"))), /Asked 1 min ago/);
+  assert.match(text(mk(row("0.2.0"))), /Ask owners to update/);
 });

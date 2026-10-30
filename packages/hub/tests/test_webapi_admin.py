@@ -284,6 +284,10 @@ def test_update_request_marks_older_workspaces_once_and_only_admins_may_ask(w, m
     s, o, _ = w.call("POST", "/admin/workspaces/update-request", {}, token=tok)
     assert s == 200 and o["asked"] == len(w.reg.ws) and o["target_version"] == __version__
     assert asked and all(a["target_version"] == __version__ for a in asked.values())
+    # only newly asked workspaces are counted: a second press asks nobody new
+    done = set(asked)
+    monkeypatch.setattr(w.reg, "ask_update", lambda ws, t, now, by: ws not in done, raising=False)
+    assert w.call("POST", "/admin/workspaces/update-request", {}, token=tok)[1]["asked"] == 0
     assert w.call("POST", "/admin/workspaces/update-request", {}, token=w.login(w.ann))[0] == 403
 
 
@@ -306,3 +310,4 @@ def test_my_workspaces_tells_an_admin_when_the_owners_were_asked(w, monkeypatch)
     monkeypatch.setattr(w.reg, "update_ask", lambda ws: {"target_version": "9.9.9", "asked_ms": 4242}, raising=False)
     _, o, _ = w.call("GET", "/me/workspaces", token=w.login(w.admin))
     assert o["workspaces"] and all(r["update_asked_ms"] == 4242 for r in o["workspaces"])
+    assert all(r["update_asked_target"] == "9.9.9" for r in o["workspaces"])

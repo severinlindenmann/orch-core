@@ -1303,7 +1303,11 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
                 st = {k: v for k, v in st.items() if k not in ("host", "address", "last_seen_ms")}
             else:
                 ask = getattr(self.d.registry, "update_ask", lambda _w: None)(w["workspace_id"])
-                st = {**st, "update_asked_ms": ask["asked_ms"] if ask else None}  # HUB-WS-04, display only
+                st = {
+                    **st,
+                    "update_asked_ms": ask["asked_ms"] if ask else None,
+                    "update_asked_target": ask["target_version"] if ask else None,
+                }  # HUB-WS-04, display only
             rows.append({**w, **st})
         return 200, {
             "workspaces": rows,

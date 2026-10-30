@@ -22,8 +22,8 @@ class UpdateRequestHandlers:
             st = reg.status(ws)
             if version_state(st["version"], __version__, "0") != "older":
                 continue
-            reg.ask_update(ws, __version__, now, c.user_id)
-            asked += 1
+            if reg.ask_update(ws, __version__, now, c.user_id):
+                asked += 1  # only the newly asked ones
         return 200, {"asked": asked, "target_version": __version__, "at_ms": now}
 
 

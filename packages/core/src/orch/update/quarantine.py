@@ -36,11 +36,20 @@ def active(state: Path) -> bool:
     return os.path.lexists(marker(state))
 
 
-def activate(state: Path) -> None:
+def activate(state: Path, update_id: str) -> None:
+    """Write the marker: a regular file (``O_EXCL|O_NOFOLLOW``, 0600) whose content is the ``update_id`` of the
+    unfinished update journal. :func:`orch.migrate.format.open_root` admits a quarantined process only when the content
+    matches the journal (and the journal is not ``restoring``), so a stale or planted marker admits nothing."""
+    if not update_id or not all(c in "0123456789abcdef" for c in update_id):
+        raise ValueError("the update id must be hex")
     p = marker(state)
     p.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    os.close(fd)
+    clear(state)
+    fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    try:
+        os.write(fd, (update_id + "\n").encode())
+    finally:
+        os.close(fd)
 
 
 def clear(state: Path) -> None:

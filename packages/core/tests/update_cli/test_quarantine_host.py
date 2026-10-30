@@ -22,7 +22,7 @@ def test_quarantine_serves_the_control_socket_only(lab):
             c.call("host.list")
         assert (lab.run / "runner" / "host.sock").exists()
         c = None
-    quarantine.activate(lab.state)
+    quarantine.activate(lab.state, "ab" * 16)
     try:
         with lab.host() as h:
             assert h.host.quarantine and h.host.services == {}
@@ -54,7 +54,7 @@ def test_host_health_opens_every_registered_root(lab):
         with normal.client() as c:
             assert lab.register(c)["ok"] is True
     store = _store_dir(lab.root)
-    quarantine.activate(lab.state)
+    quarantine.activate(lab.state, "ab" * 16)
     try:
         with lab.host() as h, h.client() as c:
             fr = c.call("host.health")

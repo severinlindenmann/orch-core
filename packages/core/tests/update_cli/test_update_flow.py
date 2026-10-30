@@ -287,7 +287,7 @@ def test_use_refuses_while_an_update_is_unfinished_or_quarantined(w):
     from orch.migrate.journal import clear_journal
 
     clear_journal(w.env)
-    quarantine.activate(w.state)
+    quarantine.activate(w.state, "ab" * 16)
     assert code(w.updater().use, OLD) == "update.interrupted"
 
 

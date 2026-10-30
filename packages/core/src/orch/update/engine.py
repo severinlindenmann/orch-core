@@ -409,7 +409,7 @@ class Updater:
 
     def _quarantine_check(self, to: str, info: Mapping[str, Any]) -> None:
         bin_ = self.layout.tool_bin(to)
-        quarantine.activate(self.state)
+        quarantine.activate(self.state, (read_journal_safe(self.env) or {}).get("update_id", ""))
         try:
             self.s.services.start(bin_, [n for n in info.get("running") or [] if n in QUARANTINE_KEYS], quarantine=True)
             problems = self._wait_healthy(True)

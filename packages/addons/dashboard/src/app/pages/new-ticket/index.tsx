@@ -331,9 +331,11 @@ export interface NewTicketFormProps {
   footerExtra?: ReactNode
   /** Focus promote: a prefilled draft that wins over a remembered one (the person edits it before creating). */
   initial?: Partial<Draft>
+  /** The New ticket sheet: after a signed create stay where you were (a toast offers Open). Other hosts (Focus) navigate themselves. */
+  stayOnCreate?: boolean
 }
 
-export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, onCreated, onClosed, onCancel, footerExtra, initial }: NewTicketFormProps) {
+export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, onCreated, onClosed, onCancel, footerExtra, initial, stayOnCreate }: NewTicketFormProps) {
   const overlay = variant === 'overlay'
   const navigate = useNavigate()
   const qc = useQueryClient()
@@ -498,7 +500,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
     // The sheet closes and the person stays where they were; the full page opens the ticket as before.
     if (ticketKey) signedToast({ key: ticketKey, type: made.type as TicketType, title: made.title }, workspace.id, { undo: false })
     else toast.success('Ticket created')
-    afterCreate(another, ticketKey, { toasted: true, stay: overlay })
+    afterCreate(another, ticketKey, { toasted: true, stay: overlay && !!stayOnCreate })
   }
   /** The notice counts as read only when the person saw it: the review's slot showed it next to the one-click review
    * they signed from in that same popover. The terminal, the hub, or a review where the slot was not on screen: not read. */

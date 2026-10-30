@@ -12,6 +12,11 @@ SRC = Path(__file__).resolve().parents[2] / "src" / "orch"
 
 #: (file, function) -> (calls, how invariant I holds there)
 PATHS: dict[tuple[str, str], tuple[int, str]] = {
+    ("host/remote/__init__.py", "append_host"): (
+        1,
+        "exempt: a host (H) remote.* line (disabled, code_issued, device_removed, key_rotated) that only reduces "
+        "power; written under the store lock, no reader-gated content",
+    ),
     ("host/human.py", "append_signed"): (
         1,
         "checked: _readers_refusal under the store lock before the first append (human.finish, relay.submit, R6)",

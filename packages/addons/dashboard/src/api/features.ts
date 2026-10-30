@@ -49,6 +49,9 @@ export function hasFeature(name: string, workspace?: string): boolean {
   return enabled.has(name)
 }
 
+/** Was this session opened on this computer (a launch code)? Remote access is changed only from here. */
+export const onThisComputer = (): boolean => login === 'local'
+
 /** True on a real host: not the in-process mock. */
 export const isRealHost = () => enabled !== null
 

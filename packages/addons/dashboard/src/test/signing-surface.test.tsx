@@ -209,7 +209,7 @@ const CASES: Case[] = [
     path: '/ticket/DEMO-0041',
     open: async (user) => {
       const dialog = await ticketAction(user, /Give verdict/)
-      expect(dialog).toHaveAccessibleName('Give verdict (Verify)')
+      expect(dialog).toHaveAccessibleName('Give verdict')
       await user.click(within(dialog).getByRole('radio', { name: /^Pass on / }))
       return dialog
     },

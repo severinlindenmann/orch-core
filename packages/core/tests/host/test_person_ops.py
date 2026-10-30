@@ -76,6 +76,8 @@ def test_the_host_person_ops_are_not_registry_ops():
         "device.mark_exposed",
         "device.rotate",
         "device.remove",
+        "remote.set",
+        "remote.device_confirm",
     }  # V3 C2a, C2b, C10, #1097, #1198 C15
     assert set(person_ops.OPS) == set(review.HOST_PERSON_OPS) == want
     for name in person_ops.OPS:

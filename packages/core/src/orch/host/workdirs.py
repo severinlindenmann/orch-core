@@ -5,7 +5,8 @@ the folder). Its files are the person's: they stay after the ticket closes, unti
 
 * ``workdir.get {ticket}`` (column P): ``{codebase, exists, files, bytes, truncated, folder}``; ``folder`` is the path
   below the project folder (never the full path). A ticket with a codebase answers ``codebase: true`` and nothing else.
-* ``workdir.delete {ticket}`` (column P, idem, **no log event**): deletes exactly ``<project>/.orch-work/<KEY>`` and
+* ``workdir.delete {ticket}`` (column P, idem, **no log event**, but a host-written ``workdir.delete`` line in
+  ``audit-security.jsonl``): deletes exactly ``<project>/.orch-work/<KEY>`` and
   what is in it, through descriptors and without following a link (:func:`orch.layout.delete_workdir`). Who: a
   person-class owner or maintainer, the ticket's owner or an assignee, who can see the ticket. A live run that works in
   the folder refuses (``worktree.in_use``). A ticket with a codebase has no work folder: ``invalid.input``. Gone
@@ -107,6 +108,13 @@ def serve(call: Call) -> dict[str, Any]:
             gone = delete_workdir(layout, view.key)
         except (LayoutError, OSError) as exc:
             raise HostError("invalid.input", f"the work folder could not be deleted: {exc}"[:300]) from None
+        from . import securitylog
+
+        securitylog.record(  # the files are the person's and gone for good: a host-written line, no signed log event
+            service.state_dir, service.host_uid, service.clock(), "workdir.delete",
+            workspace_id=service.workspace_id, principal=call.principal, person=viewer.person,
+            ticket=view.key, deleted=gone,
+        )  # fmt: skip
         return ok_result({"deleted": gone, "folder": f".orch-work/{view.key}"})
 
     return service.outcomes.execute(

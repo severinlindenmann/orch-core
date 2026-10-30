@@ -109,6 +109,7 @@ from .publishing import NETWORK_OPS as PUBLISH_NETWORK_OPS
 from .publishing import PUBLISH_CAPS, PUBLISH_OPS
 from .reads import CAPS as READ_CAPS
 from .reads import READ_OPS
+from .remote import REMOTE_CAPS, REMOTE_OPS, REMOTE_READS
 from .runnergrants import GRANT_OPS
 from .runners import RUN_CAPS, RUN_OPS
 from .shareops import NETWORK_OPS as SHARE_NETWORK_OPS
@@ -256,6 +257,7 @@ def served_ops() -> dict[str, int]:
     out.update(TRANSCRIPT_OPS)  # focus/1: run.transcript
     out.update(PUBLISH_OPS)  # P5: publish.prepare, .send, .revoke, .list, .discard, .register
     out.update(HUB_OPS)  # V3 C2a: hub.connect, hub.unbind, hub.status
+    out.update(REMOTE_OPS)  # R2 #1590: remote.off, .code, .device_remove, .key_rotate, .status, .pending, .sessions
     out.update(PEER_OPS)  # V3 C12: peer.* (ws->ws through the hub)
     out.update(SPACE_OPS)  # V3 C13: space.* (shared spaces through the hub)
     out.update(ORG_OPS)  # M3 H-2: org.* (company skills and MCP servers offered by the hub)
@@ -322,6 +324,8 @@ def op_kind(name: str) -> tuple[OpKind, Phase] | None:
     if name in HUB_OPS:  # V3 C2a: column P only (the op checks the owner role)
         reads = ("hub.status", "hub.handoff", "hub.link", "hub.switch", "hub.directory", "hub.shared")
         return ("person_read", "read") if name in reads else ("person_write", "write")
+    if name in REMOTE_OPS:  # R2 #1590: column P only (the op checks the owner role)
+        return ("person_read", "read") if name in REMOTE_READS else ("person_write", "write")
     if name in PEER_OPS:  # V3 C12: reads for P and G (an agent reads its inbox); writes P only, owner role
         return ("pg_read", "read") if name in PEER_READS else ("person_write", "write")
     if name in COSMETIC_OPS:  # D6: column P only (the op checks the owner role)
@@ -477,6 +481,7 @@ class RegistryBackend:
         return [
             *base, *READ_CAPS, *records_ops.CAPS, *(["sub_ext/1"] if SUB_EXT else []), *RUN_CAPS, *TERM_CAPS,
             *WORKDIR_CAPS, *WORKTREE_CAPS, *TRANSCRIPT_CAPS, *PUBLISH_CAPS, *readerops.CAPS, *phonehints.CAPS,
+            *REMOTE_CAPS,
         ]  # fmt: skip
 
     #: §0.6 step 10 is checked here, after the args (8) and the replay (9)
@@ -510,6 +515,10 @@ class RegistryBackend:
                     "outcome.unknown", f"{op} did not finish in time; ask outcome.get with its idem"
                 ) from None
             raise HostError("timeout", f"{op} did not finish within {timeout_ms} ms") from None
+        if op == "remote.attach":  # R3: park a poll with nothing to say (the adapter's frames wake it)
+            from . import remote
+
+            result = await remote.attach_wait(call, result)
         if op in SECOND_PHASE:  # the worker handed over its plan unredacted: redact what the second phase ANSWERS
             redactor = Redactor((call.frame.get("auth") or {}).get("grant"), op)
             try:
@@ -716,6 +725,10 @@ class RegistryBackend:
                 from . import hubops
 
                 result = hubops.serve(call)
+            elif op in REMOTE_OPS:
+                from . import remote
+
+                result = remote.serve(call)
             elif op in COSMETIC_OPS:
                 from . import cosmeticops
 

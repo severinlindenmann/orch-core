@@ -80,6 +80,10 @@ export function storyOf(action: ClickAction | null | undefined, ctx: StoryContex
       return { signLabel: 'Sign and let the hub read everything', steps: ['You sign.', 'The hub can read everything in this workspace.'] }
     case 'hub_leave':
       return { signLabel: 'Leave hub', danger: true, steps: ['You sign.', 'This workspace leaves the hub.'] }
+    case 'remote_set':
+      return { signLabel: 'Turn on remote access', steps: ['You sign.', 'Devices you add can use this workspace from afar, as shown.'] }
+    case 'remote_device_confirm':
+      return { signLabel: 'Add this device', steps: ['You sign.', 'This device can use this workspace from afar, as shown.'] }
     case 'runner_grant': {
       const length = accessLength(action.hours)
       return action.extend

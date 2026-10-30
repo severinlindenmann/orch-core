@@ -84,6 +84,18 @@ ACTOR_RULES: dict[str, str] = {
     "hub.joined": "P",
     "hub.left": "P",
     "hub.pinned": "H",
+    # R2 (#1590): the remote access policy and devices. Only the owner's local act turns it on or adds a device (P,
+    # with the remote owner proof); the host alone records the rest, and none of them can turn anything on.
+    "remote.changed": "P",
+    "remote.device_added": "P",
+    "remote.disabled": "H",
+    "remote.code_issued": "H",
+    "remote.code_burned": "H",
+    "remote.device_removed": "H",
+    "remote.key_rotated": "H",
+    "remote.session_opened": "H",
+    "remote.session_closed": "H",
+    "remote.presence": "H",
 }
 OPERATE = frozenset(
     {
@@ -99,6 +111,8 @@ OPERATE = frozenset(
         "addon.purged",
         "hub.joined",
         "hub.left",
+        "remote.changed",
+        "remote.device_added",
         "restore",
         "invalid.acknowledged",
     }

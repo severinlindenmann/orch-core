@@ -43,9 +43,20 @@ export function JoinFlow({ ws, onClose, initialLink }: { ws: string; onClose: ()
   const [signed, setSigned] = useState(false)
   const [mode, setMode] = useState<'selective' | 'full'>('selective')
   const [choosing, setChoosing] = useState(false)
+  const [noCopied, setNoCopied] = useState(false)
   const link = text.trim()
   const [detailsOpen, setDetailsOpen] = useState(false)
   const valid = LINK.test(link)
+  // P12: the clipboard is read only on this click (a user gesture), checked with LINK, and only fills the field and starts
+  // the lookup. Nothing is signed: the person still reads the hub and presses Connect.
+  const canRead = typeof navigator !== 'undefined' && typeof navigator.clipboard?.readText === 'function'
+  const useCopied = async () => {
+    setNoCopied(false)
+    try {
+      const got = ((await navigator.clipboard.readText()) ?? '').trim()
+      if (LINK.test(got)) { setText(got); setArmed(true) } else setNoCopied(true)
+    } catch { setNoCopied(true) }
+  }
 
   // The hub is looked up as soon as the pasted text is a link: nothing to click before the hub is shown.
   useEffect(() => {
@@ -55,7 +66,7 @@ export function JoinFlow({ ws, onClose, initialLink }: { ws: string; onClose: ()
     setLooking(true)
     api.getHubLink(ws, link).then(
       got => { if (alive) setInfo(got) },
-      e => { if (alive) setProblem(e instanceof ApiError && e.message ? e.code + ': ' + e.message : 'Could not reach the hub named by this link.') },
+      e => { if (alive) setProblem(e instanceof ApiError && e.message ? e.message : 'Could not reach the hub named by this link.') },
     ).finally(() => { if (alive) setLooking(false) })
     return () => { alive = false }
   }, [ws, link, valid, armed])
@@ -68,8 +79,10 @@ export function JoinFlow({ ws, onClose, initialLink }: { ws: string; onClose: ()
     {!failed && <div className="space-y-1">
       <label htmlFor="hub-link-text" className="sr-only">Connect link</label>
       <p id="hub-link-hint" className="text-sm text-text-muted">Paste the connect link from your hub admin.</p>
+      {canRead && !valid && <Action id="hub-link-use-copied" onClick={() => { void useCopied() }}>Use copied link</Action>}
+      {noCopied && <p role="status" data-testid="hub-link-nocopied" className="text-sm text-text-muted">There is no connect link copied yet.</p>}
       <input id="hub-link-text" data-testid="hub-link-text" autoFocus value={text} onChange={e => { setText(e.target.value); setArmed(true) }} autoComplete="off" spellCheck={false} aria-describedby="hub-link-hint"
-        placeholder="https://hub.example/c#h1...." className="min-h-11 w-full rounded-md border border-border bg-bg px-3 font-mono text-xs" />
+        className="min-h-11 w-full rounded-md border border-border bg-bg px-3 font-mono text-xs" />
     </div>}
     {link && !valid && <p role="alert" data-testid="hub-link-bad" className="text-danger">This does not look like a connect link. Paste all of it, from https:// to the end.</p>}
     {valid && !armed && <div className="space-y-1"><p data-testid="hub-link-from">This link points to <Raw>{link.replace(/^(https?:\/\/[^/]+).*$/, '$1')}</Raw></p><Action id="hub-link-lookup" onClick={() => setArmed(true)}>Look up this hub</Action></div>}

@@ -35,6 +35,16 @@ _NO_TICKET_EFFECT = frozenset(
         "invalid.acknowledged",
         "hub.joined",
         "hub.left",
+        "remote.changed",
+        "remote.disabled",
+        "remote.code_issued",
+        "remote.code_burned",
+        "remote.device_added",
+        "remote.device_removed",
+        "remote.key_rotated",
+        "remote.session_opened",
+        "remote.session_closed",
+        "remote.presence",
     }
 )
 

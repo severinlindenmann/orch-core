@@ -6,7 +6,7 @@ import { emptyState, loading } from "../feel.js";
 import { chip, h, text, when, withNames } from "../ui.js";
 
 export const STATEMENT = "The hub and its admins can read this space.";
-export const NO_START = "None of these can start the space yet. Tick a workspace that is not marked 'waits for its owner', or ask an owner to accept first. You can add the others later.";
+export const NO_START = "This workspace shares only selected items, so it can't start a space. Tick a workspace that joins now. You can add the others later, once their owners accept.";
 export const RESTORE_LINE = "To get an older version back, restore it from the workspace.";
 const TYPES = [["wiki", "Wiki", "Pages people write together"], ["files", "Files", "Documents everyone starts from"], ["board", "Board", "Cards that move from planned to done"]];
 const typeName = (t) => (TYPES.find((x) => x[0] === t) ?? [t, ""])[1];
@@ -87,10 +87,9 @@ export function newSpaceDialog(workspaces, done, close) {
           box.checked = form.members.has(w.workspace_id);
           box.addEventListener("change", () => { box.checked ? form.members.add(w.workspace_id) : form.members.delete(w.workspace_id); ready(); });
           return h("label", { class: "check" }, box, h("span", { class: "grow", text: nameOf(w) }),
-            h("span", { class: "small muted", text: w.mode === "full" ? "joins now" : "waits for its owner" }));
+            h("span", { class: "small muted", text: w.mode === "full" ? "joins now" : "shares only selected items" }));
         }) : [h("p", { class: "small muted", text: "No workspace is connected yet." })]),
         noStart,
-        h("p", { class: "banner warn", role: "note", text: STATEMENT }),
         h("label", { class: "check" }, tick, h("span", { text: "I understand: " + STATEMENT }))],
     };
     body.replaceChildren(h("h1", { text: "New shared space (step " + step + " of 3)" }), ...steps[step],
@@ -136,7 +135,7 @@ export function spacesView(data, actions = {}, now = Date.now()) {
     const memberIds = new Set((s.members ?? []).map((m) => m.workspace_id));
     const free = candidates.filter((w) => !memberIds.has(w.workspace_id));
     const pick = h("select", { "aria-label": "Add a workspace" }, h("option", { value: "", text: "Add a workspace" }),
-      free.map((w) => h("option", { value: w.workspace_id, text: nameOf(w) + (w.mode === "selective" ? " (its owner accepts first)" : "") })));
+      free.map((w) => h("option", { value: w.workspace_id, text: nameOf(w) + (w.mode === "selective" ? " (shares only selected items; its owner accepts first)" : "") })));
     const add = h("button", { type: "button", text: "Add", onclick: () => { if (pick.value) actions.addMember?.(s, pick.value); } });
     return h("article", { class: "card space", "data-space": s.space_id },
       h("div", { class: "row" }, h("h3", { class: "grow", text: text(s.name) || "Space" }), meta.type ? chip(typeName(meta.type)) : null, s.archived_ms != null ? chip("Archived") : null,
@@ -166,7 +165,7 @@ export function spacesView(data, actions = {}, now = Date.now()) {
     h("div", { class: "row" }, h("h1", { class: "grow", text: "Shared spaces" }),
       h("button", { type: "button", id: "new-space", class: "pri", text: "New shared space", onclick: open }),
       info("About shared spaces", "Workspaces put documents into a shared space and read each other's. A workspace set to Reads only can read but not add or remove. Archiving stops new additions; reading goes on.")),
-    h("p", { class: "banner warn", role: "note", text: STATEMENT }),
+    all.length ? h("p", { class: "banner warn", role: "note", text: STATEMENT }) : null,
     toggle, list, dialogHost);
   if (toggle) toggle.addEventListener("click", () => { showArchived = !showArchived; draw(); });
   draw();
@@ -204,4 +203,4 @@ export async function spacesPage(d) {
 }
 
 // The registry entry: the console's router, tabs and file list are built from this one export (no other file names a page).
-export const page = { path: "spaces", nav: { label: "Spaces", admin: true, after: "mcp" }, render: spacesPage };
+export const page = { path: "spaces", nav: { label: "Spaces", admin: true, needsWorkspace: true, after: "mcp" }, render: spacesPage };

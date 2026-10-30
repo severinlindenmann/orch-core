@@ -123,10 +123,36 @@ def test_the_pre_login_surface_of_the_front_gets_the_address_for_the_login_bucke
     assert bare.get("/", headers={"host": f"127.0.0.1:{PORT}"}).status_code == 200
 
 
+def prepared_id(client, stub, token, origin=HTTPS):
+    """Prepare a real (non-remote-step) request in this session; its id is known to the click routes."""
+    approve = {"action": "approve", "key": "DEMO-0001", "gate": "requirements"}
+    res = step(client, stub, "prepare", approve, token, origin)
+    assert res.status_code == 200, res.text
+    return res.json()["request_id"]
+
+
+def test_an_unprepared_request_id_on_the_sign_route_is_not_found(ungated, remote, stub, script):
+    """Unknown id means refuse (R2 authorize), before any step-up check: nothing reaches the signer."""
+    script.features = FEATURES
+    body = dict(GATES[-1][1])
+    res = step(ungated, stub, "sign", body, remote, HTTPS)
+    assert res.status_code == 404 and res.json()["error"]["code"] == "not_found", res.text
+    assert not [c for cl in script.clients for c in cl.calls if c[0] in ("prepare", "sign")]
+
+
+def test_an_unprepared_request_id_is_not_found_for_a_local_session_too(loop, local, stub, script):
+    script.features = FEATURES
+    res = step(loop, stub, "sign", dict(GATES[-1][1]), local, ORIGIN)
+    assert res.status_code == 404 and res.json()["error"]["code"] == "not_found", res.text
+    assert not [c for cl in script.clients for c in cl.calls if c[0] == "sign"]
+
+
 @pytest.mark.parametrize(("path", "body"), GATES)
 def test_a_remote_session_on_the_front_gets_each_step_up_refusal(ungated, remote, stub, script, path, body):
     """The handler's own refusal, with the route table off (the table lets these through to the handler anyway)."""
     script.features = FEATURES
+    if path == "sign":  # a sign only reaches the step-up check for a request this session really prepared
+        body = {**body, "request_id": prepared_id(ungated, stub, remote)}
     res = step(ungated, stub, path, body, remote, HTTPS)
     assert res.status_code == 403, res.text
     error = res.json()["error"]
@@ -134,7 +160,8 @@ def test_a_remote_session_on_the_front_gets_each_step_up_refusal(ungated, remote
     assert [
         c for cl in script.clients for c in cl.calls if c[0] in ("runner", "rotate", "custody_on", "custody_off")
     ] == []
-    assert not [c for cl in script.clients for c in cl.calls if c[0] in ("prepare", "sign")]
+    calls = [c[0] for cl in script.clients for c in cl.calls if c[0] in ("prepare", "sign")]
+    assert calls == (["prepare"] if path == "sign" else [])  # sign: only the set-up prepare, never a signature
 
 
 @pytest.mark.parametrize(("path", "body"), GATES)
@@ -145,6 +172,8 @@ def test_any_session_kind_that_is_not_local_is_refused_by_the_route_itself(
     """Defence in depth: the route does not rely on the listener binding. A session of another kind that reached it
     (the binding broken, a new kind added) is refused, fail closed."""
     script.features = FEATURES
+    if path == "sign":  # prepared while still a plain local session; then the kind changes under it
+        body = {**body, "request_id": prepared_id(loop, stub, local, ORIGIN)}
     auth.kinds[local] = kind
     res = step(loop, stub, path, body, local, ORIGIN)
     assert res.status_code == 403, (kind, res.text)

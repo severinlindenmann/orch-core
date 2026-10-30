@@ -1146,6 +1146,533 @@ def custodial_cases() -> None:
         case("custodial_cannot", f"custodial_cannot_{nm}", args, err(code))
 
 
+# --- inside a session (R3, #1591): app frames, exchanges, route_digest ------------------------------------------------
+
+W_TPL = "/api/w/{ws}"
+
+
+def fr(direction: str, kind: str | int, ident: int, payload: bytes = b"") -> dict[str, Any]:
+    """A frame spec: the plaintext as hex."""
+    k = R.APP_KINDS[kind] if isinstance(kind, str) else kind
+    return {"dir": direction, "hex": (bytes([k]) + ident.to_bytes(4, "big") + payload).hex()}
+
+
+def fill(direction: str, kind: str | int, ident: int, n: int, byte: int = 0x61) -> dict[str, Any]:
+    """A frame spec too large to write out: ``kind || id || bytes([byte]) * n`` (both sides build it)."""
+    k = R.APP_KINDS[kind] if isinstance(kind, str) else kind
+    return {"dir": direction, "fill": {"kind": k, "id": ident, "len": n, "byte": byte}}
+
+
+def frame_bytes(spec: dict[str, Any]) -> bytes:
+    if "hex" in spec:
+        return bytes.fromhex(spec["hex"])
+    f = spec["fill"]
+    return bytes([f["kind"]]) + f["id"].to_bytes(4, "big") + bytes([f["byte"]]) * f["len"]
+
+
+def req_head(method: str = "GET", path: str = "/api/w/" + "0" * 32 + "/runs", query: str = "", headers=None) -> dict:
+    return {"method": method, "path": path, "query": query, "headers": headers or [["accept", "application/json"]]}
+
+
+def ws_head(path: str = "/term", query: str = "ticket=t1", headers=None) -> dict:
+    return {"path": path, "query": query, "headers": headers or [["sec-websocket-protocol", "orch.term"]]}
+
+
+def resp_head(status: int = 200, headers=None) -> dict:
+    return {"status": status, "headers": [["content-type", "application/json"]] if headers is None else headers}
+
+
+def describe(f: R.AppFrame) -> dict[str, Any]:
+    """How a parsed frame is written in the vectors: byte payloads by their length."""
+    v = len(f.value) if f.kind in ("BODY", "WS_BINARY") else f.value
+    return {"kind": f.kind, "id": f.id, "value": v}
+
+
+def app_frame_cases() -> None:
+    def ok(name: str, spec: dict[str, Any], note: str | None = None) -> None:
+        case("app_frame", name, spec, {"ok": describe(R.app_frame_parse(spec["dir"], frame_bytes(spec)))}, note)
+
+    def bad(name: str, spec: dict[str, Any], note: str | None = None) -> None:
+        case("app_frame", name, spec, err("malformed"), note)
+
+    ws_path = "/api/w/" + WS
+    ok("app_frame_request_head_get", fr("d2h", "HEAD", 1, cj(req_head(path=ws_path + "/runs"))))
+    ok(
+        "app_frame_request_head_post",
+        fr(
+            "d2h",
+            "HEAD",
+            7,
+            cj(req_head("POST", ws_path + "/agents/start", "", [["content-type", "application/json"]])),
+        ),
+    )
+    ok("app_frame_ws_open", fr("d2h", "WS_OPEN", 2, cj(ws_head())))
+    ok("app_frame_response_head_200", fr("h2d", "HEAD", 1, cj(resp_head())))
+    ok("app_frame_response_head_101", fr("h2d", "HEAD", 2, cj(resp_head(101, []))))
+    ok("app_frame_body", fr("d2h", "BODY", 7, b'{"ticket":"DEMO-1"}'))
+    ok("app_frame_body_max", fill("h2d", "BODY", 1, R.APP_PAYLOAD_MAX), "65514 bytes: the plaintext is 65519")
+    ok("app_frame_end", fr("d2h", "END", 1))
+    ok("app_frame_reset", fr("h2d", "RESET", 3, b"remote.busy"))
+    ok("app_frame_ws_text", fr("d2h", "WS_TEXT", 2, "ls -la é\n".encode()))
+    ok("app_frame_ws_text_empty", fr("h2d", "WS_TEXT", 2))
+    ok("app_frame_ws_binary", fr("h2d", "WS_BINARY", 2, b"\x00\xff\x1b[0m"))
+    ok("app_frame_ws_close", fr("d2h", "WS_CLOSE", 2, (1000).to_bytes(2, "big")))
+    ok("app_frame_ping", fr("d2h", "PING", 0))
+    ok("app_frame_pong", fr("h2d", "PONG", 0))
+
+    bad("app_frame_too_short", {"dir": "d2h", "hex": "0300000001"[:8]})
+    bad(
+        "app_frame_over_max",
+        fill("h2d", "BODY", 1, R.APP_PAYLOAD_MAX + 1),
+        "65520 bytes cannot be one transport plaintext",
+    )
+    bad("app_frame_kind_0", fr("d2h", 0, 1))
+    bad("app_frame_kind_11", fr("d2h", 11, 1))
+    bad("app_frame_kind_255", fr("h2d", 255, 1))
+    bad("app_frame_head_id_0", fr("d2h", "HEAD", 0, cj(req_head())))
+    bad("app_frame_ping_id_1", fr("d2h", "PING", 1))
+    bad("app_frame_ping_payload", fr("d2h", "PING", 0, b"x"))
+    bad("app_frame_end_payload", fr("d2h", "END", 1, b"x"))
+    bad("app_frame_body_empty", fr("d2h", "BODY", 1))
+    bad("app_frame_reset_unknown_code", fr("h2d", "RESET", 1, b"revoked"))
+    bad("app_frame_reset_empty", fr("h2d", "RESET", 1))
+    bad("app_frame_ws_open_from_host", fr("h2d", "WS_OPEN", 1, cj(ws_head())))
+    bad("app_frame_ws_text_bad_utf8", fr("d2h", "WS_TEXT", 2, b"\xc3\x28"))
+    bad("app_frame_ws_close_1005", fr("d2h", "WS_CLOSE", 2, (1005).to_bytes(2, "big")), "never on the wire")
+    bad("app_frame_ws_close_3_bytes", fr("d2h", "WS_CLOSE", 2, b"\x03\xe8x"))
+    h = req_head()
+    bad("app_frame_head_not_canonical", fr("d2h", "HEAD", 1, json.dumps(h).encode()), "a head is its own cj form")
+    bad(
+        "app_frame_head_extra_key",
+        fr("d2h", "HEAD", 1, cj(h | {"person": PERSON})),
+        "identity never comes from a frame",
+    )
+    bad("app_frame_head_missing_query", fr("d2h", "HEAD", 1, cj({k: v for k, v in h.items() if k != "query"})))
+    bad("app_frame_head_response_shape_from_device", fr("d2h", "HEAD", 1, cj(resp_head())))
+    bad("app_frame_head_request_shape_from_host", fr("h2d", "HEAD", 1, cj(h)))
+    bad("app_frame_head_method_lower", fr("d2h", "HEAD", 1, cj(h | {"method": "get"})))
+    bad("app_frame_head_method_connect", fr("d2h", "HEAD", 1, cj(h | {"method": "CONNECT"})))
+    for nm, path in (
+        ("dotdot", "/api/w/../setup"),
+        ("dot", "/api/./w"),
+        ("double_slash", "/api//w"),
+        ("trailing_slash", "/api/w/"),
+        ("percent", "/api/w/%2e%2e/setup"),
+        ("backslash", "/api\\w"),
+        ("semicolon", "/api/w;x"),
+        ("relative", "api/w"),
+        ("space", "/api/w x"),
+        ("non_ascii", "/api/w/é"),
+    ):
+        bad(f"app_frame_head_path_{nm}", fr("d2h", "HEAD", 1, cj(h | {"path": path})), "the dashboard's clean_path")
+    bad("app_frame_head_path_too_long", fr("d2h", "HEAD", 1, cj(h | {"path": "/" + "a" * 2048})))
+    bad("app_frame_head_query_hash", fr("d2h", "HEAD", 1, cj(h | {"query": "a=1#frag"})))
+    bad("app_frame_head_query_space", fr("d2h", "HEAD", 1, cj(h | {"query": "a=1 2"})))
+    bad("app_frame_head_header_upper_name", fr("d2h", "HEAD", 1, cj(h | {"headers": [["Accept", "x"]]})))
+    bad(
+        "app_frame_head_header_newline", fr("d2h", "HEAD", 1, cj(h | {"headers": [["accept", "a\r\nx-orch-token: t"]]}))
+    )
+    bad("app_frame_head_header_leading_space", fr("d2h", "HEAD", 1, cj(h | {"headers": [["accept", " a"]]})))
+    bad("app_frame_head_header_triple", fr("d2h", "HEAD", 1, cj(h | {"headers": [["accept", "a", "b"]]})))
+    bad("app_frame_head_65_headers", fr("d2h", "HEAD", 1, cj(h | {"headers": [["x-a", str(i)] for i in range(65)]})))
+    big = [["x-a", "v" * 4000] for _ in range(5)]
+    bad("app_frame_head_over_16k", fr("d2h", "HEAD", 1, cj(h | {"headers": big})))
+    for name in ("content-length", "transfer-encoding", "connection", "upgrade", "host", "origin"):
+        bad(
+            f"app_frame_head_{name.replace('-', '_')}",
+            fr("d2h", "HEAD", 1, cj(h | {"headers": [[name, "1"]]})),
+            "framing is the frames'; Host and Origin are the terminator's",
+        )
+    bad(
+        "app_frame_ws_open_sec_websocket_key",
+        fr("d2h", "WS_OPEN", 2, cj(ws_head(headers=[["sec-websocket-key", "x"]]))),
+    )
+    bad("app_frame_ws_open_with_method", fr("d2h", "WS_OPEN", 2, cj(ws_head() | {"method": "GET"})))
+    bad(
+        "app_frame_response_set_cookie",
+        fr("h2d", "HEAD", 1, cj(resp_head(200, [["set-cookie", "orch_session=x"]]))),
+        "a stream credential never leaves the dashboard process",
+    )
+    bad("app_frame_response_status_100", fr("h2d", "HEAD", 1, cj(resp_head(100))))
+    bad("app_frame_response_status_600", fr("h2d", "HEAD", 1, cj(resp_head(600))))
+    bad("app_frame_response_status_text", fr("h2d", "HEAD", 1, cj({"status": "200", "headers": []})))
+    bad("app_frame_response_content_length", fr("h2d", "HEAD", 1, cj(resp_head(200, [["content-length", "2"]]))))
+
+
+def request_head_cases() -> None:
+    def a(spec: dict[str, Any]) -> dict[str, Any]:
+        return spec
+
+    h = req_head()
+    case("request_head", "request_head_plain", a(fr("d2h", "HEAD", 1, cj(h))), {"ok": True})
+    for nm, name in (
+        ("authorization", "authorization"),
+        ("cookie", "cookie"),
+        ("setup_token", "x-setup-token"),
+        ("orch_token", "x-orch-token"),
+        ("orch_anything", "x-orch-person"),
+    ):
+        case(
+            "request_head",
+            f"request_head_bearer_{nm}",
+            a(fr("d2h", "HEAD", 1, cj(h | {"headers": [["accept", "x"], [name, "Bearer t"]]}))),
+            err("remote.bearer"),
+            "an outside bearer is refused (400), never stripped",
+        )
+    case(
+        "request_head",
+        "request_head_ws_open_cookie",
+        a(fr("d2h", "WS_OPEN", 2, cj(ws_head(headers=[["cookie", "orch_session=x"]])))),
+        err("remote.bearer"),
+    )
+    case(
+        "request_head",
+        "request_head_upper_authorization",
+        a(fr("d2h", "HEAD", 1, cj(h | {"headers": [["Authorization", "Bearer t"]]}))),
+        err("malformed"),
+        "no case folding: an upper-case name is a frame error before any bearer rule",
+    )
+
+
+SEQ_HEAD = cj(req_head())
+SEQ_POST = cj(req_head("POST", "/api/w/" + "0" * 32 + "/wiki/create"))
+SEQ_WS = cj(ws_head())
+SEQ_200 = cj(resp_head())
+SEQ_101 = cj(resp_head(101, []))
+SEQ_403 = cj(resp_head(403))
+
+
+def seq_case(name: str, frames: list[dict[str, Any]], note: str | None = None) -> None:
+    st = R.AppStream()
+    results: list[str] = []
+    expect: dict[str, Any]
+    for i, f in enumerate(frames):
+        try:
+            results.append(st.feed(f["dir"], frame_bytes(f)))
+        except R.Refused as e:
+            expect = {"error": e.code, "index": i}
+            break
+    else:
+        expect = {"results": results}
+    case("app_seq", name, {"frames": frames}, expect, note)
+
+
+def get_exchange(i: int) -> list[dict[str, Any]]:
+    return [
+        fr("d2h", "HEAD", i, SEQ_HEAD),
+        fr("d2h", "END", i),
+        fr("h2d", "HEAD", i, SEQ_200),
+        fr("h2d", "BODY", i, b"[]"),
+        fr("h2d", "END", i),
+    ]
+
+
+def app_seq_cases() -> None:
+    seq_case("app_seq_get", get_exchange(1))
+    seq_case(
+        "app_seq_post_body",
+        [
+            fr("d2h", "HEAD", 1, SEQ_POST),
+            fr("d2h", "BODY", 1, b'{"title":'),
+            fr("d2h", "BODY", 1, b'"x"}'),
+            fr("d2h", "END", 1),
+            fr("h2d", "HEAD", 1, SEQ_200),
+            fr("h2d", "END", 1),
+        ],
+    )
+    seq_case(
+        "app_seq_response_before_request_end",
+        [
+            fr("d2h", "HEAD", 1, SEQ_POST),
+            fr("h2d", "HEAD", 1, cj(resp_head(413))),
+            fr("h2d", "END", 1),
+            fr("d2h", "END", 1),
+            fr("d2h", "HEAD", 2, SEQ_HEAD),
+        ],
+    )
+    seq_case(
+        "app_seq_interleaved",
+        [
+            fr("d2h", "HEAD", 1, SEQ_HEAD),
+            fr("d2h", "HEAD", 2, SEQ_HEAD),
+            fr("d2h", "END", 2),
+            fr("h2d", "HEAD", 2, SEQ_200),
+            fr("d2h", "END", 1),
+            fr("h2d", "HEAD", 1, SEQ_200),
+            fr("h2d", "END", 2),
+            fr("h2d", "END", 1),
+        ],
+    )
+    seq_case(
+        "app_seq_websocket",
+        [
+            fr("d2h", "WS_OPEN", 1, SEQ_WS),
+            fr("h2d", "HEAD", 1, SEQ_101),
+            fr("d2h", "WS_TEXT", 1, b"ls\n"),
+            fr("h2d", "WS_BINARY", 1, b"a b\r\n"),
+            fr("d2h", "WS_CLOSE", 1, (1000).to_bytes(2, "big")),
+            fr("h2d", "WS_BINARY", 1, b"bye"),
+            fr("h2d", "WS_CLOSE", 1, (1000).to_bytes(2, "big")),
+            fr("d2h", "WS_TEXT", 1, b"late"),
+        ],
+        "after both WS_CLOSE the exchange ended: a late frame is dropped",
+    )
+    seq_case(
+        "app_seq_websocket_refused",
+        [
+            fr("d2h", "WS_OPEN", 1, SEQ_WS),
+            fr("h2d", "HEAD", 1, SEQ_403),
+            fr("h2d", "BODY", 1, b'{"error":"remote.refused"}'),
+            fr("h2d", "END", 1),
+        ],
+    )
+    seq_case("app_seq_id_reused_after_end", [*get_exchange(1), fr("d2h", "HEAD", 1, SEQ_HEAD)], "ids rise strictly")
+    seq_case("app_seq_id_lower", [fr("d2h", "HEAD", 2, SEQ_HEAD), fr("d2h", "HEAD", 1, SEQ_HEAD)])
+    seq_case("app_seq_id_reused_while_open", [fr("d2h", "HEAD", 1, SEQ_HEAD), fr("d2h", "HEAD", 1, SEQ_HEAD)])
+    seq_case("app_seq_ws_open_reuses_http_id", [fr("d2h", "HEAD", 1, SEQ_HEAD), fr("d2h", "WS_OPEN", 1, SEQ_WS)])
+    seq_case("app_seq_body_before_head", [fr("d2h", "BODY", 1, b"x")])
+    seq_case("app_seq_response_unopened", [fr("h2d", "HEAD", 1, SEQ_200)], "the host never opens an exchange")
+    seq_case(
+        "app_seq_response_other_id",
+        [fr("d2h", "HEAD", 1, SEQ_HEAD), fr("h2d", "HEAD", 2, SEQ_200)],
+        "a response for an id the device has not opened",
+    )
+    seq_case(
+        "app_seq_body_after_end", [fr("d2h", "HEAD", 1, SEQ_HEAD), fr("d2h", "END", 1), fr("d2h", "BODY", 1, b"x")]
+    )
+    seq_case("app_seq_end_twice", [fr("d2h", "HEAD", 1, SEQ_HEAD), fr("d2h", "END", 1), fr("d2h", "END", 1)])
+    seq_case("app_seq_response_body_before_head", [fr("d2h", "HEAD", 1, SEQ_HEAD), fr("h2d", "BODY", 1, b"x")])
+    seq_case(
+        "app_seq_second_response_head",
+        [fr("d2h", "HEAD", 1, SEQ_HEAD), fr("h2d", "HEAD", 1, SEQ_200), fr("h2d", "HEAD", 1, SEQ_200)],
+    )
+    seq_case("app_seq_101_to_http", [fr("d2h", "HEAD", 1, SEQ_HEAD), fr("h2d", "HEAD", 1, SEQ_101)])
+    seq_case("app_seq_ws_text_on_http", [fr("d2h", "HEAD", 1, SEQ_HEAD), fr("d2h", "WS_TEXT", 1, b"x")])
+    seq_case("app_seq_ws_text_before_101", [fr("d2h", "WS_OPEN", 1, SEQ_WS), fr("d2h", "WS_TEXT", 1, b"x")])
+    seq_case(
+        "app_seq_ws_frames_after_refusal",
+        [fr("d2h", "WS_OPEN", 1, SEQ_WS), fr("h2d", "HEAD", 1, SEQ_403), fr("d2h", "WS_TEXT", 1, b"x")],
+    )
+    seq_case(
+        "app_seq_end_on_websocket",
+        [fr("d2h", "WS_OPEN", 1, SEQ_WS), fr("h2d", "HEAD", 1, SEQ_101), fr("d2h", "END", 1)],
+    )
+    seq_case("app_seq_body_on_websocket", [fr("d2h", "WS_OPEN", 1, SEQ_WS), fr("d2h", "BODY", 1, b"x")])
+    seq_case(
+        "app_seq_ws_text_after_own_close",
+        [
+            fr("d2h", "WS_OPEN", 1, SEQ_WS),
+            fr("h2d", "HEAD", 1, SEQ_101),
+            fr("d2h", "WS_CLOSE", 1, (1000).to_bytes(2, "big")),
+            fr("d2h", "WS_TEXT", 1, b"x"),
+        ],
+    )
+    seq_case(
+        "app_seq_reset_by_host_late_frames_dropped",
+        [
+            fr("d2h", "HEAD", 1, SEQ_POST),
+            fr("d2h", "BODY", 1, b"x"),
+            fr("h2d", "RESET", 1, b"timeout"),
+            fr("d2h", "BODY", 1, b"y"),
+            fr("d2h", "END", 1),
+            fr("d2h", "HEAD", 2, SEQ_HEAD),
+        ],
+        "frames the device sent before it saw the RESET are dropped; the stream stays",
+    )
+    seq_case(
+        "app_seq_reset_by_device",
+        [fr("d2h", "HEAD", 1, SEQ_HEAD), fr("d2h", "RESET", 1, b"cancelled"), fr("h2d", "HEAD", 1, SEQ_200)],
+    )
+    seq_case("app_seq_reset_unopened", [fr("d2h", "RESET", 1, b"cancelled")])
+    eight = [fr("d2h", "HEAD", i, SEQ_HEAD) for i in range(1, 9)]
+    seq_case(
+        "app_seq_ninth_exchange_busy",
+        [
+            *eight,
+            fr("d2h", "HEAD", 9, SEQ_HEAD),
+            fr("d2h", "END", 9),
+            fr("h2d", "HEAD", 1, SEQ_200),
+            fr("h2d", "END", 1),
+            fr("d2h", "END", 1),
+            fr("d2h", "HEAD", 10, SEQ_HEAD),
+        ],
+        "past 8 open HTTP exchanges: RESET remote.busy, the stream stays; a slot frees when one ends",
+    )
+    seq_case(
+        "app_seq_third_websocket_busy",
+        [
+            fr("d2h", "WS_OPEN", 1, SEQ_WS),
+            fr("d2h", "WS_OPEN", 2, SEQ_WS),
+            fr("d2h", "WS_OPEN", 3, SEQ_WS),
+            fr("d2h", "HEAD", 4, SEQ_HEAD),
+        ],
+        "2 WebSockets per stream, counted apart from HTTP",
+    )
+    n16 = [fill("d2h", "BODY", 1, R.APP_PAYLOAD_MAX) for _ in range(16)]
+    rest = R.REQUEST_BODY_MAX - 16 * R.APP_PAYLOAD_MAX
+    seq_case(
+        "app_seq_request_body_exactly_1mib",
+        [fr("d2h", "HEAD", 1, SEQ_POST), *n16, fill("d2h", "BODY", 1, rest), fr("d2h", "END", 1)],
+    )
+    seq_case(
+        "app_seq_request_body_over_1mib",
+        [fr("d2h", "HEAD", 1, SEQ_POST), *n16, fill("d2h", "BODY", 1, rest + 1), fr("d2h", "BODY", 1, b"x")],
+        "RESET too_large at the byte past 1 MiB; later frames of the exchange are dropped",
+    )
+    seq_case(
+        "app_seq_ping_pong",
+        [fr("d2h", "PING", 0), fr("h2d", "PONG", 0), fr("h2d", "PING", 0), fr("d2h", "PING", 0), fr("d2h", "PONG", 0)],
+    )
+    seq_case("app_seq_pong_unsolicited", [fr("h2d", "PONG", 0)])
+    seq_case("app_seq_second_ping_before_pong", [fr("d2h", "PING", 0), fr("d2h", "PING", 0)])
+    seq_case(
+        "app_seq_bad_frame_closes",
+        [fr("d2h", "HEAD", 1, SEQ_HEAD), fr("d2h", 11, 1)],
+        "a frame error closes the stream (malformed)",
+    )
+
+
+#: the app frames of the session transcript after ``opened``: device i2r nonce 1, 2; host r2i nonce 1, 2, 3
+APP_SESSION = {
+    "request_head": ("i2r", 1, R.app_frame("HEAD", 1, cj(req_head(path="/api/w/" + WS + "/runs")))),
+    "request_end": ("i2r", 2, R.app_frame("END", 1)),
+    "response_head": ("r2i", 1, R.app_frame("HEAD", 1, cj(resp_head()))),
+    "response_body": ("r2i", 2, R.app_frame("BODY", 1, b"[]")),
+    "response_end": ("r2i", 3, R.app_frame("END", 1)),
+}
+
+
+def app_transport_cases(t: dict[str, Any]) -> None:
+    ct: dict[str, bytes] = {}
+    for nm, (d, n, pt) in APP_SESSION.items():
+        k = bytes.fromhex(t["k_i2r_hex" if d == "i2r" else "k_r2i_hex"])
+        ct[nm] = R.CipherState(k=k, n=n).encrypt(b"", pt)
+        case(
+            "transport",
+            f"transport_session_app_{nm}",
+            {"transcript": t["name"], "dir": d, "n": n, "ct_hex": ct[nm].hex()},
+            {"pt_hex": pt.hex()},
+        )
+    case(
+        "transport",
+        "transport_session_app_reordered",
+        {"transcript": t["name"], "dir": "r2i", "n": 2, "ct_hex": ct["response_end"].hex()},
+        err("handshake"),
+        "app frames carry no counter: the Noise nonce orders them and a swap fails the AEAD",
+    )
+    order = ["request_head", "response_head", "request_end", "response_body", "response_end"]
+    seq_case(
+        "app_seq_session_transcript",
+        [{"dir": "d2h" if APP_SESSION[n][0] == "i2r" else "h2d", "hex": APP_SESSION[n][2].hex()} for n in order],
+        "the decrypted app frames of transport_session_app_*",
+    )
+
+
+TPL_ATTACH = W_TPL + "/runs/{run}/attach"
+TPL_START = W_TPL + "/agents/start"
+RUN1, RUN2 = "r_" + hexid("run-1"), "r_" + hexid("run-2")
+START_BODY = cj({"ticket": "DEMO-7", "model": "sonnet"})
+
+
+def route_args(method: str, template: str, path: str, query: str = "", body: bytes = b"", ws: str = WS) -> dict:
+    return {
+        "workspace_id": ws,
+        "method": method,
+        "template": template,
+        "path": path,
+        "query": query,
+        "body_hex": body.hex(),
+    }
+
+
+def route_cases() -> list[bytes]:
+    p = "/api/w/" + WS
+    good = {
+        "route_digest_attach_run_1": route_args("POST", TPL_ATTACH, f"{p}/runs/{RUN1}/attach", body=b"{}"),
+        "route_digest_attach_run_2": route_args("POST", TPL_ATTACH, f"{p}/runs/{RUN2}/attach", body=b"{}"),
+        "route_digest_agent_start": route_args("POST", TPL_START, f"{p}/agents/start", body=START_BODY),
+        "route_digest_agent_start_other_body": route_args(
+            "POST", TPL_START, f"{p}/agents/start", body=cj({"ticket": "DEMO-8", "model": "sonnet"})
+        ),
+        "route_digest_agent_start_other_workspace": route_args(
+            "POST", TPL_START, f"/api/w/{WS2}/agents/start", body=START_BODY, ws=WS2
+        ),
+        "route_digest_terminal_socket": route_args("WEBSOCKET", "/term", "/term", "ticket=t1"),
+        "route_digest_terminal_socket_query": route_args("WEBSOCKET", "/term", "/term", "ticket=t2"),
+        "route_digest_empty_body": route_args("POST", W_TPL + "/terminals/open", f"{p}/terminals/open"),
+    }
+    out = []
+    for name, a in good.items():
+        b = R.route_bytes(
+            a["workspace_id"], a["method"], a["template"], a["path"], a["query"], bytes.fromhex(a["body_hex"])
+        )
+        d = hashlib.sha256(b).digest()
+        out.append(d)
+        case("route_digest", name, a, {"bytes_hex": b.hex(), "digest_hex": d.hex()})
+    assert len(set(out)) == len(out), "every route vector must give its own digest"
+    base = good["route_digest_agent_start"]
+    for name, over in (
+        ("method_lower", {"method": "post"}),
+        ("method_connect", {"method": "CONNECT"}),
+        ("template_empty", {"template": ""}),
+        ("template_space", {"template": "/api/w/{ws} /agents/start"}),
+        ("template_too_long", {"template": "/" + "t" * 1024}),
+        ("path_dotdot", {"path": "/api/w/../agents/start"}),
+        ("path_percent", {"path": "/api/w/%41/agents/start"}),
+        ("query_hash", {"query": "a#b"}),
+        ("workspace_upper", {"workspace_id": WS.upper()}),
+        ("websocket_with_body", {"method": "WEBSOCKET", "template": "/term", "path": "/term"}),
+    ):
+        case("route_digest", f"route_digest_{name}", base | over, err("malformed"))
+    return out
+
+
+def presence_route_cases(route_d: list[bytes]) -> None:
+    """A batch over route digests (and one op digest) on stream A: valid on A only, for exactly its digests."""
+    attach1, attach2, start = route_d[0], route_d[1], route_d[2]
+    digests = sorted([attach1, start, DIGESTS[0]])
+    msg = R.presence_bytes(WS, DEV_A, HH, NONCE2, digests)
+    good = p256_assert("presence_a", msg)
+
+    def a(**over: Any) -> dict[str, Any]:
+        p = {
+            "entry": ENTRY_A,
+            "workspace_id": WS,
+            "handshake_hash_hex": HH.hex(),
+            "nonce_hex": NONCE2.hex(),
+            "digests_hex": [d.hex() for d in digests],
+            "assertion": good,
+            "held": 0,
+            "issued": {NONCE2.hex(): NOW - 1_000},
+            "now_ms": NOW,
+        }
+        p.update(over)
+        return p
+
+    case("presence", "presence_route_batch_ok", a(), {"count": 0}, "route digests and an op digest in one batch")
+    case(
+        "presence",
+        "presence_route_batch_replayed_into_other_stream",
+        a(handshake_hash_hex=HH_B.hex()),
+        err("bad_signature"),
+        "a batch over route digests is bound to its stream's handshake hash",
+    )
+    other = sorted([attach2, start, DIGESTS[0]])
+    case(
+        "presence",
+        "presence_route_batch_other_run",
+        a(digests_hex=[d.hex() for d in other]),
+        err("bad_signature"),
+        "the attach to run 1 does not stand for the attach to run 2",
+    )
+    case(
+        "presence",
+        "presence_route_batch_other_workspace",
+        a(workspace_id=WS2),
+        err("bad_signature"),
+    )
+
+
 REQUIRED = [
     "msg1_replayed_into_other_stream",
     "msg1_replayed_into_other_workspace",
@@ -1186,6 +1713,35 @@ REQUIRED = [
     "gate_session_device_streams_full",
     "open_msg_client_too_old",
     "session_static_other_device_key",
+    # R3, inside a session
+    "app_frame_over_max",
+    "app_frame_kind_11",
+    "app_frame_head_extra_key",
+    "app_frame_head_not_canonical",
+    "app_frame_head_path_dotdot",
+    "app_frame_head_host",
+    "app_frame_head_header_newline",
+    "app_frame_response_set_cookie",
+    "app_frame_ws_open_from_host",
+    "request_head_bearer_authorization",
+    "request_head_bearer_orch_token",
+    "app_seq_id_reused_after_end",
+    "app_seq_id_reused_while_open",
+    "app_seq_body_before_head",
+    "app_seq_response_unopened",
+    "app_seq_101_to_http",
+    "app_seq_ws_text_before_101",
+    "app_seq_reset_by_host_late_frames_dropped",
+    "app_seq_ninth_exchange_busy",
+    "app_seq_third_websocket_busy",
+    "app_seq_request_body_over_1mib",
+    "app_seq_pong_unsolicited",
+    "transport_session_app_reordered",
+    "route_digest_attach_run_1",
+    "route_digest_attach_run_2",
+    "route_digest_websocket_with_body",
+    "presence_route_batch_replayed_into_other_stream",
+    "presence_route_batch_other_run",
 ]
 
 
@@ -1207,6 +1763,7 @@ def build() -> dict[str, Any]:
     msg1_cases()
     msg2_cases()
     transport_cases(ts)
+    app_transport_cases(ts[0])
     open_cases()
     presence_cases()
     enroll_cases()
@@ -1216,12 +1773,16 @@ def build() -> dict[str, Any]:
     cost_cases(frames)
     gate_cases()
     custodial_cases()
+    app_frame_cases()
+    request_head_cases()
+    app_seq_cases()
+    presence_route_cases(route_cases())
     names = [c["name"] for c in CASES]
     assert len(names) == len(set(names)), "duplicate case name"
     assert set(REQUIRED) <= set(names)
     cases = copy.deepcopy(CASES)
     return {
-        "about": "FAKE keys, test-only. Remote access through the hub, contract R0 (protocol.md 10.2c, 8.5; #1588).",
+        "about": "FAKE keys, test-only. Remote access through the hub, contracts R0 and R3 (protocol.md 10.2c, 8.5; #1588, #1591).",
         "labels": R.REMOTE_LABELS,
         "constants": {
             "noise_protocol": R.NOISE_PROTOCOL.decode(),
@@ -1243,6 +1804,29 @@ def build() -> dict[str, Any]:
             "codes": list(R.CODES),
             "close_reasons": list(R.CLOSE_REASONS),
             "link_window_ms": 120_000,
+            "app": {
+                "kinds": R.APP_KINDS,
+                "plain_max": R.APP_PLAIN_MAX,
+                "payload_max": R.APP_PAYLOAD_MAX,
+                "head_max": R.HEAD_MAX,
+                "headers_max": R.HEADERS_MAX,
+                "header_name_max": R.HEADER_NAME_MAX,
+                "header_value_max": R.HEADER_VALUE_MAX,
+                "path_max": R.PATH_MAX,
+                "query_max": R.QUERY_MAX,
+                "template_max": R.TEMPLATE_MAX,
+                "methods": list(R.METHODS),
+                "reset_codes": list(R.RESET_CODES),
+                "exchanges_max": R.EXCHANGES_MAX,
+                "websockets_max": R.WEBSOCKETS_MAX,
+                "request_body_max": R.REQUEST_BODY_MAX,
+                "request_end_ms": R.REQUEST_END_MS,
+                "framing_headers": sorted(R.FRAMING_HEADERS),
+                "request_refused_headers": sorted(R.REQUEST_ONLY_REFUSED),
+                "response_refused_headers": sorted(R.RESPONSE_ONLY_REFUSED),
+                "bearer_headers": sorted(R.BEARER_HEADERS),
+                "bearer_prefix": R.BEARER_PREFIX,
+            },
         },
         "keys": {
             "x25519": {n: {"priv_hex": X[n].hex(), "pub_hex": XP[n].hex()} for n in X_LABELS},

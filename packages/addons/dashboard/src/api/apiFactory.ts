@@ -148,6 +148,8 @@ export function createApi(transport: Transport) {
     getHubStatus: (ws: string) => call<import('./hub').HubStatus>('GET', `/api/w/${ws}/hub`),
     getHubShare: (ws: string) => call<import('./hub').HubShare>('GET', `/api/w/${ws}/hub/share`),
     getHubShared: (ws: string) => call<{ items: import('./hub').HubSharedTicket[] }>('GET', `/api/w/${ws}/hub/shared`),
+    getSpaces: (ws: string) => call<{ spaces: import('./hub').HubSpace[]; note: string }>('GET', `/api/w/${ws}/spaces`),
+    getSpaceItems: (ws: string, id: string) => call<import('./hub').HubSpaceItems>('GET', `/api/w/${ws}/spaces/${id}`),
     getHubAudience: (ws: string) => call<import('./hub').HubAudienceList>('GET', `/api/w/${ws}/hub/share/audience`),
     getHubPreview: (ws: string, body: { add?: import('./hub').HubRule; remove?: import('./hub').HubRule }) =>
       call<import('./hub').HubPreview>('POST', `/api/w/${ws}/hub/share/preview`, body),

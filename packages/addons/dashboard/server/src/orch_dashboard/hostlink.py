@@ -137,6 +137,7 @@ OPS = {
         "share.rules",
         "share.preview",
         "hub.shared",  # P02: tickets other workspaces of the hub shared with this owner (a read, unsigned)
+        "space.list",  # run-15c P03: the shared spaces this workspace is in and their item names (a read, unsigned)
         "share.audience",  # P02: the hub people and teams the owner may name as readers (a read of the hub, unsigned)
         # the two share writes that only take sharing away: one click as the session's person, owner only (hub.py)
         "share.revoke",

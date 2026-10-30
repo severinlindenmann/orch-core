@@ -36,6 +36,7 @@ from . import (
     settings,
     shares,
     signing,
+    spaces_routes,
     stepup_routes,
     switch,
     terminals,
@@ -88,6 +89,7 @@ SPA_ROUTES = (
     "artifacts",
     "agents",
     "quick",
+    "spaces",
     "drop",
     "checklist",
     "feedback",
@@ -351,6 +353,7 @@ def create_app(
     remote_routes.register(app, gateway)
     profile_routes.register(app, gateway)
     org_routes.register(app, gateway)
+    spaces_routes.register(app, gateway)
     switch.register(app, gateway, auth)
     trust_routes.register(app, auth, gateway)
     claude_trust_routes.register(app, gateway, auth)

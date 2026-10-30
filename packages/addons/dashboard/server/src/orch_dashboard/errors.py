@@ -108,8 +108,12 @@ def status(code: str) -> int:
     return 409
 
 
-def response(code: str, http: int):
-    return JSONResponse({"ok": False, "error": {"code": code, "message": code, "retryable": False}}, status_code=http)
+def response(code: str, http: int, message: str | None = None):
+    """An error answer. `message` is a fixed plain sentence (never input, never a credential); without one the code
+    stands in for it."""
+    return JSONResponse(
+        {"ok": False, "error": {"code": code, "message": message or code, "retryable": False}}, status_code=http
+    )
 
 
 def presence_required_response(view_digest: str, template: str):

@@ -85,6 +85,11 @@ describe('P02: a code is never the sentence', () => {
       expect(`${p.title} ${p.body}`).not.toContain(code)
     },
   )
+  it('an invalid.input with real words from the host says those words, never the code', () => {
+    const p = clickProblem(new ApiError(400, { code: 'invalid.input', message: 'a feature ticket has no section nope', retryable: false }))
+    expect(p.body).toBe('a feature ticket has no section nope')
+    expect(p.next).toBe('unavailable')
+  })
   it('keeps a real message of an unknown code', () => {
     expect(clickProblem(new ApiError(400, { code: 'some.new_code', message: 'The folder is gone.', retryable: false })).body).toBe('The folder is gone.')
   })

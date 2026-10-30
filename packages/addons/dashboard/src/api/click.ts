@@ -407,7 +407,11 @@ export function clickProblem(e: unknown, minLeadS?: number): ClickProblem {
     case 'not_found':
       return { title: 'Not found', body: 'The dashboard server does not know this request any more. Prepare it again.', next: 'prepare' }
     case 'invalid.input':
-      // P02: the server's catch-all for a body it could not use; the code is never the sentence
+      // P02: the server's catch-all for a body it could not use; the code is never the sentence. A host refusal with
+      // real words ("a feature ticket has no section nope") says them; only a bare code becomes the plain sentence.
+      if (e.message && e.message !== e.code && e.message !== PLAIN_INVALID) {
+        return { title: 'That could not be used', body: e.message, next: e.retryable ? 'retry' : 'unavailable' }
+      }
       return { title: 'That could not be used', body: PLAIN_INVALID, next: 'retry' }
     case 'schedule.denied': {
       // run 13: the host's raw words ("first occurrence must be after the minimum scheduling lead") stay folded

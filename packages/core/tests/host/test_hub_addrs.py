@@ -464,7 +464,7 @@ def test_probes_run_after_the_link_is_closed_and_the_refresh_never_waits_for_the
     state = {"closed": False}
 
     class Wrapped:
-        send = staticmethod(hub.send)
+        send_next = staticmethod(hub.send_next)
 
         def close(self):
             state["closed"] = True

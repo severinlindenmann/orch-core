@@ -24,7 +24,7 @@ from orch.wsproto.pubsign import PublishContext, publish_signed_bytes
 from orch.wsproto.sign import SignerRefused
 
 from . import contract as H
-from .fake import FakeHub, vector_join_body
+from .fake import BareLink, FakeHub, vector_join_body
 from .vec import V, private_key, pub
 
 VEC = V["publish"]
@@ -219,7 +219,7 @@ def test_the_forwarded_request_verifies_under_orch_publishs_verifier(joined_link
 
 
 def test_a_hub_that_cannot_be_reached_is_hub_unreachable_and_nothing_else_is_tried():
-    class Down:
+    class Down(BareLink):
         sent = 0
 
         def send(self, message):

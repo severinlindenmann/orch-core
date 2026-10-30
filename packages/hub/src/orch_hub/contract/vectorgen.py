@@ -498,6 +498,9 @@ def publish_request(
     }
 
 
+LINK_EXPORTER = S.fake_seed("hub/tls_exporter")
+
+
 def link(
     op: str,
     body: dict[str, Any],
@@ -508,6 +511,7 @@ def link(
     re_: int | None = None,
     ts: int = NOW,
     label: str | None = None,
+    exporter: bytes | None = None,
     **kw: Any,
 ) -> dict[str, Any]:
     o = {
@@ -523,7 +527,9 @@ def link(
         **kw,
     }
     lk = label or ("sig_hub_link" if direction == "w2h" else "sig_hub_route")
-    return signed(key, lk, o)
+    # R1: a link signature is label || exporter || cj(o); the vectors all use the fake exporter LINK_EXPORTER.
+    msg = L[lk] + (LINK_EXPORTER if exporter is None else exporter) + cj(o)
+    return {"o": o, "sig": b64u(S.sign(K.priv[key], msg, deterministic=True))}
 
 
 # --- shared spaces (V3-D8) ------------------------------------------------------------------------------------------
@@ -2030,7 +2036,7 @@ def build() -> dict[str, Any]:
          {"ok": {"reader": 0}}, 5)  # fmt: skip
 
     # ---- link
-    ln = {**base, "hub_id": HUB_ID, "workspace_id": WS_A, "mode": "selective"}
+    ln = {**base, "hub_id": HUB_ID, "workspace_id": WS_A, "mode": "selective", "exporter_hex": LINK_EXPORTER.hex()}
     pub_out = link("publish_out", {"request": publish_request()})
     case(
         "link_publish_out",
@@ -2111,6 +2117,19 @@ def build() -> dict[str, Any]:
         {"error": "bad_signature"},
         2,
         "wrong signer",
+    )
+    case(
+        "link_other_exporter",
+        "link",
+        {
+            **ln,
+            "signed": link("snapshot_get", {}, exporter=S.fake_seed("hub/tls_exporter_other")),
+            "direction": "w2h",
+            "pub": K.b("wsk_a"),
+        },
+        {"error": "bad_signature"},
+        2,
+        "signed over another connection's TLS exporter (R1): valid on one connection only",
     )
     case(
         "link_stale",
@@ -3698,19 +3717,20 @@ def build() -> dict[str, Any]:
     # ---- signatures: exact signed bytes for each object (both directions are checked by the tests)
     sigs = []
 
-    def sig_entry(name: str, signer: str, label_key: str, obj: dict[str, Any]) -> None:
-        msg = L[label_key] + cj(obj["o"])
+    def sig_entry(name: str, signer: str, label_key: str, obj: dict[str, Any], exporter: bytes | None = None) -> None:
+        msg = L[label_key] + (exporter or b"") + cj(obj["o"])  # a link message binds the TLS exporter (R1)
         assert S.verify(K.pub[signer], _unb(obj["sig"]), msg)
-        sigs.append(
-            {
-                "name": name,
-                "signer": signer,
-                "label": HUB_LABELS.get(label_key) or V2_REUSED[label_key],
-                "canonical_hex": cj(obj["o"]).hex(),
-                "signed_hex": msg.hex(),
-                "sig": obj["sig"],
-            }
-        )
+        entry = {
+            "name": name,
+            "signer": signer,
+            "label": HUB_LABELS.get(label_key) or V2_REUSED[label_key],
+            "canonical_hex": cj(obj["o"]).hex(),
+            "signed_hex": msg.hex(),
+            "sig": obj["sig"],
+        }
+        if exporter is not None:
+            entry["exporter_hex"] = exporter.hex()
+        sigs.append(entry)
 
     sig_entry("op_cert", "hk_root", "sig_hub_op_cert", c["op_cert"])
     sig_entry("op_revoked", "hk_root", "sig_hub_op_revoked", rev)
@@ -3720,8 +3740,8 @@ def build() -> dict[str, Any]:
     sig_entry("snapshot", "hk_op", "sig_hub_snapshot", snapshot())
     sig_entry("binding", "wsk_a", "sig_hub_binding", b1)
     sig_entry("unbound", "wsk_a", "sig_hub_unbound", u1)
-    sig_entry("link_w2h_publish_out", "wsk_a", "sig_hub_link", pub_out)
-    sig_entry("link_h2w_snapshot_reply", "hk_op", "sig_hub_route", reply)
+    sig_entry("link_w2h_publish_out", "wsk_a", "sig_hub_link", pub_out, LINK_EXPORTER)
+    sig_entry("link_h2w_snapshot_reply", "hk_op", "sig_hub_route", reply, LINK_EXPORTER)
     sig_entry("audit_1", "hk_op", "sig_hub_audit", audit_chain()[0])
     sig_entry("space_e1", "hk_op", "sig_hub_space", space_rec(1))
     sig_entry("space_wrap_b_e1", "hk_op", "sig_hub_space_wrap", space_wrap())
@@ -3810,7 +3830,7 @@ def build() -> dict[str, Any]:
         },
     }
 
-    challenge, exporter = S.fake_seed("hub/link_challenge"), S.fake_seed("hub/tls_exporter")
+    challenge, exporter = S.fake_seed("hub/link_challenge"), LINK_EXPORTER
     la = H.link_auth_bytes(HUB_ID, WS_A, challenge, exporter)
     link_auth_vec = {
         "hub_id": HUB_ID,

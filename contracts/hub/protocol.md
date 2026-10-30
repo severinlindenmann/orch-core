@@ -148,7 +148,7 @@ literal `orch/v2/hub-…|` names.
 | `sig_hub_uk_cert` | `orch/v2/hub-uk-cert\|` | `HK_op` | `cj(o)` of `hub.uk_cert` | 6 |
 | `sig_hub_channel_cert` | `orch/v2/hub-channel-cert\|` | `HK_op` | `cj(o)` of `hub.channel_cert` | 6 |
 | `sig_hub_snapshot` | `orch/v2/hub-snapshot\|` | `HK_op` | `cj(o)` of `hub.snapshot` | 7 |
-| `sig_hub_route` | `orch/v2/hub-route\|` | `HK_op` | `cj(o)` of a hub→host `hub.link` | 10 |
+| `sig_hub_route` | `orch/v2/hub-route\|` | `HK_op` | `exporter \|\| cj(o)` of a hub→host `hub.link` | 10 |
 | `sig_hub_publish` | `orch/v2/hub-publish\|` | `HK_op` | the transport signature of a forwarded publish request | 11 |
 | `sig_hub_audit` | `orch/v2/hub-audit\|` | `HK_op` | `cj(o)` of `hub.audit` | 10.5 |
 | `sig_hub_admin_read` | `orch/v2/hub-admin-read\|` | `HK_op` | the bytes of a hub admin read request | 10.6 |
@@ -175,7 +175,7 @@ literal `orch/v2/hub-…|` names.
 | `h_share_item` | `orch/v2/hub-share-item\|` | hash | a signed shared item (what a custodial event about it binds) | 10.2b |
 | `sig_hub_binding` | `orch/v2/sig/hub-binding\|` | `WSK` | `cj(o)` of `hub.binding` | 9 |
 | `sig_hub_unbound` | `orch/v2/sig/hub-unbound\|` | `WSK` | `cj(o)` of `hub.unbound` | 9 |
-| `sig_hub_link` | `orch/v2/sig/hub-link\|` | `WSK` | `cj(o)` of a host→hub `hub.link` | 10 |
+| `sig_hub_link` | `orch/v2/sig/hub-link\|` | `WSK` | `exporter \|\| cj(o)` of a host→hub `hub.link` | 10 |
 | `sig_hub_link_auth` | `orch/v2/sig/hub-link-auth\|` | `WSK` | the link-open challenge, bound to TLS | 10 |
 | `sig_publish_hub` | `orch/v2/publish-hub\|` | `WSK` | a publish request on the hub path, with `hub_id` and the approval (L2-2) | 11 |
 | `sig_hub_publish_approval` | `orch/v2/sig/hub-publish-approval\|` | owner's `dk_sig` | `cj(o)` of `hub.publish_approval` | 11 |
@@ -1388,9 +1388,8 @@ unfinished binding and the new join starts clean.
 **Purpose.** The only channel between a host and its hub (D68). The host dials out; both sides authenticate; every
 message is signed as well (spec §4a).
 
-**SHORTCUT** `Link messages signed, no replay store; TLS pinned only (no socket-UID transport)` (L7): in V3 the link
-is TLS with the pinned SPKI on every layout, messages carry `seq` but receivers keep no replay store; the socket peer-UID
-transport and the persisted `seq` check come with L7. Everything else here is enforced in H0.
+**SHORTCUT** `TLS pinned only (no socket-UID transport)` (L7): the link is TLS with the pinned SPKI on every layout; the
+socket peer-UID transport comes with L7. Message replay is closed (R1, #1589). Everything else here is enforced in H0.
 
 ### 10.1 Opening the link
 
@@ -1410,11 +1409,14 @@ card in the `join` message) (vector `link_auth`). One link serves one `workspace
 ```
 {"o": {"v": 2, "suite": 2, "kind": "hub.link", "hv": 0, "hub_id", "workspace_id", "dir": "w2h" | "h2w", "seq",
        "ts_ms", "op", "re", "body"},
- "sig": b64u(Sign(WSK, "orch/v2/sig/hub-link|" || cj(o)))          (dir w2h)
-        b64u(Sign(HK_op, "orch/v2/hub-route|" || cj(o)))           (dir h2w)}
+ "sig": b64u(Sign(WSK, "orch/v2/sig/hub-link|" || exporter || cj(o)))      (dir w2h)
+        b64u(Sign(HK_op, "orch/v2/hub-route|" || exporter || cj(o)))       (dir h2w)}
 ```
 
-`seq` ≥ 1 per direction and link, one counter for requests and replies alike. The hub enforces it on w2h frames (D12b): the first frame of a link sets the baseline (a host numbers across reconnects), every later frame must be exactly the previous + 1, otherwise the hub answers `malformed` and closes the link before any side effect. The seq is not bound to the link: replay of a frame onto another link needs a TLS break first (L7 SHORTCUT). `re` is `null` on a request and the request's `seq` on its reply; `body` an object.
+`exporter` is this connection's 32-byte TLS exporter (§10.1), the same value on both ends; it is never sent. A message
+is valid on one connection only. The fixed-length prefix makes the signed input parse one way.
+
+`seq` counts per direction and **connection**: the first frame in each direction is 1, every later one exactly the previous + 1, requests and replies alike. A new connection starts again at 1. The hub enforces it on w2h frames and the host on every h2w frame (replies and pushes alike); a violation is `malformed` (§10.2 step 7). `re` is `null` on a request and the request's `seq` on its reply; `body` an object.
 
 **The closed operation list** (spec §8, §8a). There is **no operation that asks the hub to sign anything**; an
 unknown `op` is `unknown_op`.
@@ -1510,12 +1512,14 @@ WITHOUT being used; one presented at another workspace's link is spent. `return_
 4. `hub_id` → `other_hub`; `workspace_id` is the link's → `other_workspace`;
 5. `|now − ts_ms| ≤ 120 s` → `stale_timestamp`;
 6. the request body has exactly the table's fields with their types → `malformed`;
-7. (L7) `seq` greater than the last accepted in this direction.
+7. `seq` is exactly one more than the last frame accepted in this direction on this connection (the first frame is 1) →
+   `malformed`. The receiver keeps this counter in memory for the life of the connection. With the exporter in the
+   signature (step 1), a message is accepted on one connection, at one position, once.
 
 Reply rules:
 
 - A reply echoes `op` only if it is in the closed op list above; otherwise `op` is the fixed literal `"error"`. A sender never gets a signature over a string it chose; the requester correlates by `re`.
-- A refusal at steps 1–6 is not a reply: the hub sends an unsigned `{"t":"error","error":code}` frame and drops the link, never a signed reply. This holds above all for a peer that has not authenticated, whose input must not be answered with anything signed.
+- A refusal at steps 1–7 is not a reply: the hub sends an unsigned `{"t":"error","error":code}` frame and drops the link, never a signed reply. The host refuses an h2w frame by closing the link. This holds above all for a peer that has not authenticated, whose input must not be answered with anything signed.
 - After the link is authenticated, a request is accepted only while the link's key is the workspace's current pinned `WSK`; a link opened before the pin (the first link of a join) is closed with `wsk_mismatch` as soon as another link pinned a different key.
 - After `hub.unbound`, every op except `join` and `binding_put` is refused with `not_bound`.
 
@@ -3106,7 +3110,7 @@ and mobile do not read these shapes (the relay and the public passthrough see TL
 | 11 | V3-D4 "inside the WSK-signed request" | hub-path WSK bytes `orch/v2/publish-hub\|` cover `hub_id` and `H(approval)`; the approval names the exact request incl. ts and nonce (single use) | V3-D4; L2-2 (the first H0 draft bound only by a ts-less hash: rejected) |
 | 12 | Which publish requests need the approval | public access only; secret/sealed keep the charter path | spec §8 "public access still needs a human signature", §5.5 |
 | 13 | Owner key for the approval | owner's device key with its PK-signed certificate; PK must be the card delegation's owner | D64 local key; v2 §6.1, §7.1 |
-| 14 | Link replay | `seq` strictly consecutive per link (D12b); not bound across links | SHORTCUT (L7, residual) |
+| 14 | Link replay | `seq` strictly consecutive per connection from 1; signatures bind the TLS exporter | closed (R1) |
 | 15 | Binding replay after leave | store keeps the unbound record (§9.4) | spec §8 "no later hub.unbound" |
 | 16 | Unbound delivery with the hub down | the host sends it to publish directly | spec §8 break-glass "none needs the hub" |
 | 17 | The hub's trust in a workspace's `WSK` at join | the v2 directory card + owner `PK` in `join`; first come per `workspace_id` | L2-3 |

@@ -38,6 +38,8 @@ def test_every_allow_listed_file_is_served_with_the_hard_headers(w):
     assert set(FILES) == {
         "/",
         "/c",
+        "/oidc/callback",
+        "/oidc.js",
         "/favicon.svg",
         "/app.css",
         "/app.js",
@@ -72,7 +74,7 @@ def test_every_allow_listed_file_is_served_with_the_hard_headers(w):
         assert h["Content-Security-Policy"] == CSP
         assert h["X-Content-Type-Options"] == "nosniff" and h["Referrer-Policy"] == "no-referrer"
         assert h["Cross-Origin-Resource-Policy"] == "same-origin" and h["Cross-Origin-Opener-Policy"] == "same-origin"
-        assert h["Cache-Control"] == ("no-store" if path in ("/", "/c") else "no-cache")
+        assert h["Cache-Control"] == ("no-store" if path in ("/", "/c", "/oidc/callback") else "no-cache")
         assert "Strict-Transport-Security" in h  # the test hub has secure cookies
     assert FILES["/app.js"][1] == "text/javascript; charset=utf-8"
 

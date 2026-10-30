@@ -437,3 +437,14 @@ def test_the_redirect_uri_comes_from_configuration_not_from_the_host_header(e):
     _s, o, _ = e.call("GET", "/admin/oidc", token=e.admin_tok)
     assert o["redirect_uri"] == ORIGIN + "/oidc/callback"
     assert "evil" not in o["redirect_uri"]
+
+
+def test_pending_says_what_the_cookie_is_for_and_consumes_nothing(e):
+    e.configure()
+    assert e.call("GET", "/oidc/pending")[1] == {"purpose": None}
+    q, tx, _ = e.begin()
+    assert e.call("GET", "/oidc/pending", tx=tx)[1] == {"purpose": "signin"}
+    assert e.call("GET", "/oidc/pending", tx=tx)[1] == {"purpose": "signin"}
+    assert e.call("GET", "/oidc/pending", tx=tx[:-3] + "AAA")[1] == {"purpose": None}
+    q2, tx2, _ = e.begin("/oidc/link/start", e.admin_tok, e.w.creds(e.w.admin))
+    assert e.call("GET", "/oidc/pending", tx=tx2)[1] == {"purpose": "link"}

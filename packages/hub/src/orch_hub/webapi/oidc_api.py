@@ -25,6 +25,7 @@ IDENTITY_FIELDS = ("provider", "client_id", "tenant", "domain", "redirect_uri")
 def oidc_routes(r: Any) -> tuple[Any, ...]:
     return (
         r("GET", "/oidc/options", "none", "oidc_options", "Is company login on, and which provider"),
+        r("GET", "/oidc/pending", "none", "oidc_pending", "What the login cookie of this browser is for"),
         r("POST", "/oidc/start", "none", "oidc_start", "Begin a company login: the address to send the browser to"),
         r(
             "POST",
@@ -120,6 +121,13 @@ class OidcHandlers:
             cfg = None
         on = bool(cfg and cfg["enabled"] and cfg["tested"])
         return 200, {"enabled": on, "provider": cfg["provider"] if on else None}
+
+    def _h_oidc_pending(self, c: Any, p: dict, q: dict, b: dict | None):
+        """The page the identity provider returns to asks which finish route to call. Read from the sealed cookie, so it
+        needs no browser storage and cannot be set by anyone else; nothing is consumed."""
+        svc = getattr(self.d, "oidc", None)
+        o = svc.instance() if svc is not None else None
+        return 200, {"purpose": o.purpose_of(c.cookie_of(self._tx_cookie_name())) if o is not None else None}
 
     def _h_oidc_start(self, c: Any, p: dict, q: dict, b: dict | None):
         self._need_browser(c)

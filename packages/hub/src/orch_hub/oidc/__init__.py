@@ -272,6 +272,11 @@ class Oidc:
         )
         return tx if ok and type(tx.get("exp")) in (int, float) and type(tx.get("fresh")) is bool else None
 
+    def purpose_of(self, cookie: object) -> str | None:
+        """What the sealed cookie was made for (signin / link / test), or None. Authenticated, never consumes anything."""
+        tx = self._open(cookie)
+        return tx["purpose"] if tx is not None and tx["exp"] > self._now() else None
+
     def start(
         self, *, fresh: bool = False, source: str = "", purpose: str = "signin", bind: str = ""
     ) -> tuple[str, str]:

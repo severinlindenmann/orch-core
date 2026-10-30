@@ -561,8 +561,17 @@ Signed by `HK_op` under `orch/v2/hub-snapshot|`.
 | `issued_ms` | integer |
 | `roles` | object `{user_id hex: "read" \| "edit" \| "admin"}`; a user without a role is absent |
 | `revoked_channels` | sorted list of unique `channel_id` hex |
+| `ends_ms` | object `{user_id hex: integer}` (GA-07, **required**, `{}` when nobody has an end date): the time (UTC ms, **exclusive**) from which the user's role in `roles` no longer holds. Only users that have a role are listed; each value is an integer strictly after `issued_ms` and below 2^53. The hub lists a user when a membership that gives their role ends and the role would fall |
 | `market_policy` | the hub marketplace policy of §7.1; **required, never `null`** |
 | `dev` | boolean |
+
+**`role_at(snapshot, user, now_ms)`** is the one rule for every role decision (hub and host, including the custodial check
+and the replay at the event's time): `roles[user]`, except `none` when `user` is in `ends_ms` and `now_ms >= ends_ms[user]`
+(fail closed: the true role may only have been lowered; a fresher snapshot says), or when `issued_ms > now_ms + 300000`
+(a snapshot issued more than 5 minutes ahead of the verifier's clock gives no role to any user listed in `ends_ms`).
+The hub re-issues (version + 1) at the first request after an end, because its roles are computed at read time.
+A host keeps the highest snapshot version it ever pinned from a hub (also across a rebind or mode switch) and refuses
+a lower one with `stale_snapshot`.
 
 **SHORTCUT** `Snapshots by version only (no generations)` (#910): `generation` is present and MUST be `0`; any other
 value is `malformed`. Hardening (#910) defines `HK_root`-signed generations (spec §6) as a new `hv`.
@@ -570,7 +579,7 @@ value is `malformed`. Hardening (#910) defines `HK_root`-signed generations (spe
 **Verification by the host** (the newest snapshot it holds is `pinned`):
 
 1. §2.2 steps 1–3 under the card's `HK_op`; `hub_id` → `other_hub`; `op_cert_id` → `stale_op_cert`; dev marker;
-2. `roles` keys and values, `revoked_channels` sorted and unique, `market_policy` valid (§7.1) → `malformed`;
+2. `roles` keys and values, `revoked_channels` sorted and unique, `ends_ms` (keys in `roles`, values after `issued_ms`), `market_policy` valid (§7.1) → `malformed`;
 3. `workspace_id` is this workspace → `other_workspace`;
 4. `version < pinned.version` → `stale_snapshot` (a replayed snapshot cannot bring back a removed user);
 5. `version == pinned.version`: identical `cj(o)` is a no-op; anything else → `snapshot_conflict`;
@@ -1463,6 +1472,10 @@ unknown `op` is `unknown_op`.
 | `status_put` | w2h | both | `{"version", "commit", "host", "name"}` | `{}`, or `{"update_requested": {"target_version"}}` |
 | `agent_events` | w2h | full | `{"events": [{"kind", "ts_ms", "agent", "ticket"}]}` (1-50) | `{}` (HUB-AC-03 #1426) |
 | `addon_request` | w2h | both | `{"name", "version", "actor"}` | `{}` (M3 #1450) |
+| `hook_put` | w2h | both | `{"token_hash": hex64, "followup", "source", "secret", "expires_ms"}` + optional `"replaces": hex64` (§10.11) | `{"url_base"}`; refusals `hook_exists`, `too_many_hooks`, `unavailable`, `bad_expiry` |
+| `hook_revoke` | w2h | both | `{"token_hash"}` (own hooks only; unknown or already gone is `{}`) | `{}` (§10.11) |
+| `hook_pull` | w2h | both | `{"since"}` | `{"rings": [{seq, token_hash, source, kind, received_at}], "head"}` (at most 50; §10.11) |
+| `hook_ack` | w2h | both | `{"seq"}` | `{"acked": seq}` (§10.11) |
 | `owner_get` | w2h | both | `{}` | `{"user_id"}`: the hub user this hub names as the owner of the calling workspace (V3-D19 owner alias; FB15 §8.8b) |
 | `log_sync` | w2h | full | `{"epoch", "log", "from_seq", "count", "head", "reset", "sealed": b64u}` | `{"seq", "head"}` (p4, §10.7) |
 | `stream_open` | h2w | both | `{"stream_id", "device_id", "kind": "session"\|"enroll"}` (§10.2c) | `{}` or `{"error"}`: `remote.off`, `remote.device`, `remote.busy`, `remote.no_code`, `replay` |
@@ -2293,7 +2306,7 @@ hub.audit {v, suite, kind: "hub.audit", hv, hub_id, op_cert_id, seq ≥ 1, prev:
   otherwise (vectors `audit_share_*`); `channel` (p4) `{channel_id, user_id, change: register | revoke | renew, factor,
   actor_user_id | null, nonce}`, hub-wide (`scope_tag` null; `actor_user_id` null = the operator at the hub terminal,
   there is no `unrevoke`, §6.2; `renew` = a new certificate for the same channel key, the factor unchanged, recorded BEFORE it is issued and refusing the renewal when the chain cannot be written. **Contract text only in V3: no hub renews**, the certificate lasts 31 days and then the phone pairs again); `grant` `{group, workspace_id, role | null, actor_user_id, nonce}`; `membership`
-  `{group, user_id, added, actor_user_id, nonce}`; `market_policy` (D14, §7.1) `{version ≥ 1, policy_hash: b64u(32), actor_user_id, nonce}`, hub-wide (`scope_tag` null; the version the change produced and the hash of the new policy, the actor is always a hub-admin); `hub_settings` (M4, #1461) `{change: general | addresses, actor_user_id, nonce}`, hub-wide (`scope_tag` null; an admin changed the hub's name or company, or the addresses it advertises: it names which setting and who, never the value; written BEFORE the change is saved, and the change is refused when the chain cannot be written); `hub_backup` (M4 S5, §17) `{change: key_set | key_confirmed | made | downloaded, actor_user_id: hex16 | null, nonce}`, hub-wide (`scope_tag` null; the backup key was set or replaced, a backup was made, or one was handed out; `actor_user_id` null = the schedule or the hub terminal; never a key, a word or a file name); `hub_restore` (M4 S6, §17.8) `{backup_made_ms, gap_ms ≥ 0, op_seq ≥ 1, actor_user_id: hex16 | null, nonce}`, hub-wide (`scope_tag` null; the hub is restored from a backup made at `backup_made_ms`, `gap_ms` ago, issuing `op_seq`; written before the swap); `space` `{space_id, epoch, change: create | add | remove | unbind | delete,
+  `{group, user_id, added, ends_ms: int ≥ 1 | null, actor_user_id, nonce}` (GA-07: `ends_ms` is the UTC time, exclusive, at which the person's membership of the group ends, null = no end date, always null on a removal; every change of an end date is one `added: true` record); `market_policy` (D14, §7.1) `{version ≥ 1, policy_hash: b64u(32), actor_user_id, nonce}`, hub-wide (`scope_tag` null; the version the change produced and the hash of the new policy, the actor is always a hub-admin); `hub_settings` (M4, #1461) `{change: general | addresses, actor_user_id, nonce}`, hub-wide (`scope_tag` null; an admin changed the hub's name or company, or the addresses it advertises: it names which setting and who, never the value; written BEFORE the change is saved, and the change is refused when the chain cannot be written); `hub_backup` (M4 S5, §17) `{change: key_set | key_confirmed | made | downloaded, actor_user_id: hex16 | null, nonce}`, hub-wide (`scope_tag` null; the backup key was set or replaced, a backup was made, or one was handed out; `actor_user_id` null = the schedule or the hub terminal; never a key, a word or a file name); `hub_restore` (M4 S6, §17.8) `{backup_made_ms, gap_ms ≥ 0, op_seq ≥ 1, actor_user_id: hex16 | null, nonce}`, hub-wide (`scope_tag` null; the hub is restored from a backup made at `backup_made_ms`, `gap_ms` ago, issuing `op_seq`; written before the swap); `space` `{space_id, epoch, change: create | add | remove | unbind | delete,
   workspace_id | null, actor_user_id | null, nonce}`. The acting admin's `UK` signature on a grant or membership change is
   the custodial event it came from (spec §10); the audit record points at it, it does not replace it. **Every event of every type carries `nonce`, 32 random bytes
   inside the event; no type is exempt.** Records carry the event's hash to every tenant, so an event without a nonce
@@ -2812,6 +2825,55 @@ against the pin it already holds, keeps the last good address until a replacemen
 a link-fetched card (the card is fetched over plain HTTP and proves nothing about where the hub is). Reference
 `orch_hub.contract.where.check_hub_where` (hub) and `orch.hubclient.where.check_hub_where` (core, written from this text);
 both replay the `hub_where_*` cases of `vectors_hub_backup.json` (§15) and must agree with them.
+
+### 10.11 The public webhook inbox: `hook_put`, `hook_revoke`, `hook_pull`, `hook_ack` (orch-core #1285, follow-ups #714)
+
+**Purpose.** A follow-up can wait for "a job rang" (GitHub, a CI step, Databricks). The hub, the company's always-on part
+with a public address, receives the ring and keeps ONE row per hook; the workspace pulls it over its link. A workspace
+without a hub keeps the direct receiver and the follow-up's deadline. **Off unless the hub has a public hooks URL**
+(`hook_put` is then `unavailable`, and the hub listens for no `/h/` request).
+
+**The token and the secret.** The workspace makes both: `token` = `hh_` + base64url(32 random bytes), no padding (46
+characters); `secret` = `hs_` + base64url(32 random bytes) (46 characters; the prefixes make a token and a secret recognisable to log masks and secret scanners). The sender is given `<url_base><token>` and the
+secret. The hub keeps `token_hash` = lowercase hex SHA-256 of the token text (ASCII) and the secret; the token itself is
+never sent to the hub or stored by it. The secret's TEXT (not the decoded bytes) is the HMAC key and the Basic password.
+
+**`hook_put`** `{token_hash, followup, source, secret, expires_ms[, replaces]}`: `followup` matches
+`[A-Za-z0-9][A-Za-z0-9._:-]{0,63}` and `source` is `github`, `generic` or `databricks`; both are the workspace's own
+bookkeeping and a ring never carries them. `expires_ms` is an absolute time in ms; the hub refuses (`bad_expiry`) one
+in the past or more than 31 days ahead. A workspace holds at most 64 live hooks (`too_many_hooks`). A `token_hash` that
+any workspace already holds is `hook_exists` (a workspace re-putting its own live hash is also `hook_exists`; rotate with
+`replaces`). `replaces` (a different hash of the SAME workspace) revokes that hook in the same step. The reply
+`{"url_base"}` is `https://<public host>/h/` (`http` only for a local hub).
+
+**The ring (the only HTTP the hub serves for this).** `POST /h/<token>`, on its own listener. The hub reads no cookie,
+no `Authorization` bearer, no query. Verification by `source` (any failure, an unknown, revoked or expired token, and a
+missing header are the SAME `404` with an empty body):
+
+- `github`: `X-Hub-Signature-256: sha256=<hex>` = HMAC-SHA256(secret text, raw body), constant-time compare.
+- `generic`: `X-Orch-Signature: t=<unix seconds>,v1=<hex>` with v1 = HMAC-SHA256(secret text, `<t>.` || raw body); `t` within
+  300 s of the hub clock.
+- `databricks`: `Authorization: Basic base64("orch:" || secret)`. Databricks webhook destinations offer HTTP Basic (and
+  an OAuth client-credentials beta) and no signature or custom header; so there is no timestamp. Both fields are compared
+  in constant time without a short circuit.
+
+A valid ring stores `(token_hash, source, kind = "hook.rang", received_at)`; a second ring of the same hook is answered
+`204` and changes nothing. The body is read (at most 262144 bytes; more is `413` before any read) only to verify, then dropped;
+nothing of it or of the headers is stored or logged. `received_at` is the hub clock in ms.
+
+**`hook_pull`** `{since}` returns this link's workspace's rings with `seq > since`, oldest first, at most 50, and `head` = the
+largest `seq` the hub ever gave this workspace. **`hook_ack`** `{seq}` deletes this workspace's rings with `seq' <= seq` and
+answers `{"acked": seq}`; an unknown `seq`, or one that belongs to another workspace's ring, deletes nothing of
+that other workspace (every row is scoped to the workspace of the authenticated link, in every op).
+
+**What the host does with a ring.** It looks `token_hash` up in ITS OWN records of pending follow-ups; the follow-up and the source
+come from those records, never from the hub. A ring with no pending follow-up is acked and dropped. `kind` and `source`
+are closed words: a pull with any other value is `malformed` and not acted on. A follow-up's `--on webhook:...` can match
+`kind` only (`hook.rang`): the ring is narrower than the #717 event shape (no ref, no status). A host wakes at most 6 follow-ups
+an hour from hub rings; the rest wait for their deadline. The deadline stays the fallback.
+
+Reference `orch_hub.contract.hooks` (hub) and a hand-written port in orch-core's tests; both replay
+`contracts/hub/vectors_hooks.json` (made by `contracts/hub/make_vectors_hooks.py`).
 
 ## 11. Publish through the hub (phase 2, D76, V3-D4)
 

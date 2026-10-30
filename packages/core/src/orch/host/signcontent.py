@@ -37,6 +37,8 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from orch import canon
+from orch.addons import event_words
+from orch.addons.manifest import EVENTS_KEY
 from orch.addons.settings_value import KEY as ADDONS_KEY
 
 from .review import OWNER_PROOF_LINE
@@ -77,6 +79,7 @@ SHOWN: dict[str, frozenset[str]] = {
             "fields",
             "sections",
             "runtime",
+            EVENTS_KEY,
             "staged",
         }
     ),
@@ -308,17 +311,24 @@ def _share_summary(text: str) -> dict[str, Any] | None:
         names.append(m.group(1))
     if len(rows) != int(head.group(1)) or not 1 <= len(rows) <= ap.LIMITS["files"]:
         return None
-    n, days = int(head.group(1)), int(works.group(1))
+    days = int(works.group(1))
     who = "Anyone who has the link can open the files"
     if once:
         views = int(once.group(1))
         who += f", at most {views} time{'' if views == 1 else 's'}"
+    # r12-P11: plain and short. The exact signed text (names, sizes, both origins, who prepared it, the
+    # ticket, the staged copy and the manifest) is whole in the "What you sign" fold; the file list is the dashboard's
+    # lead. A person can still tell where it goes: the reach word here, the address in the fold.
+    sent, opens = _reach(server.group(1)), _reach(share.group(1))
+    where = (
+        f"The files go to {sent}; the link opens there too."
+        if sent == opens
+        else f"The files go to {sent}; the link opens at {opens}."
+    )
     out = [
-        f"Files: {n} ({head.group(2)}): " + ", ".join(names),
-        f"Who can open them: {who}.",
-        f"The link works for {days} day{'' if days == 1 else 's'} from the moment it is made.",
-        f"The files are sent to {server.group(1)}; the link opens at {share.group(1)}.",
-        f"Prepared by {prepared.group(1)}. From ticket {ticket.group(1)} (key per host).",
+        f"{who}, for {days} day{'' if days == 1 else 's'}.",
+        where,
+        *(["An agent prepared this copy."] if prepared.group(1) == "an agent" else []),
     ]
     return {"title": "Share these files", "lines": out}
 
@@ -538,8 +548,8 @@ def _reach(origin: str) -> str:
     if len(parts) == 4 and all(p.isdigit() for p in parts):
         a, b = int(parts[0]), int(parts[1])
         if a == 10 or (a == 172 and 16 <= b <= 31) or (a == 192 and b == 168) or (a == 100 and 64 <= b <= 127):
-            return "office network"
-    return "public address"
+            return "the office network"
+    return "a public address"
 
 
 def _leaf_word(v: Any) -> str:
@@ -1570,7 +1580,8 @@ def _addon(typ: str, ev: Mapping[str, Any], out: dict[str, Any]) -> str:
         return f"Purge the add-on {name}"
     version = ev.get("version")
     words = _capability_words(ev.get("capabilities"))
-    declares = any(ev.get(k) not in (None, [], {}) for k in ("fields", "sections", "artifact_kinds", "runtime"))
+    keys = ("fields", "sections", "artifact_kinds", "runtime", EVENTS_KEY)
+    declares = any(ev.get(k) not in (None, [], {}) for k in keys)
     if named and words is not None and not declares and isinstance(version, str) and _VERSION.fullmatch(version):
         _row(out, "add-on", name)
         _row(out, "version", version)
@@ -1599,6 +1610,9 @@ def _addon(typ: str, ev: Mapping[str, Any], out: dict[str, Any]) -> str:
     for k in ("capabilities", "artifact_kinds", "fields", "sections"):
         if ev.get(k) is not None:
             _row(out, k.replace("_", " "), ev[k])
+    if ev.get(EVENTS_KEY):
+        _row(out, "can wake", ev[EVENTS_KEY])
+        out.setdefault("notes", []).extend(_events_words(ev[EVENTS_KEY], ev.get("capabilities") or ()))
     if ev.get("runtime") is not None:
         runtime = ev["runtime"]
         _row(out, "dependencies", runtime)
@@ -1625,6 +1639,25 @@ def _deps_words(deps: Any) -> str:
     ):
         raise PlainUnavailable("the plain view does not know these packages")
     return "; ".join(f"{one(r['name'])} {one(r.get('version'))}{_DEP_NOTES[r['note']]}" for r in rows)
+
+
+def _events_words(events: Any, capabilities: Any = ()) -> list[str]:
+    """addon-api 1.2 (#718): a signed `events` declaration in words (the shared phrasing). Any other shape is the full
+    review."""
+    if (
+        not isinstance(events, list)
+        or not 1 <= len(events) <= 8
+        or not all(
+            isinstance(e, Mapping)
+            and set(e) == {"kind", "title", "statuses", "ref", "interval_s"}
+            and isinstance(e["title"], str)
+            and type(e["interval_s"]) is int
+            for e in events
+        )
+        or not isinstance(capabilities, (list, tuple))
+    ):
+        raise PlainUnavailable("the plain view does not know these events")
+    return event_words.event_lines(events, capabilities, one)
 
 
 _RUNTIME_KINDS = {"python-requirements": "Python", "node-package-lock": "Node"}

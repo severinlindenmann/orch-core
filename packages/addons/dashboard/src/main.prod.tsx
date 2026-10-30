@@ -4,6 +4,10 @@ import { bootstrap, getPendingSwitch, landSwitch } from './api/bootstrap'
 import { showBootFailure } from './api/bootFailure'
 import './lib/cssom'
 import './styles/tokens.css'
+import { applyChoice, watchSystem } from './lib/theme'
+
+applyChoice() // the boot script did this already; this keeps the page right if it was blocked
+watchSystem()
 
 // Setup claims through the server; normal dashboard launch uses its separate bootstrap.
 const setup = isSetupPage()

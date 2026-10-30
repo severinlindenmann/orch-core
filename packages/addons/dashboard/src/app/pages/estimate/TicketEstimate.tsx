@@ -81,7 +81,7 @@ export function TicketEstimate({ ticket }: { ticket: TicketDocument }) {
                       variant="outline"
                       aria-pressed={on}
                       aria-label={s.label}
-                      className={cn('h-8 min-w-9 px-2 font-mono text-[12px]', on && 'border-brand bg-brand-soft text-brand hover:bg-brand-soft hover:text-brand')}
+                      className={cn('h-8 min-w-9 px-2 font-mono text-[12px]', on && 'border-brand bg-brand-soft text-brand-chip-text hover:bg-brand-soft hover:text-brand')}
                       onClick={() => {
                         if (!on) setPick(s.size)
                       }}

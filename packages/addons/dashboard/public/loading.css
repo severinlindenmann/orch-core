@@ -1,16 +1,21 @@
-/* The first paint, before any script runs: a dark page with the logo and "Loading…". A separate file because the
-   server's CSP (style-src 'self') blocks inline <style> and style="" attributes. React replaces #root's content. */
-html { background: #0e1014; color-scheme: dark; }
-html, body { margin: 0; background: #0e1014; color: #e8eaed; }
-.boot { display: flex; height: 100vh; flex-direction: column; align-items: center; justify-content: center; gap: 12px; font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; color: #9aa3ad; }
+/* The first paint, before any script runs: the page colour of the chosen theme with the logo and "Loading…". A separate
+   file because the server's CSP (style-src 'self') blocks inline <style> and style="" attributes. React replaces #root's
+   content. Dark is the default; light follows data-theme="light" (public/theme-boot.js) or, for System, the browser. */
+:root { color-scheme: dark; --boot-bg: #0e1014; --boot-text: #e8eaed; --boot-muted: #9aa3ad; --boot-btn: #1a1d24; --boot-btn-border: #343944; }
+:root[data-theme="light"] { color-scheme: light; --boot-bg: #faf8f4; --boot-text: #1c1917; --boot-muted: #57534e; --boot-btn: #f5f2ec; --boot-btn-border: #7d7468; }
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) { color-scheme: light; --boot-bg: #faf8f4; --boot-text: #1c1917; --boot-muted: #57534e; --boot-btn: #f5f2ec; --boot-btn-border: #7d7468; }
+}
+html, body { margin: 0; background: var(--boot-bg); color: var(--boot-text); }
+.boot { display: flex; height: 100vh; flex-direction: column; align-items: center; justify-content: center; gap: 12px; font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--boot-muted); }
 .boot img { width: 40px; height: 40px; }
-.boot b { font-size: 20px; font-weight: 700; letter-spacing: -0.02em; color: #e8eaed; }
+.boot b { font-size: 20px; font-weight: 700; letter-spacing: -0.02em; color: var(--boot-text); }
 .boot span { animation: boot-pulse 1.4s ease-in-out infinite; }
 @keyframes boot-pulse { 50% { opacity: 0.45; } }
 @media (prefers-reduced-motion: reduce) { .boot span { animation: none; } }
 .boot[role="alert"] span { animation: none; max-width: 420px; text-align: center; }
-.boot-retry { font: inherit; color: #e8eaed; background: #1a1d24; border: 1px solid #343944; border-radius: 6px; padding: 8px 14px; cursor: pointer; }
-/* the switch confirm/failed pages fade in calmly instead of snapping (the page is already dark, so there is no flash either way) */
+.boot-retry { font: inherit; color: var(--boot-text); background: var(--boot-btn); border: 1px solid var(--boot-btn-border); border-radius: 6px; padding: 8px 14px; cursor: pointer; }
+/* the switch confirm/failed pages fade in calmly instead of snapping (the page already has the theme colour, so no flash) */
 .boot[role="dialog"], .boot[role="alert"] { animation: boot-in 0.25s ease-out; }
 @keyframes boot-in { from { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .boot[role="dialog"], .boot[role="alert"] { animation: none; } }

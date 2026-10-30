@@ -276,6 +276,7 @@ ALLOWED = [
     "/",
     "/favicon.svg",
     "/loading.css",
+    "/theme-boot.js",
     "/assets/main-hash.js",
     "/assets/index-AbC123_-.css",
     "/auth/passkey/login",
@@ -397,7 +398,7 @@ def test_prelogin_fuzz_no_bypass():
     ]
     shape = [
         lambda s: s == "/",
-        lambda s: s in ("/favicon.svg", "/loading.css"),
+        lambda s: s in ("/favicon.svg", "/loading.css", "/theme-boot.js"),
         lambda s: SPA_PATH.fullmatch(s[1:]) is not None,
         lambda s: s.startswith("/assets/") and s.count("/") == 2,
         lambda s: s.startswith(("/auth/passkey/", "/auth/enroll/")),

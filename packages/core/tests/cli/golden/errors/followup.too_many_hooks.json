@@ -1,0 +1,17 @@
+{
+  "ok": false,
+  "error": {
+    "code": "followup.too_many_hooks",
+    "message": "Too many new webhooks in the last hour. Try again later.",
+    "hint": "wait a while, then run orch webhook new again; reuse a webhook you already made",
+    "fix": {
+      "argv": [
+        "orch",
+        "webhook",
+        "new",
+        "--help"
+      ]
+    },
+    "retryable": true
+  }
+}

@@ -36,6 +36,8 @@ let sendRefusal: { code: string; reason?: string } | null = null
 let registerRefusal: { code: string; reason?: string } | null = null
 let sendRefusalOnce: { code: string; reason?: string } | null = null
 let uploadN = 0
+let prepareRefusal: { code: string } | null = null
+let ticketOwner: string | null | undefined
 const state = useFakeHost(() => [workspace({ id: A, features: [...READS, 'publish'], addOns: { available: true, add_ons: [{ id: 'publish', title: 'Publish', desc: 'Share files.', state: 'on', locked: null, blocked: null }] } })])
 const refusal = (r: { code: string; reason?: string }) =>
   Response.json({ ok: false, error: { code: r.code, message: r.code, retryable: false, ...(r.reason ? { detail: { reason: r.reason } } : {}) } }, { status: 409 })
@@ -51,14 +53,17 @@ const route = () => {
   registerRefusal = null
   sendRefusalOnce = null
   uploadN = 0
+  prepareRefusal = null
+  ticketOwner = undefined
   state.host.override = (path, method, body) => {
     if (path.endsWith('/tickets/DEMO-0001') && method === 'GET')
-      return Response.json({ ...ticket, artifacts: [{ name: 'report.md', kind: 'report', bytes: 2048, sha256: 'ab'.repeat(32), added_by: 'p_x', at: '2026-10-18T08:00:00Z' }, { name: 'bad/name.md', kind: 'report', bytes: 1, sha256: 'cd'.repeat(32), added_by: 'p_x', at: '2026-10-18T08:00:00Z' }] })
+      return Response.json({ ...ticket, ...(ticketOwner === undefined ? {} : { people: { ...ticket.people, owner: ticketOwner } }), artifacts: [{ name: 'report.md', kind: 'report', bytes: 2048, sha256: 'ab'.repeat(32), added_by: 'p_x', at: '2026-10-18T08:00:00Z' }, { name: 'bad/name.md', kind: 'report', bytes: 1, sha256: 'cd'.repeat(32), added_by: 'p_x', at: '2026-10-18T08:00:00Z' }] })
     if (!path.includes('/shares')) return undefined
     if (method === 'GET' && listRefusal) return refusal(listRefusal)
     if (method === 'GET')
       return Response.json({ available: true, configured, server: configured ? 'http://127.0.0.1:8103' : null, share: configured ? 'http://127.0.0.1:8104' : null, workspace: A, owner: 'p_owner', live: configured && live && serverUp, shares: configured ? shares : [], staged })
     if (path.endsWith('/shares/prepare')) {
+      if (prepareRefusal) return refusal(prepareRefusal)
       staged = [{ staged_id: STAGED, ticket: 'DEMO-0001', kind: body?.kind, days: body?.days, views: body?.views ?? 0, origin: 'person', files: [FILE], created_at: '2026-10-18T08:00:00Z' }]
       return Response.json({ staged: staged[0], server: 'http://127.0.0.1:8103', share: 'http://127.0.0.1:8104' })
     }
@@ -209,15 +214,17 @@ it('share files end to end: pick, prepare, read every file with its size, sign, 
   await waitFor(() => expect(calls('/shares/prepare')).toHaveLength(1), T)
   expect(calls('/shares/prepare')[0].body).toMatchObject({ ticket: 'DEMO-0001', artifacts: ['report.md'], kind: 'once', days: 3, views: 3 })
   // the review before the signature lists every file with its size and a link to the ticket's artifacts
-  const confirm = await screen.findByRole('dialog', { name: 'Review your share' }, T)
+  const confirm = (await screen.findByRole('list', { name: 'Files to share' }, T)).closest('[role="dialog"]') as HTMLElement
+  expect(screen.queryByRole('button', { name: 'Continue to approval' })).toBeNull() // r12-P11: one sheet, no extra step
   const files = within(confirm).getByRole('list', { name: 'Files to share' })
   expect(files).toHaveTextContent('report.md')
   expect(files).toHaveTextContent('2.0 KB')
   expect(within(files).getByRole('link', { name: 'Open report.md on the ticket' })).toHaveAttribute('href', expect.stringContaining('/ticket/DEMO-0001'))
   expect(calls('/shares/send')).toEqual([]) // nothing sent before the signature
-  await user.click(within(confirm).getByRole('button', { name: 'Continue to approval' }))
   const sign = await readyToSign()
   expect(calls('/shares/send')).toEqual([]) // nothing sent before the signature
+  expect(state.host.clickPrepares()).toHaveLength(1) // prepared on open, once; never armed (autoStart={false})
+  expect(state.host.clickSigned).toEqual([]) // opened on the review, never armed or signed by itself: Sign is the person's press
   sign()
   const dialog = await screen.findByRole('dialog', { name: 'Your link' }, { timeout: 9000 })
   expect(state.host.clickSigned).toHaveLength(1)
@@ -256,6 +263,7 @@ it('a reload shows the share in the list and never the link', async () => {
 
 it('cancelling at the review drops the prepared copy and sends nothing', async () => {
   route()
+  clickOn(state.host.workspaces[0])
   window.innerWidth = 1400
   const user = userEvent.setup()
   show('/w/DEMO/ticket/DEMO-0001')
@@ -263,12 +271,12 @@ it('cancelling at the review drops the prepared copy and sends nothing', async (
   const form = await screen.findByRole('dialog', { name: 'Share files' }, T)
   await user.click(within(form).getByRole('checkbox', { name: /report\.md/ }))
   await user.click(within(form).getByRole('button', { name: 'Review selected files' }))
-  const confirm = await screen.findByRole('dialog', { name: 'Review your share' }, T)
-  await user.click(within(confirm).getByRole('button', { name: 'Cancel' }))
+  const confirm = (await screen.findByRole('list', { name: 'Files to share' }, T)).closest('[role="dialog"]') as HTMLElement
+  await user.click(await within(confirm).findByRole('button', { name: 'Cancel' }, T))
   await waitFor(() => expect(calls('/shares/discard')).toHaveLength(1), T)
   expect(calls('/shares/send')).toEqual([])
   expect(calls('/handoff').filter((c) => c.method === 'POST')).toEqual([])
-  expect(state.host.clickPrepares()).toEqual([])
+  expect(state.host.clickSigned).toEqual([]) // the review was prepared on open, nothing was signed
 })
 
 it('a server that does not know the workspace is said in words, with the admin step behind Technical details', async () => {
@@ -283,7 +291,6 @@ it('a server that does not know the workspace is said in words, with the admin s
   expect(box).toHaveTextContent('Waiting for your signature')
   expect(box).toHaveTextContent('prepared by an agent')
   await user.click(within(box).getByRole('button', { name: 'Review and sign' }))
-  await user.click(await screen.findByRole('button', { name: 'Continue to approval' }, T))
   ;(await readyToSign())()
   const alert = await screen.findByRole('alert', {}, { timeout: 9000 })
   expect(alert).toHaveTextContent('has not allowed this workspace yet')
@@ -361,15 +368,15 @@ async function openPublish() {
   return await screen.findByTestId('publish-server', {}, T)
 }
 
-/** The approval step after "Continue to approval": its outcome button prepares through the signer (no terminal hand-off);
- * returns the press of the armed Sign. */
+/** The one sheet of a share (r12-P11): the review is prepared on open, Sign (labelled "Share files") is still the person's own
+ * press; returns that press. */
 async function readyToSign() {
-  const outcome = await screen.findByRole('button', { name: 'Share files of DEMO-0001' }, T)
-  const dialog = outcome.closest('[role="dialog"]') as HTMLElement
-  await prepareByClick(dialog, 'Share files of DEMO-0001')
+  // the dialog is named by the host's own headline once the review has loaded, so find it by its Sign button
+  const dialog = (await screen.findByRole('button', { name: 'Share files' }, T)).closest('[role="dialog"]') as HTMLElement
   expect(state.host.clickPrepares().map((c) => c.body)).toEqual([{ action: 'publish_share', key: 'DEMO-0001', staged_id: STAGED }])
   expect(calls('/handoff').filter((c) => c.method === 'POST')).toEqual([])
-  const sign = within(dialog).getByRole('button', { name: /^Sign( |$)/ })
+  const sign = within(dialog).getByRole('button', { name: 'Share files' })
+  expect(state.host.clickSigned).toEqual([]) // never armed or signed before the person's own press (also on the resume path)
   await waitFor(() => expect(sign).toBeEnabled(), { timeout: ARM_MS + 3000 })
   return () => {
     fireEvent.pointerDown(sign)
@@ -386,7 +393,6 @@ async function signedShare(user: ReturnType<typeof userEvent.setup>) {
   const form = await screen.findByRole('dialog', { name: 'Share files' }, T)
   await user.click(within(form).getByRole('checkbox', { name: /report\.md/ }))
   await user.click(within(form).getByRole('button', { name: 'Review selected files' }))
-  await user.click(within(await screen.findByRole('dialog', { name: 'Review your share' }, T)).getByRole('button', { name: 'Continue to approval' }))
   return readyToSign()
 }
 
@@ -441,7 +447,6 @@ it('on the Shares page the link also stays until Done when the list then fails t
   const user = userEvent.setup()
   show('/w/DEMO/shares')
   await user.click(await screen.findByRole('button', { name: 'Review and sign' }, T))
-  await user.click(await screen.findByRole('button', { name: 'Continue to approval' }, T)) // the dialog's own
   const sign = await readyToSign()
   const inner = state.host.override!
   state.host.override = (p, m, b) => {
@@ -565,4 +570,105 @@ it('sharing not reachable: plain words, the signature stays good, Try again send
   await screen.findByRole('dialog', { name: 'Your link' }, { timeout: 9000 })
   expect(calls('/shares/send')).toHaveLength(2)
   expect(calls('/shares/register')).toEqual([])
+})
+
+// Run 14 P01: Publish as link on a result card: one button, one small panel, Sign and publish, the link once.
+async function onResults(user: ReturnType<typeof userEvent.setup>) {
+  state.host.workspaces[0].features = [...state.host.workspaces[0].features, 'actions']
+  clickOn(state.host.workspaces[0])
+  window.innerWidth = 1400
+  show('/w/DEMO/ticket/DEMO-0001')
+  await user.click(await screen.findByRole('tab', { name: /Results/ }, T))
+  return await screen.findByRole('list', { name: 'Artifacts' }, T)
+}
+
+it('Publish as link: a button on the result card, a panel that names the file, Sign and publish, then the link shows ONCE', async () => {
+  route()
+  const user = userEvent.setup()
+  const setItem = vi.spyOn(Storage.prototype, 'setItem')
+  const list = await onResults(user)
+  // a file the server would not take has no button
+  expect(within(list).queryByRole('button', { name: 'Publish bad/name.md as a link' })).toBeNull()
+  await user.click(within(list).getByRole('button', { name: 'Publish report.md as a link' }))
+  const panel = await screen.findByRole('dialog', { name: 'Publish report.md as a link?' }, T)
+  expect(panel).toHaveTextContent('Anyone with the link can open this file. Only this file leaves your computer.')
+  expect(panel).toHaveTextContent('http://127.0.0.1:8103') // where it goes
+  expect(calls('/shares/prepare')).toEqual([]) // nothing is prepared before the press
+  await user.click(within(panel).getByRole('button', { name: 'Sign and publish' }))
+  await waitFor(() => expect(calls('/shares/prepare')).toHaveLength(1), T)
+  expect(calls('/shares/prepare')[0].body).toMatchObject({ ticket: 'DEMO-0001', artifacts: ['report.md'], kind: 'secret', days: 7 })
+  expect(calls('/shares/send')).toEqual([]) // nothing leaves before the signature
+  const sign = await readyToSign() // the existing click-to-sign dialog, no typed word
+  expect(calls('/shares/send')).toEqual([])
+  sign()
+  const dialog = await screen.findByRole('dialog', { name: 'Your link' }, { timeout: 9000 })
+  expect(state.host.clickSigned).toHaveLength(1)
+  expect((within(dialog).getByLabelText('Link') as HTMLInputElement).value).toBe(LINK)
+  expect(within(dialog).getByRole('button', { name: /Copy/ })).toBeInTheDocument()
+  expect(dialog).toHaveTextContent('You can copy this link only now.')
+  expect(setItem.mock.calls.some((c) => JSON.stringify(c).includes(TOKEN))).toBe(false)
+  await user.click(within(dialog).getByRole('button', { name: /saved the link/ }))
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Your link' })).toBeNull(), T)
+  expect(document.body.textContent).not.toContain(TOKEN)
+  expect(JSON.stringify([...queryClient.getQueryCache().getAll().map((q) => q.state.data), ...queryClient.getMutationCache().getAll().map((m) => m.state.data)])).not.toContain(TOKEN)
+})
+
+it('Publish as link: Cancel prepares nothing and sends nothing', async () => {
+  route()
+  const user = userEvent.setup()
+  const list = await onResults(user)
+  await user.click(within(list).getByRole('button', { name: 'Publish report.md as a link' }))
+  const panel = await screen.findByRole('dialog', { name: 'Publish report.md as a link?' }, T)
+  await user.click(within(panel).getByRole('button', { name: 'Cancel' }))
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull(), T)
+  expect(calls('/shares/prepare')).toEqual([])
+  expect(calls('/shares/send')).toEqual([])
+})
+
+it.each([
+  ['hub.not_joined', /Connect this workspace to a hub in Settings, Hub/],
+  ['hub.state_mismatch', /does not match what the workspace has signed/],
+])('Publish as link: a hub refusal (%s) is said in plain words before anything is signed, never as a code', async (code, words) => {
+  route()
+  prepareRefusal = { code }
+  const user = userEvent.setup()
+  const list = await onResults(user)
+  await user.click(within(list).getByRole('button', { name: 'Publish report.md as a link' }))
+  const panel = await screen.findByRole('dialog', { name: 'Publish report.md as a link?' }, T)
+  await user.click(within(panel).getByRole('button', { name: 'Sign and publish' }))
+  const alert = await within(panel).findByRole('alert', {}, T)
+  expect(alert).toHaveTextContent(words)
+  expect(alert).toHaveTextContent('Nothing was shared')
+  expect(alert.textContent).not.toMatch(/\bhub\.[a-z_]+|state_mismatch|not_joined|selective/)
+  expect(calls('/shares/send')).toEqual([])
+  expect(state.host.clickPrepares()).toEqual([]) // no signature was asked for
+})
+
+it('Publish as link: a viewer sees no button', async () => {
+  route()
+  state.host.workspaces[0].roster = state.host.workspaces[0].roster.map((m) => (m.role === 'owner' ? { ...m, role: 'viewer' as const } : m))
+  const user = userEvent.setup()
+  const list = await onResults(user)
+  expect(within(list).queryByRole('button', { name: /as a link/ })).toBeNull()
+})
+
+const asRole = (role: 'member' | 'maintainer') => {
+  const ws = state.host.workspaces[0]
+  ws.roster = ws.roster.map((m) => (m.person === ws.me ? { ...m, role } : m))
+  return ws.me
+}
+
+it.each([
+  ['a plain member on someone else\'s ticket', 'member', 'p_someone_else', false],
+  ['the ticket owner (a member)', 'member', null, true],
+  ['a maintainer on someone else\'s ticket', 'maintainer', 'p_someone_else', true],
+] as const)('Publish as link: %s', async (_who, role, owner, sees) => {
+  route()
+  const user = userEvent.setup()
+  const me = asRole(role)
+  ticketOwner = owner ?? me
+  const list = await onResults(user)
+  const btn = within(list).queryByRole('button', { name: 'Publish report.md as a link' })
+  if (sees) expect(btn).toBeInTheDocument()
+  else expect(btn).toBeNull()
 })

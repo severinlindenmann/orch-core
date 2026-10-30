@@ -26,6 +26,11 @@ import { prose, visible } from '@/components/sign/visible'
 import { verifiedMedia } from '@/api/evidenceMedia'
 import { SafeMarkdownView } from '@/addon-ui/SafeMarkdownView'
 import { NoPreviewCard } from './EvidenceCard'
+import { canAct, hasFeature, isRealHost } from '@/api/features'
+import { atLeast } from '@/api/permissions'
+import { unshareable } from '@/api/shares'
+import { ShareFlow } from '../shares/ShareFlow'
+import { TurnOnPublish } from '../shares/TurnOnPublish'
 import { EvidenceThumb, TypeBadge } from './EvidenceThumb'
 
 export const KIND_ICON: Record<Artifact['kind'], typeof FileText> = {
@@ -639,8 +644,16 @@ export function Artifacts({ ticket, viewer, jump, focus }: TabProps & { focus?: 
   /** The Preview button that opened the drawer; closing returns focus to it. */
   const opener = useRef<HTMLElement | null>(null)
   const workspaces = useQuery(queries.workspaces())
-  const agentHtml = addonActive(workspaceOfTicket(ticket.key, workspaces.data ?? []), 'widgets')
+  const home = workspaceOfTicket(ticket.key, workspaces.data ?? [])
+  const agentHtml = addonActive(home, 'widgets')
   const addonPage = useAddonPages()
+  // Publish as link (run-14 P01): on a real host, a member or more with Publish on; an owner can turn it on first.
+  const [publishing, setPublishing] = useState<{ name: string; step: 'turnon' | 'share' } | null>(null)
+  const real = isRealHost() && !!home && canAct(home.id)
+  const publishOn = real && hasFeature('publish', home.id)
+  // Who may sign a share (host rule, publishing._may_share): the ticket owner (a member or more), workspace owners and maintainers.
+  const mayShare = atLeast(viewer.role, 'maintainer') || (atLeast(viewer.role, 'member') && !!viewer.person && ticket.people.owner === viewer.person)
+  const mayPublish = real && (publishOn ? mayShare : viewer.role === 'owner')
   useEffect(() => {
     if (!focus) return
     const a = ticket.artifacts.find((x) => `artifact-${x.name}` === focus)
@@ -682,7 +695,7 @@ export function Artifacts({ ticket, viewer, jump, focus }: TabProps & { focus?: 
                   by {viewer.name(a.added_by)} · <Ago at={a.at} />
                 </p>
                 <Meta a={a} jump={jump} />
-                <div className="mt-auto pt-2">
+                <div className="mt-auto flex flex-wrap items-center gap-2 pt-2">
                   <ArtifactAction
                     a={a}
                     addonPage={addonPage}
@@ -693,6 +706,12 @@ export function Artifacts({ ticket, viewer, jump, focus }: TabProps & { focus?: 
                       setOpen(a)
                     }}
                   />
+                  {mayPublish && openMode(a) === 'preview' && !unshareable(a) && (
+                    <Button type="button" variant="outline" size="sm" className={ACTION} aria-label={`Publish ${a.name} as a link`} onClick={() => setPublishing({ name: a.name, step: publishOn ? 'share' : 'turnon' })}>
+                      <Link2 aria-hidden />
+                      Publish as link
+                    </Button>
+                  )}
                 </div>
               </li>
             )
@@ -701,6 +720,9 @@ export function Artifacts({ ticket, viewer, jump, focus }: TabProps & { focus?: 
       </div>
 
       <ArtifactDrawer artifact={open} ticket={ticket.key} agentHtml={agentHtml} holdPictures={byJump} onClose={() => setOpen(null)} opener={opener} />
+      {/* Rendered whatever the feature flags say meanwhile: a refetch must never unmount the dialog that holds the link. */}
+      {home && publishing?.step === 'turnon' && <TurnOnPublish key="turnon" workspace={home} onOn={() => setPublishing({ name: publishing.name, step: 'share' })} onClose={() => setPublishing(null)} />}
+      {home && publishing?.step === 'share' && <ShareFlow key={publishing.name} ws={home.id} ticket={ticket} only={publishing.name} onClose={() => setPublishing(null)} />}
     </>
   )
 }

@@ -1,0 +1,750 @@
+{
+  "pins": "add-on events in follow-ups (orch-core #718, addon-api 1.2): the addon.granted events shape and the followup.set / followup.fired rules. Unsigned model-level vectors: each scenario is replayed by orch.model (tests/model/test_followup_addon_vectors.py) with the placeholder verifier; a consumer that renders or checks these shapes (hub summary, dashboard, mobile) replays the same steps. Times are offsets in seconds from the moment of the step.",
+  "preamble": "workspace owner sev; member tom owns a ticket and holds a workable claim; add-on schedules granted without capabilities",
+  "scenarios": [
+    {
+      "name": "grant_with_events_is_admitted",
+      "pins": "addon.granted carries the declared events flat; replay never reads a manifest",
+      "steps": [
+        {
+          "op": "grant",
+          "payload": {
+            "name": "databricks",
+            "version": "1.0.0",
+            "capabilities": [
+              "network"
+            ],
+            "fields": {},
+            "sections": [],
+            "artifact_kinds": [],
+            "events": [
+              {
+                "kind": "run.finished",
+                "title": "Run finished",
+                "statuses": [
+                  "succeeded",
+                  "failed",
+                  "cancelled"
+                ],
+                "ref": "int",
+                "interval_s": 300
+              }
+            ]
+          },
+          "expect": null
+        }
+      ]
+    },
+    {
+      "name": "grant_refuses_a_kind_declared_twice",
+      "pins": "kinds are unique",
+      "steps": [
+        {
+          "op": "grant",
+          "payload": {
+            "name": "databricks",
+            "version": "1.0.0",
+            "capabilities": [
+              "network"
+            ],
+            "fields": {},
+            "sections": [],
+            "artifact_kinds": [],
+            "events": [
+              {
+                "kind": "run.finished",
+                "title": "Run finished",
+                "statuses": [
+                  "succeeded",
+                  "failed",
+                  "cancelled"
+                ],
+                "ref": "int",
+                "interval_s": 300
+              },
+              {
+                "kind": "run.finished",
+                "title": "Run finished",
+                "statuses": [
+                  "succeeded",
+                  "failed",
+                  "cancelled"
+                ],
+                "ref": "int",
+                "interval_s": 300
+              }
+            ]
+          },
+          "expect": "addon.value_invalid"
+        }
+      ]
+    },
+    {
+      "name": "grant_refuses_a_title_that_is_not_plain_text",
+      "pins": "no bidi or control characters in a title",
+      "steps": [
+        {
+          "op": "grant",
+          "payload": {
+            "name": "databricks",
+            "version": "1.0.0",
+            "capabilities": [
+              "network"
+            ],
+            "fields": {},
+            "sections": [],
+            "artifact_kinds": [],
+            "events": [
+              {
+                "kind": "run.finished",
+                "title": "Run \u202efinished",
+                "statuses": [
+                  "succeeded",
+                  "failed",
+                  "cancelled"
+                ],
+                "ref": "int",
+                "interval_s": 300
+              }
+            ]
+          },
+          "expect": "addon.value_invalid"
+        },
+        {
+          "op": "grant",
+          "payload": {
+            "name": "databricks",
+            "version": "1.0.0",
+            "capabilities": [
+              "network"
+            ],
+            "fields": {},
+            "sections": [],
+            "artifact_kinds": [],
+            "events": [
+              {
+                "kind": "run.finished",
+                "title": "Run\nfinished",
+                "statuses": [
+                  "succeeded",
+                  "failed",
+                  "cancelled"
+                ],
+                "ref": "int",
+                "interval_s": 300
+              }
+            ]
+          },
+          "expect": "addon.value_invalid"
+        },
+        {
+          "op": "grant",
+          "payload": {
+            "name": "databricks",
+            "version": "1.0.0",
+            "capabilities": [
+              "network"
+            ],
+            "fields": {},
+            "sections": [],
+            "artifact_kinds": [],
+            "events": [
+              {
+                "kind": "run.finished",
+                "title": " Run finished ",
+                "statuses": [
+                  "succeeded",
+                  "failed",
+                  "cancelled"
+                ],
+                "ref": "int",
+                "interval_s": 300
+              }
+            ]
+          },
+          "expect": "addon.value_invalid"
+        }
+      ]
+    },
+    {
+      "name": "set_without_a_status_filter_then_any_declared_status_wakes",
+      "pins": "on = {source,kind,ref}; the wake event carries source,kind,ref,status,at",
+      "steps": [
+        {
+          "op": "grant",
+          "payload": {
+            "name": "databricks",
+            "version": "1.0.0",
+            "capabilities": [
+              "network"
+            ],
+            "fields": {},
+            "sections": [],
+            "artifact_kinds": [],
+            "events": [
+              {
+                "kind": "run.finished",
+                "title": "Run finished",
+                "statuses": [
+                  "succeeded",
+                  "failed",
+                  "cancelled"
+                ],
+                "ref": "int",
+                "interval_s": 300
+              }
+            ]
+          },
+          "expect": null
+        },
+        {
+          "op": "set",
+          "trigger": "addon",
+          "on": {
+            "source": "addon",
+            "kind": "databricks.run.finished",
+            "ref": "8812"
+          },
+          "deadline_after_s": 10800,
+          "expect": null
+        },
+        {
+          "op": "fire",
+          "set": 0,
+          "trigger": "addon",
+          "after_s": 300,
+          "event": {
+            "source": "addon",
+            "kind": "databricks.run.finished",
+            "ref": "8812",
+            "status": "cancelled",
+            "at_offset_s": 0
+          },
+          "expect": null
+        }
+      ]
+    },
+    {
+      "name": "set_with_a_status_filter_wakes_on_that_status_only",
+      "pins": "on.status narrows the wake",
+      "steps": [
+        {
+          "op": "grant",
+          "payload": {
+            "name": "databricks",
+            "version": "1.0.0",
+            "capabilities": [
+              "network"
+            ],
+            "fields": {},
+            "sections": [],
+            "artifact_kinds": [],
+            "events": [
+              {
+                "kind": "run.finished",
+                "title": "Run finished",
+                "statuses": [
+                  "succeeded",
+                  "failed",
+                  "cancelled"
+                ],
+                "ref": "int",
+                "interval_s": 300
+              }
+            ]
+          },
+          "expect": null
+        },
+        {
+          "op": "set",
+          "trigger": "addon",
+          "on": {
+            "source": "addon",
+            "kind": "databricks.run.finished",
+            "ref": "8812",
+            "status": "failed"
+          },
+          "deadline_after_s": 10800,
+          "expect": null
+        },
+        {
+          "op": "fire",
+          "set": 0,
+          "trigger": "addon",
+          "after_s": 300,
+          "event": {
+            "source": "addon",
+            "kind": "databricks.run.finished",
+            "ref": "8812",
+            "status": "succeeded",
+            "at_offset_s": 0
+          },
+          "expect": "followup.denied"
+        },
+        {
+          "op": "fire",
+          "set": 0,
+          "trigger": "addon",
+          "after_s": 300,
+          "event": {
+            "source": "addon",
+            "kind": "databricks.run.finished",
+            "ref": "8812",
+            "status": "failed",
+            "at_offset_s": 0
+          },
+          "expect": null
+        }
+      ]
+    },
+    {
+      "name": "set_refuses_a_status_the_addon_never_declared",
+      "pins": "on.status must be declared",
+      "steps": [
+        {
+          "op": "grant",
+          "payload": {
+            "name": "databricks",
+            "version": "1.0.0",
+            "capabilities": [
+              "network"
+            ],
+            "fields": {},
+            "sections": [],
+            "artifact_kinds": [],
+            "events": [
+              {
+                "kind": "run.finished",
+                "title": "Run finished",
+                "statuses": [
+                  "succeeded",
+                  "failed",
+                  "cancelled"
+                ],
+                "ref": "int",
+                "interval_s": 300
+              }
+            ]
+          },
+          "expect": null
+        },
+        {
+          "op": "set",
+          "trigger": "addon",
+          "on": {
+            "source": "addon",
+            "kind": "databricks.run.finished",
+            "ref": "8812",
+            "status": "exploded"
+          },
+          "deadline_after_s": 10800,
+          "expect": "followup.denied"
+        }
+      ]
+    },
+    {
+      "name": "set_refuses_a_kind_nobody_declared_or_a_disabled_grant",
+      "pins": "kind must be declared by a granted add-on",
+      "steps": [
+        {
+          "op": "grant",
+          "payload": {
+            "name": "databricks",
+            "version": "1.0.0",
+            "capabilities": [
+              "network"
+            ],
+            "fields": {},
+            "sections": [],
+            "artifact_kinds": [],
+            "events": [
+              {
+                "kind": "run.finished",
+                "title": "Run finished",
+                "statuses": [
+                  "succeeded",
+                  "failed",
+                  "cancelled"
+                ],
+                "ref": "int",
+                "interval_s": 300
+              }
+            ]
+          },
+          "expect": null
+        },
+        {
+          "op": "set",
+          "trigger": "addon",
+          "on": {
+            "source": "addon",
+            "kind": "databricks.nope",
+            "ref": "8812"
+          },
+          "deadline_after_s": 10800,
+          "expect": "followup.denied"
+        },
+        {
+          "op": "set",
+          "trigger": "addon",
+          "on": {
+            "source": "addon",
+            "kind": "github.run.finished",
+            "ref": "8812"
+          },
+          "deadline_after_s": 10800,
+          "expect": "followup.denied"
+        }
+      ]
+    },
+    {
+      "name": "set_refuses_a_ref_of_the_wrong_format",
+      "pins": "ref fits the declared format (int: 1 to 19 digits)",
+      "steps": [
+        {
+          "op": "grant",
+          "payload": {
+            "name": "databricks",
+            "version": "1.0.0",
+            "capabilities": [
+              "network"
+            ],
+            "fields": {},
+            "sections": [],
+            "artifact_kinds": [],
+            "events": [
+              {
+                "kind": "run.finished",
+                "title": "Run finished",
+                "statuses": [
+                  "succeeded",
+                  "failed",
+                  "cancelled"
+                ],
+                "ref": "int",
+                "interval_s": 300
+              }
+            ]
+          },
+          "expect": null
+        },
+        {
+          "op": "set",
+          "trigger": "addon",
+          "on": {
+            "source": "addon",
+            "kind": "databricks.run.finished",
+            "ref": "abc"
+          },
+          "deadline_after_s": 10800,
+          "expect": "followup.denied"
+        },
+        {
+          "op": "set",
+          "trigger": "addon",
+          "on": {
+            "source": "addon",
+            "kind": "databricks.run.finished",
+            "ref": "11111111111111111111"
+          },
+          "deadline_after_s": 10800,
+          "expect": "followup.denied"
+        },
+        {
+          "op": "set",
+          "trigger": "addon",
+          "on": {
+            "source": "addon",
+            "kind": "databricks.run.finished",
+            "ref": "-5"
+          },
+          "deadline_after_s": 10800,
+          "expect": "followup.denied"
+        },
+        {
+          "op": "set",
+          "trigger": "addon",
+          "on": {
+            "source": "addon",
+            "kind": "databricks.run.finished",
+            "ref": "8812"
+          },
+          "deadline_after_s": 10800,
+          "expect": null
+        }
+      ]
+    },
+    {
+      "name": "fire_refuses_another_addons_event_a_wrong_ref_and_an_undeclared_status",
+      "pins": "the wake event must be the one the follow-up named",
+      "steps": [
+        {
+          "op": "grant",
+          "payload": {
+            "name": "databricks",
+            "version": "1.0.0",
+            "capabilities": [
+              "network"
+            ],
+            "fields": {},
+            "sections": [],
+            "artifact_kinds": [],
+            "events": [
+              {
+                "kind": "run.finished",
+                "title": "Run finished",
+                "statuses": [
+                  "succeeded",
+                  "failed",
+                  "cancelled"
+                ],
+                "ref": "int",
+                "interval_s": 300
+              }
+            ]
+          },
+          "expect": null
+        },
+        {
+          "op": "grant",
+          "payload": {
+            "name": "other",
+            "version": "1.0.0",
+            "capabilities": [
+              "network"
+            ],
+            "fields": {},
+            "sections": [],
+            "artifact_kinds": [],
+            "events": [
+              {
+                "kind": "run.finished",
+                "title": "Run finished",
+                "statuses": [
+                  "succeeded",
+                  "failed",
+                  "cancelled"
+                ],
+                "ref": "int",
+                "interval_s": 300
+              }
+            ]
+          },
+          "expect": null
+        },
+        {
+          "op": "set",
+          "trigger": "addon",
+          "on": {
+            "source": "addon",
+            "kind": "databricks.run.finished",
+            "ref": "8812"
+          },
+          "deadline_after_s": 10800,
+          "expect": null
+        },
+        {
+          "op": "fire",
+          "set": 0,
+          "trigger": "addon",
+          "after_s": 300,
+          "event": {
+            "source": "addon",
+            "kind": "other.run.finished",
+            "ref": "8812",
+            "status": "succeeded",
+            "at_offset_s": 0
+          },
+          "expect": "followup.denied"
+        },
+        {
+          "op": "fire",
+          "set": 0,
+          "trigger": "addon",
+          "after_s": 300,
+          "event": {
+            "source": "addon",
+            "kind": "databricks.run.finished",
+            "ref": "1",
+            "status": "succeeded",
+            "at_offset_s": 0
+          },
+          "expect": "followup.denied"
+        },
+        {
+          "op": "fire",
+          "set": 0,
+          "trigger": "addon",
+          "after_s": 300,
+          "event": {
+            "source": "addon",
+            "kind": "databricks.run.finished",
+            "ref": "8812",
+            "status": "weird",
+            "at_offset_s": 0
+          },
+          "expect": "followup.denied"
+        },
+        {
+          "op": "fire",
+          "set": 0,
+          "trigger": "addon",
+          "after_s": 300,
+          "event": {
+            "source": "addon",
+            "kind": "databricks.run.finished",
+            "ref": "8812",
+            "status": "succeeded",
+            "at_offset_s": 0
+          },
+          "expect": null
+        }
+      ]
+    },
+    {
+      "name": "fire_refuses_an_event_dated_outside_the_set_to_wake_window",
+      "pins": "set_at <= event.at <= fired.at",
+      "steps": [
+        {
+          "op": "grant",
+          "payload": {
+            "name": "databricks",
+            "version": "1.0.0",
+            "capabilities": [
+              "network"
+            ],
+            "fields": {},
+            "sections": [],
+            "artifact_kinds": [],
+            "events": [
+              {
+                "kind": "run.finished",
+                "title": "Run finished",
+                "statuses": [
+                  "succeeded",
+                  "failed",
+                  "cancelled"
+                ],
+                "ref": "int",
+                "interval_s": 300
+              }
+            ]
+          },
+          "expect": null
+        },
+        {
+          "op": "set",
+          "trigger": "addon",
+          "on": {
+            "source": "addon",
+            "kind": "databricks.run.finished",
+            "ref": "8812"
+          },
+          "deadline_after_s": 10800,
+          "expect": null
+        },
+        {
+          "op": "fire",
+          "set": 0,
+          "trigger": "addon",
+          "after_s": 300,
+          "event": {
+            "source": "addon",
+            "kind": "databricks.run.finished",
+            "ref": "8812",
+            "status": "succeeded",
+            "at_offset_s": -400
+          },
+          "expect": "followup.denied"
+        },
+        {
+          "op": "fire",
+          "set": 0,
+          "trigger": "addon",
+          "after_s": 300,
+          "event": {
+            "source": "addon",
+            "kind": "databricks.run.finished",
+            "ref": "8812",
+            "status": "succeeded",
+            "at_offset_s": 61
+          },
+          "expect": "followup.denied"
+        },
+        {
+          "op": "fire",
+          "set": 0,
+          "trigger": "addon",
+          "after_s": 300,
+          "event": {
+            "source": "addon",
+            "kind": "databricks.run.finished",
+            "ref": "8812",
+            "status": "succeeded",
+            "at_offset_s": 0
+          },
+          "expect": null
+        }
+      ]
+    },
+    {
+      "name": "a_deadline_wake_carries_no_event_and_an_addon_wake_must",
+      "pins": "trigger addon needs its event; trigger deadline fallback addon_silent has none",
+      "steps": [
+        {
+          "op": "grant",
+          "payload": {
+            "name": "databricks",
+            "version": "1.0.0",
+            "capabilities": [
+              "network"
+            ],
+            "fields": {},
+            "sections": [],
+            "artifact_kinds": [],
+            "events": [
+              {
+                "kind": "run.finished",
+                "title": "Run finished",
+                "statuses": [
+                  "succeeded",
+                  "failed",
+                  "cancelled"
+                ],
+                "ref": "int",
+                "interval_s": 300
+              }
+            ]
+          },
+          "expect": null
+        },
+        {
+          "op": "set",
+          "trigger": "addon",
+          "on": {
+            "source": "addon",
+            "kind": "databricks.run.finished",
+            "ref": "8812"
+          },
+          "deadline_after_s": 10800,
+          "expect": null
+        },
+        {
+          "op": "fire",
+          "set": 0,
+          "trigger": "addon",
+          "after_s": 300,
+          "expect": "followup.denied"
+        },
+        {
+          "op": "fire",
+          "set": 0,
+          "trigger": "deadline",
+          "fallback": "addon_silent",
+          "after_s": 10800,
+          "expect": null
+        }
+      ]
+    }
+  ]
+}

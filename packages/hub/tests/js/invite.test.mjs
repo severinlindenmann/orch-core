@@ -241,6 +241,7 @@ async function admin(extra = {}) {
 test("People: Invite a person shows the link, the promise and the group hint; the old add form is gone", async () => {
   const { calls, panel } = await admin();
   assert.ok(button(panel, "Invite a person"));
+  assert.match(panel.textContent, /With a workspace\? Use Workspaces › Connect a workspace\./);
   assert.ok(!button(panel, "Add person"));
   byId(panel, "invite-name").value = "  Dora ";
   await find(panel, (n) => n.tag === "form" && byId(n, "invite-name")).listeners.submit({ preventDefault() {} });

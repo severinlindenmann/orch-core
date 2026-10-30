@@ -193,17 +193,17 @@ def test_the_probe_dials_ws_addresses_with_dial_link_and_the_net(monkeypatch) ->
 
     monkeypatch.setattr(hubaddr, "PROBE", None)
     monkeypatch.setattr(tls, "dial_link", fake)
-    monkeypatch.setattr(hubaddr, "_ips", lambda host: ["203.0.113.9"])
+    monkeypatch.setattr(hubaddr, "_ips", lambda host: ["8.8.8.8"])
     assert hubaddr.handshake_ok("wss://hub.example", "A" * 43, net=NetSettings()) is True
     addr, kw = seen[-1]
-    assert addr.scheme == "wss" and kw["connect_host"] == "203.0.113.9" and kw["net"] == NetSettings()
+    assert addr.scheme == "wss" and kw["connect_host"] == "8.8.8.8" and kw["net"] == NetSettings()
     # behind a proxy a NAME is the proxy's to resolve: no local lookup at all
     monkeypatch.setattr(hubaddr, "_ips", lambda host: pytest.fail("resolved locally behind a proxy"))
     assert hubaddr.handshake_ok("wss://hub.example", "A" * 43, net=PROXY) is True
     assert seen[-1][1]["connect_host"] == "hub.example" and seen[-1][1]["net"] is PROXY
     # an IP literal keeps the policy check (and is dialled as that IP)
-    assert hubaddr.handshake_ok("203.0.113.9:7443", "A" * 43, net=PROXY) is True
-    assert seen[-1][1]["connect_host"] == "203.0.113.9"
+    assert hubaddr.handshake_ok("8.8.8.8:7443", "A" * 43, net=PROXY) is True
+    assert seen[-1][1]["connect_host"] == "8.8.8.8"
 
 
 def test_status_does_not_probe_directly_behind_a_proxy(monkeypatch) -> None:

@@ -55,9 +55,42 @@ test("text a workspace wrote is text: markup, bidi and control characters never 
   assert.match(view.textContent, /<img src=x onerror=1>/);
 });
 
-test("a selective workspace is named as one that shares no details", () => {
-  const view = publishedView(data({ hidden: [{ workspace_id: "2".repeat(32), name: "Marketing" }] }), { now: NOW });
-  assert.match(find(view, (n) => n.attrs["data-hidden"])[0].textContent, /^Marketing shares no details with the hub/);
+const rail = (o = {}) => ({ id: "2".repeat(32), name: "Marketing", role: "owner", online: true, switchable: true, canOpen: true, ...o });
+const hiddenOf = (hidden, opts) => find(publishedView(data({ hidden }), { now: NOW, ...opts }), (n) => n.attrs["data-hidden"]);
+test("P08: each workspace that keeps its links private gets a line naming it and what to do", () => {
+  const mine = { workspace_id: "2".repeat(32), name: "Anna Test's workspace", owner_name: "Anna Test" };
+  const ben = { workspace_id: "3".repeat(32), name: "Ben Test's workspace", owner_name: "Ben Test" };
+  let opened = null;
+  const view = publishedView(data({ hidden: [ben, mine] }), { now: NOW, rows: [rail({ name: mine.name }), rail({ id: ben.workspace_id, role: "view" })], openSettings: (id) => { opened = id; } });
+  const rows = find(view, (n) => n.attrs["data-hidden"]);
+  assert.equal(rows.length, 2);
+  assert.match(rows[0].textContent, /^Ben Test's workspace keeps its links and apps to itself, so they are not listed here\.Ask Ben Test to share them\.$/);
+  assert.equal(find(rows[0], (n) => n.tag === "button").length, 0);
+  assert.match(rows[1].textContent, /^Anna Test's workspace keeps its links and apps to itself.*Let the hub see them$/);
+  const btn = find(rows[1], (n) => n.tag === "button")[0];
+  assert.equal(btn.className, "pri");
+  btn.listeners.click();
+  assert.equal(opened, mine.workspace_id);
+});
+
+test("P08: an own workspace that cannot be opened from here (selective, #1752) gets words, never an Open button", () => {
+  const w = { workspace_id: "2".repeat(32), name: "Marketing", owner_name: "Anna" };
+  for (const row of [rail({ switchable: false, canOpen: false }), rail({ online: false })]) {
+    const r = hiddenOf([w], { rows: [row], openSettings() { throw new Error("must not open"); } })[0];
+    assert.equal(find(r, (n) => n.tag === "button").length, 0);
+    assert.match(r.textContent, /Open it on its own computer, then choose Share everything in Settings > Hub\./);
+  }
+  const noName = hiddenOf([{ workspace_id: "9".repeat(32), name: "X", owner_name: null }], { rows: [] })[0];
+  assert.match(noName.textContent, /Ask its owner to share them\./);
+});
+
+test("P08: names and owners a workspace wrote stay text", () => {
+  const evil = "<img src=x onerror=1>";
+  const r = hiddenOf([{ workspace_id: "2".repeat(32), name: evil, owner_name: "<b>x</b>" }], { rows: [] });
+  assert.equal(find(r[0], (n) => n.tag === "img").length, 0);
+  assert.deepEqual(find(r[0], (n) => n.tag === "b").map((n) => n.textContent), [evil]); // only our own name wrapper, holding text
+  assert.match(r[0].textContent, /<img src=x onerror=1>/);
+  assert.match(r[0].textContent, /Ask <b>x<\/b> to share them/);
 });
 
 test("no links and no apps shows plain empty words; the apps tab lists apps read only", () => {

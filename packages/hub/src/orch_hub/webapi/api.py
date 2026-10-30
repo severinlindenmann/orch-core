@@ -612,6 +612,10 @@ SWITCH_HANDLERS = frozenset(
 #: E4: routes only the console PAGE may call (its cookie session, from its own origin). The console's own session sent
 #: as a bearer is ``not_allowed``; an unknown bearer stays ``no_session`` and an app (pairing/channel) one
 #: ``forbidden_role``, as on every route.
+#: Run-15 P03: the two routes that register a BROWSER key. A switch session may call them because ``reg_begin`` itself
+#: proves the password and a fresh, never-used code again (A8-3, the same check as a sign-in), so nothing the switch session
+#: lacked is taken on trust; ``reg_begin`` refuses every kind but ``browser`` for it. Everything else stays closed.
+SWITCH_REGISTER_HANDLERS = frozenset({"reg_begin", "reg_complete"})
 BROWSER_ONLY = frozenset({"switch_ticket", "my_pairing", "my_channels_seen", "ask_phone"})
 
 
@@ -905,7 +909,9 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
                     raise ApiError("cert_expired")
                 if state != "active":
                     raise ApiError("no_session")
-            if ctx.via_switch and route.handler not in SWITCH_HANDLERS:  # a workspace vouched for this session
+            if (
+                ctx.via_switch and route.handler not in SWITCH_HANDLERS | SWITCH_REGISTER_HANDLERS
+            ):  # a workspace vouched for this session
                 raise ApiError("reauth_required")
             if route.auth == "admin" and not self.d.access.is_hub_admin(ctx.user_id):
                 raise ApiError("forbidden_role")
@@ -1223,7 +1229,15 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
         ws = _hex32(b["workspace_id"])
         if b["kind"] not in ("open", "signout"):
             raise ApiError("malformed")
-        if not any(w["workspace_id"] == ws for w in self._workspaces(c.user_id)):
+        mine = next((w for w in self._workspaces(c.user_id) if w["workspace_id"] == ws), None)
+        if mine is None:
+            raise ApiError("forbidden_role")
+        # P08: the one non-root landing the console asks for is the workspace's own hub settings, for an admin or owner of
+        # it only. A fixed value, never a free path; any other return_to still meets the workspace's own check unchanged.
+        # a fixed allowlist: exactly "/" or "/settings/hub" (nothing else is minted, not even a cleaned lookalike)
+        if b["return_to"] not in ("/", "/settings/hub"):
+            raise ApiError("malformed")
+        if b["return_to"] == "/settings/hub" and mine.get("role") not in ("admin", "owner"):
             raise ApiError("forbidden_role")
         origin = sw.origin_of(ws)
         if origin is None:
@@ -1583,6 +1597,10 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
 
     def _h_reg_begin(self, c: Ctx, p: dict, q: dict, b: dict | None):
         b = _need(b, kind=str, key_pub=str)
+        if c.via_switch and b["kind"] != "browser":
+            raise ApiError(
+                "reauth_required"
+            )  # a workspace-vouched session registers a browser key (password + code), nothing else
         if c.scope == "pairing" and b["kind"] != "phone":
             raise ApiError("forbidden_role")  # a pairing session registers a phone, nothing else
         label = b.get("label", "")

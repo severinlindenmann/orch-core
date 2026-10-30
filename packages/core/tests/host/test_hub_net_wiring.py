@@ -202,6 +202,7 @@ def test_the_probe_dials_ws_addresses_with_dial_link_and_the_net(monkeypatch) ->
     assert hubaddr.handshake_ok("wss://hub.example", "A" * 43, net=PROXY) is True
     assert seen[-1][1]["connect_host"] == "hub.example" and seen[-1][1]["net"] is PROXY
     # an IP literal keeps the policy check (and is dialled as that IP)
+    monkeypatch.setattr(hubaddr, "_ips", lambda host: [host])
     assert hubaddr.handshake_ok("8.8.8.8:7443", "A" * 43, net=PROXY) is True
     assert seen[-1][1]["connect_host"] == "8.8.8.8"
 

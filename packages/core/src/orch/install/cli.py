@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TextIO
 
+from orch import childenv
 from orch.wsproto import wire
 from orch.wsproto.localdial import dial_host
 
@@ -38,7 +39,8 @@ AGENT_ENV = ("ORCH_GRANT", "ORCH_SESSION")
 
 
 def _run(argv: Sequence[str], env: Mapping[str, str] | None = None) -> tuple[int, str]:
-    r = subprocess.run(list(argv), env=dict(env) if env else None, capture_output=True, text=True)
+    r = subprocess.run(list(argv), env=childenv.sanitize(env if env else os.environ, absolute_pythonpath=True),
+                       capture_output=True, text=True)  # fmt: skip
     return r.returncode, (r.stdout + r.stderr)
 
 

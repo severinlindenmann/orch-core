@@ -35,6 +35,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, TextIO
 
+from orch import childenv
 from orch.host.errors import HostError
 from orch.posixmod import posixmod
 from orch.setup import osfront
@@ -520,19 +521,10 @@ def _reset(args: argparse.Namespace, env: Mapping[str, str], out: TextIO, err: T
     return 0 if rc == 0 else 1
 
 
-#: Interpreter variables that can load code from somewhere the person did not choose. The client holds the person's
-#: keys and runs as them, so none of these reaches it (the dashboard launcher keeps absolute PYTHONPATH entries; the
-#: client does not need even those).
-_PYTHON_LOADERS = ("PYTHONPATH", "PYTHONSTARTUP", "PYTHONHOME", "PYTHONINSPECT", "PYTHONUSERBASE", "PYTHONBREAKPOINT")
-
-
 def client_env(env: Mapping[str, str]) -> dict[str, str]:
-    from orch.cli import dashboard
-
-    out = dashboard.launch_env(env)
-    for name in _PYTHON_LOADERS:
-        out.pop(name, None)
-    return out
+    """The client holds the person's keys and runs as them: no loader variable reaches it, not even an absolute
+    ``PYTHONPATH`` (the dashboard launcher keeps those; the client does not need them). One sanitizer: ``childenv``."""
+    return childenv.sanitize(env)
 
 
 def _exec(argv: list[str], env: Mapping[str, str]) -> None:  # a seam: tests replace it

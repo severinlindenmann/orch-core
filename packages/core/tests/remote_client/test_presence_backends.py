@@ -126,7 +126,8 @@ class Helper:
         self.path.chmod(0o755)
         self.reply, self.calls = reply, []
 
-    def run(self, argv, stdin, timeout):
+    def run(self, argv, stdin, timeout, env):
+        self.envs = [*getattr(self, "envs", []), env]
         self.calls.append((argv, json.loads(stdin)))
         r = self.reply(json.loads(stdin)) if callable(self.reply) else self.reply
         return json.dumps(r).encode()
@@ -282,3 +283,14 @@ def test_fido2_signature_of_another_key_is_refused(tmp_path):
     with pytest.raises(ClientError):
         be.assert_(made["ref"], OPEN, PROMPT)
     assert hashlib.sha256(b"orch-remote").digest()  # the rp id hash is the contract's
+
+
+def test_se_helper_never_gets_a_loader_variable(tmp_path, monkeypatch):
+    for k, v in {"DYLD_INSERT_LIBRARIES": "/tmp/evil.dylib", "LD_PRELOAD": "/tmp/e.so", "PYTHONPATH": "rel",
+                 "SECRET_TOKEN": "x"}.items():  # fmt: skip
+        monkeypatch.setenv(k, v)
+    h = Helper(tmp_path, {"pub": "AA", "ref": "ab" * 16})
+    with pytest.raises(Exception):  # noqa: B017 - the reply is not a valid key; only the environment matters here
+        SecureEnclaveBackend(h.path, runner=h.run).create("x")
+    assert h.envs and set(h.envs[0]) <= {"HOME", "USER", "LOGNAME", "TMPDIR", "LANG", "LC_ALL", "PATH"}
+    assert not any(k.startswith(("DYLD_", "LD_")) or k.startswith("PYTHON") for k in h.envs[0])

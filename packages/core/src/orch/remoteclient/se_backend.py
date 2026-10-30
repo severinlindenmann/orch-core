@@ -21,6 +21,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from orch import childenv
 from orch.crypto import suite
 from orch.crypto.encoding import EncodingError, b64u, unb64u
 
@@ -34,8 +35,8 @@ _REF = re.compile(r"[0-9a-f]{32}")
 TIMEOUT_S = 180  # a person has to touch the sensor
 
 
-def _run(argv: list[str], stdin: bytes, timeout: float) -> bytes:
-    p = subprocess.run(argv, input=stdin, capture_output=True, timeout=timeout, check=False)  # noqa: S603
+def _run(argv: list[str], stdin: bytes, timeout: float, env: dict[str, str]) -> bytes:
+    p = subprocess.run(argv, input=stdin, capture_output=True, timeout=timeout, check=False, env=env)  # noqa: S603
     return p.stdout
 
 
@@ -48,7 +49,7 @@ class SecureEnclaveBackend:
         *,
         store: str | os.PathLike[str] | None = None,
         bound: bool = False,
-        runner: Callable[[list[str], bytes, float], bytes] = _run,
+        runner: Callable[[list[str], bytes, float, dict[str, str]], bytes] = _run,
     ) -> None:
         self.helper = Path(helper)
         self.bound = bound
@@ -69,7 +70,9 @@ class SecureEnclaveBackend:
             raise ClientError("remote_client.helper")
         argv = [str(self.helper)] + (["--store", self._store] if self._store else [])
         try:
-            out = self._runner(argv, json.dumps(req, separators=(",", ":")).encode(), timeout)
+            # the helper may sign as the person: the minimal environment, never a loader variable
+            env = childenv.minimal(os.environ)
+            out = self._runner(argv, json.dumps(req, separators=(",", ":")).encode(), timeout, env)
             reply = json.loads(out)
         except (OSError, subprocess.SubprocessError, ValueError):
             raise ClientError("remote_client.helper") from None

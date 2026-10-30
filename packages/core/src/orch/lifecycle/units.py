@@ -18,6 +18,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TextIO
 
+from orch import childenv
+
 __all__ = ["Env", "LifecycleError", "Svc", "clear_stopped", "discover", "start_svc", "stop_svc", "stopped_by_orch"]
 
 PERSON = "person"
@@ -35,7 +37,7 @@ class LifecycleError(Exception):
 
 def _run(argv: list[str]) -> tuple[int, str]:
     try:
-        r = subprocess.run(argv, capture_output=True, text=True, timeout=60)
+        r = subprocess.run(argv, capture_output=True, text=True, timeout=60, env=childenv.sanitize(os.environ))
     except (OSError, subprocess.SubprocessError) as e:
         return 127, str(e)
     return r.returncode, (r.stdout or "") + (r.stderr or "")

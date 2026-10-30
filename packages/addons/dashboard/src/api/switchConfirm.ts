@@ -1,4 +1,4 @@
-import { confirmSwitch } from './bootstrap'
+import { confirmSwitch, switchWasRefused } from './bootstrap'
 
 /**
  * A hub switch link was opened here and this browser could not prove its key for this dashboard (a fresh profile, a
@@ -32,15 +32,17 @@ export function showSwitchConfirm(name: string | null, root: HTMLElement | null 
 }
 
 /** The link is not good (expired, already used, or not for this dashboard's person): an error page, nothing opened. */
-export function showSwitchFailed(root: HTMLElement | null = document.getElementById('root')) {
+export function showSwitchFailed(root: HTMLElement | null = document.getElementById('root'), refused = switchWasRefused()) {
   if (!root) return
   const box = document.createElement('div')
   box.className = 'boot'
   box.setAttribute('role', 'alert')
   const title = document.createElement('b')
-  title.textContent = 'This link no longer works'
+  title.textContent = refused ? 'Open this workspace on its own computer' : 'This link no longer works'
   const why = document.createElement('span')
-  why.textContent = 'Go back to the hub and click Open workspace again.'
+  why.textContent = refused
+    ? 'This workspace does not open from the hub: it shares only chosen items with the hub, or it runs at a customer\'s place.'
+    : 'Go back to the hub and click Open workspace again.'
   const home = document.createElement('button')
   home.type = 'button'
   home.className = 'boot-retry'

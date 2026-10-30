@@ -9,6 +9,11 @@ let pendingSwitch: string | null = null
 export const getPendingSwitch = () => pendingSwitch
 export const declineSwitch = () => { pendingSwitch = null }
 
+// D93 (run-15 J02): the host refused the switch on purpose (the hub is joined for chosen items only, or the computer runs
+// at a customer's place). The error page then says so instead of "This link no longer works".
+let refusedByDesign = false
+export const switchWasRefused = () => refusedByDesign
+
 type Redeemed = { ok: true; to: string | null } | { ok: false; unverified: boolean }
 
 async function redeem(t: string, proof: { key_id: string; sig: string } | null, fetcher: typeof fetch): Promise<Redeemed> {
@@ -18,6 +23,7 @@ async function redeem(t: string, proof: { key_id: string; sig: string } | null, 
   })
   if (!response.ok) {
     const code = await response.json().then((b: { error?: { code?: unknown } }) => b?.error?.code, () => null)
+    refusedByDesign = response.status === 403 && code === 'switch.refused'  // D93: this workspace never opens from the hub
     return { ok: false, unverified: response.status === 401 && code === 'switch.unverified' }
   }
   const body = await response.json() as { token?: string; return_to?: string; signed_out?: boolean }

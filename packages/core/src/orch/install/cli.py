@@ -659,7 +659,7 @@ def _qr(link: str) -> str | None:
     exe = shutil.which("qrencode")
     if not exe:
         return None
-    r = subprocess.run([exe, "-t", "ANSIUTF8", link], capture_output=True, text=True)
+    r = subprocess.run([exe, "-t", "ANSIUTF8", link], capture_output=True, text=True, env=childenv.minimal(os.environ))
     return r.stdout if r.returncode == 0 else None
 
 

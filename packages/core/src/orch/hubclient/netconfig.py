@@ -123,8 +123,10 @@ def load_net(directory: Path | str) -> NetSettings:
 
 def _write_private(path: Path, data: bytes) -> None:
     tmp = path.with_name(path.name + ".tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    tmp.unlink(missing_ok=True)  # a stale file (any mode, any link) is never reused
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
     try:
+        os.fchmod(fd, 0o600)
         os.write(fd, data)
         os.fsync(fd)
     finally:
@@ -153,6 +155,7 @@ def write_net(directory: Path | str, proxy: str, user: str | None, password: str
         load_net(d)
     except NetConfigError:
         (d / NET_FILE).unlink(missing_ok=True)
+        (d / SECRET_FILE).unlink(missing_ok=True)
         raise
 
 

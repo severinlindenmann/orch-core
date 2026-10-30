@@ -56,3 +56,30 @@ def test_an_agent_cannot_read_or_change_the_proxy(served) -> None:
         r = served.client().req(op, args, idem=op.endswith("_set"), grant=served.grant, session=SESSION)
         assert err(r) in ("op.not_allowed", "human_only"), (op, r)
     assert hubnet.load(_state_dir(served)).proxy is None
+
+
+def test_the_password_is_on_disk_only_in_the_secret_file(served) -> None:
+    from pathlib import Path
+
+    pw = "zq-very-private-word-91"
+    ok(_set(served, proxy="http://proxy.office:3128", user="anna", password=pw))
+    state = Path(_state_dir(served))
+    hits = [
+        str(p) for p in state.rglob("*")
+        if p.is_file() and p.name != "hub-proxy.secret" and pw.encode() in p.read_bytes()
+    ]  # fmt: skip
+    assert hits == []
+    assert (hubnet.net_dir(state) / "hub-proxy.secret").stat().st_mode & 0o777 == 0o600
+
+
+def test_a_stale_loose_tmp_file_cannot_leave_the_password_world_readable(tmp_path) -> None:
+    import os
+
+    d = tmp_path / "hosts"
+    d.mkdir(mode=0o700)
+    tmp = d / "hub-proxy.secret.tmp"
+    tmp.write_text("")
+    os.chmod(tmp, 0o644)
+    hubnet.set_proxy(tmp_path, "http://p.office:3128", "anna", "pw-123")
+    assert (d / "hub-proxy.secret").stat().st_mode & 0o777 == 0o600
+    assert not tmp.exists()

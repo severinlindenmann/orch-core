@@ -343,3 +343,17 @@ def test_card_goes_to_orch_publish_and_a_refusal_comes_back(env):
     with pytest.raises(Refused) as x:
         env.fw.card(WS, card, "pk")
     assert x.value.code == "unavailable"
+
+
+def test_a_full_mode_workspace_is_forwarded_like_a_selective_one(tmp_path, up):
+    """Run 14 P01: publishing from a workspace bound in FULL mode goes through the same forwarder, adding exactly the
+    same two headers; the listing and the revoke of such links are the Published page's (test_published_*)."""
+    hub = make_hub(tmp_path)
+    wsk = new_wsk()
+    fw = HubPublish(hub, RecordingSync(), PublishConfig(up.url, HOST, timeout_s=2.0))
+    fw.binding(WS, binding(wsk, hub, WS, mode="full"))
+    r = host_request(wsk, hub.hub_id, WS, method="PUT", target=f"/v1/ws/{WS}/files/a", body=b"hello")
+    assert fw.forward(WS, r) == {"status": 200, "body_hex": b'{"ok":true}'.hex()}
+    (seen,) = up.requests
+    got = {k.lower() for k in seen["headers"] if k.lower().startswith("orch-")}
+    assert got == {k.lower() for k in r["headers"]} | {"orch-hub", "orch-hub-signature"}

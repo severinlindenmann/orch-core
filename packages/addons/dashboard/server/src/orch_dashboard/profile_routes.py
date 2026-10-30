@@ -18,18 +18,28 @@ from __future__ import annotations
 import logging
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, Request
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints
+from fastapi import Body, Depends, FastAPI, Request
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, ValidationError
 
 from . import reads
 from .cosmetic_routes import full_session, refused
-from .errors import HostError
+from .errors import HostError, fail
 from .gateway import Gateway
 from .market_routes import new_idem
 from .stepup import LOCAL, stepup_required
 from .text import clean, hidden
 
 log = logging.getLogger("orch.dashboard.profile")
+
+PLAIN = "Remove the hidden or special characters and try again."
+
+
+def multiline(text: str) -> str:
+    """A textarea: line breaks stay (a \\r\\n becomes \\n); any other hidden, bidi or control character is refused."""
+    text = text.replace("\r\n", "\n")
+    clean(text.replace("\n", ""))
+    return text
+
 
 # refused, never repaired: no hidden, bidi or control character reaches the hub (text.clean)
 Item = Annotated[str, StringConstraints(max_length=80), AfterValidator(clean)]
@@ -47,7 +57,7 @@ class ProfileBody(BaseModel):
     handles: list[Item] = Field(max_length=8)
     not_handled: list[Item] = Field(max_length=8)
     accepts: list[Item] = Field(max_length=8)
-    description: Annotated[str, StringConstraints(max_length=300), AfterValidator(clean)]
+    description: Annotated[str, StringConstraints(max_length=300), AfterValidator(multiline)]
     contact: Annotated[str, StringConstraints(max_length=80), AfterValidator(clean)]
     languages: Annotated[str, StringConstraints(max_length=40), AfterValidator(clean)]
     hours: Annotated[str, StringConstraints(max_length=40), AfterValidator(clean)]
@@ -60,7 +70,11 @@ def profile_view(raw) -> dict:
 
     def text(key: str) -> str:
         v = p.get(key)
-        return v[: TEXTS[key]] if isinstance(v, str) and not hidden(v) else ""
+        return (
+            v[: TEXTS[key]]
+            if isinstance(v, str) and not hidden(v.replace("\n", "") if key == "description" else v)
+            else ""
+        )
 
     def items(key: str) -> list[str]:
         v = p.get(key)
@@ -93,9 +107,12 @@ def register(app: FastAPI, gateway: Gateway) -> None:
         return profile_view(link.call("hub.profile"))
 
     @app.put("/api/w/{ws}/hub/profile")
-    def profile_put(body: ProfileBody, request: Request, ws: str = Depends(reads.workspace)):
+    def profile_put(request: Request, raw: dict = Body(...), ws: str = Depends(reads.workspace)):  # noqa: B008
         link, person = owner_link(ws, request, "change the profile")
-        profile = body.model_dump()
+        try:
+            profile = ProfileBody.model_validate(raw).model_dump()
+        except ValidationError:  # never echo the input; hidden characters get the plain sentence
+            raise fail("invalid.input", PLAIN, exit=1) from None
         if profile["listed"] and app.state.auth.login_kind(request.state.token) != LOCAL:
             current = profile_view(link.call("hub.profile"))
             if not current["listed"]:  # turning the listing ON publishes the workspace: on this computer only

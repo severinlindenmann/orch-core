@@ -125,7 +125,7 @@ def test_listing_on_from_a_remote_session_needs_this_computer_but_other_edits_do
 )
 def test_a_body_outside_the_closed_schema_never_reaches_the_host(bad):
     link = Link()
-    assert client(link).put(URL, json={**PROFILE, **bad}).status_code == 422
+    assert client(link).put(URL, json={**PROFILE, **bad}).status_code == 400
     assert not any(call[1] for call in link.calls if call[0] == "hub.profile")
 
 
@@ -137,11 +137,38 @@ def test_hidden_characters_in_host_text_are_withheld():
 
 @pytest.mark.parametrize(
     "bad",
-    [{"description": "a\u202eb"}, {"contact": "x\u200by"}, {"languages": "e\u2066n"}, {"hours": "9\x0017"},
-     {"tags": ["ok", "a\u200db"]}, {"handles": ["x\u202ey"]}, {"not_handled": ["\u2060"]}, {"accepts": ["q\u00adr"]}],
+    [
+        {"description": "a\u202eb"},
+        {"description": "a\u200bb\nc"},
+        {"contact": "x\u200by"},
+        {"languages": "e\u2066n"},
+        {"hours": "9\x0017"},
+        {"hours": "9\n17"},
+        {"contact": "a\nb"},
+        {"tags": ["a\nb"]},
+        {"tags": ["ok", "a\u200db"]},
+        {"handles": ["x\u202ey"]},
+        {"not_handled": ["\u2060"]},
+        {"accepts": ["q\u00adr"]},
+    ],
 )
 def test_hidden_or_bidi_characters_are_refused_and_nothing_is_stored(bad):
     link = Link()
-    assert client(link).put(URL, json={**PROFILE, **bad}).status_code == 422
+    assert client(link).put(URL, json={**PROFILE, **bad}).status_code == 400
     assert not any(call[1] for call in link.calls if call[0] == "hub.profile")
     assert link.profile == OFF
+
+
+def test_a_description_with_line_breaks_saves_and_reads_back_the_same():
+    link = Link()
+    c = client(link)
+    got = c.put(URL, json={**PROFILE, "description": "Line one\r\nLine two\n\nLine four"})
+    assert got.status_code == 200 and got.json()["description"] == "Line one\nLine two\n\nLine four"
+    assert link.profile["description"] == "Line one\nLine two\n\nLine four"
+    assert c.get(URL).json()["description"] == "Line one\nLine two\n\nLine four"
+
+
+def test_the_refusal_is_a_plain_sentence_that_does_not_echo_the_input():
+    res = client(Link()).put(URL, json={**PROFILE, "description": "secret\u202e"})
+    err = res.json()["error"]
+    assert res.status_code == 400 and err["message"] == profile_routes.PLAIN and "secret" not in res.text

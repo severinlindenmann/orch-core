@@ -93,6 +93,7 @@ function fake(
     click?: boolean
     clickOff?: string
     relayUnavailable?: boolean
+    claudeAvailable?: boolean
     noGit?: boolean
     complete?: boolean
     defaults?: boolean
@@ -113,6 +114,7 @@ function fake(
         ...(options.clickOff !== undefined ? { click_available: false, click_reason: options.clickOff } : {}),
         ...(options.relayUnavailable ? { relay: { available: false, enabled: false } } : {}),
         ...(options.noGit ? { git: { repo: false } } : {}),
+        ...(options.claudeAvailable ? { claude: { available: true } } : {}),
         ...(options.os ? { os: options.os } : {}),
         mode: options.finish ? 'finish' : 'new',
         missing: options.finish && !options.complete ? ['addon:worktrees', 'runner_grant'] : [],
@@ -254,7 +256,7 @@ test('one click disables relay with its named reason and never shows a passphras
   expect(screen.queryByText(/click_relay_unsupported/)).not.toBeInTheDocument()
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Your recovery words' })
-  expect(screen.queryByRole('heading', { name: 'Your passphrase' })).not.toBeInTheDocument()
+  expect(screen.queryByRole('heading', { name: 'Your password' })).not.toBeInTheDocument()
   expect(f.calls.find((c) => c.path === 'profile')?.body).toMatchObject({ method: 'click', relay: false })
 })
 
@@ -297,8 +299,8 @@ test('run 8: One click is the default where core suggests it, with the risk sent
   expect(screen.getByText(/Safest if others use this computer/)).toBeVisible()
   const risk = screen.getByTestId('click-risk') as HTMLDetailsElement
   expect(risk.open).toBe(false) // the longer meaning is one click away, not in the main view
-  expect(risk).toHaveTextContent('Anything running as you on this computer, including your agents, could approve for you. Choose a passphrase if the computer is shared.')
-  fireEvent.click(screen.getByLabelText(/Passphrase/))
+  expect(risk).toHaveTextContent('Anything running as you on this computer, including your agents, could approve for you. Choose a password if the computer is shared.')
+  fireEvent.click(screen.getByLabelText(/Password/))
   expect(screen.queryByTestId('click-risk')).not.toBeInTheDocument()
   fireEvent.click(screen.getByLabelText(/One click on this computer/))
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
@@ -447,7 +449,7 @@ async function finishFinishMode(f: ReturnType<typeof fake>) {
 
 test('r10-P10: a skipped Claude Code trust step is said on the progress page, with the plain reason behind Why?', async () => {
   await finishFinishMode(fake({ finish: true, done: true, trust: 'skipped' }))
-  expect(screen.getByText('Claude Code will ask once to trust this folder. Say yes there.')).toBeInTheDocument()
+  expect(screen.getByText('Your AI helper will ask once to trust this folder. Say yes there.')).toBeInTheDocument()
   expect(screen.getByText('Why?')).toBeInTheDocument()
   expect(screen.getByText(/has not been started on this computer yet/)).toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Open your workspace →' })).toBeEnabled()
@@ -456,13 +458,13 @@ test('r10-P10: a skipped Claude Code trust step is said on the progress page, wi
 test("r10-P10: someone else's Claude Code settings never get the 'say yes' advice", async () => {
   await finishFinishMode(fake({ finish: true, done: true, trust: 'skipped', trustCode: 'foreign_config' }))
   expect(screen.queryByText(/Say yes there/)).toBeNull()
-  expect(screen.getByText('Claude Code will ask once about this folder. See why below.')).toBeInTheDocument()
+  expect(screen.getByText('Your AI helper will ask once about this folder. See why below.')).toBeInTheDocument()
   expect(screen.getByText('Why?')).toBeInTheDocument()
 })
 
 test('r10-P10: no trust note when the step was done or not asked for', async () => {
   await finishFinishMode(fake({ finish: true, done: true, trust: 'done' }))
-  expect(screen.queryByText(/Claude Code will ask once to trust this folder/)).toBeNull()
+  expect(screen.queryByText(/Your AI helper will ask once to trust this folder/)).toBeNull()
 })
 
 test('successful progress offers the workspace, while finish mode never reveals secrets', async () => {
@@ -732,7 +734,7 @@ test('the ready list gives every status an icon and a word, never colour alone',
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Review your setup' })
   fireEvent.click(screen.getByRole('button', { name: 'Finish setup' }))
-  const running = await screen.findByLabelText('Your key: Running')
+  const running = await screen.findByLabelText('Your way to approve: Running')
   expect(running).toHaveClass('status', 'doing')
   expect(running).toHaveTextContent('Running')
 })
@@ -854,7 +856,7 @@ test('the summary comes from the review core returned, not from the choices on t
   const summary = document.querySelector('.review-summary')!
   expect(summary).toHaveTextContent('may work for 1 day')
   expect(summary).not.toHaveTextContent('3 days')
-  expect(summary).toHaveTextContent('In a terminal, with your passphrase')
+  expect(summary).toHaveTextContent('In a terminal, with your password')
 })
 
 test('the git flag is the Own copy per ticket row, no Also row; its signed text and the git words are in Everything you approve', async () => {
@@ -1122,33 +1124,39 @@ test.each([
   expect(f.calls.find((c) => c.path === 'profile')?.body).toMatchObject({ agent_grant: false, agent_hours: 8 })
 })
 
-test('a folder without git offers to make one when Own copy per ticket is on, and never commits anything', async () => {
+test('a folder without git: one switch, one grey line with Details under the row, no second question, git_init true sent', async () => {
   const f = fake({ defaults: true, noGit: true })
-  render(<Setup api={f.api} />)
+  const { container } = render(<Setup api={f.api} />)
   await screen.findByRole('heading', { name: 'Set up your workspace' })
   for (let i = 0; i < 2; i++) fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
-  expect(screen.getByText(/not set up for its own copy per ticket yet/)).toBeInTheDocument()
-  expect(screen.getByText('Each ticket gets its own copy. Your files are not changed.')).toBeInTheDocument()
-  const fold = screen.getByText('Details').closest('details') as HTMLDetailsElement
+  const note = screen.getByTestId('git-note')
+  expect(note).toHaveTextContent('We will set your project folder up for this. Your files stay as they are.')
+  // directly under the switch row
+  expect(note.previousElementSibling).toContainElement(screen.getByRole('switch', { name: /Own copy per ticket/ }))
+  expect(screen.queryByText(/not set up for its own copy per ticket yet/)).not.toBeInTheDocument()
+  expect(screen.queryByLabelText(/Set it up for me/)).not.toBeInTheDocument()
+  expect(screen.queryByLabelText(/Skip this/)).not.toBeInTheDocument()
+  expect(container.querySelectorAll('input[name=git]')).toHaveLength(0)
+  const fold = within(note).getByText('Details').closest('details') as HTMLDetailsElement
   expect(fold.open).toBe(false)
   expect(fold).toHaveTextContent('.gitignore')
-  expect(screen.getByText('Each ticket gets its own copy. Your files are not changed.').closest('label')!.textContent!.replace(fold.textContent!, '')).not.toMatch(/gitignore/)
   expect(screen.queryByText(/git init/i)).not.toBeInTheDocument()
-  expect(screen.getByLabelText(/Set it up for me/)).toBeChecked()
   expect(screen.getByRole('button', { name: 'Continue →' })).toBeEnabled()
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Your recovery words' })
-  expect(f.calls.find((c) => c.path === 'profile')?.body).toMatchObject({ git_init: true })
+  const sent = f.calls.find((c) => c.path === 'profile')?.body as { addons: string[]; git_init: boolean }
+  expect(sent.git_init).toBe(true)
+  expect(sent.addons).toContain('worktrees')
 })
 
-test('choosing to continue without worktrees drops them and asks no git question', async () => {
+test('switching the work-copies switch off drops worktrees, hides the line and sends git_init false', async () => {
   const f = fake({ defaults: true, noGit: true })
   render(<Setup api={f.api} />)
   await screen.findByRole('heading', { name: 'Set up your workspace' })
   for (let i = 0; i < 2; i++) fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
-  fireEvent.click(screen.getByLabelText(/Skip this/))
-  expect(screen.queryByText(/not set up for its own copy per ticket yet/)).not.toBeInTheDocument()
+  fireEvent.click(screen.getByRole('switch', { name: /Own copy per ticket/ }))
+  expect(screen.queryByTestId('git-note')).not.toBeInTheDocument()
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Your recovery words' })
@@ -1203,11 +1211,11 @@ test('progress groups roll up done and failed steps without changing server step
     { id: 'flags', label: 'Flags', status: 'done' as const },
   ]
   expect(groupProgress(steps)).toEqual([
-    { id: 'key', label: 'Your key', status: 'done' },
+    { id: 'key', label: 'Your way to approve', status: 'done' },
     { id: 'workspace', label: 'Your workspace', status: 'done' },
     { id: 'services', label: 'Starting orch', status: 'failed' },
     { id: 'addons', label: 'Features', status: 'done' },
-    { id: 'approval', label: 'Approval', status: 'done' },
+    { id: 'approval', label: 'Your choices saved', status: 'done' },
   ])
   expect(steps).toHaveLength(8)
   expect(steps[5].status).toBe('failed')
@@ -1216,7 +1224,7 @@ test('progress groups roll up done and failed steps without changing server step
 
 test('the private-folders step is its own calm row (P08)', () => {
   expect(groupProgress([{ id: 'perms', label: 'x', status: 'done' as const }])).toEqual([
-    { id: 'perms', label: 'Folders made private', status: 'done' },
+    { id: 'perms', label: 'Your files are private', status: 'done' },
   ])
 })
 
@@ -1444,11 +1452,11 @@ test('r11-P16: the posted profile is the same whether or not the settings were o
   expect(bodies[0]).toMatchObject({ method: 'click' })
 })
 
-test('r11-P16: without One click the settings are open, so the passphrase choice is never hidden', async () => {
+test('r11-P16: without One click the settings are open, so the password choice is never hidden', async () => {
   render(<Setup api={fake({ clickOff: 'not on this computer' }).api} />)
   await approval()
   expect((screen.getByTestId('approval-more') as HTMLDetailsElement).open).toBe(true)
-  expect(screen.getByLabelText(/Passphrase/)).toBeVisible()
+  expect(screen.getByLabelText(/Password/)).toBeVisible()
 })
 
 async function toAgents(f: ReturnType<typeof fake>) {
@@ -1469,7 +1477,7 @@ test('r12-P15: the agents step shows the recommendation, the switches wait behin
   expect(screen.queryByText('Dashboard', { selector: 'strong' })).not.toBeInTheDocument()
 })
 
-test('r12-P15: the fold opens by itself when a switch is not at its default, or the folder question is answered Skip', async () => {
+test('r12-P15: the fold opens by itself when a switch is not at its default, or Own copy per ticket is switched off in a folder without git', async () => {
   const f = fake({ defaults: true })
   await toAgents(f)
   const more = screen.getByTestId('agents-more') as HTMLDetailsElement
@@ -1480,7 +1488,7 @@ test('r12-P15: the fold opens by itself when a switch is not at its default, or 
   await toAgents(g)
   const m2 = screen.getByTestId('agents-more') as HTMLDetailsElement
   expect(m2.open).toBe(false)
-  fireEvent.click(screen.getByLabelText(/Skip this/))
+  fireEvent.click(screen.getByLabelText(/Own copy per ticket/))
   expect(m2.open).toBe(true)
 })
 
@@ -1507,13 +1515,16 @@ test('r12-P15: the settings sent are identical whether or not the fold was opene
   expect(sent(b)).toEqual(sent(a))
 })
 
-test('r12-P15: the welcome page says Your project folder with Where is it?, not Technical details', async () => {
+test('r14-P07: the welcome page says one plain sentence; the folder name and path sit behind Details', async () => {
   const f = fake()
   const { container } = render(<Setup api={f.api} />)
   await screen.findByRole('heading', { name: 'Set up your workspace' })
-  expect(screen.getByText(/Your project folder:/)).toBeInTheDocument()
-  expect(screen.getByText('Where is it?')).toBeInTheDocument()
+  expect(screen.getByText('We will set this up in your project folder.')).toBeInTheDocument()
+  expect(container).not.toHaveTextContent('Folder:')
   expect(container).not.toHaveTextContent('Technical details')
+  const fold = screen.getByText('Details').closest('details') as HTMLDetailsElement
+  expect(fold.open).toBe(false)
+  expect(fold.textContent).toContain('/')
 })
 
 test('r12-P15: the recovery words say Not saved yet; Continue works; Copy turns into a tick (display only)', async () => {
@@ -1534,4 +1545,16 @@ test('r12-P15: the recovery words say Not saved yet; Continue works; Copy turns 
   expect(screen.getByRole('button', { name: 'I saved my words — continue →' })).toBeEnabled()
   window.dispatchEvent(new Event('afterprint'))
   expect(await screen.findByRole('button', { name: 'Printed ✓' })).toHaveClass('done')
+})
+
+test('r14-P07: the approval page uses everyday words: Password, AI helpers; no Claude Code, Passphrase or Your key', async () => {
+  const f = fake({ suggested: { method: 'click' }, claudeAvailable: true })
+  const { container } = render(<Setup api={f.api} />)
+  await approval()
+  fireEvent.click(screen.getByText('Change these settings'))
+  expect(screen.getByLabelText(/Password/)).toBeInTheDocument()
+  expect(screen.getByText(/Type your password each time/)).toBeInTheDocument()
+  expect(screen.getByRole('switch', { name: /Let your AI helpers open this folder without asking/ })).toBeInTheDocument()
+  expect(screen.getByText('They will not stop to ask first. This folder only holds orch’s files.')).toBeInTheDocument()
+  expect(container.textContent).not.toMatch(/Claude Code|assphrase|Your key/)
 })

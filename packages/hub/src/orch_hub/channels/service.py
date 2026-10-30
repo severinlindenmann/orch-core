@@ -48,6 +48,9 @@ log = logging.getLogger(__name__)
 
 CHANNELS_FILE = "channels.db"
 SESSION_TTL_MS = 15 * 60_000
+#: A ``remote`` session (R4, #1592) is a token for the hub's stream router only. It grants nothing at a workspace (the
+#: host's device list and presence signature decide), so it lives longer than a browser session; signing out ends it.
+REMOTE_SESSION_TTL_MS = 7 * 24 * 3600_000
 CHALLENGE_TTL_MS = 120_000
 PAIRING_TTL_MS = 10 * 60_000
 #: a pairing code made from the console by the person themself (M2-10, condition 19): short, never above 5 minutes
@@ -146,6 +149,9 @@ class Channels:
         self._dev = dev_mode
         #: called with the channel id after a revocation is final (the relay cleanup, orch_hub.relay); never raises out
         self.on_revoke = on_revoke
+        #: called with the user id after every session of that user ended (``end_all_sessions``); the stream router
+        #: closes that user's remote streams at once. Never raises out.
+        self.on_sessions_ended: Callable[[str], None] | None = None
         self.audit = audit  # orch_hub.audit.AuditLog; None = no chain (tests of other things)
         self._now = now_ms or (lambda: int(time.time() * 1000))
         self.max_channels = max_channels
@@ -357,12 +363,14 @@ class Channels:
         self, user_id: str, password: str, totp: str, source: str = "", *, scope: str = "full"
     ) -> dict[str, Any]:
         """Password and TOTP together (:meth:`_credentials`: any mismatch is one generic ``bad_credentials``). ``scope``:
-        ``full`` (the browser) or ``pairing`` (the phone before it binds, protocol §6.4)."""
-        if scope not in ("full", "pairing"):  # a channel session is made by :meth:`bind_session` only
+        ``full`` (the browser), ``pairing`` (the phone before it binds, protocol §6.4) or ``remote`` (a remote client's
+        token for the stream router, valid for :data:`REMOTE_SESSION_TTL_MS`)."""
+        if scope not in ("full", "pairing", "remote"):  # a channel session is made by :meth:`bind_session` only
             raise ChannelError("malformed", "scope")
         u, subject, rid, match = self._credentials(user_id, password, totp, source)
         token = secrets.token_urlsafe(32)
         now = self._now()
+        ttl = REMOTE_SESSION_TTL_MS if scope == "remote" else SESSION_TTL_MS
 
         def go() -> None:
             with self._tx() as db:  # one transaction: claim the code, then the session; a lost race is a failure
@@ -385,11 +393,11 @@ class Channels:
                 db.execute("DELETE FROM sessions WHERE expires_ms <= ?", (now,))
                 db.execute(
                     "INSERT INTO sessions(token_hash, user_id, created_ms, expires_ms, scope, login_ms) VALUES (?,?,?,?,?,?)",
-                    (_sha(token), u, now, now + SESSION_TTL_MS, scope, now),
+                    (_sha(token), u, now, now + ttl, scope, now),
                 )
 
         self._guard(go)
-        return {"token": token, "user_id": u, "expires_ms": now + SESSION_TTL_MS}
+        return {"token": token, "user_id": u, "expires_ms": now + ttl}
 
     def open_setup_session(self, user_id: str) -> dict[str, Any]:
         """A ``full`` (browser) session for the first admin, opened by the hub's one-time setup (the installer's single-use
@@ -702,7 +710,13 @@ class Channels:
     def end_all_sessions(self, user_id: str) -> int:
         """Every session of the user, the caller's too. Channel keys stay. Returns how many ended."""
         u = self._known_user(user_id)
-        return self._guard(lambda: self.db.w("DELETE FROM sessions WHERE user_id=?", (u,)))
+        n = self._guard(lambda: self.db.w("DELETE FROM sessions WHERE user_id=?", (u,)))
+        if self.on_sessions_ended is not None:
+            try:
+                self.on_sessions_ended(u)
+            except Exception as e:  # noqa: BLE001  # the sweep still closes them; name only the type
+                log.warning("sessions_ended_hook_error type=%s", type(e).__name__)
+        return n
 
     # --- registration ----------------------------------------------------------------------------------------------
 

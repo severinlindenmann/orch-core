@@ -25,3 +25,15 @@ it('the root route keeps the boot screen while the shell data loads (never a nul
   expect(read('src/app/shell/BootScreen.tsx')).toMatch(/className="boot"[\s\S]*Loading…/)
   expect(read('src/production/Shell.tsx')).not.toContain('prod-skeleton')
 })
+
+it('the first frame is dark before any script runs: dark stylesheet loads before the module script, matching the app background', () => {
+  const html = read('index.html')
+  const css = read('public/loading.css')
+  expect(html.indexOf('href="/loading.css"')).toBeGreaterThan(-1)
+  expect(html.indexOf('href="/loading.css"')).toBeLessThan(html.indexOf('<script'))
+  expect(html).toContain('name="color-scheme" content="dark"')
+  expect(html).toContain('name="theme-color" content="#0e1014"')
+  expect(css).toMatch(/html\s*\{\s*background:\s*#0e1014/)
+  expect(read('src/styles/tokens.css').toLowerCase()).toContain('#0e1014') // the app's own dark background
+  expect(css).toMatch(/prefers-reduced-motion: reduce\) \{ \.boot\[role="dialog"\]/)
+})

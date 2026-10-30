@@ -59,9 +59,10 @@ class LinkClient:
         timeout: float = 10.0,
         now_ms=lambda: int(time.time() * 1000),
         mode: str = "selective",
+        alpn: tuple[bytes, ...] = (),
     ) -> LinkClient:
         """``send_wsk_pub`` is for the first link of a join (the workspace is not pinned at the hub yet)."""
-        conn = tls.connect_pinned(host, port, tls_spki_sha256, timeout=timeout)
+        conn = tls.connect_pinned(host, port, tls_spki_sha256, timeout=timeout, alpn=alpn)
         try:
             ch = framing.read_frame(conn, first_timeout=timeout, rest_timeout=timeout)
             if set(ch) != {"t", "hub_id", "challenge"} or ch["t"] != "challenge" or ch["hub_id"] != hub_id:

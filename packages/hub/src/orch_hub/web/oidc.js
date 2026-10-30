@@ -7,6 +7,11 @@ import { chip, h, text } from "./ui.js";
 const PROVIDER = { entra: "Microsoft", google: "Google" };
 export const providerName = (p) => PROVIDER[p] ?? "your company";
 
+export const INVITE_WORDS = {
+  bad_invite: "This link does not work. It may have been used already or it has expired. Ask your admin for a new one.",
+  oidc_already_linked: "This company account is already used on this hub. Ask your hub admin.",
+};
+export const WELCOME = "Welcome. You are signed in with your company account. To approve things from this browser, ask your hub admin for a set-up link: it lets you choose a hub password and a 6-digit code once.";
 export const KEY_WORDS = "You signed in with your company login. To approve things from this browser, ask your hub admin for a set-up link: it lets you choose a hub password and a 6-digit code once.";
 export const WHY = {
   oidc_failed: "Company login did not work. Try again, or sign in with your password.",
@@ -33,8 +38,8 @@ export function callbackParams(search) {
   return ok(code) && ok(state) ? { code, state } : null;
 }
 
-const FINISH = { signin: "/oidc/finish", link: "/oidc/link/finish", test: "/admin/oidc/test/finish" };
-const WHERE = { signin: "", link: "#/account", test: "#/hub-settings" };
+const FINISH = { signin: "/oidc/finish", link: "/oidc/link/finish", test: "/admin/oidc/test/finish", invite: "/oidc/invite/finish" };
+const WHERE = { signin: "", link: "#/account", test: "#/hub-settings", invite: "" };
 
 /** The page the IdP sent the browser back to. The hub says what the sealed login cookie is for (no browser storage), then
  *  the right finish route is called. Returns `{purpose, ok, body, where}`; the caller shows it and removes the address. */

@@ -98,3 +98,15 @@ test("the account card links with a password and a code, or removes the link", a
 test("a company-login person is told how to get a key, in plain words", () => {
   assert.ok(O.KEY_WORDS.includes("ask your hub admin for a set-up link"));
 });
+
+test("an invitation login finishes on its own route and says plainly what failed", async () => {
+  const calls = [];
+  const api = async (m, p, b) => { calls.push([m, p, b]); return p === "/oidc/pending" ? { status: 200, body: { purpose: "invite" } } : { status: 403, body: { error: "bad_invite" } }; };
+  const r = await O.finishCallback(api, "?code=c&state=s");
+  assert.equal(r.purpose, "invite");
+  assert.deepEqual(calls.at(-1), ["POST", "/oidc/invite/finish", { code: "c", state: "s" }]);
+  assert.equal(r.ok, false);
+  assert.ok(O.INVITE_WORDS.bad_invite.includes("Ask your admin for a new one"));
+  assert.ok(O.INVITE_WORDS.oidc_already_linked.includes("already used"));
+  assert.ok(O.WELCOME.includes("ask your hub admin for a set-up link"));
+});

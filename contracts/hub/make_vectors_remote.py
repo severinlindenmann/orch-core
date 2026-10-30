@@ -855,7 +855,14 @@ def device_list_cases() -> None:
 
 
 def link(
-    op: str, body: dict, direction: str, *, key: str | None = None, label: bytes | None = None, **over: Any
+    op: str,
+    body: dict,
+    direction: str,
+    *,
+    key: str | None = None,
+    label: bytes | None = None,
+    exporter: bytes | None = None,
+    **over: Any,
 ) -> dict[str, Any]:
     o = {
         "v": 2,
@@ -874,14 +881,26 @@ def link(
     o.update(over)
     k = key or ("hk_op" if direction == "h2w" else "wsk")
     lab = label if label is not None else (L["sig_hub_route"] if direction == "h2w" else L["sig_hub_link"])
-    return {"o": o, "sig": b64u(sign(k, lab + cj(o)))}
+    exp = LINK_EXPORTER if exporter is None else exporter
+    return {"o": o, "sig": b64u(sign(k, lab + exp + cj(o)))}
+
+
+#: A fixed TLS exporter (32 bytes, §10.1): every stream-link signature in the vectors binds it (R1).
+LINK_EXPORTER = hashlib.sha256(b"orch-remote-vectors/link-exporter").digest()
 
 
 def stream_link_cases() -> list[dict[str, Any]]:
     out = []
 
     def c(name: str, signed: dict, direction: str, expect: dict, note: str | None = None, **over: Any) -> None:
-        args = {"signed": signed, "direction": direction, "hub_id": HUB, "workspace_id": WS, "now_ms": NOW}
+        args = {
+            "signed": signed,
+            "direction": direction,
+            "hub_id": HUB,
+            "workspace_id": WS,
+            "now_ms": NOW,
+            "exporter": LINK_EXPORTER.hex(),
+        }
         args["key"] = "hk_op" if direction == "h2w" else "wsk"
         args.update(over)
         case("stream_link", name, args, expect, note)
@@ -891,6 +910,22 @@ def stream_link_cases() -> list[dict[str, Any]]:
     data = {"stream_id": STREAM, "seq": 1, "bytes": b64u(SESSION["m1"])}
     close = {"stream_id": STREAM, "reason": "remote.off"}
     c("stream_open_session_ok", link("stream_open", so, "h2w"), "h2w", {"ok": "stream_open"})
+    old = link("stream_open", so, "h2w")
+    old["sig"] = b64u(sign("hk_op", L["sig_hub_route"] + cj(old["o"])))
+    c(
+        "stream_open_old_form_no_exporter",
+        old,
+        "h2w",
+        err("bad_signature"),
+        "the pre-R1 form label || cj(o) (no exporter) is refused; there is no fallback",
+    )
+    c(
+        "stream_data_other_connection",
+        link("stream_data", data, "w2h", exporter=hashlib.sha256(b"another connection").digest()),
+        "w2h",
+        err("bad_signature"),
+        "a frame signed for another connection's exporter is refused",
+    )
     c(
         "stream_open_enroll_ok",
         link("stream_open", {"stream_id": STREAM_E, "device_id": CODE, "kind": "enroll"}, "h2w"),
@@ -1769,6 +1804,8 @@ REQUIRED = [
     "route_digest_websocket_with_body",
     "presence_route_batch_replayed_into_other_stream",
     "presence_route_batch_other_run",
+    "stream_open_old_form_no_exporter",
+    "stream_data_other_connection",
 ]
 
 
@@ -1875,6 +1912,7 @@ def build() -> dict[str, Any]:
             "person": PERSON,
             "owner": OWNER,
             "now_ms": NOW,
+            "link_exporter_hex": LINK_EXPORTER.hex(),
         },
         "device_list": LIST,
         "transcripts": ts,

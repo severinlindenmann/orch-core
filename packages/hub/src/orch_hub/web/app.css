@@ -307,3 +307,10 @@ button[aria-busy="true"]::before { content:""; display:inline-block; width:12px;
 .qr svg { display:block; width:100%; height:100%; }
 .totp-key { margin-top:8px; }
 .prewrap{white-space:pre-line}
+
+/* --- P07: the Backup card shows the result of its own buttons (keep this block separate) --- */
+.backup-now { align-items:center; gap:10px; }
+.backup-note { margin:10px 0; }
+.dl-form { margin-top:12px; }
+.backup-now button:disabled { opacity:.45; cursor:not-allowed; }
+/* --- end P07 --- */

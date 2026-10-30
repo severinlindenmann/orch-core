@@ -32,6 +32,7 @@ const WHY = {
   dev_refused: "This backup is of a different kind of hub (test or real).",
   restore_busy: "Another big action is running on this hub (a restore, an update or a removal). Try again when it is done.",
   no_admin: "After this restore nobody could sign in as an admin, so it was not done.",
+  rate_limited: "A backup was made a moment ago. Try again in a few minutes.",
   restore_failed: "The restore could not be done. Nothing was changed.",
 };
 
@@ -137,7 +138,7 @@ export function wordsMayShow(loc = globalThis.location, privateWebs = []) {
 }
 
 /** Password + code, then one button. `onSubmit({password, totp})` resolves nothing; the page re-renders afterwards. */
-function stepUpForm(id, label, onSubmit, withWords = false) {
+function stepUpForm(id, label, onSubmit, withWords = false, onCancel = null) {
   const wordsBox = withWords ? h("textarea", { id: id + "-words", rows: "3", autocomplete: "off", spellcheck: "false", "aria-label": "The 24 backup words" }) : null;
   const pw = h("input", { id: id + "-pw", type: "password", autocomplete: "current-password", "aria-label": "Password" });
   const code = h("input", { id: id + "-totp", inputmode: "numeric", autocomplete: "one-time-code", maxlength: "6", "aria-label": "6-digit code" });
@@ -151,7 +152,8 @@ function stepUpForm(id, label, onSubmit, withWords = false) {
     h("p", { class: "small muted", text: STEP_UP }),
     wordsBox ? h("div", { class: "field" }, h("label", { for: id + "-words", text: "The 24 backup words" }), wordsBox) : null,
     h("div", { class: "field" }, h("label", { for: id + "-pw", text: "Password" }), pw),
-    h("div", { class: "field" }, h("label", { for: id + "-totp", text: "6-digit code" }), code), go);
+    h("div", { class: "field" }, h("label", { for: id + "-totp", text: "6-digit code" }), code),
+    onCancel ? h("div", { class: "row" }, go, h("button", { type: "button", text: "Cancel", onclick: onCancel })) : go);
 }
 
 /** The 24 words as a numbered grid. Shown once; "I have saved it" clears them. */
@@ -173,9 +175,12 @@ function backupRows(b, actions) {
   if (!b.backups.length) return h("p", { class: "small muted", text: "No backup yet." });
   return h("ul", { class: "list backups" }, b.backups.filter((x) => NAMES.test(String(x.name))).map((x) => {
     const row = h("li", { class: "list-row row", "data-backup": x.name },
-      h("div", { class: "grow" }, h("b", { text: text(when(x.made_ms)) }), h("div", { class: "small muted", text: Math.max(1, Math.round(x.size / 1024)) + " KB" })));
+      h("div", { class: "grow" }, h("b", { text: text(when(x.made_ms)) }), h("div", { class: "small muted", text: Math.max(1, Math.round(x.size / 1024)) + " KB" }),
+        b.note?.downloaded === x.name ? h("div", { class: "small", "data-downloaded": "1", text: "Downloaded" }) : null));
     const slot = h("div", { class: "stepup-slot" });
-    row.append(h("button", { type: "button", text: "Download", onclick: () => slot.replaceChildren(stepUpForm("dl-" + x.name.slice(4, 12), "Download", (c) => actions.download?.(x.name, c))) }));
+    row.append(h("button", { type: "button", text: "Download", onclick: () => slot.replaceChildren(h("div", { class: "dl-form" },
+      h("b", { text: "Download the backup of " + text(when(x.made_ms)) }),
+      stepUpForm("dl-" + x.name.slice(4, 12), "Download this backup", (c) => actions.download?.(x.name, c), false, () => slot.replaceChildren()))) }));
     if (actions.restore) row.append(h("button", { type: "button", text: "Restore", onclick: () => slot.replaceChildren(restorePanel(x, actions)) }));
     return h("div", {}, row, slot);
   }));
@@ -213,6 +218,27 @@ function pendingList(items, actions) {
       h("button", { type: "button", text: "Turn on", onclick: () => actions.confirmPending?.(x.id) })))));
 }
 
+// --- P07 (QA run 12): the backup card shows the result of its own buttons, right under them ---------------------------------
+/** The wait before another "Back up now" (the hub allows one in 10 minutes), in plain words; null when it may be made. */
+function waitWord(b, now = Date.now()) {
+  const left = Number(b.next_manual_ms ?? 0) - now;
+  if (!(left > 0)) return null;
+  const min = Math.max(1, Math.ceil(left / 60000));
+  return "You just made one. You can make another in " + min + (min === 1 ? " minute." : " minutes.");
+}
+function backupNow(b, actions) {
+  const wait = waitWord(b);
+  return h("div", { class: "row backup-now" },
+    h("button", { type: "button", class: "primary", text: "Back up now", disabled: wait ? "disabled" : null, onclick: () => actions.makeBackup?.() }),
+    wait ? h("span", { class: "small muted", "data-backup-wait": "1", text: wait }) : null);
+}
+/** The message slot: what the last backup action did. Always in the card, never at the top of the page. */
+function backupNoteView(n) {
+  if (!n?.title) return null;
+  return h("div", { class: "banner backup-note " + (n.kind === "bad" ? "bad" : "ok"), role: n.kind === "bad" ? "alert" : "status", "data-backup-note": n.kind },
+    h("b", { text: text(n.title) }), n.detail ? h("div", { class: "small", text: text(n.detail) }) : null);
+}
+
 function backupCard(b, actions) {
   const card = h("div", { class: "card", "data-card": "backup" }, h("h2", { text: "Backup" }));
   if (actions.words) card.append(wordsPanel(actions.words, actions));
@@ -235,7 +261,8 @@ function backupCard(b, actions) {
   card.append(
     h("p", { class: "small muted", text: "A backup is made every day. The " + text(b.keep) + " newest are kept on this server. The files are sealed: only the 24 words open them." }),
     backupRows(b, actions),
-    h("div", { class: "row" }, h("button", { type: "button", class: "primary", text: "Back up now", onclick: () => actions.makeBackup?.() })),
+    backupNow(b, actions),
+    backupNoteView(b.note),
     h("p", { class: "small muted", text: "To keep a copy in another place, download a file and store it away from this server." }));
   const more = h("div", { class: "replace" });
   if (mayShow) {
@@ -288,6 +315,12 @@ export async function hubSettingsPage(d, detected = [], words = null) {
     if (bk.status === 200) r.body.backup = bk.body;
     const say = (ok, x) => { d.state.notice = x.status < 300 ? d.banner("ok", ok, null) : d.banner("bad", "Not changed", WHY[x.body.error] ?? d.say(x.body.error ?? "unavailable")); };
     const backupNote = (x, ok) => { d.state.notice = x.status < 300 ? d.banner("ok", ok, null) : d.banner("bad", "Not done", WHY[x.body.error] ?? d.say(x.body.error ?? "unavailable")); };
+    // P07: the result of Back up now and Download shows in the Backup card, not at the top of the page. It lives for one render.
+    const slotNote = (x, ok, extra = {}) => {
+      d.state.backupNote = x.status < 300 ? { kind: "ok", title: ok, ...extra }
+        : { kind: "bad", title: "Not done", detail: WHY[x.body.error] ?? d.say(x.body.error ?? "unavailable") };
+    };
+    if (r.body.backup && d.state.backupNote) { r.body.backup.note = d.state.backupNote; d.state.backupNote = null; }
     const actions = {
       detected,
       words,
@@ -310,17 +343,17 @@ export async function hubSettingsPage(d, detected = [], words = null) {
       },
       confirmPending: async (id) => { backupNote(await d.api("POST", "/admin/backup/restore/pending/confirm", { id }), "Turned on"); await hubSettingsPage(d); },
       dismissRestored: async () => { await d.api("POST", "/admin/backup/restored/dismiss", {}); await hubSettingsPage(d); },
-      makeBackup: async () => { backupNote(await d.api("POST", "/admin/backups", {}), "Backup made"); await hubSettingsPage(d); },
+      makeBackup: async () => { slotNote(await d.api("POST", "/admin/backups", {}), "Backup made"); await hubSettingsPage(d); },
       download: async (name, c) => {
         const x = await d.api("POST", "/admin/backups/download", { name, ...c });
-        if (x.status !== 200) { backupNote(x, ""); return hubSettingsPage(d); }
+        if (x.status !== 200) { slotNote(x, ""); return hubSettingsPage(d); }
         try {
           const bin = atob(String(x.body.data).replace(/-/g, "+").replace(/_/g, "/"));
           const bytes = Uint8Array.from(bin, (ch) => ch.charCodeAt(0));
           const a = h("a", { href: URL.createObjectURL(new Blob([bytes], { type: "application/octet-stream" })), download: x.body.name });
           a.click?.();
-          backupNote({ status: 200 }, "Backup downloaded");
-        } catch { backupNote({ status: 500, body: { error: "unavailable" } }, ""); }
+          slotNote({ status: 200 }, "Backup downloaded", { downloaded: name });
+        } catch { slotNote({ status: 500, body: { error: "unavailable" } }, ""); }
         await hubSettingsPage(d);
       },
       saveGeneral: async (body) => { say("Saved", await d.api("PUT", "/admin/settings/general", body)); await hubSettingsPage(d); },
@@ -333,6 +366,7 @@ export async function hubSettingsPage(d, detected = [], words = null) {
       },
     };
     d.shell("hub-settings", d.state.notice, hubSettingsView(r.body, actions));
+    globalThis.document?.querySelector?.("[data-backup-note]")?.scrollIntoView?.({ block: "nearest" });
     d.state.notice = null;
   } finally { finish(); }
 }

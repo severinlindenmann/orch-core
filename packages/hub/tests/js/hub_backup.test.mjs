@@ -78,7 +78,8 @@ test("with a key: the kept backups, Back up now, and a download that asks for th
   button(c, "Download").listeners.click();
   const [pw, code] = inputs(c);
   pw.value = "pw"; code.value = "654321";
-  const go = c.all().filter((n) => n.tag === "button" && n.textContent === "Download")[1];
+  assert.match(c.textContent, /Download the backup of/);
+  const go = button(c, "Download this backup");
   await go.listeners.click();
   assert.deepEqual(dl, [[NAME, { password: "pw", totp: "654321" }]]);
 });
@@ -167,4 +168,52 @@ test("after a reload a pending key shows 'I have saved it' without the words, an
 
 test("a hub without the backup answer shows no Backup card", () => {
   assert.equal(card(hubSettingsView(BASE, {})), undefined);
+});
+
+test("P07: the result of Back up now shows inside the Backup card in plain words", () => {
+  const ok = card(hubSettingsView({ ...BASE, backup: { ...SET, note: { kind: "ok", title: "Backup made" } } }, { wordsMayShow: true }));
+  const n = ok.all().find((x) => x.attrs["data-backup-note"]);
+  assert.equal(n.attrs["data-backup-note"], "ok"); assert.match(n.textContent, /Backup made/);
+  const bad = card(hubSettingsView({ ...BASE, backup: { ...SET, note: { kind: "bad", title: "Not done", detail: "A backup was made a moment ago. Try again in a few minutes." } } }, { wordsMayShow: true }));
+  assert.match(bad.all().find((x) => x.attrs["data-backup-note"]).textContent, /Try again in a few minutes/);
+  assert.ok(!card(hubSettingsView({ ...BASE, backup: SET }, { wordsMayShow: true })).all().some((x) => x.attrs["data-backup-note"]));
+});
+
+test("P07: Back up now is greyed out with the reason while the next time is in the future", () => {
+  const wait = card(hubSettingsView({ ...BASE, backup: { ...SET, next_manual_ms: Date.now() + 4 * 60000 } }, { wordsMayShow: true }));
+  assert.equal(button(wait, "Back up now").attrs.disabled, "disabled");
+  assert.match(wait.all().find((x) => x.attrs["data-backup-wait"]).textContent, /You just made one\. You can make another in [45] minutes\./);
+  const free = card(hubSettingsView({ ...BASE, backup: { ...SET, next_manual_ms: Date.now() - 1000 } }, { wordsMayShow: true }));
+  assert.equal(button(free, "Back up now").attrs.disabled, undefined);
+  assert.ok(!free.all().some((x) => x.attrs["data-backup-wait"]));
+});
+
+test("P07: Download opens a headed form with 'Download this backup' and Cancel; the row says Downloaded afterwards", () => {
+  const c = card(hubSettingsView({ ...BASE, backup: SET }, { wordsMayShow: true }));
+  button(c, "Download").listeners.click();
+  assert.match(c.textContent, /Download the backup of/); assert.ok(button(c, "Download this backup"));
+  button(c, "Cancel").listeners.click();
+  assert.equal(inputs(c).length, 0);
+  const d = card(hubSettingsView({ ...BASE, backup: { ...SET, note: { kind: "ok", title: "Backup downloaded", downloaded: NAME } } }, { wordsMayShow: true }));
+  assert.match(d.all().find((x) => x.attrs["data-downloaded"]).textContent, /^Downloaded$/);
+});
+
+test("P07: the page puts a refused Back up now (429) in the card with the Backup wording", async () => {
+  const { hubSettingsPage } = await import("../../src/orch_hub/web/pages/hub-settings.js");
+  const shown = [];
+  const d = { pageLoading() {}, refresh: async () => true, state: { user: { is_admin: true } }, loadRail: async () => {}, say: (e) => "Generic " + e,
+    banner: (kind, title, detail) => kind + ":" + title + ":" + detail, home: () => "home", loginView: () => "login", reauthView: () => "reauth",
+    shell: (id, notice, view) => shown.push([notice, view]),
+    api: async (m, p) => {
+      if (p === "/admin/settings") return { status: 200, body: { ...BASE } };
+      if (p === "/admin/backup") return { status: 200, body: { ...SET } };
+      return { status: 429, body: { error: "rate_limited" } };
+    } };
+  await hubSettingsPage(d);
+  await button(card(shown.at(-1)[1]), "Back up now").listeners.click();
+  const [notice, view] = shown.at(-1);
+  assert.ok(notice == null);                                                // nothing at the top of the page
+  const n = card(view).all().find((x) => x.attrs["data-backup-note"]);
+  assert.equal(n.attrs["data-backup-note"], "bad");
+  assert.match(n.textContent, /A backup was made a moment ago\. Try again in a few minutes\./);
 });

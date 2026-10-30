@@ -167,6 +167,7 @@ class BackupHandlers:
             "key_set_ms": None if info is None else info["set_ms"],
             "key_pending": info is not None and info["pending"] is not None,
             "backups": kept,
+            "next_manual_ms": kept[0]["made_ms"] + MANUAL_GAP_MS if kept else None,  # P07: the page greys out "Back up now" until then
             "keep": KEEP,
             "schedule": "daily",
             "cli_line": CLI_LINE,

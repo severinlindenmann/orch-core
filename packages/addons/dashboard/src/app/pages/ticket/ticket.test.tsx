@@ -10,7 +10,7 @@ describe('ticket page', () => {
   it('shows DEMO-0043 with tasks T1-T4 and the open question Q2', async () => {
     const { user } = renderApp('/ticket/DEMO-0043')
     expect(await screen.findByRole('heading', { level: 1, name: 'Load tariff tables as dbt seeds' }, T)).toBeInTheDocument()
-    expect(screen.getByTestId('agent-status')).toHaveTextContent(/Claude Code is working for Severin/)
+    expect(screen.getByTestId('agent-status')).toHaveTextContent(/Claude Code is waiting for you/)
     expect(screen.getByTestId('stepper')).toBeInTheDocument()
 
     await user.click(screen.getByRole('tab', { name: /Acceptance & tasks/ }))
@@ -191,7 +191,7 @@ describe('ticket page structure: next action first, gates as a stepper, a rail t
   it('the agent is one status line, without Claim or Release buttons', async () => {
     renderApp('/ticket/DEMO-0043')
     await screen.findByRole('heading', { level: 1, name: /Load tariff tables/ }, T)
-    expect(screen.getByTestId('agent-status')).toHaveTextContent('Claude Code is working for Severin · since 08:05 · 2 subagents')
+    expect(screen.getByTestId('agent-status')).toHaveTextContent('Claude Code is waiting for you · since 08:05 · 2 subagents')
     expect(screen.queryByRole('button', { name: /^Claim/ })).toBeNull()
     expect(screen.queryByRole('button', { name: /^Release/ })).toBeNull()
   })

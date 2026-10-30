@@ -100,6 +100,14 @@ class GatedPresence:
         p.event.set()
         return True
 
+    def cancel_workspace(self, ws: str) -> None:
+        """Stop waiting for the person on every prompt that belongs to this workspace (nothing is signed)."""
+        with self._mu:
+            mine = [p for p in self._pending if p.workspace_id == ws]
+        for p in mine:
+            p.approved = False
+            p.event.set()
+
     def shut(self) -> None:
         self.closed = True
 
@@ -131,6 +139,7 @@ class EnrollJob:
     status: str = "starting"  # starting | words | added | error | stopped
     words: list[str] = field(default_factory=list)
     message: str = ""
+    cancel: threading.Event = field(default_factory=threading.Event)
 
 
 class Controller:
@@ -297,9 +306,8 @@ class Controller:
         def run() -> None:
             try:
                 with _for_workspace(code.workspace_id):
-                    self.client.enroll(text, self.computer_name, words)
-                if job.status != "stopped":
-                    job.status = "added"
+                    self.client.enroll(text, self.computer_name, words, cancel=job.cancel)
+                job.status = "added"  # it was added: a late Stop cannot undo what the workspace already did
             except ClientError as exc:
                 if job.status != "stopped":
                     job.status, job.message = "error", exc.message
@@ -320,6 +328,9 @@ class Controller:
         job = self._jobs.get(ident)
         if job is not None and job.status in ("starting", "words"):
             job.status = "stopped"
+            job.cancel.set()  # the enrollment stream is closed by the client core and nothing is stored
+            if self.gate is not None:
+                self.gate.cancel_workspace(job.workspace_id)
         return {"ok": True}
 
     # -- sessions --

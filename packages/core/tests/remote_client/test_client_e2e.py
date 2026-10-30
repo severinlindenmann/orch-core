@@ -357,6 +357,43 @@ def test_enrollment_end_to_end_six_words_then_added(world, hub, human, served, t
     assert code["code"] not in str(e)  # the code is never stored
 
 
+def test_cancelling_an_enrollment_ends_the_stream_and_adds_nothing(world, hub, human, served, tmp_path):
+    pres = SoftPresence()
+    st = Store(tmp_path / "rc3")
+    st.set_hub(origin="http://hub.test", link=hub.addr, hub_id=hub.hub_id, spki=hub.spki)
+    st.set_token(hub.token("ann"), 2**50)
+    c = Client(st, presence=pres, connector=lambda h, p, s: dial(h, p, s))
+    code = ok(call(served, "remote.code"))["data"]
+    words: list[str] = []
+    cancel = threading.Event()
+    result: dict[str, Any] = {}
+
+    def run():
+        try:
+            c.enroll(code["code"], "Test laptop", words.append, cancel=cancel)
+            result["done"] = True
+        except ClientError as e:
+            result["err"] = e.code
+
+    t = threading.Thread(target=run)
+    t.start()
+    end = time.time() + 20
+    while not words and time.time() < end:
+        time.sleep(0.05)
+    assert words, result
+    cancel.set()  # the person pressed Stop while the owner had not confirmed yet
+    t.join(10)
+    assert not t.is_alive() and result == {"err": "remote_client.cancelled"}
+    assert st.workspaces() == {} and st.transport_key(world.ws) is None
+    # nothing is left to confirm: the host's pending enrollment went away with the stream
+    deadline = time.time() + 5
+    pend = ok(call(served, "remote.pending"))["data"]["pending"]
+    while pend and time.time() < deadline:
+        time.sleep(0.1)
+        pend = ok(call(served, "remote.pending"))["data"]["pending"]
+    assert pend == []
+
+
 def test_browser_code_and_wrong_wrk_are_refused_before_any_hub_call(tmp_path):
     from orch.remoteclient.enroll import parse_code
 

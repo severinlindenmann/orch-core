@@ -532,7 +532,7 @@ def test_enroll_flow_shows_six_words_then_added(static):
     finish = threading.Event()
     client = fake_client()
 
-    def enroll(code, name, on_words):
+    def enroll(code, name, on_words, cancel=None):
         client.calls.append(("enroll", (name,), {}))
         on_words("maple river tiger cloud seven amber")
         words_seen.set()
@@ -676,3 +676,47 @@ def test_a_redirect_file_that_is_never_used_expires_and_stale_ones_are_swept(tmp
     d.chmod(0o755)
     with pytest.raises(RuntimeError):
         Launcher(lambda u: True, d)
+
+
+def test_stop_ends_the_enrollment_and_adds_nothing(static):
+    import threading
+    import time
+
+    from orch.remoteclient import ClientError
+
+    seen = {}
+    started = threading.Event()
+    client = fake_client()
+    client.added = []
+
+    def enroll(code, name, on_words, cancel=None):
+        on_words("maple river tiger cloud seven amber")
+        started.set()
+        while not cancel.is_set():
+            time.sleep(0.02)
+        seen["cancelled"] = True
+        raise ClientError("remote_client.cancelled")  # the core closes the stream and stores nothing
+
+    client.enroll = enroll
+    ctl, api = run_home(client, static)
+    import orch_dashboard.remote_client.controller as C
+
+    class Code:
+        workspace_id = WS_A
+
+    orig = C._enroll.parse_code
+    C._enroll.parse_code = lambda t: Code()
+    try:
+        st, doc = api("POST", "/enroll", {"code": "orch-rc1.ok"})
+        assert started.wait(5)
+        assert api("POST", f"/enroll/{doc['id']}/stop")[0] == 200
+        for _ in range(100):
+            if seen:
+                break
+            time.sleep(0.02)
+        assert seen == {"cancelled": True}
+        s = api("GET", f"/enroll/{doc['id']}")[1]
+        assert s["status"] == "stopped" and client.added == []
+    finally:
+        C._enroll.parse_code = orig
+        ctl.stop()

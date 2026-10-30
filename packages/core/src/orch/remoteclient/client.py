@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import secrets
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -254,7 +255,9 @@ class Client:
 
     # -- adding this computer --
 
-    def enroll(self, code_text: str, name: str, on_words: Callable[[str], None]) -> dict[str, str]:
+    def enroll(
+        self, code_text: str, name: str, on_words: Callable[[str], None], cancel: threading.Event | None = None
+    ) -> dict[str, str]:
         code = E.parse_code(code_text)  # first: a bad or browser code touches nothing
         hub, token = self._hub()
         backend = self._backend()
@@ -276,6 +279,7 @@ class Client:
         device_id = E.run_enroll(
             ch, code, transport_key=tkey, presence_kind=pres["kind"], presence_pub=pub,
             assert_=lambda msg, prompt: backend.assert_(pres["ref"], msg, prompt), name=name, on_words=on_words,
+            cancel=cancel,
         )  # fmt: skip
         self.store.put_transport_key(code.workspace_id, tkey)
         self.store.add_workspace(

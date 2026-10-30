@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import re
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -91,6 +92,7 @@ def run_enroll(
     on_words: Callable[[str], None],
     wait_s: float = WAIT_S,
     clock: Callable[[], float] = time.monotonic,
+    cancel: threading.Event | None = None,
 ) -> str:
     """After the handshake. Returns the new ``device_id``. Raises :class:`ClientError` (and closes the stream) on any
     mismatch, cancel or close."""
@@ -101,6 +103,7 @@ def run_enroll(
     except ValueError:
         raise ClientError("remote_client.assertion") from None
     try:
+        _check(cancel)
         msg = P.open_bytes(code.workspace_id, code.code_id, ch.hh, ch.challenge)
         prompt = P.Prompt(
             "Add this computer",
@@ -108,15 +111,16 @@ def run_enroll(
             f"Add this computer to workspace {code.workspace_id[-8:]}",
         )
         presence = assert_(msg, prompt)
+        _check(cancel)
         ch.send(dumps(enroll_message(code, ch.hh, transport_pub, presence_pub, presence_kind, name, presence)))
         end = clock() + wait_s
-        pending = _next(ch, end, clock)
+        pending = _next(ch, end, clock, cancel)
         if set(pending) != {"t", "fingerprint"} or pending["t"] != "pending":
             raise ClientError("remote_client.protocol")
         if pending["fingerprint"] != fp.hex():
             raise ClientError("remote_client.fingerprint")
         on_words(model_remote.fingerprint_words(fp))
-        added = _next(ch, end, clock)
+        added = _next(ch, end, clock, cancel)
         did = added.get("device_id")
         if set(added) != {"t", "device_id"} or added["t"] != "added" or not re.fullmatch(r"rd_[0-9a-f]{32}", str(did)):
             raise ClientError("remote_client.protocol")
@@ -130,8 +134,16 @@ def run_enroll(
     return str(did)
 
 
-def _next(ch: Channel, end: float, clock: Callable[[], float]) -> dict[str, Any]:
+def _check(cancel: threading.Event | None) -> None:
+    if cancel is not None and cancel.is_set():
+        raise ClientError("remote_client.cancelled")
+
+
+def _next(
+    ch: Channel, end: float, clock: Callable[[], float], cancel: threading.Event | None = None
+) -> dict[str, Any]:
     while True:
+        _check(cancel)
         left = end - clock()
         if left <= 0:
             raise ClientError("remote_client.timeout")

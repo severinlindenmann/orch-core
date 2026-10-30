@@ -425,12 +425,13 @@ def test_client_pings_when_idle_and_closes_when_the_front_goes_silent(
     rig: Rig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(W, "PING_AFTER_S", 0.1)
-    monkeypatch.setattr(W, "IDLE_CLOSE_S", 0.6)
+    monkeypatch.setattr(W, "IDLE_CLOSE_S", 5.0)
     front = rig.add(WsFront(rig.hub.port))
     addr = parse_link_address(f"ws://127.0.0.1:{front.port}")
     with rig.open(addr, None) as link:
         assert link._c.wait_readable(0.5) is False
         assert any(op == W.PING for op, _ in front.client_frames)  # idle: the client pinged, the front ponged
+    monkeypatch.setattr(W, "IDLE_CLOSE_S", 0.6)
     front2 = rig.add(WsFront(rig.hub.port, no_pong=True))
     with rig.open(parse_link_address(f"ws://127.0.0.1:{front2.port}"), None) as link2:
         conn = link2._c

@@ -33,6 +33,7 @@ PLAIN: dict[str, str] = {
     "too_large": "Too much data was sent.",
     # the client's own
     "remote_client.hub_key_changed": "The hub's key changed. Connect again on the office network.",
+    "remote_client.no_pin": "Use the connect link from your hub admin.",
     "remote_client.hub_mismatch": "This is not the hub you connected to.",
     "remote_client.alpn": "The hub does not offer remote access.",
     "remote_client.no_hub": "Connect to your hub first.",

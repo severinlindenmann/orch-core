@@ -28,7 +28,7 @@ from collections.abc import Callable
 from typing import Any
 
 from orch.canon.jcs import JcsError, loads_strict
-from orch.crypto.encoding import b64u
+from orch.crypto.encoding import EncodingError, b64u, unb64u
 from orch.hubclient import wire as hubwire
 from orch.hubclient.custodial_shape import text_ok
 from orch.hubclient.errors import HubRefused
@@ -67,6 +67,31 @@ def _http(method: str, url: str, body: bytes | None, headers: dict[str, str]) ->
         raise ClientError("unavailable") from None
 
 
+def _pinned_tls_request(host: str, port: int, pin: str, req: bytes) -> bytes:
+    """One HTTP/1.1 request over TLS 1.3 pinned to ``pin`` (the SPKI hash); the whole answer until the peer closes."""
+    from orch.hubclient.tlslink import tls
+
+    try:
+        conn = tls.connect_pinned(host, port, pin, timeout=10.0)
+    except tls.PinMismatch:
+        raise ClientError("remote_client.hub_key_changed") from None
+    except (tls.LinkClosed, tls.LinkTimeout, OSError):
+        raise ClientError("unavailable") from None
+    try:
+        end = time.monotonic() + 15
+        conn.send_all(req, end)
+        out = bytearray()
+        while len(out) <= MAX_CARD + 4096:
+            try:
+                chunk = conn.recv_exact(1, end)
+            except (tls.LinkClosed, tls.LinkTimeout):
+                break
+            out += chunk
+        return bytes(out)
+    finally:
+        conn.close()
+
+
 class Client:
     def __init__(
         self,
@@ -80,20 +105,55 @@ class Client:
         api: tuple[int, int] = REMOTE_API,
         rand: Callable[[int], bytes] | None = None,
         batch_window: float = 1.0,
+        tls_request: Callable[[str, int, str, bytes], bytes] | None = None,
     ) -> None:
         self.store, self.presence, self._http = store, presence, http
         self._connector = connector or (lambda host, port, spki: dial(host, port, spki))
         self._clock, self._dev, self.api, self._rand = clock, dev_mode, api, rand
         self._batch_window = batch_window
+        self._tls_request = tls_request or _pinned_tls_request
 
     def _now_ms(self) -> int:
         return int(self._clock() * 1000)
 
     # -- the hub --
 
-    def connect_hub(self, origin: str, link: str, user: str, password: str, totp: str) -> dict[str, Any]:
-        """``origin``: the hub's web address (``http://hub.office:8443``); ``link``: its link address ``host:port`` (the
-        card carries none). Replaces a previous hub: connecting again re-pins (the answer to a changed key)."""
+    def _hub_request(self, origin: str, pin: str | None, method: str, path: str, body: bytes | None) -> tuple[int, bytes]:
+        """THE function that builds a connection to the hub's web API (card fetch and sign-in). Credentials only ever go
+        over TLS pinned to the hub's SPKI, where the pin came from the connect link or the enrollment code and is never
+        learned from the same connection (no trust on first use). Plain http is for loopback only. No pin and not
+        loopback: refused before any connection is made."""
+        u = urllib.parse.urlsplit(origin)
+        host, port = u.hostname or "", u.port
+        headers = {"Accept": "application/json", **({"Content-Type": "application/json"} if body is not None else {})}
+        if u.scheme == "http" and host in ("127.0.0.1", "::1"):
+            return self._http(method, origin + path, body, headers)
+        if u.scheme != "https" or not host or pin is None:
+            raise ClientError("remote_client.no_pin")
+        try:
+            unb64u(pin, 32)
+        except EncodingError:
+            raise ClientError("remote_client.no_pin") from None
+        req = (
+            f"{method} {path} HTTP/1.1\r\nHost: {u.netloc}\r\nConnection: close\r\n"
+            + "".join(f"{k}: {v}\r\n" for k, v in headers.items())
+            + (f"Content-Length: {len(body)}\r\n" if body is not None else "")
+            + "\r\n"
+        ).encode() + (body or b"")
+        raw = self._tls_request(host, port or 443, pin, req)
+        head, _, rest = raw.partition(b"\r\n\r\n")
+        try:
+            status = int(head.split(b" ", 2)[1])
+        except (IndexError, ValueError):
+            raise ClientError("unavailable") from None
+        return status, rest[: MAX_CARD + 1]
+
+    def connect_hub(
+        self, origin: str, link: str, user: str, password: str, totp: str, *, pin: str | None = None
+    ) -> dict[str, Any]:
+        """``origin``: the hub's web address (``https://hub.office:8443``); ``link``: its link address ``host:port``;
+        ``pin``: the hub's TLS key pin (b64u SPKI hash) from the connect link or enrollment code. Replaces a previous
+        hub. Without a pin only a loopback ``http`` origin is allowed."""
         u = urllib.parse.urlsplit(origin)
         if u.scheme not in ("http", "https") or not u.netloc or u.path not in ("", "/") or u.query or u.username:
             raise ClientError("remote_client.no_hub")
@@ -102,7 +162,7 @@ class Client:
             parse_addr(link)
         except HubRefused:
             raise ClientError("remote_client.no_hub") from None
-        status, raw = self._http("GET", origin + "/api/v1/hub/card", None, {"Accept": "application/json"})
+        status, raw = self._hub_request(origin, pin, "GET", "/api/v1/hub/card", None)
         if status != 200 or len(raw) > MAX_CARD:
             raise ClientError("remote_client.no_hub")
         try:
@@ -111,20 +171,15 @@ class Client:
         except (JcsError, UnicodeDecodeError, ValueError, AttributeError, HubRefused):
             raise ClientError("remote_client.no_hub") from None
         c = verified["card"]
+        if pin is not None and c["tls_spki_sha256"] != pin:
+            raise ClientError("remote_client.hub_key_changed")
         body = json.dumps({"user_id": user, "password": password, "totp": totp, "client": "remote"}).encode()
-        status, raw = self._http(
-            "POST", origin + "/api/v1/session", body, {"Content-Type": "application/json", "Accept": "application/json"}
-        )
+        status, raw = self._hub_request(origin, pin, "POST", "/api/v1/session", body)
         try:
             doc = loads_strict(raw) if status == 200 else {}
         except (JcsError, UnicodeDecodeError, ValueError):
             doc = {}
-        if (
-            status != 200
-            or type(doc) is not dict
-            or type(doc.get("token")) is not str
-            or type(doc.get("expires_ms")) is not int
-        ):
+        if status != 200 or type(doc) is not dict or type(doc.get("token")) is not str or type(doc.get("expires_ms")) is not int:
             raise ClientError("no_session")
         self.store.set_hub(origin=origin, link=link, hub_id=c["hub_id"], spki=c["tls_spki_sha256"])
         self.store.set_token(doc["token"], doc["expires_ms"])

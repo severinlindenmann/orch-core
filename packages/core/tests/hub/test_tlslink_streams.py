@@ -16,7 +16,7 @@ from orch.hubclient.tlslink import client as C
 from orch.hubclient.tlslink import framing
 from orch.hubclient.tlslink.client import LinkError
 
-from .test_link_client import WSK, open_link, request, sign
+from .test_link_client import WSK, open_link, send
 from .tlshub import TlsHub
 
 
@@ -39,27 +39,28 @@ DEV = "rd_" + "cd" * 16
 CODE = "rc_" + "ef" * 16
 
 
-def push(hub: TlsHub, op: str, body: dict, seq: int, **fields: Any) -> None:
+def push(hub: TlsHub, op: str, body: dict, seq: int | None = None, **fields: Any) -> None:
+    """One h2w push signed over the connection's exporter (R1); ``seq`` defaults to the hub's next consecutive one."""
     o = {
         "v": 2, "suite": 2, "kind": "hub.link", "hv": 0, "hub_id": hub.hub_id, "workspace_id": hub.workspace_id,
-        "dir": "h2w", "seq": seq, "ts_ms": int(time.time() * 1000), "op": op, "re": None, "body": body,
+        "dir": "h2w", "seq": hub.next_seq() if seq is None else seq, "ts_ms": int(time.time() * 1000),
+        "op": op, "re": None, "body": body,
     }  # fmt: skip
     o.update(fields)
-    sig = suite.sign(hub.hk_op, C.SIG_ROUTE + cj(o))
-    framing.write_frame(hub._conns[-1], {"o": o, "sig": b64u(sig)}, timeout=5)  # noqa: SLF001
+    framing.write_frame(hub._conns[-1], hub.sign_frame(o), timeout=5)  # noqa: SLF001
 
 
 def opening(kind: str = "session", device: str = DEV) -> dict:
     return {"stream_id": SID, "device_id": device, "kind": kind}
 
 
-def hub_that_pushes(make_hub, *frames: tuple[str, dict, int]):
+def hub_that_pushes(make_hub, *frames: tuple[Any, ...]):
     got: list[dict] = []
 
     def on_request(hub: TlsHub, o: dict):
         if o["op"] == "snapshot_get":
-            for op, body, seq in frames:  # they arrive before the reply
-                push(hub, op, body, seq)
+            for frame in frames:  # (op, body[, seq]); they arrive before the reply
+                push(hub, *frame)
             return hub.reply(o)
         got.append(o)  # the host's answers and one-way frames: no reply
         return b""
@@ -74,23 +75,23 @@ def wait_for(got: list, n: int) -> None:
 
 
 def test_stream_open_is_handed_out_and_answered_by_its_seq(make_hub) -> None:
-    hub, got = hub_that_pushes(make_hub, ("stream_open", opening(), 5))
+    hub, got = hub_that_pushes(make_hub, ("stream_open", opening()))
     with open_link(hub) as link:
-        link.request("snapshot_get", {}, sign=sign, seq=1)
+        link.call("snapshot_get", {})
         assert link.next_route_in(0) is None and link.next_event_deliver(0) is None  # not theirs
-        assert link.next_stream(0) == ("stream_open", 5, opening())
-        link.answer_stream_open(5, "remote.off")
+        assert link.next_stream(0) == ("stream_open", 1, opening())
+        link.answer_stream_open(1, "remote.off")
         wait_for(got, 1)
         with pytest.raises(LinkError):  # answered once
-            link.answer_stream_open(5)
+            link.answer_stream_open(1)
     o = got[0]
-    assert (o["op"], o["re"], o["dir"], o["body"]) == ("stream_open", 5, "w2h", {"error": "remote.off"})
+    assert (o["op"], o["re"], o["dir"], o["body"]) == ("stream_open", 1, "w2h", {"error": "remote.off"})
     # an enroll stream names a code id
-    hub2, got2 = hub_that_pushes(make_hub, ("stream_open", opening("enroll", CODE), 2))
+    hub2, got2 = hub_that_pushes(make_hub, ("stream_open", opening("enroll", CODE)))
     with open_link(hub2) as link:
-        link.request("snapshot_get", {}, sign=sign, seq=1)
+        link.call("snapshot_get", {})
         assert link.next_stream(0)[2]["kind"] == "enroll"
-        link.answer_stream_open(2)
+        link.answer_stream_open(1)
         wait_for(got2, 1)
     assert got2[0]["body"] == {}
 
@@ -98,15 +99,13 @@ def test_stream_open_is_handed_out_and_answered_by_its_seq(make_hub) -> None:
 def test_one_way_frames_in_order_without_a_reply(make_hub) -> None:
     data = {"stream_id": SID, "seq": 1, "bytes": b64u(b"x" * 96)}
     close = {"stream_id": SID, "reason": "revoked"}
-    hub, _ = hub_that_pushes(
-        make_hub, ("stream_open", opening(), 3), ("stream_data", data, 4), ("stream_close", close, 5)
-    )
+    hub, _ = hub_that_pushes(make_hub, ("stream_open", opening()), ("stream_data", data), ("stream_close", close))
     with open_link(hub) as link:
-        link.request("snapshot_get", {}, sign=sign, seq=1)
+        link.call("snapshot_get", {})
         assert [link.next_stream(0)[0] for _ in range(3)] == ["stream_open", "stream_data", "stream_close"]
         assert link.next_stream(0) is None
         with pytest.raises(LinkError):  # an unanswered open of a frame that is not an open
-            link.answer_stream_open(4)
+            link.answer_stream_open(2)
 
 
 @pytest.mark.parametrize(
@@ -126,10 +125,10 @@ def test_one_way_frames_in_order_without_a_reply(make_hub) -> None:
     ],
 )
 def test_bad_stream_bodies_close_the_link(make_hub, op: str, body: dict) -> None:
-    hub, _ = hub_that_pushes(make_hub, (op, body, 2))
+    hub, _ = hub_that_pushes(make_hub, (op, body))
     with open_link(hub) as link:
         with pytest.raises(LinkError) as e:
-            link.request("snapshot_get", {}, sign=sign, seq=1)
+            link.call("snapshot_get", {})
         assert e.value.code == "malformed"
 
 
@@ -137,32 +136,49 @@ def test_a_stream_frame_must_be_signed_by_the_hub_and_in_sequence(make_hub) -> N
     def on_request(hub: TlsHub, o: dict):
         o2 = {
             "v": 2, "suite": 2, "kind": "hub.link", "hv": 0, "hub_id": hub.hub_id, "workspace_id": hub.workspace_id,
-            "dir": "h2w", "seq": 9, "ts_ms": int(time.time() * 1000), "op": "stream_close", "re": None,
+            "dir": "h2w", "seq": hub.next_seq(), "ts_ms": int(time.time() * 1000), "op": "stream_close", "re": None,
             "body": {"stream_id": SID, "reason": "closed"},
         }  # fmt: skip
-        sig = suite.sign(suite.generate_private_key(), C.SIG_ROUTE + cj(o2))  # another key
+        # another key, over the right exporter
+        framing.write_frame(hub._conns[-1], hub.sign_frame(o2, key=suite.generate_private_key()), timeout=5)  # noqa: SLF001
+        return hub.reply(o)
+
+    hub = make_hub(on_request=on_request)
+    with open_link(hub) as link, pytest.raises(LinkError) as e:
+        link.call("snapshot_get", {})
+    assert e.value.code == "bad_signature"
+    hub, _ = hub_that_pushes(
+        make_hub,
+        ("stream_close", {"stream_id": SID, "reason": "closed"}),
+        ("stream_close", {"stream_id": SID, "reason": "closed"}, 1),  # the seq of the first frame again
+    )
+    with open_link(hub) as link, pytest.raises(LinkError) as e:  # the hub's seq never goes back
+        link.call("snapshot_get", {})
+    assert e.value.code == "malformed"
+
+
+def test_a_stream_push_signed_without_the_exporter_is_refused(make_hub) -> None:
+    def on_request(hub: TlsHub, o: dict):
+        o2 = {
+            "v": 2, "suite": 2, "kind": "hub.link", "hv": 0, "hub_id": hub.hub_id, "workspace_id": hub.workspace_id,
+            "dir": "h2w", "seq": hub.next_seq(), "ts_ms": int(time.time() * 1000), "op": "stream_close", "re": None,
+            "body": {"stream_id": SID, "reason": "closed"},
+        }  # fmt: skip
+        sig = suite.sign(hub.hk_op, C.SIG_ROUTE + cj(o2))  # the pre-R1 form: label || cj(o), no exporter
         framing.write_frame(hub._conns[-1], {"o": o2, "sig": b64u(sig)}, timeout=5)  # noqa: SLF001
         return hub.reply(o)
 
     hub = make_hub(on_request=on_request)
     with open_link(hub) as link, pytest.raises(LinkError) as e:
-        link.request("snapshot_get", {}, sign=sign, seq=1)
+        link.call("snapshot_get", {})
     assert e.value.code == "bad_signature"
-    hub, _ = hub_that_pushes(
-        make_hub,
-        ("stream_close", {"stream_id": SID, "reason": "closed"}, 4),
-        ("stream_close", {"stream_id": SID, "reason": "closed"}, 4),
-    )
-    with open_link(hub) as link, pytest.raises(LinkError) as e:  # the hub's seq never goes back
-        link.request("snapshot_get", {}, sign=sign, seq=1)
-    assert e.value.code == "malformed"
 
 
 def test_w2h_stream_open_unknown_op(make_hub) -> None:
     hub = make_hub()
     with open_link(hub) as link:
         with pytest.raises(LinkError) as e:
-            link.send(request(link, "stream_open", opening()))
+            send(link, "stream_open", opening())
         assert e.value.code == "unknown_op"
         with pytest.raises(LinkError) as e2:
             link.send_stream("stream_open", opening())

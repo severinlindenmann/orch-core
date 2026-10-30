@@ -70,6 +70,14 @@ def error_doc(code: str, message: str) -> dict[str, Any]:
     return {"ok": False, "error": {"code": code, "message": message, "retryable": False}}
 
 
+GO = "/go"
+GO_JS = "/go.js"
+_GO_PAGE = (
+    b'<!doctype html><meta charset="utf-8"><meta name="referrer" content="no-referrer"><script src="/go.js"></script>'
+)
+_GO_SCRIPT = b"location.replace('/' + location.hash)"
+
+
 class Origin:
     def __init__(
         self,
@@ -155,17 +163,16 @@ class Origin:
                 return "origin"
         elif origin is not None and origin != self.origin:
             return "origin"
-        # The browser is sent here by the launcher's redirect file (file://), which makes the page load a cross-site
-        # NAVIGATION. That one request only receives the static page (no secret, no data, the code is in the fragment
-        # and never sent); every other request must be same-origin.
+        # The browser is sent here by the launcher's redirect file (file://), a cross-site NAVIGATION. Exactly one
+        # path accepts it, GO: a fixed page with no state that bounces to this origin's own entry page (a same-origin
+        # navigation, fragment kept). Every other cross-site request, a deep link into the app included, is refused.
         navigation = (
             method in ("GET", "HEAD")
             and h.get("sec-fetch-mode") == "navigate"
             and h.get("sec-fetch-dest") == "document"
+            and scope.get("path") == GO
         )
-        if h.get("sec-fetch-site") not in (None, "same-origin", "none") and not (
-            navigation and not scope.get("path", "/").startswith(("/api", "/auth"))
-        ):
+        if h.get("sec-fetch-site") not in (None, "same-origin", "none") and not navigation:
             return "fetch-site"
         if "service-worker" in h:
             return "service-worker"
@@ -238,6 +245,9 @@ class Origin:
         why = self._refusal(scope, h, single, False)
         if why is not None:
             return await self._json(send, 403, error_doc("remote_client.refused", "Not allowed."))
+        if path in (GO, GO_JS) and method in ("GET", "HEAD"):
+            body, kind = (_GO_PAGE, b"text/html; charset=utf-8") if path == GO else (_GO_SCRIPT, b"text/javascript")
+            return await self._reply(send, 200, [(b"content-type", kind)], b"" if method == "HEAD" else body)
         if path == "/auth/session" and method == "POST":
             return await self._launch(receive, send)
         if path.startswith("/auth/"):

@@ -214,16 +214,36 @@ def test_service_worker_and_cross_site_fetches_are_refused(session_origin):
     assert raw(lst.port, "GET", "/", headers={"Sec-Fetch-Site": "cross-site"})[0] == 403
     assert raw(lst.port, "GET", "/", headers={"Sec-Fetch-Site": "same-site"})[0] == 403
     assert raw(lst.port, "GET", "/", headers={"Sec-Fetch-Site": "same-origin"})[0] == 200
-    # the launcher's redirect file (file://) makes the first page load a cross-site NAVIGATION: the static page only
+    # the launcher's redirect file (file://) makes the first load a cross-site NAVIGATION: only /go takes it, and it is
+    # a fixed page that bounces same-origin; a deep link or the entry page from another site is refused
     nav = {"Sec-Fetch-Site": "cross-site", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document"}
-    assert raw(lst.port, "GET", "/", headers=nav)[0] == 200
-    assert raw(lst.port, "GET", "/api/remote-client/state", headers=nav)[0] == 403
+    for deep in ("/", "/w/BILL/settings", "/assets/dash.js", "/api/remote-client/state", "/remote-client.html"):
+        assert raw(lst.port, "GET", deep, headers=nav)[0] == 403, deep
+    st, _, body = raw(lst.port, "GET", "/go", headers=nav)
+    assert st == 200 and b"/go.js" in body and b"orch" not in body.lower()
     assert (
-        raw(
-            lst.port, "GET", "/assets/dash.js", headers={**nav, "Sec-Fetch-Mode": "no-cors", "Sec-Fetch-Dest": "script"}
-        )[0]
-        == 403
+        raw(lst.port, "GET", "/go.js", headers={"Sec-Fetch-Site": "same-origin"})[2]
+        == b"location.replace('/' + location.hash)"
     )
+    assert raw(lst.port, "POST", "/go", headers={**nav, "Origin": "http://evil.example"})[0] == 403
+
+
+def test_the_home_origin_refuses_cross_site_deep_links_too_and_the_launch_still_works(static, tmp_path):
+    opened = []
+    ctl = Controller(fake_client(), static, opener=opened.append, computer_name="T", launch_dir=tmp_path / "l")
+    try:
+        ctl.start_home()
+        ctl.open_home()
+        port = ctl.home_listener.port
+        nav = {"Sec-Fetch-Site": "cross-site", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document"}
+        for deep in ("/", "/#x", "/settings", "/remote-client.html"):
+            assert raw(port, "GET", deep, headers=nav)[0] == 403, deep
+        target = _redirect_target(opened[0])
+        assert target.endswith("/go#launch=" + target.split("launch=")[1]) and "/go#" in target
+        assert raw(port, "GET", "/go", headers=nav)[0] == 200
+        assert raw(port, "GET", "/", headers={"Sec-Fetch-Site": "same-origin", "Sec-Fetch-Mode": "navigate"})[0] == 200
+    finally:
+        ctl.stop()
 
 
 @pytest.mark.parametrize("path", ["/api/%2e%2e/x", "/api/a%2Fb", "/api/../x", "/api//x", "/api/a;b"])
@@ -417,7 +437,7 @@ def test_open_starts_one_origin_per_workspace_and_end_stops_it(static):
         assert api("POST", "/open", {"workspace_id": WS_A})[0] == 200
         (uri,) = opened
         assert "launch" not in uri.split("/")[-1].replace("launch-", "") and "#" not in uri  # no code in argv
-        url = _redirect_target(uri)
+        url = _redirect_target(uri).replace("/go#launch=", "/#launch=")
         assert url.startswith("http://127.0.0.1:") and "#launch=" in url
         sport = int(url.split(":")[2].split("/")[0])
         assert sport != ctl.home_listener.port

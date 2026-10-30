@@ -49,7 +49,7 @@ class Origin_:
     """What a browser does against one loopback origin: redeem the launch code once, then call with the bearer."""
 
     def __init__(self, url: str) -> None:
-        base, code = url.split("/#launch=")
+        base, code = url.split("/go#launch=")
         self.port = int(base.rsplit(":", 1)[1])
         self.origin = base
         st, _, body = raw(

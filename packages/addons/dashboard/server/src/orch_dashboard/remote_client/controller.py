@@ -228,7 +228,7 @@ class Controller:
 
     def open_home(self) -> bool:
         """Open the browser at the home page (through the redirect file)."""
-        return self.launcher.open("home", self.home_url())
+        return self.launcher.open("home", self.home_url().replace("/#launch=", "/go#launch="))
 
     def home_url(self) -> str:
         assert self.home is not None
@@ -419,7 +419,7 @@ class Controller:
         return {"ok": True}
 
     def _launch(self, rec: Open) -> None:
-        self.launcher.open(rec.workspace_id, f"{rec.origin.origin}/#launch={rec.origin.launch_code()}")
+        self.launcher.open(rec.workspace_id, f"{rec.origin.origin}/go#launch={rec.origin.launch_code()}")
 
     def end(self, ws: str) -> None:
         with self._mu:

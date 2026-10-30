@@ -322,7 +322,7 @@ def op_kind(name: str) -> tuple[OpKind, Phase] | None:
             return ("pg_read", "read")
         return ("pg_write", "write") if name in ("publish.prepare", "publish.discard") else ("person_write", "write")
     if name in HUB_OPS:  # V3 C2a: column P only (the op checks the owner role)
-        reads = ("hub.status", "hub.handoff", "hub.link", "hub.switch", "hub.directory", "hub.shared")
+        reads = ("hub.status", "hub.handoff", "hub.link", "hub.switch", "hub.directory", "hub.shared", "hub.network")
         return ("person_read", "read") if name in reads else ("person_write", "write")
     if name in REMOTE_OPS:  # R2 #1590: column P only (the op checks the owner role)
         return ("person_read", "read") if name in REMOTE_READS else ("person_write", "write")

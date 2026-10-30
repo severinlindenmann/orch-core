@@ -417,7 +417,9 @@ def test_selective_status_sends_the_workspace_name_but_no_host_name(monkeypatch)
     monkeypatch.setattr(hubops, "_addr", lambda *args: "unused")
     monkeypatch.setattr(hubops, "_workspace_name", lambda service: "Anna Test's workspace")
     state = SimpleNamespace(hk_op_pub=crypto.b64u(b"x" * 65), tls_spki="unused", mode="selective", hub_id="one")
-    hubops._snapshot_link(SimpleNamespace(workspace_id="ws", clock=lambda: 0, state_dir="/nonexistent-state"), state, b"", None, True)
+    hubops._snapshot_link(
+        SimpleNamespace(workspace_id="ws", clock=lambda: 0, state_dir="/nonexistent-state"), state, b"", None, True
+    )
     assert calls and calls[0]["host"] == "" and calls[0]["version"]
     assert calls[0]["name"] == "Anna Test's workspace"
 

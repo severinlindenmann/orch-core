@@ -59,7 +59,7 @@ __all__ = [
 HUB_OPS: dict[str, int] = {
     "hub.connect": 1, "hub.link": 1, "hub.unbind": 1, "hub.status": 1, "hub.refresh": 1, "hub.handoff": 1,
     "hub.profile": 1, "hub.directory": 1, "hub.shared": 1,
-    "hub.history": 1, "keys.rotate": 1, "hub.switch": 1, "hub.address": 1,
+    "hub.history": 1, "keys.rotate": 1, "hub.switch": 1, "hub.address": 1, "hub.network": 1, "hub.network_set": 1,
 }  # fmt: skip
 NETWORK_OPS = frozenset(
     {
@@ -123,6 +123,17 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
         "type": "object",
         "properties": {"link": {"type": "string", "minLength": 8, "maxLength": 1024}},
         "required": ["link"],
+        "additionalProperties": False,
+    },
+    "hub.network": {"type": "object", "properties": {}, "additionalProperties": False},  # R6: a read
+    "hub.network_set": {  # R6 (#1594): the owner's proxy for the hub link; ``proxy: null`` clears it
+        "type": "object",
+        "properties": {
+            "proxy": {"type": ["string", "null"], "maxLength": 300},
+            "user": {"type": ["string", "null"], "maxLength": 255},
+            "password": {"type": ["string", "null"], "maxLength": 1000},
+        },
+        "required": ["proxy"],
         "additionalProperties": False,
     },
     "hub.address": {  # M4 #1461: move to the address a connect link of the SAME hub names (a person; no invite used)
@@ -817,6 +828,33 @@ def _refused(code: str) -> HostError:
     return HostError("hub.refused", f"the hub is refused: {code}")
 
 
+def _network(call: Call, op: str, args: dict[str, Any]) -> dict[str, Any]:
+    """R6 (#1594, design section 3): the owner's proxy for hub links. Owner at this workspace only (``_owner`` ran: an
+    agent is ``op.not_allowed``; the dashboard route is in the remote refused lists). The hub never reaches this. The
+    password goes to its 0600 file and is never in an answer, the audit line or an error."""
+    from orch.hubclient.netconfig import NetConfigError
+
+    from . import hubnet
+
+    state_dir = call.service.state_dir
+    if op == "hub.network_set":
+        try:
+            if args["proxy"] is None:
+                hubnet.clear_proxy(state_dir)
+            else:
+                hubnet.set_proxy(state_dir, args["proxy"], args.get("user"), args.get("password"))
+        except NetConfigError as exc:
+            what = {
+                "user": "the proxy user name has characters it cannot have",
+                "password": "the proxy password has characters it cannot have",
+            }.get(str(exc), "the proxy address must look like http://name:3128 or https://name:3128")
+            raise HostError("invalid.input", what) from None
+        except OSError:
+            raise HostError("workspace.unavailable", "the network settings could not be saved here") from None
+        _audit(call, "hub.network", proxy_set=args["proxy"] is not None, password_set=bool(args.get("password")))
+    return hubnet.view(state_dir)
+
+
 def _audit(call: Call, event: str, **more: Any) -> None:
     from . import securitylog
 
@@ -886,6 +924,8 @@ def serve(call: Call) -> dict[str, Any]:
         out = breakglass.rotate(call, epochs_for(service))
         _audit(call, "keys.rotate")
         return out
+    if op in ("hub.network", "hub.network_set"):
+        return ok_result(_network(call, op, args))
     if op == "hub.link":
         return {"plan": {"op": "hub.link", "link": args["link"], "dev": workspace_dev(service)}}
     if op == "hub.address":

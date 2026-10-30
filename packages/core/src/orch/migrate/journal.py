@@ -62,6 +62,23 @@ def _interrupted(why: str) -> OrchError:
     )
 
 
+def restore_pending(root: Path) -> str | None:
+    """If a restore of ``root`` was interrupted (its sidecar record exists), the plain sentence that says where the
+    data is and what to do; else None. Reads only."""
+    rec = root.with_name(f".{root.name}.restore") / "record.json"
+    if not os.path.lexists(rec):
+        return None
+    try:
+        aside = json.loads(rec.read_bytes()[: 1 << 16]).get("aside")
+    except (OSError, ValueError, AttributeError):
+        aside = None
+    where = f"your data is in {ascii(Path(aside).name)}" if isinstance(aside, str) else "see the folders beside it"
+    return (
+        f"orch was stopped while putting back a backup; {where}; run `orch migrate --apply` "
+        f"or rename it back to {ascii(root.name)}"
+    )
+
+
 def _rank(phase: str) -> int:
     return 3 if phase.startswith("migrated:") else PHASES.index(phase) if phase in PHASES[:3] else 4
 
@@ -86,6 +103,9 @@ def write_journal(phase: str, env: Mapping[str, str] | None = None, **fields: An
     doc.update(fields)
     doc.update({"v": 1, "phase": phase, "at": int(time.time())})
     path = journal_path(env)
+    state = path.parent.parent
+    if not state.exists() and (msg := restore_pending(state)):
+        raise OrchError("update.interrupted", msg)  # never create a folder where a root is being put back
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     atomic_write(path, (json.dumps(doc, indent=2, sort_keys=True) + "\n").encode())
     return doc

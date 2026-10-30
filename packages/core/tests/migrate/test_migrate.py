@@ -803,7 +803,7 @@ def test_journal_phases_only_move_forward(env):
 
 def test_the_lock_file_is_not_followed_through_a_link(root, tmp_path):
     (root / "format.lock").symlink_to(tmp_path / "victim")
-    with pytest.raises(OSError):
+    with pytest.raises(OrchError):
         lock_root(root, exclusive=False)
     assert not (tmp_path / "victim").exists()
 
@@ -1233,3 +1233,103 @@ def test_a_second_restore_is_refused_while_the_first_runs(root, env):
         assert code_of(bk.restore, b, root, env) == "migrate.running"
     finally:
         side.close()
+
+
+def _killed_between(b, root, env, monkeypatch):
+    _killed_restore(b, root, env, monkeypatch, "between")
+    assert not root.exists()
+
+
+def test_a_missing_root_with_a_record_is_named_by_open_and_by_check(any_root, env, monkeypatch):
+    root, kind = any_root
+    _parts(root)
+    b = bk.create_backup(root, kind, 1, 2, env)
+    jr.write_journal("installed", env, backups={str(b.resolve()): 1})
+    _killed_between(b, root, env, monkeypatch)
+    with pytest.raises(OrchError, match="stopped while putting back a backup; your data is in .*orch migrate --apply"):
+        open_root(root, kind, env)
+    if kind == "host":  # the journal lives inside the host root
+        with pytest.raises(OrchError, match="stopped while putting back"):
+            jr.write_journal("installed", env)  # must not create a folder where the root is being put back
+    assert not root.exists()
+
+
+def test_migrate_check_and_apply_on_a_killed_host_restore(tmp_path, monkeypatch):
+    st = tmp_path / "state"
+    env = {"HOME": str(tmp_path / "home"), "ORCH_STATE_DIR": str(st)}
+    init_root(st, "host")
+    key = _parts(st)
+    b = bk.create_backup(st, "host", 1, 2, env)
+    jr.write_journal("installed", env, backups={str(b.resolve()): 1})
+    _killed_between(b, st, env, monkeypatch)
+    code, out, _ = run_cli(["--check", "--json"], env, tmp_path)
+    doc = json.loads(out)
+    assert code != 0 and doc["ok"] is False and "stopped while putting back" in doc["roots"][0]["error"]["message"]
+    assert not st.exists()  # check changed nothing
+    code, out, _ = run_cli(["--apply", "--json"], env, tmp_path)
+    assert code == 0 and json.loads(out)["ok"] is True
+    assert key.read_text() == "K" and read_format(st, "host") == 1 and _scratch(st) == []
+
+
+def test_migrate_apply_recovers_a_killed_workspace_restore(tmp_path, monkeypatch):
+    env = {"HOME": str(tmp_path / "home"), "ORCH_STATE_DIR": str(tmp_path / "state")}
+    store = tmp_path / "proj" / ".orch"
+    init_root(store, "workspace")
+    key = _parts(store)
+    b = bk.create_backup(store, "workspace", 1, 2, env)
+    jr.write_journal("installed", env, backups={str(b.resolve()): 1})
+    _killed_between(b, store, env, monkeypatch)
+    code, out, _ = run_cli(["--check", "--workspace", str(tmp_path / "proj")], env, tmp_path)
+    assert code != 0 and "stopped while putting back" in out and "skipped" not in out
+    code, out, _ = run_cli(["--apply", "--workspace", str(tmp_path / "proj")], env, tmp_path)
+    assert code == 0 and key.read_text() == "K" and read_format(store, "workspace") == 1
+
+
+@pytest.mark.parametrize("how", ["mkdir", "init_root"])
+def test_a_root_recreated_after_a_kill_never_costs_the_aside(any_root, env, monkeypatch, how):
+    root, kind = any_root
+    _parts(root)
+    b = bk.create_backup(root, kind, 1, 2, env)
+    jr.write_journal("installed", env, backups={str(b.resolve()): 1})
+    _killed_between(b, root, env, monkeypatch)
+    aside = next(p for p in root.parent.iterdir() if ".replaced-" in p.name)
+    if how == "mkdir":
+        root.mkdir(mode=0o700)
+    else:
+        init_root(root, kind)
+    for own in (False, True):
+        with pytest.raises(OrchError) as e:
+            bk.restore(b, root, env, own_failure=own)
+        assert (
+            aside.name in e.value.message and root.name in e.value.message and e.value.code == "migrate.backup_refused"
+        )
+    staging = next(p for p in root.parent.iterdir() if ".restore-" in p.name)  # the carried folders wait here
+    assert aside.exists() and (staging / "install/parts/hub/data/hub.key").read_text() == "K"
+
+
+def test_a_finished_restore_leaves_no_nonce_behind(root, env):
+    b = swap_setup(root, env)
+    bk.restore(b, root, env)
+    assert not (root / bk.NONCE_FILE).exists()
+
+
+def test_a_lock_file_that_is_a_link_is_refused_in_plain_words(root, tmp_path):
+    (root / "format.lock").symlink_to(tmp_path / "victim")
+    with pytest.raises(OrchError, match="cannot be used"):
+        lock_root(root, exclusive=True)
+
+
+def test_a_carried_folder_on_another_disk_is_refused_in_plain_words(root, env, monkeypatch):
+    b = swap_setup(root, env)
+    real = os.rename
+
+    def rename(s, d, *a, **k):
+        if "tools" in str(s) and ".restore-" in str(d):
+            raise OSError(18, "Invalid cross-device link")
+        return real(s, d, *a, **k)
+
+    monkeypatch.setattr(bk.os, "rename", rename)
+    with pytest.raises(OrchError, match="another disk"):
+        bk.restore(b, root, env)
+    monkeypatch.setattr(bk.os, "rename", real)
+    assert (root / "install/tools/orch-1/bin").read_text() == "tool"

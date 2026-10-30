@@ -21,6 +21,7 @@ revocation away.
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import re
@@ -38,6 +39,7 @@ from orch.layout import STATE_DIR, WORK_DIR
 from orch.ops.errors import OrchError
 
 from .format import LOCK_FILE, lock_root
+from .journal import restore_pending as journal_restore_pending
 from .steps import atomic_write, is_derived
 
 __all__ = ["KEEP", "backups_dir", "create_backup", "list_backups", "prune_backups", "restore"]
@@ -303,6 +305,21 @@ def _exchange(a: Path, b: Path) -> bool:
     return False
 
 
+NONCE_FILE = ".orch-restore-nonce"
+
+
+def _move(src: Path, dst: Path) -> None:
+    try:
+        os.rename(src, dst)
+    except OSError as exc:
+        if exc.errno == errno.EXDEV:
+            raise OrchError(
+                "migrate.backup_refused",
+                f"{src.name} is on another disk than the data folder and cannot be moved safely; nothing was lost",
+            ) from None
+        raise
+
+
 def _carry_list(base: Path) -> list[str]:
     """The entries a restore carries from the current root (everything the backup leaves out), as found in ``base``."""
     carry = [*sorted(_SKIP_TOP), *sorted(_SKIP_REL)]
@@ -317,7 +334,7 @@ def _put_back(staging: Path, root: Path) -> None:
     for rel in _carry_list(staging):
         if (staging / rel).exists() and not (root / rel).exists() and not (root / rel).is_symlink():
             (root / rel).parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-            os.rename(staging / rel, root / rel)
+            _move(staging / rel, root / rel)
 
 
 def _trusted(p: Path) -> bool:
@@ -431,6 +448,13 @@ def _leftovers(root: Path, recorded: set[Path], say: Callable[[str], None]) -> N
         say(f"found a leftover folder orch did not record: {ascii(n)}; check and remove it yourself")
 
 
+def _has_nonce(root: Path, nonce: object) -> bool:
+    try:
+        return isinstance(nonce, str) and (root / NONCE_FILE).read_text().strip() == nonce
+    except OSError:
+        return False
+
+
 def _recover(root: Path, side: _Sidecar, say: Callable[[str], None]) -> None:
     """Under the sidecar lock, before anything else. Acts ONLY on the paths in the sidecar record, each checked with
     lstat (ours, a real folder, not group/world writable). It never deletes while it is unsure: no root, or a record it
@@ -464,16 +488,26 @@ def _recover(root: Path, side: _Sidecar, say: Callable[[str], None]) -> None:
                 f"{root.name} is missing and the folder that held it is gone too: nothing was deleted. "
                 f"Look at {staging.name}",
             )
-        os.rename(aside, root)
+        _move(aside, root)
         present.remove(aside)
+    elif aside in present and not _has_nonce(root, rec.get("nonce")):
+        # a root that is not the staged one (re-created after a kill) stands where the old root was: the aside is the
+        # real old data. Delete nothing, say where everything is.
+        raise OrchError(
+            "migrate.backup_refused",
+            f"{root.name} is not the folder the restore built, and {aside.name} holds your previous data "
+            f"(carried folders may be in {staging.name}): nothing was deleted. Check them and rename the right one to "
+            f"{root.name}",
+        )
     if staging in present:
         _put_back(staging, root)
     for q in present:
         _remove(q)
-    try:
-        os.unlink(side.record)
-    except OSError:
-        pass
+    for f in (root / NONCE_FILE, side.record):
+        try:
+            os.unlink(f)
+        except OSError:
+            pass
 
 
 def restore(
@@ -533,10 +567,12 @@ def _swap_in(
     created = read_journal(env) is None  # no journal yet: this restore makes one, and removes it again
     old = os.umask(0o077)
     try:
-        side.write(staging=str(staging), aside=str(aside), backup=str(backup))  # before the first move
+        nonce = secrets.token_hex(16)
+        side.write(staging=str(staging), aside=str(aside), backup=str(backup), nonce=nonce)  # before the first move
         write_journal((read_journal(env) or {"phase": "stopped"})["phase"], env, restoring=str(root))
         saved, current = _revocation_files(src), _revocation_files(root)
         shutil.copytree(src, staging, symlinks=True)
+        atomic_write(staging / NONCE_FILE, nonce.encode())  # proves, after the swap, that this root is the staged one
         for rel in set(saved) | set(current):
             have = saved.get(rel, [])
             merged = have + [x for x in current.get(rel, []) if x not in set(have)]
@@ -550,18 +586,22 @@ def _swap_in(
             if rel == "install/update.json":
                 shutil.copy2(have, staging / rel)
             else:
-                os.rename(have, staging / rel)
+                _move(have, staging / rel)
                 carried.append(rel)
         if _exchange(staging, root):  # now ``staging`` holds the old data
             shutil.rmtree(staging, ignore_errors=True)
         else:
-            os.rename(root, aside)
+            _move(root, aside)
             try:
-                os.rename(staging, root)
+                _move(staging, root)
             except BaseException:
-                os.rename(aside, root)
+                _move(aside, root)
                 raise
             shutil.rmtree(aside, ignore_errors=True)
+        try:
+            os.unlink(root / NONCE_FILE)
+        except OSError:
+            pass
         doc = read_journal(env)
         if doc is not None:
             if created:
@@ -573,3 +613,19 @@ def _swap_in(
         if staging.exists() and root.exists():  # never delete staging while the root is missing: it may hold data
             _put_back(staging, root)
             shutil.rmtree(staging, ignore_errors=True)
+
+
+def recover_interrupted(root: Path, say: Callable[[str], None] | None = None) -> bool:
+    """Finish or refuse a restore of ``root`` that was killed. True if there was one to recover. Takes the sidecar lock
+    (so a restore that is still running is never touched) and raises plain-worded errors when it cannot be sure."""
+    root = Path(root).resolve() if root.exists() else root.parent.resolve() / root.name
+    if journal_restore_pending(root) is None:
+        return False
+    side = _Sidecar(root)
+    side.open()
+    try:
+        _recover(root, side, say or _say_stderr)
+        side.finish()
+    finally:
+        side.close()
+    return True

@@ -28,7 +28,7 @@ from orch.layout import STATE_DIR, WORK_DIR
 from orch.ops.errors import OrchError
 
 from .format import LOCK_FILE, lock_root
-from .steps import atomic_write
+from .steps import atomic_write, is_derived
 
 __all__ = ["KEEP", "backups_dir", "create_backup", "list_backups", "prune_backups", "restore"]
 
@@ -36,7 +36,7 @@ KEEP = 3
 MANIFEST = "manifest.json"
 DATA = "data"
 #: top-level entries left out (derived or runtime), and one nested path
-_SKIP_TOP = frozenset({STATE_DIR, WORK_DIR, LOCK_FILE})
+_SKIP_TOP = frozenset({WORK_DIR, LOCK_FILE})
 _SKIP_REL = frozenset({"install/tools", "install/update.json"})
 _REVOCATIONS = "revocations.jsonl"
 _SYNC_NAMES = frozenset(
@@ -90,7 +90,7 @@ def _exclude_from_time_machine(path: Path) -> None:
 
 
 def _excluded(rel: str) -> bool:
-    return rel.split("/")[0] in _SKIP_TOP or rel in _SKIP_REL
+    return rel.split("/")[0] in _SKIP_TOP or rel in _SKIP_REL or is_derived(rel)
 
 
 def _copy(src: Path, dst: Path, clone: bool, rel: str = "") -> bool:
@@ -103,7 +103,9 @@ def _copy(src: Path, dst: Path, clone: bool, rel: str = "") -> bool:
         if _excluded(erel):
             continue
         target = dst / entry.name
-        if entry.is_dir(follow_symlinks=False) and (erel in nested or any(r.startswith(erel + "/") for r in _SKIP_REL)):
+        if entry.is_dir(follow_symlinks=False) and (
+            erel in nested or erel == STATE_DIR or any(r.startswith(erel + "/") for r in _SKIP_REL)
+        ):
             all_cloned = _copy(Path(entry.path), target, clone, erel) and all_cloned
             continue
         if clone and _clone(entry.path, target):
@@ -313,6 +315,9 @@ def restore(
         except BaseException:
             os.rename(aside, root)
             raise
+        st = aside / STATE_DIR
+        if st.is_dir():
+            keep_rel += [f"{STATE_DIR}/{n}" for n in sorted(os.listdir(st)) if is_derived(f"{STATE_DIR}/{n}")]
         for rel in keep_rel:  # what the backup never held stays exactly as it was
             have = aside / rel
             if have.exists() or have.is_symlink():

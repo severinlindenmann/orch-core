@@ -315,7 +315,7 @@ def test_backup_is_private_and_leaves_out_derived_data(root, env):
     assert (data / "hosts/w/keys/wsk").read_text() == "secret"
     assert stat.S_IMODE((data / "hosts/w/keys/wsk").stat().st_mode) == 0o600
     assert (data / "events/a.jsonl").read_text() == "e1\n" and (data / "install/install.json").exists()
-    for gone in (".state", ".orch-work", "install/tools", "format.lock"):
+    for gone in (".state/index.sqlite", ".orch-work", "install/tools", "format.lock"):
         assert not (data / gone).exists(), gone
     m = json.loads((b / "manifest.json").read_text())
     assert (m["kind"], m["from"], m["to"]) == ("workspace", 1, 2)
@@ -790,3 +790,45 @@ def test_the_lock_file_is_not_followed_through_a_link(root, tmp_path):
     with pytest.raises(OSError):
         lock_root(root, exclusive=False)
     assert not (tmp_path / "victim").exists()
+
+
+def test_state_checkpoints_are_backed_up_and_protected_but_the_index_is_not(root, env):
+    (root / ".state/checkpoints").mkdir(parents=True)
+    (root / ".state/checkpoints/1").write_text("signed")
+    (root / ".state/abandoned").mkdir()
+    (root / ".state/abandoned/a.jsonl").write_text("x")
+    (root / ".state/pending").mkdir()
+    (root / ".state/pending/p").write_text("p")
+    (root / ".state/index.sqlite").write_text("derived")
+    (root / ".state/index.sqlite-wal").write_text("derived")
+    for rel in (".state/checkpoints/1", ".state/abandoned/x.jsonl", ".state/pending/p", "land/w/key", "known_hosts",
+                "git-pins.json", "secret-pins.json", "remote/counters.json"):  # fmt: skip
+        assert is_signed_path(rel), rel
+    assert not is_signed_path(".state/index.sqlite")
+    b = bk.create_backup(root, "workspace", 1, 2, env)
+    assert (b / "data/.state/checkpoints/1").read_text() == "signed"
+    assert (b / "data/.state/pending/p").exists() and not (b / "data/.state/index.sqlite").exists()
+    assert not (b / "data/.state/index.sqlite-wal").exists()
+    (root / ".state/checkpoints/1").write_text("tampered")
+    jr.write_journal("stopped", env, roots=[str(root.resolve())])
+    bk.restore(b, root, env)
+    assert (root / ".state/checkpoints/1").read_text() == "signed"
+    assert (root / ".state/index.sqlite").read_text() == "derived"  # carried over
+
+
+@pytest.mark.parametrize("mutate", ["rewrite", "create"])
+def test_a_step_touching_state_checkpoints_or_abandoned_is_caught(root, mutate):
+    (root / ".state/checkpoints").mkdir(parents=True)
+    (root / ".state/checkpoints/1").write_text("signed")
+
+    def sneaky(ctx):
+        if mutate == "rewrite":
+            (root / ".state/checkpoints/1").write_text("x")
+        else:
+            (root / ".state/abandoned").mkdir()
+            (root / ".state/abandoned/x.jsonl").write_text("x")
+
+    reg = Registry([Step("workspace", 1, 2, "s", sneaky)], {"workspace": 2})
+    with pytest.raises(OrchError):
+        apply(root, "workspace", reg)
+    assert read_format(root, "workspace") == 1

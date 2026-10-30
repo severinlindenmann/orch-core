@@ -212,25 +212,47 @@ def test_action_needs_presence_digest_recomputed_then_replayed(world, hub, tmp_p
         r.stop = True
 
 
+def _presence_handler(ws, path, answer):
+    """A workspace that serves a valid nonce and accepts ``/remote/presence`` (so a prompt is REACHABLE), and answers
+    the action with ``answer()`` (the 428 body) until a presence was taken."""
+    state = {"taken": False}
+
+    def handler(method, p, b):
+        if p.endswith("/remote/presence/nonce"):
+            return 200, dumps({"nonce": b64u(b"n" * 32)})
+        if p.endswith("/remote/presence"):
+            state["taken"] = True
+            return 200, dumps({"ok": True, "n": 1})
+        if p == path and not state["taken"]:
+            return 428, dumps({"ok": False, "error": answer()})
+        return 200, b"{}"
+
+    return handler, state
+
+
+def _presence_error(digest, template):
+    return {"code": "remote.presence_required", "message": "x", "retryable": False,
+            "view_digest": digest, "template": template}  # fmt: skip
+
+
 def test_digest_mismatch_means_no_prompt_and_a_403(world, hub, tmp_path):
     c, pres, _ = make_client(world, hub, tmp_path)
     ws = world.ws
     path = f"/api/w/{ws}/agents/start"
-
-    def handler(method, p, b):
-        if p == path:
-            err = {"code": "remote.presence_required", "message": "x", "retryable": False,
-                   "view_digest": "sha256:" + "0" * 64, "template": "/api/w/{ws}/agents/start"}  # fmt: skip
-            return 428, dumps({"ok": False, "error": err})
-        return 200, b"{}"
-
+    tmpl = "/api/w/{ws}/agents/start"
+    good = "sha256:" + P.route_digest(ws, "POST", tmpl, path, "", b"{}").hex()
+    mode = {"digest": "sha256:" + "0" * 64}
+    handler, state = _presence_handler(ws, path, lambda: _presence_error(mode["digest"], tmpl))
     r = start_responder(world, handler)
     try:
         s = c.open(ws)
-        n = len(pres.prompts)
+        n = len(pres.prompts)  # the "open this workspace" prompt is already in
         resp = s.request("POST", path, "", [], b"{}")
         assert resp.status == 403 and b"not_confirmed" in resp.read()
-        assert len(pres.prompts) == n  # no prompt for a digest the client cannot reproduce
+        assert len(pres.prompts) == n and state["taken"] is False  # no prompt for a digest the client cannot reproduce
+        mode["digest"] = good  # control: the same server, the matching digest DOES prompt and the action goes through
+        resp = s.request("POST", path, "", [], b"{}")
+        assert resp.status == 200 and len(pres.prompts) == n + 1 and state["taken"] is True
         s.close()
     finally:
         r.stop = True
@@ -240,24 +262,21 @@ def test_template_not_matching_the_path_means_no_prompt(world, hub, tmp_path):
     c, pres, _ = make_client(world, hub, tmp_path)
     ws = world.ws
     path = f"/api/w/{ws}/agents/start"
+    tmpl = "/api/w/{ws}/agents/start"
     other = "/api/w/{ws}/workdir/delete"
-    d = "sha256:" + P.route_digest(ws, "POST", other, path, "", b"{}").hex()
-
-    def handler(method, p, b):
-        err = {
-            "code": "remote.presence_required",
-            "message": "x",
-            "retryable": False,
-            "view_digest": d,
-            "template": other,
-        }
-        return (428, dumps({"ok": False, "error": err})) if p == path else (200, b"{}")
-
+    bad = "sha256:" + P.route_digest(ws, "POST", other, path, "", b"{}").hex()
+    good = "sha256:" + P.route_digest(ws, "POST", tmpl, path, "", b"{}").hex()
+    mode = {"digest": bad, "template": other}
+    handler, state = _presence_handler(ws, path, lambda: _presence_error(mode["digest"], mode["template"]))
     r = start_responder(world, handler)
     try:
         s = c.open(ws)
         n = len(pres.prompts)
-        assert s.request("POST", path, "", [], b"{}").status == 403 and len(pres.prompts) == n
+        assert s.request("POST", path, "", [], b"{}").status == 403
+        assert len(pres.prompts) == n and state["taken"] is False
+        mode.update(digest=good, template=tmpl)  # control: a template that matches the path DOES prompt
+        assert s.request("POST", path, "", [], b"{}").status == 200
+        assert len(pres.prompts) == n + 1 and state["taken"] is True
         s.close()
     finally:
         r.stop = True

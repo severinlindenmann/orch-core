@@ -37,6 +37,8 @@ PLANNED = {
     "sig_hub_owner_proof": "orch/v2/sig/hub-owner-proof|",  # #1198 C9: the owner proof of a hub step
     "sig_remote_owner_proof": "orch/v2/sig/remote-owner-proof|",  # R2 (#1590): the owner proof of a remote step
     "sig_remote_devices": "orch/v2/sig/remote-devices|",  # R2 (#1590): the WSK-signed remote device list
+    "sig_remote_open": "orch/v2/remote-open|",  # R5 (#1593): the remote presence key's two domains
+    "sig_remote_presence": "orch/v2/remote-presence|",
     "aad_hub_share": "orch/v2/hub-share-aad|",
     "h_share_item": "orch/v2/hub-share-item|",
 }

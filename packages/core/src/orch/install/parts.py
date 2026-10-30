@@ -4,11 +4,14 @@ domain (a domain only changes what is printed, never how a part listens)."""
 from __future__ import annotations
 
 import ipaddress
+import os
 import re
 import socket
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+
+from orch import childenv
 
 __all__ = [
     "ADDRESS_ALL",
@@ -128,7 +131,7 @@ def detect_addresses(run=None) -> list[tuple[str, str]]:
 
 def _run(argv: list[str]) -> str:
     try:
-        return subprocess.run(argv, capture_output=True, text=True, timeout=5).stdout
+        return subprocess.run(argv, capture_output=True, text=True, timeout=5, env=childenv.sanitize(os.environ)).stdout
     except (OSError, subprocess.SubprocessError):
         return ""
 

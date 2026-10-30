@@ -333,3 +333,36 @@ def test_free_space_counts_three_times_the_data(w):
     assert code(w.updater().update) == "update.no_space"
     w.free = 3 * data + 2 * wheels
     assert w.updater().update().ok
+
+
+class Kill(BaseException):
+    """A SIGKILL: no finally block runs."""
+
+
+def test_resume_recovers_an_interrupted_restore_first_and_never_migrates(w, monkeypatch):
+    from orch.migrate import backup as bk
+    from orch.migrate.journal import restore_pending
+
+    w.migrate_fail = True  # the update fails, so a rollback (a restore) starts ...
+    real_exchange = bk._exchange
+
+    def killed_after_swap(a, b):  # ... and is killed right after the swap, with no cleanup
+        assert real_exchange(a, b)
+        raise Kill()
+
+    with monkeypatch.context() as m:
+        m.setattr(bk, "_exchange", killed_after_swap)
+        m.setattr(bk.shutil, "rmtree", lambda *a, **k: None)
+        m.setattr(bk, "_put_back", lambda *a, **k: None)
+        with pytest.raises(Kill):
+            w.updater().update()
+    assert restore_pending(w.state) is not None  # the sidecar record of the killed restore is there
+    calls_before, installs = w.migrate_calls, []
+    real_install = w.installer
+    w.installer = lambda *a: installs.append(a) or real_install(*a)
+    o = w.updater().update(assume="finish")
+    assert o.action == "rolled-back" and not o.ok  # recovered, then the rollback was finished
+    assert w.migrate_calls == calls_before and installs == []  # nothing migrated or installed meanwhile
+    assert restore_pending(w.state) is None
+    untouched(w)
+    assert (w.state / "keys" / "wsk").read_text() == "secret-key-material\n"

@@ -526,6 +526,10 @@ class Updater:
             )
         self.say(f"an earlier update stopped at '{phase}'")
         try:
+            if self._recover_restores(doc):
+                # a restore was running, so the update was being rolled back: finish THAT, never go forward
+                self.say("a restore of your data was interrupted; it was put right. Finishing the rollback")
+                assume = "rollback"
             if assume == "rollback" or "to_version" not in doc:
                 return self._rollback(doc)
             info = dict(doc)
@@ -536,6 +540,15 @@ class Updater:
             return self._forward(info, phase, roots, files, rec)
         except Exception as exc:  # noqa: BLE001
             return self._fail(exc, doc)
+
+    def _recover_restores(self, doc: Mapping[str, Any]) -> bool:
+        """Recover every interrupted restore of the roots this update touched BEFORE anything else runs (P1-A:
+        ``recover_interrupted``). While one is pending nothing migrates or installs. True if there was one."""
+        roots = [self.state, *[Path(b["root"]) for b in doc.get("backup_list") or []]]
+        found = False
+        for root in dict.fromkeys(roots):
+            found = backup_mod.recover_interrupted(root, self.say) or found
+        return found
 
     # ------------------------------------------------------------------------------------------ --use
     @staticmethod

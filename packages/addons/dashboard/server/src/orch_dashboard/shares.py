@@ -254,8 +254,8 @@ def register(app: FastAPI, gateway: Gateway) -> None:
     def unavailable(link, code):
         """Why the host cannot list shares, when that is an expected state and not a failure: `reason` for the page's
         one line, `can_fix` whether one click on the page can change it. Seen in run 14 (J08-01, J07-03): a workspace
-        joined to a hub in selective mode answers `hub.state_mismatch` (publishing goes through a full-mode hub, run14
-        P01), a joined one not yet connected `hub.not_joined`."""
+        whose hub mode and signed-log mode disagree answers `hub.state_mismatch` (run14 P01 allows both modes), a joined
+        one not yet connected `hub.not_joined`."""
         if code == "runner.disabled":  # off, or paused by the hub: the host uses one code for both
             try:
                 row = next(

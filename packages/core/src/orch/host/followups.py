@@ -16,11 +16,13 @@ from orch.model import followups as rules
 from orch.model import followups_wire as wire
 from orch.model.types import ts
 
-from . import agents, custody
+from . import addonpoll, agents, custody, hubpolicy
 from .errors import HostError
 from .runners import LIVE
 
 LOG = logging.getLogger(__name__)
+
+POLL_BUDGET_S = 15.0  # one tick spends at most this long asking add-ons; due follow-ups are handled first
 
 
 class FollowupRunner:
@@ -33,6 +35,14 @@ class FollowupRunner:
         #: hook hashes of this workspace's pending webhook follow-ups, refreshed by every read; the receiver asks this
         #: set first so an unknown id never costs a store read
         self.hooks = frozenset()
+        # addon-api 1.2 (#718): polling of add-on events; only refs a pending follow-up waits on are ever asked
+        self.polls_path = self.path.with_name("addon-polls.json")
+        self.poller = addonpoll.Poller(
+            saved=custody.read_json(self.polls_path, service.host_uid),
+            save=self._save_polls,
+            host=addonpoll.HostBudget(service.state_dir / "addon-polls-host.json", service.host_uid),
+        )
+        self.addon_done = {}  # (kind, ref) -> the closed event shape of a finished poll
         self.intents.pop("_rings", None)  # rings used to live here; they have their own file now
         self.task = None
         self._wall, self._mono = clock(), mono()
@@ -61,7 +71,18 @@ class FollowupRunner:
             self._wake.clear()
 
     def status(self):
-        return {"last_tick": self._last_tick, "slept_s": self._slept_s, "blocked": dict(self._blocked)}
+        return {
+            "last_tick": self._last_tick,
+            "slept_s": self._slept_s,
+            "blocked": dict(self._blocked),
+            "addon_sources": {
+                k: dict(v) for k, v in self.poller.sources.items()
+            },  # failed polls: kind|ref -> code, since
+        }
+
+    def _save_polls(self, data):
+        custody.ensure_private_dir(self.polls_path.parent, self.service.host_uid)
+        custody.write_private(self.polls_path, data)
 
     def _save_rings(self):
         custody.ensure_private_dir(self.rings_path.parent, self.service.host_uid)
@@ -98,7 +119,7 @@ class FollowupRunner:
                 state = wire.view_state(core, ticket, rec, now)[0]
                 if state == "pending" and rec.hook:
                     hooks.add(rec.hook)
-                if state == "fired" or (state == "pending" and rec.trigger in ("time", "orch", "webhook")):
+                if state == "fired" or (state == "pending" and rec.trigger in ("time", "orch", "webhook", "addon")):
                     rows.append((ticket.uid, ticket.key, copy.copy(rec)))
         self.hooks = frozenset(hooks)
         caps = wire.caps_of(core.ws)
@@ -165,12 +186,19 @@ class FollowupRunner:
                 if await self.fire(uid, key, rec, hub, *wake):
                     live += 1
                 today += 1
+            # last: a slow add-on never delays a follow-up that is already due (its answer wakes it on the next tick)
+            if await self._poll_addons(rows, now):
+                self._wake.set()
 
     # -- what wakes a pending follow-up: (trigger, fallback, event) or None
     async def _wake_reason(self, uid, rec, now, early):
         if rec.trigger == "time":
             return ("time", None, None) if now >= ts(rec.due) - early else None
-        if rec.trigger == "webhook":
+        if rec.trigger == "addon":
+            found = self.addon_done.get(((rec.on or {}).get("kind"), (rec.on or {}).get("ref")))
+            if found is not None and fe.matches(rec.on, found):
+                return ("addon", None, dict(found))
+        elif rec.trigger == "webhook":
             rang = self.rings.get(rec.hook)
             if rang is not None:
                 return ("webhook", None, fe.webhook_event(rec.hook, rang))
@@ -179,8 +207,85 @@ class FollowupRunner:
             if event is not None:
                 return ("orch", None, event)
         if now >= ts(rec.deadline):  # the source never came: the deadline wakes it, with the reason
-            return ("deadline", "no_ring" if rec.trigger == "webhook" else "no_event", None)
+            fallback = {"webhook": "no_ring", "addon": "addon_silent"}.get(rec.trigger, "no_event")
+            return ("deadline", fallback, None)
         return None
+
+    # -- add-on events (#718): the host asks an add-on only about refs that a pending follow-up names
+    def _addon_snapshot(self, waiting):
+        """Worker thread: the ACTIVE grants (and their signed settings) of the add-ons that waiting follow-ups name."""
+        from orch.addons import install
+        from orch.addons.settings_value import KEY
+        from orch.store.render import thaw
+
+        ws = self.service.store.state.workspace
+        names = {fe.addon_of((r.on or {}).get("kind", "")) for r in waiting}
+        granted = install.as_addons({n: a for n, a in ws.addons.items() if n in names})
+        held = ws.settings.get(KEY)
+        return {
+            n: (a, thaw(held[n]) if held is not None and n in held else None)
+            for n, a in granted.items()
+            if hubpolicy.running(self.service, n)  # granted, on, and not paused by the hub policy now
+        }
+
+    def _poll_one(self, item, granted, settings):
+        """Executor thread: one `events.poll` of the add-on named by the kind's first word; (state, status)."""
+        from orch.addons import credential, envtree, install, runner
+
+        s = self.service
+        package, _ = install.read_installed(s.store.layout.store, granted.name)
+        provider = credential.provider(s.state_dir, s.workspace_id, s.host_uid, granted.name, granted.capabilities)
+        env = envtree.EnvLocation(str(s.state_dir), s.workspace_id) if granted.runtime is not None else None
+        return runner.poll(
+            package, granted, item[1], item[2], settings=settings, limits=runner.Limits(timeout=10.0),
+            credential=provider, env=env, gate=hubpolicy.run_gate(s),
+        )  # fmt: skip
+
+    async def _poll_addons(self, rows, now):
+        waiting = [r[2] for r in rows if r[2].trigger == "addon" and r[2].state == "pending"]
+        if not waiting:
+            self.poller.forget([])
+            self.addon_done = {}
+            return False
+        snap = await self.service.call(self._addon_snapshot, waiting)
+        items = []
+        for rec in waiting:
+            kind, ref = rec.on["kind"], rec.on["ref"]
+            entry = snap.get(fe.addon_of(kind))
+            decl = entry and fe.declared({entry[0].name: entry[0]}, kind)
+            if decl and fe.addon_fits(decl, ref):
+                items.append((entry[0].name, kind, ref, decl["interval_s"]))
+        self.poller.forget(items)
+        wanted = {(i[1], i[2]) for i in items}
+        self.addon_done = {k: v for k, v in self.addon_done.items() if k in wanted}
+        mono = self.mono()
+        loop = asyncio.get_running_loop()
+        end = mono + POLL_BUDGET_S  # total time one tick may spend on add-on polls
+        found = False
+        planned = self.poller.plan([i for i in items if (i[1], i[2]) not in self.addon_done], mono, now)
+        for n, item in enumerate(planned):
+            if self.mono() >= end:  # out of time: the rest keep their place and are not charged
+                for rest in planned[n:]:
+                    self.poller.refund(rest, now)
+                break
+            granted, settings = snap[item[0]]
+            try:
+                state, status = await loop.run_in_executor(None, self._poll_one, item, granted, settings)
+            except Exception as exc:  # noqa: BLE001 - a failed poll is a failed source, never a crash of the timer
+                code = addonpoll.code_of(getattr(exc, "code", ""))
+                LOG.warning("add-on poll %s failed: %s", item[1], getattr(exc, "code", type(exc).__name__))
+                self.poller.failed(item, code, self.mono(), now)
+                continue
+            if state == "done":
+                at = datetime.fromtimestamp(now, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+                self.addon_done[(item[1], item[2])] = fe.addon_event(item[1], item[2], status, at)
+                self.poller.done(item)
+                found = True
+            elif state == "pending":
+                self.poller.pending(item, self.mono())
+            else:
+                self.poller.failed(item, "reported", self.mono(), now)
+        return found
 
     def _scan(self, uid, rec):
         """The first ticket-log event after the set that matches the follow-up's `on`; only its closed shape leaves."""

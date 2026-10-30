@@ -45,13 +45,13 @@ def _signed(key: ec.EllipticCurvePrivateKey, label_key: str, o: dict[str, Any]) 
     return {"o": o, "sig": b64u(S.sign(key, L[label_key] + cj(o)))}
 
 
-def binding(wsk, hub: HubKeys, ws: str, seq: int = 1) -> dict[str, Any]:
+def binding(wsk, hub: HubKeys, ws: str, seq: int = 1, mode: str = "selective") -> dict[str, Any]:
     return _signed(
         wsk,
         "sig_hub_binding",
         {
             "v": 2, "suite": 2, "hv": 0, "kind": "hub.binding", "workspace_id": ws, "wsk_pub": pub_b64(wsk),
-            "hub_id": hub.hub_id, "hk_root_pub": b64u(hub.hk_root_pub), "mode": "selective", "binding_seq": seq,
+            "hub_id": hub.hub_id, "hk_root_pub": b64u(hub.hk_root_pub), "mode": mode, "binding_seq": seq,
             "valid_from_ms": NOW - 1000, "dev": True,
         },
     )  # fmt: skip

@@ -2048,6 +2048,12 @@ def client_seq_cases() -> None:
         endpoint=True,
     )
     client_seq(
+        "client_seq_hello_v_true",
+        [c2h({**HELLO, "v": True})],
+        endpoint=True,
+        note="v must be the integer 1: true is not 1",
+    )
+    client_seq(
         "client_seq_token_other_scope",
         [c2h({**HELLO, "token": "tok-browser"}), h2c({"t": "error", "error": "no_session"})],
         endpoint=True,
@@ -2266,6 +2272,7 @@ REQUIRED = [
     "client_rail_projection",
     "client_rail_over_max_cut_more",
     "client_seq_session",
+    "client_seq_hello_v_true",
     "client_seq_rail_then_open",
     "client_seq_rail_no_session",
     "client_seq_open_outside_rail",

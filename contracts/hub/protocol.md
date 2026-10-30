@@ -2034,7 +2034,8 @@ shows that user (`rail_message`, vectors `client_rail_*`):
   space), trimmed, cut to at most 200 UTF-8 bytes on a character boundary and trimmed again; `null` when the rail has no
   name or the result is empty or fails the §8.5 text rule (1 … 200 bytes, no control, format, bidi or ignorable
   character, no leading or trailing space). It comes **from the hub**: a client shows it as "name from the hub" and
-  never in a presence prompt before it has read the workspace's own name through the session (R5 design §3.2);
+  never in a presence prompt before it has read the workspace's own name through the session (R5 design §3.2). Clients render it as plain text only (never markup, links or HTML), escaped for their UI. An unnamed (`null`) full-mode
+  workspace falls back to the console's "<owner>'s workspace" text, nothing beyond what the console shows;
 - `online` is `true` iff the workspace's binding is live (as the rail's dot). It does not promise that an `open`
   succeeds (no stream link, remote off: `not_allowed`).
 

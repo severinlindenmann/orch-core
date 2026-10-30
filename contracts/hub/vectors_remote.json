@@ -549,6 +549,7 @@
   "client_rail_projection",
   "client_rail_over_max_cut_more",
   "client_seq_session",
+  "client_seq_hello_v_true",
   "client_seq_rail_then_open",
   "client_seq_rail_no_session",
   "client_seq_open_outside_rail",
@@ -18099,6 +18100,32 @@
     ],
     "end": "stream"
    }
+  },
+  {
+   "check": "client_seq",
+   "name": "client_seq_hello_v_true",
+   "args": {
+    "endpoint": true,
+    "frames": [
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "hello",
+       "v": true,
+       "token": "tok-remote"
+      }
+     }
+    ]
+   },
+   "expect": {
+    "error": "malformed",
+    "index": 0,
+    "answer": {
+     "t": "error",
+     "error": "malformed"
+    }
+   },
+   "note": "v must be the integer 1: true is not 1"
   },
   {
    "check": "client_seq",

@@ -384,6 +384,7 @@ const click = {
   getRemote: (ws: string) => call<import('./remote').RemoteView>(`${w(ws)}/remote`),
   remoteOff: (ws: string) => call<{ changed: boolean }>(`${w(ws)}/remote/off`, 'POST', {}),
   remoteCode: (ws: string) => call<import('./remote').RemoteCode>(`${w(ws)}/remote/code`, 'POST', {}),
+  endRemoteSession: (ws: string, streamId: string) => call<{ ended: boolean }>(`${w(ws)}/remote/sessions/${streamId}/end`, 'POST', {}),
   removeRemoteDevice: (ws: string, id: string) => call<{ removed: boolean }>(`${w(ws)}/remote/devices/${encodeURIComponent(id)}/remove`, 'POST', {}),
   refreshHub: (ws: string) => call<import('./hub').HubRefreshed>(`${w(ws)}/hub/refresh`, 'POST', {}),
   connectHub: (ws: string, body: import('./hub').HubConnectRequest) => call<import('./hub').HubConnected>(`${w(ws)}/hub/connect`, 'POST', body),

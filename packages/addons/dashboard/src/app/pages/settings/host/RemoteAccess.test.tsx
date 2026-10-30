@@ -25,6 +25,7 @@ beforeEach(() => {
     get: vi.spyOn(api, 'getRemote').mockImplementation(async () => view),
     off: vi.spyOn(api, 'remoteOff').mockResolvedValue({ changed: true }),
     code: vi.spyOn(api, 'remoteCode').mockResolvedValue({ code: 'orch-rc1.w.AAAA.BBBB', expires_ms: 1 }),
+    end: vi.spyOn(api, 'endRemoteSession').mockResolvedValue({ ended: true }),
     remove: vi.spyOn(api, 'removeRemoteDevice').mockResolvedValue({ removed: true }),
     click: vi.spyOn(api, 'clickStatus').mockResolvedValue({ custody: 'convenience', enabled: true, available: true, switchable: true } as never),
     prepare: vi.spyOn(api, 'prepareClick').mockRejectedValue(new Error('stop here')),
@@ -167,5 +168,16 @@ describe('Remote access, on', () => {
     fireEvent.click(screen.getByTestId('remote-pending-add'))
     await waitFor(() => expect(spies.prepare).toHaveBeenCalled())
     expect(spies.prepare.mock.calls[0]![1]).toEqual({ action: 'remote_device_confirm', pending: PENDING, level_cap: 'view', days: 90 })
+  })
+})
+
+describe('Remote access, open sessions', () => {
+  it('End is one click and names the session by its stream, nothing else', async () => {
+    view = { ...ON, sessions: [{ device: "Anna's laptop", device_id: DEV, stream_id: '5e'.repeat(16), level: 'work', since_ms: 1 }] }
+    mount()
+    expect(await screen.findByTestId('remote-session', {}, T)).toHaveTextContent("Anna's laptop")
+    fireEvent.click(screen.getByTestId('remote-session-end'))
+    await waitFor(() => expect(spies.end).toHaveBeenCalledWith(WS, '5e'.repeat(16)))
+    expect(screen.getByTestId('remote-session-end')).toHaveTextContent('End')
   })
 })

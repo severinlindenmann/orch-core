@@ -34,7 +34,7 @@ export interface RemoteView {
   hub_mode: 'none' | 'selective' | 'full'
   devices: RemoteDevice[]
   pending: RemotePending[]
-  sessions: { device: string; device_id: string }[]
+  sessions: { device: string; device_id: string; stream_id: string; level: RemoteLevel | null; since_ms: number | null }[]
 }
 export interface RemoteCode { code: string; expires_ms: number | null }
 

@@ -173,6 +173,7 @@ export function createApi(transport: Transport) {
     getRemote: (ws: string) => call<import('./remote').RemoteView>('GET', `/api/w/${ws}/remote`),
     remoteOff: (ws: string) => call<{ changed: boolean }>('POST', `/api/w/${ws}/remote/off`, {}),
     remoteCode: (ws: string) => call<import('./remote').RemoteCode>('POST', `/api/w/${ws}/remote/code`, {}),
+    endRemoteSession: (ws: string, streamId: string) => call<{ ended: boolean }>('POST', `/api/w/${ws}/remote/sessions/${streamId}/end`, {}),
     removeRemoteDevice: (ws: string, id: string) => call<{ removed: boolean }>('POST', `/api/w/${ws}/remote/devices/${id}/remove`, {}),
     getHubProfile: (ws: string) => call<import('./profile').WorkspaceProfile>('GET', `/api/w/${ws}/hub/profile`),
     putHubProfile: (ws: string, profile: import('./profile').ProfileFields) => call<import('./profile').WorkspaceProfile>('PUT', `/api/w/${ws}/hub/profile`, profile),

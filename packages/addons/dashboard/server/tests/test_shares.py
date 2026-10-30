@@ -520,6 +520,9 @@ def test_a_switch_session_cannot_register_and_the_route_takes_no_address(client,
 def test_publish_addresses_are_checked_like_the_host_does(token):
     from pydantic import ValidationError
 
-    for server, share in (("https://a..example", "https://b.example"), ("https://a.example:99999", "https://b.example")):
+    for server, share in (
+        ("https://a..example", "https://b.example"),
+        ("https://a.example:99999", "https://b.example"),
+    ):
         with pytest.raises(ValidationError):
             handoff.PublishSetup(action="publish_setup", server=server, share=share)

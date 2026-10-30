@@ -161,6 +161,7 @@ export function RemoteAccess({ ws }: { ws: string }) {
   const refresh = () => { void qc.invalidateQueries({ queryKey: ['remote', ws] }) }
   const off = useMutation({ mutationFn: () => api.remoteOff(ws), onSuccess: () => { setAdding(false); setCode(null); refresh() }, onError: e => toastApiError(e, "Couldn't turn remote access off.") })
   const remove = useMutation({ mutationFn: (id: string) => api.removeRemoteDevice(ws, id), onSuccess: refresh, onError: e => toastApiError(e, "Couldn't remove the device.") })
+  const endSession = useMutation({ mutationFn: (streamId: string) => api.endRemoteSession(ws, streamId), onSuccess: refresh, onError: e => toastApiError(e, "Couldn't end the session.") })
   const issue = useMutation({ mutationFn: () => api.remoteCode(ws), onSuccess: c => { setCode(c); setAdding(true) }, onError: e => toastApiError(e, "Couldn't make a code.") })
   const view = status.data
   if (status.isPending && status.fetchStatus !== 'idle') return null
@@ -207,7 +208,14 @@ export function RemoteAccess({ ws }: { ws: string }) {
           <h3 className="text-[13px] font-medium">Open sessions</h3>
           {view.sessions.length === 0
             ? <p data-testid="remote-no-sessions" className="text-[13px] text-text-muted">No one is connected.</p>
-            : <ul className="space-y-1">{view.sessions.map(s => <li key={s.device_id} data-testid="remote-session" className="text-[13px]"><Raw>{s.device}</Raw></li>)}</ul>}
+            : <ul className="space-y-1">
+              {view.sessions.map(s => (
+                <li key={s.stream_id} data-testid="remote-session" className="flex flex-wrap items-center justify-between gap-2 text-[13px]">
+                  <span className="min-w-0"><Raw>{s.device}</Raw>{s.level && <span className="text-text-muted"> {LEVEL_NAME[s.level]}</span>}</span>
+                  <Button size="sm" variant="outline" data-testid="remote-session-end" disabled={endSession.isPending} onClick={() => endSession.mutate(s.stream_id)}>End</Button>
+                </li>
+              ))}
+            </ul>}
         </div>
       )}
     </section>

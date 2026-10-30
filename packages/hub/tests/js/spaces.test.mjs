@@ -7,6 +7,7 @@ class Node_ {
   append(...kids) { for (const k of kids) this.children.push(k && k.nodeType ? k : new Node_("#text", String(k))); }
   replaceChildren(...kids) { this.children = []; this.append(...kids); }
   setAttribute(k, v) { this.attrs[k] = v; }
+  removeAttribute(k) { delete this.attrs[k]; }
   getAttribute(k) { return this.attrs[k] ?? null; }
   addEventListener(k, f) { this.listeners[k] = f; }
   set textContent(v) { this._text = String(v); this.children = []; }
@@ -14,7 +15,7 @@ class Node_ {
   all() { return [this, ...this.children.flatMap((c) => c.all())]; }
 }
 globalThis.document = { createElement: (t) => new Node_(t), createTextNode: (t) => new Node_("#text", t), getElementById: () => null };
-const { spacesView, historyView, newSpaceDialog, STATEMENT, RESTORE_LINE } = await import("../../src/orch_hub/web/pages/spaces.js");
+const { spacesView, historyView, newSpaceDialog, STATEMENT, NO_START, RESTORE_LINE } = await import("../../src/orch_hub/web/pages/spaces.js");
 const NOW = 1_800_000_000_000;
 const find = (n, pred) => n.all().filter(pred);
 const data = { spaces: [
@@ -73,7 +74,7 @@ test("New shared space: three steps, the statement is on the page and in the dia
   name.value = " Launches "; name.listeners.input(); purpose.value = "Dates"; purpose.listeners.input();
   clickAll(dlg, "Next")[0].listeners.click();
   assert.match(dlg.textContent, /step 3 of 3/);
-  assert.ok(dlg.textContent.includes(STATEMENT) && dlg.textContent.includes("its owner has to accept first"));
+  assert.ok(dlg.textContent.includes(STATEMENT) && dlg.textContent.includes("waits for its owner") && dlg.textContent.includes("joins now"));
   const create = clickAll(dlg, "Create")[0];
   assert.equal(create.disabled, true);
   const [box_a] = find(dlg, (n) => n.tag === "input" && n.attrs.type === "checkbox" && n.attrs["aria-label"] === "Product");
@@ -86,6 +87,29 @@ test("New shared space: three steps, the statement is on the page and in the dia
   create.listeners.click();
   assert.deepEqual(made[0], { type: "board", name: "Launches", purpose: "Dates", members: ["a"], understood: true });
   assert.equal(find(view, (n) => n.attrs.id === "space-dialog")[0].children.length, 0);   // the dialog closed
+});
+
+test("New shared space: only waiting workspaces ticked keeps Create off and says why; a full one turns it on", () => {
+  const made = [];
+  const view = spacesView({ ...data, workspaces: WS }, { create: (f) => made.push(f) }, NOW);
+  find(view, (n) => n.attrs.id === "new-space")[0].listeners.click();
+  const dlg = find(view, (n) => n.attrs.id === "space-dialog")[0];
+  find(dlg, (n) => n.attrs["data-type"] === "board")[0].listeners.click();
+  clickAll(dlg, "Next")[0].listeners.click();
+  const name = find(dlg, (n) => n.tag === "input")[0]; name.value = "X"; name.listeners.input();
+  clickAll(dlg, "Next")[0].listeners.click();
+  const box = (label) => find(dlg, (n) => n.tag === "input" && n.attrs["aria-label"] === label)[0];
+  const create = clickAll(dlg, "Create")[0];
+  const reason = find(dlg, (n) => n.attrs.id === "space-no-start")[0];
+  const tick = find(dlg, (n) => n.attrs.id === "space-understood")[0]; tick.checked = true; tick.listeners.change();
+  assert.equal(reason.hidden, true); assert.equal(create.disabled, true);          // nothing ticked: no reason yet
+  box("Legal").checked = true; box("Legal").listeners.change();                    // selective only
+  assert.equal(create.disabled, true); assert.equal(reason.hidden, false);
+  assert.equal(reason.textContent, NO_START); assert.equal(create.attrs["aria-describedby"], "space-no-start");
+  create.listeners.click(); assert.equal(made.length, 0);
+  box("Product").checked = true; box("Product").listeners.change();                // one that joins now
+  assert.equal(create.disabled, false); assert.equal(reason.hidden, true); assert.equal(create.attrs["aria-describedby"], undefined);
+  create.listeners.click(); assert.deepEqual(made[0].members, ["c", "a"]);
 });
 
 test("a member is removed only on the second click and added from the picker", () => {
@@ -142,4 +166,15 @@ test("no innerHTML (or any HTML sink) anywhere in the page, and item data only r
   const src = readFileSync(new URL("../../src/orch_hub/web/pages/spaces.js", import.meta.url), "utf8");
   for (const bad of [/innerHTML/, /outerHTML/, /insertAdjacentHTML/, /\bhref\b/, /\.src\b/, /setAttribute\(\s*["']on/, /document\.write/]) assert.doesNotMatch(src, bad);
   assert.doesNotMatch(src, /h\("a"/);                                  // never a link from item data
+});
+
+test("say() gives plain words for the space codes and never echoes a raw code", async () => {
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("../../src/orch_hub/web/app.js", import.meta.url), "utf8");
+  const words = src.slice(src.indexOf("const WORDS = {"), src.indexOf("const say ="));
+  const say = new Function(`${words}; const renderText = String; return (code) => WORDS[code] ?? ${src.match(/const say = \(code\) => WORDS\[code\] \?\? (.*);/)[1]};`)();
+  for (const code of ["wrong_mode", "unknown_workspace", "exists", "not_accepted", "some_new_code"]) {
+    const t = say(code);
+    assert.doesNotMatch(t, /[(_]/, code); assert.ok(t.length > 10);
+  }
 });

@@ -5,7 +5,8 @@ import { api } from '@/api/client'
 import type { Workspace } from '@/api/types'
 import { WorkspaceNote } from './WorkspaceNote'
 
-const viewer = vi.hoisted(() => ({ role: 'owner' as string }))
+const viewer = vi.hoisted(() => ({ role: 'owner' as string, remote: false }))
+vi.mock('@/api/features', async (orig) => ({ ...(await orig<typeof import('@/api/features')>()), showsLogout: () => viewer.remote }))
 vi.mock('./useViewerRole', () => ({ useViewerRole: () => viewer.role }))
 
 const ws = { id: 'w1', prefix: 'T', name: 'Test' } as unknown as Workspace
@@ -19,6 +20,7 @@ function show() {
 
 beforeEach(() => {
   viewer.role = 'owner'
+  viewer.remote = false
   for (const f of Object.values(fns)) f.mockReset()
   fns.getClaudeTrust.mockResolvedValue({ available: true, on: true, offered: false, why_not: '', parent_config: '' })
   fns.getRecords.mockResolvedValue(records(true))
@@ -73,6 +75,12 @@ describe('WorkspaceNote', () => {
     const { container } = show()
     await waitFor(() => expect(fns.getClaudeTrust).toHaveBeenCalled())
     await waitFor(() => expect(container.textContent).toBe(''))
+  })
+  it('in a hub or remote session it makes no Claude-trust call (the host refuses it there)', async () => {
+    viewer.remote = true
+    show()
+    expect(await screen.findByText('History on')).toBeTruthy()
+    expect(fns.getClaudeTrust).not.toHaveBeenCalled()
   })
   it('draws nothing for a non-owner and asks the host nothing', async () => {
     viewer.role = 'member'

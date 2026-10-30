@@ -151,6 +151,8 @@ TABLE: dict[tuple[str, str], tuple[str, str]] = {
     (POST, W + "/org/decline"): (ALLOWED, "turning off: owner, plain click, full session only"),
     (POST, W + "/org/sync"): (ALLOWED, "fetches the offers; grants nothing"),
     (POST, W + "/org/tool"): (ALLOWED, "owner, plain click; turning ON is refused unless the session is local"),
+    (GET, W + "/hub/profile"): (ALLOWED, "a read; the host answers the owner only"),
+    (PUT, W + "/hub/profile"): (ALLOWED, "owner, plain click; listing ON is refused from a remote session"),
     (POST, W + "/hub/link"): (ALLOWED, "reads the link's hub card; nothing is signed or kept"),
     (POST, W + "/hub/connect"): (STEP_UP, "the second half of a hub join"),
     (POST, W + "/hub/refresh"): (
@@ -226,6 +228,7 @@ TABLE: dict[tuple[str, str], tuple[str, str]] = {
     (POST, W + "/workdir/delete"): (ALLOWED, "turning off"),
     # --- shares
     (GET, W + "/shares"): (ALLOWED, ""),
+    (POST, W + "/shares/upload"): (ALLOWED, "a file picked for a share, kept aside by the host; nothing is shared"),
     (POST, W + "/shares/prepare"): (ALLOWED, "admin action, plain click"),
     (POST, W + "/shares/send"): (ALLOWED, "admin action, plain click"),
     (POST, W + "/shares/revoke"): (ALLOWED, "turning off"),

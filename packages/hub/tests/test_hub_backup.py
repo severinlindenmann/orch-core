@@ -496,6 +496,8 @@ def test_back_up_now_waits_ten_minutes_after_the_last_backup(w):
     assert len(BackupService(w.env.keys).list()) == 1 and _events(w, "hub_backup")[-1]["change"] == "key_set"
     w.clock.advance(9 * 60_000)
     assert w.call("POST", "/admin/backups", {}, token=w.login(w.admin))[0] == 429
+    st = w.call("GET", "/admin/backup", token=w.login(w.admin))[1]  # P07: the page greys out the button until then
+    assert st["next_manual_ms"] == st["backups"][0]["made_ms"] + 600_000
     tok = _later(w)  # now past 10 minutes since the first backup
     assert w.call("POST", "/admin/backups", {}, token=tok)[0] == 200
     assert w.call("POST", "/admin/backups", {}, token=tok)[0] == 429  # and again right after

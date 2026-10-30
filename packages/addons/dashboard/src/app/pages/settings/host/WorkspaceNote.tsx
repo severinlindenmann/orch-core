@@ -3,6 +3,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { Info } from 'lucide-react'
 import { queries } from '@/api/queries'
+import { showsLogout } from '@/api/features'
 import type { Workspace } from '@/api/types'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { useViewerRole } from './useViewerRole'
@@ -17,7 +18,8 @@ const HISTORY_OFF = 'Your tickets and their history are not being saved for you.
 export function WorkspaceNote({ workspace }: { workspace: Workspace }) {
   const ws = workspace.id
   const mayRecord = useViewerRole(workspace) === 'owner' // the host checks the owner role on both routes
-  const trust = useQuery({ ...queries.claudeTrust(ws), enabled: mayRecord })
+  // The host refuses the Claude-trust route in a hub or remote session by design: not asked there, so no refused call.
+  const trust = useQuery({ ...queries.claudeTrust(ws), enabled: mayRecord && !showsLogout() })
   const records = useQuery({ ...queries.records(ws), enabled: mayRecord })
   const t = trust.data
   const r = records.data

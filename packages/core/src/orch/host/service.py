@@ -339,6 +339,11 @@ class Host:
         ensure_private_dir(self.state_dir / "hosts", self.host_uid)
         self._take_host_lock()
         try:
+            from orch.update.guard import hold_state_root
+
+            self._root = hold_state_root(
+                self.state_dir, quarantine_ok=True
+            )  # the shared format lock for the life of this process
             self.cursors = Cursors(cursor_key(host_dir(self.state_dir)))
             self.registry.load()
             self._check_dev_registry()
@@ -367,6 +372,9 @@ class Host:
         return any(a["workspace_id"] == workspace_id for a in self.dev_alarms)
 
     def _release_host_lock(self) -> None:
+        root, self._root = getattr(self, "_root", None), None
+        if root is not None:
+            root.close()
         if self._lock_fd is not None:
             os.close(self._lock_fd)
             self._lock_fd = None

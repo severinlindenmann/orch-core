@@ -10,8 +10,11 @@ While the marker ``<state>/install/quarantine`` exists, a host that starts:
 It is a file, not an environment variable, because launchd and systemd start the host with their own environment.
 The marker only ever makes things MORE closed, and a host that reads it fails closed (a broken symlink counts).
 ``orch update`` writes it before the quarantined start and removes it before the normal start, on every path
-(commit, rollback, resume). A person can also remove it by hand with ``orch update --rollback`` (it is cleared there).
-:func:`orch.migrate.format.open_root` lets a quarantined process pass the "unfinished update" refusal and nothing else.
+(commit, rollback, resume).
+
+ONLY the host can run quarantined. hub, relay, publish and the dashboard are started after the commit.
+:func:`orch.migrate.format.open_root` (``quarantine_ok=True``, passed only by the host) lets a process through an
+unfinished update journal exactly while this marker exists; every other process is refused by that journal.
 """
 
 from __future__ import annotations

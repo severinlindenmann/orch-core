@@ -404,6 +404,9 @@ def bind_listener(wanted):
 
 def serve(lock_held=False, port=None, listen=None):
     refuse_agent()
+    from orch.update.guard import hold_state_root
+
+    _state_root = hold_state_root(state_dir())  # refuses during an unfinished update; lock held while serving
     run_dir(state_dir())
     directory = state_dir() / "dashboard"
     with private_directory(directory) as fd:

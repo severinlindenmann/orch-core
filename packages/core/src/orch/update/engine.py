@@ -484,6 +484,12 @@ class Updater:
     def _rollback(self, doc: dict[str, Any] | None) -> Outcome:
         """Put the old code and the old data back (only before the commit). Idempotent: a crash inside is resumed."""
         doc = doc or {}
+        if doc.get("phase") not in (None, "stopped", "committed") and not doc.get("backup_list"):
+            raise OrchError(
+                "update.interrupted",
+                "the record of the interrupted update names no backup, so orch will not roll back by itself; "
+                "nothing was changed",
+            )
         if doc.get("phase") == "committed":
             raise OrchError("update.after_commit", "the update is committed: it can only be fixed forward")
         frm = doc.get("from_version") or self.layout.current_version()
@@ -561,11 +567,17 @@ class Updater:
 
 
 def read_journal_safe(env: Mapping[str, str]) -> dict[str, Any] | None:
-    """The journal; a damaged one is treated as 'stopped, nothing known' so that a rollback is still offered."""
+    """The journal. A damaged one is NEVER rolled back on a guess: without its ``backups`` nothing says which data to
+    put back, so ``orch update`` refuses and tells the person in plain words."""
     try:
         return read_journal(env)
     except OrchError:
-        return {"phase": "stopped", "v": 1}
+        raise OrchError(
+            "update.interrupted",
+            "an earlier update was interrupted and its record is damaged, so orch will not guess what to put back. "
+            "Nothing was changed. Your backups are in the backups folder next to orch's data (see the log of that "
+            "update); ask for help before running the installer again",
+        ) from None
 
 
 def roots_of(info: Mapping[str, Any]) -> list[tuple[str, str, Path]]:

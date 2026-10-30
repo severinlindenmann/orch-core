@@ -604,7 +604,9 @@ def test_app_release_signs_exactly_the_hosts_words_for_this_staged_release():
     action = handoff.AppRelease(action="app_release", key="DEMO-1", staged_id=APP_STAGED)
     assert handoff.host_call(action) == ("app.release", {"staged_id": APP_STAGED})
     check = handoff.expected(action)
-    text = "\n".join([handoff.APP_MARK, "Ticket: DEMO-1", "Version: 2", f"Staged release: {APP_STAGED}", f"App id: {'ab' * 16}"])
+    text = "\n".join(
+        [handoff.APP_MARK, "Ticket: DEMO-1", "Version: 2", f"Staged release: {APP_STAGED}", f"App id: {'ab' * 16}"]
+    )
     assert check([{"type": "log.added", "text": text}]) is True
     assert check([{"type": "log.added", "text": text.replace(APP_STAGED, "pa_" + "f" * 32)}]) is False
     assert check([{"type": "log.added", "text": "hello\n" + text}]) is False  # does not start with the mark

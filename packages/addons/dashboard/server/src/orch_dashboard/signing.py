@@ -1036,10 +1036,10 @@ class PublishShare(Action):
 
 
 class AppRelease(Action):
-    """`app.release {staged_id}` through `human.prepare` (#1457): a person's signature over the exact words the host builds
-    from the staged app release (name, who may open it, what it may reach, every file, what changed, the hashes). An
-    app that runs code for other people goes live only after this click; an agent can stage a release, never sign it.
-    `key` is the ticket the release belongs to (the prepared review must be about that ticket)."""
+    """`app.release {staged_id}` through `human.prepare` (#1457): a person's signature over the exact words the host
+    builds from the staged app release (name, who may open it, what it may reach, every file, what changed, the
+    hashes). An app that runs code for other people goes live only after this click; an agent can stage a release,
+    never sign it. `key` is the ticket the release belongs to (the prepared review must be about that ticket)."""
 
     action: Literal["app_release"]
     key: Key

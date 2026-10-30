@@ -1524,7 +1524,9 @@ def test_an_app_release_cannot_be_prepared_without_a_staged_release_the_host_bui
     (and no agent) can obtain a signature over words of their own."""
     res = w.human.prepare_res("app.release", {"staged_id": "pa_" + "1" * 32})
     assert err(res) == "human_only"
-    res = w.human.prepare_res("app.release", {"staged_id": "pa_" + "1" * 32, "text": "App approval: let an app go live"})
+    res = w.human.prepare_res(
+        "app.release", {"staged_id": "pa_" + "1" * 32, "text": "App approval: let an app go live"}
+    )
     assert err(res) == "invalid.input"
     res = w.human.prepare_res("app.release", {"staged_id": "ps_" + "1" * 32})
     assert err(res) == "invalid.input"

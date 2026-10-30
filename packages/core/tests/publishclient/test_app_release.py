@@ -72,7 +72,10 @@ def test_an_update_lists_what_widens_against_the_live_version():
     )
     text = words(meta=new, previous={"version": 1, "meta": live})
     assert "Compared with the live version 1:" in text
-    assert "- Who can open it: was anyone with the link who knows the password you set; now anyone with the link, no sign-in" in text
+    assert (
+        "- Who can open it: was anyone with the link who knows the password you set; "
+        "now anyone with the link, no sign-in" in text
+    )
     assert "- The app may now also contact: https://api.example.com" in text
     assert "- Files: 1 added, 1 changed, 0 removed" in text
 
@@ -94,7 +97,10 @@ def test_every_access_has_plain_words(access, audience, said):
 
 
 def test_every_op_has_its_own_action_words():
-    got = {op: next(x for x in words(op=op, previous=None, version=2).split("\n") if x.startswith("Action:")) for op in approval.APP_OPS}
+    got = {
+        op: next(x for x in words(op=op, previous=None, version=2).split("\n") if x.startswith("Action:"))
+        for op in approval.APP_OPS
+    }
     assert len(set(got.values())) == 3
 
 
@@ -102,7 +108,8 @@ def test_any_change_to_what_goes_live_changes_the_signed_text():
     base = words()
     meta = make_meta()
     variants = [
-        make_meta(name="Sales board 2"), make_meta(reach=["https://api.example.com"]), make_meta(access="company", audience="company"),
+        make_meta(name="Sales board 2"), make_meta(reach=["https://api.example.com"]),
+        make_meta(access="company", audience="company"),
         make_meta(files=[file("app.js", b"changed"), file("index.html", b"<p>")]), make_meta(label="other"),
     ]  # fmt: skip
     assert len({base, *(words(meta=m) for m in variants)}) == len(variants) + 1

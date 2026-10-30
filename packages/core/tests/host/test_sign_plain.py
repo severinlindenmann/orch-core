@@ -220,6 +220,7 @@ VALUES = {
     "schedule": "sc_marker", "via": {"anchor": "marker-anchor"},
     "gates": {"plan": POLICY}, "set": {"grant_hours": 5},
     "runtime": {"kind": "python-requirements", "lock": "marker-lock.txt", "packages": 3},
+    "events": [{"kind": "run.finished", "title": "Run finished", "statuses": ["ok"], "ref": "int", "interval_s": 300}],
     "old": "d_" + "5" * 32, "rotation": {"o": {"kind": "device_rotation", "marker": "rot"}, "sig": "s"},
     "hub_id": "38d8abed52ccfb538da401fd54e64bdc", "hk_root_pub": "marker-hubroot", "mode": "selective", "binding_seq": 3,
     "level": "work", "level_cap": "view", "until_ms": 1_800_000_000_000, "expires_ms": 1_800_000_000_000, "premises": "no",
@@ -308,6 +309,8 @@ def test_the_plain_view_shows_every_key_it_claims_to_show(typ):
                     "source_sha": "aaaaaaaaaaaa",
                 }[key]
             )
+        elif key == "events":
+            needles.append("Run finished")  # the title the person reads
         elif key == "aliases":
             needles.append("a" * 32)  # the hub name of the person
         elif key in ("gate", "question"):

@@ -229,7 +229,7 @@ class LinkClient:
         self._events: list[dict[str, Any]] = []  # verified h2w ``event_deliver`` requests (custodial events, p4)
         self._pending_ev: dict[str, Any] | None = None
         self._streams: list[dict[str, Any]] = []  # verified h2w stream_open / stream_data / stream_close (R2)
-        self._overflow: list[str] = []  # streams whose h2w frame found the queue full: frame dropped, the pump closes them
+        self._overflow: list[str] = []  # streams that lost an h2w frame to a full queue (F3)
         self._open_reqs: set[int] = set()  # handed-out stream_open requests (by h2w seq) awaiting their answer
         self._cb = conn.exporter()  # this connection's TLS exporter: every signature of the link binds it (R1)
         self._last_in = 0  # the h2w seq of the last frame accepted (replies and pushes share the hub's counter)

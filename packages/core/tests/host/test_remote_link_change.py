@@ -13,7 +13,7 @@ import pytest
 from orch.crypto.encoding import b64u
 from orch.host.remote import pump
 from orch.hubclient.tlslink import framing
-from orch.hubclient.tlslink.client import MAX_QUEUED, LinkClient
+from orch.hubclient.tlslink.client import MAX_QUEUED
 from tests.host import human_helpers
 from tests.host.remote_world import World
 from tests.hub.test_link_client import open_link
@@ -102,7 +102,6 @@ def test_stream_open_that_finds_the_queue_full_is_answered_busy(make_hub) -> Non
 def test_route_in_overflow_still_closes_the_link(make_hub) -> None:
     """The change is for stream frames only: a full ``event_deliver`` queue keeps its refuse-never-drop rule."""
     from orch.hubclient.tlslink.client import LinkError
-
     from tests.hub.test_link_client import _push_event
 
     def on_request(hub: TlsHub, o: dict):

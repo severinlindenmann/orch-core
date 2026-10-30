@@ -7,6 +7,10 @@ import { RouterProvider } from '@tanstack/react-router'
 import { createAppRouter } from './app/router'
 import './lib/cssom'
 import './styles/tokens.css'
+import { applyChoice, watchSystem } from './lib/theme'
+
+applyChoice() // the boot script did this already; this keeps the page right if it was blocked
+watchSystem()
 
 if (isSetupPage()) {
   const session = bootstrapSetup()

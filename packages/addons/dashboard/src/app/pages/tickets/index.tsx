@@ -297,10 +297,10 @@ export function TicketsPage() {
           <div className="flex items-center gap-1.5">
             <span className="text-[11px] text-text-faint">Group</span>
             <ToggleGroup type="single" variant="outline" size="sm" value={grouping.group} onValueChange={(v) => v && setGrouping({ group: v as 'epic' | 'none' })} aria-label="Group by">
-              <ToggleGroupItem value="epic" className="h-7 px-2.5 text-[12px] data-[state=on]:bg-brand-soft data-[state=on]:text-brand">
+              <ToggleGroupItem value="epic" className="h-7 px-2.5 text-[12px] data-[state=on]:bg-brand-soft data-[state=on]:text-brand-chip-text">
                 Epic
               </ToggleGroupItem>
-              <ToggleGroupItem value="none" className="h-7 px-2.5 text-[12px] data-[state=on]:bg-brand-soft data-[state=on]:text-brand">
+              <ToggleGroupItem value="none" className="h-7 px-2.5 text-[12px] data-[state=on]:bg-brand-soft data-[state=on]:text-brand-chip-text">
                 None
               </ToggleGroupItem>
             </ToggleGroup>

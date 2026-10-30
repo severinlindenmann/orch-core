@@ -93,6 +93,7 @@ class Release:
     seq: int
     channel: str
     manifest: dict[str, Any]
+    revs_issued: str = ""
 
     def path(self, role: str) -> Path:
         name = next(f["name"] for f in self.manifest["files"] if f["role"] == role)
@@ -110,6 +111,8 @@ def build_release(
     cert_serial: int | None = None,
     issued: datetime | None = None,
     expires: datetime | None = None,
+    revs_issued: datetime | None = None,
+    revs_min_serial: int | None = None,
     **over: Any,
 ) -> Release:
     """A release folder: channel.json (the signed envelope), two wheels and a constraints file."""
@@ -158,9 +161,13 @@ def build_release(
         stamp(now - timedelta(days=1)),
         stamp(now + timedelta(days=90)),
     )
-    env = GEN.envelope(GEN.jcs(m), key_id, cert=GEN.key_cert(key_id, raw=GEN.jcs(cert)))
+    revs_at = stamp(revs_issued or now - timedelta(days=1))
+    revs_doc = {**GEN.REVOCATIONS, "issued_at": revs_at, "min_serial": revs_min_serial or GEN.REVOCATIONS["min_serial"]}
+    env = GEN.envelope(
+        GEN.jcs(m), key_id, cert=GEN.key_cert(key_id, raw=GEN.jcs(cert)), revs=GEN.revocations(doc=revs_doc)
+    )
     (out / "channel.json").write_text(GEN.text(env), encoding="utf-8")
-    return Release(out, version, seq, channel, m)
+    return Release(out, version, seq, channel, m, revs_at)
 
 
 def pinned_uv_version() -> str:

@@ -68,6 +68,8 @@ explain() {
     wrong_channel) echo "it belongs to a different channel" ;;
     expired) echo "it has expired" ;;
     rollback | revocations_rollback) echo "it is older than what this computer has already seen" ;;
+    revocations_below_floor) echo "its revocation list is older than this installer accepts: get a newer install.sh" ;;
+    revocations_stale) echo "this release's revocation list is too old; try again later or tell the person who runs orch releases" ;;
     size_mismatch | hash_mismatch) echo "a downloaded file does not match what was signed" ;;
     *) echo "it could not be checked" ;;
   esac
@@ -97,6 +99,11 @@ from datetime import datetime, timezone
 ROOTS_B64 = {}
 # ROOTS-END
 ALLOW_TEST_CHANNELS = False  # a production installer refuses every test-* channel
+# FLOOR-BEGIN  the oldest revocation list a FIRST install accepts (scripts/release/floor.py rewrites both lines per release)
+REVOCATIONS_FLOOR_ISSUED_AT = "2026-10-20T00:00:00Z"
+REVOCATIONS_FLOOR_MIN_SERIAL = 1
+# FLOOR-END
+REVOCATIONS_MAX_AGE_DAYS = 30  # and the list must be fresh: the scheduled re-sign refreshes it with every manifest
 
 P = 2**255 - 19
 L = 2**252 + 27742317777372353535851937790883648493
@@ -503,6 +510,12 @@ def cmd_check():
         v = verify(env, channel, now, seq_seen, revs_at, files)
     except Refused as r:
         fail("REFUSED " + r.reason, 1)
+    if v["min_serial"] < REVOCATIONS_FLOOR_MIN_SERIAL or parse_time(v["revocations_issued_at"]) < parse_time(
+        REVOCATIONS_FLOOR_ISSUED_AT
+    ):
+        fail("REFUSED revocations_below_floor", 1)
+    if (now - parse_time(v["revocations_issued_at"])).days >= REVOCATIONS_MAX_AGE_DAYS:
+        fail("REFUSED revocations_stale", 1)
     doc = v["document"]
     if arg("--json-out"):
         out = {k: v[k] for k in ("channel", "seq", "version", "min_serial", "revocations_issued_at", "root_key_id",

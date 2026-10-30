@@ -34,6 +34,13 @@
 #   REQUIRED (the refresh anchor list is git tags, trusted.py): protect `v*` tags (no update, no delete) and turn on
 #   immutable releases, so a version tag cannot be moved, nor its release retitled, replaced or deleted.
 #
+# ---- revocations freshness and the install.sh floor (P2-C) ------------------------------------------------------------
+#   install.sh refuses a revocation list whose issued_at is 30 days old or more, and one below its baked-in floor. So the
+#   scheduled re-sign (P2-B) MUST re-sign release/keys/revocations.json with a fresh issued_at at least every 3 weeks
+#   (root-signed, so this needs the root: until that is automated, a root re-sign belongs on the lead's calendar), and every
+#   release run must execute `python3 scripts/release/floor.py install.sh release/keys/revocations.json` BEFORE uploading
+#   install.sh as a release asset (tests/release/test_install_floor.py fails in CI if the committed floor is older).
+#
 # ---- seq -------------------------------------------------------------------------------------------------------------
 #   seq = github.run_number + repository variable RELEASE_SEQ_OFFSET (default 0). run_number only grows, so seq grows.
 #   It fails closed: if the workflow is ever recreated and run numbers restart, the new seq is lower than the verified

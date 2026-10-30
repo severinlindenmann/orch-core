@@ -75,7 +75,7 @@ def test_happy_path_layout_record_and_rerun(tmp_path, script, bin_dir):
     assert rec["format"] == "orch.install/1"
     assert rec["channel"] == "main" and rec["version"] == "2.0.0"
     assert rec["seq_seen"] == {"main": 5}
-    assert rec["revocations_issued_at"] == "2026-10-20T00:00:00Z"
+    assert rec["revocations_issued_at"] == rel.revs_issued
     assert rec["root_key_id"] == "root-1" and rec["trusted_roots"] == ["root-1"]
     assert {f["role"] for f in rec["files"]} == {"core", "dashboard", "constraints"}
     assert all(len(f["sha256"]) == 64 for f in rec["files"])
@@ -200,6 +200,34 @@ def test_test_channels_are_refused_by_a_production_verifier(tmp_path, script, bi
     rel = build_release(tmp_path / "rel", channel="test-x", cert_channels=["test-*"], key_id="rk-3")
     res = go(tmp_path, script, bin_dir, rel.dir, "--channel", "test-x")
     assert_untouched(tmp_path, res)
+
+
+@pytest.mark.slow
+def test_first_install_with_a_revocation_list_below_the_floor_is_refused(tmp_path, script, bin_dir):
+    # a genuine root-signed list from before the floor (for example one from before a key was revoked)
+    rel = build_release(tmp_path / "rel", revs_issued=datetime(2026, 10, 1, tzinfo=UTC))
+    res = go(tmp_path, script, bin_dir, rel.dir)
+    assert_untouched(tmp_path, res)
+    assert "older than this installer accepts" in res.stderr
+    low = build_release(tmp_path / "rel2", revs_min_serial=1)  # the list's min_serial is below the floor's
+    text = script.read_text().replace("REVOCATIONS_FLOOR_MIN_SERIAL = 1", "REVOCATIONS_FLOOR_MIN_SERIAL = 5")
+    script.write_text(text)
+    res = go(tmp_path, script, bin_dir, low.dir)
+    assert_untouched(tmp_path, res)
+
+
+@pytest.mark.slow
+def test_a_stale_revocation_list_is_refused_with_plain_guidance(tmp_path, script, bin_dir):
+    rel = build_release(tmp_path / "rel", revs_issued=datetime.now(UTC) - timedelta(days=31))
+    # lower the floor so only freshness is under test
+    script.write_text(
+        script.read_text().replace(
+            'FLOOR_ISSUED_AT = "2026-10-20T00:00:00Z"', 'FLOOR_ISSUED_AT = "2020-01-01T00:00:00Z"'
+        )
+    )
+    res = go(tmp_path, script, bin_dir, rel.dir)
+    assert_untouched(tmp_path, res)
+    assert "revocation list is too old; try again later or tell the person who runs orch releases" in res.stderr
 
 
 @pytest.mark.slow

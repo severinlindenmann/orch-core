@@ -322,11 +322,13 @@ class Closing:
             self._running = True
         self._spawn(self._run)
 
-    def _advance(self, state: str) -> None:
+    def _advance(self, frm: str, to: str, rid: str) -> None:
+        """Compare-and-set under the lock: only the run (``rid``) that started a step may move the document, and only from
+        the state it expected. A cancel (and a later reconfirm, which is a NEW run) makes the old worker stop."""
         with self._mu:
-            if self._doc is None:
+            if self._doc is None or self._doc.get("removal_id") != rid or self._doc["state"] != frm:
                 raise ClosingError("cancelled")
-            self._doc["state"] = state
+            self._doc["state"] = to
             self._doc["step_ms"] = self._now()
             self._save()
 
@@ -344,8 +346,10 @@ class Closing:
         self._run()
 
     def _run(self) -> None:
+        with self._mu:
+            rid = "" if self._doc is None else str(self._doc.get("removal_id", ""))
         try:
-            self._steps()
+            self._steps(rid)
         except ClosingError as e:
             if e.code != "cancelled":
                 self._fail(e.code, e.plain or "The removal stopped.")
@@ -355,35 +359,39 @@ class Closing:
         finally:
             with self._mu:
                 self._running = False
+                d = self._doc
+                newer = d is not None and d.get("removal_id") != rid and not d.get("fail") and d["state"] != "ordered"
+            if newer:
+                self._start()  # a cancel + reconfirm happened while this run was winding down: the new run goes on
 
-    def _state(self) -> str:
+    def _state(self, rid: str) -> str:
         with self._mu:
-            if self._doc is None:
+            if self._doc is None or self._doc.get("removal_id") != rid:
                 raise ClosingError("cancelled")
             return str(self._doc["state"])
 
-    def _steps(self) -> None:
-        if self._state() == "closing":  # 2 preflight: the remover's dry run
+    def _steps(self, rid: str) -> None:
+        if self._state(rid) == "closing":  # 2 preflight: the remover's dry run
             self._preflight()
-            self._advance("preflight_ok")
-        if self._state() == "preflight_ok":  # 3 the last backup, still WITH the secrets (the restore point)
+            self._advance("closing", "preflight_ok", rid)
+        if self._state(rid) == "preflight_ok":  # 3 the last backup, still WITH the secrets (the restore point)
             self._backup()
-            self._advance("backed_up")
-        if self._state() == "backed_up":  # 4 withdraw: the point of no return is persisted FIRST (cancel refuses from here)
-            self._advance("withdrawing")
-        if self._state() == "withdrawing":  # also the resume point after a crash: finish forward, never back to open
+            self._advance("preflight_ok", "backed_up", rid)
+        if self._state(rid) == "backed_up":  # 4 withdraw: the point of no return is persisted FIRST (cancel refuses from here)
+            self._advance("backed_up", "withdrawing", rid)
+        if self._state(rid) == "withdrawing":  # also the resume point after a crash: finish forward, never back to open
             self._withdraw()
-            self._advance("withdrawn")
-        if self._state() == "withdrawn":  # 5 notify
+            self._advance("withdrawing", "withdrawn", rid)
+        if self._state(rid) == "withdrawn":  # 5 notify
             self._notify()
-            self._advance("notified")
-        if self._state() == "notified":  # 6 order
+            self._advance("withdrawn", "notified", rid)
+        if self._state(rid) == "notified":  # 6 order
             with self._mu:
                 ok = self._now() <= self._doc.get("order_ok_until_ms", 0)  # type: ignore[union-attr]
             if not ok:
                 return  # stalled: needs a new prepare/confirm
-            self._order()
-            self._advance("ordered")
+            self._order(rid)
+            self._advance("notified", "ordered", rid)
 
     def _preflight(self) -> None:
         with self._mu:

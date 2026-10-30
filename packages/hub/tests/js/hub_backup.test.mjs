@@ -224,7 +224,7 @@ test("P07: the page puts a refused Back up now (429) in the card with the Backup
 
 const W24 = Array.from({ length: 24 }, (_, i) => "word" + i).join(" ");
 
-test("P08: the words panel offers 'Save as a file' (text only, never sent) and says to keep the file away from the server", () => {
+test("P08: the words panel offers 'Save as a file' (text only, never sent) and shows the keep-it-safe line", () => {
   const made = [];
   globalThis.Blob = class { constructor(parts, o) { made.push([parts.join(""), o]); } };
   globalThis.URL = { createObjectURL: () => "blob:x", revokeObjectURL() {} };
@@ -235,7 +235,8 @@ test("P08: the words panel offers 'Save as a file' (text only, never sent) and s
   assert.equal(made.length, 1);
   assert.equal(made[0][0].trim(), W24);
   assert.match(made[0][1].type, /^text\/plain/);
-  assert.match(c.textContent, /copy of the backup key/); assert.match(c.textContent, /away from this server/);
+  assert.ok(c.textContent.includes("Keep this file somewhere safe and offline. Anyone with it and your password can restore your hub."));
+  assert.ok(!c.textContent.includes("orch-hub-backup-words"));
 });
 
 test("P08: Restore offers 'Choose the file' and 'Paste' instead of a words box; the request body still carries the words", async () => {

@@ -563,7 +563,7 @@ async function services(silent = false) {
     if (revision !== viewRevision) return;
     if (r.status === 403 && r.body.error === "reauth_required") return reauthView();
     if (r.status !== 200) return shell("services", h("h1", { text: "Services" }), banner("bad", "Cannot read the services", say(r.body.error)));
-    shell("services", servicesView({ ...r.body, workspaces_list: ws.status === 200 ? ws.body.workspaces : undefined }, { check: () => services(), open: () => navigate("#/workspaces"), copy: copyText, service: serviceAction }));
+    shell("services", servicesView({ ...r.body, workspaces_list: ws.status === 200 ? ws.body.workspaces : undefined }, { check: () => services(), open: () => navigate("#/workspaces"), copy: copyText, service: serviceAction, logs: openLogs }));
     clearInterval(servicesTimer);
     let checking = false;
     servicesTimer = setInterval(async () => {
@@ -657,7 +657,12 @@ const svcPath = (name, tail) => "/admin/services/" + encodeURIComponent(name) + 
 function serviceFailed(code, detail) {
   dialog(banner("bad", "Nothing was changed", say(code) + (detail ? " (" + renderText(detail) + ")" : "")), h("div", { class: "row" }, h("button", { text: "Close", onclick: closeDialog })));
 }
-async function serviceAction(name, verb) {
+async function serviceAction(name, verb, confirmed = false) {
+  if (name === "hub" && verb === "stop" && !confirmed) { // a second plain click (no typed word) before the hub stops itself
+    dialog(h("h1", { text: "Stop the Hub?" }), h("p", { class: "sentence", text: "This console and every workspace link go offline. Workspaces keep working on their own; you start the hub again on the server." }),
+      h("div", { class: "row" }, h("button", { text: "Cancel", onclick: closeDialog }), h("button", { class: "dan", id: "hub-stop-confirm", text: "Yes, stop the Hub", onclick: () => { closeDialog(); void serviceAction(name, verb, true); } })));
+    return;
+  }
   if (!state.me) { state.notice = banner("warn", "Register this browser first", null); return home(); }
   const me = state.me;
   const r = await api("POST", svcPath(name, "/prepare"), { action: verb, channel_id: me.channelId });
@@ -697,6 +702,18 @@ async function serviceAction(name, verb) {
     h("p", { class: "small muted", text: "The hub signs this with this browser's key. Nothing else is changed." }),
     h("div", { class: "row" }, h("button", { text: "Cancel", onclick: done }), sign));
   sign.arm();
+}
+// The last hour of a part's log. The helper redacted it; it is shown as text only (textContent), never as HTML.
+async function openLogs(name) {
+  if (!state.me) { state.notice = banner("warn", "Register this browser first", null); return home(); }
+  const r = await api("GET", svcPath(name, "/logs") + "?channel_id=" + encodeURIComponent(state.me.channelId));
+  if (r.status !== 200) return serviceFailed(r.body.error);
+  const pre = h("pre", { class: "mono small logs", id: "log-text" });
+  pre.textContent = r.body.text || "Nothing was logged in the last hour.";
+  const header = "orch " + name + " log, last hour, " + new Date().toISOString() + "\n";
+  dialog(h("h1", { text: "Logs: " + renderText(name) }), pre,
+    h("p", { class: "small muted", id: "log-note", text: "Secrets are hidden as far as we can tell; don't paste logs publicly." }),
+    h("div", { class: "row" }, h("button", { text: "Copy for IT", onclick: () => copyText(header + r.body.text) }), h("button", { text: "Close", onclick: closeDialog })));
 }
 // The hub restarts or stops itself: this page cannot ask it anything while it is down, so it polls and says what to do if it stays away.
 async function waitForHub(verb) {

@@ -68,3 +68,12 @@ test("no helper: no buttons, the command help stays; helper down: a note; busy h
   const busy = servicesView(data({ state: "up", parts: [{ name: "relay" }], hub_busy: true }), { service: () => {}, copy: () => {} }, NOW);
   assert.ok(find(busy, (n) => n.attrs["data-svc"]).every((b) => b.getAttribute("disabled") !== null));
 });
+
+test("a Logs button per managed part calls logs(name)", () => {
+  const calls = [];
+  const view = servicesView(data({ state: "up", parts: [{ name: "relay" }], hub_busy: false }), { service: () => {}, logs: (n) => calls.push(n), copy: () => {} }, NOW);
+  const b = find(view, (n) => n.attrs["data-logs"]);
+  assert.equal(b.length, 1);
+  b[0].listeners.click();
+  assert.deepEqual(calls, ["relay"]);
+});

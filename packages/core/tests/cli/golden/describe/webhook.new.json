@@ -7,7 +7,7 @@
     "cli": "orch webhook new",
     "summary": "Make a doorbell address that wakes one follow-up when an outside job calls it.",
     "who": "read",
-    "usage": "orch webhook new [REF] --label LABEL",
+    "usage": "orch webhook new [REF] --label LABEL [--source github|generic|databricks]",
     "pre": [],
     "emits": [],
     "input": {
@@ -24,6 +24,15 @@
           "type": "string",
           "description": "what it is for",
           "maxLength": 200
+        },
+        "source": {
+          "type": "string",
+          "description": "who will call it, with a hub: github, generic (a script) or databricks",
+          "enum": [
+            "github",
+            "generic",
+            "databricks"
+          ]
         }
       },
       "x-positional": [
@@ -46,6 +55,9 @@
             "type": "string"
           },
           "label": {
+            "type": "string"
+          },
+          "secret": {
             "type": "string"
           }
         },

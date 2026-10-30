@@ -115,6 +115,7 @@ class FollowupRunner:
             if drift > 60:
                 self._slept_s = drift
             rows, today, (cap, early) = await self.service.call(self._read, int(now))
+            await self._hub_rings()  # #1285: rings the hub kept for hooks of this workspace
             hub = getattr(self.service, "runners", None)
             records = hub.store.records if hub else {}
             self._blocked = {}
@@ -199,6 +200,26 @@ class FollowupRunner:
             if len(batch) < 256:
                 self._cursor[rec.id] = after
                 return None
+
+    async def _hub_rings(self):
+        """Pull the hub's rings for the pending webhook follow-ups (only when there is one), hand each to :meth:`ring`
+        (the same call the direct receiver makes) and acknowledge. Best effort: no hub, no inbox or a failure means the
+        follow-up's own deadline is the fallback. The hub's word is a token hash; see :mod:`orch.host.hubhooks`."""
+        if not self.hooks:
+            return
+        from . import hubhooks
+
+        try:
+            if not await asyncio.to_thread(hubhooks.watching, self.service):
+                return
+            hooks, top = await asyncio.to_thread(hubhooks.pull, self.service)
+            for hook in hooks:
+                if await self.ring(hook):
+                    await asyncio.to_thread(hubhooks.count_wake, self.service)
+            if top:
+                await asyncio.to_thread(hubhooks.ack, self.service, top)
+        except Exception:  # noqa: BLE001 - never stops the tick; the deadline wakes the follow-up
+            LOG.warning("hub webhook rings not processed", exc_info=True)
 
     def learn_hooks(self):
         """N4 (c): called on the worker thread right after a ``followup.set`` is committed, so a real pending hook is

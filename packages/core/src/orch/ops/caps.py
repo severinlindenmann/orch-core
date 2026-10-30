@@ -648,6 +648,9 @@ class Capabilities:
     git: Git
     signer: Signer
     clock: Callable[[], float]
+    #: host mode only: register a webhook at the bound hub's public inbox (``orch.host.hubhooks.register``); ``None``
+    #: in the CLI and in a host that cannot. A handler learns nothing else from it than the hub's URL base.
+    hub_hooks: Callable[..., str] | None = None
 
     @classmethod
     def direct(cls, env: Mapping[str, str] | None = None, clock: Callable[[], float] = time.time) -> Capabilities:
@@ -669,6 +672,7 @@ class Capabilities:
         env: Mapping[str, str] | None = None,
         clock: Callable[[], float] = time.time,
         git: Any = None,
+        hub_hooks: Callable[..., str] | None = None,
     ) -> Capabilities:
         """What the host's handlers get: files only under ``roots`` (the workspace root and the state directory), no
         client-named paths, cwd or stdin, no exec, no signer, and an environment the caller fixes (empty by default),
@@ -682,6 +686,7 @@ class Capabilities:
             git=Git(enabled=git is not None, reader=git),
             signer=Signer(enabled=False),
             clock=clock,
+            hub_hooks=hub_hooks,
         )
 
     def with_principal(self, principal: str) -> Capabilities:

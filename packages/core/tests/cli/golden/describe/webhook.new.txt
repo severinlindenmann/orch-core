@@ -1,10 +1,11 @@
 ok describe webhook.new
 Make a doorbell address that wakes one follow-up when an outside job calls it.
-usage: orch webhook new [REF] --label LABEL
+usage: orch webhook new [REF] --label LABEL [--source github|generic|databricks]
 who: read · emits: -
 args:
   REF  ticket REF (DEMO-0043, 43); default: your claim
   --label LABEL  what it is for (required)
+  --source SOURCE  who will call it, with a hub: github, generic (a script) or databricks (github|generic|databricks)
 errors:
   ambiguous_ref (exit 2): name the ticket REF, for example DEMO-0043 | fix: orch status
   not_found (exit 2): orch list

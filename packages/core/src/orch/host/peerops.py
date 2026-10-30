@@ -324,6 +324,10 @@ def _deliveries(service: WorkspaceService, rt: _Runtime) -> None:
     state = _hub_state(service)
     while hubdeliver.pump(service, link, state, 0.0):
         pass
+    from . import hubclosing
+
+    while hubclosing.pump(service, link, 0.0):  # #1463: a pushed closing_notice
+        pass
 
 
 def pins_service(service: WorkspaceService) -> Any:

@@ -216,7 +216,8 @@ test("details Open passes the plain workspace with no pending mode or deep-link 
   assert.deepEqual(args, [w]);
   const { readFile } = await import("node:fs/promises");
   const app = await readFile(new URL("../../src/orch_hub/web/app.js", import.meta.url), "utf8");
-  const open = app.slice(app.indexOf("async function openWorkspace(w)"), app.indexOf("async function openWorkspace(w)") + 230);
+  const start = app.indexOf("async function openWorkspace(w)");
+  const open = app.slice(start, app.indexOf("\n}\n", start)); // the whole function, not a fixed length
   assert.match(open, /workspace_id: w.id, return_to: "\/", kind: "open"/);
   assert.doesNotMatch(open, /pending|mode|return_to: "[^" ]*[?#]/);
 });

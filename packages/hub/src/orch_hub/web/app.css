@@ -315,6 +315,9 @@ button[aria-busy="true"]::before { content:""; display:inline-block; width:12px;
 .totp-key { margin-top:8px; }
 .totp-key p { margin:0 0 6px; }
 .prewrap{white-space:pre-line}
+.events { list-style:none; margin:6px 0; padding:0; display:grid; gap:4px; }
+.events li { overflow-wrap:anywhere; }
+.events .small { display:inline-block; min-width:4.5em; }
 .logs { white-space:pre-wrap; overflow-wrap:anywhere; max-height:50vh; overflow:auto; margin:6px 0; padding:10px; border:1px solid var(--line); border-radius:8px; background:var(--bg); }
 
 /* r14 P11: the small round "i" button with a popover note; the global details rule does not apply to it. */

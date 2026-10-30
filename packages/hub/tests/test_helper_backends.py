@@ -113,16 +113,19 @@ def test_info_names_the_real_user_unit_when_the_helper_does_not_answer():
     """The Services note says the unit the installer made (orch-<tag>-hub-helper.service), never a guessed name."""
     import json
     import os
-
-    from orch_hub.services.helper_client import HelperClient
-
     import tempfile
     from pathlib import Path
+
+    from orch_hub.services.helper_client import HelperClient
 
     tmp_path = Path(tempfile.mkdtemp(prefix="hs"))  # short: a unix socket path is limited to ~100 bytes
     state = tmp_path / "st"
     state.mkdir(mode=0o700)
-    cfg = {"v": 1, "host_id": "vps1", "parts": {"hub": {"label": "Hub", "kind": "systemd-user", "unit": "orch-1e0740-hub.service"}}}
+    cfg = {
+        "v": 1,
+        "host_id": "vps1",
+        "parts": {"hub": {"label": "Hub", "kind": "systemd-user", "unit": "orch-1e0740-hub.service"}},
+    }
     f = state / "helper.json"
     f.write_text(json.dumps(cfg))
     os.chmod(f, 0o600)

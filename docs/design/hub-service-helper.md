@@ -35,7 +35,7 @@ Only these argv are ever run (`orch-hub helper --print-sudoers --user orch-hub` 
 `env_reset`, never `status` or `edit`):
 `/usr/bin/systemctl {start,stop,restart} <unit>` and
 `/usr/bin/journalctl -u <unit> --since -24h -n 300 -o short-iso --no-pager`.
-The owner installs the drop-in (`visudo -cf`); the helper never edits sudoers.
+The owner installs the drop-in (`visudo -cf`); the helper never edits sudoers. The log window changed from the last hour (500 lines) to the last 24 hours (300 lines): a hand-built server must reprint and reinstall the drop-in, because sudo matches the journalctl arguments exactly (systemd user units need nothing).
 
 ### Made by `orch install` (systemd user units)
 

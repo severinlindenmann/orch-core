@@ -12,7 +12,7 @@ from __future__ import annotations
 import os
 import sys
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import TextIO
 
@@ -37,18 +37,37 @@ def main(
     env: Mapping[str, str] | None = None,
     out: TextIO | None = None,
     err: TextIO | None = None,
-    sleep: float = 5.0,
+    sleep: float = 0.5,
+    stop: Callable[[], bool] = lambda: False,
 ) -> int:
     env = os.environ if env is None else env
     out, err = out or sys.stdout, err or sys.stderr
     if any(env.get(n) for n in AGENT_ENV):
         err.write("orch remote open: this is a person's; an agent never opens it.\n")
         return 3
-    from orch.remoteclient import Client, Store, default_root
+    from orch.remoteclient import default_root
+
+    from .instance import SingleInstance
+
+    root = default_root(env)
+    single = SingleInstance(root)
+    if not single.acquire():  # one client per person: hand over to the running one
+        if single.request_handover():
+            out.write("orch remote open: the client is already running; its page is open in your browser.\n")
+            return 0
+        err.write("orch remote open: the client is already running but did not answer. Close it and try again.\n")
+        return 1
+    try:
+        return _run(root, single, out, err, sleep, stop)
+    finally:
+        single.release()
+
+
+def _run(root, single, out, err, sleep, stop) -> int:  # noqa: ANN001
+    from orch.remoteclient import Client, Store
 
     from . import Controller, GatedPresence, StaticSite, installed_static_dir
 
-    root = default_root(env)
     store = Store(root)
     gate = GatedPresence(_presence(root, store))
     client = Client(store, presence=gate)
@@ -67,13 +86,16 @@ def main(
     ctl.open_home()  # the browser gets a private redirect file's path; the launch code is never in its argv
     try:
         idle_since = time.monotonic()
-        while True:
+        while not stop():
             time.sleep(sleep)
+            if single.take_handover():
+                ctl.open_home()
             assert ctl.home is not None
             if ctl._open or time.monotonic() - ctl.home.last_seen < IDLE_EXIT_S:  # noqa: SLF001
                 idle_since = time.monotonic()
             if time.monotonic() - idle_since > IDLE_EXIT_S:
                 return 0
+        return 0
     except KeyboardInterrupt:
         return 0
     finally:

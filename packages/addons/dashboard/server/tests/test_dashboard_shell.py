@@ -36,6 +36,10 @@ def test_closed_route_allowlist():
         "/api/me",
         "/api/w/{ws}/identity",
         "/api/w/{ws}/today",
+        "/api/w/{ws}/remote",  # R2: remote access (loopback only; refused on every remote listener in routegate)
+        "/api/w/{ws}/remote/code",
+        "/api/w/{ws}/remote/devices/{device_id}/remove",
+        "/api/w/{ws}/remote/off",
         "/api/w/{ws}/tickets",
         "/api/w/{ws}/board",
         "/api/w/{ws}/tickets/{key}",

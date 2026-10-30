@@ -3,6 +3,7 @@
 // wording. createElement and textContent only (tests/js/lint.test.mjs); every string that came from a phone or a person
 // (its name, its app version) goes through renderText first and is never used as markup.
 import { chip, h, text, when } from "./ui.js";
+import { slideOut } from "./feel.js";
 
 export const REMOVE_WARNING = "It can no longer approve. This cannot be undone.";
 export const PAIR_STEPS = "Open the orch app, choose Add hub, enter the address and this code.";
@@ -27,11 +28,12 @@ export function newChannelsNotice(list, actions = {}, now = Date.now()) {
     const remove = h("button", { class: "danger", text: "Remove it", onclick: async () => {
       remove.disabled = true;
       error.textContent = "";
-      try { await actions.remove?.(c); } catch { error.textContent = "Could not remove it. Please try again."; remove.disabled = false; }
+      try { await actions.remove?.(c); slideOut(notice); } catch { error.textContent = "Could not remove it. Please try again."; remove.disabled = false; }
     } });
-    return h("div", { class: "banner warn new-channel", role: "status", "data-channel": c.channel_id },
+    const notice = h("div", { class: "banner warn new-channel", role: "status", "data-channel": c.channel_id },
       h("b", { text: "A new " + (c.kind === "browser" ? "browser" : "phone") + " was added: " + text(c.label || kindWord(c)) + " at " + when(c.created_ms, now) + ". Not you? Remove it." }),
       h("div", { class: "row" }, remove, h("button", { text: "That was me", onclick: () => actions.dismiss?.() })), error);
+    return notice;
   });
 }
 
@@ -54,7 +56,7 @@ function rowView(c, data, actions, now) {
     const yes = h("button", { class: "danger", text: "Remove", onclick: async () => {
       yes.disabled = true;
       error.textContent = "";
-      try { await actions.remove?.(c); } catch { error.textContent = "Could not remove it. Please try again."; yes.disabled = false; }
+      try { await actions.remove?.(c); slideOut(box); } catch { error.textContent = "Could not remove it. Please try again."; yes.disabled = false; }
     } });
     box.replaceChildren(h("div", { class: "grow" }, h("b", { text: text(c.label || kindWord(c)) }), small(REMOVE_WARNING, ""), error),
       h("button", { text: "Keep it", onclick: idle }), yes);

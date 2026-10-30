@@ -25,6 +25,7 @@ from . import (
     hub,
     hubapprove,
     market_routes,
+    network_routes,
     org_routes,
     passkey_routes,
     phone,
@@ -350,6 +351,7 @@ def create_app(
     hub.register(app, gateway)
     remote_routes.register(app, gateway)
     profile_routes.register(app, gateway)
+    network_routes.register(app, gateway)
     org_routes.register(app, gateway)
     switch.register(app, gateway, auth)
     trust_routes.register(app, auth, gateway)

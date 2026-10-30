@@ -284,6 +284,27 @@ def _person(call: Call) -> str:
     return call.viewer
 
 
+def _display(text: Any, limit: int) -> str | None:
+    """One line of display text for the share list: white space collapsed, every character the contract refuses
+    (hidden, bidi, control) dropped, cut to ``limit`` UTF-8 bytes on a character boundary; ``None`` if empty."""
+    from orch.hubclient.sharefmt import text_ok
+
+    if not isinstance(text, str):
+        return None
+    words = ("".join(c for c in word if text_ok(c, 4)) for word in text.split())
+    line = " ".join(w for w in words if w)
+    while line and len(line.encode("utf-8")) > limit:
+        line = line[:-1].rstrip()
+    return line or None
+
+
+def _by_name(call: Call) -> str | None:
+    """The signed-in person's name from the host's own member record (never from the request)."""
+    call.service.store.refresh()
+    member = call.service.store.state.workspace.members.get(call.viewer)
+    return _display(member.name, 60) if member is not None else None
+
+
 def _owner(call: Call) -> None:
     """Registering sends the workspace's delegation to the signed server: the owner's act (the role as it is now)."""
     call.service.store.refresh()
@@ -677,6 +698,10 @@ def _prepare(call: Call, args: dict[str, Any]) -> dict[str, Any]:
         "files": files,
         "share_id": secrets.token_hex(16),
         "by": str(call.viewer),
+        # display members of the server's list (#1636): from the host's own records, never from the request
+        "label": _display(view.title, 80) or view.key,
+        "by_kind": origin,
+        "by_name": _by_name(call),
     }
     _private(service, "stage")
     if len(_stages(service)) >= MAX_STAGED:
@@ -1266,6 +1291,9 @@ def _send(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
             view_limit=meta["views"],
             token_hash_hex=send["token_hash"],
             files=meta["files"],
+            label=meta.get("label"),
+            by_kind=meta.get("by_kind"),
+            by_name=meta.get("by_name"),
         )
         rec = {
             "id": meta["share_id"],

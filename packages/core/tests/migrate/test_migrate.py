@@ -520,12 +520,30 @@ def test_the_host_and_registered_workspaces_are_checked(env, tmp_path):
     assert code == 0 and doc["roots"][0]["kind"] == "host" and doc["roots"][0]["steps"] == []
 
 
-def test_a_tracked_store_warns(env, tmp_path):
+def test_a_git_project_that_does_not_ignore_the_store_warns(env, tmp_path):
+    project = tmp_path / "proj"
+    init_root(project / ".orch", "workspace")
+    (project / ".git" / "info").mkdir(parents=True)
+    code, out, _ = run_cli(["--check", "--workspace", str(project)], env, tmp_path)
+    assert code == 0 and "not ignored by git" in out
+    (project / ".gitignore").write_text("node_modules\n/.orch/\n")
+    assert "not ignored by git" not in run_cli(["--check", "--workspace", str(project)], env, tmp_path)[1]
+
+
+def test_migrate_never_runs_the_projects_git(env, tmp_path, monkeypatch):
+    """A project's .git/config can name a program (core.fsmonitor): migrate must not run git at all."""
     import subprocess
 
     project = tmp_path / "proj"
     init_root(project / ".orch", "workspace")
+    marker = tmp_path / "marker"
+    script = tmp_path / "fsm.sh"
+    script.write_text(f"#!/bin/sh\ntouch {marker}\n")
+    script.chmod(0o755)
     subprocess.run(["git", "init", "-q", str(project)], check=True)
-    subprocess.run(["git", "-C", str(project), "add", "-f", ".orch/format.json"], check=True)
-    code, out, _ = run_cli(["--check", "--workspace", str(project)], env, tmp_path)
-    assert code == 0 and "tracked by git" in out
+    subprocess.run(["git", "-C", str(project), "config", "core.fsmonitor", str(script)], check=True)
+    spawned = []
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: spawned.append(a) or (_ for _ in ()).throw(OSError))
+    for mode in ("--check", "--apply"):
+        assert run_cli([mode, "--workspace", str(project)], env, tmp_path)[0] == 0
+    assert not marker.exists() and spawned == []

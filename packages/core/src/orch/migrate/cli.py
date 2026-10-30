@@ -8,12 +8,10 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, TextIO
 
-from orch import childenv
 from orch.layout import Layout
 from orch.ops.errors import ERRORS, OrchError
 from orch.ops.runtime import state_dir
@@ -48,17 +46,24 @@ def _workspace_roots(env: Mapping[str, str], only: str | None) -> tuple[list[tup
     return out, notes
 
 
-def _tracked(project: Path, env: Mapping[str, str]) -> bool:
-    """Is the store folder tracked by git in this project (it should not be: it holds the signed log)?"""
-    clean = {k: v for k, v in childenv.sanitize(env).items() if not k.startswith("GIT_")}
-    try:
-        r = subprocess.run(
-            ["git", "-C", str(project), "ls-files", Layout.new_at(project).store.name],
-            capture_output=True, text=True, timeout=20, env=clean, check=False,
-        )  # fmt: skip
-    except (OSError, subprocess.SubprocessError):
+def _may_be_committed(project: Path) -> bool:
+    """Could the store folder be committed to git? Decided WITHOUT running git (a project's own git config can run a
+    program: fsmonitor, hooks): true when the project is a git checkout and neither ``.gitignore`` nor
+    ``.git/info/exclude`` ignores the store folder."""
+    git = project / ".git"
+    if not git.exists():
         return False
-    return r.returncode == 0 and bool(r.stdout.strip())
+    name = Layout.new_at(project).store.name
+    ignored = {name, f"/{name}", f"{name}/", f"/{name}/"}
+    for f in (project / ".gitignore", git / "info" / "exclude"):
+        try:
+            with open(f, "rb") as h:
+                text = h.read(1 << 20).decode("utf-8", "replace")
+        except OSError:
+            continue
+        if any(line.strip() in ignored for line in text.splitlines()):
+            return False
+    return True
 
 
 def _describe(p: Plan) -> dict[str, Any]:
@@ -121,10 +126,10 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextI
                 code = max(code, ERRORS["migrate.step_failed"].exit)
         result.append(row)
         project = projects.get(label)
-        if project is not None and _tracked(project, env):
+        if project is not None and _may_be_committed(project):
             warnings.append(
-                f"{label}: the {Layout.new_at(project).store.name} folder is tracked by git; "
-                "it holds signed data: stop tracking it"
+                f"{label}: the {Layout.new_at(project).store.name} folder is not ignored by git; "
+                "it holds signed data and must never be committed: add it to .gitignore"
             )
 
     if as_json:

@@ -22,6 +22,7 @@ import time
 from collections.abc import Mapping
 from pathlib import Path
 
+from orch import childenv
 from orch.ops.errors import OrchError
 
 from .format import LOCK_FILE, lock_root
@@ -81,7 +82,13 @@ def _copy(src: Path, dst: Path, clone: bool, rel: str = "") -> bool:
         if entry.is_dir(follow_symlinks=False) and (erel in nested or any(r.startswith(erel + "/") for r in _SKIP_REL)):
             all_cloned = _copy(Path(entry.path), target, clone, erel) and all_cloned
             continue
-        if clone and subprocess.run(["cp", "-c", "-R", entry.path, str(target)], capture_output=True).returncode == 0:
+        if (
+            clone
+            and subprocess.run(
+                ["cp", "-c", "-R", entry.path, str(target)], capture_output=True, env=childenv.minimal(os.environ)
+            ).returncode
+            == 0
+        ):
             continue
         all_cloned = False
         if entry.is_dir(follow_symlinks=False):

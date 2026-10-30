@@ -125,6 +125,7 @@ class OpContext:
     activity: Any = None  # orch_hub.activity.ActivityLog; None: agent_events is `unavailable`
     switch: Any = None  # orch_hub.switch.SwitchService; None = switch/rail ops not served (unknown_op)
     where: Callable[[], dict[str, Any]] | None = None  # settings.where_answer: the advertised addresses and the name
+    hooks: Any = None  # orch_hub.hooks.HookInbox; None = the webhook inbox is off (hook ops answer `unavailable`)
     same_computer: bool = False  # the link's socket shows the peer is on this computer (never a peer-sent claim)
 
 
@@ -786,6 +787,40 @@ def addon_request(c: OpContext) -> dict[str, Any]:
     return {}
 
 
+def _hooks(c: OpContext) -> Any:
+    """The inbox of the calling workspace's link (#1285). Every op below is keyed by ``c.workspace_id`` (the link's),
+    never by anything in the body."""
+    with c.registry.lock:
+        _require_pin(c)
+        _require_bound(c)
+    if c.hooks is None or not c.hooks.enabled:
+        raise Refused("unavailable")
+    return c.hooks
+
+
+def hook_put(c: OpContext) -> dict[str, Any]:
+    from ..contract import hooks as HK
+
+    hooks = _hooks(c)
+    if not HK.put_ok(c.body):  # the cross-field rules the per-field table cannot state (replaces != token_hash)
+        raise Refused("malformed")
+    hooks.store.put(c.workspace_id, c.body, c.now_ms)
+    return {"url_base": hooks.url_base}
+
+
+def hook_revoke(c: OpContext) -> dict[str, Any]:
+    _hooks(c).store.revoke(c.workspace_id, c.body["token_hash"])
+    return {}
+
+
+def hook_pull(c: OpContext) -> dict[str, Any]:
+    return _hooks(c).store.pull(c.workspace_id, c.body["since"], c.now_ms)
+
+
+def hook_ack(c: OpContext) -> dict[str, Any]:
+    return {"acked": _hooks(c).store.ack(c.workspace_id, c.body["seq"])}
+
+
 def owner_get(c: OpContext) -> dict[str, Any]:
     """FB15: the hub user this hub names as the owner of the calling workspace (V3-D19, #1394). The host binds an
     add-on hand-off to it. No argument, nothing stored."""
@@ -847,6 +882,10 @@ HANDLERS: dict[str, Callable[[OpContext], dict[str, Any]]] = {
     "directory_get": directory_get,
     "audience_get": audience_get,
     "shared_get": shared_get,
+    "hook_put": hook_put,
+    "hook_revoke": hook_revoke,
+    "hook_pull": hook_pull,
+    "hook_ack": hook_ack,
 }
 
 __all__ = ["HANDLERS", "OpContext"]

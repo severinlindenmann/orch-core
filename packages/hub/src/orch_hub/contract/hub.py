@@ -14,6 +14,7 @@ import struct
 from collections.abc import Callable, Mapping
 from typing import Any
 
+from . import hooks as HK
 from . import suite as S
 from .canon import CanonError, b64u, cj, loads_strict, unb64u, unhex
 from .labels import EVENT_TYPE, L, custodial_label
@@ -1562,7 +1563,11 @@ PROFILE_FIELDS: dict[str, Check] = {
     "hours": lambda x: type(x) is str and len(x) <= 40,
 }
 
-LINK_OPTIONAL: dict[str, frozenset[str]] = {"join": frozenset({"alias_users"}), "directory_get": frozenset({"query"})}
+LINK_OPTIONAL: dict[str, frozenset[str]] = {
+    "join": frozenset({"alias_users"}),
+    "directory_get": frozenset({"query"}),
+    "hook_put": frozenset({"replaces"}),
+}
 LINK_OPS: dict[str, tuple[str, str | None, dict[str, Check]]] = {
     # R4 (#1592, protocol 10.2c): the only stream op that is a request/reply pair. The hub sends it (h2w) and the
     # host answers with a w2h reply (same op, ``re`` = its seq, body ``{}`` or ``{"error": code}``). A w2h
@@ -1653,6 +1658,22 @@ LINK_OPS: dict[str, tuple[str, str | None, dict[str, Check]]] = {
         "full",  # selective mode never tells the hub about tickets that were not shared (D80)
         {"events": _agent_events},
     ),
+    # #1285 (protocol 10.11): the public webhook inbox. Doorbell only; every op is scoped to the link's workspace
+    "hook_put": (
+        "w2h",
+        None,
+        {
+            "token_hash": HK.HASH_RE_CHECK,
+            "followup": lambda x: type(x) is str and HK.FOLLOWUP_RE.fullmatch(x) is not None,
+            "source": _enum(*HK.SOURCES),
+            "secret": lambda x: type(x) is str and HK.SECRET_RE.fullmatch(x) is not None,
+            "expires_ms": _int_min(1),
+            "replaces": HK.HASH_RE_CHECK,
+        },
+    ),
+    "hook_revoke": ("w2h", None, {"token_hash": HK.HASH_RE_CHECK}),
+    "hook_pull": ("w2h", None, {"since": _int_min(0)}),
+    "hook_ack": ("w2h", None, {"seq": _int_min(1)}),
     "status_put": (
         "w2h",
         None,

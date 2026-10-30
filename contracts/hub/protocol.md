@@ -1472,6 +1472,10 @@ unknown `op` is `unknown_op`.
 | `status_put` | w2h | both | `{"version", "commit", "host", "name"}` | `{}`, or `{"update_requested": {"target_version"}}` |
 | `agent_events` | w2h | full | `{"events": [{"kind", "ts_ms", "agent", "ticket"}]}` (1-50) | `{}` (HUB-AC-03 #1426) |
 | `addon_request` | w2h | both | `{"name", "version", "actor"}` | `{}` (M3 #1450) |
+| `hook_put` | w2h | both | `{"token_hash": hex64, "followup", "source", "secret", "expires_ms"}` + optional `"replaces": hex64` (§10.11) | `{"url_base"}`; refusals `hook_exists`, `too_many_hooks`, `unavailable`, `bad_expiry` |
+| `hook_revoke` | w2h | both | `{"token_hash"}` (own hooks only; unknown or already gone is `{}`) | `{}` (§10.11) |
+| `hook_pull` | w2h | both | `{"since"}` | `{"rings": [{seq, token_hash, source, kind, received_at}], "head"}` (at most 50; §10.11) |
+| `hook_ack` | w2h | both | `{"seq"}` | `{"acked": seq}` (§10.11) |
 | `owner_get` | w2h | both | `{}` | `{"user_id"}`: the hub user this hub names as the owner of the calling workspace (V3-D19 owner alias; FB15 §8.8b) |
 | `log_sync` | w2h | full | `{"epoch", "log", "from_seq", "count", "head", "reset", "sealed": b64u}` | `{"seq", "head"}` (p4, §10.7) |
 | `stream_open` | h2w | both | `{"stream_id", "device_id", "kind": "session"\|"enroll"}` (§10.2c) | `{}` or `{"error"}`: `remote.off`, `remote.device`, `remote.busy`, `remote.no_code`, `replay` |
@@ -2700,6 +2704,55 @@ against the pin it already holds, keeps the last good address until a replacemen
 a link-fetched card (the card is fetched over plain HTTP and proves nothing about where the hub is). Reference
 `orch_hub.contract.where.check_hub_where` (hub) and `orch.hubclient.where.check_hub_where` (core, written from this text);
 both replay the `hub_where_*` cases of `vectors_hub_backup.json` (§15) and must agree with them.
+
+### 10.11 The public webhook inbox: `hook_put`, `hook_revoke`, `hook_pull`, `hook_ack` (orch-core #1285, follow-ups #714)
+
+**Purpose.** A follow-up can wait for "a job rang" (GitHub, a CI step, Databricks). The hub, the company's always-on part
+with a public address, receives the ring and keeps ONE row per hook; the workspace pulls it over its link. A workspace
+without a hub keeps the direct receiver and the follow-up's deadline. **Off unless the hub has a public hooks URL**
+(`hook_put` is then `unavailable`, and the hub listens for no `/h/` request).
+
+**The token and the secret.** The workspace makes both: `token` = `hh_` + base64url(32 random bytes), no padding (46
+characters); `secret` = `hs_` + base64url(32 random bytes) (46 characters; the prefixes make a token and a secret recognisable to log masks and secret scanners). The sender is given `<url_base><token>` and the
+secret. The hub keeps `token_hash` = lowercase hex SHA-256 of the token text (ASCII) and the secret; the token itself is
+never sent to the hub or stored by it. The secret's TEXT (not the decoded bytes) is the HMAC key and the Basic password.
+
+**`hook_put`** `{token_hash, followup, source, secret, expires_ms[, replaces]}`: `followup` matches
+`[A-Za-z0-9][A-Za-z0-9._:-]{0,63}` and `source` is `github`, `generic` or `databricks`; both are the workspace's own
+bookkeeping and a ring never carries them. `expires_ms` is an absolute time in ms; the hub refuses (`bad_expiry`) one
+in the past or more than 31 days ahead. A workspace holds at most 64 live hooks (`too_many_hooks`). A `token_hash` that
+any workspace already holds is `hook_exists` (a workspace re-putting its own live hash is also `hook_exists`; rotate with
+`replaces`). `replaces` (a different hash of the SAME workspace) revokes that hook in the same step. The reply
+`{"url_base"}` is `https://<public host>/h/` (`http` only for a local hub).
+
+**The ring (the only HTTP the hub serves for this).** `POST /h/<token>`, on its own listener. The hub reads no cookie,
+no `Authorization` bearer, no query. Verification by `source` (any failure, an unknown, revoked or expired token, and a
+missing header are the SAME `404` with an empty body):
+
+- `github`: `X-Hub-Signature-256: sha256=<hex>` = HMAC-SHA256(secret text, raw body), constant-time compare.
+- `generic`: `X-Orch-Signature: t=<unix seconds>,v1=<hex>` with v1 = HMAC-SHA256(secret text, `<t>.` || raw body); `t` within
+  300 s of the hub clock.
+- `databricks`: `Authorization: Basic base64("orch:" || secret)`. Databricks webhook destinations offer HTTP Basic (and
+  an OAuth client-credentials beta) and no signature or custom header; so there is no timestamp. Both fields are compared
+  in constant time without a short circuit.
+
+A valid ring stores `(token_hash, source, kind = "hook.rang", received_at)`; a second ring of the same hook is answered
+`204` and changes nothing. The body is read (at most 262144 bytes; more is `413` before any read) only to verify, then dropped;
+nothing of it or of the headers is stored or logged. `received_at` is the hub clock in ms.
+
+**`hook_pull`** `{since}` returns this link's workspace's rings with `seq > since`, oldest first, at most 50, and `head` = the
+largest `seq` the hub ever gave this workspace. **`hook_ack`** `{seq}` deletes this workspace's rings with `seq' <= seq` and
+answers `{"acked": seq}`; an unknown `seq`, or one that belongs to another workspace's ring, deletes nothing of
+that other workspace (every row is scoped to the workspace of the authenticated link, in every op).
+
+**What the host does with a ring.** It looks `token_hash` up in ITS OWN records of pending follow-ups; the follow-up and the source
+come from those records, never from the hub. A ring with no pending follow-up is acked and dropped. `kind` and `source`
+are closed words: a pull with any other value is `malformed` and not acted on. A follow-up's `--on webhook:...` can match
+`kind` only (`hook.rang`): the ring is narrower than the #717 event shape (no ref, no status). A host wakes at most 6 follow-ups
+an hour from hub rings; the rest wait for their deadline. The deadline stays the fallback.
+
+Reference `orch_hub.contract.hooks` (hub) and a hand-written port in orch-core's tests; both replay
+`contracts/hub/vectors_hooks.json` (made by `contracts/hub/make_vectors_hooks.py`).
 
 ## 11. Publish through the hub (phase 2, D76, V3-D4)
 

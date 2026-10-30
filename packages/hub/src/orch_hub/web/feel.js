@@ -216,6 +216,24 @@ export function slideOut(row) {
   }, 220);
 }
 
+// A delayed commit: nothing is sent until the Undo window ends, so Undo is real. Only for actions that have not reached
+// the server yet; never for something already signed, revoked or removed. Leaving the page sends it at once.
+export function delayedCommit(commit, message, { delay = UNDO_DURATION, onUndo } = {}) {
+  let settled = false, timer;
+  const finish = (send) => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    globalThis.removeEventListener?.("pagehide", flush);
+    if (send) return commit(); else onUndo?.();
+  };
+  function flush() { return finish(true); }
+  const dismiss = toast(message, { undo: () => finish(false) });
+  timer = setTimeout(() => { dismiss(); flush(); }, delay);
+  globalThis.addEventListener?.("pagehide", flush);
+  return { flush, cancel: () => { dismiss(); finish(false); } };
+}
+
 // Retain matching nodes (and their focus/listeners) while updating read-only lists.
 export function reconcileRows(target, source) {
   const old = [...target.children];

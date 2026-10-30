@@ -3,7 +3,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 class Node_ {
-  constructor(tag, text) { this.tag = tag; this.nodeType = tag === "#text" ? 3 : 1; this.children = []; this.attrs = {}; this._text = text ?? ""; this.className = ""; this.listeners = {}; this.disabled = false; this.value = ""; }
+  constructor(tag, text) { this.tag = tag; this.nodeType = tag === "#text" ? 3 : 1; this.children = []; this.attrs = {}; this._text = text ?? ""; this.className = ""; this.listeners = {}; this.disabled = false; this.value = "";
+    const set = new Set(); this.classList = { add: (c) => set.add(c), contains: (c) => set.has(c), remove: (c) => set.delete(c) }; }
+  getBoundingClientRect() { return { bottom: 1, height: 0 }; }
+  remove() { this.removedNow = true; }
   append(...kids) { for (const k of kids) this.children.push(k && k.nodeType ? k : new Node_("#text", String(k))); }
   replaceChildren(...kids) { this.children = []; this._text = ""; this.append(...kids); }
   setAttribute(k, v) { this.attrs[k] = v; }
@@ -71,8 +74,12 @@ test("Remove asks first, in plain words, and then removes exactly that channel",
   assert.match(text(out), new RegExp(REMOVE_WARNING.replace(/[.]/g, "\\.")));
   assert.equal(REMOVE_WARNING, "It can no longer approve. This cannot be undone.");
   assert.deepEqual(removed, []); // nothing yet
+  const asking = find(out, (n) => n.attrs["data-channel"] === c.channel_id)[0];
   await button(out, "Remove").at(-1).listeners.click();
   assert.deepEqual(removed, [c.channel_id]);
+  // done on the server: the row slides out, and there is no Undo (a removed phone cannot be un-removed)
+  assert.equal(asking.classList.contains("row-done"), true);
+  assert.doesNotMatch(text(out), /Undo|Could not remove/);
 });
 
 test("Keep it goes back without removing; a failed removal says so and can be retried", async () => {
@@ -128,6 +135,7 @@ test("the new-phone notice says who, when and what to do, and dismiss clears it"
   assert.equal(banner.length, 1);
   assert.match(banner[0].textContent, /A new phone was added: Ann's iPhone at Today 11:59\. Not you\? Remove it\./);
   await button(out, "Remove it")[0].listeners.click();
+  assert.equal(banner[0].classList.contains("row-done"), true);
   button(out, "That was me")[0].listeners.click();
   assert.deepEqual(log, [["remove", "ab".repeat(16)], ["dismiss"]]);
   assert.deepEqual(newChannelsNotice([], {}, NOW), []);

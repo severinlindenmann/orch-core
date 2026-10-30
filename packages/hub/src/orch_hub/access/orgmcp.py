@@ -15,7 +15,7 @@ from .store import Access, AccessError, _hex
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS org_mcp (
   name TEXT PRIMARY KEY, url TEXT NOT NULL, auth TEXT NOT NULL, secret TEXT, description TEXT NOT NULL,
-  created_ms INTEGER NOT NULL, updated_ms INTEGER NOT NULL
+  created_ms INTEGER NOT NULL, updated_ms INTEGER NOT NULL, shared TEXT NOT NULL DEFAULT 'all' CHECK (shared IN ('all','chosen'))
 );
 CREATE TABLE IF NOT EXISTS org_mcp_offer (
   name TEXT NOT NULL REFERENCES org_mcp(name) ON DELETE CASCADE, workspace_id TEXT NOT NULL,
@@ -49,8 +49,8 @@ class OrgMcpStore:
         offers: dict[str, list[str]] = {}
         for n, w in a._q("SELECT name, workspace_id FROM org_mcp_offer ORDER BY workspace_id"):
             offers.setdefault(n, []).append(w)
-        rows = a._q("SELECT name, url, auth, secret, description, updated_ms FROM org_mcp ORDER BY name")
-        return [{**_entry(r), "updated_ms": r[5], "offered_to": offers.get(r[0], [])} for r in rows]
+        rows = a._q("SELECT name, url, auth, secret, description, updated_ms, shared FROM org_mcp ORDER BY name")
+        return [{**_entry(r), "updated_ms": r[5], "shared": r[6], "offered_to": offers.get(r[0], [])} for r in rows]
 
     def put(
         self, name: object, url: object, auth: object, secret: object, description: object, *, actor: str
@@ -84,24 +84,27 @@ class OrgMcpStore:
             if db.execute("DELETE FROM org_mcp WHERE name=?", (name,)).rowcount == 0:
                 raise AccessError("unknown_server")
 
-    def set_offers(self, name: object, workspace_ids: object, *, actor: str) -> list[str]:
-        """The exact set of workspaces this server is offered to. Offering is not enabling: the owner's accept decides."""
+    def set_share(self, name: object, shared: object, workspaces: object, *, actor: str) -> dict[str, Any]:
+        """Who this server is offered to: ``all`` (every bound workspace, also one bound later: resolved when a bundle is
+        built, never copied) or ``chosen`` (the exact list). Offering is not enabling: the owner's accept decides."""
         self._admin(actor)
-        if type(workspace_ids) is not list or len(workspace_ids) > 256:
-            raise AccessError("malformed", "workspace ids")
-        ids = sorted({_hex(w, "workspace_id") for w in workspace_ids})
+        if shared not in ("all", "chosen") or type(workspaces) is not list or len(workspaces) > 256:
+            raise AccessError("malformed", "share")
+        ids = sorted({_hex(w, "workspace_id") for w in workspaces}) if shared == "chosen" else []
         with self._a.tx() as db:
             if not db.execute("SELECT 1 FROM org_mcp WHERE name=?", (name,)).fetchone():
                 raise AccessError("unknown_server")
+            db.execute("UPDATE org_mcp SET shared=? WHERE name=?", (shared, name))
             db.execute("DELETE FROM org_mcp_offer WHERE name=?", (name,))
             db.executemany("INSERT INTO org_mcp_offer VALUES (?,?)", [(name, w) for w in ids])
-        return ids
+        return {"shared": shared, "offered_to": ids}
 
     def offered_to(self, workspace_id: str) -> list[dict[str, Any]]:
-        """What the bundle of ONE workspace carries (the link's workspace only, never a caller-named one)."""
+        """What the bundle of ONE workspace carries (the link's workspace only, never a caller-named one). The caller has
+        already required a live binding, so ``all`` covers every bound workspace and nothing else."""
         rows = self._a._q(
-            "SELECT s.name, s.url, s.auth, s.secret, s.description FROM org_mcp s JOIN org_mcp_offer o ON o.name=s.name "
-            "WHERE o.workspace_id=? ORDER BY s.name",
+            "SELECT s.name, s.url, s.auth, s.secret, s.description FROM org_mcp s WHERE s.shared='all' OR EXISTS "
+            "(SELECT 1 FROM org_mcp_offer o WHERE o.name=s.name AND o.workspace_id=?) ORDER BY s.name",
             (_hex(workspace_id, "workspace_id"),),
         )
         return [_entry(r) for r in rows]

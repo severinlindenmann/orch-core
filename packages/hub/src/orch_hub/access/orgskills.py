@@ -14,7 +14,8 @@ from .store import Access, AccessError, _hex
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS org_skill (
-  name TEXT PRIMARY KEY, text TEXT NOT NULL, created_ms INTEGER NOT NULL, updated_ms INTEGER NOT NULL
+  name TEXT PRIMARY KEY, text TEXT NOT NULL, created_ms INTEGER NOT NULL, updated_ms INTEGER NOT NULL,
+  shared TEXT NOT NULL DEFAULT 'all' CHECK (shared IN ('all','chosen'))
 );
 CREATE TABLE IF NOT EXISTS org_skill_offer (
   name TEXT NOT NULL REFERENCES org_skill(name) ON DELETE CASCADE, workspace_id TEXT NOT NULL,
@@ -43,8 +44,8 @@ class OrgSkillStore:
         for n, w in a._q("SELECT name, workspace_id FROM org_skill_offer ORDER BY workspace_id"):
             offers.setdefault(n, []).append(w)
         return [
-            {"name": n, "text": t, "digest": skill_digest(n, t), "updated_ms": u, "offered_to": offers.get(n, [])}
-            for n, t, u in a._q("SELECT name, text, updated_ms FROM org_skill ORDER BY name")
+            {"name": n, "text": t, "digest": skill_digest(n, t), "updated_ms": u, "shared": sh, "offered_to": offers.get(n, [])}
+            for n, t, u, sh in a._q("SELECT name, text, updated_ms, shared FROM org_skill ORDER BY name")
         ]
 
     def put(self, name: object, text: object, *, actor: str) -> dict[str, Any]:
@@ -77,24 +78,27 @@ class OrgSkillStore:
             if db.execute("DELETE FROM org_skill WHERE name=?", (name,)).rowcount == 0:
                 raise AccessError("unknown_skill")
 
-    def set_offers(self, name: object, workspace_ids: object, *, actor: str) -> list[str]:
-        """The exact set of workspaces this skill is offered to. Offering is not enabling: the owner's accept decides."""
+    def set_share(self, name: object, shared: object, workspaces: object, *, actor: str) -> dict[str, Any]:
+        """Who this skill is offered to: ``all`` (every bound workspace, also one bound later: resolved when a bundle is
+        built, never copied) or ``chosen`` (the exact list). Offering is not enabling: the owner's accept decides."""
         self._admin(actor)
-        if type(workspace_ids) is not list or len(workspace_ids) > 256:
-            raise AccessError("malformed", "workspace ids")
-        ids = sorted({_hex(w, "workspace_id") for w in workspace_ids})
+        if shared not in ("all", "chosen") or type(workspaces) is not list or len(workspaces) > 256:
+            raise AccessError("malformed", "share")
+        ids = sorted({_hex(w, "workspace_id") for w in workspaces}) if shared == "chosen" else []
         with self._a.tx() as db:
             if not db.execute("SELECT 1 FROM org_skill WHERE name=?", (name,)).fetchone():
                 raise AccessError("unknown_skill")
+            db.execute("UPDATE org_skill SET shared=? WHERE name=?", (shared, name))
             db.execute("DELETE FROM org_skill_offer WHERE name=?", (name,))
             db.executemany("INSERT INTO org_skill_offer VALUES (?,?)", [(name, w) for w in ids])
-        return ids
+        return {"shared": shared, "offered_to": ids}
 
     def offered_to(self, workspace_id: str) -> list[dict[str, str]]:
-        """What the bundle of ONE workspace carries (the link's workspace only, never a caller-named one)."""
+        """What the bundle of ONE workspace carries (the link's workspace only, never a caller-named one). The caller has
+        already required a live binding, so ``all`` covers every bound workspace and nothing else."""
         rows = self._a._q(
-            "SELECT s.name, s.text FROM org_skill s JOIN org_skill_offer o ON o.name=s.name "
-            "WHERE o.workspace_id=? ORDER BY s.name",
+            "SELECT s.name, s.text FROM org_skill s WHERE s.shared='all' OR EXISTS "
+            "(SELECT 1 FROM org_skill_offer o WHERE o.name=s.name AND o.workspace_id=?) ORDER BY s.name",
             (_hex(workspace_id, "workspace_id"),),
         )
         return [{"name": n, "text": t, "digest": skill_digest(n, t)} for n, t in rows]

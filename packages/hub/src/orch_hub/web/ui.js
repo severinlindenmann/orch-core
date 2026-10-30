@@ -60,3 +60,22 @@ export function actorLabel(actor) {
   if (actor.kind === "host") return "host";
   return "unknown";
 }
+
+// Who an item is offered to (#1432): "All workspaces" (also ones connected later) or "Chosen workspaces" with a box each.
+// Offering is not enabling: each workspace owner still accepts. `save(shared, ids)` gets the answer.
+export function sharePicker(item, workspaces, save) {
+  const pick = h("select", { "aria-label": "Who gets it" },
+    h("option", { value: "all", text: "All workspaces (also new ones)" }),
+    h("option", { value: "chosen", text: "Chosen workspaces" }));
+  pick.value = item.shared ?? "all";
+  const boxes = workspaces.map((w) => {
+    const box = h("input", { type: "checkbox", "data-ws": w.workspace_id });
+    box.checked = (item.offered_to ?? []).includes(w.workspace_id);
+    return { w, box, row: h("label", { class: "list-row row" }, box, h("span", { class: "grow", text: text(w?.name || "A workspace") })) };
+  });
+  const list = h("div", { class: "share-list" }, workspaces.length ? boxes.map((x) => x.row) : h("p", { class: "small muted", text: "No workspaces are connected yet." }));
+  const sync = () => { list.hidden = pick.value !== "chosen"; };
+  pick.addEventListener("change", sync); sync();
+  const button = h("button", { type: "button", text: "Save who gets it", onclick: () => save(pick.value, pick.value === "chosen" ? boxes.filter((x) => x.box.checked).map((x) => x.w.workspace_id) : []) });
+  return h("div", { class: "share" }, h("h4", { text: "Offer to" }), pick, list, button);
+}

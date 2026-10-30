@@ -163,8 +163,8 @@ def test_a_bundle_carries_only_the_skills_offered_to_that_workspace(env):
     keys, _acc, snaps, store = env
     store.put("invoices", TEXT, actor=ADMIN)
     store.put("support", "Greet customers by name.", actor=ADMIN)
-    store.set_offers("invoices", [WS], actor=ADMIN)
-    store.set_offers("support", [WS2], actor=ADMIN)
+    store.set_share("invoices", "chosen", [WS], actor=ADMIN)
+    store.set_share("support", "chosen", [WS2], actor=ADMIN)
     o1 = verify(keys, snaps.org_skills(WS, "full"))
     o2 = verify(keys, snaps.org_skills(WS2, "full"), ws=WS2)
     assert [s["name"] for s in o1["skills"]] == ["invoices"] and [s["name"] for s in o2["skills"]] == ["support"]
@@ -176,7 +176,7 @@ def test_a_bundle_carries_only_the_skills_offered_to_that_workspace(env):
 def test_versions_only_go_up_and_unchanged_content_is_byte_identical(env):
     keys, _acc, snaps, store = env
     store.put("invoices", TEXT, actor=ADMIN)
-    store.set_offers("invoices", [WS], actor=ADMIN)
+    store.set_share("invoices", "chosen", [WS], actor=ADMIN)
     a = snaps.org_skills(WS, "full")
     assert cj(snaps.org_skills(WS, "full")) == cj(
         a
@@ -184,7 +184,7 @@ def test_versions_only_go_up_and_unchanged_content_is_byte_identical(env):
     store.put("invoices", TEXT + " Also: add the VAT number.", actor=ADMIN)  # an edit is a new digest and a new version
     b = snaps.org_skills(WS, "full")
     assert verify(keys, b, pinned=verify(keys, a))["version"] == 2
-    store.set_offers("invoices", [], actor=ADMIN)  # withdrawing is a new version too (it narrows)
+    store.set_share("invoices", "chosen", [], actor=ADMIN)  # withdrawing is a new version too (it narrows)
     c = snaps.org_skills(WS, "full")
     assert verify(keys, c, pinned=verify(keys, b))["version"] == 3 and verify(keys, c)["skills"] == []
 
@@ -192,7 +192,7 @@ def test_versions_only_go_up_and_unchanged_content_is_byte_identical(env):
 def test_a_host_refuses_a_wrong_workspace_a_bad_signature_and_a_rollback(env):
     keys, _acc, snaps, store = env
     store.put("invoices", TEXT, actor=ADMIN)
-    store.set_offers("invoices", [WS], actor=ADMIN)
+    store.set_share("invoices", "chosen", [WS], actor=ADMIN)
     v1 = snaps.org_skills(WS, "full")
     store.put("invoices", TEXT + " Edited.", actor=ADMIN)
     v2 = snaps.org_skills(WS, "full")
@@ -216,7 +216,7 @@ def test_a_host_refuses_a_wrong_workspace_a_bad_signature_and_a_rollback(env):
 def test_the_contract_refuses_a_bundle_whose_text_or_digest_is_bad(env):
     keys, _acc, snaps, store = env
     store.put("invoices", TEXT, actor=ADMIN)
-    store.set_offers("invoices", [WS], actor=ADMIN)
+    store.set_share("invoices", "chosen", [WS], actor=ADMIN)
     o = verify(keys, snaps.org_skills(WS, "full"))
     good = o["skills"][0]
     for bad in (
@@ -235,7 +235,7 @@ def test_the_contract_refuses_a_bundle_whose_text_or_digest_is_bad(env):
 def test_a_deleted_skill_leaves_every_bundle_and_unbind_drops_offers(env):
     keys, _acc, snaps, store = env
     store.put("invoices", TEXT, actor=ADMIN)
-    store.set_offers("invoices", [WS, WS2], actor=ADMIN)
+    store.set_share("invoices", "chosen", [WS, WS2], actor=ADMIN)
     snaps.org_skills(WS, "full")
     store.drop_workspace(WS)  # unbind or leave
     assert verify(keys, snaps.org_skills(WS, "full"))["skills"] == []
@@ -264,7 +264,7 @@ def reg():
 def test_the_op_serves_the_link_workspace_only(env, reg):
     keys, _acc, snaps, store = env
     store.put("invoices", TEXT, actor=ADMIN)
-    store.set_offers("invoices", [WS], actor=ADMIN)
+    store.set_share("invoices", "chosen", [WS], actor=ADMIN)
     c = lambda ws: SimpleNamespace(registry=reg, workspace_id=ws, snapshots=snaps, body={})
     got = org_skills_get(c(WS))
     assert set(got) == {"bundle"} and [s["name"] for s in verify(keys, got["bundle"])["skills"]] == ["invoices"]
@@ -289,7 +289,7 @@ def test_the_admin_routes_save_offer_remove_audit_and_are_admin_only(tmp_path):
         assert s == 400 and o["error"] == "malformed"  # hidden characters are refused, not cleaned
         s, o, _ = w.call("PUT", "/admin/skills/invoices", {"text": TEXT}, token=admin)
         assert s == 200 and o["digest"] == OB.skill_digest("invoices", TEXT)
-        s, o, _ = w.call("PUT", "/admin/skills/invoices/offers", {"workspaces": [WS]}, token=admin)
+        s, o, _ = w.call("PUT", "/admin/skills/invoices/offers", {"shared": "chosen", "workspaces": [WS]}, token=admin)
         assert s == 200 and o["offered_to"] == [WS]
         s, o, _ = w.call("GET", "/admin/skills", token=admin)
         assert s == 200 and o["skills"][0]["text"] == TEXT and o["skills"][0]["offered_to"] == [WS]
@@ -298,14 +298,14 @@ def test_the_admin_routes_save_offer_remove_audit_and_are_admin_only(tmp_path):
         assert s == 400 and o["error"] == "malformed"
         s, o, _ = w.call("PUT", "/admin/skills/invoices", {"text": 5}, token=admin)
         assert s == 400
-        s, o, _ = w.call("PUT", "/admin/skills/invoices/offers", {"workspaces": ["nope"]}, token=admin)
+        s, o, _ = w.call("PUT", "/admin/skills/invoices/offers", {"shared": "chosen", "workspaces": ["nope"]}, token=admin)
         assert s == 400
-        s, o, _ = w.call("PUT", "/admin/skills/ghost/offers", {"workspaces": []}, token=admin)
+        s, o, _ = w.call("PUT", "/admin/skills/ghost/offers", {"shared": "chosen", "workspaces": []}, token=admin)
         assert s == 404 and o["error"] == "unknown_skill"
         for method, path, body in (
             ("GET", "/admin/skills", None),
             ("PUT", "/admin/skills/invoices", {"text": TEXT}),
-            ("PUT", "/admin/skills/invoices/offers", {"workspaces": []}),
+            ("PUT", "/admin/skills/invoices/offers", {"shared": "chosen", "workspaces": []}),
             ("DELETE", "/admin/skills/invoices", None),
         ):
             s, _o, _ = w.call(method, path, body, token=ann)  # a member who is not a hub-admin
@@ -320,3 +320,42 @@ def test_the_admin_routes_save_offer_remove_audit_and_are_admin_only(tmp_path):
         assert "INV-2026" not in repr(events)  # the name, never the text
     finally:
         w.close()
+
+
+# --- #1432: "all workspaces" is the default and is resolved when the bundle is built ------------------------------------------------
+
+
+def test_all_is_the_default_and_covers_a_workspace_bound_later(env, reg):
+    keys, _acc, snaps, store = env
+    store.put("invoices", TEXT, actor=ADMIN)
+    assert store.list()[0]["shared"] == "all" and store.list()[0]["offered_to"] == []  # no list is copied anywhere
+    c = lambda ws: SimpleNamespace(registry=reg, workspace_id=ws, snapshots=snaps, body={})
+    assert [s["name"] for s in verify(keys, org_skills_get(c(WS))["bundle"])["skills"]] == ["invoices"]
+    late = "c3" * 16
+    reg.commit_join(late, late, "key", "pk", {"name": "late"}, {"status": "bound", "binding": {"mode": "full"}}, owner_alias=None)
+    got = verify(keys, org_skills_get(c(late))["bundle"], ws=late)
+    assert [s["name"] for s in got["skills"]] == ["invoices"] and got["skills"][0]["digest"] == OB.skill_digest("invoices", TEXT)
+
+
+def test_all_stops_at_unbind_and_chosen_narrows_again(env, reg):
+    keys, _acc, snaps, store = env
+    store.put("invoices", TEXT, actor=ADMIN)
+    c = lambda ws: SimpleNamespace(registry=reg, workspace_id=ws, snapshots=snaps, body={})
+    reg.set_binding_state(WS, {"status": "unbound", "binding": {"mode": "full"}})
+    with pytest.raises(Refused):
+        org_skills_get(c(WS))  # the link op needs a live binding: "all" never reaches an unbound workspace
+    store.set_share("invoices", "chosen", [WS2], actor=ADMIN)
+    assert verify(keys, org_skills_get(c(WS2))["bundle"], ws=WS2)["skills"] != []
+    store.set_share("invoices", "chosen", [], actor=ADMIN)
+    assert verify(keys, snaps.org_skills(WS2, "full"), ws=WS2)["skills"] == []
+    store.set_share("invoices", "all", [WS2], actor=ADMIN)  # the list is dropped when it is all
+    assert store.list()[0]["offered_to"] == []
+
+
+def test_share_must_be_all_or_chosen(env):
+    _keys, _acc, _snaps, store = env
+    store.put("invoices", TEXT, actor=ADMIN)
+    for bad in ("some", None, 1):
+        with pytest.raises(AccessError) as e:
+            store.set_share("invoices", bad, [], actor=ADMIN)
+        assert e.value.code == "malformed"

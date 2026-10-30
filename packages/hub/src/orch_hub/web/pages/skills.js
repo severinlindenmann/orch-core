@@ -1,10 +1,9 @@
 // The Company skills page (M3, #1430): instructions a hub admin offers to workspaces. Offering is not enabling: a
 // workspace's owner reads the full text and turns a skill on at their own host. The hub never reaches an agent from here.
 import { emptyState, loading } from "../feel.js";
-import { h, text, withNames } from "../ui.js";
+import { h, sharePicker, text, withNames } from "../ui.js";
 
 const info = (label, body) => h("details", { class: "info" }, h("summary", { "aria-label": label, text: "i" }), h("p", { class: "small muted", text: body }));
-const wsName = (w) => text(w?.name || "A workspace");
 const NAME = /^[a-z][a-z0-9-]{1,39}$/;
 
 // Mirrors the hub's own check so a typo is caught before sending; the hub decides in the end.
@@ -24,11 +23,6 @@ export function skillsView(data, actions = {}) {
     const area = h("textarea", { rows: 6, "aria-label": "Text of " + s.name, maxlength: String(max) });
     area.value = s.text;
     const note = h("p", { class: "small", role: "status" });
-    const boxes = workspaces.map((w) => {
-      const box = h("input", { type: "checkbox", "data-ws": w.workspace_id });
-      box.checked = (s.offered_to ?? []).includes(w.workspace_id);
-      return { w, box };
-    });
     let sure = false;
     const remove = h("button", { type: "button", text: "Remove", onclick: () => {
       if (!sure) { sure = true; remove.textContent = "Sure? Remove it"; return; }
@@ -42,9 +36,7 @@ export function skillsView(data, actions = {}) {
         if (bad) { note.textContent = bad; return; }
         actions.save?.(s.name, area.value);
       } }), h("span", { class: "small muted", text: "Saving changes the skill, so each workspace owner has to accept it again." })),
-      h("h4", { text: "Offer to" }),
-      workspaces.length ? boxes.map(({ w, box }) => h("label", { class: "list-row row" }, box, h("span", { class: "grow", text: wsName(w) }))) : h("p", { class: "small muted", text: "No workspaces are connected yet." }),
-      workspaces.length ? h("button", { type: "button", text: "Save who gets it", onclick: () => actions.offer?.(s.name, boxes.filter((x) => x.box.checked).map((x) => x.w.workspace_id)) }) : null);
+      sharePicker(s, workspaces, (shared, ids) => actions.offer?.(s.name, shared, ids)));
   };
   const nameIn = h("input", { type: "text", "aria-label": "Name of the new skill", placeholder: "for example: how-we-write-invoices", maxlength: "40" });
   const bodyIn = h("textarea", { rows: 5, "aria-label": "Text of the new skill", maxlength: String(max) });
@@ -76,7 +68,7 @@ export async function skillsPage(d) {
     const say = (ok, x) => { d.state.notice = x.status === 200 ? d.banner("ok", ok, null) : d.banner("bad", "Not changed", d.say(x.body.error ?? "unavailable")); };
     const save = async (name, body) => { say("Saved", await d.api("PUT", "/admin/skills/" + name, { text: body })); await skillsPage(d); };
     const remove = async (s) => { say("Removed", await d.api("DELETE", "/admin/skills/" + s.name)); await skillsPage(d); };
-    const offer = async (name, workspaces) => { say("Saved", await d.api("PUT", "/admin/skills/" + name + "/offers", { workspaces })); await skillsPage(d); };
+    const offer = async (name, shared, workspaces) => { say("Saved", await d.api("PUT", "/admin/skills/" + name + "/offers", { shared, workspaces })); await skillsPage(d); };
     d.shell("skills", d.state.notice, skillsView({ ...r.body, workspaces: withNames(r.body.workspaces, d.state.rail?.rows ?? []) }, { save, remove, offer }));
     d.state.notice = null;
   } finally { finish(); }

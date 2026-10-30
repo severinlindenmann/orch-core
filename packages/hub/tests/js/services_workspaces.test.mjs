@@ -651,6 +651,18 @@ test("SV-01: every part shows its address; Edge down is called out; no address i
   assert.equal(summary(d).text, "Edge is not answering");
 });
 
+test("r14 P05: the joined banner for a private workspace has no Open button and names who can open it", async () => {
+  const { joinedBannerView } = await import("../../src/orch_hub/web/workspaces.js");
+  const opened = [];
+  const row = { workspace_id: "b".repeat(32), name: "Ben Test's workspace", owner_name: "Ben Test", private: true };
+  const el = joinedBannerView(row, { open: (x) => opened.push(x) });
+  assert.match(el.textContent, /Ben Test's workspace joined/);
+  assert.match(el.textContent, /It is online now\. Only Ben Test can open it\./);
+  assert.doesNotMatch(el.textContent, /Open |from here/);
+  const plain = joinedBannerView({ workspace_id: "a", name: "Anna" }, {});
+  assert.match(plain.textContent, /You can open it from here/);
+});
+
 test("P08: the Workspaces page shows the Restored note at the top until Got it is clicked", () => {
   let n = 0;
   const out = workspacesView({ workspaces: [], handoffs: [], restored: { made_ms: NOW - 3600000, restored_ms: NOW, suspended: 1 },

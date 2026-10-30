@@ -57,7 +57,7 @@ class ReadOnlyAuth:
         )
         return bool(rows)
 
-    def channel_revoked(self, channel_id: str) -> bool:
+    def is_channel_revoked(self, channel_id: str) -> bool:
         if self._q(ACCESS_FILE, "SELECT 1 FROM revoked_channels WHERE channel_id=?", (channel_id,)):
             return True
         row = self._q(CHANNELS_FILE, "SELECT revoked_ms FROM channels WHERE channel_id=?", (channel_id,))
@@ -66,7 +66,7 @@ class ReadOnlyAuth:
     # the ChannelRegistry that check_channel_proof reads
     def active_channel(self, user_id: str, channel_id: str) -> dict[str, Any] | None:
         try:
-            if not (HEX32.fullmatch(user_id) and HEX32.fullmatch(channel_id)) or self.channel_revoked(channel_id):
+            if not (HEX32.fullmatch(user_id) and HEX32.fullmatch(channel_id)) or self.is_channel_revoked(channel_id):
                 return None
             own = self._q(
                 CHANNELS_FILE, "SELECT 1 FROM channels WHERE channel_id=? AND user_id=?", (channel_id, user_id)

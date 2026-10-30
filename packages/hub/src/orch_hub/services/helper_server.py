@@ -136,7 +136,7 @@ class HelperService:
     def _admin(self, user_id: str, channel_id: str) -> None:
         if not self._auth.is_admin(user_id):
             raise HelperError("forbidden_role")
-        if self._auth.channel_revoked(channel_id):
+        if self._auth.is_channel_revoked(channel_id):
             raise HelperError("channel_revoked")
 
     def prepare(self, req: dict) -> dict[str, Any]:

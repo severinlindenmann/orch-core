@@ -189,10 +189,13 @@ def _ask(path, obj):
     s = socket.socket(socket.AF_UNIX)
     s.settimeout(5)
     s.connect(str(path))
-    s.sendall(json.dumps(obj).encode() + b"\n")
     out = b""
-    while chunk := s.recv(4096):
-        out += chunk
+    try:  # a refused peer sees a clean EOF (macOS) or a reset (Linux), never a reply
+        s.sendall(json.dumps(obj).encode() + b"\n")
+        while chunk := s.recv(4096):
+            out += chunk
+    except ConnectionResetError, BrokenPipeError:
+        pass
     s.close()
     return json.loads(out) if out else None
 

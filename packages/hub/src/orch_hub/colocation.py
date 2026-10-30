@@ -118,6 +118,46 @@ def parse_link_listen(value: str, *, assigned: Callable[[str], bool] = locally_a
     return str(ip), int(port)
 
 
+def parse_link_ws_listen(
+    value: str,
+    *,
+    assigned: Callable[[str], bool] = locally_assigned,
+    bind_all: bool = False,
+    behind_front: bool = False,
+) -> tuple[str, int]:
+    """R6 (#1594): the WebSocket listener's bind (``--link-ws-listen``), plain HTTP with no outer TLS, so it is meant for
+    a front on this machine (loopback) or one private address. Loopback and the private ranges of
+    :func:`parse_link_listen` are accepted; a wildcard only with ``--bind-all``; a PUBLIC address only when the owner
+    says (``--link-ws-behind-front``) that a TLS-terminating front is the only way to reach it. Multicast, broadcast
+    and link-local are always refused, and the address must be assigned to this machine."""
+    host, sep, port = value.rpartition(":")
+    if not sep or not port.isdigit() or not 0 <= int(port) <= 65535:
+        raise BindRefused("--link-ws-listen must be IP:port with a port of 0-65535")
+    try:
+        ip = ipaddress.ip_address(host.strip("[]"))
+    except ValueError:
+        raise BindRefused("--link-ws-listen takes a literal IP address, not a hostname") from None
+    if ip.is_multicast or ip == ipaddress.ip_address("255.255.255.255"):
+        raise BindRefused("--link-ws-listen refuses multicast and broadcast addresses")
+    if ip.is_link_local:
+        raise BindRefused("--link-ws-listen refuses link-local addresses")
+    if ip.is_unspecified:
+        if not bind_all:
+            raise BindRefused("--link-ws-listen refuses a wildcard address (0.0.0.0, ::) without --bind-all")
+        return str(ip), int(port)
+    if not ip.is_loopback:
+        v4 = ip.version == 4
+        private = any(ip in n for n in _PRIVATE_V4) or ip in _CGNAT if v4 else ip in _ULA
+        if not private and not behind_front:
+            raise BindRefused(
+                "--link-ws-listen refuses a public address (private, 100.64/10 or ULA only) unless "
+                "--link-ws-behind-front says a TLS-terminating front is the only way in"
+            )
+    if not assigned(str(ip)):
+        raise BindRefused("--link-ws-listen address is not assigned to a local interface")
+    return str(ip), int(port)
+
+
 def check_bind_allowed(
     acc: Accounts,
     *,

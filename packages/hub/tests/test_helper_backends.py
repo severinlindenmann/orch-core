@@ -27,7 +27,7 @@ def test_argv_is_fixed_and_exact():
     ]
     assert c.parts["relay"].logs_argv() == [
         "sudo", "-n", "/usr/bin/journalctl", "-u", "orch-relay.service",
-        "--since", "-1h", "-n", "500", "-o", "short-iso", "--no-pager",
+        "--since", "-24h", "-n", "300", "-o", "short-iso", "--no-pager",
     ]  # fmt: skip
     assert c.parts["publish"].action_argv("stop") == ["systemctl", "--user", "stop", "orch-publish-api.service"]
     for bad in ("status", "edit", "restart; rm", "--now", "update"):
@@ -85,7 +85,7 @@ def test_sudoers_lists_exact_argv_no_wildcards():
     c = B.parse_config(GOOD)
     t = B.sudoers_text("orch-hub", list(c.parts.values()))
     assert "/usr/bin/systemctl restart orch-relay.service" in t
-    assert "/usr/bin/journalctl -u orch-relay.service --since -1h -n 500 -o short-iso --no-pager" in t
+    assert "/usr/bin/journalctl -u orch-relay.service --since -24h -n 300 -o short-iso --no-pager" in t
     assert "orch-publish" not in t  # a user unit needs no sudo
     assert "*" not in t and "status" not in t and "edit" not in t
     assert "Defaults:orch-hub env_reset" in t and "orch-hub ALL=(root) NOPASSWD: ORCH_SVC" in t
@@ -107,3 +107,36 @@ def test_installer_vector_parses_and_the_installers_own_unit_is_refused():
     vec = json.loads((Path(__file__).resolve().parents[3] / "contracts/hub/helper_config_vector.json").read_text())
     cfg = B.parse_config(vec)
     assert set(cfg.parts) == {"hub", "relay", "publish"} and cfg.parts["hub"].kind == "systemd-user"
+
+
+def test_info_names_the_real_user_unit_when_the_helper_does_not_answer():
+    """The Services note says the unit the installer made (orch-<tag>-hub-helper.service), never a guessed name."""
+    import json
+    import os
+    import shutil
+    import tempfile
+    from pathlib import Path
+
+    from orch_hub.services.helper_client import HelperClient
+
+    tmp_path = Path(tempfile.mkdtemp(prefix="hs"))  # short: a unix socket path is limited to ~100 bytes
+    try:
+        state = tmp_path / "st"
+        state.mkdir(mode=0o700)
+        cfg = {
+            "v": 1,
+            "host_id": "vps1",
+            "parts": {"hub": {"label": "Hub", "kind": "systemd-user", "unit": "orch-1e0740-hub.service"}},
+        }
+        f = state / "helper.json"
+        f.write_text(json.dumps(cfg))
+        os.chmod(f, 0o600)
+        info = HelperClient(state / "helper.sock").info()  # no socket: the helper is not running
+        assert info["state"] == "not_set_up" and info["helper_unit"] == "orch-1e0740-hub-helper.service"
+        # a system unit (hand-built server) or a missing file gives no guessed name
+        cfg["parts"]["hub"]["kind"] = "systemd"
+        f.write_text(json.dumps(cfg))
+        assert "helper_unit" not in HelperClient(state / "helper.sock").info()
+        assert "helper_unit" not in HelperClient(tmp_path / "nowhere" / "helper.sock").info()
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)

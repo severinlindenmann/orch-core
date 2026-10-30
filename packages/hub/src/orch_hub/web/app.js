@@ -16,8 +16,8 @@ import { KEY_GONE_NOTE, totpPanel } from "./totp.js";
 import { inviteView } from "./invite.js";
 import { INVITE_WORDS, KEY_WORDS, WELCOME, WHY as COMPANY_WHY, accountCard as companyAccountCard, begin as beginCompany, finishCallback, signInButton as companyButton } from "./oidc.js";
 import { rememberDashboard, rememberName } from "./connect.js";
-import { servicesView } from "./services.js";
-import { VERBS, checkServiceAction, resultWords, needsConfirm, hubStopConfirm, logsDialog } from "./service_actions.js";
+import { servicesView, NAME } from "./services.js";
+import { checkServiceAction, resultWords, logsDialog, serviceDialog, stopLabel, withKey } from "./service_actions.js";
 import { handoffsView } from "./handoffs.js";
 import { phonesView } from "./phones.js";
 import { workspacesView, workspaceDetailsView, newWorkspaces, privateRows } from "./workspaces.js";
@@ -677,7 +677,7 @@ function changeFailed(code) {
   dialog(banner("bad", "Nothing was approved", say(code)), h("div", { class: "row" }, h("button", { text: "Close", onclick: async () => { closeDialog(); await approvals(); } })));
 }
 async function approveChange(change, ap) {
-  if (!state.me) { state.notice = banner("warn", "Set up signing first", null); return home(); }
+  if (!state.me) return registerDialog("Approve an access change", () => approveChange(change, ap));
   const me = state.me;
   const r = await api("POST", changePath(change, "/approve/prepare"), { workspace_id: ap.workspace_id });
   if (r.status === 401) return loginView(say("no_session"));
@@ -719,12 +719,10 @@ const svcPath = (name, tail) => "/admin/services/" + encodeURIComponent(name) + 
 function serviceFailed(code, detail) {
   dialog(banner("bad", "Nothing was changed", say(code) + (detail ? " (" + renderText(detail) + ")" : "")), h("div", { class: "row" }, h("button", { text: "Close", onclick: closeDialog })));
 }
-async function serviceAction(name, verb, confirmed = false) {
-  if (needsConfirm(name, verb) && !confirmed) { // a second plain click (no typed word) before the hub stops itself
-    dialog(...hubStopConfirm({ onCancel: closeDialog, onYes: () => { closeDialog(); void serviceAction(name, verb, true); } }));
-    return;
-  }
-  if (!state.me) { state.notice = banner("warn", "Set up signing first", null); return home(); }
+async function serviceAction(name, verb) {
+  return withKey(() => !!state.me, (resume) => registerDialog(stopLabel(name, verb) + "?", resume), () => serviceActionSigned(name, verb));
+}
+async function serviceActionSigned(name, verb) {
   const me = state.me;
   const r = await api("POST", svcPath(name, "/prepare"), { action: verb, channel_id: me.channelId });
   if (r.status === 401) return loginView(say("no_session"));
@@ -732,7 +730,7 @@ async function serviceAction(name, verb, confirmed = false) {
   let digest;
   try { digest = await checkServiceAction(r.body, { part: name, action: verb, userId: state.user.user_id, channelId: me.channelId }); } catch (e) { return serviceFailed(e.message === "event_changed" ? "event_changed" : "malformed"); }
   const sign = h("button", { class: verb === "stop" ? "dan" : "pri", id: "sign", "data-sign": "", disabled: true, text: "Please review…" });
-  const label = VERBS[verb] + " " + (r.body.text.match(/^\w+ (\w+)/)?.[1] ?? name);
+  const label = stopLabel(name, verb);
   sign.arm = () => arm(sign, label);
   const onVis = () => sign.arm();
   document.addEventListener("visibilitychange", onVis);
@@ -750,7 +748,7 @@ async function serviceAction(name, verb, confirmed = false) {
         if (a.body.error === "channel_revoked") await deleteChannel().catch(() => {});
         return serviceFailed(a.body.error, a.body.error === "action_failed" ? a.body.detail : undefined);
       }
-      if (a.body.will_restart) return waitForHub(verb);
+      if (a.body.will_restart) return waitForHub();
       toast(renderText(r.body.ctx.part) + " " + resultWords[verb]);
       await services(true);
     } catch {
@@ -758,34 +756,32 @@ async function serviceAction(name, verb, confirmed = false) {
       serviceFailed("unavailable");
     }
   });
-  dialog(h("h1", { text: VERBS[verb] + " " + (r.body.text.match(/^\w+ (\w+)/)?.[1] ?? name) + "?" }),
-    h("p", { class: "sentence", text: r.body.text }),
-    h("p", { class: "small muted", text: "The hub signs this with this browser's key. Nothing else is changed." }),
-    h("div", { class: "row" }, h("button", { text: "Cancel", onclick: done }), sign));
+  dialog(...serviceDialog(name, verb, r.body.text, { sign, onCancel: done }));
   sign.arm();
 }
-// The last hour of a part's log. The helper redacted it; it is shown as text only (textContent), never as HTML.
-async function openLogs(name) {
-  if (!state.me) { state.notice = banner("warn", "Set up signing first", null); return home(); }
+// The last 24 hours of a part's log. The helper redacted it; it is shown as text only (textContent), never as HTML.
+function openLogs(name) {
+  return withKey(() => !!state.me, (resume) => registerDialog("Logs: " + (NAME[name] ?? renderText(name)), resume), () => openLogsSigned(name));
+}
+async function openLogsSigned(name) {
   const r = await api("GET", svcPath(name, "/logs") + "?channel_id=" + encodeURIComponent(state.me.channelId));
   if (r.status !== 200) return serviceFailed(r.body.error);
   dialog(...logsDialog(renderText(name), r.body.text, { copy: copyText, onClose: closeDialog }));
 }
-// The hub restarts or stops itself: this page cannot ask it anything while it is down, so it polls and says what to do if it stays away.
-async function waitForHub(verb) {
-  const cmd = "systemctl start orch-hub";
+// The hub restarts itself (the console has no Stop for the hub): it cannot be asked while it is down, so this polls until it answers.
+async function waitForHub() {
   const box = h("div", { class: "card" });
-  const show = (...nodes) => { box.replaceChildren(...nodes); };
-  show(banner("warn", verb === "stop" ? "The hub is stopping" : "The hub is restarting…", "This page cannot reach it for a moment."));
   dialog(box);
-  if (verb === "stop") return show(banner("warn", "The hub is stopped", "Workspaces keep working on their own. To start it again, run this on the server:"), h("div", { class: "cmd" }, h("code", { text: cmd })), h("div", { class: "row" }, h("button", { text: "Copy", onclick: () => copyText(cmd) }), h("button", { text: "Close", onclick: closeDialog })));
-  const until = Date.now() + 60000;
-  while (Date.now() < until) {
+  box.replaceChildren(banner("warn", "The hub is restarting…", "This page cannot reach it for a moment."));
+  const slowAt = Date.now() + 60000;
+  let slow = false;
+  for (;;) {
     await new Promise((res) => setTimeout(res, 2000));
+    if (!document.getElementById("dlg")?.contains(box)) return; // the admin closed it: stop polling
     const r = await api("GET", "/admin/services").catch(() => null);
     if (r?.status === 200 || r?.status === 401 || r?.status === 403) { closeDialog(); return services(true); }
+    if (!slow && Date.now() > slowAt) { slow = true; box.replaceChildren(banner("warn", "The hub is taking longer than usual", "This page keeps trying."), h("div", { class: "row" }, h("button", { text: "Close", onclick: closeDialog }))); }
   }
-  show(banner("bad", "The hub did not come back", "Run this on the server:"), h("div", { class: "cmd" }, h("code", { text: cmd })), h("div", { class: "row" }, h("button", { text: "Copy", onclick: () => copyText(cmd) }), h("button", { text: "Close", onclick: closeDialog })));
 }
 async function rejectChange(change, ap) {
   const r = await api("POST", changePath(change, "/reject"), { workspace_id: ap.workspace_id });
@@ -886,7 +882,8 @@ async function registerRoute() { // a hub with no workspace has no Home signing 
   if (!(await refresh())) return loginView();
   registerView();
 }
-function registerView(err) {
+// The register form: used by the Register page and, in place, by the Services buttons (P04). `onDone` runs after the key is stored.
+function registerForm({ onDone, onCancel, rerender, intro }) {
   const label = h("input", { id: "label", value: "This browser", maxlength: 60 });
   const pw = h("input", { id: "pw2", type: "password", autocomplete: "current-password", required: true });
   const code = h("input", { id: "code2", inputmode: "numeric", autocomplete: "one-time-code", maxlength: 6, required: true });
@@ -898,12 +895,24 @@ function registerView(err) {
       const out = await busyButton(button, () => registerBrowser(label.value.trim() || "This browser", pw.value, code.value.trim()));
       if (out === undefined) return; // a second submit while the first is still running: that one decides, not this one
       pw.value = code.value = "";
-      if (out) return registerView(out);
-      state.notice = banner("ok", "This browser is ready", "It holds a signing key for you. You can remove it any time.");
-      await home();
+      if (out) return rerender(out);
+      await onDone();
     },
-  }, h("p", { class: "muted small", text: "Type your password and a new 6-digit code. Each code works only once, so wait for the next one if you just signed in." }), field("Browser name", label), field("Password", pw), field("6-digit code", code), h("div", { class: "row top" }, h("button", { type: "button", text: "Cancel", onclick: home }), h("button", { class: "pri", type: "submit", "data-sign": "", text: "Set up signing" })));
+  }, intro ?? h("p", { class: "muted small", text: "Type your password and a new 6-digit code. Each code works only once, so wait for the next one if you just signed in." }), field("Browser name", label), field("Password", pw), field("6-digit code", code), h("div", { class: "row top" }, h("button", { type: "button", text: "Cancel", onclick: onCancel }), h("button", { class: "pri", type: "submit", "data-sign": "", text: intro ? "Continue" : "Set up signing" })));
+  return form;
+}
+function registerView(err) {
+  const form = registerForm({ rerender: registerView, onCancel: home, onDone: async () => { state.notice = banner("ok", "This browser is ready", "It holds a signing key for you. You can remove it any time."); await home(); } });
   show(h("h1", { text: "Set up signing" }), err ? banner("bad", "Browser not registered. Nothing was kept.", err) : null, form);
+}
+// The same step as a small box on top of the page the admin is on; `resume` carries on with what they pressed (P04).
+function registerDialog(title, resume, err) {
+  const form = registerForm({
+    rerender: (e) => registerDialog(title, resume, e), onCancel: closeDialog,
+    intro: h("p", { class: "muted small", text: "First, let this browser sign for you. Done once; the next time it is one click. A 6-digit code works only once, so wait for the next one if you just signed in." }),
+    onDone: async () => { state.me = await loadChannel(); closeDialog(); if (state.me) await resume(); },
+  });
+  dialog(h("h1", { text: title }), err ? banner("bad", "Browser not registered. Nothing was kept.", err) : null, form);
 }
 
 /** Returns an error text, or null on success. The key is stored only after the certificate checked out. */

@@ -150,7 +150,7 @@ class HelperService:
         if action == "update":
             # signed releases do not exist yet (docs/design/install-update.md): refuse rather than run anything unverified
             raise HelperError("update_unavailable")
-        text = P.text_for(part.label, action, self._cfg.host_id, None)
+        text = P.text_for(part.name, part.label, action, self._cfg.host_id, None)
         nonce, iat = secrets.token_hex(16), self._now()
         ctx = P.context(
             hub_id=self._auth.hub_id(),

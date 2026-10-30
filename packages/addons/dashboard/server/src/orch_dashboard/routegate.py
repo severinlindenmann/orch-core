@@ -140,6 +140,11 @@ TABLE: dict[tuple[str, str], tuple[str, str]] = {
     (GET, W + "/hub/share"): (ALLOWED, ""),
     (GET, W + "/hub/share/audience"): (ALLOWED, "a read: hub people and teams, display names only"),
     (GET, W + "/hub/shared"): (ALLOWED, "a read-only list of tickets others shared with this owner"),
+    (GET, W + "/spaces"): (ALLOWED, "a read: the shared spaces of this workspace (from the hub, unsigned)"),
+    (GET, W + "/spaces/{sid}"): (
+        ALLOWED,
+        "a read: the item names of one shared space (names and sizes, never content)",
+    ),
     (POST, W + "/hub/share/preview"): (ALLOWED, "a read-only preview"),
     (POST, W + "/hub/share/revoke"): (ALLOWED, "turning off: owner, plain click, no signature, full session only"),
     (POST, W + "/hub/share/rule-remove"): (ALLOWED, "turning off: owner, plain click, no signature, full session only"),
@@ -159,6 +164,8 @@ TABLE: dict[tuple[str, str], tuple[str, str]] = {
     (POST, W + "/org/decline"): (ALLOWED, "turning off: owner, plain click, full session only"),
     (POST, W + "/org/sync"): (ALLOWED, "fetches the offers; grants nothing"),
     (POST, W + "/org/tool"): (ALLOWED, "owner, plain click; turning ON is refused unless the session is local"),
+    (GET, W + "/hub/network"): (REFUSED, "R6: where the hub link goes is decided on this computer (D90)"),
+    (PUT, W + "/hub/network"): (REFUSED, "R6: where the hub link goes is decided on this computer (D90)"),
     (GET, W + "/hub/profile"): (ALLOWED, "a read; the host answers the owner only"),
     (PUT, W + "/hub/profile"): (ALLOWED, "owner, plain click; listing ON is refused from a remote session"),
     (POST, W + "/hub/link"): (ALLOWED, "reads the link's hub card; nothing is signed or kept"),
@@ -270,6 +277,8 @@ def _rows(rule, level, method, *templates):
 
 REMOTE_DEVICE: dict[tuple[str, str], tuple[str, str]] = {
     # the hub profile (who this workspace is on the hub) is changed and shown on this computer only
+    **_rows(REFUSED, VIEW, GET, W + "/hub/network"),
+    **_rows(REFUSED, VIEW, PUT, W + "/hub/network"),
     **_rows(REFUSED, VIEW, GET, W + "/hub/profile"),
     **_rows(REFUSED, VIEW, PUT, W + "/hub/profile"),
     # asked of this computer's hub link and folders by an owner on the computer itself (a dry-run prepare of a repo
@@ -335,6 +344,8 @@ REMOTE_DEVICE: dict[tuple[str, str], tuple[str, str]] = {
         W + "/hub/share",
         W + "/hub/share/audience",
         W + "/hub/shared",
+        W + "/spaces",
+        W + "/spaces/{sid}",
         W + "/org",
         W + "/org/item",
         W + "/org/secrets",

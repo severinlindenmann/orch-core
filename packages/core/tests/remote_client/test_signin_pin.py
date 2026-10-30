@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from orch.hubclient.netconfig import NetSettings
 from orch.remoteclient import Client, ClientError, Store
 from orch.remoteclient.codes import plain
 
@@ -23,7 +24,7 @@ def client(tmp_path, tls_result=b"", http_result=(500, b"")):
             raise tls_result
         return tls_result
 
-    return Client(Store(tmp_path / "rc"), http=http, tls_request=tls), calls
+    return Client(Store(tmp_path / "rc"), http=http, tls_request=tls, net=NetSettings()), calls
 
 
 @pytest.mark.parametrize("origin", ["http://hub.office:8443", "http://10.0.0.5:8080", "http://localhost:9"])

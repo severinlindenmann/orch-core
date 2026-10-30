@@ -59,6 +59,8 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/hub/share",
         "/api/w/{ws}/hub/share/audience",
         "/api/w/{ws}/hub/shared",
+        "/api/w/{ws}/spaces",
+        "/api/w/{ws}/spaces/{sid}",
         "/api/w/{ws}/hub/share/preview",
         "/api/w/{ws}/hub/share/revoke",  # one click: stop sharing a ticket (owner, full session)
         "/api/w/{ws}/hub/share/rule-remove",  # one click: stop sharing by a rule (owner, full session)
@@ -174,6 +176,7 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/add-ons/{name}/settings",
         "/api/w/{ws}/hub/link",  # run-9 feedback 6: read a connect link
         "/api/w/{ws}/hub/profile",  # HUB-WS-09: the owner's workspace profile (GET and PUT)
+        "/api/w/{ws}/hub/network",  # R6: the company proxy (GET and PUT, loopback owner only)
         "/api/w/{ws}/runner",
         "/api/w/{ws}/runner/deposits/{deposit_id}",
         "/api/w/{ws}/runner/forget",

@@ -1,6 +1,9 @@
 // Today's attention queue as pure data: which group an item belongs to, its stable order, folding of repeated addon
 // asks, and the buffer that keeps new arrivals out of the list until the person asks for them.
-import type { AddonDecision, NeedsYouItem } from '@/api/types'
+import type { AddonDecision, NeedsYouItem, TicketDocument } from '@/api/types'
+import { availableActions, lacks } from '../ticket/actions'
+import { agentWorking } from '../ticket/progress'
+import type { Viewer } from '../ticket/shared'
 
 export type GroupId = 'questions' | 'approvals' | 'verdicts' | 'addons'
 
@@ -152,3 +155,29 @@ export function foldLabel(n: number, addonTitle: string, titles: string[]): stri
 
 /** How many items the rows hold (a fold counts each of its decisions). */
 export const itemsIn = (rows: Row[]) => rows.reduce((n, r) => n + (r.kind === 'fold' ? r.entries.length : 1), 0)
+
+/**
+ * R12 P03: what Today lists for approvals. Requirements and plan are asked in ONE card ("Approve requirements and plan",
+ * the same approve_both action as the ticket page); while the agent is still writing the plan the requirements item is
+ * withheld (`writing`, shown as a quiet line, never counted or announced). When the agent stops or waits the item is
+ * listed again at once. Tickets not read yet leave their items as the host sent them. Pure: counts, badge, notifier and
+ * list all take `items` from here, so they cannot disagree.
+ */
+export function shapeApprovals(items: NeedsYouItem[], tickets: Record<string, TicketDocument | undefined>, viewer: Viewer): { items: NeedsYouItem[]; writing: NeedsYouItem[] } {
+  const writing: NeedsYouItem[] = []
+  const both = new Set<string>()
+  const shaped = items.flatMap((item): NeedsYouItem[] => {
+    const t = item.kind === 'approval' && item.ref === 'requirements' ? tickets[item.ticket] : undefined
+    if (!t) return [item]
+    const inWait = items.some((i) => i.kind === 'terminal_wait' && i.ticket === item.ticket && i.source === 'wait')
+    if (lacks(t.gates.plan) && t.gates.plan.state !== 'approved' && agentWorking(t, inWait ? 'wait' : null)) {
+      writing.push(item)
+      return []
+    }
+    if (!availableActions(t, viewer).approveBoth) return [item]
+    both.add(item.ticket)
+    return [{ ...item, text: 'Approve requirements and plan', both: true }]
+  })
+  // The plan's own item would ask for the same signature a second time.
+  return { items: shaped.filter((i) => !(i.kind === 'approval' && i.ref === 'plan' && both.has(i.ticket))), writing }
+}

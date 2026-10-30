@@ -137,20 +137,65 @@ export function wordsMayShow(loc = globalThis.location, privateWebs = []) {
   return privateWebs.includes(origin);
 }
 
+const MAX_WORDS_FILE = 4096;  // the 24 words are well under 300 bytes; anything bigger is not the words file
+
+/** The 24 words from text that came from a file or the clipboard: exactly 24 words, joined by single spaces, else null.
+ *  Only a shape check for a plain message; the hub still opens the backup with the words or refuses. */
+function wordsFrom(raw) {
+  const list = String(raw ?? "").trim().split(/\s+/).filter(Boolean);
+  return list.length === 24 && list.every((w) => /^\S{1,32}$/.test(w)) ? list.join(" ") : null;
+}
+
+/** The words input of the restore form: Choose the file / Paste (read in this page, never stored, never sent anywhere but
+ *  the restore request), with the old text box behind "Type them instead". `get()` returns the words and forgets them. */
+function wordsInput(id) {
+  let fromFile = "";
+  const status = h("span", { class: "small muted", role: "status" });
+  const area = h("textarea", { id: id + "-words", rows: "3", autocomplete: "off", spellcheck: "false", hidden: true, "aria-label": "The 24 backup words" });
+  const take = (raw, label) => {
+    const w = wordsFrom(raw);
+    fromFile = w ?? "";
+    status.textContent = w ? label + " ✓" : "That is not the 24 words. Choose the words file again, or type them.";
+  };
+  const file = h("input", { type: "file", accept: ".txt,text/plain", hidden: true, "aria-label": "The words file", onchange: async (e) => {
+    const f = e?.target?.files?.[0];
+    if (!f || !(f.size <= MAX_WORDS_FILE)) return take("", "");
+    let t = "";
+    try { t = await f.text(); } catch { t = ""; }
+    take(t, "Words file chosen: " + text(f.name ?? "file"));
+  } });
+  const choose = h("button", { type: "button", text: "Choose the file", onclick: () => file.click?.() });
+  const paste = h("button", { type: "button", text: "Paste", onclick: async () => {
+    let t = "";
+    try { t = await globalThis.navigator?.clipboard?.readText(); } catch { t = ""; }
+    take(t, "Words pasted");
+  } });
+  const typed = h("button", { type: "button", class: "link", text: "Type them instead", onclick: () => { area.removeAttribute("hidden"); typed.setAttribute("hidden", ""); } });
+  const node = h("div", { class: "field", "data-words-input": "1" },
+    h("label", { text: "The 24 backup words" }),
+    h("div", { class: "row" }, choose, paste, status), file, area, typed);
+  return { node, get: () => {
+    const typedWords = String(area.value ?? "").trim();
+    const w = typedWords || fromFile;
+    area.value = ""; file.value = ""; fromFile = ""; status.textContent = "";
+    return w;
+  } };
+}
+
 /** Password + code, then one button. `onSubmit({password, totp})` resolves nothing; the page re-renders afterwards. */
 function stepUpForm(id, label, onSubmit, withWords = false, onCancel = null) {
-  const wordsBox = withWords ? h("textarea", { id: id + "-words", rows: "3", autocomplete: "off", spellcheck: "false", "aria-label": "The 24 backup words" }) : null;
+  const words = withWords ? wordsInput(id) : null;
   const pw = h("input", { id: id + "-pw", type: "password", autocomplete: "current-password", "aria-label": "Password" });
   const code = h("input", { id: id + "-totp", inputmode: "numeric", autocomplete: "one-time-code", maxlength: "6", "aria-label": "6-digit code" });
   const go = h("button", { type: "button", class: "primary", text: label, onclick: async () => {
     const body = { password: pw.value ?? "", totp: String(code.value ?? "").trim() };
-    if (wordsBox) { body.words = String(wordsBox.value ?? ""); wordsBox.value = ""; }
+    if (words) body.words = words.get();
     pw.value = ""; code.value = "";
     await onSubmit(body);
   } });
   return h("div", { class: "stepup", "data-stepup": id },
     h("p", { class: "small muted", text: STEP_UP }),
-    wordsBox ? h("div", { class: "field" }, h("label", { for: id + "-words", text: "The 24 backup words" }), wordsBox) : null,
+    words ? words.node : null,
     h("div", { class: "field" }, h("label", { for: id + "-pw", text: "Password" }), pw),
     h("div", { class: "field" }, h("label", { for: id + "-totp", text: "6-digit code" }), code),
     onCancel ? h("div", { class: "row" }, go, h("button", { type: "button", text: "Cancel", onclick: onCancel })) : go);
@@ -165,10 +210,21 @@ function wordsPanel(words, actions) {
     try { ok = !!(await actions.copy?.(list.join(" "))); } catch { ok = false; }
     copy.textContent = ok ? "Copied" : "Select and copy";
   } });
+  const save = h("button", { type: "button", text: "Save as a file", onclick: () => {
+    try {
+      const url = URL.createObjectURL(new Blob([list.join(" ") + "\n"], { type: "text/plain" }));
+      h("a", { href: url, download: "hub-backup-words.txt" }).click?.();
+      setTimeout(() => URL.revokeObjectURL?.(url), 0);
+      save.textContent = "Saved";
+    } catch { save.textContent = "Could not save"; }
+  } });
+  const host = String(globalThis.location?.hostname ?? "").replace(/^\[|\]$/g, "");
+  const onServer = host === "localhost" || host === "::1" || /^127\.\d+\.\d+\.\d+$/.test(host);   // the browser runs on the hub machine: a file would land on the server
   return h("div", { class: "banner ok", role: "status", "data-words": "1" },
     h("b", { text: "Write these 24 words down" }),
     h("p", { class: "small", text: "They are shown only now. Keep them somewhere safe, away from this server. Without them a backup cannot be opened, and nobody can get them back for you." }),
-    grid, h("div", { class: "row" }, copy, h("button", { type: "button", class: "primary", text: "I have saved it", onclick: () => actions.wordsSaved?.() })));
+    onServer ? null : h("p", { class: "small", text: "Keep this file somewhere safe and offline. Anyone with it and your password can restore your hub." }),
+    grid, h("div", { class: "row" }, copy, onServer ? null : save, h("button", { type: "button", class: "primary", text: "I have saved it", onclick: () => actions.wordsSaved?.() })));
 }
 
 function backupRows(b, actions) {
@@ -199,10 +255,10 @@ function restorePanel(x, actions) {
 }
 
 /** The notice after a restore: what happened, what to check. */
-function restoredNotice(n, actions) {
+export function restoredNotice(n, actions) {
   return h("div", { class: "banner warn", role: "status", "data-restored": "1" },
     h("b", { text: "Restored from the backup of " + text(when(n.made_ms)) }),
-    h("p", { class: "small", text: "Changes made after it are gone. Check People and Workspaces. " + (n.suspended ? text(n.suspended) + (n.suspended === 1 ? " person is" : " people are") + " switched off: turn each one on again in People." : "") }),
+    h("p", { class: "small", text: "Changes made after it are gone. Check that your workspaces show Online. " + (n.suspended ? text(n.suspended) + (n.suspended === 1 ? " person is" : " people are") + " switched off: turn them on again in People." : "") }),
     h("div", { class: "row" }, h("button", { type: "button", text: "Got it", onclick: () => actions.dismissRestored?.() })));
 }
 

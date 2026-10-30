@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, Any
 
 from jsonschema import Draft202012Validator
 
+from . import agentevents
 from .errors import HostError
 
 if TYPE_CHECKING:
@@ -1066,6 +1067,7 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
             }
             service.__dict__.pop("_hub_profile_sent", None)
             service.__dict__.pop("_hub_status_sent", None)  # a (re)connect: tell the hub again
+            agentevents.forget_position(service)  # and start the agent events at the end of every log
             transport = _transport(service, model["hub_id"], link)
             try:
                 r = _connect(state, plan, model, service, wsk_pub, sign, now, save, transport, aliases)
@@ -1079,6 +1081,7 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
             return ok_result(out)
         if plan["op"] == "hub.refresh":
             return ok_result(_refresh(call, plan, state, wsk_pub, sign, now, save))
+        agentevents.forget_position(service)  # before anything can fail: the time not joined is never uploaded
         out = _unbind(call, plan, state, sign, wsk_pub, now, save, leave, flush_outbox)
         from . import orgmcp, orgsecrets, orgstate
 
@@ -1287,6 +1290,7 @@ def _snapshot_link(
         mode=state.mode, now_ms=lambda: int(service.clock() * 1000),
     )  # fmt: skip
     _send_status(service, state, hub_link)
+    agentevents.send(service, state, hub_link)  # HUB-AC-03: four references per agent action, never content
     try:
         if send_profile:
             profile = _load_profile(service)

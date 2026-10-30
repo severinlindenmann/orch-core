@@ -146,6 +146,63 @@ def _int_min(lo: int) -> Check:
     return lambda x: type(x) is int and x >= lo
 
 
+#: the closed set of event type words a workspace may report (what orch.host.agentevents sends; "event" = any other)
+AGENT_EVENT_KINDS = frozenset(
+    {
+        "artifact.added",
+        "artifact.replaced",
+        "branch.pushed",
+        "event",
+        "followup.cancelled",
+        "followup.fired",
+        "followup.outcome",
+        "followup.rescheduled",
+        "followup.restored",
+        "followup.set",
+        "gate.approved",
+        "gate.changes_requested",
+        "gate.invalidated",
+        "grant.issued",
+        "grant.requested",
+        "grant.revoked",
+        "handoff.written",
+        "question.answered",
+        "question.asked",
+        "status.changed",
+        "ticket.closed",
+        "ticket.created",
+        "ticket.moved",
+        "ticket.reopened",
+        "ticket.submitted",
+        "ticket.updated",
+        "verdict.given",
+    }
+)
+_AGENT_NAME = re.compile(r"[0-9A-Za-z][0-9A-Za-z._:@-]*")
+_TICKET_KEY = re.compile(r"[A-Z][A-Z0-9]{0,15}-[0-9]{1,9}")
+AGENT_EVENTS_MAX = 50
+
+
+def _agent_event(x: Any) -> bool:
+    return (
+        type(x) is dict
+        and set(x) == {"kind", "ts_ms", "agent", "ticket"}
+        and type(x["kind"]) is str
+        and x["kind"] in AGENT_EVENT_KINDS
+        and type(x["ts_ms"]) is int
+        and x["ts_ms"] >= 0
+        and type(x["agent"]) is str
+        and len(x["agent"]) <= 64
+        and _AGENT_NAME.fullmatch(x["agent"]) is not None
+        and type(x["ticket"]) is str
+        and (x["ticket"] == "" or _TICKET_KEY.fullmatch(x["ticket"]) is not None)
+    )
+
+
+def _agent_events(x: Any) -> bool:
+    return type(x) is list and 1 <= len(x) <= AGENT_EVENTS_MAX and all(_agent_event(e) for e in x)
+
+
 def _utc_day(x: Any) -> bool:
     """A calendar day as ``YYYY-MM-DD`` (UTC), a real date."""
     import datetime
@@ -1553,6 +1610,12 @@ LINK_OPS: dict[str, tuple[str, str | None, dict[str, Check]]] = {
     "rail_get": ("w2h", None, {"origin": lambda x: type(x) is str}),
     "profile_put": ("w2h", None, PROFILE_FIELDS),
     "directory_get": ("w2h", None, {"query": lambda x: type(x) is str and len(x) <= 80}),
+    # HUB-AC-03 (#1426): what agents did in the workspace, four references per event, never content (protocol 10.10)
+    "agent_events": (
+        "w2h",
+        "full",  # selective mode never tells the hub about tickets that were not shared (D80)
+        {"events": _agent_events},
+    ),
     "status_put": (
         "w2h",
         None,

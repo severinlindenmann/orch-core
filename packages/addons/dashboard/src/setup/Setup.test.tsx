@@ -21,7 +21,7 @@ const state: SetupState = {
     },
     {
       id: 'worktrees',
-      title: 'Work copies',
+      title: 'Own copy per ticket',
       desc: 'Separate working copies',
       required: false,
       default: false,
@@ -166,6 +166,7 @@ function fake(
       result = {
         steps: [
           { id: 'genesis', label: 'Create workspace', status: options.failure ? 'failed' : options.running ? 'doing' : 'todo' },
+          ...(options.running ? [{ id: 'register', label: 'Starting orch in the background', status: 'doing' as const }] : []),
           ...(options.trust ? [{ id: 'trust', label: 'Letting Claude Code trust this folder', status: options.trust }] : []),
         ],
         reasons: options.trust === 'skipped' ? { trust: 'Claude Code has not been started on this computer yet, so orch could not answer for you.' } : {},
@@ -357,7 +358,7 @@ test('finish skips secrets; progress exposes failure and Finish setup later', as
   const f = fake({ finish: true, failure: true })
   render(<Setup api={f.api} />)
   await screen.findByRole('heading', { name: 'Finish setting up your workspace' })
-  fireEvent.click(screen.getByLabelText(/Work copies/))
+  fireEvent.click(screen.getByLabelText(/Own copy per ticket/))
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Review your setup' })
   expect(f.calls.some((c) => c.path.startsWith('secrets/'))).toBe(false)
@@ -437,7 +438,7 @@ test('a service-worker-controlled page refuses the exchange', async () => {
 async function finishFinishMode(f: ReturnType<typeof fake>) {
   render(<Setup api={f.api} />)
   await screen.findByRole('heading', { name: 'Finish setting up your workspace' })
-  fireEvent.click(screen.getByLabelText(/Work copies/))
+  fireEvent.click(screen.getByLabelText(/Own copy per ticket/))
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Review your setup' })
   fireEvent.click(screen.getByRole('button', { name: 'Finish setup' }))
@@ -468,7 +469,7 @@ test('successful progress offers the workspace, while finish mode never reveals 
   const f = fake({ finish: true, done: true })
   render(<Setup api={f.api} />)
   await screen.findByRole('heading', { name: 'Finish setting up your workspace' })
-  fireEvent.click(screen.getByLabelText(/Work copies/))
+  fireEvent.click(screen.getByLabelText(/Own copy per ticket/))
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Review your setup' })
   fireEvent.click(screen.getByRole('button', { name: 'Finish setup' }))
@@ -631,12 +632,12 @@ test('finish shows the current values read-only and offers only what is missing,
   // the name and the short name are not inputs, the add-on that is on is not a switch
   expect(screen.queryByLabelText('Your name')).toBeNull()
   expect(screen.getAllByRole('switch').map((el) => el.closest('label')?.textContent ?? '')).toEqual([
-    expect.stringContaining('Work copies'),
+    expect.stringContaining('Own copy per ticket'),
     expect.stringContaining('Let agents start on this computer now'),
     expect.stringContaining('Approve with one click'),
   ])
   expect(screen.getByRole('button', { name: 'Continue →' })).toBeDisabled()
-  fireEvent.click(screen.getByLabelText(/Work copies/))
+  fireEvent.click(screen.getByLabelText(/Own copy per ticket/))
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Review your setup' })
   expect(f.calls.find((c) => c.path === 'profile')?.body).toMatchObject({
@@ -727,7 +728,7 @@ test('the ready list gives every status an icon and a word, never colour alone',
   const f = fake({ finish: true, running: true })
   render(<Setup api={f.api} />)
   await screen.findByRole('heading', { name: 'Finish setting up your workspace' })
-  fireEvent.click(screen.getByLabelText(/Work copies/))
+  fireEvent.click(screen.getByLabelText(/Own copy per ticket/))
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Review your setup' })
   fireEvent.click(screen.getByRole('button', { name: 'Finish setup' }))
@@ -803,7 +804,7 @@ test('the progress words are shown, and the unfinished items are named in words'
   }
   const { container } = render(<Setup api={new SetupAPI('tok', fetcher)} />)
   await screen.findByRole('heading', { name: 'Finish setting up your workspace' })
-  fireEvent.click(screen.getByLabelText(/Work copies/))
+  fireEvent.click(screen.getByLabelText(/Own copy per ticket/))
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Review your setup' })
   fireEvent.click(screen.getByRole('button', { name: 'Finish setup' }))
@@ -856,7 +857,7 @@ test('the summary comes from the review core returned, not from the choices on t
   expect(summary).toHaveTextContent('In a terminal, with your passphrase')
 })
 
-test('the git flag is the Work copies row, no Also row; its signed text and the git words are in Everything you approve', async () => {
+test('the git flag is the Own copy per ticket row, no Also row; its signed text and the git words are in Everything you approve', async () => {
   const { api } = withReview({
     flags: [{ id: 'git', text: 'Keep a history of changes in this folder. Your files stay as they are.', detail: 'This runs git init, keeps .orch/ and .orch-work/ out of the repository, and makes one empty first commit.' }],
   })
@@ -867,7 +868,7 @@ test('the git flag is the Work copies row, no Also row; its signed text and the 
   await check()
   await screen.findByRole('heading', { name: 'Review your setup' })
   const summary = document.querySelector('.review-summary')!
-  expect(summary).toHaveTextContent('Work copiesEach ticket gets its own copy of this folder. Your files are not changed.')
+  expect(summary).toHaveTextContent('Own copy per ticketEach ticket gets its own copy of this folder. Your files are not changed.')
   expect(summary).not.toHaveTextContent(/Also|git init|\.orch/)
   const fold = document.querySelector('.review-technical') as HTMLDetailsElement
   expect(fold.open).toBe(false)
@@ -1087,7 +1088,7 @@ test('U1: a new setup starts with the main add-ons and agent access ticked, all 
   render(<Setup api={f.api} />)
   await screen.findByRole('heading', { name: 'Set up your workspace' })
   for (let i = 0; i < 2; i++) fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
-  const sw = screen.getByRole('switch', { name: /Work copies/ })
+  const sw = screen.getByRole('switch', { name: /Own copy per ticket/ })
   expect(sw).toBeChecked()
   expect(sw).toBeEnabled()
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
@@ -1121,12 +1122,12 @@ test.each([
   expect(f.calls.find((c) => c.path === 'profile')?.body).toMatchObject({ agent_grant: false, agent_hours: 8 })
 })
 
-test('a folder without git offers to make one when Work copies is on, and never commits anything', async () => {
+test('a folder without git offers to make one when Own copy per ticket is on, and never commits anything', async () => {
   const f = fake({ defaults: true, noGit: true })
   render(<Setup api={f.api} />)
   await screen.findByRole('heading', { name: 'Set up your workspace' })
   for (let i = 0; i < 2; i++) fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
-  expect(screen.getByText(/not set up for work copies yet/)).toBeInTheDocument()
+  expect(screen.getByText(/not set up for its own copy per ticket yet/)).toBeInTheDocument()
   expect(screen.getByText('Each ticket gets its own copy. Your files are not changed.')).toBeInTheDocument()
   const fold = screen.getByText('Details').closest('details') as HTMLDetailsElement
   expect(fold.open).toBe(false)
@@ -1147,7 +1148,7 @@ test('choosing to continue without worktrees drops them and asks no git question
   await screen.findByRole('heading', { name: 'Set up your workspace' })
   for (let i = 0; i < 2; i++) fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   fireEvent.click(screen.getByLabelText(/Skip this/))
-  expect(screen.queryByText(/not set up for work copies yet/)).not.toBeInTheDocument()
+  expect(screen.queryByText(/not set up for its own copy per ticket yet/)).not.toBeInTheDocument()
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Your recovery words' })
@@ -1185,7 +1186,7 @@ test('reviewFacts builds the short card in plain words from the review', () => {
   expect(facts.map((f) => f.label)).toEqual(['Workspace', 'Owner', 'Your project', 'How you approve', 'Agents', 'History'])
   expect(facts.find((f) => f.label === 'Workspace')!.value).toBe('Marketing') // r11-P15: no ticket prefix on the card
   expect(facts.find((f) => f.label === 'Agents')!.value).toBe('may work for 3 days')
-  expect(facts.find((f) => f.label === 'Add-ons')).toBeUndefined()
+  expect(facts.find((f) => f.label === 'Features')).toBeUndefined()
   expect(facts.find((f) => f.label === 'Your project')!.value).toBe('p')
 })
 
@@ -1205,7 +1206,7 @@ test('progress groups roll up done and failed steps without changing server step
     { id: 'key', label: 'Your key', status: 'done' },
     { id: 'workspace', label: 'Your workspace', status: 'done' },
     { id: 'services', label: 'Starting orch', status: 'failed' },
-    { id: 'addons', label: 'Add-ons', status: 'done' },
+    { id: 'addons', label: 'Features', status: 'done' },
     { id: 'approval', label: 'Approval', status: 'done' },
   ])
   expect(steps).toHaveLength(8)
@@ -1233,7 +1234,7 @@ test('P10: the review has no approval-count sentence, the fold is Details, and t
   expect(page(container)).not.toContain('Background services')
 })
 
-test('P10: the permissions page says Work copies, not Worktrees or the CLI', async () => {
+test('P10: the permissions page says Own copy per ticket, not Worktrees or the CLI', async () => {
   render(<Setup api={fake().api} />)
   await approval()
   expect(page(document.body as HTMLElement)).not.toMatch(/worktree|the CLI/i)
@@ -1319,7 +1320,7 @@ test.each([
   await screen.findByRole('heading', { name: 'Review your setup' })
   fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }))
   await waitFor(() => expect(container.querySelector('ol.progress li')).not.toBeNull())
-  expect(Boolean(screen.queryByText(/orch added items that run in the background/))).toBe(shown)
+  expect(Boolean(screen.queryByText(/Your Mac may show a note/))).toBe(shown)
 })
 
 test('P15: no Recommended badge when One click is not available here', async () => {
@@ -1364,7 +1365,7 @@ test('r11-P01: a Finish that cannot open the dashboard says so in plain words an
   })
   const { container } = render(<Setup api={f.api} />)
   await screen.findByRole('heading', { name: 'Finish setting up your workspace' })
-  fireEvent.click(screen.getByLabelText(/Work copies/))
+  fireEvent.click(screen.getByLabelText(/Own copy per ticket/))
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Review your setup' })
   fireEvent.click(screen.getByRole('button', { name: 'Finish setup' }))
@@ -1396,7 +1397,7 @@ test('r11-P15: the Mac notice shows while the steps run, never on the ready or t
     fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }))
     await waitFor(() => expect(container.querySelector('ol.progress li')).not.toBeNull())
     if (!shown) await waitFor(() => expect(page(container)).toMatch(/ready|attention|Failed/))
-    expect(page(container).includes('Your Mac may say')).toBe(shown)
+    expect(page(container).includes('Your Mac may show a note')).toBe(shown)
     unmount()
   }
 })
@@ -1448,4 +1449,89 @@ test('r11-P16: without One click the settings are open, so the passphrase choice
   await approval()
   expect((screen.getByTestId('approval-more') as HTMLDetailsElement).open).toBe(true)
   expect(screen.getByLabelText(/Passphrase/)).toBeVisible()
+})
+
+async function toAgents(f: ReturnType<typeof fake>) {
+  render(<Setup api={f.api} />)
+  await screen.findByRole('heading', { name: 'Set up your workspace' })
+  for (let i = 0; i < 2; i++) fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  await screen.findByTestId('agents-summary')
+}
+
+test('r12-P15: the agents step shows the recommendation, the switches wait behind "Change these settings"', async () => {
+  const f = fake({ defaults: true })
+  await toAgents(f)
+  expect(screen.getByTestId('agents-summary')).toHaveTextContent('Recommended for most people')
+  const more = screen.getByTestId('agents-more') as HTMLDetailsElement
+  expect(more.open).toBe(false)
+  expect(more).toHaveTextContent('Change these settings')
+  expect(more).toContainElement(screen.getByRole('switch', { name: /Own copy per ticket/, hidden: true }))
+  expect(screen.queryByText('Dashboard', { selector: 'strong' })).not.toBeInTheDocument()
+})
+
+test('r12-P15: the fold opens by itself when a switch is not at its default, or the folder question is answered Skip', async () => {
+  const f = fake({ defaults: true })
+  await toAgents(f)
+  const more = screen.getByTestId('agents-more') as HTMLDetailsElement
+  fireEvent.click(screen.getByLabelText(/Own copy per ticket/))
+  expect(more.open).toBe(true)
+  cleanup()
+  const g = fake({ defaults: true, noGit: true })
+  await toAgents(g)
+  const m2 = screen.getByTestId('agents-more') as HTMLDetailsElement
+  expect(m2.open).toBe(false)
+  fireEvent.click(screen.getByLabelText(/Skip this/))
+  expect(m2.open).toBe(true)
+})
+
+test('r12-P15: the settings sent are identical whether or not the fold was opened', async () => {
+  const run = async () => {
+    const f = fake({ defaults: true })
+    await toAgents(f)
+    return f
+  }
+  const a = await run()
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  await screen.findByRole('heading', { name: 'Your recovery words' })
+  cleanup()
+  const b = await run()
+  const more = screen.getByTestId('agents-more') as HTMLDetailsElement
+  more.open = true
+  fireEvent(more, new Event('toggle'))
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  await screen.findByRole('heading', { name: 'Your recovery words' })
+  const sent = (f: ReturnType<typeof fake>) => f.calls.find((c) => c.path === 'profile')?.body
+  expect(sent(b)).toBeDefined()
+  expect(sent(b)).toEqual(sent(a))
+})
+
+test('r12-P15: the welcome page says Your project folder with Where is it?, not Technical details', async () => {
+  const f = fake()
+  const { container } = render(<Setup api={f.api} />)
+  await screen.findByRole('heading', { name: 'Set up your workspace' })
+  expect(screen.getByText(/Your project folder:/)).toBeInTheDocument()
+  expect(screen.getByText('Where is it?')).toBeInTheDocument()
+  expect(container).not.toHaveTextContent('Technical details')
+})
+
+test('r12-P15: the recovery words say Not saved yet; Continue works; Copy turns into a tick (display only)', async () => {
+  const writeText = vi.fn().mockResolvedValue(undefined)
+  Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+  const f = fake()
+  render(<Setup api={f.api} />)
+  await reveal()
+  expect(screen.getByRole('status')).toHaveTextContent('Not saved yet')
+  expect(screen.getByRole('button', { name: 'I saved my words — continue →' })).toBeEnabled()
+  fireEvent.click(screen.getByRole('button', { name: 'Copy' }))
+  const copied = await screen.findByRole('button', { name: 'Copied ✓' })
+  expect(copied).toHaveClass('done')
+  expect(screen.getByRole('status')).toHaveTextContent('Recovery words copied')
+  expect(screen.getByRole('status')).not.toHaveTextContent('Not saved yet')
+  // display only: no call carries it, and the step still needs its own confirm
+  expect(f.calls.some((c) => c.path === 'secrets/confirm')).toBe(false)
+  expect(screen.getByRole('button', { name: 'I saved my words — continue →' })).toBeEnabled()
+  window.dispatchEvent(new Event('afterprint'))
+  expect(await screen.findByRole('button', { name: 'Printed ✓' })).toHaveClass('done')
 })

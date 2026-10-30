@@ -1,5 +1,5 @@
 import { useId, useRef, useState, type KeyboardEvent, type MutableRefObject } from 'react'
-import { Check, ChevronsUpDown, ServerOff } from 'lucide-react'
+import { Check, ChevronsUpDown, ExternalLink, ServerOff } from 'lucide-react'
 import { roleOf } from '@/api/permissions'
 import type { Workspace } from '@/api/types'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils'
 import { useAttention } from '../attention'
 import { useWorkspace } from '../workspace'
 import { SHORTCUTS } from './shortcuts'
+import { useOpenHub, useRail } from './CompanyRail'
 import { WorkspaceIconFor } from '../workspaceIcon'
 import { lookAlike } from '@/api/wsIcons'
 
@@ -127,6 +128,8 @@ export function WorkspaceSwitcher({ collapsed, viewer }: { collapsed: boolean; v
   const [open, setOpen] = useState(false)
   const list = useRef<HTMLUListElement>(null)
   const quietFocus = useRef(false)
+  const hub = useRail().data?.hub
+  const openHub = useOpenHub(workspace?.id)
   const headingId = useId()
   // Same prefix, same name or same icon and colour as another workspace: the short id is shown too, so they stay apart.
   const confusable = (w: Workspace) => workspaces.some((o) => o.id !== w.id && sharesPrefix(o, w)) || lookAlike(w, workspaces)
@@ -216,6 +219,16 @@ export function WorkspaceSwitcher({ collapsed, viewer }: { collapsed: boolean; v
             <StoppedRow key={w.id} w={w} />
           ))}
         </ul>
+        {hub && (
+          <>
+            <div role="separator" className="my-1.5 h-px bg-border" />
+            <button type="button" data-testid="switcher-open-hub" onClick={() => { setOpen(false); openHub('/') }}
+              className="flex w-full min-w-0 items-center gap-2 rounded-md px-1.5 py-1.5 text-left text-[13px] text-brand outline-none hover:bg-surface-2 focus-visible:bg-surface-2 focus-visible:ring-2 focus-visible:ring-brand">
+              <ExternalLink aria-hidden className="size-3.5 shrink-0" />
+              <span className="min-w-0 flex-1 truncate">Open hub · <bdi>{hub.name}</bdi></span>
+            </button>
+          </>
+        )}
       </PopoverContent>
     </Popover>
   )

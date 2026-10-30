@@ -1,10 +1,8 @@
 // Tells the person when something new needs them (a question, an approval or a check): a toast, and the count in the
 // tab title. What was already waiting when the page opened is not announced again.
-import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import { useEffect, useRef } from 'react'
 import { toast } from 'sonner'
-import { queries } from '@/api/queries'
 import type { NeedsYouItem } from '@/api/types'
 import { useAttention } from '../attention'
 import { useWorkspace } from '../workspace'
@@ -35,16 +33,17 @@ export function NeedsYouNotifier() {
   const { workspace } = useWorkspace()
   const ws = workspace?.id
   const navigate = useNavigate()
-  const today = useQuery({ ...queries.today(ws ?? ''), enabled: !!ws })
   const attention = useAttention(ws)
   const total = attention.needsYou.total
+  const { ready, items: listed } = attention
   const seen = useRef(new Set<string>())
   const seededFor = useRef<string | undefined | null>(null)
 
   useEffect(() => {
-    const data = today.data
-    if (!data) return
-    const items = data.needs_you.filter((i) => KINDS.includes(i.kind))
+    // Only what Today lists (R12 P03): the requirements held back while the agent writes the plan are not announced, and
+    // requirements + plan come as one. Wait until the tickets behind them are read, so nothing is announced twice.
+    if (!ready) return
+    const items = listed.filter((i) => KINDS.includes(i.kind))
     if (seededFor.current !== ws) {
       // First read for this workspace: only remember what is already waiting.
       seededFor.current = ws
@@ -71,7 +70,7 @@ export function NeedsYouNotifier() {
     }
     // Forget what left the list, so a step that comes back is announced again.
     seen.current = new Set(items.map(itemId))
-  }, [today.data, ws, navigate])
+  }, [ready, listed, ws, navigate])
 
   useEffect(() => {
     // The base is whatever the title is now (pages set their own), never a value kept from mount.

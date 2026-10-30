@@ -94,6 +94,20 @@ def test_not_told_and_pending_key_change_are_passed_on():
     assert got["not_told"] and got["owed"] == 1 and got["key_change_pending"]
 
 
+@pytest.mark.parametrize(
+    "notice,want",
+    [
+        ({"target_version": "0.2.0"}, "0.2.0"),
+        (None, None),
+        ({"target_version": "go <b>here</b>"}, None),
+        ("0.2.0", None),
+    ],
+)
+def test_update_request_from_the_hub_is_only_a_plain_version(notice, want):
+    got = client(Link({"hub.status": {**STATUS, "update_notice": notice}})).get(f"/api/w/{WS}/hub").json()
+    assert got["update_target"] == want
+
+
 def test_share_view_lists_rules_and_shared_tickets():
     link = Link({"share.rules": RULES, "share.preview": PREVIEW})
     got = client(link).get(f"/api/w/{WS}/hub/share").json()

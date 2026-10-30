@@ -225,7 +225,7 @@ def test_loading_css_is_served_as_css_with_the_csp(gateway, auth, tmp_path):
 
 
 def test_theme_boot_js_is_served_as_javascript_with_nosniff(gateway, auth, tmp_path):
-    """#421: the pre-paint theme script is a root file; a wrong type or a missing nosniff would block it under the CSP."""
+    """#421: the pre-paint theme script is a root file; a wrong type or no nosniff blocks it under the CSP."""
     from fastapi.testclient import TestClient
 
     from orch_dashboard.app import create_app

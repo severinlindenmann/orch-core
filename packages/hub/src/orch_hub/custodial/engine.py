@@ -260,7 +260,7 @@ class CustodialEngine:
             log, core = self._core_selective(workspace_id, user_id, action)
             role = "edit"  # the decisions' floor; no hub role exists here and the host checks the real member role
         else:
-            role = snap["roles"].get(user_id)
+            role = H.role_at(snap, user_id, now)
             if role not in H.ROLES:
                 raise Refused("forbidden_role")
             log, core = self._core_full(workspace_id, user_id, event_id, action, role)

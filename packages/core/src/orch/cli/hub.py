@@ -555,5 +555,12 @@ def _status_text(d: Mapping[str, Any]) -> str:
             " (orch doctor)"
         )
     snap = d.get("snapshot")
-    roles = f", group snapshot v{snap['version']} ({len(snap['roles'])} roles)" if snap else ""
+    ended = len(snap.get("ended", ())) if snap else 0
+    roles = (
+        f", group snapshot v{snap['version']} ({len(snap['roles']) - ended} roles"
+        + (f", {ended} ended" if ended else "")
+        + ")"
+        if snap
+        else ""
+    )
     return f"hub {d['hub_id']}: {state} ({d.get('mode')}){link}{roles}{queued}"

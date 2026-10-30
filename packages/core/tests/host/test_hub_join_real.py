@@ -287,6 +287,8 @@ def _race_rig(human, served, monkeypatch):
 
 
 def test_two_racing_refreshes_never_roll_the_pin_back(human, served, monkeypatch):
+    from orch.hubclient import HubRefused
+
     hub, service, fetch, started_now = _race_rig(human, served, monkeypatch)
     a, b = started_now(), started_now()  # both read hub.json before either fetched
     hub.set_snapshot(served.wid, {"11" * 16: "admin"})
@@ -298,7 +300,9 @@ def test_two_racing_refreshes_never_roll_the_pin_back(human, served, monkeypatch
     hub.workspaces[served.wid].snapshot = hub._snapshot(served.wid, 2, {"11" * 16: "admin"}, [])  # noqa: SLF001
     stale = started_now()
     stale.snapshot = None  # as if it started before any pin
-    fetch(stale)  # its own view says "newer" (no pin), but the merge under the lock sees version 3 on disk: no write
+    with pytest.raises(HubRefused) as e:  # GA-07: the floor (3) outlives the pin, so version 2 is refused outright
+        fetch(stale)
+    assert e.value.code == "stale_snapshot"
     assert hubops._load_state(service).snapshot["o"]["version"] == 3  # noqa: SLF001
     assert hubops.hub_role(service, "22" * 16) == "read"
 

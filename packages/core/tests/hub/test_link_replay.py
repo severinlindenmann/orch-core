@@ -11,6 +11,7 @@ import pytest
 from orch.canon.jcs import dumps as cj
 from orch.crypto.encoding import b64u
 from orch.hubclient.link import HubLink
+from orch.hubclient.netconfig import NetSettings
 from orch.hubclient.tlsadapter import TlsTransport
 from orch.hubclient.tlslink.client import LinkError
 
@@ -127,7 +128,7 @@ def test_reconnect_after_the_link_dropped_starts_at_1_and_works(make_hub) -> Non
     hub = make_hub(on_request=on_request)
     t = TlsTransport(
         addr=f"127.0.0.1:{hub.port}", tls_spki_sha256=hub.spki, hub_id=hub.hub_id, workspace_id=hub.workspace_id,
-        hk_op_pub=hub.hk_op_pub, wsk_pub=WSK_PUB, sign=sign, mode="selective", timeout=3.0,
+        hk_op_pub=hub.hk_op_pub, wsk_pub=WSK_PUB, sign=sign, mode="selective", timeout=3.0, net=NetSettings(),
     )  # fmt: skip
     link = HubLink(
         t, hub_id=hub.hub_id, workspace_id=hub.workspace_id, hk_op_pub=hub.hk_op_pub, sign=sign, mode="selective",

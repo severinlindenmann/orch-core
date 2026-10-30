@@ -38,7 +38,21 @@ export interface OrgShown {
   needs_isolation: string | null
 }
 
+/** One company secret this workspace was given. Never the value, never a length or a hash of it. `expires_ms` is null when unknown. */
+export type OrgSecretStatus = 'ready' | 'expired' | 'not_received' | 'needs_isolation'
+export interface OrgSecret { name: string; status: OrgSecretStatus; expires_ms: number | null; used_by: string[] }
+/** `GET /api/w/<ws>/org/secrets` (#1434): `available: false` is a host without the op. */
+export interface OrgSecrets { available: boolean; secrets: OrgSecret[] }
+
+export const SECRET_STATUS_WORD: Record<OrgSecretStatus, string> = {
+  ready: 'Ready',
+  expired: 'Expired',
+  not_received: 'Not shared any more',
+  needs_isolation: 'Needs a separate agent user',
+}
+
 export const orgQueries = {
+  secrets: (ws: string) => queryOptions({ queryKey: ['org', ws, 'secrets'], queryFn: () => api.getOrgSecrets(ws), retry: false }),
   offers: (ws: string) => queryOptions({ queryKey: ['org', ws, 'offers'], queryFn: () => api.getOrgOffers(ws), retry: false }),
   item: (ws: string, kind: OrgKind, name: string) =>
     queryOptions({ queryKey: ['org', ws, 'item', kind, name], queryFn: () => api.getOrgItem(ws, kind, name), retry: false, gcTime: 0 }),

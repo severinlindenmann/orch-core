@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import hmac
 import socket
-import threading
 import time
 from functools import partial
 
@@ -21,18 +20,25 @@ from OpenSSL import SSL
 
 from orch import fdwait
 from orch.crypto.encoding import EncodingError, b64u, unb64u
-from orch.wsproto.localdial import dial_host
+
+from ..linkaddr import LinkAddr
+from ..netconfig import NetSettings
+from . import transport
+from .errors import LinkClosed, LinkInspected, LinkTimeout, NoPin, PinMismatch
 
 __all__ = [
     "EXPORTER_LABEL",
     "EXPORTER_LEN",
+    "BioTlsConn",
     "LinkClosed",
+    "LinkInspected",
     "LinkTimeout",
     "PLACEHOLDER_PIN",
     "NoPin",
     "PinMismatch",
     "TlsConn",
     "connect_pinned",
+    "dial_link",
     "spki_sha256",
 ]
 
@@ -40,25 +46,9 @@ EXPORTER_LABEL = b"EXPORTER-orch-hub-link"
 EXPORTER_LEN = 32
 
 
-class LinkClosed(ConnectionError):
-    """The peer closed the connection or the transport failed."""
-
-
-class LinkTimeout(TimeoutError):
-    """A deadline passed."""
-
-
 #: What an orch-hub card carries before it has a TLS key (``b64u(SHA-256("orch-hub dev: no TLS key pinned yet"))``).
 #: It matches no real key; a host never dials on it (D12b G6).
 PLACEHOLDER_PIN = "l35Tp0Xpilo2yI3r8TVl3Q9_pQ9QB8neaBC5A3dNG6k"
-
-
-class PinMismatch(Exception):
-    """The peer's certificate does not hash to the pinned SPKI (nothing was sent)."""
-
-
-class NoPin(PinMismatch):
-    """There is no usable pin to dial with (missing, malformed or the card's placeholder): nothing was dialled."""
 
 
 def spki_sha256(cert: x509.Certificate) -> str:
@@ -141,66 +131,101 @@ class TlsConn:
             pass
 
 
+class BioTlsConn(TlsConn):
+    """The link's TLS over a byte pipe instead of a socket (a WebSocket, a tunnel inside an ``https`` proxy): a
+    pyOpenSSL memory-BIO connection, the same interface as :class:`TlsConn`. Pump rules:
+
+    1. Pull, never push: wire bytes are read from the pipe only when OpenSSL raises ``WantRead``, then ``bio_write``.
+    2. After every SSL call, reads and handshake included, the output BIO is drained to the pipe (TLS 1.3 sends
+       tickets and key updates from inside a read).
+    3. One thread at a time, as the client's lock gives it.
+    4. :meth:`wait_readable` is true only when decrypted bytes exist; pings, pongs and handshake records alone never
+       make it true (a ping every 25 s would otherwise start a frame read that times out and drops the link).
+    """
+
+    def __init__(self, conn: SSL.Connection, pipe: transport.Pipe) -> None:
+        super().__init__(conn, None)  # type: ignore[arg-type]
+        self._p = pipe
+
+    def _flush(self, deadline: float) -> None:
+        while True:
+            try:
+                data = self._c.bio_read(16384)
+            except SSL.WantReadError:
+                return
+            self._p.write(data, deadline)
+
+    def _run(self, fn, deadline: float):  # type: ignore[no-untyped-def]
+        while True:
+            try:
+                out = fn()
+            except SSL.WantReadError:
+                self._flush(deadline)
+                self._c.bio_write(self._p.read(deadline))
+                continue
+            except SSL.WantWriteError:
+                self._flush(deadline)
+                continue
+            except (SSL.Error, OSError) as e:
+                raise LinkClosed(type(e).__name__) from None
+            self._flush(deadline)
+            return out
+
+    def wait_readable(self, timeout: float) -> bool:
+        end = time.monotonic() + max(timeout, 0.0)
+        while True:
+            try:
+                if self._c.pending() > 0:
+                    return True
+                try:
+                    self._c.recv(1, socket.MSG_PEEK)
+                    return True
+                except (SSL.WantReadError, SSL.WantWriteError):
+                    pass
+                self._flush(time.monotonic() + 10.0)
+            except (SSL.Error, OSError):
+                return True  # let the read report the failure
+            try:
+                raw = self._p.poll(max(end - time.monotonic(), 0.0))
+            except (LinkClosed, LinkTimeout):
+                return True
+            if raw is None:
+                return False
+            if raw:
+                self._c.bio_write(raw)
+            elif time.monotonic() >= end:
+                return False
+
+    def close(self) -> None:
+        self._p.close()
+
+
 def client_context(alpn: tuple[bytes, ...] = ()) -> SSL.Context:
     ctx = SSL.Context(SSL.TLS_CLIENT_METHOD)
     if alpn:
         ctx.set_alpn_protos(list(alpn))
     ctx.set_min_proto_version(SSL.TLS1_3_VERSION)
     ctx.set_max_proto_version(SSL.TLS1_3_VERSION)
-    ctx.set_verify(SSL.VERIFY_NONE)  # trust is the SPKI pin, compared by connect_pinned before anything is sent
+    ctx.set_verify(SSL.VERIFY_NONE)  # trust is the SPKI pin, compared by dial_link before anything is sent
     return ctx
 
 
-def _dial(host: str, port: int, deadline: float) -> socket.socket:
-    """Resolve and connect within the overall deadline (the resolver itself cannot be interrupted, so it runs in a
-    helper thread that is abandoned on timeout; a socket it opens late is closed)."""
-    out: list[socket.socket | BaseException] = []
-    done = threading.Event()
-    abandoned = threading.Event()
-
-    def work() -> None:
-        try:
-            infos = socket.getaddrinfo(dial_host(host), port, type=socket.SOCK_STREAM)  # pin, not name, is the trust
-            err: BaseException = OSError("no address")
-            for fam, typ, proto, _, addr in infos:
-                left = deadline - time.monotonic()
-                if left <= 0 or abandoned.is_set():
-                    break
-                s = socket.socket(fam, typ, proto)
-                try:
-                    s.settimeout(left)
-                    s.connect(addr)
-                    if abandoned.is_set():
-                        s.close()
-                        return
-                    out.append(s)
-                    return
-                except OSError as e:
-                    s.close()
-                    err = e
-            out.append(err)
-        except BaseException as e:  # noqa: BLE001
-            out.append(e)
-        finally:
-            done.set()
-
-    threading.Thread(target=work, daemon=True).start()
-    if not done.wait(max(deadline - time.monotonic(), 0)):
-        abandoned.set()
-        raise LinkTimeout
-    r = out[0]
-    if isinstance(r, socket.socket):
-        return r
-    raise LinkClosed(type(r).__name__)
-
-
-def connect_pinned(
-    host: str, port: int, pinned_spki_sha256: str, *, timeout: float = 10.0, alpn: tuple[bytes, ...] = ()
+def dial_link(
+    addr: LinkAddr,
+    pinned_spki_sha256: str,
+    *,
+    timeout: float = 10.0,
+    alpn: tuple[bytes, ...] = (),
+    net: NetSettings,
+    connect_host: str | None = None,
 ) -> TlsConn:
-    """Dial, handshake TLS 1.3 and compare the peer certificate's SPKI hash with the pin. Raises
-    :class:`PinMismatch` (connection closed, nothing sent) on any difference; a malformed pin is refused before
-    dialling. No pin, a malformed pin or the placeholder pin is :class:`NoPin`: the host never dials without a real
-    pin and never falls back to an unpinned or plaintext connection."""
+    """THE dial: every byte of a hub link leaves the host through here. Reach ``addr`` as its scheme and the host's
+    proxy settings ``net`` say (:mod:`.transport`), run the link's TLS 1.3 handshake (SNI = the address's DNS name,
+    none for an IP) and compare the peer's SPKI hash with the pin before anything is sent. A mismatch is
+    :class:`PinMismatch`; :class:`LinkInspected` when a proxy or a WebSocket front was in the way. No pin, a malformed
+    pin or the placeholder is :class:`NoPin` (nothing dialled). There is no fallback to another transport, around the
+    proxy, or to an unpinned or plaintext connection. ``connect_host`` is the checked IP of a name, used for a direct
+    TCP dial only."""
     if type(pinned_spki_sha256) is not str or pinned_spki_sha256 == PLACEHOLDER_PIN:
         raise NoPin
     try:
@@ -208,16 +233,42 @@ def connect_pinned(
     except EncodingError:
         raise NoPin from None
     deadline = time.monotonic() + timeout
-    sock = _dial(host, port, deadline)
-    sock.setblocking(False)
-    c = SSL.Connection(client_context(alpn), sock)
-    c.set_connect_state()
-    t = TlsConn(c, sock)
+    path = transport.open_path(addr, net, deadline, connect_host=connect_host)
     try:
+        c: SSL.Connection
+        t: TlsConn
+        if path.pipe is None:
+            path.sock.setblocking(False)
+            c = SSL.Connection(client_context(alpn), path.sock)
+            t = TlsConn(c, path.sock)
+        else:
+            c = SSL.Connection(client_context(alpn), None)
+            t = BioTlsConn(c, path.pipe)
+        if addr.sni is not None:
+            c.set_tlsext_host_name(addr.sni.encode("ascii"))
+        c.set_connect_state()
         t.handshake(deadline)
+        if isinstance(path.pipe, transport.WsPipe):
+            path.pipe.handshake_budget = None  # the bound was for the time before the link's TLS completed
         if not hmac.compare_digest(t.peer_spki_sha256().encode(), pinned_spki_sha256.encode()):
-            raise PinMismatch
+            raise LinkInspected if path.via else PinMismatch
     except BaseException:
-        t.close()
+        path.close()
         raise
     return t
+
+
+def connect_pinned(
+    host: str,
+    port: int,
+    pinned_spki_sha256: str,
+    *,
+    timeout: float = 10.0,
+    alpn: tuple[bytes, ...] = (),
+    net: NetSettings,
+) -> TlsConn:
+    """:func:`dial_link` for a direct ``host:port`` (a convenience; not a second dial path)."""
+    h = "[" + host + "]" if ":" in host else host
+    return dial_link(
+        LinkAddr("tcp", host, port, f"{h}:{port}"), pinned_spki_sha256, timeout=timeout, alpn=alpn, net=net
+    )

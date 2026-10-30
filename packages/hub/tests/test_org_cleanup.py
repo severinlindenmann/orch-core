@@ -34,9 +34,9 @@ def seed(a: Access, ws: str) -> None:
         )
         db.execute("INSERT INTO org_secret_wraps VALUES (?,?,?,?,?)", ("11" * 16, 1, ws, 1, b"x" * 100))
     org_skills(a).put("invoices", "Write invoice numbers as INV-1.", actor=ADMIN)
-    org_skills(a).set_offers("invoices", [ws], actor=ADMIN)
+    org_skills(a).set_share("invoices", "chosen", [ws], actor=ADMIN)
     org_mcp(a).put("crm", "https://tools.example.com/mcp", "none", None, "Our CRM", actor=ADMIN)
-    org_mcp(a).set_offers("crm", [ws], actor=ADMIN)
+    org_mcp(a).set_share("crm", "chosen", [ws], actor=ADMIN)
 
 
 def left(a: Access, ws: str) -> dict:

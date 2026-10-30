@@ -11,6 +11,7 @@ from typing import Any
 from orch.crypto import suite
 from orch.crypto.encoding import b64u
 from orch.hubclient import HubLink
+from orch.hubclient.netconfig import NetSettings
 from orch.hubclient.tlsadapter import TlsTransport
 from orch.hubclient.tlslink import framing
 
@@ -67,6 +68,7 @@ def _setup() -> tuple[StrictHub, TlsHub, TlsTransport, HubLink]:
     t = TlsTransport(
         addr=f"127.0.0.1:{hub.port}", tls_spki_sha256=hub.spki, hub_id=hub.hub_id, workspace_id=hub.workspace_id,
         hk_op_pub=hub.hk_op_pub, wsk_pub=WSK_PUB, sign=sign, mode="selective", timeout=3.0, now_ms=_now,
+        net=NetSettings(),
     )  # fmt: skip
     link = HubLink(
         t, hub_id=hub.hub_id, workspace_id=hub.workspace_id, hk_op_pub=hub.hk_op_pub, sign=sign, mode="selective",

@@ -32,6 +32,7 @@ from orch.crypto.encoding import EncodingError, b64u, unb64u
 from orch.hubclient import wire as hubwire
 from orch.hubclient.custodial_shape import text_ok
 from orch.hubclient.errors import HubRefused
+from orch.hubclient.netconfig import NetSettings
 from orch.hubclient.tlsadapter import parse_addr
 
 from . import enroll as E
@@ -56,7 +57,7 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 def _http(method: str, url: str, body: bytes | None, headers: dict[str, str]) -> tuple[int, bytes]:
-    opener = urllib.request.build_opener(_NoRedirect)
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect)  # never the environment's proxy
     req = urllib.request.Request(url, data=body, method=method, headers=headers)  # noqa: S310
     try:
         with opener.open(req, timeout=10) as r:  # noqa: S310
@@ -67,12 +68,14 @@ def _http(method: str, url: str, body: bytes | None, headers: dict[str, str]) ->
         raise ClientError("unavailable") from None
 
 
-def _pinned_tls_request(host: str, port: int, pin: str, req: bytes) -> bytes:
+def _pinned_tls_request(host: str, port: int, pin: str, req: bytes, *, net: NetSettings) -> bytes:
     """One HTTP/1.1 request over TLS 1.3 pinned to ``pin`` (the SPKI hash); the whole answer until the peer closes."""
     from orch.hubclient.tlslink import tls
 
     try:
-        conn = tls.connect_pinned(host, port, pin, timeout=10.0)
+        conn = tls.connect_pinned(host, port, pin, timeout=10.0, net=net)  # this computer's proxy, if any
+    except tls.LinkInspected:
+        raise ClientError("remote_client.link_inspected") from None
     except tls.PinMismatch:
         raise ClientError("remote_client.hub_key_changed") from None
     except (tls.LinkClosed, tls.LinkTimeout, OSError):
@@ -106,12 +109,14 @@ class Client:
         rand: Callable[[int], bytes] | None = None,
         batch_window: float = 1.0,
         tls_request: Callable[[str, int, str, bytes], bytes] | None = None,
+        net: NetSettings,
     ) -> None:
         self.store, self.presence, self._http = store, presence, http
-        self._connector = connector or (lambda host, port, spki: dial(host, port, spki))
+        self._net = net  # this computer's own proxy settings (never from the hub); None: dial direct
+        self._connector = connector
         self._clock, self._dev, self.api, self._rand = clock, dev_mode, api, rand
         self._batch_window = batch_window
-        self._tls_request = tls_request or _pinned_tls_request
+        self._tls_request = tls_request or (lambda h, p, pin, req: _pinned_tls_request(h, p, pin, req, net=net))
 
     def _now_ms(self) -> int:
         return int(self._clock() * 1000)
@@ -222,8 +227,10 @@ class Client:
         return hub, token
 
     def _wire(self, hub: dict[str, Any]) -> Wire:
-        host, port = parse_addr(hub["link"])
-        return self._connector(host, port, hub["spki"])
+        a = parse_addr(hub["link"])
+        if self._connector is not None:
+            return self._connector(a.host, a.port, hub["spki"])
+        return dial(a.host, a.port, hub["spki"], addr=a, net=self._net)
 
     # -- the rail --
 

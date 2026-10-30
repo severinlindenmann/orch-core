@@ -475,10 +475,17 @@ describe('agent access on a click View', () => {
 })
 
 describe('the story around the review', () => {
-  it('#1070 the Create ticket button says in its first step that pressing it signs', () => {
+  it('run 15 P08: the plain Create ticket review has no "What happens next" list and no "You sign."', () => {
     const story = storyOf({ action: 'new_sequence', title: 'T', type: 'feature', sections: {} })!
     mount(answer(), { story })
     expect(screen.getByRole('button', { name: 'Create ticket' })).toBeInTheDocument()
+    expect(screen.queryByTestId('what-next')).toBeNull()
+    expect(document.body.textContent).not.toMatch(/You sign\./)
+  })
+
+  it('run 15 P08: creating with an agent still lists What happens next', () => {
+    const story = storyOf({ action: 'new_sequence', title: 'T', type: 'feature', sections: {} }, { startsAgent: true })!
+    mount(answer(), { story })
     expect(within(screen.getByTestId('what-next')).getAllByRole('listitem')[0]).toHaveTextContent('You sign.')
   })
 

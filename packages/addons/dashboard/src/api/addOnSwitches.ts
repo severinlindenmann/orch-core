@@ -7,6 +7,8 @@ export interface AddOnRow {
   needs?: 'publish' | null
   /** Whether that setting is set; null when the host could not say (then nothing is claimed). */
   set_up?: boolean | null
+  /** P02: the Publish server installed on this computer (`orch install publish`), or null (hosted elsewhere): the form starts with it. */
+  suggest?: string | null
   title: string
   /** The plain one-line description, the same words as the setup wizard. */
   desc: string

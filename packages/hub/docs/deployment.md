@@ -51,3 +51,33 @@ service may target the link port.
 The TLS key persists in the key store (`tls.key`, 0600): a restart keeps the pin and the card sequence. A rotation is explicit
 (`orch-hub keys rotate-tls`) and re-issues the card; hosts that still hold the old card then fail the pin check before a byte is sent
 and must take the new card through the signed-card path.
+
+## The public webhook inbox (follow-ups, orch-core#1285)
+
+Off by default. A follow-up can wait for "a job rang" (GitHub, a CI step, a Databricks job); the hub is the always-on
+part with a public address, so it receives the ring and the workspace pulls it over its link. Turn it on with two flags
+that go together:
+
+```
+orch-hub serve ... --hooks-listen 127.0.0.1:8790 --public-hooks-url https://hub.example.com
+```
+
+* `--hooks-listen` is a separate socket with its own small worker pool (8 workers, 16 waiting). It serves only
+  `POST /h/<token>`; the admin web API (`--web-listen`) is not involved and does not change. Bind it to loopback and let the
+  edge forward `/h/*` to it.
+* `--public-hooks-url` is the origin senders use (https; http only on a dev hub). Workspaces show `<origin>/h/<token>`.
+* Limits: body at most 256 KiB (checked before any read; pick the GitHub events you need, not `push`), 10 s in total for
+  head and body, per-sender and global rate limits, 64 live hooks per workspace, hooks live at most 31 days.
+* State: `hooks.db` in the state dir (0600): the hash of each token, its signature secret, and at most one ring row per
+  hook (no body, no header). It is not part of the hub backup; a restored hub has no hooks and follow-ups fall back to
+  their deadline.
+* Edge (Caddy >= 2.8): keep `/h/*` out of the access log, the token is the address:
+
+```
+hub.example.com {
+    @hooks path /h/*
+    log_skip @hooks
+    reverse_proxy @hooks 127.0.0.1:8790
+    # ... the existing reverse_proxy for the console and API
+}
+```

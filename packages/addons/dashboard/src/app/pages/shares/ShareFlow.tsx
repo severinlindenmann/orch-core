@@ -482,7 +482,7 @@ export function ShareFlow({ ws, ticket, resume, only, onClose }: { ws: string; t
   }
 
   // ---- link: shown once
-  return <LinkOnce sent={stage.sent} onDone={onClose} />
+  return stage.at === 'link' ? <LinkOnce sent={stage.sent} onDone={onClose} /> : null
 }
 
 /** The link, once. Only "Done" ends it. Nothing here writes the link anywhere but the screen and the clipboard. */

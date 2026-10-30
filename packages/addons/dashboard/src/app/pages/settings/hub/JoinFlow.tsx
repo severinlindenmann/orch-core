@@ -44,6 +44,7 @@ export function JoinFlow({ ws, onClose, initialLink }: { ws: string; onClose: ()
   const [mode, setMode] = useState<'selective' | 'full'>('selective')
   const [choosing, setChoosing] = useState(false)
   const link = text.trim()
+  const [detailsOpen, setDetailsOpen] = useState(false)
   const valid = LINK.test(link)
 
   // The hub is looked up as soon as the pasted text is a link: nothing to click before the hub is shown.
@@ -59,6 +60,8 @@ export function JoinFlow({ ws, onClose, initialLink }: { ws: string; onClose: ()
     return () => { alive = false }
   }, [ws, link, valid, armed])
 
+  // the hub is named by the address the link points to (what is really dialled); its own name and id sit under Details
+  const hubAt = (valid && link.replace(/^https?:\/\/([^/]+).*$/, '$1')) || info?.name || ''
   if (signed && info) return <Flow title="Connect a hub" onClose={leave} finish="here"><ConnectStage ws={ws} info={info} mode={mode} onClose={leave} /></Flow>
 
   return <Flow title="Connect a hub" onClose={onClose} finish="here">
@@ -73,19 +76,22 @@ export function JoinFlow({ ws, onClose, initialLink }: { ws: string; onClose: ()
     {looking && <p role="status" data-testid="hub-link-looking">Looking up the hub…</p>}
     {problem && <p role="alert" data-testid="hub-link-problem" className="text-danger">{problem}</p>}
     {info && <>
-      {!failed && <><div className="rounded-md border border-border p-3" data-testid="hub-link-hub">
-        <div className="flex items-center gap-1"><p className="font-bold">Hub <Raw>{info.name}</Raw></p><InfoDrawer><p>Hub id: <Raw>{info.hub_id}</Raw></p></InfoDrawer></div>
-        {initialLink && <p className="text-sm text-text-muted" data-testid="hub-link-origin">at <Raw>{link.replace(/^(https?:\/\/[^/]+).*$/, '$1')}</Raw></p>}
+      {!failed && <><div className="space-y-2 rounded-md border border-border p-3" data-testid="hub-link-hub">
+        <p className="font-bold">Connect to the hub at <Raw>{hubAt}</Raw>?</p>
+        {choosing && !signed
+          ? <ModeChoice mode={mode} onChange={setMode} />
+          : <div className={'rounded-md border p-2 ' + violet} data-testid="hub-mode-box">
+            <p className="text-sm">{mode === 'full' ? 'The hub can read every ticket and file.' : 'The hub sees only the tickets you pick, plus this workspace\'s name.'}{!signed && <> <button type="button" data-testid="hub-mode-other" className="underline" onClick={() => setChoosing(true)}>Change</button></>}</p>
+          </div>}
+        <details className="text-sm text-text-muted" data-testid="hub-link-details" onToggle={e => setDetailsOpen(e.currentTarget.open)}>
+          <summary className="cursor-pointer">Details</summary>
+          {detailsOpen && <>
+            <p>Hub <Raw>{info.name}</Raw></p>
+            <p>Hub id: <Raw>{info.hub_id}</Raw></p>
+            {initialLink && <p data-testid="hub-link-origin">at <Raw>{link.replace(/^(https?:\/\/[^/]+).*$/, '$1')}</Raw></p>}
+          </>}
+        </details>
       </div>
-      {choosing && !signed
-        ? <ModeChoice mode={mode} onChange={setMode} />
-        : <div className="space-y-1" data-testid="hub-mode-box">
-          <div className={'rounded-md border p-3 ' + violet}>
-            <p className="font-semibold">{mode === 'full' ? 'Everything' : 'Only what I choose'}{mode !== 'full' && <span className="font-normal text-text-muted"> · recommended</span>}</p>
-            <p className="text-sm text-text-muted">{mode === 'full' ? 'The hub can read every ticket and file.' : 'You pick the tickets. The hub also sees this workspace\'s name; everything else stays on this computer.'}</p>
-            {!signed && <button type="button" data-testid="hub-mode-other" className="text-sm underline" onClick={() => setChoosing(true)}>Change</button>}
-          </div>
-        </div>}
       {mode === 'full' && !info.owner_user && <p role="alert" data-testid="hub-link-old" className="text-warning">This link does not name you on the hub, so your agents could not work in this mode. Make a new connect link in the hub and paste that one.</p>}
       {mode === 'full' && <p className="text-warning">{caveat}</p>}</>}
       {oneClick !== 'on'

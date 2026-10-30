@@ -576,4 +576,16 @@ describe('r10-P08 hub join workspace line', () => {
     mount(risky(), { story: join, manyWorkspaces: false })
     expect(screen.getByTestId('sign-workspace').closest('details')).not.toBeNull()
   })
+  it('r14-P07: the workspace line shares the review\'s own fold (one fold, named Details); the risk line stays outside any fold', () => {
+    mount(answer({ headline: 'Connect', risk_lines: ['Risk line'], content: { headline: 'Hub', fields_changed: [{ field: 'hub', before: null, after: 'demo-hub-id' }] } }), { story: join, manyWorkspaces: false })
+    const fold = screen.getByTestId('sign-workspace').closest('details')!
+    expect(fold).toHaveTextContent('Workspace')
+    expect(fold.querySelector(':scope > summary')).toHaveTextContent(/^Details$/)
+    expect(screen.queryByTestId('sign-workspace-fold')).toBeNull() // no second fold of its own
+    expect(within(screen.getByTestId('sign-footer')).getByText('Risk line').closest('details')).toBeNull()
+  })
+  it('r14-P07: with several workspaces the review keeps its Technical details and the line stays on the main surface', () => {
+    mount(risky(), { story: join, manyWorkspaces: true })
+    expect(screen.getByTestId('sign-workspace').closest('details')).toBeNull()
+  })
 })

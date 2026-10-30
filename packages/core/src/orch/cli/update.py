@@ -131,14 +131,19 @@ def _check(u: Updater, channel: str | None, as_json: bool, out: TextIO, env: Map
         pending = json.loads(buf.getvalue()).get("roots", [])
     except ValueError:
         pending = []
+    from orch.update.floor import expiry_warning
+
+    warning = expiry_warning(rec.revocations_issued_at, u.s.now())
     if as_json:
         row = {"ok": True, "installed": cur, "latest": ver.version, "channel": ch, "update_available": newer}
-        row.update({"changelog": doc["changelog"], "roots": pending})
+        row.update({"changelog": doc["changelog"], "roots": pending, "warnings": [warning] if warning else []})
         out.write(json.dumps(row) + "\n")
         return 0
     out.write(f"installed {cur}, latest {ver.version} (channel {ch})\n")
     out.write("An update is available.\n" if newer else "You are up to date.\n")
     out.write(f"Changes: {doc['changelog']}\n")
+    if warning:
+        out.write(f"warning: {warning}\n")
     for row in pending:
         n = len(row.get("steps") or [])
         out.write(f"data: {row['root']}: {'up to date' if not n else f'{n} migration step(s) waiting'}\n")

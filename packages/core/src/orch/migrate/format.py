@@ -124,17 +124,33 @@ def lock_root(root: Path, *, exclusive: bool) -> int:
     return fd
 
 
-def open_root(path: Path, kind: str, env: Mapping[str, str] | None = None) -> RootHandle:
+def _quarantined(env: Mapping[str, str] | None) -> bool:
+    """The host state dir has the quarantine marker ``orch update`` writes for its health check
+    (``<state>/install/quarantine``, see orch.update.quarantine). A broken link counts."""
+    from orch.ops.runtime import state_dir
+
+    return os.path.lexists(state_dir(os.environ if env is None else env) / "install" / "quarantine")
+
+
+def _interrupted(env: Mapping[str, str] | None, quarantine_ok: bool) -> bool:
+    return unfinished(env) and not (quarantine_ok and _quarantined(env))
+
+
+def open_root(
+    path: Path, kind: str, env: Mapping[str, str] | None = None, *, quarantine_ok: bool = False
+) -> RootHandle:
+    """``quarantine_ok`` is for the service that ``orch update`` starts for its health check: it passes an unfinished
+    update ONLY while the quarantine marker exists. Every other caller is refused by an unfinished journal."""
     path = Path(path)
     if kind not in CURRENT:
         raise ValueError(f"unknown root kind {kind!r}")
-    if unfinished(env):
+    if _interrupted(env, quarantine_ok):
         raise OrchError("update.interrupted", "an update was interrupted: run `orch update` to finish or roll back")
     if not path.is_dir():
         raise _not_a_root(path, "no such folder")
     fd = lock_root(path, exclusive=False)
     try:
-        if unfinished(env):  # re-check under the lock: an update may have started meanwhile
+        if _interrupted(env, quarantine_ok):  # re-check under the lock: an update may have started meanwhile
             raise OrchError("update.interrupted", "an update was interrupted: run `orch update` to finish or roll back")
         fmt = read_format(path, kind)
         if fmt is None:

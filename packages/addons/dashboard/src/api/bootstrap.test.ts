@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as boot from './bootstrap'
-import { bootstrap, clearSession, confirmSwitch, declineSwitch, getPendingSwitch, getToken, landSwitch, safeDestination, switchFailureCode } from './bootstrap'
+import { bootstrap, clearSession, confirmSwitch, declineSwitch, getPendingSwitch, getToken, landSwitch, safeDestination, switchFailureCode, switchHubOrigin } from './bootstrap'
 
 beforeEach(() => {
   sessionStorage.clear()
@@ -79,6 +79,27 @@ describe('run-15 J02: a switch the workspace refuses by design (D93)', () => {
     const fetcher = vi.fn(async () => Response.json({ ok: false, error: { code: 'switch.refused' } }, { status: 403 })) as unknown as typeof fetch
     expect(await landSwitch(fetcher)).toEqual({ kind: 'failed', code: 'switch.refused' })
     expect(switchFailureCode()).toBe('switch.refused')
+    expect(switchHubOrigin()).toBeNull() // the server named no hub
+  })
+})
+
+describe('P01: the joined hub origin from the server', () => {
+  const failWith = async (hub_origin: unknown) => {
+    history.replaceState(null, '', `/#t=${TICKET}`)
+    await bootstrap(vi.fn())
+    vi.mocked(switchProof).mockResolvedValueOnce({ name: 'Product', proof: PROOF })
+    const body = { ok: false, error: { code: 'session.required', hub_origin } }
+    await landSwitch(vi.fn(async () => Response.json(body, { status: 401 })) as unknown as typeof fetch)
+  }
+  it('keeps a closed http(s) origin, drops anything else', async () => {
+    await failWith('https://hub.example.org')
+    expect(switchHubOrigin()).toBe('https://hub.example.org')
+    await failWith('javascript:alert(1)')
+    expect(switchHubOrigin()).toBeNull()
+    await failWith('https://hub.example.org/path')
+    expect(switchHubOrigin()).toBeNull()
+    await failWith(42)
+    expect(switchHubOrigin()).toBeNull()
   })
 })
 

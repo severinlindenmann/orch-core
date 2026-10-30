@@ -1,13 +1,15 @@
 """H1: the hub switch routes. The hub is the authority for a ticket; this process only relays the host's answer and
 opens a `switch` session (not `local`) for an `open` ticket."""
 
+import json
+
 import pytest
 from conftest import ORIGIN, PORT
 from fastapi.testclient import TestClient
 
 from orch_dashboard.app import create_app
 from orch_dashboard.auth import Auth
-from orch_dashboard.errors import fail
+from orch_dashboard.errors import HostError, fail
 from orch_dashboard.gateway import Gateway
 
 WS = "a" * 32
@@ -237,3 +239,73 @@ def test_p01_the_403_on_a_hub_switch_is_never_an_origin_problem_of_the_configure
     assert tunnel.status_code == 421 and tunnel.json()["error"]["code"] == "host.bad"
     foreign = client.post("/auth/switch", json={"t": TICKET}, headers={"Origin": "http://127.0.0.1:47821"})
     assert foreign.status_code == 403 and foreign.json()["error"]["code"] == "origin.bad"
+
+
+def _rail_read(client, link, auth, origin="https://hub.test"):
+    """The authenticated rail read that fills the host-state cache."""
+    link.answers["rail"] = {"hub": {"name": "Acme", "origin": origin}, "workspaces": []}
+    token = _switch_token(client, link)
+    link.calls.clear()
+    assert client.get(f"/api/w/{WS}/hub/rail", headers={"Authorization": "Bearer " + token}).status_code == 200
+
+
+def _refuse(client, link):
+    link.answers["redeem"] = HostError({"code": "switch.refused", "message": "x", "retryable": False})
+    link.calls.clear()
+    return client.post("/auth/switch", json={"t": TICKET}, headers=H)
+
+
+def test_p01_without_a_cached_hub_origin_the_failure_has_none_and_makes_no_link_call_for_it(client, link):
+    refused = _refuse(client, link)
+    assert refused.status_code == 403 and "hub_origin" not in refused.json()["error"]
+    assert [c["kind"] for c in link.calls] == ["redeem"]  # no rail call on a pre-login request
+
+
+def test_p01_loopback_failure_names_the_hub_from_the_cached_rail_read_only(client, link, auth):
+    _rail_read(client, link, auth)
+    refused = _refuse(client, link)
+    assert refused.json()["error"]["hub_origin"] == "https://hub.test"
+    assert [c["kind"] for c in link.calls] == ["redeem"]  # cached: still no rail call
+    link.answers["redeem"] = HostError({"code": "ticket.used", "message": "x", "retryable": False})
+    assert (
+        client.post("/auth/switch", json={"t": TICKET}, headers=H).json()["error"]["hub_origin"] == "https://hub.test"
+    )
+
+
+def test_p01_only_a_closed_http_origin_is_ever_cached(client, link, auth):
+    for bad in ("javascript:alert(1)", "https://hub.test/path", "https://a b", None):
+        _rail_read(client, link, auth, origin=bad)
+        link.calls.clear()
+        assert "hub_origin" not in _refuse(client, link).json()["error"]
+
+
+def test_p01_remote_listeners_never_carry_the_hub_origin():
+    from orch_dashboard.policy import LOOPBACK, REMOTE
+    from orch_dashboard.switch import switch_failure
+
+    assert json.loads(switch_failure("switch.refused", 403, "x", "https://hub.test", LOOPBACK).body)["error"][
+        "hub_origin"
+    ]
+    for listener in (REMOTE, "remote-device"):
+        res = switch_failure("switch.refused", 403, "x", "https://hub.test", listener)
+        assert "hub_origin" not in json.loads(res.body)["error"] and res.status_code == 403
+
+
+def test_p01_the_network_address_never_gets_the_hub_origin_only_127_0_0_1_does(link, auth, tmp_path):
+    """`serve --listen` is an alt host of the loopback policy: a pre-login request from the LAN address must not learn
+    the hub, the exact 127.0.0.1:<port> Host does."""
+    lan = "192.168.1.20:8151"
+    state = tmp_path / "state"
+    state.mkdir(mode=0o700)
+    static = tmp_path / "static"
+    (static / "assets").mkdir(parents=True)
+    (static / "index.html").write_text("<html></html>")
+    app = create_app(PORT, Gw(link, state), auth, static, alt_hosts=(lan,))
+    with TestClient(app, base_url=ORIGIN) as c:
+        _rail_read(c, link, auth)
+        link.answers["redeem"] = HostError({"code": "switch.refused", "message": "x", "retryable": False})
+        own = c.post("/auth/switch", json={"t": TICKET}, headers=H)
+        assert own.json()["error"]["hub_origin"] == "https://hub.test"
+        via_lan = c.post("/auth/switch", json={"t": TICKET}, headers={"Host": lan, "Origin": "http://" + lan})
+        assert via_lan.status_code == 403 and via_lan.json()["error"]["code"] == "switch.refused"
+        assert "hub_origin" not in via_lan.json()["error"]

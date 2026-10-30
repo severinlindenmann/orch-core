@@ -182,9 +182,10 @@ def test_remote_sessions_lists_the_open_streams(human, served):
     table = remote.streams(served.service)
     table.register("b" * 32, "rd_" + "2" * 32)
     table.register("a" * 32, "rd_" + "1" * 32)
+    none = {"name": None, "person": None, "level": None, "since_ms": None}  # not opened: nothing is known yet
     rows = [
-        {"stream_id": "a" * 32, "device_id": "rd_" + "1" * 32},
-        {"stream_id": "b" * 32, "device_id": "rd_" + "2" * 32},
+        {"stream_id": "a" * 32, "device_id": "rd_" + "1" * 32, **none},
+        {"stream_id": "b" * 32, "device_id": "rd_" + "2" * 32, **none},
     ]
     assert ok(call(served, "remote.sessions"))["data"] == {"sessions": rows}
 
@@ -384,7 +385,9 @@ def _gate_open(served, dev: str, n: int) -> str | None:
 
 def test_member_removed_closes_open_stream_and_refuses_new(human, served):
     dev, r, p2 = _two_owners(human, served)
-    assert _gate_open(served, dev, 1) == "remote.version"  # an owner's device passes the gate (R3 not built yet)
+    assert (
+        _gate_open(served, dev, 1) == "remote.version"
+    )  # an owner's device passes the gate (no adapter is attached: the host serves no session)
     _host_event(served, p2, "member.removed", person=served.lab.ws.owner.ref)
     assert r.calls == ["revoked"] and r.held == [True]  # closed inside the store lock
     assert _gate_open(served, dev, 2) == "remote.device"

@@ -217,3 +217,29 @@ def test_the_https_front_commands_are_still_reached(monkeypatch):
     seen = []
     monkeypatch.setattr(remote_access, "main", lambda argv, **kw: seen.append(list(argv)) or 0)
     assert run(["status"])[0] == 0 and seen == [["status"]]
+
+
+def test_sessions_lists_by_number_and_end_uses_the_number_not_the_raw_id(host):
+    host.tty = False
+    rows = [
+        {"stream_id": "a" * 32, "device_id": DEVICE, "name": "Severin's MacBook", "person": "p_" + "1" * 32,
+         "level": "work", "since_ms": 1_800_000_000_000},
+        {"stream_id": "b" * 32, "device_id": DEVICE, "name": None, "person": None, "level": None, "since_ms": None},
+    ]  # fmt: skip
+    host.reply["remote.sessions"] = {"sessions": rows}
+    code, out = run(["sessions"])
+    assert code == 0 and "1  Severin's MacBook  work" in out and "2  (connecting)" in out
+    assert "a" * 32 not in out and DEVICE not in out  # no raw ids on screen
+    code, out = run(["end", "1"])
+    assert code == 0 and "session 1 ended" in out
+    assert host.called[-1] == ("remote.session_end", {"stream_id": "a" * 32}) and host.signed == []
+    code, out = run(["end", "3"])
+    assert code == 3 and "remote.no_stream" in out
+    assert run(["end", "x"])[0] == 2 and run(["end"])[0] == 2
+    assert run(["sessions"], as_json=True)[1].startswith('{"ok": true')
+
+
+@pytest.mark.parametrize("argv", [["sessions"], ["end", "1"]])
+def test_an_agent_cannot_list_or_end_sessions(offline, argv):
+    code, out = run(argv, {"ORCH_GRANT": "gr_x"})
+    assert code != 0 and "op.not_allowed" in out

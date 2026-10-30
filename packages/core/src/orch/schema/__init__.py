@@ -104,6 +104,7 @@ _WORKSPACE_ONLY = frozenset(
         "remote.key_rotated",
         "remote.session_opened",
         "remote.session_closed",
+        "remote.presence",
     }
 )
 _BOTH_LOGS = frozenset({"policy.changed", "projection.repaired", "restore", "invalid.acknowledged"})

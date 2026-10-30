@@ -558,6 +558,7 @@ agent; **D** an addon; **H** the host only. Types marked D58–D60 are new with 
 | `remote.key_rotated` | H | `wrk_fp`: 32 hex | R2. The remote key `WRK` was replaced; every session ends. |
 | `remote.session_opened` | H | `stream_id`: hex32; `device_id`; `person`; `level` | R2 (written by R3). |
 | `remote.session_closed` | H | `stream_id`; `device_id`; `reason`: a contract close reason | R2 (written by R3). |
+| `remote.presence` | H | `stream_id`; `device_id`; `n`: 1 to 16 | R3. A presence batch (n digests) was accepted for the stream; the signature is never logged. |
 
 The **member-list version** is the number of `workspace.created`, `member.added`, `member.removed` and
 `role.changed` events in the workspace log so far (so 1 right after the genesis). **Authorization is evaluated at

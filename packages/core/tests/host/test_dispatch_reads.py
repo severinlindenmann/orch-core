@@ -139,6 +139,7 @@ def args_for(op: str, ref: str) -> dict:
         "remote.status",
         "remote.pending",
         "remote.sessions",
+        "remote.attach",
         "remote.off",
         "remote.code",
         "remote.key_rotate",
@@ -147,6 +148,8 @@ def args_for(op: str, ref: str) -> dict:
         "share.audience",
     }:  # share.*: owner-only (C6)
         return {}
+    if op == "remote.stream":  # R3: names a remote stream, never a ticket (no such stream: remote.no_stream)
+        return {"stream_id": "a" * 32}
     if op == "org.show":  # M3 H-2: owner-only; names an offered item, never a ticket (standalone here: hub.not_joined)
         return {"kind": "skill", "name": "invoices"}
     if op == "hub.link":  # run-9: reads a connect link; nothing to do with tickets (the port refuses at once)
@@ -202,6 +205,8 @@ def test_every_served_read_is_known():
 def test_no_person_learns_nothing_about_a_restricted_ticket(world, op):
     if op in {"follow_up.show", "schedule.show"}:
         pytest.skip("names a follow-up or schedule id, not a ticket, and is gated by the Schedules add-on")
+    if op == "remote.attach":
+        pytest.skip("names no ticket; it claims the workspace's one dashboard slot (a second call is remote.busy)")
     served, key, baseline = world
     c = served.client()
     hidden = c.req(op, args_for(op, key), session=SESSION)

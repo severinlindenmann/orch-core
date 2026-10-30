@@ -109,7 +109,7 @@ from .publishing import NETWORK_OPS as PUBLISH_NETWORK_OPS
 from .publishing import PUBLISH_CAPS, PUBLISH_OPS
 from .reads import CAPS as READ_CAPS
 from .reads import READ_OPS
-from .remote import REMOTE_OPS, REMOTE_READS
+from .remote import REMOTE_CAPS, REMOTE_OPS, REMOTE_READS
 from .runnergrants import GRANT_OPS
 from .runners import RUN_CAPS, RUN_OPS
 from .shareops import NETWORK_OPS as SHARE_NETWORK_OPS
@@ -481,6 +481,7 @@ class RegistryBackend:
         return [
             *base, *READ_CAPS, *records_ops.CAPS, *(["sub_ext/1"] if SUB_EXT else []), *RUN_CAPS, *TERM_CAPS,
             *WORKDIR_CAPS, *WORKTREE_CAPS, *TRANSCRIPT_CAPS, *PUBLISH_CAPS, *readerops.CAPS, *phonehints.CAPS,
+            *REMOTE_CAPS,
         ]  # fmt: skip
 
     #: §0.6 step 10 is checked here, after the args (8) and the replay (9)
@@ -514,6 +515,10 @@ class RegistryBackend:
                     "outcome.unknown", f"{op} did not finish in time; ask outcome.get with its idem"
                 ) from None
             raise HostError("timeout", f"{op} did not finish within {timeout_ms} ms") from None
+        if op == "remote.attach":  # R3: park a poll with nothing to say (the adapter's frames wake it)
+            from . import remote
+
+            result = await remote.attach_wait(call, result)
         if op in SECOND_PHASE:  # the worker handed over its plan unredacted: redact what the second phase ANSWERS
             redactor = Redactor((call.frame.get("auth") or {}).get("grant"), op)
             try:

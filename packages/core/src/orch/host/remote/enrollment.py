@@ -329,16 +329,9 @@ def on_added(service: Any, event: dict[str, Any]) -> None:
 
 
 def _counter(service: Any, device_id: str, count: int) -> None:
-    from ..custody import ensure_private_dir, read_json, write_private
-    from . import wrk
+    from . import counters
 
-    path = wrk.state_dir(service) / "counters.json"
-    doc = read_json(path, service.host_uid, limit=1 << 20)
-    if not isinstance(doc, dict) or doc.get("v") != 1 or not isinstance(doc.get("fido2"), dict):
-        doc = {"v": 1, "fido2": {}}
-    doc["fido2"][device_id] = count
-    ensure_private_dir(wrk.state_dir(service), service.host_uid)
-    write_private(path, doc)
+    counters.record(service, device_id, count)
 
 
 def wait_added(pid: str, timeout: float | None = None) -> str | None:

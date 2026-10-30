@@ -4,13 +4,15 @@
 :func:`orch.host.hubdeliver.pump` does for ``event_deliver``:
 
 - ``stream_open``: judged by :func:`gate.open` on the workspace's worker thread (the store belongs to it) and answered
-  ``{}`` or the gate's code. Until R3 a passing open is answered ``remote.version``.
+  ``{}`` or the gate's code (``remote.version`` while no dashboard adapter is attached).
 - ``stream_data`` of a stream the host does not hold is dropped (no reply exists, nothing is sent back); of an open
-  stream it is checked against the stream's ``seq`` and byte budget (R3 reads the bytes).
+  stream it is checked against the stream's ``seq`` and byte budget, then handed to its :mod:`session`.
 - ``stream_close``: the stream is forgotten (its revoker runs).
 
-After every frame the ``stream_close`` frames :class:`gate.StreamTable` queued (revocation, budget, bad ``seq``) are
-sent, outside the store lock. :func:`run` loops it on the shared link (``peerops.shared_link``)."""
+Before and after every frame the sessions are swept (handshake, life, idle), the data frames they queued are sent, then
+the ``stream_close`` frames :class:`gate.StreamTable` queued (revocation, budget, bad ``seq``), all outside the store
+lock, and ``remote.session_closed`` is appended for each opened session that ended. :func:`run` loops it on the
+shared link (``peerops.shared_link``)."""
 
 from __future__ import annotations
 
@@ -18,9 +20,10 @@ import logging
 import threading
 from typing import TYPE_CHECKING, Any
 
+from orch.crypto.encoding import EncodingError, unb64u
 from orch.hubclient.tlslink.client import LinkError
 
-from . import gate
+from . import gate, session
 
 if TYPE_CHECKING:
     from orch.host.workspace import WorkspaceService
@@ -29,9 +32,13 @@ _log = logging.getLogger("orch.host.remote.pump")
 
 
 def flush_closing(service: WorkspaceService, link: Any) -> int:
-    """Send the queued ``stream_close`` frames. A refused frame is dropped (the stream is closed either way)."""
+    """Send the queued data frames, then the queued ``stream_close`` frames (the closes are taken FIRST, so a frame
+    queued before its stream's close always goes out before it). A refused frame is dropped (the stream is closed
+    either way)."""
     n = 0
-    for stream_id, reason in gate.table(service).take_closing():
+    closing = gate.table(service).take_closing()
+    session.flush_out(service, link)
+    for stream_id, reason in closing:
         try:
             link.send_stream("stream_close", {"stream_id": stream_id, "reason": reason})
             n += 1
@@ -42,24 +49,36 @@ def flush_closing(service: WorkspaceService, link: Any) -> int:
 
 def pump(service: WorkspaceService, link: Any, wait: float = 0.0) -> bool:
     """Take one stream frame off ``link`` (if any) and handle it. ``True`` when one was handled."""
+    now_ms = int(service.clock() * 1000)
+    session.sweep(service, now_ms)
     flush_closing(service, link)  # a revocation that happened between two frames goes out now
+    session.log_ended(service)
     got = link.next_stream(wait)
     if got is None:
         return False
     op, seq, body = got
     now_ms = int(service.clock() * 1000)
     if op == "stream_open":
-        code = service.submit(gate.open, service, body, now_ms).result(timeout=120)
+        hub_id = getattr(link, "hub_id", None)
+        code = service.submit(lambda: gate.open(service, body, now_ms, hub_id=hub_id)).result(timeout=120)
         link.answer_stream_open(seq, code)
     elif op == "stream_data":
-        gate.table(service).inbound(body, now_ms)  # unknown stream: dropped; bad seq or over budget: closed
+        # unknown stream: dropped; bad seq or over budget: closed; otherwise the session reads the bytes
+        if gate.table(service).inbound(body, now_ms) is None and gate.table(service).is_open(body["stream_id"]):
+            try:
+                raw = unb64u(body["bytes"])
+            except EncodingError:
+                gate.table(service).close(body["stream_id"], "malformed")
+            else:
+                session.feed(service, body["stream_id"], raw, now_ms)
     else:
         gate.table(service).peer_closed(body["stream_id"])
     flush_closing(service, link)
+    session.log_ended(service)
     return True
 
 
-def run(service: WorkspaceService, get_link: Any, stop: threading.Event, wait: float = 0.5) -> None:
+def run(service: WorkspaceService, get_link: Any, stop: threading.Event, wait: float = 0.05) -> None:
     """Serve frames until ``stop`` is set. ``get_link()`` is ``peerops.shared_link`` (``None``: no hub link now)."""
     while not stop.is_set():
         try:

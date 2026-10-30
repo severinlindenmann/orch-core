@@ -10,6 +10,8 @@
                                        a person: a one-time code, then the device that used it (its six words), then
                                        your backup key adds it
     orch remote device list | remove DEVICE
+    orch remote sessions [--json]      a person: the remote sessions open now (a number each, who, level, since when)
+    orch remote end N                  a person: end session number N of that list (no signature: it only removes power)
     orch remote key rotate             a person: a new workspace remote key; every device must be added again
 
 These sit next to ``orch remote enable|disable|reset`` (the HTTPS front of the dashboard, ``orch.cli.remote``),
@@ -33,12 +35,13 @@ from orch.cli.publish import PubError, _call, _sign, _target, _tty_ok
 
 __all__ = ["VERBS", "main"]
 
-VERBS = frozenset({"on", "off", "level", "status", "device", "key"})
+VERBS = frozenset({"on", "off", "level", "status", "device", "key", "sessions", "end"})
 _LEVELS = ("view", "work", "terminals")
 _USAGE = (
     "usage: orch remote {on --level LEVEL --premises yes|no [--days N] [--agents-can-act-as-me] "
     "| level LEVEL [--days N] [--agents-can-act-as-me] | off | status "
-    "| device add [--level LEVEL] [--days N] | device list | device remove DEVICE | key rotate} [--json]"
+    "| device add [--level LEVEL] [--days N] | device list | device remove DEVICE | key rotate | sessions "
+    "| end N} [--json]"
 )
 #: how long ``device add`` waits for the device to use the code (the code lives 15 minutes), and how often it asks
 WAIT_S = 15 * 60
@@ -100,6 +103,15 @@ def _devices_text(d: Mapping[str, Any]) -> str:
     return "\n".join(rows) or "  no devices"
 
 
+def _sessions_text(rows: Sequence[Mapping[str, Any]]) -> str:
+    lines = []
+    for n, r in enumerate(rows, 1):
+        who = clean_line(str(r.get("name"))) if r.get("name") else "(connecting)"
+        since = f"  since {_day(r['since_ms'])}" if type(r.get("since_ms")) is int else ""
+        lines.append(f"  {n}  {who}  {r.get('level') or ''}{since}")
+    return "\n".join(lines) or "  no remote sessions open"
+
+
 def _check_shape(a: argparse.Namespace) -> None:
     def usage(why: str) -> PubError:
         return PubError("invalid.input", f"{why}\n{_USAGE}", 2)
@@ -113,7 +125,10 @@ def _check_shape(a: argparse.Namespace) -> None:
     elif a.cmd == "level":
         if len(rest) != 1 or rest[0] not in _LEVELS or a.level or a.premises:
             raise usage("remote level takes one of view, work, terminals")
-    elif a.cmd in ("off", "status"):
+    elif a.cmd == "end":
+        if len(rest) != 1 or not rest[0].isdigit() or int(rest[0]) < 1 or a.level or a.premises or a.days is not None:
+            raise usage("remote end takes the number of a session from orch remote sessions")
+    elif a.cmd in ("off", "status", "sessions"):
         if rest or a.level or a.premises or a.days is not None or a.agents_risk:
             raise usage(f"remote {a.cmd} takes no arguments")
     elif a.cmd == "device":
@@ -166,6 +181,18 @@ def main(
             d = _call(target, "remote.off", {}, env)
             text = "ok remote access is off" if d.get("changed") else "ok remote access was already off"
             _emit(out, as_json, d, text)
+            return 0
+        if a.cmd == "sessions":
+            rows = _call(target, "remote.sessions", {}, env).get("sessions") or []
+            _emit(out, as_json, {"sessions": rows}, _sessions_text(rows))
+            return 0
+        if a.cmd == "end":
+            rows = _call(target, "remote.sessions", {}, env).get("sessions") or []
+            n = int(a.rest[0])
+            if n > len(rows):
+                raise PubError("remote.no_stream", "there is no session with that number; see orch remote sessions", 3)
+            _call(target, "remote.session_end", {"stream_id": rows[n - 1]["stream_id"]}, env)
+            _emit(out, as_json, {"ended": n}, f"ok session {n} ended")
             return 0
         if a.cmd == "key":
             d = _call(target, "remote.key_rotate", {}, env)

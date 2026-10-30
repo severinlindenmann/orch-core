@@ -661,6 +661,7 @@ def test_no_remote_type_is_a_hub_type_and_every_remote_type_has_a_column():
     assert remote_types == {
         "remote.changed", "remote.device_added", "remote.disabled", "remote.code_issued", "remote.code_burned",
         "remote.device_removed", "remote.key_rotated", "remote.session_opened", "remote.session_closed",
+        "remote.presence",
     }  # fmt: skip
     assert not remote_types & authz.HUB_TYPES
     assert {t for t, letters in authz.ACTOR_RULES.items() if t.startswith("remote.") and "P" in letters} == {

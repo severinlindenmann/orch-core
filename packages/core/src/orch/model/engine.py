@@ -317,6 +317,7 @@ def _workspace_handler(core: Core, lc: LogCore, e: dict[str, Any], ctx: Ctx) -> 
         "remote.code_burned": lambda: remote.remote_apply(ws, e, v, dev=hub_dev_of(core, ctx)),
         "remote.session_opened": lambda: remote.remote_apply(ws, e, v, dev=hub_dev_of(core, ctx)),
         "remote.session_closed": lambda: remote.remote_apply(ws, e, v, dev=hub_dev_of(core, ctx)),
+        "remote.presence": lambda: remote.remote_apply(ws, e, v, dev=hub_dev_of(core, ctx)),
         "restore": lambda: workspace.restore(core, lc, e, v),
         "invalid.acknowledged": lambda: _ack(ws, lc, e),
         "projection.repaired": lambda: None,

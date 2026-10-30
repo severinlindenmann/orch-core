@@ -67,6 +67,9 @@ HOST_CODES: dict[str, tuple[int, bool]] = {
     "human.request_mismatch": (5, False),
     "human.request_state": (3, False),
     "repo.remote_mismatch": (3, False),
+    "remote.no_stream": (3, False),  # R3: the remote session is closed, unknown or another person's
+    "remote.presence_replay": (3, False),  # R3: a presence batch whose signature counter did not rise
+    "remote.busy": (3, False),  # R3: another dashboard is already attached to the workspace's remote access
     "sign.convenience_unavailable": (3, False),  # H5c: with a reason first in the message (§0.8.6 item 1)
     "reader.decl_invalid": (3, False),  # H12d-2: a reader declaration that does not verify (§0.8.6 item 9.3)
     "sign.convenience_readers": (3, False),  # H5c: also in the P1 catalog (member.add refuses it in both modes)

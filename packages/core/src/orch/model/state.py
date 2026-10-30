@@ -44,6 +44,7 @@ _NO_TICKET_EFFECT = frozenset(
         "remote.key_rotated",
         "remote.session_opened",
         "remote.session_closed",
+        "remote.presence",
     }
 )
 

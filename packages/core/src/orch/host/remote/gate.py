@@ -4,8 +4,9 @@ Three things live here and nothing else touches them:
 
 - :func:`open` judges one h2w ``stream_open`` in the contract's order (replay, enroll, off, device, limits) from the
   workspace **model** (the policy and the device list are never read from a file, a cache or the hub), under the
-  workspace store lock. Until R3 builds the session (Noise, presence, the in-process terminator) a passing open is
-  answered ``remote.version`` and the stream is never registered (:data:`STREAMS_ACCEPT` is the one switch R3 flips).
+  workspace store lock. A passing open is taken only while the dashboard's adapter is attached (``attach.attached``:
+  the host offers its remote API range only while something serves it) and the link gave a hub id; the stream is then
+  registered with its :class:`session.Session` as revoker, in the same store hold. Otherwise it is ``remote.version``.
 - :class:`StreamTable` holds the open streams of the workspace and the revokers R3 registers on them. :func:`on_commit`
   runs from the store's commit hook, so it is called **inside the store lock**: a stream is closed in the same hold
   that appended the line that revokes it, and a gate that registers a stream also holds that lock, so no stream can
@@ -30,7 +31,7 @@ from orch.model import remote as model_remote
 from . import devices
 
 __all__ = [
-    "BYTE_BUDGET", "CODES", "FRAME_MIN_COST", "LIMITS", "STREAMS_ACCEPT", "Budget", "StreamTable", "decide",
+    "BYTE_BUDGET", "CODES", "FRAME_MIN_COST", "LIMITS", "Budget", "StreamTable", "decide",
     "frame_cost", "on_commit", "open", "table",
 ]  # fmt: skip
 
@@ -44,10 +45,6 @@ MINUTE_MS = 60_000
 SEEN_TTL_MS = 12 * 3600 * 1000
 SEEN_MAX = 4096
 WORKSPACE = "workspace"
-
-#: R3 flips this when the host can answer a remote API range. Until then every open that passes the gate is answered
-#: ``remote.version`` and nothing is registered, consumed or shown to the dashboard.
-STREAMS_ACCEPT = False
 
 #: the outstanding enrollment codes of a workspace as ``{code_id: expires_ms}``; ``remote.enrollment`` (T2a) installs
 #: the real source (memory only). Without one no enroll stream passes (``remote.no_code``).
@@ -363,12 +360,17 @@ def decide(
 
 
 def open(  # noqa: A001 - the gate's verb, as in the contract
-    service: Any, body: Mapping[str, Any], now_ms: int, *, codes: Mapping[str, int] | None = None
+    service: Any,
+    body: Mapping[str, Any],
+    now_ms: int,
+    *,
+    codes: Mapping[str, int] | None = None,
+    hub_id: str | None = None,
 ) -> str | None:
-    """Judge one h2w ``stream_open`` ``body`` at ``now_ms``. Returns ``None`` when the host takes the stream (only
-    once R3 sets :data:`STREAMS_ACCEPT`) or the code of the reply: ``replay``, ``remote.off``, ``remote.device``,
-    ``remote.busy``, ``remote.no_code``, ``remote.version``, or ``malformed`` for a body the link should have
-    refused. Runs under the store lock, which is also the lock of :func:`on_commit`."""
+    """Judge one h2w ``stream_open`` ``body`` at ``now_ms`` (``hub_id``: the link's hub, part of the Noise prologue).
+    Returns ``None`` when the host takes the stream (an adapter is attached) or the code of the reply: ``replay``,
+    ``remote.off``, ``remote.device``, ``remote.busy``, ``remote.no_code``, ``remote.version``, or ``malformed`` for a
+    body the link should have refused. Runs under the store lock, which is also the lock of :func:`on_commit`."""
     if not stream_body_ok("stream_open", dict(body)):
         return "malformed"
     t = table(service)
@@ -397,7 +399,12 @@ def open(  # noqa: A001 - the gate's verb, as in the contract
             t.note_enroll(now_ms)
         else:
             t.note_handshake(dev, now_ms)
-        if not STREAMS_ACCEPT:
-            return "remote.version"  # the host offers no remote API range yet: nothing is registered or shown
+        from . import adapter, session
+
+        if not adapter.attached(service):
+            return "remote.version"  # nothing serves a remote API range now: nothing is registered or shown
         t.register(sid, dev, kind=kind)
+        if not session.start(service, sid, dev, kind, hub_id, now_ms):
+            t.unregister(sid)
+            return "remote.version"
         return None

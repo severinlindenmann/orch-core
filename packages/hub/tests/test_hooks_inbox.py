@@ -131,3 +131,26 @@ def test_disabled_without_public_url():
     _c, _s, ib = setup()
     ib.url_base = None
     assert not ib.enabled
+
+
+def test_github_ping_is_answered_but_does_not_use_the_ring():
+    clk, st, ib = setup()
+    assert ring(ib, {**gh(), "x-github-event": "ping"}) == 204
+    assert st.pull(WS, 0, clk())["rings"] == []
+    assert ring(ib, {**gh(), "x-github-event": "check_suite"}) == 204  # the real event still rings
+    assert len(st.pull(WS, 0, clk())["rings"]) == 1
+
+
+def test_a_ping_without_a_good_signature_is_no_exception():
+    _clk, _st, ib = setup()
+    assert ring(ib, {"x-github-event": "ping"}) == 404
+    assert ring(ib, {**gh(secret="hs_" + "X" * 43), "x-github-event": "ping"}) == 404
+
+
+def test_ping_header_means_nothing_for_other_sources():
+    clk, st, ib = setup("generic")
+    t = NOW // 1000
+    m = HK.generic_mac(SECRET, t)
+    m.update(BODY)
+    assert ring(ib, {"x-orch-signature": f"t={t},v1={m.hexdigest()}", "x-github-event": "ping"}) == 204
+    assert len(st.pull(WS, 0, clk())["rings"]) == 1

@@ -78,6 +78,8 @@ class HookInbox:
         if not self._signed(hook, headers, body):
             self._miss.take(source)
             return NOT_FOUND
+        if hook.source == "github" and headers.get("x-github-event") == "ping":
+            return OK  # GitHub's signed test on creation answers 204 but must not use the hook's single ring
         # over the per-hook limit: still a 204, nothing is stored
         if self._hook.take(hook.token_hash) and self.store.ring(hook, self.now_ms()):
             LOG.info("webhook ring for hook %s", hook.token_hash[:8])

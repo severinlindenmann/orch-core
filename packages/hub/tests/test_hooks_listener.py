@@ -245,3 +245,11 @@ def test_threads_are_bounded(lst):
     ls, *_ = lst(workers=4)
     assert threading.active_count() - before <= 5
     ls.close()
+
+
+def test_ping_over_the_wire_then_a_real_event(lst):
+    ls, st, _ib, _seen = lst()
+    assert status(raw(ls, post(extra=b"X-GitHub-Event: ping\r\n"))) == 204
+    assert st.pull(WS, 0, NOW)["rings"] == []
+    assert status(raw(ls, post(extra=b"X-GitHub-Event: check_suite\r\n"))) == 204
+    assert len(st.pull(WS, 0, NOW)["rings"]) == 1

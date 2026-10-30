@@ -29,7 +29,9 @@ MAX_HEAD = 8 * 1024
 WORKERS = 8
 BACKLOG = 16  # accepted connections waiting for a worker; more are closed at once
 TOTAL_S = 10.0
-KEEP = frozenset({"x-hub-signature-256", "x-orch-signature", "authorization", "x-forwarded-for", "content-length"})
+KEEP = frozenset(
+    {"x-hub-signature-256", "x-orch-signature", "x-github-event", "authorization", "x-forwarded-for", "content-length"}
+)
 _LINE = re.compile(rb"POST /h/(hh_[A-Za-z0-9_-]{43}) HTTP/1\.[01]")
 _REASON = {204: "No Content", 400: "Bad Request", 404: "Not Found", 411: "Length Required", 413: "Content Too Large"}
 _REASON |= {429: "Too Many Requests", 503: "Service Unavailable"}

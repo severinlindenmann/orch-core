@@ -53,8 +53,8 @@ def accepted_on_loopback(scope, missing: bool = False) -> bool:
         return missing
     try:
         return ipaddress.ip_address(str(server[0]).split("%", 1)[0]).is_loopback
-    except ValueError:
-        return False
+    except ValueError:  # not an IP address (a real server always names one; a test client names a host): unknown
+        return missing
 
 
 def clean_path(path: str) -> list[str] | None:

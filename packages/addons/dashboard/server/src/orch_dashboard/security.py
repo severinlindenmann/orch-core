@@ -464,7 +464,10 @@ class Security:
             return [v.decode("latin1") for k, v in headers if k.lower() == name]
 
         if (
-            not policy.websocket_ok(scope["path"], values(b"host"), values(b"origin"))
+            # the terminal socket is for this computer only: a loopback Host on a connection accepted on the network
+            # socket is refused (the Host header proves nothing); the network Host never passes `websocket_ok`
+            (policy.name == LOOPBACK and not policy.stream and not accepted_on_loopback(scope, missing=True))
+            or not policy.websocket_ok(scope["path"], values(b"host"), values(b"origin"))
             or values(b"sec-websocket-protocol")
             or scope.get("subprotocols")
             or scope.get("query_string")

@@ -413,6 +413,8 @@ const click = {
 const cosmetic = {
   setCosmetic: (ws: string, body: CosmeticBody) => call<Cosmetic>(`${w(ws)}/workspace/cosmetic`, 'PUT', body),
   /** HUB-WS-09: the owner's workspace profile (the host pushes it to a bound hub; `pushed` says whether it has). */
+  getHubNetwork: (ws: string) => call<import('./network').NetworkSettings>(`${w(ws)}/hub/network`),
+  putHubNetwork: (ws: string, body: import('./network').NetworkChange) => call<import('./network').NetworkSettings>(`${w(ws)}/hub/network`, 'PUT', body),
   getHubProfile: (ws: string) => call<import('./profile').WorkspaceProfile>(`${w(ws)}/hub/profile`),
   putHubProfile: (ws: string, profile: import('./profile').ProfileFields) => call<import('./profile').WorkspaceProfile>(`${w(ws)}/hub/profile`, 'PUT', profile),
 }

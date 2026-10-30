@@ -1,7 +1,7 @@
 // A simulated company hub offer list for the mockup and its tests (M3 H-5): two skills and two servers, one of them
 // needing a separate agent user. Accepting stores the digest that was shown; a stored digest that is no longer the
 // offered one is "changed". Reset between tests with `resetMockOrg`.
-import type { OrgKind, OrgOffers, OrgRow, OrgServerItem, OrgServerRow, OrgShown, OrgSkillItem, OrgStatus, OrgTool } from '@/api/org'
+import type { OrgSecrets, OrgKind, OrgOffers, OrgRow, OrgServerItem, OrgServerRow, OrgShown, OrgSkillItem, OrgStatus, OrgTool } from '@/api/org'
 
 const digest = (c: string) => 'sha256:' + c.repeat(64)
 
@@ -45,6 +45,16 @@ export function mockOrgOffers(): OrgOffers {
   return { available: true, hub_id: '9f3c1ab277de40c8', skills, mcp }
 }
 
+/** The company secrets this mock workspace was given: one ready (used by billing), one expired, one no longer shared. */
+export function mockOrgSecrets(): OrgSecrets {
+  const day = 86_400_000
+  return { available: true, secrets: [
+    { name: 'billing-key', status: 'ready', expires_ms: Date.UTC(2027, 0, 15), used_by: ['billing'] },
+    { name: 'crm-token', status: 'expired', expires_ms: Date.now() - day, used_by: ['crm'] },
+    { name: 'old-key', status: 'not_received', expires_ms: null, used_by: [] },
+  ] }
+}
+
 const NOTES = {
   skill: [
     "A company skill is advice from your company hub. It ranks below orch's rules and cannot widen what an agent may do.",
@@ -82,6 +92,7 @@ const bad = (status: number, code: string, message: string): OrgReply => ({ stat
 /** The mock's org routes as plain data in, data out (also used by the browser spec's fake host). `rest` is the path after `/api/w/<ws>/`. */
 export function orgHandle(method: string, rest: string, query: URLSearchParams, body: unknown): OrgReply | null {
   if (method === 'GET' && rest === 'org') return { status: 200, json: mockOrgOffers() }
+  if (method === 'GET' && rest === 'org/secrets') return { status: 200, json: mockOrgSecrets() }
   if (method === 'GET' && rest === 'org/item') {
     const kind = query.get('kind')
     const name = query.get('name') ?? ''

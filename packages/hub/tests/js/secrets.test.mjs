@@ -294,3 +294,14 @@ test("P07: the card's share box shows the hub warning above its Save only while 
   const all = card.all();
   assert.ok(all.indexOf(warn()) < all.indexOf(button(card, "Save who can read it")), "above Save");
 });
+
+test("#1431: per-workspace use is behind a small click, in plain words, with the expiry shown", () => {
+  const view = secretsView(data, {});
+  const note = find(view, (n) => n.attrs["data-use"] === "crm-key")[0];
+  assert.equal(note.hidden, true);
+  assert.equal(note.textContent, "Used this week: Product 12, A workspace 0");
+  const btn = find(view, (n) => n.attrs["data-use-toggle"] === "crm-key")[0];
+  btn.listeners.click();
+  assert.equal(note.hidden, false);
+  assert.match(view.textContent, /Valid until /); // run15c P07 wording
+});

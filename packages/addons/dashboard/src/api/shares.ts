@@ -208,7 +208,7 @@ export const UNAVAILABLE_TEXT: Record<UnavailableReason, { title: string; text: 
   off: { title: 'Sharing is switched off', text: 'Turn it on to send files of a ticket as a link.', button: 'Turn on sharing' },
   not_configured: { title: 'Sharing has no server yet', text: 'Choose where files are sent, then share a ticket’s files as a link.', button: 'Set up sharing' },
   paused: { title: 'Your hub paused sharing', text: 'It works again when the hub allows it.', button: null },
-  hub_mode: { title: 'Sharing is not available here', text: 'Links work only while this workspace shares selected things with the hub, not everything.', button: null },
+  hub_mode: { title: 'Sharing is not available here', text: 'Links work only while this workspace shares everything with the hub. You can change that in Settings, Hub.', button: null },
   hub_not_connected: { title: 'Sharing is waiting for the hub', text: 'This workspace has joined a hub but is not connected to it yet.', button: null },
 }
 

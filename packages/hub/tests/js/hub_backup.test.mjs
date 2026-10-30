@@ -288,11 +288,14 @@ test("P08 review: no 'Save as a file' when the page is on a loopback address; Co
       globalThis.location = { hostname };
       const c = view();
       assert.equal(button(c, "Save as a file"), undefined, hostname);
+      assert.ok(!c.textContent.includes("Keep this file somewhere safe"), hostname);  // no advice about a file you cannot get
       assert.ok(button(c, "Copy"), hostname);
     }
     for (const hostname of ["hub.example.com", "100.64.1.2", "192.168.1.5", "127.example.com"]) {
       globalThis.location = { hostname };
-      assert.ok(button(view(), "Save as a file"), hostname);
+      const c = view();
+      assert.ok(button(c, "Save as a file"), hostname);
+      assert.ok(c.textContent.includes("Keep this file somewhere safe"), hostname);
     }
   } finally { delete globalThis.location; }
 });

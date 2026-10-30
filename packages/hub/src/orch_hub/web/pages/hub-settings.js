@@ -223,7 +223,7 @@ function wordsPanel(words, actions) {
   return h("div", { class: "banner ok", role: "status", "data-words": "1" },
     h("b", { text: "Write these 24 words down" }),
     h("p", { class: "small", text: "They are shown only now. Keep them somewhere safe, away from this server. Without them a backup cannot be opened, and nobody can get them back for you." }),
-    h("p", { class: "small", text: "Keep this file somewhere safe and offline. Anyone with it and your password can restore your hub." }),
+    onServer ? null : h("p", { class: "small", text: "Keep this file somewhere safe and offline. Anyone with it and your password can restore your hub." }),
     grid, h("div", { class: "row" }, copy, onServer ? null : save, h("button", { type: "button", class: "primary", text: "I have saved it", onclick: () => actions.wordsSaved?.() })));
 }
 

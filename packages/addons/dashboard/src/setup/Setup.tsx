@@ -16,7 +16,7 @@ import './setup.css'
 const clickRiskCopy = 'Faster, less safe: anything using this computer as you, including your agents, could approve for you. Choose this only on your own computer.'
 /** The plain meaning of One click, behind "What does this mean?"; the full risk sentence stays in the review step. */
 const clickMeaningCopy =
-  'Anything running as you on this computer, including your agents, could approve for you. Choose a passphrase if the computer is shared.'
+  'Anything running as you on this computer, including your agents, could approve for you. Choose a password if the computer is shared.'
 const terminalStepCopy = "One step needs your terminal: you'll press Enter once."
 const voidCopy =
   'If setup stops before it finishes, you get new words next time.'
@@ -135,7 +135,7 @@ export function reviewFacts(review: Review): Fact[] {
   }
   const has = (id: string) => review.flags.some((f) => f.id === id)
   if (has('custody')) facts.push({ icon: '◈', label: 'How you approve', value: 'One click on this computer' })
-  else if (has('terminal') || review.tty_confirm) facts.push({ icon: '◈', label: 'How you approve', value: 'In a terminal, with your passphrase' })
+  else if (has('terminal') || review.tty_confirm) facts.push({ icon: '◈', label: 'How you approve', value: 'In a terminal, with your password' })
   let agents: string | undefined
   for (const item of review.items) {
     const f = item.fields
@@ -183,7 +183,7 @@ export function approvalSummary(
         : `Agents can work on their own for ${duration(profile.agent_hours)}.`,
   ]
   if (opts.records) out.push(profile.records !== false ? 'Your history stays on this computer.' : 'No history is kept.')
-  if (opts.trust !== undefined) out.push(opts.trust ? 'Claude Code opens this folder without asking.' : 'Claude Code asks before it opens this folder.')
+  if (opts.trust !== undefined) out.push(opts.trust ? 'AI helpers open this folder without asking.' : 'AI helpers ask before they open this folder.')
   return out.join(' ')
 }
 const statusWord = { todo: 'Waiting', doing: 'Running', done: 'Done', failed: 'Failed', skipped: 'Skipped' }
@@ -191,12 +191,12 @@ const statusIcon = { todo: '•', doing: '◔', done: '✓', failed: '✕', skip
 /** Roll up display rows only; setup still uses the original server steps. */
 export function groupProgress(steps: Progress['steps']): Progress['steps'] {
   const groups = [
-    { id: 'perms', label: 'Folders made private', ids: ['perms'] },
-    { id: 'key', label: 'Your key', ids: ['keys', 'genesis', 'custody'] },
+    { id: 'perms', label: 'Your files are private', ids: ['perms'] },
+    { id: 'key', label: 'Your way to approve', ids: ['keys', 'genesis', 'custody'] },
     { id: 'workspace', label: 'Your workspace', ids: ['git', 'settings', 'records', 'trust'] },
     { id: 'services', label: 'Starting orch', ids: ['register', 'runner', 'runner_grant'] },
     { id: 'addons', label: 'Features', ids: [] },
-    { id: 'approval', label: 'Approval', ids: ['flags'] },
+    { id: 'approval', label: 'Your choices saved', ids: ['flags'] },
   ]
   return groups.flatMap(({ id, label, ids }) => {
     const members = steps.filter((step) => ids.includes(step.id) || (id === 'addons' && step.id.startsWith('addon:')))
@@ -341,7 +341,7 @@ function FinishChoices({
             <label className="toggle">
               <span>
                 <strong>Approve with one click on this computer</strong>
-                <small>Instead of the terminal. Your key is kept in a key file only you can read on this computer. You keep your passphrase.</small>
+                <small>Instead of the terminal. It is kept in a key file only you can read on this computer. You keep your password.</small>
               </span>
               <input
                 type="checkbox"
@@ -740,12 +740,12 @@ export function Setup({ api }: { api: SetupAPI }) {
       />
       <span>
         <strong>
-          {method === 'click' ? 'One click on this computer' : 'Passphrase'}
+          {method === 'click' ? 'One click on this computer' : 'Password'}
           {method === 'click' && state.click_available && <span className="badge">Recommended</span>}
         </strong>
         <small>
           {method === 'terminal'
-            ? 'Type your passphrase each time. Safest if others use this computer.'
+            ? 'Type your password each time. Safest if others use this computer.'
             : state.click_available
               ? 'No typing. Best on your own computer.'
               : clickOffText(state.click_reason)}
@@ -855,9 +855,10 @@ export function Setup({ api }: { api: SetupAPI }) {
           {step === 0 && (
             <>
               <p>orch keeps a to-do list of tickets that you and your AI helpers work on.</p>
-              <p>Your project folder: <Inline>{state.dir_name}</Inline></p>
+              <p>We will set this up in your project folder.</p>
               <details className="welcome-technical">
-                <summary>Where is it?</summary>
+                <summary>Details</summary>
+                <p><Inline>{state.dir_name}</Inline></p>
                 <Raw>{state.dir}</Raw>
               </details>
               {profile.method === 'terminal' && <p>{terminalStepCopy}</p>}
@@ -1038,7 +1039,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                 </details>
               )}
               {/* r11-P16: the safe defaults in one line; every other choice behind one click (forced open when a choice
-                  must be seen: no One click here, or a parent Claude Code setting asks for "Trust anyway") */}
+                  must be seen: no One click here, or a parent AI helper setting asks for "Trust anyway") */}
               <p className="approval-summary" data-testid="approval-summary">
                 {approvalSummary(profile, access, { records: state.mode !== 'finish', trust: offersTrust ? (parentConfig ? profile.trust_parent === true : profile.trust_folder !== false) : undefined })}
               </p>
@@ -1089,7 +1090,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                     />
                   </label>
                   {profile.method === 'click' && (
-                    <p>Phone approvals are not available with One click yet. Choose Passphrase to use them.</p>
+                    <p>Phone approvals are not available with One click yet. Choose Password to use them.</p>
                   )}
                 </>
               )}
@@ -1112,8 +1113,8 @@ export function Setup({ api }: { api: SetupAPI }) {
                   <span>
                     Trust anyway
                     <small>
-                      Found Claude Code settings in {parentConfig}: they would apply to this folder too. Off means
-                      Claude Code asks each time.
+                      Found AI helper settings in {parentConfig}: they would apply to this folder too. Off means
+                      AI helpers ask each time.
                     </small>
                   </span>
                   <input
@@ -1127,8 +1128,8 @@ export function Setup({ api }: { api: SetupAPI }) {
               {offersTrust && !parentConfig && (
                 <label className="toggle">
                   <span>
-                    Let Claude Code trust this folder
-                    <small>Claude Code will open this folder without asking. It only holds orch’s files.</small>
+                    Let your AI helpers open this folder without asking
+                    <small>They will not stop to ask first. This folder only holds orch’s files.</small>
                   </span>
                   <input
                     type="checkbox"
@@ -1154,9 +1155,9 @@ export function Setup({ api }: { api: SetupAPI }) {
                 <>
                   {secrets.passphrase && (
                     <section className="passphrase">
-                      <h2>Your passphrase</h2>
+                      <h2>Your password</h2>
                       <p className="inset">{secrets.passphrase}</p>
-                      <p>Never type your passphrase into this page.</p>
+                      <p>Never type your password into this page.</p>
                     </section>
                   )}
                   <section className="recovery-print">
@@ -1384,8 +1385,8 @@ export function Setup({ api }: { api: SetupAPI }) {
           {progress?.steps.some((s) => s.id === 'trust' && s.status === 'skipped') && (
             <div className="progress-note" role="note">
               {progress.reason_codes?.trust === 'not_installed' || progress.reason_codes?.trust === 'not_started'
-                ? 'Claude Code will ask once to trust this folder. Say yes there.'
-                : 'Claude Code will ask once about this folder. See why below.'}
+                ? 'Your AI helper will ask once to trust this folder. Say yes there.'
+                : 'Your AI helper will ask once about this folder. See why below.'}
               {progress.reasons?.trust && (
                 <details>
                   <summary>Why?</summary>

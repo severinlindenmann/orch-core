@@ -128,11 +128,19 @@ export function secretsView(data, actions = {}) {
       if (!sure) { sure = true; remove.textContent = "Sure? Remove it"; return; }
       actions.remove?.(s);
     } });
+    // Per-workspace use numbers (reported by the workspaces), one small click away.
+    const useLine = "Used this week: " + (Object.keys(s.state ?? {}).length
+      ? Object.entries(s.state).map(([id, x]) => wsName(wsById[id]) + " " + (x.used_this_week ?? 0)).join(", ")
+      : "no workspace yet");
+    const useNote = h("p", { class: "small muted", "data-use": s.name, text: useLine });
+    useNote.hidden = true;
+    const useBtn = h("button", { type: "button", class: "link small", "data-use-toggle": s.name, text: "Who used it", onclick: () => { useNote.hidden = !useNote.hidden; } });
     const reenter = needs ? h("button", { type: "button", class: "primary", text: "Enter the value", onclick: () => { again.node.hidden = !again.node.hidden; } }) : null;
     return h("article", { class: "card secret", "data-secret": s.name },
       h("div", { class: "row" }, h("h3", { class: "grow", text: s.name }), remove),
       h("p", { class: "small muted", text: (s.expired ? "Expired on " : "Expires on ") + plainDate(s.expires_ms) + ". " + (s.shared === "all" ? "Shared with all workspaces." : "Shared with chosen workspaces only.") }),
       h("p", { class: "small muted", text: "Used " + (s.used_this_week ?? 0) + " times this week (as reported by the workspaces)." }),
+      h("div", { class: "row" }, useBtn), useNote,
       rows,
       reenter ? h("div", { class: "row" }, reenter) : null,
       again.node,

@@ -35,7 +35,7 @@ test("the page registers as hub-settings for admins (settings is a route of orch
 
 test("the cards show name, company, every address in plain words and the sign-in rows", () => {
   const t = hubSettingsView(DEMO).textContent;
-  for (const s of ["Hub name", "Company", "Private network (VPN)", "http://100.71.188.237:8100", "phones use this one", "On this server", "on the server itself, use this one", "Office network", "http://192.168.60.30:8100", "Name + password + 6-digit code"]) assert.ok(t.includes(s), s);
+  for (const s of ["Hub name", "Company", "Private network (VPN)", "http://100.71.188.237:8100", "phones use this one", "On this server", "this computer only", "Office network", "http://192.168.60.30:8100", "Name + password + 6-digit code"]) assert.ok(t.includes(s), s);
   assert.match(t, /Public address\s*Not set up/);          // a kind without an address says so
   assert.doesNotMatch(t, /NetBird|WireGuard|Tailscale/i);   // owner rule: never a VPN product name
 });
@@ -155,4 +155,15 @@ test("an address change that restarts the hub waits until the hub answers again"
   for (const deadline = Date.now() + 5000; polls < 2 && Date.now() < deadline;) await new Promise((r) => setTimeout(r, 5));
   assert.ok(calls.some((c) => c[0] === "PUT" && c[1] === "/admin/settings/addresses"));
   assert.ok(polls >= 2);
+});
+
+test("r14 P11: a server-only address says 'this computer only', never 'phones use this one', and the card says phones cannot reach the hub", () => {
+  const d = { ...DEMO, phone_kind: "server", addresses: [{ kind: "server", web: "http://127.0.0.1:8100" }] };
+  const t = (can) => hubSettingsView({ ...d, can_change_addresses: can }).textContent;
+  for (const can of [false, true]) {
+    const out = t(can);
+    assert.ok(out.includes("this computer only"));
+    assert.ok(!out.includes("hones use this one"), "no phones hint on a server address");
+    assert.ok(out.includes("Phones can't reach this hub yet. To add an address they can use, ask the person who installed it."));
+  }
 });

@@ -204,7 +204,7 @@ def test_the_host_cap_is_shared_by_every_workspace_and_survives_a_restart(tmp_pa
 
 
 @pytest.fixture
-def real(env, tmp_path):
+def real(env, tmp_path):  # noqa: F811
     """The real fixture add-on `eventer` installed in the workspace's store and granted: nothing is monkeypatched, the
     host runs it as a process through `runner.poll` (closed env, strict JSON)."""
     import shutil

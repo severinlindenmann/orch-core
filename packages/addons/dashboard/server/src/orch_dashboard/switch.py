@@ -123,29 +123,23 @@ def rail_view(raw) -> dict:
     }
 
 
-_HTTP_ORIGIN = re.compile(r"https?://[A-Za-z0-9.\[\]:-]{1,200}")
+def switch_failure(code: str, http: int, message: str, hub_origin: str | None, listener: str):
+    """The error body of a failed switch. P01: it may carry the joined hub's origin for "Back to the hub", but only on
+    the loopback listener and only from a value an authenticated rail read already cached: this pre-login answer never
+    makes a link call and never leaks the hub to the network or remote listener."""
+    error = {"code": code, "message": message, "retryable": False}
+    if hub_origin and listener == LOOPBACK:
+        error["hub_origin"] = hub_origin
+    return JSONResponse({"ok": False, "error": error}, status_code=http)
 
 
 def register(app: FastAPI, gateway: Gateway, auth=None, clock=time.monotonic):
     cache: dict[str, tuple[float, dict]] = {}
 
-    def joined_hub_origin(link, request: Request) -> str | None:
-        """P01: the origin of the hub THIS workspace joined, from the host's own hub state (never from the request),
-        for the failure page's "Back to the hub" button. A closed http(s) origin, else None (the page hides the
-        button). Any host failure is None."""
-        try:
-            raw = link.call("hub.switch", {"kind": "rail", "origin": browser_origin(request)})
-            origin = raw["hub"]["origin"]
-        except (HostError, KeyError, TypeError, AttributeError):
-            return None
-        return origin if isinstance(origin, str) and _HTTP_ORIGIN.fullmatch(origin) else None
+    hub_origins: dict[str, str] = {}  # ws -> the joined hub's origin, filled only by the authenticated rail read below
 
-    def failed(code: str, http: int, message: str, link, request: Request):
-        error = {"code": code, "message": message, "retryable": False}
-        hub = joined_hub_origin(link, request)
-        if hub:
-            error["hub_origin"] = hub
-        return JSONResponse({"ok": False, "error": error}, status_code=http)
+    def failed(code: str, http: int, message: str, ws: str, listener: str):
+        return switch_failure(code, http, message, hub_origins.get(ws), listener)
 
     def link_for(ws: str):
         link = gateway.enabled(ws)
@@ -212,10 +206,10 @@ def register(app: FastAPI, gateway: Gateway, auth=None, clock=time.monotonic):
             got = link.call("hub.switch", {"kind": "redeem", "ticket": body.t})
         except HostError as exc:
             if exc.error["code"] == "switch.refused":  # D93 (R2): the host refused before the hub: the ticket is unused
-                return failed("switch.refused", 403, SWITCH_REFUSED, link, request)
+                return failed("switch.refused", 403, SWITCH_REFUSED, ws, listener)
             a.switch_attempt(client)  # a refused ticket costs its source a second charge
             # one answer for a bad, used, expired or foreign ticket
-            return failed("session.required", 401, "session.required", link, request)
+            return failed("session.required", 401, "session.required", ws, listener)
         if got.get("kind") == "signout":
             return JSONResponse({"signed_out": True})
         minted = a.open_keyed(body.key_id, ws) if keyed else None
@@ -245,8 +239,14 @@ def register(app: FastAPI, gateway: Gateway, auth=None, clock=time.monotonic):
             raw = link_for(ws).call("hub.switch", {"kind": "rail", "origin": browser_origin(request)})
         except HostError as exc:
             if exc.error["code"] in _NO_HUB or exc.error["code"] == "hub.refused":
+                hub_origins.pop(ws, None)
                 return {"hub": None, "workspaces": []}
             raise
         out = rail_view(raw)
         cache[ws] = (clock(), out)
+        origin = (out["hub"] or {}).get("origin")
+        if origin:
+            hub_origins[ws] = origin
+        else:
+            hub_origins.pop(ws, None)
         return out

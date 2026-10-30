@@ -1,6 +1,8 @@
 """H1: the hub switch routes. The hub is the authority for a ticket; this process only relays the host's answer and
 opens a `switch` session (not `local`) for an `open` ticket."""
 
+import json
+
 import pytest
 from conftest import ORIGIN, PORT
 from fastapi.testclient import TestClient
@@ -239,25 +241,51 @@ def test_p01_the_403_on_a_hub_switch_is_never_an_origin_problem_of_the_configure
     assert foreign.status_code == 403 and foreign.json()["error"]["code"] == "origin.bad"
 
 
-def test_p01_a_failed_switch_names_the_joined_hub_from_the_hosts_own_state(client, link):
-    """The failure page's "Back to the hub" may only point at the hub this workspace joined. The origin comes from the
-    host's hub state (never the request), as a closed http(s) origin, else it is absent."""
+def _rail_read(client, link, auth, origin="https://hub.test"):
+    """The authenticated rail read that fills the host-state cache."""
+    link.answers["rail"] = {"hub": {"name": "Acme", "origin": origin}, "workspaces": []}
+    token = _switch_token(client, link)
+    link.calls.clear()
+    assert client.get(f"/api/w/{WS}/hub/rail", headers={"Authorization": "Bearer " + token}).status_code == 200
+
+
+def _refuse(client, link):
     link.answers["redeem"] = HostError({"code": "switch.refused", "message": "x", "retryable": False})
-    link.answers["rail"] = {"hub": {"name": "Acme", "origin": "https://hub.test"}, "workspaces": []}
-    refused = client.post("/auth/switch", json={"t": TICKET}, headers=H)
-    assert refused.status_code == 403 and refused.json()["error"]["hub_origin"] == "https://hub.test"
+    link.calls.clear()
+    return client.post("/auth/switch", json={"t": TICKET}, headers=H)
+
+
+def test_p01_without_a_cached_hub_origin_the_failure_has_none_and_makes_no_link_call_for_it(client, link):
+    refused = _refuse(client, link)
+    assert refused.status_code == 403 and "hub_origin" not in refused.json()["error"]
+    assert [c["kind"] for c in link.calls] == ["redeem"]  # no rail call on a pre-login request
+
+
+def test_p01_loopback_failure_names_the_hub_from_the_cached_rail_read_only(client, link, auth):
+    _rail_read(client, link, auth)
+    refused = _refuse(client, link)
+    assert refused.json()["error"]["hub_origin"] == "https://hub.test"
+    assert [c["kind"] for c in link.calls] == ["redeem"]  # cached: still no rail call
     link.answers["redeem"] = HostError({"code": "ticket.used", "message": "x", "retryable": False})
-    used = client.post("/auth/switch", json={"t": TICKET}, headers=H)
-    assert used.status_code == 401 and used.json()["error"]["hub_origin"] == "https://hub.test"
-    for bad in ("javascript:alert(1)", "https://hub.test/path", "https://a b", None, 5):
-        link.answers["rail"] = {"hub": {"name": "Acme", "origin": bad}, "workspaces": []}
-        assert "hub_origin" not in client.post("/auth/switch", json={"t": TICKET}, headers=H).json()["error"]
-    link.answers["rail"] = HostError({"code": "hub.not_joined", "message": "x", "retryable": False})
-    assert "hub_origin" not in client.post("/auth/switch", json={"t": TICKET}, headers=H).json()["error"]
+    assert (
+        client.post("/auth/switch", json={"t": TICKET}, headers=H).json()["error"]["hub_origin"] == "https://hub.test"
+    )
 
 
-def test_p01_a_request_cannot_choose_the_hub_origin(client, link):
-    link.answers["redeem"] = HostError({"code": "switch.refused", "message": "x", "retryable": False})
-    link.answers["rail"] = {"hub": {"name": "Acme", "origin": "https://hub.test"}, "workspaces": []}
-    forged = client.post("/auth/switch", json={"t": TICKET}, headers={**H, "Referer": "https://evil.example"})
-    assert forged.json()["error"]["hub_origin"] == "https://hub.test"
+def test_p01_only_a_closed_http_origin_is_ever_cached(client, link, auth):
+    for bad in ("javascript:alert(1)", "https://hub.test/path", "https://a b", None):
+        _rail_read(client, link, auth, origin=bad)
+        link.calls.clear()
+        assert "hub_origin" not in _refuse(client, link).json()["error"]
+
+
+def test_p01_the_network_and_remote_listener_never_carry_the_hub_origin():
+    from orch_dashboard.policy import LOOPBACK, REMOTE
+    from orch_dashboard.switch import switch_failure
+
+    assert json.loads(switch_failure("switch.refused", 403, "x", "https://hub.test", LOOPBACK).body)["error"][
+        "hub_origin"
+    ]
+    for listener in (REMOTE, "network", "remote-device"):
+        res = switch_failure("switch.refused", 403, "x", "https://hub.test", listener)
+        assert "hub_origin" not in json.loads(res.body)["error"] and res.status_code == 403

@@ -134,3 +134,118 @@ def test_persists_and_fails_closed(tmp_path):
     with pytest.raises(AccessError) as e:
         Access(str(bad))
     assert e.value.code == "store_error"
+
+
+# --- GA-07: membership end dates, review, default group -------------------------------------------------------------
+
+
+class Clock:
+    def __init__(self, t: int = 1_000_000_000_000) -> None:
+        self.t = t
+
+    def __call__(self) -> int:
+        return self.t
+
+
+@pytest.fixture
+def timed():
+    clk = Clock()
+    a = Access(now_ms=clk)
+    for u, n in ((U1, "ann"), (U2, "bob"), (U3, "cy")):
+        a.add_user(u, n)
+    a.add_group("g")
+    a.grant(WS, "g", "edit")
+    yield a, clk
+    a.close()
+
+
+def test_end_date_boundary_is_exclusive_and_read_time(timed):
+    a, clk = timed
+    end = clk.t + 5000
+    a.add_member("g", U1, ends_ms=end)
+    a.add_member("g", U2)
+    clk.t = end - 1
+    assert a.role_of(U1, WS) == "edit" and a.members("g") == [U1, U2] and a.groups_of(U1) == ["g"]
+    clk.t = end  # no sweeper ran: the role is gone at the boundary
+    assert a.role_of(U1, WS) is None and a.roles(WS) == {U2: "edit"}
+    assert a.members("g") == [U2] and a.groups_of(U1) == [] and a.groups_of_all(U1) == ["g"]
+
+
+def test_end_date_validation_and_admin_group(timed):
+    a, clk = timed
+    for bad in (clk.t, clk.t - 1, "x", True, 1.5):
+        with pytest.raises(AccessError):
+            a.add_member("g", U1, ends_ms=bad)
+    with pytest.raises(AccessError) as e:
+        a.add_member("g", U1, ends_ms=clk.t + 401 * 86_400_000)
+    assert e.value.code == "malformed"
+    with pytest.raises(AccessError) as e:
+        a.add_member(ADMIN_GROUP, U1, ends_ms=clk.t + 1000)
+    assert e.value.code == "reserved_group"
+
+
+def test_set_member_end_shorten_extend_permanent(timed):
+    a, clk = timed
+    a.add_member("g", U1, ends_ms=clk.t + 10_000)
+    a.set_member_end("g", U1, clk.t + 20_000)
+    assert a.member_end("g", U1) == clk.t + 20_000
+    a.set_member_end("g", U1, None)
+    assert a.member_end("g", U1) is None
+    with pytest.raises(AccessError) as e:
+        a.set_member_end("g", U2, clk.t + 1000)
+    assert e.value.code == "not_member"
+    a.add_member("g", U1)  # a plain re-add keeps what was there
+    a.set_member_end("g", U1, clk.t + 1000)
+    a.add_member("g", U1)
+    assert a.member_end("g", U1) == clk.t + 1000
+
+
+def test_ends_for_first_fall_only_when_role_falls(timed):
+    a, clk = timed
+    a.add_group("g2")
+    a.grant(WS, "g2", "edit")
+    a.add_member("g", U1, ends_ms=clk.t + 1000)
+    a.add_member("g2", U1)  # still edit through g2: the role never falls
+    a.add_member("g", U2, ends_ms=clk.t + 3000)
+    a.add_member("g", U3, ends_ms=clk.t + 2000)
+    assert a.ends_for(WS) == {U2: clk.t + 3000, U3: clk.t + 2000}
+
+
+def test_sweep_review_and_default_group(timed):
+    a, clk = timed
+    seen = []
+    a.observer = seen.append
+    a.add_member("g", U1, ends_ms=clk.t + 3 * 86_400_000)
+    a.add_member("g", U2)
+    assert [r["user_id"] for r in a.review()] == [U1]
+    clk.t += 91 * 86_400_000
+    assert {(r["user_id"], r["ended"]) for r in a.review()} == {(U2, False)}  # U1 ended long ago: out of the list
+    assert a.sweep() == 1 and a.members_all("g") == [U2]
+    assert seen[-1] == {"kind": "membership", "group": "g", "user_id": U1, "added": False, "actor_user_id": None}
+    a.confirm_member("g", U2)
+    assert a.review() == []
+
+
+def test_default_group_never_admin(timed):
+    a, _clk = timed
+    a.add_member(ADMIN_GROUP, U3)
+    a.set_default_group("g", actor=U3)
+    assert a.default_group() == "g"
+    with pytest.raises(AccessError) as e:
+        a.grant(WS2, "g", "admin")
+    assert e.value.code == "default_group_admin"
+    for bad, code in ((ADMIN_GROUP, "reserved_group"), ("nope", "unknown_group")):
+        with pytest.raises(AccessError) as e:
+            a.set_default_group(bad, actor=U3)
+        assert e.value.code == code
+    with pytest.raises(AccessError) as e:
+        a.set_default_group(None, actor=U1)
+    assert e.value.code == "forbidden_role"
+    a.add_group("adm")
+    a.grant(WS2, "adm", "admin")
+    with pytest.raises(AccessError) as e:
+        a.set_default_group("adm", actor=U3)
+    assert e.value.code == "default_group_admin"
+    a.set_default_group(None, actor=U3)
+    a.remove_group("g")
+    assert a.default_group() is None

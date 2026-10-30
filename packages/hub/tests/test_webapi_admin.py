@@ -37,7 +37,7 @@ def test_users_groups_members_grants_round_trip(w):
     _, o, _ = w.call("GET", f"/admin/grants?workspace_id={ws2}", token=tok)
     assert o["grants"] == [{"workspace_id": ws2, "group": "devs", "role": "edit"}]
     _, o, _ = w.call("GET", "/admin/groups", token=tok)
-    assert {"name": "devs", "members": [carol], "grants": [{"workspace_id": ws2, "role": "edit"}]} in o["groups"]
+    assert {"name": "devs", "members": [carol], "ends": {}, "grants": [{"workspace_id": ws2, "role": "edit"}]} in o["groups"]
     assert w.call("POST", "/admin/grants/revoke", {"workspace_id": ws2, "group": "devs"}, token=tok)[0] == 200
     assert (
         w.call("POST", "/admin/grants/revoke", {"workspace_id": ws2, "group": "devs"}, token=tok)[:2]

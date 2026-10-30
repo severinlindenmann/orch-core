@@ -65,7 +65,7 @@ function valueBox(label) {
 }
 function expiryBox() {
   const sel = h("select", { "aria-label": "Valid for" },
-    h("option", { value: "30", text: "30 days" }), h("option", { value: "90", text: "90 days" }), h("option", { value: "365", text: "1 year" }));
+    h("option", { value: "7", text: "7 days" }), h("option", { value: "30", text: "30 days" }), h("option", { value: "90", text: "90 days" }), h("option", { value: "365", text: "1 year" }));
   sel.value = "90";
   return sel;
 }
@@ -107,7 +107,8 @@ function entryForm({ workspaces, name, nameIn, share, submitLabel, actions }) {
   } });
   return { node: h("div", { class: "secret-entry" },
     h("label", { class: "small", text: "Value" }), input,
-    h("label", { class: "small", text: "Valid for" }), days, note, go), input };
+    h("label", { class: "small", text: "Valid for" }), days,
+    h("p", { class: "small muted", text: "Recommended: 90 days. Pick 7 days for something temporary." }), note, go), input };
 }
 
 export function secretsView(data, actions = {}) {
@@ -116,8 +117,9 @@ export function secretsView(data, actions = {}) {
   const card = (s) => {
     const needs = Object.values(s.state ?? {}).some((x) => x.state !== "ready");
     const rows = Object.entries(s.state ?? {}).map(([id, x]) => h("div", { class: "list-row row" },
-      h("span", { class: "grow", text: wsName(wsById[id]) }),
-      h("span", { class: "chip " + (x.state === "ready" ? "ok" : "warn"), text: x.state === "ready" ? "ready" : "needs the value again" })));
+      h("span", { class: "grow" }, wsName(wsById[id]),
+        x.state === "ready" ? null : h("div", { class: "small muted", text: "Waiting for you to type the value again for this workspace." })),
+      h("span", { class: "chip " + (x.state === "ready" ? "ok" : "warn"), text: x.state === "ready" ? "Ready" : "Needs the value" })));
     const share = shareBox(workspaces, s.shared, s.workspaces ?? []);
     const again = entryForm({ workspaces, name: s.name, share: { read: () => ({ shared: s.shared, workspaces: s.workspaces ?? [] }) }, submitLabel: "Save the value", actions });
     again.node.hidden = true;
@@ -126,18 +128,18 @@ export function secretsView(data, actions = {}) {
       if (!sure) { sure = true; remove.textContent = "Sure? Remove it"; return; }
       actions.remove?.(s);
     } });
-    const reenter = h("button", { type: "button", class: needs ? "primary" : "", text: "Enter the value again", onclick: () => { again.node.hidden = !again.node.hidden; } });
+    const reenter = needs ? h("button", { type: "button", class: "primary", text: "Enter the value", onclick: () => { again.node.hidden = !again.node.hidden; } }) : null;
     return h("article", { class: "card secret", "data-secret": s.name },
       h("div", { class: "row" }, h("h3", { class: "grow", text: s.name }), remove),
       h("p", { class: "small muted", text: (s.expired ? "Expired on " : "Expires on ") + plainDate(s.expires_ms) + ". " + (s.shared === "all" ? "Shared with all workspaces." : "Shared with chosen workspaces only.") }),
       h("p", { class: "small muted", text: "Used " + (s.used_this_week ?? 0) + " times this week (as reported by the workspaces)." }),
       rows,
-      h("div", { class: "row" }, reenter),
+      reenter ? h("div", { class: "row" }, reenter) : null,
       again.node,
-      h("h4", { text: "Who can read it" }),
+      h("div", { class: "row" }, h("h4", { class: "grow", text: "Who can read it" }),
+        info("About who can read it", "A workspace you add here needs the value entered again. A workspace that already received the value keeps it.")),
       share.sel, share.list,
-      h("button", { type: "button", text: "Save who can read it", onclick: () => { const p = share.read(); actions.share?.(s.name, p.shared, p.workspaces); } }),
-      h("p", { class: "small muted", text: "A workspace you add here needs the value entered again. A workspace that already received the value keeps it." }));
+      h("button", { type: "button", text: "Save who can read it", onclick: () => { const p = share.read(); actions.share?.(s.name, p.shared, p.workspaces); } }));
   };
   const nameIn = h("input", { type: "text", autocomplete: "off", spellcheck: "false", "aria-label": "Name of the new secret", placeholder: "for example: crm-key", maxlength: "40" });
   const share = shareBox(workspaces, "all", []);

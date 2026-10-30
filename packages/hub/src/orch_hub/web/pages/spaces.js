@@ -6,6 +6,7 @@ import { emptyState, loading } from "../feel.js";
 import { chip, h, text, when, withNames } from "../ui.js";
 
 export const STATEMENT = "The hub and its admins can read this space.";
+export const NO_START = "None of these can start the space yet. Tick a workspace that is not marked 'waits for its owner', or ask an owner to accept first. You can add the others later.";
 export const RESTORE_LINE = "To get an older version back, restore it from the workspace.";
 const TYPES = [["wiki", "Wiki", "Pages people write together"], ["files", "Files", "Documents everyone starts from"], ["board", "Board", "Cards that move from planned to done"]];
 const typeName = (t) => (TYPES.find((x) => x[0] === t) ?? [t, ""])[1];
@@ -48,7 +49,15 @@ export function newSpaceDialog(workspaces, done, close) {
   const tick = h("input", { type: "checkbox", id: "space-understood", "aria-label": "I understand" });
   const create = h("button", { type: "button", class: "pri", text: "Create" });
   const next = h("button", { type: "button", class: "pri", text: "Next" });
-  const ready = () => { create.disabled = !(form.understood === true && form.members.size > 0); };
+  // The hub adds only 'full' workspaces now; a 'selective' one waits for its owner. A space needs at least one that joins now.
+  const joinsNow = () => workspaces.some((w) => w.mode === "full" && form.members.has(w.workspace_id));
+  const noStart = h("p", { class: "banner warn", id: "space-no-start", role: "note", text: NO_START });
+  const ready = () => {
+    const stuck = form.members.size > 0 && !joinsNow();
+    noStart.hidden = !stuck;
+    create.disabled = !(form.understood === true && joinsNow());
+    if (stuck) create.setAttribute("aria-describedby", "space-no-start"); else create.removeAttribute("aria-describedby");
+  };
   tick.addEventListener("change", () => { form.understood = tick.checked === true; ready(); });
   nameIn.addEventListener("input", () => { form.name = nameIn.value; });
   purposeIn.addEventListener("input", () => { form.purpose = purposeIn.value; });
@@ -59,7 +68,7 @@ export function newSpaceDialog(workspaces, done, close) {
     step += 1; draw();
   });
   create.addEventListener("click", () => {
-    if (form.understood !== true || !form.members.size) return; // the tick is required, here and at the hub
+    if (form.understood !== true || !joinsNow()) return; // the tick is required, here and at the hub
     done({ type: form.type, name: form.name.trim(), purpose: form.purpose.trim(), members: [...form.members], understood: true });
   });
   const cancel = h("button", { type: "button", text: "Cancel", onclick: close });
@@ -78,8 +87,9 @@ export function newSpaceDialog(workspaces, done, close) {
           box.checked = form.members.has(w.workspace_id);
           box.addEventListener("change", () => { box.checked ? form.members.add(w.workspace_id) : form.members.delete(w.workspace_id); ready(); });
           return h("label", { class: "check" }, box, h("span", { class: "grow", text: nameOf(w) }),
-            w.mode === "selective" ? h("span", { class: "small muted", text: "its owner has to accept first" }) : null);
+            h("span", { class: "small muted", text: w.mode === "full" ? "joins now" : "waits for its owner" }));
         }) : [h("p", { class: "small muted", text: "No workspace is connected yet." })]),
+        noStart,
         h("p", { class: "banner warn", role: "note", text: STATEMENT }),
         h("label", { class: "check" }, tick, h("span", { text: "I understand: " + STATEMENT }))],
     };

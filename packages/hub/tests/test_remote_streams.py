@@ -70,7 +70,7 @@ def test_stream_open_reply_reaches_router_by_re_and_port():
 
 
 def test_stream_unbound_workspace_is_not_allowed():
-    r, a, _ = make()
+    r, _a, _ = make()
     with pytest.raises(Refused) as e:
         r.open("33" * 16, "u1", DEV, "session", FakeSink())
     assert e.value.code == "not_allowed"
@@ -140,7 +140,7 @@ def test_stream_w2h_data_reaches_the_client_in_order():
 
 def test_stream_w2h_frame_for_unknown_id_dropped():
     r, a, _ = make()
-    sid, sink = open_stream(r, WS_A, a)
+    _sid, sink = open_stream(r, WS_A, a)
     r.on_frame(WS_A, a, data_frame("ff" * 16, 1, b"x"), 1024)
     r.on_frame(WS_A, a, close_frame("ff" * 16, "closed"), 1024)
     assert r.dropped == 2 and sink.frames == [] and sink.ended == [] and r.open_count() == 1
@@ -473,7 +473,7 @@ def test_stream_open_on_a_dead_link_unavailable():
 def test_stream_sweep_expires_old_streams():
     t = [0.0]
     r, a, _ = make(now=lambda: t[0])
-    sid, sink = open_stream(r, WS_A, a)
+    _sid, sink = open_stream(r, WS_A, a)
     t[0] = 12 * 3600
     r.sweep()
     assert sink.ended == []
@@ -485,8 +485,8 @@ def test_stream_sweep_expires_old_streams():
 def test_stream_user_removed_closes_streams_revoked():
     live = {"u1": True, "u2": True}
     r, a, _ = make(allowed=lambda u, ws: live[u])
-    s1, k1 = open_stream(r, WS_A, a, user="u1")
-    s2, k2 = open_stream(r, WS_A, a, user="u2", dev=DEV2)
+    _s1, k1 = open_stream(r, WS_A, a, user="u1")
+    _s2, k2 = open_stream(r, WS_A, a, user="u2", dev=DEV2)
     live["u1"] = False
     r.sweep()
     assert k1.ended == ["revoked"] and k2.ended == []
@@ -517,7 +517,7 @@ def test_stream_logs_hold_no_frame_content(caplog, capsys, tmp_path):
     caplog.set_level(logging.DEBUG)
     secret = b"SECRET-PLAINTEXT-MARKER-0123456789"
     r, a, _ = make()
-    sid, sink = open_stream(r, WS_A, a, dev=DEV)
+    sid, _sink = open_stream(r, WS_A, a, dev=DEV)
     r.send(sid, secret)
     r.on_frame(WS_A, a, data_frame(sid, 1, secret), 1024)
     r.on_frame(WS_A, a, data_frame(sid, 9, secret), 1024)  # bad seq: a malformed close is logged

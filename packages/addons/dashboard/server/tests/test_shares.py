@@ -431,7 +431,6 @@ def test_setup_is_a_settings_change_naming_both_addresses():
         ("http://evil.example", "https://ok.example"),  # http is for this computer only
         ("https://Upper.example", "https://ok.example"),
         ("https://ok.example/path", "https://other.example"),
-        ("https://ok.example", "https://ok.example"),  # one address for both
         ("ftp://ok.example", "https://other.example"),
         ("https://ok.example", ""),
         ("https://user@ok.example", "https://other.example"),
@@ -441,6 +440,11 @@ def test_setup_is_a_settings_change_naming_both_addresses():
 def test_setup_refuses_addresses_core_would_refuse(server, share):
     with pytest.raises(ValidationError):
         handoff.PublishSetup(action="publish_setup", server=server, share=share)
+
+
+def test_setup_accepts_one_address_for_both():
+    one = handoff.PublishSetup(action="publish_setup", server="https://ok.example", share="https://ok.example")
+    assert one.server == one.share
 
 
 def test_setup_accepts_https_and_loopback():

@@ -52,8 +52,8 @@ W2H_OPS: dict[str, str | None] = {
     "directory_get": None,
     "audience_get": None,
     "shared_get": None,
-    "share_put": "selective",
-    "share_revoke": "selective",
+    "share_put": None,
+    "share_revoke": None,
     "wk_seal": "full",
     "log_sync": "full",
 }
@@ -64,6 +64,10 @@ class HubTransport(Protocol):
         """Number one w2h request (the link's own counter, 1 on a new connection), let ``build(seq, exporter)`` sign it
         over the connection's TLS exporter, deliver it and return the signed h2w reply. ``OSError`` if unreachable."""
         ...
+
+
+#: link failures that carry their own code (``hub.`` + one of these): see :mod:`orch.hubclient.tlslink.errors`
+NET_CODES = frozenset({"hub.link_inspected", "hub.proxy_auth", "hub.proxy_refused", "hub.proxy_unreachable"})
 
 
 class HubLink:
@@ -103,8 +107,9 @@ class HubLink:
 
         try:
             reply = self._t.send_next(op, build)  # the link's ONE counter numbers every frame (calls and acks alike)
-        except OSError:
-            raise HubRefused("hub_unreachable") from None
+        except OSError as exc:
+            net = getattr(exc, "code", None)  # R6: why the network failed (inspected, proxy), not just "unreachable"
+            raise HubRefused(net[4:] if net in NET_CODES else "hub_unreachable") from None
         r = self._open(reply, sent["o"], sent["cb"])
         if "error" in r["body"]:
             code = r["body"]["error"]

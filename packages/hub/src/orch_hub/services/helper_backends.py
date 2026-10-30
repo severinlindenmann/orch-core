@@ -22,6 +22,7 @@ from .helper_proto import HOST_RE, PART_RE, HelperError
 CONFIG_FILE = "helper.json"
 UNIT_RE = re.compile(r"orch-[a-z0-9][a-z0-9-]{0,40}(@[a-z0-9-]{1,40})?\.service")
 LABEL_RE = re.compile(r"[A-Za-z][A-Za-z0-9 -]{0,23}")
+HELPER_UNIT_RE = re.compile(r"orch-(?:[a-z0-9-]+-)?hub-helper(?:[@.-].*)?")  # orch-hub-helper*, orch-<tag>-hub-helper*
 PARTS = ("hub", "relay", "publish")  # the closed set the console knows
 KINDS = ("systemd", "systemd-user")
 VERBS = ("start", "stop", "restart")
@@ -62,6 +63,12 @@ class Config:
     parts: dict[str, Part]
 
 
+def _is_helper_unit(unit: str) -> bool:
+    """The helper's own unit (``orch-hub-helper.service`` by hand, ``orch-<tag>-hub-helper.service`` from the
+    installer): it must never be listed, or the helper could be told to stop itself."""
+    return unit.startswith("orch-hub-helper") or HELPER_UNIT_RE.fullmatch(unit) is not None
+
+
 def parse_config(obj: object) -> Config:
     if type(obj) is not dict or set(obj) != {"v", "host_id", "parts"} or obj["v"] != 1:
         raise HelperError("bad_config", "shape")
@@ -82,7 +89,7 @@ def parse_config(obj: object) -> Config:
             raise HelperError("bad_config", f"{name} label")
         if kind not in KINDS:
             raise HelperError("bad_config", f"{name} kind (systemd or systemd-user)")
-        if type(unit) is not str or not UNIT_RE.fullmatch(unit) or unit.startswith("orch-hub-helper"):
+        if type(unit) is not str or not UNIT_RE.fullmatch(unit) or _is_helper_unit(unit):
             raise HelperError("bad_config", f"{name} unit")
         parts[name] = Part(name, label, kind, unit)
     return Config(host, parts)

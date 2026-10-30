@@ -22,4 +22,11 @@ describe('AgentStatus', () => {
     render(<AgentStatus ticket={doc(false)} viewer={viewer} />)
     expect(screen.getByTestId('agent-status')).toHaveTextContent('No agent is working on this ticket')
   })
+  it('a live claim while the ticket needs the person says "is waiting for you", not "is working"', () => {
+    render(<AgentStatus ticket={doc(true)} viewer={viewer} needsYou />)
+    const t = screen.getByTestId('agent-status')
+    expect(t).toHaveTextContent('is waiting for you')
+    expect(t).not.toHaveTextContent('is working')
+    expect(t).toHaveTextContent('since')
+  })
 })

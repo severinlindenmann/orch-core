@@ -9,7 +9,7 @@ from remote_kit import HTTPS, app, bearer, front, passkey_store, remote  # noqa:
 from test_hub_share_reduce import MEMBER, OWNER, link_of
 from test_market_routes import Host, hdr
 
-from orch_dashboard.org_routes import item_view, offers_view
+from orch_dashboard.org_routes import item_view, offers_view, secrets_view
 from orch_dashboard.policy import LOOPBACK
 
 D1 = "sha256:" + "a" * 64
@@ -238,3 +238,59 @@ def test_a_field_that_cannot_be_shown_marks_the_server_and_dropped_tools_are_cou
     assert view(description="a\u202eb")["fields_hidden"] is True
     assert view(auth="hub_secret", secret=None)["fields_hidden"] is True
     assert view(auth="hub_secret", secret="crm-key")["fields_hidden"] is False
+
+
+SENTINEL = "s3cr3t-VALUE-xyz"
+
+
+def test_the_secrets_view_keeps_only_closed_fields_and_never_a_value():
+    got = secrets_view(
+        {
+            "secrets": [
+                {
+                    "name": "billing-key",
+                    "status": "ready",
+                    "expires_ms": 1_900_000_000_000,
+                    "used_by": ["billing", "Bad Name"],
+                    "value": SENTINEL,
+                    "sealed": SENTINEL,
+                    "len": 16,
+                },
+                {"name": "old-key", "status": "not_received", "expires_ms": None, "used_by": []},
+                {"name": "Bad Name", "status": "ready", "expires_ms": 1, "used_by": []},
+                {"name": "odd-key", "status": "weird", "expires_ms": 1, "used_by": []},
+                {"name": "bool-key", "status": "expired", "expires_ms": True, "used_by": []},
+            ]
+        }
+    )
+    assert got == {
+        "available": True,
+        "secrets": [
+            {"name": "billing-key", "status": "ready", "expires_ms": 1_900_000_000_000, "used_by": ["billing"]},
+            {"name": "old-key", "status": "not_received", "expires_ms": None, "used_by": []},
+            {"name": "bool-key", "status": "expired", "expires_ms": None, "used_by": []},
+        ],
+    }
+    assert SENTINEL not in str(got)
+    assert secrets_view(None) == {"available": True, "secrets": []}
+
+
+def test_the_secrets_route_asks_the_host_and_an_older_host_degrades(client, token, stub, host, gateway, monkeypatch):
+    host.answers["org.secrets"] = {
+        "hub_id": "9f3c1ab277de40c8",
+        "secrets": [
+            {"name": "billing-key", "status": "ready", "expires_ms": 5, "used_by": ["billing"], "value": SENTINEL}
+        ],
+    }
+    r = client.get(f"/api/w/{stub.ws}/org/secrets", headers=hdr(token, write=False))
+    assert r.status_code == 200 and SENTINEL not in r.text
+    assert r.json()["secrets"] == [{"name": "billing-key", "status": "ready", "expires_ms": 5, "used_by": ["billing"]}]
+    assert any(c[0] == "org.secrets" for c in host.calls) and not writes(host)
+
+    class Old(OrgHost):
+        def supports(self, op, cap="ops/1"):
+            return False
+
+    monkeypatch.setattr(gateway, "enabled", lambda ws: Old())
+    r = client.get(f"/api/w/{stub.ws}/org/secrets", headers=hdr(token, write=False))
+    assert r.json() == {"available": False, "secrets": []}

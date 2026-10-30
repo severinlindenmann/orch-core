@@ -587,6 +587,26 @@ _SPECS = [
         ["orch", "status"],
         "A verify or code decision while a linked repo ref is missing.",
     ),
+    _e(
+        "update.unverified",
+        5,
+        False,
+        "the release or catalog could not be verified",
+        "nothing was changed; do not install it",
+        ["orch", "doctor"],
+        "A signed release envelope failed a check (signature, certificate, revocation, format, channel or file "
+        "hash). The reason is in the message (CONTRACT.md section 4).",
+    ),
+    _e(
+        "update.stale",
+        5,
+        False,
+        "the release or catalog is out of date",
+        "nothing was changed; fetch a fresh one later",
+        ["orch", "doctor"],
+        "A correctly signed envelope is expired, older than the newest one seen, or carries an older revocation "
+        "list than the stored one.",
+    ),
     # 6 parse
     _e(
         "parse.json",
@@ -665,6 +685,44 @@ _SPECS = [
         "A hub step (join, switch to full, leave) needs the owner proof, signed with the person key derived from the "
         "backup key (hub contract 9.6). Detail reason: proof_invalid, proof_expired, proof_missing, dev_mismatch or "
         "dev_refused.",
+    ),
+    _e(
+        "hub.link_inspected",
+        3,
+        False,
+        "something on this network opens encrypted connections, so the hub cannot be trusted from here",
+        "ask your IT team to let the hub's name through without inspection",
+        ["orch", "hub", "status"],
+        "The hub's certificate was not the card's pin on a path through a proxy or WebSocket front (R6, D92). The link "
+        "stays down, no other route is tried, and the next dial of that address waits at least 5 minutes.",
+    ),
+    _e(
+        "hub.proxy_auth",
+        3,
+        False,
+        "the company proxy did not accept the sign-in",
+        "check the proxy user and password: orch hub network",
+        ["orch", "hub", "network"],
+        "The proxy in this computer's network settings answered 407 to the CONNECT (R6). Basic sign-in only.",
+    ),
+    _e(
+        "hub.proxy_refused",
+        3,
+        False,
+        "the company proxy refused the connection to the hub",
+        "ask your IT team to allow the hub's address through the proxy",
+        ["orch", "hub", "network"],
+        "The proxy refused the CONNECT, answered something that is not HTTP, or the network settings cannot be used "
+        "(R6); nothing is dialled direct.",
+    ),
+    _e(
+        "hub.proxy_unreachable",
+        9,
+        True,
+        "the company proxy could not be reached",
+        "check the proxy address: orch hub network",
+        ["orch", "hub", "network"],
+        "The configured proxy did not answer (R6).",
     ),
     _e(
         "remote.proof_invalid",

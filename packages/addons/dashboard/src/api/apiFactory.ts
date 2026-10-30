@@ -160,6 +160,7 @@ export function createApi(transport: Transport) {
     getHubLink: (ws: string, link: string) => call<import('./hub').HubLinkInfo>('POST', `/api/w/${ws}/hub/link`, { link }),
     /** M3 H-5: company skills and tools offered by the hub (the owner's Company tab). */
     getOrgOffers: (ws: string) => call<import('./org').OrgOffers>('GET', `/api/w/${ws}/org`),
+    getOrgSecrets: (ws: string) => call<import('./org').OrgSecrets>('GET', `/api/w/${ws}/org/secrets`),
     getOrgItem: (ws: string, kind: import('./org').OrgKind, name: string) =>
       call<import('./org').OrgShown>('GET', `/api/w/${ws}/org/item?kind=${kind}&name=${encodeURIComponent(name)}`),
     acceptOrgItem: (ws: string, kind: import('./org').OrgKind, name: string, digest: string) =>
@@ -175,6 +176,8 @@ export function createApi(transport: Transport) {
     remoteCode: (ws: string) => call<import('./remote').RemoteCode>('POST', `/api/w/${ws}/remote/code`, {}),
     endRemoteSession: (ws: string, streamId: string) => call<{ ended: boolean }>('POST', `/api/w/${ws}/remote/sessions/${streamId}/end`, {}),
     removeRemoteDevice: (ws: string, id: string) => call<{ removed: boolean }>('POST', `/api/w/${ws}/remote/devices/${id}/remove`, {}),
+    getHubNetwork: (ws: string) => call<import('./network').NetworkSettings>('GET', `/api/w/${ws}/hub/network`),
+    putHubNetwork: (ws: string, body: import('./network').NetworkChange) => call<import('./network').NetworkSettings>('PUT', `/api/w/${ws}/hub/network`, body),
     getHubProfile: (ws: string) => call<import('./profile').WorkspaceProfile>('GET', `/api/w/${ws}/hub/profile`),
     putHubProfile: (ws: string, profile: import('./profile').ProfileFields) => call<import('./profile').WorkspaceProfile>('PUT', `/api/w/${ws}/hub/profile`, profile),
     refreshHub: (ws: string) => call<import('./hub').HubRefreshed>('POST', `/api/w/${ws}/hub/refresh`, {}),

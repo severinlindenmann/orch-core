@@ -74,7 +74,7 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 def fetch_card(link: Link) -> dict[str, Any]:
-    opener = urllib.request.build_opener(_NoRedirect)
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect)  # never the environment's proxy
     url, host_header = local_url(link.card_url)  # this computer's own address is dialled on loopback
     headers = {"Accept": "application/json", **({"Host": host_header} if host_header else {})}
     req = urllib.request.Request(url, headers=headers)  # noqa: S310

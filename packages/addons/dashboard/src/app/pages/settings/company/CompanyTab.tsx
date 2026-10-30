@@ -1,8 +1,10 @@
 import { useState } from 'react'
+import { Info } from 'lucide-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type { Workspace } from '@/api/types'
 import { hubServed } from '@/api/hub'
-import { orgQueries, STATUS_WORD, type OrgKind, type OrgRow, type OrgServerRow } from '@/api/org'
+import { orgQueries, SECRET_STATUS_WORD, STATUS_WORD, type OrgKind, type OrgRow, type OrgSecret, type OrgServerRow } from '@/api/org'
+import { fmtDay } from '@/lib/time'
 import { api } from '@/api/client'
 import { ApiError } from '@/api/types'
 import { Action, Panel } from '../hub/shared'
@@ -25,6 +27,17 @@ function Row({ kind, row, busy, onOpen, onOff }: { kind: OrgKind; row: OrgRow; b
   </li>
 }
 
+// The company secrets this workspace was given. Name, status, until when and which tools use it; never the value.
+function SecretRow({ s }: { s: OrgSecret }) {
+  const bad = s.status !== 'ready'
+  return <li className="py-2" data-testid={`company-secret-row-${s.name}`}>
+    <span className="font-medium">{s.name}</span>
+    <span className={'ml-2 text-xs ' + (bad ? 'text-warning' : 'text-success')} data-testid={`company-secret-status-${s.name}`}>{SECRET_STATUS_WORD[s.status]}</span>
+    {s.expires_ms !== null && <span className="block text-xs text-text-muted" data-testid={`company-secret-until-${s.name}`}>Until {fmtDay(new Date(s.expires_ms).toISOString())}</span>}
+    {s.used_by.length > 0 && <span className="block text-xs text-text-muted" data-testid={`company-secret-usedby-${s.name}`}>Used by {s.used_by.join(', ')}</span>}
+  </li>
+}
+
 function syncMessage(e: unknown): string {
   const code = e instanceof ApiError ? e.code : ''
   if (code === 'hub.not_joined') return 'This workspace is not connected to a hub.'
@@ -35,9 +48,11 @@ export function CompanyTab({ workspace, isOwner }: { workspace: Workspace; isOwn
   const ws = workspace.id
   const qc = useQueryClient()
   const offers = useQuery({ ...orgQueries.offers(ws), enabled: hubServed(ws) && isOwner })
+  const secrets = useQuery({ ...orgQueries.secrets(ws), enabled: hubServed(ws) && isOwner })
   const [open, setOpen] = useState<{ kind: OrgKind; name: string }>()
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState('')
+  const [more, setMore] = useState(false)
   const refresh = () => qc.invalidateQueries({ queryKey: ['org', ws] })
   if (!hubServed(ws)) return <Panel title="Company"><p>This host does not serve a hub yet.</p></Panel>
   if (!isOwner) return <Panel title="Company"><p data-testid="company-owner-only">Only the workspace owner decides which company skills and tools are on.</p></Panel>
@@ -68,12 +83,23 @@ export function CompanyTab({ workspace, isOwner }: { workspace: Workspace; isOwn
 
   return <div className="space-y-4" data-testid="company-tab">
     <div className="flex flex-wrap items-center gap-3">
-      <p className="min-w-0 flex-1 text-sm text-text-muted" data-testid="company-intro">Skills and tools your company hub offers. Everything is off until you turn it on. Some tools use a company secret, like a password kept safely by your hub. You never see it. These tools work only when agents run as a separate agent user.</p>
+      <p className="min-w-0 flex-1 text-sm text-text-muted" data-testid="company-intro">
+        Skills and tools your company offers. All are off until you turn them on.
+        <button type="button" className="ml-1.5 inline-flex align-middle text-text-faint hover:text-text" aria-label="More about this" aria-expanded={more} aria-controls="company-intro-more" onClick={() => setMore((m) => !m)}>
+          <Info className="size-4" aria-hidden />
+        </button>
+      </p>
       <Action id="company-sync" disabled={busy} onClick={sync}>Get the latest from your hub</Action>
     </div>
+    {more && <p id="company-intro-more" className="text-sm text-text-muted" data-testid="company-intro-more">Some tools use a password your hub keeps safe; you never see it. They only work when agents run as a separate user on this computer.</p>}
     {note && <p role="status" className="text-sm" data-testid="company-note">{note}</p>}
     <Panel title="Company skills">{list('skill', o.skills, 'Your hub offers no skills.')}</Panel>
     <Panel title="Company tools">{list('mcp', o.mcp, 'Your hub offers no tools.')}</Panel>
+    {secrets.data?.available && <Panel title="Company secrets">
+      {secrets.data.secrets.length === 0
+        ? <p className="text-text-muted" data-testid="company-secrets-empty">No company secrets are shared with this workspace.</p>
+        : <ul className="divide-y divide-border">{secrets.data.secrets.map((s) => <SecretRow key={s.name} s={s} />)}</ul>}
+    </Panel>}
     {open && <ItemSheet ws={ws} kind={open.kind} name={open.name} onClose={() => setOpen(undefined)} />}
   </div>
 }

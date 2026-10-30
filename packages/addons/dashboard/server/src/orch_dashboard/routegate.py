@@ -154,10 +154,13 @@ TABLE: dict[tuple[str, str], tuple[str, str]] = {
     (POST, W + "/remote/presence"): (REFUSED, "R3: a presence is given inside a stream only"),
     (GET, W + "/org"): (ALLOWED, "company offers: names and status"),
     (GET, W + "/org/item"): (ALLOWED, "a read; the host answers the owner only"),
+    (GET, W + "/org/secrets"): (ALLOWED, "a read: names, expiry, status of company secrets, never a value; owner only"),
     (POST, W + "/org/accept"): (REFUSED, "turning a company item on is decided on this computer"),
     (POST, W + "/org/decline"): (ALLOWED, "turning off: owner, plain click, full session only"),
     (POST, W + "/org/sync"): (ALLOWED, "fetches the offers; grants nothing"),
     (POST, W + "/org/tool"): (ALLOWED, "owner, plain click; turning ON is refused unless the session is local"),
+    (GET, W + "/hub/network"): (REFUSED, "R6: where the hub link goes is decided on this computer (D90)"),
+    (PUT, W + "/hub/network"): (REFUSED, "R6: where the hub link goes is decided on this computer (D90)"),
     (GET, W + "/hub/profile"): (ALLOWED, "a read; the host answers the owner only"),
     (PUT, W + "/hub/profile"): (ALLOWED, "owner, plain click; listing ON is refused from a remote session"),
     (POST, W + "/hub/link"): (ALLOWED, "reads the link's hub card; nothing is signed or kept"),
@@ -269,6 +272,8 @@ def _rows(rule, level, method, *templates):
 
 REMOTE_DEVICE: dict[tuple[str, str], tuple[str, str]] = {
     # the hub profile (who this workspace is on the hub) is changed and shown on this computer only
+    **_rows(REFUSED, VIEW, GET, W + "/hub/network"),
+    **_rows(REFUSED, VIEW, PUT, W + "/hub/network"),
     **_rows(REFUSED, VIEW, GET, W + "/hub/profile"),
     **_rows(REFUSED, VIEW, PUT, W + "/hub/profile"),
     # asked of this computer's hub link and folders by an owner on the computer itself (a dry-run prepare of a repo
@@ -336,6 +341,7 @@ REMOTE_DEVICE: dict[tuple[str, str], tuple[str, str]] = {
         W + "/hub/shared",
         W + "/org",
         W + "/org/item",
+        W + "/org/secrets",
         W + "/me/risk_notices",
         W + "/records",
         W + "/records/current",

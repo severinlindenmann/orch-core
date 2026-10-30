@@ -456,6 +456,8 @@ def _review_view(raw) -> dict | None:
         "later_edits": display(raw.get("later_edits"))[:200] if isinstance(raw.get("later_edits"), str) else None,
         "leaves_short": _short(raw.get("leaves_short")),
         "later_edits_short": _short(raw.get("later_edits_short")),
+        "mode": raw.get("mode") if raw.get("mode") in ("selective", "full") else None,
+        "scope_short": _short(raw.get("scope_short")),
     }
 
 

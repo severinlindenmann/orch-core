@@ -23,7 +23,6 @@ KINDS = ("private", "office", "server", "public")
 NAME_MAX = 60
 ADDRESSES_MAX = 4
 _WEB = re.compile(r"https?://[A-Za-z0-9.\-\[\]:]{1,100}:[0-9]{1,5}")
-_LINK = re.compile(r"[A-Za-z0-9.\-\[\]:]{1,100}:[0-9]{1,5}")
 _FIELDS = frozenset({"v", "name", "company", "addresses"})
 _ADDR_FIELDS = frozenset({"kind", "web", "link"})
 
@@ -38,6 +37,18 @@ class SettingsError(ValueError):
 
 def _port_ok(s: str) -> bool:
     return 0 < int(s.rpartition(":")[2]) < 65536
+
+
+def _link_ok(link: object) -> bool:
+    """A link address of protocol.md 10.10.1: ``host:port``, ``ws://host[:port]`` or ``wss://host[:port]`` (R6)."""
+    from .contract.hub import Refused
+    from .contract.linkws import parse_link_address
+
+    try:
+        parse_link_address(link)
+    except Refused:
+        return False
+    return True
 
 
 def validate(d: Any) -> dict[str, Any]:
@@ -59,7 +70,7 @@ def validate(d: Any) -> dict[str, Any]:
         web, link = a["web"], a["link"]
         if type(web) is not str or not _WEB.fullmatch(web) or not _port_ok(web):
             raise bad
-        if link is not None and (type(link) is not str or not _LINK.fullmatch(link) or not _port_ok(link)):
+        if link is not None and not _link_ok(link):
             raise bad
         seen.add(a["kind"])
         out.append({"kind": a["kind"], "web": web, "link": link})
@@ -86,10 +97,12 @@ def save(state: Path, settings: dict[str, Any]) -> None:
     write_atomic(state / SETTINGS_FILE, (json.dumps(clean, indent=2, sort_keys=True) + "\n").encode())
 
 
-def where_answer(state: Path) -> dict[str, Any]:
+def where_answer(state: Path, *, extra_public: str | None = None) -> dict[str, Any]:
     """The ``hub_where`` reply (protocol 10.9) built from the settings file only: the entries that have a link address, in
     file order (at most 4), and the name. A missing or damaged file, or nothing with a link, is ``unavailable``: the
-    host keeps what it holds. The reply is validated with the same checker the host replays."""
+    host keeps what it holds. ``extra_public`` (``serve --link-ws-public``, R6) is a ``ws://``/``wss://`` address of the
+    hub's front, listed last as kind ``public`` (a hint like every address; it takes one of the 4 places). The reply is
+    validated with the same checker the host replays."""
     from .contract.hub import Refused
     from .contract.where import check_hub_where
 
@@ -104,6 +117,8 @@ def where_answer(state: Path) -> dict[str, Any]:
     entries = [e for e in entries if not (e["link"] in seen or seen.add(e["link"]))]
     if not entries:
         raise Refused("unavailable")
+    if extra_public is not None and all(e["link"] != extra_public for e in entries):
+        entries = [*entries[: 4 - 1], {"kind": "public", "link": extra_public}]
     return check_hub_where({"addresses": entries, "name": s["name"]})
 
 

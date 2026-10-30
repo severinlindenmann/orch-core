@@ -4,7 +4,7 @@
 // there is no automatic retry: after any outcome the box is empty and the person types it again.
 import { sealOrgSecret } from "../seal.js";
 import { loading } from "../feel.js";
-import { h, text, withNames } from "../ui.js";
+import { attentionList, h, text, withNames } from "../ui.js";
 
 const DAY = 86400000;
 const NAME = /^[a-z][a-z0-9-]{0,39}$/;
@@ -147,6 +147,7 @@ export function secretsView(data, actions = {}) {
   return h("div", { class: "secrets" },
     h("div", { class: "row" }, h("h1", { class: "grow", text: "Company secrets" }),
       info("About company secrets", "A secret is a key your tools need, such as the sign-in key of your CRM. You type it here once. It is locked in your browser for each workspace you choose, and only those workspaces can read it. Agents never see it.")),
+    attentionList(data.attention),
     h("p", { class: "banner warn", role: "note", text: "The hub could read this value if it were taken over." }),
     (data.secrets ?? []).length ? (data.secrets ?? []).map(card) : none(),
     h("section", { class: "card" }, h("h3", { text: "New secret" }),
@@ -164,6 +165,7 @@ export async function secretsPage(d) {
     const r = await d.api("GET", "/admin/secrets");
     if (r.status === 403 && r.body.error === "reauth_required") return d.reauthView();
     if (r.status !== 200) return d.shell("secrets", h("h1", { text: "Company secrets" }), h("p", { role: "alert", text: "Cannot read the company secrets. " + d.say(r.body.error) }));
+    const att = await d.api("GET", "/admin/needs-attention");
     const say = (ok, x) => { d.state.notice = x.status === 200 ? d.banner("ok", ok, null) : d.banner("bad", "Not changed", d.say(x.body.error ?? "unavailable")); };
     const save = async (f) => {
       const out = await saveSecret({ api: d.api, ...f });
@@ -172,7 +174,7 @@ export async function secretsPage(d) {
     };
     const remove = async (s) => { say("Removed", await d.api("DELETE", "/admin/secrets/" + s.name)); await secretsPage(d); };
     const share = async (name, shared, workspaces) => { say("Saved", await d.api("PUT", "/admin/secrets/" + name + "/share", { shared, workspaces })); await secretsPage(d); };
-    d.shell("secrets", d.state.notice, secretsView({ ...r.body, workspaces: withNames(r.body.workspaces, d.state.rail?.rows ?? []) }, { save, remove, share }));
+    d.shell("secrets", d.state.notice, secretsView({ ...r.body, attention: att.status === 200 ? att.body.items : [], workspaces: withNames(r.body.workspaces, d.state.rail?.rows ?? []) }, { save, remove, share }));
     d.state.notice = null;
   } finally { finish(); }
 }

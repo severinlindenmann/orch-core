@@ -172,6 +172,12 @@ main#app.shelled { max-width:none; padding:0; margin:0; }
 .menu button:hover { background:var(--surface-3); }
 .menu .hd { font:600 10px "Geist Mono",ui-monospace,monospace; letter-spacing:.12em; color:var(--text-faint); padding:6px 10px 2px; }
 .plain { max-width:520px; margin:12vh auto 0; }
+/* "Opening <workspace>…": the calm in-page state while the hub asks for a ticket and the browser moves to the workspace */
+.opening { display:flex; flex-direction:column; align-items:center; gap:10px; text-align:center; min-height:50vh; justify-content:center; }
+.opening b { font-size:20px; letter-spacing:-.02em; }
+.opening span { animation:opening-pulse 1.4s ease-in-out infinite; }
+@keyframes opening-pulse { 50% { opacity:.45; } }
+@media (prefers-reduced-motion: reduce) { .opening span { animation:none; } }
 @media (max-width:760px) {
   .app { grid-template-columns:minmax(0,1fr); grid-template-rows:auto 1fr; }
   .side { display:none; }

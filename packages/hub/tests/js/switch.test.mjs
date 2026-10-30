@@ -68,3 +68,22 @@ test("openTarget matches only /open/<32 hex> and landing forwards it, never as a
   assert.deepEqual(landing(200, { user_id: "u", kind: "open", return_to: "/open/" + id }), { kind: "forward", workspace_id: id });
   assert.equal(safeReturn("/open/" + id), null);
 });
+
+test("openingState names the workspace, with a plain fallback", async () => {
+  const { openingState } = await import("../../src/orch_hub/web/switch.js");
+  assert.equal(openingState("Product").title, "Opening Product…");
+  assert.equal(openingState(null).title, "Opening your workspace…");
+});
+
+test("the hub shows the Opening state before it asks for a ticket or navigates", async () => {
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("../../src/orch_hub/web/app.js", import.meta.url), "utf8");
+  const body = src.slice(src.indexOf("async function openWorkspace"));
+  const fn = body.slice(0, body.indexOf("\n}\n"));
+  const shown = fn.indexOf("openingState(");
+  assert.ok(shown >= 0);
+  assert.ok(shown < fn.indexOf('"/switch/ticket"'));
+  assert.ok(shown < fn.indexOf("location.assign"));
+  const css = readFileSync(new URL("../../src/orch_hub/web/app.css", import.meta.url), "utf8");
+  assert.match(css, /prefers-reduced-motion: reduce\) \{ \.opening span \{ animation:none/);
+});

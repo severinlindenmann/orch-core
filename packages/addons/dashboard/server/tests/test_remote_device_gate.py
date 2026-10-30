@@ -406,8 +406,10 @@ def test_remote_identity_is_checked():
 
 
 # --- invariant A: a row that lets a stream in is true about its handler ---
-def _sources(route):
-    """The source of the endpoint and of every dependency callable of a route."""
+def _sources(route, deep=True):
+    """The source of the endpoint, of every dependency callable of a route, and (transitively) of every same-package
+    helper they close over or name (G1/F8: `reduce`, `owner_link` and friends are closures of the registering function,
+    so a walk of the endpoint body alone never saw what they call). Limited to the orch_dashboard package."""
     import inspect
 
     calls = [route.endpoint]
@@ -416,13 +418,79 @@ def _sources(route):
         dep = stack.pop()
         calls.append(dep.call)
         stack.extend(dep.dependencies)
-    out = []
-    for call in calls:
+    out, seen = [], set()
+
+    def visit(fn):
         try:
-            out.append(inspect.getsource(inspect.unwrap(call)))
+            fn = inspect.unwrap(fn)
+        except ValueError:
+            return
+        if not inspect.isfunction(fn) or fn in seen or not (fn.__module__ or "").startswith("orch_dashboard"):
+            return
+        seen.add(fn)
+        try:
+            out.append(inspect.getsource(fn))
+            cv = inspect.getclosurevars(fn)
         except (OSError, TypeError):
-            continue
+            return
+        for nxt in (*cv.nonlocals.values(), *cv.globals.values()) if deep else ():
+            visit(nxt)
+
+    for call in calls:
+        visit(call)
     return out
+
+
+#: host ops a handler may name that are READS (or a host-side check that signs nothing): `remote_kinds.classify` knows
+#: only the person ops and refuses everything else, so these are listed by hand. A write op is never added here: a write
+#: that a stream may do must be a row of remote_kinds.TABLE.
+READ_OPS = {
+    "member.list", "addon.list", "records.status", "hub.status", "workspace.settings", "ticket.query", "ticket.get",
+    "activity.list", "workspace.show", "run.sources", "run.transcript", "run.list", "run.link", "share.preview",
+    "share.rules", "share.audience", "hub.shared", "remote.pending", "remote.status", "remote.sessions", "host.list",
+    "worktree.list", "worktree.diff", "workdir.get", "whoami", "outcome.get", "org.show", "org.offers", "reader.list",
+    "quick.list", "grant.list", "follow_up.list", "delegation.list", "publish.list", "phone.status", "needs", "status",
+}  # fmt: skip
+#: false positives, by (method, template) and op, each with the reason: the op is refused by `classify` only because it
+#: is no person op, and the handler is the stream's own action. Empty entries need a comment; add none without one.
+CLASSIFY_ALLOWLIST: dict[str, str] = {
+    # the signer's own relay: the dashboard's click routes only forward these, the signer's stream branch decides
+    "human.": "prefix: the click relay (prepare/view/sign/cancel/state); ClickSigner decides per SIGNER_OPS",
+    # non-person host ops of rows that are ALLOWED by owner decision (not signed events: the dashboard's row is the
+    # gate, the host op is called over the dashboard's own link). classify() refuses what it does not list.
+    "grant.forget": "runner/forget: turning off",
+    "worktree.remove": "worktrees/remove: turning off",
+    "workdir.delete": "workdir/delete: turning off",
+    "publish.revoke": "shares/revoke: turning off",
+    "publish.discard": "shares/discard: turning off",
+    "workspace.cosmetic.set": "workspace/cosmetic: owner plain click, role read from the stream's person",
+    "run.detach": "runs/{run}/detach: focus mode",
+    "agent.start": "agents/start: plain click once the runner is on (the host's own gate)",
+    "term.open": "terminals/open: the TERMINALS rule, level-gated by the row",
+    "remote.off": "remote/off: a VIEW write that ends the stream's own session",
+}  # fmt: skip
+
+
+def _op_literals(tree):
+    """String constants that are the first argument of a `.call(`, `human(`, or of the `reduce(`/`add(` helpers' op slot
+    (third positional) in one function body: the host ops the handler names."""
+    import ast
+
+    ops = set()
+    for n in ast.walk(tree):
+        if not isinstance(n, ast.Call):
+            continue
+        name = n.func.attr if isinstance(n.func, ast.Attribute) else getattr(n.func, "id", "")
+        if name in ("call", "human") and n.args:
+            idx = 1 if name == "human" else 0
+        elif name in ("reduce", "add"):
+            idx = 2
+        else:
+            continue
+        for i in {idx, idx - 1} if name == "human" else {idx}:
+            if 0 <= i < len(n.args) and isinstance(n.args[i], ast.Constant) and isinstance(n.args[i].value, str):
+                ops.add(n.args[i].value)
+    return ops
 
 
 def _route_for(app, method, template):
@@ -442,10 +510,12 @@ def test_a_row_that_admits_a_stream_is_true_about_its_handler(app):
     row would be a lie that ends in a refusal), unless the handler reads the stream's own person; and the handler must
     name no signer op the signer refuses from a stream."""
     import ast
+    import textwrap
 
     from orch.click import remote_kinds
 
     refused_ops = {op for op, cls in remote_kinds.TABLE.items() if cls == remote_kinds.REFUSED}
+    refused_ops |= {op for op, cls in remote_kinds.SIGNER_OPS.items() if cls == remote_kinds.REFUSED}
     lies = []
     checked = 0
     for (method, template), (rule, _level) in COLUMN.items():
@@ -455,17 +525,36 @@ def test_a_row_that_admits_a_stream_is_true_about_its_handler(app):
         if route is None:
             continue  # a T4 row whose handler is the host's/adapter's own
         checked += 1
-        for src in _sources(route):
-            import textwrap
-
+        deep = _sources(route)
+        trees = [ast.parse(textwrap.dedent(src)) for src in deep]
+        all_calls = {
+            n.func.attr if isinstance(n.func, ast.Attribute) else getattr(n.func, "id", "")
+            for t in trees
+            for n in ast.walk(t)
+            if isinstance(n, ast.Call)
+        }
+        # (a) the whole reachable body: a helper's full_session is the route's, unless something reachable reads the
+        # stream's own person (G1: revoke/rule-remove reached full_session only through reduce -> owner_link)
+        # (login_kind stays a direct-body check below: the click relay compares it deliberately, R2; REMOTE_STREAM is
+        # the stream-aware branch of remote/off)
+        names = {n.id for t in trees for n in ast.walk(t) if isinstance(n, ast.Name)}
+        aware = "stream_person" in all_calls or "REMOTE_STREAM" in names
+        if "full_session" in all_calls and not aware and (method, template) not in LOGIN_KIND_READS:
+            lies.append((method, template, "needs a full session (reachable)"))
+        # (b) host ops the reachable bodies name, classified like the signer would (writes only)
+        if method != "GET":
+            for op in sorted(set().union(*(_op_literals(t) for t in trees)) - READ_OPS):
+                cls = remote_kinds.SIGNER_OPS[op] if op in remote_kinds.SIGNER_OPS else remote_kinds.classify(op)
+                if cls == remote_kinds.REFUSED and not any(op.startswith(k) for k in CLASSIFY_ALLOWLIST):
+                    lies.append((method, template, f"host op {op} is refused from a stream"))
+        for src in _sources(route, deep=False):  # the literals of the handler itself (shared helpers hold whole tables)
             tree = ast.parse(textwrap.dedent(src))
-            calls = {
+            direct = {
                 n.func.attr if isinstance(n.func, ast.Attribute) else getattr(n.func, "id", "")
                 for n in ast.walk(tree)
                 if isinstance(n, ast.Call)
             }
-            needs = ("full_session" in calls or "login_kind" in calls) and "stream_person" not in calls
-            if needs and (method, template) not in LOGIN_KIND_READS:
+            if "login_kind" in direct and "stream_person" not in direct and (method, template) not in LOGIN_KIND_READS:
                 lies.append((method, template, "needs a full session"))
             if method == "GET":
                 continue  # a read calls no signer op

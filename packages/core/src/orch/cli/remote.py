@@ -520,6 +520,25 @@ def _reset(args: argparse.Namespace, env: Mapping[str, str], out: TextIO, err: T
     return 0 if rc == 0 else 1
 
 
+#: Interpreter variables that can load code from somewhere the person did not choose. The client holds the person's
+#: keys and runs as them, so none of these reaches it (the dashboard launcher keeps absolute PYTHONPATH entries; the
+#: client does not need even those).
+_PYTHON_LOADERS = ("PYTHONPATH", "PYTHONSTARTUP", "PYTHONHOME", "PYTHONINSPECT", "PYTHONUSERBASE", "PYTHONBREAKPOINT")
+
+
+def client_env(env: Mapping[str, str]) -> dict[str, str]:
+    from orch.cli import dashboard
+
+    out = dashboard.launch_env(env)
+    for name in _PYTHON_LOADERS:
+        out.pop(name, None)
+    return out
+
+
+def _exec(argv: list[str], env: Mapping[str, str]) -> None:  # a seam: tests replace it
+    os.execve(argv[0], argv, dict(env))
+
+
 def _client(args: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextIO) -> int:
     """``orch remote open``: start the remote client (``orch_dashboard.remote_client``, in the dashboard addon) and open
     the person's browser at it. Same refusals as ``orch dashboard``: an agent's environment, an addon that is not
@@ -530,12 +549,13 @@ def _client(args: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: Te
     if refusal:
         err.write(f"orch remote open: human_only: {refusal}\n")
         return EXIT_REFUSED
+    env = client_env(env)  # one sanitized environment for the probe AND the exec
     if not dashboard._module_installed(env):  # noqa: SLF001 - the launcher's own probe
         err.write(f"orch remote open: {dashboard.INSTALL_HINT}\n")
         return 1
     out.flush()
     err.flush()
-    os.execve(sys.executable, [sys.executable, "-P", "-m", "orch_dashboard.remote_client", *args], dict(env))
+    _exec([sys.executable, "-P", "-m", "orch_dashboard.remote_client", *args], env)
     return 1  # pragma: no cover - execve does not return
 
 

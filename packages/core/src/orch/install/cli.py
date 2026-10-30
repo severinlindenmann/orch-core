@@ -186,7 +186,11 @@ def default_ctx(env: Mapping[str, str], out: TextIO, err: TextIO) -> Ctx:
 
 def _publish_setup(url: str) -> str | None:
     """Sign the workspace's publish settings (server = share = the part's address): the person's terminal signs."""
-    rc, out = _run([sys.executable, "-m", "orch", "publish", "setup", "--server", url, "--share", url])
+    from orch.cli import dashboard
+
+    # -P: the current directory is not on sys.path; PYTHONPATH reduced to absolute entries (the launcher's sanitizer)
+    env = dashboard.launch_env(os.environ)
+    rc, out = _run([sys.executable, "-P", "-m", "orch", "publish", "setup", "--server", url, "--share", url], env)
     return None if rc == 0 else (out.strip().splitlines() or ["failed"])[-1]
 
 

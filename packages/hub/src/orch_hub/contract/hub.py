@@ -146,7 +146,38 @@ def _int_min(lo: int) -> Check:
     return lambda x: type(x) is int and x >= lo
 
 
-_EVENT_KIND = re.compile(r"[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*){0,2}")
+#: the closed set of event type words a workspace may report (what orch.host.agentevents sends; "event" = any other)
+AGENT_EVENT_KINDS = frozenset(
+    {
+        "artifact.added",
+        "artifact.replaced",
+        "branch.pushed",
+        "event",
+        "followup.cancelled",
+        "followup.fired",
+        "followup.outcome",
+        "followup.rescheduled",
+        "followup.restored",
+        "followup.set",
+        "gate.approved",
+        "gate.changes_requested",
+        "gate.invalidated",
+        "grant.issued",
+        "grant.requested",
+        "grant.revoked",
+        "handoff.written",
+        "question.answered",
+        "question.asked",
+        "status.changed",
+        "ticket.closed",
+        "ticket.created",
+        "ticket.moved",
+        "ticket.reopened",
+        "ticket.submitted",
+        "ticket.updated",
+        "verdict.given",
+    }
+)
 _AGENT_NAME = re.compile(r"[0-9A-Za-z][0-9A-Za-z._:@-]*")
 _TICKET_KEY = re.compile(r"[A-Z][A-Z0-9]{0,15}-[0-9]{1,9}")
 AGENT_EVENTS_MAX = 50
@@ -157,8 +188,7 @@ def _agent_event(x: Any) -> bool:
         type(x) is dict
         and set(x) == {"kind", "ts_ms", "agent", "ticket"}
         and type(x["kind"]) is str
-        and len(x["kind"]) <= 40
-        and _EVENT_KIND.fullmatch(x["kind"]) is not None
+        and x["kind"] in AGENT_EVENT_KINDS
         and type(x["ts_ms"]) is int
         and x["ts_ms"] >= 0
         and type(x["agent"]) is str
@@ -1583,7 +1613,7 @@ LINK_OPS: dict[str, tuple[str, str | None, dict[str, Check]]] = {
     # HUB-AC-03 (#1426): what agents did in the workspace, four references per event, never content (protocol 10.10)
     "agent_events": (
         "w2h",
-        None,
+        "full",  # selective mode never tells the hub about tickets that were not shared (D80)
         {"events": _agent_events},
     ),
     "status_put": (

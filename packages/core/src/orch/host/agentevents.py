@@ -20,7 +20,38 @@ __all__ = ["MAX_EVENTS", "collect", "send"]
 
 LOG = logging.getLogger("orch.host.agentevents")
 MAX_EVENTS = 50
-_KIND = re.compile(r"[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*){0,2}")
+#: the closed set the hub accepts (hub contract 10.10); any other event type is reported as "event"
+KINDS = frozenset(
+    {
+        "artifact.added",
+        "artifact.replaced",
+        "branch.pushed",
+        "event",
+        "followup.cancelled",
+        "followup.fired",
+        "followup.outcome",
+        "followup.rescheduled",
+        "followup.restored",
+        "followup.set",
+        "gate.approved",
+        "gate.changes_requested",
+        "gate.invalidated",
+        "grant.issued",
+        "grant.requested",
+        "grant.revoked",
+        "handoff.written",
+        "question.answered",
+        "question.asked",
+        "status.changed",
+        "ticket.closed",
+        "ticket.created",
+        "ticket.moved",
+        "ticket.reopened",
+        "ticket.submitted",
+        "ticket.updated",
+        "verdict.given",
+    }
+)
 _AGENT = re.compile(r"[0-9A-Za-z][0-9A-Za-z._:@-]*")
 _TICKET = re.compile(r"[A-Z][A-Z0-9]{0,15}-[0-9]{1,9}")
 
@@ -48,13 +79,20 @@ def collect(store: Any, position: dict[str, Any]) -> tuple[list[dict[str, Any]],
     marks = [k for k in [WORKSPACE, *sorted(store.log_marks())] if k]
     seen = dict(position.get("logs", {}))
     if not position.get("init"):
-        return [], {log: int(store.log_seq(log) or 0) for log in dict.fromkeys(marks)}
+        start = {log: store.log_seq(log) for log in dict.fromkeys(marks)}
+        position["unread"] = {log for log, n in start.items() if n is None}
+        return [], {log: n for log, n in start.items() if n is not None}  # unreadable now: starts at its end later
     keys: dict[str, str] = position.setdefault("keys", {})
     out: list[dict[str, Any]] = []
     for log in dict.fromkeys(marks):
         head = store.log_seq(log)
+        if head is None:
+            continue
+        if log not in seen and log in position.get("unread", ()):
+            seen[log] = head  # it was unreadable on the first pass: its history is never uploaded
+            continue
         after = seen.get(log, 0)
-        if head is None or head <= after:
+        if head <= after:
             continue
         for ev, _h in store.events_after(log, after, 256):
             if len(out) >= MAX_EVENTS:
@@ -67,7 +105,7 @@ def collect(store: Any, position: dict[str, Any]) -> tuple[list[dict[str, Any]],
             kind = ev.get("type")
             out.append(
                 {
-                    "kind": kind if isinstance(kind, str) and _KIND.fullmatch(kind) else "event",
+                    "kind": kind if kind in KINDS else "event",
                     "ts_ms": _ts_ms(ev.get("at")),
                     "agent": name if isinstance(name, str) and len(name) <= 64 and _AGENT.fullmatch(name) else "agent",
                     "ticket": _ticket_key(store, log, keys),
@@ -81,7 +119,7 @@ def send(service: Any, state: Any, hub_link: Any) -> None:
     """Best effort, never raises. ``state`` is the hub binding (``hub_id``)."""
     try:
         store = getattr(service, "store", None)
-        if store is None:
+        if store is None or getattr(state, "mode", None) != "full":  # selective: never reveal unshared tickets (D80)
             return
         pos = service.__dict__.setdefault("_agent_events_pos", {})
         mine = pos.setdefault(state.hub_id, {"init": False, "logs": {}})

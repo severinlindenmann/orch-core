@@ -68,8 +68,21 @@ AGENT_WORDS = {
     "status.changed": "changed a ticket's status",
     "question.asked": "asked a question",
     "question.answered": "answered a question",
-    "comment.added": "added a comment",
-    "gate.requested": "asked for a gate",
+    "ticket.moved": "moved a ticket",
+    "gate.approved": "approved a gate",
+    "gate.changes_requested": "asked for changes at a gate",
+    "gate.invalidated": "reset a gate",
+    "verdict.given": "gave a verdict",
+    "artifact.added": "added a file to a ticket",
+    "artifact.replaced": "replaced a file on a ticket",
+    "branch.pushed": "pushed a branch",
+    "handoff.written": "wrote a hand-off",
+    "grant.requested": "asked for access",
+    "grant.issued": "was given access",
+    "grant.revoked": "lost access",
+    "followup.set": "set a follow-up",
+    "followup.fired": "ran a follow-up",
+    "followup.cancelled": "cancelled a follow-up",
 }
 
 

@@ -75,7 +75,7 @@ W2H_OPS: dict[str, str | None] = {
     "rail_get": None,
     "owner_get": None,
     "hub_where": None,
-    "agent_events": None,
+    "agent_events": "full",
     "status_put": None,  # R14b: this list lacked the display ops, so a real link refused them as unknown_op
     "addon_request": None,
     "profile_put": None,

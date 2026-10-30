@@ -218,6 +218,7 @@ keep the union with every label above, every v2 label and core's live tables pre
 | `h_remote_prologue` | `orch/v2/remote-prologue\|` | hash input | the Noise prologue | 10.2c |
 | `h_remote_wrk` | `orch/v2/remote-wrk\|` | hash | the `WRK` fingerprint an enrollment code carries | 10.2c |
 | `h_remote_device_fp` | `orch/v2/remote-device-fp\|` | hash | the device fingerprint the owner confirms | 10.2c |
+| `h_remote_route` | `orch/v2/remote-route\|` | hash | `route_digest`: the `view_digest` of a presence route (R3) | 10.2c |
 
 **The presence key signs under exactly `remote-open|` and `remote-presence|`** (spec §5: the D64 backend kind
 `remote-presence` is never a person signer); `WSK` gains `sig/remote-devices|`. Neither the hub's keys nor `UK` nor a
@@ -1734,7 +1735,8 @@ with 1 ≤ n ≤ 16 digests, sorted ascending and unique (`malformed` otherwise)
 nothing else. The signer accepts it once: the nonce must be one it issued, unused, at most 5 min old (`replay`
 otherwise; it is deleted in the same step), then the assertion as above. A verified batch authorizes exactly its
 listed digests until 5 min after its nonce was issued, on that stream only. `view_digest` is the signer's own digest of
-the prepared action it shows (R3 fixes its bytes); the contract fixes only its length. An open signature is never a
+the prepared action it shows: for a signed op the signer's review digest, for a presence route `route_digest`
+("Inside a session" below). An open signature is never a
 presence signature and the other way round (two labels).
 
 **Enrollment** (spec §5; `kind: "enroll"`). The owner makes a code at the workspace: `code_id` (16 bytes, shown as
@@ -1787,6 +1789,117 @@ Vectors `device_list_*`, `device_lookup_*`.
 **What R0 leaves to the steps** (spec §11): the runtime link tables take these ops with their handlers in R2 (host)
 and R4 (hub) (until then `orch_hub.contract.hub.LINK_OPS` does not list them and the live hub answers `unknown_op`);
 the L7 replay store, both directions, comes in R1 before any stream is accepted.
+
+**Inside a session** (R3, #1591; spec §7.4, D88–D90; reference `app_frame_parse`, `AppStream`, `check_request_head`,
+`route_digest`; vectors `app_frame_*`, `app_seq_*`, `request_head_*`, `route_digest_*`, `presence_route_*`). After
+`opened`, every Noise transport plaintext of a session stream, in both directions, is exactly one **app frame**; the
+first transport message of each direction stays the JSON `open` / `opened` above (by position, never by sniffing). An
+enroll stream carries no app frames: anything the device sends after `enroll` is `malformed`.
+
+```
+app_frame = kind (1) || id (4, big-endian) || payload          5 … 65519 bytes (65535 − the 16-byte AEAD tag)
+```
+
+| kind | name | dir | id | payload |
+|---|---|---|---|---|
+| 1 | `HEAD` | d→h | new | cj request head `{"headers", "method", "path", "query"}`, ≤ 16384 bytes |
+| 1 | `HEAD` | h→d | open | cj response head `{"headers", "status"}`, ≤ 16384 bytes |
+| 2 | `BODY` | both | open | 1 … 65514 raw bytes |
+| 3 | `END` | both | open | empty: this direction of the exchange is complete |
+| 4 | `RESET` | both | open | ASCII reset code: `cancelled`, `timeout`, `too_large`, `remote.busy` |
+| 5 | `WS_OPEN` | d→h | new | cj `{"headers", "path", "query"}`, ≤ 16384 bytes |
+| 6 | `WS_TEXT` | both | open | 0 … 65514 bytes of UTF-8: one whole WebSocket text message |
+| 7 | `WS_BINARY` | both | open | 0 … 65514 bytes: one whole WebSocket binary message |
+| 8 | `WS_CLOSE` | both | open | exactly 2 bytes, big-endian close code: 1000–1003, 1007–1011 or 3000–4999 |
+| 9 | `PING` | both | 0 | empty |
+| 10 | `PONG` | both | 0 | empty, answers the other side's outstanding `PING` |
+
+Any other kind byte, a frame shorter than 5 or longer than 65519 bytes, a payload outside its row, `id` 0 on an exchange
+frame or a non-zero `id` on `PING`/`PONG` is `malformed`. A head is exact (its keys and no others) and is the
+canonical form of its own strict parse (`cj(loads_strict(p)) == p`), else `malformed`:
+
+- `method` is one of `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE`; `status` an integer, 101 or 200 … 599;
+- `path` (1 … 2048 bytes) is plain, as the dashboard's `clean_path`: starts with `/`, bytes 0x21–0x7E without `%`,
+  `\`, `;`, `?`, `#`, no empty, `.` or `..` segment; `query` (0 … 4096 bytes) the raw query string without `?`, bytes
+  `A–Z a–z 0–9 - . _ ~ ! $ & ' ( ) * + , ; = : @ % / ?`;
+- `headers` is a list of at most 64 `[name, value]` pairs, in order, duplicates allowed: `name` 1 … 64 bytes of
+  RFC 9110 `tchar` without upper case (`a–z`, `0–9` and ``!#$%&'*+-.^_`|~``), `value` 0 … 4096 bytes of 0x20–0x7E without
+  a leading or trailing space;
+- framing belongs to the frames, so these names are `malformed` in every head: `content-length`, `transfer-encoding`,
+  `connection`, `upgrade`, `keep-alive`, `te`, `trailer`, `proxy-connection`, `sec-websocket-key`,
+  `sec-websocket-version`, `sec-websocket-extensions`, `sec-websocket-accept`; in a request head and `WS_OPEN` also
+  `host` and `origin` (the terminator sets `Host: orch-remote` and no Origin; the remote client already enforced Origin
+  on its own loopback server, spec §6); in a response head also `set-cookie` (a stream credential never leaves the
+  dashboard process; the device closes the stream).
+
+**Outside bearers** (D89): a well-formed request head or `WS_OPEN` that carries `authorization`, `cookie`,
+`x-setup-token` or any `x-orch-` name is answered 400 with `remote.bearer` (an ordinary response; the stream
+stays): refused, never stripped (`check_request_head`, vectors `request_head_*`).
+
+**Exchanges and ordering.** The device opens every exchange with `HEAD` or `WS_OPEN` under an `id` greater than every id
+it used before on this stream (ids rise strictly from 1 to 2^32 − 1; a reused or lower id is `malformed`); the host
+never opens one. Per exchange and direction:
+
+- HTTP: device `HEAD`, `BODY`*, `END`; host `HEAD` (not 101; it may come before the request's `END`), `BODY`*, `END`.
+  The exchange ends when both directions sent `END`, or at a `RESET` from either side.
+- WebSocket: device `WS_OPEN`; host `HEAD` 101 (accepted) or a refusing status followed by `BODY`* and `END` (an
+  ordinary response, then the exchange ends). After 101 both sides send `WS_TEXT` / `WS_BINARY` until their own
+  `WS_CLOSE`; the exchange ends when both sent `WS_CLOSE`, or at a `RESET`. A message over 65514 bytes is not sent (the
+  sender closes its WebSocket 1009). No `END` on a WebSocket.
+- A frame for an id above the highest opened that is not an opener, a frame out of its state (a `BODY` before its
+  `HEAD`, anything after its direction's `END` or `WS_CLOSE`, a second response `HEAD`, 101 to an HTTP request, a
+  non-101 head followed by WebSocket frames, `WS_TEXT` before 101), or a `PONG` with no outstanding `PING` (or a
+  second `PING` before its `PONG`) is `malformed`. A frame for an exchange that already ended (an id at or below the
+  highest, no longer open) is **dropped** silently: the peer may have sent it before it saw a `RESET`.
+- A request body is complete only at its `END`. A stream closed (`stream_close`, or any other end) before a request's
+  `END` means the client disconnected: the route never acts on a partial request. The device treats a response without
+  its `END` as failed.
+- Order is the Noise nonce order (per direction, from the first transport message) and so the link's `seq`; app frames
+  carry no counter of their own, and a lost, repeated or reordered message has already closed the stream (§10.2c
+  transport rule).
+
+**Limits** (the receiver resets the one exchange; the stream stays): at most 8 open HTTP exchanges and 2 open WebSockets
+per stream (one more is `RESET remote.busy` at once); a request body (the sum of its `BODY` frames) over 1 MiB is `RESET
+too_large` (a route may set a lower limit and answer 413); a request without its `END` 60 s after its `HEAD` is `RESET
+timeout`. A response body has no size limit (event streams), but every frame is charged on the outbound byte budget and
+the terminator holds at most 64 unsent frames per stream: a device that stops reading closes the stream `remote.busy`.
+Owed R3 adapter test: `stream_closed_before_request_end_never_dispatches_body`. A frame error is a stream error: the receiver closes the stream `malformed` (host: `stream_close`; device: through its
+hub). There is no in-session close frame: a session ends with the link's `stream_close`.
+
+**Timeouts** (host terminator): handshake 60 s from `stream_open` to `open`; stream life 12 h (`expired`); 2 h with no
+accepted (`ok`) inbound device frame other than `PING`/`PONG` (`idle`; keepalives never keep a session alive, and
+dropped frames do not count). A remote-device `/term`
+WebSocket closes 1000 after 10 min with no inbound `WS_TEXT`/`WS_BINARY` from the device.
+
+**How a request is bound to its stream** (D89). The host reads only the kind byte and the id of each frame (it counts
+exchanges and stamps identity); it hands each frame to the dashboard's in-process adapter together with the stream id,
+and on every `HEAD`/`WS_OPEN` it adds `{workspace_id, device_id, person, level}` computed from its model at that moment
+(remote on, device listed for a current owner, level = min(device cap, policy level); any failure closes the stream
+`revoked` / `remote.off` and the request is never forwarded). The adapter answers on the same stream and id only, and refuses with 404 any request path whose `{ws}` segment is
+not the stream's `workspace_id` (owed R3 runtime test `remote_device_other_workspace_path_refused`).
+Nothing in a frame (header, query, body, token) names or changes the identity; a credential the dashboard mints inside
+a stream is bound to its stream id.
+
+**Presence for a route, `route_digest`** (D88, D90 `presence` rows). For a presence route (an agent start, each
+terminal open and each attach, …) the action's `view_digest` is
+
+```
+route = "orch/v2/remote-route|" || workspace_id (16) || u8 len(method) || method || u16 len(template) || template
+        || u16 len(path) || path || u16 len(query) || query || SHA-256(body) (32)
+route_digest = SHA-256(route)                                         (lengths big-endian)
+```
+
+`method` as in the head, or `WEBSOCKET` for a `WS_OPEN`; `template` (1 … 1024 bytes, 0x21–0x7E) the dashboard's route
+template that matched (for example `/api/w/{ws}/runs/{run}/attach`); `path` and `query` exactly as in the head; `body`
+the whole request body (empty for a WebSocket). The concrete path and body are covered, so a batch that lists the attach
+to one run never authorizes the attach to another. A signed op's `view_digest` stays the signer's
+`SHA-256(cj(view))`, with `view` the review view whose checks' `at` times are removed (`click/view.py` `digest`): its input starts with `{`, a route's with the label, so no route digest is an op digest. Both kinds
+may share one batch (`presence_bytes` above binds the batch to `hh`, so a batch is never valid on another stream).
+Flow: the request without a covering batch is answered `428 {"error": "remote.presence_required", "view_digest":
+"sha256:<hex>", "template"}`; the remote client recomputes the digest from the request it sent and that template (and
+refuses to prompt on a mismatch), asks the dashboard for a nonce (`remote/presence/nonce`), draws the prompt naming
+the workspace and the actions, posts the presence (`remote/presence`) and retries; each digest of a verified batch
+authorizes one request (it is taken when used).
 
 ### 10.3 Routing (`route_out`, `route_in`; phase 3, V3-D8)
 
@@ -3211,6 +3324,12 @@ transport in the action).
 | 56 | Device ids (R0) | `rd_` + 32 hex (codes `rc_`), so no hub `device.excluded` (`d_`) can name a remote device | D93 "touch the devices" |
 | 57 | Device list (R0) | `remote.device_list`, `hv: 0`, a rising `version` (rollback refused), `name` added for the session list, `presence_kind` added; the sign counter kept beside it | spec §5, D91 |
 | 58 | Remote labels (R0) | their own table (like the backup labels), so `vectors_hub.json` stays unchanged | §3 |
+| 61 | In-session app frames (R3) | one Noise transport plaintext = one frame `kind (1) ‖ id (4) ‖ payload`, ten kinds; heads as cj JSON (parsed only by the dashboard's adapter, the host reads kind and id); no in-session close frame (the link's `stream_close`) | spec §7.4, D89; R3 design §2 |
+| 62 | Exchange ids (R3) | chosen by the device, strictly rising per stream (not merely unique while open), so a late frame of an ended exchange is told from a new one with one integer; such late frames are dropped, every other state error is `malformed` | a `RESET` and a frame cross on the wire |
+| 63 | Ordering and counters (R3) | no app-level counter: the Noise nonce and the link `seq` already order and number every frame per direction | §10.2c transport rule |
+| 64 | Heads (R3) | exact keys, canonical; framing and WebSocket handshake headers `malformed`; `host`/`origin` from the device `malformed` (the terminator sets Host `orch-remote`, no Origin); `set-cookie` never to the device; outside bearers `400 remote.bearer` (refused, never stripped) | D89; the design's "replaced" Host/Origin made strict |
+| 65 | Exchange limits (R3) | 8 HTTP, 2 WebSockets open per stream (`RESET remote.busy`), request body 1 MiB (`RESET too_large`), 60 s to the request `END` (`RESET timeout`), a WebSocket message fits one frame (else 1009); only accepted (`ok`) device frames other than `PING`/`PONG` reset the 2 h idle timer (dropped frames and keepalives do not); a request body is complete only at its `END` (a stream closed before it never dispatches a partial request) | D88 terminal idle, D91 |
+| 66 | `route_digest` (R3) | label `orch/v2/remote-route\|`, length-prefixed method, template, concrete path and query, then `SHA-256(body)`; covers the concrete target; the adapter 404s a path whose `{ws}` is not the stream's workspace (the design's template-only form would let one confirmed attach authorize every run) | D88 "fixed list" |
 
 ## 17. Hub backup (M4, #1462; design `m4-settings-design.md` 4.2-4.3 and the Opus conditions 9-17)
 

@@ -230,6 +230,7 @@ def _run(c: dict[str, Any]) -> dict[str, Any]:
                     workspace_id=a["workspace_id"],
                     pub=PUB[a["key"]],
                     now_ms=a["now_ms"],
+                    exporter=bytes.fromhex(a["exporter"]),
                 )
                 return {"ok": o["op"]}
             case "frame_cost":

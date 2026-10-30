@@ -202,6 +202,21 @@ def test_a_dead_link_is_redialled_with_backoff(world, monkeypatch):
     assert r.thread is not None
 
 
+def test_a_failed_link_closes_its_streams_even_when_the_redial_keeps_failing(world, monkeypatch):
+    monkeypatch.setattr(linkrun, "BACKOFF_FIRST_S", 0.05)
+    r = feed(world)
+    wait_for(lambda: world.dialer.links)
+    sid = "ab" * 16
+    world.link.frames.append(("stream_open", 7, {"stream_id": sid, "device_id": world.did, "kind": "session"}))
+    wait_for(lambda: gate.table(world.service).is_open(sid), what="the open was not served")
+    world.dialer.fail = LinkError("unreachable")  # no new link will ever come
+    world.dialer.links[0].call = lambda *a: (_ for _ in ()).throw(LinkError("malformed"))  # type: ignore[method-assign]
+    world.dialer.links[0].is_open = False
+    monkeypatch.setattr(linkrun, "KEEPALIVE_S", 0.01)
+    wait_for(lambda: r.link is None and len(world.dialer.alpns) >= 3, what="the link did not fail and redial")
+    assert gate.table(world.service).open_streams() == []
+
+
 def test_alpn_not_negotiated_means_no_stream_and_a_retry(world, monkeypatch):
     monkeypatch.setattr(linkrun, "BACKOFF_FIRST_S", 0.05)
     world.dialer.fail = LinkError("unsupported")

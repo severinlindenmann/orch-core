@@ -131,7 +131,9 @@ class Runner:
                         self.stop_event.wait(0.01)
                 except (LinkClosed, LinkError, LinkTimeout, OSError) as exc:  # the link failed: redial
                     self.last_error = type(exc).__name__
-                    self._drop_link(streams=False)  # the next pump sees a new link (F4) and closes the old streams
+                    self._drop_link(
+                        streams=True
+                    )  # the streams belong to the failed link: end them now, a redial may never come
                 except Exception as exc:  # noqa: BLE001 - never die: a bug in one frame must not end remote access
                     _log.warning("remote.streams_error %s", type(exc).__name__)
                     self.last_error = type(exc).__name__

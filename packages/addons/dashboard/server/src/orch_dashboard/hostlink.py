@@ -134,7 +134,6 @@ OPS = {
         "hub.switch",  # H1: one-time switch tickets and the rail list over the hub link (no log line, no idem)
         "share.rules",
         "share.preview",
-        "hub.profile",  # HUB-WS-09: the owner's profile; a read without `profile`, a write with it (profile_routes.py)
         "hub.shared",  # P02: tickets other workspaces of the hub shared with this owner (a read, unsigned)
         "share.audience",  # P02: the hub people and teams the owner may name as readers (a read of the hub, unsigned)
         # the two share writes that only take sharing away: one click as the session's person, owner only (hub.py)

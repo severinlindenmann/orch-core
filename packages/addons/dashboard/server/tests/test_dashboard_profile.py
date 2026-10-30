@@ -172,3 +172,12 @@ def test_the_refusal_is_a_plain_sentence_that_does_not_echo_the_input():
     res = client(Link()).put(URL, json={**PROFILE, "description": "secret\u202e"})
     err = res.json()["error"]
     assert res.status_code == 400 and err["message"] == profile_routes.PLAIN and "secret" not in res.text
+
+
+def test_every_profile_call_is_a_write_with_an_idem_as_core_serves_it():
+    link = Link(profile=PROFILE)
+    c = client(link)
+    c.get(URL)
+    c.put(URL, json=PROFILE)
+    calls = [call for call in link.calls if call[0] == "hub.profile"]
+    assert len(calls) == 2 and all(call[2]["write"] is True and call[2]["idem"] for call in calls)

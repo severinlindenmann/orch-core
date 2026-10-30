@@ -89,6 +89,13 @@ def profile_view(raw) -> dict:
     }
 
 
+def ask(link, args: dict | None = None):
+    """Core serves `hub.profile` as ONE person write for both the get (no `profile`) and the put: it takes an idem
+    either way, so a read of the draft is a write call with a fresh idem (it changes nothing). A retried save reuses
+    nothing: the page sends one save per click and the host replaces the whole file, so a repeat is the same file."""
+    return link.call("hub.profile", args or {}, write=True, idem=new_idem())
+
+
 def register(app: FastAPI, gateway: Gateway) -> None:
     def owner_link(ws: str, request: Request, what: str):
         if not full_session(app.state.auth, request.state.token):
@@ -104,7 +111,7 @@ def register(app: FastAPI, gateway: Gateway) -> None:
     @app.get("/api/w/{ws}/hub/profile")
     def profile_get(request: Request, ws: str = Depends(reads.workspace)):
         link, _ = owner_link(ws, request, "see the profile")
-        return profile_view(link.call("hub.profile"))
+        return profile_view(ask(link))
 
     @app.put("/api/w/{ws}/hub/profile")
     def profile_put(request: Request, raw: dict = Body(...), ws: str = Depends(reads.workspace)):  # noqa: B008
@@ -114,9 +121,9 @@ def register(app: FastAPI, gateway: Gateway) -> None:
         except ValidationError:  # never echo the input; hidden characters get the plain sentence
             raise fail("invalid.input", PLAIN, exit=1) from None
         if profile["listed"] and app.state.auth.login_kind(request.state.token) != LOCAL:
-            current = profile_view(link.call("hub.profile"))
+            current = profile_view(ask(link))
             if not current["listed"]:  # turning the listing ON publishes the workspace: on this computer only
                 raise stepup_required("listing this workspace in the hub")
-        got = link.call("hub.profile", {"profile": profile}, write=True, idem=new_idem())
+        got = ask(link, {"profile": profile})
         log.warning("workspace profile changed from the dashboard by %s (listed=%s)", person, profile["listed"])
         return profile_view(got)

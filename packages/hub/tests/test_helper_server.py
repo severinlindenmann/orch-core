@@ -322,7 +322,6 @@ def test_bind_refuses_when_a_helper_already_answers_but_replaces_a_stale_socket(
 def test_failed_command_output_is_redacted(rig):
     rig.rc = 1
     rig.ran.clear()
-    orig = rig._run
     rig.svc._run = lambda argv, t: (1, "", "failed token=abc12345678")
     r = rig.run(rig.prepare())
     assert r["code"] == "action_failed" and "abc12345678" not in r["detail"]

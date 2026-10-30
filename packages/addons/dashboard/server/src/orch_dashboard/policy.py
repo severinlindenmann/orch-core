@@ -46,8 +46,9 @@ _NAME = re.compile(r"(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]([
 def accepted_on_loopback(scope, missing: bool = False) -> bool:
     """Was this connection accepted on a loopback socket? Decided from the accepting socket's own address
     (``scope["server"]``, set by the server that accepted it), never from the Host header: a network client
-    can send any Host. ``missing`` is the answer when the scope names no address (an in-process call; a real server
-    always names it)."""
+    can send any Host. ``missing`` is the answer when the scope names no address or a non-IP one. It exists only for
+    TestClient's "testserver" and in-process scopes: real listeners are TCP on literal IPs, and the unix front socket
+    is the REMOTE listener (never this policy)."""
     server = scope.get("server")
     if not (isinstance(server, tuple | list) and server):
         return missing

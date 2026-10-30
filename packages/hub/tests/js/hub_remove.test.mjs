@@ -60,7 +60,7 @@ async function rig({ prepare, confirm, statuses = [] } = {}) {
   const ctx = { contract: 1, exp_ms: 1790000300000, hub_id: "38d8abed52ccfb538da401fd54e64bdc", kind: "orch.hub_remove.v1", nonce: "e57f9658d7cf82ff6094d29922cce814", user_id: "a368bd380588e5dabee62a516031e21f" };
   const good = { ctx, digest: vectors.digest_cases[0].digest_hex, nonce: ctx.nonce, exp_ms: ctx.exp_ms };
   let i = 0, reauth = 0;
-  const d = { state: { me: { pair, channelId: "c1" } }, removePoll: FAST, reauthView: () => { reauth++; },
+  const d = { state: { me: { pair, channelId: "c1", userId: ctx.user_id, hubId: ctx.hub_id } }, removePoll: FAST, reauthView: () => { reauth++; },
     api: async (m, p, b) => {
       calls.push([m, p, b]);
       if (p.endsWith("/prepare")) return prepare ?? { status: 200, body: good };
@@ -140,12 +140,23 @@ test("202: 'Removing' with step words, then 'The hub is gone' when the page stop
 test("Cancel only while cancel_allowed; stalled offers 'Finish removing'", async () => {
   const st = { state: "backed_up", plain: "Last backup made", told: 0, total: 3, cancel_allowed: true, result: null };
   let n = 0;
-  const node = removeCard({ preview: { ...PV, state: "backed_up" } }, { poll: FAST, status: async () => (n++ < 3 ? st : null), cancel: async () => ({ ok: true }) });
-  await tick();
+  const node = removeCard({ preview: { ...PV, state: "backed_up" } }, { poll: FAST, status: async () => (n++ < 40 ? st : null), cancel: async () => ({ ok: true }) });
+  await new Promise((r) => setTimeout(r, 4));
   assert.ok(node.all().find((n) => n.attrs["data-act"] === "cancel"));
   const stalled = removeCard({ preview: { ...PV, state: "stalled" } }, { poll: FAST, status: async () => ({ ...st, state: "stalled", cancel_allowed: false, plain: "Stopped" }) });
   await tick();
   assert.equal(stalled.all().find((n) => n.attrs["data-act"] === "cancel"), undefined);
   assert.ok(btn(stalled, "Finish removing"));
   assert.equal(inputs(stalled).length, 2);
+});
+
+test("F6: a context for another hub or another person is never signed", async () => {
+  for (const over of [{ hub_id: "00".repeat(16) }, { user_id: "11".repeat(16) }]) {
+    const base = await rig();
+    const ctx = { ...base.ctx, ...over };
+    const r = await rig({ prepare: { status: 200, body: { ctx, digest: hex(await hubRemoveDigest(ctx)), nonce: ctx.nonce, exp_ms: ctx.exp_ms } } });
+    await r.go();
+    assert.match(r.node.textContent, /nothing was signed/);
+    assert.ok(!r.calls.some((c) => c[1].endsWith("/confirm")));
+  }
 });

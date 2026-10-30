@@ -450,7 +450,7 @@ export function removeActions(d) {
       let digest;
       try {
         digest = await hubRemoveDigest(p.body.ctx);
-        if (p.body.ctx.kind !== "orch.hub_remove.v1" || p.body.ctx.nonce !== p.body.nonce || hex(digest) !== p.body.digest) throw new Error("mismatch");
+        if (p.body.ctx.kind !== "orch.hub_remove.v1" || p.body.ctx.nonce !== p.body.nonce || p.body.ctx.hub_id !== me.hubId || p.body.ctx.user_id !== me.userId || hex(digest) !== p.body.digest) throw new Error("mismatch");
       } catch { return { ok: false, plain: "The request could not be checked, so nothing was signed. Nothing was changed." }; }
       let proof;
       try { proof = await signProof(me.pair.privateKey, digest); } catch { return { ok: false, plain: "This browser could not sign. Nothing was changed." }; }

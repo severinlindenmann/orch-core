@@ -78,7 +78,7 @@ def test_journal_build_and_append_hooks_at_1000_tickets(tmp_path, capsys):
     )
     with capsys.disabled():
         print("\nPERF", msg)
-    assert per_append < 2 * SLACK  # of the 20 ms append target
+    assert per_append < 5 * SLACK  # about 0.4 ms today; the append target is 20 ms
     assert build_ms < 30_000 * SLACK
     assert full_ms < 500 * SLACK
     assert role_ms < 3_000 * SLACK

@@ -63,16 +63,15 @@ describe('the ticket Actions menu and sharing', () => {
     const preview = vi.spyOn(api, 'getHubPreview')
     const view = await openMenu('selective')
     await view.user.click(await screen.findByRole('menuitem', { name: 'Share with the hub' }, T))
-    const dialog = await screen.findByRole('dialog', { name: 'Share this ticket with the hub' }, T)
+    const dialog = await screen.findByRole('dialog', { name: 'Share this ticket' }, T)
     expect(within(dialog).queryByRole('textbox')).toBeNull()
     const go = await within(dialog).findByTestId('hub-add-go', {}, T)
     await waitFor(() => expect(go).toBeEnabled(), T)
     expect(within(dialog).getByTestId('hub-add-readers')).toBeTruthy() // who will see it
-    expect(within(dialog).getByTestId('hub-add-sentence')).toHaveTextContent('ticket DEMO-0042')
     const shownPlan = await preview.mock.results[preview.mock.results.length - 1].value.then((p: { plan: string }) => p.plan)
     expect(preview).toHaveBeenLastCalledWith(expect.any(String), { add: { kind: 'ticket', value: 'DEMO-0042', description: true } })
     fireEvent.click(go)
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Share this ticket with the hub' })).toBeNull(), T)
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Share this ticket' })).toBeNull(), T)
     expect(ok).toHaveBeenCalledWith(expect.stringMatching(/^Shared “.+” with the hub\.$|^Shared “.+” with .+\.$/), expect.anything())
     expect(add).toHaveBeenCalledTimes(1)
     expect(add.mock.calls[0][1]).toEqual({ kind: 'ticket', value: 'DEMO-0042', description: true })
@@ -99,5 +98,42 @@ describe('the ticket Actions menu and sharing', () => {
     const view = await openMenu('selective', { ticket: 'DEMO-0043' }) // the mock hub already has DEMO-0043
     await view.user.click(await screen.findByRole('menuitem', { name: 'Stop sharing' }, T))
     expect(await screen.findByRole('dialog', { name: 'Stop sharing this ticket' }, T)).toBeTruthy()
+  })
+
+  it('the review is one sentence naming exactly the ticked people, the caveat once, and the counts behind Details (P05)', async () => {
+    const view = await openMenu('selective')
+    await view.user.click(await screen.findByRole('menuitem', { name: 'Share with the hub' }, T))
+    const dialog = await screen.findByRole('dialog', { name: 'Share this ticket' }, T)
+    const go = await within(dialog).findByTestId('hub-add-go', {}, T)
+    await waitFor(() => expect(go).toBeEnabled(), T)
+    const text = () => dialog.textContent ?? ''
+    // nobody ticked: it says only you, never "Who will see it:" and never "Only me"
+    const boxes = within(dialog).getAllByRole('checkbox').filter(b => (b as HTMLElement).dataset.testid?.startsWith('hub-rule-person-') || (b as HTMLElement).dataset.testid?.startsWith('hub-rule-team-'))
+    for (const b of boxes) if ((b as HTMLInputElement).checked) await view.user.click(b)
+    await waitFor(() => expect(within(dialog).getByTestId('hub-add-sentence')).toHaveTextContent('Only you will see it.'), T)
+    expect(text()).not.toMatch(/Who will see it:|Only me|not signed/)
+    // tick one person: the sentence names them and what they see, in one place
+    await view.user.click(boxes[0])
+    await waitFor(() => expect(within(dialog).getByTestId('hub-add-sentence')).toHaveTextContent(/will see the ticket's title, status, labels, deadline and description, but never its plan, comments or files\./), T)
+    expect(within(dialog).getByTestId('hub-add-readers')).not.toHaveTextContent('Only you')
+    expect(text().split('cannot be taken back')).toHaveLength(2)
+    expect(within(dialog).queryByTestId('hub-add-new')).toBeNull()
+    expect(within(dialog).queryByTestId('hub-add-leaves')).toBeNull()
+    await view.user.click(within(dialog).getByTestId('hub-add-details'))
+    expect(await screen.findByTestId('hub-add-new')).toBeTruthy()
+    expect(screen.getByTestId('hub-add-leaves')).toBeTruthy()
+  })
+
+  it('says "Nobody new will see it." when the preview adds nothing and names no readers (P05 review)', async () => {
+    const real = api.getHubPreview.bind(api)
+    vi.spyOn(api, 'getHubPreview').mockImplementation(async (ws, change) => {
+      const p = await real(ws, change)
+      return p.review ? { ...p, review: { ...p.review, new_count: 0, new_items: [], leaves: [], widened: [], readers: { ...p.review.readers, people: [], teams: [] } } } : p
+    })
+    const view = await openMenu('selective')
+    await view.user.click(await screen.findByRole('menuitem', { name: 'Share with the hub' }, T))
+    const dialog = await screen.findByRole('dialog', { name: 'Share this ticket' }, T)
+    await waitFor(() => expect(within(dialog).getByTestId('hub-add-sentence')).toHaveTextContent('Nobody new will see it.'), T)
+    expect(dialog.textContent).not.toContain('Only you')
   })
 })

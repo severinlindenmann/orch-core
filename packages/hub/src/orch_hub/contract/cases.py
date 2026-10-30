@@ -242,6 +242,7 @@ def run(check: str, a: dict[str, Any]) -> dict[str, Any]:
             mode=a["mode"],
             pub=unb64u(a["pub"], 65),
             now_ms=now,
+            exporter=bytes.fromhex(a["exporter_hex"]),
         )
         return {"op": o["op"], "seq": o["seq"]}
     if check == "hub_join":

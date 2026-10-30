@@ -141,6 +141,18 @@ describe('Send answer in the card, one click (C2: prepare only on a trusted pres
     expect(prepare).toHaveBeenCalledTimes(1)
   })
 
+  it('P10: a grey Send answer says why beside it; a recommended answer is preselected but nothing is prepared until a press', async () => {
+    flag(true)
+    trusted()
+    await mountHost()
+    expect(send()).toBeDisabled()
+    const hint = await screen.findByTestId('answer-hint', {}, T)
+    expect(hint).toHaveTextContent('Pick an answer to send')
+    expect(send()).toHaveAttribute('aria-describedby', hint.id)
+    fireEvent.click(screen.getByText('pick a'))
+    await waitFor(() => expect(screen.queryByTestId('answer-hint')).toBeNull(), T)
+  })
+
   it('nothing is prepared on render, pick, note typing or a synthetic (untrusted) click', async () => {
     flag(true)
     await mountHost()
@@ -547,6 +559,23 @@ describe('both callers answer with one click', () => {
     press()
     await waitFor(() => expect(sign).toHaveBeenCalledTimes(1), T)
     expect(pageSign).not.toHaveBeenCalled()
+  })
+})
+
+describe('P10: recommended answer is preselected, never sent by itself', () => {
+  it('the recommended option is chosen and Send answer is on, but nothing is prepared or signed until a press', async () => {
+    flag(true)
+    trusted()
+    await mountHost(vi.fn(), undefined, (ticket) => (
+      <QuestionsPage ticket={{ ...ticket, questions_state: ticket.questions_state.map((x) => (x.id === 'Q2' ? { ...x, recommended: x.options?.[1]?.key } : x)) }} sign={vi.fn()} />
+    ))
+    const radio = (await openQ2().catch(() => screen.findAllByRole('radio', {}, T).then((r) => r[1]))) as HTMLInputElement
+    expect(screen.getAllByRole('radio').some((r) => (r as HTMLInputElement).checked)).toBe(true)
+    expect(radio).toBeDefined()
+    await waitFor(() => expect(send()).toBeEnabled(), T)
+    await new Promise((r) => setTimeout(r, 300))
+    expect(prepare).not.toHaveBeenCalled()
+    expect(sign).not.toHaveBeenCalled()
   })
 })
 

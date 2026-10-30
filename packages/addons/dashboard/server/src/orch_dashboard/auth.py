@@ -607,6 +607,11 @@ class Auth:
         with self._locked():
             return bool(token) and hashlib.sha256(token.encode()).hexdigest() in self.setup_sessions
 
+    def has_setup(self):
+        """A setup page is bound to this server (claimed, and its session not ended by finish/cancel/401/410)."""
+        with self._locked():
+            return bool(self.setup_sessions)
+
     def forget_setup(self, token):
         with self._locked():
             self.setup_sessions.pop(hashlib.sha256(token.encode()).hexdigest(), None)

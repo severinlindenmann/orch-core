@@ -1143,6 +1143,8 @@ class ClickSigner:
                     held = None
                 name = f" {held['ticket']['key']}" if held and held.get("ticket") else ""
                 where = f" {exc.landed} of {exc.total} signatures landed; the ticket{name} stays a draft."
+                if intent["kind"] == sequence.GATES:  # the first approval landed, the second did not
+                    where = " The requirements are approved; the plan waits for you."
                 if intent["kind"] == sequence.ADDON:  # no ticket: the settings stay and the add-on stays off
                     where = (
                         f" {exc.landed} of {exc.total} signatures landed; the settings stay and the add-on stays off."

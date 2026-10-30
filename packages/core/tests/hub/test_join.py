@@ -12,7 +12,7 @@ from orch.crypto.encoding import unb64u
 from orch.hubclient import HubRefused, HubState, flush_outbox, join_selective, leave, wire
 
 from . import contract as H
-from .fake import FakeHub, host_join_proof
+from .fake import BareLink, FakeHub, host_join_proof
 from .vec import V, private_key, pub
 
 WS = V["ids"]["workspace_a"]
@@ -24,7 +24,7 @@ def sign_wsk(b: bytes) -> bytes:
     return S.sign(WSK, b)
 
 
-class Wire:
+class Wire(BareLink):
     """An in-process HubTransport on the fake hub; ``down`` makes it unreachable."""
 
     def __init__(self, hub: FakeHub) -> None:
@@ -341,7 +341,7 @@ def test_same_hub_rejoin_delivers_first_then_binds(host: Host, hub: FakeHub) -> 
     assert [c[1] for c in hub.calls if c[0] == WS] == ["join", "binding_put", "join"]
 
 
-class Dead:
+class Dead(BareLink):
     def __init__(self) -> None:
         self.sent: list[dict] = []
 

@@ -33,6 +33,7 @@ export function reasonOf(e: unknown): string {
 export function plainReason(code: string): string {
   if (code === 'session.required' || code === 'session.expired') return 'This page has lost its link to orch. This happens after a reload or when the session ran out.'
   if (code === 'setup.ended') return 'This setup was already finished or stopped.'
+  if (code === 'setup.dashboard_unavailable') return 'The page could not start the dashboard on this computer. Nothing was lost.'
   if (code === 'setup.token' || code === 'setup.unavailable') return 'The link to your terminal could not be used.'
   if (code.startsWith('client:') || code.startsWith('http.')) return 'The page could not reach orch on this computer.'
   return 'Setup could not go on.'
@@ -41,10 +42,14 @@ export function plainReason(code: string): string {
 export function clickOffText(_code: string): string {
   return 'One click is not available on this computer; you approve in your terminal.'
 }
-function Reason({ reason }: { reason: string }) {
+/** Finish could not open the dashboard (r11-P01): the workspace is ready, the page keeps working, Try again. */
+const openFailedCopy = 'The dashboard did not open yet. Your workspace is safe. Press “Try again” to open it.'
+/** "Try again" reaches this setup only for a few minutes: the way out after that, in plain words. */
+const openFailedLater = 'If this keeps failing, run orch setup again in your project folder. Your workspace stays as it is.'
+function Reason({ reason, plain }: { reason: string; plain?: string }) {
   return (
     <>
-      <small>{plainReason(reason)}</small>
+      <small>{plain ?? plainReason(reason)}</small>
       <details className="reason">
         <summary>Technical details</summary>
         <small>Reason: {reason}</small>
@@ -123,9 +128,10 @@ export function reviewFacts(review: Review): Fact[] {
   const facts: Fact[] = []
   const ws = review.workspace
   if (ws) {
-    facts.push({ icon: '▦', label: 'Workspace', value: `${ws.workspace_name ?? ws.name} (tickets ${ws.prefix}-0001…)` })
+    // the ticket prefix is a technical detail: it stays in the Details fold (the workspace's own lines)
+    facts.push({ icon: '▦', label: 'Workspace', value: ws.workspace_name ?? ws.name })
     facts.push({ icon: '☺', label: 'Owner', value: ws.name })
-    facts.push({ icon: '▤', label: 'Project folder', value: ws.dir.split(/[\\/]/).filter(Boolean).at(-1) ?? ws.dir })
+    facts.push({ icon: '▤', label: 'Your project', value: ws.dir.split(/[\\/]/).filter(Boolean).at(-1) ?? ws.dir })
   }
   const has = (id: string) => review.flags.some((f) => f.id === id)
   if (has('custody')) facts.push({ icon: '◈', label: 'How you approve', value: 'One click on this computer' })
@@ -162,6 +168,23 @@ export function suggestPrefix(name: string): string {
 export function defaultWorkspaceName(name: string): string {
   const n = name.trim()
   return n ? `${n}'s workspace` : 'My workspace'
+}
+/** r11-P16: the approval step's defaults in one plain line, from the profile itself (the single source). */
+export function approvalSummary(
+  profile: { agent_hours: number; agent_grant?: boolean; records?: boolean },
+  access: 'none' | number,
+  opts: { records: boolean; trust?: boolean },
+): string {
+  const out = [
+    access === 'none'
+      ? 'No agent works here until you give access.'
+      : profile.agent_grant === false
+        ? `Agents may work for ${duration(profile.agent_hours)}; none start on this computer yet.`
+        : `Agents can work on their own for ${duration(profile.agent_hours)}.`,
+  ]
+  if (opts.records) out.push(profile.records !== false ? 'Your history stays on this computer.' : 'No history is kept.')
+  if (opts.trust !== undefined) out.push(opts.trust ? 'Claude Code opens this folder without asking.' : 'Claude Code asks before it opens this folder.')
+  return out.join(' ')
 }
 const statusWord = { todo: 'Waiting', doing: 'Running', done: 'Done', failed: 'Failed', skipped: 'Skipped' }
 const statusIcon = { todo: '•', doing: '◔', done: '✓', failed: '✕', skipped: '–' }
@@ -413,6 +436,7 @@ export function Setup({ api }: { api: SetupAPI }) {
   const [ended, setEnded] = useState(false)
   const [notice, setNotice] = useState('')
   const [reason, setReason] = useState('')
+  const [openFailed, setOpenFailed] = useState(false) // Finish answered but the dashboard did not open: "Try again"
   // "No agent access" is a choice of its own (B11 finding 21); it keeps the workspace default time and no runner grant.
   const [access, setAccess] = useState<'none' | number>('none')
   const chooseAccess = (a: 'none' | number) => {
@@ -438,8 +462,10 @@ export function Setup({ api }: { api: SetupAPI }) {
     lock.current = true
     setBusy(true)
     setError('')
+    const opening = fn === finish
     try {
       await fn()
+      if (opening) setOpenFailed(false)
     } catch (e) {
       const code = e instanceof SetupError ? e.code : 'setup.unavailable'
       if (!(e instanceof SetupError) || code !== 'invalid.input') setReason(report(e))
@@ -458,6 +484,10 @@ export function Setup({ api }: { api: SetupAPI }) {
         setEnded(true)
         api.forget()
         setError(expiredCopy)
+      } else if (opening) {
+        // The workspace is ready; only the way into the dashboard failed. Never send the person to a terminal here.
+        setOpenFailed(true)
+        setError(openFailedCopy)
       } else
         setError(
           code === 'invalid.input'
@@ -684,6 +714,34 @@ export function Setup({ api }: { api: SetupAPI }) {
     api.forget()
     location.assign(elsewhere ? url.href : url.pathname + url.search + url.hash)
   }
+  // r11-P16: One click first (when this computer offers it); the protocol order of state.methods is unchanged
+  const orderedMethods = state ? [...state.methods].sort((a, b) => (b === 'click' && state.click_available ? 1 : 0) - (a === 'click' && state.click_available ? 1 : 0)) : []
+  const methodCard = (method: Profile['method']) =>
+    state && (
+      <label className="toggle" key={method}>
+      <input
+        type="radio"
+        name="method"
+        checked={profile.method === method}
+        disabled={method === 'click' && !state.click_available}
+        onChange={() => update({ method, ...(method === 'click' ? { relay: false } : {}) })}
+      />
+      <span>
+        <strong>
+          {method === 'click' ? 'One click on this computer' : 'Passphrase'}
+          {method === 'click' && state.click_available && <span className="badge">Recommended</span>}
+        </strong>
+        <small>
+          {method === 'terminal'
+            ? 'Type your passphrase each time. Safest if others use this computer.'
+            : state.click_available
+              ? 'No typing. Best on your own computer.'
+              : clickOffText(state.click_reason)}
+        </small>
+        {method === 'terminal' && profile.method === 'terminal' && <small>{terminalStepCopy}</small>}
+      </span>
+    </label>
+    )
   const terminalReviewMissing =
     !!review &&
     ((profile.method !== 'click' && (state?.mode === 'finish' || !!review.runner_grant) && !review.tty_confirm) ||
@@ -770,7 +828,10 @@ export function Setup({ api }: { api: SetupAPI }) {
           {error}
         </p>
       )}
-      {error && reason && <Reason reason={reason} />}
+      {error && openFailed && <p>{openFailedLater}</p>}
+      {error && reason && (
+        <Reason reason={reason} plain={openFailed ? plainReason('setup.dashboard_unavailable') : undefined} />
+      )}
       {state?.error && (
         <p role="alert" className="warning">
           <Raw>{state.error.message}</Raw> Check your terminal, then run <code>orch setup</code> in this folder to resume.
@@ -980,32 +1041,8 @@ export function Setup({ api }: { api: SetupAPI }) {
           )}
           {step === 3 && (
             <>
-              <p>Choose what works for you on this device.</p>
-              {state.methods.map((method) => (
-                <label className="toggle" key={method}>
-                  <input
-                    type="radio"
-                    name="method"
-                    checked={profile.method === method}
-                    disabled={method === 'click' && !state.click_available}
-                    onChange={() => update({ method, ...(method === 'click' ? { relay: false } : {}) })}
-                  />
-                  <span>
-                    <strong>
-                      {method === 'click' ? 'One click on this computer' : 'Passphrase'}
-                      {method === 'click' && state.click_available && <span className="badge">Recommended</span>}
-                    </strong>
-                    <small>
-                      {method === 'terminal'
-                        ? 'Type your passphrase each time. Safest if others use this computer.'
-                        : state.click_available
-                          ? 'No typing. Best on your own computer.'
-                          : clickOffText(state.click_reason)}
-                    </small>
-                    {method === 'terminal' && profile.method === 'terminal' && <small>{terminalStepCopy}</small>}
-                  </span>
-                </label>
-              ))}
+              <p>{state.click_available ? 'We picked what works best on your own computer.' : 'Choose what works for you on this device.'}</p>
+              {methodCard(profile.method)}
               {profile.method === 'click' && state.click_available && (
                 <details className="click-risk" data-testid="click-risk">
                   <summary>What does this mean?</summary>
@@ -1014,6 +1051,14 @@ export function Setup({ api }: { api: SetupAPI }) {
                   </p>
                 </details>
               )}
+              {/* r11-P16: the safe defaults in one line; every other choice behind one click (forced open when a choice
+                  must be seen: no One click here, or a parent Claude Code setting asks for "Trust anyway") */}
+              <p className="approval-summary" data-testid="approval-summary">
+                {approvalSummary(profile, access, { records: state.mode !== 'finish', trust: offersTrust ? (parentConfig ? profile.trust_parent === true : profile.trust_folder !== false) : undefined })}
+              </p>
+              <details className="approval-more" data-testid="approval-more" open={!state.click_available || !!parentConfig || undefined}>
+                <summary>Change these settings</summary>
+                {orderedMethods.filter((m) => m !== profile.method).map(methodCard)}
               <h2>How long can agents work on their own?</h2>
               <div className="segments">
                 <button aria-pressed={access === 'none'} onClick={() => chooseAccess('none')}>
@@ -1107,6 +1152,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                   />
                 </label>
               )}
+              </details>
               <SetupFooter cancel={cancel}>
                 <button onClick={() => setStep(2)}>Back</button>
                 <button className="primary" onClick={() => void act(approveProfile)}>
@@ -1333,7 +1379,8 @@ export function Setup({ api }: { api: SetupAPI }) {
             </p>
             )
           )}
-          {state?.os === 'darwin' && (
+          {state?.os === 'darwin' && !progress?.done && !progress?.error && (
+            // only while the steps run (the Mac asks then); never on the ready or the error screen
             <p><small>Your Mac may say “orch added items that run in the background”. That is fine; leave it on.</small></p>
           )}
           <ol className="progress">
@@ -1409,7 +1456,7 @@ export function Setup({ api }: { api: SetupAPI }) {
           )}
           {progress?.done && !progress.error && (
             <button className="primary open-workspace" disabled={busy} onClick={() => void act(finish)}>
-              Open your workspace →
+              {openFailed ? 'Try again' : 'Open your workspace →'}
             </button>
           )}
         </section>

@@ -1,4 +1,4 @@
-import { VerdictEvidence, VerdictPreview } from './EvidenceView'
+import { allChecked, VerdictEvidence, VerdictPreview } from './EvidenceView'
 import { ManualAcceptanceReview } from './ManualAcceptance'
 // A ticket's human action in hand-off mode (real host): approve, request changes, verdict, answer. The form holds only
 // what the person types or picks; once they press the verb, the host prepares the request and the dialog shows the
@@ -17,8 +17,10 @@ import { Textarea } from '@/components/ui/textarea'
 import { gateActionName } from './actions'
 import { useViewer, type HumanAction } from './shared'
 
-function titleOf(a: HumanAction): string {
+function titleOf(a: HumanAction, ticketTitle: string): string {
   switch (a.kind) {
+    case 'approve_both':
+      return `Approve requirements and plan: ${ticketTitle}`
     case 'answer':
       return `Answer ${a.question}`
     case 'approve':
@@ -33,6 +35,8 @@ function titleOf(a: HumanAction): string {
 /** The ONE toast after the signature says the outcome, not the mechanism. */
 function doneToastOf(a: HumanAction): string {
   switch (a.kind) {
+    case 'approve_both':
+      return 'Requirements and plan approved'
     case 'answer':
       return 'Answer sent'
     case 'approve':
@@ -47,7 +51,7 @@ function doneToastOf(a: HumanAction): string {
 /** The content the ticket had when the request was prepared, for the "changed since you started" warning only. */
 function liveHash(ticket: TicketDocument, a: HumanAction): string | null {
   if (a.kind === 'answer') return ticket.questions_state.find((q) => q.id === a.question)?.hash ?? null
-  const gate: GateName = a.kind === 'verdict' ? 'verify' : a.gate
+  const gate: GateName = a.kind === 'verdict' ? 'verify' : a.kind === 'approve_both' ? 'requirements' : a.gate
   return ticket.gates[gate].hash ?? null
 }
 
@@ -72,17 +76,17 @@ export function HandoffSignDialog({
   const navigate = useNavigate()
   const qc = useQueryClient()
   const [text, setText] = useState('')
-  const [outcome, setOutcome] = useState<'pass' | 'fail' | null>(null)
+  const [outcome, setOutcome] = useState<'pass' | 'fail' | null>(() => (action?.kind === 'verdict' && allChecked(ticket) ? 'pass' : null))
   const radio = useRef<HTMLInputElement>(null)
   // The opening press of an approve is used once: it is kept per action object and spent when the review starts,
   // so a remount never re-arms without a new press. Approve never depends on the ambient press flag.
   const press = useRef<{ a: HumanAction | null; left: boolean }>({ a: null, left: false })
-  if (press.current.a !== action) press.current = { a: action, left: action?.kind === 'approve' && action.pressed === true }
+  if (press.current.a !== action) press.current = { a: action, left: (action?.kind === 'approve' || action?.kind === 'approve_both') && action.pressed === true }
   // A preview replaces the verdict form in the dialog body; the choice and note stay in this component's state.
   const [preview, setPreview] = useState<{ artifact: Artifact; acId: string } | null>(null)
   if (!action) return null
 
-  const title = titleOf(action)
+  const title = titleOf(action, ticket.title)
   const note = text.trim()
   let request: HandoffAction | null = null
   let hint: string | null = null
@@ -91,6 +95,10 @@ export function HandoffSignDialog({
     case 'approve':
       request = { action: 'approve', key: ticket.key, gate: action.gate }
       break
+    case 'approve_both':
+      confirmLabel = 'Approve requirements and plan'
+      request = { action: 'approve_both', key: ticket.key, head_seq: ticket.head.seq }
+      break
     case 'request_changes':
       confirmLabel = 'Request changes'
       hint = note ? null : 'Say what should change to continue'
@@ -98,7 +106,7 @@ export function HandoffSignDialog({
       break
     case 'verdict':
       confirmLabel = outcome === 'pass' ? 'Pass' : outcome === 'fail' ? 'Send back' : 'Give verdict'
-      hint = !outcome ? 'Choose Pass or Send back' : outcome === 'fail' && !note ? 'Say what should change to continue' : null
+      hint = !outcome ? 'Pick Pass or Send back to continue' : outcome === 'fail' && !note ? 'Say what should change to continue' : null
       request = outcome ? { action: 'verdict', key: ticket.key, outcome, ...(note ? { message: text } : {}) } : null
       break
     case 'answer':
@@ -136,7 +144,7 @@ export function HandoffSignDialog({
       action={request}
       doneToast={doneToastOf(action)}
       confirmLabel={confirmLabel}
-      autoStart={action.kind === 'approve' ? press.current.left : undefined}
+      autoStart={action.kind === 'approve' || action.kind === 'approve_both' ? press.current.left : undefined}
       armOnStart
       hint={preview ? 'Go back to the verdict to sign' : hint}
       warning={warning}
@@ -146,7 +154,13 @@ export function HandoffSignDialog({
       }}
       onSettled={(phase) => {
         // The host confirmed the signature: the item leaves Today and the approvals now, not at the next read.
-        if (phase === 'done') signedNow(qc, ws, ticket.key, action.kind === 'answer' ? action.question : action.kind === 'verdict' ? 'verify' : action.gate, now)
+        if (phase !== 'done') return
+        if (action.kind === 'approve_both') {
+          signedNow(qc, ws, ticket.key, 'requirements', ticket.gates.requirements.hash ?? null)
+          signedNow(qc, ws, ticket.key, 'plan', ticket.gates.plan.hash ?? null)
+          return
+        }
+        signedNow(qc, ws, ticket.key, action.kind === 'answer' ? action.question : action.kind === 'verdict' ? 'verify' : action.gate, now)
       }}
       onClose={onClose}
       initialFocus={() => (action.kind === 'verdict' ? radio.current : null)}
@@ -169,17 +183,17 @@ export function HandoffSignDialog({
             <legend className="sr-only">Verdict</legend>
             {(
               [
-                ['pass', 'Pass: the evidence is enough'],
-                ['fail', 'Send back · something must change'],
+                ['pass', 'Pass', allChecked(ticket) ? "Recommended: the agent's check passed" : 'The evidence is enough'],
+                ['fail', 'Send back', 'Something must change'],
               ] as const
-            ).map(([r, label], i) => (
+            ).map(([r, label, reason], i) => (
               <label key={r} className="flex cursor-pointer items-center gap-2 rounded-md border border-border px-3 py-2 text-[13px] has-[:checked]:border-brand has-[:checked]:bg-brand-soft">
                 <input ref={i === 0 ? radio : undefined} type="radio" name="verdict" value={r} checked={outcome === r} onChange={() => setOutcome(r)} className="accent-[var(--brand)]" />
-                {label}
+                <span className="font-medium">{label}</span>
+                <span className="text-text-muted">{reason}</span>
               </label>
             ))}
           </fieldset>
-          <p className="text-[12px] text-text-muted">Pass accepts all {ticket.acceptance_state.length} criteria with the files and code shown.</p>
         </>
       )}
       {(action.kind === 'request_changes' || (action.kind === 'verdict' && !preview)) && (

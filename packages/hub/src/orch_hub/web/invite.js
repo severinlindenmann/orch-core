@@ -4,7 +4,7 @@
 import { sha256, unb64u, utf8 } from "./cj.js";
 import { loadChannel, signProof } from "./channel.js";
 import { h, text } from "./ui.js";
-import { totpPanel } from "./totp.js";
+import { SIGN_IN_NOTE, totpPanel } from "./totp.js";
 
 export const PROOF_LABEL = "orch/v2/invite-proof|";
 export const MIN_PASSWORD = 10;
@@ -101,24 +101,13 @@ export function inviteView(token, d) {
   function secret(done) {
     d.finished?.();
     const code = String(done.totp_secret ?? "");
-    let timer;
-    const hint = h("span", { class: "small muted", "aria-live": "polite" });
-    const copy = h("button", { type: "button", text: "Copy", onclick: async () => {
-      try {
-        await navigator.clipboard.writeText(code);
-        copy.textContent = "Copied ✓";
-        clearTimeout(timer);
-        timer = setTimeout(() => { copy.textContent = "Copy"; }, 2000);
-      } catch { hint.textContent = "Select the code and copy it by hand."; }
-    } });
     paint(
       h("h1", { text: done.kind === "join" ? "Your account is ready" : "Your password and code are changed" }),
-      banner("ok", "Add this code to your authenticator app now. It is shown only once."),
+      banner("ok", "Add your sign-in code to your phone now. " + SIGN_IN_NOTE),
       h("dl", { class: "facts" },
         h("dt", { text: "Your name for signing in" }), h("dd", { id: "invite-name", text: text(done.name ?? "") }),
         ),
       totpPanel(done.totp_uri, code, { id: "invite-secret" }),
-      h("div", { class: "row" }, copy, hint),
       done.kind === "join" ? h("p", { class: "muted", text: "You do not have access to any workspace yet. Your admin adds you to groups afterwards." }) : null,
       done.recovery ? h("p", { class: "muted", text: "Your devices were removed. Set them up again once you are signed in." }) : null,
       // A new person is already signed in by the redeem; a reset or recovery signs in with the new password and code.

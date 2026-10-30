@@ -825,14 +825,34 @@ def link_label(direction: str) -> bytes:
     return L["sig_hub_link"] if direction == "w2h" else L["sig_hub_route"]
 
 
+def link_signed_bytes(direction: str, exporter: bytes, o: Any) -> bytes:
+    """``label || exporter || cj(o)`` (protocol 10.2, R1)."""
+    if type(exporter) is not bytes or len(exporter) != 32:
+        raise Refused("malformed")
+    return link_label(direction) + exporter + signing_bytes(b"", o)
+
+
 def verify_link(
-    signed: Any, *, direction: str, hub_id_: str, workspace_id: str, mode: str, pub: bytes, now_ms: int
+    signed: Any,
+    *,
+    direction: str,
+    hub_id_: str,
+    workspace_id: str,
+    mode: str,
+    pub: bytes,
+    now_ms: int,
+    exporter: bytes,
 ) -> dict[str, Any]:
     """``pub`` is WSK for w2h (checked by the hub) and the card's HK_op for h2w (checked by the host). Requests are
     messages with ``re: null`` in the op's request direction; a reply has ``re`` = the request's ``seq`` and the other
     direction, and its body is either the op's reply body or ``{"error": code}`` (not validated in H0)."""
     o = _envelope(signed, "hub.link")
-    _signature(signed, link_label(direction), pub)
+    try:
+        sig = unb64u(signed["sig"], SIG_LEN)
+    except CanonError:
+        raise Refused("malformed") from None
+    if not verify_sig(pub, sig, link_signed_bytes(direction, exporter, o)):
+        raise Refused("bad_signature")
     _fields(o, "hub.link")
     if o["dir"] != direction:
         raise Refused("malformed")

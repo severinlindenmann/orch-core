@@ -506,7 +506,7 @@ def _shape(
 _MATERIAL_KEYS = {
     "gate": (
         {"kind", "gate", "input", "policy", "texts", "ticket", "review"},
-        {"kind", "gate", "input", "policy", "texts", "ticket", "review", "manual_acceptances"},
+        {"kind", "gate", "input", "policy", "texts", "ticket", "review", "manual_acceptances", "sequence"},
     ),
     "question": ({"kind", "ticket", "question", "review"}, {"kind", "ticket", "question", "review"}),
     "payload": (

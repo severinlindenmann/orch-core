@@ -12,6 +12,7 @@ from orch.ops import person_ops
 from tests.host import human_helpers
 from tests.host.dispatch_helpers import SESSION
 from tests.host.human_helpers import err
+from tests.hub.fake import BareLink
 from tests.hub.vec import V
 
 lab, served, human = human_helpers.lab, human_helpers.served, human_helpers.human
@@ -284,7 +285,7 @@ def test_the_signer_refuses_what_hub_join_must_not_sign():
 # --- the host ops: connect, unbind, status --------------------------------------------------------------------------
 
 
-class StubHub:
+class StubHub(BareLink):
     """A hub that takes every message and answers it, signed by the vector HK_op. It checks nothing: the contract's
     checks are in tests/hub (the fake hub); here we look at what the host SENDS."""
 

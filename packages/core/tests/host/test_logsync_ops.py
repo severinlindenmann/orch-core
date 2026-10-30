@@ -25,13 +25,13 @@ from tests.host.test_hub_ops import (  # noqa: F401 - fixtures
     stub,
 )
 from tests.hub import logview
-from tests.hub.fake import sign_with
+from tests.hub.fake import BareLink, sign_with
 from tests.hub.vec import private_key, pub
 
 lab, served, human = human_helpers.lab, human_helpers.served, human_helpers.human
 
 
-class LogHub:
+class LogHub(BareLink):
     """Answers ``log_sync`` the way the hub does (the test-side port of its rules) and records every page."""
 
     def __init__(self, wsk_pub: bytes, wk: dict[int, bytes]) -> None:

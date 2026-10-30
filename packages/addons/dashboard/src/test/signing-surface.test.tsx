@@ -210,7 +210,7 @@ const CASES: Case[] = [
     open: async (user) => {
       const dialog = await ticketAction(user, /Give verdict/)
       expect(dialog).toHaveAccessibleName('Give verdict (Verify)')
-      await user.click(within(dialog).getByRole('radio', { name: /^Pass on .*: the evidence is enough$/ }))
+      await user.click(within(dialog).getByRole('radio', { name: /^Pass on / }))
       return dialog
     },
     confirm: press('Pass'),
@@ -218,7 +218,7 @@ const CASES: Case[] = [
     arg: 1,
     skip: ['action'],
     // The verdict signs the commit (owner decision 2026-10-10): the head is in the choice and the covers, in full.
-    shown: { result: (v) => (v === 'pass' ? 'Pass on ' : 'Send back ·'), source_sha: (v) => `Commit ${v} on ` },
+    shown: { result: (v) => (v === 'pass' ? 'Pass on ' : 'Send back'), source_sha: (v) => `Commit ${v} on ` },
   },
   {
     // Owner decision 2026-10-10 (1): the opt-in code review gate signs exactly the commit the verdict signed.

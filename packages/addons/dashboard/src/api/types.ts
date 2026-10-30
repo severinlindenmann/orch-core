@@ -328,6 +328,8 @@ export interface GateStatus {
   /** Real host: what an approval of requirements or plan still lacks (core's completeness rule), e.g. ["plan"]. */
   missing?: string[]
   eligible?: string[]
+  /** Display only: the gate's input binds files or add-on fields, so the combined approval is not offered (the host refuses it anyway). */
+  single_only?: boolean
   note?: string
   /** Hash of the gated content as it is now. */
   hash?: string

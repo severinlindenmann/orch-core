@@ -55,8 +55,9 @@ W2H_OPS: dict[str, str | None] = {
 
 
 class HubTransport(Protocol):
-    def send(self, message: dict[str, Any]) -> dict[str, Any]:
-        """Deliver one signed w2h ``hub.link`` object; return the signed h2w reply. ``OSError`` if unreachable."""
+    def send_next(self, op: str, build: Callable[[int, bytes], dict[str, Any]]) -> dict[str, Any]:
+        """Number one w2h request (the link's own counter, 1 on a new connection), let ``build(seq, exporter)`` sign it
+        over the connection's TLS exporter, deliver it and return the signed h2w reply. ``OSError`` if unreachable."""
         ...
 
 
@@ -76,7 +77,6 @@ class HubLink:
             raise HubRefused("malformed")
         self._t, self.hub_id, self.workspace_id = transport, hub_id, workspace_id
         self._hk_op, self._sign, self.mode, self._now = hk_op_pub, sign, mode, now_ms
-        self._seq = 0
 
     def set_hk_op(self, hk_op_pub: bytes) -> None:
         """Verify replies from now on under another op key (the host adopted a rotated hub card)."""
@@ -91,20 +91,16 @@ class HubLink:
             raise HubRefused("wrong_mode")
         sent: dict[str, Any] = {}
 
-        def build(seq: int) -> dict[str, Any]:
-            sent["o"] = o = self._request(op, body, seq)
-            return {"o": o, "sig": b64u(self._sign(wire.SIG_LINK + wire.cj(o)))}
+        def build(seq: int, exporter: bytes) -> dict[str, Any]:
+            o = self._request(op, body, seq)
+            sent["o"], sent["cb"] = o, exporter
+            return {"o": o, "sig": b64u(self._sign(wire.link_signed_bytes(wire.SIG_LINK, exporter, o)))}
 
         try:
-            send_next = getattr(self._t, "send_next", None)
-            if send_next is not None:  # a real link: ITS counter numbers every frame (calls and acks alike)
-                reply = send_next(op, build)
-            else:  # a bare transport (fakes): this link object's own counter
-                self._seq += 1
-                reply = self._t.send(build(self._seq))
+            reply = self._t.send_next(op, build)  # the link's ONE counter numbers every frame (calls and acks alike)
         except OSError:
             raise HubRefused("hub_unreachable") from None
-        r = self._open(reply, sent["o"])
+        r = self._open(reply, sent["o"], sent["cb"])
         if "error" in r["body"]:
             code = r["body"]["error"]
             raise HubRefused(code if type(code) is str and 0 < len(code) <= 40 else "malformed")
@@ -126,9 +122,9 @@ class HubLink:
             "body": body,
         }
 
-    def _open(self, reply: Any, want: dict[str, Any]) -> dict[str, Any]:
+    def _open(self, reply: Any, want: dict[str, Any], exporter: bytes) -> dict[str, Any]:
         r = wire._envelope(reply, "hub.link")
-        wire._signature(reply, wire.SIG_ROUTE, self._hk_op)
+        wire._link_signature(reply, wire.SIG_ROUTE, exporter, self._hk_op)
         wire._fields(r, "hub.link")
         if r["dir"] != "h2w" or r["re"] != want["seq"] or r["op"] not in (want["op"], "error"):
             raise HubRefused("malformed")

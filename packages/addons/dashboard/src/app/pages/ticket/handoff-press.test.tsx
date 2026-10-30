@@ -29,3 +29,35 @@ it('approve without a press (menu item, palette) never depends on the ambient fl
   render(show({ kind: 'approve', gate: 'plan', pressed: false }))
   expect(last().autoStart).toBe(false)
 })
+
+// P10: Pass is preselected only when every requirement is checked, and a preselected verdict is never started by itself.
+type Prop = { autoStart?: boolean; action?: { action: string; outcome?: string } | null; hint?: string | null; confirmLabel?: string }
+const withAc = (states: ('proven' | 'unproven')[]) =>
+  ({ ...ticket, acceptance_state: states.map((state, i) => ({ id: `AC${i + 1}`, text: `Req ${i + 1}`, state, evidence: [{ kind: 'task', ref: 'T1' }] })), tasks_state: [], artifacts: [], branch: {} }) as unknown as TicketDocument
+const showT = (t: TicketDocument) => <QueryClientProvider client={new QueryClient()}><HandoffSignDialog ticket={t} action={{ kind: 'verdict' }} ws="w" onClose={() => {}} /></QueryClientProvider>
+it('verdict: Pass is preselected when every requirement is checked, and nothing starts on its own', () => {
+  render(showT(withAc(['proven'])))
+  const p = last() as Prop
+  expect(p.action).toMatchObject({ action: 'verdict', outcome: 'pass' })
+  expect(p.confirmLabel).toBe('Pass')
+  expect(p.autoStart).toBeUndefined() // the person still presses; the dialog arms only on that press
+})
+it('verdict: nothing is preselected when a requirement is not checked; the hint says what to do', () => {
+  render(showT(withAc(['proven', 'unproven'])))
+  const p = last() as Prop
+  expect(p.action).toBeNull()
+  expect(p.hint).toBe('Pick Pass or Send back to continue')
+})
+
+// R11 P09: the combined approval asks the signer for ONE sequence request (never two separate approvals).
+it('approve_both prepares one approve_both request bound to the head the page showed, and arms only on a press', () => {
+  const t = { ...ticket, title: 'Add a hello.txt', head: { seq: 7, hash: 'h' } } as unknown as TicketDocument
+  const r = render(<QueryClientProvider client={new QueryClient()}><HandoffSignDialog ticket={t} action={{ kind: 'approve_both', pressed: true }} ws="w" onClose={() => {}} /></QueryClientProvider>)
+  const p = last() as unknown as { action: unknown; title: string; autoStart: boolean; confirmLabel: string }
+  expect(p.action).toEqual({ action: 'approve_both', key: 'T-1', head_seq: 7 })
+  expect(p.title).toBe('Approve requirements and plan: Add a hello.txt')
+  expect(p.autoStart).toBe(true)
+  r.unmount()
+  render(<QueryClientProvider client={new QueryClient()}><HandoffSignDialog ticket={t} action={{ kind: 'approve_both' }} ws="w" onClose={() => {}} /></QueryClientProvider>)
+  expect((last() as unknown as { autoStart: boolean }).autoStart).toBe(false)
+})

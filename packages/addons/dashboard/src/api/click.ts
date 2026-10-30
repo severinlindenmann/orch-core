@@ -250,7 +250,7 @@ export const clickReady = (w: Pick<Workspace, 'click'> | undefined | null): bool
  */
 const CLICK_ACTIONS: ReadonlySet<string> = new Set<ClickAction['action']>([
   'accept_criterion', 'withdraw_acceptance', 'mark_task_done',
-  'approve', 'request_changes', 'verdict', 'answer', 'comment', 'label', 'close', 'reopen', 'move', 'new', 'new_sequence', 'edit_sequence', 'quick_start', 'details', 'section',
+  'approve', 'approve_both', 'request_changes', 'verdict', 'answer', 'comment', 'label', 'close', 'reopen', 'move', 'new', 'new_sequence', 'edit_sequence', 'quick_start', 'details', 'section',
   'settings_set', 'repo_set', 'repo_remove', 'policy_set', 'member_add', 'member_role', 'member_remove', 'device_remove', 'grant_revoke', 'runner_grant', 'agent_access', 'hub_join', 'hub_leave', 'addon_grant', 'market_grant', 'market_update', 'addon_disable', 'addon_purge', 'addon_settings', 'addon_enable', 'publish_setup', 'publish_share', 'followup_cancel', 'followup_reschedule', 'followup_undo', 'schedule_add', 'schedule_cancel',
 ])
 export const clickEligible = (a: ClickAction | null): boolean => !!a && CLICK_ACTIONS.has(a.action)
@@ -350,7 +350,7 @@ export function clickProblem(e: unknown, minLeadS?: number): ClickProblem {
     case DEV_REFUSED:
       return { title: 'Refused by a dev sandbox host', body: devRefusedSentence(e), next: 'unavailable' }
     case 'intent.done':
-      if (e.ticket?.key) return { title: 'Already done', body: `${e.ticket.title ? `“${e.ticket.title}” (${e.ticket.key})` : e.ticket.key} was already created.`, next: 'open', ticket: e.ticket, signedAt: e.signed_at }
+      if (e.ticket?.key) return { title: 'You already have this ticket', body: `${e.ticket.title ? `“${e.ticket.title}” (${e.ticket.key})` : e.ticket.key} already exists with this text. Open it, or make another one like it.`, next: 'open', ticket: e.ticket, signedAt: e.signed_at }
       return { title: 'Already done', body: alreadySigned(e), next: 'again', signedAt: e.signed_at, details: alreadyDetails(e) }
     case 'addon.already':
       // The add-on is already as asked: plain words, nothing to sign, nothing to "do again".

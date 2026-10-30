@@ -44,16 +44,30 @@ class _Signer:
     def _sig(self, msg: bytes) -> bytes:
         return S.sign(self.__key, msg)
 
+    def sign_link(self, o: Mapping[str, Any], exporter: bytes) -> dict[str, Any]:
+        """Sign one ``hub.link`` message of this key's direction, bound to the connection's TLS exporter (§10.2)."""
+        if self.LINK_DIR is None:
+            raise KeyUseError(f"{type(self).__name__} may not sign kind 'hub.link'")
+        if type(o) is not dict or o.get("kind") != "hub.link":
+            raise KeyUseError("not a link message")
+        if o.get("dir") != self.LINK_DIR:
+            raise KeyUseError(f"this key signs link messages only in direction {self.LINK_DIR}")
+        if o.get("v") != 2 or o.get("suite") != S.SUITE_ID or o.get("hv") != H.HV:
+            raise KeyUseError("header is not v 2, suite 2, hv 0")
+        try:
+            msg = H.link_signed_bytes(self.LINK_DIR, exporter, o)
+        except H.Refused as r:
+            raise KeyUseError(r.code) from None
+        return {"o": o, "sig": b64u(self._sig(msg))}
+
     def sign_object(self, o: Mapping[str, Any]) -> dict[str, Any]:
         """Sign one hub object of a kind this key may sign; returns ``{"o", "sig"}``."""
         if type(o) is not dict:
             raise KeyUseError("not an object")
         kind = o.get("kind")
-        if kind == "hub.link" and self.LINK_DIR is not None:
-            if o.get("dir") != self.LINK_DIR:
-                raise KeyUseError(f"this key signs link messages only in direction {self.LINK_DIR}")
-            label = H.link_label(self.LINK_DIR)
-        elif type(kind) is str and kind in self.KINDS:
+        if kind == "hub.link":
+            raise KeyUseError("a link message is signed with sign_link (it binds the TLS exporter)")
+        if type(kind) is str and kind in self.KINDS:
             label = L[self.KINDS[kind]]
         else:
             raise KeyUseError(f"{type(self).__name__} may not sign kind {kind!r}")

@@ -142,6 +142,7 @@ A Mac that is newer than the server may be refused; the other way round works.
 
   ```
   sudo adduser --disabled-password --gecos "" orch-backup
+  sudo chmod 700 /home/orch-backup
   sudo install -d -m 2770 -o orch-backup -g orch-backup /var/lib/orch-backup-drop
   sudo usermod -aG orch-backup orch-hub
   sudo systemctl restart user@$(id -u orch-hub).service
@@ -154,10 +155,11 @@ A Mac that is newer than the server may be refused; the other way round works.
 - The Mac pulls them over the private network, from the Mac (for example a nightly job):
 
   ```
-  rsync -a --ignore-existing orch-backup@100.x.y.z:/ ~/orch-backups/
+  rsync -a --ignore-existing --exclude '.*' orch-backup@100.x.y.z: ~/orch-backups/
   ```
 
-  The path is `/` because the server limits `orch-backup` to that one folder. In `/home/orch-backup/.ssh/authorized_keys`
+  The path after the colon is empty because the server limits `orch-backup` to that one folder; `--exclude '.*'` keeps an
+  unfinished (hidden `.part`) file from ever being pulled. In `/home/orch-backup/.ssh/authorized_keys`
   put your Mac's public key restricted to a single read-only command and to the private network, all on one line:
 
   ```

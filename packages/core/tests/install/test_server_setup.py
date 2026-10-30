@@ -767,7 +767,8 @@ def test_runbook_backup_pull_uses_a_restricted_key_and_no_shell():
     assert " backup@" not in doc and "orch-backup-out" not in doc
     drop = "/var/lib/orch-backup-drop"
     assert doc.count(drop) >= 3
-    assert f'rrsync -ro {drop}"' in doc and "orch-backup@100.x.y.z:/ " in doc
+    assert f'rrsync -ro {drop}"' in doc and "--exclude '.*' orch-backup@100.x.y.z: " in doc
+    assert "sudo chmod 700 /home/orch-backup" in doc
     assert f"install -d -m 2770 -o orch-backup -g orch-backup {drop}" in doc
     assert "usermod -aG orch-backup orch-hub" in doc and f"--backup-drop {drop}" in doc
     assert "command -v rrsync" in doc
@@ -815,12 +816,11 @@ def test_backup_out_folder_is_made_0700_on_every_run(tmp_path):
     assert oct(dest.stat().st_mode & 0o777) == "0o700"
 
 
-def test_allow_non_cgnat_warns_for_a_lan_v4_and_refuses_a_wide_v6(tmp_path):
+def test_allow_non_cgnat_warns_for_a_lan_v4_and_every_ipv6_is_refused(tmp_path):
     lan = [
         server.Addr("10.1.1.5", 24, "eth1"),
         server.Addr(VPN, 16, "wt0"),
         server.Addr(VPS, 24, "eth0"),
-        server.Addr("127.0.0.1", 8, "lo"),
         server.Addr("fd00::5", 8, "eth2"),
         server.Addr("fd12:3456:789a::5", 64, "eth3"),
     ]
@@ -831,18 +831,26 @@ def test_allow_non_cgnat_warns_for_a_lan_v4_and_refuses_a_wide_v6(tmp_path):
     assert "hub link will listen on that address" in text
     argv, _ = ctx.runner.started["hub"]
     assert argv[argv.index("--link-listen") + 1] == "10.1.1.5:8105"
-    ctx2, out2, *_ = stub_ctx(tmp_path / "x") if (tmp_path / "x").mkdir() is None else None
-    for bad in ("fd00::5", "fd00::5/8", "fd00::5/47"):  # a ULA /8 is far wider than /48
-        with pytest.raises(InstallError, match="/48|48 to 128"):
-            server.check_vpn_ip(bad, lan, allow_non_cgnat=True)
-    with pytest.raises(InstallError, match="/48 or narrower"):
-        server.check_vpn_ip("fd00::5", lan, allow_non_cgnat=True)  # interface says /8
-    assert server.check_vpn_ip("fd12:3456:789a::5", lan, allow_non_cgnat=True)[0].prefix == 64
-    assert str(server.vpn_network(lan[5])) == "fd12:3456:789a::/64"
-    assert "WARNING" not in out2.getvalue()
-    # without the flag a LAN address is still refused
-    with pytest.raises(InstallError, match="--allow-non-cgnat"):
+    for bad in ("fd00::5", "fd00::5/8", "fd12:3456:789a::5/64"):
+        for flag in (False, True):
+            with pytest.raises(InstallError, match="uses IPv4 addresses"):
+                server.check_vpn_ip(bad, lan, allow_non_cgnat=flag)
+    with pytest.raises(InstallError, match="--allow-non-cgnat"):  # without the flag a LAN address is still refused
         server.check_vpn_ip("10.1.1.5", lan)
+
+
+def test_health_warns_about_files_in_the_drop_this_hub_did_not_copy(tmp_path):
+    drop = tmp_path / "drop"
+    drop.mkdir()
+    rec = tmp_path / "rec.json"
+    rec.write_text(json.dumps({"done": ["hub-abcd1234-20260101T030000Z.orchbak"]}))
+    (drop / "hub-abcd1234-20260101T030000Z.orchbak").write_bytes(b"x")
+    cfg = {"parts": [], "backup_drop": str(drop), "backup_record": str(rec)}
+    kw = dict(ntp=lambda: True, mem_mb=lambda: 900.0, disk_free_gb=lambda p: 50.0)
+    assert ops.run_health(cfg, **kw)["ok"]
+    (drop / "hub-abcd1234-99999999T999999Z.orchbak").write_bytes(b"planted")
+    rep = ops.run_health(cfg, **kw)
+    assert not rep["ok"] and "did not copy" in rep["problems"][0] and "99999999" in rep["problems"][0]
 
 
 def _shared(tmp_path):

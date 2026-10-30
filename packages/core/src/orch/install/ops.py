@@ -153,6 +153,17 @@ def run_health(
             problems.append(f"cannot read the certificate of {name}")
         elif days < cfg.get("cert_warn_days", CERT_WARN_DAYS):
             problems.append(f"the certificate of {name} expires in {max(days, 0):.0f} days")
+    drop = cfg.get("backup_drop")
+    if drop:  # a file in the shared drop that this hub did not copy: someone else in the group put it there
+        mine = set(_load_record(Path(cfg["backup_record"])))
+        try:
+            strange = sorted(n for n in os.listdir(drop) if n not in mine)
+        except OSError:
+            strange = []
+        if strange:
+            problems.append(
+                f"the backup drop folder holds {len(strange)} file(s) this hub did not copy, such as {strange[0]}"
+            )
     mem = mem_mb()
     if mem is not None and mem < cfg.get("min_mem_mb", MIN_MEM_MB):
         problems.append(f"only {mem:.0f} MB of memory is available")

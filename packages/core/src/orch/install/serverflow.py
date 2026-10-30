@@ -68,6 +68,8 @@ def _ops(
         "status_file": str(ops_dir / "health-status.json"),
         "min_mem_mb": ops.MIN_MEM_MB,
     }
+    if role == "hub" and backup_drop:
+        cfg |= {"backup_drop": backup_drop, "backup_record": str(ops_dir / "backup-copied.json")}
     cfg_file = ops_dir / "health.json"
     cfg_file.write_text(json.dumps(cfg, indent=2, sort_keys=True) + "\n")
     cfg_file.chmod(0o600)

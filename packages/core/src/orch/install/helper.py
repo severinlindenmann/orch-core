@@ -101,15 +101,18 @@ def sync_helper(ctx: Ctx) -> None:
     lay = ctx.layout
     st = load(lay)
     parts = st.get("parts") or {}
-    cfg = helper_config(st)
+    cfg = helper_config(st) if ctx.runner.kind == "systemd" else None  # the helper's unit needs the same runner
     if cfg is None:
-        if st.get("helper"):
+        if st.get("helper") and ctx.runner.kind == "systemd":
             remove_helper(ctx, st)
             save(lay, st)
         if "hub" in parts:
             ctx.say("  service buttons: off (the Services page can only start and stop parts that systemd runs here)")
         return
     data = lay.data("hub")
+    if not st.get("helper") and os.path.lexists(data / CONFIG_FILE):
+        ctx.say("  service helper set up by hand, left alone")  # an owner's helper.json and unit are theirs
+        return
     try:
         changed = _write_config(data / CONFIG_FILE, _body(cfg))
     except OSError as e:

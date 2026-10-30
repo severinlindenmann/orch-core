@@ -131,6 +131,29 @@ def test_a_helper_set_up_by_hand_is_left_alone_on_remove(home):
     assert helper_json(ctx).exists() and "hub-helper" not in ctx.runner.stopped
 
 
+def test_install_leaves_a_hand_written_helper_json_alone_and_starts_no_second_helper(home):
+    ctx, out = ctx_for(home)
+    data = ctx.layout.data("hub")
+    data.mkdir(parents=True)
+    mine = data / "helper.json"
+    mine.write_text('{"by": "owner"}')
+    mine.chmod(0o600)
+    cli.full_server(ctx, ["hub"], address="127.0.0.1")
+    assert mine.read_text() == '{"by": "owner"}' and "hub-helper" not in ctx.runner.started
+    assert "helper" not in load(ctx.layout) and "set up by hand, left alone" in out.getvalue()
+
+
+def test_no_helper_unless_the_runner_is_systemd_even_if_a_part_record_says_so(home):
+    ctx, out = ctx_for(home, FakeRunner())
+    cli.full_server(ctx, ["hub"], address="127.0.0.1")
+    st = load(ctx.layout)
+    st["parts"]["hub"]["runner"] = "systemd"
+    st["parts"]["hub"]["service"] = "orch-ab12cd-hub.service"
+    save(ctx.layout, st)
+    H.sync_helper(ctx)
+    assert "hub-helper" not in ctx.runner.started and not helper_json(ctx).exists()
+
+
 def test_symlink_at_helper_json_is_refused_and_not_followed(home, tmp_path):
     ctx, out = ctx_for(home)
     cli.full_server(ctx, ["hub"], address="127.0.0.1")

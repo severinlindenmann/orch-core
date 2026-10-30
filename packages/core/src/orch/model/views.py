@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any
 
+from orch.addons.manifest import EVENTS_KEY
 from orch.canon import gate_hash
 
 from . import (
@@ -447,6 +448,7 @@ def workspace_view(core: Core, now: int) -> WorkspaceView:
                         "capabilities": a.capabilities,
                         "purged": a.purged,
                         "runtime": a.runtime,
+                        EVENTS_KEY: a.events,
                     }
                 )
                 for n, a in ws.addons.items()

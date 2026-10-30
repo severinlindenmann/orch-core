@@ -229,7 +229,7 @@ def test_addon_and_unmatched_triggers_are_refused(env):
     w, uid, a = env
     on = {"source": "orch", "kind": "question", "status": "answered"}
     _, result = _event_set(w, uid, a, on, "addon")
-    assert result.code == Code.FOLLOWUP_DENIED and "addon" in result.detail
+    assert result.code == Code.FOLLOWUP_DENIED and "does not fit" in result.detail
     for bad in (None, {"source": "webhook", "kind": "hook", "status": "rang", "hook": "0" * 64}):
         _, result = _event_set(w, uid, a, bad, "orch")
         assert result.code == Code.FOLLOWUP_DENIED

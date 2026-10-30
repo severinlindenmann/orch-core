@@ -188,12 +188,13 @@ def _helper(args: argparse.Namespace) -> int:
     return 0
 
 
-#: #1463: groups of hub commands that write; refused (``hub_closing``) while a removal is running or stalled
-_CLOSING_REFUSED = frozenset({"users", "groups", "grants", "channels", "access", "spaces", "backup-key", "restore", "keys"})
+#: #1463: while a removal runs or stalls only these command groups work (an ALLOW list: a command added later is refused by
+#: default). ``serve`` must run (it resumes the removal); the others only read.
+_CLOSING_ALLOWED = frozenset({"serve", "helper", "doctor", "inspect", "releases"})
 
 
 def _closing_refused(args: argparse.Namespace) -> bool:
-    if args.group not in _CLOSING_REFUSED:
+    if args.group in _CLOSING_ALLOWED:
         return False
     if args.group == "keys" and args.cmd == "card" and args.relay_url is None and args.tls_spki_sha256 is None:
         return False  # printing the card writes nothing

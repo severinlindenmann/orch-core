@@ -20,12 +20,15 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlencode
 
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from joserfc import jwt
 from joserfc.errors import JoseError
 from joserfc.jwk import KeySet
 
 SKEW_S = 120  # clock skew accepted on exp / iat / nbf
 TX_TTL_S = 600
+USED_MAX = 50_000
+_AAD = b"orch-hub oidc tx v1"
 JWKS_REFETCH_MIN_S = 60  # an unknown kid causes at most one refetch per this many seconds
 ALGS = ["RS256", "ES256"]  # never none, never HS*: the key set holds public keys only, the list is the second fence
 FRESH_S = 300  # a "fresh" login means auth_time within this many seconds
@@ -105,10 +108,12 @@ def _b64(b: bytes) -> str:
 
 
 class Oidc:
-    def __init__(self, cfg: OidcConfig, http: Http, now: Callable[[], float] = time.time) -> None:
-        self.cfg, self.http, self._now = cfg, http, now
+    def __init__(self, cfg: OidcConfig, http: Http, box_key: bytes, now: Callable[[], float] = time.time) -> None:
+        if type(box_key) is not bytes or len(box_key) != 32:
+            raise OidcError("bad_config")
+        self.cfg, self.http, self._box, self._now = cfg, http, box_key, now
         self._lock = threading.Lock()
-        self._tx: dict[str, dict[str, Any]] = {}  # tx cookie -> {state, nonce, verifier, fresh, exp}; single use
+        self._used: dict[str, float] = {}  # sha256(tx cookie) -> expiry: replay guard, dropped once expired
         self._meta: dict[str, Any] | None = None
         self._keys: KeySet | None = None
         self._keys_at = -1e9
@@ -150,22 +155,29 @@ class Oidc:
             return ks
 
     # --- start / finish ---------------------------------------------------------------------------------------------
+    def _seal(self, tx: dict[str, Any]) -> str:
+        n = secrets.token_bytes(12)
+        ct = AESGCM(self._box).encrypt(n, json.dumps(tx).encode(), _AAD)
+        return _b64(n + ct)
+
+    def _open(self, cookie: object) -> dict[str, Any] | None:
+        try:
+            raw = base64.urlsafe_b64decode(str(cookie) + "=" * (-len(str(cookie)) % 4))
+            tx = json.loads(AESGCM(self._box).decrypt(raw[:12], raw[12:], _AAD))
+        except Exception:  # noqa: BLE001 - tampered, foreign, truncated: all the same refusal
+            return None
+        ok = isinstance(tx, dict) and all(type(tx.get(k)) is str for k in ("state", "nonce", "verifier"))
+        return tx if ok and type(tx.get("exp")) in (int, float) and type(tx.get("fresh")) is bool else None
+
     def start(self, *, fresh: bool = False) -> tuple[str, str]:
-        """``(authorization url, tx cookie value)``. ``fresh`` asks the IdP to re-authenticate the person."""
+        """``(authorization url, tx cookie value)``. ``fresh`` asks the IdP to re-authenticate the person. No server state:
+        state, nonce and the PKCE verifier live in the sealed cookie (AES-GCM under the hub's key), so unauthenticated
+        starts cost nothing to keep and can never block anyone."""
         meta = self._discover()
-        now = self._now()
-        cookie, state, nonce, verifier = (secrets.token_urlsafe(32) for _ in range(4))
-        with self._lock:
-            self._tx = {k: v for k, v in self._tx.items() if v["exp"] > now}
-            if len(self._tx) >= 1000:
-                raise OidcError("busy")
-            self._tx[cookie] = {
-                "state": state,
-                "nonce": nonce,
-                "verifier": verifier,
-                "fresh": fresh,
-                "exp": now + TX_TTL_S,
-            }
+        state, nonce, verifier = (secrets.token_urlsafe(32) for _ in range(3))
+        cookie = self._seal(
+            {"state": state, "nonce": nonce, "verifier": verifier, "fresh": fresh, "exp": self._now() + TX_TTL_S}
+        )
         q = {
             "response_type": "code",
             "client_id": self.cfg.client_id,
@@ -182,14 +194,30 @@ class Oidc:
             q["hd"] = self.cfg.domain
         return meta["authorization_endpoint"] + "?" + urlencode(q), cookie
 
+    def _burn(self, cookie: str, exp: float) -> bool:
+        """Mark this login as used. True = first use. Entries drop when they expire; a full set evicts the oldest (the
+        IdP's one-time code is the second fence against a replay)."""
+        h = hashlib.sha256(cookie.encode()).hexdigest()
+        now = self._now()
+        with self._lock:
+            self._used = {k: v for k, v in self._used.items() if v > now}
+            if h in self._used:
+                return False
+            while len(self._used) >= USED_MAX:
+                self._used.pop(next(iter(self._used)))
+            self._used[h] = exp
+            return True
+
     def finish(self, cookie: str, state: str, code: str, client_secret: str) -> Identity:
-        """Check the callback, swap the code, verify the id_token. Raises :class:`OidcError`; never returns a half result."""
-        with self._lock:  # single use: the row is gone whatever happens next
-            tx = self._tx.pop(cookie, None) if isinstance(cookie, str) else None
+        """Check the callback, swap the code, verify the id_token. Raises :class:`OidcError`; never returns a half result.
+        The caller clears the cookie whatever happens."""
+        tx = self._open(cookie)
         now = self._now()
         if tx is None or tx["exp"] <= now:
             raise OidcError("bad_state")
         if not isinstance(state, str) or not secrets.compare_digest(state.encode(), tx["state"].encode()):
+            raise OidcError("bad_state")  # URL and cookie must be the same login (a forced callback burns nothing)
+        if not self._burn(cookie, tx["exp"]):
             raise OidcError("bad_state")
         if not isinstance(code, str) or not (0 < len(code) <= 2048):
             raise OidcError("bad_code")

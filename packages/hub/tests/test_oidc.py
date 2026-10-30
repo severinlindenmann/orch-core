@@ -9,12 +9,14 @@ from oidc_fake_idp import CLIENT, NOW, FakeIdp, entra_cfg, google_cfg, verifier_
 
 from orch_hub.oidc import Oidc, OidcConfig, OidcError, mfa_ok
 
+KEY = b"k" * 32
+
 
 def make(cfg=None, clock=None):
     cfg = cfg or entra_cfg()
     idp = FakeIdp(cfg)
     t = clock or [NOW]
-    return Oidc(cfg, idp, lambda: t[0]), idp, t
+    return Oidc(cfg, idp, KEY, lambda: t[0]), idp, t
 
 
 def login(o, idp, **kw):
@@ -158,19 +160,58 @@ def test_unknown_kid_one_rate_limited_refetch_and_rotation():
     assert idp.jwks_calls == 2
 
 
-def test_state_and_tx_single_use():
+def test_state_mismatch_refused_and_burns_nothing():
     o, idp, _ = make()
     url, cookie = o.start()
     q = verifier_ok(idp, url)
     idp.nonce = q["nonce"]
     with pytest.raises(OidcError):
         o.finish(cookie, "wrong-state", "c", "S")
-    with pytest.raises(OidcError) as e:  # the tx row is burned by the failed try
+    o.finish(cookie, q["state"], "c", "S")  # the real callback still works
+
+
+def test_replay_refused():
+    o, idp, _ = make()
+    url, cookie = o.start()
+    q = verifier_ok(idp, url)
+    idp.nonce = q["nonce"]
+    o.finish(cookie, q["state"], "c", "S")
+    with pytest.raises(OidcError) as e:
         o.finish(cookie, q["state"], "c", "S")
     assert e.value.code == "bad_state"
-    o.start()
+
+
+def test_tampered_or_foreign_cookie_refused():
+    o, idp, _ = make()
+    url, cookie = o.start()
+    q = verifier_ok(idp, url)
+    idp.nonce = q["nonce"]
+    flipped = cookie[:-2] + ("AA" if cookie[-2:] != "AA" else "BB")
+    for bad in (flipped, "", "junk", cookie[:10]):
+        with pytest.raises(OidcError):
+            o.finish(bad, q["state"], "c", "S")
+    other = Oidc(entra_cfg(), idp, b"z" * 32, lambda: NOW)  # a cookie sealed under another hub key
     with pytest.raises(OidcError):
-        o.finish("never-issued", q["state"], "c", "S")
+        other.finish(cookie, q["state"], "c", "S")
+
+
+def test_thousands_of_starts_never_block_a_login():
+    o, idp, _ = make()
+    for _ in range(1500):
+        o.start()
+    ident, _, _ = login(o, idp)
+    assert ident.subject == "oid-1"
+    assert not hasattr(o, "_tx")  # no per-start server state
+
+
+def test_used_set_drops_expired_entries():
+    o, idp, t = make()
+    login(o, idp)
+    assert len(o._used) == 1
+    t[0] += 700
+    idp.claims = {"exp": NOW + 2000, "iat": NOW + 650}
+    login(o, idp)
+    assert len(o._used) == 1
 
 
 def test_tx_expires():

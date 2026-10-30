@@ -116,6 +116,7 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/explorer/compare",
         "/api/w/{ws}/explorer/ticket/{key}",
         "/api/w/{ws}/shares",
+        "/api/w/{ws}/shares/upload",
         "/api/w/{ws}/shares/prepare",
         "/api/w/{ws}/shares/send",
         "/api/w/{ws}/shares/revoke",
@@ -164,6 +165,7 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/workspace/cosmetic",
         "/api/w/{ws}/add-ons/{name}/settings",
         "/api/w/{ws}/hub/link",  # run-9 feedback 6: read a connect link
+        "/api/w/{ws}/hub/profile",  # HUB-WS-09: the owner's workspace profile (GET and PUT)
         "/api/w/{ws}/runner",
         "/api/w/{ws}/runner/deposits/{deposit_id}",
         "/api/w/{ws}/runner/forget",

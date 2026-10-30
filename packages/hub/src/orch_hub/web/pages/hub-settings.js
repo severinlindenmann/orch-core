@@ -65,13 +65,13 @@ export function addressBody(data, picks) {
 }
 
 function generalCard(data, actions) {
-  const name = h("input", { type: "text", id: "hub-name", maxlength: "60", autocomplete: "off" });
-  const company = h("input", { type: "text", id: "hub-company", maxlength: "60", autocomplete: "off" });
+  const name = h("input", { type: "text", id: "hub-name", maxlength: "60", autocomplete: "off", placeholder: "for example Acme headquarters" });
+  const company = h("input", { type: "text", id: "hub-company", maxlength: "60", autocomplete: "off", placeholder: "Your company name, for example Acme Ltd" });
   name.value = data.name ?? ""; company.value = data.company ?? "";
   const save = h("button", { type: "button", class: "primary", text: "Save", onclick: () => actions.saveGeneral?.({ name: name.value ?? "", company: company.value ?? "" }) });
   return h("div", { class: "card", "data-card": "general" }, h("h2", { text: "General" }),
     h("div", { class: "field" }, h("label", { for: "hub-name", text: "Hub name" }), name),
-    h("div", { class: "field" }, h("label", { for: "hub-company", text: "Company" }), company),
+    h("div", { class: "field" }, h("label", { for: "hub-company" }, "Company ", h("span", { class: "optional", text: "(optional)" })), company),
     h("p", { class: "small muted", text: "People see the name in the switcher. Connected workspaces show it too, in the hub's own words." }),
     save);
 }

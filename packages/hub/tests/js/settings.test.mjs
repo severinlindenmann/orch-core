@@ -167,3 +167,16 @@ test("r14 P11: a server-only address says 'this computer only', never 'phones us
     assert.ok(out.includes("Phones can't reach this hub yet. To add an address they can use, ask the person who installed it."));
   }
 });
+
+test("r14 P12: Company and Hub name boxes have an example; Company says optional; an empty company still saves as empty", () => {
+  const saved = [];
+  const view = hubSettingsView({ ...DEMO, company: "" }, { saveGeneral: (b) => saved.push(b) });
+  const nodes = view.all();
+  const company = nodes.find((n) => n.attrs.id === "hub-company");
+  assert.equal(company.attrs.placeholder, "Your company name, for example Acme Ltd");
+  assert.equal(nodes.find((n) => n.attrs.id === "hub-name").attrs.placeholder, "for example Acme headquarters");
+  const label = nodes.find((n) => n.tag === "label" && n.attrs.for === "hub-company");
+  assert.match(label.textContent, /Company\s*\(optional\)/);
+  nodes.find((n) => n.tag === "button" && n.textContent === "Save").listeners.click();
+  assert.equal(saved[0].company, "");
+});

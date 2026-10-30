@@ -300,8 +300,9 @@ def test_a_public_name_goes_through_the_proxy_and_the_current_class_is_the_excep
     assert hubaddr.handshake_ok("wss://hub.example.com", "A" * 43, net=PROXY) is True
     assert seen == ["hub.example.com"]
     # the address in use is an internal name: another internal address is the same class
-    assert hubaddr.handshake_ok("nas.lan:7443", "A" * 43, net=PROXY, allow_internal=hubaddr.is_internal("hub.lan:1"))
-    assert seen[-1] == "nas.lan"
+    monkeypatch.setattr(hubaddr, "_ips", lambda host: [host])  # a literal needs no lookup
+    assert hubaddr.handshake_ok("10.1.2.3:7443", "A" * 43, net=PROXY, allow_internal=hubaddr.is_internal("10.9.9.9:1"))
+    assert seen[-1] == "10.1.2.3"
     assert hubaddr.is_internal("10.0.0.5:7443") and not hubaddr.is_internal("hub.example.com:7443")
 
 
@@ -369,3 +370,45 @@ def test_no_dial_site_falls_back_to_a_missing_net() -> None:
                     if k.arg == "net" and isinstance(k.value, ast.Constant) and k.value.value is None:
                         bad.append(f"{rel}:{n.lineno} net=None")
     assert not bad, bad
+
+
+# -- Opus R6 review M2: classes, only LAN unlocks ---------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "addr",
+    [
+        "100.64.0.7:7443",
+        "ws://[fec0::1]",
+        "ws://192.0.0.8:80",
+        "ws://[::ffff:10.0.0.1]",
+        "ws://[::ffff:169.254.169.254]",
+    ],
+)
+def test_non_global_literals_are_not_handed_to_a_proxy(monkeypatch, addr) -> None:
+    seen: list[str] = []
+    monkeypatch.setattr(hubaddr, "PROBE", None)
+    monkeypatch.setattr(tls, "dial_link", lambda a, *_x, **_k: seen.append(a.host))
+    assert hubaddr.handshake_ok(addr, "A" * 43, net=PROXY) is False
+    assert seen == []
+
+
+@pytest.mark.parametrize(
+    "addr",
+    ["ws://metadata.google.internal", "ws://foo.localhost", "wss://kube.localdomain", "169.254.169.254:80",
+     "ws://[::1]", "ws://[fe80::1]", "ws://[fd00:ec2::254]"],
+)  # fmt: skip
+def test_a_lan_current_address_unlocks_only_the_lan_class(monkeypatch, addr) -> None:
+    seen: list[str] = []
+    monkeypatch.setattr(hubaddr, "PROBE", None)
+    monkeypatch.setattr(tls, "dial_link", lambda a, *_x, **_k: seen.append(a.host))
+    allow = hubaddr.is_internal("192.168.1.5:7443")
+    assert allow is True
+    assert hubaddr.handshake_ok(addr, "A" * 43, net=PROXY, allow_internal=allow) is False
+    assert seen == []
+
+
+def test_a_loopback_or_sensitive_current_address_unlocks_nothing() -> None:
+    assert not hubaddr.is_internal("127.0.0.1:7443") and not hubaddr.is_internal("hub.internal:7443")
+    assert not hubaddr.is_internal("169.254.1.1:80") and not hubaddr.is_internal("hub.example.com:7443")
+    assert hubaddr.is_internal("100.64.0.7:7443") and not hubaddr.is_internal("kube.localdomain:7443")

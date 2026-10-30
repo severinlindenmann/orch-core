@@ -127,19 +127,54 @@ def is_loopback(addr: str | None) -> bool:
         return False
 
 
-#: names that only mean something inside a network: never handed to a proxy (it would resolve them on the inside)
-_INTERNAL_SUFFIXES = (".internal", ".local", ".lan", ".localhost", ".localdomain", ".home.arpa")
+#: Address classes for a dial through a proxy (the proxy resolves names on its own side, so the text decides):
+#: ``lan`` (private/shared ranges, single-label, .local/.lan/.localdomain/.home.arpa names),
+#: ``loopback``
+#: (loopback, localhost, *.localhost), ``sensitive`` (link-local, metadata: 169.254/16, fe80::/10, fd00:ec2::254,
+#: *.internal, metadata.*), ``public`` (anything else). Only ``public`` goes through a proxy; ``lan`` IP literals
+#: also when the address in use is a ``lan`` IP literal. ``loopback`` and ``sensitive`` never do.
+_LAN_SUFFIXES = (".local", ".lan", ".localdomain", ".home.arpa")
 
 
-def internal_name(host: str) -> bool:
-    """A name that is not a public one: ``localhost``, a single label, or an internal-only suffix."""
+def _name_class(host: str) -> str:
     h = host.lower().rstrip(".")
-    return "." not in h or h.endswith(_INTERNAL_SUFFIXES)
+    if h == "localhost" or h.endswith(".localhost"):
+        return "loopback"
+    if h.endswith(".internal") or h.split(".")[0] == "metadata":
+        return "sensitive"
+    if "." not in h or h.endswith(_LAN_SUFFIXES):
+        return "lan"
+    return "public"
+
+
+def _ip_class(a: ipaddress.IPv4Address | ipaddress.IPv6Address) -> str:
+    forms = _forms(a)
+    if any(f.is_link_local or f in _METADATA for f in forms):
+        return "sensitive"
+    if any(f.is_loopback or f.is_unspecified for f in forms):
+        return "loopback"
+    return "public" if all(f.is_global and not getattr(f, "is_site_local", False) for f in forms) else "lan"
+
+
+def address_class(host: str) -> str:
+    """``public`` | ``lan`` | ``loopback`` | ``sensitive`` by the text of ``host`` (an IP literal or a name)."""
+    try:
+        return _ip_class(ipaddress.ip_address(host))
+    except ValueError:
+        return _name_class(host)
+
+
+def _is_literal(host: str) -> bool:
+    try:
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        return False
 
 
 def is_internal(addr: str | None) -> bool:
-    """Whether the stored address is of the internal class by its own text: loopback, a private/link-local IP literal,
-    or an internal name. The current address being internal lets other internal addresses be tried through a proxy."""
+    """Whether the stored address is in the ``lan`` class by its own text (only that class lets other ``lan`` addresses
+    be tried through a proxy)."""
     from orch.hubclient.errors import HubRefused
     from orch.hubclient.tlsadapter import parse_addr
 
@@ -147,12 +182,9 @@ def is_internal(addr: str | None) -> bool:
         return False
     try:
         host = parse_addr(addr).host
+        return address_class(host) == "lan" and _is_literal(host)
     except HubRefused:
         return False
-    try:
-        return any(f.is_private or f.is_loopback or f.is_link_local for f in _forms(ipaddress.ip_address(host)))
-    except ValueError:
-        return internal_name(host)
 
 
 def checked_ip(host: str, *, allow_loopback: bool, proxied: bool = False, allow_internal: bool = False) -> str:
@@ -161,17 +193,16 @@ def checked_ip(host: str, *, allow_loopback: bool, proxied: bool = False, allow_
     caller connects to that exact IP; the name is for display only. Raises ``OSError`` when refused.
 
     ``proxied``: the dial goes through the host's proxy, which resolves a name on its own side, so a name is not
-    resolved here and is judged by its text instead: ``localhost``, single-label and internal-suffix names are refused,
-    and so are IP literals in private, loopback, link-local and metadata ranges, unless ``allow_internal`` (the
-    address in use is of that class too). A proxy is never made to probe the inside of a network for a hub."""
+    resolved here and is judged by its text instead (:func:`address_class`): only public ones pass; ``lan`` ones pass
+    when ``allow_internal`` (the address in use is ``lan`` too); loopback and sensitive ones never."""
     try:
         lit = ipaddress.ip_address(host)
     except ValueError:
         lit = None
-    if proxied and not allow_internal:
-        if lit is None and internal_name(host):
-            raise OSError("address refused by policy")
-        if lit is not None and any(f.is_private or f.is_loopback for f in _forms(lit)):
+    if proxied:
+        cls = address_class(host)
+        # a LAN current address (an IP literal) unlocks LAN IP literals only, never a name
+        if cls != "public" and not (cls == "lan" and allow_internal and lit is not None):
             raise OSError("address refused by policy")
     if proxied and lit is None:
         return host  # the proxy resolves it; nothing to check locally beyond the text

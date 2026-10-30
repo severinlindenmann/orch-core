@@ -1,4 +1,4 @@
-"""The hub's logic for selective-mode shared items (protocol.md §10.2, spec §8a).
+"""The hub's logic for shared items of a bound workspace (selective or full) (protocol.md §10.2, spec §8a).
 
 * ``put`` / ``revoke`` serve the link ops. They run under the registry lock, so the mode check and the write cannot be
   separated from an unbind; a full-mode (or unbound) workspace gets ``wrong_mode`` / ``not_bound``.
@@ -7,7 +7,7 @@
   bytes is an idempotent ``{}``, an equal or lower one (or a revoked one) is ``stale_version``. ``share_revoke`` is
   idempotent and keeps a tombstone. Each accepted put, revoke or purge is a ``share`` event on the hub audit chain, written
   BEFORE the change commits.
-* ``on_unbind`` / ``sync`` delete a workspace's items when its binding ends or leaves selective mode.
+* ``on_unbind`` / ``sync`` delete a workspace's items when its binding ends.
 * ``list_shared`` is the read API for the web view and the phone. Hub groups and the hub-admin group get no role in a
   selective workspace (spec §8a): the hub user the admin aliased as the workspace's owner sees every item; anyone else
   sees only the TICKET items whose owner-signed ``audience`` names them (by id) or a group they belong to now (P02,
@@ -55,7 +55,13 @@ class ShareService:
         )  # workspaces whose purge failed (audit down): retried at the next sync/reconcile
 
     def _selective(self, ws: str) -> None:
-        """The caller holds the registry lock."""
+        """Bound and selective (custodial build only). The caller holds the registry lock."""
+        self._bound(ws)
+        if self._reg.mode(ws) != "selective":
+            raise Refused("wrong_mode")
+
+    def _bound(self, ws: str) -> None:
+        """Bound, in selective or full mode. The caller holds the registry lock."""
         if self._reg.pin(ws) is None:
             raise Refused("unknown_workspace")
         if self._is_pending(ws):
@@ -65,7 +71,7 @@ class ShareService:
         st = self._reg.binding_state(ws)
         if st is None or st["status"] != "bound":
             raise Refused("not_bound")
-        if self._reg.mode(ws) != "selective":
+        if self._reg.mode(ws) not in ("selective", "full"):
             raise Refused("wrong_mode")
 
     def _is_pending(self, ws: str) -> bool:
@@ -103,7 +109,7 @@ class ShareService:
 
     def put(self, ws: str, body: dict[str, Any]) -> dict[str, Any]:
         with self._reg.lock, self.store.lock:
-            self._selective(ws)
+            self._bound(ws)
             item_id = body["item_id"]
             held = self.store.held(ws, item_id)
             live, _ = self.store.usage(ws)
@@ -117,6 +123,8 @@ class ShareService:
                 held=held,
                 live_items=live,
             )
+            if self._reg.mode(ws) == "full" and r["item"]["item_kind"] != "ticket":
+                raise Refused("wrong_mode")  # full mode: ticket items only (the hub's views already cover the rest)
             if not r["new"]:
                 return {}  # the same version with the same bytes: a resend
             version = r["item"]["item_version"]
@@ -135,7 +143,7 @@ class ShareService:
     def revoke(self, ws: str, body: dict[str, Any]) -> dict[str, Any]:
         item_id = body["item_id"]
         with self._reg.lock, self.store.lock:
-            self._selective(ws)
+            self._bound(ws)
             held = self.store.held(ws, item_id)
             if held is None or held["revoked"]:
                 return {}  # unknown or already revoked: an idempotent {} (a retried revoke)
@@ -181,7 +189,7 @@ class ShareService:
                 self.purge(ws)  # the items are those of an earlier binding, whatever the state is now
                 self._clear(ws)
             st = self._reg.binding_state(ws)
-            if st is None or st["status"] != "bound" or self._reg.mode(ws) != "selective":
+            if st is None or st["status"] != "bound":
                 self.purge(ws)
         except Exception:  # noqa: BLE001  any sink failure must leave the other unbind steps running
             self._mark(ws)
@@ -211,12 +219,14 @@ class ShareService:
         or content) is left out (fail closed)."""
         with self._reg.lock:
             try:
-                self._selective(workspace_id)
+                self._bound(workspace_id)
             except Refused:
                 return []
             if type(user_id) is not str or not user_id:
                 return []
             rows = self._open_all(workspace_id, self.store.items(workspace_id))
+            if self._reg.mode(workspace_id) == "full":  # a leftover summary from before a switch is never served
+                rows = [it for it in rows if it["item"].get("item_kind") == "ticket"]
             if self._reg.owner_alias(workspace_id) == user_id:
                 return rows
             return [it for it in rows if self.audience_reads(user_id, it["item"])]

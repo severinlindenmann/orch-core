@@ -1378,7 +1378,7 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
         return _render(
             {
                 "workspace_id": ws["workspace_id"],
-                "mode": "selective",
+                "mode": self.d.registry.mode(ws["workspace_id"]),
                 "item_id": o["item_id"],
                 "item_version": o["item_version"],
                 "kind": o["item_kind"],
@@ -1443,7 +1443,7 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
         people = {u["user_id"]: P4.render_text(u["name"]) for u in self.d.access.users()}
         rows: list[dict[str, Any]] = []
         for ws in sorted(self.d.registry.pins()):
-            if (only is not None and ws != only) or self.d.registry.mode(ws) != "selective":
+            if only is not None and ws != only:
                 continue
             owner = self.d.registry.owner_alias(ws)
             for it in self.d.shares.list_shared(c.user_id, ws):

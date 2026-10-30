@@ -242,8 +242,8 @@ class Updater:
         names = self.s.services.running()
         self.s.services.stop()
         info = {
-            "from_version": cur, "to_version": new, "channel": ch, "seq": ver.seq, "running": names, "backups": [],
-            "roots": [str(r[2].resolve()) for r in roots],
+            "from_version": cur, "to_version": new, "channel": ch, "seq": ver.seq, "running": names,
+            "backups": {}, "backup_list": [],
             "revocations_issued_at": ver.revocations_issued_at, "root_key_id": self._root_key_id(),
             "min_serial": ver.min_serial, "release_key_id": self._release_key_id(),
             "trusted_roots": sorted(embedded_roots()), "log": str(self.log_path),
@@ -374,13 +374,16 @@ class Updater:
 
     def _backup(self, info: dict[str, Any], roots: list[tuple[str, str, Path]]) -> None:
         done: list[dict[str, str]] = []
+        formats: dict[str, int] = {}
         for label, kind, root in roots:
             n = _fmt(root, kind)
             b = backup_mod.create_backup(root, kind, n, n, self.env)
+            formats[str(b.resolve())] = n
             done.append({"root": str(root), "kind": kind, "label": label, "backup": str(b)})
             self.say(f"backed up {label}")
-        info["backups"] = done
-        self._phase("backed-up", backups=done)
+        info["backups"], info["backup_list"] = formats, done
+        # ``backups`` {path: format} is what P1-A's restore() checks; ``backup_list`` is ours (which root is which)
+        self._phase("backed-up", backups=formats, backup_list=done)
 
     def _migrate(self, to: str, roots: list[tuple[str, str, Path]]) -> None:
         rc, out = self.s.run_orch(self.layout.tool_bin(to), ["migrate", "--apply", "--json"])
@@ -488,7 +491,7 @@ class Updater:
         quarantine.clear(self.state)
         if frm and self.layout.current_version() != frm and self.layout.tool_dir(frm).is_dir():
             flip_current(self.layout, frm)
-        for b in doc.get("backups") or []:
+        for b in doc.get("backup_list") or []:
             if Path(b["backup"]).is_dir():
                 backup_mod.restore(Path(b["backup"]), Path(b["root"]), self.env)
         quarantine.clear(self.state)
@@ -566,4 +569,4 @@ def read_journal_safe(env: Mapping[str, str]) -> dict[str, Any] | None:
 
 
 def roots_of(info: Mapping[str, Any]) -> list[tuple[str, str, Path]]:
-    return [(b["label"], b["kind"], Path(b["root"])) for b in info.get("backups") or []]
+    return [(b["label"], b["kind"], Path(b["root"])) for b in info.get("backup_list") or []]

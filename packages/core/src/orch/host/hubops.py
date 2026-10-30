@@ -1066,6 +1066,7 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
             }
             service.__dict__.pop("_hub_profile_sent", None)
             service.__dict__.pop("_hub_status_sent", None)  # a (re)connect: tell the hub again
+            agentevents.forget_position(service)  # and start the agent events at the end of every log
             transport = _transport(service, model["hub_id"], link)
             try:
                 r = _connect(state, plan, model, service, wsk_pub, sign, now, save, transport, aliases)
@@ -1079,6 +1080,7 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
             return ok_result(out)
         if plan["op"] == "hub.refresh":
             return ok_result(_refresh(call, plan, state, wsk_pub, sign, now, save))
+        agentevents.forget_position(service)  # before anything can fail: the time not joined is never uploaded
         out = _unbind(call, plan, state, sign, wsk_pub, now, save, leave, flush_outbox)
         from . import orgmcp, orgsecrets, orgstate
 
@@ -1088,7 +1090,6 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
         orgsecrets.drop_cache(service)  # then the opened values (condition 14), then the files
         orgstate.purge(service)  # M3: the company skills and servers of that binding go with it (nothing stays served)
         _stop_peers(service)  # unbound: the ws->ws link and receive thread end here
-        agentevents.forget_position(service)  # a leave: the time not joined is never uploaded after a rejoin
         return ok_result(out)
     except HubRefused as exc:
         _audit(call, "hub.refused", op=plan["op"], code=exc.code)

@@ -18,6 +18,7 @@ from orch.crypto import suite
 from orch.crypto.encoding import unb64u
 from orch.hubclient import wire
 from orch.hubclient.errors import HubRefused
+from orch.hubclient.netconfig import NetSettings
 from orch.hubclient.spaceclient import SpaceClient, SpaceState
 from orch.hubclient.tlslink.client import LinkClient
 
@@ -76,7 +77,7 @@ class Host:
         return LinkClient.open(
             "127.0.0.1", i["port"], tls_spki_sha256=i["spki"], hub_id=i["hub_id"], workspace_id=self.ws,
             sign=self.sign, hk_op_pub=unb64u(i["hk_op_pub"], 65), mode="full",
-            wsk_pub=suite.public_bytes(self.wsk) if first else None, timeout=10,
+            wsk_pub=suite.public_bytes(self.wsk) if first else None, timeout=10, net=NetSettings(),
         )  # fmt: skip
 
     def link(self) -> LinkClient:

@@ -253,6 +253,15 @@ def prepare(client, token, stub, body=None):
     return client.post(url(stub, "prepare"), json=body or approve(), headers=hdr(token))
 
 
+def test_a_prepare_body_that_does_not_validate_gets_a_plain_sentence_not_just_a_code(client, token, stub, script):
+    res = prepare(
+        client, token, stub, {"action": "addon_enable", "name": "publish", "publish": {"server": "ftp://x:y"}}
+    )
+    err = res.json()["error"]
+    assert res.status_code == 400 and err["code"] == "invalid.input"
+    assert err["message"] == "That could not be used. Check it and try again." and "ftp" not in res.text
+
+
 def test_the_signer_is_one_child_started_on_first_use_with_a_clean_environment(client, token, stub, script, gateway):
     assert script.started == []  # nothing starts at boot
     got = client.get("/api/workspaces", headers=hdr(token, False)).json()

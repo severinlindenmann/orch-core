@@ -186,9 +186,22 @@ export function publishValidation(server: string, share: string) {
 }
 
 /** One address by default (files and links both use it). `share` follows `server` until the person opens "Links open at a different address". */
-export function PublishForm({ server, share, setServer, setShare }: { server: string; share: string; setServer: (value: string) => void; setShare: (value: string) => void }) {
+export function PublishForm({ server, share, setServer, setShare, suggested }: { server: string; share: string; setServer: (value: string) => void; setShare: (value: string) => void; suggested?: string | null }) {
   const { problem } = publishValidation(server, share)
   const [separate, setSeparate] = useState(share !== '' && share !== server)
+  const [changing, setChanging] = useState(false)
+  // P02: a Publish server installed on this computer is named in one sentence; the address field only appears behind "Change"
+  if (suggested && !changing && server === suggested && share === suggested)
+    return (
+      <div className="space-y-1.5 text-[13px]" data-testid="publish-suggested">
+        <p>
+          Files and links use the Publish server on this computer: <Inline>{suggested}</Inline>
+        </p>
+        <button type="button" className="text-[12px] text-accent hover:underline" onClick={() => setChanging(true)}>
+          Change
+        </button>
+      </div>
+    )
   return (
     <div className="space-y-3 text-[13px]">
       <div className="space-y-1.5">
@@ -202,14 +215,13 @@ export function PublishForm({ server, share, setServer, setShare }: { server: st
             setServer(v)
             if (!separate) setShare(v)
           }}
-          placeholder="https://pub.example.org"
         />
         {!separate && <p className="text-[12px] text-text-muted">Files and links both use this address.</p>}
       </div>
       {separate ? (
         <div className="space-y-1.5">
           <Label htmlFor="pub-share">Links open at</Label>
-          <input id="pub-share" className="h-8 w-full rounded border border-border bg-bg px-2 font-mono text-[12px]" value={share} onChange={(e) => setShare(e.target.value.trim())} placeholder="https://apps.example.org" />
+          <input id="pub-share" className="h-8 w-full rounded border border-border bg-bg px-2 font-mono text-[12px]" value={share} onChange={(e) => setShare(e.target.value.trim())} />
         </div>
       ) : (
         <button type="button" className="text-[12px] text-accent hover:underline" onClick={() => { setSeparate(true); setShare('') }}>

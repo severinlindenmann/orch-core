@@ -18,12 +18,14 @@
 #
 # ---- Signing key and the GitHub ENVIRONMENT "release" (owner sets this up once; never in a file) --------------------
 #   Environment `release`  Settings > Environments > release > Deployment branches and tags: "Selected branches",
-#                          allow ONLY `main` and `develop`. Required reviewers: none (no click per release).
+#                          allow ONLY `main` (NOT develop: agents merge to develop,
+#                          so a develop job must never reach the key). Required reviewers: none (no click per release).
 #                          Secret ORCH_RELEASE_KEY (base64 of the 32-byte Ed25519 seed of the CI release key) lives
 #                          in THIS environment, never as a repository secret.
 #   Why the branch policy: a job that references an environment only gets its secrets if the ref passes the policy.
 #   Without it any branch an agent pushes (or any workflow_dispatch from a feature branch) could run this file, edited,
-#   and sign a release. With it only code that was merged into main/develop can reach the key.
+#   and sign a release. With it only code that was merged into main (owner-merged) can reach the key.
+#   A develop channel comes later, with its OWN key whose certificate lists only `develop`.
 #   Environment `release-test`  secret ORCH_RELEASE_KEY = a separate TEST key whose certificate lists only test-*;
 #                          no branch restriction needed (a test-* envelope is refused by every production verifier).
 #   Repository variables RELEASE_KEY_ID, RELEASE_TEST_KEY_ID (for example rk-1, tk-1): the certificate files
@@ -52,7 +54,7 @@
 #      verify and agree with it, and the git tag must point at the manifest's commit. Refresh then re-signs that
 #      version, seq and commit and nothing else: only issued_at/expires_at change. Anything unverifiable fails the job.
 #   4. The pointer never moves to a lower seq (channel_seq.py uses the same function).
-#   Residual risk (accepted, documented): the build job runs dependency code (npm, uv build) from main/develop; a
+#   Residual risk (accepted, documented): the build job runs dependency code (npm, uv build) from main; a
 #   compromised dependency could alter a wheel before it is hashed and signed. The constraints file hash-locks the
 #   Python dependencies; the npm tree is locked by package-lock.json (npm ci).
 

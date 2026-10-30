@@ -27,7 +27,9 @@ def test_the_key_is_read_only_by_sign_steps():
 def test_signing_jobs_use_the_gated_environments():
     assert "environment: ${{ needs.plan.outputs.test == 'true' && 'release-test' || 'release' }}" in DRAFT
     assert "    environment: release\n" in DRAFT  # the refresh job
-    assert "allow ONLY `main` and `develop`" in DRAFT  # the branch policy is documented in the header
+    assert "allow ONLY `main` (NOT develop" in DRAFT  # the branch policy is documented in the header
+    assert "allow ONLY `main` and `develop`" not in DRAFT
+    assert "can reach the key" in DRAFT and "its OWN key" in DRAFT
 
 
 def test_no_develop_channel_and_only_main_or_test_channels():

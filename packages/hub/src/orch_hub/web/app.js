@@ -21,7 +21,7 @@ import { checkServiceAction, resultWords, logsDialog, serviceDialog, stopLabel, 
 import { handoffsView } from "./handoffs.js";
 import { phonesView } from "./phones.js";
 import { workspacesView, workspaceDetailsView, newWorkspaces, privateRows } from "./workspaces.js";
-import { OPEN_FIRST, colour, initials, landing, landingPlan, openingState, railRows, safeUrl } from "./switch.js";
+import { OPEN_FIRST, OPEN_ON_ITS_COMPUTER, colour, initials, landing, landingPlan, openingState, railRows, safeUrl } from "./switch.js";
 import { Refusal, grantTermsOk, grantSentence, grantFacts, addonFacts, addonTermsOk, settingsFacts, settingsTermsOk, checkBindings, checkPrepared, describe, renderMulti, renderText, shortHash, verifyQuestion, DECISIONS } from "./render.js";
 
 const root = document.getElementById("app");
@@ -354,8 +354,8 @@ async function landFromTicket(t) {
 
 // A session that came from a workspace ticket cannot use admin tools until a real password sign-in.
 function reauthView() {
-  show(h("div", { class: "plain" }, h("h1", { text: "Sign in again to use admin tools" }), h("p", { class: "muted", text: "You arrived from a workspace. Admin tools need your password and code." }),
-    h("button", { class: "pri", text: "Sign in again", onclick: async () => { await api("DELETE", "/session"); clearSession(); loginView(); } })));
+  show(h("div", { class: "plain" }, h("h1", { text: "Sign in again to use admin tools" }), h("p", { class: "muted", text: "You opened the hub from your workspace, so you can see your things here. Admin tools need your password and code once; you come straight back to this page." }),
+    h("button", { class: "pri", text: "Sign in again", onclick: async () => { const back = globalThis.location?.hash ?? null; await api("DELETE", "/session"); clearSession(); returnHash = back; loginView(); } })));
 }
 
 // P17: an admin whose session came from a workspace keeps "Connect a workspace" in reach. The click explains why one real
@@ -1389,8 +1389,9 @@ async function workspacePage(route) {
       h("p", { text: w.online ? "Online" : "Hand-offs and approvals wait until this workspace is back." }),
       h("p", { text: needs.status === 200 && w.online ? items.length + " things need you" : w.badge ? w.badge + " things need you. They wait until the workspace is back." : "Waiting items will be shown when the workspace is back." }),
       sharedTicketsView(sharedTickets),
-      w.online ? h("button", { text: "Open workspace", disabled: !w.canOpen, onclick: () => openWorkspace(w) }) : null,
-      w.online && !w.canOpen ? h("p", { text: OPEN_FIRST }) : null);
+      w.online && w.switchable ? h("button", { text: "Open workspace", disabled: !w.canOpen, onclick: () => openWorkspace(w) }) : null,
+      w.online && w.switchable && !w.canOpen ? h("p", { text: OPEN_FIRST }) : null,
+      w.online && !w.switchable ? h("p", { text: OPEN_ON_ITS_COMPUTER }) : null);
   } finally { finishLoading(); }
 }
 
@@ -1439,7 +1440,14 @@ async function renderRoute() {
       else if (route.workspace) await workspacePage(route);
       else await ({ home, approvals, workspaces, services, admin, activity, account, handoffs, phones, register: registerRoute }[route.kind] ?? pageRender(route.kind) ?? home)();
     }
-  } catch { loginView("Something went wrong. Please sign in again."); }
+  } catch (e) {
+    // A page that throws is a bug in the page, never a sign-in problem: api() returns 401s as data and each page sends a
+    // real 401 to the sign-in form itself. So say the page did not load, offer Retry, and keep the error for the console.
+    console.error("orch hub: the page did not load", e);
+    show(h("h1", { text: "This page did not load" }),
+      h("p", { role: "alert", text: "Something went wrong on this page. Try again. If it keeps happening, tell whoever runs this hub." }),
+      h("button", { type: "button", class: "primary", "data-retry": "page", text: "Retry", onclick: () => renderRoute() }));
+  }
   finally { routing = false; }
 }
 window.addEventListener("hashchange", renderRoute);

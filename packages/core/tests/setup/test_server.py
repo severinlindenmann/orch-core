@@ -252,13 +252,16 @@ def _fake_run(seen, url, rc=0, extra=b"", stderr=b""):
     return run
 
 
-def _setup(monkeypatch, run):
+def _setup(monkeypatch, run, *, headless=None):
     import io
     import subprocess
 
     from orch.cli import dashboard as dash
+    from orch.setup import flow as flow_mod
 
     monkeypatch.setattr(dash, "find_entry_point", lambda env, err: ["orch-dashboard"])
+    if headless is not None:  # a Linux CI runner has no DISPLAY and counts as headless: a desktop test says so
+        monkeypatch.setattr(flow_mod, "is_headless", lambda environ: headless)
     monkeypatch.setattr(subprocess, "run", run)
     return io.StringIO(), _tty(monkeypatch)
 
@@ -267,7 +270,7 @@ def test_the_opener_prints_one_link_and_puts_no_code_in_any_child_argument(monke
     from orch.setup import flow as flow_mod
 
     seen = {}
-    err, tty = _setup(monkeypatch, _fake_run(seen, URL))
+    err, tty = _setup(monkeypatch, _fake_run(seen, URL), headless=False)
     assert flow_mod._open_browser({"PATH": "/usr/bin"}, err, {"setup_id": "su_1", "code": CODE}) is True
     assert err.getvalue() == ""  # the code never reaches stderr/stdout
     ((argv, env),) = seen["calls"]
@@ -282,7 +285,7 @@ def test_no_browser_passes_the_flag_and_always_prints_the_link(monkeypatch):
     from orch.setup import flow as flow_mod
 
     seen = {}
-    err, tty = _setup(monkeypatch, _fake_run(seen, URL, extra=b"no-browser\n"))
+    err, tty = _setup(monkeypatch, _fake_run(seen, URL, extra=b"no-browser\n"), headless=False)
     assert flow_mod._open_browser({}, err, {}, no_browser=True) == "link"
     assert "--no-browser" in seen["calls"][0][0] and CODE not in repr(seen["calls"][0][0])
     assert "".join(tty).startswith("Open this link in your browser (single use, 5 minutes): ") and err.getvalue() == ""
@@ -518,3 +521,26 @@ def test_stop_waits_for_the_request_that_ended_the_session_to_be_answered(srv):
     assert not stopping.is_alive() and not request.is_alive()
     assert got and got[0][0] == 200
     assert order == ["request done", "stop returned"], order
+
+
+def test_headless_setup_shows_the_ssh_tunnel_line_on_the_terminal_only(monkeypatch):
+    from orch.setup import flow as flow_mod
+
+    url = "http://127.0.0.1:47821/#launch=" + CODE + "&to=%2Fsetup"
+    err, tty = _setup(monkeypatch, _fake_run({}, url, extra=b"no-browser\n"))
+    env = {"SSH_CONNECTION": "10.0.0.2 5000 203.0.113.7 22"}
+    assert flow_mod._open_browser(env, err, {}, no_browser=True) == "link"
+    shown = "".join(tty)
+    assert "ssh -o ExitOnForwardFailure=yes -L 127.0.0.1:47821:127.0.0.1:47821 " in shown and "@203.0.113.7" in shown
+    assert shown.index("ssh -o") < shown.index("#launch=") and CODE not in err.getvalue()
+
+
+def test_tunnel_line_placeholders_and_closed_patterns():
+    from orch.setup.tunnel import tunnel_line, valid_server, valid_user
+
+    ok = tunnel_line(47821, {"SSH_CONNECTION": "a 1 srv.example.com 22"}, user="alice")
+    assert ok == "ssh -o ExitOnForwardFailure=yes -L 127.0.0.1:47821:127.0.0.1:47821 alice@srv.example.com"
+    assert tunnel_line(1234, {}, user="-oProxyCommand=x", server="a b").endswith(" USER@SERVER")
+    assert tunnel_line(1234, {}, user="bob", server="::1").endswith(" bob@::1")
+    for bad in ("a;b", "a$(x)", "a`x`", "a b", "a\nb", "-oProxyCommand=x", "", "é"):
+        assert not valid_user(bad) and not valid_server(bad)

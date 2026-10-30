@@ -1455,8 +1455,8 @@ unknown `op` is `unknown_op`.
 | `binding_put` | w2h | both | `{"object", "owner_proof"}`: a `hub.binding` or `hub.unbound`, forwarded as is; `owner_proof` is always present: the proof (§9.6) for a binding that is new or switches the mode, else `null` | `{}` |
 | `audit_ack` | w2h | both | `{"seq", "head": b64u(32)}` | `{"acked": seq}` (§10.5) |
 | `audit_get` | w2h | both | `{"since"}` | `{"records": [{"record": <hub.audit>, "event"?}], "head", "op_certs": [<hub.op_cert>]}` (D4, §10.5; added) |
-| `share_put` | w2h | selective | `{"item_id", "sealed": b64u}` | `{}` |
-| `share_revoke` | w2h | selective | `{"item_id"}` | `{}` |
+| `share_put` | w2h | both | `{"item_id", "sealed": b64u}` | `{}` |
+| `share_revoke` | w2h | both | `{"item_id"}` | `{}` |
 | `space_list` | w2h | both | `{}` | `{"spaces": [<hub.space>]}` (V3-D8, §10.4) |
 | `space_accept` | w2h | both | `{"accept": <space.accept>}` | `{}` (L2P-2) |
 | `space_put` | w2h | both | `{"space_id", "epoch", "item_id", "sealed": b64u}` | `{"seq"}` |
@@ -1544,8 +1544,8 @@ WITHOUT being used; one presented at another workspace's link is spent. `return_
 2. `op` in the table, and `re == null` exactly when `dir` is the op's request direction → `unknown_op`; the one-way
    stream frames (`stream_data`, `stream_close`) have `re == null` in both directions and get no reply, and
    `stream_open` is h2w only (§10.2c);
-3. the op exists in this workspace's mode → `wrong_mode` (no `wk_seal` in selective mode, D80; no share ops in full
-   mode);
+3. the op exists in this workspace's mode → `wrong_mode` (no `wk_seal` in selective mode, D80). `share_put` / `share_revoke` work in both modes;
+   in full mode the hub accepts only `item_kind: ticket` (`wrong_mode` otherwise);
 4. `hub_id` → `other_hub`; `workspace_id` is the link's → `other_workspace`;
 5. `|now − ts_ms| ≤ 120 s` → `stale_timestamp`;
 6. the request body has exactly the table's fields with their types → `malformed`;
@@ -1560,7 +1560,11 @@ Reply rules:
 - After the link is authenticated, a request is accepted only while the link's key is the workspace's current pinned `WSK`; a link opened before the pin (the first link of a join) is closed with `wsk_mismatch` as soon as another link pinned a different key.
 - After `hub.unbound`, every op except `join` and `binding_put` is refused with `not_bound`.
 
-#### 10.2b The content of a selective `share_put` (phase 4, C6/D9)
+#### 10.2b The content of a `share_put` (phase 4, C6/D9; both modes since r15)
+
+In full mode the hub accepts only `item_kind: ticket` (`wrong_mode` otherwise); the item gives its named `audience` read
+access and nothing else; hub roles still grant nothing on a shared item. A selective-to-full switch keeps the items; the
+hub serves only ticket items of a full workspace, and the host's next pass revokes the rest.
 
 The `share_put {item_id, sealed}` body of H0 left `sealed` opaque. Its content, merged from C6 (orch-core #1022) and D9
 (orch-hub #23) (DECIDED HERE where they differed):
@@ -3322,7 +3326,7 @@ v2 codes keep their meaning (v2 §14). New in H0:
 | `foreign_user` (p4, C3b) | custodial, `event_deliver` reply | the event's `user_id` belongs to another hub of this workspace (aliased there, or first recorded under it) and not to the signing hub: a hub may not present another hub's user ids (§9.1, L2P4-C1, L2-C3-2). Checked after the certificates |
 | `not_custodial` (p4) | action, custodial | §8.5: the type is not in the custodial table for that log |
 | `event_changed` (p4) | channel, hub `sign` | §8.4: the digest does not match the shown context, or the hub's view moved since `prepare` |
-| `stale_version`, `too_many_items` (p4) | selective `share_put` | §10.2b: an equal or lower `item_version` (other bytes, or a revoked one); over 1000 live items. Reused there: `bad_wrap`, `too_large`, `other_hub`, `other_workspace` |
+| `stale_version`, `too_many_items` (p4) | `share_put` | §10.2b: an equal or lower `item_version` (other bytes, or a revoked one); over 1000 live items. Reused there: `bad_wrap`, `too_large`, `other_hub`, `other_workspace` |
 | `no_session`, `key_in_use` (p4) | channel registration | §6.3: the challenge was not opened inside a live session of the user; the key is registered to another user. Reused: `channel_revoked` (a revoked key never registers again) |
 | `unknown_channel` (p4) | hub CLI/API, local | §6.3: a revocation of a channel id this hub never registered |
 | `challenge_invalid` (p4) | channel registration | §6.3: not the challenge the hub issued, or expired. Reused there: `factor_mismatch` (the attestation is not the gate the hub checked), `other_user`, `other_hub` |

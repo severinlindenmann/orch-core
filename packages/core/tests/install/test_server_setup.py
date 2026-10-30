@@ -1046,3 +1046,17 @@ def test_health_skips_the_signature_list_check_quietly_without_a_record(tmp_path
     assert ops.run_health({"parts": [], "update_record": str(tmp_path / "bad.json")}, **kw)["ok"]
     assert ops.run_health({"parts": []}, **kw)["ok"]
     assert ops.run_health({"parts": [], "update_record": _record(tmp_path, "garbage")}, **kw)["ok"]
+
+
+def test_expired_boundary_matches_install_sh_exactly_30_days(tmp_path):
+    now = 1_800_000_000.0
+    kw = dict(ntp=lambda: True, mem_mb=lambda: 900.0, disk_free_gb=lambda p: 50.0, now=lambda: now)
+
+    def verdict(elapsed):
+        iso = datetime.datetime.fromtimestamp(now - elapsed, datetime.UTC).isoformat().replace("+00:00", "Z")
+        rep = ops.run_health({"parts": [], "update_record": _record(tmp_path, iso)}, **kw)
+        return rep["problems"][0].split(" list ")[1].split(" on ")[0]
+
+    assert verdict(30 * 86400) == "expired"  # (now - issued).days >= 30
+    assert verdict(30 * 86400 - 1) == "expires"
+    assert verdict(30 * 86400 + 5) == "expired"

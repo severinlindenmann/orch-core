@@ -117,7 +117,7 @@ NOW = datetime(2026, 9, 1, tzinfo=UTC)  # after the manifests' expires_at (2026-
 TIMES = ("2026-09-01T00:00:00Z", "2026-09-22T00:00:00Z")
 
 
-def current(pointer, releases, *, revs=None, now=NOW, commit_of=lambda tag: SHA, listed=()):
+def current(pointer, releases, *, revs=None, now=NOW, commit_of=lambda tag: SHA, listed=None):
     return trusted.trusted_current(
         "develop",
         revs or revocations(),
@@ -126,13 +126,13 @@ def current(pointer, releases, *, revs=None, now=NOW, commit_of=lambda tag: SHA,
         get_pointer=lambda: pointer,
         get_release=lambda tag: releases.get(tag),
         tag_commit=commit_of,
-        releases_for_channel=lambda: list(listed),
+        releases_for_channel=lambda: list(releases if listed is None else listed),
     )
 
 
 def test_refresh_resigns_exactly_the_current_pointer_with_new_times():
     env = envelope(manifest(7))
-    t = current(env, {"v2.0.0.dev7": env, "v2.0.0.dev9": envelope(manifest(9))})  # a newer release is ignored
+    t = current(env, {"v2.0.0.dev7": env, "v2.0.0.dev5": envelope(manifest(5))})  # an older release is ignored
     assert json.loads(trusted.refresh_payload(t, *TIMES)) == {
         **manifest(7),
         "issued_at": TIMES[0],
@@ -160,7 +160,7 @@ def test_lower_seq_rebuild_is_refused():
     with pytest.raises(refresh.Refused, match="lower"):
         trusted.check_new_seq(t, 6)
     # the immutable release says an older seq than the pointer: refresh must not rebuild from it
-    with pytest.raises(refresh.Refused, match="disagree|agree"):
+    with pytest.raises(refresh.Refused, match="disagree|agree|rollback"):
         current(envelope(manifest(7)), {"v2.0.0.dev7": envelope(manifest(6, version="2.0.0.dev7"))})
 
 
@@ -263,3 +263,23 @@ def test_a_stable_release_version_is_a_valid_tag():
     assert current(env, {"v2.0.0": env}).tag == "v2.0.0"
     with pytest.raises(trusted.Refused):
         current(env, {})  # the immutable release of that version is missing
+
+
+def test_a_rolled_back_pointer_is_refused():
+    """The pointer names seq 7 but an immutable release of seq 9 exists: never re-sign the old one as fresh."""
+    old = envelope(manifest(7))
+    with pytest.raises(trusted.Refused, match="rollback"):
+        current(old, {"v2.0.0.dev7": old, "v2.0.0.dev9": envelope(manifest(9))})
+
+
+def test_refresh_takes_the_highest_verified_release_not_the_pointers_choice():
+    new = envelope(manifest(9))
+    t = current(new, {"v2.0.0.dev9": new, "v2.0.0.dev7": envelope(manifest(7)), "v2.0.0.dev8": envelope(manifest(8))})
+    assert t.seq == 9 and t.tag == "v2.0.0.dev9"
+
+
+def test_an_unverifiable_listed_release_stops_the_refresh():
+    new = envelope(manifest(9))
+    stranger = Ed25519PrivateKey.from_private_bytes(bytes(range(40, 72)))
+    with pytest.raises(trusted.Refused):
+        current(new, {"v2.0.0.dev9": new, "v2.0.0.dev7": envelope(manifest(7), key=stranger)})

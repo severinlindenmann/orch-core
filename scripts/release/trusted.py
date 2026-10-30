@@ -146,13 +146,23 @@ def _trusted_current(channel, revocations, verify, now, get_pointer, get_release
         raise Refused(f"{tag}: version and seq do not agree")
     if doc["commit"] != tag_commit(tag):
         raise Refused(f"{tag}: commit does not match the git tag")
-    release = get_release(tag)
-    if release is None:
-        raise Refused(f"{tag}: the immutable release of the current version is missing")
-    rdoc = verify_published(release, channel, revocations, verify, now, allow_expired=True)
-    if not _same_but_times(rdoc, doc):
+    # Anchor in immutable data: the pointer is mutable and never picks the release. Every immutable version release of
+    # the channel must verify (fail closed), and the pointer must name the one with the highest seq.
+    best_tag, best = tag, None
+    for t in sorted({tag, *releases_for_channel()}):
+        raw = get_release(t)
+        if raw is None:
+            raise Refused(f"{t}: the immutable release is missing")
+        rdoc = verify_published(raw, channel, revocations, verify, now, allow_expired=True)
+        if f"v{rdoc['version']}" != t:
+            raise Refused(f"{t}: the release names another version")
+        if best is None or rdoc["seq"] > best["seq"] or (rdoc["seq"] == best["seq"] and t == tag):
+            best_tag, best = t, rdoc
+    if best_tag != tag or best["seq"] != doc["seq"]:
+        raise Refused(f"channel pointer is {tag} (seq {doc['seq']}) but the highest verified release is {best_tag}: rollback?")
+    if not _same_but_times(best, doc):
         raise Refused(f"{tag}: the release and the channel pointer disagree")
-    return Trusted(doc=rdoc, tag=tag)
+    return Trusted(doc=best, tag=best_tag)
 
 
 def refresh_payload(t: Trusted, issued_at: str, expires_at: str) -> bytes:

@@ -304,3 +304,15 @@ def test_file_list_without_constraints_is_refused():
 
 def test_file_list_with_only_the_mandatory_roles_is_accepted():
     assert _with_files(lambda fs: fs.__setitem__(slice(1, 5), [])) is None
+
+
+def test_seq_seen_refuses_a_lower_seq_and_it_is_a_required_argument():
+    import inspect
+
+    assert reason(env_bytes(core()), seq_seen=43) is Reason.ROLLBACK  # manifest seq is 42
+    assert reason(env_bytes(core()), seq_seen=42) is None
+    p = inspect.signature(verify_envelope).parameters
+    assert (
+        p["seq_seen"].default is inspect.Parameter.empty
+        and p["revocations_issued_at"].default is inspect.Parameter.empty
+    )

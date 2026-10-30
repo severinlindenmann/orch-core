@@ -3,6 +3,11 @@
 The verifier never canonicalises: signatures are checked over the exact decoded bytes, and those bytes are then
 parsed and refused unless already canonical. Stored state (``seq_seen``, ``revocations_issued_at``) is passed in and
 the caller stores the values of :class:`Verified` only on success.
+
+``seq_seen`` and ``revocations_issued_at`` are required keywords (no default): every update-path caller (install.sh's
+verifier, ``orch update``) MUST persist the highest verified seq per channel and pass it back, or a rolled-back
+channel pointer is accepted as long as its old envelope is still unexpired. ``None`` means "first install, nothing
+seen" and is only correct then (P2-C/P2-D persist it in the install record).
 """
 
 from __future__ import annotations

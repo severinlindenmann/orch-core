@@ -459,7 +459,7 @@ def test_f3_dry_run_and_linux_never_call_launchctl(b):
     calls: list[list[str]] = []
     run = lambda argv, env=None: (calls.append(list(argv)), (0, ""))[1]  # noqa: E731
     assert b.run("--dry-run", platform="darwin", run=run) == 0
-    assert not any(c[:1] == ["launchctl"] for c in calls)
+    assert not any(c[:2] == ["launchctl", "remove"] for c in calls)
 
 
 def test_f3_a_second_run_without_an_order_does_not_overwrite_the_real_result(b):

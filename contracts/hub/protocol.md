@@ -1452,7 +1452,7 @@ unknown `op` is `unknown_op`.
 | `rail_get` | w2h | both | `{"origin"}` | `{"hub": {name, origin, network_origin}, "user_id", "workspaces": [{workspace_id, name, role, online, badge, origin, current}]}` (hub one-app) |
 | `profile_put` | w2h | both | `{listed, tags, description, handles, not_handled, accepts, contact, languages, hours}` | `{}` |
 | `directory_get` | w2h | both | `{query?: string}` | `{entries: [...]}` (at most 50) |
-| `status_put` | w2h | both | `{"version", "commit", "host", "name"}` | `{}` |
+| `status_put` | w2h | both | `{"version", "commit", "host", "name"}` | `{}`, or `{"update_requested": {"target_version"}}` |
 | `addon_request` | w2h | both | `{"name", "version", "actor"}` | `{}` (M3 #1450) |
 | `owner_get` | w2h | both | `{}` | `{"user_id"}`: the hub user this hub names as the owner of the calling workspace (V3-D19 owner alias; FB15 §8.8b) |
 | `log_sync` | w2h | full | `{"epoch", "log", "from_seq", "count", "head", "reset", "sealed": b64u}` | `{"seq", "head"}` (p4, §10.7) |
@@ -1488,6 +1488,13 @@ Its exact body has a version matching `[0-9A-Za-z.+-]+` (at most 32 characters),
 possibly empty), a host string (at most 80) and the workspace display name `name` (at most 80, from `config.json`); a selective-mode workspace sends `host` and `name` empty and the hub stores them empty (the hub console then shows a friendly fallback, never an id); bad shapes are `malformed`, unknown pins `unknown_workspace`.
 The hub sanitizes these fields and records its own last-seen clock and socket peer address. These values never
 influence authorization, routing, signing or mode, and are not written to the workspace log.
+HUB-WS-04 (#1385): when a hub admin asked the owners of older workspaces to update, the reply is
+`{"update_requested": {"target_version"}}` instead of `{}` for as long as the workspace's reported `version` is lower
+than `target_version` (the hub's own version, `[0-9A-Za-z.+-]+`, at most 32 characters; never free text). The field is
+optional: a host MUST accept both shapes (a host from before HUB-WS-04 refuses the reply as a malformed link reply, which
+for this display-only op is only a logged, retried failure). A hub sends the field only on a `status_put` reply. A host shows a plain notice to its
+human owner while its own version is lower than `target_version` and drops it once it is not. The request grants
+nothing and changes no key, trust, mode or signing rule; the update itself stays the owner's own action.
 
 **Hub one-app ops (27 Oct, prototype).** `switch_ticket`, `switch_redeem` and `rail_get` let the workspace dashboard and the
 hub console feel like one app. The hub names the user itself: always the link workspace's owner alias (`no_owner_alias`

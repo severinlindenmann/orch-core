@@ -84,3 +84,15 @@ test("who gets a skill defaults to all workspaces, hides the boxes, and saves no
   pick.value = "chosen"; pick.listeners.change();
   assert.equal(find(view, (n) => n.className === "share-list")[0].hidden, false);
 });
+
+test("needs attention sits at the top, one line and one action link each, and is absent when empty", () => {
+  const items = [{ kind: "secret_expiring", text: "crm-key expires in 5 days.", page: "secrets", action: "Enter a new value" }];
+  const view = skillsView({ ...data, attention: items });
+  const kids = view.children.map((c) => c.textContent);
+  assert.match(kids[1], /^Needs attention/);
+  assert.match(view.textContent, /crm-key expires in 5 days\./);
+  const link = find(view, (n) => n.tag === "a")[0];
+  assert.equal(link.attrs.href, "#/secrets");
+  assert.equal(link.textContent, "Enter a new value");
+  assert.doesNotMatch(skillsView({ ...data, attention: [] }).textContent, /Needs attention/);
+});

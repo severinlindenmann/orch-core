@@ -79,3 +79,13 @@ export function sharePicker(item, workspaces, save) {
   const button = h("button", { type: "button", text: "Save who gets it", onclick: () => save(pick.value, pick.value === "chosen" ? boxes.filter((x) => x.box.checked).map((x) => x.w.workspace_id) : []) });
   return h("div", { class: "share" }, h("h4", { text: "Offer to" }), pick, list, button);
 }
+
+// "Needs attention" (#1617): one plain line each with one action link. Nothing is drawn when there is nothing to do.
+export function attentionList(items) {
+  if (!Array.isArray(items) || !items.length) return null;
+  return h("section", { class: "card attention", role: "region", "aria-label": "Needs attention" },
+    h("h3", { text: "Needs attention" }),
+    items.map((i) => h("div", { class: "list-row row", "data-kind": i.kind },
+      h("span", { class: "grow", text: i.text }),
+      h("a", { href: "#/" + i.page, text: i.action }))));
+}

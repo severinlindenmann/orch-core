@@ -2,7 +2,7 @@
 // enabling: a workspace's owner sees the exact address and turns a server on at their own host, and agents reach it only
 // through the host's own proxy. There is no way to offer a program to run, only an https address.
 import { emptyState, loading } from "../feel.js";
-import { h, sharePicker, text, withNames } from "../ui.js";
+import { attentionList, h, sharePicker, text, withNames } from "../ui.js";
 
 const info = (label, body) => h("details", { class: "info" }, h("summary", { "aria-label": label, text: "i" }), h("p", { class: "small muted", text: body }));
 const NAME = /^[a-z][a-z0-9-]{1,39}$/;
@@ -59,6 +59,7 @@ export function mcpView(data, actions = {}) {
   return h("div", { class: "mcp-servers" },
     h("div", { class: "row" }, h("h1", { class: "grow", text: "Tool servers" }),
       info("About tool servers", "A tool server gives your agents extra tools over the internet, such as your CRM. Each workspace owner sees the address and turns it on. Agents never see the sign-in secret: the workspace connects for them, and you can switch single tools off there.")),
+    attentionList(data.attention),
     h("p", { class: "banner warn", role: "note", text: "Nothing is switched on for anyone until their workspace owner accepts it." }),
     (data.servers ?? []).length ? (data.servers ?? []).map(card) : emptyState("mcp"),
     h("section", { class: "card" }, h("h3", { text: "New server" }), form(null, true)));
@@ -73,6 +74,7 @@ export async function mcpPage(d, retried = false) {
     if (d.state.user.needs_sign_in) return d.reauthView();
     await d.loadRail();
     const r = await d.api("GET", "/admin/mcp-servers");
+    const att = await d.api("GET", "/admin/needs-attention");
     if (r.status === 403 && r.body.error === "reauth_required") return d.reauthView();
     if (r.status !== 200) return d.shell("mcp", h("h1", { text: "Tool servers" }), h("p", { role: "alert", text: "Cannot read the tool servers. " + d.say(r.body.error) }));
     const say = (ok, x) => { d.state.notice = x.status === 200 ? d.banner("ok", ok, null) : d.banner("bad", "Not changed", d.say(x.body.error ?? "unavailable")); };
@@ -80,7 +82,7 @@ export async function mcpPage(d, retried = false) {
     const remove = async (s) => { say("Removed", await d.api("DELETE", "/admin/mcp-servers/" + s.name)); await mcpPage(d); };
     const check = async (name) => { const x = await d.api("POST", "/admin/mcp-servers/" + name + "/check"); if (x.status !== 200) say("", x); await mcpPage(d); };
     const offer = async (name, shared, workspaces) => { say("Saved", await d.api("PUT", "/admin/mcp-servers/" + name + "/offers", { shared, workspaces })); await mcpPage(d); };
-    d.shell("mcp", d.state.notice, mcpView({ ...r.body, workspaces: withNames(r.body.workspaces, d.state.rail?.rows ?? []) }, { save, remove, offer, check }));
+    d.shell("mcp", d.state.notice, mcpView({ ...r.body, attention: att.status === 200 ? att.body.items : [], workspaces: withNames(r.body.workspaces, d.state.rail?.rows ?? []) }, { save, remove, offer, check }));
     d.state.notice = null;
     // The hub checks stale servers in the background when this page opens; ask once more shortly for the answer.
     if (!retried && (r.body.servers ?? []).some((x) => x.status?.status === "not_checked")) setTimeout(() => mcpPage(d, true), 4000);

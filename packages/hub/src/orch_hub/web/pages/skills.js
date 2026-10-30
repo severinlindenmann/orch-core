@@ -1,7 +1,7 @@
 // The Company skills page (M3, #1430): instructions a hub admin offers to workspaces. Offering is not enabling: a
 // workspace's owner reads the full text and turns a skill on at their own host. The hub never reaches an agent from here.
 import { emptyState, loading } from "../feel.js";
-import { h, sharePicker, text, withNames } from "../ui.js";
+import { attentionList, h, sharePicker, text, withNames } from "../ui.js";
 
 const info = (label, body) => h("details", { class: "info" }, h("summary", { "aria-label": label, text: "i" }), h("p", { class: "small muted", text: body }));
 const NAME = /^[a-z][a-z0-9-]{1,39}$/;
@@ -49,6 +49,7 @@ export function skillsView(data, actions = {}) {
   return h("div", { class: "skills" },
     h("div", { class: "row" }, h("h1", { class: "grow", text: "Company skills" }),
       info("About company skills", "A skill is advice your agents read, such as how your company writes invoices. Each workspace owner reads it and turns it on. Skills stay below orch's own rules and cannot widen what an agent may do.")),
+    attentionList(data.attention),
     h("p", { class: "banner warn", role: "note", text: "Nothing is switched on for anyone until their workspace owner accepts it." }),
     (data.skills ?? []).length ? (data.skills ?? []).map(card) : emptyState("skills"),
     h("section", { class: "card" }, h("h3", { text: "New skill" }), nameIn, bodyIn, err, add));
@@ -63,13 +64,14 @@ export async function skillsPage(d) {
     if (d.state.user.needs_sign_in) return d.reauthView();
     await d.loadRail();
     const r = await d.api("GET", "/admin/skills");
+    const att = await d.api("GET", "/admin/needs-attention");
     if (r.status === 403 && r.body.error === "reauth_required") return d.reauthView();
     if (r.status !== 200) return d.shell("skills", h("h1", { text: "Company skills" }), h("p", { role: "alert", text: "Cannot read the company skills. " + d.say(r.body.error) }));
     const say = (ok, x) => { d.state.notice = x.status === 200 ? d.banner("ok", ok, null) : d.banner("bad", "Not changed", d.say(x.body.error ?? "unavailable")); };
     const save = async (name, body) => { say("Saved", await d.api("PUT", "/admin/skills/" + name, { text: body })); await skillsPage(d); };
     const remove = async (s) => { say("Removed", await d.api("DELETE", "/admin/skills/" + s.name)); await skillsPage(d); };
     const offer = async (name, shared, workspaces) => { say("Saved", await d.api("PUT", "/admin/skills/" + name + "/offers", { shared, workspaces })); await skillsPage(d); };
-    d.shell("skills", d.state.notice, skillsView({ ...r.body, workspaces: withNames(r.body.workspaces, d.state.rail?.rows ?? []) }, { save, remove, offer }));
+    d.shell("skills", d.state.notice, skillsView({ ...r.body, attention: att.status === 200 ? att.body.items : [], workspaces: withNames(r.body.workspaces, d.state.rail?.rows ?? []) }, { save, remove, offer }));
     d.state.notice = null;
   } finally { finish(); }
 }

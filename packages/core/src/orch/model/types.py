@@ -136,6 +136,8 @@ class Addon:
     purged: bool = False
     #: V3 G4 (D6): ``{kind, lock, packages}`` when the grant also installs dependencies, else ``None``
     runtime: dict[str, Any] | None = None
+    #: addon-api 1.2 (#718): the wake events the grant declared (flat, sorted by kind); empty for most add-ons
+    events: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def binds(self) -> dict[str, Any]:
@@ -161,6 +163,9 @@ class WsCore:
     members: dict[str, Member] = field(default_factory=dict)
     former: dict[str, Member] = field(default_factory=dict)
     roster_v: int = 0
+    #: the `at` (ms) of the event being judged / last applied: the deterministic "now" of every hub role decision (an
+    #: end date in the pinned snapshot is read against it, never the wall clock, so a replay gives the same answer)
+    at_ms: int = 0
     devices: dict[str, Device] = field(default_factory=dict)
     # Effective revocation evidence and tombstones: device id -> person id -> {revocation, device_cert, pk_pub}.
     # Keyed by (device, person) (§5.10): another person's evidence for one device id is kept, never merged or replaced.

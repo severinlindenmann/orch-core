@@ -1058,3 +1058,35 @@ def test_invite_status_on_a_store_made_before_the_redeemed_user_column(w, tmp_pa
     finally:
         w.api.d.user_invites.close()
         w.api.d.user_invites = old
+
+
+def test_ga07_a_new_person_joins_the_default_group_through_the_inviter(w):
+    tok_admin = w.login(w.admin)
+    assert w.call("POST", "/admin/groups", {"name": "newbies"}, token=tok_admin)[0] == 200
+    assert w.call("PUT", "/admin/default-group", {"group": "newbies"}, token=tok_admin)[0] == 200
+    s, o, _ = redeem(w, invite_join(w))
+    assert s == 200
+    assert w.env.acc.members("newbies") == [o["user_id"]]
+    assert not w.env.acc.is_hub_admin(o["user_id"])
+
+
+def test_ga07_without_a_default_group_a_new_person_joins_nothing(w):
+    s, o, _ = redeem(w, invite_join(w))
+    assert s == 200 and w.env.acc.groups_of(o["user_id"]) == []
+
+
+def test_ga07_no_auto_join_when_the_inviter_is_no_longer_an_active_hub_admin(w):
+    """R5: the default-group join is skipped (and never raises) for a row whose maker is not an active hub admin."""
+    tok_admin = w.login(w.admin)
+    assert w.call("POST", "/admin/groups", {"name": "newbies"}, token=tok_admin)[0] == 200
+    assert w.call("PUT", "/admin/default-group", {"group": "newbies"}, token=tok_admin)[0] == 200
+    erin = w.env.user("erin")
+    not_admin = type("Row", (), {"created_by": w.env.user("frank")})()  # a maker who is no hub admin (any more)
+    w.api._join_default_group(not_admin, erin)
+    assert w.env.acc.members("newbies") == []
+    gone = type("Row", (), {"created_by": "00" * 16})()  # a maker who does not exist
+    w.api._join_default_group(gone, erin)
+    assert w.env.acc.members("newbies") == []
+    still_admin = type("Row", (), {"created_by": w.admin})()
+    w.api._join_default_group(still_admin, erin)  # control: the same call by an active admin joins
+    assert w.env.acc.members("newbies") == [erin]

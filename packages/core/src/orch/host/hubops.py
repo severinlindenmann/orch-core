@@ -329,8 +329,13 @@ def _save_snapshot(service: WorkspaceService, fetched: Any) -> None:
         new = fetched.snapshot
         if new is not None:
             held = None if cur.snapshot is None else cur.snapshot["o"]
+            if held is None and new["o"]["version"] < cur.snapshot_floor:
+                raise HubRefused(
+                    "stale_snapshot"
+                )  # nothing pinned after a rebind or mode switch: the floor still holds
             if held is None or new["o"]["version"] > held["version"]:
                 cur.snapshot, changed = new, True
+                cur.raise_floor(new["o"]["version"])
             elif new["o"]["version"] == held["version"] and wire.cj(new["o"]) != wire.cj(held):
                 raise HubRefused("snapshot_conflict")
         revoked = sorted({*cur.revoked_op_certs, *fetched.revoked_op_certs})
@@ -559,9 +564,11 @@ def publish_route(service: WorkspaceService) -> dict[str, Any] | None:
 
     * The log has no ``hub.joined``, or its newest hub record is ``hub.left``: the workspace is not in hub mode, so
       the direct path stays (until the H6 switch). The old binding is not consulted: leaving ends it.
-    * The log says joined: the hub is the **only** path. If ``hub.json`` is missing, is not the joined hub's bound
-      binding (same ``hub_id`` and ``binding_seq``, selective), or cannot be read, the request is refused
-      (``hub.not_joined`` / ``hub.state_mismatch``); it never falls back to direct, which would bypass the hub."""
+    * The log says joined: the hub is the **only** path, in either mode (selective or full). If ``hub.json`` is
+      missing, is not the joined hub's bound binding (same ``hub_id`` and ``binding_seq``), disagrees with the signed
+      log about the mode, or cannot be read, the request is refused (``hub.not_joined`` / ``hub.state_mismatch``,
+      each in plain words); it never falls back to direct, which would bypass the hub. Publishing stays the person's
+      signed decision in both modes: the route carries no authority of its own, the share was signed first."""
     from orch.crypto.encoding import unb64u
 
     model = dict(service.store.state.workspace.hub)
@@ -575,10 +582,20 @@ def publish_route(service: WorkspaceService) -> dict[str, Any] | None:
         or state.binding_seq != model.get("binding_seq")
     ):
         raise HostError(
-            "hub.not_joined", "this workspace has joined a hub but is not connected to it yet: orch hub connect"
+            "hub.not_joined",
+            "This workspace has joined a hub but is not connected to it right now. Connect it in Settings, "
+            "Hub, then try again.",
         )
-    if state.mode != "selective" or model.get("mode") != "selective":
-        raise HostError("hub.state_mismatch", "only selective hub mode publishes today")
+    if (
+        state.mode not in ("selective", "full")
+        or state.mode != model.get("mode")
+        or state.binding["o"]["mode"] != state.mode  # the signed binding must agree too: fail closed
+    ):
+        raise HostError(
+            "hub.state_mismatch",
+            "The hub connection on this computer does not match what the workspace has signed. Open Settings, "
+            "Hub and connect again, then try again.",
+        )
     dev = bool(state.binding["o"]["dev"])
     return {
         "hub_id": state.hub_id,
@@ -890,7 +907,7 @@ def serve(call: Call) -> dict[str, Any]:
             )
         return ok_result(
             {
-                "snapshot": snapshot.pinned_view(state),
+                "snapshot": snapshot.pinned_view(state, int(service.clock() * 1000)),
                 "joined": bool(model) and model.get("status") == "joined",
                 "hub_id": model.get("hub_id"),
                 "mode": model.get("mode"),

@@ -241,7 +241,12 @@ def managed_python(tmp: Path) -> Path:
 
 
 def run_install(
-    tmp: Path, script: Path, *args: str, path_dirs: list[Path] | None = None, env_extra: dict[str, str] | None = None
+    tmp: Path,
+    script: Path,
+    *args: str,
+    path_dirs: list[Path] | None = None,
+    env_extra: dict[str, str] | None = None,
+    system_dirs: list[str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     home = tmp / "home"
     home.mkdir(exist_ok=True)
@@ -250,7 +255,8 @@ def run_install(
         place_uv(tmp, script)
     (tmp / "tmp").mkdir(exist_ok=True)
     py_dir = str(Path(sys.executable).resolve().parent)
-    path = ":".join([*(str(p) for p in (path_dirs or [])), py_dir, "/usr/bin", "/bin"])
+    system = ["/usr/bin", "/bin"] if system_dirs is None else system_dirs
+    path = ":".join([*(str(p) for p in (path_dirs or [])), py_dir, *system])
     env = {
         "HOME": str(home),
         "PATH": path,

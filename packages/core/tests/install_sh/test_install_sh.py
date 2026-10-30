@@ -307,8 +307,26 @@ def test_server_with_linger_off_prints_the_sudo_line_and_stops(tmp_path, script)
     assert not state(tmp_path).exists()  # nothing was fetched or written
 
 
+def _tools_without(tmp_path: Path, missing: str) -> Path:
+    """A folder of links to the system tools install.sh needs, without ``missing`` (a CI runner has systemd's
+    loginctl in /usr/bin, so the system folders cannot stay on PATH for this test)."""
+    out = tmp_path / "systools"
+    out.mkdir(exist_ok=True)
+    for d in ("/usr/bin", "/bin"):
+        for p in Path(d).iterdir():
+            if p.name != missing and not (out / p.name).exists():
+                (out / p.name).symlink_to(p)
+    return out
+
+
 def test_server_without_loginctl_stops(tmp_path, script):
-    res = run_install(tmp_path, script, "--server", path_dirs=[_linux_stubs(tmp_path, None)])
+    res = run_install(
+        tmp_path,
+        script,
+        "--server",
+        path_dirs=[_linux_stubs(tmp_path, None)],
+        system_dirs=[str(_tools_without(tmp_path, "loginctl"))],
+    )
     assert res.returncode == 1 and "loginctl" in res.stderr
 
 

@@ -222,6 +222,12 @@ VALUES = {
     "runtime": {"kind": "python-requirements", "lock": "marker-lock.txt", "packages": 3},
     "old": "d_" + "5" * 32, "rotation": {"o": {"kind": "device_rotation", "marker": "rot"}, "sig": "s"},
     "hub_id": "38d8abed52ccfb538da401fd54e64bdc", "hk_root_pub": "marker-hubroot", "mode": "selective", "binding_seq": 3,
+    "level": "work", "level_cap": "view", "until_ms": 1_800_000_000_000, "expires_ms": 1_800_000_000_000, "premises": "no",
+    "agents_risk": True, "on": True, "hub_mode": "none", "remote_v": 0, "presence_kind": "platform",
+    "transport_pub": "3J02PWPii0wd9JGl1e8ylfF2OQt3ZHwobpD22e-Sb2g",
+    "presence_pub": "BM_dyBP9WmXDUz13KE9_OxWamJkWSLgLBQcQLqipmcxXtMqQz7yTIYqposCv27jyI50SgrbdmxV0_M5PHktruNY",
+    "fingerprint": "09f2da73415b22423ee0075a56f2cec02b69bf851471bf17707d6c9345368e3f", "code_id": "rc_" + "6" * 32,
+    "device_id": "rd_" + "7" * 32,
     "aliases": [{"person_id": "9" * 32, "user_id": "a" * 32}], "sections": {"summary": {"hash": "sha256:" + "ee" * 32, "refs": ["marker-art"]}},
 }  # fmt: skip
 

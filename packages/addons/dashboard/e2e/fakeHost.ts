@@ -107,6 +107,8 @@ export class FakeServer {
   historyOn = false
   trustParent = ''
   clickRequests = new Map<string, { name: string; staged: string }>()
+  /** R2 T4: remote access (Settings > Devices), as the host would answer the closed view. */
+  remote: Record<string, any> = { on: false, level: null, until_ms: null, premises: null, off_reason: null, isolated: false, hub_mode: 'none', devices: [], pending: [], sessions: [] }
   constructor(private dist: string) {
     this.server = http.createServer((req, res) => void this.handle(req, res))
   }
@@ -141,8 +143,8 @@ export class FakeServer {
       return
     }
     if (p === '/api/host') return json({})
-    const features = [...FEATURES, ...(this.clickOn ? ['click'] : []), ...(this.hubOn ? ['hub'] : []), ...(this.publishOn ? ['publish'] : [])]
-    if (p === '/api/session') return json({ features, workspaces: { [WS]: features } })
+    const features = [...FEATURES, 'remote', ...(this.clickOn ? ['click'] : []), ...(this.hubOn ? ['hub'] : []), ...(this.publishOn ? ['publish'] : [])]
+    if (p === '/api/session') return json({ features, login: 'local', workspaces: { [WS]: features } })
     if (p === '/api/workspaces') return json([{ id: WS, prefix: 'DEMO', name: 'Dev workspace', members: [{ person: OWNER, name: 'Sev', role: 'owner', devices: 1 }], needs_you: 0, host_state: 'ok', features, click: this.clickOn ? { custody: 'convenience', enabled: true, available: true, switchable: true } : null }])
     if (p === '/api/me') return json([{ person: OWNER, name: 'Sev', role: 'owner', tier: 'A', workspace: WS }])
     const m = /^\/api\/w\/[0-9a-f]{32}\/(.*)$/.exec(p)
@@ -152,6 +154,10 @@ export class FakeServer {
       if (reply) return json(reply.json, reply.status)
     }
     if (this.hubOn && rest === 'hub') return json({ mode: 'standalone', joined: false, hub_id: null, member: false, link: null, reachable: null, not_told: false, owed: 0, reseal_needed: false, key_change_pending: false, log_sync_stuck: false, groups: null, snapshot_version: null })
+    if (rest === 'remote' && method === 'GET') return json(this.remote)
+    if (rest === 'remote/code' && method === 'POST') return json({ code: 'orch-rc1.' + WS.slice(0, 8) + '.Zm9vYmFyYmF6cXV4.cHVibGljLWtleS1ieXRlcw', expires_ms: Date.now() + 900_000 })
+    if (rest === 'remote/off' && method === 'POST') { this.remote = { ...this.remote, on: false, devices: [], pending: [] }; return json({ changed: true }) }
+    if (/^remote\/devices\/rd_[0-9a-f]{32}\/remove$/.test(rest) && method === 'POST') { this.remote = { ...this.remote, devices: [] }; return json({ removed: true }) }
     if (rest === 'market' && method === 'GET') {
       const l = marketList() // a package whose grant was signed shows as installed (Off until turned on)
       for (const m of l.markets) for (const a of m.addons) if (this.installedNames.has(a.id) && !a.installed) a.installed = { version: a.version, state: 'disabled' }

@@ -93,3 +93,15 @@ describe('phaseOf', () => {
     expect(phaseOf(ticket(), { needsYou: false, now: NOW })).toEqual({ kind: 'idle' })
   })
 })
+
+import { agentFinished } from './progress'
+describe('agentFinished (r14 P06)', () => {
+  it('is true only for a running agent whose ticket is done or closed', () => {
+    expect(agentFinished({ kind: 'agent', state: 'running' }, 'done')).toBe(true)
+    expect(agentFinished({ kind: 'agent', state: 'starting' }, 'closed')).toBe(true)
+    expect(agentFinished({ kind: 'agent', state: 'running' }, 'open')).toBe(false)
+    expect(agentFinished({ kind: 'agent', state: 'running' }, undefined)).toBe(false)
+    expect(agentFinished({ kind: 'agent', state: 'exited' }, 'done')).toBe(false)
+    expect(agentFinished({ kind: 'shell', state: 'running' }, 'done')).toBe(false)
+  })
+})

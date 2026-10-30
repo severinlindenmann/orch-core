@@ -10,7 +10,8 @@ test("skeletons follow the page's column structure", () => {
 });
 test("empty states explain the next step without technical errors", () => {
   assert.equal(emptyWords("home")[0], "Nothing needs you");
-  assert.match(emptyWords("workspaces")[1], /open it on the workspace's own dashboard, under Settings › Hub\./);
+  assert.match(emptyWords("workspaces")[1], /Press “Connect a workspace” and follow the steps\./);
+  assert.doesNotMatch(emptyWords("workspaces")[1] + emptyWords("workspaces-member")[1], /Settings/);
   assert.doesNotMatch(emptyWords("workspaces")[1] + emptyWords("workspaces-member")[1], /Mission Control/);
   assert.match(emptyWords("services")[1], /check again/);
   assert.deepEqual(emptyWords("search"), ["Nothing found", "Try another name or a shorter search."]);

@@ -1,0 +1,15 @@
+{
+  "ok": false,
+  "error": {
+    "code": "remote.proof_invalid",
+    "message": "the remote access step is not backed by your backup key",
+    "hint": "repeat the step and enter your backup key",
+    "fix": {
+      "argv": [
+        "orch",
+        "status"
+      ]
+    },
+    "retryable": false
+  }
+}

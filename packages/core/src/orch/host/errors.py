@@ -67,6 +67,9 @@ HOST_CODES: dict[str, tuple[int, bool]] = {
     "human.request_mismatch": (5, False),
     "human.request_state": (3, False),
     "repo.remote_mismatch": (3, False),
+    "remote.no_stream": (3, False),  # R3: the remote session is closed, unknown or another person's
+    "remote.presence_replay": (3, False),  # R3: a presence batch whose signature counter did not rise
+    "remote.busy": (3, False),  # R3: another dashboard is already attached to the workspace's remote access
     "sign.convenience_unavailable": (3, False),  # H5c: with a reason first in the message (§0.8.6 item 1)
     "reader.decl_invalid": (3, False),  # H12d-2: a reader declaration that does not verify (§0.8.6 item 9.3)
     "sign.convenience_readers": (3, False),  # H5c: also in the P1 catalog (member.add refuses it in both modes)
@@ -182,6 +185,9 @@ DETAIL_KEYS: dict[str, dict[str, tuple[str, ...] | str | None]] = {
     "ticket.key_not_next": {"next_key": None},
     # #1198 C9: why the owner proof of a hub step was refused (hub contract 9.6, section 14)
     "hub.proof_invalid": {"reason": ("proof_invalid", "proof_expired", "proof_missing", "dev_mismatch", "dev_refused")},
+    "remote.proof_invalid": {
+        "reason": ("proof_invalid", "proof_expired", "proof_missing", "dev_mismatch", "dev_refused")
+    },
     # H12d-2 (§0.8.6 item 9.9, 9.11): the closed reason and the readers below the level (``devices``: device ids)
     "sign.convenience_unavailable": {  # H12c-e; pair_device is no longer emitted (B10)
         "reason": (

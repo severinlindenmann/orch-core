@@ -258,7 +258,7 @@ it('while a signature is being sent, the verdict and answer buttons are disabled
   doc.gates.verify = { ...doc.gates.verify, state: 'pending', approvals: [], eligible: ['p_sev'] }
   const view = render(<TicketProgress ticket={doc} viewer={viewer as never} sign={vi.fn()} jump={() => {}} signing />)
   expect(screen.getByRole('button', { name: 'Give verdict' })).toBeDisabled()
-  expect(screen.getByRole('button', { name: 'Send back' })).toBeDisabled()
+  expect(screen.queryByRole('button', { name: 'Send back' })).toBeNull() // one place: the verdict dialog
   view.unmount()
   const withQ = await demo()
   withQ.status = 'open'

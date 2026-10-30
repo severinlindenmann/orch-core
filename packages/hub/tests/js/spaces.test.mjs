@@ -27,6 +27,7 @@ test("the page says plainly that the hub can read, lists members with Reads/Edit
   const calls = [];
   const view = spacesView(data, { setMode: (s, m, mode) => calls.push(["mode", s.space_id, m.workspace_id, mode]), archive: (s, a) => calls.push(["archive", s.space_id, a]) }, NOW);
   assert.match(view.textContent, /The hub and its admins can read this space\./);
+  assert.equal(find(view, (n) => n.className === "banner warn" || n.attrs.class === "banner warn").length, 1); // shown once a space exists
   assert.match(view.textContent, /Finance/); assert.doesNotMatch(view.textContent, /Old/);   // archived: hidden by default
   assert.match(view.textContent, /Show archived \(1\)/);
   const selects = find(view, (n) => n.tag === "select");
@@ -50,6 +51,7 @@ test("no spaces: a plain empty state", () => {
   const text = spacesView({ spaces: [] }, {}, NOW).textContent;
   assert.match(text, /No shared spaces yet/);
   assert.match(text, /folder of documents/);
+  assert.equal(find(spacesView({ spaces: [] }, {}, NOW), (n) => n.attrs.class === "banner warn").length, 0, "no warning on a page with no spaces");
   assert.doesNotMatch(text, /command line|orch-hub/i);
 });
 
@@ -74,7 +76,7 @@ test("New shared space: three steps, the statement is on the page and in the dia
   name.value = " Launches "; name.listeners.input(); purpose.value = "Dates"; purpose.listeners.input();
   clickAll(dlg, "Next")[0].listeners.click();
   assert.match(dlg.textContent, /step 3 of 3/);
-  assert.ok(dlg.textContent.includes(STATEMENT) && dlg.textContent.includes("waits for its owner") && dlg.textContent.includes("joins now"));
+  assert.ok(dlg.textContent.includes(STATEMENT) && dlg.textContent.includes("shares only selected items") && dlg.textContent.includes("joins now"));
   const create = clickAll(dlg, "Create")[0];
   assert.equal(create.disabled, true);
   const [box_a] = find(dlg, (n) => n.tag === "input" && n.attrs.type === "checkbox" && n.attrs["aria-label"] === "Product");
@@ -105,7 +107,8 @@ test("New shared space: only waiting workspaces ticked keeps Create off and says
   assert.equal(reason.hidden, true); assert.equal(create.disabled, true);          // nothing ticked: no reason yet
   box("Legal").checked = true; box("Legal").listeners.change();                    // selective only
   assert.equal(create.disabled, true); assert.equal(reason.hidden, false);
-  assert.equal(reason.textContent, NO_START); assert.equal(create.attrs["aria-describedby"], "space-no-start");
+  assert.equal(reason.textContent, NO_START); assert.match(NO_START, /shares only selected items/);
+  assert.equal(find(dlg, (n) => n.attrs.class === "banner warn").length, 0, "the tick box already carries the sentence"); assert.equal(create.attrs["aria-describedby"], "space-no-start");
   create.listeners.click(); assert.equal(made.length, 0);
   box("Product").checked = true; box("Product").listeners.change();                // one that joins now
   assert.equal(create.disabled, false); assert.equal(reason.hidden, true); assert.equal(create.attrs["aria-describedby"], undefined);
@@ -123,7 +126,7 @@ test("a member is removed only on the second click and added from the picker", (
   rm.listeners.click(); assert.deepEqual(calls[0], ["rm", "s1", "a"]);
   const pick = find(view, (n) => n.tag === "select" && n.attrs["aria-label"] === "Add a workspace")[0];
   assert.deepEqual(pick.children.map((o) => o.attrs.value), ["", "c"]);   // only the workspace that is not in yet
-  assert.match(pick.textContent, /its owner accepts first/);
+  assert.match(pick.textContent, /shares only selected items; its owner accepts first/);
   clickAll(view, "Add")[0].listeners.click(); assert.equal(calls.length, 1);   // nothing picked
   pick.value = "c"; clickAll(view, "Add")[0].listeners.click();
   assert.deepEqual(calls[1], ["add", "s1", "c"]);

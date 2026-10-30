@@ -118,6 +118,12 @@ def test_workdir_get_and_delete_touch_only_the_ticket_folder(ready, tmp_path):  
     assert (victim / "keep").read_text() == "mine" and (root / "mine.txt").exists()  # nothing else was touched
     assert (root / ".orch-work" / other / "a.txt").exists()  # another ticket's folder stays
     assert ok(c.call("workdir.delete", {"ticket": key}, idem=True))["data"]["deleted"] is False  # already gone
+    import json
+
+    lines = (world.lab.state / "host" / "audit-security.jsonl").read_text().splitlines()
+    mine = [json.loads(x) for x in lines if json.loads(x)["event"] == "workdir.delete"]
+    assert [(m["ticket"], m["deleted"]) for m in mine] == [(key, True), (key, False)]
+    assert all(m["principal"] and m["workspace_id"] for m in mine)
 
 
 def test_workdir_delete_is_a_persons_op_needs_an_idem_and_refuses_a_running_folder(ready):  # noqa: F811

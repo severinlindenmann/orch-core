@@ -34,6 +34,7 @@ from orch.host.peerops import PEER_OPS, PEER_READS
 from orch.host.publishing import PUBLISH_OPS
 from orch.host.reads import READ_OPS
 from orch.host.records import RECORDS_OPS
+from orch.host.remote import REMOTE_OPS, REMOTE_READS
 from orch.host.review import HOST_PERSON_OPS
 from orch.host.runnergrants import GRANT_OPS
 from orch.host.runners import RUN_OPS
@@ -99,6 +100,7 @@ def test_welcome_lists_exactly_the_registry_ops_and_the_host_ops(served):
     host |= set(TRANSCRIPT_OPS)  # focus/1
     host |= set(PUBLISH_OPS)  # P5
     host |= set(HUB_OPS)  # V3 C2a
+    host |= set(REMOTE_OPS)  # R2 #1590
     host |= set(PEER_OPS)  # V3 C12
     host |= set(SPACE_OPS)  # V3 C13
     host |= set(ORG_OPS)  # M3 H-2
@@ -130,6 +132,8 @@ def test_welcome_lists_exactly_the_registry_ops_and_the_host_ops(served):
         "device.mark_exposed",
         "device.rotate",
         "device.remove",
+        "remote.set",
+        "remote.device_confirm",
     }  # H12c-e, B12D, P5, R3, V3 C2a, C2b, #1097
     assert set(HUMAN_OPS) == {"human.prepare", "human.get", "human.submit", "human.cancel", "human.pending"}
     assert set(NOT_SERVED) == {"import.v1"}
@@ -249,6 +253,8 @@ def test_every_served_op_in_every_row_of_the_effective_column_table():
                 if op in ("hub.status", "hub.handoff", "hub.link", "hub.switch", "hub.directory", "hub.shared")
                 else ("person_write", "write")
             )
+        elif op in REMOTE_OPS:  # R2 #1590: P only (owner role); status, pending, sessions read
+            assert kind == (("person_read", "read") if op in REMOTE_READS else ("person_write", "write"))
         elif op in COSMETIC_OPS:  # D6: column P only (owner role)
             assert kind == ("person_write", "write")
         elif op in SHARE_OPS:  # V3 C6: column P only (owner role)

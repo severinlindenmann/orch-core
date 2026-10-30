@@ -472,7 +472,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
         id: 'U2',
         title: 'The list',
         text: 'Open Terminals in the left menu. Start a terminal with "New terminal", and, if you can, an agent on a ticket.',
-        see: 'Each terminal or agent is one row: its name, "Terminal" or "Agent", when it started, the ticket (a link), Live or Ended, and Read only or Controlled. "New terminal" first shows the same preview as the panel at the bottom and starts nothing until you confirm.',
+        see: 'Each terminal or agent is one row: its name, "Terminal" or "Agent", when it started, the ticket (a link), Live, Finished (the ticket is done, button Close) or Ended, and Read only or Controlled. "New terminal" first shows the same preview as the panel at the bottom and starts nothing until you confirm.',
       },
       {
         id: 'U3',

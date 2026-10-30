@@ -250,7 +250,8 @@ def test_every_served_op_in_every_row_of_the_effective_column_table():
         elif op in HUB_OPS:  # V3 C2a: P only (the op checks the owner role); status reads
             assert kind == (
                 ("person_read", "read")
-                if op in ("hub.status", "hub.handoff", "hub.link", "hub.switch", "hub.directory", "hub.shared")
+                if op
+                in ("hub.status", "hub.handoff", "hub.link", "hub.switch", "hub.directory", "hub.shared", "hub.network")
                 else ("person_write", "write")
             )
         elif op in REMOTE_OPS:  # R2 #1590: P only (owner role); status, pending, sessions read

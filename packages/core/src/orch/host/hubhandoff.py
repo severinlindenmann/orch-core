@@ -49,7 +49,8 @@ def build_url(addr: str, workspace_id: str, ticket_id: str, gate: str | None = N
     from orch.hubclient.tlsadapter import parse_addr
 
     try:
-        host, port = parse_addr(addr)
+        a = parse_addr(addr)
+        host, port = a.host, a.port
     except HubRefused:
         raise HostError(
             "hub.state_mismatch", "the pinned hub address is not usable: the host refuses to guess"

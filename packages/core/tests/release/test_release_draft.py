@@ -59,3 +59,7 @@ def test_no_install_or_build_work_in_a_step_that_holds_the_key():
     # the environment those steps run with is installed earlier, without the secret
     assert DRAFT.count("uv sync --frozen --project packages/core --no-dev") == 2
     assert not re.search(r"uv run (?!--no-sync)", DRAFT)
+
+
+def test_tag_protection_and_immutable_releases_are_marked_required():
+    assert "REQUIRED (the refresh anchor list is git tags" in DRAFT and "immutable releases" in DRAFT

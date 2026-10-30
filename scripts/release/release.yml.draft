@@ -31,7 +31,8 @@
 #   Repository variables RELEASE_KEY_ID, RELEASE_TEST_KEY_ID (for example rk-1, tk-1): the certificate files
 #   release/keys/<id>.cert.json and release/keys/revocations.json are committed (root-signed, public).
 #   The root key is never on GitHub: the owner certifies the CI key (180 days) and signs revocations off-line.
-#   Also recommended: protect `v*` tags (no update, no delete) so a version tag cannot be moved to another commit.
+#   REQUIRED (the refresh anchor list is git tags, trusted.py): protect `v*` tags (no update, no delete) and turn on
+#   immutable releases, so a version tag cannot be moved, nor its release retitled, replaced or deleted.
 #
 # ---- The "signing oracle" finding, re-checked -----------------------------------------------------------------------
 #   Finding (earlier Opus review): a signing step that signs whatever payload it is handed (an input, an artifact, a

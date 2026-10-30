@@ -22,7 +22,7 @@ from trusted import (  # noqa: E402
     check_new_seq,
     core_verifier,
     gh_release,
-    gh_releases_for_channel,
+    git_release_tags,
     git_tag_commit,
     http_pointer,
     trusted_current,
@@ -47,7 +47,7 @@ def main(argv: list[str]) -> int:
             get_pointer=http_pointer(a.pointer_url),
             get_release=gh_release,
             tag_commit=git_tag_commit(a.repo),
-            releases_for_channel=gh_releases_for_channel(a.channel, a.exclude_tag),
+            releases_for_channel=git_release_tags(a.repo, a.exclude_tag),
         )
         check_new_seq(t, a.new_seq)
     except NothingToRefresh:

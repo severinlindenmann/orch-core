@@ -15,6 +15,7 @@ of exactly the version it names must verify too and agree with it.
 
 from __future__ import annotations
 
+import base64
 import json
 import re
 import subprocess
@@ -133,10 +134,28 @@ def trusted_current(
         raise Refused(f"unexpected {type(exc).__name__}") from None
 
 
+def _claimed_channel(raw: bytes) -> str:
+    """The channel an envelope CLAIMS (unverified); it is only used to pick the verifier's channel argument, and the
+    verified document's own channel is what counts afterwards."""
+    try:
+        c = json.loads(base64.b64decode(json.loads(raw)["payload"]))["channel"]
+    except (KeyError, TypeError, ValueError, IndexError) as exc:
+        raise Refused(f"unreadable release: {type(exc).__name__}") from None
+    if not isinstance(c, str):
+        raise Refused("unreadable release channel")
+    return c
+
+
+def _channel_tags(channel: str, tags: list[str]) -> list[str]:
+    """Release tags that can anchor ``channel``: main takes plain versions (v2.0.0); a test channel takes the
+    ``.dev<seq>`` candidates. A production verifier refuses test channels, so those never anchor main."""
+    return [t for t in tags if channel != "main" or ".dev" not in t]
+
+
 def _trusted_current(channel, revocations, verify, now, get_pointer, get_release, tag_commit, releases_for_channel):  # type: ignore[no-untyped-def]
     pointer = get_pointer()
     if pointer is None:
-        if releases_for_channel():
+        if _channel_tags(channel, releases_for_channel()):
             raise Refused(f"channel-{channel} has version releases but no channel.json")
         raise NothingToRefresh(channel)
     doc = verify_published(pointer, channel, revocations, verify, now, allow_expired=True)
@@ -149,11 +168,13 @@ def _trusted_current(channel, revocations, verify, now, get_pointer, get_release
     # Anchor in immutable data: the pointer is mutable and never picks the release. Every immutable version release of
     # the channel must verify (fail closed), and the pointer must name the one with the highest seq.
     best_tag, best = tag, None
-    for t in sorted({tag, *releases_for_channel()}):
+    for t in sorted({tag, *_channel_tags(channel, releases_for_channel())}):
         raw = get_release(t)
         if raw is None:
-            raise Refused(f"{t}: the immutable release is missing")
-        rdoc = verify_published(raw, channel, revocations, verify, now, allow_expired=True)
+            raise Refused(f"{t}: a git tag exists but its immutable release is missing or was retitled/deleted")
+        rdoc = verify_published(raw, _claimed_channel(raw), revocations, verify, now, allow_expired=True)
+        if rdoc["channel"] != channel:
+            raise Refused(f"{t}: the verified release belongs to channel {rdoc['channel']}")
         if f"v{rdoc['version']}" != t:
             raise Refused(f"{t}: the release names another version")
         if best is None or rdoc["seq"] > best["seq"] or (rdoc["seq"] == best["seq"] and t == tag):
@@ -204,21 +225,18 @@ def gh_release(tag: str) -> bytes | None:
     return res.stdout if res.returncode == 0 and res.stdout else None
 
 
-def gh_releases_for_channel(channel: str, exclude: str | None) -> Callable[[], list[str]]:
+def git_release_tags(repo: Path, exclude: str | None) -> Callable[[], list[str]]:
+    """Every ``v*`` release tag of the checked-out repository (``fetch-depth: 0``). The ANCHOR list is git tags, not
+    release titles: a tag cannot be hidden by retitling or deleting a release. Tag protection and immutable releases
+    (REQUIRED, see release.yml.draft) make the tags themselves unmovable."""
+
     def get() -> list[str]:
         res = subprocess.run(
-            ["gh", "release", "list", "--limit", "1000", "--json", "tagName,name"],
-            capture_output=True,
-            text=True,
-            check=False,
+            ["git", "-C", str(repo), "tag", "-l", "v*"], capture_output=True, text=True, check=False
         )
         if res.returncode != 0:
-            raise Refused("cannot list releases")
-        return [
-            r["tagName"]
-            for r in json.loads(res.stdout)
-            if TAG.fullmatch(r["tagName"]) and r["name"].endswith(f"({channel})") and r["tagName"] != exclude
-        ]
+            raise Refused("cannot list git tags")
+        return [t for t in res.stdout.split() if TAG.fullmatch(t) and t != exclude]
 
     return get
 

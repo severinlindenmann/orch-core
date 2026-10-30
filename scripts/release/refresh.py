@@ -21,7 +21,7 @@ from trusted import (  # noqa: E402
     Refused,
     core_verifier,
     gh_release,
-    gh_releases_for_channel,
+    git_release_tags,
     git_tag_commit,
     http_pointer,
     refresh_payload,
@@ -50,7 +50,7 @@ def main(argv: list[str]) -> int:
             get_pointer=http_pointer(a.pointer_url),
             get_release=gh_release,
             tag_commit=git_tag_commit(a.repo),
-            releases_for_channel=gh_releases_for_channel(a.channel, None),
+            releases_for_channel=git_release_tags(a.repo, None),
         )
         out = refresh_payload(t, a.issued_at, a.expires_at)
     except NothingToRefresh:

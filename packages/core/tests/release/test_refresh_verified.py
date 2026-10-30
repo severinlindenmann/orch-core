@@ -283,3 +283,31 @@ def test_an_unverifiable_listed_release_stops_the_refresh():
     stranger = Ed25519PrivateKey.from_private_bytes(bytes(range(40, 72)))
     with pytest.raises(trusted.Refused):
         current(new, {"v2.0.0.dev9": new, "v2.0.0.dev7": envelope(manifest(7), key=stranger)})
+
+
+def test_a_kept_tag_whose_release_is_retitled_or_deleted_is_refused():
+    """The anchor list is git tags: hiding the highest release (retitle/delete) while its tag stays must not help."""
+    old = envelope(manifest(7))
+    # tag v2.0.0.dev9 exists (listed) but its release is gone; the pointer was rolled back to seq 7
+    with pytest.raises(trusted.Refused, match="missing"):
+        current(old, {"v2.0.0.dev7": old}, listed=["v2.0.0.dev7", "v2.0.0.dev9"])
+
+
+def test_main_is_anchored_by_plain_version_tags_only():
+    env = envelope(manifest(7, channel="main", version="2.0.0"))
+    t = trusted.trusted_current(
+        "main", revocations(), ref_verify, NOW,
+        get_pointer=lambda: env, get_release=lambda tag: {"v2.0.0": env}.get(tag),
+        tag_commit=lambda tag: SHA, releases_for_channel=lambda: ["v2.0.0", "v2.0.0.dev3"],
+    )  # fmt: skip
+    assert t.tag == "v2.0.0"  # the test-candidate tag (no release here) does not anchor main
+
+
+def test_a_tag_of_another_channel_is_refused_not_ignored_silently():
+    other = envelope(manifest(9, channel="develop"))
+    with pytest.raises(trusted.Refused):
+        trusted.trusted_current(
+            "test-x", revocations(), ref_verify, NOW,
+            get_pointer=lambda: envelope(manifest(7, channel="test-x")), get_release=lambda tag: other,
+            tag_commit=lambda tag: SHA, releases_for_channel=lambda: ["v2.0.0.dev9"],
+        )  # fmt: skip

@@ -489,7 +489,16 @@ def audit_ack(c: OpContext) -> dict[str, Any]:
 
 
 def space_list(c: OpContext) -> dict[str, Any]:
-    return {"spaces": _spaces(c).list_for(c.workspace_id)}
+    """The signed ``hub.space`` records plus ``meta``: the display name and kind of each listed space. ``meta`` is NOT
+    signed (the record has no name); a host shows it as "from the hub"."""
+    svc = _spaces(c)
+    recs = svc.list_for(c.workspace_id)
+    kinds = svc.store.metas()
+    meta = {}
+    for r in recs:
+        sid = r["o"]["space_id"]
+        meta[sid] = {"name": svc.store.name(sid) or "", "kind": kinds.get(sid, {}).get("type", "")}
+    return {"spaces": recs, "meta": meta}
 
 
 def space_put(c: OpContext) -> dict[str, Any]:

@@ -79,6 +79,11 @@ class SpaceState:
         )
 
 
+def _label(v: Any, cap: int) -> str:
+    """An unsigned display string from the hub: short, one line, printable, else empty."""
+    return v if type(v) is str and len(v) <= cap and v.isprintable() else ""
+
+
 def _by_kind(by: Any) -> str:
     """``by`` is the writer's own claim: shown as a fixed word, never as text."""
     if type(by) is str:
@@ -182,16 +187,21 @@ class SpaceClient:
     # --- reads ------------------------------------------------------------------------------------------------------
 
     def list_spaces(self) -> list[dict[str, Any]]:
-        """The spaces this workspace is a member of, each ``hub.space`` verified."""
+        """The spaces this workspace is a member of, each ``hub.space`` verified. ``name`` and ``kind`` come from the
+        hub's unsigned ``meta`` (display only: the signed record has no name); never printable-unsafe or long."""
         body = self._call("space_list", {})
+        meta = body.get("meta") if type(body.get("meta")) is dict else {}
         out = []
         for signed in body["spaces"]:
             o = self._take_record(signed)
             slot = self.st.spaces[o["space_id"]]
+            m = meta.get(o["space_id"])
+            m = m if type(m) is dict else {}
             out.append(
                 {
                     "space_id": o["space_id"], "epoch": o["epoch"], "members": list(o["members"]),
                     "shared": o["space_id"] in self.st.rules, "key": str(o["epoch"]) in slot["keys"],
+                    "name": _label(m.get("name"), 64), "kind": _label(m.get("kind"), 32),
                 }
             )  # fmt: skip
         self._save(self.st)

@@ -664,9 +664,9 @@ def _org(w):
     db.execute("INSERT INTO org_secrets VALUES ('s2','wide',1,9999999999999,'all',?,1,NULL)", (w.admin,))
     db.execute("INSERT INTO org_secret_shares VALUES ('s1', ?)", (WS,))
     db.execute("INSERT INTO org_secret_wraps VALUES ('s1',1,?,1,x'00')", (WS,))
-    db.execute("INSERT INTO org_skill VALUES ('sk','text',1,1)")
+    db.execute("INSERT INTO org_skill VALUES ('sk','text',1,1,'chosen')")
     db.execute("INSERT INTO org_skill_offer VALUES ('sk', ?)", (WS,))
-    db.execute("INSERT INTO org_mcp VALUES ('m','https://x.example','none',NULL,'d',1,1)")
+    db.execute("INSERT INTO org_mcp VALUES ('m','https://x.example','none',NULL,'d',1,1,'chosen')")
     db.execute("INSERT INTO org_mcp_offer VALUES ('m', ?)", (WS,))
 
 
@@ -763,6 +763,35 @@ def test_a_fresh_server_switches_shares_and_offers_off_until_an_admin_confirms_a
         ) == [("sk", WS)]
         with pytest.raises(KeyError):
             GD.confirm(acc, 999)
+    finally:
+        acc.close()
+
+
+def test_a_fresh_server_does_not_keep_all_workspaces_for_skills_and_tool_servers(w, tmp_path):
+    _org(w)
+    with w.env.acc.tx() as db:
+        db.execute("INSERT INTO org_skill VALUES ('wide-sk','text',1,1,'all')")
+        db.execute("INSERT INTO org_mcp VALUES ('wide-m','https://y.example','none',NULL,'d',1,1,'all')")
+    words, data = _backup(w)
+    fresh = tmp_path / "srv" / "d"
+    RS.restore(fresh, data, words, dev_mode=True, now_ms=lambda: 1_900_000_000_000)
+    q = lambda sql: _rows(fresh, "access.db", sql)
+    assert (
+        q("SELECT name FROM org_skill WHERE shared='all'") == []
+        and q("SELECT name FROM org_mcp WHERE shared='all'") == []
+    )
+    assert {(k, a) for k, a in q("SELECT kind, a FROM restore_pending")} >= {
+        ("skill_all", "wide-sk"),
+        ("mcp_all", "wide-m"),
+    }
+    from orch_hub.backup import guard as GD
+
+    acc = Access(str(fresh / "access.db"))
+    try:
+        for i in GD.pending(acc):
+            GD.confirm(acc, i["id"])  # the admin's click turns it back on
+        assert acc._q("SELECT shared FROM org_skill WHERE name='wide-sk'") == [("all",)]
+        assert acc._q("SELECT shared FROM org_mcp WHERE name='wide-m'") == [("all",)]
     finally:
         acc.close()
 

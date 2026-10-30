@@ -108,6 +108,11 @@ HOST_CODES: dict[str, tuple[int, bool]] = {
     # V3 C2a, the hub (hub contract 9; host/hubops.py)
     "hub.unreachable": (9, True),
     "hub.no_card": (3, False),
+    # R6 (#1594): why the link did not come up (docs/architecture/orch-v2-host.md)
+    "hub.link_inspected": (3, False),
+    "hub.proxy_auth": (3, False),
+    "hub.proxy_refused": (3, False),
+    "hub.proxy_unreachable": (9, True),
     "hub.no_epoch": (3, False),
     "keys.no_epoch": (3, False),  # V3 C8 (L2-C8i-2): keys.rotate on a workspace without a workspace key
     "keys.joined": (3, False),  # V3 C8: keys.rotate while joined to a hub in full mode

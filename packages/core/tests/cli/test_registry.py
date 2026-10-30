@@ -176,6 +176,8 @@ def test_operation_errors_are_declared_once_known_and_complete():
     # #1198 R1-5: returned by the dashboard server's remote listener (route gate, passkey login, enrollment), no op
     control_only |= {"cosmetic.conflict"}  # run 13 D6: host op workspace.cosmetic.set
     control_only |= {"remote.refused", "passkey.invalid", "enroll.expired", "passkey.stepup_required"}
+    # U2: raised by orch.update.verify; the update ops that declare them land later (then drop these two)
+    control_only |= {"update.unverified", "update.stale"}
     unused = (
         set(ERRORS) - used - set(GLOBAL_ERRORS) - {"wait.timeout", "quick.unlabelled"} - control_only - later
     )  # the latter: the CLI composite `quick add` (H11f)

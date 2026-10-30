@@ -1058,3 +1058,18 @@ def test_invite_status_on_a_store_made_before_the_redeemed_user_column(w, tmp_pa
     finally:
         w.api.d.user_invites.close()
         w.api.d.user_invites = old
+
+
+def test_ga07_a_new_person_joins_the_default_group_through_the_inviter(w):
+    tok_admin = w.login(w.admin)
+    assert w.call("POST", "/admin/groups", {"name": "newbies"}, token=tok_admin)[0] == 200
+    assert w.call("PUT", "/admin/default-group", {"group": "newbies"}, token=tok_admin)[0] == 200
+    s, o, _ = redeem(w, invite_join(w))
+    assert s == 200
+    assert w.env.acc.members("newbies") == [o["user_id"]]
+    assert not w.env.acc.is_hub_admin(o["user_id"])
+
+
+def test_ga07_without_a_default_group_a_new_person_joins_nothing(w):
+    s, o, _ = redeem(w, invite_join(w))
+    assert s == 200 and w.env.acc.groups_of(o["user_id"]) == []

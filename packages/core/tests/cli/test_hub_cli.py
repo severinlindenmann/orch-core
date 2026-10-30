@@ -264,6 +264,11 @@ def share_host(monkeypatch):
         "share.rule_remove": {"note": "changed", "synced": True, "put": 0, "revoke": 1, "kept": 0},
         "share.revoke": {"note": "withdrawn", "synced": True, "put": 0, "revoke": 1, "kept": 0},
         "share.sync": {"synced": False, "pending": "hub_unreachable"},
+        "share.audience": {
+            "people": [{"user_id": "a" * 32, "name": "Ben"}, {"user_id": "b" * 32, "name": "Ben"},
+                       {"user_id": "c" * 32, "name": "Cleo"}],
+            "teams": [{"name": "team-b", "count": 2}],
+        },
         "share.rules": {
             "rules": [{"kind": "tag", "tag": "x", "count": 1, "describes": "d"}],
             "shared": 1,
@@ -403,3 +408,21 @@ def test_hub_history_golden(host):
     )  # L2-C8i-6: no JSON pretending to be a command
     code, out = run(["history"], {}, as_json=True)
     assert code == 0 and json.loads(out)["data"] == HIST
+
+
+def test_share_people_lists_the_hub_people(share_host):
+    code, out = run(["share", "people"], {})
+    assert code == 0 and "Cleo" in out and "team team-b" in out and share_host.called == [("share.audience", {})]
+
+
+def test_with_resolves_a_name_or_id_into_the_signed_audience(share_host):
+    code, _ = run(["share", "rule", "add", "--ticket", "K-1", "--with", "Cleo", "--team", "team-b"], {}, as_json=True)
+    rule = {"kind": "ticket", "ticket": "K-1", "audience": {"users": ["c" * 32], "groups": ["team-b"]}}
+    assert code == 0 and ("share.rule_add", {"rule": rule, "expect": "p" * 43}) in share_host.called
+
+
+def test_an_ambiguous_or_unknown_person_reaches_no_rule_change(share_host):
+    for who in ("Ben", "Nobody"):
+        code, _ = run(["share", "rule", "add", "--ticket", "K-1", "--with", who], {}, as_json=True)
+        assert code == 5
+    assert all(op != "share.rule_add" for op, _ in share_host.called)

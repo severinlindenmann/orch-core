@@ -11,8 +11,10 @@
     orch keys rotate                          a person: break-glass, a new workspace key epoch now (owner, terminal)
     orch hub history [--hub ID] [--since TS]  a person: what a hub did here, hub-made policy and grants first
     orch hub status [--refresh]               a person: the joined hub, the link state and the pinned snapshot
-    orch hub share rule list                  a person: what a selective workspace shares (rules and counts)
+    orch hub share people                     a person: the people and teams a ticket can be shared with
+    orch hub share rule list                  a person: what this workspace shares (rules and counts)
     orch hub share rule add|remove (--tag T | --type T | --ticket KEY | --questions | --needs-you)
+        [--with PERSON]... [--team NAME]... [--description]   (who may read it; in full mode only tickets are shared)
                                               a person: change what the hub may see (shown, then typed confirmation)
     orch hub share revoke REF                 a person: withdraw one shared item now
     orch hub share sync                       a person: send what changed (also done after every change above)
@@ -47,8 +49,8 @@ _USAGE = (
     "| join INVITE --hub-card FILE [--hub-id HEX32] [--hub-addr HOST:PORT] [--mode selective|full] "
     "[--owner-user-id HEX32] | mode full --hub-card FILE [--hub-addr HOST:PORT] | leave "
     "| connect [INVITE] --hub-card FILE [--hub-addr HOST:PORT] | unbind "
-    "| address --link LINK | directory [--query Q] | status [--refresh [--hub-card FILE]] | share rule list "
-    "| share rule add|remove RULE | share revoke REF "
+    "| address --link LINK | directory [--query Q] | status [--refresh [--hub-card FILE]] | share people | share rule list "
+    "| share rule add|remove RULE [--with PERSON] [--team NAME] [--description] | share revoke REF "
     "| share sync} [--json]"
 )
 _CARD_MAX = 64 * 1024
@@ -82,6 +84,9 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--ticket")
     p.add_argument("--questions", action="store_true")
     p.add_argument("--needs-you", dest="needs_you", action="store_true")
+    p.add_argument("--with", dest="with_people", action="append", default=[])
+    p.add_argument("--team", dest="teams", action="append", default=[])
+    p.add_argument("--description", action="store_true")
     p.add_argument("rest", nargs="*")
     p.add_argument("--hub-card")
     p.add_argument("--link")
@@ -427,6 +432,35 @@ def _rule_of(a: argparse.Namespace) -> dict[str, str]:
     return picked[0]
 
 
+def _with_audience(a: argparse.Namespace, rule: dict[str, Any], target: Any, env: Mapping[str, str]) -> dict[str, Any]:
+    """``--with PERSON`` (exact user id or exact unique name) and ``--team NAME`` become the rule's signed audience."""
+    if rule["kind"] not in ("ticket", "tag", "type"):
+        raise PubError("invalid.input", "--with, --team and --description go with --ticket, --tag or --type", 2)
+    users: list[str] = []
+    teams: list[str] = []
+    if a.with_people or a.teams:
+        d = _call(target, "share.audience", {}, env)
+        people, known = d["people"], {t.get("name") for t in d["teams"]}
+        for want in a.with_people:
+            hit = [p for p in people if p["user_id"] == want] or [p for p in people if p.get("name") == want]
+            if len(hit) != 1:
+                names = ", ".join(f"{clean_line(str(p.get('name', '')))} ({p['user_id']})" for p in hit or people)
+                raise PubError("invalid.input", f"{clean_line(want[:60])!r}: "
+                               + ("several people match: " if hit else "nobody by that name: orch hub share people: ")
+                               + names, 5)  # fmt: skip
+            users.append(hit[0]["user_id"])
+        for t in a.teams:
+            if t not in known:
+                raise PubError("invalid.input", f"no team {clean_line(t[:60])!r} on the hub: orch hub share people", 5)
+            teams.append(t)
+    out = dict(rule)
+    if users or teams:
+        out["audience"] = {"users": sorted(set(users)), "groups": sorted(set(teams))}
+    if a.description:
+        out["description"] = True
+    return out
+
+
 def _refused_lines(d: Mapping[str, Any]) -> str:
     """C6r3-1: items the share rules or the hub refused are never silent. One whose update was refused is marked: the
     hub still serves the older version, which is not what the owner just changed."""
@@ -449,13 +483,23 @@ def _sync_line(d: Mapping[str, Any]) -> str:
 def _share(a: argparse.Namespace, env: Mapping[str, str], out: TextIO, as_json: bool) -> int:
     words = a.rest
     shape = (
-        words == ["rule", "list"] or words == ["sync"] or (len(words) == 2 and words[0] == "revoke")
+        words == ["rule", "list"] or words == ["sync"] or words == ["people"] or (len(words) == 2 and words[0] == "revoke")
         or words in (["rule", "add"], ["rule", "remove"])
     )  # fmt: skip
+    extras = bool(a.with_people or a.teams or a.description)
+    if extras and words not in (["rule", "add"], ["rule", "remove"]):
+        raise PubError("invalid.input", _USAGE, 2)
     has_rule = any((a.tag is not None, a.ttype is not None, a.ticket is not None, a.questions, a.needs_you))
     if not shape or has_rule != (words[:1] == ["rule"] and words[1:] in (["add"], ["remove"])):
         raise PubError("invalid.input", _USAGE, 2)
     target = _target(env)
+    if words == ["people"]:
+        d = _call(target, "share.audience", {}, env)
+        lines = [f"  {clean_line(str(p.get('name', '')))} ({p['user_id']})" for p in d["people"]]
+        lines += [f"  team {clean_line(str(t.get('name', '')))} ({t.get('count', '?')} people)" for t in d["teams"]]
+        _emit(out, as_json, d, "People you can share a ticket with (from the hub, not signed):\n"
+              + ("\n".join(lines) or "  (nobody yet)"))
+        return 0
     if words == ["rule", "list"]:
         d = _call(target, "share.rules", {}, env)
         text = "\n".join(f"  {r['describes']}: {r['count']} now" for r in d["rules"]) or "  (nothing is shared)"
@@ -489,6 +533,8 @@ def _share(a: argparse.Namespace, env: Mapping[str, str], out: TextIO, as_json: 
     from orch.ops.human import review_prompt
 
     rule, op = _rule_of(a), "share.rule_" + words[1]
+    if extras:
+        rule = _with_audience(a, rule, target, env)
     key = "add" if words[1] == "add" else "remove"
     prev = _call(target, "share.preview", {key: rule}, env)
     from orch.hubclient.shares import describe

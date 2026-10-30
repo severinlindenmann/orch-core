@@ -83,6 +83,10 @@ SEALED_OPS: dict[str, tuple[str, ...]] = {
     "hub.join": ("hub.backup_key",),
     "hub.mode": ("hub.backup_key",),
     "hub.leave": ("hub.backup_key",),
+    # R2 (#1590): the owner's remote policy and device confirmation are clicks only at the loopback dashboard, with the
+    # backup key sealed to the signer (the remote owner proof); a remote session never reaches them (``handle``)
+    "remote.set": ("hub.backup_key",),
+    "remote.device_confirm": ("hub.backup_key",),
 }
 #: #1198 C13: ``device.rotate`` (a new key for this computer) is a click only through the signer's own ``rotate`` op,
 #: never through ``prepare``: the NEW key signs it, so the signer makes that key itself. It takes the recovery code
@@ -226,6 +230,8 @@ CLICK_OPS = frozenset(
         "hub.join",  # #1198 C10: only with the backup key sealed to the signer (SEALED_OPS); see view.check_prepared
         "hub.mode",
         "hub.leave",
+        "remote.set",  # R2 (#1590): sealed backup key like a hub step; refused when the call is from a remote session
+        "remote.device_confirm",
         "device.remove",  # #1198 C15: refused for the signing device and an owner's last device (device.lockout)
         "addon.grant",  # every add-on, publish included (#1198 C2); the review lists what is signed
         "publish.share",  # #1198 C2: the staged copy's own words are the review; the person clicks
@@ -288,6 +294,8 @@ OP_TITLES: dict[str, str] = {
     "hub.join": "Join a hub",
     "hub.mode": "Change the hub mode",
     "hub.leave": "Leave a hub",
+    "remote.set": "Turn on remote access",
+    "remote.device_confirm": "Add a remote device",
     "device.remove": "Remove a device",
     "addon.grant": "Turn on an add-on",
     "publish.share": "Share files outside this computer",
@@ -363,6 +371,10 @@ HUB_LEAVE_RISK = (
     "reaching this workspace."
 )
 HUB_RISK = "This changes what a hub can read of this workspace."
+REMOTE_RISK = "Devices you add can use this workspace from afar, up to the level you chose, until you turn it off."
+REMOTE_AGENTS_RISK = "Agents on this computer can act as you."
+REMOTE_HUB_FULL_LINE = "The hub can already act for people in this workspace. Remote access does not change that."
+REMOTE_DEVICE_RISK = "Check that the six words match the ones on the device; this device can then reach this workspace."
 DEVICE_REMOVE_RISK = (
     "That device can no longer sign for this workspace; to use it again, it must be paired again as a new device."
 )
@@ -459,6 +471,20 @@ def _hub_risk(events: Events, deposit: bool, reveal: bool) -> list[str]:
     return list(dict.fromkeys(out)) or [HUB_RISK]  # a hub step is always marked
 
 
+def _remote_risk(events: Events, deposit: bool, reveal: bool) -> list[str]:
+    out: list[str] = []
+    for ev in events:
+        if ev.get("type") == "remote.changed":
+            out.append(REMOTE_RISK)
+            if ev.get("agents_risk") is True:
+                out.append(REMOTE_AGENTS_RISK)
+            if ev.get("hub_mode") == "full":
+                out.append(REMOTE_HUB_FULL_LINE)
+        elif ev.get("type") == "remote.device_added":
+            out.append(REMOTE_DEVICE_RISK)
+    return list(dict.fromkeys(out)) or [REMOTE_RISK]
+
+
 def _schedule_risk(events: Events, deposit: bool, reveal: bool) -> list[str]:
     from orch.ops.schedule import describe, risk
 
@@ -537,6 +563,8 @@ RISK_BUILDERS: dict[str, Callable[[Events, bool, bool], list[str]]] = {
     "hub.join": _hub_risk,
     "hub.mode": _hub_risk,
     "hub.leave": _hub_risk,
+    "remote.set": _remote_risk,
+    "remote.device_confirm": _remote_risk,
     "device.remove": _fixed(DEVICE_REMOVE_RISK),
     ROTATE_OP: _fixed(KEY_REPLACE_RISK),
     "addon.purge": _fixed(PURGE_RISK),

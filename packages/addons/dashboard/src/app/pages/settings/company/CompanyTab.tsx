@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type { Workspace } from '@/api/types'
 import { hubServed } from '@/api/hub'
-import { orgQueries, STATUS_WORD, type OrgKind, type OrgRow } from '@/api/org'
+import { orgQueries, STATUS_WORD, type OrgKind, type OrgRow, type OrgServerRow } from '@/api/org'
 import { api } from '@/api/client'
 import { ApiError } from '@/api/types'
 import { Action, Panel } from '../hub/shared'
@@ -17,6 +17,7 @@ function Row({ kind, row, busy, onOpen, onOff }: { kind: OrgKind; row: OrgRow; b
     <button type="button" className="min-w-0 flex-1 text-left hover:underline" onClick={onOpen} data-testid={`company-open-${row.name}`}>
       <span className="font-medium">{row.name}</span>
       <span className={'ml-2 text-xs ' + (row.status === 'on' ? 'text-success' : row.status === 'off' ? 'text-text-muted' : 'text-warning')} data-testid={`company-status-${row.name}`}>{STATUS_WORD[row.status]}</span>
+      {kind === 'mcp' && (row as OrgServerRow).auth === 'hub_secret' && <span className="block text-xs text-text-muted" data-testid={`company-secret-${row.name}`}>Uses a company secret from your hub</span>}
     </button>
     {isOn
       ? <Action id={`company-off-${row.name}`} disabled={busy} onClick={onOff}>Turn off</Action>
@@ -67,7 +68,7 @@ export function CompanyTab({ workspace, isOwner }: { workspace: Workspace; isOwn
 
   return <div className="space-y-4" data-testid="company-tab">
     <div className="flex flex-wrap items-center gap-3">
-      <p className="min-w-0 flex-1 text-sm text-text-muted">Skills and tools your company hub offers. Everything is off until you turn it on.</p>
+      <p className="min-w-0 flex-1 text-sm text-text-muted" data-testid="company-intro">Skills and tools your company hub offers. Everything is off until you turn it on. Some tools use a company secret, like a password kept safely by your hub. You never see it. These tools work only when agents run as a separate agent user.</p>
       <Action id="company-sync" disabled={busy} onClick={sync}>Get the latest from your hub</Action>
     </div>
     {note && <p role="status" className="text-sm" data-testid="company-note">{note}</p>}

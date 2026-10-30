@@ -122,6 +122,7 @@ OPS = {
         # with an idem. `publish.send` answers the share link ONCE (shares.py); `publish.share` is never sent as a
         # plain op: it is the inner op of a signed hand-off (handoff.py).
         "publish.list",
+        "publish.stage_upload",
         "publish.prepare",
         "publish.send",
         "publish.revoke",
@@ -187,6 +188,7 @@ WORKDIR_OPS = {"workdir.get", "workdir.delete"}
 FOCUS_OPS = {"run.transcript", "run.sources", "delegation.list", "run.link", "run.detach"}
 PUBLISH_OPS = {
     "publish.list",
+    "publish.stage_upload",
     "publish.prepare",
     "publish.send",
     "publish.revoke",

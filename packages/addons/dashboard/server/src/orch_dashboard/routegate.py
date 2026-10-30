@@ -235,6 +235,7 @@ TABLE: dict[tuple[str, str], tuple[str, str]] = {
     (POST, W + "/workdir/delete"): (ALLOWED, "permanently deletes the person's files: presence for a remote device"),
     # --- shares
     (GET, W + "/shares"): (ALLOWED, ""),
+    (POST, W + "/shares/upload"): (ALLOWED, "a file picked for a share, kept aside by the host; nothing is shared"),
     (POST, W + "/shares/prepare"): (ALLOWED, "admin action, plain click"),
     (POST, W + "/shares/send"): (ALLOWED, "admin action, plain click"),
     (POST, W + "/shares/revoke"): (ALLOWED, "turning off"),

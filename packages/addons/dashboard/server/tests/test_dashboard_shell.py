@@ -123,6 +123,7 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/explorer/compare",
         "/api/w/{ws}/explorer/ticket/{key}",
         "/api/w/{ws}/shares",
+        "/api/w/{ws}/shares/upload",
         "/api/w/{ws}/shares/prepare",
         "/api/w/{ws}/shares/send",
         "/api/w/{ws}/shares/revoke",

@@ -70,7 +70,7 @@ test("offline workspace stays inside the shell and never requests a switch ticke
   await context.workspacePage({ kind: "workspace", workspace: ws });
   assert.equal(output.active, "workspaces");
   assert.equal(output.nodes[0].text, "Legal is offline since yesterday");
-  assert.match(output.nodes[2].text, /3 things need you/);
+  assert.equal(output.nodes[1].text, "It cannot be opened until it is back. 3 things wait for you.");
   assert.deepEqual(calls, ["/me/needs-you", "/me/shared?workspace_id=" + ws]);
 });
 
@@ -124,7 +124,7 @@ test("the workspace page lists shared tickets under the waiting count, for the o
   let output;
   const shared = [{ workspace_id: ws, title: "Invoice export for Ben", shared_with: ["Ben Test"] }, { workspace_id: ws, title: "Other", shared_by: "Anna Test" }, { workspace_id: "cd".repeat(16), title: "Elsewhere" }];
   const context = vm.createContext({ pageLoading() {}, loading: () => () => {}, skeleton: () => ({}), show() {}, state: { rail: { rows: [{ id: ws, name: "Anna Test's workspace", online: true, canOpen: true }] } },
-    refresh: async () => true, loadRail: async () => {}, renderText: String, workspaceStatus: () => "", OPEN_FIRST: "", openWorkspace() {},
+    refresh: async () => true, loadRail: async () => {}, renderText: String, workspaceStatus: () => "", OPEN_FIRST: "", OPEN_ON_ITS_COMPUTER: "", openWorkspace() {},
     h: (tag, props, ...kids) => ({ tag, ...props, kids: kids.flat() }),
     shell: (active, ...nodes) => { output = nodes; },
     api: async (method, path) => ({ status: 200, body: path.startsWith("/me/shared") ? { items: shared } : { items: [] } }) });
@@ -134,6 +134,46 @@ test("the workspace page lists shared tickets under the waiting count, for the o
   assert.equal(section.kids[0].text, "Shared tickets (2)"); // another workspace's ticket is not listed
   const lines = JSON.stringify(section.kids.slice(1));
   assert.match(lines, /Shared with Ben Test/); assert.match(lines, /Shared by Anna Test/);
+});
+
+test("run15c P08: one click on an online, openable workspace opens it; offline or not openable lands on the page that says why", async () => {
+  const A = "a".repeat(32), B = "b".repeat(32), C = "c".repeat(32), D = "d".repeat(32);
+  const rows = [{ id: A, online: true, canOpen: true }, { id: B, online: false, canOpen: true }, { id: C, online: true, canOpen: false, switchable: false }, { id: D, online: true, canOpen: false, switchable: true }];
+  const calls = [];
+  const context = vm.createContext({ state: { rail: { rows } }, openWorkspace: (w) => calls.push(["open", w.id]), navigate: (h) => calls.push(["go", h]) });
+  vm.runInContext(source.slice(source.indexOf("function openOrPage("), source.indexOf("const HUB_SETTINGS")), context);
+  for (const id of [A, B, C, D, "e".repeat(32)]) context.openOrPage(id);
+  assert.deepEqual(calls, [["open", A], ["go", "#/w/" + B], ["go", "#/w/" + C], ["go", "#/w/" + D], ["go", "#/w/" + "e".repeat(32)]]);
+  // the rail button and the Home Open button both go through it
+  assert.match(source, /title: renderText\(w\.name\), onclick: \(\) => openOrPage\(w\.id\) \}/);
+  assert.match(source, /open: \(id\) => openOrPage\(id\), dismissEnded/);
+  // the only landings the console asks the hub for are "/" and the workspace's hub settings
+  assert.match(source, /return_to: returnTo === HUB_SETTINGS \? HUB_SETTINGS : "\/"/);
+});
+
+test("run15c P08: the workspace page (the fallback) says why it cannot be opened, not 'Online' and a count", async () => {
+  const ws = "ab".repeat(16);
+  const run = async (row, needsItems = []) => {
+    let output;
+    const context = vm.createContext({ pageLoading() {}, loading: () => () => {}, skeleton: () => ({}), show() {}, state: { rail: { rows: [{ id: ws, name: "Anna Test's workspace", ...row }] } },
+      refresh: async () => true, loadRail: async () => {}, renderText: String, workspaceStatus: () => "offline since an unknown time", OPEN_FIRST: "FIRST", OPEN_ON_ITS_COMPUTER: "ITS-COMPUTER", openWorkspace() {},
+      sharedTicketsView: () => null, h: (tag, props, ...kids) => ({ tag, ...props, kids: kids.flat() }),
+      shell: (active, ...nodes) => { output = nodes; },
+      api: async (method, path) => ({ status: 200, body: path.startsWith("/me/shared") ? { items: [] } : { items: needsItems.map((k) => ({ workspace_id: ws, key: k })) } }) });
+    vm.runInContext(source.slice(source.indexOf("async function workspacePage("), source.indexOf("// Serialize renders")), context);
+    await context.workspacePage({ kind: "workspace", workspace: ws });
+    return JSON.stringify(output);
+  };
+  const off = await run({ online: false, switchable: true, canOpen: true, badge: 2 });
+  assert.match(off, /Anna Test's workspace is offline since an unknown time/);
+  assert.match(off, /It cannot be opened until it is back\. 2 things wait for you\./);
+  assert.doesNotMatch(off, /Open workspace|"Online"/);
+  const selective = await run({ online: true, switchable: false, canOpen: false });
+  assert.match(selective, /ITS-COMPUTER/);
+  assert.doesNotMatch(selective, /Open workspace|"Online"|0 things need you/);
+  const first = await run({ online: true, switchable: true, canOpen: false }, ["K-1"]);
+  assert.match(first, /FIRST/);
+  assert.match(first, /1 thing needs you/);
 });
 
 test("a failed first read of the workspaces never turns the existing ones into joins", async () => {

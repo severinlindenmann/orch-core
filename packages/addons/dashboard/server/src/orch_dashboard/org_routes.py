@@ -4,6 +4,7 @@
 |--------|---------------------------|----------------|---------------------------------------------------------|
 | GET    | /api/w/{ws}/org           | org.offers     | a read: names, digests, status                          |
 | GET    | /api/w/{ws}/org/item      | org.show       | a read (the host answers the owner only)                |
+| GET    | /api/w/{ws}/org/secrets   | org.secrets    | a read: names, expiry, status, who uses it (never a value) |
 | POST   | /api/w/{ws}/org/accept    | org.accept     | owner, full LOCAL session; the digest the page showed   |
 | POST   | /api/w/{ws}/org/decline   | org.decline    | owner, full session (it only takes authority away)      |
 | POST   | /api/w/{ws}/org/sync      | org.sync       | owner, full session (it grants nothing)                 |
@@ -101,6 +102,32 @@ def offers_view(raw) -> dict:
         "skills": _rows(raw.get("skills"), False),
         "mcp": _rows(raw.get("mcp"), True),
     }
+
+
+SECRET_NAME = re.compile(r"^[a-z][a-z0-9-]{1,63}$")
+SECRET_STATUSES = ("ready", "expired", "not_received", "needs_isolation")
+
+
+def secrets_view(raw) -> dict:
+    """Of `org.secrets` only the closed fields: name, status, expiry (milliseconds) and the servers that use it.
+    No other key passes, so a value that ever reached this far could not be shown."""
+    out = []
+    rows = raw.get("secrets") if isinstance(raw, dict) else None
+    for r in (rows if isinstance(rows, list) else [])[:MAX_ROWS]:
+        if not (isinstance(r, dict) and isinstance(r.get("name"), str) and SECRET_NAME.fullmatch(r["name"])):
+            continue
+        if r.get("status") not in SECRET_STATUSES:
+            continue
+        exp = r.get("expires_ms")
+        used = r.get("used_by")
+        used = used if isinstance(used, list) else []
+        out.append({
+            "name": r["name"],
+            "status": r["status"],
+            "expires_ms": exp if isinstance(exp, int) and not isinstance(exp, bool) and 0 <= exp < 2**53 else None,
+            "used_by": [n for n in used[:20] if isinstance(n, str) and NAME.fullmatch(n)],
+        })  # fmt: skip
+    return {"available": True, "secrets": out}
 
 
 MAX_DESC = 20000
@@ -238,6 +265,13 @@ def register(app: FastAPI, gateway: Gateway) -> None:
         if not link.supports("org.offers"):
             return {"available": False, "hub_id": None, "skills": [], "mcp": []}
         return offers_view(link.call("org.offers"))
+
+    @app.get("/api/w/{ws}/org/secrets")
+    def org_secrets(ws: str = Depends(reads.workspace)):
+        link = gateway.enabled(ws)
+        if not link.supports("org.secrets"):
+            return {"available": False, "secrets": []}
+        return secrets_view(link.call("org.secrets"))
 
     @app.get("/api/w/{ws}/org/item")
     def org_item(kind: Kind, name: Name, ws: str = Depends(reads.workspace)):

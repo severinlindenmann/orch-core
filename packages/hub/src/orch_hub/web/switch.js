@@ -42,11 +42,14 @@ export function railRows(body) {
       online: w.online === true,
       ...(w.last_seen == null ? {} : { last_seen: w.last_seen }),
       badge: Number.isInteger(w.badge) && w.badge > 0 ? w.badge : 0,
-      canOpen: typeof w.origin === "string" && w.origin !== "",
+      switchable: w.switchable !== false,
+      canOpen: typeof w.origin === "string" && w.origin !== "" && w.switchable !== false,
     }));
 }
 
 export const OPEN_FIRST = "Open its dashboard once first";
+/** D93: a workspace that shares only chosen items with the hub never opens from here. */
+export const OPEN_ON_ITS_COMPUTER = "This workspace shares only chosen items with the hub. Open it on its own computer.";
 
 /** Only an http(s) address may be navigated to after a ticket answer. */
 export function safeUrl(url) {

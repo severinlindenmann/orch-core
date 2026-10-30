@@ -117,12 +117,12 @@ def test_audience_get_lists_names_ids_and_team_counts_only(shub):
     acc.close()
 
 
-def test_audience_get_is_refused_where_sharing_is_not_possible(shub):
+def test_audience_get_works_in_full_mode_too(shub):
     from shares_helpers import refused
 
     acc = access()
     h = shub(access=acc)
-    refused(h.join(mode="full"), "audience_get", {}, "wrong_mode")
+    assert "people" in h.join(mode="full").request("audience_get", {})
     acc.close()
     h2 = shub()  # no access wired: nothing to list
     refused(h2.join(), "audience_get", {}, "unavailable")
@@ -182,3 +182,37 @@ def test_the_hub_admin_group_is_never_a_signed_audience():
     for groups in (["hub-admin"], ["hub-admin", "team-a"]):
         with pytest.raises(Refused):
             check_audience({"users": [], "groups": groups}, "ticket")
+
+
+def test_full_mode_shares_a_ticket_with_named_people_only(shub):
+    """r15: a full-mode workspace shares tickets with chosen people; roles and summaries add nothing."""
+    import pytest
+
+    from orch_hub.contract.hub import Refused
+
+    acc = access()
+    acc.grant(G.WS_A, "team-a", "admin")  # a hub role in the full workspace
+    h = shub(access=acc)
+    c = h.join("full")
+    c.request("share_put", ticket_body(IT1, audience={"users": [BEN], "groups": []}))
+    assert [i["item_id"] for i in h.svc.list_shared(BEN, G.WS_A)] == [IT1]
+    assert h.svc.list_shared(DANA, G.WS_A) == []  # not named
+    assert h.svc.list_shared(CARL, G.WS_A) == []  # team member with an admin role: roles read nothing
+    assert h.svc.list_shared(ADMIN, G.WS_A) == []  # hub admin: nothing by role
+    assert [i["item_id"] for i in h.svc.list_shared(OWNER, G.WS_A)] == [IT1]
+    with pytest.raises(Refused) as e:
+        h.svc.shared_item(OWNER, G.WS_A, IT1)  # the custodial build stays selective
+    assert e.value.code == "not_granted"
+    assert c.request("share_revoke", {"item_id": IT1}) == {}
+    assert h.svc.list_shared(BEN, G.WS_A) == []
+    acc.close()
+
+
+def test_unbind_purges_a_full_mode_share(shub):
+    acc = access()
+    h = shub(access=acc)
+    c = h.join("full")
+    c.request("share_put", ticket_body(IT1, audience={"users": [BEN], "groups": []}))
+    c.request("binding_put", {"object": G.unbound(seq=1)})
+    assert h.share_store.usage(G.WS_A) == (0, 0)
+    acc.close()

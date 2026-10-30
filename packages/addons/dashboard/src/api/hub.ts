@@ -23,6 +23,8 @@ export interface HubStatus {
   reseal_needed: boolean
   key_change_pending: boolean
   log_sync_stuck: boolean
+  /** The version a hub admin asked this workspace to update to (HUB-WS-04); `null`: no request, or already there. */
+  update_target?: string | null
   /** From the hub, not signed: people per role in the pinned group snapshot. `null`: no snapshot yet. */
   groups: { read: number; edit: number; admin: number } | null
   snapshot_version: number | null

@@ -48,12 +48,16 @@ class Services:
         publish_url: str | None,
         behind_edge: bool = False,
         edge_url: str | None = None,
+        hub_url: str | None = None,
         now_ms: Callable[[], int] | None = None,
         probe: Probe = http_probe,
         timeout_s: float = 2.0,
     ) -> None:
         self._urls = {"relay": relay_url, "publish": publish_url}
-        self._edge = {"state": "up" if behind_edge else "not_set_up", "url": edge_url if behind_edge else None}
+        # Edge is probed only when the hub runs behind one and its public address is known; no address = configuration only.
+        self._edge_state = "up" if behind_edge else "not_set_up"
+        self._urls["edge"] = edge_url if behind_edge else None
+        self._hub_url = hub_url
         self._now = now_ms or (lambda: int(time.time() * 1000))
         self._probe, self._timeout = probe, timeout_s
         self._started = self._now()
@@ -69,14 +73,16 @@ class Services:
         url = self._urls[name]
         out: dict[str, Any] = {"name": name, "url": url, "version": None, "last_ok_ms": None}
         if not url:
-            return {**out, "state": "not_set_up"}
+            return {**out, "state": self._edge_state if name == "edge" else "not_set_up"}
         now = self._now()
         try:
             status, obj = self._probe(url, path, self._timeout)
         except OSError, ValueError:
             state = "down"
         else:
-            state = "up" if (status == 200 or name == "publish") else "down"
+            # http.client never follows redirects, so a probe cannot be sent to another host. Publish and Edge count as
+            # up on any answer that is not a server error (an older publish has no /healthz; Edge answers whatever the hub does).
+            state = "up" if (status == 200 or (name in ("publish", "edge") and status < 500)) else "down"
             ver = (obj or {}).get("version")
             if state == "up" and type(ver) is str and len(ver) <= 40:
                 out["version"] = ver
@@ -96,20 +102,21 @@ class Services:
         ts = [
             threading.Thread(target=run, args=("relay", "/healthz")),
             threading.Thread(target=run, args=("publish", "/healthz")),
+            threading.Thread(target=run, args=("edge", "/")),
         ]
         for t in ts:
             t.start()
         for t in ts:
             t.join(self._timeout + 2)
         now = self._now()
-        for name in ("relay", "publish"):  # a thread that did not finish in time counts as down
+        for name in ("relay", "publish", "edge"):  # a thread that did not finish in time counts as down
             res.setdefault(
                 name, {"name": name, "url": self._urls[name], "version": None, "last_ok_ms": None, "state": "down"}
             )
         return {
             "now_ms": now,
-            "hub": {"version": __version__, "started_ms": self._started, "state": "up"},
+            "hub": {"version": __version__, "started_ms": self._started, "state": "up", "url": self._hub_url},
             "relay": res["relay"],
             "publish": res["publish"],
-            "edge": dict(self._edge),
+            "edge": res["edge"],
         }

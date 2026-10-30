@@ -593,3 +593,54 @@ test("P05: the Home count includes private workspaces for a hub admin and nobody
   assert.equal(line({ adminWorkspaces: [ben] }), "2 workspaces online, 0 offline");
   assert.equal(line({ adminWorkspaces: null }), "1 workspace online, 0 offline");
 });
+
+// HUB-WS-04 (#1385): ask the owners of older workspaces to update.
+test("HUB-WS-04: an admin can ask the owners to update; it is asked once and then shows when", async () => {
+  let asked = 0;
+  const rows = [workspace(), workspace({ workspace_id: "b", name: "Legal", version_state: "older" })];
+  const out = workspacesView({ workspaces: rows, handoffs: [], admin: [], hub: { version: "0.3.0", min_supported: "0.1.0" },
+    actions: { askUpdate: async () => { asked += 1; return { asked: 1, at_ms: NOW }; } } }, NOW);
+  assert.match(text(out), /Ask owners to update/);
+  await clickButton(out, "Ask owners to update");
+  assert.equal(asked, 1);
+  assert.match(text(out), /Asked/);
+  assert.doesNotMatch(text(out), /Ask owners to update/);
+  // a later visit (the hub remembers the first time): no button, only when it was asked
+  const later = workspacesView({ workspaces: [workspace({ workspace_id: "b", version_state: "older", update_asked_ms: NOW - 120000, update_asked_target: "0.3.0" })],
+    handoffs: [], admin: [], hub: { version: "0.3.0" }, actions: { askUpdate: async () => { asked += 1; } } }, NOW);
+  assert.match(text(later), /Asked 2 min ago/);
+  assert.doesNotMatch(text(later), /Ask owners to update/);
+});
+
+test("HUB-WS-04: only admins see the button, and a failed ask says so and can be repeated", async () => {
+  const rows = [workspace({ version_state: "older" })];
+  const member = workspacesView({ workspaces: rows, handoffs: [], admin: null, hub: { version: "0.3.0" }, actions: { askUpdate: async () => ({}) } }, NOW);
+  assert.doesNotMatch(text(member), /Ask owners to update/);
+  const out = workspacesView({ workspaces: rows, handoffs: [], admin: [], hub: { version: "0.3.0" }, actions: { askUpdate: async () => { throw new Error("x"); } } }, NOW);
+  await clickButton(out, "Ask owners to update");
+  assert.match(text(out), /Could not send the request/);
+  assert.match(text(out), /Ask owners to update/);
+});
+
+test("HUB-WS-04 L1: 'Asked' shows only for the hub's current version; an older ask shows the button again", () => {
+  const row = (target) => workspace({ workspace_id: "b", version_state: "older", update_asked_ms: NOW - 60000, update_asked_target: target });
+  const mk = (r) => workspacesView({ workspaces: [r], handoffs: [], admin: [], hub: { version: "0.3.0" }, actions: { askUpdate: async () => ({}) } }, NOW);
+  assert.match(text(mk(row("0.3.0"))), /Asked 1 min ago/);
+  assert.match(text(mk(row("0.2.0"))), /Ask owners to update/);
+});
+
+test("SV-01: every part shows its address; Edge down is called out; no address is said plainly", () => {
+  const d = base();
+  d.hub.url = "http://192.168.1.5:8100";
+  d.relay.url = "http://100.64.0.2:8101";
+  d.publish.url = null; d.publish.state = "up";
+  d.edge = { state: "down", url: "https://hub.test", last_ok_ms: null };
+  const out = servicesView(d, actions, NOW);
+  const row = (n) => find(out, (x) => x.attrs.id === "svc-" + n)[0].textContent;
+  assert.match(row("hub"), /Address http:\/\/192\.168\.1\.5:8100/);
+  assert.match(row("relay"), /Address http:\/\/100\.64\.0\.2:8101/);
+  assert.match(row("publish"), /No address/);
+  assert.match(row("edge"), /Not answering/);
+  assert.match(row("edge"), /Address https:\/\/hub\.test/);
+  assert.equal(summary(d).text, "Edge is not answering");
+});

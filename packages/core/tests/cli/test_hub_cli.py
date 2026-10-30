@@ -265,8 +265,11 @@ def share_host(monkeypatch):
         "share.revoke": {"note": "withdrawn", "synced": True, "put": 0, "revoke": 1, "kept": 0},
         "share.sync": {"synced": False, "pending": "hub_unreachable"},
         "share.audience": {
-            "people": [{"user_id": "a" * 32, "name": "Ben"}, {"user_id": "b" * 32, "name": "Ben"},
-                       {"user_id": "c" * 32, "name": "Cleo"}],
+            "people": [
+                {"user_id": "a" * 32, "name": "Ben"},
+                {"user_id": "b" * 32, "name": "Ben"},
+                {"user_id": "c" * 32, "name": "Cleo"},
+            ],
             "teams": [{"name": "team-b", "count": 2}],
         },
         "share.rules": {

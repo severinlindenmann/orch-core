@@ -198,9 +198,7 @@ def _select(service: WorkspaceService, rules: list[Any], facts: list[Any]) -> li
     return [i for i in items if i.kind == "ticket"] if _is_full(service) else items
 
 
-FULL_SCOPE = (
-    "The hub already holds this workspace. These people will see this ticket in their own workspace: {leaves}."
-)
+FULL_SCOPE = "The hub already holds this workspace. These people will see this ticket in their own workspace: {leaves}."
 FULL_NO_SUMMARY = "In this hub mode the hub already sees what needs you. Share a ticket with people instead."
 
 
@@ -469,7 +467,7 @@ def _review(service: WorkspaceService, want: list[Any], had: set[str], st: Any =
     if names > MAX_REVIEW_NAMES:
         raise HostError("invalid.input", TOO_MANY)
     kinds = sorted({i.kind for i in leaving})
-    full = _is_full(service)
+    full = getattr(state, "mode", None) == "full"
     return {
         "hub_id": getattr(state, "hub_id", None),
         "mode": "full" if full else "selective",
@@ -484,10 +482,11 @@ def _review(service: WorkspaceService, want: list[Any], had: set[str], st: Any =
     }
 
 
-def _after(service: WorkspaceService, st: Any, facts: list[Any], *, add: Any = None, remove: Any = None) -> tuple[list[Any], list[str], list[Any]]:
+def _after(
+    service: WorkspaceService, st: Any, facts: list[Any], *, add: Any = None, remove: Any = None
+) -> tuple[list[Any], list[str], list[Any]]:
     """The rules and withdrawn list after ``add`` / ``remove`` and the items they would share (withdrawn ones left
     out): what ``share.preview`` shows, what ``expect`` is checked against and what the sync sends."""
-    from orch.hubclient import shares as S
 
     rules = [dict(r) for r in st.rules]
     if remove is not None:
@@ -511,8 +510,8 @@ def _read(call: Call, op: str, args: dict[str, Any]) -> dict[str, Any]:
     facts = tickets_for(call.service, call.viewer)
     try:
         if op == "share.rules":
-            rules = [{**r, "count": len(_select(call.service, [r], facts)), "describes": S.describe(r)} for r in st.rules
-                     if not _is_full(call.service) or r["kind"] in S.TICKET_KINDS]  # fmt: skip
+            shown = [r for r in st.rules if not _is_full(call.service) or r["kind"] in S.TICKET_KINDS]
+            rules = [{**r, "count": len(_select(call.service, [r], facts)), "describes": S.describe(r)} for r in shown]
             return ok_result({"rules": rules, "shared": len(st.sent), "withdrawn": sorted(st.withdrawn),
                               "refused_items": st.refused_items()})  # fmt: skip
         add = S.normalize_rule(args["add"]) if "add" in args else None
@@ -551,7 +550,7 @@ def _make_builder(service: WorkspaceService) -> Any:
     from orch.hubclient import shares as S
     from orch.hubclient.errors import HubRefused
 
-    from . import hubops, peerops
+    from . import hubops
 
     state = _bound_hub(service)
     if state.hxk_pub is None:
@@ -621,7 +620,6 @@ def sync_now(
     C6fu2-3: the owner's confirmation covers what they were shown. With ``expect`` (the ``share.preview`` plan) the
     current selection is checked against it and then confirmed; without it a sync only retries the confirmed set
     (:meth:`ShareState.auto_wanted`) and confirms nothing new."""
-    from orch.hubclient import shares as S
 
     with _MU:
         if expect is not None and recheck is not None:
@@ -644,7 +642,6 @@ def auto_sync(service: WorkspaceService) -> dict[str, Any] | None:
 
     Raises :class:`HostError` where sharing does not apply (full mode, no bound hub: nothing is sent, ever);
     returns ``None`` where it is not the time (closing, degraded, no store); otherwise the sync answer."""
-    from orch.hubclient import shares as S
 
     if service.closing or service.store is None or service.state != "ok":
         return None
@@ -689,9 +686,10 @@ def _find(st: Any, ref: str, facts: list[Any]) -> str:
 
 def _widens(service: WorkspaceService, before: list[Any], after: list[Any], facts: list[Any]) -> bool:
     """Would the rules ``after`` select an item the rules ``before`` do not (on the same tickets)?"""
-    from orch.hubclient import shares as S
 
-    return bool({i.logical for i in _select(service, after, facts)} - {i.logical for i in _select(service, before, facts)})
+    return bool(
+        {i.logical for i in _select(service, after, facts)} - {i.logical for i in _select(service, before, facts)}
+    )
 
 
 def _add_audit(service: WorkspaceService, call: Call, args: dict[str, Any], count: int | None = None) -> dict[str, Any]:

@@ -167,9 +167,7 @@ def test_a_member_and_an_agent_cannot_share_in_full_mode(served, full):
 
 
 def test_a_hub_log_mode_mismatch_is_refused(served, selective, monkeypatch):
-    from orch.host import shareops
-
-    from orch.host import peerops
+    from orch.host import peerops, shareops
 
     real = peerops._hub_state
 

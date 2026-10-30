@@ -49,7 +49,8 @@ _USAGE = (
     "| join INVITE --hub-card FILE [--hub-id HEX32] [--hub-addr HOST:PORT] [--mode selective|full] "
     "[--owner-user-id HEX32] | mode full --hub-card FILE [--hub-addr HOST:PORT] | leave "
     "| connect [INVITE] --hub-card FILE [--hub-addr HOST:PORT] | unbind "
-    "| address --link LINK | directory [--query Q] | status [--refresh [--hub-card FILE]] | share people | share rule list "
+    "| address --link LINK | directory [--query Q] | status [--refresh [--hub-card FILE]] "
+    "| share people | share rule list "
     "| share rule add|remove RULE [--with PERSON] [--team NAME] [--description] | share revoke REF "
     "| share sync} [--json]"
 )
@@ -483,7 +484,7 @@ def _sync_line(d: Mapping[str, Any]) -> str:
 def _share(a: argparse.Namespace, env: Mapping[str, str], out: TextIO, as_json: bool) -> int:
     words = a.rest
     shape = (
-        words == ["rule", "list"] or words == ["sync"] or words == ["people"] or (len(words) == 2 and words[0] == "revoke")
+        words in (["rule", "list"], ["sync"], ["people"]) or (len(words) == 2 and words[0] == "revoke")
         or words in (["rule", "add"], ["rule", "remove"])
     )  # fmt: skip
     extras = bool(a.with_people or a.teams or a.description)
@@ -497,8 +498,12 @@ def _share(a: argparse.Namespace, env: Mapping[str, str], out: TextIO, as_json: 
         d = _call(target, "share.audience", {}, env)
         lines = [f"  {clean_line(str(p.get('name', '')))} ({p['user_id']})" for p in d["people"]]
         lines += [f"  team {clean_line(str(t.get('name', '')))} ({t.get('count', '?')} people)" for t in d["teams"]]
-        _emit(out, as_json, d, "People you can share a ticket with (from the hub, not signed):\n"
-              + ("\n".join(lines) or "  (nobody yet)"))
+        _emit(
+            out,
+            as_json,
+            d,
+            "People you can share a ticket with (from the hub, not signed):\n" + ("\n".join(lines) or "  (nobody yet)"),
+        )
         return 0
     if words == ["rule", "list"]:
         d = _call(target, "share.rules", {}, env)

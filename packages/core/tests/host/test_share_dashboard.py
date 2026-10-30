@@ -6,6 +6,8 @@ tests/cli/test_hub_cli.py)."""
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from orch.host import securitylog, shareops
@@ -117,7 +119,12 @@ def test_no_rule_kind_excludes_so_removing_any_rule_never_selects_more():
     for r in rules:
         rest = [x for x in rules if x != r]
         assert {i.logical for i in S.select(rest, facts)} <= every, r
-        assert not shareops._widens(rules, rest, facts)
+        assert not shareops._widens(
+            SimpleNamespace(store=SimpleNamespace(state=SimpleNamespace(workspace=SimpleNamespace(hub={})))),
+            rules,
+            rest,
+            facts,
+        )
 
 
 def test_a_removal_that_would_select_more_is_refused_and_sends_nothing(served, selective, monkeypatch):
@@ -420,7 +427,7 @@ def test_a_review_over_the_hard_limits_is_refused_in_plain_words(monkeypatch):
     from orch.host.errors import HostError
 
     service = SimpleNamespace(_share_names={})
-    monkeypatch.setattr(shareops, "_selective", lambda s: (_ for _ in ()).throw(HostError("hub.not_joined", "x")))
+    monkeypatch.setattr(shareops, "_bound_hub", lambda s: (_ for _ in ()).throw(HostError("hub.not_joined", "x")))
     many = [f"{n:032x}" for n in range(shareops.MAX_REVIEW_PEOPLE + 1)]
     with pytest.raises(HostError, match="reaches too many people") as e:
         shareops._review(service, [_item("a", many)], set())
@@ -477,7 +484,7 @@ def test_a_review_counts_distinct_teams_and_refuses_above_the_limit(monkeypatch)
     from orch.host.errors import HostError
 
     service = SimpleNamespace(_share_names={})
-    monkeypatch.setattr(shareops, "_selective", lambda s: (_ for _ in ()).throw(HostError("hub.not_joined", "x")))
+    monkeypatch.setattr(shareops, "_bound_hub", lambda s: (_ for _ in ()).throw(HostError("hub.not_joined", "x")))
     monkeypatch.setattr(shareops, "_rows", lambda items: {})  # the item rows are not under test
     teams = [f"team-{n}" for n in range(shareops.MAX_REVIEW_TEAMS)]
     got = shareops._review(service, [_item("a", (), teams)], set())
@@ -495,7 +502,7 @@ def test_a_review_with_too_many_names_in_all_is_refused_before_it_can_hit_the_fr
 
     assert shareops.MAX_REVIEW_NAMES * 250 < framing.MAX_FRAME  # a name of 250 bytes each still fits one frame
     service = SimpleNamespace(_share_names={})
-    monkeypatch.setattr(shareops, "_selective", lambda s: (_ for _ in ()).throw(HostError("hub.not_joined", "x")))
+    monkeypatch.setattr(shareops, "_bound_hub", lambda s: (_ for _ in ()).throw(HostError("hub.not_joined", "x")))
     monkeypatch.setattr(shareops, "MAX_REVIEW_NAMES", 40)
     users = [f"{n:032x}" for n in range(30)]
     items = [_item(f"ticket:{k}", users) for k in range(2)]

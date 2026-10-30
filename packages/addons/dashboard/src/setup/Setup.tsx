@@ -656,10 +656,8 @@ export function Setup({ api }: { api: SetupAPI }) {
     window.addEventListener('afterprint', done)
     return () => window.removeEventListener('afterprint', done)
   }, [])
-  // the recommendation no longer applies: a switch is not at its default, or the project-folder question was answered "Skip"
-  const agentsDiffer =
-    !!state?.addons?.some((a) => a.kind !== 'flag' && !a.required && a.default !== profile.addons.includes(a.id)) ||
-    (offersGit && profile.git_init === false)
+  // the recommendation no longer applies: a switch is not at its default
+  const agentsDiffer = !!state?.addons?.some((a) => a.kind !== 'flag' && !a.required && a.default !== profile.addons.includes(a.id))
   const update = (value: Partial<Profile>) => {
     setProfile((p) => ({ ...p, ...value }))
     setReview(undefined)
@@ -985,7 +983,8 @@ export function Setup({ api }: { api: SetupAPI }) {
                       <span className="always">Always on</span>
                     </div>
                   ) : (
-                  <label className="toggle" key={a.id}>
+                  <Fragment key={a.id}>
+                  <label className="toggle">
                     <span>
                       <strong>{a.title}</strong>
                       <small>{a.desc}</small>
@@ -1006,46 +1005,18 @@ export function Setup({ api }: { api: SetupAPI }) {
                       }
                     />
                   </label>
-                  ),
-                )}
-              {offersGit && (
-                <div className="note" role="group" aria-label="Own copy per ticket">
-                  <p>
-                    <strong>Your project folder is not set up for its own copy per ticket yet.</strong> Agents work best when
-                    each ticket gets its own copy. We can do it for you; your files stay as they are.
-                  </p>
-                  <label className="toggle">
-                    <span>
-                      <strong>Set it up for me (recommended)</strong>
-                      <small>Each ticket gets its own copy. Your files are not changed.</small>
+                  {a.id === 'worktrees' && offersGit && (
+                    <small className="reason sub-note" data-testid="git-note">
+                      We will set your project folder up for this. Your files stay as they are.
                       <details className="info">
                         <summary>Details</summary>
                         <small>orch adds two lines to your .gitignore (.orch/ and .orch-work/) so the copies stay out of your project history.</small>
                       </details>
-                    </span>
-                    <input
-                      type="radio"
-                      name="git"
-                      checked={profile.git_init !== false}
-                      onChange={() => update({ git_init: true })}
-                    />
-                  </label>
-                  <label className="toggle">
-                    <span>
-                      <strong>Skip this</strong>
-                      <small>Agents work one ticket at a time.</small>
-                    </span>
-                    <input
-                      type="radio"
-                      name="git"
-                      checked={profile.git_init === false}
-                      onChange={() =>
-                        update({ git_init: false, addons: profile.addons.filter((id) => id !== 'worktrees') })
-                      }
-                    />
-                  </label>
-                </div>
-              )}
+                    </small>
+                  )}
+                  </Fragment>
+                  ),
+                )}
               </details>
               <small>You can change this later in Settings.</small>
               <SetupFooter cancel={cancel}>

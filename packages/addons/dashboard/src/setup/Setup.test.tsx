@@ -1122,33 +1122,39 @@ test.each([
   expect(f.calls.find((c) => c.path === 'profile')?.body).toMatchObject({ agent_grant: false, agent_hours: 8 })
 })
 
-test('a folder without git offers to make one when Own copy per ticket is on, and never commits anything', async () => {
+test('a folder without git: one switch, one grey line with Details under the row, no second question, git_init true sent', async () => {
   const f = fake({ defaults: true, noGit: true })
-  render(<Setup api={f.api} />)
+  const { container } = render(<Setup api={f.api} />)
   await screen.findByRole('heading', { name: 'Set up your workspace' })
   for (let i = 0; i < 2; i++) fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
-  expect(screen.getByText(/not set up for its own copy per ticket yet/)).toBeInTheDocument()
-  expect(screen.getByText('Each ticket gets its own copy. Your files are not changed.')).toBeInTheDocument()
-  const fold = screen.getByText('Details').closest('details') as HTMLDetailsElement
+  const note = screen.getByTestId('git-note')
+  expect(note).toHaveTextContent('We will set your project folder up for this. Your files stay as they are.')
+  // directly under the switch row
+  expect(note.previousElementSibling).toContainElement(screen.getByRole('switch', { name: /Own copy per ticket/ }))
+  expect(screen.queryByText(/not set up for its own copy per ticket yet/)).not.toBeInTheDocument()
+  expect(screen.queryByLabelText(/Set it up for me/)).not.toBeInTheDocument()
+  expect(screen.queryByLabelText(/Skip this/)).not.toBeInTheDocument()
+  expect(container.querySelectorAll('input[name=git]')).toHaveLength(0)
+  const fold = within(note).getByText('Details').closest('details') as HTMLDetailsElement
   expect(fold.open).toBe(false)
   expect(fold).toHaveTextContent('.gitignore')
-  expect(screen.getByText('Each ticket gets its own copy. Your files are not changed.').closest('label')!.textContent!.replace(fold.textContent!, '')).not.toMatch(/gitignore/)
   expect(screen.queryByText(/git init/i)).not.toBeInTheDocument()
-  expect(screen.getByLabelText(/Set it up for me/)).toBeChecked()
   expect(screen.getByRole('button', { name: 'Continue →' })).toBeEnabled()
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Your recovery words' })
-  expect(f.calls.find((c) => c.path === 'profile')?.body).toMatchObject({ git_init: true })
+  const sent = f.calls.find((c) => c.path === 'profile')?.body as { addons: string[]; git_init: boolean }
+  expect(sent.git_init).toBe(true)
+  expect(sent.addons).toContain('worktrees')
 })
 
-test('choosing to continue without worktrees drops them and asks no git question', async () => {
+test('switching the work-copies switch off drops worktrees, hides the line and sends git_init false', async () => {
   const f = fake({ defaults: true, noGit: true })
   render(<Setup api={f.api} />)
   await screen.findByRole('heading', { name: 'Set up your workspace' })
   for (let i = 0; i < 2; i++) fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
-  fireEvent.click(screen.getByLabelText(/Skip this/))
-  expect(screen.queryByText(/not set up for its own copy per ticket yet/)).not.toBeInTheDocument()
+  fireEvent.click(screen.getByRole('switch', { name: /Own copy per ticket/ }))
+  expect(screen.queryByTestId('git-note')).not.toBeInTheDocument()
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Your recovery words' })
@@ -1469,7 +1475,7 @@ test('r12-P15: the agents step shows the recommendation, the switches wait behin
   expect(screen.queryByText('Dashboard', { selector: 'strong' })).not.toBeInTheDocument()
 })
 
-test('r12-P15: the fold opens by itself when a switch is not at its default, or the folder question is answered Skip', async () => {
+test('r12-P15: the fold opens by itself when a switch is not at its default, or Own copy per ticket is switched off in a folder without git', async () => {
   const f = fake({ defaults: true })
   await toAgents(f)
   const more = screen.getByTestId('agents-more') as HTMLDetailsElement
@@ -1480,7 +1486,7 @@ test('r12-P15: the fold opens by itself when a switch is not at its default, or 
   await toAgents(g)
   const m2 = screen.getByTestId('agents-more') as HTMLDetailsElement
   expect(m2.open).toBe(false)
-  fireEvent.click(screen.getByLabelText(/Skip this/))
+  fireEvent.click(screen.getByLabelText(/Own copy per ticket/))
   expect(m2.open).toBe(true)
 })
 

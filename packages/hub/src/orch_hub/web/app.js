@@ -14,14 +14,14 @@ import { adminView } from "./admin.js";
 import { changesView, checkChange, sentence as changeSentence } from "./changes.js";
 import { KEY_GONE_NOTE, totpPanel } from "./totp.js";
 import { inviteView } from "./invite.js";
-import { KEY_WORDS, WHY as COMPANY_WHY, accountCard as companyAccountCard, begin as beginCompany, finishCallback, signInButton as companyButton } from "./oidc.js";
+import { INVITE_WORDS, KEY_WORDS, WELCOME, WHY as COMPANY_WHY, accountCard as companyAccountCard, begin as beginCompany, finishCallback, signInButton as companyButton } from "./oidc.js";
 import { rememberDashboard, rememberName } from "./connect.js";
 import { servicesView } from "./services.js";
 import { VERBS, checkServiceAction, resultWords, needsConfirm, hubStopConfirm, logsDialog } from "./service_actions.js";
 import { handoffsView } from "./handoffs.js";
 import { phonesView } from "./phones.js";
 import { workspacesView, workspaceDetailsView, newWorkspaces, privateRows } from "./workspaces.js";
-import { OPEN_FIRST, colour, initials, landing, landingPlan, railRows, safeUrl } from "./switch.js";
+import { OPEN_FIRST, colour, initials, landing, landingPlan, openingState, railRows, safeUrl } from "./switch.js";
 import { Refusal, grantTermsOk, grantSentence, grantFacts, addonFacts, addonTermsOk, settingsFacts, settingsTermsOk, checkBindings, checkPrepared, describe, renderMulti, renderText, shortHash, verifyQuestion, DECISIONS } from "./render.js";
 
 const root = document.getElementById("app");
@@ -292,6 +292,8 @@ async function loadRail() {
 }
 
 async function openWorkspace(w) {
+  const o = openingState(w.name); // at once, before the request and the navigation: the same dark page, no white frame
+  plain(h("div", { class: "opening", role: "status" }, h("b", { text: o.title }), h("span", { class: "muted", text: o.note })));
   const r = await api("POST", "/switch/ticket", { workspace_id: w.id, return_to: "/", kind: "open" });
   const url = r.status === 200 ? safeUrl(r.body.url) : null;
   if (!url) { state.notice = banner("bad", "Cannot open " + renderText(w.name), say(r.status === 200 ? "malformed" : r.body.error)); return home(); }
@@ -1436,7 +1438,9 @@ if (location.pathname === "/oidc/callback") { // the company's sign-in page sent
   const search = location.search;
   history.replaceState(null, "", "/");
   finishCallback(api, search).then(async (r) => {
+    if (r.ok && r.purpose === "invite") state.notice = banner("ok", "Your account is ready", WELCOME); // a company-login invitation: signed in, a session only
     if (r.ok) { if (r.where) location.hash = r.where; await renderRoute(); return; }
+    if (r.purpose === "invite") { show(h("h1", { text: "This link does not work" }), banner("bad", INVITE_WORDS[r.body?.error] ?? INVITE_WORDS.bad_invite)); return; }
     if (r.purpose === "signin") { loginView(COMPANY_WHY[r.body?.error] ?? say(r.body?.error)); return; }
     state.notice = banner("bad", "Company login did not finish", r.body?.reason ?? COMPANY_WHY[r.body?.error] ?? say(r.body?.error));
     if (r.where) location.hash = r.where;

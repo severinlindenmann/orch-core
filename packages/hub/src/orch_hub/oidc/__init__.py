@@ -54,6 +54,7 @@ GOOGLE_DISCOVERY = "https://accounts.google.com/.well-known/openid-configuration
 
 #: what the sign-in page says for the refusals a person can act on (everything else: "Company login did not work.")
 PLAIN = {
+    "already_linked": "This company account is already used on this hub. Ask your hub admin.",
     "not_allowed": "This company account is not set up for this hub. Ask your hub admin.",
     "failed": "Company login did not work. Try again, or sign in with your password.",
     "rate_limited": "Too many tries. Try again in a minute.",
@@ -340,7 +341,23 @@ class Oidc:
     ) -> Identity:
         """Check the callback, swap the code, verify the id_token. Raises :class:`OidcError`; never returns a half result.
         The caller clears the cookie whatever happens. Replay protection: the IdP's single-use code and the nonce in the
-        id_token; here an in-flight lock per login (no parallel finishes) and a set of completed ones."""
+        id_token; here an in-flight lock per login (no parallel finishes) and a set of completed ones. ``bind`` must be
+        the exact string the login was started with: there is no wildcard (see :meth:`finish_invite`)."""
+        if type(bind) is not str or purpose == "invite":
+            raise OidcError("bad_state")  # an invite login is finished only by finish_invite
+        return self._finish(cookie, state, code, client_secret, source, purpose, bind)[0]
+
+    def finish_invite(
+        self, cookie: str, state: str, code: str, client_secret: str, source: str = ""
+    ) -> tuple[Identity, str]:
+        """Finish a login that was started for an invite: ``(identity, bind)`` where ``bind`` is the invite's token hash, read
+        from the authenticated cookie (the page never says which invite). Only a cookie made with ``purpose="invite"`` passes."""
+        ident, tx = self._finish(cookie, state, code, client_secret, source, "invite", None)
+        return ident, tx["bind"]
+
+    def _finish(
+        self, cookie: str, state: str, code: str, client_secret: str, source: str, purpose: str, bind: str | None
+    ) -> tuple[Identity, dict[str, Any]]:
         with self._lock:
             ok = self._finish_lim.allow(source, self._now())
         if not ok:
@@ -350,9 +367,8 @@ class Oidc:
             raise OidcError("bad_state")
         if not isinstance(state, str) or not secrets.compare_digest(state.encode(), tx["state"].encode()):
             raise OidcError("bad_state")  # URL and cookie must be the same login
-        if (
-            tx["purpose"] != purpose or tx["bind"] != bind
-        ):  # a link / test login cannot be used to sign in, or by another person
+        # a link / test / invite login cannot be used to sign in, or by another person (bind None: finish_invite only)
+        if tx["purpose"] != purpose or (bind is not None and tx["bind"] != bind):
             raise OidcError("bad_state")
         if not isinstance(code, str) or not (0 < len(code) <= 2048):
             raise OidcError("bad_code")
@@ -364,7 +380,7 @@ class Oidc:
         try:
             ident = self._exchange(tx, code, client_secret)
             self._complete(nonce, tx["exp"])
-            return ident
+            return ident, tx
         finally:
             with self._lock:
                 self._inflight.discard(nonce)

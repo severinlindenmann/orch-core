@@ -53,6 +53,7 @@ from .publish import HttpPublishSync, HubPublish, PublishConfig
 from .reconcile import reconcile_full_only, reconcile_relay_purge
 from .relay import PushNotifier, RelayClient, RelayError
 from .relay.client import Transport
+from .remote import wire_remote
 from .restart import exec_self
 from .router import AccessAuthz, RouteQueue, Router
 from .services import Services
@@ -416,6 +417,11 @@ def serve(
             parse_public_url(public_hooks_url, dev=cfg.dev),
         )
         hook_listener = HookListener(hook_inbox, hooks_listen, trusted_peers=cfg.trusted_peers)
+    # R4 (#1592): remote access streams. The hub forwards opaque Noise frames and judges only abuse limits (D87); the
+    # rail rule and the remote-scope token decide who may open. Registry counts every stream_open by outcome.
+    stream_router, remote_endpoint = wire_remote(
+        channels, registry, access, hub_id=keys.hub_id, count_op=registry.count_op
+    )
     server = LinkServer.from_keys(
         keys,
         snapshots=AccessSnapshots(access, keys),
@@ -435,6 +441,8 @@ def serve(
         activity=activity,
         where=lambda: where_answer(state),
         deliveries=deliveries,
+        streams=stream_router,
+        remote=remote_endpoint,
         host="0.0.0.0" if bind_all and link_listen is not None else host,  # the address stays the validated one
         port=port,
         dev_mode=cfg.dev,
@@ -469,6 +477,7 @@ def serve(
 
         threading.Thread(target=_retry, name="state-retry", daemon=True).start()
         deliveries.start()
+        stream_router.start()  # the 60 s sweep: users who lost access, expired streams
         server.start()
         if web is not None:
             web.start()
@@ -499,6 +508,7 @@ def serve(
             web.close if web is not None else None,
             hook_listener.close if hook_listener is not None else None,
             hook_inbox.store.close if hook_inbox is not None else None,
+            stream_router.close_all,  # every client connection ends before the link server goes
             server.close,
             deliveries.close,
             channels.close,

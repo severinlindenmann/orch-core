@@ -105,3 +105,11 @@ test("S2: with an act function the hub offers Revoke link and Stop app only, one
   const labels = find(view, (n) => n.tag === "button").map((b) => b.textContent);
   assert.ok(labels.every((l) => !/extend|password|start|roll back|change/i.test(l.replace(/Shared files|Apps & pages/g, ""))), labels.join("|"));
 });
+
+test("an agent's share is shown as the agent of the person, never as the person", () => {
+  const view = publishedView(data({ links: [link({ by_kind: "agent", by_name: "Severin" }), link({ id: "b".repeat(32), by_kind: "agent", by_name: null })] }), { now: NOW });
+  const rows = find(view, (n) => n.tag === "tr" && n.attrs["data-link"]);
+  assert.match(rows[0].textContent, /by Severin's agent/);
+  assert.match(rows[1].textContent, /by an agent/);
+  assert.doesNotMatch(rows[0].textContent, /by Severin(?!')/);
+});

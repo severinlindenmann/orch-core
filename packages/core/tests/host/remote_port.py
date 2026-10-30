@@ -462,7 +462,10 @@ def check_stream_link(a: Mapping[str, Any], pub: bytes) -> str:
     o = s["o"]
     if type(o.get("suite")) is not int or o["suite"] != 2:
         raise no("wrong_suite")
-    if not suite.verify(pub, b64(s["sig"], 64), LINK_LABEL[a["direction"]] + dumps(o)):
+    exporter = bytes.fromhex(a["exporter"])
+    if len(exporter) != 32:
+        raise no()
+    if not suite.verify(pub, b64(s["sig"], 64), LINK_LABEL[a["direction"]] + exporter + dumps(o)):
         raise no("bad_signature")
     if set(o) != set(LINK_FIELDS) or o["v"] != 2 or o["hv"] != 0 or o["dir"] != a["direction"]:
         raise no()

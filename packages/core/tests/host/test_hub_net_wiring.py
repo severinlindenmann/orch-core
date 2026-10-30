@@ -193,16 +193,15 @@ def test_the_probe_dials_ws_addresses_with_dial_link_and_the_net(monkeypatch) ->
 
     monkeypatch.setattr(hubaddr, "PROBE", None)
     monkeypatch.setattr(tls, "dial_link", fake)
-    monkeypatch.setattr(hubaddr, "checked_ip", lambda host, allow_loopback: "203.0.113.9")
+    monkeypatch.setattr(hubaddr, "_ips", lambda host: ["203.0.113.9"])
     assert hubaddr.handshake_ok("wss://hub.example", "A" * 43, net=NetSettings()) is True
     addr, kw = seen[-1]
     assert addr.scheme == "wss" and kw["connect_host"] == "203.0.113.9" and kw["net"] == NetSettings()
     # behind a proxy a NAME is the proxy's to resolve: no local lookup at all
-    monkeypatch.setattr(hubaddr, "checked_ip", lambda *a, **k: pytest.fail("resolved locally behind a proxy"))
+    monkeypatch.setattr(hubaddr, "_ips", lambda host: pytest.fail("resolved locally behind a proxy"))
     assert hubaddr.handshake_ok("wss://hub.example", "A" * 43, net=PROXY) is True
     assert seen[-1][1]["connect_host"] == "hub.example" and seen[-1][1]["net"] is PROXY
     # an IP literal keeps the policy check (and is dialled as that IP)
-    monkeypatch.setattr(hubaddr, "checked_ip", lambda host, allow_loopback: host)
     assert hubaddr.handshake_ok("203.0.113.9:7443", "A" * 43, net=PROXY) is True
     assert seen[-1][1]["connect_host"] == "203.0.113.9"
 
@@ -262,3 +261,52 @@ def test_an_ordinary_oserror_is_still_just_unreachable() -> None:
     with pytest.raises(_HR) as e:
         link.call("hub_where", {})
     assert e.value.code == "hub_unreachable"
+
+
+# -- the address policy also decides what is handed to a proxy ------------------------------------------------------
+
+
+class _FakeProxy:
+    """Records every CONNECT it would have received."""
+
+    def __init__(self) -> None:
+        self.connects: list[str] = []
+
+
+@pytest.mark.parametrize(
+    "addr",
+    ["hubbox:7443", "wss://hub.internal", "hub.local:7443", "wss://nas.lan", "10.1.2.3:7443",
+     "192.168.1.5:7443", "169.254.169.254:80", "[fd00:ec2::254]:80", "[fe80::1]:7443"],
+)  # fmt: skip
+def test_nothing_internal_is_handed_to_a_proxy(monkeypatch, addr) -> None:
+    proxy = _FakeProxy()
+    monkeypatch.setattr(hubaddr, "PROBE", None)
+    monkeypatch.setattr(hubaddr, "_ips", lambda host: pytest.fail("resolved locally"))
+    monkeypatch.setattr(tls, "dial_link", lambda a, *_x, **_k: proxy.connects.append(a.host))
+    assert hubaddr.handshake_ok(addr, "A" * 43, net=PROXY) is False
+    assert proxy.connects == []
+
+
+def test_a_public_name_goes_through_the_proxy_and_the_current_class_is_the_exception(monkeypatch) -> None:
+    seen: list[str] = []
+
+    class Conn:
+        def close(self) -> None: ...
+
+    monkeypatch.setattr(hubaddr, "PROBE", None)
+    monkeypatch.setattr(hubaddr, "_ips", lambda host: pytest.fail("resolved locally"))
+    monkeypatch.setattr(tls, "dial_link", lambda a, *_x, **k: seen.append(k["connect_host"]) or Conn())
+    assert hubaddr.handshake_ok("wss://hub.example.com", "A" * 43, net=PROXY) is True
+    assert seen == ["hub.example.com"]
+    # the address in use is an internal name: another internal address is the same class
+    assert hubaddr.handshake_ok("nas.lan:7443", "A" * 43, net=PROXY, allow_internal=hubaddr.is_internal("hub.lan:1"))
+    assert seen[-1] == "nas.lan"
+    assert hubaddr.is_internal("10.0.0.5:7443") and not hubaddr.is_internal("hub.example.com:7443")
+
+
+def test_the_transport_resolver_applies_the_same_policy_behind_a_proxy() -> None:
+    check = hubaddr.dial_resolver("hub.example.com:7443", PROXY)
+    assert check("hub2.example.com") == "hub2.example.com"
+    for bad in ("hubbox", "x.internal", "10.0.0.1", "169.254.169.254"):
+        with pytest.raises(OSError):
+            check(bad)

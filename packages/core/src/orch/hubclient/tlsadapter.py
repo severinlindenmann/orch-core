@@ -16,7 +16,6 @@ from typing import Any
 from .errors import HubRefused
 from .linkaddr import LinkAddr, parse_link_address
 from .netconfig import NetSettings
-from .tlslink import transport
 from .tlslink.client import LinkClient, LinkError
 from .tlslink.tls import LinkInspected, PinMismatch
 
@@ -123,10 +122,9 @@ class TlsTransport:
     def _open(self, op: object) -> LinkClient:
         if self._client is None:
             a = self._addr
-            if self._resolve is None or (a.sni is not None and transport.proxy_applies(a, self._net) is not None):
-                host = a.host  # a name behind a proxy is the proxy's to resolve, as text; no local lookup
-            else:
-                host = self._resolve(a.host)  # resolved and checked per dial
+            # the resolver is the host's address policy; it also judges a name that goes to a proxy (and returns it as
+            # text: the proxy resolves it)
+            host = a.host if self._resolve is None else self._resolve(a.host)
             self._client = LinkClient.open(
                 host, a.port, wsk_pub=self._wsk_pub if op == "join" else None, addr=a, net=self._net, **self._kw
             )

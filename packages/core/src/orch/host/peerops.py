@@ -162,7 +162,9 @@ def _open_link(service: WorkspaceService, alpn: bytes | None = None) -> Any:
             last = LinkInspectedError("the network inspects encrypted connections")
             continue
         try:
-            host = hubaddr.dial_host(a, net, allow_loopback=hubaddr.is_loopback(addr))
+            host = hubaddr.dial_host(
+                a, net, allow_loopback=hubaddr.is_loopback(addr), allow_internal=hubaddr.is_internal(addr)
+            )
             return LinkClient.open(
                 host, a.port, addr=a, net=net, tls_spki_sha256=state.tls_spki, hub_id=state.hub_id,
                 workspace_id=service.workspace_id, sign=sign, hk_op_pub=unb64u(state.hk_op_pub, 65),

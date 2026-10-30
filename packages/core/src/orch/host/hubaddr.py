@@ -127,34 +127,90 @@ def is_loopback(addr: str | None) -> bool:
         return False
 
 
-def checked_ip(host: str, *, allow_loopback: bool) -> str:
+#: names that only mean something inside a network: never handed to a proxy (it would resolve them on the inside)
+_INTERNAL_SUFFIXES = (".internal", ".local", ".lan", ".localhost", ".localdomain", ".home.arpa")
+
+
+def internal_name(host: str) -> bool:
+    """A name that is not a public one: ``localhost``, a single label, or an internal-only suffix."""
+    h = host.lower().rstrip(".")
+    return "." not in h or h.endswith(_INTERNAL_SUFFIXES)
+
+
+def is_internal(addr: str | None) -> bool:
+    """Whether the stored address is of the internal class by its own text: loopback, a private/link-local IP literal,
+    or an internal name. The current address being internal lets other internal addresses be tried through a proxy."""
+    from orch.hubclient.errors import HubRefused
+    from orch.hubclient.tlsadapter import parse_addr
+
+    if not addr:
+        return False
+    try:
+        host = parse_addr(addr).host
+    except HubRefused:
+        return False
+    try:
+        return any(f.is_private or f.is_loopback or f.is_link_local for f in _forms(ipaddress.ip_address(host)))
+    except ValueError:
+        return internal_name(host)
+
+
+def checked_ip(host: str, *, allow_loopback: bool, proxied: bool = False, allow_internal: bool = False) -> str:
     """THE address policy, used by the probe and by every dial of a hub-learned address: resolve ``host`` once, check
     every answer with :func:`ip_allowed` (one forbidden answer refuses the name) and return the IP to connect to. The
-    caller connects to that exact IP; the name is for display only. Raises ``OSError`` when refused."""
+    caller connects to that exact IP; the name is for display only. Raises ``OSError`` when refused.
+
+    ``proxied``: the dial goes through the host's proxy, which resolves a name on its own side, so a name is not
+    resolved here and is judged by its text instead: ``localhost``, single-label and internal-suffix names are refused,
+    and so are IP literals in private, loopback, link-local and metadata ranges, unless ``allow_internal`` (the
+    address in use is of that class too). A proxy is never made to probe the inside of a network for a hub."""
+    try:
+        lit = ipaddress.ip_address(host)
+    except ValueError:
+        lit = None
+    if proxied and not allow_internal:
+        if lit is None and internal_name(host):
+            raise OSError("address refused by policy")
+        if lit is not None and any(f.is_private or f.is_loopback for f in _forms(lit)):
+            raise OSError("address refused by policy")
+    if proxied and lit is None:
+        return host  # the proxy resolves it; nothing to check locally beyond the text
     ips = _ips(host)
     if not ips or not all(ip_allowed(i, allow_loopback=allow_loopback) for i in ips):
         raise OSError("address refused by policy")
     return ips[0]
 
 
-def dial_resolver(current_addr: str | None) -> Callable[[str], str]:
+def dial_resolver(current_addr: str | None, net: Any = None) -> Callable[[str], str]:
     """The ``resolve`` hook for dialling hub-learned addresses: policy-checked IP, loopback only next to a loopback
-    current address (decided by the stored text)."""
-    allow = is_loopback(current_addr)
-    return lambda host: checked_ip(host, allow_loopback=allow)
-
-
-def dial_host(a: Any, net: Any, *, allow_loopback: bool) -> str:
-    """The host to hand to the dial of link address ``a``: the policy-checked IP, except a NAME behind the host's
-    proxy, which is the proxy's to resolve (sent as text; no local lookup, the pin decides who answers)."""
+    current address (decided by the stored text). With a proxy the same policy decides the text of a name."""
     from orch.hubclient.tlslink import transport
 
-    if a.sni is not None and transport.proxy_applies(a, net) is not None:
-        return a.host  # type: ignore[no-any-return]
-    return checked_ip(a.host, allow_loopback=allow_loopback)
+    allow, internal = is_loopback(current_addr), is_internal(current_addr)
+    return lambda host: checked_ip(
+        host,
+        allow_loopback=allow,
+        proxied=net is not None and net.proxy is not None and not transport.is_loopback_host(host),
+        allow_internal=internal,
+    )
 
 
-def handshake_ok(addr: str, spki: str | None, *, allow_loopback: bool = False, net: Any = None) -> bool:
+def dial_host(a: Any, net: Any, *, allow_loopback: bool, allow_internal: bool = False) -> str:
+    """The host to hand to the dial of link address ``a``: the policy-checked IP, except a NAME behind the host's
+    proxy, which is the proxy's to resolve (sent as text, after the same policy judged it)."""
+    from orch.hubclient.tlslink import transport
+
+    return checked_ip(
+        a.host,
+        allow_loopback=allow_loopback,
+        proxied=transport.proxy_applies(a, net) is not None,
+        allow_internal=allow_internal,
+    )
+
+
+def handshake_ok(
+    addr: str, spki: str | None, *, allow_loopback: bool = False, net: Any = None, allow_internal: bool = False
+) -> bool:
     """True when a TLS handshake AT ``addr`` presents the held pin ``spki``. The name is resolved once, the IP checked
     (:func:`checked_ip`), and that exact IP is dialled. Nothing is sent over the connection and it is closed at once.
     No pin, no handshake. Nothing about the outcome is ever reported to the hub."""
@@ -166,7 +222,7 @@ def handshake_ok(addr: str, spki: str | None, *, allow_loopback: bool = False, n
         return False
     try:
         a = parse_addr(addr)
-        ip = dial_host(a, net, allow_loopback=allow_loopback)
+        ip = dial_host(a, net, allow_loopback=allow_loopback, allow_internal=allow_internal)
     except (HubRefused, OSError):
         return False
     try:
@@ -197,7 +253,7 @@ def _probe_new(scope: str, state: Any, links: list[str], net: Any = None) -> lis
         if at is not None and now - at < FAIL_BACKOFF_S:
             continue
         tried += 1
-        if handshake_ok(link, state.tls_spki, allow_loopback=allow_lo, net=net):
+        if handshake_ok(link, state.tls_spki, allow_loopback=allow_lo, net=net, allow_internal=is_internal(state.addr)):
             passed.append(link)
         else:
             with _MU:

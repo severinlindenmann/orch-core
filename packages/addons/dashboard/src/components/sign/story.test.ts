@@ -16,7 +16,7 @@ describe('storyOf', () => {
     const s = storyOf({ ...new_, agent: { hours: 168 } })!
     expect(s.signLabel).toBe('Sign and start agent')
     expect(s.access).toEqual({ length: '7 days' })
-    expect(s.steps).toEqual(['You sign.', 'The ticket is created and access is given for 7 days.', 'An agent starts and writes the requirements and a plan for you.', 'It stops and waits: nothing is built until you approve the plan.'])
+    expect(s.steps).toEqual(['You sign.', 'The ticket is created and agents may work for you for 7 days.', 'An agent starts and writes the requirements and a plan for you.', 'It stops and waits: nothing is built until you approve the plan.'])
   })
 
   it('new ticket + start with access already there: no access is given, the agent still waits for the plan', () => {
@@ -62,5 +62,19 @@ describe('storyOf', () => {
   it('an action without a story gets none (the plain Sign stays)', () => {
     expect(storyOf({ action: 'comment', key: 'DEMO-1', message: 'x' })).toBeNull()
     expect(storyOf(null)).toBeNull()
+  })
+})
+
+describe('r14-P03: starting an agent folds the workspace line and says what is granted', () => {
+  it('folds the workspace line for a ticket that starts an agent and for a start grant, not for a plain create', () => {
+    expect(storyOf({ action: 'new_sequence', agent: { hours: 72 } } as never)?.foldWorkspace).toBe(true)
+    expect(storyOf({ action: 'runner_grant', hours: 72 } as never, { startsAgent: true })?.foldWorkspace).toBe(true)
+    expect(storyOf({ action: 'new' } as never)?.foldWorkspace).toBeUndefined()
+  })
+  it('every start step names the length and says nothing about "access" or a "runner"', () => {
+    const s = storyOf({ action: 'new_sequence', agent: { hours: 72 } } as never)!
+    expect(s.access).toEqual({ length: '3 days' })
+    expect(s.steps.join(' ')).toContain('agents may work for you for 3 days')
+    expect(s.steps.join(' ')).not.toMatch(/access|runner/i)
   })
 })

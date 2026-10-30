@@ -160,6 +160,7 @@ test("after a reload a pending key shows 'I have saved it' without the words, an
     api: async (m, p) => {
       if (p === "/admin/settings") return { status: 200, body: { ...BASE } };
       if (p === "/admin/backup") return { status: 200, body: { ...SET, key_pending: true } };
+      if (p === "/admin/oidc") return { status: 404, body: { error: "unknown_op" } }; // an older hub: no company login card
       notes.push(p); return { status: 403, body: { error: "confirm_denied" } };
     } };
   await hubSettingsPage(d);

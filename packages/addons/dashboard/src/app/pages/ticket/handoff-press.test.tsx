@@ -99,3 +99,4 @@ it('verdict: mounted closed, then opened with an unproven requirement -> nothing
   r.rerender(<QueryClientProvider client={new QueryClient()}><HandoffSignDialog ticket={t} action={{ kind: 'verdict' }} ws="w" onClose={() => {}} /></QueryClientProvider>)
   expect((last() as Prop).action).toBeNull()
 })
+

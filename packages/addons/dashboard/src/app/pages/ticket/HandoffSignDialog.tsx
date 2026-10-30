@@ -78,8 +78,10 @@ export function HandoffSignDialog({
   const [text, setText] = useState('')
   // Only a pick is stored; Pass is the default while every requirement is proven (what the list calls "Recommended"). Nothing is
   // sent by this: the person still presses Sign, and the verdict signed is the one shown. A new action starts without a pick.
-  const actionKey = action ? `${action.kind}-${action.kind === 'answer' ? action.question : 'gate' in action ? action.gate : ''}` : ''
+  // The key names the ticket and the content round (hash) too: the dialog stays mounted across tickets and verify rounds.
+  const actionKey = action ? `${ticket.key}|${action.kind}-${action.kind === 'answer' ? action.question : 'gate' in action ? action.gate : ''}|${liveHash(ticket, action) ?? ''}` : ''
   const [pick, setPick] = useState<{ k: string; v: 'pass' | 'fail' } | null>(null)
+  if (!action && pick) setPick(null) // closed: the next opening starts without a pick
   const outcome: 'pass' | 'fail' | null = pick && pick.k === actionKey ? pick.v : action?.kind === 'verdict' && allChecked(ticket) ? 'pass' : null
   const setOutcome = (v: 'pass' | 'fail') => setPick({ k: actionKey, v })
   const radio = useRef<HTMLInputElement>(null)

@@ -24,12 +24,15 @@ from orch.wsproto.localdial import dial_host
 from . import parts as P
 from .helper import remove_helper, sync_helper, wait_for_socket
 from .parts import InstallError
+from .server import CADDY_DIR, ROLES, derive_names
 from .service import Runner, pick_runner
 from .state import Layout, load, save
 
 __all__ = ["Ctx", "main", "add_workspace", "choose_role", "full_server", "default_ctx"]
 
 USAGE = (
+    "usage: orch install server --role hub|edge [--domain BASE] [--domain-hub N] [--domain-relay N]\n"
+    "                    [--domain-publish N] [--hub-vpn-only] [--vpn-ip IP] [--caddy-dir DIR] [--yes]\n"
     "usage: orch install phone [--user ID]\n"
     "usage: orch install {hub|relay|publish} [--address A] [--port N] [--domain D] [--source PATH] [--ref REF]\n"
     "                    [--publish-url U] [--relay-url U] [--dev] [--yes] | status [--json] | remove PART [--purge]\n"
@@ -270,7 +273,16 @@ def hub_address_kind(address: str) -> str:
     return {"private network": "private", "local network": "office"}.get(label, "public")
 
 
-def write_hub_settings(data: Path, *, address: str, domain: str | None, port: int) -> None:
+def write_hub_settings(
+    data: Path,
+    *,
+    address: str,
+    domain: str | None,
+    port: int,
+    web_origin: str | None = None,
+    link_host: str | None = None,
+    vpn_only: bool = False,
+) -> None:
     """Seed ``hub-settings.json`` (the hub's own words and the addresses it advertises) with the address chosen now.
 
     The hub validates the same shape when it reads it (``orch_hub.settings``). A re-run keeps the name and company an
@@ -293,6 +305,13 @@ def write_hub_settings(data: Path, *, address: str, domain: str | None, port: in
         pass
     link = P.HUB_LINK_PORT
     loop = address in ("localhost", P.ADDRESS_LOOPBACK)
+    if link_host:  # server role: the card advertises the VPN address for the link and the https name for the console
+        web = f"{web_origin}:443" if web_origin else f"http://{P.ADDRESS_LOOPBACK}:{port}"
+        addrs = [
+            {"kind": "private" if vpn_only else "public", "web": web, "link": f"{link_host}:{link}"},
+            {"kind": "server", "web": f"http://{P.ADDRESS_LOOPBACK}:{port}", "link": None},
+        ]
+        return _save_hub_settings(f, {"v": 1, "name": name, "company": company, "addresses": addrs})
     host = P.ADDRESS_LOOPBACK if loop else (f"[{address}]" if ":" in address else address)
     addrs = [{"kind": hub_address_kind(address), "web": f"http://{host}:{port}", "link": f"{host}:{link}"}]
     if not loop:  # a network install also answers on the computer itself
@@ -301,7 +320,10 @@ def write_hub_settings(data: Path, *, address: str, domain: str | None, port: in
         )
     if domain:  # the scheme of a domain address (http here) is revisited in S2 with the address picker
         addrs.append({"kind": "public", "web": f"http://{domain}:{port}", "link": None})
-    body = {"v": 1, "name": name, "company": company, "addresses": addrs}
+    _save_hub_settings(f, {"v": 1, "name": name, "company": company, "addresses": addrs})
+
+
+def _save_hub_settings(f: Path, body: dict[str, Any]) -> None:
     tmp = f.with_name(f".{f.name}.tmp")
     tmp.unlink(missing_ok=True)
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
@@ -323,6 +345,11 @@ def install_part(
     relay_url: str | None = None,
     dev: bool = False,
     sync: bool = True,  # False: the caller (full_server) syncs the service helper once at the end
+    link_address: str | None = None,  # server role, hub: the VPN address the link binds (the console stays on loopback)
+    web_origin: str | None = None,  # server role, hub: https://<hub name>, advertised in the card
+    vpn_only: bool = False,
+    public_origin: str | None = None,  # server role, publish: https://<publish name> (server = share)
+    workspace_side: bool = True,  # False: no workspace on this user; the Macs get the publish address printed instead
 ) -> dict[str, Any]:
     spec = P.PARTS[part]
     source = source or ctx.env.get(f"ORCH_INSTALL_SOURCE_{part.upper()}")  # a local checkout (dev machines, tests)
@@ -381,7 +408,15 @@ def install_part(
             tf.write_text(token + "\n")
             tf.chmod(0o600)
     if part == "hub":
-        write_hub_settings(data, address=address, domain=domain, port=port)
+        write_hub_settings(
+            data,
+            address=address,
+            domain=domain,
+            port=port,
+            web_origin=web_origin,
+            link_host=link_address,
+            vpn_only=vpn_only,
+        )
     argv = P.command_for(
         part,
         binary=binary,
@@ -391,6 +426,8 @@ def install_part(
         publish_url=publish_url,
         relay_url=relay_url,
         dev=dev,
+        link_address=link_address,
+        public_origin=public_origin,
     )
     log = lay.logs / f"{part}.log"
     started = ctx.runner.start(part, argv, P.env_for(part, data), log)
@@ -423,6 +460,10 @@ def install_part(
     }
     if part == "hub":
         rec["link_port"] = P.HUB_LINK_PORT
+        if link_address:
+            rec["link_host"] = link_address
+        if web_origin:
+            rec["console_url"] = web_origin + "/"
         rec["setup_token"] = token
     st = load(lay)
     st["address"], st["domain"] = address, domain or st.get("domain")
@@ -432,11 +473,17 @@ def install_part(
     save(lay, {**st, "parts": {**st["parts"], part: rec}})
     _report(ctx, part, rec)
     if part == "publish":
-        hint = ctx.publish_setup(url)
-        if hint:
-            ctx.say(f"  publish settings: not set yet ({hint}); run: orch publish setup --server {url} --share {url}")
+        url = public_origin or url  # server = share = the https name when there is one
+        if not workspace_side:
+            ctx.say(f"  on each Mac, once: orch publish setup --server {url} --share {url}")
         else:
-            ctx.say(f"  publish settings: server = share = {url}")
+            hint = ctx.publish_setup(url)
+            if hint:
+                ctx.say(
+                    f"  publish settings: not set yet ({hint}); run: orch publish setup --server {url} --share {url}"
+                )
+            else:
+                ctx.say(f"  publish settings: server = share = {url}")
     if sync:
         sync_helper(ctx)
     return rec
@@ -471,7 +518,7 @@ def _report(ctx: Ctx, part: str, rec: dict[str, Any]) -> None:
         ctx.say(f"  first admin:  {hub_console_url(rec)}#setup={rec['setup_token']}")
         if rec["bind"] != P.ADDRESS_LOOPBACK:
             ctx.say(f"  on this computer: http://{P.ADDRESS_LOOPBACK}:{rec['port']}/#setup={rec['setup_token']}")
-        ctx.say(f"  workspaces connect to the hub link at {rec['bind']}:{rec['link_port']}")
+        ctx.say(f"  workspaces connect to the hub link at {rec.get('link_host') or rec['bind']}:{rec['link_port']}")
     if part != "hub" and rec["bind"] != P.ADDRESS_LOOPBACK:
         ctx.say(f"  on this computer: http://{P.ADDRESS_LOOPBACK}:{rec['port']}")
     if rec.get("domain"):
@@ -482,6 +529,8 @@ def _report(ctx: Ctx, part: str, rec: dict[str, Any]) -> None:
 
 
 def hub_console_url(rec: dict[str, Any]) -> str:
+    if rec.get("console_url"):
+        return rec["console_url"]
     return f"http://{rec['bind']}:{rec['port']}/"
 
 
@@ -782,7 +831,7 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextI
         err.write("orch install: installing parts is a person's job; an agent never does it\n")
         return 3
     p = argparse.ArgumentParser(prog="orch install", add_help=False)
-    p.add_argument("cmd", choices=("hub", "relay", "publish", "status", "remove", "phone"))
+    p.add_argument("cmd", choices=("hub", "relay", "publish", "status", "remove", "phone", "server"))
     p.add_argument("rest", nargs="*")
     p.add_argument("--address")
     p.add_argument("--port", type=int)
@@ -796,6 +845,13 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextI
     p.add_argument("--json", action="store_true")
     p.add_argument("--purge", action="store_true")
     p.add_argument("--user")
+    p.add_argument("--role", choices=tuple(ROLES))
+    p.add_argument("--domain-hub")
+    p.add_argument("--domain-relay")
+    p.add_argument("--domain-publish")
+    p.add_argument("--hub-vpn-only", action="store_true")
+    p.add_argument("--vpn-ip")
+    p.add_argument("--caddy-dir", default=CADDY_DIR)
     try:
         a = p.parse_args(list(argv))
     except SystemExit:
@@ -809,6 +865,25 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextI
             return status(ctx, a.json)
         if a.cmd == "phone":
             return phone(ctx, a.user)
+        if a.cmd == "server":
+            from .serverflow import server_setup
+
+            if not a.role or a.rest:
+                err.write(USAGE)
+                return 2
+            server_setup(
+                ctx,
+                a.role,
+                names=derive_names(a.domain, a.domain_hub, a.domain_relay, a.domain_publish),
+                hub_vpn_only=a.hub_vpn_only,
+                vpn_ip=a.vpn_ip,
+                address=a.address,
+                caddy_dir=a.caddy_dir,
+                source=a.source,
+                ref=a.ref,
+                dev=a.dev,
+            )
+            return 0
         if a.cmd == "remove":
             if len(a.rest) != 1:
                 err.write(USAGE)

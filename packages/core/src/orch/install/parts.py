@@ -150,18 +150,21 @@ def command_for(
     publish_url: str | None,
     relay_url: str | None,
     dev: bool,
+    link_address: str | None = None,
+    public_origin: str | None = None,
 ) -> list[str]:
     """The ``serve`` command line of a part (argv; environment is :func:`env_for`)."""
     bind = address if address else ADDRESS_LOOPBACK
     if part == "hub":
         loop = bind in (ADDRESS_LOOPBACK, "localhost")
-        # a network address is the advertised one; the hub listens on every interface (--bind-all) because a computer
-        # cannot dial its own overlay address
-        link = (
-            ["--listen", f"127.0.0.1:{HUB_LINK_PORT}"]
-            if loop
-            else ["--link-listen", f"{bind}:{HUB_LINK_PORT}", "--bind-all"]
-        )
+        if link_address:  # server role: the console stays on loopback behind Caddy, the link binds the VPN address only
+            link = ["--link-listen", f"{link_address}:{HUB_LINK_PORT}"]
+        elif loop:
+            link = ["--listen", f"127.0.0.1:{HUB_LINK_PORT}"]
+        else:
+            # a network address is the advertised one; the hub listens on every interface (--bind-all) because a
+            # computer cannot dial its own overlay address
+            link = ["--link-listen", f"{bind}:{HUB_LINK_PORT}", "--bind-all"]
         cmd = [
             str(binary),
             "serve",
@@ -189,7 +192,7 @@ def command_for(
         "--listen",
         f"{listen}:{port}",
         "--public-origin",
-        f"http://{bind}:{port}",
+        public_origin or f"http://{bind}:{port}",
     ]
     return cmd + (["--dev-mode"] if dev else [])
 

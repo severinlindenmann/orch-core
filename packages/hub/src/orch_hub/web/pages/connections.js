@@ -1,5 +1,5 @@
 import { h, text } from "../ui.js";
-import { delayedCommit, emptyState, loading } from "../feel.js";
+import { delayedCommit, emptyState, loading, toast } from "../feel.js";
 
 function svg(tag, attrs = {}, ...children) {
   const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
@@ -35,7 +35,7 @@ export function connectionsView(data, actions = {}) {
       // The request has not been sent yet during the Undo window, so Undo is real. Closing is different: it is done at once.
       const ask = button("Ask to allow", () => {
         ask.disabled = true;
-        delayedCommit(() => actions.set(from, to, true), "Asking to allow " + label(a) + " to " + label(b), { onUndo: () => { ask.disabled = false; } });
+        delayedCommit(() => Promise.resolve(actions.set(from, to, true)).catch(() => { ask.disabled = false; toast("Could not ask. Please try again."); }), "Asking to allow " + label(a) + " to " + label(b), { onUndo: () => { ask.disabled = false; } });
       }, { "aria-label": "Ask to allow " + label(a) + " to " + label(b) });
       td.append(ask);
     }

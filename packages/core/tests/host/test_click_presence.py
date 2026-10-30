@@ -132,7 +132,10 @@ def test_presence_from_other_stream_refused(world):
     # the nonce of stream SID posted on stream OTHER
     assert (
         world.refusal(
-            "presence", sid=OTHER, nonce=nonce, digests=[D1],
+            "presence",
+            sid=OTHER,
+            nonce=nonce,
+            digests=[D1],
             assertion=world.streams.assertion(raw, one, hh=bytes([9]) * 32),  # valid for OTHER: only the nonce fails
         ).code
         == "remote.presence_invalid"

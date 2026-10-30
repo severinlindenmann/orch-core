@@ -78,6 +78,8 @@ OPS = {
         "sub.open",
         "sub.close",
         "outcome.get",
+        # what the host hashes for a gate (a read): the approve_both intent is built from both gates' inputs
+        "gate.input",
         # M7a terminals (contract v1.6, section 12.3): reads, and the writes the routes call with write=True and an idem
         "run.sub",
         "run.list",

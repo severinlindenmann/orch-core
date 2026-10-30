@@ -670,6 +670,7 @@ def test_sign_in_error_does_not_say_which_field(static):
         raise ClientError("no_session")
 
     client.connect_hub = bad
+    client.connect_with_link = bad  # the core's link sign-in raises the same plain error
     ctl, api = run_home(client, static)
     try:
         from orch.hubclient import connectlink

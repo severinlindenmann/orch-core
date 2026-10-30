@@ -221,9 +221,7 @@ def test_service_worker_and_cross_site_fetches_are_refused(session_origin):
         assert raw(lst.port, "GET", deep, headers=nav)[0] == 403, deep
     st, _, body = raw(lst.port, "GET", "/go", headers=nav)
     assert st == 200 and b"/go.js" in body and b"orch" not in body.lower()
-    assert (
-        raw(lst.port, "GET", "/go.js", headers={"Sec-Fetch-Site": "same-origin"})[2] == origin_mod._GO_SCRIPT
-    )
+    assert raw(lst.port, "GET", "/go.js", headers={"Sec-Fetch-Site": "same-origin"})[2] == origin_mod._GO_SCRIPT
     assert raw(lst.port, "POST", "/go", headers={**nav, "Origin": "http://evil.example"})[0] == 403
 
 
@@ -359,7 +357,15 @@ def test_websocket_without_the_bearer_is_closed_before_any_frame(session_origin)
 
     lst, origin, sess = session_origin
     good = login(lst, origin)
-    for protos in (None, ["orch.b", "orch.b.nope"], ["orch.b", "orch.b."], ["orch.b"], ["orch.b", f"x.{good}"], ["orch.b", f"orch.b.{good[:-1]}"], [f"orch.b.{good}"]):
+    for protos in (
+        None,
+        ["orch.b", "orch.b.nope"],
+        ["orch.b", "orch.b."],
+        ["orch.b"],
+        ["orch.b", f"x.{good}"],
+        ["orch.b", f"orch.b.{good[:-1]}"],
+        [f"orch.b.{good}"],
+    ):
         with pytest.raises(Exception):  # noqa: B017 - right Origin, no / wrong bearer: refused
             with connect(ws_url(lst), origin=origin.origin, subprotocols=protos, open_timeout=5) as ws:
                 ws.recv(timeout=2)
@@ -493,6 +499,26 @@ def test_open_starts_one_origin_per_workspace_and_end_stops_it(static):
         ctl.stop()
 
 
+SIGNABLE = b"orch/v2/remote-open|" + bytes(16 + 16 + 32 + 32)  # a message the presence key would sign
+
+
+def test_an_unsignable_message_shows_no_confirm_at_all():
+    from orch.remoteclient import ClientError, Prompt
+
+    from orch_dashboard.remote_client import GatedPresence
+
+    class Inner:
+        kind = "fido2"
+
+        def assert_(self, *a):
+            raise AssertionError("signed")
+
+    gate = GatedPresence(Inner(), wait_s=0.3)
+    with pytest.raises(ClientError) as e:
+        gate.assert_("r", b"not-a-presence-message", Prompt("t", (), "r"))
+    assert e.value.code == "malformed" and gate.current() is None
+
+
 def test_the_confirm_screen_names_the_workspace_from_the_session_not_the_hub(static):
     import threading
 
@@ -522,7 +548,7 @@ def test_the_confirm_screen_names_the_workspace_from_the_session_not_the_hub(sta
                 out.append(
                     gate.assert_(
                         "ref",
-                        b"m",
+                        SIGNABLE,
                         Prompt("Confirm in Billing service", ("Start an agent on AT-12", "Open a terminal"), "r"),
                     )
                 )
@@ -567,7 +593,7 @@ def test_a_declined_confirm_signs_nothing(static):
 
     def ask():
         try:
-            gate.assert_("r", b"m", Prompt("t", (), "r"))
+            gate.assert_("r", SIGNABLE, Prompt("t", (), "r"))
         except ClientError as e:
             res.append(e.code)
 

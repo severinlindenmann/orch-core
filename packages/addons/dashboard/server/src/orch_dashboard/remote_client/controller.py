@@ -22,6 +22,7 @@ from typing import Any
 
 from orch.remoteclient import Client, ClientError, PresenceBackend, Prompt, Session
 from orch.remoteclient import enroll as _enroll
+from orch.remoteclient.presence import check_signable
 
 from .launcher import Launcher
 from .listener import Listener, bind_loopback
@@ -71,6 +72,7 @@ class GatedPresence:
         return self.inner.create(name)
 
     def assert_(self, ref: str, msg: bytes, prompt: Prompt) -> dict[str, Any]:
+        check_signable(msg)  # the person is never asked to confirm bytes the key would refuse to sign
         p = Pending(secrets.token_urlsafe(9), getattr(_ctx, "ws", None), prompt)
         with self._mu:
             self._pending.append(p)

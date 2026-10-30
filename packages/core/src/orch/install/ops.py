@@ -3,7 +3,7 @@
 ``python -m orch.install.ops health --config FILE`` and ``... backup-copy --src DIR --dest DIR [--keep N]``.
 Problems go to stderr (the journal) and to a status file; the exit code is 1 when anything is wrong, so the unit
 shows as failed. The hub has no admin-warning path of its own (its notifications are phone pushes to a person), so
-the journal and the status file are the warning. The unit generators here are pure and tested; nothing here needs root."""
+the journal and the status file are the warning. The unit generators are pure and tested; nothing here needs root."""
 
 from __future__ import annotations
 

@@ -168,9 +168,7 @@ def test_off_sends_queued_closes_before_closing_the_link(world):
     world.link.frames.append(("stream_open", 7, {"stream_id": sid, "device_id": world.did, "kind": "session"}))
     wait_for(lambda: world.link.answers, what="the open was not served")
     assert world.link.answers[-1][1] is None and gate.table(world.service).is_open(sid)
-    assert world.service.submit(policy.turn_off, world.service, "owner").result(
-        timeout=10
-    )
+    assert world.service.submit(policy.turn_off, world.service, "owner").result(timeout=10)
     wait_for(lambda: r.thread is None and r.link is None, what="the runner kept the link")
     kinds = world.dialer.links[0].kinds()
     assert ("stream_close", {"stream_id": sid, "reason": "remote.off"}) in world.dialer.links[0].events

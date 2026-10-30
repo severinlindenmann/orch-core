@@ -112,3 +112,18 @@ test("filter row offers workspace and state only: no person filter (the hub neve
   assert.deepEqual(find(out, (n) => n.attrs["aria-pressed"]).map((n) => n.textContent), ["All", "Waiting", "Delivered"]);
   assert.doesNotMatch(words(out), /person|people/i);
 });
+
+test("a redraw with fresh data keeps the chosen workspace and state", () => {
+  let out = handoffsView(data, {}, now);
+  const select = find(out, (n) => n.tag === "select")[0];
+  select.value = "b"; select.listeners.change();
+  click(out, "Delivered");
+  const fresh = { ...data, handoffs: [...data.handoffs, { from: C, to: B, sent_ms: now, status: "delivered" }] };
+  out = handoffsView(fresh, {}, now);
+  assert.equal(find(out, (n) => n.tag === "select")[0].value, "b");
+  assert.deepEqual(find(out, (n) => n.attrs["aria-pressed"]).map((n) => n.attrs["aria-pressed"]), ["false", "false", "true"]);
+  assert.equal(rows(out).length, 2);
+  assert.match(rows(out).map((r) => r.textContent).join("|"), /Archive→Legal/);
+  const select2 = find(out, (n) => n.tag === "select")[0];
+  select2.value = ""; select2.listeners.change(); click(out, "All"); // reset for other tests
+});

@@ -454,7 +454,13 @@ def _review_view(raw) -> dict | None:
             if isinstance(x, dict) and isinstance(x.get("text"), str)
         ],
         "later_edits": display(raw.get("later_edits"))[:200] if isinstance(raw.get("later_edits"), str) else None,
+        "leaves_short": _short(raw.get("leaves_short")),
+        "later_edits_short": _short(raw.get("later_edits_short")),
     }
+
+
+def _short(v) -> str | None:
+    return display(v)[:200] if isinstance(v, str) else None
 
 
 def preview_view(raw) -> dict:

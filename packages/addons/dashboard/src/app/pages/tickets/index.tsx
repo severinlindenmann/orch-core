@@ -287,9 +287,11 @@ export function TicketsPage() {
     <div ref={frame} className="flex h-full min-h-0 flex-col gap-3">
       <div className="flex items-baseline gap-3">
         <h1 className="text-xl font-semibold tracking-tight">Tickets</h1>
-        <span className="font-mono text-[11px] text-text-faint" aria-live="polite">
-          {countLabel}
-        </span>
+        {allCards > 0 && (
+          <span className="text-[11px] text-text-faint" aria-live="polite">
+            {countLabel}
+          </span>
+        )}
         <span className="flex-1" />
         {hasEpics(everything) && (
           <div className="flex items-center gap-1.5">

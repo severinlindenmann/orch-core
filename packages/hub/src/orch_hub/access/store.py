@@ -78,6 +78,15 @@ CREATE TABLE IF NOT EXISTS recovery_notes (
   user_id TEXT PRIMARY KEY REFERENCES users(user_id) ON DELETE CASCADE,
   by_user TEXT NOT NULL, at_ms INTEGER NOT NULL
 );
+CREATE TRIGGER IF NOT EXISTS default_group_no_admin_set BEFORE UPDATE OF grp ON default_group
+WHEN NEW.grp IS NOT NULL AND EXISTS (SELECT 1 FROM grants WHERE grp = NEW.grp AND role = 'admin')
+BEGIN SELECT RAISE(ABORT, 'default_group_admin'); END;
+CREATE TRIGGER IF NOT EXISTS grants_no_admin_for_default_ins BEFORE INSERT ON grants
+WHEN NEW.role = 'admin' AND NEW.grp = (SELECT grp FROM default_group WHERE id = 1)
+BEGIN SELECT RAISE(ABORT, 'default_group_admin'); END;
+CREATE TRIGGER IF NOT EXISTS grants_no_admin_for_default_upd BEFORE UPDATE ON grants
+WHEN NEW.role = 'admin' AND NEW.grp = (SELECT grp FROM default_group WHERE id = 1)
+BEGIN SELECT RAISE(ABORT, 'default_group_admin'); END;
 """
 
 
@@ -468,11 +477,27 @@ class Access:
         return rows[0][0] if rows else "absent"
 
     def set_member_end(self, group: str, user_id: str, ends_ms: object, *, actor: str | None = None) -> None:
-        """Change the end date of an existing, still active membership (``None`` = permanent). Policy (owner approval for
-        a later end, owner/last-admin guards for a shorter one) lives in ``ChangeService``; this is the write."""
-        if not self.is_member(group, user_id):
-            raise AccessError("not_member")
-        self.add_member(group, user_id, actor=actor, ends_ms=ends_ms)
+        """Change the end date of an existing, still active membership (``None`` = permanent). One conditional UPDATE of
+        the ACTIVE row: if the member was removed or ended in between, nothing is written (``not_member``); this path never
+        inserts. Policy (owner approval for a later end, owner/last-admin guards for a shorter one) is ``ChangeService``."""
+        _grp(group)
+        _hex(user_id, "user_id")
+        if actor is not None:
+            _hex(actor, "actor")
+        ends = self.check_end(ends_ms, group)
+        try:
+            with self.tx() as db:
+                now = self._now()
+                n = db.execute(
+                    "UPDATE members SET ends_ms=?, confirmed_ms=? WHERE grp=? AND user_id=? "
+                    "AND (ends_ms IS NULL OR ends_ms > ?)",
+                    (ends, now, group, user_id, now),
+                ).rowcount
+                if n == 0:
+                    raise AccessError("not_member")
+                db.execute("INSERT INTO member_end_log VALUES (?,?,?,?,?)", (now, group, user_id, ends, actor))
+        except sqlite3.Error as e:
+            raise AccessError("store_error", type(e).__name__) from None
 
     def is_member(self, group: str, user_id: str) -> bool:
         """An ACTIVE membership of ``group``."""
@@ -528,19 +553,27 @@ class Access:
         return rows[0][0] if rows else None
 
     def set_default_group(self, group: str | None, *, actor: str) -> None:
-        """Hub admin only. Never ``hub-admin`` and never a group that holds an admin grant anywhere (R5)."""
+        """Hub admin only. Never ``hub-admin`` and never a group that holds an admin grant anywhere (R5). Every check and
+        the write are ONE transaction; triggers on ``grants`` and ``default_group`` hold the rule for any other writer."""
         _hex(actor, "actor")
-        if not self.is_hub_admin(actor):
-            raise AccessError("forbidden_role", "only a hub-admin sets the default group")
         if group is not None:
             _grp(group)
             if group == ADMIN_GROUP:
                 raise AccessError("reserved_group")
-            if not self._q("SELECT 1 FROM groups WHERE name=?", (group,)):
-                raise AccessError("unknown_group")
-            if self._q("SELECT 1 FROM grants WHERE grp=? AND role='admin'", (group,)):
-                raise AccessError("default_group_admin", "a group with admin access cannot be the default")
-        self._w("UPDATE default_group SET grp=? WHERE id=1", (group,))
+        try:
+            with self.tx() as db:
+                if not self.is_hub_admin(actor):
+                    raise AccessError("forbidden_role", "only a hub-admin sets the default group")
+                if group is not None:
+                    if not db.execute("SELECT 1 FROM groups WHERE name=?", (group,)).fetchone():
+                        raise AccessError("unknown_group")
+                    if db.execute("SELECT 1 FROM grants WHERE grp=? AND role='admin'", (group,)).fetchone():
+                        raise AccessError("default_group_admin", "a group with admin access cannot be the default")
+                db.execute("UPDATE default_group SET grp=? WHERE id=1", (group,))
+        except sqlite3.Error as e:
+            if "default_group_admin" in str(e):
+                raise AccessError("default_group_admin") from None
+            raise AccessError("store_error", type(e).__name__) from None
 
     # --- grants --------------------------------------------------------------------------------------------------
 
@@ -576,6 +609,8 @@ class Access:
                     }
                 )
         except sqlite3.Error as e:
+            if "default_group_admin" in str(e):
+                raise AccessError("default_group_admin") from None
             raise AccessError("store_error", type(e).__name__) from None
 
     def revoke(self, workspace_id: str, group: str, *, actor: str | None = None) -> None:
@@ -797,19 +832,22 @@ class Access:
             or any(type(i) is not str or not _ADDON_ID.fullmatch(i) for i in ids)
         ):
             raise AccessError("malformed", "add-on ids")
-        with self.lock:
-            if not self.is_hub_admin(actor):
-                raise AccessError("forbidden_role", "only a hub-admin sets an allowlist")
-            if ids is None:
-                self._w("DELETE FROM workspace_addon_allow WHERE workspace_id=?", (workspace_id,))
-                return None
-            clean = sorted(set(ids))
-            self._w(
-                "INSERT INTO workspace_addon_allow(workspace_id, ids) VALUES (?,?) "
-                "ON CONFLICT(workspace_id) DO UPDATE SET ids=excluded.ids",
-                (workspace_id, cj(clean).decode()),
-            )
-            return clean
+        try:
+            with self.tx() as db:
+                if not self.is_hub_admin(actor):
+                    raise AccessError("forbidden_role", "only a hub-admin sets an allowlist")
+                if ids is None:
+                    db.execute("DELETE FROM workspace_addon_allow WHERE workspace_id=?", (workspace_id,))
+                    return None
+                clean = sorted(set(ids))
+                db.execute(
+                    "INSERT INTO workspace_addon_allow(workspace_id, ids) VALUES (?,?) "
+                    "ON CONFLICT(workspace_id) DO UPDATE SET ids=excluded.ids",
+                    (workspace_id, cj(clean).decode()),
+                )
+                return clean
+        except sqlite3.Error as e:
+            raise AccessError("store_error", type(e).__name__) from None
 
     def effective_market_policy(self, workspace_id: str) -> dict[str, Any]:
         """The policy THIS workspace's snapshot carries: the hub-wide one with ``addons.allow`` INTERSECTED with the

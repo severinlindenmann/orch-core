@@ -249,3 +249,53 @@ def test_default_group_never_admin(timed):
     a.set_default_group(None, actor=U3)
     a.remove_group("g")
     assert a.default_group() is None
+
+
+def test_set_member_end_on_removed_member_inserts_nothing(timed):
+    a, clk = timed
+    a.add_member("g", U1, ends_ms=clk.t + 5000)
+    a.remove_member("g", U1)
+    with pytest.raises(AccessError) as e:
+        a.set_member_end("g", U1, clk.t + 9000)
+    assert e.value.code == "not_member" and a.members_all("g") == []
+    a.add_member("g", U2, ends_ms=clk.t + 1000)
+    clk.t += 1000  # ended (not swept): also not a member to extend
+    with pytest.raises(AccessError) as e:
+        a.set_member_end("g", U2, clk.t + 9000)
+    assert e.value.code == "not_member" and a.member_end("g", U2) == clk.t
+
+
+def test_default_group_triggers_refuse_direct_writes(timed):
+    import sqlite3
+
+    a, _clk = timed
+    a.add_member(ADMIN_GROUP, U3)
+    a.set_default_group("g", actor=U3)
+    db = a._db
+    with pytest.raises(sqlite3.IntegrityError, match="default_group_admin"):
+        db.execute("INSERT INTO grants VALUES (?,?,?)", (WS2, "g", "admin"))
+    with pytest.raises(sqlite3.IntegrityError, match="default_group_admin"):
+        db.execute("UPDATE grants SET role='admin' WHERE grp='g'")
+    a.add_group("adm")
+    a.grant(WS2, "adm", "admin")
+    with pytest.raises(sqlite3.IntegrityError, match="default_group_admin"):
+        db.execute("UPDATE default_group SET grp='adm' WHERE id=1")
+    assert a.default_group() == "g"
+
+
+def test_default_group_rule_holds_when_a_grant_lands_after_the_check(timed):
+    """The check passes, then another writer grants admin before the update: the update is refused (trigger)."""
+    a, _clk = timed
+    a.add_member(ADMIN_GROUP, U3)
+    a.add_group("late")
+    real = a.is_hub_admin
+
+    def racing(user_id):  # runs inside set_default_group's check, then a grant sneaks in on the raw connection
+        ok = real(user_id)
+        a._db.execute("INSERT INTO grants VALUES (?,?,?)", (WS2, "late", "admin"))
+        return ok
+
+    a.is_hub_admin = racing  # type: ignore[method-assign]
+    with pytest.raises(AccessError) as e:
+        a.set_default_group("late", actor=U3)
+    assert e.value.code == "default_group_admin" and a.default_group() is None

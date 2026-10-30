@@ -12,7 +12,7 @@ import { activityView } from "./activity.js";
 import { accountFromWorkspaceView, accountView } from "./account.js";
 import { adminView } from "./admin.js";
 import { changesView, checkChange, sentence as changeSentence } from "./changes.js";
-import { totpPanel } from "./totp.js";
+import { KEY_GONE_NOTE, totpPanel } from "./totp.js";
 import { inviteView } from "./invite.js";
 import { rememberDashboard, rememberName } from "./connect.js";
 import { servicesView } from "./services.js";
@@ -73,7 +73,7 @@ async function api(method, path, body) {
 }
 const WORDS = {
   no_session: "Your sign-in ended. Sign in again.",
-  bad_credentials: "Wrong user id, password or code. A code works once; wait for the next one.",
+  bad_credentials: "Wrong name, password or code. A code works once; wait for the next one.",
   rate_limited: "Too many tries. Wait a moment.",
   event_changed: "The request changed while you were deciding.",
   prepared_expired: "Time ran out.",
@@ -136,7 +136,8 @@ function setupView(token, err) {
         h("h2", { text: "Add your sign-in code to your phone" }),
         h("p", { class: "muted", text: "Scan this with your authenticator app. You will need the app's 6-digit code each time you sign in." }),
         totpPanel(r.body.totp_uri, r.body.totp_secret),
-        h("div", { class: "row top" }, h("button", { class: "pri", id: "open-hub", text: "Open the hub", onclick: () => afterLogin() })),
+        h("p", { class: "small muted top", id: "key-gone", text: KEY_GONE_NOTE }),
+        h("div", { class: "row top" }, h("button", { class: "pri", id: "open-hub", text: "I've added it, open the hub", onclick: () => afterLogin() })),
       );
     },
   }, field("Your name", name), field("Choose a password (10 or more characters)", pw), h("div", { class: "row top" }, h("button", { class: "pri", type: "submit", text: "Create the admin" })));

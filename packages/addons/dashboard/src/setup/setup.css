@@ -146,11 +146,13 @@
   text-decoration: none;
 }
 .setup button:disabled {
-  opacity: 0.5;
+  background: var(--disabled-bg);
+  border-color: var(--disabled-border);
+  color: var(--disabled-text);
   cursor: default;
 }
 .setup :focus-visible {
-  outline: 2px solid var(--brand);
+  outline: 2px solid var(--focus-outline, var(--brand));
   outline-offset: 4px;
 }
 .setup h1:focus {

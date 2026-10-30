@@ -277,6 +277,8 @@ REMOTE_DEVICE: dict[tuple[str, str], tuple[str, str]] = {
     # turning sharing off is the owner's plain click from a FULL session (reduce -> owner_link -> full_session): never
     # true for a stream, so the row is a refusal, not an offer that ends in one (rule-remove also needs the preview)
     **_rows(REFUSED, VIEW, POST, W + "/hub/share/revoke", W + "/hub/share/rule-remove"),
+    # a file picked for a share is written to this computer's disk by the upload; a stream does not offer it
+    **_rows(REFUSED, VIEW, POST, W + "/shares/upload"),
     **_rows(
         ALLOWED,
         VIEW,

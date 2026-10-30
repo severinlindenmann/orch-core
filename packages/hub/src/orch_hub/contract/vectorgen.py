@@ -696,7 +696,14 @@ AUDIT_EVENTS: list[tuple[str, dict[str, Any]]] = [
     ),
     (
         "membership",
-        {"group": "ops", "user_id": U_BOB, "added": True, "actor_user_id": U_ALICE, "nonce": nonce32("membership")},
+        {
+            "group": "ops",
+            "user_id": U_BOB,
+            "added": True,
+            "ends_ms": None,
+            "actor_user_id": U_ALICE,
+            "nonce": nonce32("membership"),
+        },
     ),
     (
         "space",

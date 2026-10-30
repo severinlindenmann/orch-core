@@ -37,6 +37,10 @@ def _text(x: Any) -> bool:
     return type(x) is str and 0 < len(x) <= 128 and x.isprintable()
 
 
+def _opt_ms(x: Any) -> bool:
+    return x is None or (type(x) is int and 1 <= x < 2**53)
+
+
 def _opt_hex16(x: Any) -> bool:
     return x is None or _hex16(x)
 
@@ -62,7 +66,8 @@ EVENT_FIELDS: dict[str, dict[str, Any]] = {
         "actor_user_id": _hex16,
     },
     # a user joined or left a group; the acting admin
-    "membership": {"group": _text, "user_id": _hex16, "added": _bool, "actor_user_id": _hex16},
+    # ``ends_ms``: the time the membership ends (UTC ms, exclusive), or null = no end date (GA-07); always null on a removal
+    "membership": {"group": _text, "user_id": _hex16, "added": _bool, "ends_ms": _opt_ms, "actor_user_id": _hex16},
     # a space changed (create, add, remove, unbind, delete); the epoch it produced
     "space": {
         "space_id": _hex16,

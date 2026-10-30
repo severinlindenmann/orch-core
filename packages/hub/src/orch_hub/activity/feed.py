@@ -86,6 +86,14 @@ AGENT_WORDS = {
 }
 
 
+def _day(ends_ms: int) -> str:
+    """The last day of an end-dated membership as "14 Nov" (UTC; ``ends_ms`` is the exclusive end)."""
+    import time
+
+    t = time.gmtime(max(ends_ms - 1, 0) / 1000)
+    return f"{t.tm_mday} {time.strftime('%b', t)}"
+
+
 def _agent_text(detail):
     text = "worked in a workspace" if not detail.get("what") else AGENT_WORDS.get(detail["what"], "did something")
     return text + (" on " + render_text(detail["ticket"]) if detail.get("ticket") else "")
@@ -216,7 +224,12 @@ def feed(deps, query):
                     "membership": ("added " if ev.get("added") else "removed ")
                     + names.get(ev.get("user_id"), render_text(ev.get("user_id", "person")))
                     + (" to " if ev.get("added") else " from ")
-                    + render_text(ev.get("group", "group")),
+                    + render_text(ev.get("group", "group"))
+                    + (
+                        ", access until " + _day(ev["ends_ms"])
+                        if ev.get("added") and type(ev.get("ends_ms")) is int
+                        else ""
+                    ),
                     "space": "changed a space",
                     "channel": "removed a device" if ev.get("change") == "revoke" else "registered a device",
                     "share": "changed shared information",

@@ -221,7 +221,14 @@ def test_sweep_review_and_default_group(timed):
     clk.t += 91 * 86_400_000
     assert {(r["user_id"], r["ended"]) for r in a.review()} == {(U2, False)}  # U1 ended long ago: out of the list
     assert a.sweep() == 1 and a.members_all("g") == [U2]
-    assert seen[-1] == {"kind": "membership", "group": "g", "user_id": U1, "added": False, "actor_user_id": None}
+    assert seen[-1] == {
+        "kind": "membership",
+        "group": "g",
+        "user_id": U1,
+        "added": False,
+        "ends_ms": None,
+        "actor_user_id": None,
+    }
     a.confirm_member("g", U2)
     assert a.review() == []
 
@@ -283,8 +290,9 @@ def test_default_group_triggers_refuse_direct_writes(timed):
     assert a.default_group() == "g"
 
 
-def test_default_group_rule_holds_when_a_grant_lands_after_the_check(timed):
-    """The check passes, then another writer grants admin before the update: the update is refused (trigger)."""
+def test_default_group_check_in_the_tx_catches_a_grant_landing_after_the_admin_check(timed):
+    """A grant lands after the admin check, inside the same tx: the in-tx group check refuses (the trigger test above is the
+    proof for writers that bypass the code)."""
     a, _clk = timed
     a.add_member(ADMIN_GROUP, U3)
     a.add_group("late")
@@ -299,3 +307,33 @@ def test_default_group_rule_holds_when_a_grant_lands_after_the_check(timed):
     with pytest.raises(AccessError) as e:
         a.set_default_group("late", actor=U3)
     assert e.value.code == "default_group_admin" and a.default_group() is None
+
+
+def test_every_end_date_change_is_in_the_audit_chain(timed):
+    a, clk = timed
+    seen = []
+    a.observer = seen.append
+    a.add_member("g", U1, ends_ms=clk.t + 5000, actor=U3)
+    a.set_member_end("g", U1, clk.t + 9000, actor=U3)  # later
+    a.set_member_end("g", U1, clk.t + 2000, actor=U3)  # earlier
+    a.set_member_end("g", U1, None, actor=U3)  # permanent
+    a.remove_member("g", U1, actor=U3)
+    assert [(e["added"], e["ends_ms"]) for e in seen] == [
+        (True, clk.t + 5000),
+        (True, clk.t + 9000),
+        (True, clk.t + 2000),
+        (True, None),
+        (False, None),
+    ]
+
+
+def test_add_without_end_replaces_an_ended_unswept_row(timed):
+    a, clk = timed
+    seen = []
+    a.add_member("g", U1, ends_ms=clk.t + 1000)
+    clk.t += 1000  # ended, not swept
+    assert a.roles(WS) == {}
+    a.observer = seen.append
+    a.add_member("g", U1)
+    assert a.member_end("g", U1) is None and a.roles(WS) == {U1: "edit"}
+    assert seen[-1]["added"] is True and seen[-1]["ends_ms"] is None

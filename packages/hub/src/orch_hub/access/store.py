@@ -50,9 +50,6 @@ CREATE TABLE IF NOT EXISTS members (
   PRIMARY KEY (grp, user_id)
 );
 CREATE TABLE IF NOT EXISTS default_group (id INTEGER PRIMARY KEY CHECK (id = 1), grp TEXT REFERENCES groups(name) ON DELETE SET NULL);
-CREATE TABLE IF NOT EXISTS member_end_log (
-  at_ms INTEGER NOT NULL, grp TEXT NOT NULL, user_id TEXT NOT NULL, ends_ms INTEGER, actor TEXT
-);
 CREATE TABLE IF NOT EXISTS grants (
   workspace_id TEXT NOT NULL,
   grp TEXT NOT NULL REFERENCES groups(name) ON DELETE CASCADE,
@@ -222,7 +219,14 @@ class Access:
                 # the cascade removes the user's group memberships: each one is a membership change and is audited
                 for (g,) in db.execute("SELECT grp FROM members WHERE user_id=? ORDER BY grp", (user_id,)).fetchall():
                     self._observe(
-                        {"kind": "membership", "group": g, "user_id": user_id, "added": False, "actor_user_id": actor}
+                        {
+                            "kind": "membership",
+                            "group": g,
+                            "user_id": user_id,
+                            "added": False,
+                            "ends_ms": None,
+                            "actor_user_id": actor,
+                        }
                     )
                 db.execute("DELETE FROM users WHERE user_id=?", (user_id,))
         except sqlite3.Error as e:
@@ -349,7 +353,14 @@ class Access:
                     )
                 for (u,) in db.execute("SELECT user_id FROM members WHERE grp=? ORDER BY user_id", (name,)).fetchall():
                     self._observe(
-                        {"kind": "membership", "group": name, "user_id": u, "added": False, "actor_user_id": actor}
+                        {
+                            "kind": "membership",
+                            "group": name,
+                            "user_id": u,
+                            "added": False,
+                            "ends_ms": None,
+                            "actor_user_id": actor,
+                        }
                     )
                 db.execute("DELETE FROM groups WHERE name=?", (name,))
         except sqlite3.Error as e:
@@ -451,6 +462,11 @@ class Access:
                     raise AccessError("unknown_user")
                 if add:
                     now = self._now()
+                    # an ended row that was not swept yet counts as missing: it is replaced, so the audit and the access agree
+                    db.execute(
+                        "DELETE FROM members WHERE grp=? AND user_id=? AND ends_ms IS NOT NULL AND ends_ms <= ?",
+                        (group, user_id, now),
+                    )
                     db.execute(
                         "INSERT OR IGNORE INTO members(grp, user_id, ends_ms, added_ms, confirmed_ms) VALUES (?,?,?,?,?)",
                         (group, user_id, None if ends_ms is _KEEP else ends_ms, now, now),
@@ -460,13 +476,21 @@ class Access:
                             "UPDATE members SET ends_ms=?, confirmed_ms=? WHERE grp=? AND user_id=?",
                             (ends_ms, now, group, user_id),
                         )
-                        db.execute(
-                            "INSERT INTO member_end_log VALUES (?,?,?,?,?)", (now, group, user_id, ends_ms, actor)
-                        )
+                    ends_now = db.execute(
+                        "SELECT ends_ms FROM members WHERE grp=? AND user_id=?", (group, user_id)
+                    ).fetchone()[0]
                 else:
                     db.execute("DELETE FROM members WHERE grp=? AND user_id=?", (group, user_id))
+                    ends_now = None
                 self._observe(
-                    {"kind": "membership", "group": group, "user_id": user_id, "added": add, "actor_user_id": actor}
+                    {
+                        "kind": "membership",
+                        "group": group,
+                        "user_id": user_id,
+                        "added": add,
+                        "ends_ms": ends_now,
+                        "actor_user_id": actor,
+                    }
                 )
         except sqlite3.Error as e:
             raise AccessError("store_error", type(e).__name__) from None
@@ -495,7 +519,16 @@ class Access:
                 ).rowcount
                 if n == 0:
                     raise AccessError("not_member")
-                db.execute("INSERT INTO member_end_log VALUES (?,?,?,?,?)", (now, group, user_id, ends, actor))
+                self._observe(
+                    {
+                        "kind": "membership",
+                        "group": group,
+                        "user_id": user_id,
+                        "added": True,
+                        "ends_ms": ends,
+                        "actor_user_id": actor,
+                    }
+                )
         except sqlite3.Error as e:
             raise AccessError("store_error", type(e).__name__) from None
 
@@ -539,7 +572,14 @@ class Access:
                 ).fetchall():
                     db.execute("DELETE FROM members WHERE grp=? AND user_id=?", (g, u))
                     self._observe(
-                        {"kind": "membership", "group": g, "user_id": u, "added": False, "actor_user_id": None}
+                        {
+                            "kind": "membership",
+                            "group": g,
+                            "user_id": u,
+                            "added": False,
+                            "ends_ms": None,
+                            "actor_user_id": None,
+                        }
                     )
                     n += 1
         except sqlite3.Error as e:

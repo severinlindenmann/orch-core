@@ -384,7 +384,9 @@ def _gate_open(served, dev: str, n: int) -> str | None:
 
 def test_member_removed_closes_open_stream_and_refuses_new(human, served):
     dev, r, p2 = _two_owners(human, served)
-    assert _gate_open(served, dev, 1) == "remote.version"  # an owner's device passes the gate (R3 not built yet)
+    assert (
+        _gate_open(served, dev, 1) == "remote.version"
+    )  # an owner's device passes the gate (no adapter is attached: the host serves no session)
     _host_event(served, p2, "member.removed", person=served.lab.ws.owner.ref)
     assert r.calls == ["revoked"] and r.held == [True]  # closed inside the store lock
     assert _gate_open(served, dev, 2) == "remote.device"

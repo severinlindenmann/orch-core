@@ -16,7 +16,7 @@ from unittest import mock
 
 import pytest
 
-from orch.host.remote import enrollment, gate, pump
+from orch.host.remote import adapter, enrollment, gate, pump
 from orch.hubclient.tlslink.client import LinkError
 
 CONTRACT = Path(__file__).resolve().parents[4] / "contracts" / "hub"
@@ -26,6 +26,13 @@ DEV = "rd_" + "a1" * 16
 OWNER = "p_" + "0f" * 16
 CODE = "rc_" + "c3" * 16
 SID = "5e" * 16
+HUB = "7b" * 16
+
+
+def attached(svc: Any) -> Any:
+    """The dashboard's adapter attached to the (fake) service: what lets the gate take a passing open (R3)."""
+    adapter.claim(svc, OWNER, None)
+    return svc
 
 
 def sid(n: int) -> str:
@@ -102,10 +109,9 @@ def test_gate_vector(c: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None
     if "ok" not in want:
         assert got == want["error"], c.get("note")
         return
-    assert got == "remote.version"  # it passed every check; R3 has not built the session yet
-    monkeypatch.setattr(gate, "STREAMS_ACCEPT", True)  # with the switch flipped the same open is taken and registered
-    svc2, t2 = _prepared(c)
-    assert gate.open(svc2, a["body"], a["now_ms"], codes=a["state"]["codes"]) is None
+    assert got == "remote.version"  # it passed every check; no adapter is attached, so nothing serves a session
+    svc2, t2 = _prepared(c)  # with the dashboard's adapter attached the same open is taken and registered
+    assert gate.open(attached(svc2), a["body"], a["now_ms"], codes=a["state"]["codes"], hub_id=HUB) is None
     assert t2.is_open(a["body"]["stream_id"])
 
 
@@ -186,22 +192,20 @@ def test_gate_runs_under_the_store_lock() -> None:
     assert seen == [1]
 
 
-def test_limits_4_16_10(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(gate, "STREAMS_ACCEPT", True)
+def test_limits_4_16_10() -> None:
     devs = {f"rd_{i:032x}": {"person": OWNER, "expires_ms": NOW + 3_600_000, "level_cap": "view"} for i in range(1, 7)}
-    svc = service(devices=devs)
+    svc = attached(service(devices=devs))
     ids = list(devs)
     n = iter(range(1, 1000))
     for _ in range(4):  # 4 per device
-        assert gate.open(svc, body(sid(next(n)), ids[0]), NOW) is None
-    assert gate.open(svc, body(sid(next(n)), ids[0]), NOW) == "remote.busy"
+        assert gate.open(svc, body(sid(next(n)), ids[0]), NOW, hub_id=HUB) is None
+    assert gate.open(svc, body(sid(next(n)), ids[0]), NOW, hub_id=HUB) == "remote.busy"
     for d in ids[1:4]:  # 4 + 3*4 = 16 per workspace
         for _ in range(4):
-            assert gate.open(svc, body(sid(next(n)), d), NOW) is None
+            assert gate.open(svc, body(sid(next(n)), d), NOW, hub_id=HUB) is None
     assert gate.table(svc).count_workspace() == 16
-    assert gate.open(svc, body(sid(next(n)), ids[4]), NOW) == "remote.busy"
-    # 10 handshakes per minute per device, streams or not
-    monkeypatch.setattr(gate, "STREAMS_ACCEPT", False)
+    assert gate.open(svc, body(sid(next(n)), ids[4]), NOW, hub_id=HUB) == "remote.busy"
+    # 10 handshakes per minute per device, streams or not (here: no adapter, so every passing open is remote.version)
     svc2 = service(devices=devs)
     for _ in range(10):
         assert gate.open(svc2, body(sid(next(n)), ids[5]), NOW) == "remote.version"
@@ -238,13 +242,13 @@ def test_seen_set_is_bounded() -> None:
     assert t.remember(sid(99999), NOW + gate.SEEN_TTL_MS)
 
 
-def test_passing_open_answers_remote_version_until_r3() -> None:
+def test_passing_open_answers_remote_version_without_an_adapter() -> None:
     svc = service()
     t = gate.table(svc)
-    assert gate.STREAMS_ACCEPT is False
-    assert gate.open(svc, body(), NOW) == "remote.version"
+    assert gate.open(svc, body(), NOW, hub_id=HUB) == "remote.version"
     assert t.count_workspace() == 0 and not t.is_open(SID)  # never registered
     assert svc.terminator.mock_calls == []
+    assert gate.open(attached(service()), body(), NOW) == "remote.version"  # no hub id from the link: no session
 
 
 def test_malformed_body_is_refused() -> None:

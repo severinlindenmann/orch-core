@@ -1,0 +1,564 @@
+"""scripts/release/ceremony.py against fake `pass-cli` and `gh` executables. No real key, vault or GitHub is touched.
+
+The fakes record argv and env to ``log/`` and keep their "vault" and "GitHub secret" in ``sim/``. ``sim/`` is the
+only place a secret may appear (it stands for Proton Pass and GitHub); everything else under the test directory,
+plus stdout and stderr, is scanned for every form of every seed."""
+
+from __future__ import annotations
+
+import base64
+import importlib.util
+import json
+import os
+import stat
+import subprocess
+import sys
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+
+import pytest
+
+from tests.release.test_release_tooling import wheels
+
+ROOT = Path(__file__).resolve().parents[4]
+TOOLS = ROOT / "scripts" / "release"
+sys.path.insert(0, str(TOOLS))
+
+import ceremony  # noqa: E402
+import floor  # noqa: E402
+import manifest  # noqa: E402
+import sign  # noqa: E402
+
+T0 = datetime(2026, 11, 2, 9, 0, 0, tzinfo=UTC)
+REPO = "severinlindenmann/orch-core"
+
+FAKE_COMMON = """\
+import json, os, sys
+from pathlib import Path
+D = Path(__file__).resolve().parent.parent
+SIM, LOG = D / "sim", D / "log"
+argv = sys.argv[1:]
+stdin = b"" if sys.stdin.isatty() else sys.stdin.buffer.read()
+with (LOG / "calls.jsonl").open("a") as f:
+    f.write(json.dumps({"tool": TOOL, "argv": argv, "env": dict(os.environ)}) + "\\n")
+with (SIM / f"{TOOL}-stdin.bin").open("ab") as f:  # stands for the vault / GitHub: the one place a secret may be
+    f.write(stdin + b"\\n--\\n")
+
+
+def opt(name):
+    return argv[argv.index(name) + 1] if name in argv else None
+"""
+
+FAKE_PASS = (
+    'TOOL = "pass-cli"\n'
+    + FAKE_COMMON
+    + """
+V = SIM / "vault"
+if argv[:1] == ["info"]:
+    sys.exit(0)
+if argv[:3] == ["item", "create", "login"]:
+    if "--get-template" in argv:
+        print(json.dumps({"title": "", "username": "", "email": "", "password": "", "note": "", "urls": []}))
+        sys.exit(0)
+    item = json.loads(stdin)
+    assert opt("--vault-name") == "Agents" and opt("--from-template") == "-"
+    if os.environ.get("PROTON_PASS_AGENT_REASON", "") == "":
+        sys.exit(9)
+    (V / (item["title"] + ".json")).write_text(json.dumps(item))
+    sys.exit(0)
+if argv[:2] == ["item", "view"]:
+    p = V / (opt("--item-title") + ".json")
+    if not p.exists():
+        sys.exit(1)
+    print(json.loads(p.read_text())[opt("--field")])
+    sys.exit(0)
+sys.exit(2)
+"""
+)
+
+FAKE_GH = (
+    'TOOL = "gh"\n'
+    + FAKE_COMMON
+    + """
+if argv[:2] == ["auth", "status"]:
+    sys.exit(0)
+if argv[:1] == ["api"]:
+    name = "env" if argv[1].endswith("/release") else "policies"
+    p = SIM / f"gh-{name}.json"
+    if not p.exists():
+        sys.exit(1)
+    print(p.read_text())
+    sys.exit(0)
+if argv[:2] == ["secret", "set"]:
+    assert argv[2] == "ORCH_RELEASE_KEY" and opt("--env") == "release" and opt("--repo")
+    (SIM / "gh-secret").write_bytes(stdin)
+    sys.exit(0)
+if argv[:2] == ["secret", "list"]:
+    if (SIM / "gh-secret").exists():
+        print("ORCH_RELEASE_KEY\\tUpdated just now")
+    sys.exit(0)
+sys.exit(2)
+"""
+)
+
+GOOD_ENV = {"deployment_branch_policy": {"protected_branches": False, "custom_branch_policies": True}}
+GOOD_POLICIES = {"total_count": 1, "branch_policies": [{"name": "main", "type": "branch"}]}
+
+
+class Lab:
+    def __init__(self, base: Path):
+        self.base = base
+        for d in ("fake/bin", "fake/sim/vault", "fake/log", "repo/release", "tmp", "home"):
+            (base / d).mkdir(parents=True)
+        self.sim = base / "fake/sim"
+        for name, body in (("pass-cli", FAKE_PASS), ("gh", FAKE_GH)):
+            p = base / "fake/bin" / name
+            p.write_text(f"#!{sys.executable}\n{body}")
+            p.chmod(p.stat().st_mode | stat.S_IXUSR)
+        self.repo = base / "repo"
+        for rel in (ceremony.KEYS_PY, ceremony.INSTALL_SH):
+            (self.repo / rel).parent.mkdir(parents=True, exist_ok=True)
+            (self.repo / rel).write_text((ROOT / rel).read_text())
+        (self.repo / ".gitignore").write_text((ROOT / ".gitignore").read_text())
+        self.original = self.snapshot()
+        (self.sim / "gh-env.json").write_text(json.dumps(GOOD_ENV))
+        (self.sim / "gh-policies.json").write_text(json.dumps(GOOD_POLICIES))
+
+    def env(self) -> dict[str, str]:
+        return {
+            "PATH": f"{self.base / 'fake/bin'}{os.pathsep}/usr/bin{os.pathsep}/bin",
+            "TMPDIR": str(self.base / "tmp"),
+            "HOME": str(self.base / "home"),
+        }
+
+    def snapshot(self) -> dict[str, bytes]:
+        return {str(p.relative_to(self.repo)): p.read_bytes() for p in sorted(self.repo.rglob("*")) if p.is_file()}
+
+    def calls(self) -> list[dict]:
+        p = self.base / "fake/log/calls.jsonl"
+        return [json.loads(x) for x in p.read_text().splitlines()] if p.exists() else []
+
+    def vault(self, title: str) -> dict:
+        return json.loads((self.sim / "vault" / f"{title}.json").read_text())
+
+    def seeds(self) -> list[bytes]:
+        out = []
+        for p in (self.sim / "vault").glob("*.json"):
+            out.append(base64.b64decode(json.loads(p.read_text())["password"]))
+        return out
+
+    def assert_no_leak(self, *streams: str) -> None:
+        for seed in self.seeds():
+            forms = {
+                seed,
+                base64.b64encode(seed),
+                base64.urlsafe_b64encode(seed),
+                seed.hex().encode(),
+                base64.b64encode(seed).rstrip(b"="),
+            }
+            for s in streams:
+                assert not any(f.decode(errors="ignore") in s for f in forms)
+            for p in self.base.rglob("*"):
+                if p.is_file() and self.sim not in p.parents:
+                    data = p.read_bytes()
+                    assert not any(f in data for f in forms), f"secret found in {p}"
+
+    def tmp_left(self) -> list[str]:
+        return [p.name for p in (self.base / "tmp").iterdir()]
+
+
+@pytest.fixture
+def lab(tmp_path, monkeypatch):
+    lab = Lab(tmp_path)
+    for k, v in lab.env().items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.setattr(ceremony, "_now", lambda: T0)
+    monkeypatch.setattr(ceremony, "_fail_at", None)
+    return lab
+
+
+def run_main(lab: Lab, capsys, *cmd: str) -> tuple[int, str, str]:
+    rc = ceremony.main([*cmd, "--repo-root", str(lab.repo), "--gh-repo", REPO])
+    cap = capsys.readouterr()
+    return rc, cap.out, cap.err
+
+
+def embedded(lab: Lab):
+    spec = importlib.util.spec_from_file_location("embedded_keys", lab.repo / ceremony.KEYS_PY)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def envelope_for(lab: Lab, tmp: Path, channel: str = "main") -> bytes:
+    """A real manifest signed by the generated CI key with the generated cert and revocations."""
+    ci_seed = base64.b64decode(lab.vault(ceremony.CI_TITLE)["password"])
+    key = sign.Ed25519PrivateKey.from_private_bytes(ci_seed)
+    keys = lab.repo / "release/keys"
+    doc = manifest.build_manifest(
+        channel=channel,
+        version="2.0.0",
+        seq=1,
+        commit="a" * 40,
+        issued_at="2026-11-02T10:00:00Z",
+        expires_at="2026-11-20T10:00:00Z",
+        files=wheels(tmp, "2.0.0"),
+        base_url="https://example.invalid/releases/v2.0.0",
+        changelog="TEST",
+        min_from="2.0.0",
+    )
+    return sign.sign_envelope(
+        manifest.jcs(doc),
+        purpose="core",
+        key=key,
+        key_id="rk-1",
+        key_cert=json.loads((keys / "rk-1.cert.json").read_text()),
+        revocations=json.loads((keys / "revocations.json").read_text()),
+    )
+
+
+def verify(lab: Lab, monkeypatch, envelope: bytes, channel: str = "main", when: datetime = T0 + timedelta(days=1)):
+    from orch.update import keys
+    from orch.update.verify import verify_envelope
+
+    monkeypatch.setattr(keys, "PRODUCTION_ROOTS", embedded(lab).PRODUCTION_ROOTS)  # the generated, embedded root
+    return verify_envelope(
+        envelope, purpose="core", channel=channel, now=when, seq_seen=None, revocations_issued_at=None
+    )
+
+
+# ---- the happy path ------------------------------------------------------------------------------------------------
+
+
+def test_init_succeeds_without_leaking_and_prints_only_the_allowed_lines(lab, capsys):
+    rc, out, err = run_main(lab, capsys, "init")
+    assert rc == 0 and err == ""
+    pub = json.loads((lab.repo / "release/keys/root-1.pub.json").read_text())
+    lines = out.splitlines()
+    assert lines[:2] == ["root key id: root-1", f"fingerprint: {pub['fingerprint']}"]
+    assert pub["fingerprint"].startswith("sha256:") and len(pub["fingerprint"]) == 71
+    assert lines[2] == "changed files:"
+    assert lines[-1] == "ORCH_RELEASE_KEY in environment release: present"
+    changed = {x.strip() for x in lines[3:-1]}
+    assert changed == {
+        ".gitignore",
+        "install.sh",
+        ceremony.KEYS_PY,
+        "release/keys/revocations.json",
+        "release/keys/rk-1.cert.json",
+        "release/keys/root-1.pub.json",
+        "release/keys/root.env",
+    }
+    assert lab.tmp_left() == []
+    lab.assert_no_leak(out, err)
+    assert "release/keys/root.env" in (lab.repo / ".gitignore").read_text().splitlines()
+    assert (
+        lab.repo / "release/keys/root.env"
+    ).read_text() == "ORCH_ROOT_SIGNING_KEY=pass://Agents/orch release root key/password\n"
+
+
+def test_init_secrets_only_travel_on_stdin_and_the_env_is_sanitized(lab, capsys, monkeypatch):
+    monkeypatch.setenv("PYTHONPATH", "/evil")
+    monkeypatch.setenv("LD_PRELOAD", "/evil.so")
+    rc, out, err = run_main(lab, capsys, "init")
+    assert rc == 0
+    calls = lab.calls()
+    seeds = lab.seeds()
+    assert len(seeds) == 2
+    for c in calls:
+        assert "PYTHONPATH" not in c["env"] and "LD_PRELOAD" not in c["env"]
+        if c["tool"] == "pass-cli":
+            assert c["env"]["PROTON_PASS_AGENT_REASON"]
+    sets = [c for c in calls if c["tool"] == "gh" and c["argv"][:2] == ["secret", "set"]]
+    assert len(sets) == 1 and sets[0]["argv"] == [
+        "secret",
+        "set",
+        "ORCH_RELEASE_KEY",
+        "--env",
+        "release",
+        "--repo",
+        REPO,
+    ]
+    # the GitHub secret is the CI key's seed (stdin), which is also what Proton holds for rk-1
+    assert (lab.sim / "gh-secret").read_text() == lab.vault(ceremony.CI_TITLE)["password"]
+    creates = [c for c in calls if c["tool"] == "pass-cli" and "--from-template" in c["argv"]]
+    assert [c["argv"][-1] for c in creates] == ["-", "-"]
+    assert lab.vault(ceremony.ROOT_TITLE)["username"] == "root-1"
+    assert lab.vault(ceremony.CI_TITLE)["username"] == "rk-1"
+    note = lab.vault(ceremony.ROOT_TITLE)["note"]
+    assert "2026-11-02" in note and "root-1" in note and "sha256:" in note
+    lab.assert_no_leak(out, err)
+
+
+def test_init_runs_under_python_dash_I_as_a_real_process(lab):
+    p = subprocess.run(
+        [sys.executable, "-I", str(TOOLS / "ceremony.py"), "init", "--repo-root", str(lab.repo), "--gh-repo", REPO],
+        env=lab.env(),
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert p.returncode == 0, p.stderr
+    assert p.stderr == ""
+    assert "fingerprint: sha256:" in p.stdout
+    assert lab.tmp_left() == []
+    lab.assert_no_leak(p.stdout, p.stderr)
+
+
+def test_public_outputs_verify_with_the_embedded_root_and_main_only(lab, capsys, monkeypatch, tmp_path_factory):
+    assert run_main(lab, capsys, "init")[0] == 0
+    cert_obj = json.loads((lab.repo / "release/keys/rk-1.cert.json").read_text())
+    cert = json.loads(base64.b64decode(cert_obj["cert"]))
+    assert cert["channels"] == ["main"] and cert["purpose"] == "core" and cert["serial"] == 1
+    assert cert["key_id"] == "rk-1"
+    nb = datetime.strptime(cert["not_before"], "%Y-%m-%dT%H:%M:%SZ")
+    na = datetime.strptime(cert["not_after"], "%Y-%m-%dT%H:%M:%SZ")
+    assert na - nb == timedelta(days=180)
+    env = envelope_for(lab, tmp_path_factory.mktemp("w"))
+    verify(lab, monkeypatch, env)  # raises UpdateRefused unless the whole chain (root, cert, list, signature) is good
+    from orch.update.verify import UpdateRefused
+
+    # not allowed on any other channel: re-sign a develop manifest by hand and expect the verifier to refuse it
+    with pytest.raises(ValueError):  # sign.py itself refuses (the certificate does not allow the channel)
+        envelope_for(lab, tmp_path_factory.mktemp("w2"), channel="develop")
+    # the embedded roots in install.sh and keys.py are the same key
+    sh = (lab.repo / "install.sh").read_text()
+    pub = json.loads((lab.repo / "release/keys/root-1.pub.json").read_text())["public_key"]
+    assert f'ROOTS_B64 = {{"root-1": "{pub}"}}' in sh
+    assert embedded(lab).PRODUCTION_ROOTS == {"root-1": base64.b64decode(pub)}
+    assert pub not in (ROOT / "install.sh").read_text()
+    with pytest.raises(UpdateRefused):  # and a verifier without the embedded root refuses (production roots stay empty)
+        from orch.update.verify import verify_envelope
+
+        verify_envelope(
+            env,
+            purpose="core",
+            channel="main",
+            now=T0 + timedelta(days=1),
+            seq_seen=None,
+            revocations_issued_at=None,
+            roots={},
+        )
+
+
+def test_init_floor_equals_the_revocation_list(lab, capsys):
+    assert run_main(lab, capsys, "init")[0] == 0
+    sh = (lab.repo / "install.sh").read_text()
+    assert (
+        floor.read_floor(sh)
+        == floor.read_list(lab.repo / "release/keys/revocations.json")
+        == ("2026-11-02T09:00:00Z", 1)
+    )
+    assert floor.main(["--check", str(lab.repo / "install.sh"), str(lab.repo / "release/keys/revocations.json")]) == 0
+
+
+def test_the_leak_scan_really_detects_a_leak(lab, capsys):
+    assert run_main(lab, capsys, "init")[0] == 0
+    seed = lab.seeds()[0]
+    with pytest.raises(AssertionError):
+        lab.assert_no_leak(base64.b64encode(seed).decode())
+    stray = lab.base / "home" / "stray.txt"
+    stray.write_bytes(b"x" + seed.hex().encode())
+    with pytest.raises(AssertionError):
+        lab.assert_no_leak()
+
+
+# ---- refusals ------------------------------------------------------------------------------------------------------
+
+
+def _assert_refused_cleanly(lab, capsys, expect: str):
+    rc, out, err = run_main(lab, capsys, "init")
+    assert rc == 1 and out == "" and expect in err
+    assert lab.snapshot() == lab.original
+    assert lab.tmp_left() == []
+    forbidden = [c for c in lab.calls() if "--from-template" in c["argv"] or c["argv"][:2] == ["secret", "set"]]
+    assert forbidden == []
+    lab.assert_no_leak(out, err)
+
+
+def test_refuses_when_the_root_item_already_exists(lab, capsys):
+    (lab.sim / "vault" / f"{ceremony.ROOT_TITLE}.json").write_text(
+        json.dumps({"title": "x", "username": "u", "password": "AAAA"})
+    )
+    _assert_refused_cleanly(lab, capsys, "already exists")
+
+
+def test_refuses_when_the_release_environment_is_missing(lab, capsys):
+    (lab.sim / "gh-env.json").unlink()
+    _assert_refused_cleanly(lab, capsys, "does not exist")
+
+
+@pytest.mark.parametrize(
+    "policies",
+    [
+        {"branch_policies": []},
+        {"branch_policies": [{"name": "develop", "type": "branch"}]},
+        {"branch_policies": [{"name": "main", "type": "branch"}, {"name": "develop", "type": "branch"}]},
+        {"branch_policies": [{"name": "main", "type": "tag"}]},
+        {"branch_policies": [{"name": "*", "type": "branch"}]},
+    ],
+)
+def test_refuses_when_the_policy_is_not_main_only(lab, capsys, policies):
+    (lab.sim / "gh-policies.json").write_text(json.dumps(policies))
+    _assert_refused_cleanly(lab, capsys, "not exactly: main")
+
+
+@pytest.mark.parametrize(
+    "env",
+    [
+        {"deployment_branch_policy": None},
+        {"deployment_branch_policy": {"protected_branches": True, "custom_branch_policies": False}},
+        {},
+    ],
+)
+def test_refuses_when_the_environment_has_no_custom_branch_policy(lab, capsys, env):
+    (lab.sim / "gh-env.json").write_text(json.dumps(env))
+    _assert_refused_cleanly(lab, capsys, "custom branch policy")
+
+
+def test_refuses_to_run_init_twice(lab, capsys):
+    assert run_main(lab, capsys, "init")[0] == 0
+    (lab.sim / "gh-secret").unlink()
+    for p in (lab.sim / "vault").glob("*.json"):
+        p.unlink()
+    rc, out, err = run_main(lab, capsys, "init")
+    assert rc == 1 and "already exists" in err and out == ""
+
+
+# ---- cleanup after an injected failure at each step ---------------------------------------------------------------
+
+INIT_STEPS = ["preflight", "root", "ci-key", "ci-proton", "ci-secret", "revocations", "stage", "write", "secret-list"]
+
+
+@pytest.mark.parametrize("step", INIT_STEPS)
+def test_init_cleans_up_after_a_failure_at_each_step(lab, capsys, monkeypatch, step):
+    monkeypatch.setattr(ceremony, "_fail_at", step)
+    rc, out, err = run_main(lab, capsys, "init")
+    assert rc == 1 and f"injected failure at {step}" in err
+    assert lab.tmp_left() == []
+    if step in INIT_STEPS[: INIT_STEPS.index("write")]:
+        assert lab.snapshot() == lab.original  # nothing public is written before every external step has worked
+    lab.assert_no_leak(out, err)
+
+
+def test_temp_dir_is_removed_on_a_signal(lab, monkeypatch, capsys):
+    import signal
+
+    def boom(*_a, **_k):
+        os.kill(os.getpid(), signal.SIGTERM)
+
+    monkeypatch.setattr(ceremony, "cmd_init", boom)
+    old = signal.getsignal(signal.SIGTERM)
+    try:
+        with pytest.raises(SystemExit) as e:
+            run_main(lab, capsys, "init")
+    finally:
+        signal.signal(signal.SIGTERM, old)
+    assert e.value.code == 128 + signal.SIGTERM
+    assert lab.tmp_left() == []
+
+
+def test_failing_children_do_not_echo_their_output(lab, capsys, monkeypatch):
+    real = ceremony.run
+
+    def noisy(argv, stdin=b""):
+        rc, out = real(argv, stdin)
+        if argv[:2] == ["gh", "secret"] and argv[2] == "set":
+            return 1, b"SUPERSECRET-OUTPUT"
+        return rc, out
+
+    monkeypatch.setattr(ceremony, "run", noisy)
+    rc, out, err = run_main(lab, capsys, "init")
+    assert rc == 1 and "SUPERSECRET-OUTPUT" not in out + err and "could not set" in err
+    assert lab.tmp_left() == []
+
+
+# ---- resign-revocations --------------------------------------------------------------------------------------------
+
+
+def _init_then(lab, capsys, monkeypatch, later: timedelta = timedelta(days=14)):
+    assert run_main(lab, capsys, "init")[0] == 0
+    capsys.readouterr()
+    monkeypatch.setattr(ceremony, "_now", lambda: T0 + later)
+
+
+def _list(path: Path) -> dict:
+    return json.loads(base64.b64decode(json.loads(path.read_text())["doc"]))
+
+
+def test_resign_keeps_serials_raises_issued_at_and_bumps_the_floor(lab, capsys, monkeypatch, tmp_path_factory):
+    _init_then(lab, capsys, monkeypatch)
+    revs = lab.repo / "release/keys/revocations.json"
+    before = _list(revs)
+    rc, out, err = run_main(lab, capsys, "resign-revocations")
+    assert rc == 0 and err == ""
+    after = _list(revs)
+    assert after["min_serial"] == before["min_serial"] and after["revoked"] == before["revoked"]
+    assert after["issued_at"] == "2026-11-16T09:00:00Z" > before["issued_at"]
+    assert out.splitlines()[0] == "issued_at: 2026-11-16T09:00:00Z"
+    assert {x.strip() for x in out.splitlines()[2:]} == {"install.sh", "release/keys/revocations.json"}
+    sh = (lab.repo / "install.sh").read_text()
+    assert floor.read_floor(sh) == floor.read_list(revs) == ("2026-11-16T09:00:00Z", 1)  # manager condition 4
+    assert floor.main(["--check", str(lab.repo / "install.sh"), str(revs)]) == 0
+    assert lab.tmp_left() == []
+    lab.assert_no_leak(out, err)
+    # the new list is signed by the same root: an envelope built with it verifies against the embedded root
+    env = envelope_for(lab, tmp_path_factory.mktemp("w"))
+    verify(lab, monkeypatch, env, when=T0 + timedelta(days=15))
+
+
+def test_resign_keeps_revoked_serials(lab, capsys, monkeypatch):
+    _init_then(lab, capsys, monkeypatch)
+    # an earlier list that already revoked serial 7 with min_serial 3 (signed by the real generated root)
+    import rootkey
+
+    root = rootkey.Ed25519PrivateKey.from_private_bytes(base64.b64decode(lab.vault(ceremony.ROOT_TITLE)["password"]))
+    old = rootkey.revoke(
+        root, "root-1", rootkey.build_revocations(min_serial=3, revoked=[7, 5], issued_at="2026-11-02T09:00:00Z")
+    )
+    (lab.repo / "release/keys/revocations.json").write_text(json.dumps(old))
+    rc, out, err = run_main(lab, capsys, "resign-revocations")
+    assert rc == 0
+    got = _list(lab.repo / "release/keys/revocations.json")
+    assert (got["min_serial"], got["revoked"]) == (3, [5, 7])
+    assert floor.read_floor((lab.repo / "install.sh").read_text()) == ("2026-11-16T09:00:00Z", 3)
+
+
+def test_resign_refuses_a_clock_that_is_not_after_the_current_list(lab, capsys, monkeypatch):
+    _init_then(lab, capsys, monkeypatch, later=timedelta(0))
+    snap = lab.snapshot()
+    rc, out, err = run_main(lab, capsys, "resign-revocations")
+    assert rc == 1 and "not after" in err and lab.snapshot() == snap and lab.tmp_left() == []
+
+
+def test_resign_refuses_a_root_that_is_not_the_published_one(lab, capsys, monkeypatch):
+    _init_then(lab, capsys, monkeypatch)
+    other = base64.b64encode(bytes(range(32))).decode()
+    p = lab.sim / "vault" / f"{ceremony.ROOT_TITLE}.json"
+    item = json.loads(p.read_text())
+    item["password"] = other
+    p.write_text(json.dumps(item))
+    snap = lab.snapshot()
+    rc, out, err = run_main(lab, capsys, "resign-revocations")
+    assert rc == 1 and "not the one published" in err and lab.snapshot() == snap
+    assert other not in out + err and lab.tmp_left() == []
+
+
+@pytest.mark.parametrize("step", ["preflight", "read-root", "sign", "stage", "write"])
+def test_resign_cleans_up_after_a_failure_at_each_step(lab, capsys, monkeypatch, step):
+    _init_then(lab, capsys, monkeypatch)
+    snap = lab.snapshot()
+    monkeypatch.setattr(ceremony, "_fail_at", step)
+    rc, out, err = run_main(lab, capsys, "resign-revocations")
+    assert rc == 1 and lab.tmp_left() == [] and lab.snapshot() == snap
+    lab.assert_no_leak(out, err)
+
+
+def test_resign_reads_the_root_from_proton_and_never_creates_anything(lab, capsys, monkeypatch):
+    _init_then(lab, capsys, monkeypatch)
+    n = len(lab.calls())
+    assert run_main(lab, capsys, "resign-revocations")[0] == 0
+    new = lab.calls()[n:]
+    assert [c["argv"][:2] for c in new if c["tool"] == "pass-cli"] == [["info"], ["item", "view"]]
+    assert all(c["tool"] == "pass-cli" for c in new)  # no gh call at all
+    assert new[1]["argv"][-2:] == ["--field", "password"]

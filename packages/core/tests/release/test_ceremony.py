@@ -38,9 +38,12 @@ from pathlib import Path
 D = Path(__file__).resolve().parent.parent
 SIM, LOG = D / "sim", D / "log"
 argv = sys.argv[1:]
+import stat
+st = os.fstat(0)
+DEVNULL = stat.S_ISCHR(st.st_mode) and st.st_rdev == os.stat("/dev/null").st_rdev
 stdin = b"" if sys.stdin.isatty() else sys.stdin.buffer.read()
 with (LOG / "calls.jsonl").open("a") as f:
-    f.write(json.dumps({"tool": TOOL, "argv": argv, "env": dict(os.environ)}) + "\\n")
+    f.write(json.dumps({"tool": TOOL, "argv": argv, "env": dict(os.environ), "devnull": DEVNULL}) + "\\n")
 with (SIM / f"{TOOL}-stdin.bin").open("ab") as f:  # stands for the vault / GitHub: the one place a secret may be
     f.write(stdin + b"\\n--\\n")
 
@@ -67,7 +70,8 @@ if argv[:3] == ["item", "create", "login"]:
     if "--get-template" in argv:
         if (SIM / "pass-template-fail").exists():
             sys.exit(1)
-        print(json.dumps({"title": "", "username": "", "email": "", "password": "", "note": "", "urls": []}))
+        tpl = {"title": "", "username": "", "email": "", "password": "", "totp_uri": "", "urls": [], "extra_fields": []}
+        print(json.dumps(tpl))
         sys.exit(0)
     item = json.loads(stdin)
     assert opt("--vault-name") == "Agents" and opt("--from-template") == "-"
@@ -357,8 +361,9 @@ def test_init_secrets_only_travel_on_stdin_and_the_env_is_sanitized(lab, capsys,
     assert [c["argv"][-1] for c in creates] == ["-", "-"]
     assert lab.vault(ceremony.ROOT_TITLE)["username"] == "root-1"
     assert lab.vault(ceremony.CI_TITLE)["username"] == "rk-1"
-    note = lab.vault(ceremony.ROOT_TITLE)["note"]
-    assert "2026-11-02" in note and "root-1" in note and "sha256:" in note
+    keys = {"title", "username", "email", "password", "totp_uri", "urls", "extra_fields"}
+    assert set(lab.vault(ceremony.ROOT_TITLE)) == keys
+    assert lab.vault(ceremony.ROOT_TITLE)["totp_uri"] == "" and lab.vault(ceremony.ROOT_TITLE)["urls"] == []
     lab.assert_no_leak(out, err)
 
 
@@ -537,6 +542,27 @@ def test_the_printed_id_is_the_one_from_the_list(lab, capsys):
     assert ids["proton item id (root)"] != ids["proton item id (ci)"]
 
 
+@pytest.mark.parametrize("extra", [{"note": "n"}, {"mystery": 1}, {"urls": ["https://x"]}, {"extra_fields": [1]}])
+def test_template_keys_outside_ours_must_be_empty(lab, capsys, monkeypatch, extra):
+    real = ceremony.run
+    base = {"title": "", "username": "", "email": "", "password": "", "totp_uri": "", "urls": []}
+    tpl = json.dumps({**base, **extra}).encode()
+    monkeypatch.setattr(ceremony, "run", lambda a, i=None, **k: (0, tpl) if "--get-template" in a else real(a, i, **k))
+    _assert_refused_cleanly(lab, capsys, "unexpected non-empty")
+
+
+def test_every_call_has_stdin_closed_except_the_ones_that_feed_it(lab, capsys):
+    assert run_main(lab, capsys, "init")[0] == 0
+    feeding = [c for c in lab.calls() if not c["devnull"]]
+    assert {tuple(c["argv"][:3]) for c in feeding} == {
+        ("item", "create", "login"),
+        ("secret", "set", "ORCH_RELEASE_KEY"),
+    }
+    assert all("--from-template" in c["argv"] or c["tool"] == "gh" for c in feeding)
+    gt = [c for c in lab.calls() if "--get-template" in c["argv"]]
+    assert gt and all(c["devnull"] for c in gt)  # the call that hung when it inherited a terminal
+
+
 def test_template_unreadable_aborts_before_anything_is_stored(lab, capsys):
     (lab.sim / "pass-template-fail").write_text("")
     _assert_refused_cleanly(lab, capsys, "template")
@@ -544,7 +570,7 @@ def test_template_unreadable_aborts_before_anything_is_stored(lab, capsys):
 
 def test_template_with_unexpected_filled_fields_aborts(lab, capsys, monkeypatch):
     real = ceremony.run
-    tpl = json.dumps({"title": "", "username": "", "password": "", "note": "", "totp": "SECRETISH"}).encode()
+    tpl = json.dumps({"title": "", "username": "", "password": "", "totp_uri": "otpauth://x"}).encode()
     monkeypatch.setattr(ceremony, "run", lambda a, i=b"", **k: (0, tpl) if "--get-template" in a else real(a, i, **k))
     _assert_refused_cleanly(lab, capsys, "unexpected non-empty")
 

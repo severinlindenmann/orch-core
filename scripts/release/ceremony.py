@@ -103,8 +103,8 @@ def _child_env(tool: str) -> dict[str, str]:
     return env
 
 
-def run(argv: list[str], stdin: bytes = b"", timeout: int = 120) -> tuple[int, bytes]:
-    """The ONLY way to start a program: argv plus stdin bytes, a per-tool allowlisted env, no shell.
+def run(argv: list[str], stdin: bytes | None = None, timeout: int = 120) -> tuple[int, bytes]:
+    """The ONLY way to start a program: argv plus stdin bytes (none: /dev/null), a per-tool allowlisted env, no shell.
 
     Returns (exit code, stdout). stderr is captured and dropped, so a child can never leak a value through ours."""
     tool = argv[0]
@@ -113,7 +113,7 @@ def run(argv: list[str], stdin: bytes = b"", timeout: int = 120) -> tuple[int, b
     try:
         p = subprocess.run(  # noqa: S603
             [_BINS[tool], *argv[1:]],
-            input=stdin,
+            **({"input": stdin} if stdin is not None else {"stdin": subprocess.DEVNULL}),
             capture_output=True,
             env=_child_env(tool),
             shell=False,
@@ -178,6 +178,9 @@ def _pass_find_id(title: str) -> str:
     return next(iter(ids))
 
 
+_OURS = ("title", "username", "password")  # the only template fields we fill; every other key stays as pass-cli gave it
+
+
 def _pass_template() -> dict:
     """The item template of this pass-cli version. If it cannot be read, nothing is stored (no guessed shape)."""
     rc, out = run(["pass-cli", "item", "create", "login", "--get-template"], timeout=10)
@@ -187,20 +190,15 @@ def _pass_template() -> dict:
         tpl = None
     if not isinstance(tpl, dict) or not {"title", "username", "password"} <= set(tpl):
         raise Ceremony("cannot read pass-cli's login item template: nothing was stored (confirm the shape first)")
-    note_key = "note" if "note" in tpl else "notes" if "notes" in tpl else None
-    extra = {k: v for k, v in tpl.items() if k not in {"title", "username", "password", note_key} and v}
-    if extra:
+    if any(v for k, v in tpl.items() if k not in _OURS):
         raise Ceremony("pass-cli's login template has unexpected non-empty fields: nothing was stored")
     return tpl
 
 
-def _pass_store(tpl: dict, title: str, username: str, seed: bytearray, note: str) -> None:
+def _pass_store(tpl: dict, title: str, username: str, seed: bytearray) -> None:
     """Create the login item from a fixed key set (JSON with the base64 seed on stdin). Its stdout is not parsed."""
     item = dict(tpl)  # the extra template keys are empty (checked in _pass_template)
     item.update({"title": title, "username": username, "password": base64.b64encode(bytes(seed)).decode()})
-    for k in ("note", "notes"):
-        if k in tpl:
-            item[k] = note
     payload = bytearray(json.dumps(item).encode())
     try:
         rc, _ = run(
@@ -229,10 +227,10 @@ def _pass_read_seed(item_id: str) -> bytearray:
     return seed
 
 
-def _store_and_verify(tpl: dict, label: str, title: str, username: str, key: Ed25519PrivateKey, note: str) -> None:
+def _store_and_verify(tpl: dict, label: str, title: str, username: str, key: Ed25519PrivateKey) -> None:
     seed = _seed(key)
     try:
-        _pass_store(tpl, title, username, seed, note)
+        _pass_store(tpl, title, username, seed)
     finally:
         _wipe(seed)
     # The ID comes from the vault listing, not from create's output: there was no such item before, so exactly one now.
@@ -474,8 +472,7 @@ def cmd_init(root: Path, repo: str, tmp: Path) -> int:
     root_key = Ed25519PrivateKey.generate()
     root_pub = _pub(root_key)
     fp = _fingerprint(root_pub)
-    note = f"orch release root key {ROOT_ID}; created {_stamp(now)}; fingerprint {fp}. Never leaves Proton Pass."
-    _store_and_verify(tpl, "root", ROOT_TITLE, ROOT_ID, root_key, note)
+    _store_and_verify(tpl, "root", ROOT_TITLE, ROOT_ID, root_key)
 
     _step("ci-key")
     ci_key = Ed25519PrivateKey.generate()
@@ -489,11 +486,8 @@ def cmd_init(root: Path, repo: str, tmp: Path) -> int:
         not_after=_stamp(now + timedelta(days=CI_DAYS)),
     )
     cert = rootkey.certify(root_key, ROOT_ID, cert_doc)
-    ci_note = (
-        f"orch release CI key {CI_ID}; created {_stamp(now)}; core/main only; restores the GitHub secret {SECRET_NAME}."
-    )
     _step("ci-proton")
-    _store_and_verify(tpl, "ci", CI_TITLE, CI_ID, ci_key, ci_note)
+    _store_and_verify(tpl, "ci", CI_TITLE, CI_ID, ci_key)
     _step("ci-secret")
     _gh_secret_set(ci_key, repo)
 

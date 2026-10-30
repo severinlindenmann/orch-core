@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import collections
 import hmac
+import json
 import logging
 import secrets
 import threading
@@ -90,6 +91,15 @@ def check_open_msg(msg: Any, host_api: tuple[int, int]) -> int:
     return min(api[1], host_api[1])
 
 
+def head_status(pt: bytes) -> int | None:
+    """The status of a response head (a HEAD frame from the adapter), or ``None``: the host reads nothing else of it."""
+    try:
+        status = json.loads(pt[5:]).get("status")
+    except (ValueError, AttributeError):
+        return None
+    return status if type(status) is int else None
+
+
 def app_header(pt: bytes) -> tuple[int, int]:
     """``(kind, id)`` of one app frame, checking only what needs no JSON: size, kind, the id rule and the payload
     shape of the kinds with a fixed one. Anything else is ``malformed``."""
@@ -127,7 +137,7 @@ class Tracker:
         self.live: dict[int, dict[str, Any]] = {}
         self.pinged = {"d2h": False, "h2d": False}
 
-    def step(self, d: str, kind: int, i: int, n: int) -> str:
+    def step(self, d: str, kind: int, i: int, n: int, status: int | None = None) -> str:
         back = "h2d" if d == "d2h" else "d2h"
         if kind == PING:
             if self.pinged[d]:
@@ -148,7 +158,15 @@ class Tracker:
                 ws = kind == WS_OPEN
                 if sum(e["ws"] == ws for e in self.live.values()) >= (MAX_WS if ws else MAX_HTTP):
                     return "reset:remote.busy"
-                self.live[i] = {"ws": ws, "up": False, "down": False, "shut": set(), "head": False, "n": 0}
+                self.live[i] = {
+                    "ws": ws,
+                    "up": False,
+                    "down": False,
+                    "shut": set(),
+                    "head": False,
+                    "n": 0,
+                    "acc": False,
+                }
                 return "ok"
             if i > self.top or d == "d2h" and kind in (HEAD, WS_OPEN):
                 raise _Fail("malformed")  # a frame that opens nothing for an id above every opened one
@@ -160,6 +178,10 @@ class Tracker:
             if d == "d2h" or kind == WS_OPEN or x["head"]:
                 raise _Fail("malformed")  # a second request head, a host WS_OPEN, a second response head
             x["head"] = True
+            if status == 101:
+                if not x["ws"]:
+                    raise _Fail("malformed")  # a 101 for a plain request
+                x["acc"] = True  # the WebSocket accept: frames flow only after it, in both directions
         elif kind in (BODY, END):
             if d == "d2h":
                 if x["ws"] or x["up"]:
@@ -177,7 +199,7 @@ class Tracker:
                 if kind == END:
                     x["down"] = True
         else:  # WS_TEXT, WS_BINARY, WS_CLOSE
-            if not x["ws"] or d in x["shut"] or (d == "h2d" and not x["head"]):
+            if not x["ws"] or d in x["shut"] or not x["acc"]:
                 raise _Fail("malformed")
             if kind == WS_CLOSE:
                 x["shut"].add(d)
@@ -519,7 +541,7 @@ class Session:
                     return False
             kind, i = app_header(pt)
             with self.mu:
-                verdict = self.tracker.step("h2d", kind, i, len(pt) - 5)
+                verdict = self.tracker.step("h2d", kind, i, len(pt) - 5, head_status(pt) if kind == HEAD else None)
             if verdict == "drop":
                 return False
             return self._emit(pt)

@@ -319,23 +319,11 @@ class Controller:
     # -- the hub --
 
     def connect(self, body: dict[str, Any]) -> dict[str, Any]:
-        from orch.hubclient import connectlink
-        from orch.hubclient.errors import HubRefused
-
         link, user, password, totp = (body.get(k) for k in ("link", "user", "password", "code"))
         if not all(type(x) is str and x for x in (link, user, password, totp)):
             raise ClientError("remote_client.no_hub")
-        try:
-            # the link carries the hub's id; its card is signed by the key that id names, so the TLS key in the card is
-            # the hub's own (this is where the pin comes from -- never from the connection that signs in)
-            found = connectlink.resolve(link.strip(), now_ms=int(self._clock() * 1000), dev_mode=False)
-            u = connectlink.parse_link(link.strip())
-        except HubRefused:
-            raise ClientError("remote_client.no_hub") from None
-        if not found["endpoint"]:
-            raise ClientError("remote_client.no_pin")
-        pin = found["hub_card"]["tls_spki_sha256"]
-        self.client.connect_hub(u.origin, found["endpoint"], user.strip(), password, totp.strip(), pin=pin)
+        # the pin comes from the hub's signed card the link names (the core client does the hub part)
+        self.client.connect_with_link(link, user, password, totp, now_ms=int(self._clock() * 1000))
         return {"ok": True}
 
     def workspaces(self) -> list[dict[str, Any]]:

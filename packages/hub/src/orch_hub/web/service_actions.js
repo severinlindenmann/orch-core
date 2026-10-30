@@ -37,11 +37,8 @@ export const resultWords = {
 const LOG_LINES = 300, LOG_BYTES = 256 * 1024 - 1024; // the helper returns at most this many lines / bytes (helper_backends.LOG_TAIL, LOG_MAX_BYTES)
 export const LOG_NOTE = "Secrets are hidden as far as we can tell; don't paste logs publicly.";
 
-/** What the hub-stop dialog adds under the signed sentence (the sentence itself is the helper's and stays bound). */
-export const HUB_STOP_NOTE = "Workspaces keep working on their own. You start the hub again on the server.";
-
-/** The title and the sign button: "Stop Relay", or "Stop the Hub" for the console itself. */
-export const stopLabel = (name, verb) => name === "hub" && verb === "stop" ? "Stop the Hub" : VERBS[verb] + " " + (NAME[name] ?? name);
+/** The title and the sign button: "Stop Relay", "Restart Hub". */
+export const stopLabel = (name, verb) => VERBS[verb] + " " + (NAME[name] ?? name);
 
 /** Run `resume` now when this browser holds a signing key; otherwise open the register step, which calls `resume` once
  *  the key is stored (P04: the admin stays where they are and the same action goes on). */
@@ -51,11 +48,9 @@ export function withKey(hasKey, openRegister, resume) {
 
 /** The one dialog before signing. `sign` is the arm-delayed button made by the caller; nothing is sent from here. */
 export function serviceDialog(name, verb, sentence, { sign, onCancel }) {
-  const hubStop = name === "hub" && verb === "stop";
   return [h("h1", { text: stopLabel(name, verb) + "?" }),
     h("p", { class: "sentence", text: sentence }),
-    hubStop ? h("p", { class: "small muted", id: "hub-stop-note", text: HUB_STOP_NOTE }) : null,
-    h("div", { class: "row" }, h("button", { text: "Cancel", onclick: onCancel }), sign)].filter(Boolean);
+    h("div", { class: "row" }, h("button", { text: "Cancel", onclick: onCancel }), sign)];
 }
 
 const LINE = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.\d+)?([+-]\d{2}):?(\d{2}|Z)?\s+\S+\s+([^\s:[]+)(?:\[\d+\])?:\s?(.*)$/;

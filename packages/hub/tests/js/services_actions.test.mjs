@@ -78,7 +78,7 @@ test("a Logs button per managed part calls logs(name)", () => {
   assert.deepEqual(calls, ["relay"]);
 });
 
-const { logsDialog, serviceDialog, stopLabel, summarize, withKey, HUB_STOP_NOTE, LOG_NOTE } = await import("../../src/orch_hub/web/service_actions.js");
+const { logsDialog, serviceDialog, stopLabel, summarize, withKey, LOG_NOTE } = await import("../../src/orch_hub/web/service_actions.js");
 const nodes = (list) => list.flatMap((n) => n.all());
 
 test("the Logs dialog shows log text literally, with the note, and copies exactly that text", () => {
@@ -124,17 +124,13 @@ test("no key: the action opens the register step and resumes after it; with a ke
   assert.deepEqual(log3, ["register"]);
 });
 
-test("stopping the Hub opens one dialog with the note and a single red button; relay and publish show no note", () => {
-  const mk = (name, verb) => serviceDialog(name, verb, "The sentence.", { sign: Object.assign(new Node_("button", "Stop the Hub"), { className: "dan" }), onCancel: () => {} });
-  const hub = nodes(mk("hub", "stop"));
-  assert.equal(hub.find((n) => n.tag === "h1").textContent, "Stop the Hub?");
-  assert.equal(hub.find((n) => n.attrs.id === "hub-stop-note").textContent, HUB_STOP_NOTE);
-  assert.equal(hub.filter((n) => n.tag === "button").length, 2); // Cancel and the one sign button
-  assert.equal(hub.filter((n) => n.attrs.id === "hub-stop-confirm").length, 0); // no second confirmation
-  for (const [n, v] of [["relay", "stop"], ["publish", "stop"], ["hub", "restart"]]) assert.equal(nodes(mk(n, v)).filter((x) => x.attrs.id === "hub-stop-note").length, 0, n + v);
-  assert.equal(stopLabel("relay", "stop"), "Stop Relay");
+test("the service dialog has the title, the sentence and one sign button; no second confirmation", () => {
+  const mk = (name, verb) => serviceDialog(name, verb, "The sentence.", { sign: new Node_("button", "Stop Relay"), onCancel: () => {} });
+  const all = nodes(mk("relay", "stop"));
+  assert.equal(all.find((n) => n.tag === "h1").textContent, "Stop Relay?");
+  assert.equal(all.filter((n) => n.tag === "button").length, 2); // Cancel and the one sign button
+  assert.equal(all.filter((n) => n.attrs.id === "hub-stop-confirm" || n.attrs.id === "hub-stop-note").length, 0);
   assert.equal(stopLabel("hub", "restart"), "Restart Hub");
-  assert.equal(stopLabel("hub", "stop"), "Stop the Hub");
 });
 
 test("summarize: systemd lines become plain events, benign lines fold, other lines stay", () => {

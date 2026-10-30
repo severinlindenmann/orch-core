@@ -194,17 +194,22 @@ describe('P12: Use copied link', () => {
     expect((await screen.findByTestId('hub-link-hub', {}, T)).textContent).toContain('Connect to the hub at') // r14 P07: the address is the question; the hub name sits under Details
     view.unmount()
   })
-  it('with clipboard permission already granted the copied link is picked up without a click', async () => {
+  it('with clipboard permission already granted the copied link only fills the field: no lookup until the click', async () => {
+    const lookup = vi.spyOn(api, 'getHubLink')
     const join = vi.spyOn(api, 'connectHub')
     Object.defineProperty(navigator, 'permissions', { configurable: true, value: { query: vi.fn(async () => ({ state: 'granted' })) } })
     try {
       const view = renderApp('/w/DEMO/settings/hub')
       clip(async () => LINK)
       await view.user.click(await screen.findByTestId('hub-connect', {}, T))
-      clip(async () => LINK)
       await waitFor(() => expect((screen.getByTestId('hub-link-text') as HTMLInputElement).value).toBe(LINK), T)
-      expect((await screen.findByTestId('hub-link-found', {}, T)).textContent).toContain('Link found')
-      expect(screen.queryByRole('button', { name: 'Use copied link' })).toBeNull()
+      expect(screen.getByTestId('hub-link-from').textContent).toContain('http://10.0.0.5:8106') // the host is shown plainly
+      expect(lookup).not.toHaveBeenCalled()
+      expect(screen.queryByTestId('hub-link-hub')).toBeNull()
+      await view.user.click(await screen.findByRole('button', { name: 'Look up this hub' }, T))
+      expect((await screen.findByTestId('hub-link-hub', {}, T)).textContent).toContain('Connect to the hub at')
+      expect(lookup).toHaveBeenCalledTimes(1)
+      expect(lookup.mock.calls[0][1]).toBe(LINK)
       expect(join).not.toHaveBeenCalled()
       view.unmount()
     } finally { Reflect.deleteProperty(navigator, 'permissions') }

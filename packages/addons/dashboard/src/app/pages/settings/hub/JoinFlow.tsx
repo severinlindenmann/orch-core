@@ -49,12 +49,14 @@ export function JoinFlow({ ws, onClose, initialLink }: { ws: string; onClose: ()
   // P12: the clipboard is read only on this click (a user gesture), checked with LINK, and only fills the field and starts
   // the lookup. Nothing is signed: the person still reads the hub and presses Connect.
   const canRead = typeof navigator !== 'undefined' && typeof navigator.clipboard?.readText === 'function'
-  const useCopied = async () => {
+  // `auto`: no click was made (permission was already granted): the link only fills the field and names its host; the lookup
+  // (an outbound call) waits for "Look up this hub", exactly like a link that came in the address.
+  const useCopied = async (auto = false) => {
     setNoCopied(false)
     try {
       const got = ((await navigator.clipboard.readText()) ?? '').trim()
-      if (LINK.test(got)) { setText(got); setArmed(true) } else setNoCopied(true)
-    } catch { setNoCopied(true) }
+      if (LINK.test(got)) { setText(got); setArmed(!auto) } else if (!auto) setNoCopied(true)
+    } catch { if (!auto) setNoCopied(true) }
   }
 
   // Run 15 P04: when the browser already lets this page read the clipboard, a copied connect link is picked up at once (same
@@ -66,7 +68,7 @@ export function JoinFlow({ ws, onClose, initialLink }: { ws: string; onClose: ()
     const perms = typeof navigator !== 'undefined' ? navigator.permissions : undefined
     if (!perms?.query) return
     perms.query({ name: 'clipboard-read' as PermissionName }).then(
-      st => { if (alive && st.state === 'granted') void useCopied() },
+      st => { if (alive && st.state === 'granted') void useCopied(true) },
       () => {},
     )
     return () => { alive = false }
@@ -105,7 +107,7 @@ export function JoinFlow({ ws, onClose, initialLink }: { ws: string; onClose: ()
       </details>
     </div>}
     {link && !valid && <p role="alert" data-testid="hub-link-bad" className="text-danger">This does not look like a connect link. Paste all of it, from https:// to the end.</p>}
-    {valid && !armed && <div className="space-y-1"><p data-testid="hub-link-from">This link points to <Raw>{link.replace(/^(https?:\/\/[^/]+).*$/, '$1')}</Raw></p><Action id="hub-link-lookup" onClick={() => setArmed(true)}>Look up this hub</Action></div>}
+    {valid && !armed && <div className="space-y-1"><p data-testid="hub-link-from">Link found. This link points to <Raw>{link.replace(/^(https?:\/\/[^/]+).*$/, '$1')}</Raw></p><Action id="hub-link-lookup" onClick={() => setArmed(true)}>Look up this hub</Action></div>}
     {looking && <p role="status" data-testid="hub-link-looking">Looking up the hub…</p>}
     {problem && <p role="alert" data-testid="hub-link-problem" className="text-danger">{problem}</p>}
     {info && <>

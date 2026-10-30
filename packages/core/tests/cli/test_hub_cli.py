@@ -255,7 +255,7 @@ def test_refresh_flags_belong_to_status(host, argv):
 
 @pytest.fixture
 def share_host(monkeypatch):
-    log = SimpleNamespace(called=[], asked=[], yes=True)
+    log = SimpleNamespace(called=[], asked=[], yes=True, answers={})
     preview = {"count": 1, "new": 1, "revoked": 0, "more": 0, "plan": "p" * 43,
                "items": [{"logical": "ticket:t", "kind": "ticket", "line": "ticket K-1: Public note"}]}  # fmt: skip
     reply = {
@@ -279,7 +279,9 @@ def share_host(monkeypatch):
         },  # fmt: skip
     }
     monkeypatch.setattr(hub, "_target", lambda env: object())
-    monkeypatch.setattr(hub, "_call", lambda t, op, args, env: (log.called.append((op, args)), reply[op])[1])
+    monkeypatch.setattr(
+        hub, "_call", lambda t, op, args, env: (log.called.append((op, args)), log.answers.get(op, reply[op]))[1]
+    )
 
     monkeypatch.setattr(
         __import__("orch.ops.human", fromlist=["review_prompt"]),
@@ -429,3 +431,26 @@ def test_an_ambiguous_or_unknown_person_reaches_no_rule_change(share_host):
         code, _ = run(["share", "rule", "add", "--ticket", "K-1", "--with", who], {}, as_json=True)
         assert code == 5
     assert all(op != "share.rule_add" for op, _ in share_host.called)
+
+
+def test_the_hubs_people_are_cleaned_before_anything_is_printed(share_host):
+    share_host.answers["share.audience"] = {
+        "people": [{"user_id": "a" * 32, "name": "\x1b[31mBen\u202e\nEvil"}, {"user_id": "zz\x1b[2J", "name": "X"}],
+        "teams": [{"name": "t\x1b[0m", "count": "7"}, {"name": "ok", "count": True}, {"name": "fine", "count": 3}],
+    }
+    code, out = run(["share", "people"], {})
+    assert code == 0 and "\x1b" not in out and "\u202e" not in out and "Evil" in out and "zz" not in out
+    assert "team fine (3 people)" in out and "team ok" not in out and "7" not in out
+
+
+def test_two_people_with_one_name_are_refused_with_both_ids_listed(share_host):
+    code, out = run(["share", "rule", "add", "--ticket", "K-1", "--with", "Ben"], {}, as_json=True)
+    assert code == 5 and "a" * 32 in out and "b" * 32 in out and "--with ID" in out
+    assert all(op != "share.rule_add" for op, _ in share_host.called)
+
+
+def test_one_name_shows_the_short_id_in_the_review_and_signs_only_the_id(share_host):
+    code, _ = run(["share", "rule", "add", "--ticket", "K-1", "--with", "Cleo"], {}, as_json=True)
+    assert code == 0 and "Cleo (..." + "c" * 8 + ")" in share_host.asked[0]
+    rule = {"kind": "ticket", "ticket": "K-1", "audience": {"users": ["c" * 32], "groups": []}}
+    assert ("share.rule_add", {"rule": rule, "expect": "p" * 43}) in share_host.called

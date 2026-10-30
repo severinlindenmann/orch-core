@@ -433,27 +433,48 @@ def _rule_of(a: argparse.Namespace) -> dict[str, str]:
     return picked[0]
 
 
+def _audience(d: Any) -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
+    """The hub's people and teams, every field checked and cleaned (the hub's text is data, never raw output);
+    malformed entries are dropped."""
+    import re
+
+    people, teams = [], []
+    for p in d.get("people") if isinstance(d, dict) and isinstance(d.get("people"), list) else []:
+        uid = p.get("user_id") if isinstance(p, dict) else None
+        if isinstance(uid, str) and re.fullmatch(r"[0-9a-f]{32}", uid):
+            people.append({"user_id": uid, "name": clean_line(str(p.get("name", "")))[:80]})
+    for t in d.get("teams") if isinstance(d, dict) and isinstance(d.get("teams"), list) else []:
+        if isinstance(t, dict) and isinstance(t.get("name"), str) and type(t.get("count")) is int:
+            teams.append({"name": clean_line(t["name"])[:80], "count": t["count"]})
+    return people, teams
+
+
 def _with_audience(a: argparse.Namespace, rule: dict[str, Any], target: Any, env: Mapping[str, str]) -> dict[str, Any]:
     """``--with PERSON`` (exact user id or exact unique name) and ``--team NAME`` become the rule's signed audience."""
     if rule["kind"] not in ("ticket", "tag", "type"):
         raise PubError("invalid.input", "--with, --team and --description go with --ticket, --tag or --type", 2)
     users: list[str] = []
     teams: list[str] = []
+    who: list[str] = []
+    a.readers_line = who
     if a.with_people or a.teams:
-        d = _call(target, "share.audience", {}, env)
-        people, known = d["people"], {t.get("name") for t in d["teams"]}
+        people, team_rows = _audience(_call(target, "share.audience", {}, env))
+        known = {t["name"] for t in team_rows}
         for want in a.with_people:
-            hit = [p for p in people if p["user_id"] == want] or [p for p in people if p.get("name") == want]
+            hit = [p for p in people if p["user_id"] == want] or [p for p in people if p["name"] == want]
             if len(hit) != 1:
-                names = ", ".join(f"{clean_line(str(p.get('name', '')))} ({p['user_id']})" for p in hit or people)
+                names = ", ".join(f"{p['name']} ({p['user_id']})" for p in hit or people)
                 raise PubError("invalid.input", f"{clean_line(want[:60])!r}: "
-                               + ("several people match: " if hit else "nobody by that name: orch hub share people: ")
+                               + ("several people have that name, pass --with ID: " if hit else
+                                  "nobody by that name: orch hub share people: ")
                                + names, 5)  # fmt: skip
             users.append(hit[0]["user_id"])
+            who.append(f"{hit[0]['name']} (...{hit[0]['user_id'][-8:]})")
         for t in a.teams:
             if t not in known:
                 raise PubError("invalid.input", f"no team {clean_line(t[:60])!r} on the hub: orch hub share people", 5)
             teams.append(t)
+            who.append(f"team {t}")
     out = dict(rule)
     if users or teams:
         out["audience"] = {"users": sorted(set(users)), "groups": sorted(set(teams))}
@@ -495,9 +516,10 @@ def _share(a: argparse.Namespace, env: Mapping[str, str], out: TextIO, as_json: 
         raise PubError("invalid.input", _USAGE, 2)
     target = _target(env)
     if words == ["people"]:
-        d = _call(target, "share.audience", {}, env)
-        lines = [f"  {clean_line(str(p.get('name', '')))} ({p['user_id']})" for p in d["people"]]
-        lines += [f"  team {clean_line(str(t.get('name', '')))} ({t.get('count', '?')} people)" for t in d["teams"]]
+        people, teams = _audience(_call(target, "share.audience", {}, env))
+        d = {"people": people, "teams": teams}
+        lines = [f"  {p['name']} (...{p['user_id'][-8:]})" for p in people]
+        lines += [f"  team {t['name']} ({t['count']} people)" for t in teams]
         _emit(
             out,
             as_json,
@@ -548,9 +570,10 @@ def _share(a: argparse.Namespace, env: Mapping[str, str], out: TextIO, as_json: 
         f"  ... and {prev['more']} more\n" if prev["more"] else ""
     )
     verb = "will also share" if key == "add" else "will stop sharing"
+    readers = f"Readers: {', '.join(getattr(a, 'readers_line', []))}\n" if getattr(a, "readers_line", None) else ""
 
     if not review_prompt(
-        f"The hub {verb}: {describe(rule)}.\nAfter this change the hub sees {prev['count']} item(s) "
+        f"The hub {verb}: {describe(rule)}.\n{readers}After this change the hub sees {prev['count']} item(s) "
         f"({prev['new']} new, {prev['revoked']} withdrawn):\n{lines}{_CANNOT_UNREAD}\n"
         "Later changes to these items are sent automatically.\n",
         verb="continue",

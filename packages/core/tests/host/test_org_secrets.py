@@ -580,6 +580,8 @@ def test_org_secrets_lists_names_expiry_and_status_but_never_a_value(w, iso, cap
         got = _list(w)
     assert got["secrets"] == [{"name": "vault-key", "status": "ready", "expires_ms": exp, "used_by": ["vault"]}]
     blob = json.dumps(got)
+    sealed_text = w.stored()[0]["sealed"]
+    assert sealed_text not in blob and len(sealed_text) > 20
     assert VALUE not in blob and "sealed" not in blob and "wxk" not in blob and "value" not in blob
     assert VALUE not in caplog.text
     w.advance(6000)

@@ -584,3 +584,20 @@ def test_hub_profile_dispatch_get_and_put(lab, role):
                 assert data == ({"profile": profile, "pushed": False} if args else {"profile": _DEFAULT_PROFILE})
     finally:
         s.close()
+
+
+def test_a_non_owner_member_is_role_denied_on_org_secrets(lab):
+    """#1434: the list of company secrets is the owner's: a member (a person, column P) gets role.denied."""
+    person = lab.add_member()
+    s = Served.__new__(Served)
+    s.lab = lab
+    s.h = lab.host(clock=lambda: lab.ws.clock[0])
+    s.h.__enter__()
+    s.control = s.h.client()
+    s.wid = ok(lab.register(s.control, peers=lab.peers(person.ref)))["data"]["workspace_id"]
+    s.service = s.h.host.services[s.wid]
+    s.clients = []
+    try:
+        assert err(s.client().req("org.secrets", {})) == "role.denied"
+    finally:
+        s.close()

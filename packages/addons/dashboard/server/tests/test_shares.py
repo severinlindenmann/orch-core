@@ -116,6 +116,7 @@ def test_the_publish_ops_are_ours_under_cap_publish_1():
     assert "publish/1" in hostlink.CAPS
     for op in (
         "publish.list",
+        "publish.stage_upload",
         "publish.prepare",
         "publish.send",
         "publish.revoke",
@@ -160,6 +161,36 @@ def test_a_host_without_publish_says_unavailable(client, token, stub, host):
     assert host.calls == []
 
 
+@pytest.mark.parametrize(
+    ("code", "rows", "reason", "can_fix"),
+    [
+        # `publish.list` answers runner.disabled when Publish is off, and the same code while the hub pauses it
+        ("runner.disabled", [{"name": "publish", "state": "disabled"}], "off", True),
+        ("runner.disabled", [{"name": "publish", "state": "paused"}], "paused", False),
+        ("runner.disabled", None, "off", True),
+        ("publish.not_configured", [], "not_configured", True),
+        # run 14 (J08-01, J07-03): a workspace joined in full mode, or joined and not yet connected
+        ("hub.state_mismatch", [], "hub_mode", False),
+        ("hub.not_joined", [], "hub_not_connected", False),
+    ],
+)
+def test_a_refusal_that_says_why_sharing_is_unavailable_is_an_answer_not_an_error(
+    client, token, stub, host, monkeypatch, gateway, code, rows, reason, can_fix
+):
+    host.answers["publish.list"] = HostError({"code": code, "message": code, "retryable": False}, 3)
+    monkeypatch.setattr(
+        gateway, "addon_rows", lambda link: rows if rows is not None else (_ for _ in ()).throw(KeyError())
+    )
+    res = client.get(url(stub, "/shares"), headers=hdr(token))
+    assert res.status_code == 200, res.text
+    assert res.json() == {"available": False, "reason": reason, "can_fix": can_fix}
+
+
+def test_any_other_refusal_stays_an_error(client, token, stub, host):
+    host.answers["publish.list"] = HostError({"code": "workspace.unavailable", "message": "x", "retryable": False}, 3)
+    assert client.get(url(stub, "/shares"), headers=hdr(token)).status_code == 503
+
+
 def test_list_for_one_ticket_names_the_ticket(client, token, stub, host):
     host.answers["publish.list"] = LIST
     assert client.get(url(stub, "/shares?ticket=DEMO-1"), headers=hdr(token)).status_code == 200
@@ -201,10 +232,76 @@ def test_prepare_is_a_write_with_the_browsers_idem_and_nothing_leaves(client, to
     assert got["server"] == "http://127.0.0.1:8103" and "words" not in res.text and "needs" not in res.text
 
 
+UPLOADED = {"upload_id": "pu_0123456789abcdef0123456789abcdef", "name": "notes.txt", "size": 5, "sha256": "cd" * 32}
+
+
+def test_upload_hands_one_file_to_the_host_and_answers_only_plain_fields(client, token, stub, host):
+    host.answers["publish.stage_upload"] = {**UPLOADED, "extra": "x", "path": "/secret"}
+    body = {"name": "notes.txt", "data": "aGVsbG8=", "idem": IDEM}
+    res = client.post(url(stub, "/shares/upload"), json=body, headers=hdr(token))
+    assert res.status_code == 200, res.text
+    assert host.calls[-1] == ("publish.stage_upload", {"name": "notes.txt", "b64": "aGVsbG8="}, True, IDEM)
+    assert res.json() == UPLOADED and "secret" not in res.text
+
+
+def test_an_upload_answer_without_an_id_is_an_error(client, token, stub, host):
+    host.answers["publish.stage_upload"] = {"name": "notes.txt"}
+    body = {"name": "notes.txt", "data": "aGVsbG8=", "idem": IDEM}
+    assert client.post(url(stub, "/shares/upload"), json=body, headers=hdr(token)).status_code >= 500
+
+
+def test_prepare_names_picked_files_and_artifacts_together(client, token, stub, host):
+    host.answers["publish.prepare"] = PREPARED
+    up = UPLOADED["upload_id"]
+    body = {"ticket": "DEMO-1", "artifacts": ["report.md"], "uploads": [up], "idem": IDEM}
+    res = client.post(url(stub, "/shares/prepare"), json=body, headers=hdr(token))
+    assert res.status_code == 200, res.text
+    args = host.calls[-1][1]
+    assert args["artifacts"] == ["report.md"] and args["uploads"] == [up]
+    only = {"ticket": "DEMO-1", "uploads": [up], "idem": IDEM}
+    assert client.post(url(stub, "/shares/prepare"), json=only, headers=hdr(token)).status_code == 200
+    assert "artifacts" not in host.calls[-1][1] and host.calls[-1][1]["uploads"] == [up]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"name": "n.txt", "data": "aGVsbG8="},  # no idem
+        {"name": "../n.txt", "data": "aGVsbG8=", "idem": IDEM},
+        {"name": ".hidden", "data": "aGVsbG8=", "idem": IDEM},
+        {"name": "n.txt", "data": "not base64 !!", "idem": IDEM},
+        {"name": "n.txt", "data": "", "idem": IDEM},
+        {"name": "n.txt", "data": "A" * (1_398_104 + 4), "idem": IDEM},  # over the cap: never reaches the host
+        {"name": "n.txt", "data": "aGVsbG8=", "idem": IDEM, "path": "/etc/passwd"},
+        {"name": "n.txt", "data": "aGVsbG8=", "idem": IDEM, "ticket": "DEMO-1"},
+        {"name": "n.txt", "data": ["aGVsbG8="], "idem": IDEM},
+        {"names": ["a.txt", "b.txt"], "data": "aGVsbG8=", "idem": IDEM},  # one file per call
+    ],
+)
+def test_upload_bodies_are_closed(client, token, stub, host, body):
+    assert client.post(url(stub, "/shares/upload"), json=body, headers=hdr(token)).status_code == 400
+    assert host.calls == []
+
+
+def test_a_body_far_over_the_cap_is_refused_before_it_is_read(client, token, stub, host):
+    body = {"name": "n.txt", "data": "A" * 3_000_000, "idem": IDEM}
+    assert client.post(url(stub, "/shares/upload"), json=body, headers=hdr(token)).status_code == 413
+    assert host.calls == []
+
+
+def test_upload_needs_a_session_and_the_right_origin(client, stub, host):
+    body = {"name": "n.txt", "data": "aGVsbG8=", "idem": IDEM}
+    assert client.post(url(stub, "/shares/upload"), json=body).status_code in (401, 403)
+    assert host.calls == []
+
+
 @pytest.mark.parametrize(
     "path,body",
     [
         ("prepare", {"ticket": "DEMO-1", "artifacts": ["a.md"]}),
+        ("prepare", {"ticket": "DEMO-1", "uploads": ["pu_xyz"], "idem": IDEM}),
+        ("prepare", {"ticket": "DEMO-1", "uploads": ["pu_" + "0" * 32] * 2, "idem": IDEM}),
+        ("prepare", {"ticket": "DEMO-1", "uploads": ["pu_" + "0" * 32], "artifacts": ["x.md"] * 20, "idem": IDEM}),
         ("prepare", {"ticket": "DEMO-1", "artifacts": [], "idem": IDEM}),
         ("prepare", {"ticket": "DEMO-1", "artifacts": ["../x"], "idem": IDEM}),
         ("prepare", {"ticket": "DEMO-1", "artifacts": [".hidden"], "idem": IDEM}),
@@ -520,6 +617,9 @@ def test_a_switch_session_cannot_register_and_the_route_takes_no_address(client,
 def test_publish_addresses_are_checked_like_the_host_does(token):
     from pydantic import ValidationError
 
-    for server, share in (("https://a..example", "https://b.example"), ("https://a.example:99999", "https://b.example")):
+    for server, share in (
+        ("https://a..example", "https://b.example"),
+        ("https://a.example:99999", "https://b.example"),
+    ):
         with pytest.raises(ValidationError):
             handoff.PublishSetup(action="publish_setup", server=server, share=share)

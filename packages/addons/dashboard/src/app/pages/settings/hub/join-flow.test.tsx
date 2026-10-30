@@ -42,7 +42,7 @@ describe('the join waits for the hub', () => {
     expect((await screen.findByTestId('hub-connect-waiting', {}, T)).textContent).toContain('Connected, but the hub has not confirmed yet.')
     const reads = hubStatus.mock.calls.length
     expect(screen.getByRole('dialog')).toBeTruthy()
-    expect(screen.queryByTestId('hub-mode-other')).toBeNull() // once signed the mode can no longer be changed
+    expect(screen.queryByTestId('hub-mode-selective')).toBeNull() // once signed the mode can no longer be changed
     expect(screen.queryByTestId('hub-mode-full')).toBeNull()
     expect(success).not.toHaveBeenCalled() // no "Connected" before the hub said so
     expect(refresh).not.toHaveBeenCalled()
@@ -110,26 +110,28 @@ describe('P10: a short join dialog', () => {
     const view = await open()
     expect(document.body.textContent).not.toMatch(/backup key/i)
     expect(document.body.textContent).toContain('Paste the connect link from your hub admin.')
-    expect(document.activeElement).toBe(await screen.findByTestId('hub-link-text', {}, T))
+    expect(await screen.findByRole('button', { name: 'Use copied link' }, T)).toBeTruthy() // the clipboard button is the first step; the field is folded
+    expect(screen.getByText('Paste a different link')).toBeTruthy()
     view.unmount()
   })
-  it('shows one mode box, the choice only after "Change", and the caveat only for Everything', async () => {
+  it('shows both choices at once with the first chosen, no Change link, and the caveat only for Everything', async () => {
     const view = await open()
     fireEvent.change(await screen.findByTestId('hub-link-text', {}, T), { target: { value: LINK } })
-    const box = await screen.findByTestId('hub-mode-box', {}, T)
-    expect(box.textContent).toContain("The hub sees the tickets you pick, notes that need you, and this workspace's name.")
+    const hub = await screen.findByTestId('hub-link-hub', {}, T)
+    expect(screen.getByText('What can the hub see?')).toBeTruthy()
+    expect(screen.getByTestId('hub-mode-selective').getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByTestId('hub-mode-full').getAttribute('aria-pressed')).toBe('false')
+    expect(screen.queryByTestId('hub-mode-other')).toBeNull()
+    expect(screen.queryByText('Change')).toBeNull()
+    expect(screen.getByTestId('hub-link-later').textContent).toBe('Leaving later does not take back what the hub already read.')
     // one question naming the hub by its address, one Details fold in the hub box; Connect stays the only way on
-    expect(screen.getByTestId('hub-link-hub').textContent).toContain('Connect to the hub at')
-    expect(screen.getByTestId('hub-link-hub').querySelectorAll('details')).toHaveLength(1)
-    expect(screen.queryByTestId('hub-link-hub')!.contains(box)).toBe(true)
-    expect(screen.queryByTestId('hub-mode-full')).toBeNull()
+    expect(hub.textContent).toContain('Connect to the hub at')
+    expect(hub.querySelectorAll('details')).toHaveLength(1)
+    expect(screen.getByTestId('hub-link-found').textContent).toContain('Link found. Hub at 10.0.0.5:8106')
     expect(screen.queryByText('What the hub has already read cannot be taken back.')).toBeNull()
-    expect(screen.queryByText('You choose what to share.')).toBeNull()
-    await view.user.click(screen.getByTestId('hub-mode-other'))
-    expect(screen.getByText('What the hub can see')).toBeTruthy()
-    expect(screen.queryByTestId('hub-mode-box')).toBeNull()
     await view.user.click(screen.getByTestId('hub-mode-full'))
     expect(screen.getByText('What the hub has already read cannot be taken back.')).toBeTruthy()
+    expect(screen.queryByTestId('hub-link-later')).toBeNull()
     await view.user.click(screen.getByTestId('hub-mode-selective'))
     expect(screen.queryByText('What the hub has already read cannot be taken back.')).toBeNull()
   })
@@ -191,5 +193,32 @@ describe('P12: Use copied link', () => {
     fireEvent.change(screen.getByTestId('hub-link-text'), { target: { value: LINK } })
     expect((await screen.findByTestId('hub-link-hub', {}, T)).textContent).toContain('Connect to the hub at') // r14 P07: the address is the question; the hub name sits under Details
     view.unmount()
+  })
+  it('with clipboard permission already granted the copied link is picked up without a click', async () => {
+    const join = vi.spyOn(api, 'connectHub')
+    Object.defineProperty(navigator, 'permissions', { configurable: true, value: { query: vi.fn(async () => ({ state: 'granted' })) } })
+    try {
+      const view = renderApp('/w/DEMO/settings/hub')
+      clip(async () => LINK)
+      await view.user.click(await screen.findByTestId('hub-connect', {}, T))
+      clip(async () => LINK)
+      await waitFor(() => expect((screen.getByTestId('hub-link-text') as HTMLInputElement).value).toBe(LINK), T)
+      expect((await screen.findByTestId('hub-link-found', {}, T)).textContent).toContain('Link found')
+      expect(screen.queryByRole('button', { name: 'Use copied link' })).toBeNull()
+      expect(join).not.toHaveBeenCalled()
+      view.unmount()
+    } finally { Reflect.deleteProperty(navigator, 'permissions') }
+  })
+  it('without permission the button is the first step and the field is folded under "Paste a different link"', async () => {
+    Object.defineProperty(navigator, 'permissions', { configurable: true, value: { query: vi.fn(async () => ({ state: 'prompt' })) } })
+    try {
+      const view = await open()
+      clip(async () => LINK)
+      expect(await screen.findByRole('button', { name: 'Use copied link' }, T)).toBeTruthy()
+      expect(screen.getByTestId('hub-link-paste').hasAttribute('open')).toBe(false)
+      expect(screen.getByText('Paste a different link')).toBeTruthy()
+      expect(navigator.clipboard.readText).not.toHaveBeenCalled()
+      view.unmount()
+    } finally { Reflect.deleteProperty(navigator, 'permissions') }
   })
 })

@@ -122,20 +122,19 @@ export function homeView(d) {
       d.actions?.openShared && it.workspace_id ? h("button", { text: "Read", onclick: () => d.actions.openShared(it) }) : null))) : null;
   const browser = d.thisBrowser;
   const active = browser?.state === "active";
-  const fromWorkspace = browser?.state === "from_workspace";
+  const dead = browser?.state === "dead";
   const local = h("div", { class: "browser-card" },
-    h("b", { text: active ? "This browser holds a signing key for you" : "This browser cannot sign yet" }),
-    active ? note("Name: " + text(browser.label || "this browser")) : fromWorkspace ? note("You came here from a workspace") : note("This browser has no signing key yet"),
-    fromWorkspace ? note("Sign in here once with your password and code. Then you can set up signing in this browser.") : !active ? note(browser?.state === "dead" ? "The key is missing here or was removed at the hub. Register again to sign here."
-      : "Registering gives this browser a signing key for you. Signing needs the key; being signed in only lets you look.") : null,
-    browser?.state === "dead" ? h("button", { text: "Forget the key in this browser", onclick: () => d.actions.forgetLocal() }) : null,
-    !active && !fromWorkspace ? h("button", { class: "pri", text: "Register this browser", onclick: () => d.actions.register() }) : null);
+    h("b", { text: active ? "This browser holds a signing key for you" : "Approvals need a signing key in this browser" }),
+    active ? note("Name: " + text(browser.label || "this browser"))
+      : note(dead ? "The key is missing here or was removed at the hub. Set up signing again to sign here." : "One step: confirm with your password and a code."),
+    dead ? h("button", { text: "Forget the key in this browser", onclick: () => d.actions.forgetLocal() }) : null,
+    !active ? h("button", { class: "pri", text: "Set up signing", onclick: () => d.actions.register() }) : null);
   const signing = h("section", { class: "card", "aria-labelledby": "signing-heading" },
     h("h2", { id: "signing-heading", text: "Where you can sign" }), local,
     (d.channels ?? []).map((c) => h("div", { class: "list-row row" },
       h("div", { class: "grow" }, h("b", { text: text(c.label || c.kind) }), note(text(c.kind) + " · " + text(c.status))),
       c.status === "active" ? h("button", { text: "Remove", onclick: () => d.actions.removeChannel(c.channel_id) }) : null)),
-    note("You confirm with a key held by this browser or your iPhone. The hub signs this approval for you."));
+    note("You confirm with a key held by this browser or your iPhone."));
   const notice = d.notice?.nodeType ? d.notice : d.notice ? h("div", { class: "banner", role: "status", text: text(d.notice) }) : null;
   const added = newChannelsNotice(d.newChannels, { remove: (c) => d.actions?.removeChannel(c.channel_id), dismiss: () => d.actions?.dismissNew?.() });
   return [h("h1", { text: "Hello, " + text(d.user?.name ?? "you") }), notice, ...added,

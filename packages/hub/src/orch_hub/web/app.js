@@ -100,7 +100,7 @@ const WORDS = {
   unknown_change: "This request is no longer waiting for you.",
   not_pending: "This request has already been answered.",
   expired: "This request has lapsed. Ask for it again.",
-  no_channel: "Set up this browser first (Home > Where you can sign).",
+  no_channel: "Set up signing in this browser first (Home > Where you can sign).",
   owner_protected: "This would take away the workspace owner's own admin access, which is never allowed.",
   last_admin: "This is the last administrator. Make someone else an administrator first.",
   self_disable: "You cannot disable yourself.",
@@ -668,7 +668,7 @@ function changeFailed(code) {
   dialog(banner("bad", "Nothing was approved", say(code)), h("div", { class: "row" }, h("button", { text: "Close", onclick: async () => { closeDialog(); await approvals(); } })));
 }
 async function approveChange(change, ap) {
-  if (!state.me) { state.notice = banner("warn", "Register this browser first", null); return home(); }
+  if (!state.me) { state.notice = banner("warn", "Set up signing first", null); return home(); }
   const me = state.me;
   const r = await api("POST", changePath(change, "/approve/prepare"), { workspace_id: ap.workspace_id });
   if (r.status === 401) return loginView(say("no_session"));
@@ -715,7 +715,7 @@ async function serviceAction(name, verb, confirmed = false) {
     dialog(...hubStopConfirm({ onCancel: closeDialog, onYes: () => { closeDialog(); void serviceAction(name, verb, true); } }));
     return;
   }
-  if (!state.me) { state.notice = banner("warn", "Register this browser first", null); return home(); }
+  if (!state.me) { state.notice = banner("warn", "Set up signing first", null); return home(); }
   const me = state.me;
   const r = await api("POST", svcPath(name, "/prepare"), { action: verb, channel_id: me.channelId });
   if (r.status === 401) return loginView(say("no_session"));
@@ -757,7 +757,7 @@ async function serviceAction(name, verb, confirmed = false) {
 }
 // The last hour of a part's log. The helper redacted it; it is shown as text only (textContent), never as HTML.
 async function openLogs(name) {
-  if (!state.me) { state.notice = banner("warn", "Register this browser first", null); return home(); }
+  if (!state.me) { state.notice = banner("warn", "Set up signing first", null); return home(); }
   const r = await api("GET", svcPath(name, "/logs") + "?channel_id=" + encodeURIComponent(state.me.channelId));
   if (r.status !== 200) return serviceFailed(r.body.error);
   dialog(...logsDialog(renderText(name), r.body.text, { copy: copyText, onClose: closeDialog }));
@@ -813,7 +813,7 @@ async function home() {
       ended,
       channels: state.channels.map((c) => ({ ...c, status: c.status + (state.me?.channelId === c.channel_id ? " (this browser)" : "") })),
       newChannels: state.newChannels,
-      thisBrowser: state.user.needs_sign_in ? { state: "from_workspace" } : mine ? { state: "active", label: state.me.label } : dead ? { state: "dead", label: state.me?.label } : { state: "unregistered" },
+      thisBrowser: state.user.needs_sign_in ? (state.me?.userId === user.user_id ? { state: "active", label: state.me.label } : { state: "unregistered" }) : mine ? { state: "active", label: state.me.label } : dead ? { state: "dead", label: state.me?.label } : { state: "unregistered" },
       notice: state.notice,
       actions: { review: (it) => navigate("#/w/" + it.workspace_id + "/item/" + encodeURIComponent(it.key || it.item_id)), open: (id) => navigate("#/w/" + id), dismissEnded: (id) => { dismissEnded(user.user_id, id); void home(); }, openShared: (it) => navigate("#/shared/" + it.workspace_id + "/" + encodeURIComponent(it.key)), connect: () => navigate("#/workspaces"), register: () => registerView(), removeChannel, forgetLocal, dismissNew },
     };
@@ -893,8 +893,8 @@ function registerView(err) {
       state.notice = banner("ok", "This browser is ready", "It holds a signing key for you. You can remove it any time.");
       await home();
     },
-  }, h("p", { class: "muted small", text: "Type your password and a new 6-digit code. Each code works only once, so wait for the next one if you just signed in." }), field("Browser name", label), field("Password", pw), field("6-digit code", code), h("div", { class: "row top" }, h("button", { type: "button", text: "Cancel", onclick: home }), h("button", { class: "pri", type: "submit", "data-sign": "", text: "Register this browser" })));
-  show(h("h1", { text: "Register this browser" }), err ? banner("bad", "Browser not registered. Nothing was kept.", err) : null, form);
+  }, h("p", { class: "muted small", text: "Type your password and a new 6-digit code. Each code works only once, so wait for the next one if you just signed in." }), field("Browser name", label), field("Password", pw), field("6-digit code", code), h("div", { class: "row top" }, h("button", { type: "button", text: "Cancel", onclick: home }), h("button", { class: "pri", type: "submit", "data-sign": "", text: "Set up signing" })));
+  show(h("h1", { text: "Set up signing" }), err ? banner("bad", "Browser not registered. Nothing was kept.", err) : null, form);
 }
 
 /** Returns an error text, or null on success. The key is stored only after the certificate checked out. */
@@ -1080,7 +1080,7 @@ function nothingSigned(code, extra) {
 }
 
 async function startSign(workspaceId, action, qv = null) {
-  if (!state.me) { state.notice = banner("warn", "Register this browser first", null); return home(); }
+  if (!state.me) { state.notice = banner("warn", "Set up signing first", null); return home(); }
   const me = state.me;
   const sent = { workspaceId, action };
   const r = await api("POST", "/sign/prepare", { workspace_id: workspaceId, channel_id: me.channelId, action });

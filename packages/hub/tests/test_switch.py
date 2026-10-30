@@ -333,7 +333,7 @@ from route_paths import concrete_path
 
 
 def test_a_switch_session_reaches_only_the_named_routes_everything_else_is_closed(w):
-    from orch_hub.webapi.api import ROUTES, SWITCH_HANDLERS, route_scopes
+    from orch_hub.webapi.api import ROUTES, SWITCH_HANDLERS, SWITCH_REGISTER_HANDLERS, route_scopes
 
     def fresh():  # one session per route: sign-out ends its own
         _, _, h = w.call("POST", "/switch/redeem", {"t": w.sw.issue_to_hub(w.admin, WS, "/")})
@@ -351,7 +351,7 @@ def test_a_switch_session_reaches_only_the_named_routes_everything_else_is_close
         assert o.get("error") != "unknown_op", (rt.method, rt.path)  # the sweep must really route
         seen += 1
         reauth = s == 403 and o.get("error") == "reauth_required"
-        if rt.handler in SWITCH_HANDLERS:
+        if rt.handler in SWITCH_HANDLERS | SWITCH_REGISTER_HANDLERS:
             assert not reauth, (rt.method, rt.path)
         else:  # closed: asked to sign in for real, or not even reachable with a browser cookie
             pairing_only = "full" not in route_scopes(
@@ -519,3 +519,32 @@ def test_a_connect_link_for_ben_issues_to_ben_only_and_the_owner_must_be_a_real_
         assert w.call("POST", "/admin/connect", {"owner_user": bad}, token=admin)[:2] == (400, {"error": "malformed"})
     w.env.acc.set_disabled(ben, True, actor=w.admin)
     assert w.call("POST", "/admin/connect", {"owner_user": ben}, token=admin)[1] == {"error": "malformed"}
+
+
+def test_run15_p03_a_switch_session_registers_a_browser_key_only_with_password_and_code(w):
+    """P03: reg_begin/reg_complete are open to a workspace-vouched session, but reg_begin re-proves password + a fresh code
+    and refuses every kind but browser; the rest of the closed list stays closed."""
+    from channels_helpers import new_channel, prove
+    from orch_hub.contract.canon import b64u
+    from orch_hub.webapi.api import SWITCH_HANDLERS, SWITCH_REGISTER_HANDLERS
+
+    assert SWITCH_REGISTER_HANDLERS == {"reg_begin", "reg_complete"} and not SWITCH_REGISTER_HANDLERS & SWITCH_HANDLERS
+    _, _, h = w.call("POST", "/switch/redeem", {"t": w.sw.issue_to_hub(w.ann, WS, "/")})
+    tok = _tok(h)
+    w.browser_tokens.add(tok)
+    k = new_channel()
+    pub = b64u(k.public)
+    s, o, _ = w.call("POST", "/channels/register/begin", {"kind": "phone", "key_pub": pub, "pairing_code": "x"}, token=tok)
+    assert (s, o["error"]) == (403, "reauth_required")
+    s, o, _ = w.call("POST", "/channels/register/begin", {"kind": "browser", "key_pub": pub}, token=tok)
+    assert (s, o["error"]) == (400, "malformed")  # no password and code: nothing is registered
+    bad = {"kind": "browser", "key_pub": pub, "password": "wrong password", "totp": w.env.next_code(w.ann)}
+    s, o, _ = w.call("POST", "/channels/register/begin", bad, token=tok)
+    assert s != 200 and w.env.svc.db.q("SELECT COUNT(*) FROM channels WHERE user_id=?", (w.ann,))[0][0] == 0
+    s, begun, _ = w.call("POST", "/channels/register/begin", {"kind": "browser", "key_pub": pub, "label": "B", **w.creds(w.ann)}, token=tok)
+    assert s == 200, begun
+    s, got, _ = w.call("POST", "/channels/register/complete", {"challenge_id": begun["challenge_id"], "signed": prove(k, begun)}, token=tok)
+    assert s == 200 and got["channel_cert"]["o"]["factor"] == "password+totp"
+    # still a switch session: the closed list stays closed
+    s, o, _ = w.call("GET", "/admin/users", token=tok)
+    assert (s, o["error"]) == (403, "reauth_required")

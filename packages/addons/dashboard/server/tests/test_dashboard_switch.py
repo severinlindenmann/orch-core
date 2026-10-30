@@ -279,13 +279,33 @@ def test_p01_only_a_closed_http_origin_is_ever_cached(client, link, auth):
         assert "hub_origin" not in _refuse(client, link).json()["error"]
 
 
-def test_p01_the_network_and_remote_listener_never_carry_the_hub_origin():
+def test_p01_remote_listeners_never_carry_the_hub_origin():
     from orch_dashboard.policy import LOOPBACK, REMOTE
     from orch_dashboard.switch import switch_failure
 
     assert json.loads(switch_failure("switch.refused", 403, "x", "https://hub.test", LOOPBACK).body)["error"][
         "hub_origin"
     ]
-    for listener in (REMOTE, "network", "remote-device"):
+    for listener in (REMOTE, "remote-device"):
         res = switch_failure("switch.refused", 403, "x", "https://hub.test", listener)
         assert "hub_origin" not in json.loads(res.body)["error"] and res.status_code == 403
+
+
+def test_p01_the_network_address_never_gets_the_hub_origin_only_127_0_0_1_does(link, auth, tmp_path):
+    """`serve --listen` is an alt host of the loopback policy: a pre-login request from the LAN address must not learn
+    the hub, the exact 127.0.0.1:<port> Host does."""
+    lan = "192.168.1.20:8151"
+    state = tmp_path / "state"
+    state.mkdir(mode=0o700)
+    static = tmp_path / "static"
+    (static / "assets").mkdir(parents=True)
+    (static / "index.html").write_text("<html></html>")
+    app = create_app(PORT, Gw(link, state), auth, static, alt_hosts=(lan,))
+    with TestClient(app, base_url=ORIGIN) as c:
+        _rail_read(c, link, auth)
+        link.answers["redeem"] = HostError({"code": "switch.refused", "message": "x", "retryable": False})
+        own = c.post("/auth/switch", json={"t": TICKET}, headers=H)
+        assert own.json()["error"]["hub_origin"] == "https://hub.test"
+        via_lan = c.post("/auth/switch", json={"t": TICKET}, headers={"Host": lan, "Origin": "http://" + lan})
+        assert via_lan.status_code == 403 and via_lan.json()["error"]["code"] == "switch.refused"
+        assert "hub_origin" not in via_lan.json()["error"]

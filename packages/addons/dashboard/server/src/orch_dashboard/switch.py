@@ -138,8 +138,11 @@ def register(app: FastAPI, gateway: Gateway, auth=None, clock=time.monotonic):
 
     hub_origins: dict[str, str] = {}  # ws -> the joined hub's origin, filled only by the authenticated rail read below
 
-    def failed(code: str, http: int, message: str, ws: str, listener: str):
-        return switch_failure(code, http, message, hub_origins.get(ws), listener)
+    def failed(code: str, http: int, message: str, ws: str, listener: str, request: Request):
+        # The network address (`serve --listen`) is an alt host of the LOOPBACK policy, not a listener of its own: only
+        # the exact 127.0.0.1:<port> Host counts as this computer.
+        own = request.headers.get("host") == request.app.state.policies[LOOPBACK].host
+        return switch_failure(code, http, message, hub_origins.get(ws) if own else None, listener)
 
     def link_for(ws: str):
         link = gateway.enabled(ws)
@@ -206,10 +209,10 @@ def register(app: FastAPI, gateway: Gateway, auth=None, clock=time.monotonic):
             got = link.call("hub.switch", {"kind": "redeem", "ticket": body.t})
         except HostError as exc:
             if exc.error["code"] == "switch.refused":  # D93 (R2): the host refused before the hub: the ticket is unused
-                return failed("switch.refused", 403, SWITCH_REFUSED, ws, listener)
+                return failed("switch.refused", 403, SWITCH_REFUSED, ws, listener, request)
             a.switch_attempt(client)  # a refused ticket costs its source a second charge
             # one answer for a bad, used, expired or foreign ticket
-            return failed("session.required", 401, "session.required", ws, listener)
+            return failed("session.required", 401, "session.required", ws, listener, request)
         if got.get("kind") == "signout":
             return JSONResponse({"signed_out": True})
         minted = a.open_keyed(body.key_id, ws) if keyed else None

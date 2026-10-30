@@ -201,3 +201,42 @@ def test_the_host_cap_is_shared_by_every_workspace_and_survives_a_restart(tmp_pa
     restarted = ap.Poller(host=ap.HostBudget(path, uid, limit=3), host_hour=3)  # a new process: counts are on disk
     assert restarted.plan(xs, 0.0, 200.0) == []
     assert len(restarted.plan(xs, 0.0, 100.0 + 3601)) > 0
+
+
+@pytest.fixture
+def real(env, tmp_path):
+    """The real fixture add-on `eventer` installed in the workspace's store and granted: nothing is monkeypatched, the
+    host runs it as a process through `runner.poll` (closed env, strict JSON)."""
+    import shutil
+    from pathlib import Path
+
+    from tests.addons.test_poll_runner import make
+
+    _, granted = make(tmp_path)
+    dest = Path(env.w.service.store.layout.store) / "addons" / "eventer"
+    shutil.copytree(next(tmp_path.glob("w[0-9]*")) / "addons" / "eventer", dest)
+    env.w.person_event(
+        "addon.granted", "workspace", name="eventer", version=granted.version, package_sha256=granted.package_sha256,
+        capabilities=list(granted.capabilities), fields={}, sections=[], artifact_kinds=[], events=granted.events,
+    )  # fmt: skip
+    return env
+
+
+def test_a_real_addon_process_answers_and_wakes_the_follow_up(real):
+    e = real
+    uid, *_ = e.schedule_on(on("2", kind="eventer.run.finished"), "addon")
+    e.tick()  # asks the add-on (a real process): done, succeeded
+    e.tick()  # and the answer wakes the follow-up
+    rec = e.view(uid)
+    assert rec["state"] == "fired" and rec["event"]["status"] == "succeeded"
+    assert rec["event"]["kind"] == "eventer.run.finished" and rec["event"]["ref"] == "2"
+
+
+def test_a_real_addon_that_crashes_marks_the_source_failed_and_leaks_nothing(real):
+    e = real
+    uid, *_ = e.schedule_on(on("10", kind="eventer.run.finished"), "addon")
+    for _ in range(3):
+        e.tick()
+        later(e, 4000)
+    assert e.runner.status()["addon_sources"]["eventer.run.finished|10"]["code"] == "crashed"
+    assert e.view(uid)["state"] == "pending"

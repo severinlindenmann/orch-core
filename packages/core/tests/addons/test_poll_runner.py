@@ -65,11 +65,13 @@ def test_anything_else_is_a_bad_response_and_no_text_survives(tmp_path, ref):
     assert "ignore previous" not in str(e) and "rm -rf" not in str(e)
 
 
-def test_the_credential_is_never_a_status(tmp_path):
-    package, granted = make(tmp_path)
-    with pytest.raises(RunnerError) as e:
-        poll(package, granted, KIND, "8", gate=None, credential=lambda n: "sk-SECRET-1234567890")
-    assert e.value.code in ("addon.bad_response", "addon.bad_request")
+def test_the_credential_is_never_a_status(tmp_path, caplog):
+    secret = "sk-SECRET-1234567890"
+    package, granted = make(tmp_path, caps=("network", "credential"))
+    with caplog.at_level("DEBUG"), pytest.raises(RunnerError) as e:
+        poll(package, granted, KIND, "8", gate=None, credential=lambda n: secret)  # the add-on echoes it as a status
+    assert e.value.code == "addon.bad_response"
+    assert secret not in str(e.value) and secret not in repr(e.value) and secret not in caplog.text
 
 
 def test_a_crash_and_a_timeout_are_errors_of_the_call(tmp_path):

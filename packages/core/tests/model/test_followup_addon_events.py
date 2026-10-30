@@ -5,7 +5,6 @@ from datetime import timedelta
 
 import pytest
 
-from orch import canon
 from orch.model import Code
 from orch.model import followup_events as fe
 from tests.model.test_followups_engine import _fire_with  # noqa: PLC2701
@@ -146,10 +145,6 @@ def test_deadline_fallback_is_addon_silent(env):
     w.clock += timedelta(hours=3)
     _, r = _fire_with(w, uid, e, "deadline", fallback="addon_silent")
     assert not hasattr(r, "code"), r
-
-
-def test_canon_hash_import_is_used():
-    assert canon.grant_secret_hash(b"s" * 32)
 
 
 def test_the_cli_parses_an_addon_event_with_an_optional_status_filter(env):

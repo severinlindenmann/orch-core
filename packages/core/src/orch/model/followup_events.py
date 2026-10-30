@@ -40,6 +40,27 @@ _LEDGER = {
 }
 
 
+#: ref formats an add-on's ``events`` may declare (addon-api 1.2); each yields text that also fits ``REF_RE``
+_OWNER = r"[A-Za-z0-9](?:-?[A-Za-z0-9]){0,38}"
+_REPO = r"[A-Za-z0-9._-]{1,100}"
+REF_FORMATS: dict[str, re.Pattern[str]] = {
+    "int": re.compile(r"[0-9]{1,19}"),
+    "slug": re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,63}"),
+    "owner_repo_number": re.compile(rf"{_OWNER}:{_REPO}:[1-9][0-9]{{0,8}}"),
+    "hex40": re.compile(r"[0-9a-f]{40}"),
+}
+
+
+def ref_fits(fmt: str, ref: Any) -> bool:
+    """True when ``ref`` is exactly a ``fmt`` reference, at most 64 characters, and also a plain event ref."""
+    pat = REF_FORMATS.get(fmt) if isinstance(fmt, str) else None
+    if pat is None or not isinstance(ref, str) or len(ref) > 64 or ".." in ref:
+        return False
+    if fmt == "owner_repo_number" and ref.split(":")[1] in (".", ".."):
+        return False
+    return pat.fullmatch(ref) is not None and REF_RE.fullmatch(ref) is not None
+
+
 def allowed_text() -> str:
     return ", ".join(f"{k}.{s}" for k, ss in KINDS["orch"].items() for s in ss) + ", webhook:<hook id>"
 

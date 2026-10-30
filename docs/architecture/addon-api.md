@@ -125,6 +125,18 @@ running as the same UID can read or write the stored file directly until the per
 **8.5 Reserved ids.** `github`, `landing` and `model-routing` are reserved for the official marketplace
 (`orch.market.constants.OFFICIAL_IDS`); another marketplace that lists one is refused with `market.reserved_id`.
 
+**8.6 `events` (API 1.2, #718).** An add-on can declare the events it can report to a waiting follow-up
+(`orch follow-up --on <addon>.<kind>:<ref>`). `events` is a list of at most 8 of `{kind, title, statuses, ref, poll}`:
+`kind` is `word.word` (up to three words, `[a-z][a-z0-9_]*`), unique; `title` is 1 to 40 plain printable characters
+the person reads when granting; `statuses` are 1 to 4 distinct tokens the add-on may report; `ref.format` is one of the
+closed formats `int` (1 to 19 digits), `slug`, `owner_repo_number` (`owner:repo:123`) and `hex40`; `poll.interval_s` is
+60 to 3600. Anything else is refused. The manifest needs `api` excluding 1.1 and the `network` capability. The host
+polls only while a follow-up waits on the event, with the runner method `events.poll` (needs `network`), params exactly
+`{kind, ref, settings}`; the answer is exactly `{"state": "pending" | "done" | "failed"}`, and `done` carries
+`"status"`, one of the declared statuses. The event is `{source: "addon", kind: "<addon>.<kind>", ref, status, at}`
+with `at` from the host clock. The declaration is signed in `addon.granted` (`events`, flat: `kind`, `title`,
+`statuses`, `ref` format, `interval_s`).
+
 ## 9. Commands and fields of an add-on at the CLI (AP D5, steps 1 and 1b)
 
 **9.1 Availability.** A core operation that belongs to an add-on is declared `operation(..., addon="<name>")` (today

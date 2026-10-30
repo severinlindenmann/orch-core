@@ -27,7 +27,7 @@ __all__ = [
     "load_package_manifest",
 ]
 
-ADDON_API = "1.1"  # the add-on API this core implements, major.minor (docs/architecture/addon-api.md)
+ADDON_API = "1.2"  # the add-on API this core implements, major.minor (docs/architecture/addon-api.md)
 LEGACY_API = ">=1.0,<2"  # what an orch.addon/2 manifest (no api key) is read as
 
 # the closed list (§11.4; addon-api 1.1 adds choose_model and credential; credential needs network)
@@ -98,6 +98,11 @@ class Manifest:
     def settings(self) -> dict[str, Any] | None:
         """``{title, schema}`` of the settings the person can configure (addon-api 1.1), or ``None``."""
         return self.doc.get("settings")
+
+    @property
+    def events(self) -> list[dict[str, Any]]:
+        """The wake events the add-on can report (addon-api 1.2), as written."""
+        return self.doc.get("events", [])
 
     @property
     def agents_md(self) -> str:
@@ -171,7 +176,23 @@ def declarations(m: Manifest) -> dict[str, Any]:
         if s.get("gate"):
             d["gate"] = sorted(s["gate"], key=_GATES.index)
         sections.append(d)
-    return {"fields": fields, "sections": sections, "artifact_kinds": sorted(k["kind"] for k in m.artifact_kinds)}
+    out: dict[str, Any] = {
+        "fields": fields,
+        "sections": sections,
+        "artifact_kinds": sorted(k["kind"] for k in m.artifact_kinds),
+    }
+    if m.events:  # only when declared: a grant without events keeps its bytes
+        out["events"] = [
+            {
+                "kind": e["kind"],
+                "title": e["title"],
+                "statuses": sorted(e["statuses"]),
+                "ref": e["ref"]["format"],
+                "interval_s": e["poll"]["interval_s"],
+            }
+            for e in sorted(m.events, key=lambda e: e["kind"])
+        ]
+    return out
 
 
 # ------------------------------------------------------------------------------------------------ compatibility

@@ -96,7 +96,7 @@ def test_vector_remote_host_labels_and_constants() -> None:
 def test_vector_remote_labels_prefix_free_with_core_tables() -> None:
     """The remote labels are new and prefix-free with every live core label (crypto, planned and canon)."""
     devices = DOC["labels"]["sig_remote_devices"]  # R2 T2a: the one remote label the host itself signs under
-    presence = {DOC["labels"]["sig_remote_open"], DOC["labels"]["sig_remote_presence"]}  # R5: the presence key's domains
+    presence = {DOC["labels"]["sig_remote_open"], DOC["labels"]["sig_remote_presence"]}  # R5: presence domains
     remote = set(DOC["labels"].values())
     live = {v for v in {**crypto_labels.LABELS, **crypto_labels.PLANNED_LABELS}.values() if v.endswith("|")}
     live |= {v for v in CANON_LABELS.values() if isinstance(v, str) and v.endswith("|")}

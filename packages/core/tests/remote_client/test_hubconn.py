@@ -83,7 +83,10 @@ def test_rail_once_and_rows_checked():
     [
         [{"workspace_id": WS, "name": "A", "online": 1}],
         [{"workspace_id": WS, "name": "A", "online": True, "role": "x"}],
-        [{"workspace_id": "b" * 32, "name": None, "online": True}, {"workspace_id": "a" * 32, "name": None, "online": True}],
+        [
+            {"workspace_id": "b" * 32, "name": None, "online": True},
+            {"workspace_id": "a" * 32, "name": None, "online": True},
+        ],
         [{"workspace_id": WS, "name": " pad", "online": True}],
     ],
 )
@@ -157,7 +160,6 @@ def test_connection_end_is_close_closed():
 
 def test_every_client_vector_h2c_frame_is_judged_like_the_contract():
     from orch.remoteclient import hubconn
-
     from tests.remote_client.vectors import cases
 
     n = 0

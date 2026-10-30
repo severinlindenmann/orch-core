@@ -1,4 +1,4 @@
-"""Test doubles for the remote client: a scripted hub wire, a software presence backend (tests only), a fake CTAP2 key."""
+"""Test doubles for the remote client: a hub wire, a software presence backend (tests only), a fake CTAP2 key."""
 
 from __future__ import annotations
 
@@ -59,7 +59,9 @@ class SoftPresence:
 class FakeCtap:
     """A fake CTAP2 authenticator: ES256, UV capable, counting."""
 
-    def __init__(self, *, uv: bool = True, pin: bool = False, alg: int = -7, flags: int = 0x05, counter: int = 0) -> None:
+    def __init__(
+        self, *, uv: bool = True, pin: bool = False, alg: int = -7, flags: int = 0x05, counter: int = 0
+    ) -> None:
         self.key = suite.generate_private_key()
         pub = suite.public_bytes(self.key)
         self.x, self.y = pub[1:33], pub[33:]
@@ -82,7 +84,12 @@ class FakeCtap:
 
         self.calls += 1
         self.counter += 1
-        auth = hashlib.sha256(b"orch-remote").digest() + bytes([self.flags]) + self.counter.to_bytes(4, "big") + self.auth_extra
+        auth = (
+            hashlib.sha256(b"orch-remote").digest()
+            + bytes([self.flags])
+            + self.counter.to_bytes(4, "big")
+            + self.auth_extra
+        )
         raw = suite.sign(self.key, auth + cdh)
         der = encode_dss_signature(int.from_bytes(raw[:32], "big"), int.from_bytes(raw[32:], "big"))
         del hashes, ec

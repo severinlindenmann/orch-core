@@ -10,6 +10,10 @@ from orch.remoteclient.codes import ClientError
 from tests.remote_client.vectors import DOC, cases, priv, pub
 
 
+def _fixed(k: bytes):
+    return lambda n: k
+
+
 @pytest.mark.parametrize("c", cases("prologue"), ids=lambda c: c["name"])
 def test_prologue(c):
     a = c["args"]
@@ -26,15 +30,21 @@ def test_msg1_built_by_initiator_equals_vector(c):
     a = c["args"]
     if "ok" not in c["expect"] or "msg1_hex" not in a:
         pytest.skip("responder-side case")
-    pro = noise_init.prologue(**{"kind": a["prologue"]["kind"], "workspace_id": a["prologue"]["workspace_id"],
-                                 "ident": a["prologue"]["id"], "stream_id": a["prologue"]["stream_id"],
-                                 "hub_id": a["prologue"]["hub_id"]})
+    pro = noise_init.prologue(
+        **{
+            "kind": a["prologue"]["kind"],
+            "workspace_id": a["prologue"]["workspace_id"],
+            "ident": a["prologue"]["id"],
+            "stream_id": a["prologue"]["stream_id"],
+            "hub_id": a["prologue"]["hub_id"],
+        }
+    )
     msg1 = bytes.fromhex(a["msg1_hex"])
     e_pub = msg1[:32]
     for s_name in ("dev_a_s", "dev_b_s", "dev_new_s"):
         for e_name in ("dev_a_e", "dev_b_e", "dev_new_e"):
             if pub(e_name) == e_pub and bytes.fromhex(c["expect"]["ok"]["rs_hex"]) == pub(s_name):
-                ini = noise_init.Initiator(pro, priv(s_name), pub("wrk"), lambda n, k=priv(e_name): k)
+                ini = noise_init.Initiator(pro, priv(s_name), pub("wrk"), _fixed(priv(e_name)))
                 assert ini.msg1() == msg1
                 return
     pytest.fail("no key pair for the vector")
@@ -43,8 +53,9 @@ def test_msg1_built_by_initiator_equals_vector(c):
 @pytest.mark.parametrize("c", cases("msg2_read"), ids=lambda c: c["name"])
 def test_msg2_read(c):
     a = c["args"]
-    ini = noise_init.Initiator(bytes.fromhex(a["prologue_hex"]), priv(a["s"]), bytes.fromhex(a["wrk_pub_hex"]),
-                               lambda n: priv(a["e"]))
+    ini = noise_init.Initiator(
+        bytes.fromhex(a["prologue_hex"]), priv(a["s"]), bytes.fromhex(a["wrk_pub_hex"]), lambda n: priv(a["e"])
+    )
     ini.msg1()
     try:
         challenge, tp = ini.read_msg2(bytes.fromhex(a["msg2_hex"]))
@@ -72,8 +83,14 @@ def test_transcript_from_the_initiators_side(t):
 
 
 def _opens(t, s_name, msg1):
-    ini = noise_init.Initiator(bytes.fromhex(t["prologue_hex"]), priv(s_name), pub("wrk"), lambda n: bytes.fromhex(
-        next(v["priv_hex"] for v in DOC["keys"]["x25519"].values() if bytes.fromhex(v["pub_hex"]) == msg1[:32])))
+    ini = noise_init.Initiator(
+        bytes.fromhex(t["prologue_hex"]),
+        priv(s_name),
+        pub("wrk"),
+        lambda n: bytes.fromhex(
+            next(v["priv_hex"] for v in DOC["keys"]["x25519"].values() if bytes.fromhex(v["pub_hex"]) == msg1[:32])
+        ),
+    )
     return ini.msg1() == msg1
 
 
@@ -92,8 +109,13 @@ def test_initiator_refuses_wrong_sizes_and_reuse():
 def test_presence_bytes_vector():
     for c in cases("presence_bytes"):
         a = c["args"]
-        got = presence.presence_bytes(a["workspace_id"], a["device_id"], bytes.fromhex(a["handshake_hash_hex"]),
-                                      bytes.fromhex(a["nonce_hex"]), [bytes.fromhex(d) for d in a["digests_hex"]])
+        got = presence.presence_bytes(
+            a["workspace_id"],
+            a["device_id"],
+            bytes.fromhex(a["handshake_hash_hex"]),
+            bytes.fromhex(a["nonce_hex"]),
+            [bytes.fromhex(d) for d in a["digests_hex"]],
+        )
         assert got.hex() == c["expect"]["hex"]
         assert presence.check_signable(got) == "presence"
 
@@ -117,5 +139,7 @@ def test_device_fp(c):
     from orch.crypto.encoding import unb64u
 
     a = c["args"]
-    fp = model_remote.device_fp(a["presence_kind"], bytes.fromhex(a["transport_pub_hex"]), unb64u(a["presence_pub"], 65))
+    fp = model_remote.device_fp(
+        a["presence_kind"], bytes.fromhex(a["transport_pub_hex"]), unb64u(a["presence_pub"], 65)
+    )
     assert fp.hex() == c["expect"]["hex"]

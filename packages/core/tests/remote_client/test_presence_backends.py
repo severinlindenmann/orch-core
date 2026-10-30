@@ -24,7 +24,7 @@ OPEN = P.open_bytes(WS, RD, b"h" * 32, b"c" * 32)
 PROMPT = P.Prompt("Open", reason="Open workspace on this computer")
 
 
-# --- the domain limit ---------------------------------------------------------------------------------------------------
+# --- the domain limit ---
 
 
 def test_check_signable_accepts_exactly_the_two_messages():
@@ -71,7 +71,7 @@ def test_template_matching():
     assert P.template_matches("/api/x/{p:path}", "/api/x/a/b/c", WS)
 
 
-# --- key files and the custody role ------------------------------------------------------------------------------------
+# --- key files and the custody role ---
 
 
 @pytest.mark.parametrize("ref", ["/home/u/key.pem", "file:abc", "-----BEGIN", "key:abc", "x.p8", "", "../k", 5, "~/k"])
@@ -94,7 +94,9 @@ def test_no_software_presence_signer_in_src():
     src = Path(__file__).resolve().parents[2] / "src" / "orch" / "remoteclient"
     for f in src.glob("*.py"):
         text = f.read_text()
-        assert "generate_private_key" not in text and "private_key_from" not in text and "suite.sign" not in text, f.name
+        assert "generate_private_key" not in text and "private_key_from" not in text and "suite.sign" not in text, (
+            f.name
+        )
 
 
 def test_custody_role_remote_presence_signs_only_its_two_labels_and_is_never_a_person_label():
@@ -114,7 +116,7 @@ def test_custody_role_remote_presence_signs_only_its_two_labels_and_is_never_a_p
     assert "remote-presence" not in ROLES  # no file-tier / passphrase backend can hold it
 
 
-# --- the Secure Enclave helper ------------------------------------------------------------------------------------------
+# --- the Secure Enclave helper ---
 
 
 class Helper:
@@ -188,7 +190,7 @@ def test_se_create_refuses_a_bad_public_key(tmp_path):
         SecureEnclaveBackend(h.path, runner=h.run).create("x")
 
 
-# --- FIDO2 --------------------------------------------------------------------------------------------------------------
+# --- FIDO2 ---
 
 
 def fido(tmp_path, **kw):

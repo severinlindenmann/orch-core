@@ -6,7 +6,9 @@ import json
 from pathlib import Path
 from typing import Any
 
-DOC: dict[str, Any] = json.loads((Path(__file__).resolve().parents[4] / "contracts" / "hub" / "vectors_remote.json").read_text())
+DOC: dict[str, Any] = json.loads(
+    (Path(__file__).resolve().parents[4] / "contracts" / "hub" / "vectors_remote.json").read_text()
+)
 X = DOC["keys"]["x25519"]
 
 

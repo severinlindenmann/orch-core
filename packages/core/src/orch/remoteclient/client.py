@@ -118,7 +118,9 @@ class Client:
 
     # -- the hub --
 
-    def _hub_request(self, origin: str, pin: str | None, method: str, path: str, body: bytes | None) -> tuple[int, bytes]:
+    def _hub_request(
+        self, origin: str, pin: str | None, method: str, path: str, body: bytes | None
+    ) -> tuple[int, bytes]:
         """THE function that builds a connection to the hub's web API (card fetch and sign-in). Credentials only ever go
         over TLS pinned to the hub's SPKI, where the pin came from the connect link or the enrollment code and is never
         learned from the same connection (no trust on first use). Plain http is for loopback only. No pin and not
@@ -179,7 +181,12 @@ class Client:
             doc = loads_strict(raw) if status == 200 else {}
         except (JcsError, UnicodeDecodeError, ValueError):
             doc = {}
-        if status != 200 or type(doc) is not dict or type(doc.get("token")) is not str or type(doc.get("expires_ms")) is not int:
+        if (
+            status != 200
+            or type(doc) is not dict
+            or type(doc.get("token")) is not str
+            or type(doc.get("expires_ms")) is not int
+        ):
             raise ClientError("no_session")
         self.store.set_hub(origin=origin, link=link, hub_id=c["hub_id"], spki=c["tls_spki_sha256"])
         self.store.set_token(doc["token"], doc["expires_ms"])

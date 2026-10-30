@@ -158,6 +158,7 @@ class Session:
         self.closed: str | None = None
         self._send_mu = threading.Lock()
         self._mu = threading.Lock()
+        self._open_mu = threading.Lock()
         self._next_id = 0
         self._ex: dict[int, _Ex] = {}
         self._http_slots = threading.Semaphore(MAX_HTTP)
@@ -320,17 +321,30 @@ class Session:
         if self.closed is not None:
             raise ClientError(self.closed if self.closed != "closed" else "remote_client.closed")
 
-    def _open_ex(self, ws: bool) -> _Ex:
-        (self._ws_slots if ws else self._http_slots).acquire()
+    def _open_ex(self, ws: bool, kind: str, head: bytes) -> _Ex:
+        """A slot (queued here, not a ``remote.busy``), the next id and the opening frame -- id and frame under one
+        lock, because the host requires ids that only rise **in the order they arrive**."""
+        slots = self._ws_slots if ws else self._http_slots
+        while not slots.acquire(timeout=0.25):
+            self._alive()
+        registered = False
         try:
-            with self._mu:
-                self._alive()
-                self._next_id += 1
-                ex = _Ex(self._next_id, ws)
-                self._ex[ex.id] = ex
+            with self._open_mu:
+                with self._mu:
+                    self._alive()
+                    self._next_id += 1
+                    ex = _Ex(self._next_id, ws)
+                    self._ex[ex.id] = ex
+                    registered = True
+                try:
+                    self._send_raw(F.frame(kind, ex.id, head))
+                except BaseException:
+                    self._drop(ex)  # releases the slot
+                    raise
                 return ex
         except BaseException:
-            (self._ws_slots if ws else self._http_slots).release()
+            if not registered:
+                slots.release()
             raise
 
     def _chunks(self, body: bytes) -> Iterator[bytes]:
@@ -400,9 +414,8 @@ class Session:
         self, method: str, path: str, query: str, headers: Iterable[tuple[str, str]], body: bytes
     ) -> tuple[_Ex, int, list[tuple[str, str]]]:
         head = F.build_request_head(method, path, query, headers)
-        ex = self._open_ex(False)
+        ex = self._open_ex(False, "HEAD", head)
         try:
-            self._send_raw(F.frame("HEAD", ex.id, head))
             for c in self._chunks(body):
                 self._send_raw(F.frame("BODY", ex.id, c))
             self._send_raw(F.frame("END", ex.id))
@@ -462,9 +475,8 @@ class Session:
         hs = list(headers)
         for attempt in range(3):
             head = F.build_request_head(None, path, query, hs)
-            ex = self._open_ex(True)
+            ex = self._open_ex(True, "WS_OPEN", head)
             try:
-                self._send_raw(F.frame("WS_OPEN", ex.id, head))
                 status, rh = self._await_head(ex, 30.0)
             except BaseException:
                 self._drop(ex)

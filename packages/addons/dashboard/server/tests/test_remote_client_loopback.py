@@ -634,9 +634,7 @@ def test_the_browser_is_given_a_private_redirect_file_never_the_code(static, tmp
     import stat
 
     opened: list[str] = []
-    ctl = Controller(
-        fake_client(), static, opener=opened.append, computer_name="T", launch_dir=tmp_path / "launch"
-    )
+    ctl = Controller(fake_client(), static, opener=opened.append, computer_name="T", launch_dir=tmp_path / "launch")
     try:
         ctl.start_home()
         ctl.open_home()

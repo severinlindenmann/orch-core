@@ -139,9 +139,7 @@ def _check(cancel: threading.Event | None) -> None:
         raise ClientError("remote_client.cancelled")
 
 
-def _next(
-    ch: Channel, end: float, clock: Callable[[], float], cancel: threading.Event | None = None
-) -> dict[str, Any]:
+def _next(ch: Channel, end: float, clock: Callable[[], float], cancel: threading.Event | None = None) -> dict[str, Any]:
     while True:
         _check(cancel)
         left = end - clock()

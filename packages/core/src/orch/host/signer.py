@@ -336,6 +336,16 @@ def _person_op(prepared: Mapping[str, Any]) -> None:
                 and isinstance(e.get("text"), str)
                 and e["text"].startswith(MARK + "\n")
             )
+        elif op == "app.release":  # #1457: one note on a ticket, whose words are the host-built release text
+            from orch.publishclient.approval import APP_MARK
+
+            ok = (
+                e["type"] == "log.added"
+                and log != "workspace"
+                and ticket is not None
+                and isinstance(e.get("text"), str)
+                and e["text"].startswith(APP_MARK + "\n")
+            )
         elif op in ("hub.join", "hub.mode"):
             # V3 C2a/C2b: one hub.joined on the workspace log, exactly the contract's members. hub.mode only ever
             # signs a switch to full without new aliases; hub.join signs either mode (the review says which).
@@ -843,6 +853,7 @@ _PLAIN = {
     "settings.set": "change the workspace settings {set}",
     "people.set": "change the {role} of {ticket}",
     "publish.share": "let the staged copy of files of {ticket} be shared outside this computer",
+    "app.release": "let the staged app release of {ticket} go live",
     "hub.join": (
         "join hub {hub_id} in {mode} mode: the hub sees only what you share, plus this workspace's name, "
         "and never gets the workspace key"

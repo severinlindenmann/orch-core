@@ -1517,3 +1517,14 @@ def test_a_label_refused_again_is_not_retried_forever(w):
     w.server.fail.extend([("PUT", r"/shares/[0-9a-f]{32}$", 400, "bad_label")] * 2)
     assert err(w.send(staged))
     assert len([r for r in w.server.requests if r["method"] == "PUT"]) == 2
+
+
+def test_an_app_release_cannot_be_prepared_without_a_staged_release_the_host_built(w):
+    """#1457: ``app.release`` names only a staged release; with none from the host module nothing is prepared, so nobody
+    (and no agent) can obtain a signature over words of their own."""
+    res = w.human.prepare_res("app.release", {"staged_id": "pa_" + "1" * 32})
+    assert err(res) == "human_only"
+    res = w.human.prepare_res("app.release", {"staged_id": "pa_" + "1" * 32, "text": "App approval: let an app go live"})
+    assert err(res) == "invalid.input"
+    res = w.human.prepare_res("app.release", {"staged_id": "ps_" + "1" * 32})
+    assert err(res) == "invalid.input"

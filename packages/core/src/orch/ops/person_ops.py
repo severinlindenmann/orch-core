@@ -318,6 +318,24 @@ def handle_publish_share(ctx: Context, args: dict[str, Any]) -> Result:
     return h.ticket_result(view, done, {"staged_id": facts.staged_id}, f"orch publish send {facts.staged_id}")
 
 
+def handle_app_release(ctx: Context, args: dict[str, Any]) -> Result:
+    """``app.release {staged_id}`` (#1457): the person's signature over the exact words of one staged app release (new
+    version, update, rollback or start), as a ``log.added`` note on its ticket. The words come from the host's facts
+    about the staged release (name, who may open it, what it may reach, every file, what changed since the live
+    version, the hashes), never from the request, which names only the staged id; the host makes the app live only
+    after it finds a note with exactly these words signed by a person."""
+    from orch.publishclient.approval import AppReleaseFacts
+
+    h = _Human(ctx, "app.release")
+    facts = getattr(ctx.prepare, "app", None)
+    if not isinstance(facts, AppReleaseFacts) or facts.staged_id != args["staged_id"]:
+        raise OrchError("human_only", "app.release is prepared only by the host's app module, from a staged release")
+    view = h.ticket(facts.ticket_key)
+    done = h.run({"type": "log.added", "text": facts.text}, view.uid, f"let an app of {view.key} go live",
+                 review=h.header(view))  # fmt: skip
+    return h.ticket_result(view, done, {"staged_id": facts.staged_id}, f"orch app release {facts.staged_id}")
+
+
 def _prior_aliases(hub: dict[str, Any], hk_root_pub: bytes) -> dict[str, str]:
     """The aliases an earlier binding of THIS hub made (a user id means something only on the hub that chose it)."""
     from orch.hubclient import wire
@@ -734,6 +752,19 @@ PUBLISH_SHARE = operation(
     errors=(err("role.denied"), err("not_found")),
     handler=handle_publish_share,
 )
+APP_RELEASE = operation(
+    "app.release",
+    "Human only",
+    "Sign the exact words of one staged app release (name, access, reach, files, changes); prepared by the host only.",
+    who="human",
+    props={"staged_id": S("the staged release (pa_ and 32 hex)", pattern="^pa_[0-9a-f]{32}$")},
+    required=("staged_id",),
+    emits=("log.added",),
+    text="ok {key} log.added seq={seq}\nnext: {next}",
+    data=obj({"staged_id": STR}),
+    errors=(err("role.denied"), err("not_found")),
+    handler=handle_app_release,
+)
 
 
 def _manageable(h: Human, view: Any) -> Any:
@@ -937,6 +968,7 @@ OPS: dict[str, Operation] = {
         SETTINGS_SET,
         PEOPLE_SET,
         PUBLISH_SHARE,
+        APP_RELEASE,
         HUB_JOIN,
         HUB_MODE,
         HUB_LEAVE,

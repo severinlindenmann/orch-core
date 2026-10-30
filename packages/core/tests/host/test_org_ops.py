@@ -548,7 +548,8 @@ def test_record_seen_keeps_little_and_ignores_bad_input(served, org):
     orgstate.record_seen(s, "crm", srv["digest"], many)
     rec = json.loads((orgstate.org_dir(s) / "seen.json").read_text())["servers"]["crm"]
     assert len(rec["tools"]) == 200 and rec["tools"][0] == {"name": "t0", "problem": "too_long"}
-    assert set(rec["tools"][1]) == {"name", "description", "inputSchema", "reads", "pin"} and rec["digest"] == srv["digest"]
+    assert set(rec["tools"][1]) == {"name", "description", "inputSchema", "reads", "pin"}
+    assert rec["digest"] == srv["digest"]
     orgstate.record_seen(s, "Bad Name", srv["digest"], many[:1])
     orgstate.record_seen(s, "orch-x", srv["digest"], many[:1])
     orgstate.record_seen(s, "crm", srv["digest"], [{"name": "a b", "pin": PIN_A}])
@@ -615,7 +616,11 @@ def test_bulk_turns_on_only_the_listed_reading_tools(served, org):
     srv = accept_mcp(served, org)
     rows = tools_of("get_a", "get_b", "edit")
     orgstate.record_seen(svc(served), "crm", srv["digest"], rows)
-    got = ok(bulk_op(served, [{"tool": "get_a", "pin": pin_of(rows, "get_a")}, {"tool": "get_b", "pin": pin_of(rows, "get_b")}]))
+    got = ok(
+        bulk_op(
+            served, [{"tool": "get_a", "pin": pin_of(rows, "get_a")}, {"tool": "get_b", "pin": pin_of(rows, "get_b")}]
+        )
+    )
     assert got["data"] == {"server": "crm", "tools": ["get_a", "get_b"], "status": "on"}
     assert orgstate.tool_policy(svc(served), "crm") == {"get_a": pin_of(rows, "get_a"), "get_b": pin_of(rows, "get_b")}
 
@@ -624,7 +629,9 @@ def test_bulk_refuses_a_tool_that_changes_things_and_changes_nothing(served, org
     srv = accept_mcp(served, org)
     rows = tools_of("get_a", "edit")
     orgstate.record_seen(svc(served), "crm", srv["digest"], rows)
-    res = bulk_op(served, [{"tool": "get_a", "pin": pin_of(rows, "get_a")}, {"tool": "edit", "pin": pin_of(rows, "edit")}])
+    res = bulk_op(
+        served, [{"tool": "get_a", "pin": pin_of(rows, "get_a")}, {"tool": "edit", "pin": pin_of(rows, "edit")}]
+    )
     assert err(res) == "invalid.input" and "not_reads" in res["error"]["message"]
     assert orgstate.tool_policy(svc(served), "crm") == {}
 
@@ -661,5 +668,7 @@ def test_bulk_is_owner_only_and_on_only(served, org):
     pins = [{"tool": "get_a", "pin": pin_of(rows, "get_a")}]
     assert err(bulk_op(served, pins, grant=served.grant, session=SESSION)) == "op.not_allowed"
     assert err(req(served, "org.tool", {"server": "crm", "on": False, "tools": pins})) == "invalid.input"
-    assert err(req(served, "org.tool", {"server": "crm", "on": True, "tool": "get_a", "tools": pins})) == "invalid.input"
+    assert (
+        err(req(served, "org.tool", {"server": "crm", "on": True, "tool": "get_a", "tools": pins})) == "invalid.input"
+    )
     assert orgstate.tool_policy(svc(served), "crm") == {}

@@ -10,12 +10,13 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import heapq
+import ipaddress
 import json
 import re
 import secrets
 import threading
 import time
+from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -31,9 +32,9 @@ TX_TTL_S = 600
 USED_MAX = 50_000
 _AAD = b"orch-hub oidc tx v1"
 _COOKIE_RX = re.compile(r"[A-Za-z0-9_-]+")
-START_BURST = 10  # starts per source, refilled one every START_EVERY_S
-START_EVERY_S = 6.0
-START_SOURCES_MAX = 100_000
+START_BURST, START_EVERY_S = 10, 6.0  # starts per source, one more every START_EVERY_S
+FINISH_BURST, FINISH_EVERY_S = 10, 3.0
+SOURCES_MAX = 100_000
 COOKIE_MAX = 2048
 JWKS_REFETCH_MIN_S = 60  # an unknown kid causes at most one refetch per this many seconds
 ALGS = ["RS256", "ES256"]  # never none, never HS*: the key set holds public keys only, the list is the second fence
@@ -48,7 +49,6 @@ GOOGLE_DISCOVERY = "https://accounts.google.com/.well-known/openid-configuration
 
 #: what the sign-in page says for the refusals a person can act on (everything else: "Company login did not work.")
 PLAIN = {
-    "busy": "Too many sign-ins right now. Try again in a minute.",
     "rate_limited": "Too many tries. Try again in a minute.",
 }
 
@@ -122,6 +122,33 @@ def _b64(b: bytes) -> str:
     return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
 
 
+def source_key(source: str) -> str:
+    """The bucket for a peer address: IPv6 per /64 (one customer holds a whole /64), anything else as given."""
+    try:
+        ip = ipaddress.ip_address(source)
+    except ValueError:
+        return source[:64]
+    return str(ipaddress.ip_network(f"{ip}/64", strict=False)) if ip.version == 6 else str(ip)
+
+
+class _Limiter:
+    """A token bucket per source in an LRU (OrderedDict): O(1) per call, no scan, bounded by ``cap``."""
+
+    def __init__(self, burst: int, every_s: float, cap: int = SOURCES_MAX) -> None:
+        self.burst, self.every_s, self.cap = burst, every_s, cap
+        self._m: OrderedDict[str, tuple[float, float]] = OrderedDict()
+
+    def allow(self, source: str, now: float) -> bool:  # the caller holds the lock
+        k = source_key(source)
+        tokens, at = self._m.pop(k, (float(self.burst), now))
+        tokens = min(float(self.burst), tokens + (now - at) / self.every_s)
+        ok = tokens >= 1.0
+        self._m[k] = (tokens - 1.0 if ok else tokens, now)  # most recent at the end
+        while len(self._m) > self.cap:
+            self._m.popitem(last=False)
+        return ok
+
+
 class Oidc:
     def __init__(self, cfg: OidcConfig, http: Http, box_key: bytes, now: Callable[[], float] = time.time) -> None:
         if type(box_key) is not bytes or len(box_key) != 32:
@@ -130,9 +157,10 @@ class Oidc:
         # a cookie made under another issuer or client id (an earlier config) does not open
         self._aad = b"|".join((_AAD, cfg.issuer.encode(), cfg.client_id.encode()))
         self._lock = threading.Lock()
-        self._used: dict[str, float] = {}  # login nonce -> expiry: replay guard, never evicts a live entry
-        self._used_heap: list[tuple[float, str]] = []  # (expiry, nonce): incremental pruning
-        self._buckets: dict[str, tuple[float, float]] = {}
+        self._done: OrderedDict[str, float] = OrderedDict()  # completed logins (nonce -> expiry), oldest first
+        self._inflight: set[str] = set()
+        self._start_lim = _Limiter(START_BURST, START_EVERY_S)
+        self._finish_lim = _Limiter(FINISH_BURST, FINISH_EVERY_S)
         self._meta: dict[str, Any] | None = None
         self._keys: KeySet | None = None
         self._keys_at = -1e9
@@ -194,29 +222,13 @@ class Oidc:
         ok = isinstance(tx, dict) and all(type(tx.get(k)) is str for k in ("state", "nonce", "verifier"))
         return tx if ok and type(tx.get("exp")) in (int, float) and type(tx.get("fresh")) is bool else None
 
-    def _start_allowed(self, source: str) -> bool:
-        """A small token bucket per source address. ``source`` "" (tests, local) is one bucket of its own."""
-        now = self._now()
-        with self._lock:
-            tokens, at = self._buckets.get(source, (float(START_BURST), now))
-            tokens = min(float(START_BURST), tokens + (now - at) / START_EVERY_S)
-            if (
-                len(self._buckets) >= START_SOURCES_MAX
-            ):  # drop the buckets that have refilled, they carry no information
-                full = [k for k, (t, a) in self._buckets.items() if t + (now - a) / START_EVERY_S >= START_BURST]
-                for k in full or [next(iter(self._buckets))]:
-                    del self._buckets[k]
-            if tokens < 1.0:
-                self._buckets[source] = (tokens, now)
-                return False
-            self._buckets[source] = (tokens - 1.0, now)
-            return True
-
     def start(self, *, fresh: bool = False, source: str = "") -> tuple[str, str]:
         """``(authorization url, tx cookie value)``. ``fresh`` asks the IdP to re-authenticate the person. No server state:
         state, nonce and the PKCE verifier live in the sealed cookie (AES-GCM under the hub's key), so unauthenticated
         starts cost nothing to keep and can never block anyone."""
-        if not self._start_allowed(source[:64]):
+        with self._lock:
+            ok = self._start_lim.allow(source, self._now())
+        if not ok:
             raise OidcError("rate_limited")
         meta = self._discover()
         state, nonce, verifier = (secrets.token_urlsafe(32) for _ in range(3))
@@ -239,37 +251,46 @@ class Oidc:
             q["hd"] = self.cfg.domain
         return meta["authorization_endpoint"] + "?" + urlencode(q), cookie
 
-    def _burn(self, nonce: str, exp: float) -> bool:
-        """Mark this login as used; True = first use. Expired entries are pruned incrementally (heap). A live entry is
-        never evicted: if the set is still full the finish is refused ``busy`` (bounded by the cookie lifetime and the
-        per-source start limit)."""
+    def _complete(self, nonce: str, exp: float) -> None:
+        """Remember a COMPLETED login. Only successes land here, so forged or failed finishes use no capacity. Expired
+        entries leave from the front; when full the oldest goes (safe: the IdP's code is single-use, this is a second fence)."""
         now = self._now()
         with self._lock:
-            while self._used_heap and self._used_heap[0][0] <= now:
-                self._used.pop(heapq.heappop(self._used_heap)[1], None)
-            if nonce in self._used:
-                return False
-            if len(self._used) >= USED_MAX:
-                raise OidcError("busy")
-            self._used[nonce] = exp
-            heapq.heappush(self._used_heap, (exp, nonce))
-            return True
+            while self._done and next(iter(self._done.values())) <= now:
+                self._done.popitem(last=False)
+            while len(self._done) >= USED_MAX:
+                self._done.popitem(last=False)
+            self._done[nonce] = exp
 
-    def finish(self, cookie: str, state: str, code: str, client_secret: str) -> Identity:
+    def finish(self, cookie: str, state: str, code: str, client_secret: str, source: str = "") -> Identity:
         """Check the callback, swap the code, verify the id_token. Raises :class:`OidcError`; never returns a half result.
-        The caller clears the cookie whatever happens."""
+        The caller clears the cookie whatever happens. Replay protection: the IdP's single-use code and the nonce in the
+        id_token; here an in-flight lock per login (no parallel finishes) and a set of completed ones."""
+        with self._lock:
+            ok = self._finish_lim.allow(source, self._now())
+        if not ok:
+            raise OidcError("rate_limited")
         tx = self._open(cookie)
-        now = self._now()
-        if tx is None or tx["exp"] <= now:
+        if tx is None or tx["exp"] <= self._now():
             raise OidcError("bad_state")
         if not isinstance(state, str) or not secrets.compare_digest(state.encode(), tx["state"].encode()):
-            raise OidcError("bad_state")  # URL and cookie must be the same login (a forced callback burns nothing)
-        # burn after the AEAD-verified decrypt (a forged cookie never enters the set) and BEFORE the exchange (two parallel
-        # finishes of one cookie cannot both pass)
-        if not self._burn(tx["nonce"], tx["exp"]):
-            raise OidcError("bad_state")
+            raise OidcError("bad_state")  # URL and cookie must be the same login
         if not isinstance(code, str) or not (0 < len(code) <= 2048):
             raise OidcError("bad_code")
+        nonce = tx["nonce"]
+        with self._lock:
+            if nonce in self._done or nonce in self._inflight:
+                raise OidcError("bad_state")
+            self._inflight.add(nonce)
+        try:
+            ident = self._exchange(tx, code, client_secret)
+            self._complete(nonce, tx["exp"])
+            return ident
+        finally:
+            with self._lock:
+                self._inflight.discard(nonce)
+
+    def _exchange(self, tx: dict[str, Any], code: str, client_secret: str) -> Identity:
         try:
             tok = self.http.post_form(
                 self._discover()["token_endpoint"],

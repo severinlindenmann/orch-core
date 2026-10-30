@@ -319,41 +319,7 @@ def test_two_encodings_of_one_cookie_second_refused():
     for variant in (cookie + "=", cookie + "==", b64.b64encode(raw).decode(), b64.urlsafe_b64encode(raw).decode()):
         with pytest.raises(OidcError):
             o.finish(variant, state, "c", "S")
-    assert len(o._used) == 1
-
-
-def test_forged_cookie_never_enters_the_set():
-    o, idp, _ = make()
-    cookie, state = burnable(o, idp)
-    for bad in (cookie[:-3] + "AAA", "A" * 100, "not base64 !!"):
-        with pytest.raises(OidcError):
-            o.finish(bad, state, "c", "S")
-    assert not o._used
-
-
-def test_full_set_never_evicts_a_live_entry_and_start_still_works(monkeypatch):
-    import orch_hub.oidc as M
-
-    monkeypatch.setattr(M, "USED_MAX", 3)
-    o, idp, t = make()
-    first, first_state = burnable(o, idp)
-    o.finish(first, first_state, "c", "S")
-    for _ in range(2):
-        c, st = burnable(o, idp)
-        o.finish(c, st, "c", "S")
-        t[0] += 7
-    extra, st = burnable(o, idp)
-    with pytest.raises(OidcError) as e:
-        o.finish(extra, st, "c", "S")
-    assert e.value.code == "busy" and "Try again in a minute" in M.PLAIN["busy"]
-    with pytest.raises(OidcError) as e:  # the oldest live entry was NOT evicted: its replay is still refused
-        o.finish(first, first_state, "c", "S")
-    assert e.value.code == "bad_state"
-    o.start(source="2.2.2.2")  # starting still works
-    t[0] += 700  # entries expire (incrementally pruned), logins work again
-    idp.claims = {"exp": NOW + 2000, "iat": NOW + 650}
-    c, st = burnable(o, idp)
-    o.finish(c, st, "c", "S")
+    assert len(o._done) == 1
 
 
 def test_start_rate_limit_per_source():
@@ -388,3 +354,71 @@ def test_parallel_finishes_of_one_cookie_only_one_passes():
     [x.start() for x in ts]
     [x.join() for x in ts]
     assert results.count("ok") == 1 and results.count("refused") == 7
+
+
+def test_failed_and_forged_finishes_use_no_capacity_and_do_not_block(monkeypatch):
+    import orch_hub.oidc as M
+
+    monkeypatch.setattr(M, "FINISH_BURST", 10**9)
+    monkeypatch.setattr(M, "USED_MAX", 5)
+    o, idp, _ = make()
+    o._finish_lim = M._Limiter(10**9, 1.0)
+    cookie, state = burnable(o, idp)
+    idp.post_form = lambda url, data: {"nothing": 1}  # the IdP refuses the code
+    for i in range(2000):
+        with pytest.raises(OidcError):
+            o.finish(cookie if i % 2 else f"forged{i}", state, "junk", "S")
+    assert not o._done and not o._inflight
+    del idp.post_form
+    idp.nonce = verifier_ok(idp, o.start()[0])["nonce"]  # unrelated, a real login follows
+    c2, s2 = burnable(o, idp)
+    o.finish(c2, s2, "c", "S")  # the real login still works after 2000 failures
+
+
+def test_same_nonce_completing_twice_second_refused():
+    o, idp, _ = make()
+    cookie, state = burnable(o, idp)
+    o.finish(cookie, state, "c", "S")
+    with pytest.raises(OidcError) as e:
+        o.finish(cookie, state, "c", "S")
+    assert e.value.code == "bad_state"
+
+
+def test_full_done_set_evicts_oldest_and_never_refuses(monkeypatch):
+    import orch_hub.oidc as M
+
+    monkeypatch.setattr(M, "USED_MAX", 3)
+    o, idp, _ = make()
+    for _ in range(6):
+        c, st = burnable(o, idp)
+        o.finish(c, st, "c", "S")
+    assert len(o._done) == 3
+
+
+def test_finish_rate_limit_per_source_and_ipv6_slash64():
+    import orch_hub.oidc as M
+
+    o, idp, _ = make()
+    cookie, state = burnable(o, idp)
+    for _ in range(10):
+        with pytest.raises(OidcError):
+            o.finish("junk", state, "c", "S", source="2001:db8:1:2::1")
+    with pytest.raises(OidcError) as e:  # another address in the same /64 shares the bucket
+        o.finish(cookie, state, "c", "S", source="2001:db8:1:2:ffff::9")
+    assert e.value.code == "rate_limited"
+    o.finish(cookie, state, "c", "S", source="2001:db8:1:3::1")  # another /64 is fine
+    assert M.source_key("2001:db8:1:2::1") == M.source_key("2001:db8:1:2:aaaa::1")
+    assert M.source_key("10.1.2.3") == "10.1.2.3"
+    for _ in range(10):
+        o.start(source="2001:db8:9:9::1")
+    with pytest.raises(OidcError):
+        o.start(source="2001:db8:9:9::2")
+
+
+def test_limiter_lru_is_bounded():
+    import orch_hub.oidc as M
+
+    lim = M._Limiter(1, 1.0, cap=100)
+    for i in range(1000):
+        lim.allow(f"10.0.{i // 250}.{i % 250}", 0.0)
+    assert len(lim._m) == 100

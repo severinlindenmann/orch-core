@@ -458,6 +458,11 @@ async function workspaces(joined = [], known = null) {
           if (ownerUser) rememberName(ownerUser, peopleNames.get(ownerUser)); // the /c page says whose workspace (display only)
           return r.body;
         },
+        askUpdate: async () => { // HUB-WS-04: the owners of older workspaces are asked (the request carries only the version)
+          const r = await api("POST", "/admin/workspaces/update-request", {});
+          if (r.status < 200 || r.status >= 300) throw new Error("ask failed");
+          return r.body;
+        },
         remove: async (w) => {
           const r = await api("DELETE", "/admin/workspaces/" + encodeURIComponent(w.workspace_id));
           if (r.status < 200 || r.status >= 300) throw new Error("remove failed");

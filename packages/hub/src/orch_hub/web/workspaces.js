@@ -1,4 +1,4 @@
-import { emptyState } from "./feel.js";
+import { emptyState, toast } from "./feel.js";
 // Connected workspaces and their availability.
 import { ago, chip, h, text } from "./ui.js";
 
@@ -263,11 +263,32 @@ export function workspacesView(data, now = Date.now()) {
       return h("article", { class: "list-row" }, h("div", { class: "row" }, h("b", { class: "grow", text: nameOf(w) }), chip("Left"), remove),
         small(Number.isFinite(w.left_ms) ? "Left " + new Date(w.left_ms).toLocaleDateString() : "Left on an unknown date"), error);
     })) : null;
+  // HUB-WS-04: a hub admin asks the owners to update; the request carries only the version, the owner clicks in Mission Control
+  const askedAt = Math.max(0, ...older.map((w) => w.update_asked_ms).filter(Number.isFinite));
+  const askBox = h("div", { class: "row" });
+  const showAsked = (at) => { askBox.textContent = ""; askBox.append(small("Asked " + ago(at, Math.max(now, at)))); };
+  if (data.admin != null && actions.askUpdate && older.length) {
+    if (askedAt > 0) showAsked(askedAt);
+    else {
+      const error = h("p", { role: "alert" });
+      const ask = button("Ask owners to update", async () => {
+        ask.disabled = true;
+        error.textContent = "";
+        try {
+          const r = await actions.askUpdate();
+          showAsked(Number.isFinite(r?.at_ms) ? r.at_ms : now);
+          try { toast("Each owner now sees an update request in Mission Control."); } catch { /* no page to show it on */ }
+        } catch { error.textContent = "Could not send the request. Please try again."; ask.disabled = false; }
+      });
+      askBox.append(ask, error);
+    }
+  }
   return [
     h("div", { class: "row" }, h("h1", { class: "grow", text: "Workspaces" }), data.admin != null || data.canConnect ? connect : null),
     connectBox,
     older.length ? h("div", { class: "banner warn" }, h("b", { text: older.length === 1 ? "1 workspace runs an older orch" : older.length + " workspaces run an older orch" }),
-      small(older.map(nameOf).join(", ")), data.hub?.min_supported ? small("The hub still works with " + text(data.hub.min_supported) + " and newer.") : null) : null,
+      small(older.map(nameOf).join(", ")), data.hub?.min_supported ? small("The hub still works with " + text(data.hub.min_supported) + " and newer.") : null,
+      data.admin != null && actions.askUpdate ? askBox : null) : null,
     h("section", { class: "card", "aria-labelledby": "ws-h" }, h("h2", { id: "ws-h", text: "Connected workspaces" }), list, leftView),
   ].filter(Boolean);
 }

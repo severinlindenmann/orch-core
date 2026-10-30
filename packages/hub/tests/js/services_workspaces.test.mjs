@@ -593,3 +593,31 @@ test("P05: the Home count includes private workspaces for a hub admin and nobody
   assert.equal(line({ adminWorkspaces: [ben] }), "2 workspaces online, 0 offline");
   assert.equal(line({ adminWorkspaces: null }), "1 workspace online, 0 offline");
 });
+
+// HUB-WS-04 (#1385): ask the owners of older workspaces to update.
+test("HUB-WS-04: an admin can ask the owners to update; it is asked once and then shows when", async () => {
+  let asked = 0;
+  const rows = [workspace(), workspace({ workspace_id: "b", name: "Legal", version_state: "older" })];
+  const out = workspacesView({ workspaces: rows, handoffs: [], admin: [], hub: { version: "0.3.0", min_supported: "0.1.0" },
+    actions: { askUpdate: async () => { asked += 1; return { asked: 1, at_ms: NOW }; } } }, NOW);
+  assert.match(text(out), /Ask owners to update/);
+  await clickButton(out, "Ask owners to update");
+  assert.equal(asked, 1);
+  assert.match(text(out), /Asked/);
+  assert.doesNotMatch(text(out), /Ask owners to update/);
+  // a later visit (the hub remembers the first time): no button, only when it was asked
+  const later = workspacesView({ workspaces: [workspace({ workspace_id: "b", version_state: "older", update_asked_ms: NOW - 120000 })],
+    handoffs: [], admin: [], hub: { version: "0.3.0" }, actions: { askUpdate: async () => { asked += 1; } } }, NOW);
+  assert.match(text(later), /Asked 2 min ago/);
+  assert.doesNotMatch(text(later), /Ask owners to update/);
+});
+
+test("HUB-WS-04: only admins see the button, and a failed ask says so and can be repeated", async () => {
+  const rows = [workspace({ version_state: "older" })];
+  const member = workspacesView({ workspaces: rows, handoffs: [], admin: null, hub: { version: "0.3.0" }, actions: { askUpdate: async () => ({}) } }, NOW);
+  assert.doesNotMatch(text(member), /Ask owners to update/);
+  const out = workspacesView({ workspaces: rows, handoffs: [], admin: [], hub: { version: "0.3.0" }, actions: { askUpdate: async () => { throw new Error("x"); } } }, NOW);
+  await clickButton(out, "Ask owners to update");
+  assert.match(text(out), /Could not send the request/);
+  assert.match(text(out), /Ask owners to update/);
+});

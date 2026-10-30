@@ -136,6 +136,8 @@ class Addon:
     purged: bool = False
     #: V3 G4 (D6): ``{kind, lock, packages}`` when the grant also installs dependencies, else ``None``
     runtime: dict[str, Any] | None = None
+    #: addon-api 1.2 (#718): the wake events the grant declared (flat, sorted by kind); empty for most add-ons
+    events: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def binds(self) -> dict[str, Any]:

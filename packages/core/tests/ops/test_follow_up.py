@@ -224,3 +224,60 @@ def test_human_reschedule_and_undo(hws, agent, me, event_trigger):
     assert result.code == 0, result.out
     assert hws.view("1").followups[0]["state"] == "pending"
     assert hws.events("1")[-1]["type"] == "followup.restored"
+
+
+def _eventer(ws, name="databricks"):
+    ws.store.append(
+        ws.person_event(
+            ws.owner,
+            "workspace",
+            "addon.granted",
+            name=name,
+            version="0.1.0",
+            package_sha256="sha256:" + "0" * 64,
+            capabilities=["network"],
+            fields={},
+            sections=[],
+            artifact_kinds=[],
+            events=[
+                {
+                    "kind": "run.finished",
+                    "title": "Run finished",
+                    "statuses": ["succeeded", "failed"],
+                    "ref": "int",
+                    "interval_s": 300,
+                }
+            ],
+        ),
+        log="workspace",
+    )
+
+
+def test_on_addon_event_binds_to_a_declared_event_and_ref(ws, cli, schedules):
+    _eventer(ws)
+    claimed(cli)
+    r = cli.j("follow-up", "--in", "2d", "--on", "databricks.run.finished:8812", "--brief", "check the run")
+    assert r.code == 0, r.out
+    assert r.data["trigger"] == "addon"
+    rec = ws.view("1").followups[0]
+    assert rec["on"] == {"source": "addon", "kind": "databricks.run.finished", "ref": "8812"} and "hook" not in rec
+    shown = cli("follow-up", "show", r.data["id"])
+    assert "waiting for" in shown.out, shown.err
+
+
+def test_on_addon_event_refuses_what_is_not_declared(ws, cli, schedules):
+    _eventer(ws)
+    claimed(cli)
+    for on, extra in (
+        ("databricks.run.finished:abc", ()),  # ref not an int
+        ("databricks.run.finished", ()),  # no ref
+        ("databricks.run.exploded:1", ()),  # undeclared event
+        ("ghost.run.finished:1", ()),  # unknown add-on
+        ("databricks.run.finished:1", ("--on-status", "weird")),
+        ("question.answered:q1", ("--on-status", "failed")),  # a status filter is for add-on events only
+    ):
+        r = cli.j("follow-up", "--in", "2d", "--on", on, *extra, "--brief", "x")
+        assert r.err_code == "invalid.input", (on, extra, r.out)
+    ok = cli.j("follow-up", "--in", "2d", "--on", "databricks.run.finished:7", "--on-status", "failed", "--brief", "x")
+    assert ok.code == 0, ok.out
+    assert ws.view("1").followups[-1]["on"]["status"] == "failed"

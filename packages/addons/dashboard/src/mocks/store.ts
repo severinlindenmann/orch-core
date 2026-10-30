@@ -1057,7 +1057,7 @@ export class MockStore {
         return refuse(409, 'addon.changed', `${c.title} changed since you reviewed it; nothing was signed.`, 'Open it again and review the current package.')
       this.appendWs(wsId, { type: 'addon.installed', actor, name, version: c.version, package_sha256: c.package_sha256, capabilities: c.capabilities })
       if (signedInstall) {
-        this.appendWs(wsId, { type: 'addon.granted', actor, name, version: c.version, package_sha256: c.package_sha256, capabilities: c.capabilities, viewer_actions: req.viewer_actions, presence: 'touchid' })
+        this.appendWs(wsId, { type: 'addon.granted', actor, name, version: c.version, package_sha256: c.package_sha256, capabilities: c.capabilities, ...(c.events ? { events: c.events } : {}), viewer_actions: req.viewer_actions, presence: 'touchid' })
         if (req.enable !== false) this.appendWs(wsId, { type: 'addon.enabled', actor, name })
       }
       return done()
@@ -1078,7 +1078,7 @@ export class MockStore {
         if (req.version !== st.version) return refuse(409, 'addon.version_mismatch', `The installed version is ${st.version}; a grant for ${String(req.version)} was refused.`, 'Review the installed version and grant again.')
         if (req.package_sha256 !== st.package_sha256 || !Array.isArray(req.capabilities) || !sameSet(req.capabilities, st.capabilities) || !Array.isArray(req.viewer_actions) || !sameSet(req.viewer_actions, viewerActions(manifestFor(pkg, st.version)).map((a) => a.id)))
           return refuse(409, 'addon.changed', `${v.title} changed since you reviewed it; nothing was signed.`, 'Open the grant again and review the current package.')
-        this.appendWs(wsId, { type: 'addon.granted', actor, name, version: st.version, package_sha256: st.package_sha256, capabilities: st.capabilities, viewer_actions: req.viewer_actions, presence: 'touchid' })
+        this.appendWs(wsId, { type: 'addon.granted', actor, name, version: st.version, package_sha256: st.package_sha256, capabilities: st.capabilities, ...(pkg.events ? { events: pkg.events } : {}), viewer_actions: req.viewer_actions, presence: 'touchid' })
         if (req.enable) this.appendWs(wsId, { type: 'addon.enabled', actor, name })
         break
       case 'enable':
@@ -1096,7 +1096,7 @@ export class MockStore {
           return refuse(409, 'addon.changed', `The update to ${v.title} changed since you reviewed it; nothing was signed.`, 'Open the update again and review it.')
         this.appendWs(wsId, { type: 'addon.updated', actor, name, version: update.version, from: st.version, package_sha256: update.package_sha256, capabilities: update.capabilities, viewer_actions: req.viewer_actions, presence: 'touchid' })
         // The signature is the grant of the new version too (one act, not two): the addon keeps its on/off state.
-        this.appendWs(wsId, { type: 'addon.granted', actor, name, version: update.version, package_sha256: update.package_sha256, capabilities: update.capabilities, viewer_actions: req.viewer_actions, presence: 'touchid' })
+        this.appendWs(wsId, { type: 'addon.granted', actor, name, version: update.version, package_sha256: update.package_sha256, capabilities: update.capabilities, ...(update.events ? { events: update.events } : {}), viewer_actions: req.viewer_actions, presence: 'touchid' })
         break
       case 'uninstall': // ticket data under addons.<name> stays; the UI shows it inactive
         this.appendWs(wsId, { type: 'addon.uninstalled', actor, name })

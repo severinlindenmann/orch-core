@@ -1,5 +1,5 @@
 {
- "about": "FAKE keys, test-only. Remote access through the hub, contracts R0 and R3 (protocol.md 10.2c, 8.5; #1588, #1591).",
+ "about": "FAKE keys, test-only. Remote access through the hub, contracts R0, R3 and R5 (protocol.md 10.2c, 10.2d, 8.5; #1588, #1591, #1593).",
  "labels": {
   "sig_remote_open": "orch/v2/remote-open|",
   "sig_remote_presence": "orch/v2/remote-presence|",
@@ -68,6 +68,90 @@
    "remote.version"
   ],
   "link_window_ms": 120000,
+  "client": {
+   "alpn": "orch-remote/1",
+   "version": 1,
+   "frame_max": 98304,
+   "b64_max": 87380,
+   "setup_ms": 30000,
+   "open_wait_ms": 30000,
+   "idle_poll_ms": 30000,
+   "rail_max": 100,
+   "rail_name_max": 200,
+   "error_codes": [
+    "malformed",
+    "no_session",
+    "remote.busy",
+    "unavailable"
+   ],
+   "refused_codes": [
+    "malformed",
+    "not_allowed",
+    "unavailable",
+    "remote.busy",
+    "remote.off",
+    "remote.device",
+    "remote.no_code",
+    "replay"
+   ],
+   "messages": {
+    "c2h": {
+     "hello": [
+      "t",
+      "token",
+      "v"
+     ],
+     "rail": [
+      "t"
+     ],
+     "open": [
+      "device_id",
+      "kind",
+      "t",
+      "workspace_id"
+     ],
+     "data": [
+      "b",
+      "t"
+     ],
+     "close": [
+      "reason",
+      "t"
+     ]
+    },
+    "h2c": {
+     "ready": [
+      "hub_id",
+      "t"
+     ],
+     "error": [
+      "error",
+      "t"
+     ],
+     "rail": [
+      "more",
+      "t",
+      "workspaces"
+     ],
+     "opened": [
+      "stream_id",
+      "t"
+     ],
+     "refused": [
+      "error",
+      "t"
+     ],
+     "data": [
+      "b",
+      "t"
+     ],
+     "close": [
+      "reason",
+      "t"
+     ]
+    }
+   }
+  },
   "app": {
    "kinds": {
     "HEAD": 1,
@@ -225,6 +309,46 @@
   "owner": "p_8686516f1301cc3c2b7e223ec6184a5f",
   "now_ms": 1800000000000,
   "link_exporter_hex": "802a88984bf67aba049265a55d6d565bc7594509613ed4e8a70446519eb02cfd"
+ },
+ "client_env": {
+  "hub_id": "5204b6091c616bc615ddba3107e6255c",
+  "tokens": {
+   "tok-remote": {
+    "user_id": "u_327a7b35be310aaa",
+    "scope": "remote"
+   },
+   "tok-browser": {
+    "user_id": "u_327a7b35be310aaa",
+    "scope": "browser"
+   }
+  },
+  "rail_rows": {
+   "u_327a7b35be310aaa": [
+    {
+     "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+     "name": "Severin's workspace",
+     "owner_name": "Severin",
+     "mode": "full",
+     "role": "owner",
+     "online": true,
+     "hub_reads": "everything",
+     "can_start": true
+    },
+    {
+     "workspace_id": "833f61d283cbe988c5af01349e254bc3",
+     "name": null,
+     "owner_name": "Severin",
+     "mode": "selective",
+     "role": "owner",
+     "online": false,
+     "hub_reads": "shared items and summaries",
+     "can_start": false
+    }
+   ]
+  },
+  "links": [
+   "882d742fa53e3cfdf21947a2c63286f2"
+  ]
  },
  "device_list": {
   "o": {
@@ -414,7 +538,31 @@
   "presence_route_batch_replayed_into_other_stream",
   "presence_route_batch_other_run",
   "stream_open_old_form_no_exporter",
-  "stream_data_other_connection"
+  "stream_data_other_connection",
+  "client_frame_hello_v2",
+  "client_frame_open_session_with_code_id",
+  "client_frame_data_over_65535",
+  "client_frame_wire_length_over_max",
+  "client_frame_refused_version_code",
+  "client_frame_rail_row_extra_key",
+  "client_frame_rail_name_bidi",
+  "client_rail_projection",
+  "client_rail_over_max_cut_more",
+  "client_seq_session",
+  "client_seq_rail_then_open",
+  "client_seq_rail_no_session",
+  "client_seq_open_outside_rail",
+  "client_seq_open_in_rail_no_link",
+  "client_seq_host_refuses_remote.off",
+  "client_seq_host_unknown_code_unavailable",
+  "client_seq_data_before_opened",
+  "client_seq_rail_twice",
+  "client_seq_second_open",
+  "client_seq_data_over_65535",
+  "client_seq_hub_opened_before_open",
+  "client_seq_hub_rail_not_asked",
+  "client_seq_hub_refused_after_opened",
+  "client_seq_hub_data_after_client_close_dropped"
  ],
  "cases": [
   {
@@ -12012,6 +12160,8365 @@
    },
    "expect": {
     "error": "bad_signature"
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_c2h_hello",
+   "args": {
+    "dir": "c2h",
+    "frame": {
+     "t": "hello",
+     "v": 1,
+     "token": "tok-remote"
+    }
+   },
+   "expect": {
+    "ok": true
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_c2h_rail",
+   "args": {
+    "dir": "c2h",
+    "frame": {
+     "t": "rail"
+    }
+   },
+   "expect": {
+    "ok": true
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_c2h_open_session",
+   "args": {
+    "dir": "c2h",
+    "frame": {
+     "t": "open",
+     "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+     "device_id": "rd_6be572e1241672d2a48515fb6eca992b",
+     "kind": "session"
+    }
+   },
+   "expect": {
+    "ok": true
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_c2h_open_enroll",
+   "args": {
+    "dir": "c2h",
+    "frame": {
+     "t": "open",
+     "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+     "device_id": "rc_60aca6974672558190b27fcee2e050fa",
+     "kind": "enroll"
+    }
+   },
+   "expect": {
+    "ok": true
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_c2h_data_msg1",
+   "args": {
+    "dir": "c2h",
+    "frame": {
+     "t": "data",
+     "b": "yhgDhq5nJxMrdZKStUarOo8K-MlcfdaLjR_L-2EyPGJ39ojE5Tl0ivlTDBBKoNTzwnAvdYVF14oodJYgVAWiJyVgPJSSc9LYs6uVg-k02mPohjw-RszKhlHTUFcedFql"
+    }
+   },
+   "expect": {
+    "ok": true
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_c2h_close",
+   "args": {
+    "dir": "c2h",
+    "frame": {
+     "t": "close",
+     "reason": "closed"
+    }
+   },
+   "expect": {
+    "ok": true
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_c2h_data_max",
+   "args": {
+    "dir": "c2h",
+    "frame": {
+     "t": "data",
+     "b": ""
+    },
+    "b_repeat": {
+     "unit": "YWFh",
+     "n": 21845,
+     "tail": ""
+    }
+   },
+   "expect": {
+    "ok": true
+   },
+   "note": "65535 bytes, the largest Noise message"
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_h2c_ready",
+   "args": {
+    "dir": "h2c",
+    "frame": {
+     "t": "ready",
+     "hub_id": "5204b6091c616bc615ddba3107e6255c"
+    }
+   },
+   "expect": {
+    "ok": true
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_h2c_rail",
+   "args": {
+    "dir": "h2c",
+    "frame": {
+     "t": "rail",
+     "workspaces": [
+      {
+       "workspace_id": "833f61d283cbe988c5af01349e254bc3",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+       "name": "Severin's workspace",
+       "online": true
+      }
+     ],
+     "more": false
+    }
+   },
+   "expect": {
+    "ok": true
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_h2c_rail_empty",
+   "args": {
+    "dir": "h2c",
+    "frame": {
+     "t": "rail",
+     "workspaces": [],
+     "more": false
+    }
+   },
+   "expect": {
+    "ok": true
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_h2c_rail_full_more",
+   "args": {
+    "dir": "h2c",
+    "frame": {
+     "t": "rail",
+     "workspaces": [
+      {
+       "workspace_id": "015965b9755dbce6f468e94aca4ee73c",
+       "name": "Workspace 55",
+       "online": false
+      },
+      {
+       "workspace_id": "07b67da46c515841f4007e11b1def5fc",
+       "name": "Workspace 57",
+       "online": false
+      },
+      {
+       "workspace_id": "07e15192cd268f4771fb778c978c823a",
+       "name": "Workspace 75",
+       "online": false
+      },
+      {
+       "workspace_id": "0e21589f9c4bf496c7b7bfe01233baf0",
+       "name": "Workspace 89",
+       "online": false
+      },
+      {
+       "workspace_id": "0eee3dc6227251e8e1b039a5236483b3",
+       "name": "Workspace 65",
+       "online": false
+      },
+      {
+       "workspace_id": "111e33845bd2f1b7d8006af99518e282",
+       "name": "Workspace 62",
+       "online": true
+      },
+      {
+       "workspace_id": "113263e010e7c387d91a5c2de2b51a66",
+       "name": "Workspace 2",
+       "online": true
+      },
+      {
+       "workspace_id": "122c0cde1deb38085c3c52875f942c9c",
+       "name": "Workspace 44",
+       "online": true
+      },
+      {
+       "workspace_id": "1253631ccdf83a94f435e72b27eec210",
+       "name": "Workspace 68",
+       "online": true
+      },
+      {
+       "workspace_id": "13037208f86117cb2d2d8ebcfc401cdd",
+       "name": "Workspace 1",
+       "online": false
+      },
+      {
+       "workspace_id": "154ac654d62970e38bbcaf12972f7990",
+       "name": "Workspace 34",
+       "online": true
+      },
+      {
+       "workspace_id": "15dd6d9f32c935981889358c041da74d",
+       "name": "Workspace 80",
+       "online": true
+      },
+      {
+       "workspace_id": "1698305c9b11af4226b42832a86b1e11",
+       "name": "Workspace 29",
+       "online": false
+      },
+      {
+       "workspace_id": "1895d3c404364116266a84d2207bf2aa",
+       "name": "Workspace 15",
+       "online": false
+      },
+      {
+       "workspace_id": "1e1da899d5de931f20f451b5683cd2cb",
+       "name": "Workspace 79",
+       "online": false
+      },
+      {
+       "workspace_id": "1f17825b8b4c6a61ad7d47cf9b925a1c",
+       "name": "Workspace 0",
+       "online": true
+      },
+      {
+       "workspace_id": "20df53f1288abd233621d2d6671455af",
+       "name": "Workspace 5",
+       "online": false
+      },
+      {
+       "workspace_id": "22b3b685bf58e2aab65d2f78b4239e3f",
+       "name": "Workspace 90",
+       "online": true
+      },
+      {
+       "workspace_id": "2879e92f1a56d1b4b4117bffbe37f446",
+       "name": "Workspace 83",
+       "online": false
+      },
+      {
+       "workspace_id": "2b7fabcec1bb0e9d007516a2912eeed6",
+       "name": "Workspace 52",
+       "online": true
+      },
+      {
+       "workspace_id": "32424d67ca564dca679e8e83f71d8896",
+       "name": "Workspace 76",
+       "online": true
+      },
+      {
+       "workspace_id": "339e6dfcec4b3475f4ee894e19c520f2",
+       "name": "Workspace 77",
+       "online": false
+      },
+      {
+       "workspace_id": "346bd1fb74f07736139b9d58a109a159",
+       "name": "Workspace 73",
+       "online": false
+      },
+      {
+       "workspace_id": "3a634c0c28a3f3870c988146795a886a",
+       "name": "Workspace 70",
+       "online": true
+      },
+      {
+       "workspace_id": "43bb1de4a37e6af3cad2ded8f47ec94f",
+       "name": "Workspace 82",
+       "online": true
+      },
+      {
+       "workspace_id": "49c624c9e80bf64d1a598a76ad2388ea",
+       "name": "Workspace 38",
+       "online": true
+      },
+      {
+       "workspace_id": "4c24e665342947d2cb0d3164a726ad03",
+       "name": "Workspace 41",
+       "online": false
+      },
+      {
+       "workspace_id": "50b48df1114d2a4f60d1113d90f2157f",
+       "name": "Workspace 61",
+       "online": false
+      },
+      {
+       "workspace_id": "57f4430e91d26164cf6d9159a39c8a63",
+       "name": "Workspace 16",
+       "online": true
+      },
+      {
+       "workspace_id": "5b930fc136276ab4f181dbdfee3e7b83",
+       "name": "Workspace 71",
+       "online": false
+      },
+      {
+       "workspace_id": "5cd48008a05ca7cbfb8ddff169e035b8",
+       "name": "Workspace 27",
+       "online": false
+      },
+      {
+       "workspace_id": "5ffb3327eb62e6228522d72b973b93e3",
+       "name": "Workspace 32",
+       "online": true
+      },
+      {
+       "workspace_id": "60e58f68656e92db4b6740884e18a11d",
+       "name": "Workspace 74",
+       "online": true
+      },
+      {
+       "workspace_id": "6211b429e4696771f4da0b0c112a8254",
+       "name": "Workspace 37",
+       "online": false
+      },
+      {
+       "workspace_id": "62d1263ef188e21d3e2b86eb083f9293",
+       "name": "Workspace 66",
+       "online": true
+      },
+      {
+       "workspace_id": "6506281f7e6e1d2fb7ca650bf4bd6c5c",
+       "name": "Workspace 24",
+       "online": true
+      },
+      {
+       "workspace_id": "65377e8d324de9fb1dea70e7eab6c38e",
+       "name": "Workspace 58",
+       "online": true
+      },
+      {
+       "workspace_id": "6792b7235af2fd4dd09d4b617aa8d8c3",
+       "name": "Workspace 6",
+       "online": true
+      },
+      {
+       "workspace_id": "6aad8a2283bd8578bc6893d2436719c1",
+       "name": "Workspace 39",
+       "online": false
+      },
+      {
+       "workspace_id": "6b46ebb00823bb0949d1f73bec8f9b8a",
+       "name": "Workspace 20",
+       "online": true
+      },
+      {
+       "workspace_id": "6bae0fb08fafcd4ca3cf50cd95e5c0d7",
+       "name": "Workspace 86",
+       "online": true
+      },
+      {
+       "workspace_id": "6c9b4d2fa042a858041ad4558106cc98",
+       "name": "Workspace 11",
+       "online": false
+      },
+      {
+       "workspace_id": "6e5d67928c39aa4377b68ff908687d3a",
+       "name": "Workspace 99",
+       "online": false
+      },
+      {
+       "workspace_id": "71e4738d9521756f10d031426509485a",
+       "name": "Workspace 69",
+       "online": false
+      },
+      {
+       "workspace_id": "739b7bf66c3885e73b39cbe501bd0a50",
+       "name": "Workspace 72",
+       "online": true
+      },
+      {
+       "workspace_id": "7973720fb18fe28e29999877f0ed23c9",
+       "name": "Workspace 42",
+       "online": true
+      },
+      {
+       "workspace_id": "79ebae3e32a0f7eb4c2c2ac1b7d7a3d8",
+       "name": "Workspace 91",
+       "online": false
+      },
+      {
+       "workspace_id": "7a5577edd76a3f6aae5a31a0c010b780",
+       "name": "Workspace 81",
+       "online": false
+      },
+      {
+       "workspace_id": "7d8be88509ec1b05e88a858cd3c978b6",
+       "name": "Workspace 88",
+       "online": true
+      },
+      {
+       "workspace_id": "7f2483dcd2bfb0a90aebc67063e04272",
+       "name": "Workspace 7",
+       "online": false
+      },
+      {
+       "workspace_id": "80192fd860bd8c7a59b6c55ec582112a",
+       "name": "Workspace 92",
+       "online": true
+      },
+      {
+       "workspace_id": "82e8c087c9950348a89d1fa58cb234d7",
+       "name": "Workspace 26",
+       "online": true
+      },
+      {
+       "workspace_id": "89290215dc6ccaa1ab9f86d0d2f1392a",
+       "name": "Workspace 10",
+       "online": true
+      },
+      {
+       "workspace_id": "8968800030098684dc25a5e8a4ac54ec",
+       "name": "Workspace 21",
+       "online": false
+      },
+      {
+       "workspace_id": "8ec716291fe0bd7fc62dbfb9dab2c58c",
+       "name": "Workspace 54",
+       "online": true
+      },
+      {
+       "workspace_id": "9078f94cbb37836af4c1a909d1b2e4fb",
+       "name": "Workspace 93",
+       "online": false
+      },
+      {
+       "workspace_id": "974f4adea30dc5ec70c1ed905139efe8",
+       "name": "Workspace 49",
+       "online": false
+      },
+      {
+       "workspace_id": "989fe0242f086c9eb1f9a52aa0feab1f",
+       "name": "Workspace 59",
+       "online": false
+      },
+      {
+       "workspace_id": "99798b8b260a8cd0b62cd905a885d212",
+       "name": "Workspace 96",
+       "online": true
+      },
+      {
+       "workspace_id": "9c9d35b68bc479de5ebb8c8711dd3f58",
+       "name": "Workspace 17",
+       "online": false
+      },
+      {
+       "workspace_id": "a1f5c1d2f88c796b5520f8b2439279a2",
+       "name": "Workspace 47",
+       "online": false
+      },
+      {
+       "workspace_id": "a207afc7cc518c90d6ddfa10519e4af9",
+       "name": "Workspace 50",
+       "online": true
+      },
+      {
+       "workspace_id": "a2271fb2113041b6a137650bf36e18a4",
+       "name": "Workspace 9",
+       "online": false
+      },
+      {
+       "workspace_id": "a47d712788d4aefeb6f4c50986b0013b",
+       "name": "Workspace 23",
+       "online": false
+      },
+      {
+       "workspace_id": "a85328e07961fe063a733d6896d61dae",
+       "name": "Workspace 94",
+       "online": true
+      },
+      {
+       "workspace_id": "aa31c781aa491ee840935f9a5724fe5a",
+       "name": "Workspace 12",
+       "online": true
+      },
+      {
+       "workspace_id": "ac87dcaf020491a5f5d30c0cac3f603f",
+       "name": "Workspace 53",
+       "online": false
+      },
+      {
+       "workspace_id": "ad756ec48cf639be57cd47125665b7e4",
+       "name": "Workspace 40",
+       "online": true
+      },
+      {
+       "workspace_id": "aec8bb315f8605318c25e4a7452e3bcf",
+       "name": "Workspace 18",
+       "online": true
+      },
+      {
+       "workspace_id": "b26c1a29ccc2fbc85b3a6bf86cbcedcf",
+       "name": "Workspace 46",
+       "online": true
+      },
+      {
+       "workspace_id": "b2fd00e07af966bbfbfc2dcc357d2f36",
+       "name": "Workspace 43",
+       "online": false
+      },
+      {
+       "workspace_id": "b392f21a9011092c43a0e15b04c3289f",
+       "name": "Workspace 8",
+       "online": true
+      },
+      {
+       "workspace_id": "c39df8cce4b043ee58942acd4c70875c",
+       "name": "Workspace 84",
+       "online": true
+      },
+      {
+       "workspace_id": "c51c9d93761a4b14c1ec4e64f9064c6c",
+       "name": "Workspace 4",
+       "online": true
+      },
+      {
+       "workspace_id": "c6aed708abec571f6b57f0d4449b030e",
+       "name": "Workspace 25",
+       "online": false
+      },
+      {
+       "workspace_id": "c7d45015b546153bdb512e170bd814ae",
+       "name": "Workspace 19",
+       "online": false
+      },
+      {
+       "workspace_id": "c997554feae5253bdd08fe784ab53132",
+       "name": "Workspace 31",
+       "online": false
+      },
+      {
+       "workspace_id": "caae75c073360728b8f92894368436fa",
+       "name": "Workspace 56",
+       "online": true
+      },
+      {
+       "workspace_id": "cb5c5d7dd01680c0f1829b3975973e10",
+       "name": "Workspace 28",
+       "online": true
+      },
+      {
+       "workspace_id": "cfaf9d1a0af1b9164f55cd3d5a5c78ee",
+       "name": "Workspace 85",
+       "online": false
+      },
+      {
+       "workspace_id": "d01c88ce25997bdb751460c3196a23b9",
+       "name": "Workspace 3",
+       "online": false
+      },
+      {
+       "workspace_id": "d1a281a5a23e75a8e393ea80263be227",
+       "name": "Workspace 13",
+       "online": false
+      },
+      {
+       "workspace_id": "d1ab3af1fbc5c6bf10e29ed55c1ed8f0",
+       "name": "Workspace 14",
+       "online": true
+      },
+      {
+       "workspace_id": "d2e7406776f738ffcb902e46c4f3a060",
+       "name": "Workspace 67",
+       "online": false
+      },
+      {
+       "workspace_id": "d3f1b446c2b1667d3a26215e7ce78c62",
+       "name": "Workspace 22",
+       "online": true
+      },
+      {
+       "workspace_id": "d47f1437564d482480edf2901ece8e0e",
+       "name": "Workspace 63",
+       "online": false
+      },
+      {
+       "workspace_id": "d9117850b0f9895aebfd9142a970447c",
+       "name": "Workspace 35",
+       "online": false
+      },
+      {
+       "workspace_id": "dd0e094b60577117fcd38a04cd76dec9",
+       "name": "Workspace 33",
+       "online": false
+      },
+      {
+       "workspace_id": "e314b7959be7378fa1e718c26b4dd02f",
+       "name": "Workspace 95",
+       "online": false
+      },
+      {
+       "workspace_id": "e334dfa996b3ff1e6b6529d5fb730bd5",
+       "name": "Workspace 78",
+       "online": true
+      },
+      {
+       "workspace_id": "e552402fdd1ebe05e6a10314aee545e9",
+       "name": "Workspace 64",
+       "online": true
+      },
+      {
+       "workspace_id": "ebbdc46ef7bf9fc36f8afc314d894b7a",
+       "name": "Workspace 98",
+       "online": true
+      },
+      {
+       "workspace_id": "ec727d96fda292bf6e81f2a005154861",
+       "name": "Workspace 60",
+       "online": true
+      },
+      {
+       "workspace_id": "f1057fb1bacf1f15d2077f4fe93cb3de",
+       "name": "Workspace 48",
+       "online": true
+      },
+      {
+       "workspace_id": "f2216a54f124a63cd35342373ce455db",
+       "name": "Workspace 30",
+       "online": true
+      },
+      {
+       "workspace_id": "f48eb56b41fef0e74bea6712c5690e38",
+       "name": "Workspace 36",
+       "online": true
+      },
+      {
+       "workspace_id": "f56103a3f86d1b5d76c93bf0d5c10fb1",
+       "name": "Workspace 51",
+       "online": false
+      },
+      {
+       "workspace_id": "f800f76e1cabc83decc6133422a47211",
+       "name": "Workspace 87",
+       "online": false
+      },
+      {
+       "workspace_id": "f8228822bae9e1d9b87d4b481f7e485d",
+       "name": "Workspace 45",
+       "online": false
+      },
+      {
+       "workspace_id": "fe8af0ea95f6e3914f7aae6afb2231e3",
+       "name": "Workspace 97",
+       "online": false
+      }
+     ],
+     "more": true
+    }
+   },
+   "expect": {
+    "ok": true
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_h2c_opened",
+   "args": {
+    "dir": "h2c",
+    "frame": {
+     "t": "opened",
+     "stream_id": "2edc92539206351c997ef280c35402ee"
+    }
+   },
+   "expect": {
+    "ok": true
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_h2c_data_msg2",
+   "args": {
+    "dir": "h2c",
+    "frame": {
+     "t": "data",
+     "b": "KSIsrfAmFJEVrosNMpYIYAEmjLko9QmutDQHuhnLQE4vUqqnLV5KagwzRGdnu_M_5DWyQDFnMgTfxOAuwZeJ3YiWaLvUyrysIMfreshEynE"
+    }
+   },
+   "expect": {
+    "ok": true
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_h2c_close_remote_off",
+   "args": {
+    "dir": "h2c",
+    "frame": {
+     "t": "close",
+     "reason": "remote.off"
+    }
+   },
+   "expect": {
+    "ok": true
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_h2c_error_malformed",
+   "args": {
+    "dir": "h2c",
+    "frame": {
+     "t": "error",
+     "error": "malformed"
+    }
+   },
+   "expect": {
+    "ok": true
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_h2c_error_no_session",
+   "args": {
+    "dir": "h2c",
+    "frame": {
+     "t": "error",
+     "error": "no_session"
+    }
+   },
+   "expect": {
+    "ok": true
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_h2c_error_remote.busy",
+   "args": {
+    "dir": "h2c",
+    "frame": {
+     "t": "error",
+     "error": "remote.busy"
+    }
+   },
+   "expect": {
+    "ok": true
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_h2c_error_unavailable",
+   "args": {
+    "dir": "h2c",
+    "frame": {
+     "t": "error",
+     "error": "unavailable"
+    }
+   },
+   "expect": {
+    "ok": true
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_h2c_refused_malformed",
+   "args": {
+    "dir": "h2c",
+    "frame": {
+     "t": "refused",
+     "error": "malformed"
+    }
+   },
+   "expect": {
+    "ok": true
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_h2c_refused_not_allowed",
+   "args": {
+    "dir": "h2c",
+    "frame": {
+     "t": "refused",
+     "error": "not_allowed"
+    }
+   },
+   "expect": {
+    "ok": true
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_h2c_refused_unavailable",
+   "args": {
+    "dir": "h2c",
+    "frame": {
+     "t": "refused",
+     "error": "unavailable"
+    }
+   },
+   "expect": {
+    "ok": true
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_h2c_refused_remote.busy",
+   "args": {
+    "dir": "h2c",
+    "frame": {
+     "t": "refused",
+     "error": "remote.busy"
+    }
+   },
+   "expect": {
+    "ok": true
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_h2c_refused_remote.off",
+   "args": {
+    "dir": "h2c",
+    "frame": {
+     "t": "refused",
+     "error": "remote.off"
+    }
+   },
+   "expect": {
+    "ok": true
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_h2c_refused_remote.device",
+   "args": {
+    "dir": "h2c",
+    "frame": {
+     "t": "refused",
+     "error": "remote.device"
+    }
+   },
+   "expect": {
+    "ok": true
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_h2c_refused_remote.no_code",
+   "args": {
+    "dir": "h2c",
+    "frame": {
+     "t": "refused",
+     "error": "remote.no_code"
+    }
+   },
+   "expect": {
+    "ok": true
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_h2c_refused_replay",
+   "args": {
+    "dir": "h2c",
+    "frame": {
+     "t": "refused",
+     "error": "replay"
+    }
+   },
+   "expect": {
+    "ok": true
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_key_order_free",
+   "args": {
+    "dir": "c2h",
+    "wire_hex": "000000287b2276223a312c22746f6b656e223a22746f6b2d72656d6f7465222c2274223a2268656c6c6f227d"
+   },
+   "expect": {
+    "ok": true
+   },
+   "note": "strict parse, not canonical order: the sender writes cj, the receiver does not insist"
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_hello_v2",
+   "args": {
+    "dir": "c2h",
+    "frame": {
+     "t": "hello",
+     "v": 2,
+     "token": "tok-remote"
+    }
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_hello_v_string",
+   "args": {
+    "dir": "c2h",
+    "frame": {
+     "t": "hello",
+     "v": "1",
+     "token": "tok-remote"
+    }
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_hello_token_int",
+   "args": {
+    "dir": "c2h",
+    "frame": {
+     "t": "hello",
+     "v": 1,
+     "token": 7
+    }
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_hello_extra_key",
+   "args": {
+    "dir": "c2h",
+    "frame": {
+     "t": "hello",
+     "v": 1,
+     "token": "tok-remote",
+     "device_id": "rd_6be572e1241672d2a48515fb6eca992b"
+    }
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_hello_no_token",
+   "args": {
+    "dir": "c2h",
+    "frame": {
+     "t": "hello",
+     "v": 1
+    }
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_rail_extra_key",
+   "args": {
+    "dir": "c2h",
+    "frame": {
+     "t": "rail",
+     "workspace_id": "882d742fa53e3cfdf21947a2c63286f2"
+    }
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_open_session_with_code_id",
+   "args": {
+    "dir": "c2h",
+    "frame": {
+     "t": "open",
+     "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+     "device_id": "rc_60aca6974672558190b27fcee2e050fa",
+     "kind": "session"
+    }
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_open_enroll_with_device_id",
+   "args": {
+    "dir": "c2h",
+    "frame": {
+     "t": "open",
+     "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+     "device_id": "rd_6be572e1241672d2a48515fb6eca992b",
+     "kind": "enroll"
+    }
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_open_kind_unknown",
+   "args": {
+    "dir": "c2h",
+    "frame": {
+     "t": "open",
+     "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+     "device_id": "rd_6be572e1241672d2a48515fb6eca992b",
+     "kind": "browser"
+    }
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_open_workspace_upper_hex",
+   "args": {
+    "dir": "c2h",
+    "frame": {
+     "t": "open",
+     "workspace_id": "882D742FA53E3CFDF21947A2C63286F2",
+     "device_id": "rd_6be572e1241672d2a48515fb6eca992b",
+     "kind": "session"
+    }
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_open_workspace_short",
+   "args": {
+    "dir": "c2h",
+    "frame": {
+     "t": "open",
+     "workspace_id": "882d742fa53e3cfdf21947a2c63286",
+     "device_id": "rd_6be572e1241672d2a48515fb6eca992b",
+     "kind": "session"
+    }
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_open_extra_stream_id",
+   "args": {
+    "dir": "c2h",
+    "frame": {
+     "t": "open",
+     "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+     "device_id": "rd_6be572e1241672d2a48515fb6eca992b",
+     "kind": "session",
+     "stream_id": "2edc92539206351c997ef280c35402ee"
+    }
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_data_empty",
+   "args": {
+    "dir": "c2h",
+    "frame": {
+     "t": "data",
+     "b": ""
+    }
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_data_padded",
+   "args": {
+    "dir": "c2h",
+    "frame": {
+     "t": "data",
+     "b": "YQ=="
+    }
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_data_trailing_bits",
+   "args": {
+    "dir": "c2h",
+    "frame": {
+     "t": "data",
+     "b": "YR"
+    }
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_data_standard_alphabet",
+   "args": {
+    "dir": "c2h",
+    "frame": {
+     "t": "data",
+     "b": "+/8"
+    }
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_data_not_string",
+   "args": {
+    "dir": "c2h",
+    "frame": {
+     "t": "data",
+     "b": 5
+    }
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_data_extra_key",
+   "args": {
+    "dir": "c2h",
+    "frame": {
+     "t": "data",
+     "b": "YQ",
+     "seq": 1
+    }
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_data_over_65535",
+   "args": {
+    "dir": "c2h",
+    "frame": {
+     "t": "data",
+     "b": ""
+    },
+    "b_repeat": {
+     "unit": "YWFh",
+     "n": 21845,
+     "tail": "YQ"
+    }
+   },
+   "expect": {
+    "error": "too_large"
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_data_string_over_max",
+   "args": {
+    "dir": "c2h",
+    "frame": {
+     "t": "data",
+     "b": ""
+    },
+    "b_repeat": {
+     "unit": "!",
+     "n": 87381,
+     "tail": ""
+    }
+   },
+   "expect": {
+    "error": "too_large"
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_close_unknown_reason",
+   "args": {
+    "dir": "c2h",
+    "frame": {
+     "t": "close",
+     "reason": "bye"
+    }
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_close_with_refusal_code",
+   "args": {
+    "dir": "c2h",
+    "frame": {
+     "t": "close",
+     "reason": "not_allowed"
+    }
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_t_unknown",
+   "args": {
+    "dir": "c2h",
+    "frame": {
+     "t": "ping"
+    }
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_t_missing",
+   "args": {
+    "dir": "c2h",
+    "frame": {
+     "v": 1,
+     "token": "tok-remote"
+    }
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_t_not_string",
+   "args": {
+    "dir": "c2h",
+    "frame": {
+     "t": 1
+    }
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_hub_message_from_client",
+   "args": {
+    "dir": "c2h",
+    "frame": {
+     "t": "ready",
+     "hub_id": "5204b6091c616bc615ddba3107e6255c"
+    }
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_client_message_from_hub",
+   "args": {
+    "dir": "h2c",
+    "frame": {
+     "t": "hello",
+     "v": 1,
+     "token": "tok-remote"
+    }
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_ready_upper_hub_id",
+   "args": {
+    "dir": "h2c",
+    "frame": {
+     "t": "ready",
+     "hub_id": "5204B6091C616BC615DDBA3107E6255C"
+    }
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_ready_extra_key",
+   "args": {
+    "dir": "h2c",
+    "frame": {
+     "t": "ready",
+     "hub_id": "5204b6091c616bc615ddba3107e6255c",
+     "v": 1
+    }
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_opened_short_stream_id",
+   "args": {
+    "dir": "h2c",
+    "frame": {
+     "t": "opened",
+     "stream_id": "2edc92539206351c997ef280c35402e"
+    }
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_error_refusal_code",
+   "args": {
+    "dir": "h2c",
+    "frame": {
+     "t": "error",
+     "error": "not_allowed"
+    }
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_error_free_text",
+   "args": {
+    "dir": "h2c",
+    "frame": {
+     "t": "error",
+     "error": "token expired"
+    }
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_refused_session_code",
+   "args": {
+    "dir": "h2c",
+    "frame": {
+     "t": "refused",
+     "error": "no_session"
+    }
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_refused_version_code",
+   "args": {
+    "dir": "h2c",
+    "frame": {
+     "t": "refused",
+     "error": "remote.version"
+    }
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_rail_row_extra_key",
+   "args": {
+    "dir": "h2c",
+    "frame": {
+     "t": "rail",
+     "workspaces": [
+      {
+       "workspace_id": "833f61d283cbe988c5af01349e254bc3",
+       "name": null,
+       "online": false,
+       "role": "owner"
+      }
+     ],
+     "more": false
+    }
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_rail_rows_unsorted",
+   "args": {
+    "dir": "h2c",
+    "frame": {
+     "t": "rail",
+     "workspaces": [
+      {
+       "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+       "name": "Severin's workspace",
+       "online": true
+      },
+      {
+       "workspace_id": "833f61d283cbe988c5af01349e254bc3",
+       "name": null,
+       "online": false
+      }
+     ],
+     "more": false
+    }
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_rail_rows_duplicate",
+   "args": {
+    "dir": "h2c",
+    "frame": {
+     "t": "rail",
+     "workspaces": [
+      {
+       "workspace_id": "833f61d283cbe988c5af01349e254bc3",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "833f61d283cbe988c5af01349e254bc3",
+       "name": null,
+       "online": false
+      }
+     ],
+     "more": false
+    }
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_rail_name_control",
+   "args": {
+    "dir": "h2c",
+    "frame": {
+     "t": "rail",
+     "workspaces": [
+      {
+       "workspace_id": "833f61d283cbe988c5af01349e254bc3",
+       "name": "Sev\u0007erin",
+       "online": false
+      }
+     ],
+     "more": false
+    }
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_rail_name_bidi",
+   "args": {
+    "dir": "h2c",
+    "frame": {
+     "t": "rail",
+     "workspaces": [
+      {
+       "workspace_id": "833f61d283cbe988c5af01349e254bc3",
+       "name": "\u202eabc",
+       "online": false
+      }
+     ],
+     "more": false
+    }
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_rail_name_too_long",
+   "args": {
+    "dir": "h2c",
+    "frame": {
+     "t": "rail",
+     "workspaces": [
+      {
+       "workspace_id": "833f61d283cbe988c5af01349e254bc3",
+       "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       "online": false
+      }
+     ],
+     "more": false
+    }
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_rail_name_empty",
+   "args": {
+    "dir": "h2c",
+    "frame": {
+     "t": "rail",
+     "workspaces": [
+      {
+       "workspace_id": "833f61d283cbe988c5af01349e254bc3",
+       "name": "",
+       "online": false
+      }
+     ],
+     "more": false
+    }
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_rail_name_padded",
+   "args": {
+    "dir": "h2c",
+    "frame": {
+     "t": "rail",
+     "workspaces": [
+      {
+       "workspace_id": "833f61d283cbe988c5af01349e254bc3",
+       "name": " ws",
+       "online": false
+      }
+     ],
+     "more": false
+    }
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_rail_online_string",
+   "args": {
+    "dir": "h2c",
+    "frame": {
+     "t": "rail",
+     "workspaces": [
+      {
+       "workspace_id": "833f61d283cbe988c5af01349e254bc3",
+       "name": null,
+       "online": "yes"
+      }
+     ],
+     "more": false
+    }
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_rail_more_without_full_page",
+   "args": {
+    "dir": "h2c",
+    "frame": {
+     "t": "rail",
+     "workspaces": [
+      {
+       "workspace_id": "833f61d283cbe988c5af01349e254bc3",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+       "name": "Severin's workspace",
+       "online": true
+      }
+     ],
+     "more": true
+    }
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_rail_over_max",
+   "args": {
+    "dir": "h2c",
+    "frame": {
+     "t": "rail",
+     "workspaces": [
+      {
+       "workspace_id": "015965b9755dbce6f468e94aca4ee73c",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "07b67da46c515841f4007e11b1def5fc",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "07e15192cd268f4771fb778c978c823a",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "0e21589f9c4bf496c7b7bfe01233baf0",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "0eee3dc6227251e8e1b039a5236483b3",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "111e33845bd2f1b7d8006af99518e282",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "113263e010e7c387d91a5c2de2b51a66",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "122c0cde1deb38085c3c52875f942c9c",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "1253631ccdf83a94f435e72b27eec210",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "13037208f86117cb2d2d8ebcfc401cdd",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "154ac654d62970e38bbcaf12972f7990",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "15dd6d9f32c935981889358c041da74d",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "1698305c9b11af4226b42832a86b1e11",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "1895d3c404364116266a84d2207bf2aa",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "1ae14aa4ce7ab7b52ee0d90fd2ab11ea",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "1e1da899d5de931f20f451b5683cd2cb",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "1f17825b8b4c6a61ad7d47cf9b925a1c",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "20df53f1288abd233621d2d6671455af",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "22b3b685bf58e2aab65d2f78b4239e3f",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "2879e92f1a56d1b4b4117bffbe37f446",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "2b7fabcec1bb0e9d007516a2912eeed6",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "32424d67ca564dca679e8e83f71d8896",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "339e6dfcec4b3475f4ee894e19c520f2",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "346bd1fb74f07736139b9d58a109a159",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "3a634c0c28a3f3870c988146795a886a",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "43bb1de4a37e6af3cad2ded8f47ec94f",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "49c624c9e80bf64d1a598a76ad2388ea",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "4c24e665342947d2cb0d3164a726ad03",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "50b48df1114d2a4f60d1113d90f2157f",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "57f4430e91d26164cf6d9159a39c8a63",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "5b930fc136276ab4f181dbdfee3e7b83",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "5cd48008a05ca7cbfb8ddff169e035b8",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "5ffb3327eb62e6228522d72b973b93e3",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "60e58f68656e92db4b6740884e18a11d",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "6211b429e4696771f4da0b0c112a8254",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "62d1263ef188e21d3e2b86eb083f9293",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "6506281f7e6e1d2fb7ca650bf4bd6c5c",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "65377e8d324de9fb1dea70e7eab6c38e",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "6792b7235af2fd4dd09d4b617aa8d8c3",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "6aad8a2283bd8578bc6893d2436719c1",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "6b46ebb00823bb0949d1f73bec8f9b8a",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "6bae0fb08fafcd4ca3cf50cd95e5c0d7",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "6c9b4d2fa042a858041ad4558106cc98",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "6e5d67928c39aa4377b68ff908687d3a",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "71e4738d9521756f10d031426509485a",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "739b7bf66c3885e73b39cbe501bd0a50",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "7973720fb18fe28e29999877f0ed23c9",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "79ebae3e32a0f7eb4c2c2ac1b7d7a3d8",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "7a5577edd76a3f6aae5a31a0c010b780",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "7d8be88509ec1b05e88a858cd3c978b6",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "7f2483dcd2bfb0a90aebc67063e04272",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "80192fd860bd8c7a59b6c55ec582112a",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "82e8c087c9950348a89d1fa58cb234d7",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "89290215dc6ccaa1ab9f86d0d2f1392a",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "8968800030098684dc25a5e8a4ac54ec",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "8ec716291fe0bd7fc62dbfb9dab2c58c",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "9078f94cbb37836af4c1a909d1b2e4fb",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "974f4adea30dc5ec70c1ed905139efe8",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "989fe0242f086c9eb1f9a52aa0feab1f",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "99798b8b260a8cd0b62cd905a885d212",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "9c9d35b68bc479de5ebb8c8711dd3f58",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "a1f5c1d2f88c796b5520f8b2439279a2",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "a207afc7cc518c90d6ddfa10519e4af9",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "a2271fb2113041b6a137650bf36e18a4",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "a47d712788d4aefeb6f4c50986b0013b",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "a85328e07961fe063a733d6896d61dae",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "aa31c781aa491ee840935f9a5724fe5a",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "ac87dcaf020491a5f5d30c0cac3f603f",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "ad756ec48cf639be57cd47125665b7e4",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "aec8bb315f8605318c25e4a7452e3bcf",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "b26c1a29ccc2fbc85b3a6bf86cbcedcf",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "b2fd00e07af966bbfbfc2dcc357d2f36",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "b392f21a9011092c43a0e15b04c3289f",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "c39df8cce4b043ee58942acd4c70875c",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "c51c9d93761a4b14c1ec4e64f9064c6c",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "c6aed708abec571f6b57f0d4449b030e",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "c7d45015b546153bdb512e170bd814ae",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "c997554feae5253bdd08fe784ab53132",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "caae75c073360728b8f92894368436fa",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "cb5c5d7dd01680c0f1829b3975973e10",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "cfaf9d1a0af1b9164f55cd3d5a5c78ee",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "d01c88ce25997bdb751460c3196a23b9",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "d1a281a5a23e75a8e393ea80263be227",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "d1ab3af1fbc5c6bf10e29ed55c1ed8f0",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "d2e7406776f738ffcb902e46c4f3a060",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "d3f1b446c2b1667d3a26215e7ce78c62",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "d47f1437564d482480edf2901ece8e0e",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "d9117850b0f9895aebfd9142a970447c",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "dd0e094b60577117fcd38a04cd76dec9",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "e314b7959be7378fa1e718c26b4dd02f",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "e334dfa996b3ff1e6b6529d5fb730bd5",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "e552402fdd1ebe05e6a10314aee545e9",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "ebbdc46ef7bf9fc36f8afc314d894b7a",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "ec727d96fda292bf6e81f2a005154861",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "f1057fb1bacf1f15d2077f4fe93cb3de",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "f2216a54f124a63cd35342373ce455db",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "f48eb56b41fef0e74bea6712c5690e38",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "f56103a3f86d1b5d76c93bf0d5c10fb1",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "f800f76e1cabc83decc6133422a47211",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "f8228822bae9e1d9b87d4b481f7e485d",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "fe8af0ea95f6e3914f7aae6afb2231e3",
+       "name": null,
+       "online": false
+      }
+     ],
+     "more": false
+    }
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_rail_missing_more",
+   "args": {
+    "dir": "h2c",
+    "frame": {
+     "t": "rail",
+     "workspaces": []
+    }
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_close_from_hub_unknown_reason",
+   "args": {
+    "dir": "h2c",
+    "frame": {
+     "t": "close",
+     "reason": "kicked"
+    }
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_wire_length_zero",
+   "args": {
+    "dir": "c2h",
+    "wire_hex": "00000000"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_wire_length_over_max",
+   "args": {
+    "dir": "c2h",
+    "wire_hex": "00018001"
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "note": "the length is refused before any payload byte is read"
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_wire_length_mismatch",
+   "args": {
+    "dir": "c2h",
+    "wire_hex": "0000000a7b2274223a22726169"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_wire_not_utf8",
+   "args": {
+    "dir": "c2h",
+    "wire_hex": "000000097b2274223a22ff227d"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_wire_duplicate_key",
+   "args": {
+    "dir": "c2h",
+    "wire_hex": "000000177b2274223a227261696c222c2274223a227261696c227d"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_wire_float",
+   "args": {
+    "dir": "c2h",
+    "wire_hex": "000000217b2274223a2268656c6c6f222c22746f6b656e223a2278222c2276223a312e307d"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_wire_array",
+   "args": {
+    "dir": "c2h",
+    "wire_hex": "000000095b2268656c6c6f225d"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_wire_nan",
+   "args": {
+    "dir": "c2h",
+    "wire_hex": "000000217b2274223a2268656c6c6f222c22746f6b656e223a2278222c2276223a4e614e7d"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "check": "client_frame",
+   "name": "client_frame_wire_not_json",
+   "args": {
+    "dir": "c2h",
+    "wire_hex": "0000000568656c6c6f"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "check": "client_rail",
+   "name": "client_rail_projection",
+   "args": {
+    "rows": [
+     {
+      "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+      "name": "Severin's workspace",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "833f61d283cbe988c5af01349e254bc3",
+      "name": null,
+      "owner_name": "Severin",
+      "mode": "selective",
+      "role": "owner",
+      "online": false,
+      "hub_reads": "shared items and summaries",
+      "can_start": false
+     }
+    ]
+   },
+   "expect": {
+    "ok": {
+     "t": "rail",
+     "workspaces": [
+      {
+       "workspace_id": "833f61d283cbe988c5af01349e254bc3",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+       "name": "Severin's workspace",
+       "online": true
+      }
+     ],
+     "more": false
+    }
+   },
+   "note": "only workspace_id, name, online: role, mode, owner, reads dropped"
+  },
+  {
+   "check": "client_rail",
+   "name": "client_rail_sorted",
+   "args": {
+    "rows": [
+     {
+      "workspace_id": "833f61d283cbe988c5af01349e254bc3",
+      "name": null,
+      "owner_name": "Severin",
+      "mode": "selective",
+      "role": "owner",
+      "online": false,
+      "hub_reads": "shared items and summaries",
+      "can_start": false
+     },
+     {
+      "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+      "name": "Severin's workspace",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     }
+    ]
+   },
+   "expect": {
+    "ok": {
+     "t": "rail",
+     "workspaces": [
+      {
+       "workspace_id": "833f61d283cbe988c5af01349e254bc3",
+       "name": null,
+       "online": false
+      },
+      {
+       "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+       "name": "Severin's workspace",
+       "online": true
+      }
+     ],
+     "more": false
+    }
+   }
+  },
+  {
+   "check": "client_rail",
+   "name": "client_rail_empty",
+   "args": {
+    "rows": []
+   },
+   "expect": {
+    "ok": {
+     "t": "rail",
+     "workspaces": [],
+     "more": false
+    }
+   }
+  },
+  {
+   "check": "client_rail",
+   "name": "client_rail_name_newline",
+   "args": {
+    "rows": [
+     {
+      "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+      "name": "Team\nnotes",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     }
+    ]
+   },
+   "expect": {
+    "ok": {
+     "t": "rail",
+     "workspaces": [
+      {
+       "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+       "name": "Team notes",
+       "online": true
+      }
+     ],
+     "more": false
+    }
+   },
+   "note": "LF becomes a space"
+  },
+  {
+   "check": "client_rail",
+   "name": "client_rail_name_cut",
+   "args": {
+    "rows": [
+     {
+      "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+      "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     }
+    ]
+   },
+   "expect": {
+    "ok": {
+     "t": "rail",
+     "workspaces": [
+      {
+       "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+       "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       "online": true
+      }
+     ],
+     "more": false
+    }
+   },
+   "note": "cut to 200 UTF-8 bytes"
+  },
+  {
+   "check": "client_rail",
+   "name": "client_rail_name_cut_char_boundary",
+   "args": {
+    "rows": [
+     {
+      "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+      "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\u00e9b",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     }
+    ]
+   },
+   "expect": {
+    "ok": {
+     "t": "rail",
+     "workspaces": [
+      {
+       "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+       "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       "online": true
+      }
+     ],
+     "more": false
+    }
+   },
+   "note": "a 2-byte character across byte 200 is dropped whole"
+  },
+  {
+   "check": "client_rail",
+   "name": "client_rail_name_blank",
+   "args": {
+    "rows": [
+     {
+      "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+      "name": "   ",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     }
+    ]
+   },
+   "expect": {
+    "ok": {
+     "t": "rail",
+     "workspaces": [
+      {
+       "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+       "name": null,
+       "online": true
+      }
+     ],
+     "more": false
+    }
+   },
+   "note": "empty after trimming: null"
+  },
+  {
+   "check": "client_rail",
+   "name": "client_rail_name_bidi_raw",
+   "args": {
+    "rows": [
+     {
+      "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+      "name": "\u202eevil",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     }
+    ]
+   },
+   "expect": {
+    "ok": {
+     "t": "rail",
+     "workspaces": [
+      {
+       "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+       "name": null,
+       "online": true
+      }
+     ],
+     "more": false
+    }
+   },
+   "note": "fails the text rule: null"
+  },
+  {
+   "check": "client_rail",
+   "name": "client_rail_name_rendered_escape",
+   "args": {
+    "rows": [
+     {
+      "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+      "name": "<U+202E>evil",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     }
+    ]
+   },
+   "expect": {
+    "ok": {
+     "t": "rail",
+     "workspaces": [
+      {
+       "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+       "name": "<U+202E>evil",
+       "online": true
+      }
+     ],
+     "more": false
+    }
+   },
+   "note": "render_text output passes as shown"
+  },
+  {
+   "check": "client_rail",
+   "name": "client_rail_online_not_bool",
+   "args": {
+    "rows": [
+     {
+      "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+      "name": "Severin's workspace",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": "bound",
+      "hub_reads": "everything",
+      "can_start": true
+     }
+    ]
+   },
+   "expect": {
+    "ok": {
+     "t": "rail",
+     "workspaces": [
+      {
+       "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+       "name": "Severin's workspace",
+       "online": false
+      }
+     ],
+     "more": false
+    }
+   },
+   "note": "anything but true is false"
+  },
+  {
+   "check": "client_rail",
+   "name": "client_rail_over_max_cut_more",
+   "args": {
+    "rows": [
+     {
+      "workspace_id": "1f17825b8b4c6a61ad7d47cf9b925a1c",
+      "name": "Workspace 0",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "13037208f86117cb2d2d8ebcfc401cdd",
+      "name": "Workspace 1",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "113263e010e7c387d91a5c2de2b51a66",
+      "name": "Workspace 2",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "d01c88ce25997bdb751460c3196a23b9",
+      "name": "Workspace 3",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "c51c9d93761a4b14c1ec4e64f9064c6c",
+      "name": "Workspace 4",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "20df53f1288abd233621d2d6671455af",
+      "name": "Workspace 5",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "6792b7235af2fd4dd09d4b617aa8d8c3",
+      "name": "Workspace 6",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "7f2483dcd2bfb0a90aebc67063e04272",
+      "name": "Workspace 7",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "b392f21a9011092c43a0e15b04c3289f",
+      "name": "Workspace 8",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "a2271fb2113041b6a137650bf36e18a4",
+      "name": "Workspace 9",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "89290215dc6ccaa1ab9f86d0d2f1392a",
+      "name": "Workspace 10",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "6c9b4d2fa042a858041ad4558106cc98",
+      "name": "Workspace 11",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "aa31c781aa491ee840935f9a5724fe5a",
+      "name": "Workspace 12",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "d1a281a5a23e75a8e393ea80263be227",
+      "name": "Workspace 13",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "d1ab3af1fbc5c6bf10e29ed55c1ed8f0",
+      "name": "Workspace 14",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "1895d3c404364116266a84d2207bf2aa",
+      "name": "Workspace 15",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "57f4430e91d26164cf6d9159a39c8a63",
+      "name": "Workspace 16",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "9c9d35b68bc479de5ebb8c8711dd3f58",
+      "name": "Workspace 17",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "aec8bb315f8605318c25e4a7452e3bcf",
+      "name": "Workspace 18",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "c7d45015b546153bdb512e170bd814ae",
+      "name": "Workspace 19",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "6b46ebb00823bb0949d1f73bec8f9b8a",
+      "name": "Workspace 20",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "8968800030098684dc25a5e8a4ac54ec",
+      "name": "Workspace 21",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "d3f1b446c2b1667d3a26215e7ce78c62",
+      "name": "Workspace 22",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "a47d712788d4aefeb6f4c50986b0013b",
+      "name": "Workspace 23",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "6506281f7e6e1d2fb7ca650bf4bd6c5c",
+      "name": "Workspace 24",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "c6aed708abec571f6b57f0d4449b030e",
+      "name": "Workspace 25",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "82e8c087c9950348a89d1fa58cb234d7",
+      "name": "Workspace 26",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "5cd48008a05ca7cbfb8ddff169e035b8",
+      "name": "Workspace 27",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "cb5c5d7dd01680c0f1829b3975973e10",
+      "name": "Workspace 28",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "1698305c9b11af4226b42832a86b1e11",
+      "name": "Workspace 29",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "f2216a54f124a63cd35342373ce455db",
+      "name": "Workspace 30",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "c997554feae5253bdd08fe784ab53132",
+      "name": "Workspace 31",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "5ffb3327eb62e6228522d72b973b93e3",
+      "name": "Workspace 32",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "dd0e094b60577117fcd38a04cd76dec9",
+      "name": "Workspace 33",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "154ac654d62970e38bbcaf12972f7990",
+      "name": "Workspace 34",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "d9117850b0f9895aebfd9142a970447c",
+      "name": "Workspace 35",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "f48eb56b41fef0e74bea6712c5690e38",
+      "name": "Workspace 36",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "6211b429e4696771f4da0b0c112a8254",
+      "name": "Workspace 37",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "49c624c9e80bf64d1a598a76ad2388ea",
+      "name": "Workspace 38",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "6aad8a2283bd8578bc6893d2436719c1",
+      "name": "Workspace 39",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "ad756ec48cf639be57cd47125665b7e4",
+      "name": "Workspace 40",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "4c24e665342947d2cb0d3164a726ad03",
+      "name": "Workspace 41",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "7973720fb18fe28e29999877f0ed23c9",
+      "name": "Workspace 42",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "b2fd00e07af966bbfbfc2dcc357d2f36",
+      "name": "Workspace 43",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "122c0cde1deb38085c3c52875f942c9c",
+      "name": "Workspace 44",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "f8228822bae9e1d9b87d4b481f7e485d",
+      "name": "Workspace 45",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "b26c1a29ccc2fbc85b3a6bf86cbcedcf",
+      "name": "Workspace 46",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "a1f5c1d2f88c796b5520f8b2439279a2",
+      "name": "Workspace 47",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "f1057fb1bacf1f15d2077f4fe93cb3de",
+      "name": "Workspace 48",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "974f4adea30dc5ec70c1ed905139efe8",
+      "name": "Workspace 49",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "a207afc7cc518c90d6ddfa10519e4af9",
+      "name": "Workspace 50",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "f56103a3f86d1b5d76c93bf0d5c10fb1",
+      "name": "Workspace 51",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "2b7fabcec1bb0e9d007516a2912eeed6",
+      "name": "Workspace 52",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "ac87dcaf020491a5f5d30c0cac3f603f",
+      "name": "Workspace 53",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "8ec716291fe0bd7fc62dbfb9dab2c58c",
+      "name": "Workspace 54",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "015965b9755dbce6f468e94aca4ee73c",
+      "name": "Workspace 55",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "caae75c073360728b8f92894368436fa",
+      "name": "Workspace 56",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "07b67da46c515841f4007e11b1def5fc",
+      "name": "Workspace 57",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "65377e8d324de9fb1dea70e7eab6c38e",
+      "name": "Workspace 58",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "989fe0242f086c9eb1f9a52aa0feab1f",
+      "name": "Workspace 59",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "ec727d96fda292bf6e81f2a005154861",
+      "name": "Workspace 60",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "50b48df1114d2a4f60d1113d90f2157f",
+      "name": "Workspace 61",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "111e33845bd2f1b7d8006af99518e282",
+      "name": "Workspace 62",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "d47f1437564d482480edf2901ece8e0e",
+      "name": "Workspace 63",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "e552402fdd1ebe05e6a10314aee545e9",
+      "name": "Workspace 64",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "0eee3dc6227251e8e1b039a5236483b3",
+      "name": "Workspace 65",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "62d1263ef188e21d3e2b86eb083f9293",
+      "name": "Workspace 66",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "d2e7406776f738ffcb902e46c4f3a060",
+      "name": "Workspace 67",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "1253631ccdf83a94f435e72b27eec210",
+      "name": "Workspace 68",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "71e4738d9521756f10d031426509485a",
+      "name": "Workspace 69",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "3a634c0c28a3f3870c988146795a886a",
+      "name": "Workspace 70",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "5b930fc136276ab4f181dbdfee3e7b83",
+      "name": "Workspace 71",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "739b7bf66c3885e73b39cbe501bd0a50",
+      "name": "Workspace 72",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "346bd1fb74f07736139b9d58a109a159",
+      "name": "Workspace 73",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "60e58f68656e92db4b6740884e18a11d",
+      "name": "Workspace 74",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "07e15192cd268f4771fb778c978c823a",
+      "name": "Workspace 75",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "32424d67ca564dca679e8e83f71d8896",
+      "name": "Workspace 76",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "339e6dfcec4b3475f4ee894e19c520f2",
+      "name": "Workspace 77",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "e334dfa996b3ff1e6b6529d5fb730bd5",
+      "name": "Workspace 78",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "1e1da899d5de931f20f451b5683cd2cb",
+      "name": "Workspace 79",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "15dd6d9f32c935981889358c041da74d",
+      "name": "Workspace 80",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "7a5577edd76a3f6aae5a31a0c010b780",
+      "name": "Workspace 81",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "43bb1de4a37e6af3cad2ded8f47ec94f",
+      "name": "Workspace 82",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "2879e92f1a56d1b4b4117bffbe37f446",
+      "name": "Workspace 83",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "c39df8cce4b043ee58942acd4c70875c",
+      "name": "Workspace 84",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "cfaf9d1a0af1b9164f55cd3d5a5c78ee",
+      "name": "Workspace 85",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "6bae0fb08fafcd4ca3cf50cd95e5c0d7",
+      "name": "Workspace 86",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "f800f76e1cabc83decc6133422a47211",
+      "name": "Workspace 87",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "7d8be88509ec1b05e88a858cd3c978b6",
+      "name": "Workspace 88",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "0e21589f9c4bf496c7b7bfe01233baf0",
+      "name": "Workspace 89",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "22b3b685bf58e2aab65d2f78b4239e3f",
+      "name": "Workspace 90",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "79ebae3e32a0f7eb4c2c2ac1b7d7a3d8",
+      "name": "Workspace 91",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "80192fd860bd8c7a59b6c55ec582112a",
+      "name": "Workspace 92",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "9078f94cbb37836af4c1a909d1b2e4fb",
+      "name": "Workspace 93",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "a85328e07961fe063a733d6896d61dae",
+      "name": "Workspace 94",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "e314b7959be7378fa1e718c26b4dd02f",
+      "name": "Workspace 95",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "99798b8b260a8cd0b62cd905a885d212",
+      "name": "Workspace 96",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "fe8af0ea95f6e3914f7aae6afb2231e3",
+      "name": "Workspace 97",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "ebbdc46ef7bf9fc36f8afc314d894b7a",
+      "name": "Workspace 98",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "6e5d67928c39aa4377b68ff908687d3a",
+      "name": "Workspace 99",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "1ae14aa4ce7ab7b52ee0d90fd2ab11ea",
+      "name": "Workspace 100",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     }
+    ]
+   },
+   "expect": {
+    "ok": {
+     "t": "rail",
+     "workspaces": [
+      {
+       "workspace_id": "015965b9755dbce6f468e94aca4ee73c",
+       "name": "Workspace 55",
+       "online": true
+      },
+      {
+       "workspace_id": "07b67da46c515841f4007e11b1def5fc",
+       "name": "Workspace 57",
+       "online": true
+      },
+      {
+       "workspace_id": "07e15192cd268f4771fb778c978c823a",
+       "name": "Workspace 75",
+       "online": true
+      },
+      {
+       "workspace_id": "0e21589f9c4bf496c7b7bfe01233baf0",
+       "name": "Workspace 89",
+       "online": true
+      },
+      {
+       "workspace_id": "0eee3dc6227251e8e1b039a5236483b3",
+       "name": "Workspace 65",
+       "online": true
+      },
+      {
+       "workspace_id": "111e33845bd2f1b7d8006af99518e282",
+       "name": "Workspace 62",
+       "online": true
+      },
+      {
+       "workspace_id": "113263e010e7c387d91a5c2de2b51a66",
+       "name": "Workspace 2",
+       "online": true
+      },
+      {
+       "workspace_id": "122c0cde1deb38085c3c52875f942c9c",
+       "name": "Workspace 44",
+       "online": true
+      },
+      {
+       "workspace_id": "1253631ccdf83a94f435e72b27eec210",
+       "name": "Workspace 68",
+       "online": true
+      },
+      {
+       "workspace_id": "13037208f86117cb2d2d8ebcfc401cdd",
+       "name": "Workspace 1",
+       "online": true
+      },
+      {
+       "workspace_id": "154ac654d62970e38bbcaf12972f7990",
+       "name": "Workspace 34",
+       "online": true
+      },
+      {
+       "workspace_id": "15dd6d9f32c935981889358c041da74d",
+       "name": "Workspace 80",
+       "online": true
+      },
+      {
+       "workspace_id": "1698305c9b11af4226b42832a86b1e11",
+       "name": "Workspace 29",
+       "online": true
+      },
+      {
+       "workspace_id": "1895d3c404364116266a84d2207bf2aa",
+       "name": "Workspace 15",
+       "online": true
+      },
+      {
+       "workspace_id": "1ae14aa4ce7ab7b52ee0d90fd2ab11ea",
+       "name": "Workspace 100",
+       "online": true
+      },
+      {
+       "workspace_id": "1e1da899d5de931f20f451b5683cd2cb",
+       "name": "Workspace 79",
+       "online": true
+      },
+      {
+       "workspace_id": "1f17825b8b4c6a61ad7d47cf9b925a1c",
+       "name": "Workspace 0",
+       "online": true
+      },
+      {
+       "workspace_id": "20df53f1288abd233621d2d6671455af",
+       "name": "Workspace 5",
+       "online": true
+      },
+      {
+       "workspace_id": "22b3b685bf58e2aab65d2f78b4239e3f",
+       "name": "Workspace 90",
+       "online": true
+      },
+      {
+       "workspace_id": "2879e92f1a56d1b4b4117bffbe37f446",
+       "name": "Workspace 83",
+       "online": true
+      },
+      {
+       "workspace_id": "2b7fabcec1bb0e9d007516a2912eeed6",
+       "name": "Workspace 52",
+       "online": true
+      },
+      {
+       "workspace_id": "32424d67ca564dca679e8e83f71d8896",
+       "name": "Workspace 76",
+       "online": true
+      },
+      {
+       "workspace_id": "339e6dfcec4b3475f4ee894e19c520f2",
+       "name": "Workspace 77",
+       "online": true
+      },
+      {
+       "workspace_id": "346bd1fb74f07736139b9d58a109a159",
+       "name": "Workspace 73",
+       "online": true
+      },
+      {
+       "workspace_id": "3a634c0c28a3f3870c988146795a886a",
+       "name": "Workspace 70",
+       "online": true
+      },
+      {
+       "workspace_id": "43bb1de4a37e6af3cad2ded8f47ec94f",
+       "name": "Workspace 82",
+       "online": true
+      },
+      {
+       "workspace_id": "49c624c9e80bf64d1a598a76ad2388ea",
+       "name": "Workspace 38",
+       "online": true
+      },
+      {
+       "workspace_id": "4c24e665342947d2cb0d3164a726ad03",
+       "name": "Workspace 41",
+       "online": true
+      },
+      {
+       "workspace_id": "50b48df1114d2a4f60d1113d90f2157f",
+       "name": "Workspace 61",
+       "online": true
+      },
+      {
+       "workspace_id": "57f4430e91d26164cf6d9159a39c8a63",
+       "name": "Workspace 16",
+       "online": true
+      },
+      {
+       "workspace_id": "5b930fc136276ab4f181dbdfee3e7b83",
+       "name": "Workspace 71",
+       "online": true
+      },
+      {
+       "workspace_id": "5cd48008a05ca7cbfb8ddff169e035b8",
+       "name": "Workspace 27",
+       "online": true
+      },
+      {
+       "workspace_id": "5ffb3327eb62e6228522d72b973b93e3",
+       "name": "Workspace 32",
+       "online": true
+      },
+      {
+       "workspace_id": "60e58f68656e92db4b6740884e18a11d",
+       "name": "Workspace 74",
+       "online": true
+      },
+      {
+       "workspace_id": "6211b429e4696771f4da0b0c112a8254",
+       "name": "Workspace 37",
+       "online": true
+      },
+      {
+       "workspace_id": "62d1263ef188e21d3e2b86eb083f9293",
+       "name": "Workspace 66",
+       "online": true
+      },
+      {
+       "workspace_id": "6506281f7e6e1d2fb7ca650bf4bd6c5c",
+       "name": "Workspace 24",
+       "online": true
+      },
+      {
+       "workspace_id": "65377e8d324de9fb1dea70e7eab6c38e",
+       "name": "Workspace 58",
+       "online": true
+      },
+      {
+       "workspace_id": "6792b7235af2fd4dd09d4b617aa8d8c3",
+       "name": "Workspace 6",
+       "online": true
+      },
+      {
+       "workspace_id": "6aad8a2283bd8578bc6893d2436719c1",
+       "name": "Workspace 39",
+       "online": true
+      },
+      {
+       "workspace_id": "6b46ebb00823bb0949d1f73bec8f9b8a",
+       "name": "Workspace 20",
+       "online": true
+      },
+      {
+       "workspace_id": "6bae0fb08fafcd4ca3cf50cd95e5c0d7",
+       "name": "Workspace 86",
+       "online": true
+      },
+      {
+       "workspace_id": "6c9b4d2fa042a858041ad4558106cc98",
+       "name": "Workspace 11",
+       "online": true
+      },
+      {
+       "workspace_id": "6e5d67928c39aa4377b68ff908687d3a",
+       "name": "Workspace 99",
+       "online": true
+      },
+      {
+       "workspace_id": "71e4738d9521756f10d031426509485a",
+       "name": "Workspace 69",
+       "online": true
+      },
+      {
+       "workspace_id": "739b7bf66c3885e73b39cbe501bd0a50",
+       "name": "Workspace 72",
+       "online": true
+      },
+      {
+       "workspace_id": "7973720fb18fe28e29999877f0ed23c9",
+       "name": "Workspace 42",
+       "online": true
+      },
+      {
+       "workspace_id": "79ebae3e32a0f7eb4c2c2ac1b7d7a3d8",
+       "name": "Workspace 91",
+       "online": true
+      },
+      {
+       "workspace_id": "7a5577edd76a3f6aae5a31a0c010b780",
+       "name": "Workspace 81",
+       "online": true
+      },
+      {
+       "workspace_id": "7d8be88509ec1b05e88a858cd3c978b6",
+       "name": "Workspace 88",
+       "online": true
+      },
+      {
+       "workspace_id": "7f2483dcd2bfb0a90aebc67063e04272",
+       "name": "Workspace 7",
+       "online": true
+      },
+      {
+       "workspace_id": "80192fd860bd8c7a59b6c55ec582112a",
+       "name": "Workspace 92",
+       "online": true
+      },
+      {
+       "workspace_id": "82e8c087c9950348a89d1fa58cb234d7",
+       "name": "Workspace 26",
+       "online": true
+      },
+      {
+       "workspace_id": "89290215dc6ccaa1ab9f86d0d2f1392a",
+       "name": "Workspace 10",
+       "online": true
+      },
+      {
+       "workspace_id": "8968800030098684dc25a5e8a4ac54ec",
+       "name": "Workspace 21",
+       "online": true
+      },
+      {
+       "workspace_id": "8ec716291fe0bd7fc62dbfb9dab2c58c",
+       "name": "Workspace 54",
+       "online": true
+      },
+      {
+       "workspace_id": "9078f94cbb37836af4c1a909d1b2e4fb",
+       "name": "Workspace 93",
+       "online": true
+      },
+      {
+       "workspace_id": "974f4adea30dc5ec70c1ed905139efe8",
+       "name": "Workspace 49",
+       "online": true
+      },
+      {
+       "workspace_id": "989fe0242f086c9eb1f9a52aa0feab1f",
+       "name": "Workspace 59",
+       "online": true
+      },
+      {
+       "workspace_id": "99798b8b260a8cd0b62cd905a885d212",
+       "name": "Workspace 96",
+       "online": true
+      },
+      {
+       "workspace_id": "9c9d35b68bc479de5ebb8c8711dd3f58",
+       "name": "Workspace 17",
+       "online": true
+      },
+      {
+       "workspace_id": "a1f5c1d2f88c796b5520f8b2439279a2",
+       "name": "Workspace 47",
+       "online": true
+      },
+      {
+       "workspace_id": "a207afc7cc518c90d6ddfa10519e4af9",
+       "name": "Workspace 50",
+       "online": true
+      },
+      {
+       "workspace_id": "a2271fb2113041b6a137650bf36e18a4",
+       "name": "Workspace 9",
+       "online": true
+      },
+      {
+       "workspace_id": "a47d712788d4aefeb6f4c50986b0013b",
+       "name": "Workspace 23",
+       "online": true
+      },
+      {
+       "workspace_id": "a85328e07961fe063a733d6896d61dae",
+       "name": "Workspace 94",
+       "online": true
+      },
+      {
+       "workspace_id": "aa31c781aa491ee840935f9a5724fe5a",
+       "name": "Workspace 12",
+       "online": true
+      },
+      {
+       "workspace_id": "ac87dcaf020491a5f5d30c0cac3f603f",
+       "name": "Workspace 53",
+       "online": true
+      },
+      {
+       "workspace_id": "ad756ec48cf639be57cd47125665b7e4",
+       "name": "Workspace 40",
+       "online": true
+      },
+      {
+       "workspace_id": "aec8bb315f8605318c25e4a7452e3bcf",
+       "name": "Workspace 18",
+       "online": true
+      },
+      {
+       "workspace_id": "b26c1a29ccc2fbc85b3a6bf86cbcedcf",
+       "name": "Workspace 46",
+       "online": true
+      },
+      {
+       "workspace_id": "b2fd00e07af966bbfbfc2dcc357d2f36",
+       "name": "Workspace 43",
+       "online": true
+      },
+      {
+       "workspace_id": "b392f21a9011092c43a0e15b04c3289f",
+       "name": "Workspace 8",
+       "online": true
+      },
+      {
+       "workspace_id": "c39df8cce4b043ee58942acd4c70875c",
+       "name": "Workspace 84",
+       "online": true
+      },
+      {
+       "workspace_id": "c51c9d93761a4b14c1ec4e64f9064c6c",
+       "name": "Workspace 4",
+       "online": true
+      },
+      {
+       "workspace_id": "c6aed708abec571f6b57f0d4449b030e",
+       "name": "Workspace 25",
+       "online": true
+      },
+      {
+       "workspace_id": "c7d45015b546153bdb512e170bd814ae",
+       "name": "Workspace 19",
+       "online": true
+      },
+      {
+       "workspace_id": "c997554feae5253bdd08fe784ab53132",
+       "name": "Workspace 31",
+       "online": true
+      },
+      {
+       "workspace_id": "caae75c073360728b8f92894368436fa",
+       "name": "Workspace 56",
+       "online": true
+      },
+      {
+       "workspace_id": "cb5c5d7dd01680c0f1829b3975973e10",
+       "name": "Workspace 28",
+       "online": true
+      },
+      {
+       "workspace_id": "cfaf9d1a0af1b9164f55cd3d5a5c78ee",
+       "name": "Workspace 85",
+       "online": true
+      },
+      {
+       "workspace_id": "d01c88ce25997bdb751460c3196a23b9",
+       "name": "Workspace 3",
+       "online": true
+      },
+      {
+       "workspace_id": "d1a281a5a23e75a8e393ea80263be227",
+       "name": "Workspace 13",
+       "online": true
+      },
+      {
+       "workspace_id": "d1ab3af1fbc5c6bf10e29ed55c1ed8f0",
+       "name": "Workspace 14",
+       "online": true
+      },
+      {
+       "workspace_id": "d2e7406776f738ffcb902e46c4f3a060",
+       "name": "Workspace 67",
+       "online": true
+      },
+      {
+       "workspace_id": "d3f1b446c2b1667d3a26215e7ce78c62",
+       "name": "Workspace 22",
+       "online": true
+      },
+      {
+       "workspace_id": "d47f1437564d482480edf2901ece8e0e",
+       "name": "Workspace 63",
+       "online": true
+      },
+      {
+       "workspace_id": "d9117850b0f9895aebfd9142a970447c",
+       "name": "Workspace 35",
+       "online": true
+      },
+      {
+       "workspace_id": "dd0e094b60577117fcd38a04cd76dec9",
+       "name": "Workspace 33",
+       "online": true
+      },
+      {
+       "workspace_id": "e314b7959be7378fa1e718c26b4dd02f",
+       "name": "Workspace 95",
+       "online": true
+      },
+      {
+       "workspace_id": "e334dfa996b3ff1e6b6529d5fb730bd5",
+       "name": "Workspace 78",
+       "online": true
+      },
+      {
+       "workspace_id": "e552402fdd1ebe05e6a10314aee545e9",
+       "name": "Workspace 64",
+       "online": true
+      },
+      {
+       "workspace_id": "ebbdc46ef7bf9fc36f8afc314d894b7a",
+       "name": "Workspace 98",
+       "online": true
+      },
+      {
+       "workspace_id": "ec727d96fda292bf6e81f2a005154861",
+       "name": "Workspace 60",
+       "online": true
+      },
+      {
+       "workspace_id": "f1057fb1bacf1f15d2077f4fe93cb3de",
+       "name": "Workspace 48",
+       "online": true
+      },
+      {
+       "workspace_id": "f2216a54f124a63cd35342373ce455db",
+       "name": "Workspace 30",
+       "online": true
+      },
+      {
+       "workspace_id": "f48eb56b41fef0e74bea6712c5690e38",
+       "name": "Workspace 36",
+       "online": true
+      },
+      {
+       "workspace_id": "f56103a3f86d1b5d76c93bf0d5c10fb1",
+       "name": "Workspace 51",
+       "online": true
+      },
+      {
+       "workspace_id": "f800f76e1cabc83decc6133422a47211",
+       "name": "Workspace 87",
+       "online": true
+      },
+      {
+       "workspace_id": "f8228822bae9e1d9b87d4b481f7e485d",
+       "name": "Workspace 45",
+       "online": true
+      }
+     ],
+     "more": true
+    }
+   },
+   "note": "first 100 by workspace_id, more: true"
+  },
+  {
+   "check": "client_rail",
+   "name": "client_rail_exactly_max",
+   "args": {
+    "rows": [
+     {
+      "workspace_id": "1f17825b8b4c6a61ad7d47cf9b925a1c",
+      "name": "Workspace 0",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "13037208f86117cb2d2d8ebcfc401cdd",
+      "name": "Workspace 1",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "113263e010e7c387d91a5c2de2b51a66",
+      "name": "Workspace 2",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "d01c88ce25997bdb751460c3196a23b9",
+      "name": "Workspace 3",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "c51c9d93761a4b14c1ec4e64f9064c6c",
+      "name": "Workspace 4",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "20df53f1288abd233621d2d6671455af",
+      "name": "Workspace 5",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "6792b7235af2fd4dd09d4b617aa8d8c3",
+      "name": "Workspace 6",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "7f2483dcd2bfb0a90aebc67063e04272",
+      "name": "Workspace 7",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "b392f21a9011092c43a0e15b04c3289f",
+      "name": "Workspace 8",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "a2271fb2113041b6a137650bf36e18a4",
+      "name": "Workspace 9",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "89290215dc6ccaa1ab9f86d0d2f1392a",
+      "name": "Workspace 10",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "6c9b4d2fa042a858041ad4558106cc98",
+      "name": "Workspace 11",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "aa31c781aa491ee840935f9a5724fe5a",
+      "name": "Workspace 12",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "d1a281a5a23e75a8e393ea80263be227",
+      "name": "Workspace 13",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "d1ab3af1fbc5c6bf10e29ed55c1ed8f0",
+      "name": "Workspace 14",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "1895d3c404364116266a84d2207bf2aa",
+      "name": "Workspace 15",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "57f4430e91d26164cf6d9159a39c8a63",
+      "name": "Workspace 16",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "9c9d35b68bc479de5ebb8c8711dd3f58",
+      "name": "Workspace 17",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "aec8bb315f8605318c25e4a7452e3bcf",
+      "name": "Workspace 18",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "c7d45015b546153bdb512e170bd814ae",
+      "name": "Workspace 19",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "6b46ebb00823bb0949d1f73bec8f9b8a",
+      "name": "Workspace 20",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "8968800030098684dc25a5e8a4ac54ec",
+      "name": "Workspace 21",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "d3f1b446c2b1667d3a26215e7ce78c62",
+      "name": "Workspace 22",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "a47d712788d4aefeb6f4c50986b0013b",
+      "name": "Workspace 23",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "6506281f7e6e1d2fb7ca650bf4bd6c5c",
+      "name": "Workspace 24",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "c6aed708abec571f6b57f0d4449b030e",
+      "name": "Workspace 25",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "82e8c087c9950348a89d1fa58cb234d7",
+      "name": "Workspace 26",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "5cd48008a05ca7cbfb8ddff169e035b8",
+      "name": "Workspace 27",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "cb5c5d7dd01680c0f1829b3975973e10",
+      "name": "Workspace 28",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "1698305c9b11af4226b42832a86b1e11",
+      "name": "Workspace 29",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "f2216a54f124a63cd35342373ce455db",
+      "name": "Workspace 30",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "c997554feae5253bdd08fe784ab53132",
+      "name": "Workspace 31",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "5ffb3327eb62e6228522d72b973b93e3",
+      "name": "Workspace 32",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "dd0e094b60577117fcd38a04cd76dec9",
+      "name": "Workspace 33",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "154ac654d62970e38bbcaf12972f7990",
+      "name": "Workspace 34",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "d9117850b0f9895aebfd9142a970447c",
+      "name": "Workspace 35",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "f48eb56b41fef0e74bea6712c5690e38",
+      "name": "Workspace 36",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "6211b429e4696771f4da0b0c112a8254",
+      "name": "Workspace 37",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "49c624c9e80bf64d1a598a76ad2388ea",
+      "name": "Workspace 38",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "6aad8a2283bd8578bc6893d2436719c1",
+      "name": "Workspace 39",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "ad756ec48cf639be57cd47125665b7e4",
+      "name": "Workspace 40",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "4c24e665342947d2cb0d3164a726ad03",
+      "name": "Workspace 41",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "7973720fb18fe28e29999877f0ed23c9",
+      "name": "Workspace 42",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "b2fd00e07af966bbfbfc2dcc357d2f36",
+      "name": "Workspace 43",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "122c0cde1deb38085c3c52875f942c9c",
+      "name": "Workspace 44",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "f8228822bae9e1d9b87d4b481f7e485d",
+      "name": "Workspace 45",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "b26c1a29ccc2fbc85b3a6bf86cbcedcf",
+      "name": "Workspace 46",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "a1f5c1d2f88c796b5520f8b2439279a2",
+      "name": "Workspace 47",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "f1057fb1bacf1f15d2077f4fe93cb3de",
+      "name": "Workspace 48",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "974f4adea30dc5ec70c1ed905139efe8",
+      "name": "Workspace 49",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "a207afc7cc518c90d6ddfa10519e4af9",
+      "name": "Workspace 50",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "f56103a3f86d1b5d76c93bf0d5c10fb1",
+      "name": "Workspace 51",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "2b7fabcec1bb0e9d007516a2912eeed6",
+      "name": "Workspace 52",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "ac87dcaf020491a5f5d30c0cac3f603f",
+      "name": "Workspace 53",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "8ec716291fe0bd7fc62dbfb9dab2c58c",
+      "name": "Workspace 54",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "015965b9755dbce6f468e94aca4ee73c",
+      "name": "Workspace 55",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "caae75c073360728b8f92894368436fa",
+      "name": "Workspace 56",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "07b67da46c515841f4007e11b1def5fc",
+      "name": "Workspace 57",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "65377e8d324de9fb1dea70e7eab6c38e",
+      "name": "Workspace 58",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "989fe0242f086c9eb1f9a52aa0feab1f",
+      "name": "Workspace 59",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "ec727d96fda292bf6e81f2a005154861",
+      "name": "Workspace 60",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "50b48df1114d2a4f60d1113d90f2157f",
+      "name": "Workspace 61",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "111e33845bd2f1b7d8006af99518e282",
+      "name": "Workspace 62",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "d47f1437564d482480edf2901ece8e0e",
+      "name": "Workspace 63",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "e552402fdd1ebe05e6a10314aee545e9",
+      "name": "Workspace 64",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "0eee3dc6227251e8e1b039a5236483b3",
+      "name": "Workspace 65",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "62d1263ef188e21d3e2b86eb083f9293",
+      "name": "Workspace 66",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "d2e7406776f738ffcb902e46c4f3a060",
+      "name": "Workspace 67",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "1253631ccdf83a94f435e72b27eec210",
+      "name": "Workspace 68",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "71e4738d9521756f10d031426509485a",
+      "name": "Workspace 69",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "3a634c0c28a3f3870c988146795a886a",
+      "name": "Workspace 70",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "5b930fc136276ab4f181dbdfee3e7b83",
+      "name": "Workspace 71",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "739b7bf66c3885e73b39cbe501bd0a50",
+      "name": "Workspace 72",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "346bd1fb74f07736139b9d58a109a159",
+      "name": "Workspace 73",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "60e58f68656e92db4b6740884e18a11d",
+      "name": "Workspace 74",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "07e15192cd268f4771fb778c978c823a",
+      "name": "Workspace 75",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "32424d67ca564dca679e8e83f71d8896",
+      "name": "Workspace 76",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "339e6dfcec4b3475f4ee894e19c520f2",
+      "name": "Workspace 77",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "e334dfa996b3ff1e6b6529d5fb730bd5",
+      "name": "Workspace 78",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "1e1da899d5de931f20f451b5683cd2cb",
+      "name": "Workspace 79",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "15dd6d9f32c935981889358c041da74d",
+      "name": "Workspace 80",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "7a5577edd76a3f6aae5a31a0c010b780",
+      "name": "Workspace 81",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "43bb1de4a37e6af3cad2ded8f47ec94f",
+      "name": "Workspace 82",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "2879e92f1a56d1b4b4117bffbe37f446",
+      "name": "Workspace 83",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "c39df8cce4b043ee58942acd4c70875c",
+      "name": "Workspace 84",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "cfaf9d1a0af1b9164f55cd3d5a5c78ee",
+      "name": "Workspace 85",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "6bae0fb08fafcd4ca3cf50cd95e5c0d7",
+      "name": "Workspace 86",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "f800f76e1cabc83decc6133422a47211",
+      "name": "Workspace 87",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "7d8be88509ec1b05e88a858cd3c978b6",
+      "name": "Workspace 88",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "0e21589f9c4bf496c7b7bfe01233baf0",
+      "name": "Workspace 89",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "22b3b685bf58e2aab65d2f78b4239e3f",
+      "name": "Workspace 90",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "79ebae3e32a0f7eb4c2c2ac1b7d7a3d8",
+      "name": "Workspace 91",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "80192fd860bd8c7a59b6c55ec582112a",
+      "name": "Workspace 92",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "9078f94cbb37836af4c1a909d1b2e4fb",
+      "name": "Workspace 93",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "a85328e07961fe063a733d6896d61dae",
+      "name": "Workspace 94",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "e314b7959be7378fa1e718c26b4dd02f",
+      "name": "Workspace 95",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "99798b8b260a8cd0b62cd905a885d212",
+      "name": "Workspace 96",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "fe8af0ea95f6e3914f7aae6afb2231e3",
+      "name": "Workspace 97",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "ebbdc46ef7bf9fc36f8afc314d894b7a",
+      "name": "Workspace 98",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     },
+     {
+      "workspace_id": "6e5d67928c39aa4377b68ff908687d3a",
+      "name": "Workspace 99",
+      "owner_name": "Severin",
+      "mode": "full",
+      "role": "owner",
+      "online": true,
+      "hub_reads": "everything",
+      "can_start": true
+     }
+    ]
+   },
+   "expect": {
+    "ok": {
+     "t": "rail",
+     "workspaces": [
+      {
+       "workspace_id": "015965b9755dbce6f468e94aca4ee73c",
+       "name": "Workspace 55",
+       "online": true
+      },
+      {
+       "workspace_id": "07b67da46c515841f4007e11b1def5fc",
+       "name": "Workspace 57",
+       "online": true
+      },
+      {
+       "workspace_id": "07e15192cd268f4771fb778c978c823a",
+       "name": "Workspace 75",
+       "online": true
+      },
+      {
+       "workspace_id": "0e21589f9c4bf496c7b7bfe01233baf0",
+       "name": "Workspace 89",
+       "online": true
+      },
+      {
+       "workspace_id": "0eee3dc6227251e8e1b039a5236483b3",
+       "name": "Workspace 65",
+       "online": true
+      },
+      {
+       "workspace_id": "111e33845bd2f1b7d8006af99518e282",
+       "name": "Workspace 62",
+       "online": true
+      },
+      {
+       "workspace_id": "113263e010e7c387d91a5c2de2b51a66",
+       "name": "Workspace 2",
+       "online": true
+      },
+      {
+       "workspace_id": "122c0cde1deb38085c3c52875f942c9c",
+       "name": "Workspace 44",
+       "online": true
+      },
+      {
+       "workspace_id": "1253631ccdf83a94f435e72b27eec210",
+       "name": "Workspace 68",
+       "online": true
+      },
+      {
+       "workspace_id": "13037208f86117cb2d2d8ebcfc401cdd",
+       "name": "Workspace 1",
+       "online": true
+      },
+      {
+       "workspace_id": "154ac654d62970e38bbcaf12972f7990",
+       "name": "Workspace 34",
+       "online": true
+      },
+      {
+       "workspace_id": "15dd6d9f32c935981889358c041da74d",
+       "name": "Workspace 80",
+       "online": true
+      },
+      {
+       "workspace_id": "1698305c9b11af4226b42832a86b1e11",
+       "name": "Workspace 29",
+       "online": true
+      },
+      {
+       "workspace_id": "1895d3c404364116266a84d2207bf2aa",
+       "name": "Workspace 15",
+       "online": true
+      },
+      {
+       "workspace_id": "1e1da899d5de931f20f451b5683cd2cb",
+       "name": "Workspace 79",
+       "online": true
+      },
+      {
+       "workspace_id": "1f17825b8b4c6a61ad7d47cf9b925a1c",
+       "name": "Workspace 0",
+       "online": true
+      },
+      {
+       "workspace_id": "20df53f1288abd233621d2d6671455af",
+       "name": "Workspace 5",
+       "online": true
+      },
+      {
+       "workspace_id": "22b3b685bf58e2aab65d2f78b4239e3f",
+       "name": "Workspace 90",
+       "online": true
+      },
+      {
+       "workspace_id": "2879e92f1a56d1b4b4117bffbe37f446",
+       "name": "Workspace 83",
+       "online": true
+      },
+      {
+       "workspace_id": "2b7fabcec1bb0e9d007516a2912eeed6",
+       "name": "Workspace 52",
+       "online": true
+      },
+      {
+       "workspace_id": "32424d67ca564dca679e8e83f71d8896",
+       "name": "Workspace 76",
+       "online": true
+      },
+      {
+       "workspace_id": "339e6dfcec4b3475f4ee894e19c520f2",
+       "name": "Workspace 77",
+       "online": true
+      },
+      {
+       "workspace_id": "346bd1fb74f07736139b9d58a109a159",
+       "name": "Workspace 73",
+       "online": true
+      },
+      {
+       "workspace_id": "3a634c0c28a3f3870c988146795a886a",
+       "name": "Workspace 70",
+       "online": true
+      },
+      {
+       "workspace_id": "43bb1de4a37e6af3cad2ded8f47ec94f",
+       "name": "Workspace 82",
+       "online": true
+      },
+      {
+       "workspace_id": "49c624c9e80bf64d1a598a76ad2388ea",
+       "name": "Workspace 38",
+       "online": true
+      },
+      {
+       "workspace_id": "4c24e665342947d2cb0d3164a726ad03",
+       "name": "Workspace 41",
+       "online": true
+      },
+      {
+       "workspace_id": "50b48df1114d2a4f60d1113d90f2157f",
+       "name": "Workspace 61",
+       "online": true
+      },
+      {
+       "workspace_id": "57f4430e91d26164cf6d9159a39c8a63",
+       "name": "Workspace 16",
+       "online": true
+      },
+      {
+       "workspace_id": "5b930fc136276ab4f181dbdfee3e7b83",
+       "name": "Workspace 71",
+       "online": true
+      },
+      {
+       "workspace_id": "5cd48008a05ca7cbfb8ddff169e035b8",
+       "name": "Workspace 27",
+       "online": true
+      },
+      {
+       "workspace_id": "5ffb3327eb62e6228522d72b973b93e3",
+       "name": "Workspace 32",
+       "online": true
+      },
+      {
+       "workspace_id": "60e58f68656e92db4b6740884e18a11d",
+       "name": "Workspace 74",
+       "online": true
+      },
+      {
+       "workspace_id": "6211b429e4696771f4da0b0c112a8254",
+       "name": "Workspace 37",
+       "online": true
+      },
+      {
+       "workspace_id": "62d1263ef188e21d3e2b86eb083f9293",
+       "name": "Workspace 66",
+       "online": true
+      },
+      {
+       "workspace_id": "6506281f7e6e1d2fb7ca650bf4bd6c5c",
+       "name": "Workspace 24",
+       "online": true
+      },
+      {
+       "workspace_id": "65377e8d324de9fb1dea70e7eab6c38e",
+       "name": "Workspace 58",
+       "online": true
+      },
+      {
+       "workspace_id": "6792b7235af2fd4dd09d4b617aa8d8c3",
+       "name": "Workspace 6",
+       "online": true
+      },
+      {
+       "workspace_id": "6aad8a2283bd8578bc6893d2436719c1",
+       "name": "Workspace 39",
+       "online": true
+      },
+      {
+       "workspace_id": "6b46ebb00823bb0949d1f73bec8f9b8a",
+       "name": "Workspace 20",
+       "online": true
+      },
+      {
+       "workspace_id": "6bae0fb08fafcd4ca3cf50cd95e5c0d7",
+       "name": "Workspace 86",
+       "online": true
+      },
+      {
+       "workspace_id": "6c9b4d2fa042a858041ad4558106cc98",
+       "name": "Workspace 11",
+       "online": true
+      },
+      {
+       "workspace_id": "6e5d67928c39aa4377b68ff908687d3a",
+       "name": "Workspace 99",
+       "online": true
+      },
+      {
+       "workspace_id": "71e4738d9521756f10d031426509485a",
+       "name": "Workspace 69",
+       "online": true
+      },
+      {
+       "workspace_id": "739b7bf66c3885e73b39cbe501bd0a50",
+       "name": "Workspace 72",
+       "online": true
+      },
+      {
+       "workspace_id": "7973720fb18fe28e29999877f0ed23c9",
+       "name": "Workspace 42",
+       "online": true
+      },
+      {
+       "workspace_id": "79ebae3e32a0f7eb4c2c2ac1b7d7a3d8",
+       "name": "Workspace 91",
+       "online": true
+      },
+      {
+       "workspace_id": "7a5577edd76a3f6aae5a31a0c010b780",
+       "name": "Workspace 81",
+       "online": true
+      },
+      {
+       "workspace_id": "7d8be88509ec1b05e88a858cd3c978b6",
+       "name": "Workspace 88",
+       "online": true
+      },
+      {
+       "workspace_id": "7f2483dcd2bfb0a90aebc67063e04272",
+       "name": "Workspace 7",
+       "online": true
+      },
+      {
+       "workspace_id": "80192fd860bd8c7a59b6c55ec582112a",
+       "name": "Workspace 92",
+       "online": true
+      },
+      {
+       "workspace_id": "82e8c087c9950348a89d1fa58cb234d7",
+       "name": "Workspace 26",
+       "online": true
+      },
+      {
+       "workspace_id": "89290215dc6ccaa1ab9f86d0d2f1392a",
+       "name": "Workspace 10",
+       "online": true
+      },
+      {
+       "workspace_id": "8968800030098684dc25a5e8a4ac54ec",
+       "name": "Workspace 21",
+       "online": true
+      },
+      {
+       "workspace_id": "8ec716291fe0bd7fc62dbfb9dab2c58c",
+       "name": "Workspace 54",
+       "online": true
+      },
+      {
+       "workspace_id": "9078f94cbb37836af4c1a909d1b2e4fb",
+       "name": "Workspace 93",
+       "online": true
+      },
+      {
+       "workspace_id": "974f4adea30dc5ec70c1ed905139efe8",
+       "name": "Workspace 49",
+       "online": true
+      },
+      {
+       "workspace_id": "989fe0242f086c9eb1f9a52aa0feab1f",
+       "name": "Workspace 59",
+       "online": true
+      },
+      {
+       "workspace_id": "99798b8b260a8cd0b62cd905a885d212",
+       "name": "Workspace 96",
+       "online": true
+      },
+      {
+       "workspace_id": "9c9d35b68bc479de5ebb8c8711dd3f58",
+       "name": "Workspace 17",
+       "online": true
+      },
+      {
+       "workspace_id": "a1f5c1d2f88c796b5520f8b2439279a2",
+       "name": "Workspace 47",
+       "online": true
+      },
+      {
+       "workspace_id": "a207afc7cc518c90d6ddfa10519e4af9",
+       "name": "Workspace 50",
+       "online": true
+      },
+      {
+       "workspace_id": "a2271fb2113041b6a137650bf36e18a4",
+       "name": "Workspace 9",
+       "online": true
+      },
+      {
+       "workspace_id": "a47d712788d4aefeb6f4c50986b0013b",
+       "name": "Workspace 23",
+       "online": true
+      },
+      {
+       "workspace_id": "a85328e07961fe063a733d6896d61dae",
+       "name": "Workspace 94",
+       "online": true
+      },
+      {
+       "workspace_id": "aa31c781aa491ee840935f9a5724fe5a",
+       "name": "Workspace 12",
+       "online": true
+      },
+      {
+       "workspace_id": "ac87dcaf020491a5f5d30c0cac3f603f",
+       "name": "Workspace 53",
+       "online": true
+      },
+      {
+       "workspace_id": "ad756ec48cf639be57cd47125665b7e4",
+       "name": "Workspace 40",
+       "online": true
+      },
+      {
+       "workspace_id": "aec8bb315f8605318c25e4a7452e3bcf",
+       "name": "Workspace 18",
+       "online": true
+      },
+      {
+       "workspace_id": "b26c1a29ccc2fbc85b3a6bf86cbcedcf",
+       "name": "Workspace 46",
+       "online": true
+      },
+      {
+       "workspace_id": "b2fd00e07af966bbfbfc2dcc357d2f36",
+       "name": "Workspace 43",
+       "online": true
+      },
+      {
+       "workspace_id": "b392f21a9011092c43a0e15b04c3289f",
+       "name": "Workspace 8",
+       "online": true
+      },
+      {
+       "workspace_id": "c39df8cce4b043ee58942acd4c70875c",
+       "name": "Workspace 84",
+       "online": true
+      },
+      {
+       "workspace_id": "c51c9d93761a4b14c1ec4e64f9064c6c",
+       "name": "Workspace 4",
+       "online": true
+      },
+      {
+       "workspace_id": "c6aed708abec571f6b57f0d4449b030e",
+       "name": "Workspace 25",
+       "online": true
+      },
+      {
+       "workspace_id": "c7d45015b546153bdb512e170bd814ae",
+       "name": "Workspace 19",
+       "online": true
+      },
+      {
+       "workspace_id": "c997554feae5253bdd08fe784ab53132",
+       "name": "Workspace 31",
+       "online": true
+      },
+      {
+       "workspace_id": "caae75c073360728b8f92894368436fa",
+       "name": "Workspace 56",
+       "online": true
+      },
+      {
+       "workspace_id": "cb5c5d7dd01680c0f1829b3975973e10",
+       "name": "Workspace 28",
+       "online": true
+      },
+      {
+       "workspace_id": "cfaf9d1a0af1b9164f55cd3d5a5c78ee",
+       "name": "Workspace 85",
+       "online": true
+      },
+      {
+       "workspace_id": "d01c88ce25997bdb751460c3196a23b9",
+       "name": "Workspace 3",
+       "online": true
+      },
+      {
+       "workspace_id": "d1a281a5a23e75a8e393ea80263be227",
+       "name": "Workspace 13",
+       "online": true
+      },
+      {
+       "workspace_id": "d1ab3af1fbc5c6bf10e29ed55c1ed8f0",
+       "name": "Workspace 14",
+       "online": true
+      },
+      {
+       "workspace_id": "d2e7406776f738ffcb902e46c4f3a060",
+       "name": "Workspace 67",
+       "online": true
+      },
+      {
+       "workspace_id": "d3f1b446c2b1667d3a26215e7ce78c62",
+       "name": "Workspace 22",
+       "online": true
+      },
+      {
+       "workspace_id": "d47f1437564d482480edf2901ece8e0e",
+       "name": "Workspace 63",
+       "online": true
+      },
+      {
+       "workspace_id": "d9117850b0f9895aebfd9142a970447c",
+       "name": "Workspace 35",
+       "online": true
+      },
+      {
+       "workspace_id": "dd0e094b60577117fcd38a04cd76dec9",
+       "name": "Workspace 33",
+       "online": true
+      },
+      {
+       "workspace_id": "e314b7959be7378fa1e718c26b4dd02f",
+       "name": "Workspace 95",
+       "online": true
+      },
+      {
+       "workspace_id": "e334dfa996b3ff1e6b6529d5fb730bd5",
+       "name": "Workspace 78",
+       "online": true
+      },
+      {
+       "workspace_id": "e552402fdd1ebe05e6a10314aee545e9",
+       "name": "Workspace 64",
+       "online": true
+      },
+      {
+       "workspace_id": "ebbdc46ef7bf9fc36f8afc314d894b7a",
+       "name": "Workspace 98",
+       "online": true
+      },
+      {
+       "workspace_id": "ec727d96fda292bf6e81f2a005154861",
+       "name": "Workspace 60",
+       "online": true
+      },
+      {
+       "workspace_id": "f1057fb1bacf1f15d2077f4fe93cb3de",
+       "name": "Workspace 48",
+       "online": true
+      },
+      {
+       "workspace_id": "f2216a54f124a63cd35342373ce455db",
+       "name": "Workspace 30",
+       "online": true
+      },
+      {
+       "workspace_id": "f48eb56b41fef0e74bea6712c5690e38",
+       "name": "Workspace 36",
+       "online": true
+      },
+      {
+       "workspace_id": "f56103a3f86d1b5d76c93bf0d5c10fb1",
+       "name": "Workspace 51",
+       "online": true
+      },
+      {
+       "workspace_id": "f800f76e1cabc83decc6133422a47211",
+       "name": "Workspace 87",
+       "online": true
+      },
+      {
+       "workspace_id": "f8228822bae9e1d9b87d4b481f7e485d",
+       "name": "Workspace 45",
+       "online": true
+      },
+      {
+       "workspace_id": "fe8af0ea95f6e3914f7aae6afb2231e3",
+       "name": "Workspace 97",
+       "online": true
+      }
+     ],
+     "more": false
+    }
+   },
+   "note": "more: false"
+  },
+  {
+   "check": "client_seq",
+   "name": "client_seq_session",
+   "args": {
+    "endpoint": true,
+    "frames": [
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "hello",
+       "v": 1,
+       "token": "tok-remote"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "ready",
+       "hub_id": "5204b6091c616bc615ddba3107e6255c"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "open",
+       "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+       "device_id": "rd_6be572e1241672d2a48515fb6eca992b",
+       "kind": "session"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "opened",
+       "stream_id": "2edc92539206351c997ef280c35402ee"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "data",
+       "b": "yhgDhq5nJxMrdZKStUarOo8K-MlcfdaLjR_L-2EyPGJ39ojE5Tl0ivlTDBBKoNTzwnAvdYVF14oodJYgVAWiJyVgPJSSc9LYs6uVg-k02mPohjw-RszKhlHTUFcedFql"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "data",
+       "b": "KSIsrfAmFJEVrosNMpYIYAEmjLko9QmutDQHuhnLQE4vUqqnLV5KagwzRGdnu_M_5DWyQDFnMgTfxOAuwZeJ3YiWaLvUyrysIMfreshEynE"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "close",
+       "reason": "closed"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "close",
+       "reason": "closed"
+      }
+     }
+    ]
+   },
+   "expect": {
+    "results": [
+     "ok",
+     "ok",
+     "ok",
+     "ok",
+     "ok",
+     "ok",
+     "ok",
+     "ok"
+    ],
+    "end": "ended"
+   },
+   "note": "the hub draws stream_id: a replay compares opened.stream_id with the id of its stream_open; the hub answers the client's close with the same close"
+  },
+  {
+   "check": "client_seq",
+   "name": "client_seq_rail_then_open",
+   "args": {
+    "endpoint": true,
+    "frames": [
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "hello",
+       "v": 1,
+       "token": "tok-remote"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "ready",
+       "hub_id": "5204b6091c616bc615ddba3107e6255c"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "rail"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "rail",
+       "workspaces": [
+        {
+         "workspace_id": "833f61d283cbe988c5af01349e254bc3",
+         "name": null,
+         "online": false
+        },
+        {
+         "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+         "name": "Severin's workspace",
+         "online": true
+        }
+       ],
+       "more": false
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "open",
+       "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+       "device_id": "rd_6be572e1241672d2a48515fb6eca992b",
+       "kind": "session"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "opened",
+       "stream_id": "2edc92539206351c997ef280c35402ee"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "close",
+       "reason": "remote.off"
+      }
+     }
+    ]
+   },
+   "expect": {
+    "results": [
+     "ok",
+     "ok",
+     "ok",
+     "ok",
+     "ok",
+     "ok",
+     "ok"
+    ],
+    "end": "ended"
+   },
+   "note": "a host close reaches the client verbatim"
+  },
+  {
+   "check": "client_seq",
+   "name": "client_seq_rail_only",
+   "args": {
+    "endpoint": true,
+    "frames": [
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "hello",
+       "v": 1,
+       "token": "tok-remote"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "ready",
+       "hub_id": "5204b6091c616bc615ddba3107e6255c"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "rail"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "rail",
+       "workspaces": [
+        {
+         "workspace_id": "833f61d283cbe988c5af01349e254bc3",
+         "name": null,
+         "online": false
+        },
+        {
+         "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+         "name": "Severin's workspace",
+         "online": true
+        }
+       ],
+       "more": false
+      }
+     }
+    ]
+   },
+   "expect": {
+    "results": [
+     "ok",
+     "ok",
+     "ok",
+     "ok"
+    ],
+    "end": "ready"
+   }
+  },
+  {
+   "check": "client_seq",
+   "name": "client_seq_enroll",
+   "args": {
+    "endpoint": true,
+    "frames": [
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "hello",
+       "v": 1,
+       "token": "tok-remote"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "ready",
+       "hub_id": "5204b6091c616bc615ddba3107e6255c"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "open",
+       "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+       "device_id": "rc_60aca6974672558190b27fcee2e050fa",
+       "kind": "enroll"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "opened",
+       "stream_id": "2edc92539206351c997ef280c35402ee"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "data",
+       "b": "Zi5Kg3UHgL3wKZKRY19WfDNWXMf9Ae-GP8tjZg-2V3Q5vU1ccb9-srT_ABaqdRKVZYey8i9pfNTyyO2QEjBH80KEEgyuzjLMVEeZ6TzVNSI0Jl7Rcf0DbDThy-QmwRG3"
+      }
+     }
+    ]
+   },
+   "expect": {
+    "results": [
+     "ok",
+     "ok",
+     "ok",
+     "ok",
+     "ok"
+    ],
+    "end": "stream"
+   }
+  },
+  {
+   "check": "client_seq",
+   "name": "client_seq_token_other_scope",
+   "args": {
+    "endpoint": true,
+    "frames": [
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "hello",
+       "v": 1,
+       "token": "tok-browser"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "error",
+       "error": "no_session"
+      }
+     }
+    ]
+   },
+   "expect": {
+    "results": [
+     "ok",
+     "ok"
+    ],
+    "end": "ended"
+   }
+  },
+  {
+   "check": "client_seq",
+   "name": "client_seq_token_unknown",
+   "args": {
+    "endpoint": true,
+    "frames": [
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "hello",
+       "v": 1,
+       "token": "tok-gone"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "error",
+       "error": "no_session"
+      }
+     }
+    ]
+   },
+   "expect": {
+    "results": [
+     "ok",
+     "ok"
+    ],
+    "end": "ended"
+   }
+  },
+  {
+   "check": "client_seq",
+   "name": "client_seq_rail_no_session",
+   "args": {
+    "endpoint": true,
+    "frames": [
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "hello",
+       "v": 1,
+       "token": "tok-remote"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "ready",
+       "hub_id": "5204b6091c616bc615ddba3107e6255c"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "rail"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "error",
+       "error": "no_session"
+      }
+     }
+    ],
+    "env": {
+     "signed_out_after_ready": true
+    }
+   },
+   "expect": {
+    "results": [
+     "ok",
+     "ok",
+     "ok",
+     "ok"
+    ],
+    "end": "ended"
+   },
+   "note": "the token is re-checked at rail as at open"
+  },
+  {
+   "check": "client_seq",
+   "name": "client_seq_rail_unavailable",
+   "args": {
+    "endpoint": true,
+    "frames": [
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "hello",
+       "v": 1,
+       "token": "tok-remote"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "ready",
+       "hub_id": "5204b6091c616bc615ddba3107e6255c"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "rail"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "error",
+       "error": "unavailable"
+      }
+     }
+    ],
+    "env": {
+     "rail": "fail"
+    }
+   },
+   "expect": {
+    "results": [
+     "ok",
+     "ok",
+     "ok",
+     "ok"
+    ],
+    "end": "ended"
+   }
+  },
+  {
+   "check": "client_seq",
+   "name": "client_seq_open_outside_rail",
+   "args": {
+    "endpoint": true,
+    "frames": [
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "hello",
+       "v": 1,
+       "token": "tok-remote"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "ready",
+       "hub_id": "5204b6091c616bc615ddba3107e6255c"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "open",
+       "workspace_id": "81688d9aff7378653e19ce9ec66d4aa7",
+       "device_id": "rd_6be572e1241672d2a48515fb6eca992b",
+       "kind": "session"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "refused",
+       "error": "not_allowed"
+      }
+     }
+    ]
+   },
+   "expect": {
+    "results": [
+     "ok",
+     "ok",
+     "ok",
+     "ok"
+    ],
+    "end": "ended"
+   }
+  },
+  {
+   "check": "client_seq",
+   "name": "client_seq_open_in_rail_no_link",
+   "args": {
+    "endpoint": true,
+    "frames": [
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "hello",
+       "v": 1,
+       "token": "tok-remote"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "ready",
+       "hub_id": "5204b6091c616bc615ddba3107e6255c"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "open",
+       "workspace_id": "833f61d283cbe988c5af01349e254bc3",
+       "device_id": "rd_6be572e1241672d2a48515fb6eca992b",
+       "kind": "session"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "refused",
+       "error": "not_allowed"
+      }
+     }
+    ]
+   },
+   "expect": {
+    "results": [
+     "ok",
+     "ok",
+     "ok",
+     "ok"
+    ],
+    "end": "ended"
+   },
+   "note": "no stream link (offline, or remote off with no code): the same answer as outside the rail"
+  },
+  {
+   "check": "client_seq",
+   "name": "client_seq_host_refuses_remote.off",
+   "args": {
+    "endpoint": true,
+    "frames": [
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "hello",
+       "v": 1,
+       "token": "tok-remote"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "ready",
+       "hub_id": "5204b6091c616bc615ddba3107e6255c"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "open",
+       "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+       "device_id": "rd_6be572e1241672d2a48515fb6eca992b",
+       "kind": "session"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "refused",
+       "error": "remote.off"
+      }
+     }
+    ],
+    "env": {
+     "host": "remote.off"
+    }
+   },
+   "expect": {
+    "results": [
+     "ok",
+     "ok",
+     "ok",
+     "ok"
+    ],
+    "end": "ended"
+   },
+   "note": "the host's gate code, verbatim"
+  },
+  {
+   "check": "client_seq",
+   "name": "client_seq_host_refuses_remote.device",
+   "args": {
+    "endpoint": true,
+    "frames": [
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "hello",
+       "v": 1,
+       "token": "tok-remote"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "ready",
+       "hub_id": "5204b6091c616bc615ddba3107e6255c"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "open",
+       "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+       "device_id": "rd_6be572e1241672d2a48515fb6eca992b",
+       "kind": "session"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "refused",
+       "error": "remote.device"
+      }
+     }
+    ],
+    "env": {
+     "host": "remote.device"
+    }
+   },
+   "expect": {
+    "results": [
+     "ok",
+     "ok",
+     "ok",
+     "ok"
+    ],
+    "end": "ended"
+   },
+   "note": "the host's gate code, verbatim"
+  },
+  {
+   "check": "client_seq",
+   "name": "client_seq_host_refuses_remote.busy",
+   "args": {
+    "endpoint": true,
+    "frames": [
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "hello",
+       "v": 1,
+       "token": "tok-remote"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "ready",
+       "hub_id": "5204b6091c616bc615ddba3107e6255c"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "open",
+       "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+       "device_id": "rd_6be572e1241672d2a48515fb6eca992b",
+       "kind": "session"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "refused",
+       "error": "remote.busy"
+      }
+     }
+    ],
+    "env": {
+     "host": "remote.busy"
+    }
+   },
+   "expect": {
+    "results": [
+     "ok",
+     "ok",
+     "ok",
+     "ok"
+    ],
+    "end": "ended"
+   },
+   "note": "the host's gate code, verbatim"
+  },
+  {
+   "check": "client_seq",
+   "name": "client_seq_host_refuses_replay",
+   "args": {
+    "endpoint": true,
+    "frames": [
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "hello",
+       "v": 1,
+       "token": "tok-remote"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "ready",
+       "hub_id": "5204b6091c616bc615ddba3107e6255c"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "open",
+       "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+       "device_id": "rd_6be572e1241672d2a48515fb6eca992b",
+       "kind": "session"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "refused",
+       "error": "replay"
+      }
+     }
+    ],
+    "env": {
+     "host": "replay"
+    }
+   },
+   "expect": {
+    "results": [
+     "ok",
+     "ok",
+     "ok",
+     "ok"
+    ],
+    "end": "ended"
+   },
+   "note": "the host's gate code, verbatim"
+  },
+  {
+   "check": "client_seq",
+   "name": "client_seq_host_refuses_remote.no_code",
+   "args": {
+    "endpoint": true,
+    "frames": [
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "hello",
+       "v": 1,
+       "token": "tok-remote"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "ready",
+       "hub_id": "5204b6091c616bc615ddba3107e6255c"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "open",
+       "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+       "device_id": "rc_60aca6974672558190b27fcee2e050fa",
+       "kind": "enroll"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "refused",
+       "error": "remote.no_code"
+      }
+     }
+    ],
+    "env": {
+     "host": "remote.no_code"
+    }
+   },
+   "expect": {
+    "results": [
+     "ok",
+     "ok",
+     "ok",
+     "ok"
+    ],
+    "end": "ended"
+   },
+   "note": "the host's gate code, verbatim"
+  },
+  {
+   "check": "client_seq",
+   "name": "client_seq_host_unknown_code_unavailable",
+   "args": {
+    "endpoint": true,
+    "frames": [
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "hello",
+       "v": 1,
+       "token": "tok-remote"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "ready",
+       "hub_id": "5204b6091c616bc615ddba3107e6255c"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "open",
+       "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+       "device_id": "rd_6be572e1241672d2a48515fb6eca992b",
+       "kind": "session"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "refused",
+       "error": "unavailable"
+      }
+     }
+    ],
+    "env": {
+     "host": "free text"
+    }
+   },
+   "expect": {
+    "results": [
+     "ok",
+     "ok",
+     "ok",
+     "ok"
+    ],
+    "end": "ended"
+   },
+   "note": "a host answer outside the gate codes is never passed on"
+  },
+  {
+   "check": "client_seq",
+   "name": "client_seq_host_closes_remote_version",
+   "args": {
+    "endpoint": true,
+    "frames": [
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "hello",
+       "v": 1,
+       "token": "tok-remote"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "ready",
+       "hub_id": "5204b6091c616bc615ddba3107e6255c"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "open",
+       "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+       "device_id": "rd_6be572e1241672d2a48515fb6eca992b",
+       "kind": "session"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "opened",
+       "stream_id": "2edc92539206351c997ef280c35402ee"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "data",
+       "b": "yhgDhq5nJxMrdZKStUarOo8K-MlcfdaLjR_L-2EyPGJ39ojE5Tl0ivlTDBBKoNTzwnAvdYVF14oodJYgVAWiJyVgPJSSc9LYs6uVg-k02mPohjw-RszKhlHTUFcedFql"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "close",
+       "reason": "remote.version"
+      }
+     }
+    ]
+   },
+   "expect": {
+    "results": [
+     "ok",
+     "ok",
+     "ok",
+     "ok",
+     "ok",
+     "ok"
+    ],
+    "end": "ended"
+   }
+  },
+  {
+   "check": "client_seq",
+   "name": "client_seq_hello_v2",
+   "args": {
+    "endpoint": true,
+    "frames": [
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "hello",
+       "v": 2,
+       "token": "tok-remote"
+      }
+     }
+    ]
+   },
+   "expect": {
+    "error": "malformed",
+    "index": 0,
+    "answer": {
+     "t": "error",
+     "error": "malformed"
+    }
+   }
+  },
+  {
+   "check": "client_seq",
+   "name": "client_seq_open_without_hello",
+   "args": {
+    "endpoint": true,
+    "frames": [
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "open",
+       "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+       "device_id": "rd_6be572e1241672d2a48515fb6eca992b",
+       "kind": "session"
+      }
+     }
+    ]
+   },
+   "expect": {
+    "error": "malformed",
+    "index": 0,
+    "answer": {
+     "t": "error",
+     "error": "malformed"
+    }
+   }
+  },
+  {
+   "check": "client_seq",
+   "name": "client_seq_rail_without_hello",
+   "args": {
+    "endpoint": true,
+    "frames": [
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "rail"
+      }
+     }
+    ]
+   },
+   "expect": {
+    "error": "malformed",
+    "index": 0,
+    "answer": {
+     "t": "error",
+     "error": "malformed"
+    }
+   }
+  },
+  {
+   "check": "client_seq",
+   "name": "client_seq_hello_frame_over_max",
+   "args": {
+    "endpoint": true,
+    "frames": [
+     {
+      "dir": "c2h",
+      "wire_hex": "00018001"
+     }
+    ]
+   },
+   "expect": {
+    "error": "malformed",
+    "index": 0,
+    "answer": {
+     "t": "error",
+     "error": "malformed"
+    }
+   }
+  },
+  {
+   "check": "client_seq",
+   "name": "client_seq_hello_not_json",
+   "args": {
+    "endpoint": true,
+    "frames": [
+     {
+      "dir": "c2h",
+      "wire_hex": "0000000e474554202f20485454502f312e31"
+     }
+    ]
+   },
+   "expect": {
+    "error": "malformed",
+    "index": 0,
+    "answer": {
+     "t": "error",
+     "error": "malformed"
+    }
+   }
+  },
+  {
+   "check": "client_seq",
+   "name": "client_seq_data_before_opened",
+   "args": {
+    "endpoint": true,
+    "frames": [
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "hello",
+       "v": 1,
+       "token": "tok-remote"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "ready",
+       "hub_id": "5204b6091c616bc615ddba3107e6255c"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "data",
+       "b": "yhgDhq5nJxMrdZKStUarOo8K-MlcfdaLjR_L-2EyPGJ39ojE5Tl0ivlTDBBKoNTzwnAvdYVF14oodJYgVAWiJyVgPJSSc9LYs6uVg-k02mPohjw-RszKhlHTUFcedFql"
+      }
+     }
+    ]
+   },
+   "expect": {
+    "error": "malformed",
+    "index": 2,
+    "answer": {
+     "t": "refused",
+     "error": "malformed"
+    }
+   }
+  },
+  {
+   "check": "client_seq",
+   "name": "client_seq_close_before_opened",
+   "args": {
+    "endpoint": true,
+    "frames": [
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "hello",
+       "v": 1,
+       "token": "tok-remote"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "ready",
+       "hub_id": "5204b6091c616bc615ddba3107e6255c"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "close",
+       "reason": "closed"
+      }
+     }
+    ]
+   },
+   "expect": {
+    "error": "malformed",
+    "index": 2,
+    "answer": {
+     "t": "refused",
+     "error": "malformed"
+    }
+   }
+  },
+  {
+   "check": "client_seq",
+   "name": "client_seq_second_hello",
+   "args": {
+    "endpoint": true,
+    "frames": [
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "hello",
+       "v": 1,
+       "token": "tok-remote"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "ready",
+       "hub_id": "5204b6091c616bc615ddba3107e6255c"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "hello",
+       "v": 1,
+       "token": "tok-remote"
+      }
+     }
+    ]
+   },
+   "expect": {
+    "error": "malformed",
+    "index": 2,
+    "answer": {
+     "t": "refused",
+     "error": "malformed"
+    }
+   }
+  },
+  {
+   "check": "client_seq",
+   "name": "client_seq_rail_twice",
+   "args": {
+    "endpoint": true,
+    "frames": [
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "hello",
+       "v": 1,
+       "token": "tok-remote"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "ready",
+       "hub_id": "5204b6091c616bc615ddba3107e6255c"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "rail"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "rail",
+       "workspaces": [
+        {
+         "workspace_id": "833f61d283cbe988c5af01349e254bc3",
+         "name": null,
+         "online": false
+        },
+        {
+         "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+         "name": "Severin's workspace",
+         "online": true
+        }
+       ],
+       "more": false
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "rail"
+      }
+     }
+    ]
+   },
+   "expect": {
+    "error": "malformed",
+    "index": 4,
+    "answer": {
+     "t": "refused",
+     "error": "malformed"
+    }
+   }
+  },
+  {
+   "check": "client_seq",
+   "name": "client_seq_rail_extra_key",
+   "args": {
+    "endpoint": true,
+    "frames": [
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "hello",
+       "v": 1,
+       "token": "tok-remote"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "ready",
+       "hub_id": "5204b6091c616bc615ddba3107e6255c"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "rail",
+       "all": true
+      }
+     }
+    ]
+   },
+   "expect": {
+    "error": "malformed",
+    "index": 2,
+    "answer": {
+     "t": "refused",
+     "error": "malformed"
+    }
+   }
+  },
+  {
+   "check": "client_seq",
+   "name": "client_seq_data_after_rail",
+   "args": {
+    "endpoint": true,
+    "frames": [
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "hello",
+       "v": 1,
+       "token": "tok-remote"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "ready",
+       "hub_id": "5204b6091c616bc615ddba3107e6255c"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "rail"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "rail",
+       "workspaces": [
+        {
+         "workspace_id": "833f61d283cbe988c5af01349e254bc3",
+         "name": null,
+         "online": false
+        },
+        {
+         "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+         "name": "Severin's workspace",
+         "online": true
+        }
+       ],
+       "more": false
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "data",
+       "b": "yhgDhq5nJxMrdZKStUarOo8K-MlcfdaLjR_L-2EyPGJ39ojE5Tl0ivlTDBBKoNTzwnAvdYVF14oodJYgVAWiJyVgPJSSc9LYs6uVg-k02mPohjw-RszKhlHTUFcedFql"
+      }
+     }
+    ]
+   },
+   "expect": {
+    "error": "malformed",
+    "index": 4,
+    "answer": {
+     "t": "refused",
+     "error": "malformed"
+    }
+   }
+  },
+  {
+   "check": "client_seq",
+   "name": "client_seq_open_bad_pairing",
+   "args": {
+    "endpoint": true,
+    "frames": [
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "hello",
+       "v": 1,
+       "token": "tok-remote"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "ready",
+       "hub_id": "5204b6091c616bc615ddba3107e6255c"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "open",
+       "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+       "device_id": "rc_60aca6974672558190b27fcee2e050fa",
+       "kind": "session"
+      }
+     }
+    ]
+   },
+   "expect": {
+    "error": "malformed",
+    "index": 2,
+    "answer": {
+     "t": "refused",
+     "error": "malformed"
+    }
+   }
+  },
+  {
+   "check": "client_seq",
+   "name": "client_seq_second_open",
+   "args": {
+    "endpoint": true,
+    "frames": [
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "hello",
+       "v": 1,
+       "token": "tok-remote"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "ready",
+       "hub_id": "5204b6091c616bc615ddba3107e6255c"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "open",
+       "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+       "device_id": "rd_6be572e1241672d2a48515fb6eca992b",
+       "kind": "session"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "opened",
+       "stream_id": "2edc92539206351c997ef280c35402ee"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "open",
+       "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+       "device_id": "rd_6be572e1241672d2a48515fb6eca992b",
+       "kind": "session"
+      }
+     }
+    ]
+   },
+   "expect": {
+    "error": "malformed",
+    "index": 4,
+    "answer": {
+     "t": "close",
+     "reason": "malformed"
+    }
+   }
+  },
+  {
+   "check": "client_seq",
+   "name": "client_seq_rail_in_stream",
+   "args": {
+    "endpoint": true,
+    "frames": [
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "hello",
+       "v": 1,
+       "token": "tok-remote"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "ready",
+       "hub_id": "5204b6091c616bc615ddba3107e6255c"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "open",
+       "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+       "device_id": "rd_6be572e1241672d2a48515fb6eca992b",
+       "kind": "session"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "opened",
+       "stream_id": "2edc92539206351c997ef280c35402ee"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "rail"
+      }
+     }
+    ]
+   },
+   "expect": {
+    "error": "malformed",
+    "index": 4,
+    "answer": {
+     "t": "close",
+     "reason": "malformed"
+    }
+   }
+  },
+  {
+   "check": "client_seq",
+   "name": "client_seq_hello_in_stream",
+   "args": {
+    "endpoint": true,
+    "frames": [
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "hello",
+       "v": 1,
+       "token": "tok-remote"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "ready",
+       "hub_id": "5204b6091c616bc615ddba3107e6255c"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "open",
+       "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+       "device_id": "rd_6be572e1241672d2a48515fb6eca992b",
+       "kind": "session"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "opened",
+       "stream_id": "2edc92539206351c997ef280c35402ee"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "hello",
+       "v": 1,
+       "token": "tok-remote"
+      }
+     }
+    ]
+   },
+   "expect": {
+    "error": "malformed",
+    "index": 4,
+    "answer": {
+     "t": "close",
+     "reason": "malformed"
+    }
+   }
+  },
+  {
+   "check": "client_seq",
+   "name": "client_seq_data_empty_in_stream",
+   "args": {
+    "endpoint": true,
+    "frames": [
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "hello",
+       "v": 1,
+       "token": "tok-remote"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "ready",
+       "hub_id": "5204b6091c616bc615ddba3107e6255c"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "open",
+       "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+       "device_id": "rd_6be572e1241672d2a48515fb6eca992b",
+       "kind": "session"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "opened",
+       "stream_id": "2edc92539206351c997ef280c35402ee"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "data",
+       "b": ""
+      }
+     }
+    ]
+   },
+   "expect": {
+    "error": "malformed",
+    "index": 4,
+    "answer": {
+     "t": "close",
+     "reason": "malformed"
+    }
+   }
+  },
+  {
+   "check": "client_seq",
+   "name": "client_seq_data_over_65535",
+   "args": {
+    "endpoint": true,
+    "frames": [
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "hello",
+       "v": 1,
+       "token": "tok-remote"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "ready",
+       "hub_id": "5204b6091c616bc615ddba3107e6255c"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "open",
+       "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+       "device_id": "rd_6be572e1241672d2a48515fb6eca992b",
+       "kind": "session"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "opened",
+       "stream_id": "2edc92539206351c997ef280c35402ee"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "data",
+       "b": ""
+      },
+      "b_repeat": {
+       "unit": "YWFh",
+       "n": 21845,
+       "tail": "YQ"
+      }
+     }
+    ]
+   },
+   "expect": {
+    "error": "too_large",
+    "index": 4,
+    "answer": {
+     "t": "close",
+     "reason": "too_large"
+    }
+   }
+  },
+  {
+   "check": "client_seq",
+   "name": "client_seq_data_string_over_max",
+   "args": {
+    "endpoint": true,
+    "frames": [
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "hello",
+       "v": 1,
+       "token": "tok-remote"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "ready",
+       "hub_id": "5204b6091c616bc615ddba3107e6255c"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "open",
+       "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+       "device_id": "rd_6be572e1241672d2a48515fb6eca992b",
+       "kind": "session"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "opened",
+       "stream_id": "2edc92539206351c997ef280c35402ee"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "data",
+       "b": ""
+      },
+      "b_repeat": {
+       "unit": "!",
+       "n": 87381,
+       "tail": ""
+      }
+     }
+    ]
+   },
+   "expect": {
+    "error": "too_large",
+    "index": 4,
+    "answer": {
+     "t": "close",
+     "reason": "too_large"
+    }
+   }
+  },
+  {
+   "check": "client_seq",
+   "name": "client_seq_close_bad_reason",
+   "args": {
+    "endpoint": true,
+    "frames": [
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "hello",
+       "v": 1,
+       "token": "tok-remote"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "ready",
+       "hub_id": "5204b6091c616bc615ddba3107e6255c"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "open",
+       "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+       "device_id": "rd_6be572e1241672d2a48515fb6eca992b",
+       "kind": "session"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "opened",
+       "stream_id": "2edc92539206351c997ef280c35402ee"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "close",
+       "reason": "bye"
+      }
+     }
+    ]
+   },
+   "expect": {
+    "error": "malformed",
+    "index": 4,
+    "answer": {
+     "t": "close",
+     "reason": "malformed"
+    }
+   }
+  },
+  {
+   "check": "client_seq",
+   "name": "client_seq_not_json_in_stream",
+   "args": {
+    "endpoint": true,
+    "frames": [
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "hello",
+       "v": 1,
+       "token": "tok-remote"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "ready",
+       "hub_id": "5204b6091c616bc615ddba3107e6255c"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "open",
+       "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+       "device_id": "rd_6be572e1241672d2a48515fb6eca992b",
+       "kind": "session"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "opened",
+       "stream_id": "2edc92539206351c997ef280c35402ee"
+      }
+     },
+     {
+      "dir": "c2h",
+      "wire_hex": "000000020001"
+     }
+    ]
+   },
+   "expect": {
+    "error": "malformed",
+    "index": 4,
+    "answer": {
+     "t": "close",
+     "reason": "malformed"
+    }
+   }
+  },
+  {
+   "check": "client_seq",
+   "name": "client_seq_hub_data_after_client_close_dropped",
+   "args": {
+    "endpoint": false,
+    "frames": [
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "hello",
+       "v": 1,
+       "token": "tok-remote"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "ready",
+       "hub_id": "5204b6091c616bc615ddba3107e6255c"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "open",
+       "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+       "device_id": "rd_6be572e1241672d2a48515fb6eca992b",
+       "kind": "session"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "opened",
+       "stream_id": "2edc92539206351c997ef280c35402ee"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "close",
+       "reason": "closed"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "data",
+       "b": "KSIsrfAmFJEVrosNMpYIYAEmjLko9QmutDQHuhnLQE4vUqqnLV5KagwzRGdnu_M_5DWyQDFnMgTfxOAuwZeJ3YiWaLvUyrysIMfreshEynE"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "close",
+       "reason": "closed"
+      }
+     }
+    ]
+   },
+   "expect": {
+    "results": [
+     "ok",
+     "ok",
+     "ok",
+     "ok",
+     "ok",
+     "dropped",
+     "ok"
+    ],
+    "end": "ended"
+   },
+   "note": "frames the host sent before it saw the close are dropped, not an error"
+  },
+  {
+   "check": "client_seq",
+   "name": "client_seq_hub_hub_speaks_first",
+   "args": {
+    "endpoint": false,
+    "frames": [
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "ready",
+       "hub_id": "5204b6091c616bc615ddba3107e6255c"
+      }
+     }
+    ]
+   },
+   "expect": {
+    "error": "malformed",
+    "index": 0,
+    "answer": null
+   }
+  },
+  {
+   "check": "client_seq",
+   "name": "client_seq_hub_ready_twice",
+   "args": {
+    "endpoint": false,
+    "frames": [
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "hello",
+       "v": 1,
+       "token": "tok-remote"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "ready",
+       "hub_id": "5204b6091c616bc615ddba3107e6255c"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "ready",
+       "hub_id": "5204b6091c616bc615ddba3107e6255c"
+      }
+     }
+    ]
+   },
+   "expect": {
+    "error": "malformed",
+    "index": 2,
+    "answer": null
+   }
+  },
+  {
+   "check": "client_seq",
+   "name": "client_seq_hub_opened_before_open",
+   "args": {
+    "endpoint": false,
+    "frames": [
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "hello",
+       "v": 1,
+       "token": "tok-remote"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "ready",
+       "hub_id": "5204b6091c616bc615ddba3107e6255c"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "opened",
+       "stream_id": "2edc92539206351c997ef280c35402ee"
+      }
+     }
+    ]
+   },
+   "expect": {
+    "error": "malformed",
+    "index": 2,
+    "answer": null
+   }
+  },
+  {
+   "check": "client_seq",
+   "name": "client_seq_hub_rail_not_asked",
+   "args": {
+    "endpoint": false,
+    "frames": [
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "hello",
+       "v": 1,
+       "token": "tok-remote"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "ready",
+       "hub_id": "5204b6091c616bc615ddba3107e6255c"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "rail",
+       "workspaces": [
+        {
+         "workspace_id": "833f61d283cbe988c5af01349e254bc3",
+         "name": null,
+         "online": false
+        },
+        {
+         "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+         "name": "Severin's workspace",
+         "online": true
+        }
+       ],
+       "more": false
+      }
+     }
+    ]
+   },
+   "expect": {
+    "error": "malformed",
+    "index": 2,
+    "answer": null
+   }
+  },
+  {
+   "check": "client_seq",
+   "name": "client_seq_hub_rail_answer_twice",
+   "args": {
+    "endpoint": false,
+    "frames": [
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "hello",
+       "v": 1,
+       "token": "tok-remote"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "ready",
+       "hub_id": "5204b6091c616bc615ddba3107e6255c"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "rail"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "rail",
+       "workspaces": [
+        {
+         "workspace_id": "833f61d283cbe988c5af01349e254bc3",
+         "name": null,
+         "online": false
+        },
+        {
+         "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+         "name": "Severin's workspace",
+         "online": true
+        }
+       ],
+       "more": false
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "rail",
+       "workspaces": [
+        {
+         "workspace_id": "833f61d283cbe988c5af01349e254bc3",
+         "name": null,
+         "online": false
+        },
+        {
+         "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+         "name": "Severin's workspace",
+         "online": true
+        }
+       ],
+       "more": false
+      }
+     }
+    ]
+   },
+   "expect": {
+    "error": "malformed",
+    "index": 4,
+    "answer": null
+   }
+  },
+  {
+   "check": "client_seq",
+   "name": "client_seq_hub_data_before_opened",
+   "args": {
+    "endpoint": false,
+    "frames": [
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "hello",
+       "v": 1,
+       "token": "tok-remote"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "ready",
+       "hub_id": "5204b6091c616bc615ddba3107e6255c"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "open",
+       "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+       "device_id": "rd_6be572e1241672d2a48515fb6eca992b",
+       "kind": "session"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "data",
+       "b": "KSIsrfAmFJEVrosNMpYIYAEmjLko9QmutDQHuhnLQE4vUqqnLV5KagwzRGdnu_M_5DWyQDFnMgTfxOAuwZeJ3YiWaLvUyrysIMfreshEynE"
+      }
+     }
+    ]
+   },
+   "expect": {
+    "error": "malformed",
+    "index": 3,
+    "answer": null
+   }
+  },
+  {
+   "check": "client_seq",
+   "name": "client_seq_hub_refused_after_opened",
+   "args": {
+    "endpoint": false,
+    "frames": [
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "hello",
+       "v": 1,
+       "token": "tok-remote"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "ready",
+       "hub_id": "5204b6091c616bc615ddba3107e6255c"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "open",
+       "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+       "device_id": "rd_6be572e1241672d2a48515fb6eca992b",
+       "kind": "session"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "opened",
+       "stream_id": "2edc92539206351c997ef280c35402ee"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "refused",
+       "error": "remote.off"
+      }
+     }
+    ]
+   },
+   "expect": {
+    "error": "malformed",
+    "index": 4,
+    "answer": {
+     "t": "close",
+     "reason": "malformed"
+    }
+   }
+  },
+  {
+   "check": "client_seq",
+   "name": "client_seq_hub_error_after_opened",
+   "args": {
+    "endpoint": false,
+    "frames": [
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "hello",
+       "v": 1,
+       "token": "tok-remote"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "ready",
+       "hub_id": "5204b6091c616bc615ddba3107e6255c"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "open",
+       "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+       "device_id": "rd_6be572e1241672d2a48515fb6eca992b",
+       "kind": "session"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "opened",
+       "stream_id": "2edc92539206351c997ef280c35402ee"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "error",
+       "error": "no_session"
+      }
+     }
+    ]
+   },
+   "expect": {
+    "error": "malformed",
+    "index": 4,
+    "answer": {
+     "t": "close",
+     "reason": "malformed"
+    }
+   }
+  },
+  {
+   "check": "client_seq",
+   "name": "client_seq_hub_opened_twice",
+   "args": {
+    "endpoint": false,
+    "frames": [
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "hello",
+       "v": 1,
+       "token": "tok-remote"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "ready",
+       "hub_id": "5204b6091c616bc615ddba3107e6255c"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "open",
+       "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+       "device_id": "rd_6be572e1241672d2a48515fb6eca992b",
+       "kind": "session"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "opened",
+       "stream_id": "2edc92539206351c997ef280c35402ee"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "opened",
+       "stream_id": "2edc92539206351c997ef280c35402ee"
+      }
+     }
+    ]
+   },
+   "expect": {
+    "error": "malformed",
+    "index": 4,
+    "answer": {
+     "t": "close",
+     "reason": "malformed"
+    }
+   }
+  },
+  {
+   "check": "client_seq",
+   "name": "client_seq_hub_ready_extra_key",
+   "args": {
+    "endpoint": false,
+    "frames": [
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "hello",
+       "v": 1,
+       "token": "tok-remote"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "ready",
+       "hub_id": "5204b6091c616bc615ddba3107e6255c",
+       "stream_id": "2edc92539206351c997ef280c35402ee"
+      }
+     }
+    ]
+   },
+   "expect": {
+    "error": "malformed",
+    "index": 1,
+    "answer": null
+   }
+  },
+  {
+   "check": "client_seq",
+   "name": "client_seq_hub_opened_upper_stream_id",
+   "args": {
+    "endpoint": false,
+    "frames": [
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "hello",
+       "v": 1,
+       "token": "tok-remote"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "ready",
+       "hub_id": "5204b6091c616bc615ddba3107e6255c"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "open",
+       "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+       "device_id": "rd_6be572e1241672d2a48515fb6eca992b",
+       "kind": "session"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "opened",
+       "stream_id": "2EDC92539206351C997EF280C35402EE"
+      }
+     }
+    ]
+   },
+   "expect": {
+    "error": "malformed",
+    "index": 3,
+    "answer": null
+   }
+  },
+  {
+   "check": "client_seq",
+   "name": "client_seq_hub_close_unknown_reason",
+   "args": {
+    "endpoint": false,
+    "frames": [
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "hello",
+       "v": 1,
+       "token": "tok-remote"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "ready",
+       "hub_id": "5204b6091c616bc615ddba3107e6255c"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "open",
+       "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+       "device_id": "rd_6be572e1241672d2a48515fb6eca992b",
+       "kind": "session"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "opened",
+       "stream_id": "2edc92539206351c997ef280c35402ee"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "close",
+       "reason": "kicked"
+      }
+     }
+    ]
+   },
+   "expect": {
+    "error": "malformed",
+    "index": 4,
+    "answer": {
+     "t": "close",
+     "reason": "malformed"
+    }
+   }
+  },
+  {
+   "check": "client_seq",
+   "name": "client_seq_hub_data_over_65535_from_hub",
+   "args": {
+    "endpoint": false,
+    "frames": [
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "hello",
+       "v": 1,
+       "token": "tok-remote"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "ready",
+       "hub_id": "5204b6091c616bc615ddba3107e6255c"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "open",
+       "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+       "device_id": "rd_6be572e1241672d2a48515fb6eca992b",
+       "kind": "session"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "opened",
+       "stream_id": "2edc92539206351c997ef280c35402ee"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "data",
+       "b": ""
+      },
+      "b_repeat": {
+       "unit": "YWFh",
+       "n": 21845,
+       "tail": "YQ"
+      }
+     }
+    ]
+   },
+   "expect": {
+    "error": "too_large",
+    "index": 4,
+    "answer": {
+     "t": "close",
+     "reason": "too_large"
+    }
+   }
+  },
+  {
+   "check": "client_seq",
+   "name": "client_seq_hub_rail_with_role",
+   "args": {
+    "endpoint": false,
+    "frames": [
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "hello",
+       "v": 1,
+       "token": "tok-remote"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "ready",
+       "hub_id": "5204b6091c616bc615ddba3107e6255c"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "rail"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "rail",
+       "workspaces": [
+        {
+         "workspace_id": "833f61d283cbe988c5af01349e254bc3",
+         "name": null,
+         "online": false,
+         "role": "owner"
+        }
+       ],
+       "more": false
+      }
+     }
+    ]
+   },
+   "expect": {
+    "error": "malformed",
+    "index": 3,
+    "answer": null
+   }
+  },
+  {
+   "check": "client_seq",
+   "name": "client_seq_hub_frame_after_close",
+   "args": {
+    "endpoint": false,
+    "frames": [
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "hello",
+       "v": 1,
+       "token": "tok-remote"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "ready",
+       "hub_id": "5204b6091c616bc615ddba3107e6255c"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "open",
+       "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+       "device_id": "rd_6be572e1241672d2a48515fb6eca992b",
+       "kind": "session"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "opened",
+       "stream_id": "2edc92539206351c997ef280c35402ee"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "close",
+       "reason": "idle"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "data",
+       "b": "KSIsrfAmFJEVrosNMpYIYAEmjLko9QmutDQHuhnLQE4vUqqnLV5KagwzRGdnu_M_5DWyQDFnMgTfxOAuwZeJ3YiWaLvUyrysIMfreshEynE"
+      }
+     }
+    ]
+   },
+   "expect": {
+    "error": "malformed",
+    "index": 5,
+    "answer": null
+   }
+  },
+  {
+   "check": "client_seq",
+   "name": "client_seq_open_before_ready",
+   "args": {
+    "endpoint": false,
+    "frames": [
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "hello",
+       "v": 1,
+       "token": "tok-remote"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "open",
+       "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+       "device_id": "rd_6be572e1241672d2a48515fb6eca992b",
+       "kind": "session"
+      }
+     }
+    ]
+   },
+   "expect": {
+    "error": "malformed",
+    "index": 1,
+    "answer": null
+   },
+   "note": "a client waits for ready (it needs hub_id for the prologue); the hub may not notice, so reference only"
+  },
+  {
+   "check": "client_seq",
+   "name": "client_seq_client_frame_after_own_close",
+   "args": {
+    "endpoint": false,
+    "frames": [
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "hello",
+       "v": 1,
+       "token": "tok-remote"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "ready",
+       "hub_id": "5204b6091c616bc615ddba3107e6255c"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "open",
+       "workspace_id": "882d742fa53e3cfdf21947a2c63286f2",
+       "device_id": "rd_6be572e1241672d2a48515fb6eca992b",
+       "kind": "session"
+      }
+     },
+     {
+      "dir": "h2c",
+      "frame": {
+       "t": "opened",
+       "stream_id": "2edc92539206351c997ef280c35402ee"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "close",
+       "reason": "closed"
+      }
+     },
+     {
+      "dir": "c2h",
+      "frame": {
+       "t": "data",
+       "b": "yhgDhq5nJxMrdZKStUarOo8K-MlcfdaLjR_L-2EyPGJ39ojE5Tl0ivlTDBBKoNTzwnAvdYVF14oodJYgVAWiJyVgPJSSc9LYs6uVg-k02mPohjw-RszKhlHTUFcedFql"
+      }
+     }
+    ]
+   },
+   "expect": {
+    "error": "malformed",
+    "index": 5,
+    "answer": null
    }
   }
  ]

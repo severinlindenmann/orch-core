@@ -57,6 +57,11 @@ CHECKS = {
     "request_head",
     "app_seq",
     "route_digest",
+    # R5, the client endpoint (§10.2d); the real endpoint replays the ``endpoint: true`` sequences too
+    # (tests/test_remote_endpoint.py)
+    "client_frame",
+    "client_rail",
+    "client_seq",
 }
 
 
@@ -256,9 +261,40 @@ def _run(c: dict[str, Any]) -> dict[str, Any]:
                     a["workspace_id"], a["method"], a["template"], a["path"], a["query"], bytes.fromhex(a["body_hex"])
                 )
                 return {"bytes_hex": b.hex(), "digest_hex": d.hex()}
+            case "client_frame":
+                R.client_msg_check(a["dir"], R.client_frame_payload(client_wire(a)))
+                return {"ok": True}
+            case "client_rail":
+                return {"ok": R.rail_message(a["rows"])}
+            case "client_seq":
+                return _client_seq(a["frames"])
     except H.Refused as e:
         return {"error": e.code}
     raise AssertionError(f"unhandled check {c['check']!r}")
+
+
+def client_wire(spec: dict[str, Any]) -> bytes:
+    """A client frame spec: ``wire_hex`` (raw bytes on the wire), or ``frame`` encoded as ``len || cj``, its ``b`` rebuilt
+    from ``b_repeat`` (``unit * n + tail``) when present."""
+    if "wire_hex" in spec:
+        return bytes.fromhex(spec["wire_hex"])
+    frame = dict(spec["frame"])
+    if "b_repeat" in spec:
+        r = spec["b_repeat"]
+        frame["b"] = r["unit"] * r["n"] + r["tail"]
+    payload = cj(frame)
+    return len(payload).to_bytes(4, "big") + payload
+
+
+def _client_seq(frames: list[dict[str, Any]]) -> dict[str, Any]:
+    conn = R.ClientConn()
+    out = []
+    for i, f in enumerate(frames):
+        try:
+            out.append(conn.feed(f["dir"], client_wire(f)))
+        except H.Refused as e:
+            return {"error": e.code, "index": i, "answer": conn.answer(f["dir"], e.code)}
+    return {"results": out, "end": conn.state}
 
 
 def _frame(spec: dict[str, Any]) -> bytes:

@@ -52,7 +52,12 @@ CHECKS = {
     "request_head",
     "app_seq",
     "route_digest",
+    # R5: the client endpoint (§10.2d), replayed by tests/host/test_remote_client_vectors.py
+    "client_frame",
+    "client_rail",
+    "client_seq",
 }
+HOST_CASES = [c for c in DOC["cases"] if not c["check"].startswith("client_")]
 
 
 def test_vector_remote_host_knows_every_check_and_required_case() -> None:
@@ -232,7 +237,7 @@ def _run(c: dict[str, Any]) -> dict[str, Any]:
     raise AssertionError(f"unhandled check {c['check']!r}")
 
 
-@pytest.mark.parametrize("c", DOC["cases"], ids=[c["name"] for c in DOC["cases"]])
+@pytest.mark.parametrize("c", HOST_CASES, ids=[c["name"] for c in HOST_CASES])
 def test_vector_remote_host_case(c: dict[str, Any]) -> None:
     assert _run(c) == c["expect"], c.get("note")
 

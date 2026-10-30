@@ -1732,6 +1732,455 @@ def presence_route_cases(route_d: list[bytes]) -> None:
     )
 
 
+# --- §10.2d: the remote-client endpoint (R4 protocol, R5 rail) ------------------------------------------------------
+
+WS_OUT = hexid("workspace-outside-rail")
+USER = "u_" + hexid("hub-user")[:16]
+#: the hub world every ``client_seq`` case with ``endpoint: true`` runs in (the hub replays them against its real
+#: ``RemoteEndpoint``): tokens -> session info, the user's rail rows as ``workspace_rows`` gives them, live links
+CLIENT_ENV = {
+    "hub_id": HUB,
+    "tokens": {
+        "tok-remote": {"user_id": USER, "scope": "remote"},
+        "tok-browser": {"user_id": USER, "scope": "browser"},
+    },
+    "rail_rows": {
+        USER: [
+            {
+                "workspace_id": WS,
+                "name": "Severin's workspace",
+                "owner_name": "Severin",
+                "mode": "full",
+                "role": "owner",
+                "online": True,
+                "hub_reads": "everything",
+                "can_start": True,
+            },
+            {
+                "workspace_id": WS2,
+                "name": None,
+                "owner_name": "Severin",
+                "mode": "selective",
+                "role": "owner",
+                "online": False,
+                "hub_reads": "shared items and summaries",
+                "can_start": False,
+            },
+        ]
+    },
+    "links": [WS],
+}
+RAIL_MSG = {
+    "t": "rail",
+    "workspaces": [
+        {"workspace_id": WS, "name": "Severin's workspace", "online": True},
+        {"workspace_id": WS2, "name": None, "online": False},
+    ],
+    "more": False,
+}
+RAIL_MSG["workspaces"].sort(key=lambda r: r["workspace_id"])  # written by hand above; the order is by id
+#: long ``b`` values are written as ``{"unit", "n", "tail"}`` (``b = unit * n + tail``) in ``args.b_repeat`` to keep the
+#: file small; a replay rebuilds ``frame.b`` from it before it encodes the frame
+B_MAX = {"unit": "YWFh", "n": R.FRAME_MAX // 3, "tail": ""}  # 65535 bytes of "a"
+B_OVER = {"unit": "YWFh", "n": R.FRAME_MAX // 3, "tail": "YQ"}  # 65536 bytes of "a"
+B_LONG = {"unit": "!", "n": R.CLIENT_B64_MAX + 1, "tail": ""}  # longer than any legal b; not even base64url
+assert b64u(b"a" * R.FRAME_MAX) == "YWFh" * B_MAX["n"] and b64u(b"a" * (R.FRAME_MAX + 1)) == "YWFh" * B_OVER["n"] + "YQ"
+
+
+def big(direction: str, rep: dict[str, Any]) -> dict[str, Any]:
+    return {"dir": direction, "frame": {"t": "data", "b": ""}, "b_repeat": rep}
+
+
+def wire(o: dict[str, Any]) -> bytes:
+    return R.client_frame(o)
+
+
+def wire_raw(payload: bytes) -> str:
+    return (len(payload).to_bytes(4, "big") + payload).hex()
+
+
+def cf_spec(direction: str, frame: dict[str, Any] | None = None, wire_hex: str | None = None) -> dict[str, Any]:
+    return {"dir": direction, "frame": frame} if wire_hex is None else {"dir": direction, "wire_hex": wire_hex}
+
+
+def cf_bytes(spec: dict[str, Any]) -> bytes:
+    if "wire_hex" in spec:
+        return bytes.fromhex(spec["wire_hex"])
+    frame = dict(spec["frame"])
+    if "b_repeat" in spec:
+        r = spec["b_repeat"]
+        frame["b"] = r["unit"] * r["n"] + r["tail"]
+    return R.client_frame(frame)
+
+
+def client_frame_case(name: str, spec: dict[str, Any], note: str | None = None) -> None:
+    try:
+        o = R.client_frame_payload(cf_bytes(spec))
+        R.client_msg_check(spec["dir"], o)
+        expect: dict[str, Any] = {"ok": True}
+    except R.Refused as e:
+        expect = err(e.code)
+    case("client_frame", name, spec, expect, note)
+
+
+def c2h(o: dict[str, Any]) -> dict[str, Any]:
+    return cf_spec("c2h", o)
+
+
+def h2c(o: dict[str, Any]) -> dict[str, Any]:
+    return cf_spec("h2c", o)
+
+
+HELLO = {"t": "hello", "v": 1, "token": "tok-remote"}
+READY = {"t": "ready", "hub_id": HUB}
+OPEN_S = {"t": "open", "workspace_id": WS, "device_id": DEV_A, "kind": "session"}
+OPEN_E = {"t": "open", "workspace_id": WS, "device_id": CODE, "kind": "enroll"}
+OPENED = {"t": "opened", "stream_id": STREAM}
+
+
+def client_frame_cases() -> None:
+    good_c2h = {
+        "hello": HELLO,
+        "rail": {"t": "rail"},
+        "open_session": OPEN_S,
+        "open_enroll": OPEN_E,
+        "data_msg1": {"t": "data", "b": b64u(SESSION["m1"])},
+        "close": {"t": "close", "reason": "closed"},
+    }
+    for n, o in good_c2h.items():
+        client_frame_case(f"client_frame_c2h_{n}", c2h(o))
+    client_frame_case("client_frame_c2h_data_max", big("c2h", B_MAX), "65535 bytes, the largest Noise message")
+    good_h2c = {
+        "ready": READY,
+        "rail": RAIL_MSG,
+        "rail_empty": {"t": "rail", "workspaces": [], "more": False},
+        "rail_full_more": {
+            "t": "rail",
+            "workspaces": [
+                {"workspace_id": hexid(f"rail-{i:03d}"), "name": f"Workspace {i}", "online": i % 2 == 0}
+                for i in range(R.RAIL_MAX)
+            ],
+            "more": True,
+        },
+        "opened": OPENED,
+        "data_msg2": {"t": "data", "b": b64u(SESSION["m2"])},
+        "close_remote_off": {"t": "close", "reason": "remote.off"},
+    }
+    good_h2c["rail_full_more"]["workspaces"].sort(key=lambda r: r["workspace_id"])
+    for n, o in good_h2c.items():
+        client_frame_case(f"client_frame_h2c_{n}", h2c(o))
+    for code in R.CLIENT_ERROR_CODES:
+        client_frame_case(f"client_frame_h2c_error_{code}", h2c({"t": "error", "error": code}))
+    for code in R.CLIENT_REFUSED_CODES:
+        client_frame_case(f"client_frame_h2c_refused_{code}", h2c({"t": "refused", "error": code}))
+    client_frame_case(
+        "client_frame_key_order_free",
+        cf_spec("c2h", wire_hex=wire_raw(b'{"v":1,"token":"tok-remote","t":"hello"}')),
+        "strict parse, not canonical order: the sender writes cj, the receiver does not insist",
+    )
+    bad = {
+        "hello_v2": c2h({**HELLO, "v": 2}),
+        "hello_v_string": c2h({**HELLO, "v": "1"}),
+        "hello_token_int": c2h({**HELLO, "token": 7}),
+        "hello_extra_key": c2h({**HELLO, "device_id": DEV_A}),
+        "hello_no_token": c2h({"t": "hello", "v": 1}),
+        "rail_extra_key": c2h({"t": "rail", "workspace_id": WS}),
+        "open_session_with_code_id": c2h({**OPEN_S, "device_id": CODE}),
+        "open_enroll_with_device_id": c2h({**OPEN_E, "device_id": DEV_A}),
+        "open_kind_unknown": c2h({**OPEN_S, "kind": "browser"}),
+        "open_workspace_upper_hex": c2h({**OPEN_S, "workspace_id": WS.upper()}),
+        "open_workspace_short": c2h({**OPEN_S, "workspace_id": WS[:30]}),
+        "open_extra_stream_id": c2h({**OPEN_S, "stream_id": STREAM}),
+        "data_empty": c2h({"t": "data", "b": ""}),
+        "data_padded": c2h({"t": "data", "b": "YQ=="}),
+        "data_trailing_bits": c2h({"t": "data", "b": "YR"}),
+        "data_standard_alphabet": c2h({"t": "data", "b": "+/8"}),
+        "data_not_string": c2h({"t": "data", "b": 5}),
+        "data_extra_key": c2h({"t": "data", "b": "YQ", "seq": 1}),
+        "data_over_65535": big("c2h", B_OVER),
+        "data_string_over_max": big("c2h", B_LONG),
+        "close_unknown_reason": c2h({"t": "close", "reason": "bye"}),
+        "close_with_refusal_code": c2h({"t": "close", "reason": "not_allowed"}),
+        "t_unknown": c2h({"t": "ping"}),
+        "t_missing": c2h({"v": 1, "token": "tok-remote"}),
+        "t_not_string": c2h({"t": 1}),
+        "hub_message_from_client": c2h(READY),
+        "client_message_from_hub": h2c(HELLO),
+        "ready_upper_hub_id": h2c({"t": "ready", "hub_id": HUB.upper()}),
+        "ready_extra_key": h2c({**READY, "v": 1}),
+        "opened_short_stream_id": h2c({"t": "opened", "stream_id": STREAM[:31]}),
+        "error_refusal_code": h2c({"t": "error", "error": "not_allowed"}),
+        "error_free_text": h2c({"t": "error", "error": "token expired"}),
+        "refused_session_code": h2c({"t": "refused", "error": "no_session"}),
+        "refused_version_code": h2c({"t": "refused", "error": "remote.version"}),
+        "rail_row_extra_key": h2c({**RAIL_MSG, "workspaces": [{**RAIL_MSG["workspaces"][0], "role": "owner"}]}),
+        "rail_rows_unsorted": h2c({**RAIL_MSG, "workspaces": RAIL_MSG["workspaces"][::-1]}),
+        "rail_rows_duplicate": h2c({**RAIL_MSG, "workspaces": [RAIL_MSG["workspaces"][0]] * 2}),
+        "rail_name_control": h2c({**RAIL_MSG, "workspaces": [{**RAIL_MSG["workspaces"][0], "name": "Sev\u0007erin"}]}),
+        "rail_name_bidi": h2c({**RAIL_MSG, "workspaces": [{**RAIL_MSG["workspaces"][0], "name": "\u202eabc"}]}),
+        "rail_name_too_long": h2c({**RAIL_MSG, "workspaces": [{**RAIL_MSG["workspaces"][0], "name": "a" * 201}]}),
+        "rail_name_empty": h2c({**RAIL_MSG, "workspaces": [{**RAIL_MSG["workspaces"][0], "name": ""}]}),
+        "rail_name_padded": h2c({**RAIL_MSG, "workspaces": [{**RAIL_MSG["workspaces"][0], "name": " ws"}]}),
+        "rail_online_string": h2c({**RAIL_MSG, "workspaces": [{**RAIL_MSG["workspaces"][0], "online": "yes"}]}),
+        "rail_more_without_full_page": h2c({**RAIL_MSG, "more": True}),
+        "rail_over_max": h2c(
+            {
+                "t": "rail",
+                "workspaces": sorted(
+                    ({"workspace_id": hexid(f"rail-{i:03d}"), "name": None, "online": False} for i in range(101)),
+                    key=lambda r: r["workspace_id"],
+                ),
+                "more": False,
+            }
+        ),
+        "rail_missing_more": h2c({"t": "rail", "workspaces": []}),
+        "close_from_hub_unknown_reason": h2c({"t": "close", "reason": "kicked"}),
+    }
+    for n, spec in bad.items():
+        client_frame_case(f"client_frame_{n}", spec)
+    wires = {
+        "wire_length_zero": "00000000",
+        "wire_length_over_max": (R.CLIENT_FRAME_MAX + 1).to_bytes(4, "big").hex(),
+        "wire_length_mismatch": "0000000a" + b'{"t":"rail"'[:9].hex(),
+        "wire_not_utf8": wire_raw(b'{"t":"\xff"}'),
+        "wire_duplicate_key": wire_raw(b'{"t":"rail","t":"rail"}'),
+        "wire_float": wire_raw(b'{"t":"hello","token":"x","v":1.0}'),
+        "wire_array": wire_raw(b'["hello"]'),
+        "wire_nan": wire_raw(b'{"t":"hello","token":"x","v":NaN}'),
+        "wire_not_json": wire_raw(b"hello"),
+    }
+    for n, hx in wires.items():
+        client_frame_case(
+            f"client_frame_{n}",
+            cf_spec("c2h", wire_hex=hx),
+            "the length is refused before any payload byte is read" if n == "wire_length_over_max" else None,
+        )
+
+
+def client_rail_case(name: str, rows: list[dict[str, Any]], note: str | None = None) -> None:
+    msg = R.rail_message(copy.deepcopy(rows))
+    R.client_msg_check("h2c", msg)
+    case("client_rail", name, {"rows": rows}, {"ok": msg}, note)
+
+
+def client_rail_cases() -> None:
+    rows = CLIENT_ENV["rail_rows"][USER]
+    client_rail_case(
+        "client_rail_projection", rows, "only workspace_id, name, online: role, mode, owner, reads dropped"
+    )
+    client_rail_case("client_rail_sorted", rows[::-1])
+    client_rail_case("client_rail_empty", [])
+    base = rows[0]
+    client_rail_case("client_rail_name_newline", [{**base, "name": "Team\nnotes"}], "LF becomes a space")
+    client_rail_case("client_rail_name_cut", [{**base, "name": "a" * 300}], "cut to 200 UTF-8 bytes")
+    client_rail_case(
+        "client_rail_name_cut_char_boundary",
+        [{**base, "name": "a" * 199 + "é" + "b"}],
+        "a 2-byte character across byte 200 is dropped whole",
+    )
+    client_rail_case("client_rail_name_blank", [{**base, "name": "   "}], "empty after trimming: null")
+    client_rail_case("client_rail_name_bidi_raw", [{**base, "name": "\u202eevil"}], "fails the text rule: null")
+    client_rail_case(
+        "client_rail_name_rendered_escape", [{**base, "name": "<U+202E>evil"}], "render_text output passes as shown"
+    )
+    client_rail_case("client_rail_online_not_bool", [{**base, "online": "bound"}], "anything but true is false")
+    many = [{**base, "workspace_id": hexid(f"rail-{i:03d}"), "name": f"Workspace {i}"} for i in range(R.RAIL_MAX + 1)]
+    client_rail_case("client_rail_over_max_cut_more", many, "first 100 by workspace_id, more: true")
+    client_rail_case("client_rail_exactly_max", many[: R.RAIL_MAX], "more: false")
+
+
+def client_seq(
+    name: str,
+    frames: list[dict[str, Any]],
+    *,
+    endpoint: bool,
+    env: dict[str, Any] | None = None,
+    note: str | None = None,
+) -> None:
+    conn = R.ClientConn()
+    results: list[str] = []
+    expect: dict[str, Any]
+    for i, f in enumerate(frames):
+        try:
+            results.append(conn.feed(f["dir"], cf_bytes(f)))
+        except R.Refused as e:
+            expect = {"error": e.code, "index": i, "answer": conn.answer(f["dir"], e.code)}
+            assert i == len(frames) - 1, name
+            break
+    else:
+        expect = {"results": results, "end": conn.state}
+    args: dict[str, Any] = {"endpoint": endpoint, "frames": frames}
+    if env:
+        args["env"] = env
+    case("client_seq", name, args, expect, note)
+
+
+def client_seq_cases() -> None:
+    d1 = {"t": "data", "b": b64u(SESSION["m1"])}
+    d2 = {"t": "data", "b": b64u(SESSION["m2"])}
+    hs = [c2h(HELLO), h2c(READY)]
+    # --- what the real hub does (endpoint: true) -----------------------------------------------------------------
+    client_seq(
+        "client_seq_session",
+        [
+            *hs,
+            c2h(OPEN_S),
+            h2c(OPENED),
+            c2h(d1),
+            h2c(d2),
+            c2h({"t": "close", "reason": "closed"}),
+            h2c({"t": "close", "reason": "closed"}),
+        ],
+        endpoint=True,
+        note="the hub draws stream_id: a replay compares opened.stream_id with the id of its stream_open; the hub "
+        "answers the client's close with the same close",
+    )
+    client_seq(
+        "client_seq_rail_then_open",
+        [*hs, c2h({"t": "rail"}), h2c(RAIL_MSG), c2h(OPEN_S), h2c(OPENED), h2c({"t": "close", "reason": "remote.off"})],
+        endpoint=True,
+        note="a host close reaches the client verbatim",
+    )
+    client_seq("client_seq_rail_only", [*hs, c2h({"t": "rail"}), h2c(RAIL_MSG)], endpoint=True)
+    client_seq(
+        "client_seq_enroll",
+        [*hs, c2h(OPEN_E), h2c(OPENED), c2h({"t": "data", "b": b64u(ENROLL["m1"])})],
+        endpoint=True,
+    )
+    client_seq(
+        "client_seq_token_other_scope",
+        [c2h({**HELLO, "token": "tok-browser"}), h2c({"t": "error", "error": "no_session"})],
+        endpoint=True,
+    )
+    client_seq(
+        "client_seq_token_unknown",
+        [c2h({**HELLO, "token": "tok-gone"}), h2c({"t": "error", "error": "no_session"})],
+        endpoint=True,
+    )
+    client_seq(
+        "client_seq_rail_no_session",
+        [*hs, c2h({"t": "rail"}), h2c({"t": "error", "error": "no_session"})],
+        endpoint=True,
+        env={"signed_out_after_ready": True},
+        note="the token is re-checked at rail as at open",
+    )
+    client_seq(
+        "client_seq_rail_unavailable",
+        [*hs, c2h({"t": "rail"}), h2c({"t": "error", "error": "unavailable"})],
+        endpoint=True,
+        env={"rail": "fail"},
+    )
+    client_seq(
+        "client_seq_open_outside_rail",
+        [*hs, c2h({**OPEN_S, "workspace_id": WS_OUT}), h2c({"t": "refused", "error": "not_allowed"})],
+        endpoint=True,
+    )
+    client_seq(
+        "client_seq_open_in_rail_no_link",
+        [*hs, c2h({**OPEN_S, "workspace_id": WS2}), h2c({"t": "refused", "error": "not_allowed"})],
+        endpoint=True,
+        note="no stream link (offline, or remote off with no code): the same answer as outside the rail",
+    )
+    for code, op in (
+        ("remote.off", OPEN_S),
+        ("remote.device", OPEN_S),
+        ("remote.busy", OPEN_S),
+        ("replay", OPEN_S),
+        ("remote.no_code", OPEN_E),
+    ):
+        client_seq(
+            f"client_seq_host_refuses_{code}",
+            [*hs, c2h(op), h2c({"t": "refused", "error": code})],
+            endpoint=True,
+            env={"host": code},
+            note="the host's gate code, verbatim",
+        )
+    client_seq(
+        "client_seq_host_unknown_code_unavailable",
+        [*hs, c2h(OPEN_S), h2c({"t": "refused", "error": "unavailable"})],
+        endpoint=True,
+        env={"host": "free text"},
+        note="a host answer outside the gate codes is never passed on",
+    )
+    client_seq(
+        "client_seq_host_closes_remote_version",
+        [*hs, c2h(OPEN_S), h2c(OPENED), c2h(d1), h2c({"t": "close", "reason": "remote.version"})],
+        endpoint=True,
+    )
+    bad_c2h: dict[str, list[dict[str, Any]]] = {
+        "hello_v2": [c2h({**HELLO, "v": 2})],
+        "open_without_hello": [c2h(OPEN_S)],
+        "rail_without_hello": [c2h({"t": "rail"})],
+        "hello_frame_over_max": [cf_spec("c2h", wire_hex=(R.CLIENT_FRAME_MAX + 1).to_bytes(4, "big").hex())],
+        "hello_not_json": [cf_spec("c2h", wire_hex=wire_raw(b"GET / HTTP/1.1"))],
+        "data_before_opened": [*hs, c2h(d1)],
+        "close_before_opened": [*hs, c2h({"t": "close", "reason": "closed"})],
+        "second_hello": [*hs, c2h(HELLO)],
+        "rail_twice": [*hs, c2h({"t": "rail"}), h2c(RAIL_MSG), c2h({"t": "rail"})],
+        "rail_extra_key": [*hs, c2h({"t": "rail", "all": True})],
+        "data_after_rail": [*hs, c2h({"t": "rail"}), h2c(RAIL_MSG), c2h(d1)],
+        "open_bad_pairing": [*hs, c2h({**OPEN_S, "device_id": CODE})],
+        "second_open": [*hs, c2h(OPEN_S), h2c(OPENED), c2h(OPEN_S)],
+        "rail_in_stream": [*hs, c2h(OPEN_S), h2c(OPENED), c2h({"t": "rail"})],
+        "hello_in_stream": [*hs, c2h(OPEN_S), h2c(OPENED), c2h(HELLO)],
+        "data_empty_in_stream": [*hs, c2h(OPEN_S), h2c(OPENED), c2h({"t": "data", "b": ""})],
+        "data_over_65535": [*hs, c2h(OPEN_S), h2c(OPENED), big("c2h", B_OVER)],
+        "data_string_over_max": [*hs, c2h(OPEN_S), h2c(OPENED), big("c2h", B_LONG)],
+        "close_bad_reason": [*hs, c2h(OPEN_S), h2c(OPENED), c2h({"t": "close", "reason": "bye"})],
+        "not_json_in_stream": [*hs, c2h(OPEN_S), h2c(OPENED), cf_spec("c2h", wire_hex=wire_raw(b"\x00\x01"))],
+    }
+    for n, frames in bad_c2h.items():
+        client_seq(f"client_seq_{n}", frames, endpoint=True)
+    # --- what a client must refuse or tolerate (the hub cannot be made to send these; reference only) -------------
+    client_seq(
+        "client_seq_hub_data_after_client_close_dropped",
+        [
+            *hs,
+            c2h(OPEN_S),
+            h2c(OPENED),
+            c2h({"t": "close", "reason": "closed"}),
+            h2c(d2),
+            h2c({"t": "close", "reason": "closed"}),
+        ],
+        endpoint=False,
+        note="frames the host sent before it saw the close are dropped, not an error",
+    )
+    bad_h2c: dict[str, list[dict[str, Any]]] = {
+        "hub_speaks_first": [h2c(READY)],
+        "ready_twice": [*hs, h2c(READY)],
+        "opened_before_open": [*hs, h2c(OPENED)],
+        "rail_not_asked": [*hs, h2c(RAIL_MSG)],
+        "rail_answer_twice": [*hs, c2h({"t": "rail"}), h2c(RAIL_MSG), h2c(RAIL_MSG)],
+        "data_before_opened": [*hs, c2h(OPEN_S), h2c(d2)],
+        "refused_after_opened": [*hs, c2h(OPEN_S), h2c(OPENED), h2c({"t": "refused", "error": "remote.off"})],
+        "error_after_opened": [*hs, c2h(OPEN_S), h2c(OPENED), h2c({"t": "error", "error": "no_session"})],
+        "opened_twice": [*hs, c2h(OPEN_S), h2c(OPENED), h2c(OPENED)],
+        "ready_extra_key": [c2h(HELLO), h2c({**READY, "stream_id": STREAM})],
+        "opened_upper_stream_id": [*hs, c2h(OPEN_S), h2c({"t": "opened", "stream_id": STREAM.upper()})],
+        "close_unknown_reason": [*hs, c2h(OPEN_S), h2c(OPENED), h2c({"t": "close", "reason": "kicked"})],
+        "data_over_65535_from_hub": [*hs, c2h(OPEN_S), h2c(OPENED), big("h2c", B_OVER)],
+        "rail_with_role": [
+            *hs,
+            c2h({"t": "rail"}),
+            h2c({**RAIL_MSG, "workspaces": [{**RAIL_MSG["workspaces"][0], "role": "owner"}]}),
+        ],
+        "frame_after_close": [*hs, c2h(OPEN_S), h2c(OPENED), h2c({"t": "close", "reason": "idle"}), h2c(d2)],
+    }
+    for n, frames in bad_h2c.items():
+        client_seq(f"client_seq_hub_{n}", frames, endpoint=False)
+    client_seq(
+        "client_seq_open_before_ready",
+        [c2h(HELLO), c2h(OPEN_S)],
+        endpoint=False,
+        note="a client waits for ready (it needs hub_id for the prologue); the hub may not notice, so reference only",
+    )
+    client_seq(
+        "client_seq_client_frame_after_own_close",
+        [*hs, c2h(OPEN_S), h2c(OPENED), c2h({"t": "close", "reason": "closed"}), c2h(d1)],
+        endpoint=False,
+    )
+
+
 REQUIRED = [
     "msg1_replayed_into_other_stream",
     "msg1_replayed_into_other_workspace",
@@ -1806,6 +2255,31 @@ REQUIRED = [
     "presence_route_batch_other_run",
     "stream_open_old_form_no_exporter",
     "stream_data_other_connection",
+    # R5, the client endpoint (§10.2d)
+    "client_frame_hello_v2",
+    "client_frame_open_session_with_code_id",
+    "client_frame_data_over_65535",
+    "client_frame_wire_length_over_max",
+    "client_frame_refused_version_code",
+    "client_frame_rail_row_extra_key",
+    "client_frame_rail_name_bidi",
+    "client_rail_projection",
+    "client_rail_over_max_cut_more",
+    "client_seq_session",
+    "client_seq_rail_then_open",
+    "client_seq_rail_no_session",
+    "client_seq_open_outside_rail",
+    "client_seq_open_in_rail_no_link",
+    "client_seq_host_refuses_remote.off",
+    "client_seq_host_unknown_code_unavailable",
+    "client_seq_data_before_opened",
+    "client_seq_rail_twice",
+    "client_seq_second_open",
+    "client_seq_data_over_65535",
+    "client_seq_hub_opened_before_open",
+    "client_seq_hub_rail_not_asked",
+    "client_seq_hub_refused_after_opened",
+    "client_seq_hub_data_after_client_close_dropped",
 ]
 
 
@@ -1841,12 +2315,15 @@ def build() -> dict[str, Any]:
     request_head_cases()
     app_seq_cases()
     presence_route_cases(route_cases())
+    client_frame_cases()
+    client_rail_cases()
+    client_seq_cases()
     names = [c["name"] for c in CASES]
     assert len(names) == len(set(names)), "duplicate case name"
     assert set(REQUIRED) <= set(names)
     cases = copy.deepcopy(CASES)
     return {
-        "about": "FAKE keys, test-only. Remote access through the hub, contracts R0 and R3 (protocol.md 10.2c, 8.5; #1588, #1591).",
+        "about": "FAKE keys, test-only. Remote access through the hub, contracts R0, R3 and R5 (protocol.md 10.2c, 10.2d, 8.5; #1588, #1591, #1593).",
         "labels": R.REMOTE_LABELS,
         "constants": {
             "noise_protocol": R.NOISE_PROTOCOL.decode(),
@@ -1868,6 +2345,20 @@ def build() -> dict[str, Any]:
             "codes": list(R.CODES),
             "close_reasons": list(R.CLOSE_REASONS),
             "link_window_ms": 120_000,
+            "client": {
+                "alpn": R.CLIENT_ALPN,
+                "version": R.CLIENT_VERSION,
+                "frame_max": R.CLIENT_FRAME_MAX,
+                "b64_max": R.CLIENT_B64_MAX,
+                "setup_ms": R.CLIENT_SETUP_MS,
+                "open_wait_ms": R.CLIENT_OPEN_WAIT_MS,
+                "idle_poll_ms": R.CLIENT_IDLE_POLL_MS,
+                "rail_max": R.RAIL_MAX,
+                "rail_name_max": R.RAIL_NAME_MAX,
+                "error_codes": list(R.CLIENT_ERROR_CODES),
+                "refused_codes": list(R.CLIENT_REFUSED_CODES),
+                "messages": {d: {t: sorted(k) for t, k in m.items()} for d, m in R.CLIENT_MSGS.items()},
+            },
             "app": {
                 "kinds": R.APP_KINDS,
                 "plain_max": R.APP_PLAIN_MAX,
@@ -1914,6 +2405,7 @@ def build() -> dict[str, Any]:
             "now_ms": NOW,
             "link_exporter_hex": LINK_EXPORTER.hex(),
         },
+        "client_env": CLIENT_ENV,
         "device_list": LIST,
         "transcripts": ts,
         "required": REQUIRED,

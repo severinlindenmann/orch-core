@@ -33,7 +33,7 @@ import re
 import struct
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, ClassVar
 
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
@@ -1058,3 +1058,216 @@ def stream_open_gate(body: Mapping[str, Any], state: Mapping[str, Any], now_ms: 
         or state["handshakes_device"] >= LIMITS["handshakes_per_min"]
     ):
         raise Refused("remote.busy")
+
+
+# --- the remote-client endpoint (§10.2d; R4 protocol, R5 rail) ------------------------------------------------------
+
+CLIENT_ALPN = "orch-remote/1"
+CLIENT_VERSION = 1  # ``hello.v``; a later version is a new ALPN name, never a negotiation inside this one
+CLIENT_HEADER = 4  # big-endian payload length before every endpoint frame
+CLIENT_FRAME_MAX = 96 * 1024  # payload bytes of one endpoint frame
+CLIENT_B64_MAX = -(-FRAME_MAX * 4 // 3)  # the longest legal ``data.b`` (65535 bytes as unpadded base64url)
+CLIENT_SETUP_MS = 30_000  # from TLS to ``open`` (hello, rail, open) on one connection
+CLIENT_OPEN_WAIT_MS = 30_000  # the host's answer to ``stream_open`` (else ``refused unavailable``)
+CLIENT_IDLE_POLL_MS = 30_000  # in a stream: how often the hub re-checks a silent client's stream (no keepalive frame)
+RAIL_MAX = 100  # rail rows in one ``rail`` answer (first by workspace_id; ``more`` says the rest exist)
+RAIL_NAME_MAX = 200  # UTF-8 bytes of a rail name
+#: ``error``: the connection-level answers (before a stream; ends the connection)
+CLIENT_ERROR_CODES = ("malformed", "no_session", "remote.busy", "unavailable")
+#: ``refused``: the answers to ``open`` (hub checks, then the host's gate codes verbatim; ends the connection)
+CLIENT_REFUSED_CODES = (
+    "malformed",
+    "not_allowed",
+    "unavailable",
+    "remote.busy",
+    "remote.off",
+    "remote.device",
+    "remote.no_code",
+    "replay",
+)
+
+
+def _client_b(x: Any) -> bytes:
+    """``data.b``: canonical b64u of 1..65535 bytes. Too long is ``too_large``; anything else wrong is ``malformed``."""
+    if type(x) is str and len(x) > CLIENT_B64_MAX:
+        raise Refused("too_large")
+    try:
+        raw = unb64u(x)
+    except CanonError:
+        raise Refused("malformed") from None
+    if not raw:
+        raise Refused("malformed")
+    if len(raw) > FRAME_MAX:
+        raise Refused("too_large")
+    return raw
+
+
+def rail_name_ok(x: Any) -> bool:
+    return x is None or text_ok(x, RAIL_NAME_MAX)
+
+
+def _rail_ok(rows: Any, more: Any) -> bool:
+    if type(rows) is not list or type(more) is not bool or len(rows) > RAIL_MAX or (more and len(rows) != RAIL_MAX):
+        return False
+    last = ""
+    for r in rows:
+        if (
+            type(r) is not dict
+            or set(r) != {"workspace_id", "name", "online"}
+            or not _hex16(r["workspace_id"])
+            or r["workspace_id"] <= last
+            or not rail_name_ok(r["name"])
+            or type(r["online"]) is not bool
+        ):
+            return False
+        last = r["workspace_id"]
+    return True
+
+
+def _open_ok(o: Mapping[str, Any]) -> bool:
+    kind, dev = o["kind"], o["device_id"]
+    want = DEVICE_ID if kind == "session" else CODE_ID if kind == "enroll" else None
+    return _hex16(o["workspace_id"]) and want is not None and type(dev) is str and want.fullmatch(dev) is not None
+
+
+#: direction -> t -> exact keys. The field rules are in :func:`client_msg_check`.
+CLIENT_MSGS: dict[str, dict[str, frozenset[str]]] = {
+    "c2h": {
+        "hello": frozenset({"t", "v", "token"}),
+        "rail": frozenset({"t"}),
+        "open": frozenset({"t", "workspace_id", "device_id", "kind"}),
+        "data": frozenset({"t", "b"}),
+        "close": frozenset({"t", "reason"}),
+    },
+    "h2c": {
+        "ready": frozenset({"t", "hub_id"}),
+        "error": frozenset({"t", "error"}),
+        "rail": frozenset({"t", "workspaces", "more"}),
+        "opened": frozenset({"t", "stream_id"}),
+        "refused": frozenset({"t", "error"}),
+        "data": frozenset({"t", "b"}),
+        "close": frozenset({"t", "reason"}),
+    },
+}
+
+
+def client_msg_check(direction: str, o: Any) -> dict[str, Any]:
+    """One endpoint message, exact keys and field rules (§10.2d). ``malformed``, or ``too_large`` for a ``data`` whose
+    ``b`` is longer than one Noise message."""
+    keys = CLIENT_MSGS[direction].get(o.get("t")) if type(o) is dict and type(o.get("t")) is str else None
+    if keys is None or set(o) != keys:
+        raise Refused("malformed")
+    t = o["t"]
+    if t == "data":
+        _client_b(o["b"])
+        return o
+    ok = {
+        "hello": lambda: type(o.get("v")) is int and o.get("v") == CLIENT_VERSION and type(o.get("token")) is str,
+        "rail": lambda: direction == "c2h" or _rail_ok(o["workspaces"], o["more"]),
+        "open": lambda: _open_ok(o),
+        "close": lambda: type(o["reason"]) is str and o["reason"] in CLOSE_REASONS,
+        "ready": lambda: _hex16(o["hub_id"]),
+        "opened": lambda: _hex16(o["stream_id"]),
+        "error": lambda: type(o["error"]) is str and o["error"] in CLIENT_ERROR_CODES,
+        "refused": lambda: type(o["error"]) is str and o["error"] in CLIENT_REFUSED_CODES,
+    }[t]()
+    if not ok:
+        raise Refused("malformed")
+    return o
+
+
+def client_frame_payload(wire: bytes) -> dict[str, Any]:
+    """The 4-byte length and the strict JSON object of one endpoint frame (``malformed`` otherwise). The receiver checks
+    the length against :data:`CLIENT_FRAME_MAX` before it reads the payload; the payload must parse strictly (no
+    duplicate key, float, NaN or non-UTF-8) but need not be in canonical key order (senders write ``cj``)."""
+    if len(wire) < CLIENT_HEADER:
+        raise Refused("malformed")
+    n = int.from_bytes(wire[:CLIENT_HEADER], "big")
+    if n == 0 or n > CLIENT_FRAME_MAX or len(wire) != CLIENT_HEADER + n:
+        raise Refused("malformed")
+    try:
+        o = loads_strict(wire[CLIENT_HEADER:])
+    except CanonError:
+        raise Refused("malformed") from None
+    if type(o) is not dict:
+        raise Refused("malformed")
+    return o
+
+
+def client_frame(o: Mapping[str, Any]) -> bytes:
+    payload = cj(dict(o))
+    return len(payload).to_bytes(CLIENT_HEADER, "big") + payload
+
+
+def rail_message(rows: list[Mapping[str, Any]]) -> dict[str, Any]:
+    """The ``rail`` answer from the person's rail rows (``orch_hub.switch.workspace_rows``): ONLY ``workspace_id``,
+    ``name`` and ``online`` of each row, sorted by workspace_id, at most :data:`RAIL_MAX` (``more`` when cut). A name
+    becomes one line (LF -> space), cut to :data:`RAIL_NAME_MAX` UTF-8 bytes on a character boundary and trimmed;
+    one that is then empty or fails the text rule is ``None``. Nothing else of the row (mode, role, owner, reads) is
+    sent."""
+    out = []
+    for r in sorted(rows, key=lambda r: r["workspace_id"]):
+        name = r.get("name")
+        if type(name) is str:
+            name = name.replace("\n", " ").strip()
+            while len(name.encode("utf-8", "surrogatepass")) > RAIL_NAME_MAX:
+                name = name[:-1]
+            name = name.strip()
+            if not text_ok(name, RAIL_NAME_MAX):
+                name = None
+        else:
+            name = None
+        out.append({"workspace_id": r["workspace_id"], "name": name, "online": r.get("online") is True})
+    return {"t": "rail", "workspaces": out[:RAIL_MAX], "more": len(out) > RAIL_MAX}
+
+
+@dataclass
+class ClientConn:
+    """One endpoint connection as an observer sees it: every frame of both directions in arrival order (§10.2d
+    "Order"). :meth:`feed` returns ``"ok"``, or ``"dropped"`` for a hub ``data`` after the client's own ``close``, and
+    raises :class:`Refused` (``malformed`` / ``too_large``) on a frame out of its shape or its state.
+    :meth:`answer` names what the receiver of that bad frame sends before it closes the connection."""
+
+    state: str = "hello"
+    railed: bool = False
+    # direction -> state -> t -> next state
+    _NEXT: ClassVar[dict[str, dict[str, dict[str, str]]]] = {
+        "c2h": {
+            "hello": {"hello": "auth"},
+            "ready": {"rail": "rail_wait", "open": "open_wait"},
+            "stream": {"data": "stream", "close": "client_closed"},
+        },
+        "h2c": {
+            "auth": {"ready": "ready", "error": "ended"},
+            "rail_wait": {"rail": "ready", "error": "ended"},
+            "open_wait": {"opened": "stream", "refused": "ended", "error": "ended"},
+            "stream": {"data": "stream", "close": "ended"},
+            "client_closed": {"data": "client_closed", "close": "ended"},
+        },
+    }
+
+    def feed(self, direction: str, wire: bytes) -> str:
+        o = client_frame_payload(wire)
+        t = o.get("t")
+        nxt = self._NEXT[direction].get(self.state, {}).get(t) if type(t) is str else None
+        if nxt is None or (direction == "c2h" and t == "rail" and self.railed):
+            raise Refused("malformed")
+        client_msg_check(direction, o)
+        if t == "rail":
+            self.railed = True
+        before, self.state = self.state, nxt
+        return "dropped" if before == "client_closed" and t == "data" else "ok"
+
+    def answer(self, direction: str, code: str) -> dict[str, Any] | None:
+        """The frame the receiver of a bad frame sends, given the state it was in; ``None``: it just closes."""
+        if direction == "c2h":
+            if self.state == "hello":
+                return {"t": "error", "error": code}
+            if self.state == "ready":
+                return {"t": "refused", "error": code}
+            if self.state == "stream":
+                return {"t": "close", "reason": code}
+            return None  # the hub does not read while it owes the answer; nothing defined
+        if self.state == "stream":
+            return {"t": "close", "reason": code}
+        return None

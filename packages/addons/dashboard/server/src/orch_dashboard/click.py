@@ -1039,9 +1039,9 @@ def register(app: FastAPI, gateway: Gateway):
         rid = got["request_id"]
         clicks.forget(rid)  # adopted by the new signer; it is no longer an orphan
         sweep()
-        clicks.add(ws, rid, planned.op, body, signer.restarts)
-        if isinstance(body, REMOTE_STEPS) and not clicks.bind(rid, token):
+        if isinstance(body, REMOTE_STEPS) and not clicks.bind(rid, token):  # bound before the record exists
             raise fail("intent.blocked", "This change is open in another window.", exit=5)
+        clicks.add(ws, rid, planned.op, body, signer.restarts)
         if planned.sequence:  # a display aid for `state` (how far a stopped run got); it decides nothing
             handoffs.note_intent(planned.person, rid, planned.sequence["intent"])
         handoffs.own(planned.person, ws, rid, TTL)
@@ -1166,6 +1166,9 @@ def register(app: FastAPI, gateway: Gateway):
                 return {"id": rid, **got}
         else:
             mine(ws, rid)
+            authorize(
+                rid, request.state.token
+            )  # the one rule: a remote-step request answers its preparing session only
         try:
             rows = human(ws, "human.pending", {"request_id": rid})["requests"]
         except HostError:

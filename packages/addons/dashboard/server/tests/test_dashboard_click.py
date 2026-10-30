@@ -3991,7 +3991,7 @@ STATES = (
     "unknown",
 )
 TOKENS = ("same", "other_loopback", "remote", "none")
-STEPS = ("view", "sign")
+STEPS = ("view", "sign", "state")
 
 
 def put_in_state(client, token, stub, backup, state):
@@ -4029,8 +4029,8 @@ def test_authorize_table_over_states_tokens_and_steps(client, token, stub, backu
             client_login_kind(), "login_kind", lambda self, t: "remote" if t == other else real(self, t), raising=False
         )
     headers = hdr(caller) if caller else {"Origin": ORIGIN}
-    if step == "view":
-        res = client.post(url(stub, "view"), json={"request_id": REQ}, headers=headers)
+    if step in ("view", "state"):
+        res = client.post(url(stub, step), json={"request_id": REQ}, headers=headers)
     else:
         res = client.post(
             url(stub, "sign"),

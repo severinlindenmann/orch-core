@@ -555,3 +555,41 @@ def test_listen_takes_one_literal_ip_and_a_port():
     for addr, port in (("0.0.0.0", 8151), ("example.org", 8151), ("100.71.14.98", 0)):
         with pytest.raises(RuntimeError):
             network_address(addr, port)
+
+
+def test_websocket_upgrade_is_tied_to_the_accepting_socket(tmp_path):
+    """Real ASGI websocket scopes: a loopback Host on the network socket is closed (1008); on the loopback socket (also
+    through an ssh tunnel, Host 127.0.0.1:port) the upgrade passes the Host/socket tie; the network Host never does."""
+    import asyncio
+
+    from orch_dashboard.security import Security
+
+    lan = "192.168.1.20:8151"
+    own = f"127.0.0.1:{PORT}"
+    policy = loopback_policy(PORT, (lan,))
+    sec = Security(None, None, policy)
+
+    def run(server, host):
+        sent, calls = [], {"n": 0}
+
+        async def send(m):
+            sent.append(m)
+
+        async def receive():
+            return {"type": "websocket.connect"}
+
+        headers = [(b"host", host.encode()), (b"origin", f"http://{host}".encode())]
+        scope = {"type": "websocket", "path": "/term", "query_string": b"", "subprotocols": [], "server": server,
+                 "client": ("192.168.1.99", 5), "headers": headers}  # fmt: skip
+        try:
+            asyncio.run(sec.websocket(scope, receive, send, policy))
+        except Exception:  # past the tie the stub has no router: reaching it proves the tie let it through
+            calls["n"] = 1
+        closed = any(m["type"] == "websocket.close" and m.get("code") == 1008 for m in sent)
+        return closed, calls["n"]
+
+    assert run(("192.168.1.20", PORT), own)[0] is True  # network socket, forged loopback Host
+    assert run(("127.0.0.1", PORT), lan)[0] is True  # network Host never upgrades
+    assert run(("192.168.1.20", PORT), lan)[0] is True
+    closed, passed = run(("127.0.0.1", PORT), own)  # loopback socket / ssh tunnel
+    assert passed == 1 or closed is False  # not closed by the tie: it went on to the (stub) route check

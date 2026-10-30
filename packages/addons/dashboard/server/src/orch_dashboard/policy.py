@@ -6,6 +6,7 @@ it keeps no listener constants of its own. Today only the loopback listener is w
 unchanged and pinned by a golden test). `remote_policy` is the stricter definition for the HTTPS front; R1-4 wires it
 to a listener."""
 
+import ipaddress
 import re
 from dataclasses import dataclass
 
@@ -40,6 +41,20 @@ TERM_PATH = "/term"
 _SEGMENT = re.compile(r"[A-Za-z0-9_-]{1,64}")
 _ASSET = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 _NAME = re.compile(r"(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]([a-z0-9-]{0,61}[a-z0-9])?")
+
+
+def accepted_on_loopback(scope, missing: bool = False) -> bool:
+    """Was this connection accepted on a loopback socket? Decided from the accepting socket's own address
+    (``scope["server"]``, set by the server that accepted it), never from the Host header: a network client
+    can send any Host. ``missing`` is the answer when the scope names no address (an in-process call; a real server
+    always names it)."""
+    server = scope.get("server")
+    if not (isinstance(server, tuple | list) and server):
+        return missing
+    try:
+        return ipaddress.ip_address(str(server[0]).split("%", 1)[0]).is_loopback
+    except ValueError:  # not an IP address (a real server always names one; a test client names a host): unknown
+        return missing
 
 
 def clean_path(path: str) -> list[str] | None:

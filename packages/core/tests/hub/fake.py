@@ -182,11 +182,12 @@ class FakeHub(BareLink):
         roles: dict[str, str],
         revoked_channels: list[str] | None = None,
         market_policy: Json | None = None,
+        ends_ms: dict[str, int] | None = None,
     ) -> Json:
         """Sign the next snapshot version of a joined workspace (``roles``: user_id hex -> read | edit | admin)."""
         ws = self.workspaces[workspace_id]
         ws.snapshot = self._snapshot(
-            workspace_id, ws.snapshot["o"]["version"] + 1, roles, revoked_channels or [], market_policy
+            workspace_id, ws.snapshot["o"]["version"] + 1, roles, revoked_channels or [], market_policy, ends_ms
         )
         return ws.snapshot
 
@@ -259,7 +260,13 @@ class FakeHub(BareLink):
         return sign_with(self._hk_op, "sig_hub_route", o)
 
     def _snapshot(
-        self, ws_id: str, version: int, roles: dict[str, str], revoked: list[str], market_policy: Json | None = None
+        self,
+        ws_id: str,
+        version: int,
+        roles: dict[str, str],
+        revoked: list[str],
+        market_policy: Json | None = None,
+        ends_ms: dict[str, int] | None = None,
     ) -> Json:
         o = {
             "v": 2,
@@ -274,6 +281,7 @@ class FakeHub(BareLink):
             "issued_ms": self.now_ms,
             "roles": dict(roles),
             "revoked_channels": sorted(set(revoked)),
+            "ends_ms": dict(ends_ms or {}),
             "market_policy": DEFAULT_POLICY if market_policy is None else market_policy,
             "dev": self.dev_mode,
         }

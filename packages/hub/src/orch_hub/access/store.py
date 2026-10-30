@@ -751,11 +751,11 @@ class Access:
                         out[u] = role
         return dict(sorted(out.items()))
 
-    def ends_for(self, workspace_id: str) -> dict[str, int]:
+    def ends_for(self, workspace_id: str, now: int | None = None) -> dict[str, int]:
         """``{user_id: ends_ms}`` for the signed snapshot: for each user who has a role now, the first moment their role
         would fall (rank lower than now) because a membership ends. Users whose role never falls are absent."""
         _hex(workspace_id, "workspace_id")
-        now = self._now()
+        now = self._now() if now is None else now
         with self.lock:
             cur = self.roles_overlay(workspace_id, at_ms=now)
             points = sorted(

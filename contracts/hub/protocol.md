@@ -555,8 +555,17 @@ Signed by `HK_op` under `orch/v2/hub-snapshot|`.
 | `issued_ms` | integer |
 | `roles` | object `{user_id hex: "read" \| "edit" \| "admin"}`; a user without a role is absent |
 | `revoked_channels` | sorted list of unique `channel_id` hex |
+| `ends_ms` | object `{user_id hex: integer}` (GA-07, **required**, `{}` when nobody has an end date): the time (UTC ms, **exclusive**) from which the user's role in `roles` no longer holds. Only users that have a role are listed; each value is an integer strictly after `issued_ms` and below 2^53. The hub lists a user when a membership that gives their role ends and the role would fall |
 | `market_policy` | the hub marketplace policy of §7.1; **required, never `null`** |
 | `dev` | boolean |
+
+**`role_at(snapshot, user, now_ms)`** is the one rule for every role decision (hub and host, including the custodial check
+and the replay at the event's time): `roles[user]`, except `none` when `user` is in `ends_ms` and `now_ms >= ends_ms[user]`
+(fail closed: the true role may only have been lowered; a fresher snapshot says), or when `issued_ms > now_ms + 300000`
+(a snapshot issued more than 5 minutes ahead of the verifier's clock gives no role to any user listed in `ends_ms`).
+The hub re-issues (version + 1) at the first request after an end, because its roles are computed at read time.
+A host keeps the highest snapshot version it ever pinned from a hub (also across a rebind or mode switch) and refuses
+a lower one with `stale_snapshot`.
 
 **SHORTCUT** `Snapshots by version only (no generations)` (#910): `generation` is present and MUST be `0`; any other
 value is `malformed`. Hardening (#910) defines `HK_root`-signed generations (spec §6) as a new `hv`.
@@ -564,7 +573,7 @@ value is `malformed`. Hardening (#910) defines `HK_root`-signed generations (spe
 **Verification by the host** (the newest snapshot it holds is `pinned`):
 
 1. §2.2 steps 1–3 under the card's `HK_op`; `hub_id` → `other_hub`; `op_cert_id` → `stale_op_cert`; dev marker;
-2. `roles` keys and values, `revoked_channels` sorted and unique, `market_policy` valid (§7.1) → `malformed`;
+2. `roles` keys and values, `revoked_channels` sorted and unique, `ends_ms` (keys in `roles`, values after `issued_ms`), `market_policy` valid (§7.1) → `malformed`;
 3. `workspace_id` is this workspace → `other_workspace`;
 4. `version < pinned.version` → `stale_snapshot` (a replayed snapshot cannot bring back a removed user);
 5. `version == pinned.version`: identical `cj(o)` is a no-op; anything else → `snapshot_conflict`;

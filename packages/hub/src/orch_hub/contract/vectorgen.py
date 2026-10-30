@@ -229,6 +229,7 @@ def snapshot(
         "issued_ms": NOW - 60_000,
         "roles": roles if roles is not None else {U_ALICE: "admin", U_BOB: "read"},
         "revoked_channels": revoked if revoked is not None else [],
+        "ends_ms": {},
         "market_policy": default_policy(),
         "dev": True,
         **kw,
@@ -1224,6 +1225,34 @@ def build() -> dict[str, Any]:
         3,
         "same version with another policy is a conflict like any other content change",
     )
+    # GA-07: the required field ends_ms {user_id: ms}: only users that have a role; each end is an integer after issued_ms
+    case(
+        "snapshot_ends_ms_ok",
+        "snapshot",
+        {**with_card, "signed": snapshot(ends_ms={U_BOB: NOW + 1000}), "workspace_id": WS_A, "pinned": None},
+        {"ok": {"version": 3}},
+        3,
+        "a user whose access ends at a given time (exclusive)",
+    )
+    for tag, bad in (
+        ("missing", None),
+        ("null", "null"),
+        ("list", []),
+        ("string_value", {U_BOB: "1790000001000"}),
+        ("bool_value", {U_BOB: True}),
+        ("not_after_issue", {U_BOB: NOW - 60_000}),
+        ("negative", {U_BOB: -5}),
+        ("key_not_hex16", {"bob": NOW + 1000}),
+        ("key_not_in_roles", {fake16("user_nobody"): NOW + 1000}),
+    ):
+        sn = snapshot(drop="ends_ms") if tag == "missing" else snapshot(ends_ms=None if tag == "null" else bad)
+        case(
+            f"snapshot_ends_ms_malformed_{tag}",
+            "snapshot",
+            {**with_card, "signed": sn, "workspace_id": WS_A, "pinned": None},
+            {"error": "malformed"},
+            3,
+        )
     case(
         "snapshot_unsorted_revocations",
         "snapshot",
@@ -1329,6 +1358,35 @@ def build() -> dict[str, Any]:
         {**cus, "event": ev, "snapshot": {**snap_o, "roles": {U_BOB: "read"}}},
         {"error": "forbidden_role"},
         4,
+    )
+    # GA-07 (R2/R6): a user listed in ends_ms has no role from that time on, and none when the snapshot is issued far ahead
+    ends_snap = lambda t, **kw: {**snap_o, "ends_ms": {U_ALICE: t}, **kw}
+    case(
+        "custodial_access_ends_after_now", "custodial", {**cus, "event": ev, "snapshot": ends_snap(NOW + 1)}, ok_cus, 4
+    )
+    case(
+        "custodial_access_ends_exactly_now",
+        "custodial",
+        {**cus, "event": ev, "snapshot": ends_snap(NOW)},
+        {"error": "forbidden_role"},
+        4,
+        "exclusive end: now == ends_ms is already over",
+    )
+    case(
+        "custodial_snapshot_issued_far_ahead_with_end",
+        "custodial",
+        {**cus, "event": ev, "snapshot": ends_snap(NOW + 10**9, issued_ms=NOW + 300_001)},
+        {"error": "forbidden_role"},
+        4,
+        "R6: more than 5 minutes ahead of the verifier's clock: no role for a user with an end date",
+    )
+    case(
+        "custodial_snapshot_issued_ahead_without_end",
+        "custodial",
+        {**cus, "event": ev, "snapshot": {**snap_o, "issued_ms": NOW + 300_001}},
+        ok_cus,
+        4,
+        "users without an end date are not affected by the skew rule",
     )
     case(
         "custodial_channel_revoked",

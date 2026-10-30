@@ -233,6 +233,7 @@ FIELDS: dict[str, dict[str, Check]] = {
         "issued_ms": _int_min(0),
         "roles": lambda x: type(x) is dict,
         "revoked_channels": lambda x: type(x) is list,
+        "ends_ms": lambda x: type(x) is dict,
         "market_policy": lambda x: _wire._policy_ok(x),  # the production validator (orch.hubclient.marketpolicy)
         "dev": _bool,
     },
@@ -495,6 +496,11 @@ def verify_snapshot(
     if any(not _hex16(u) or r not in ROLES or type(r) is not str for u, r in roles.items()):
         raise Refused("malformed")
     if any(not _hex16(c) for c in revoked) or revoked != sorted(set(revoked)):
+        raise Refused("malformed")
+    ends = o["ends_ms"]
+    if any(
+        not _hex16(u) or u not in roles or type(t) is not int or not o["issued_ms"] < t < 2**53 for u, t in ends.items()
+    ):
         raise Refused("malformed")
     if o["workspace_id"] != workspace_id:
         raise Refused("other_workspace")

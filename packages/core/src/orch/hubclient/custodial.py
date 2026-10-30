@@ -273,7 +273,7 @@ def verify_custodial(
         raise HubRefused("unknown_snapshot")
     if event["channel"] in snapshot["revoked_channels"]:
         raise HubRefused("channel_revoked")
-    role = snapshot["roles"].get(user)
+    role = wire.role_at(snapshot, user, now_ms)
     if mode == "selective":
         if user not in granted_users:
             raise HubRefused("not_granted")

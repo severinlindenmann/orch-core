@@ -68,6 +68,25 @@ def person_id(pk_pub: bytes) -> str:
     return _key_hash(_H_PERSON_ID, pk_pub)[:16].hex()
 
 
+#: a snapshot issued more than this far ahead of the verifier's clock is not trusted for any user with an end date (R6)
+SNAPSHOT_SKEW_MS = 5 * 60 * 1000
+
+
+def role_at(snapshot: Mapping[str, Any], user_id: str, now_ms: int) -> str | None:
+    """THE role of ``user_id`` in a verified snapshot object at ``now_ms`` (GA-07; hub protocol 7). A user listed in
+    ``ends_ms`` has no role from that time on (fail closed: the true role may only have been lowered, a fresher
+    snapshot says so), and none when the snapshot claims to be issued more than 5 minutes ahead of this clock (a host
+    clock set back must not extend access). Every role decision on the host (reads and the signing path) goes
+    through this one function."""
+    role = snapshot["roles"].get(user_id)
+    end = snapshot["ends_ms"].get(user_id)
+    if role is None or end is None:
+        return role
+    if now_ms >= end or snapshot["issued_ms"] > now_ms + SNAPSHOT_SKEW_MS:
+        return None
+    return role
+
+
 def hex16(x: Any) -> bool:
     try:
         unhex(x, 16)
@@ -165,6 +184,9 @@ _FIELDS: dict[str, dict[str, Callable[[Any], bool]]] = {
         "issued_ms": _int_min(0),
         "roles": lambda x: type(x) is dict,
         "revoked_channels": lambda x: type(x) is list,
+        "ends_ms": lambda x: (
+            type(x) is dict
+        ),  # GA-07 (hub protocol 7): {user_id: ms}, checked in snapshot.verify_snapshot
         "market_policy": _policy_ok,  # D14: required, never null (hub protocol 7.1)
         "dev": lambda x: type(x) is bool,
     },

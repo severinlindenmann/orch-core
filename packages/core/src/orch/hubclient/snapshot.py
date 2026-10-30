@@ -20,7 +20,18 @@ from .link import HubLink
 from .marketpolicy import MarketPolicy, parse_policy
 from .service import HubState
 
-__all__ = ["ROLES", "hub_market_policy", "hub_role", "pinned_view", "record_revoked_op", "refresh", "verify_snapshot"]
+role_at = wire.role_at
+
+__all__ = [
+    "ROLES",
+    "hub_market_policy",
+    "hub_role",
+    "pinned_view",
+    "record_revoked_op",
+    "refresh",
+    "role_at",
+    "verify_snapshot",
+]
 
 ROLES = ("read", "edit", "admin")
 
@@ -85,6 +96,12 @@ def verify_snapshot(
         raise HubRefused("malformed")
     if any(not wire.hex16(c) for c in revoked) or revoked != sorted(set(revoked)):
         raise HubRefused("malformed")
+    ends = o["ends_ms"]  # GA-07: only users that have a role; each end is an integer after the issue time
+    if any(
+        not wire.hex16(u) or u not in roles or type(t) is not int or not o["issued_ms"] < t < 2**53
+        for u, t in ends.items()
+    ):
+        raise HubRefused("malformed")
     if o["workspace_id"] != workspace_id:
         raise HubRefused("other_workspace")
     if pinned is not None:
@@ -107,7 +124,10 @@ def _accept(state: HubState, signed: Any, *, workspace_id: str, now_ms: int, dev
     )  # fmt: skip
     if pinned is not None and o["version"] == pinned["version"]:
         return False
+    if o["version"] < state.snapshot_floor:  # GA-07: never go below the highest version seen, also after a rebind
+        raise HubRefused("stale_snapshot")
     state.snapshot = signed
+    state.snapshot_floor = max(state.snapshot_floor, o["version"])
     return True
 
 
@@ -175,7 +195,7 @@ def hub_role(state: HubState | None, user_id: str, *, now_ms: int, dev_mode: boo
         )  # fmt: skip
     except (HubRefused, KeyError, TypeError):
         return None
-    return o["roles"].get(user_id)
+    return wire.role_at(o, user_id, now_ms)
 
 
 def hub_market_policy(state: HubState | None, *, now_ms: int, dev_mode: bool) -> tuple[int, MarketPolicy] | None:

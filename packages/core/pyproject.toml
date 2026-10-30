@@ -8,6 +8,7 @@ license = "LicenseRef-PolyForm-Noncommercial-1.0.0"
 license-files = ["LICENSE"]
 dependencies = [
     "cryptography>=43",
+    "fido2>=2",  # R5: FIDO2 presence key where there is no Secure Enclave (remote client, custody kind remote-presence)
     "jsonschema>=4.26.0",
     "packaging>=24",  # lockfile and marker parsing (marketplace spec 15.2-11)
     "pip>=24",  # installs add-on wheels offline into their own environment (spec 8.2, design G4)

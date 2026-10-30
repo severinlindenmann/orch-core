@@ -37,6 +37,7 @@ __all__ = [
     "PRIMARY_SIG_LABELS",
     "PERSON_LABELS",
     "DEVICE_KEY_LABELS",
+    "REMOTE_PRESENCE_LABELS",
     "ROLE_LABELS",
     "Backend",
     "BackendUnavailable",
@@ -167,11 +168,16 @@ PRIMARY_SIG_LABELS: tuple[bytes, ...] = (_p("sig_relay_auth"),)
 """The primary's ``dk_sig`` (orch-v2-host 11A.15.1): it only logs in to the relay as the account's device (protocol
 §12.2, ``POST /v2/accounts``, ``PUT /v2/devices``). The primary is never an F1 member, so it signs no person event,
 decision or bridge request; certificates, challenges and rejections are ``PK``'s (``PERSON_KEY_LABELS``)."""
+REMOTE_PRESENCE_LABELS: tuple[bytes, ...] = (_p("sig_remote_open"), _p("sig_remote_presence"))
+"""R5 (#1593, D64 kind ``remote-presence``): the presence key of a computer used for remote access signs exactly these two
+messages of hub contract 10.2c (the stream open and an action presence). It is not ``person_capable``, never offered by
+:mod:`orch.custody.select` and has no ``file`` tier: it lives in a Secure Enclave / security key (``orch.remoteclient``)."""
 ROLE_LABELS: dict[str, tuple[bytes, ...]] = {
     "person": PERSON_KEY_LABELS,
     "device": DEVICE_KEY_LABELS,
     "workspace": HOST_LABELS,
     "primary": PRIMARY_SIG_LABELS,
+    "remote-presence": REMOTE_PRESENCE_LABELS,  # R5: see REMOTE_PRESENCE_LABELS; no custody backend creates this role
     "kx": (),  # a key-exchange key signs nothing; a signing key never does ECDH (11A.15.1)
 }
 

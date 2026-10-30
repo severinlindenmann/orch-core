@@ -72,6 +72,9 @@ class HookStore:
             raise Refused("malformed")
         with self._lock, self._db:
             self._purge(now_ms)
+            # an expired row of this very hash (the purge above is bounded) must not block it, nor leave a ring behind
+            self._db.execute("DELETE FROM ring WHERE token_hash = ? AND expires_ms <= ?", (th, now_ms))
+            self._db.execute("DELETE FROM hook WHERE token_hash = ? AND expires_ms <= ?", (th, now_ms))
             if self._db.execute("SELECT 1 FROM hook WHERE token_hash = ?", (th,)).fetchone():
                 raise Refused("hook_exists")
             if replaces is not None:  # only the caller's own hook; another workspace's hash is silently not touched

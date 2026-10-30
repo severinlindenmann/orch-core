@@ -109,3 +109,17 @@ def test_revoke_drops_hook_and_pending_ring():
     s.revoke(WS_A, th(1))
     assert s.counts(WS_A) == (0, 0) and s.lookup(th(1), NOW) is None
     s.revoke(WS_A, th(1))  # again: no error
+
+
+def test_expired_row_beyond_the_purge_batch_does_not_block_its_own_hash():
+    from orch_hub.hooks import store as ST
+
+    s = HookStore()
+    n = ST.PURGE + 20
+    with s._lock, s._db:  # more expired rows than one purge call removes, of many workspaces
+        for i in range(1, n + 1):
+            s._db.execute(
+                "INSERT INTO hook VALUES (?,?,?,?,?,?,NULL)", (th(i), f"{i:032x}", "F", "github", SECRET, NOW + 1)
+            )
+    s.put(WS_A, body(n, expires_ms=NOW + 5000), NOW + 2000)  # the last, never reached by the first purge batch
+    assert s.lookup(th(n), NOW + 2000) is not None

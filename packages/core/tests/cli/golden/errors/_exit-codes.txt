@@ -93,6 +93,14 @@ passkey.stepup_required 3 retry:false
 retry.later 9 retry:true
 quota.unattended 9 retry:true
 members.stale 9 retry:true
+update.unreachable 9 retry:true
+update.no_record 2 retry:false
+update.downgrade 3 retry:false
+update.too_old 5 retry:false
+update.no_space 4 retry:false
+update.agents_running 4 retry:true
+update.rolled_back 5 retry:false
+update.after_commit 5 retry:false
 format.older 3 retry:false
 format.newer 3 retry:false
 format.missing 3 retry:false

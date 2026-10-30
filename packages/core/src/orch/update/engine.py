@@ -237,6 +237,7 @@ class Updater:
         self.s.services.stop()
         info = {
             "from_version": cur, "to_version": new, "channel": ch, "seq": ver.seq, "running": names, "backups": [],
+            "roots": [str(r[2].resolve()) for r in roots],
             "revocations_issued_at": ver.revocations_issued_at, "root_key_id": self._root_key_id(),
             "files": {f["name"]: f["sha256"] for f in manifest["files"]},
             "roles": {f["name"]: f["role"] for f in manifest["files"]}, "log": str(self.log_path),
@@ -417,6 +418,8 @@ class Updater:
             problems = [str(exc)]
         for p in problems:
             warnings.append(p)
+        for _label, _kind, root in roots_of(info):
+            backup_mod.prune_backups(self.env, root)  # only now: a failing update never eats its own way back
         prune_tools(self.layout, to, frm)
         prune_cache(self.layout, {to, frm})
         if problems:
@@ -472,7 +475,7 @@ class Updater:
             flip_current(self.layout, frm)
         for b in doc.get("backups") or []:
             if Path(b["backup"]).is_dir():
-                backup_mod.restore(Path(b["backup"]), Path(b["root"]))
+                backup_mod.restore(Path(b["backup"]), Path(b["root"]), self.env)
         quarantine.clear(self.state)
         clear_journal(self.env)  # restore may have brought back a copy of the journal: it is gone either way
         if frm:
@@ -543,3 +546,7 @@ def read_journal_safe(env: Mapping[str, str]) -> dict[str, Any] | None:
         return read_journal(env)
     except OrchError:
         return {"phase": "stopped", "v": 1}
+
+
+def roots_of(info: Mapping[str, Any]) -> list[tuple[str, str, Path]]:
+    return [(b["label"], b["kind"], Path(b["root"])) for b in info.get("backups") or []]

@@ -231,8 +231,9 @@ def test_use_refuses_a_version_that_is_not_installed(w):
 
 
 def test_a_second_update_at_the_same_time_is_refused(w):
-    from orch import oslock
     import os
+
+    from orch import oslock
 
     fd = os.open(w.layout.lock, os.O_RDWR | os.O_CREAT, 0o600)
     oslock.flock(fd, oslock.LOCK_EX)

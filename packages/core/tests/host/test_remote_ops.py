@@ -282,6 +282,9 @@ def test_wrk_rotate_ends_sessions_and_removes_devices(human, served):
     assert out["removed"] == sorted([d1, d2])
     assert r.calls[0] == "revoked" and all(r.held)  # sessions ended, under the lock
     assert model(served)["devices"] == {} and model(served)["wrk_fp"] == out["wrk_fp"]
+    # R2 review L3: one line does it all, no separate removal lines follow the rotation
+    kinds = [e["type"] for e, _ in served.service.store.events_after("workspace", 0, 1000)]
+    assert kinds[-1] == "remote.key_rotated" and "remote.device_removed" not in kinds
     assert enrollment.outstanding(served.service, clock_ms(served)) == {}  # the old code pinned the old key
     assert first["code_id"] not in enrollment.outstanding(served.service, clock_ms(served))
 

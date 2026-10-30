@@ -94,19 +94,16 @@ def create(service: WorkspaceService) -> bytes:
 
 
 def rotate(service: WorkspaceService) -> dict[str, Any]:
-    """A new WRK: file first, then ``remote.key_rotated`` (all streams close), then every device is removed."""
-    from . import append_host, dev_ids
+    """A new WRK as ONE step under the store lock: file, then ``remote.key_rotated`` (the model removes every device in
+    that same line, the commit hook closes all streams), then the codes and pending devices are forgotten."""
+    from . import append_host, dev_ids, enrollment
 
     store = service.store
     scalar = secrets.token_bytes(32)
     fp = wrk_fp(public(scalar)).hex()
     with store.locked():
         _write(service, scalar)
-        append_host(service, "remote.key_rotated", wrk_fp=fp)
         ids = dev_ids(service)
-        for did in ids:
-            append_host(service, "remote.device_removed", device_id=did, reason="key_rotated")
-    from . import enrollment
-
-    enrollment.forget_all(service)  # outstanding codes and pending devices pinned the old key
+        append_host(service, "remote.key_rotated", wrk_fp=fp)
+        enrollment.forget_all(service)  # outstanding codes and pending devices pinned the old key
     return {"wrk_fp": fp, "removed": ids}

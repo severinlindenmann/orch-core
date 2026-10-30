@@ -96,7 +96,7 @@ def on_commit(service: Any, log: str, event: dict[str, Any]) -> None:
         gate.on_commit(service, "workspace", event)  # the ONE place streams close; runs once per commit
         if typ in ("member.removed", "role.changed"):
             _drop_non_owner_devices(service)
-        if typ in ("remote.device_added", "remote.device_removed"):
+        if typ in ("remote.device_added", "remote.device_removed", "remote.key_rotated"):
             from . import devices
 
             devices.export(service)

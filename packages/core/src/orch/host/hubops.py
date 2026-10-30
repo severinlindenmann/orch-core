@@ -329,8 +329,13 @@ def _save_snapshot(service: WorkspaceService, fetched: Any) -> None:
         new = fetched.snapshot
         if new is not None:
             held = None if cur.snapshot is None else cur.snapshot["o"]
+            if held is None and new["o"]["version"] < cur.snapshot_floor:
+                raise HubRefused(
+                    "stale_snapshot"
+                )  # nothing pinned after a rebind or mode switch: the floor still holds
             if held is None or new["o"]["version"] > held["version"]:
                 cur.snapshot, changed = new, True
+                cur.raise_floor(new["o"]["version"])
             elif new["o"]["version"] == held["version"] and wire.cj(new["o"]) != wire.cj(held):
                 raise HubRefused("snapshot_conflict")
         revoked = sorted({*cur.revoked_op_certs, *fetched.revoked_op_certs})
@@ -902,7 +907,7 @@ def serve(call: Call) -> dict[str, Any]:
             )
         return ok_result(
             {
-                "snapshot": snapshot.pinned_view(state),
+                "snapshot": snapshot.pinned_view(state, int(service.clock() * 1000)),
                 "joined": bool(model) and model.get("status") == "joined",
                 "hub_id": model.get("hub_id"),
                 "mode": model.get("mode"),

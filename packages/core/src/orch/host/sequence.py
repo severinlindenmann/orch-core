@@ -1350,10 +1350,12 @@ def build_content(prepared: Mapping[str, Any], *, verified: bool) -> dict[str, A
         if "owner" in intent.get("people", {}):
             notes.append("The owner is set last. After that you may no longer be able to change this ticket yourself.")
         notes.extend(_people_notes(intent))
-        notes.append(
-            "Only the ticket as it was when you opened it is edited. If anyone changes it meanwhile, signing "
-            "stops and nothing more is signed."
-        )
+        if intent["sections"] or any(k in intent for k in ("acceptance", "tasks", "links", "people", "images")):
+            # r12-P11: a title-only rename does not say it (a conflict refusal says it in plain words)
+            notes.append(
+                "Only the ticket as it was when you opened it is edited. If anyone changes it meanwhile, signing "
+                "stops and nothing more is signed."
+            )
     else:
         content.setdefault("notes", []).extend(extra_lines(intent))
         count = len(intent["sections"])
@@ -1432,11 +1434,26 @@ def _addon_content(content: dict[str, Any], intent: Mapping[str, Any], n: int) -
     the events, built by :func:`signcontent.build`), and what happens if signing stops between the two."""
     from orch.addons.settings_needs import TITLES
 
-    content["fields_inline"] = True
-    content.pop("summary", None)  # settings and identity stay inline, never folded behind a grant summary
+    content["fields_inline"] = True  # (Publish folds them under the technical details below)
+    content.pop("summary", None)  # never folded behind a grant summary
     content["headline"] = f"Turn on {TITLES.get(intent['name'], intent['name'])}"
     content["subline"] = "its settings are signed first, then the add-on is turned on"
     notes = content.setdefault("notes", [])
+    publish = (intent.get("settings") or {}).get("publish")
+    if isinstance(publish, Mapping) and set(publish) == {"server", "share"}:
+        # r12-P11: Publish says it in one plain line; the addresses (both rows) and the add-on's identity and
+        # capabilities stay in the review, folded under the technical details. The line names where files go.
+        from orch.host.signcontent import _reach
+
+        sent, opens = _reach(str(publish["server"])), _reach(str(publish["share"]))
+        content["fields_inline"] = False
+        notes[:] = [n for n in notes if not n.startswith(("Files you share go to this server", "Files are sent to: "))]
+        notes.insert(
+            0,
+            f"Files you share go to {sent}"
+            + ("" if sent == opens else f" (links open at {opens})")
+            + "; anyone with the link can read them.",
+        )
     notes.append(
         "Settings are signed first, then the add-on is turned on. If signing stops in between, "
         "the settings stay and the add-on stays off."

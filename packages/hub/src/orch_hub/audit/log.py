@@ -108,7 +108,13 @@ class AuditLog:
             )
         return self.append(
             "membership",
-            {"group": ev["group"], "user_id": ev["user_id"], "added": ev["added"], "actor_user_id": actor},
+            {
+                "group": ev["group"],
+                "user_id": ev["user_id"],
+                "added": ev["added"],
+                "ends_ms": ev["ends_ms"],
+                "actor_user_id": actor,
+            },
         )
 
     def space_change(self, ev: dict[str, Any]) -> dict[str, Any]:

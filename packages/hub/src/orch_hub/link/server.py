@@ -121,6 +121,7 @@ class LinkServer:
         views: Any = None,
         shares: Any = None,
         switch: Any = None,
+        hooks: Any = None,
         activity: Any = None,
         where: Callable[[], dict[str, Any]] | None = None,
         deliveries: Any = None,
@@ -160,6 +161,7 @@ class LinkServer:
         self._views = views
         self._shares = shares
         self._switch = switch
+        self._hooks = hooks
         self._activity = activity
         self._where = where
         self._deliveries = deliveries  # custodial.DeliveryQueue: event_deliver out, its replies in (§8.7)
@@ -637,6 +639,7 @@ class LinkServer:
                 views=self._views,
                 shares=self._shares,
                 switch=self._switch,
+                hooks=self._hooks,
                 activity=self._activity,
                 where=self._where,
                 same_computer=same,

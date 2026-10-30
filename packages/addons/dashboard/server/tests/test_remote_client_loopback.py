@@ -214,6 +214,16 @@ def test_service_worker_and_cross_site_fetches_are_refused(session_origin):
     assert raw(lst.port, "GET", "/", headers={"Sec-Fetch-Site": "cross-site"})[0] == 403
     assert raw(lst.port, "GET", "/", headers={"Sec-Fetch-Site": "same-site"})[0] == 403
     assert raw(lst.port, "GET", "/", headers={"Sec-Fetch-Site": "same-origin"})[0] == 200
+    # the launcher's redirect file (file://) makes the first page load a cross-site NAVIGATION: the static page only
+    nav = {"Sec-Fetch-Site": "cross-site", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document"}
+    assert raw(lst.port, "GET", "/", headers=nav)[0] == 200
+    assert raw(lst.port, "GET", "/api/remote-client/state", headers=nav)[0] == 403
+    assert (
+        raw(
+            lst.port, "GET", "/assets/dash.js", headers={**nav, "Sec-Fetch-Mode": "no-cors", "Sec-Fetch-Dest": "script"}
+        )[0]
+        == 403
+    )
 
 
 @pytest.mark.parametrize("path", ["/api/%2e%2e/x", "/api/a%2Fb", "/api/../x", "/api//x", "/api/a;b"])

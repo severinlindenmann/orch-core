@@ -155,7 +155,17 @@ class Origin:
                 return "origin"
         elif origin is not None and origin != self.origin:
             return "origin"
-        if h.get("sec-fetch-site") not in (None, "same-origin", "none"):
+        # The browser is sent here by the launcher's redirect file (file://), which makes the page load a cross-site
+        # NAVIGATION. That one request only receives the static page (no secret, no data, the code is in the fragment
+        # and never sent); every other request must be same-origin.
+        navigation = (
+            method in ("GET", "HEAD")
+            and h.get("sec-fetch-mode") == "navigate"
+            and h.get("sec-fetch-dest") == "document"
+        )
+        if h.get("sec-fetch-site") not in (None, "same-origin", "none") and not (
+            navigation and not scope.get("path", "/").startswith(("/api", "/auth"))
+        ):
             return "fetch-site"
         if "service-worker" in h:
             return "service-worker"

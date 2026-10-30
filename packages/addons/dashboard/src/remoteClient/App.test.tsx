@@ -145,6 +145,24 @@ describe('confirm', () => {
   })
 })
 
+describe('adding a computer while a confirm is shown', () => {
+  it('keeps the job and its words when the confirm screen comes and goes', async () => {
+    let prompt: State['prompt'] = null
+    const api = fakeApi({ state: vi.fn(async () => state({ prompt })), workspaces: vi.fn(async () => [row({ added: false })]) })
+    mount(api)
+    fireEvent.click(await screen.findByRole('button', { name: 'Add this computer' }))
+    fireEvent.change(screen.getByPlaceholderText('Paste the code here'), { target: { value: 'orch-rc1.x' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+    await screen.findByLabelText('Six words')
+    prompt = { id: 'p9', workspace: 'Website', lines: ['Add this computer to workspace abcd1234'] }
+    expect(await screen.findByRole('heading', { name: 'Website asks you to confirm' })).toBeInTheDocument()
+    prompt = null
+    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Website asks you to confirm' })).toBeNull())
+    expect(screen.getByLabelText('Six words')).toBeVisible() // same job: the words are still there
+    expect(api.enrollStart).toHaveBeenCalledTimes(1)
+  })
+})
+
 describe('security key PIN', () => {
   it('is not asked unless the key asks, and then on its own screen, sent once', async () => {
     const quiet = fakeApi()

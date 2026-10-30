@@ -50,11 +50,19 @@ export function App({ api, pollMs = 1500 }: { api: Api | null; pollMs?: number }
 
   if (!api) return <Shell><h1>Open this page from orch</h1><p>Run <b>orch remote open</b> to get a new link.</p></Shell>
   if (!state) return <Shell><p>{failed ? 'The client is not running. Start it again with orch remote open.' : 'Loading…'}</p></Shell>
-  if (state.pin) return <Shell><PinScreen key={state.pin} api={api} id={state.pin} onDone={refresh} /></Shell>
-  if (state.prompt) return <Shell><Confirm key={state.prompt.id} api={api} prompt={state.prompt} method={state.presence.method} onDone={refresh} /></Shell>
-  if (!state.signed_in) return <Shell><Connect api={api} onDone={refresh} /></Shell>
-  if (screen.name === 'add') return <Shell><Add api={api} onBack={() => setScreen({ name: 'list' })} pollMs={Math.min(pollMs, 700)} /></Shell>
-  return <Shell><Workspaces api={api} state={state} onAdd={() => setScreen({ name: 'add' })} onChange={refresh} /></Shell>
+  // A confirm or PIN screen sits ON TOP of the page: the page below stays mounted (hidden), so a pending "Add this
+  // computer" keeps its words and its job while the person confirms.
+  const over = state.pin
+    ? <PinScreen key={state.pin} api={api} id={state.pin} onDone={refresh} />
+    : state.prompt
+      ? <Confirm key={state.prompt.id} api={api} prompt={state.prompt} method={state.presence.method} onDone={refresh} />
+      : null
+  const page = !state.signed_in
+    ? <Connect api={api} onDone={refresh} />
+    : screen.name === 'add'
+      ? <Add api={api} onBack={() => setScreen({ name: 'list' })} pollMs={Math.min(pollMs, 700)} />
+      : <Workspaces api={api} state={state} onAdd={() => setScreen({ name: 'add' })} onChange={refresh} />
+  return <Shell>{over}<div hidden={over !== null}>{page}</div></Shell>
 }
 
 function Connect({ api, onDone }: { api: Api; onDone: () => void }) {

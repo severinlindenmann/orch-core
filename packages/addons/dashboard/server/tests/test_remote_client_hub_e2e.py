@@ -9,6 +9,7 @@ presence-gated action shows Confirm with the workspace's OWN name -> End."""
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 from pathlib import Path
@@ -108,7 +109,9 @@ def stack(world, hub, human, served, tmp_path, monkeypatch):  # noqa: F811
     home = Origin_(redirect_target(opened.pop(0)))
     ctl.card = hub.card  # noqa: B010
     try:
-        yield SimpleNamespace_(ctl=ctl, home=home, opened=opened, soft=soft, client=client, world=world, hub=hub)
+        yield SimpleNamespace_(
+            ctl=ctl, home=home, opened=opened, soft=soft, client=client, world=world, hub=hub, world_human=human
+        )
     finally:
         ctl.stop()
 
@@ -119,6 +122,9 @@ class SimpleLink:
 
 
 def _static(tmp_path: Path) -> Path:
+    real = os.environ.get("ORCH_R5_STATIC")  # the browser run: the real built UI (dist) instead of the stand-in
+    if real:
+        return Path(real)
     root = make_static(tmp_path / "static")
     (root / "index.html").write_text(SESSION_PAGE)
     return root

@@ -261,8 +261,10 @@ def test_every_field_named_in_the_long_leaves_text_is_in_the_short_text():
     for long, short in (
         (shareops.LEAVES["ticket"], shareops.LEAVES_SHORT["ticket"]),
         (shareops._leaves("ticket", []), shareops.LEAVES_SHORT["ticket"]),
-        ("the ticket's title, status, labels, deadline and description, but never its plan, comments or files",
-         shareops.LEAVES_SHORT_DESCRIPTION),
+        (
+            "the ticket's title, status, labels, deadline and description, but never its plan, comments or files",
+            shareops.LEAVES_SHORT_DESCRIPTION,
+        ),
         (shareops.LEAVES["summary"], shareops.LEAVES_SHORT["summary"]),
     ):
         named = long.split(", but never")[0]

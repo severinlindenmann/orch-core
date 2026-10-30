@@ -1234,7 +1234,10 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
             raise ApiError("forbidden_role")
         # P08: the one non-root landing the console asks for is the workspace's own hub settings, for an admin or owner of
         # it only. A fixed value, never a free path; any other return_to still meets the workspace's own check unchanged.
-        if clean_return_to(b["return_to"]) == "/settings/hub" and mine.get("role") not in ("admin", "owner"):
+        # a fixed allowlist: exactly "/" or "/settings/hub" (nothing else is minted, not even a cleaned lookalike)
+        if b["return_to"] not in ("/", "/settings/hub"):
+            raise ApiError("malformed")
+        if b["return_to"] == "/settings/hub" and mine.get("role") not in ("admin", "owner"):
             raise ApiError("forbidden_role")
         origin = sw.origin_of(ws)
         if origin is None:

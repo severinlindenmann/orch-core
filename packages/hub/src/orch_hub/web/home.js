@@ -124,7 +124,7 @@ export function homeView(d) {
   const active = browser?.state === "active";
   const dead = browser?.state === "dead";
   const local = h("div", { class: "browser-card" },
-    h("b", { text: active ? "This browser holds a signing key for you" : "Approvals need a signing key in this browser" }),
+    h("b", { text: active && browser.needsSignIn ? "Ready. Sign in once to approve." : active ? "This browser holds a signing key for you" : "Approvals need a signing key in this browser" }),
     active ? note("Name: " + text(browser.label || "this browser"))
       : note(dead ? "The key is missing here or was removed at the hub. Set up signing again to sign here." : "One step: confirm with your password and a code."),
     dead ? h("button", { text: "Forget the key in this browser", onclick: () => d.actions.forgetLocal() }) : null,

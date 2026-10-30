@@ -102,6 +102,14 @@ test("P03: a nameless workspace uses its owner's name", () => {
 
 const all = (n) => [n, ...n.children.flatMap(all)];
 const textOf = (out) => out.flatMap(all).map((n) => n.textContent).join(" ");
+test("run15 P03 N4: a switch session that holds a local key says it is ready and needs one sign-in", () => {
+  const out = homeView({ user: { name: "Anna", is_admin: true }, workspaces: [{ workspace_id: "a", name: "P", online: true }], items: [], channels: [],
+    thisBrowser: { state: "active", label: "Chrome", needsSignIn: true }, actions: {} });
+  const t = out.flatMap((n) => n.all()).map((n) => n.textContent).join(" ");
+  assert.match(t, /Ready\. Sign in once to approve\./);
+  assert.doesNotMatch(t, /holds a signing key/);
+});
+
 test("run15 P03: a browser with no key gets one green button, Set up signing, and no 'sign in here once' detour", () => {
   let called = 0;
   for (const state of ["unregistered", "dead"]) {

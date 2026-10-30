@@ -95,7 +95,7 @@ def test_link_op_without_owner_alias_is_refused(w):
 def test_hub_to_workspace_redeem_over_the_link(w):
     w.sw.set_origin(WS, DASH)
     token = w.login(w.ann)
-    s, o, _ = w.call("POST", "/switch/ticket", {"workspace_id": WS, "return_to": "/t/9", "kind": "open"}, token=token)
+    s, o, _ = w.call("POST", "/switch/ticket", {"workspace_id": WS, "return_to": "/", "kind": "open"}, token=token)
     assert s == 200 and o["url"].startswith(DASH + "/#t=" + WS + ".")
     t = o["url"].split("#t=")[1]
     # another workspace's link cannot redeem it, and that spends it
@@ -103,10 +103,10 @@ def test_hub_to_workspace_redeem_over_the_link(w):
         ops.switch_redeem(ctx(w, WS_SEL, "switch_redeem", {"ticket": t}))
     with pytest.raises(Refused):
         ops.switch_redeem(ctx(w, WS, "switch_redeem", {"ticket": t}))
-    s, o, _ = w.call("POST", "/switch/ticket", {"workspace_id": WS, "return_to": "/t/9", "kind": "open"}, token=token)
+    s, o, _ = w.call("POST", "/switch/ticket", {"workspace_id": WS, "return_to": "/", "kind": "open"}, token=token)
     t = o["url"].split("#t=")[1]
     r = ops.switch_redeem(ctx(w, WS, "switch_redeem", {"ticket": t}))
-    assert (r["user_id"], r["return_to"], r["kind"]) == (w.ann, "/t/9", "open")
+    assert (r["user_id"], r["return_to"], r["kind"]) == (w.ann, "/", "open")
     with pytest.raises(Refused):
         ops.switch_redeem(ctx(w, WS, "switch_redeem", {"ticket": t}))
 
@@ -536,8 +536,16 @@ def test_run15c_p08_settings_landing_is_for_an_admin_or_owner_of_the_workspace_o
     tok = w.login(bob)
     s, o, _ = w.call("POST", "/switch/ticket", body, token=tok)
     assert s == 200 and o["url"].startswith(DASH + "/#t=")
-    s, o, _ = w.call("POST", "/switch/ticket", {**body, "return_to": "/settings/hub/../x"}, token=editor)
-    assert s == 200  # an unclean path is cleaned to "/" (as before), so it is not the settings landing
+    for other in (
+        "/settings/hub/",
+        "/settings",
+        "/settings/hub/../x",
+        "/t/9",
+        "/phones",
+        "",
+    ):  # N1: exactly "/" or "/settings/hub"
+        s, o, _ = w.call("POST", "/switch/ticket", {**body, "return_to": other}, token=tok)
+        assert (s, o["error"]) == (400, "malformed"), other
 
 
 def test_run15_p03_a_switch_session_registers_a_browser_key_only_with_password_and_code(w):
@@ -563,10 +571,11 @@ def test_run15_p03_a_switch_session_registers_a_browser_key_only_with_password_a
     bad = {"kind": "browser", "key_pub": pub, "password": "wrong password", "totp": w.env.next_code(w.ann)}
     s, o, _ = w.call("POST", "/channels/register/begin", bad, token=tok)
     assert s != 200 and w.env.svc.db.q("SELECT COUNT(*) FROM channels WHERE user_id=?", (w.ann,))[0][0] == 0
+    used = w.creds(w.ann)
     s, begun, _ = w.call(
         "POST",
         "/channels/register/begin",
-        {"kind": "browser", "key_pub": pub, "label": "B", **w.creds(w.ann)},
+        {"kind": "browser", "key_pub": pub, "label": "B", **used},
         token=tok,
     )
     assert s == 200, begun
@@ -577,6 +586,10 @@ def test_run15_p03_a_switch_session_registers_a_browser_key_only_with_password_a
         token=tok,
     )
     assert s == 200 and got["channel_cert"]["o"]["factor"] == "password+totp"
+    # N2: the code already used at the first begin is refused (single use)
+    again = {"kind": "browser", "key_pub": b64u(new_channel().public), "label": "C", **used}
+    s, o, _ = w.call("POST", "/channels/register/begin", again, token=tok)
+    assert (s, o["error"]) == (401, "bad_credentials")
     # still a switch session: the closed list stays closed
     s, o, _ = w.call("GET", "/admin/users", token=tok)
     assert (s, o["error"]) == (403, "reauth_required")

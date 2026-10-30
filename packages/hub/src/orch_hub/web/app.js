@@ -822,7 +822,7 @@ async function home() {
       ended,
       channels: state.channels.map((c) => ({ ...c, status: c.status + (state.me?.channelId === c.channel_id ? " (this browser)" : "") })),
       newChannels: state.newChannels,
-      thisBrowser: state.user.needs_sign_in ? (state.me?.userId === user.user_id ? { state: "active", label: state.me.label } : { state: "unregistered" }) : mine ? { state: "active", label: state.me.label } : dead ? { state: "dead", label: state.me?.label } : { state: "unregistered" },
+      thisBrowser: state.user.needs_sign_in ? (state.me?.userId === user.user_id ? { state: "active", label: state.me.label, needsSignIn: true } : { state: "unregistered" }) : mine ? { state: "active", label: state.me.label } : dead ? { state: "dead", label: state.me?.label } : { state: "unregistered" },
       notice: state.notice,
       actions: { review: (it) => navigate("#/w/" + it.workspace_id + "/item/" + encodeURIComponent(it.key || it.item_id)), open: (id) => openOrPage(id), dismissEnded: (id) => { dismissEnded(user.user_id, id); void home(); }, openShared: (it) => navigate("#/shared/" + it.workspace_id + "/" + encodeURIComponent(it.key)), connect: () => navigate("#/workspaces"), register: () => registerView(), removeChannel, forgetLocal, dismissNew },
     };

@@ -246,6 +246,8 @@ def test_the_review_of_an_adding_change_comes_from_the_host_and_lists_only_new_i
     assert review["leaves"] == [{"kind": "ticket", "text": shareops.LEAVES["ticket"]}]
     assert (
         review["later_edits"] == shareops.LATER_EDITS
+        and review["leaves_short"] == shareops.LEAVES_SHORT["ticket"]
+        and review["later_edits_short"] == shareops.LATER_EDITS_SHORT
         and "hub_id" in review
         and "readers" in review
         and "widened" in review

@@ -110,6 +110,9 @@ export interface HubShareReview {
   new_items: string[]
   leaves: string[]
   later_edits: string | null
+  /** Short forms for the one-ticket dialog (the host words them too). */
+  leaves_short?: string | null
+  later_edits_short?: string | null
 }
 
 /** `POST /hub/share/rule-add` and `/hub/share/sync`: sharing more. `synced: false`: saved, sent when the hub is back. */

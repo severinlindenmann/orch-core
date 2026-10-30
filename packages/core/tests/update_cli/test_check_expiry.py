@@ -47,3 +47,21 @@ def test_expired_is_refused_with_plain_words(tmp_path):
     doc = json.loads(out)
     assert rc != 0 and doc["ok"] is False and doc["code"] == "update.stale"
     assert "expired on 2026-11-19: ask your admin to renew it" in doc["message"]
+
+
+def test_a_newer_fetched_list_replaces_the_admin_text(tmp_path):
+    w = World(tmp_path)  # installed list dated 2026-10-20: 9 days left on 2026-11-10
+    w.source.publish("main", 42, expires_at="2027-01-01T00:00:00Z")
+    w.now = datetime(2026, 11, 10, 12, tzinfo=UTC)
+    from orch.update import floor
+
+    fresh = "2026-11-08T00:00:00Z"
+    assert floor.list_warning("2026-10-20T00:00:00Z", fresh, w.now) == (
+        "a renewed update signature list is available: run orch update"
+    )
+    # a newer list that is itself close to expiry: the admin text, with ITS date
+    assert floor.list_warning("2026-10-01T00:00:00Z", "2026-10-20T00:00:00Z", w.now) == (
+        "the update signature list expires on 2026-11-19: ask your admin to renew it"
+    )
+    # nothing near expiry on either side
+    assert floor.list_warning("2026-11-01T00:00:00Z", "2026-11-09T00:00:00Z", w.now) is None

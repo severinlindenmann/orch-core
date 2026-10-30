@@ -131,9 +131,9 @@ def _check(u: Updater, channel: str | None, as_json: bool, out: TextIO, env: Map
         pending = json.loads(buf.getvalue()).get("roots", [])
     except ValueError:
         pending = []
-    from orch.update.floor import expiry_warning
+    from orch.update.floor import list_warning
 
-    warning = expiry_warning(rec.revocations_issued_at, u.s.now())
+    warning = list_warning(rec.revocations_issued_at, ver.revocations_issued_at, u.s.now())
     if as_json:
         row = {"ok": True, "installed": cur, "latest": ver.version, "channel": ch, "update_available": newer}
         row.update({"changelog": doc["changelog"], "roots": pending, "warnings": [warning] if warning else []})

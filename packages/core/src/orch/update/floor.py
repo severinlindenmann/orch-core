@@ -27,6 +27,7 @@ __all__ = [
     "REVOCATIONS_WARN_DAYS",
     "check_revocations",
     "expiry_warning",
+    "list_warning",
 ]
 
 # FLOOR-BEGIN  the oldest revocation list an update accepts (scripts/release/floor.py rewrites both lines per release)
@@ -47,6 +48,19 @@ def expiry_warning(issued_at: str | None, now: datetime) -> str | None:
     expires = parse_time(issued_at) + timedelta(days=REVOCATIONS_MAX_AGE_DAYS)
     if timedelta(0) < expires - now <= timedelta(days=REVOCATIONS_WARN_DAYS):
         return f"the update signature list expires on {expires.date()}: ask your admin to renew it"
+    return None
+
+
+def list_warning(installed_issued_at: str | None, fetched_issued_at: str, now: datetime) -> str | None:
+    """The warning ``orch update --check`` shows. A verified list that is NEWER than the installed one is the one that
+    counts: if only the installed list is near expiry, the renewed one is already available."""
+    if installed_issued_at is None or parse_time(fetched_issued_at) <= parse_time(installed_issued_at):
+        return expiry_warning(installed_issued_at, now)
+    fetched = expiry_warning(fetched_issued_at, now)
+    if fetched:
+        return fetched
+    if expiry_warning(installed_issued_at, now):
+        return "a renewed update signature list is available: run orch update"
     return None
 
 

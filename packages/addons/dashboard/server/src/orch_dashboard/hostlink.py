@@ -160,6 +160,7 @@ OPS = {
         # clicks (org_routes.py).
         "org.offers",
         "org.show",
+        "org.secrets",
         "org.accept",
         "org.decline",
         "org.sync",

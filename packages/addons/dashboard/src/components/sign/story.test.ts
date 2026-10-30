@@ -8,7 +8,7 @@ describe('storyOf', () => {
   it('new ticket, only create: nothing starts', () => {
     const s = storyOf(new_)!
     expect(s.signLabel).toBe('Create ticket')
-    expect(s.steps).toEqual(['You sign.', 'The ticket is created.', 'Nothing starts yet: an agent starts only when you press Start agent.'])
+    expect(s.steps).toEqual([])
     expect(s.access).toBeUndefined()
   })
 

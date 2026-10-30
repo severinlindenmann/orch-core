@@ -95,7 +95,7 @@ def test_link_op_without_owner_alias_is_refused(w):
 def test_hub_to_workspace_redeem_over_the_link(w):
     w.sw.set_origin(WS, DASH)
     token = w.login(w.ann)
-    s, o, _ = w.call("POST", "/switch/ticket", {"workspace_id": WS, "return_to": "/t/9", "kind": "open"}, token=token)
+    s, o, _ = w.call("POST", "/switch/ticket", {"workspace_id": WS, "return_to": "/", "kind": "open"}, token=token)
     assert s == 200 and o["url"].startswith(DASH + "/#t=" + WS + ".")
     t = o["url"].split("#t=")[1]
     # another workspace's link cannot redeem it, and that spends it
@@ -103,10 +103,10 @@ def test_hub_to_workspace_redeem_over_the_link(w):
         ops.switch_redeem(ctx(w, WS_SEL, "switch_redeem", {"ticket": t}))
     with pytest.raises(Refused):
         ops.switch_redeem(ctx(w, WS, "switch_redeem", {"ticket": t}))
-    s, o, _ = w.call("POST", "/switch/ticket", {"workspace_id": WS, "return_to": "/t/9", "kind": "open"}, token=token)
+    s, o, _ = w.call("POST", "/switch/ticket", {"workspace_id": WS, "return_to": "/", "kind": "open"}, token=token)
     t = o["url"].split("#t=")[1]
     r = ops.switch_redeem(ctx(w, WS, "switch_redeem", {"ticket": t}))
-    assert (r["user_id"], r["return_to"], r["kind"]) == (w.ann, "/t/9", "open")
+    assert (r["user_id"], r["return_to"], r["kind"]) == (w.ann, "/", "open")
     with pytest.raises(Refused):
         ops.switch_redeem(ctx(w, WS, "switch_redeem", {"ticket": t}))
 
@@ -249,6 +249,16 @@ def test_rail_lists_my_workspaces_with_origins_and_badges(w):
     assert all(x["origin"] is None for x in o["workspaces"] if x["workspace_id"] != WS)
 
 
+def test_run15_j02_a_selective_workspace_is_not_switchable(w):
+    """D93: the host refuses a hub switch into a workspace joined for chosen items only, so the rail says so and the
+    console shows no Open button for it (Ben's 403 on /auth/switch)."""
+    token = w.login(w.ann)
+    s, o, _ = w.call("GET", "/rail", token=token)
+    rows = {x["workspace_id"]: x for x in o["workspaces"]}
+    assert s == 200 and rows[WS]["switchable"] is True
+    assert rows[WS_SEL]["switchable"] is False
+
+
 def test_no_switch_service_means_unavailable(tmp_path):
     x = Web(tmp_path)
     try:
@@ -323,7 +333,7 @@ from route_paths import concrete_path
 
 
 def test_a_switch_session_reaches_only_the_named_routes_everything_else_is_closed(w):
-    from orch_hub.webapi.api import ROUTES, SWITCH_HANDLERS, route_scopes
+    from orch_hub.webapi.api import ROUTES, SWITCH_HANDLERS, SWITCH_REGISTER_HANDLERS, route_scopes
 
     def fresh():  # one session per route: sign-out ends its own
         _, _, h = w.call("POST", "/switch/redeem", {"t": w.sw.issue_to_hub(w.admin, WS, "/")})
@@ -341,7 +351,7 @@ def test_a_switch_session_reaches_only_the_named_routes_everything_else_is_close
         assert o.get("error") != "unknown_op", (rt.method, rt.path)  # the sweep must really route
         seen += 1
         reauth = s == 403 and o.get("error") == "reauth_required"
-        if rt.handler in SWITCH_HANDLERS:
+        if rt.handler in SWITCH_HANDLERS | SWITCH_REGISTER_HANDLERS:
             assert not reauth, (rt.method, rt.path)
         else:  # closed: asked to sign in for real, or not even reachable with a browser cookie
             pairing_only = "full" not in route_scopes(
@@ -509,3 +519,77 @@ def test_a_connect_link_for_ben_issues_to_ben_only_and_the_owner_must_be_a_real_
         assert w.call("POST", "/admin/connect", {"owner_user": bad}, token=admin)[:2] == (400, {"error": "malformed"})
     w.env.acc.set_disabled(ben, True, actor=w.admin)
     assert w.call("POST", "/admin/connect", {"owner_user": ben}, token=admin)[1] == {"error": "malformed"}
+
+
+def test_run15c_p08_settings_landing_is_for_an_admin_or_owner_of_the_workspace_only(w):
+    """P08: return_to '/settings/hub' is the one landing the console adds; a member who only edits may not ask for it."""
+    w.sw.set_origin(WS, DASH)
+    body = {"workspace_id": WS, "return_to": "/settings/hub", "kind": "open"}
+    editor = w.login(w.ann)  # edit on WS (fixture)
+    assert w.call("POST", "/switch/ticket", {**body, "return_to": "/"}, token=editor)[0] == 200  # opening is fine
+    s, o, _ = w.call("POST", "/switch/ticket", body, token=editor)
+    assert (s, o["error"]) == (403, "forbidden_role")
+    bob = w.env.user("bob")
+    w.env.acc.add_group("wsadmins")
+    w.env.acc.add_member("wsadmins", bob)
+    w.env.acc.grant(WS, "wsadmins", "admin")
+    tok = w.login(bob)
+    s, o, _ = w.call("POST", "/switch/ticket", body, token=tok)
+    assert s == 200 and o["url"].startswith(DASH + "/#t=")
+    for other in (
+        "/settings/hub/",
+        "/settings",
+        "/settings/hub/../x",
+        "/t/9",
+        "/phones",
+        "",
+    ):  # N1: exactly "/" or "/settings/hub"
+        s, o, _ = w.call("POST", "/switch/ticket", {**body, "return_to": other}, token=tok)
+        assert (s, o["error"]) == (400, "malformed"), other
+
+
+def test_run15_p03_a_switch_session_registers_a_browser_key_only_with_password_and_code(w):
+    """P03: reg_begin/reg_complete are open to a workspace-vouched session, but reg_begin re-proves password + a fresh code
+    and refuses every kind but browser; the rest of the closed list stays closed."""
+    from channels_helpers import new_channel, prove
+
+    from orch_hub.contract.canon import b64u
+    from orch_hub.webapi.api import SWITCH_HANDLERS, SWITCH_REGISTER_HANDLERS
+
+    assert SWITCH_REGISTER_HANDLERS == {"reg_begin", "reg_complete"} and not SWITCH_REGISTER_HANDLERS & SWITCH_HANDLERS
+    _, _, h = w.call("POST", "/switch/redeem", {"t": w.sw.issue_to_hub(w.ann, WS, "/")})
+    tok = _tok(h)
+    w.browser_tokens.add(tok)
+    k = new_channel()
+    pub = b64u(k.public)
+    s, o, _ = w.call(
+        "POST", "/channels/register/begin", {"kind": "phone", "key_pub": pub, "pairing_code": "x"}, token=tok
+    )
+    assert (s, o["error"]) == (403, "reauth_required")
+    s, o, _ = w.call("POST", "/channels/register/begin", {"kind": "browser", "key_pub": pub}, token=tok)
+    assert (s, o["error"]) == (400, "malformed")  # no password and code: nothing is registered
+    bad = {"kind": "browser", "key_pub": pub, "password": "wrong password", "totp": w.env.next_code(w.ann)}
+    s, o, _ = w.call("POST", "/channels/register/begin", bad, token=tok)
+    assert s != 200 and w.env.svc.db.q("SELECT COUNT(*) FROM channels WHERE user_id=?", (w.ann,))[0][0] == 0
+    used = w.creds(w.ann)
+    s, begun, _ = w.call(
+        "POST",
+        "/channels/register/begin",
+        {"kind": "browser", "key_pub": pub, "label": "B", **used},
+        token=tok,
+    )
+    assert s == 200, begun
+    s, got, _ = w.call(
+        "POST",
+        "/channels/register/complete",
+        {"challenge_id": begun["challenge_id"], "signed": prove(k, begun)},
+        token=tok,
+    )
+    assert s == 200 and got["channel_cert"]["o"]["factor"] == "password+totp"
+    # N2: the code already used at the first begin is refused (single use)
+    again = {"kind": "browser", "key_pub": b64u(new_channel().public), "label": "C", **used}
+    s, o, _ = w.call("POST", "/channels/register/begin", again, token=tok)
+    assert (s, o["error"]) == (401, "bad_credentials")
+    # still a switch session: the closed list stays closed
+    s, o, _ = w.call("GET", "/admin/users", token=tok)
+    assert (s, o["error"]) == (403, "reauth_required")

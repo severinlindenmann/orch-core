@@ -1,4 +1,4 @@
-import { confirmSwitch, switchFailureCode } from './bootstrap'
+import { confirmSwitch, switchFailureCode, switchHubOrigin } from './bootstrap'
 
 /**
  * A hub switch link was opened here and this browser could not prove its key for this dashboard (a fresh profile, a
@@ -37,17 +37,19 @@ const FAILED_WHY: Record<string, string> = {
 }
 const FAILED_DEFAULT = 'This link was already used or has expired. Nothing was changed.'
 
-/** Where the person came from, when that was another website (the hub): its origin only, never a path or a query. */
-function hubOrigin(): string | null {
+/** "Back to the hub" only when the person really came from the hub this workspace joined: the referrer's origin must
+ * equal the origin the server named from its own hub state. Any other site (a page can link here) or an unknown hub:
+ * no button. */
+function hubOrigin(joined: string | null): string | null {
+  if (!joined) return null
   try {
-    const u = new URL(document.referrer)
-    return (u.protocol === 'https:' || u.protocol === 'http:') && u.origin !== location.origin ? u.origin : null
+    return new URL(document.referrer).origin === joined ? joined : null
   } catch { return null }
 }
 
 /** The link is not good (expired, already used, refused on purpose): an error page that says the real reason and always
  * offers a way on. Nothing is opened and nobody is signed in. */
-export function showSwitchFailed(root: HTMLElement | null = document.getElementById('root'), code: string | null = switchFailureCode()) {
+export function showSwitchFailed(root: HTMLElement | null = document.getElementById('root'), code: string | null = switchFailureCode(), joinedHub: string | null = switchHubOrigin()) {
   if (!root) return
   const box = document.createElement('div')
   box.className = 'boot'
@@ -55,9 +57,9 @@ export function showSwitchFailed(root: HTMLElement | null = document.getElementB
   const title = document.createElement('b')
   title.textContent = 'This workspace did not open'
   const why = document.createElement('span')
-  why.textContent = (code && FAILED_WHY[code]) || FAILED_DEFAULT
+  why.textContent = (code && Object.hasOwn(FAILED_WHY, code) && FAILED_WHY[code]) || FAILED_DEFAULT
   box.append(title, why)
-  const hub = hubOrigin()
+  const hub = hubOrigin(joinedHub)
   if (hub) {
     const back = document.createElement('button')
     back.type = 'button'

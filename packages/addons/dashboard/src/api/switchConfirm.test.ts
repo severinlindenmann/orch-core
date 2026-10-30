@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest'
 
-vi.mock('./bootstrap', () => ({ confirmSwitch: vi.fn(async () => undefined), switchFailureCode: vi.fn(() => null) }))
+vi.mock('./bootstrap', () => ({ confirmSwitch: vi.fn(async () => undefined), switchFailureCode: vi.fn(() => null), switchHubOrigin: vi.fn(() => null) }))
 import { confirmSwitch } from './bootstrap'
 import { showSwitchConfirm, showSwitchFailed } from './switchConfirm'
 
@@ -66,9 +66,46 @@ it('P01: every code gives a plain line and a way on: Sign in again always, Back 
     expect([...root.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Sign in again']) // jsdom: no referrer
     expect(root.textContent).not.toMatch(/orch dashboard|terminal/i)
   }
-  Object.defineProperty(document, 'referrer', { value: 'https://hub.example.org/path?x=1', configurable: true })
-  const root = document.createElement('div')
-  showSwitchFailed(root, 'session.required')
-  expect([...root.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Back to the hub', 'Sign in again'])
-  Object.defineProperty(document, 'referrer', { value: '', configurable: true })
+})
+
+const buttons = (root: HTMLElement) => [...root.querySelectorAll('button')].map((b) => b.textContent)
+const withReferrer = (value: string, run: () => void) => {
+  Object.defineProperty(document, 'referrer', { value, configurable: true })
+  try { run() } finally { Object.defineProperty(document, 'referrer', { value: '', configurable: true }) }
+}
+
+it('P01 (Opus): Back to the hub only when the referrer is the hub this workspace joined', () => {
+  const HUB = 'https://hub.example.org'
+  // a foreign site that links here: no button, even with a joined hub known
+  withReferrer('https://evil.example.net/page', () => {
+    const root = document.createElement('div')
+    showSwitchFailed(root, 'session.required', HUB)
+    expect(buttons(root)).toEqual(['Sign in again'])
+  })
+  // the joined hub's origin: a button that goes to origin + "/" only (never the referrer's path or query)
+  withReferrer(HUB + '/some/path?x=1', () => {
+    const root = document.createElement('div')
+    const assign = vi.fn()
+    vi.stubGlobal('location', { origin: 'http://127.0.0.1:1', assign, replace: vi.fn() })
+    showSwitchFailed(root, 'session.required', HUB)
+    expect(buttons(root)).toEqual(['Back to the hub', 'Sign in again'])
+    root.querySelector('button')!.click()
+    expect(assign).toHaveBeenCalledWith(HUB + '/')
+    vi.unstubAllGlobals()
+  })
+  // the hub's origin is unknown: no button, whatever the referrer
+  withReferrer(HUB + '/', () => {
+    const root = document.createElement('div')
+    showSwitchFailed(root, 'session.required', null)
+    expect(buttons(root)).toEqual(['Sign in again'])
+  })
+})
+
+it('P01 (Opus): a code that is an inherited property name never prints a function', () => {
+  for (const code of ['constructor', 'toString', '__proto__', 'hasOwnProperty']) {
+    const root = document.createElement('div')
+    showSwitchFailed(root, code, null)
+    expect(root.textContent).toContain('already used or has expired')
+    expect(root.textContent).not.toMatch(/function|\[native/)
+  }
 })

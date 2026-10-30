@@ -123,8 +123,29 @@ def rail_view(raw) -> dict:
     }
 
 
+_HTTP_ORIGIN = re.compile(r"https?://[A-Za-z0-9.\[\]:-]{1,200}")
+
+
 def register(app: FastAPI, gateway: Gateway, auth=None, clock=time.monotonic):
     cache: dict[str, tuple[float, dict]] = {}
+
+    def joined_hub_origin(link, request: Request) -> str | None:
+        """P01: the origin of the hub THIS workspace joined, from the host's own hub state (never from the request),
+        for the failure page's "Back to the hub" button. A closed http(s) origin, else None (the page hides the
+        button). Any host failure is None."""
+        try:
+            raw = link.call("hub.switch", {"kind": "rail", "origin": browser_origin(request)})
+            origin = raw["hub"]["origin"]
+        except (HostError, KeyError, TypeError, AttributeError):
+            return None
+        return origin if isinstance(origin, str) and _HTTP_ORIGIN.fullmatch(origin) else None
+
+    def failed(code: str, http: int, message: str, link, request: Request):
+        error = {"code": code, "message": message, "retryable": False}
+        hub = joined_hub_origin(link, request)
+        if hub:
+            error["hub_origin"] = hub
+        return JSONResponse({"ok": False, "error": error}, status_code=http)
 
     def link_for(ws: str):
         link = gateway.enabled(ws)
@@ -191,12 +212,10 @@ def register(app: FastAPI, gateway: Gateway, auth=None, clock=time.monotonic):
             got = link.call("hub.switch", {"kind": "redeem", "ticket": body.t})
         except HostError as exc:
             if exc.error["code"] == "switch.refused":  # D93 (R2): the host refused before the hub: the ticket is unused
-                return JSONResponse(
-                    {"ok": False, "error": {"code": "switch.refused", "message": SWITCH_REFUSED, "retryable": False}},
-                    status_code=403,
-                )
+                return failed("switch.refused", 403, SWITCH_REFUSED, link, request)
             a.switch_attempt(client)  # a refused ticket costs its source a second charge
-            return response("session.required", 401)  # one answer for a bad, used, expired or foreign ticket
+            # one answer for a bad, used, expired or foreign ticket
+            return failed("session.required", 401, "session.required", link, request)
         if got.get("kind") == "signout":
             return JSONResponse({"signed_out": True})
         minted = a.open_keyed(body.key_id, ws) if keyed else None

@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from orch_dashboard.app import create_app
 from orch_dashboard.auth import Auth
-from orch_dashboard.errors import fail
+from orch_dashboard.errors import HostError, fail
 from orch_dashboard.gateway import Gateway
 
 WS = "a" * 32
@@ -237,3 +237,27 @@ def test_p01_the_403_on_a_hub_switch_is_never_an_origin_problem_of_the_configure
     assert tunnel.status_code == 421 and tunnel.json()["error"]["code"] == "host.bad"
     foreign = client.post("/auth/switch", json={"t": TICKET}, headers={"Origin": "http://127.0.0.1:47821"})
     assert foreign.status_code == 403 and foreign.json()["error"]["code"] == "origin.bad"
+
+
+def test_p01_a_failed_switch_names_the_joined_hub_from_the_hosts_own_state(client, link):
+    """The failure page's "Back to the hub" may only point at the hub this workspace joined. The origin comes from the
+    host's hub state (never the request), as a closed http(s) origin, else it is absent."""
+    link.answers["redeem"] = HostError({"code": "switch.refused", "message": "x", "retryable": False})
+    link.answers["rail"] = {"hub": {"name": "Acme", "origin": "https://hub.test"}, "workspaces": []}
+    refused = client.post("/auth/switch", json={"t": TICKET}, headers=H)
+    assert refused.status_code == 403 and refused.json()["error"]["hub_origin"] == "https://hub.test"
+    link.answers["redeem"] = HostError({"code": "ticket.used", "message": "x", "retryable": False})
+    used = client.post("/auth/switch", json={"t": TICKET}, headers=H)
+    assert used.status_code == 401 and used.json()["error"]["hub_origin"] == "https://hub.test"
+    for bad in ("javascript:alert(1)", "https://hub.test/path", "https://a b", None, 5):
+        link.answers["rail"] = {"hub": {"name": "Acme", "origin": bad}, "workspaces": []}
+        assert "hub_origin" not in client.post("/auth/switch", json={"t": TICKET}, headers=H).json()["error"]
+    link.answers["rail"] = HostError({"code": "hub.not_joined", "message": "x", "retryable": False})
+    assert "hub_origin" not in client.post("/auth/switch", json={"t": TICKET}, headers=H).json()["error"]
+
+
+def test_p01_a_request_cannot_choose_the_hub_origin(client, link):
+    link.answers["redeem"] = HostError({"code": "switch.refused", "message": "x", "retryable": False})
+    link.answers["rail"] = {"hub": {"name": "Acme", "origin": "https://hub.test"}, "workspaces": []}
+    forged = client.post("/auth/switch", json={"t": TICKET}, headers={**H, "Referer": "https://evil.example"})
+    assert forged.json()["error"]["hub_origin"] == "https://hub.test"

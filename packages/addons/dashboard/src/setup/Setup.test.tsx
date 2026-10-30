@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, expect, test, vi } from 'vitest'
-import { groupProgress, plainReason, Setup, reviewFacts, summarize } from './Setup'
+import { answers, groupProgress, plainReason, Setup, reviewFacts, summarize } from './Setup'
 import { SetupAPI, SetupError, bootstrapSetup, isSetupPage, type SetupState, type Review } from '../api/setup'
 
 const state: SetupState = {
@@ -1081,6 +1081,20 @@ test('P01: an unreachable dashboard address keeps the page, shows only the addre
   fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
   await vi.waitFor(() => expect(assign).toHaveBeenCalledTimes(1))
   expect(assign.mock.calls[0][0]).toMatch(/^http:\/\/127\.0\.0\.1:8151\/#launch=/)
+  vi.unstubAllGlobals()
+})
+
+test('P01 (Opus): answers() is true for an answering address, false when nothing listens, and true (fail open) when the page CSP blocked the probe', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(null)))
+  expect(await answers('http://127.0.0.1:8151')).toBe(true)
+  vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch') }))
+  expect(await answers('http://127.0.0.1:8151')).toBe(false)
+  // the browser rejects the fetch AND queues a securitypolicyviolation event: the answer is unknown, so it opens as before
+  vi.stubGlobal('fetch', vi.fn(async () => {
+    setTimeout(() => document.dispatchEvent(new Event('securitypolicyviolation')), 0)
+    throw new TypeError('Failed to fetch')
+  }))
+  expect(await answers('http://192.168.1.5:8151')).toBe(true)
   vi.unstubAllGlobals()
 })
 

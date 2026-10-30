@@ -13,6 +13,10 @@ export const declineSwitch = () => { pendingSwitch = null }
 // real reason in plain words (D93 run-15 J02: a workspace joined for chosen items only never opens from the hub).
 let failureCode: string | null = null
 export const switchFailureCode = () => failureCode
+// The origin of the hub THIS workspace joined, sent by the dashboard server from the host's own hub state with a
+// failed switch. The only origin "Back to the hub" may point at (never the referrer on its own).
+let failureHub: string | null = null
+export const switchHubOrigin = () => failureHub
 
 type Redeemed = { ok: true; to: string | null } | { ok: false; unverified: boolean; code: string | null }
 
@@ -22,8 +26,11 @@ async function redeem(t: string, proof: { key_id: string; sig: string } | null, 
     headers: { 'content-type': 'application/json' }, body: JSON.stringify(proof ? { t, ...proof } : { t }),
   })
   if (!response.ok) {
-    const code = await response.json().then((b: { error?: { code?: unknown } }) => b?.error?.code, () => null)
+    const error = await response.json().then((b: { error?: { code?: unknown; hub_origin?: unknown } }) => b?.error ?? null, () => null)
+    const code = error?.code
+    const hub = error?.hub_origin
     failureCode = typeof code === 'string' ? code : null
+    failureHub = typeof hub === 'string' && /^https?:\/\/[A-Za-z0-9.[\]:-]{1,200}$/.test(hub) ? hub : null
     return { ok: false, unverified: response.status === 401 && code === 'switch.unverified', code: failureCode }
   }
   const body = await response.json() as { token?: string; return_to?: string; signed_out?: boolean }

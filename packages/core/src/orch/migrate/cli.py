@@ -1,0 +1,154 @@
+"""``orch migrate --check | --apply [--workspace PATH] [--json]``: a person's command (never an agent's).
+
+``--check`` lists, per data root, the migration steps that are waiting. ``--apply`` backs up every root it is about to
+change (always, first), then migrates it. A workspace that cannot be reached is skipped and listed; the others go on.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+from collections.abc import Mapping, Sequence
+from pathlib import Path
+from typing import Any, TextIO
+
+from orch.layout import Layout
+from orch.ops.errors import ERRORS, OrchError
+from orch.ops.runtime import state_dir
+
+from . import backup as backup_mod
+from .runner import Plan, apply, plan
+
+__all__ = ["main"]
+
+USAGE = "usage: orch migrate --check | --apply [--workspace PATH] [--json]\n"
+AGENT_ENV = ("ORCH_GRANT", "ORCH_SESSION")
+
+
+def _workspace_roots(env: Mapping[str, str], only: str | None) -> tuple[list[tuple[str, Path, Path]], list[str]]:
+    """(label, project, store) per workspace to look at, and notes on registry problems."""
+    if only is not None:
+        project = Path(os.path.abspath(only))
+        return [(str(project), project, Layout.new_at(project).store)], []
+    notes: list[str] = []
+    out: list[tuple[str, Path, Path]] = []
+    try:
+        from orch.host.custody import read_json
+        from orch.host.registry import registry_path
+
+        doc = read_json(registry_path(state_dir(env)), os.getuid()) or {}
+        for w in doc.get("workspaces") or []:
+            if isinstance(w, dict) and isinstance(w.get("root"), str):
+                project = Path(w["root"])
+                out.append((str(project), project, Layout.new_at(project).store))
+    except Exception as exc:  # noqa: BLE001 - an unreadable list must not hide the host's own data
+        notes.append(f"the list of workspaces could not be read ({exc}); use --workspace PATH")
+    return out, notes
+
+
+def _may_be_committed(project: Path) -> bool:
+    """Could the store folder be committed to git? Decided WITHOUT running git (a project's own git config can run a
+    program: fsmonitor, hooks): true when the project is a git checkout and neither ``.gitignore`` nor
+    ``.git/info/exclude`` ignores the store folder."""
+    git = project / ".git"
+    if not git.exists():
+        return False
+    name = Layout.new_at(project).store.name
+    ignored = {name, f"/{name}", f"{name}/", f"/{name}/"}
+    for f in (project / ".gitignore", git / "info" / "exclude"):
+        try:
+            with open(f, "rb") as h:
+                text = h.read(1 << 20).decode("utf-8", "replace")
+        except OSError:
+            continue
+        if any(line.strip() in ignored for line in text.splitlines()):
+            return False
+    return True
+
+
+def _describe(p: Plan) -> dict[str, Any]:
+    return {"at": p.at, "target": p.target, "steps": [s.name for s in p.steps]}
+
+
+def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextIO) -> int:
+    as_json = "--json" in argv
+    if any(env.get(k) for k in AGENT_ENV):
+        spec = ERRORS["migrate.actor_refused"]
+        if as_json:
+            out.write(json.dumps({"ok": False, "code": spec.code, "message": spec.message}) + "\n")
+        else:
+            err.write(f"orch migrate: {spec.message}\n")
+        return spec.exit
+    args = list(argv)
+    mode = "--check" if "--check" in args else "--apply" if "--apply" in args else None
+    only: str | None = None
+    rest = [a for a in args if a not in ("--check", "--apply", "--json")]
+    if "--workspace" in rest:
+        i = rest.index("--workspace")
+        if i + 1 >= len(rest):
+            mode = None
+        else:
+            only = rest[i + 1]
+            del rest[i : i + 2]
+    if mode is None or rest or ("--check" in args and "--apply" in args):
+        err.write(USAGE)
+        return 2
+
+    targets: list[tuple[str, str, Path]] = []  # (label, kind, root)
+    skipped: list[dict[str, str]] = []
+    projects: dict[str, Path] = {}
+    wss, notes = _workspace_roots(env, only)
+    if only is None:
+        targets.append(("this computer's orch data", "host", state_dir(env)))
+    for label, project, store in wss:
+        targets.append((label, "workspace", store))
+        projects[label] = project
+    result: list[dict[str, Any]] = []
+    warnings = list(notes)
+    code = 0
+    for label, kind, root in targets:
+        try:
+            p = plan(root, kind)
+        except (OrchError, OSError) as exc:
+            skipped.append({"root": label, "why": exc.message if isinstance(exc, OrchError) else str(exc)})
+            continue
+        row: dict[str, Any] = {"root": label, "kind": kind, **_describe(p)}
+        if mode == "--apply" and p.pending:
+            try:
+                b = backup_mod.create_backup(root, kind, p.at, p.target, env)
+                row["backup"] = str(b)
+                row["applied"] = apply(root, kind)
+            except OrchError as exc:
+                row["error"] = {"code": exc.code, "message": exc.message}
+                code = max(code, ERRORS[exc.code].exit if exc.code in ERRORS else 1)
+            except Exception as exc:  # noqa: BLE001 - one root failing is reported, never a traceback
+                row["error"] = {"code": "migrate.step_failed", "message": f"{exc}"}
+                code = max(code, ERRORS["migrate.step_failed"].exit)
+        result.append(row)
+        project = projects.get(label)
+        if project is not None and _may_be_committed(project):
+            warnings.append(
+                f"{label}: the {Layout.new_at(project).store.name} folder is not ignored by git; "
+                "it holds signed data and must never be committed: add it to .gitignore"
+            )
+
+    if as_json:
+        out.write(json.dumps({"ok": code == 0, "roots": result, "skipped": skipped, "warnings": warnings}) + "\n")
+        return code
+    for row in result:
+        if "error" in row:
+            out.write(f"{row['root']}: could not migrate ({row['error']['message']}).")
+            if "backup" in row:
+                out.write(f" Your data was backed up first: {row['backup']}")
+            out.write("\n")
+        elif row.get("applied"):
+            out.write(f"{row['root']}: migrated ({', '.join(row['applied'])}). Backup: {row['backup']}\n")
+        elif row["steps"]:
+            out.write(f"{row['root']}: {len(row['steps'])} step(s) waiting ({', '.join(row['steps'])})\n")
+        else:
+            out.write(f"{row['root']}: up to date (format {row['at']})\n")
+    for s in skipped:
+        out.write(f"skipped {s['root']}: {s['why']}\n")
+    for w in warnings:
+        out.write(f"warning: {w}\n")
+    return code

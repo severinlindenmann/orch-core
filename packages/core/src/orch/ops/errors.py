@@ -935,6 +935,41 @@ _MARKET = (
     ("market.ambiguous_addon", 3, False, "more than one added marketplace lists this id", "name one with --from URL"),
     ("market.still_enabled", 3, False, "the add-on is still turned on", "orch addon disable NAME, then remove it"),
 )
+# Data across updates (spec: "Data across updates"): the open-time rule, the lock, the journal, the migrate command.
+_MIGRATE = (
+    ("format.older", 3, False, "this data was made by an older orch: run `orch update`", "orch update"),
+    ("format.newer", 3, False, "this data was made by a newer orch: update orch", "update orch, then try again"),
+    ("format.missing", 3, False, "this folder is not orch data", "check the folder"),
+    ("format.exists", 3, False, "this folder already has a format", "nothing to do"),
+    (
+        "update.interrupted",
+        3,
+        False,
+        "an update was interrupted: run `orch update` to finish or roll back",
+        "orch update",
+    ),
+    ("migrate.running", 4, True, "orch is running: stop it first, then try again", "orch stop"),
+    ("migrate.signed_path", 3, False, "a migration may never change signed data", "this is a bug in the migration"),
+    (
+        "migrate.backup_refused",
+        3,
+        False,
+        "the backup cannot be made here",
+        "keep backups on this machine, outside synced folders",
+    ),
+    (
+        "migrate.actor_refused",
+        3,
+        False,
+        "a person migrates data at their own terminal; an agent cannot",
+        "ask the person",
+    ),
+    ("migrate.step_failed", 5, False, "a migration step failed; the data was backed up first", "restore the backup"),
+)
+_SPECS += [
+    _e(code, exit_, retry, msg, hint, ["orch", "migrate", "--check"], "Data across updates: " + msg + ".")
+    for code, exit_, retry, msg, hint in _MIGRATE
+]
 _SPECS += [
     _e(code, exit_, retry, msg, hint, ["orch", "market", "list"], "Marketplace refusal (spec section 13): " + msg + ".")
     for code, exit_, retry, msg, hint in _MARKET

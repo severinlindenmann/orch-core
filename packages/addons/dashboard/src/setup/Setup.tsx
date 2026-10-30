@@ -115,7 +115,7 @@ export function summarize(review: Review): { lines: string[]; unknown: boolean; 
   }
   for (const flag of review.flags) {
     if (flag.id === 'custody' || flag.id === 'terminal' || flag.id === 'records' || flag.id === 'trust' || flag.id === 'perms') lines.push(flag.text)
-    else if (flag.id === 'git') continue // shown as the 'Work copies' row on the card; its detail stays in the fold
+    else if (flag.id === 'git') continue // shown as the 'Own copy per ticket' row on the card; its detail stays in the fold
     else if (flag.id !== 'runner' && flag.id !== 'terminals') odd(flag.text) // a flag this page does not know is shown
   }
   if (addons.length) lines.push(`Add-ons: ${addons.join(', ')}`)
@@ -151,8 +151,8 @@ export function reviewFacts(review: Review): Fact[] {
   }
   if (agents !== undefined) facts.push({ icon: '✦', label: 'Agents', value: agents })
   const addons = review.items.filter((i) => i.type === 'addon.granted' && i.id !== 'addon:dashboard').map((i) => i.title)
-  if (addons.length) facts.push({ icon: '⊞', label: 'Add-ons', value: addons })
-  if (has('git')) facts.push({ icon: '⧉', label: 'Work copies', value: 'Each ticket gets its own copy of this folder. Your files are not changed.' })
+  if (addons.length) facts.push({ icon: '⊞', label: 'Features', value: addons })
+  if (has('git')) facts.push({ icon: '⧉', label: 'Own copy per ticket', value: 'Each ticket gets its own copy of this folder. Your files are not changed.' })
   if (has('records')) facts.push({ icon: '◷', label: 'History', value: 'Tickets are saved on this computer only' })
   return facts
 }
@@ -195,7 +195,7 @@ export function groupProgress(steps: Progress['steps']): Progress['steps'] {
     { id: 'key', label: 'Your key', ids: ['keys', 'genesis', 'custody'] },
     { id: 'workspace', label: 'Your workspace', ids: ['git', 'settings', 'records', 'trust'] },
     { id: 'services', label: 'Starting orch', ids: ['register', 'runner', 'runner_grant'] },
-    { id: 'addons', label: 'Add-ons', ids: [] },
+    { id: 'addons', label: 'Features', ids: [] },
     { id: 'approval', label: 'Approval', ids: ['flags'] },
   ]
   return groups.flatMap(({ id, label, ids }) => {
@@ -435,6 +435,8 @@ export function Setup({ api }: { api: SetupAPI }) {
   const [error, setError] = useState('')
   const [ended, setEnded] = useState(false)
   const [notice, setNotice] = useState('')
+  // display only: which way the words were kept on this page. Never sent, never stored, never skips the step.
+  const [savedHow, setSavedHow] = useState<'copy' | 'file' | 'print' | null>(null)
   const [reason, setReason] = useState('')
   const [openFailed, setOpenFailed] = useState(false) // Finish answered but the dashboard did not open: "Try again"
   // "No agent access" is a choice of its own (B11 finding 21); it keeps the workspace default time and no runner grant.
@@ -644,10 +646,20 @@ export function Setup({ api }: { api: SetupAPI }) {
       drop()
     }
   }, [api])
-  // Work copies need a git repository: a new workspace in a folder without git offers to make one (nothing is committed)
+  // Own copy per ticket needs a git repository: a new workspace in a folder without git offers to make one (nothing is committed)
   const offersTrust = state?.mode === 'new' && state.claude?.available === true
   const parentConfig = state?.claude?.parent_config ?? ''
   const offersGit = state?.mode === 'new' && state.git?.repo === false && profile.addons.includes('worktrees')
+  // Print: the tick comes from the browser's own afterprint event (display only)
+  useEffect(() => {
+    const done = () => setSavedHow('print')
+    window.addEventListener('afterprint', done)
+    return () => window.removeEventListener('afterprint', done)
+  }, [])
+  // the recommendation no longer applies: a switch is not at its default, or the project-folder question was answered "Skip"
+  const agentsDiffer =
+    !!state?.addons?.some((a) => a.kind !== 'flag' && !a.required && a.default !== profile.addons.includes(a.id)) ||
+    (offersGit && profile.git_init === false)
   const update = (value: Partial<Profile>) => {
     setProfile((p) => ({ ...p, ...value }))
     setReview(undefined)
@@ -684,11 +696,13 @@ export function Setup({ api }: { api: SetupAPI }) {
     a.remove()
     setTimeout(() => URL.revokeObjectURL(url), 0)
     setNotice('Recovery words saved as a file. Keep it somewhere safe.')
+    setSavedHow('file')
   }
   async function copyRecovery() {
     try {
       await navigator.clipboard.writeText(secrets!.recovery_words.join(' '))
       setNotice('Recovery words copied. We will try to clear your clipboard in 60 seconds.')
+      setSavedHow('copy')
       // Do not retain the secret in a timer closure, or read unrelated clipboard contents.
       setTimeout(clearClipboard, 60_000)
     } catch {
@@ -843,9 +857,9 @@ export function Setup({ api }: { api: SetupAPI }) {
           {step === 0 && (
             <>
               <p>orch keeps a to-do list of tickets that you and your AI helpers work on.</p>
-              <p>Folder: <Inline>{state.dir_name}</Inline></p>
+              <p>Your project folder: <Inline>{state.dir_name}</Inline></p>
               <details className="welcome-technical">
-                <summary>Technical details</summary>
+                <summary>Where is it?</summary>
                 <Raw>{state.dir}</Raw>
               </details>
               {profile.method === 'terminal' && <p>{terminalStepCopy}</p>}
@@ -951,15 +965,14 @@ export function Setup({ api }: { api: SetupAPI }) {
           )}
           {step === 2 && (
             <>
-              <p>A starting point. You can change these choices in Settings.</p>
-              <label className="toggle">
-                <span>
-                  <strong>Dashboard</strong>
-                  <small>Your workspace in the browser · required</small>
-                </span>
-                <input type="checkbox" role="switch" checked disabled />
-              </label>
-              {state.addons
+              <div className="agents-summary" data-testid="agents-summary">
+                <strong>Recommended for most people</strong>
+                <small>Agents can start from the dashboard, open a terminal, get their own copy of each ticket&apos;s files, and run quick tasks. Your files are not changed.</small>
+              </div>
+              {/* the fold opens by itself when the recommendation does not apply (a switch differs from its default, or the folder question was answered Skip) */}
+              <details className="approval-more" data-testid="agents-more" open={agentsDiffer || undefined}>
+                <summary>Change these settings</summary>
+                            {state.addons
                 .filter((a) => a.id !== 'dashboard')
                 .map((a) =>
                   a.kind === 'flag' ? (
@@ -987,7 +1000,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                           addons: e.target.checked
                             ? [...profile.addons, a.id]
                             : profile.addons.filter((id) => id !== a.id),
-                          // ticking Work copies again asks the git question again
+                          // ticking Own copy per ticket again asks the git question again
                           ...(a.id === 'worktrees' ? { git_init: undefined } : {}),
                         })
                       }
@@ -996,9 +1009,9 @@ export function Setup({ api }: { api: SetupAPI }) {
                   ),
                 )}
               {offersGit && (
-                <div className="note" role="group" aria-label="Work copies">
+                <div className="note" role="group" aria-label="Own copy per ticket">
                   <p>
-                    <strong>Your project folder is not set up for work copies yet.</strong> Agents work best when
+                    <strong>Your project folder is not set up for its own copy per ticket yet.</strong> Agents work best when
                     each ticket gets its own copy. We can do it for you; your files stay as they are.
                   </p>
                   <label className="toggle">
@@ -1033,6 +1046,8 @@ export function Setup({ api }: { api: SetupAPI }) {
                   </label>
                 </div>
               )}
+              </details>
+              <small>You can change this later in Settings.</small>
               <SetupFooter cancel={cancel}>
                 <button onClick={() => setStep(1)}>Back</button>
                 {next(3)}
@@ -1184,11 +1199,13 @@ export function Setup({ api }: { api: SetupAPI }) {
                     </ol>
                   </section>
                   <div className="segments">
-                    <button onClick={() => void copyRecovery()}>Copy</button>
-                    <button onClick={saveRecovery}>Save as file</button>
-                    <button onClick={() => window.print()}>Print</button>
+                    <button className={savedHow === 'copy' ? 'done' : undefined} onClick={() => void copyRecovery()}>{savedHow === 'copy' ? 'Copied ✓' : 'Copy'}</button>
+                    <button className={savedHow === 'file' ? 'done' : undefined} onClick={saveRecovery}>{savedHow === 'file' ? 'Saved ✓' : 'Save as file'}</button>
+                    <button className={savedHow === 'print' ? 'done' : undefined} onClick={() => window.print()}>{savedHow === 'print' ? 'Printed ✓' : 'Print'}</button>
                   </div>
-                  <p role="status">{notice}</p>
+                  <p role="status" className={savedHow ? 'state' : undefined}>
+                    {savedHow ? `✓ ${notice}` : 'Not saved yet. Copy, save or print your words, then continue.'}
+                  </p>
                   <p className="warning">{voidCopy}</p>
                   <SetupFooter cancel={cancel}>
                     <button className="primary" onClick={() => void act(confirm)}>
@@ -1379,9 +1396,9 @@ export function Setup({ api }: { api: SetupAPI }) {
             </p>
             )
           )}
-          {state?.os === 'darwin' && !progress?.done && !progress?.error && (
+          {state?.os === 'darwin' && !progress?.done && !progress?.error && groupProgress(progress?.steps ?? []).some((g) => g.id === 'services' && g.status === 'doing') && (
             // only while the steps run (the Mac asks then); never on the ready or the error screen
-            <p><small>Your Mac may say “orch added items that run in the background”. That is fine; leave it on.</small></p>
+            <p><small>Your Mac may show a note that orch runs in the background. That is fine; leave it on.</small></p>
           )}
           <ol className="progress">
             {groupProgress(progress?.steps ?? []).map((s) => (

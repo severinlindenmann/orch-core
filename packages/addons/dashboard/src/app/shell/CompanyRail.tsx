@@ -23,13 +23,21 @@ export function railInitials(r: Pick<RailRow, 'name' | 'workspace_id'>): string 
   return s.toUpperCase()
 }
 
+/** One ticketed hop to the hub (the rail icon, the Hub page and the workspace menu all use this one way in). */
+export function useOpenHub(ws: string | undefined) {
+  return (returnTo: string = '/') => {
+    if (!ws) return
+    void hubUrl(ws, 'open', returnTo).then((u) => location.assign(u)).catch((e: unknown) => toastApiError(e, 'The hub could not be reached.'))
+  }
+}
+
 /** The company rail (V3 of the hub-one-app mockup): the hub, then your workspaces. A click is one ticketed hop. */
 export function CompanyRail() {
   const { workspace } = useWorkspace()
   const rail = useRail()
   const ws = workspace?.id
+  const go = useOpenHub(ws)
   if (!ws || !rail.data?.hub) return null
-  const go = (returnTo: string) => void hubUrl(ws, 'open', returnTo).then((u) => location.assign(u)).catch((e: unknown) => toastApiError(e, 'The hub could not be reached.'))
   return (
     <nav aria-label="Company" className="flex w-14 shrink-0 flex-col items-center gap-2 border-r border-border bg-surface py-3" data-testid="company-rail">
       <button type="button" onClick={() => go('/')} aria-label={`${rail.data.hub.name} hub`} title={`${rail.data.hub.name} hub`}

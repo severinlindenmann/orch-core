@@ -1665,6 +1665,22 @@ and opened only with a **presence signature** by a device the owner enrolled **a
 hub to sign anything, and no hub key, `UK`, channel certificate, hub session or switch ticket grants anything (D87).
 Reference: `orch_hub.contract.remote`; vectors `vectors_remote.json` (§15).
 
+**The stream link (R4 follow-up, decision 69).** Streams travel only on a host's **dedicated stream link**: a link the
+host dials with the TLS ALPN protocol `orch-link-streams/1` (same pinned SPKI, same `WSK` auth over the exporter; the
+exporter covers the handshake transcript, so the role is authenticated and no new signed op exists). The hub attaches
+such a link to the stream router and to nothing else (no ws->ws router, no custodial deliveries), and accepts on it
+only the one-way `stream_data` / `stream_close`, the host's `stream_open` replies and `hub_where` (the host's keepalive,
+every 120 s; the hub drops a link after 300 s without a w2h frame). Any other op on it is `unknown_op` and the link
+closes; a stream link for a workspace that is not pinned and bound is `not_bound` and closes (no `join` on it). A
+**plain** link (no ALPN) is never attached to the stream router: the hub never sends it a `stream_open`, and stream
+frames on it are dropped, so a short per-op link (status, shares, approvals, publish) can neither carry a stream nor
+replace the route of the stream link. A new stream link of a workspace replaces the old one (its streams end `closed`).
+A hub without a stream router does not select the protocol; the host then closes the link (never used as a plain one).
+The host runs the link while the workspace is bound to the hub and remote access is on, or an enrollment code is
+outstanding (§7.1 enrollment); in both hub modes. So a workspace with remote off and no code has no stream link at
+all, and a client that opens a stream to it is refused `not_allowed` (the hub cannot say `remote.off`); `remote.off`
+still reaches a client whose open session is closed by the owner's off.
+
 **The three ops** (rows above). Same signing (`WSK` w2h, `HK_op` h2w), same steps 1–6 and the same `ts` window
 (`|now − ts_ms| ≤ 120 s` → `stale_timestamp`) as every link message; both modes.
 
@@ -3249,7 +3265,7 @@ handshake hash, split keys, the first transport message each way, plain and seal
 `custodial_cannot`, and `required` naming the cases an implementation must not lose (replays into another stream,
 workspace or device; early data; a flipped byte; UP-only FIDO2; tampered and rolled-back device lists; `stream_open`
 w2h; the gate while off; every "no custodial type can" item). The hub replays every case against its reference
-(`tests/test_remote_vectors.py`, which also rebuilds the file byte for byte); **orch-core replays every case** with an
+(`tests/test_remote_vectors.py`, which also rebuilds the file byte for byte; R4: every `stream_link` case carries the connection's `exporter` (hex, `ids.link_exporter_hex`) and a stream frame signed in the pre-R1 form `label || cj(o)` is `bad_signature`, with no fallback); **orch-core replays every case** with an
 independent test-side port (`tests/host/test_remote_vectors.py`, `tests/host/remote_port.py`) and the custodial cases
 against its real `check_custodial_role` and `check_custodial_payload`; R2–R5 replay them against the real paths. The
 Noise of the reference was cross-checked once against the `noiseprotocol` package (both directions, byte-equal
@@ -3376,6 +3392,7 @@ transport in the action).
 | 66 | `route_digest` (R3) | label `orch/v2/remote-route\|`, length-prefixed method, template, concrete path and query, then `SHA-256(body)`; covers the concrete target; the adapter 404s a path whose `{ws}` is not the stream's workspace (the design's template-only form would let one confirmed attach authorize every run) | D88 "fixed list" |
 | 67 | Remote owner proof (R2) | the §9.6 proof object under its own kind `remote.owner_proof` and its own label `orch/v2/sig/remote-owner-proof\|`, ops `remote.set` and `remote.device_confirm`; signed payload includes `remote_v` (the replay counter), single-use `request_id`; core only | spec D84, D93; a hub proof can never stand in for a remote one or the reverse |
 | 68 | Remote code text and fingerprint words (R2) | the code text is `orch-rc1.<workspace_id>.<b64u(code_id raw 16 ‖ secret 16 ‖ wrk_fp 16)>.<b64u(WRK_pub, 32)>`; the owner and the device show `device_fp` as the first 66 bits, six BIP-39 English words of 11 bits each (the all-zero fingerprint is `abandon` six times) | spec §5 "fingerprint", R5 renders and parses the same |
+| 69 | Dedicated stream link (R4) | ALPN `orch-link-streams/1` marks a host's stream link; the hub attaches it to the stream router only and accepts on it stream frames, `stream_open` replies and the `hub_where` keepalive (120 s; hub idle drop 300 s); plain links never carry or replace streams; the link exists while remote is on or a code is outstanding, in both modes, so an opted-out selective workspace answers a client `not_allowed` (no link) | spec D85 (the hub sees when remote is on), §7.1, §9 |
 
 ## 17. Hub backup (M4, #1462; design `m4-settings-design.md` 4.2-4.3 and the Opus conditions 9-17)
 

@@ -21,7 +21,7 @@ import { VERBS, checkServiceAction, resultWords, needsConfirm, hubStopConfirm, l
 import { handoffsView } from "./handoffs.js";
 import { phonesView } from "./phones.js";
 import { workspacesView, workspaceDetailsView, newWorkspaces, privateRows } from "./workspaces.js";
-import { OPEN_FIRST, colour, initials, landing, landingPlan, railRows, safeUrl } from "./switch.js";
+import { OPEN_FIRST, colour, initials, landing, landingPlan, openingState, railRows, safeUrl } from "./switch.js";
 import { Refusal, grantTermsOk, grantSentence, grantFacts, addonFacts, addonTermsOk, settingsFacts, settingsTermsOk, checkBindings, checkPrepared, describe, renderMulti, renderText, shortHash, verifyQuestion, DECISIONS } from "./render.js";
 
 const root = document.getElementById("app");
@@ -292,6 +292,8 @@ async function loadRail() {
 }
 
 async function openWorkspace(w) {
+  const o = openingState(w.name); // at once, before the request and the navigation: the same dark page, no white frame
+  plain(h("div", { class: "opening", role: "status" }, h("b", { text: o.title }), h("span", { class: "muted", text: o.note })));
   const r = await api("POST", "/switch/ticket", { workspace_id: w.id, return_to: "/", kind: "open" });
   const url = r.status === 200 ? safeUrl(r.body.url) : null;
   if (!url) { state.notice = banner("bad", "Cannot open " + renderText(w.name), say(r.status === 200 ? "malformed" : r.body.error)); return home(); }

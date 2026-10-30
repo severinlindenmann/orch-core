@@ -1564,6 +1564,19 @@ PROFILE_FIELDS: dict[str, Check] = {
 
 LINK_OPTIONAL: dict[str, frozenset[str]] = {"join": frozenset({"alias_users"}), "directory_get": frozenset({"query"})}
 LINK_OPS: dict[str, tuple[str, str | None, dict[str, Check]]] = {
+    # R4 (#1592, protocol 10.2c): the only stream op that is a request/reply pair. The hub sends it (h2w) and the
+    # host answers with a w2h reply (same op, ``re`` = its seq, body ``{}`` or ``{"error": code}``). A w2h
+    # ``stream_open`` request is therefore ``unknown_op`` here. ``stream_data`` / ``stream_close`` are one-way in both
+    # directions and live in ``remote.STREAM_OPS`` (``remote.verify_stream_link``), never in this table.
+    "stream_open": (
+        "h2w",
+        None,
+        {
+            "stream_id": _hex16,
+            "device_id": lambda x: type(x) is str and re.fullmatch(r"r[dc]_[0-9a-f]{32}", x) is not None,
+            "kind": lambda x: x in ("session", "enroll"),
+        },
+    ),
     "snapshot_get": ("w2h", None, {}),
     "hub_where": (
         "w2h",

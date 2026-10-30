@@ -43,3 +43,35 @@ def test_a_broken_symlink_marker_still_quarantines(tmp_path):
     (tmp_path / "install").mkdir()
     (tmp_path / "install" / "quarantine").symlink_to(tmp_path / "nowhere")
     assert quarantine.active(tmp_path)
+
+
+def test_host_health_opens_every_registered_root(lab):
+    from orch.host.control import _store_dir
+    from orch.migrate import init_root
+    from orch.migrate.format import FORMAT_FILE
+
+    with lab.host() as normal:
+        with normal.client() as c:
+            assert lab.register(c)["ok"] is True
+    store = _store_dir(lab.root)
+    quarantine.activate(lab.state)
+    try:
+        with lab.host() as h, h.client() as c:
+            fr = c.call("host.health")
+            assert fr.get("ok"), str(fr)
+            data = fr["result"]["data"]
+            assert str(data) and data["problems"] == [] and len(data["unchecked"]) == 1, str(
+                data
+            )  # no format.json yet: unchecked, not a problem
+            init_root(store, "workspace")
+            fr = c.call("host.health")
+            assert fr.get("ok"), str(fr)
+            data = fr["result"]["data"]
+            assert data["checked"] == 1 and data["problems"] == []
+            (store / FORMAT_FILE).write_text("{damaged")
+            fr = c.call("host.health")
+            assert fr.get("ok"), str(fr)
+            data = fr["result"]["data"]
+            assert data["checked"] == 0 and len(data["problems"]) == 1
+    finally:
+        quarantine.clear(lab.state)

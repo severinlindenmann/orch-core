@@ -160,10 +160,25 @@ class LifecycleServices:
                 except LifecycleError as exc:
                     raise OrchError("host.unavailable", str(exc)) from None
 
+    def _host_health(self) -> list[str]:
+        """``host.health``: the host opens every workspace root with the real rule (a read: works in quarantine)."""
+        from orch.host.control_client import ControlClient
+
+        try:
+            with ControlClient(self.e.state / "run" / "control" / "host.sock", timeout=20.0) as c:
+                frame = c.call("host.health")
+        except Exception as exc:  # noqa: BLE001
+            return [f"the host could not be asked for its health ({exc})"]
+        if not frame.get("ok"):
+            return ["the host refused the health question"]
+        return [str(p) for p in (frame.get("result") or {}).get("data", frame.get("result") or {}).get("problems", [])]
+
     def health(self, *, quarantine: bool) -> list[str]:
         out: list[str] = []
         if not self.e.answers(self.e.state / "run" / "control" / "host.sock"):
             out.append("the host does not answer")
+        if not out:
+            out += self._host_health()
         if quarantine:  # before the commit only the host runs; the other parts are checked after it (warnings)
             return out
         for s in self._svcs():

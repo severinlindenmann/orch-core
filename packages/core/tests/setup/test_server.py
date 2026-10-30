@@ -252,13 +252,16 @@ def _fake_run(seen, url, rc=0, extra=b"", stderr=b""):
     return run
 
 
-def _setup(monkeypatch, run):
+def _setup(monkeypatch, run, *, headless=None):
     import io
     import subprocess
 
     from orch.cli import dashboard as dash
+    from orch.setup import flow as flow_mod
 
     monkeypatch.setattr(dash, "find_entry_point", lambda env, err: ["orch-dashboard"])
+    if headless is not None:  # a Linux CI runner has no DISPLAY and counts as headless: a desktop test says so
+        monkeypatch.setattr(flow_mod, "is_headless", lambda environ: headless)
     monkeypatch.setattr(subprocess, "run", run)
     return io.StringIO(), _tty(monkeypatch)
 
@@ -267,7 +270,7 @@ def test_the_opener_prints_one_link_and_puts_no_code_in_any_child_argument(monke
     from orch.setup import flow as flow_mod
 
     seen = {}
-    err, tty = _setup(monkeypatch, _fake_run(seen, URL))
+    err, tty = _setup(monkeypatch, _fake_run(seen, URL), headless=False)
     assert flow_mod._open_browser({"PATH": "/usr/bin"}, err, {"setup_id": "su_1", "code": CODE}) is True
     assert err.getvalue() == ""  # the code never reaches stderr/stdout
     ((argv, env),) = seen["calls"]
@@ -282,7 +285,7 @@ def test_no_browser_passes_the_flag_and_always_prints_the_link(monkeypatch):
     from orch.setup import flow as flow_mod
 
     seen = {}
-    err, tty = _setup(monkeypatch, _fake_run(seen, URL, extra=b"no-browser\n"))
+    err, tty = _setup(monkeypatch, _fake_run(seen, URL, extra=b"no-browser\n"), headless=False)
     assert flow_mod._open_browser({}, err, {}, no_browser=True) == "link"
     assert "--no-browser" in seen["calls"][0][0] and CODE not in repr(seen["calls"][0][0])
     assert "".join(tty).startswith("Open this link in your browser (single use, 5 minutes): ") and err.getvalue() == ""

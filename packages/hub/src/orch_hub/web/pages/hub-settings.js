@@ -346,8 +346,9 @@ export function hubSettingsView(data, actions = {}) {
     addressCard(data, actions),
     data.backup ? backupCard(data.backup, actions) : null,
     h("div", { class: "card", "data-card": "sign-in" }, h("h2", { text: "Sign-in" }),
-      (data.sign_in ?? []).map((m) => row(m.label, m.on ? m.note : null, m.on))),
-    data.company ? companyCard(data.company, actions.company ?? {}) : null);
+      (data.sign_in ?? []).map((m) => row(m.label, m.on ? m.note : null, m.on)),
+      h("p", { class: "small muted", text: "Always on: the password and the code make the key that approves things, so they cannot be turned off." }),
+      data.company ? companyCard(data.company, actions.company ?? {}, { inside: true }) : null));
 }
 
 // Wait until the restarted hub answers again (it keeps its port), at most about 30 seconds.

@@ -347,6 +347,7 @@ def test_a_switch_session_reaches_only_the_named_routes_everything_else_is_close
             "share_id",
             "app_id",
             "invite",
+            "part",
         ):
             path = path.replace("{" + name + "}", ws)
         s, o, _ = w.call(rt.method, path, {}, token=fresh())

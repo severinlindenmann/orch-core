@@ -470,6 +470,11 @@ async function workspaces(joined = [], known = null) {
           if (ownerUser) rememberName(ownerUser, peopleNames.get(ownerUser)); // the /c page says whose workspace (display only)
           return r.body;
         },
+        askUpdate: async () => { // HUB-WS-04: the owners of older workspaces are asked (the request carries only the version)
+          const r = await api("POST", "/admin/workspaces/update-request", {});
+          if (r.status < 200 || r.status >= 300) throw new Error("ask failed");
+          return r.body;
+        },
         remove: async (w) => {
           const r = await api("DELETE", "/admin/workspaces/" + encodeURIComponent(w.workspace_id));
           if (r.status < 200 || r.status >= 300) throw new Error("remove failed");
@@ -610,7 +615,18 @@ async function approvals(filter = {}) {
   const [ws, needs, chg] = await Promise.all([api("GET", "/me/workspaces"), api("GET", "/me/needs-you"), api("GET", "/me/changes")]);
   if (ws.status !== 200 || needs.status !== 200) return shell("approvals", banner("bad", "Cannot read approvals", "Please try again."));
   const changes = chg.status === 200 ? changesView(chg.body, { approve: approveChange, reject: rejectChange, canSign: !!state.me }, Date.now()) : [];
-  shell("approvals", changes, inboxView({ ...needs.body, workspaces: ws.body.workspaces, channels: state.channels, filter }, { review: reviewItem, open: openWorkspace, filter: approvals }));
+  shell("approvals", changes, inboxView({ ...needs.body, workspaces: ws.body.workspaces, channels: state.channels, filter }, { review: reviewItem, open: openWorkspace, filter: approvals, askPhone }));
+}
+
+// The phone does the review and the signing; this only sends a hint (no action, no text). The list refreshes on its own
+// when the item is gone.
+async function askPhone(it) {
+  const r = await api("POST", "/workspaces/" + encodeURIComponent(it.workspace_id) + "/items/" + encodeURIComponent(it.item_id) + "/ask-phone", {});
+  state.notice = r.status === 200 && r.body.asked > 0 ? banner("ok", "Sent to your phone", "Open it on your phone, check what you are signing and confirm with Face ID.")
+    : r.status === 200 ? banner("warn", "No phone to ask", "Pair a phone first: Phones & browsers.")
+    : r.status === 429 ? banner("warn", "Already sent", "Give it a few seconds.")
+    : banner("bad", "Could not ask your phone", "Reload the list and try again.");
+  return approvals();
 }
 
 // An access change that waits for me as the workspace owner: prepare, check the digest here, sign with this browser's key.

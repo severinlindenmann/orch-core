@@ -48,6 +48,7 @@ def test_a_pairing_token_reaches_nothing_beyond_pair_bind_sign_out(w):  # noqa: 
         ):
             path = path.replace("{" + k + "}", cid if k == "channel_id" else "ab" * 16)
         path = path.replace("{invite}", "ab" * 8)  # invite ids are 16 hex
+        path = path.replace("{part}", "relay")  # service parts are a closed set
         s, o, _ = w.call(rt.method, path, {} if rt.method != "GET" else None, token=tok)
         assert o == {"error": "forbidden_role"}, (rt.method, rt.path, s, o)
 

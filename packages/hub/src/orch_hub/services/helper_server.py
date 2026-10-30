@@ -323,7 +323,11 @@ def run_helper(state: Path) -> int:
     except (HelperError, ValueError) as e:
         print(f"orch-hub helper: refused: {e}", file=sys.stderr)
         return 1
-    svc = HelperService(state=state, config=cfg, auth=ReadOnlyAuth(state), nonces=nonces)
+    from .redact import read_logs
+
+    svc = HelperService(
+        state=state, config=cfg, auth=ReadOnlyAuth(state), nonces=nonces, logs=lambda p: read_logs(p, run_argv)
+    )
     srv = HelperServer(svc, state / SOCK_FILE)
     try:
         srv.bind()

@@ -46,6 +46,7 @@ class Rig:
             runner=self._run,
             now_ms=self.env.clock,
             defer=lambda d, fn: self.deferred.append(fn),
+            logs=lambda part: f"log of {part.name}",
         )
 
     def _run(self, argv, timeout):
@@ -263,3 +264,22 @@ def test_cli_prints_sudoers_and_refuses_without_config(tmp_path, capsys):
     os.chmod(f, 0o600)
     assert cli.main(["helper", "--state", str(tmp_path), "--print-sudoers", "--user", "orch-hub"]) == 0
     assert "NOPASSWD: ORCH_SVC" in capsys.readouterr().out
+
+
+def test_logs_are_admin_only_audited_and_part_closed(rig):
+    ok = rig.svc.handle({"op": "logs", "user_id": rig.admin, "channel_id": rig.chan, "part": "relay"})
+    assert ok == {"ok": True, "part": "relay", "text": "log of relay"}
+    last = json.loads((rig.state / HS.AUDIT_FILE).read_text().splitlines()[-1])
+    assert last["op"] == "logs" and last["user"] == rig.admin and last["part"] == "relay"
+    ann = rig.env.user("ann")
+    _, c2 = register(rig.env, ann)
+    bad = rig.svc.handle({"op": "logs", "user_id": ann, "channel_id": c2["o"]["channel_id"], "part": "relay"})
+    assert bad["code"] == "forbidden_role"
+    assert (
+        rig.svc.handle({"op": "logs", "user_id": rig.admin, "channel_id": rig.chan, "part": "../x"})["code"]
+        == "unknown_part"
+    )
+    n = len((rig.state / HS.AUDIT_FILE).read_text().splitlines())
+    os.chmod(rig.state / HS.AUDIT_FILE, 0o400)  # an audit line that cannot be written refuses the read
+    r = rig.svc.handle({"op": "logs", "user_id": rig.admin, "channel_id": rig.chan, "part": "relay"})
+    assert r["code"] == "unavailable" and len((rig.state / HS.AUDIT_FILE).read_text().splitlines()) == n

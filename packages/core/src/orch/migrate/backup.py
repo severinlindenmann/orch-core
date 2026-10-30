@@ -34,7 +34,7 @@ import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
-from orch import childenv, oslock
+from orch import childenv, oslock, privdir
 from orch.layout import STATE_DIR, WORK_DIR
 from orch.ops.errors import OrchError
 
@@ -338,12 +338,14 @@ def _put_back(staging: Path, root: Path) -> None:
 
 
 def _trusted(p: Path) -> bool:
-    """Ours, not a link, not writable by group or others (checked with lstat: nothing is followed)."""
+    """Ours, not a link, not writable by anyone else (checked with lstat: nothing is followed). The write rule is
+    orch.privdir's one answer for person-owned paths."""
     try:
         st = os.lstat(p)
     except OSError:
         return False
-    return stat.S_ISDIR(st.st_mode) and st.st_uid == os.getuid() and not st.st_mode & 0o022
+    uid = os.getuid()
+    return stat.S_ISDIR(st.st_mode) and st.st_uid == uid and not privdir.others_can_write(st, uid)
 
 
 def _remove(p: Path) -> None:

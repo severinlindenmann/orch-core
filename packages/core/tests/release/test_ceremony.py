@@ -74,7 +74,7 @@ if argv[:3] == ["item", "create", "login"]:
     if os.environ.get("PROTON_PASS_AGENT_REASON", "") == "":
         sys.exit(9)
     (V / (item["title"] + ".json")).write_text(json.dumps(item))
-    print(json.dumps({"id": item_id(item["title"]), "share_id": "SHARE"}))
+    print("Item created")  # create's stdout is not parsed: the script must take the ID from the list
     sys.exit(0)
 if argv[:2] == ["item", "list"]:
     assert opt("--vault-name") == "Agents" and opt("--output") == "json"
@@ -467,7 +467,8 @@ def test_refuses_when_the_ci_item_already_exists(lab, capsys):
 def test_an_error_from_pass_cli_is_never_read_as_absent(lab, capsys, flag):
     (lab.sim / flag).write_text("")
     if flag == "pass-view-fail":  # view is not used for the existence check at all: init must go through
-        assert run_main(lab, capsys, "init")[0] == 1  # ... but the read-back by ID then fails, without a title fallback
+        rc, out, _ = run_main(lab, capsys, "init")  # ... but the read-back by ID then fails, without a title fallback
+        assert rc == 1 and "proton item id" not in out  # the ID is printed only after a successful read-back
         assert not any("--item-title" in c["argv"] for c in lab.calls())
         return
     _assert_refused_cleanly(lab, capsys, "refusing")
@@ -507,6 +508,33 @@ def test_the_list_is_asked_for_active_and_trashed(lab, capsys):
         c["argv"][c["argv"].index("--filter-state") + 1] for c in lab.calls() if c["argv"][:2] == ["item", "list"]
     ]
     assert states[:2] == ["active", "trashed"]
+
+
+@pytest.mark.parametrize("extra", [[], ["a", "b"]], ids=["none-found", "two-found"])
+def test_not_exactly_one_item_after_create_refuses_and_prints_no_id(lab, capsys, monkeypatch, extra):
+    real, calls = ceremony._pass_items, []
+
+    def listing():
+        calls.append(1)
+        items = real()
+        if len(calls) == 1:
+            return items  # preflight
+        title = ceremony.ROOT_TITLE
+        return [x for x in items if x[0] != title] + [(title, f"DUP{n}", "active") for n in extra]
+
+    monkeypatch.setattr(ceremony, "_pass_items", listing)
+    rc, out, err = run_main(lab, capsys, "init")
+    assert rc == 1 and "proton item id" not in out and "expected exactly 1" in err
+    assert lab.tmp_left() == [] and lab.snapshot() == lab.original
+    assert not any(c["argv"][:2] == ["item", "view"] and "--field" in c["argv"] for c in lab.calls())
+
+
+def test_the_printed_id_is_the_one_from_the_list(lab, capsys):
+    rc, out, err = run_main(lab, capsys, "init")
+    assert rc == 0
+    ids = dict(x.split(": ") for x in out.splitlines() if x.startswith("proton item id"))
+    assert ids["proton item id (root)"].startswith("ID") and ids["proton item id (ci)"].startswith("ID")
+    assert ids["proton item id (root)"] != ids["proton item id (ci)"]
 
 
 def test_template_unreadable_aborts_before_anything_is_stored(lab, capsys):

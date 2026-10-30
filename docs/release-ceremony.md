@@ -39,8 +39,10 @@ Reads the root from Proton, checks it is the root embedded in `keys.py` and `ins
 The script prints a fixed message (no child output) and removes its temp dir; the repo tree is only written at the
 very end, so a failure earlier leaves it untouched. What already happened outside the repo:
 
-Each Proton item's ID is printed the moment it is created (`proton item id (root): ...`, `proton item id (ci): ...`).
-It is not secret. Keep it from the output. Items are only ever named by that ID, never by title.
+Each Proton item's ID comes from the vault listing and is printed only after the read-back of that item matched
+(`proton item id (root): ...`, `proton item id (ci): ...`). It is not secret: record both after the run. Items are only
+ever named by ID, never by title. If a run stopped before an ID was printed, look the ID up with
+`pass-cli item list --vault-name Agents --output json` (it lists `id` and `title` per item) and act on that ID.
 
 | Failed at | Already done | Recovery |
 |---|---|---|

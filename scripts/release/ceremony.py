@@ -194,21 +194,8 @@ def _pass_template() -> dict:
     return tpl
 
 
-def _created_id(out: bytes) -> str:
-    """The item ID that ``create`` printed (JSON ``id``/``item_id``, else the single long token in its output)."""
-    text = out.decode(errors="replace")
-    try:
-        doc = json.loads(text)
-        found = {doc[k] for k in ("id", "item_id") if isinstance(doc, dict) and isinstance(doc.get(k), str)}
-    except ValueError:
-        found = set(re.findall(r"[A-Za-z0-9_=-]{16,}", text))
-    if len(found) != 1:
-        raise Ceremony("the item was created but its ID could not be read from pass-cli's answer: find it in Proton")
-    return next(iter(found))
-
-
-def _pass_store(tpl: dict, title: str, username: str, seed: bytearray, note: str) -> str:
-    """Create the login item from a fixed key set (JSON with the base64 seed on stdin). Returns the new item's ID."""
+def _pass_store(tpl: dict, title: str, username: str, seed: bytearray, note: str) -> None:
+    """Create the login item from a fixed key set (JSON with the base64 seed on stdin). Its stdout is not parsed."""
     item = dict(tpl)  # the extra template keys are empty (checked in _pass_template)
     item.update({"title": title, "username": username, "password": base64.b64encode(bytes(seed)).decode()})
     for k in ("note", "notes"):
@@ -216,14 +203,13 @@ def _pass_store(tpl: dict, title: str, username: str, seed: bytearray, note: str
             item[k] = note
     payload = bytearray(json.dumps(item).encode())
     try:
-        rc, out = run(
+        rc, _ = run(
             ["pass-cli", "item", "create", "login", "--vault-name", VAULT, "--from-template", "-"], bytes(payload)
         )
     finally:
         _wipe(payload)
     if rc != 0:
         raise Ceremony(f"pass-cli could not store the item {title!r}")
-    return _created_id(out)
 
 
 def _pass_read_seed(item_id: str) -> bytearray:
@@ -246,10 +232,17 @@ def _pass_read_seed(item_id: str) -> bytearray:
 def _store_and_verify(tpl: dict, label: str, title: str, username: str, key: Ed25519PrivateKey, note: str) -> None:
     seed = _seed(key)
     try:
-        item_id = _pass_store(tpl, title, username, seed, note)
+        _pass_store(tpl, title, username, seed, note)
     finally:
         _wipe(seed)
-    print(f"proton item id ({label}): {item_id}", flush=True)  # not secret; recovery names the item by this ID
+    # The ID comes from the vault listing, not from create's output: there was no such item before, so exactly one now.
+    found = [i for t, i, _ in _pass_items() if t == title]
+    if len(found) != 1:
+        raise Ceremony(
+            f"after creating the {label} item, {len(found)} vault items are titled {title!r} (expected exactly 1): "
+            "check the vault with `pass-cli item list` before doing anything else"
+        )
+    item_id = found[0]
     back = _pass_read_seed(item_id)
     try:
         same = _pub(Ed25519PrivateKey.from_private_bytes(bytes(back))) == _pub(key)
@@ -257,6 +250,7 @@ def _store_and_verify(tpl: dict, label: str, title: str, username: str, key: Ed2
         _wipe(back)
     if not same:
         raise Ceremony(f"read-back of the {label} item does not match the generated key")
+    print(f"proton item id ({label}): {item_id}", flush=True)  # not secret; printed only once the read-back matched
 
 
 def _gh_secret_set(key: Ed25519PrivateKey, repo: str) -> None:

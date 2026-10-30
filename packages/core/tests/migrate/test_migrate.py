@@ -1004,3 +1004,12 @@ def test_a_failed_restore_puts_carried_entries_back(root, env, monkeypatch, fall
     monkeypatch.setattr(bk.os, "rename", real)
     assert (root / "install/tools/orch-1/bin").read_text() == "tool"
     assert (root / ".state/index.sqlite").read_text() == "kept-index"
+
+
+def test_state_rejected_and_body_are_data_not_derived(root, env):
+    for rel in (".state/rejected/T-1.md", ".state/body/uid.md"):
+        assert is_signed_path(rel) and not bk.is_derived(rel)
+    (root / ".state/rejected").mkdir(parents=True)
+    (root / ".state/rejected/a.md").write_text("prose")
+    b = bk.create_backup(root, "workspace", 1, 2, env)
+    assert (b / "data/.state/rejected/a.md").read_text() == "prose"

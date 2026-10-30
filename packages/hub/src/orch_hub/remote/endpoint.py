@@ -217,6 +217,7 @@ class RemoteEndpoint:
         if (
             set(hello) != {"t", "v", "token"}
             or hello["t"] != "hello"
+            or type(hello["v"]) is not int  # True == 1 in Python
             or hello["v"] != 1
             or type(hello["token"]) is not str
         ):

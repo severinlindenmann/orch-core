@@ -118,6 +118,7 @@ def status(service: Any, now_ms: int) -> dict[str, Any]:
     """``remote.status``: the policy, the devices (with the six fingerprint words) and what is outstanding."""
     from orch.hubclient import wire
 
+    from .. import orgstate
     from . import enrollment, remote_state, wrk
 
     r = remote_state(service)
@@ -133,7 +134,7 @@ def status(service: Any, now_ms: int) -> dict[str, Any]:
     scalar = wrk.load(service)
     return {
         "on": p.on, "level": p.level, "until_ms": p.until_ms, "premises": p.premises, "off_reason": p.off_reason,
-        "agents_risk": r.get("agents_risk"), "hub_mode": r.get("hub_mode"),
+        "agents_risk": r.get("agents_risk"), "hub_mode": r.get("hub_mode"), "isolated": orgstate.isolated(service),
         "devices": devices, "device_version": r.get("device_version", 0),
         "codes": len(enrollment.outstanding(service, now_ms)),
         "wrk_fp": None if scalar is None else wrk.wrk_fp(wrk.public(scalar)).hex(),

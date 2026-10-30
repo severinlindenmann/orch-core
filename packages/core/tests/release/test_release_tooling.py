@@ -29,6 +29,9 @@ NOW = "2026-10-22T08:00:00Z"
 FILE_BYTES = {
     "core": b"TEST orch-core wheel bytes (not a real wheel)\n",
     "dashboard": b"TEST orch-dashboard wheel bytes (not a real wheel)\n",
+    "hub": b"TEST orch-hub wheel bytes (not a real wheel)\n",
+    "relay": b"TEST orch-relay wheel bytes (not a real wheel)\n",
+    "publish": b"TEST orch-publish wheel bytes (not a real wheel)\n",
     "constraints": b"cryptography==46.0.3\njsonschema==4.26.0\nsegno==1.6.6\n",
 }
 
@@ -77,6 +80,9 @@ def wheels(tmp: Path, version: str) -> dict[str, Path]:
     names = {
         "core": f"orch_core-{version}-py3-none-any.whl",
         "dashboard": f"orch_dashboard-{version}-py3-none-any.whl",
+        "hub": f"orch_hub-{version}-py3-none-any.whl",
+        "relay": f"orch_relay-{version}-py3-none-any.whl",
+        "publish": f"orch_publish-{version}-py3-none-any.whl",
         "constraints": "constraints.txt",
     }
     out = {}
@@ -96,9 +102,7 @@ def build(tmp: Path, channel: str, seq: int) -> bytes:
         commit=hashlib.sha1(f"TEST commit {channel} {seq}".encode()).hexdigest(),
         issued_at="2026-10-21T07:40:00Z",
         expires_at="2026-11-11T07:40:00Z",
-        core_wheel=w["core"],
-        dashboard_wheel=w["dashboard"],
-        constraints=w["constraints"],
+        files=w,
         base_url=f"https://github.com/severinlindenmann/orch-core/releases/download/v{version}",
         changelog="TEST release. Wiki add-on: page links; fix terminal resize.",
         min_from="2.0.0.dev1",
@@ -229,12 +233,7 @@ def test_cli_round_trip_and_files_match_manifest(tmp_path, monkeypatch):
         "2026-10-21T07:40:00Z",
         "--expires-at",
         "2026-11-11T07:40:00Z",
-        "--core-wheel",
-        str(w["core"]),
-        "--dashboard-wheel",
-        str(w["dashboard"]),
-        "--constraints",
-        str(w["constraints"]),
+        *[a for role, path in w.items() for a in ("--file", f"{role}={path}")],
         "--base-url",
         "https://github.com/severinlindenmann/orch-core/releases/download/v2.0.0.dev42",
         "--changelog-file",
@@ -327,9 +326,7 @@ def test_manifest_validation(tmp_path):
         commit="a" * 40,
         issued_at="2026-10-21T07:40:00Z",
         expires_at="2026-11-11T07:40:00Z",
-        core_wheel=w["core"],
-        dashboard_wheel=w["dashboard"],
-        constraints=w["constraints"],
+        files=w,
         base_url="https://x.example/d",
         changelog="c",
         min_from="2.0.0.dev1",
@@ -409,3 +406,63 @@ def test_check_wheels(tmp_path):
     )
     assert check_wheels.main(["--core", str(ok_core), "--dashboard", str(ok_dash), "--version", "2.0.1", *REL[2:]]) == 1
     assert check_wheels.check_core(tmp_path / "missing.whl")
+
+
+# --- the manifest file list ---------------------------------------------------------------------------------------
+
+
+def _build(tmp_path, files):
+    return manifest.build_manifest(
+        channel="main",
+        version="2.0.0",
+        seq=1,
+        commit="a" * 40,
+        issued_at="2026-10-21T07:40:00Z",
+        expires_at="2026-11-11T07:40:00Z",
+        files=files,
+        base_url="https://example.invalid/download/v2.0.0",
+        changelog="TEST",
+        min_from="2.0.0.dev0",
+    )
+
+
+def test_file_list_holds_every_role_in_role_order(tmp_path):
+    doc = _build(tmp_path, wheels(tmp_path, "2.0.0"))
+    assert [f["role"] for f in doc["files"]] == list(manifest.ROLES)
+    assert all(set(f) == {"role", "name", "sha256", "size", "url"} for f in doc["files"])
+
+
+def test_file_list_may_omit_optional_roles(tmp_path):
+    w = wheels(tmp_path, "2.0.0")
+    doc = _build(tmp_path, {r: w[r] for r in ("core", "constraints")})
+    assert [f["role"] for f in doc["files"]] == ["core", "constraints"]
+
+
+@pytest.mark.parametrize(
+    "mutate, why",
+    [
+        (lambda w: w.pop("core"), "core"),
+        (lambda w: w.pop("constraints"), "constraints"),
+        (lambda w: w.update(installer=w["core"]), "unknown file role"),
+    ],
+)
+def test_builder_refuses_missing_and_unknown_roles(tmp_path, mutate, why):
+    w = wheels(tmp_path, "2.0.0")
+    mutate(w)
+    with pytest.raises(ValueError, match=why):
+        _build(tmp_path, w)
+
+
+def test_cli_refuses_a_duplicate_role(tmp_path):
+    w = wheels(tmp_path, "2.0.0")
+    (tmp_path / "log.txt").write_text("TEST\n")
+    args = [
+        "core", "--channel", "main", "--seq", "1", "--issued-at", "2026-10-21T07:40:00Z",
+        "--expires-at", "2026-11-11T07:40:00Z", "--version", "2.0.0", "--commit", "a" * 40,
+        "--base-url", "https://example.invalid/d", "--changelog-file", str(tmp_path / "log.txt"),
+        "--min-from", "2.0.0.dev0", "--out", str(tmp_path / "m.json"),
+        *[a for r, p in w.items() for a in ("--file", f"{r}={p}")],
+        "--file", f"hub={w['hub']}",
+    ]  # fmt: skip
+    assert manifest.main(args) == 1
+    assert not (tmp_path / "m.json").exists()

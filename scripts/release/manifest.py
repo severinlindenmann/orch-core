@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Build the signed payloads of a release: the core manifest and the add-on catalog (CONTRACT.md §2).
 
-    manifest.py core --channel develop --version 2.0.0.dev42 --seq 42 --commit <sha1> --core-wheel X.whl \
-        --dashboard-wheel Y.whl --constraints constraints.txt --base-url https://…/download/v2.0.0.dev42 \
+    manifest.py core --channel main --version 2.0.0 --seq 42 --commit <sha1> --file core=X.whl \
+        --file dashboard=Y.whl --file hub=H.whl --file constraints=constraints.txt --base-url https://…/download/v2.0.0 \
         --issued-at … --expires-at … --changelog-file CHANGELOG.txt --min-from 2.0.0.dev1 --out manifest.json
     manifest.py catalog --channel develop --seq 311 --issued-at … --expires-at … --addons addons.json --out catalog.json
 
@@ -25,7 +25,8 @@ VERSION = re.compile(r"\d+\.\d+\.\d+(\.dev\d+)?")
 TIME = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ")
 COMMIT = re.compile(r"[0-9a-f]{40}")
 FILE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,127}")
-ROLES = ("core", "dashboard", "constraints")
+ROLES = ("core", "dashboard", "hub", "relay", "publish", "constraints")
+REQUIRED_ROLES = ("core", "constraints")  # the constraints file is hash-locked (--require-hashes)
 MAX_INT = 2**53 - 1
 
 
@@ -70,9 +71,7 @@ def build_manifest(
     commit: str,
     issued_at: str,
     expires_at: str,
-    core_wheel: Path,
-    dashboard_wheel: Path,
-    constraints: Path,
+    files: dict[str, Path],
     base_url: str,
     changelog: str,
     min_from: str,
@@ -82,7 +81,10 @@ def build_manifest(
     need(VERSION.fullmatch(min_from) is not None, f"bad min_from: {min_from!r}")
     need(COMMIT.fullmatch(commit) is not None, "commit must be 40 lowercase hex characters")
     need(len(changelog.encode("utf-8")) <= 4096, "changelog is longer than 4096 bytes")
-    paths = {"core": core_wheel, "dashboard": dashboard_wheel, "constraints": constraints}
+    need(all(r in ROLES for r in files), f"unknown file role: {sorted(set(files) - set(ROLES))}")
+    need(all(r in files for r in REQUIRED_ROLES), f"the file list needs the roles {', '.join(REQUIRED_ROLES)}")
+    names = [p.name.lower() for p in files.values()]
+    need(len(set(names)) == len(names), "two files have the same name (case-insensitively)")
     return {
         "format": "orch.release/1",
         "channel": channel,
@@ -91,7 +93,7 @@ def build_manifest(
         "commit": commit,
         "issued_at": issued_at,
         "expires_at": expires_at,
-        "files": [file_entry(role, paths[role], base_url) for role in ROLES],
+        "files": [file_entry(role, files[role], base_url) for role in ROLES if role in files],
         "changelog": changelog,
         "min_from": min_from,
     }
@@ -123,9 +125,7 @@ def main(argv: list[str]) -> int:
     core = sub.choices["core"]
     core.add_argument("--version", required=True)
     core.add_argument("--commit", required=True)
-    core.add_argument("--core-wheel", type=Path, required=True)
-    core.add_argument("--dashboard-wheel", type=Path, required=True)
-    core.add_argument("--constraints", type=Path, required=True)
+    core.add_argument("--file", action="append", default=[], metavar="ROLE=PATH", help=f"one of {', '.join(ROLES)}")
     core.add_argument("--base-url", required=True)
     core.add_argument("--changelog-file", type=Path, required=True)
     core.add_argument("--min-from", required=True)
@@ -133,6 +133,12 @@ def main(argv: list[str]) -> int:
     a = ap.parse_args(argv)
     try:
         if a.kind == "core":
+            files: dict[str, Path] = {}
+            for item in a.file:
+                role, sep, path = item.partition("=")
+                need(sep == "=" and bool(path), f"--file wants ROLE=PATH, got {item!r}")
+                need(role not in files, f"duplicate file role: {role}")
+                files[role] = Path(path)
             doc = build_manifest(
                 channel=a.channel,
                 version=a.version,
@@ -140,9 +146,7 @@ def main(argv: list[str]) -> int:
                 commit=a.commit,
                 issued_at=a.issued_at,
                 expires_at=a.expires_at,
-                core_wheel=a.core_wheel,
-                dashboard_wheel=a.dashboard_wheel,
-                constraints=a.constraints,
+                files=files,
                 base_url=a.base_url,
                 changelog=a.changelog_file.read_text(encoding="utf-8").strip(),
                 min_from=a.min_from,

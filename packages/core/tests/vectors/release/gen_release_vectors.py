@@ -151,9 +151,14 @@ def text(env: dict[str, Any]) -> str:
 
 # --- payloads -----------------------------------------------------------------------------------------------------
 
+ROLES = ("core", "dashboard", "hub", "relay", "publish", "constraints")  # the file list of one release
+
 FILE_BYTES = {
     "core": b"TEST orch-core wheel bytes (not a real wheel)\n",
     "dashboard": b"TEST orch-dashboard wheel bytes (not a real wheel)\n",
+    "hub": b"TEST orch-hub wheel bytes (not a real wheel)\n",
+    "relay": b"TEST orch-relay wheel bytes (not a real wheel)\n",
+    "publish": b"TEST orch-publish wheel bytes (not a real wheel)\n",
     "constraints": b"cryptography==46.0.3\njsonschema==4.26.0\nsegno==1.6.6\n",
 }
 
@@ -162,6 +167,9 @@ def file_names(version: str) -> dict[str, str]:
     return {
         "core": f"orch_core-{version}-py3-none-any.whl",
         "dashboard": f"orch_dashboard-{version}-py3-none-any.whl",
+        "hub": f"orch_hub-{version}-py3-none-any.whl",
+        "relay": f"orch_relay-{version}-py3-none-any.whl",
+        "publish": f"orch_publish-{version}-py3-none-any.whl",
         "constraints": "constraints.txt",
     }
 
@@ -185,7 +193,7 @@ def manifest(channel: str, seq: int, **over: Any) -> dict[str, Any]:
                 "size": len(FILE_BYTES[role]),
                 "url": f"https://github.com/severinlindenmann/orch-core/releases/download/v{version}/{names[role]}",
             }
-            for role in ("core", "dashboard", "constraints")
+            for role in ROLES
         ],
         "changelog": "TEST release. Wiki add-on: page links; fix terminal resize.",
         "min_from": "2.0.0.dev1",
@@ -415,6 +423,46 @@ def core_cases() -> list[dict[str, Any]]:
             "a signed manifest whose file name is a path (names are bare file names)",
             text(envelope(jcs(traversal))),
             "malformed",
+        )
+    )
+
+    # the manifest file list (roles: core dashboard hub relay publish constraints)
+    def listed(mutate):  # a manifest whose file list was changed by ``mutate(files)``
+        m = manifest("develop", 42)
+        mutate(m["files"])
+        return text(envelope(jcs(m)))
+
+    def dup_role(fs):
+        fs[3]["role"] = "hub"  # the relay entry claims the hub role
+
+    def unknown_role(fs):
+        fs[3]["role"] = "installer"
+
+    def no_core(fs):
+        del fs[0]
+
+    def no_constraints(fs):
+        del fs[-1]
+
+    for name, pins, mutate in (
+        ("malformed_duplicate_role", "two file entries with the role hub", dup_role),
+        ("malformed_unknown_role", "a file entry with a role that is not in the role set", unknown_role),
+        ("malformed_missing_core", "the file list has no core wheel", no_core),
+        ("malformed_missing_constraints", "the file list has no hash-locked constraints file", no_constraints),
+    ):
+        add(case(name, pins, listed(mutate), "malformed"))
+    small = manifest("develop", 42)
+    small["files"] = [f for f in small["files"] if f["role"] in ("core", "constraints")]
+    add(
+        accept(
+            case(
+                "ok_core_and_constraints_only",
+                "a release whose file list holds only the mandatory roles (core, constraints)",
+                text(envelope(jcs(small))),
+                "ok",
+                files=files_for(small),
+            ),
+            small,
         )
     )
     add(

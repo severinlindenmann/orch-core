@@ -39,6 +39,7 @@ _TIME = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ\Z", _A)
 _CHANNEL = re.compile(r"(main|develop|test-[a-z0-9][a-z0-9-]{0,30})\Z", _A)
 _KEY_ID = re.compile(r"[a-z][a-z0-9-]{0,31}\Z", _A)
 _VERSION = re.compile(r"\d+\.\d+\.\d+(\.dev\d+)?\Z", _A)
+RELEASE_ROLES = ("core", "dashboard", "hub", "relay", "publish", "constraints")
 _FILE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,127}\Z", _A)
 _HEX64 = re.compile(r"[0-9a-f]{64}\Z", _A)
 _HEX40 = re.compile(r"[0-9a-f]{40}\Z", _A)
@@ -216,7 +217,7 @@ def check_manifest(m: dict[str, Any]) -> None:
     _need(parse_time(m["issued_at"]) < parse_time(m["expires_at"]))
     _need(len(_str(m["changelog"]).encode("utf-8")) <= 4096)
     fs = m["files"]
-    _need(isinstance(fs, list) and len(fs) == 3)
+    _need(isinstance(fs, list) and 1 <= len(fs) <= len(RELEASE_ROLES))
     for f in fs:
         _keys(f, {"role", "name", "sha256", "size", "url"})
         _matches(f["name"], _FILE_NAME)
@@ -224,8 +225,12 @@ def check_manifest(m: dict[str, Any]) -> None:
         _uint(f["size"])
         url = _str(f["url"])
         _need(url.startswith("https://") and len(url) <= 512 and url.isprintable() and " " not in url)
-    _need(sorted(str(f["role"]) for f in fs) == ["constraints", "core", "dashboard"])
-    _need(len({f["name"].lower() for f in fs}) == 3)  # case-insensitive file systems
+    # a file LIST: every role at most once, no unknown role, and the two mandatory ones present
+    roles = [f["role"] for f in fs]
+    _need(all(isinstance(r, str) and r in RELEASE_ROLES for r in roles))
+    _need(len(set(roles)) == len(roles))
+    _need("core" in roles and "constraints" in roles)
+    _need(len({f["name"].lower() for f in fs}) == len(fs))  # case-insensitive file systems
 
 
 def check_catalog(m: dict[str, Any]) -> None:

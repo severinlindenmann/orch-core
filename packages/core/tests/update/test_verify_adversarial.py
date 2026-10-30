@@ -275,3 +275,32 @@ def test_production_refuses_test_channels_without_the_hook():
         assert reason(env, channel="test-e2e", roots=roots) is Reason.CHANNEL_NOT_ALLOWED
     finally:
         keys_mod._test_hook_depth = depth
+
+
+# --- the manifest file list: duplicate roles, unknown roles, missing core / constraints ---------------------------
+
+
+def _with_files(mutate):
+    m = GEN.manifest("develop", 42)
+    mutate(m["files"])
+    return reason(env_bytes(GEN.jcs(m)))
+
+
+def test_file_list_duplicate_role_is_refused():
+    assert _with_files(lambda fs: fs[3].update(role="hub")) is Reason.MALFORMED
+
+
+def test_file_list_unknown_role_is_refused():
+    assert _with_files(lambda fs: fs[3].update(role="installer")) is Reason.MALFORMED
+
+
+def test_file_list_without_core_is_refused():
+    assert _with_files(lambda fs: fs.pop(0)) is Reason.MALFORMED
+
+
+def test_file_list_without_constraints_is_refused():
+    assert _with_files(lambda fs: fs.pop()) is Reason.MALFORMED
+
+
+def test_file_list_with_only_the_mandatory_roles_is_accepted():
+    assert _with_files(lambda fs: fs.__setitem__(slice(1, 5), [])) is None

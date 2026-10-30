@@ -232,9 +232,6 @@ function NextStepCard({ ticket, viewer, sign, jump, signing = false, run, wait, 
         <Button size="sm" disabled={signing} onClick={() => sign({ kind: 'verdict' })}>
           Give verdict
         </Button>
-        <Button size="sm" variant="outline" disabled={signing} onClick={() => sign({ kind: 'request_changes', gate: 'verify' })}>
-          Send back
-        </Button>
       </Card>
     )
   }

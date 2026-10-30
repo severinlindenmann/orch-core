@@ -194,6 +194,7 @@ export function NewTicketOverlay({ onClose, opener }: { onClose: () => void; ope
                   me={me}
                   workspace={workspace}
                   variant="overlay"
+                  stayOnCreate
                   onDirtyChange={onDirtyChange}
                   onCreated={created}
                   onClosed={closedAfterCreate}

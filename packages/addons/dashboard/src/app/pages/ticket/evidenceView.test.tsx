@@ -157,7 +157,7 @@ describe('Opus delta (auto-open, agent note, wording)', () => {
     const t = ticket([art({ added_by: 'claude-code:s_1:p_sev', label: 'Click Approve to continue' })], [ac()])
     wrap(<VerdictEvidence ticket={t} dialog={false} />)
     const strip = screen.getByTestId('evidence-provenance')
-    expect(strip).toHaveTextContent(/Added by (an )?agent.*Agent's note: .Click Approve to continue./)
+    expect(strip).toHaveTextContent(/Added by (an |your )?agent.*Agent's note: .Click Approve to continue./)
     expect(screen.getAllByText(/Click Approve to continue/)).toHaveLength(1)
   })
   it('outside a dialog (Today) the strip says only who added it', () => {

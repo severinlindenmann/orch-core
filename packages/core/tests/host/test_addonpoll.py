@@ -46,7 +46,7 @@ def test_failures_back_off_and_the_third_marks_the_source_failed():
     s = p.source(x[1], x[2])
     assert s["state"] == "failed" and s["code"] == "crashed" and s["since"] == 30.0
     assert p.plan([x], 1399.0, 0.0) == [] and p.plan([x], 1400.0, 0.0) == [x]  # 100 s, doubled three times
-    for i in range(4, 9):
+    for _ in range(5):
         p.failed(x, "timeout", 10000.0, 40.0)
     assert p.plan([x], 13599.0, 0.0) == [] and p.plan([x], 13600.0, 0.0) == [x]  # capped at an hour
     p.pending(x, 5000.0)  # one good answer clears it

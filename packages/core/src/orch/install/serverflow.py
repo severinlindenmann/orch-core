@@ -54,6 +54,12 @@ def _install_timers(ctx: Ctx, files: dict[str, str], timers: list[str]) -> None:
         ctx.run(["systemctl", "--user", "enable", "--now", t], dict(ctx.env))
 
 
+def _update_record(ctx: Ctx) -> Path:
+    """install.sh's install record: ``$XDG_DATA_HOME/orch/install.json`` (else ``~/.local/share/orch/``)."""
+    base = ctx.env.get("XDG_DATA_HOME")
+    return (Path(base) if base else ctx.layout.home / ".local" / "share") / "orch" / "install.json"
+
+
 def _ops(
     ctx: Ctx, role: str, parts: list[str], names: Names, ports: dict[str, int], backup_drop: str | None = None
 ) -> None:
@@ -67,6 +73,7 @@ def _ops(
         "disk_path": str(lay.home),
         "status_file": str(ops_dir / "health-status.json"),
         "min_mem_mb": ops.MIN_MEM_MB,
+        "update_record": str(_update_record(ctx)),
     }
     if role == "hub" and backup_drop:
         cfg |= {"backup_drop": backup_drop, "backup_record": str(ops_dir / "backup-copied.json")}

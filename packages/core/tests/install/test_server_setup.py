@@ -3,6 +3,7 @@ No DNS, no Caddy, no systemd, no sudo: every seam is a stub."""
 
 from __future__ import annotations
 
+import datetime
 import io
 import json
 import subprocess
@@ -999,3 +1000,49 @@ def test_health_never_shows_a_raw_foreign_name_and_notices_a_replaced_file(tmp_p
     (drop / name).unlink()
     (drop / name).symlink_to(tmp_path / "canary")
     assert not ops.run_health(cfg, **kw)["ok"]
+
+
+def _record(tmp_path, issued):
+    f = tmp_path / "install.json"
+    f.write_text(json.dumps({"revocations_issued_at": issued}))
+    return str(f)
+
+
+def _health_at(tmp_path, left_days, issued_as="iso"):
+    now = 1_800_000_000.0
+    issued = now + left_days * 86400 - 30 * 86400
+    v = datetime.datetime.fromtimestamp(issued, datetime.UTC).isoformat().replace("+00:00", "Z")
+    rec = _record(tmp_path, v if issued_as == "iso" else issued)
+    return ops.run_health(
+        {"parts": [], "update_record": rec},
+        ntp=lambda: True,
+        mem_mb=lambda: 900.0,
+        disk_free_gb=lambda p: 50.0,
+        now=lambda: now,
+    ), now
+
+
+def test_health_warns_ten_days_before_the_update_signature_list_expires(tmp_path):
+    rep, _ = _health_at(tmp_path, 11)
+    assert rep["ok"]  # 11 days left: quiet
+    rep, now = _health_at(tmp_path, 9)
+    date = datetime.datetime.fromtimestamp(now + 9 * 86400, datetime.UTC).strftime("%Y-%m-%d")
+    assert not rep["ok"] and rep["problems"] == [
+        f"the update signature list expires on {date}: ask your admin to renew it"
+    ]
+    rep, _ = _health_at(tmp_path, 9, issued_as="epoch")
+    assert "expires on" in rep["problems"][0]
+
+
+def test_health_warns_when_the_update_signature_list_has_expired(tmp_path):
+    rep, _ = _health_at(tmp_path, -2)
+    assert not rep["ok"] and "expired on" in rep["problems"][0] and "ask your admin to renew it" in rep["problems"][0]
+
+
+def test_health_skips_the_signature_list_check_quietly_without_a_record(tmp_path):
+    kw = dict(ntp=lambda: True, mem_mb=lambda: 900.0, disk_free_gb=lambda p: 50.0)
+    assert ops.run_health({"parts": [], "update_record": str(tmp_path / "missing.json")}, **kw)["ok"]
+    (tmp_path / "bad.json").write_text("not json")
+    assert ops.run_health({"parts": [], "update_record": str(tmp_path / "bad.json")}, **kw)["ok"]
+    assert ops.run_health({"parts": []}, **kw)["ok"]
+    assert ops.run_health({"parts": [], "update_record": _record(tmp_path, "garbage")}, **kw)["ok"]

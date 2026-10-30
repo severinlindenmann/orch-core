@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import calendar
 import contextlib
+import datetime
 import hashlib
 import json
 import os
@@ -127,6 +128,46 @@ def _mem_available_mb() -> float | None:
     return None
 
 
+REVOCATIONS_LIFE_DAYS = 30
+REVOCATIONS_WARN_DAYS = 10
+
+
+def _issued_ts(v: Any) -> float | None:
+    """``revocations_issued_at`` as epoch seconds: a number, or an ISO 8601 string (``Z`` or an offset)."""
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, (int, float)):
+        return float(v)
+    if isinstance(v, str):
+        try:
+            d = datetime.datetime.fromisoformat(v.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return (d if d.tzinfo else d.replace(tzinfo=datetime.UTC)).timestamp()
+    return None
+
+
+def _revocations_warning(record: str | None, now: float) -> str | None:
+    """A warning when the installed update-signature (revocation) list is within 10 days of expiring (issued_at + 30
+    days) or has expired. No record, or no readable date: nothing (quietly)."""
+    if not record:
+        return None
+    try:
+        fd = os.open(record, os.O_RDONLY | os.O_NOFOLLOW)
+        with os.fdopen(fd) as fh:
+            issued = _issued_ts(json.load(fh).get("revocations_issued_at"))
+    except (OSError, ValueError, AttributeError):
+        return None
+    if issued is None:
+        return None
+    expires = issued + REVOCATIONS_LIFE_DAYS * 86400
+    if expires - now >= REVOCATIONS_WARN_DAYS * 86400:
+        return None
+    date = datetime.datetime.fromtimestamp(expires, datetime.UTC).strftime("%Y-%m-%d")
+    verb = "expired on" if expires <= now else "expires on"
+    return f"the update signature list {verb} {date}: ask your admin to renew it"
+
+
 def run_health(
     cfg: dict[str, Any],
     *,
@@ -164,6 +205,9 @@ def run_health(
                 f"the backup drop folder holds {len(strange)} unexpected or changed file(s)"
                 + (f", such as {', '.join(shown)}" if shown else "")
             )
+    why = _revocations_warning(cfg.get("update_record"), now())
+    if why:
+        problems.append(why)
     mem = mem_mb()
     if mem is not None and mem < cfg.get("min_mem_mb", MIN_MEM_MB):
         problems.append(f"only {mem:.0f} MB of memory is available")

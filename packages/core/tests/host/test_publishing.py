@@ -1184,6 +1184,13 @@ def test_the_hosts_settings_handler_checks_both_origins_whoever_asks(bare, human
     assert good["ok"]
 
 
+def test_one_address_for_both_server_and_share_is_accepted(bare, human):
+    """P06: the publish server's run mode serves uploads and links from one address, so equal addresses are valid."""
+    bare.addon()
+    res = human.prepare_res("settings.set", {"set": {"publish": {"server": SERVER, "share": SERVER}}})
+    assert res["ok"]
+
+
 def test_register_is_the_owners_act_three_a_minute_and_never_an_agents(w):
     assert err(w.req("publish.register", {}, agent=True)) in ("op.not_allowed", "human_only")
     for _ in range(3):

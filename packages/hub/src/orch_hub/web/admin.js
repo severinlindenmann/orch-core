@@ -170,6 +170,18 @@ export function adminView(d) {
     const n = data.channels.filter((c) => c.user_id === u.user_id && c.status === "active").length;
     return n === 1 ? "1 device" : n + " devices";
   };
+  /** A person who joined with the company account: which account it was (display text), a hint when its name differs from the
+   * invited one, and a plain Remove. The invitation works for anyone who has the link, so the admin must be able to see who used it. */
+  function companyLine(u) {
+    const c = u.company;
+    if (!c) return null;
+    const email = String(c.email ?? "").replace(/[^\P{C}]/gu, "").slice(0, 200);
+    const idp = String(c.name ?? "").replace(/[^\P{C}]/gu, "").slice(0, 200);
+    return h("div", { class: "company-line small", "data-company": u.user_id },
+      h("span", { text: "Signed in as " + txt(email || "a company account") }),
+      idp && idp !== u.name ? h("div", { class: "muted", text: "Their company account is named " + txt(idp) }) : null,
+      remove("Remove", "DELETE", "/admin/users/" + enc(u.user_id)));
+  }
   function personControls(u) {
     const recovery = h("input", { type: "checkbox", id: "recovery-" + u.user_id });
     const reset = h("button", { type: "button", text: "Reset password and code", onclick: async (ev) => {
@@ -231,6 +243,7 @@ export function adminView(d) {
       h("section", { class: "card" }, h("h3", { text: "People" }), data.users.length ? data.users.map((u) => h("article", { class: "list-row row" },
         h("div", { class: "grow" }, h("b", { text: txt(u.name) }), data.users.filter((o) => o.name === u.name).length > 1 ? h("details", { class: "info" }, h("summary", { "aria-label": "More about " + txt(u.name), text: "i" }), p(txt(u.user_id))) : null,
           h("div", { class: "row" }, u.disabled ? chip("Disabled", "warn") : null, data.groups.filter((g) => g.members.includes(u.user_id)).map((g) => chip(txt(g.name)))),
+          companyLine(u),
           p(deviceCount(u) + " · " + (data.channels.filter((c) => c.user_id === u.user_id).map((c) => txt(c.label || c.kind) + " · " + txt(c.status)).join(", ") || "No approval device set up"))),
         personControls(u))) : p("No people yet.")),
       h("section", { class: "card" }, h("h3", { text: "Groups" }),

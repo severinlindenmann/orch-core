@@ -171,6 +171,18 @@ class Invites:
         except sqlite3.Error as e:
             raise InviteError("store_error") from e
 
+    def company_labels(self) -> dict[str, dict[str, str]]:
+        """``{user_id: {"email", "name"}}`` for people who joined through a company-login invitation: what the company
+        account said at that moment, for the admin's People page (display text, never matched)."""
+        try:
+            with self._lock:
+                rows = self._db.execute(
+                    "SELECT redeemed_user, label, idp_name FROM invites WHERE company=1 AND redeemed_user IS NOT NULL"
+                ).fetchall()
+        except sqlite3.Error as e:
+            raise InviteError("store_error") from e
+        return {u: {"email": e or "", "name": n or ""} for u, e, n in rows}
+
     def void_company(self) -> int:
         """End every unused company-login link (the provider, tenant or domain changed: they were made for the old one)."""
         try:

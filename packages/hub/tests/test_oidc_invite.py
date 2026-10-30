@@ -349,3 +349,16 @@ def test_an_older_invites_store_gets_the_new_columns(tmp_path):
             inv.create("reset", created_by="a", for_user="u", company=True)
     finally:
         inv.close()
+
+
+def test_the_people_list_says_who_joined_with_which_company_account(e):
+    e.configure()
+    token, _ = make_invite(e)
+    plain, _ = make_invite(e, "Plain Pat", company=False)
+    s, o, *_ = go(e, token, oid="oid-julia", name="Mallory Admin", email="julia@acme.example")
+    uid = o["user_id"]
+    s, body, _ = e.call("GET", "/admin/users", token=e.admin_tok)
+    by = {u["user_id"]: u for u in body["users"]}
+    assert by[uid]["company"] == {"email": "julia@acme.example", "name": "Mallory Admin"}
+    assert "company" not in by[e.w.ann] and "company" not in by[e.w.admin]
+    assert e.call("GET", "/admin/users", token=e.w.login(e.w.ann))[0] == 403  # admins only

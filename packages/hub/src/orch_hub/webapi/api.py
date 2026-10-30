@@ -1720,7 +1720,11 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
         return 200, person_reach(self.d.access, self.d.registry, p["user_id"])
 
     def _h_a_users(self, c: Ctx, p: dict, q: dict, b: dict | None):
-        return 200, {"users": self.d.access.users()}
+        users = self.d.access.users()
+        if self.d.user_invites is not None:  # who joined through a company-login invitation, and what that account said
+            labels = self.d.user_invites.company_labels()
+            users = [{**u, "company": labels[u["user_id"]]} if u["user_id"] in labels else u for u in users]
+        return 200, {"users": users}
 
     def _h_a_user_remove(self, c: Ctx, p: dict, q: dict, b: dict | None):
         with self._chg().reducing("user_remove", confirm=confirmed(b), user_id=p["user_id"]):

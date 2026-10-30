@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
 from orch.addons import event_words
+from orch.addons.manifest import EVENTS_KEY
 
 from .errors import HostError
 
@@ -194,7 +195,7 @@ def _addon(call: Call, args: dict[str, Any], state: Any, mode: str) -> dict[str,
         terms["runtime"] = dict(ev["runtime"])
     # The events the add-on can wake follow-ups with, in words, for the summary the hub page shows. Display only: the
     # signed terms (and the link) keep their shape; the events are part of the package digest the person signs.
-    events = event_words.event_lines(ev.get("events") or (), ev["capabilities"], lambda x: ascii(str(x))[1:-1])
+    events = event_words.event_lines(ev.get(EVENTS_KEY) or (), ev["capabilities"], lambda x: ascii(str(x))[1:-1])
     from orch.hubclient import shorthash
 
     from .workspace import ok_result
@@ -209,7 +210,7 @@ def _addon(call: Call, args: dict[str, Any], state: Any, mode: str) -> dict[str,
             "summary": {
                 "kind": "addon",
                 **{k: v for k, v in terms.items() if k != "handoff"},
-                **({"events": events} if events else {}),
+                **({EVENTS_KEY: events} if events else {}),
             },
             "short_hash": shorthash.short_hash(terms["package_sha256"]),
             "url": build_addon_url(state.addr, service.workspace_id, terms),

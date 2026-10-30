@@ -136,6 +136,8 @@ def test_a_sign_request_belongs_to_the_workspace_it_was_prepared_in(two):
     )
     request_id = made["request"]["id"]
     client.app.state.handoffs.own(owner["person"], a.ws, request_id, 600)
+    # ... and recorded in the click table, which R2 requires before it answers for a request (unknown means refuse).
+    client.app.state.clicks.add(a.ws, request_id, "log", None, 0)
     step = {"request_id": request_id}
     assert client.post(f"/api/w/{a.ws}/click/state", json=step, headers=write).json()["state"] == "bound"
     # The same id under the other workspace's address is a request that never existed there.

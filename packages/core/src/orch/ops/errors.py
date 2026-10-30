@@ -658,6 +658,65 @@ _SPECS = [
         "dev_refused.",
     ),
     _e(
+        "remote.proof_invalid",
+        3,
+        False,
+        "the remote access step is not backed by your backup key",
+        "repeat the step and enter your backup key",
+        ["orch", "status"],
+        "A remote access step (turning it on or changing it, adding a device) needs the owner proof, signed with the "
+        "person key derived from the backup key (hub contract 10.2c). Detail reason: proof_invalid, proof_expired, "
+        "proof_missing, dev_mismatch or dev_refused.",
+    ),
+    _e(
+        "remote.agents_risk",
+        3,
+        False,
+        "agents on this computer can act as you",
+        "set up the separate agent user first, or confirm that you accept the risk",
+        ["orch", "status"],
+        "Agents run as the same operating-system user as the owner (tier A), so an agent could use a remote session "
+        "as the owner (#1198 H1). Remote access is turned on only when agents are isolated or the owner says so.",
+    ),
+    _e(
+        "remote.needs_selective",
+        3,
+        False,
+        "remote access needs the hub in selective mode, or no hub",
+        "leave the hub or run it in selective mode, then turn remote access on",
+        ["orch", "hub", "status"],
+        "In full mode the hub reads this workspace and can act for people in it, so a computer at a customer's place "
+        "never offers remote access with it (D93).",
+    ),
+    _e(
+        "remote.no_pending",
+        3,
+        False,
+        "no device is waiting to be added",
+        "make a new code and add the device again",
+        ["orch", "status"],
+        "The pending device is gone: its stream closed, the code ran out or another owner already decided.",
+    ),
+    _e(
+        "remote.full",
+        3,
+        False,
+        "this workspace already has the most remote devices it can hold",
+        "remove a device you no longer use",
+        ["orch", "status"],
+        "At most 64 remote devices, and at most 4 outstanding enrollment codes, per workspace.",
+    ),
+    _e(
+        "switch.refused",
+        3,
+        False,
+        "this workspace cannot be opened from another computer through the hub",
+        "open it on its own computer",
+        ["orch", "status"],
+        "A hub console switch is refused for a workspace that runs at a customer's place or has remote access with a "
+        "selective hub (D93); the switch ticket stays unused.",
+    ),
+    _e(
         "hub.already_joined",
         3,
         False,

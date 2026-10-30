@@ -57,7 +57,9 @@ def test_op_catalog_walk_every_kind_classified():
     }  # fmt: skip
 
 
-@pytest.mark.parametrize("op", ["member.add", "policy.set", "remote.off", "hub.future", "addon.new_thing", "frobnicate", 7])
+@pytest.mark.parametrize(
+    "op", ["member.add", "policy.set", "remote.off", "hub.future", "addon.new_thing", "frobnicate", 7]
+)
 def test_unlisted_and_refused_families_are_refused(op):
     assert K.classify(op) == K.REFUSED
 

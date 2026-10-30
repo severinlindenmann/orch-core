@@ -2,7 +2,8 @@
 remote-device stream. The host's ``remote.stream`` (T1) and ``remote.presence_used`` are faked here; the interface
 assumed (see ``Streams.facts``): ``remote.stream {stream_id}`` answers ``{workspace_id, device_id, person, level, hh
 (b64u 32 bytes), presence_kind, presence_pub (b64u 65 bytes), counter (int)}``, a closed or unknown stream is
-``remote.no_stream``; ``remote.presence_used {stream_id, device_id, count, n}`` answers ``{}`` or ``remote.presence_replay``."""
+``remote.no_stream``; ``remote.presence_used {stream_id, device_id, count, n}`` answers ``{}`` or
+``remote.presence_replay``."""
 
 from __future__ import annotations
 
@@ -52,7 +53,9 @@ class Streams:
         return {}
 
     # -- the device -----------------------------------------------------------------------------------------------
-    def assertion(self, nonce: bytes, digests: list[bytes], *, hh: bytes = HH, count: int = 1, flags: int = 0x05) -> dict:
+    def assertion(
+        self, nonce: bytes, digests: list[bytes], *, hh: bytes = HH, count: int = 1, flags: int = 0x05
+    ) -> dict:
         msg = P.presence_bytes(self.workspace_id, DEVICE, hh, nonce, digests)
         if self.kind == "platform":
             return {"form": "p256", "sig": b64u(suite.sign(self.key, msg))}

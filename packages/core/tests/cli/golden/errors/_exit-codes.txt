@@ -75,6 +75,10 @@ conflict.field 8 retry:true
 quick.unlabelled 9 retry:true
 hub.refused 3 retry:false
 hub.proof_invalid 3 retry:false
+hub.link_inspected 3 retry:false
+hub.proxy_auth 3 retry:false
+hub.proxy_refused 3 retry:false
+hub.proxy_unreachable 9 retry:true
 remote.proof_invalid 3 retry:false
 remote.agents_risk 3 retry:false
 remote.needs_selective 3 retry:false

@@ -1,4 +1,4 @@
-"""#1734: the dashboard's self-start runs with -P and the cleaned environment; the signer child gets no loader variable."""
+"""#1734: the dashboard self-start uses -P and a cleaned env; the signer child gets no loader variable."""
 
 import os
 import subprocess
@@ -54,6 +54,10 @@ def test_a_module_in_the_current_directory_is_not_imported_by_dash_p(tmp_path):
     (tmp_path / "orch_dashboard.py").write_text("raise SystemExit('shadow imported')\n")
     code = textwrap.dedent("import sys; sys.exit(7 if any(p in ('', '.') for p in sys.path) else 0)")
     r = subprocess.run(
-        [sys.executable, "-P", "-c", code], cwd=tmp_path, env={"PATH": "/usr/bin:/bin"}, capture_output=True, check=False
+        [sys.executable, "-P", "-c", code],
+        cwd=tmp_path,
+        env={"PATH": "/usr/bin:/bin"},
+        capture_output=True,
+        check=False,
     )
     assert r.returncode == 0

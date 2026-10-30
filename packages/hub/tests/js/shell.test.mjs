@@ -193,3 +193,8 @@ test("P14: an empty hub shows 6 menu entries; every area appears once a workspac
   assert.equal(paint({ hubName: "H", rows: [{ id: "ab".repeat(16), name: "Legal", online: true }], ready: true }).length, 17);
   assert.equal(paint({ hubName: "H", rows: [], ready: false }).length, 17, "a rail that could not be read hides nothing");
 });
+
+test("P20: a failed sign-in says name, never user id", () => {
+  assert.match(source, /bad_credentials: "Wrong name, password or code\. A code works once; wait for the next one\."/);
+  assert.doesNotMatch(source, /Wrong user id/);
+});

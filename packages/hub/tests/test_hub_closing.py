@@ -205,3 +205,65 @@ def test_hub_cli_writes_are_refused_while_closing(tmp_path, capsys):
     (tmp_path / STATE_FILE).write_text(json.dumps({"state": "closing"}))
     assert CLI.main(["users", "--state", str(tmp_path), "list"]) == 1
     assert "hub_closing" in capsys.readouterr().err
+
+
+def _reconfirm(w, signer, ch):
+    tok = w.login(w.admin)
+    w.closing._spawn = lambda fn: fn()
+    return start(w, tok, signer, ch)
+
+
+def test_f1_a_refused_order_can_be_confirmed_again_with_a_new_order_id(w):
+    _tok, signer, ch = _begin(w)
+    w.closing.run_sync()
+    assert w.closing.phase() == "ordered"
+    first = [c[1] for c in w.launcher.calls if c[0] == "launch"]
+    w.launcher.result = {"ok": False, "code": "refused", "message_plain": "The hub folder is in use."}
+    st = w.closing.status()
+    assert st["state"] == "stalled" and "Finish removing" in st["plain"] and st["cancel_allowed"] is False
+    assert _reconfirm(w, signer, ch)[0] == 202
+    again = [c[1] for c in w.launcher.calls if c[0] == "launch"]
+    assert len(again) == 2 and again[0] != again[1] and w.closing.phase() == "ordered"
+    assert w.launcher.result is None  # the old refusal is cleared
+    assert w.closing._doc["removal_id"] not in again  # the notice id is never an order id
+
+
+def test_f1_an_ordered_hub_with_no_result_is_stuck_only_after_fifteen_minutes(w):
+    _begin(w)
+    w.closing.run_sync()
+    w.tok = w.login(w.admin)
+    assert w.closing._can_reconfirm() is False
+    w.clock.advance(15 * 60_000 + 1)
+    assert w.closing._can_reconfirm() is True
+    w.launcher.result = {"ok": True}
+    assert w.closing._can_reconfirm() is False
+
+
+def test_f2_a_cancelled_run_cannot_move_the_new_one(w, monkeypatch):
+    with_backup_key(w)
+    tok, signer, ch = admin_with_key(w)
+    assert start(w, tok, signer, ch)[0] == 202
+    gate, inside = threading.Event(), threading.Event()
+    real = w.closing._backup
+
+    def held():
+        inside.set()
+        gate.wait(10)
+        real()
+
+    monkeypatch.setattr(w.closing, "_backup", held)
+    t = threading.Thread(target=w.closing.run_sync)
+    t.start()
+    assert inside.wait(20)
+    w.closing.cancel("x")  # cancelled while the backup is held open
+    assert w.closing.active() is False
+    monkeypatch.setattr(w.closing, "_backup", real)
+    w.closing._spawn = w.spawned.append  # the second run is observed, not started
+    assert start(w, tok, signer, ch)[0] == 202
+    new_rid = w.closing._doc["removal_id"]
+    gate.set()
+    t.join(20)
+    assert w.closing._doc["removal_id"] == new_rid
+    assert w.closing.phase() in ("closing", "preflight_ok", "backed_up", "withdrawing", "withdrawn", "notified", "ordered")
+    # the old worker did not skip the new run's preflight: it either left the doc at 'closing' or the new run took over
+    assert w.closing._doc["state"] == "closing" or any(c[0] == "dry_run" for c in w.launcher.calls)

@@ -100,6 +100,10 @@ class Launcher:
             return None
         return d if type(d) is dict else None
 
+    def clear_result(self, state_dir: Path) -> None:
+        """Before a new attempt: the old refusal must not show as the new one."""
+        Path(state_dir, RESULT_FILE).unlink(missing_ok=True)
+
     # --- argv and environment --------------------------------------------------------------------------------------
 
     def orch(self) -> Path:

@@ -35,6 +35,9 @@ class FakeLauncher:
     def read_result(self, state_dir):
         return self.result
 
+    def clear_result(self, state_dir):
+        self.result = None
+
     def dry_run(self, state_dir):
         self.calls.append(("dry_run", str(state_dir) in self.present))
         return self.dry

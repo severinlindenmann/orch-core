@@ -41,6 +41,7 @@ ORDER_FILE = "remove-order.json"
 RESULT_FILE = "remove-result.json"
 NONCE_LIFE_MS = 5 * 60_000
 ORDER_LIFE_MS = 10 * 60_000
+ORDERED_STUCK_MS = 15 * 60_000  # ordered, no result and no end of the hub after this long: "Finish removing" is offered again
 STALL_MS = 60 * 60_000  # step 6 needs a fresh confirm when the run was idle this long
 STATES = ("closing", "preflight_ok", "backed_up", "withdrawing", "withdrawn", "notified", "ordered")
 CANCEL_OK = frozenset({"closing", "preflight_ok", "backed_up"})
@@ -200,7 +201,9 @@ class Closing:
             shown, plain = "stalled", "Removal is paused. Finish removing to continue."
         result = self.launcher.read_result(self.state_dir) if state == "ordered" else None
         if result is not None and not result.get("ok", False):
-            shown, plain = "failed", str(result.get("message_plain") or "The removal was refused.")
+            shown, plain = "stalled", str(result.get("message_plain") or "The removal was refused.") + " Finish removing to try again."
+        elif state == "ordered" and self._ordered_stuck(doc):
+            shown, plain = "stalled", "The removal did not finish. Finish removing to try again."
         return {
             "state": shown,
             "plain": plain,
@@ -231,7 +234,16 @@ class Closing:
         d = self._doc
         if d is None:
             return False
-        return d["state"] != "ordered" and (bool(d.get("fail")) or self._now() > d.get("order_ok_until_ms", 0))
+        if d["state"] == "ordered":
+            return self._ordered_stuck(d)
+        return bool(d.get("fail")) or self._now() > d.get("order_ok_until_ms", 0)
+
+    def _ordered_stuck(self, d: dict[str, Any]) -> bool:
+        """The remover refused (``remove-result.json`` says ``ok: false``), or nothing happened for 15 minutes."""
+        res = self.launcher.read_result(self.state_dir)
+        if res is not None:
+            return res.get("ok") is False
+        return self._now() > d.get("ordered_ms", 0) + ORDERED_STUCK_MS
 
     def check_nonce(self, user_id: str, nonce: object, session_token: str) -> None:
         """Cheap checks before a code is spent: the nonce is this user's, this session's, unexpired and unused."""
@@ -285,6 +297,11 @@ class Closing:
                 self._save()
                 self._record("hub.removal.started", user_id)
             elif self._can_reconfirm():
+                if self._doc["state"] == "ordered":  # the remover did not finish: order it again (a NEW order id)
+                    self._doc["state"] = "notified"
+                    clear = getattr(self.launcher, "clear_result", None)
+                    if clear is not None:
+                        clear(self.state_dir)
                 self._doc.pop("fail", None)
                 self._doc["order_ok_until_ms"] = now + STALL_MS
                 self._doc["step_ms"] = now
@@ -446,28 +463,38 @@ class Closing:
                 self._doc["told"], self._doc["total"] = told, len(bound)
                 self._save()
 
-    def _order_doc(self, doc: dict[str, Any]) -> dict[str, Any]:
+    def _order_doc(self, doc: dict[str, Any], order_id: str | None = None) -> dict[str, Any]:
+        """The order's ``removal_id`` is a FRESH id per attempt (the remover's ledger spends it); the notice keeps the run's
+        own ``removal_id``, so a refused or failed attempt never blocks the next one."""
         now = self._now()
         return {
             "v": 1,
             "kind": "orch.hub_remove_order.v1",
             "hub_id": self.keys.hub_id,
-            "removal_id": doc.get("removal_id") or secrets.token_hex(16),
+            "removal_id": order_id or secrets.token_hex(16),
             "state_dir": os.path.realpath(self.state_dir),
             "issued_ms": now,
             "exp_ms": now + ORDER_LIFE_MS,
             "dev": bool(dev_of(self.keys)),
         }
 
-    def _order(self) -> None:
+    def _order(self, rid: str) -> None:
         with self._mu:
-            doc = dict(self._doc or {})
-        self.launcher.write_order(self.state_dir, self._order_doc(doc))
+            if self._doc is None or self._doc.get("removal_id") != rid:
+                raise ClosingError("cancelled")
+            doc = dict(self._doc)
+        order_id = secrets.token_hex(16)
+        self.launcher.write_order(self.state_dir, self._order_doc(doc, order_id))
         try:
-            self.launcher.launch(self.state_dir, doc["removal_id"])
+            self.launcher.launch(self.state_dir, order_id)
         except Exception:
             self.launcher.remove_order(self.state_dir)  # cannot start the remover: the hub stays up in closing
             raise ClosingError("launch_failed", "The removal could not be started. The hub is still running.") from None
+        with self._mu:
+            if self._doc is not None and self._doc.get("removal_id") == rid:
+                self._doc["ordered_ms"] = self._now()
+                self._doc["order_id"] = order_id
+                self._save()
         self._record("hub.removal.ordered")
 
     # --- the notice (push and pull) ---------------------------------------------------------------------------------

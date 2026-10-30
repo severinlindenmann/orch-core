@@ -1919,8 +1919,9 @@ the whole request body (empty for a WebSocket). The concrete path and body are c
 to one run never authorizes the attach to another. A signed op's `view_digest` stays the signer's
 `SHA-256(cj(view))`, with `view` the review view whose checks' `at` times are removed (`click/view.py` `digest`): its input starts with `{`, a route's with the label, so no route digest is an op digest. Both kinds
 may share one batch (`presence_bytes` above binds the batch to `hh`, so a batch is never valid on another stream).
-Flow: the request without a covering batch is answered `428 {"error": "remote.presence_required", "view_digest":
-"sha256:<hex>", "template"}`; the remote client recomputes the digest from the request it sent and that template (and
+Flow: the request without a covering batch is answered `428` with the dashboard's error envelope
+`{"ok": false, "error": {"code": "remote.presence_required", "message", "view_digest": "sha256:<hex>", "template"}}`
+(the digest and the template are read from `error`); the remote client recomputes the digest from the request it sent and that template (and
 refuses to prompt on a mismatch), asks the dashboard for a nonce (`remote/presence/nonce`), draws the prompt naming
 the workspace and the actions, posts the presence (`remote/presence`) and retries; each digest of a verified batch
 authorizes one request (it is taken when used).

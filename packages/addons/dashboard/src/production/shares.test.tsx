@@ -34,6 +34,8 @@ let live = true
 let listRefusal: { code: string } | null = null
 let sendRefusal: { code: string; reason?: string } | null = null
 let registerRefusal: { code: string; reason?: string } | null = null
+let sendRefusalOnce: { code: string; reason?: string } | null = null
+let uploadN = 0
 const state = useFakeHost(() => [workspace({ id: A, features: [...READS, 'publish'], addOns: { available: true, add_ons: [{ id: 'publish', title: 'Publish', desc: 'Share files.', state: 'on', locked: null, blocked: null }] } })])
 const refusal = (r: { code: string; reason?: string }) =>
   Response.json({ ok: false, error: { code: r.code, message: r.code, retryable: false, ...(r.reason ? { detail: { reason: r.reason } } : {}) } }, { status: 409 })
@@ -47,6 +49,8 @@ const route = () => {
   listRefusal = null
   sendRefusal = null
   registerRefusal = null
+  sendRefusalOnce = null
+  uploadN = 0
   state.host.override = (path, method, body) => {
     if (path.endsWith('/tickets/DEMO-0001') && method === 'GET')
       return Response.json({ ...ticket, artifacts: [{ name: 'report.md', kind: 'report', bytes: 2048, sha256: 'ab'.repeat(32), added_by: 'p_x', at: '2026-10-18T08:00:00Z' }, { name: 'bad/name.md', kind: 'report', bytes: 1, sha256: 'cd'.repeat(32), added_by: 'p_x', at: '2026-10-18T08:00:00Z' }] })
@@ -58,8 +62,17 @@ const route = () => {
       staged = [{ staged_id: STAGED, ticket: 'DEMO-0001', kind: body?.kind, days: body?.days, views: body?.views ?? 0, origin: 'person', files: [FILE], created_at: '2026-10-18T08:00:00Z' }]
       return Response.json({ staged: staged[0], server: 'http://127.0.0.1:8103', share: 'http://127.0.0.1:8104' })
     }
+    if (path.endsWith('/shares/upload')) {
+      uploadN += 1
+      return Response.json({ upload_id: 'pu_' + String(uploadN).repeat(32), name: body?.name, size: atob(String(body?.data)).length, sha256: 'ef'.repeat(32) })
+    }
     if (path.endsWith('/shares/send')) {
       if (sendRefusal) return refusal(sendRefusal)
+      if (sendRefusalOnce) {
+        const r = sendRefusalOnce
+        sendRefusalOnce = null
+        return refusal(r)
+      }
       staged = []
       shares = [...shares, share({ id: SID })]
       return Response.json({ share_id: SID, ticket: 'DEMO-0001', kind: 'secret', link: LINK, expires_at: '2099-10-25T08:00:00Z', view_limit: 0 })
@@ -115,13 +128,14 @@ it('Publish on but no server set up: the Shares page says what is missing and wh
   expect(screen.queryByTestId('shares-empty')).toBeNull()
 })
 
-it('a server that is not running: the Shares page says so and how to start it', async () => {
+it('a server that is not running: the Shares page says sharing is not reachable and offers Try again, no terminal command', async () => {
   route()
   live = false
   show('/w/DEMO/shares')
   const note = await screen.findByTestId('shares-unreachable', {}, T)
-  expect(note).toHaveTextContent('not running or cannot be reached')
-  expect(note).toHaveTextContent('orch-publish dev')
+  expect(note).toHaveTextContent('Sharing is not reachable right now')
+  expect(note).not.toHaveTextContent('orch-publish')
+  expect(within(note).getByRole('button', { name: 'Try again' })).toBeInTheDocument()
   expect(screen.getByRole('table', { name: 'Shares' })).toBeInTheDocument()
 })
 
@@ -450,4 +464,105 @@ it('PL: the link dialog has no dead X, announces a copy, and the Settings note s
   show('/w/DEMO/addons')
   const box = await openPublish()
   expect(within(box).getByTestId('publish-local-note')).toHaveTextContent('opens only on this computer')
+})
+
+// ---- P05: a file picked on this computer, and connecting by itself
+
+async function openForm(user: ReturnType<typeof userEvent.setup>) {
+  clickOn(state.host.workspaces[0])
+  window.innerWidth = 1400
+  show('/w/DEMO/ticket/DEMO-0001')
+  await user.click(within(await screen.findByTestId('ticket-shares', {}, T)).getByRole('button', { name: 'Share files' }))
+  return await screen.findByRole('dialog', { name: 'Share files' }, T)
+}
+const file = (name: string, text: string) => new File([text], name, { type: 'text/plain' })
+
+it('Add a file: the pick is uploaded alone, listed with its size, enables Review, and Review names it with the artifacts', async () => {
+  route()
+  const user = userEvent.setup()
+  const form = await openForm(user)
+  expect(form).toHaveTextContent('Nothing is sent until you approve')
+  expect(within(form).getByRole('button', { name: 'Review selected files' })).toBeDisabled()
+  await user.upload(within(form).getByTestId('share-file-input'), file('readme.md', 'hello readme'))
+  await waitFor(() => expect(calls('/shares/upload')).toHaveLength(1), T)
+  const sent = calls('/shares/upload')[0].body as Record<string, unknown>
+  expect(sent).toMatchObject({ name: 'readme.md', data: btoa('hello readme') })
+  expect(sent.idem).toMatch(/^a_[0-7][0-9A-HJKMNP-TV-Z]{25}$/)
+  expect(await within(form).findByRole('checkbox', { name: 'readme.md from this computer' }, T)).toBeChecked()
+  expect(form).toHaveTextContent('12 bytes')
+  const review = within(form).getByRole('button', { name: 'Review selected files' })
+  await waitFor(() => expect(review).toBeEnabled(), T)
+  expect(calls('/shares/prepare')).toEqual([]) // nothing is prepared, let alone sent, by picking
+  await user.click(within(form).getByRole('checkbox', { name: /report\.md/ }))
+  await user.click(review)
+  await waitFor(() => expect(calls('/shares/prepare')).toHaveLength(1), T)
+  expect(calls('/shares/prepare')[0].body).toMatchObject({ ticket: 'DEMO-0001', artifacts: ['report.md'], uploads: ['pu_' + '1'.repeat(32)] })
+  expect(calls('/shares/send')).toEqual([])
+})
+
+it('Add a file: Remove takes the pick out again, and Review is off with nothing selected', async () => {
+  route()
+  const user = userEvent.setup()
+  const form = await openForm(user)
+  await user.upload(within(form).getByTestId('share-file-input'), file('a.txt', 'abc'))
+  await user.click(await within(form).findByRole('button', { name: 'Remove a.txt' }, T))
+  expect(within(form).queryByRole('checkbox', { name: 'a.txt from this computer' })).toBeNull()
+  expect(within(form).getByRole('button', { name: 'Review selected files' })).toBeDisabled()
+})
+
+it('Add a file: a file that is too big, empty, badly named or a double never leaves the browser', async () => {
+  route()
+  const user = userEvent.setup()
+  const form = await openForm(user)
+  const input = within(form).getByTestId('share-file-input')
+  await user.upload(input, file('big.bin', 'x'.repeat(1024 * 1024 + 1)))
+  expect(await within(form).findByRole('alert', {}, T)).toHaveTextContent('Larger than 1 MB')
+  await user.upload(input, file('empty.txt', ''))
+  await waitFor(() => expect(within(form).getByRole('alert')).toHaveTextContent('This file is empty'), T)
+  await user.upload(input, file('.hidden', 'x'))
+  await waitFor(() => expect(within(form).getByRole('alert')).toHaveTextContent('characters the server does not take'), T)
+  await user.upload(input, file('REPORT.md', 'x'))
+  await waitFor(() => expect(within(form).getByRole('alert')).toHaveTextContent('already in the list'), T)
+  expect(calls('/shares/upload')).toEqual([])
+})
+
+it('a server that does not know the workspace is connected by itself and the send is retried once', async () => {
+  route()
+  sendRefusalOnce = { code: 'publish.server_refused', reason: 'unknown_workspace' }
+  const user = userEvent.setup()
+  const sign = await signedShare(user)
+  sign()
+  const dialog = await screen.findByRole('dialog', { name: 'Your link' }, { timeout: 9000 })
+  expect(calls('/shares/register')).toHaveLength(1)
+  expect(calls('/shares/send')).toHaveLength(2)
+  expect((calls('/shares/send')[1].body as { idem: string }).idem).toBe((calls('/shares/send')[0].body as { idem: string }).idem)
+  expect((within(dialog).getByLabelText('Link') as HTMLInputElement).value).toBe(LINK)
+})
+
+it('when connecting is refused the first refusal is said in words and nothing loops', async () => {
+  route()
+  sendRefusal = { code: 'publish.server_refused', reason: 'unknown_workspace' }
+  registerRefusal = { code: 'role.denied' }
+  const user = userEvent.setup()
+  ;(await signedShare(user))()
+  const alert = await screen.findByRole('alert', {}, { timeout: 9000 })
+  expect(alert).toHaveTextContent('has not allowed this workspace yet')
+  expect(calls('/shares/register')).toHaveLength(1)
+  expect(calls('/shares/send')).toHaveLength(1)
+  expect(document.body.textContent).not.toMatch(/orch publish register|orch-publish dev/)
+})
+
+it('sharing not reachable: plain words, the signature stays good, Try again sends once more', async () => {
+  route()
+  sendRefusalOnce = { code: 'publish.unreachable' }
+  const user = userEvent.setup()
+  ;(await signedShare(user))()
+  const alert = await screen.findByRole('alert', {}, { timeout: 9000 })
+  expect(alert).toHaveTextContent('Sharing is not reachable right now. Nothing was shared.')
+  expect(screen.getByRole('dialog')).toHaveTextContent('signature stays good for an hour')
+  expect(document.body.textContent).not.toMatch(/orch-publish|terminal/i)
+  await user.click(screen.getByRole('button', { name: 'Try again' }))
+  await screen.findByRole('dialog', { name: 'Your link' }, { timeout: 9000 })
+  expect(calls('/shares/send')).toHaveLength(2)
+  expect(calls('/shares/register')).toEqual([])
 })

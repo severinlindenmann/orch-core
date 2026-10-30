@@ -650,3 +650,17 @@ test("SV-01: every part shows its address; Edge down is called out; no address i
   assert.match(row("edge"), /Address https:\/\/hub\.test/);
   assert.equal(summary(d).text, "Edge is not answering");
 });
+
+test("P08: the Workspaces page shows the Restored note at the top until Got it is clicked", () => {
+  let n = 0;
+  const out = workspacesView({ workspaces: [], handoffs: [], restored: { made_ms: NOW - 3600000, restored_ms: NOW, suspended: 1 },
+    actions: { dismissRestored: () => n++ } }, NOW);
+  const t = text(out);
+  assert.match(t, /Restored from the backup of/); assert.match(t, /Check that your workspaces show Online/);
+  assert.match(t, /1 person is switched off/);
+  const got = find(out, (x) => x.tag === "button" && x.textContent === "Got it");
+  assert.equal(got.length, 1);
+  got[0].listeners.click();
+  assert.equal(n, 1);
+  assert.doesNotMatch(text(workspacesView({ workspaces: [], handoffs: [] }, NOW)), /Restored from/);
+});

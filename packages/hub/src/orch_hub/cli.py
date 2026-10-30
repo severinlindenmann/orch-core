@@ -50,6 +50,20 @@ def _parser() -> argparse.ArgumentParser:
         "workspace host or agent users, see --dev-shared-machine)",
     )
     sv.add_argument(
+        "--link-ws-listen",
+        help="R6: a second listener for the link over WebSocket, IP:port: loopback (a TLS front on this machine) or one "
+        "private address; plain HTTP, serves only /orch/link/1 (see docs/deployment.md, Link over 443)",
+    )
+    sv.add_argument(
+        "--link-ws-public",
+        help="R6: a public address of the WebSocket front to list in hub_where, wss://name[:port] (or ws://); a hint only",
+    )
+    sv.add_argument(
+        "--link-ws-behind-front",
+        action="store_true",
+        help="R6: allow a non-private --link-ws-listen address; only when a TLS-terminating front is the only way to it",
+    )
+    sv.add_argument(
         "--dev-shared-machine",
         action="store_true",
         help="dev only: allow --link-listen on a machine that has host/agent users (needs a dev card; network link, not separation)",
@@ -196,6 +210,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 link_listen=args.link_listen,
                 dev_shared_machine=args.dev_shared_machine,
                 bind_all=args.bind_all,
+                link_ws_listen=args.link_ws_listen,
+                link_ws_public=args.link_ws_public,
+                link_ws_behind_front=args.link_ws_behind_front,
                 api_host=args.api_host,
                 web_listen=args.web_listen,
                 relay_url=args.relay_url,

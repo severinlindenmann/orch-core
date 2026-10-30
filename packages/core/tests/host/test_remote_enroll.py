@@ -186,6 +186,25 @@ def test_confirm_after_stream_gone_no_pending(human, served):
     )
 
 
+def test_still_pending_is_true_only_for_the_right_code_while_open_and_in_time(human, served):
+    """The real `enrollment.still_pending` (not a stub): the confirm's last check under the store lock."""
+    turn_on(human)
+    code, dev = new_code(served), Device()
+    cid = code["code_id"]
+    assert not enrollment.still_pending(served.service, cid)  # nothing verified yet
+    verify(served, code, dev)
+    assert enrollment.still_pending(served.service, cid)
+    assert not enrollment.still_pending(served.service, "c_" + "0" * 26)  # another code id
+    enrollment.drop(served.service, STREAM)
+    assert not enrollment.still_pending(served.service, cid)  # the stream closed
+    # expiry: a second device, then the clock moves past its expires_ms
+    code2 = new_code(served)
+    verify(served, code2, Device(seed=2))
+    assert enrollment.still_pending(served.service, code2["code_id"])
+    served.lab.ws.clock[0] += 16 * 60
+    assert not enrollment.still_pending(served.service, code2["code_id"])
+
+
 def test_a_confirmation_needs_the_owner_proof(human, served):
     turn_on(human)
     code, dev = new_code(served), Device()

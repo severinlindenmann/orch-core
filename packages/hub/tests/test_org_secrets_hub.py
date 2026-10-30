@@ -727,3 +727,20 @@ def test_nothing_in_the_hub_source_can_log_a_wrap():
     for rel in ("access/orgsecrets.py", "webapi/secrets_api.py"):
         src = (root / rel).read_text()
         assert "logging" not in src and "print(" not in src and "getLogger" not in src, rel
+
+
+def test_chosen_with_no_workspace_is_refused_by_the_hub_not_only_by_the_page(w):
+    w.recipients("crm-key", "chosen", [], expect=400)
+    rec = w.recipients("crm-key", "all", [])
+    body = {
+        "name": "crm-key",
+        "secret_id": rec["secret_id"],
+        "version": rec["version"],
+        "expires_ms": w.now + 30 * DAY,
+        "shared": "chosen",
+        "workspaces": [],
+        "wraps": [],
+    }
+    s, o, _ = w.call("POST", "/admin/secrets", body, token=w.token)
+    assert s == 400, o
+    assert stored(w)["secrets"] == []

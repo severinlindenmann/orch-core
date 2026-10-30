@@ -87,7 +87,7 @@ function shareBox(workspaces, current, chosen, fresh = false) {
   sync();
   const node = fresh ? h("div", { class: "share-box" }, h("label", { class: "small", text: "Who can read it" }), sel,
     h("p", { class: "small muted", text: "Recommended: only the workspaces that need it." }), warn, list) : null;
-  return { sel, list, node, read: () => ({ shared: sel.value === "chosen" ? "chosen" : "all", workspaces: sel.value === "chosen" ? boxes.filter((x) => x.box.checked).map((x) => x.w.workspace_id) : [] }) };
+  return { sel, list, node, warn, read: () => ({ shared: sel.value === "chosen" ? "chosen" : "all", workspaces: sel.value === "chosen" ? boxes.filter((x) => x.box.checked).map((x) => x.w.workspace_id) : [] }) };
 }
 
 // One form that takes a value: used for a new secret and for "Enter the value again". The box is emptied before anything is sent
@@ -153,7 +153,7 @@ export function secretsView(data, actions = {}) {
       again.node,
       h("div", { class: "row" }, h("h4", { class: "grow", text: "Who can read it" }),
         info("About who can read it", "A workspace you add here needs the value entered again. A workspace that already received the value keeps it.")),
-      share.sel, share.list,
+      share.sel, share.list, share.warn,
       h("button", { type: "button", text: "Save who can read it", onclick: () => { const p = share.read(); actions.share?.(s.name, p.shared, p.workspaces); } }));
   };
   const nameIn = h("input", { type: "text", autocomplete: "off", spellcheck: "false", "aria-label": "Name of the new secret", placeholder: "for example: crm-key", maxlength: "40" });

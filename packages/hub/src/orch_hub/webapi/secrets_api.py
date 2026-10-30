@@ -115,6 +115,7 @@ class SecretHandlers:
             or type(ws) is not list
             or len(ws) > 256
             or any(type(w) is not str for w in ws)
+            or (shared == "chosen" and not ws)
         ):
             raise AccessError("malformed")
         store = org_secrets(self.d.access)

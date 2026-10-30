@@ -282,3 +282,15 @@ test("P07: the card says Not used yet, 'as reported' lives only behind the i, an
   assert.match(inside, /Available means the workspace has received the secret\./);
   assert.match(card.textContent, /Needs the value/);
 });
+
+test("P07: the card's share box shows the hub warning above its Save only while All workspaces is picked", () => {
+  const view = secretsView(data, {});
+  const card = find(view, (n) => n.attrs["data-secret"] === "crm-key")[0];
+  const sel = find(card, (n) => n.tag === "select" && n.attrs["aria-label"] === "Who can read it")[0];
+  const warn = () => find(card, (n) => n.attrs.role === "note" && /hub could read/.test(n.textContent))[0];
+  assert.equal(sel.value, "chosen"); assert.equal(warn().hidden, true);
+  sel.value = "all"; sel.listeners.change();
+  assert.equal(warn().hidden, false);
+  const all = card.all();
+  assert.ok(all.indexOf(warn()) < all.indexOf(button(card, "Save who can read it")), "above Save");
+});

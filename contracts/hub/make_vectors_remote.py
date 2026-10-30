@@ -1175,7 +1175,11 @@ def req_head(method: str = "GET", path: str = "/api/w/" + "0" * 32 + "/runs", qu
 
 
 def ws_head(path: str = "/term", query: str = "ticket=t1", headers=None) -> dict:
-    return {"path": path, "query": query, "headers": [["sec-websocket-protocol", "orch.term"]] if headers is None else headers}
+    return {
+        "path": path,
+        "query": query,
+        "headers": [["sec-websocket-protocol", "orch.term"]] if headers is None else headers,
+    }
 
 
 def resp_head(status: int = 200, headers=None) -> dict:

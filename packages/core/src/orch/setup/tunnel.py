@@ -3,7 +3,8 @@
 ``ssh -o ExitOnForwardFailure=yes -L 127.0.0.1:<port>:127.0.0.1:<port> USER@SERVER``
 
 User and server are checked against closed patterns (ASCII, never a leading ``-``) so a name can never become an ssh
-option or shell syntax; a name that fails (or is unknown) is replaced by the ``USER`` / ``SERVER`` placeholders (no angle brackets: a shell reads them as redirection)
+option or shell syntax; a name that fails (or is unknown) is replaced by the ``USER`` / ``SERVER`` placeholders
+(no angle brackets: a shell reads them as redirection)
 instead of failing. The line carries no secret: the single-use launch link is shown on /dev/tty only.
 """
 

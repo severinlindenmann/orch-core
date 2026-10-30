@@ -90,10 +90,12 @@ def test_vector_remote_host_labels_and_constants() -> None:
 
 def test_vector_remote_labels_prefix_free_with_core_tables() -> None:
     """The remote labels are new and prefix-free with every live core label (crypto, planned and canon)."""
+    devices = DOC["labels"]["sig_remote_devices"]  # R2 T2a: the one remote label the host itself signs under
     remote = set(DOC["labels"].values())
     live = {v for v in {**crypto_labels.LABELS, **crypto_labels.PLANNED_LABELS}.values() if v.endswith("|")}
     live |= {v for v in CANON_LABELS.values() if isinstance(v, str) and v.endswith("|")}
-    assert not remote & live
+    assert remote & live == {devices} and crypto_labels.L["sig_remote_devices"].decode() == devices
+    live -= {devices}
     for a, b in itertools.permutations(remote | live, 2):
         if a in remote or b in remote:
             assert not b.startswith(a), (a, b)

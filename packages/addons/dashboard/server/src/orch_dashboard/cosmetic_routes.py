@@ -54,7 +54,8 @@ def refused(message: str) -> HostError:
 
 def full_session(auth, token) -> bool:
     """A full session: ``local`` on the loopback listener and not bound to a switch ticket, or ``remote`` opened by a
-    passkey login. Never a switch session, never a remote session without its passkey."""
+    passkey login. Never a switch session, never a remote session without its passkey, and NEVER a remote-device stream
+    (R3: a stream is never "full" by its kind; an owner route reads the stream's person and CURRENT role instead)."""
     if auth.switch_workspace(token) is not None:
         return False
     kind = auth.login_kind(token)
@@ -66,10 +67,14 @@ def full_session(auth, token) -> bool:
 def register(app: FastAPI, gateway: Gateway) -> None:
     @app.put("/api/w/{ws}/workspace/cosmetic")
     def cosmetic(body: CosmeticBody, request: Request, ws: str = Depends(reads.workspace)):
-        if not full_session(app.state.auth, request.state.token):
+        auth = app.state.auth
+        streamer = auth.stream_person(request.state.token)  # a remote device's stream: its own person, never "full"
+        if streamer is None and not full_session(auth, request.state.token):
             raise refused("Sign in fully to change the workspace name or icon.")
         link = gateway.enabled(ws)
-        person = link.welcome["peer"]["person"]  # the session's person: the host's `call.viewer` for this link
+        # the session's person: the host's `call.viewer` for this link; a stream's is the one the host gave it. The
+        # role is read from the member list on EVERY request, so a person demoted since the stream opened is refused.
+        person = streamer or link.welcome["peer"]["person"]
         role = next((m.get("role") for m in link.call("member.list")["members"] if m.get("person") == person), None)
         if role != "owner":
             raise HostError(

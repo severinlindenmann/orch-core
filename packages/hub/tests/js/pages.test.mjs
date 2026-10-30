@@ -26,6 +26,7 @@ function problems(entries) {
     paths.add(page.path);
     if (typeof page.nav?.label !== "string" || !page.nav.label || page.nav.label.length > 24) out.push(f + ": nav.label");
     if (typeof page.nav?.admin !== "boolean") out.push(f + ": nav.admin");
+    if (page.nav?.needsWorkspace !== undefined && typeof page.nav.needsWorkspace !== "boolean") out.push(f + ": nav.needsWorkspace");
     if (typeof page.render !== "function") out.push(f + ": render");
     if (JSON.stringify(Object.keys(page).sort()) !== '["nav","path","render"]') out.push(f + ": a page exports exactly path, nav, render");
   }

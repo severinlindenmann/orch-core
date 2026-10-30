@@ -4,10 +4,13 @@ import traceback
 import urllib.parse
 from pathlib import Path
 
+from starlette.concurrency import run_in_threadpool
+
 from . import widget_frame
-from .errors import response, step_up_response
-from .policy import ListenerPolicy
-from .routegate import ALLOWED, PRE_LOGIN, STEP_UP, TERMINALS, RouteGate
+from .errors import HostError, host_response, presence_required_response, response, step_up_response
+from .policy import ListenerPolicy, clean_path
+from .remote_identity import REMOTE_STREAM, RemoteIdentity, route_digest, workspace_key
+from .routegate import ALLOWED, PRE_LOGIN, PRESENCE, STEP_UP, TERMINALS, RouteGate, rule_device
 from .testrun import UPLOAD_LIMIT
 
 LOG = logging.getLogger(__name__)
@@ -71,6 +74,8 @@ READONLY_REFUSED = (
     "/org/decline",
     "/org/sync",
     "/org/tool",
+    "/remote/off",
+    "/remote/code",
 )
 
 
@@ -87,14 +92,29 @@ def switch_allows(method, path, bound, query=None) -> bool:
     return False
 
 
+#: Headers a stream's device may not send (D89, contract 10.2c): a request that carries one is answered 400
+#: `remote.bearer` (an ordinary response; the stream stays). Refused, never stripped.
+BEARER_NAMES = (b"authorization", b"cookie", b"x-setup-token")
+BEARER_PREFIX = b"x-orch-"
+#: What the dashboard's own click routes read from a page that is current: the stream has no page, and the check is
+#: ours to answer (Security adds it AFTER the device's headers passed, it never takes one from the device).
+CLICK_CONTRACT = (b"x-orch-click-contract", b"4")
+
+
+def bearer_headers(headers) -> bool:
+    return any(k.lower() in BEARER_NAMES or k.lower().startswith(BEARER_PREFIX) for k, _ in headers)
+
+
 class Security:
     """ASGI checks before routing, including duplicate headers and streamed body limits."""
 
-    def __init__(self, app, auth, policy: ListenerPolicy, others=(), registry=None, router=None):
+    def __init__(self, app, auth, policy: ListenerPolicy, others=(), registry=None, router=None, presence=None):
         """``policy`` is the default listener (loopback). ``others`` are further listeners' policies; a request is
         handled by the one named in ``scope["orch_listener"]``, which only the server that accepted the connection
         sets (front.Front), never a header. A name that is not configured is refused (fail closed)."""
         self.app, self.auth, self.policy = app, auth, policy
+        # Takes the presence of a stream's route from the click signer (D88, `click.py`): returns, or raises HostError.
+        self.presence = presence
         # The app's router, for the remote route gate. Without one a gated listener answers nothing (fail closed).
         self.gate = RouteGate(router) if router is not None else None
         # `registry` (create_app's `app.state.policies`) is shared: taking a policy out of it turns that listener off
@@ -113,14 +133,82 @@ class Security:
             and policy.session_kind_ok(self.auth.login_kind(token))
         )
 
-    def route_ok(self, scope, policy) -> bool:
-        """The one place the remote route table is enforced. On a listener with ``route_gate`` only a route whose rule
-        is ALLOWED, STEP_UP (its handler asks for the passkey, `stepup.refuse_step_up`), PRE_LOGIN, or TERMINALS
-        (where the policy has terminals on) answers; a refused, unlisted or unmatched route does not."""
+    def stream_identity(self, scope, policy) -> RemoteIdentity | None:
+        """The identity of a stream request, or None. It comes from the scope the in-process adapter built, bound three
+        ways to ONE stream: the identity's, the context value only the adapter sets, and the stream the credential was
+        minted for. Anything missing or different is None (fail closed); nothing here reads a header or a query."""
+        state = scope.get("state") or {}
+        identity, token = state.get("remote"), state.get("token")
+        stream = REMOTE_STREAM.get()
+        if (
+            not isinstance(identity, RemoteIdentity)
+            or not isinstance(token, str)
+            or stream is None
+            or stream != identity.stream_id
+            or self.auth.stream_of(token) != identity.stream_id
+            or not self.session_ok(token, policy)
+        ):
+            return None
+        return identity
+
+    def route_check(self, scope, policy):
+        """The one place a route table is enforced: ``(refusal, rule, template)``; ``refusal`` is None when the route
+        answers.
+
+        On a listener with ``route_gate`` only a route whose rule is ALLOWED, STEP_UP (its handler asks for the passkey,
+        `stepup.refuse_step_up`), PRE_LOGIN, or TERMINALS (where the policy has terminals on) answers; a refused,
+        unlisted or unmatched route does not. A stream (``policy.stream``) uses its own column and the access level of
+        the identity the host gave the stream (`routegate.REMOTE_DEVICE`), refusing with ``remote.level`` where a
+        higher level would do. ``rule`` is the stream rule (PRESENCE: the caller must take a presence first)."""
         if not policy.route_gate:
-            return True
-        rule = self.gate.rule(scope) if self.gate is not None else None
-        return rule in (ALLOWED, STEP_UP, PRE_LOGIN) or (rule == TERMINALS and policy.terminals)
+            return None, None, None
+        if self.gate is None:
+            return "remote.refused", None, None
+        template = self.gate.template(scope)
+        if policy.stream:
+            identity = self.stream_identity(scope, policy)
+            if template is None or identity is None:
+                return "remote.refused", None, template
+            method = "WEBSOCKET" if scope["type"] == "websocket" else scope["method"]
+            rule, refusal = rule_device(method, template, identity.level)
+            return refusal, rule, template
+        rule = self.gate.rule(scope)
+        ok = rule in (ALLOWED, STEP_UP, PRE_LOGIN) or (rule == TERMINALS and policy.terminals)
+        return (None if ok else "remote.refused"), rule, template
+
+    def route_ok(self, scope, policy) -> bool:
+        return self.route_check(scope, policy)[0] is None
+
+    @staticmethod
+    def in_stream_workspace(identity: RemoteIdentity, scope) -> bool:
+        """A stream sees ONE workspace (contract row 66): a plain path, and every `{ws}` of the request (the path
+        segment of `/api/w/{ws}/...`, the `ws` of `/api/events`) names the stream's workspace; else 404."""
+        path = scope["path"]
+        raw = scope.get("raw_path")
+        if clean_path(path) is None or (raw is not None and raw != path.encode("ascii", "replace")):
+            return False
+        mine = workspace_key(identity.workspace_id)
+        parts = path.split("/")
+        if parts[:3] == ["", "api", "w"]:
+            return len(parts) > 4 and workspace_key(parts[3]) == mine
+        if path == "/api/events":
+            wanted = urllib.parse.parse_qs(scope.get("query_string", b"").decode("latin1")).get("ws")
+            return wanted is not None and len(wanted) == 1 and workspace_key(wanted[0]) == mine
+        return True
+
+    def take_presence(self, identity: RemoteIdentity, method, template, path, query, body) -> str | None:
+        """Take the presence that covers this very request (D88): its `route_digest` must be in a live batch of THIS
+        stream. None when taken; else the digest to ask for (`sha256:<hex>`), or a HostError of the signer."""
+        digest = "sha256:" + route_digest(identity.workspace_id, method, template, path, query, body).hex()
+        if self.presence is None:
+            raise HostError({"code": "click.unavailable", "message": "no signer", "retryable": False}, 9)
+        try:
+            self.presence(identity.workspace_id, digest)
+        except HostError as exc:
+            if exc.error.get("code") == "remote.presence_required":
+                return digest
+            raise
+        return None
 
     async def __call__(self, scope, receive, send):
         if scope["type"] not in ("http", "websocket"):
@@ -179,26 +267,41 @@ class Security:
         if len(host) != 1 or host[0] not in allowed:
             return await reject("host.bad", 421)
         origins = values(b"origin")
-        if origins and origins != [origin]:
+        if policy.stream:
+            if origins:  # the adapter sets no Origin; a device's is refused before it gets here (contract row 64)
+                return await reject("origin.bad", 403)
+        elif origins and origins != [origin]:
             return await reject("origin.bad", 403)
         api = path == "/api" or path.startswith("/api/")
         if not policy.launch_codes and path == "/auth/session":
             return await reject("not_found", 404)
         if not policy.widget_frames and path.startswith(widget_frame.PREFIX):
             return await reject("not_found", 404)  # off means off, before and after login
-        if not policy.pre_login(path, scope.get("raw_path"), method):
+        identity = None
+        if policy.stream:
+            # D89: no route answers before login here, and the credential is the one the adapter minted for THIS
+            # stream (scope, not a header). Then: no outside bearer, a plain path, and only this stream's workspace.
+            identity = self.stream_identity(scope, policy)
+            if identity is None:
+                return await reject("not_found", 404)
+            if bearer_headers(headers):
+                return await reject("remote.bearer", 400)
+            if not self.in_stream_workspace(identity, scope):
+                return await reject("not_found", 404)
+        elif not policy.pre_login(path, scope.get("raw_path"), method):
             # Before login only the policy's routes answer; everything else needs a session of this listener.
             auth = values(b"authorization")
             bearer = auth[0][7:] if len(auth) == 1 and auth[0].startswith("Bearer ") else ""
             if not self.session_ok(bearer, policy):
                 return await reject("not_found", 404)
-        if not self.route_ok(scope, policy):
-            return await reject(
-                "remote.refused", 403
-            )  # after the session test above: nobody learns routes before login
+        refusal, rule, template = self.route_check(scope, policy)
+        if refusal is not None:
+            return await reject(refusal, 403)  # after the session test above: nobody learns routes before login
         if api or path == "/auth/logout":
             auth = values(b"authorization")
             token = auth[0][7:] if len(auth) == 1 and auth[0].startswith("Bearer ") else ""
+            if policy.stream:
+                token = scope["state"]["token"]  # `stream_identity` checked it above
             if setup:
                 tokens = values(b"x-setup-token")
                 token = tokens[0] if len(tokens) == 1 and len(tokens[0]) <= 200 else ""
@@ -211,7 +314,7 @@ class Security:
             if refusal:
                 return await step_up_response(policy.name != "loopback")(scope, receive, secure_send)
         if method not in ("GET", "HEAD", "OPTIONS"):
-            if origins != [origin]:
+            if not policy.stream and origins != [origin]:
                 return await reject("origin.bad", 403)
         sites = values(b"sec-fetch-site")
         if sites and sites != ["same-origin"] and (method not in ("GET", "HEAD", "OPTIONS") or api):
@@ -270,6 +373,26 @@ class Security:
                 return await reject("invalid.input", 413)
             if not event.get("more_body"):
                 break
+        if policy.stream and rule == PRESENCE:
+            # D88: a presence route runs only with a presence signature of the device that covers THIS request (its
+            # concrete path, query and body); the signer takes it from the stream's batch, once.
+            try:
+                missing = await run_in_threadpool(
+                    self.take_presence,
+                    identity,
+                    method,
+                    template,
+                    path,
+                    scope.get("query_string", b"").decode("latin1"),
+                    bytes(body),
+                )
+            except HostError as exc:
+                return await host_response(exc)(scope, receive, secure_send)
+            if missing is not None:
+                return await presence_required_response(missing, template)(scope, receive, secure_send)
+        if policy.stream:
+            # the dashboard's own click routes ask for a current page; a stream has none, and the answer is ours
+            scope = {**scope, "headers": [*headers, CLICK_CONTRACT]}
         delivered = False
 
         async def replay():
@@ -298,6 +421,23 @@ class Security:
         query = urllib.parse.parse_qs(scope.get("query_string", b"").decode("latin1"))
         return not switch_allows(method, path, bound, query)
 
+    @staticmethod
+    async def deny(scope, send, digest, template):
+        """A WebSocket that needs a presence: the 428 as an HTTP denial response where the server has the extension
+        (the adapter does), else just a close. A signer error is a close."""
+        if digest.startswith("sha256:") and "websocket.http.response" in scope.get("extensions", {}):
+            body = presence_required_response(digest, template).body
+            await send(
+                {
+                    "type": "websocket.http.response.start",
+                    "status": 428,
+                    "headers": [(b"content-type", b"application/json"), (b"cache-control", b"no-store")],
+                }
+            )
+            await send({"type": "websocket.http.response.body", "body": body})
+            return
+        await send({"type": "websocket.close", "code": 1008})
+
     async def refuse(self, scope, receive, send):
         if scope["type"] == "websocket":
             await send({"type": "websocket.close", "code": 1008})
@@ -322,9 +462,33 @@ class Security:
         ):
             await send({"type": "websocket.close", "code": 1008})
             return
-        if not self.route_ok(scope, policy):
+        identity = None
+        if policy.stream:
+            identity = self.stream_identity(scope, policy)
+            if identity is None or bearer_headers(headers) or not self.in_stream_workspace(identity, scope):
+                await send({"type": "websocket.close", "code": 1008})
+                return
+        refusal, rule, template = self.route_check(scope, policy)
+        if refusal is not None:
             await send({"type": "websocket.close", "code": 1008})
             return
+        if policy.stream and rule == PRESENCE:
+            # each terminal open and each attach is its own presence request (D88); a WebSocket has no body
+            try:
+                missing = await run_in_threadpool(
+                    self.take_presence,
+                    identity,
+                    "WEBSOCKET",
+                    template,
+                    scope["path"],
+                    scope.get("query_string", b"").decode("latin1"),
+                    b"",
+                )
+            except HostError:
+                missing = "refused"
+            if missing is not None:
+                await self.deny(scope, send, missing, template)
+                return
         scope = {**scope, "headers": [(k, v) for k, v in headers if k.lower() != b"cookie"]}
         try:
             await self.app(scope, receive, send)

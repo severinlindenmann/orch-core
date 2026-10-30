@@ -47,7 +47,8 @@ from .adapters import runs as project
 from .errors import HostError, fail, retry_after, valid_code
 from .gateway import Gateway
 from .hostlink import HostLink
-from .policy import LOOPBACK
+from .policy import LOOPBACK, REMOTE_DEVICE
+from .remote_identity import REMOTE_STREAM
 
 #: Tier B (spec 13.5): the host names the agent user the terminal runs as (`runs_as`); only this shape is shown.
 AGENT_USER = re.compile(r"^orch-agent-[a-z_][a-z0-9_-]{0,31}$")
@@ -75,6 +76,7 @@ Label = Annotated[str, StringConstraints(min_length=1, max_length=40)]
 TICKET_TTL = 30.0  # the browser ticket (the dashboard server's choice, at most 30 s)
 TICKET_RATE = 10  # browser tickets per minute per bearer session
 FIRST_MESSAGE_S = 5.0
+STREAM_IDLE_S = 600.0  # R3: a remote device's terminal closes 1000 after this long with no frame from the device
 FIRST_MESSAGE_MAX = 4096
 MAX_MESSAGE = 65536  # the WebSocket's max_size (also set on the server: uvicorn ws_max_size)
 BEARER_RECHECK = 0.25
@@ -141,6 +143,8 @@ class Intent:
     expires: float
     #: the listener the session (and so the ticket) belongs to; a ticket works on that listener's socket only
     listener: str = LOOPBACK
+    #: R3: the stream a ticket was minted in; it redeems on that stream only (None outside a stream)
+    stream: str | None = None
 
 
 @dataclass
@@ -154,7 +158,15 @@ class Tickets:
     lock: threading.Lock = field(default_factory=threading.Lock)
 
     def mint(
-        self, token: str, ws: str, run: str, mode: str, take: bool, from_: int | None, listener: str = LOOPBACK
+        self,
+        token: str,
+        ws: str,
+        run: str,
+        mode: str,
+        take: bool,
+        from_: int | None,
+        listener: str = LOOPBACK,
+        stream: str | None = None,
     ) -> tuple[str, float] | None:
         """A new ticket and its lifetime in seconds, or None when this session asked for 10 in the last minute."""
         with self.lock:
@@ -170,7 +182,7 @@ class Tickets:
             recent.append(now)
             raw = secrets.token_urlsafe(16)  # 128 bits
             self.items[_digest(raw)] = Intent(
-                token, ws, run, mode, take, from_, self.generation, now + TICKET_TTL, listener
+                token, ws, run, mode, take, from_, self.generation, now + TICKET_TTL, listener, stream
             )
             return raw, TICKET_TTL
 
@@ -287,7 +299,9 @@ def register(app: FastAPI, gateway: Gateway, tickets: Tickets) -> None:
         """Step 1 of the lazy attach: a browser ticket bound to this session, workspace, run and request. Nothing is
         asked of the host here."""
         listener = terminals_listener(request)
-        minted = tickets.mint(request.state.token, ws, run, body.mode, body.take, body.from_, listener)
+        minted = tickets.mint(
+            request.state.token, ws, run, body.mode, body.take, body.from_, listener, REMOTE_STREAM.get()
+        )
         if minted is None:
             raise fail("rate.limited")
         raw, ttl = minted
@@ -517,6 +531,8 @@ class TermSocket:
 
     def __init__(self, websocket: WebSocket, gateway: Gateway, auth, tickets: Tickets, streams):
         self.websocket, self.gateway, self.auth, self.tickets, self.streams = websocket, gateway, auth, tickets, streams
+        in_stream = getattr(websocket, "scope", {}).get("orch_listener", LOOPBACK) == REMOTE_DEVICE
+        self.idle_s = STREAM_IDLE_S if in_stream else None
         self.intent: Intent | None = None
         self.link: HostLink | None = None
         self.att: str | None = None
@@ -550,6 +566,7 @@ class TermSocket:
                 intent is None
                 or not self.auth.valid(intent.token, touch=False)
                 or intent.listener != listener
+                or intent.stream != REMOTE_STREAM.get()  # a ticket of another stream is no ticket
                 or self.auth.listener_of(intent.token) != listener
             ):
                 raise Closed("ticket.refused", silent=True, close=4401)
@@ -812,7 +829,11 @@ class TermSocket:
                 await asyncio.sleep(wait)
             while self.input_full():
                 await asyncio.sleep(0.02)
-            message = await ws.receive()
+            try:
+                message = await asyncio.wait_for(ws.receive(), self.idle_s)
+            except TimeoutError:
+                self.end(Closed("idle", close=1000))  # a stream's terminal: 10 min without a frame from the device
+                return
             if message.get("type") == "websocket.disconnect":
                 self.end(Closed("cancelled", silent=True))
                 return

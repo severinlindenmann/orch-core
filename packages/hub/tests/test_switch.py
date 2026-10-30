@@ -319,6 +319,9 @@ def test_the_rail_lists_only_my_workspaces(w):
     assert all(x["workspace_id"] != WS_SEL or w.reg.owner_alias(WS_SEL) == w.ann for x in r["workspaces"])
 
 
+from route_paths import concrete_path
+
+
 def test_a_switch_session_reaches_only_the_named_routes_everything_else_is_closed(w):
     from orch_hub.webapi.api import ROUTES, SWITCH_HANDLERS, route_scopes
 
@@ -333,23 +336,9 @@ def test_a_switch_session_reaches_only_the_named_routes_everything_else_is_close
     for rt in ROUTES:
         if rt.auth == "none":
             continue
-        path = rt.path[len("/api/v1") :]
-        for name in (
-            "workspace_id",
-            "item_id",
-            "user_id",
-            "group",
-            "channel_id",
-            "prepared_id",
-            "change_id",
-            "name",
-            "space_id",
-            "share_id",
-            "app_id",
-            "invite",
-        ):
-            path = path.replace("{" + name + "}", ws)
+        path = concrete_path(rt, {"workspace_id": ws}).removeprefix("/api/v1")
         s, o, _ = w.call(rt.method, path, {}, token=fresh())
+        assert o.get("error") != "unknown_op", (rt.method, rt.path)  # the sweep must really route
         seen += 1
         reauth = s == 403 and o.get("error") == "reauth_required"
         if rt.handler in SWITCH_HANDLERS:

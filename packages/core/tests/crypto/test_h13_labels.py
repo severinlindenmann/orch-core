@@ -35,6 +35,8 @@ PLANNED = {
     "sig_share_item": "orch/v2/sig/share-item|",  # V3 C6: selective share_put (hub contract 10.2b)
     "sig_device_rotate": "orch/v2/sig/device-rotate|",  # #1097: the person key's device rotation
     "sig_hub_owner_proof": "orch/v2/sig/hub-owner-proof|",  # #1198 C9: the owner proof of a hub step
+    "sig_remote_owner_proof": "orch/v2/sig/remote-owner-proof|",  # R2 (#1590): the owner proof of a remote step
+    "sig_remote_devices": "orch/v2/sig/remote-devices|",  # R2 (#1590): the WSK-signed remote device list
     "aad_hub_share": "orch/v2/hub-share-aad|",
     "h_share_item": "orch/v2/hub-share-item|",
 }

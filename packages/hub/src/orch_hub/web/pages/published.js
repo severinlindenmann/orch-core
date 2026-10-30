@@ -102,4 +102,4 @@ export async function publishedPage(d) {
   } finally { finish(); }
 }
 
-export const page = { path: "published", nav: { label: "Published", admin: true, after: "services" }, render: publishedPage };
+export const page = { path: "published", nav: { label: "Published", admin: true, needsWorkspace: true, after: "services" }, render: publishedPage };

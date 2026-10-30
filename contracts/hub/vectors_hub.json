@@ -43292,6 +43292,30 @@
      ],
      "handoff": "hr_01J9ZP0000000000000000HND1",
      "log": "workspace",
+     "name": "remote",
+     "package_sha256": "sha256:d11cbffd720709b4fff84f9e914c49e67e3368dbbf16f288ae8cb9ba025a5995",
+     "type": "addon.requested",
+     "version": "1.2.0"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_addon_requested_reserved_name_remote",
+   "note": "a name core's schema reserves",
+   "phase": 5
+  },
+  {
+   "args": {
+    "action": {
+     "capabilities": [
+      "network",
+      "serve_http"
+     ],
+     "handoff": "hr_01J9ZP0000000000000000HND1",
+     "log": "workspace",
      "name": "wiki",
      "package_sha256": "sha256:d11cbffd720709b4fff84f9e914c49e67e3368dbbf16f288ae8cb9ba025a5995",
      "type": "addon.requested",

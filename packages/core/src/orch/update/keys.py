@@ -14,8 +14,10 @@ from contextlib import contextmanager
 
 __all__ = ["PRODUCTION_ROOTS", "TEST_ROOTS", "embedded_roots", "test_hook_active", "enable_test_root_for_tests"]
 
-# key id -> raw 32-byte Ed25519 public key. Filled by U3b.
-PRODUCTION_ROOTS: Mapping[str, bytes] = {}
+# key id -> raw 32-byte Ed25519 public key (set by scripts/release/ceremony.py).
+PRODUCTION_ROOTS: Mapping[str, bytes] = {
+    "root-1": base64.b64decode("AqlVu40nbMo5blJaZ9oEfSHp3mx6jBlHwUjcUDGabLE="),
+}
 
 # TEST ONLY (public seed, see the module docstring): never copy into PRODUCTION_ROOTS.
 TEST_ROOTS: Mapping[str, bytes] = {

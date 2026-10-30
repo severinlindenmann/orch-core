@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import heapq
 import json
 import re
 import secrets
@@ -29,13 +30,27 @@ SKEW_S = 120  # clock skew accepted on exp / iat / nbf
 TX_TTL_S = 600
 USED_MAX = 50_000
 _AAD = b"orch-hub oidc tx v1"
+_COOKIE_RX = re.compile(r"[A-Za-z0-9_-]+")
+START_BURST = 10  # starts per source, refilled one every START_EVERY_S
+START_EVERY_S = 6.0
+START_SOURCES_MAX = 100_000
+COOKIE_MAX = 2048
 JWKS_REFETCH_MIN_S = 60  # an unknown kid causes at most one refetch per this many seconds
 ALGS = ["RS256", "ES256"]  # never none, never HS*: the key set holds public keys only, the list is the second fence
 FRESH_S = 300  # a "fresh" login means auth_time within this many seconds
+#: the Microsoft "personal accounts" tenant: it passes the guid check and would let any personal account in
+CONSUMERS_TENANT = "9188040d-6c67-4c5b-b112-36a304b66dad"
 _TENANT = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 _DOMAIN = re.compile(r"(?:[a-z0-9-]{1,63}\.)+[a-z]{2,63}")
 GOOGLE_ISSUERS = ("https://accounts.google.com", "accounts.google.com")
 GOOGLE_DISCOVERY = "https://accounts.google.com/.well-known/openid-configuration"
+
+
+#: what the sign-in page says for the refusals a person can act on (everything else: "Company login did not work.")
+PLAIN = {
+    "busy": "Too many sign-ins right now. Try again in a minute.",
+    "rate_limited": "Too many tries. Try again in a minute.",
+}
 
 
 class OidcError(Exception):
@@ -63,7 +78,7 @@ class OidcConfig:
         local = r.startswith(("http://localhost:", "http://127.0.0.1:"))
         if not (r.startswith("https://") or local) or "#" in r or len(r) > 300:
             raise bad  # Entra and Google take https, or http on localhost only
-        if self.provider == "entra" and not _TENANT.fullmatch(self.tenant):
+        if self.provider == "entra" and (not _TENANT.fullmatch(self.tenant) or self.tenant == CONSUMERS_TENANT):
             raise bad
         if self.provider == "google" and not _DOMAIN.fullmatch(self.domain):
             raise bad
@@ -112,8 +127,12 @@ class Oidc:
         if type(box_key) is not bytes or len(box_key) != 32:
             raise OidcError("bad_config")
         self.cfg, self.http, self._box, self._now = cfg, http, box_key, now
+        # a cookie made under another issuer or client id (an earlier config) does not open
+        self._aad = b"|".join((_AAD, cfg.issuer.encode(), cfg.client_id.encode()))
         self._lock = threading.Lock()
-        self._used: dict[str, float] = {}  # sha256(tx cookie) -> expiry: replay guard, dropped once expired
+        self._used: dict[str, float] = {}  # login nonce -> expiry: replay guard, never evicts a live entry
+        self._used_heap: list[tuple[float, str]] = []  # (expiry, nonce): incremental pruning
+        self._buckets: dict[str, tuple[float, float]] = {}
         self._meta: dict[str, Any] | None = None
         self._keys: KeySet | None = None
         self._keys_at = -1e9
@@ -157,22 +176,48 @@ class Oidc:
     # --- start / finish ---------------------------------------------------------------------------------------------
     def _seal(self, tx: dict[str, Any]) -> str:
         n = secrets.token_bytes(12)
-        ct = AESGCM(self._box).encrypt(n, json.dumps(tx).encode(), _AAD)
+        ct = AESGCM(self._box).encrypt(n, json.dumps(tx).encode(), self._aad)
         return _b64(n + ct)
 
     def _open(self, cookie: object) -> dict[str, Any] | None:
+        """The login behind a cookie, or None. Strict: only the url-safe alphabet, no padding, and re-encoding the decoded
+        bytes must give the input back exactly, so one login has exactly one string form."""
+        if type(cookie) is not str or not (0 < len(cookie) <= COOKIE_MAX) or not _COOKIE_RX.fullmatch(cookie):
+            return None
         try:
-            raw = base64.urlsafe_b64decode(str(cookie) + "=" * (-len(str(cookie)) % 4))
-            tx = json.loads(AESGCM(self._box).decrypt(raw[:12], raw[12:], _AAD))
+            raw = base64.b64decode(cookie + "=" * (-len(cookie) % 4), altchars=b"-_", validate=True)
+            if _b64(raw) != cookie:
+                return None
+            tx = json.loads(AESGCM(self._box).decrypt(raw[:12], raw[12:], self._aad))
         except Exception:  # noqa: BLE001 - tampered, foreign, truncated: all the same refusal
             return None
         ok = isinstance(tx, dict) and all(type(tx.get(k)) is str for k in ("state", "nonce", "verifier"))
         return tx if ok and type(tx.get("exp")) in (int, float) and type(tx.get("fresh")) is bool else None
 
-    def start(self, *, fresh: bool = False) -> tuple[str, str]:
+    def _start_allowed(self, source: str) -> bool:
+        """A small token bucket per source address. ``source`` "" (tests, local) is one bucket of its own."""
+        now = self._now()
+        with self._lock:
+            tokens, at = self._buckets.get(source, (float(START_BURST), now))
+            tokens = min(float(START_BURST), tokens + (now - at) / START_EVERY_S)
+            if (
+                len(self._buckets) >= START_SOURCES_MAX
+            ):  # drop the buckets that have refilled, they carry no information
+                full = [k for k, (t, a) in self._buckets.items() if t + (now - a) / START_EVERY_S >= START_BURST]
+                for k in full or [next(iter(self._buckets))]:
+                    del self._buckets[k]
+            if tokens < 1.0:
+                self._buckets[source] = (tokens, now)
+                return False
+            self._buckets[source] = (tokens - 1.0, now)
+            return True
+
+    def start(self, *, fresh: bool = False, source: str = "") -> tuple[str, str]:
         """``(authorization url, tx cookie value)``. ``fresh`` asks the IdP to re-authenticate the person. No server state:
         state, nonce and the PKCE verifier live in the sealed cookie (AES-GCM under the hub's key), so unauthenticated
         starts cost nothing to keep and can never block anyone."""
+        if not self._start_allowed(source[:64]):
+            raise OidcError("rate_limited")
         meta = self._discover()
         state, nonce, verifier = (secrets.token_urlsafe(32) for _ in range(3))
         cookie = self._seal(
@@ -194,18 +239,20 @@ class Oidc:
             q["hd"] = self.cfg.domain
         return meta["authorization_endpoint"] + "?" + urlencode(q), cookie
 
-    def _burn(self, cookie: str, exp: float) -> bool:
-        """Mark this login as used. True = first use. Entries drop when they expire; a full set evicts the oldest (the
-        IdP's one-time code is the second fence against a replay)."""
-        h = hashlib.sha256(cookie.encode()).hexdigest()
+    def _burn(self, nonce: str, exp: float) -> bool:
+        """Mark this login as used; True = first use. Expired entries are pruned incrementally (heap). A live entry is
+        never evicted: if the set is still full the finish is refused ``busy`` (bounded by the cookie lifetime and the
+        per-source start limit)."""
         now = self._now()
         with self._lock:
-            self._used = {k: v for k, v in self._used.items() if v > now}
-            if h in self._used:
+            while self._used_heap and self._used_heap[0][0] <= now:
+                self._used.pop(heapq.heappop(self._used_heap)[1], None)
+            if nonce in self._used:
                 return False
-            while len(self._used) >= USED_MAX:
-                self._used.pop(next(iter(self._used)))
-            self._used[h] = exp
+            if len(self._used) >= USED_MAX:
+                raise OidcError("busy")
+            self._used[nonce] = exp
+            heapq.heappush(self._used_heap, (exp, nonce))
             return True
 
     def finish(self, cookie: str, state: str, code: str, client_secret: str) -> Identity:
@@ -217,7 +264,9 @@ class Oidc:
             raise OidcError("bad_state")
         if not isinstance(state, str) or not secrets.compare_digest(state.encode(), tx["state"].encode()):
             raise OidcError("bad_state")  # URL and cookie must be the same login (a forced callback burns nothing)
-        if not self._burn(cookie, tx["exp"]):
+        # burn after the AEAD-verified decrypt (a forged cookie never enters the set) and BEFORE the exchange (two parallel
+        # finishes of one cookie cannot both pass)
+        if not self._burn(tx["nonce"], tx["exp"]):
             raise OidcError("bad_state")
         if not isinstance(code, str) or not (0 < len(code) <= 2048):
             raise OidcError("bad_code")

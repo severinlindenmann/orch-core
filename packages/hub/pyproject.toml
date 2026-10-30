@@ -5,7 +5,7 @@ description = "orch hub: users, groups, roles, custodial signing and routing bet
 requires-python = ">=3.14"
 dependencies = [
     "cryptography>=43",
-    "joserfc>=1.0",
+    "joserfc==1.7.7",
     "pyopenssl>=24.3",
 ]
 

@@ -197,21 +197,11 @@ def test_tampered_or_foreign_cookie_refused():
 
 def test_thousands_of_starts_never_block_a_login():
     o, idp, _ = make()
-    for _ in range(1500):
-        o.start()
+    for i in range(1500):  # from many sources (one source is rate limited)
+        o.start(source=f"10.0.{i // 250}.{i % 250}")
     ident, _, _ = login(o, idp)
     assert ident.subject == "oid-1"
     assert not hasattr(o, "_tx")  # no per-start server state
-
-
-def test_used_set_drops_expired_entries():
-    o, idp, t = make()
-    login(o, idp)
-    assert len(o._used) == 1
-    t[0] += 700
-    idp.claims = {"exp": NOW + 2000, "iat": NOW + 650}
-    login(o, idp)
-    assert len(o._used) == 1
 
 
 def test_tx_expires():
@@ -279,3 +269,122 @@ def test_discovery_must_name_pinned_issuer():
     )
     with pytest.raises(OidcError):
         o.start()
+
+
+def test_replay_of_a_real_cookie_after_junk_still_refused():
+    o, idp, _ = make()
+    url, cookie = o.start()
+    q = verifier_ok(idp, url)
+    idp.nonce = q["nonce"]
+    o.finish(cookie, q["state"], "c", "S")
+    for i in range(50):
+        _u2, c2 = o.start(source=f"s{i}")
+        with pytest.raises(OidcError):
+            o.finish(c2, "wrong", "c", "S")
+    with pytest.raises(OidcError):
+        o.finish(cookie, q["state"], "c", "S")
+
+
+def test_cookie_length_cap_and_config_binding():
+    o, idp, _ = make()
+    with pytest.raises(OidcError):
+        o.finish("A" * 5000, "s", "c", "S")
+    url, cookie = o.start()
+    q = verifier_ok(idp, url)
+    idp.nonce = q["nonce"]
+    changed = Oidc(
+        OidcConfig("entra", "other-client", entra_cfg().redirect_uri, tenant=entra_cfg().tenant), idp, KEY, lambda: NOW
+    )
+    with pytest.raises(OidcError):
+        changed.finish(cookie, q["state"], "c", "S")
+    tenant2 = Oidc(entra_cfg(tenant="99999999-2222-3333-4444-555555555555"), idp, KEY, lambda: NOW)
+    with pytest.raises(OidcError):
+        tenant2.finish(cookie, q["state"], "c", "S")
+
+
+def burnable(o, idp):
+    url, cookie = o.start()
+    q = verifier_ok(idp, url)
+    idp.nonce = q["nonce"]
+    return cookie, q["state"]
+
+
+def test_two_encodings_of_one_cookie_second_refused():
+    import base64 as b64
+
+    o, idp, _ = make()
+    cookie, state = burnable(o, idp)
+    o.finish(cookie, state, "c", "S")
+    raw = b64.urlsafe_b64decode(cookie + "=" * (-len(cookie) % 4))
+    for variant in (cookie + "=", cookie + "==", b64.b64encode(raw).decode(), b64.urlsafe_b64encode(raw).decode()):
+        with pytest.raises(OidcError):
+            o.finish(variant, state, "c", "S")
+    assert len(o._used) == 1
+
+
+def test_forged_cookie_never_enters_the_set():
+    o, idp, _ = make()
+    cookie, state = burnable(o, idp)
+    for bad in (cookie[:-3] + "AAA", "A" * 100, "not base64 !!"):
+        with pytest.raises(OidcError):
+            o.finish(bad, state, "c", "S")
+    assert not o._used
+
+
+def test_full_set_never_evicts_a_live_entry_and_start_still_works(monkeypatch):
+    import orch_hub.oidc as M
+
+    monkeypatch.setattr(M, "USED_MAX", 3)
+    o, idp, t = make()
+    first, first_state = burnable(o, idp)
+    o.finish(first, first_state, "c", "S")
+    for _ in range(2):
+        c, st = burnable(o, idp)
+        o.finish(c, st, "c", "S")
+        t[0] += 7
+    extra, st = burnable(o, idp)
+    with pytest.raises(OidcError) as e:
+        o.finish(extra, st, "c", "S")
+    assert e.value.code == "busy" and "Try again in a minute" in M.PLAIN["busy"]
+    with pytest.raises(OidcError) as e:  # the oldest live entry was NOT evicted: its replay is still refused
+        o.finish(first, first_state, "c", "S")
+    assert e.value.code == "bad_state"
+    o.start(source="2.2.2.2")  # starting still works
+    t[0] += 700  # entries expire (incrementally pruned), logins work again
+    idp.claims = {"exp": NOW + 2000, "iat": NOW + 650}
+    c, st = burnable(o, idp)
+    o.finish(c, st, "c", "S")
+
+
+def test_start_rate_limit_per_source():
+    o, _idp, t = make()
+    for _ in range(10):
+        o.start(source="1.1.1.1")
+    with pytest.raises(OidcError) as e:
+        o.start(source="1.1.1.1")
+    assert e.value.code == "rate_limited"
+    o.start(source="9.9.9.9")  # another source is not affected
+    t[0] += 7
+    o.start(source="1.1.1.1")  # refilled
+
+
+def test_parallel_finishes_of_one_cookie_only_one_passes():
+    import threading
+
+    o, idp, _ = make()
+    cookie, state = burnable(o, idp)
+    results = []
+    gate = threading.Barrier(8)
+
+    def go():
+        gate.wait()
+        try:
+            o.finish(cookie, state, "c", "S")
+            results.append("ok")
+        except OidcError:
+            results.append("refused")
+
+    ts = [threading.Thread(target=go) for _ in range(8)]
+    [x.start() for x in ts]
+    [x.join() for x in ts]
+    assert results.count("ok") == 1 and results.count("refused") == 7

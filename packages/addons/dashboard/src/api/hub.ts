@@ -25,6 +25,8 @@ export interface HubStatus {
   log_sync_stuck: boolean
   /** The version a hub admin asked this workspace to update to (HUB-WS-04); `null`: no request, or already there. */
   update_target?: string | null
+  /** The host's own word that the hub is being removed (#1463): it serves no company content meanwhile. `null`: not closing. */
+  closing?: { since_ms: number; ends_ms: number } | null
   /** From the hub, not signed: people per role in the pinned group snapshot. `null`: no snapshot yet. */
   groups: { read: number; edit: number; admin: number } | null
   snapshot_version: number | null

@@ -119,6 +119,8 @@ describe('run 15c P10: a check result card', () => {
   })
   it('an agent-added file of kind receipt is not a check either, and a host receipt with no status claims nothing', () => {
     expect(checkOf(art({ added_by: 'claude-code', added_by_kind: 'agent' }), tasks(0))).toBeNull()
+    expect(checkOf(art({ added_by: 'host', added_by_kind: 'agent' }), tasks(0))).toBeNull() // the name "host" is not the host
+    expect(checkOf(art({ added_by: 'host', added_by_kind: undefined }), tasks(0))).toBeNull()
     const card = cardOf(art(), tasks())
     expect(within(card).getByText('T1-receipt.log')).toBeInTheDocument()
   })

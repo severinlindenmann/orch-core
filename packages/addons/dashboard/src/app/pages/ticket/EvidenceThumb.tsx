@@ -34,11 +34,11 @@ async function limited<T>(run: () => Promise<T>): Promise<T> {
 
 const ext = (name: string) => /\.([A-Za-z0-9]+)$/.exec(name)?.[1].toLowerCase() ?? ''
 
-/** The result of a check, from what the HOST recorded only: a receipt artifact the host added (`added_by_kind` host) for a task
+/** The result of a check, from what the HOST recorded only: a receipt artifact the host added (`added_by_kind` host, set by the host from the event's actor; the display name never counts) for a task
  *  whose receipt has an exit status. The file name and anything an agent wrote never count. null: not a recorded check. */
 export type CheckResult = 'passed' | 'failed'
 export function checkOf(a: Pick<Artifact, 'kind' | 'task' | 'added_by' | 'added_by_kind'>, tasks: ReadonlyArray<Pick<TaskStatus, 'id' | 'receipt'>> | undefined): CheckResult | null {
-  if (a.kind !== 'receipt' || !(a.added_by_kind === 'host' || a.added_by === 'host') || !a.task) return null
+  if (a.kind !== 'receipt' || a.added_by_kind !== 'host' || !a.task) return null
   const exit = tasks?.find((t) => t.id === a.task)?.receipt?.exit
   return typeof exit !== 'number' ? null : exit === 0 ? 'passed' : 'failed'
 }

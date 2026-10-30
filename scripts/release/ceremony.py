@@ -33,9 +33,10 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parents[1] / "packages" / "core" / "src"))
 import floor  # noqa: E402
 import rootkey  # noqa: E402
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey  # noqa: E402
+from cryptography.exceptions import InvalidSignature  # noqa: E402
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey  # noqa: E402
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat  # noqa: E402
-from manifest import b64  # noqa: E402
+from manifest import b64, jcs  # noqa: E402
 
 from orch import childenv  # noqa: E402
 
@@ -378,16 +379,66 @@ def cmd_init(root: Path, repo: str, tmp: Path) -> int:
     return 0
 
 
+def _embedded_root(root: Path) -> bytes:
+    """The root public key embedded in keys.py, which must equal the one embedded in install.sh."""
+    k = re.search(
+        r'PRODUCTION_ROOTS: Mapping\[str, bytes\] = \{\s*"root-1": base64\.b64decode\("([^"]+)"\),\s*\}',
+        _read(root / KEYS_PY),
+    )
+    i = re.search(r'^ROOTS_B64 = \{"root-1": "([^"]+)"\}$', _read(root / INSTALL_SH), re.M)
+    if k is None or i is None or k[1] != i[1]:
+        raise Ceremony("no single embedded root-1 in keys.py and install.sh: refusing")
+    try:
+        pub = base64.b64decode(k[1], validate=True)
+    except ValueError:
+        raise Ceremony("the embedded root is not base64") from None
+    if len(pub) != 32:
+        raise Ceremony("the embedded root is not 32 bytes")
+    return pub
+
+
+def _verified_current(root: Path, revs_path: Path, embedded: bytes) -> dict:
+    """The current list, accepted only as a signed envelope that verifies against ``embedded`` and is >= the floor."""
+    try:
+        env = json.loads(_read(revs_path))
+        if not isinstance(env, dict) or set(env) != {"doc", "root_key_id", "sig"} or env["root_key_id"] != ROOT_ID:
+            raise ValueError
+        body = base64.b64decode(env["doc"], validate=True)
+        sig = base64.b64decode(env["sig"], validate=True)
+        Ed25519PublicKey.from_public_bytes(embedded).verify(sig, rootkey.REVOCATIONS_DOMAIN + body)
+        doc = json.loads(body)
+        if jcs(doc) != body:
+            raise ValueError
+        prev = rootkey.build_revocations(
+            min_serial=doc["min_serial"], revoked=doc["revoked"], issued_at=doc["issued_at"]
+        )
+        if set(doc) != set(prev) or doc["format"] != prev["format"]:
+            raise ValueError
+    except (ValueError, KeyError, TypeError, InvalidSignature):
+        raise Ceremony("the current revocations.json is not a validly signed list (embedded root): refusing") from None
+    for rel in (INSTALL_SH, FLOOR_PY):
+        p = root / rel
+        if p.exists():
+            f_at, f_serial = floor.read_floor(_read(p))
+            if prev["issued_at"] < f_at or prev["min_serial"] < f_serial:
+                raise Ceremony(f"the current list is below the floor in {rel}: refusing")
+    return prev
+
+
 def cmd_resign(root: Path, repo: str, tmp: Path) -> int:
     _step("preflight")
     rc, _ = run(["pass-cli", "info"])
     if rc != 0:
         raise Ceremony("pass-cli info failed: log in first (scripts/pass-login.sh)")
     revs_path = root / "release" / "keys" / "revocations.json"
-    pub_path = root / "release" / "keys" / "root-1.pub.json"
-    if not revs_path.exists() or not pub_path.exists():
-        raise Ceremony("release/keys/ has no root-1.pub.json / revocations.json: run init first")
-    prev = rootkey.load_previous(revs_path)
+    if not revs_path.exists():
+        raise Ceremony("release/keys/revocations.json is missing: run init first")
+    # The current list is only trusted after its signature verifies against the EMBEDDED root (never a key file in
+    # the tree) and it is not below the floor. All of this happens before the root key is fetched.
+    _step("verify-current")
+    embedded = _embedded_root(root)
+    prev = _verified_current(root, revs_path, embedded)
+    print(f"re-signing: min_serial {prev['min_serial']}, revoked {prev['revoked']}")
 
     _step("read-root")
     seed = _pass_read_seed(ROOT_TITLE)
@@ -395,9 +446,8 @@ def cmd_resign(root: Path, repo: str, tmp: Path) -> int:
         key = Ed25519PrivateKey.from_private_bytes(bytes(seed))
     finally:
         _wipe(seed)
-    expected = base64.b64decode(json.loads(_read(pub_path))["public_key"], validate=True)
-    if _pub(key) != expected:
-        raise Ceremony("the root key in Proton Pass is not the one published in release/keys/root-1.pub.json")
+    if _pub(key) != embedded:
+        raise Ceremony("the root key in Proton Pass is not the embedded root: refusing to sign")
 
     _step("sign")
     issued_at = _stamp(_now())

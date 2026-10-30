@@ -495,8 +495,9 @@ def test_resign_keeps_serials_raises_issued_at_and_bumps_the_floor(lab, capsys, 
     after = _list(revs)
     assert after["min_serial"] == before["min_serial"] and after["revoked"] == before["revoked"]
     assert after["issued_at"] == "2026-11-16T09:00:00Z" > before["issued_at"]
-    assert out.splitlines()[0] == "issued_at: 2026-11-16T09:00:00Z"
-    assert {x.strip() for x in out.splitlines()[2:]} == {"install.sh", "release/keys/revocations.json"}
+    assert out.splitlines()[0] == "re-signing: min_serial 1, revoked []"
+    assert out.splitlines()[1] == "issued_at: 2026-11-16T09:00:00Z"
+    assert {x.strip() for x in out.splitlines()[3:]} == {"install.sh", "release/keys/revocations.json"}
     sh = (lab.repo / "install.sh").read_text()
     assert floor.read_floor(sh) == floor.read_list(revs) == ("2026-11-16T09:00:00Z", 1)  # manager condition 4
     assert floor.main(["--check", str(lab.repo / "install.sh"), str(revs)]) == 0
@@ -540,7 +541,7 @@ def test_resign_refuses_a_root_that_is_not_the_published_one(lab, capsys, monkey
     p.write_text(json.dumps(item))
     snap = lab.snapshot()
     rc, out, err = run_main(lab, capsys, "resign-revocations")
-    assert rc == 1 and "not the one published" in err and lab.snapshot() == snap
+    assert rc == 1 and "not the embedded root" in err and lab.snapshot() == snap
     assert other not in out + err and lab.tmp_left() == []
 
 
@@ -562,3 +563,78 @@ def test_resign_reads_the_root_from_proton_and_never_creates_anything(lab, capsy
     assert [c["argv"][:2] for c in new if c["tool"] == "pass-cli"] == [["info"], ["item", "view"]]
     assert all(c["tool"] == "pass-cli" for c in new)  # no gh call at all
     assert new[1]["argv"][-2:] == ["--field", "password"]
+
+
+# ---- the current list is verified before the root key is fetched ---------------------------------------------------
+
+
+def _root_reads(lab: Lab) -> int:
+    return sum(1 for c in lab.calls() if c["tool"] == "pass-cli" and "--field" in c["argv"])
+
+
+def _refused(lab, capsys, expect: str, *, root_read: bool = False):
+    snap = lab.snapshot()
+    n = _root_reads(lab)
+    rc, out, err = run_main(lab, capsys, "resign-revocations")
+    assert rc == 1 and expect in err and lab.snapshot() == snap and lab.tmp_left() == []
+    assert (_root_reads(lab) > n) is root_read  # the Proton root is read only in the last case
+    lab.assert_no_leak(out, err)
+
+
+def _write_env(lab, doc: dict, root_seed: bytes | None = None):
+    import rootkey
+
+    seed = root_seed or base64.b64decode(lab.vault(ceremony.ROOT_TITLE)["password"])
+    env = rootkey.revoke(rootkey.Ed25519PrivateKey.from_private_bytes(seed), "root-1", doc)
+    (lab.repo / "release/keys/revocations.json").write_text(json.dumps(env))
+
+
+def test_resign_refuses_a_tampered_doc_with_the_old_signature(lab, capsys, monkeypatch):
+    _init_then(lab, capsys, monkeypatch)
+    import rootkey
+
+    path = lab.repo / "release/keys/revocations.json"
+    old = json.loads(path.read_text())
+    evil = rootkey.build_revocations(min_serial=1, revoked=[], issued_at="2026-11-02T09:00:01Z")
+    old["doc"] = base64.b64encode(manifest.jcs(evil)).decode()
+    path.write_text(json.dumps(old))
+    _refused(lab, capsys, "not a validly signed list")
+
+
+def test_resign_refuses_a_bare_doc(lab, capsys, monkeypatch):
+    _init_then(lab, capsys, monkeypatch)
+    doc = {"format": "orch.revocations/1", "min_serial": 1, "revoked": [], "issued_at": "2026-11-02T09:00:00Z"}
+    (lab.repo / "release/keys/revocations.json").write_text(json.dumps(doc))
+    _refused(lab, capsys, "not a validly signed list")
+
+
+def test_resign_refuses_a_valid_signature_from_another_root(lab, capsys, monkeypatch):
+    _init_then(lab, capsys, monkeypatch)
+    import rootkey
+
+    doc = rootkey.build_revocations(min_serial=1, revoked=[], issued_at="2026-11-02T09:00:00Z")
+    _write_env(lab, doc, root_seed=bytes(range(32)))
+    _refused(lab, capsys, "not a validly signed list")
+
+
+def test_resign_refuses_a_list_below_the_floor(lab, capsys, monkeypatch):
+    _init_then(lab, capsys, monkeypatch)
+    import rootkey
+
+    sh = lab.repo / "install.sh"
+    sh.write_text(floor.bumped(sh.read_text(), "2026-11-02T09:00:00Z", 5))  # the floor moved on: min_serial 5
+    doc = rootkey.build_revocations(min_serial=1, revoked=[], issued_at="2026-11-02T09:00:00Z")
+    _write_env(lab, doc)  # genuinely signed by the root, but a lower min_serial than the floor
+    _refused(lab, capsys, "below the floor")
+
+
+def test_resign_refuses_a_proton_root_that_differs_from_the_embedded_one_and_signs_nothing(lab, capsys, monkeypatch):
+    _init_then(lab, capsys, monkeypatch)
+    p = lab.sim / "vault" / f"{ceremony.ROOT_TITLE}.json"
+    item = json.loads(p.read_text())
+    item["password"] = base64.b64encode(bytes(range(32))).decode()
+    p.write_text(json.dumps(item))
+    called = []
+    monkeypatch.setattr(ceremony.rootkey, "revoke", lambda *a, **k: called.append(1))
+    _refused(lab, capsys, "not the embedded root", root_read=True)
+    assert called == []

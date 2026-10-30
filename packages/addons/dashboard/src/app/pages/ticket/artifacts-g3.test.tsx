@@ -80,7 +80,7 @@ describe('Ticket artifacts: viewer', () => {
 describe('run 15c P10: a check result card', () => {
   const sha = 'sha256:' + 'e3b0c442'.repeat(8)
   const art = (over: Record<string, unknown> = {}): Artifact => ({ name: 'T1-receipt.log', kind: 'receipt', task: 'T1', bytes: 0, sha256: sha, added_by: 'host', added_by_kind: 'host', at: '2026-10-30T10:00:00Z', ...over }) as Artifact
-  const tasks = (exit?: number) => [{ id: 'T1', receipt: exit === undefined ? null : { exit, ms: 5 } }]
+  const tasks = (exit?: number, attested: 'host' | 'agent' = 'host') => [{ id: 'T1', receipt: exit === undefined ? null : { exit, ms: 5, attested_by: attested } }]
   function cardOf(artifact: object, tasksState: unknown) {
     const ticket = { key: 'DEMO-1', artifacts: [artifact], people: {}, tasks_state: tasksState } as unknown as TicketDocument
     const viewer = { name: (p: string) => p, role: 'owner' } as unknown as Viewer
@@ -104,6 +104,12 @@ describe('run 15c P10: a check result card', () => {
     expect(checkOf(art(), tasks(2))).toBe('failed')
     expect(checkOf(art(), tasks())).toBeNull()
     expect(checkOf(art(), undefined)).toBeNull()
+    expect(checkOf(art(), tasks(0, 'agent'))).toBeNull() // an agent-attested receipt is a claim, not a passed check
+  })
+  it('an agent-attested receipt with exit 0 shows no "Check passed" and keeps the real name', () => {
+    const card = cardOf(art(), tasks(0, 'agent'))
+    expect(within(card).getByText('T1-receipt.log')).toBeInTheDocument()
+    expect(within(card).getByTestId('type-badge')).not.toHaveTextContent('CHECK')
   })
   it('a failing status says so on the badge', () => {
     const card = cardOf(art(), tasks(1))

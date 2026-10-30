@@ -44,6 +44,8 @@ export function JoinFlow({ ws, onClose, initialLink }: { ws: string; onClose: ()
   const [mode, setMode] = useState<'selective' | 'full'>('selective')
   const [noCopied, setNoCopied] = useState(false)
   const link = text.trim()
+  const textRef = useRef(text)
+  textRef.current = text
   const [detailsOpen, setDetailsOpen] = useState(false)
   const valid = LINK.test(link)
   // P12: the clipboard is read only on this click (a user gesture), checked with LINK, and only fills the field and starts
@@ -55,6 +57,7 @@ export function JoinFlow({ ws, onClose, initialLink }: { ws: string; onClose: ()
     setNoCopied(false)
     try {
       const got = ((await navigator.clipboard.readText()) ?? '').trim()
+      if (auto && textRef.current.trim()) return // the person typed or pasted meanwhile: never replace it
       if (LINK.test(got)) { setText(got); setArmed(!auto) } else if (!auto) setNoCopied(true)
     } catch { if (!auto) setNoCopied(true) }
   }

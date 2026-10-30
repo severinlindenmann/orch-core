@@ -214,6 +214,21 @@ describe('P12: Use copied link', () => {
       view.unmount()
     } finally { Reflect.deleteProperty(navigator, 'permissions') }
   })
+  it('the automatic clipboard read never replaces a link the person already typed', async () => {
+    let grant: (v: { state: string }) => void = () => {}
+    Object.defineProperty(navigator, 'permissions', { configurable: true, value: { query: vi.fn(() => new Promise(r => { grant = r })) } })
+    try {
+      const view = renderApp('/w/DEMO/settings/hub')
+      clip(async () => LINK)
+      await view.user.click(await screen.findByTestId('hub-connect', {}, T))
+      const mine = 'http://10.0.0.9:9/c#h1.00000000000000000000000000000000.AAAAAAAA'
+      fireEvent.change(await screen.findByTestId('hub-link-text', {}, T), { target: { value: mine } })
+      grant({ state: 'granted' })
+      await new Promise(r => setTimeout(r, 50))
+      expect((screen.getByTestId('hub-link-text') as HTMLInputElement).value).toBe(mine)
+      view.unmount()
+    } finally { Reflect.deleteProperty(navigator, 'permissions') }
+  })
   it('without permission the button is the first step and the field is folded under "Paste a different link"', async () => {
     Object.defineProperty(navigator, 'permissions', { configurable: true, value: { query: vi.fn(async () => ({ state: 'prompt' })) } })
     try {

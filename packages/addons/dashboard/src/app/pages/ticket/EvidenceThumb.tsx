@@ -34,12 +34,17 @@ async function limited<T>(run: () => Promise<T>): Promise<T> {
 
 const ext = (name: string) => /\.([A-Za-z0-9]+)$/.exec(name)?.[1].toLowerCase() ?? ''
 
-/** The result of a check, from what the HOST recorded only: a receipt artifact the host added (`added_by_kind` host, set by the host from the event's actor; the display name never counts) for a task
- *  whose receipt has an exit status. The file name and anything an agent wrote never count. null: not a recorded check. */
+/** The result of a check. It counts only when BOTH hold: the artifact's author kind is the host's (`added_by_kind`, from the signed
+ *  event's actor, never the display name) AND the task's receipt is attested by the host (`attested_by === 'host'`). Today the
+ *  host labels every receipt "agent" (task_done) and never appends artifacts itself, so no check status shows on a real host:
+ *  that is intended. An agent-attested receipt is the agent's claim and must not be drawn as a passed check. Do not "fix" the
+ *  missing status by accepting agent-kind receipts; make the host attest them instead. File names never count. null: not a recorded check. */
 export type CheckResult = 'passed' | 'failed'
 export function checkOf(a: Pick<Artifact, 'kind' | 'task' | 'added_by' | 'added_by_kind'>, tasks: ReadonlyArray<Pick<TaskStatus, 'id' | 'receipt'>> | undefined): CheckResult | null {
   if (a.kind !== 'receipt' || a.added_by_kind !== 'host' || !a.task) return null
-  const exit = tasks?.find((t) => t.id === a.task)?.receipt?.exit
+  const receipt = tasks?.find((t) => t.id === a.task)?.receipt
+  if (receipt?.attested_by !== 'host') return null
+  const exit = receipt.exit
   return typeof exit !== 'number' ? null : exit === 0 ? 'passed' : 'failed'
 }
 

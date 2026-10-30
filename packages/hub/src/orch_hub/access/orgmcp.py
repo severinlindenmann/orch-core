@@ -110,6 +110,15 @@ class OrgMcpStore:
         """Unbind or leave: nothing is offered to that workspace any more."""
         self._a._w("DELETE FROM org_mcp_offer WHERE workspace_id=?", (_hex(workspace_id, "workspace_id"),))
 
+    def withdraw_all(self) -> int:
+        """The hub is being removed (#1463): every tool server and every offer goes in ONE transaction, so the next
+        ``mcp_servers_get`` of each workspace signs an EMPTY bundle at a higher version."""
+        with self._a.tx() as db:
+            n = db.execute("SELECT COUNT(*) FROM org_mcp").fetchone()[0]
+            db.execute("DELETE FROM org_mcp_offer")
+            db.execute("DELETE FROM org_mcp")
+        return int(n)
+
 
 def org_mcp(a: Access) -> OrgMcpStore:
     s = getattr(a, "_org_mcp", None)

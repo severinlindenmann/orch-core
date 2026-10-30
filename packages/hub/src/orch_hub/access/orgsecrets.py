@@ -246,6 +246,17 @@ class OrgSecretStore:
             db.execute("DELETE FROM org_secret_wraps WHERE workspace_id=?", (ws,))
             db.execute("DELETE FROM org_secret_use WHERE workspace_id=?", (ws,))
 
+    def withdraw_all(self, now_ms: int) -> int:
+        """The hub is being removed (#1463): every secret is marked removed and every wrap, share and use count goes, in ONE
+        transaction. The next ``org_secrets_get`` of each workspace signs an EMPTY bundle at a higher version. Returns the
+        number of secrets withdrawn."""
+        with self._a.tx() as db:
+            n = db.execute("UPDATE org_secrets SET removed_ms=? WHERE removed_ms IS NULL", (now_ms,)).rowcount
+            db.execute("DELETE FROM org_secret_wraps")
+            db.execute("DELETE FROM org_secret_shares")
+            db.execute("DELETE FROM org_secret_use")
+        return n
+
     # --- what ONE workspace's bundle carries ---------------------------------------------------------------------------
 
     def wraps_for(self, workspace_id: str, now_ms: int) -> list[dict[str, Any]]:

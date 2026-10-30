@@ -188,8 +188,27 @@ def _helper(args: argparse.Namespace) -> int:
     return 0
 
 
+#: #1463: groups of hub commands that write; refused (``hub_closing``) while a removal is running or stalled
+_CLOSING_REFUSED = frozenset({"users", "groups", "grants", "channels", "access", "spaces", "backup-key", "restore", "keys"})
+
+
+def _closing_refused(args: argparse.Namespace) -> bool:
+    if args.group not in _CLOSING_REFUSED:
+        return False
+    if args.group == "keys" and args.cmd == "card" and args.relay_url is None and args.tls_spki_sha256 is None:
+        return False  # printing the card writes nothing
+    try:
+        state = Path(args.state) if getattr(args, "state", None) else default_state_dir()
+    except KeysError:
+        return False
+    return (state / "hub-removal.json").exists()
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    if _closing_refused(args):
+        print("orch-hub: refused: hub_closing (this hub is being removed)", file=sys.stderr)
+        return 1
     if args.group == "helper":
         return _helper(args)
     if args.group == "serve":

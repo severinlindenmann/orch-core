@@ -126,6 +126,7 @@ class OpContext:
     switch: Any = None  # orch_hub.switch.SwitchService; None = switch/rail ops not served (unknown_op)
     where: Callable[[], dict[str, Any]] | None = None  # settings.where_answer: the advertised addresses and the name
     hooks: Any = None  # orch_hub.hooks.HookInbox; None = the webhook inbox is off (hook ops answer `unavailable`)
+    closing: Any = None  # orch_hub.closing.Closing; None = no removal service (closing_get answers null)
     same_computer: bool = False  # the link's socket shows the peer is on this computer (never a peer-sent claim)
 
 
@@ -375,6 +376,17 @@ def hub_where(c: OpContext) -> dict[str, Any]:
     if c.where is None:
         raise Refused("unavailable")
     return c.where()
+
+
+def closing_get(c: OpContext) -> dict[str, Any]:
+    """#1463 (protocol 9.7): ``{}`` -> ``{"closing": <hub.closing> | null}``. A fresh signed notice for the LINK's workspace
+    while the hub is being removed (withdrawn, notified, ordered), else ``null`` (also what a restored hub answers, which
+    clears the host's banner). Only a bound workspace is answered; nothing in the request is read."""
+    with c.registry.lock:
+        _require_pin(c)
+        _require_bound(c)
+    note = None if c.closing is None else c.closing.notice_for(c.workspace_id)
+    return {"closing": note}
 
 
 def _fetched(c: OpContext, bundle: dict[str, Any]) -> dict[str, Any]:
@@ -854,6 +866,7 @@ HANDLERS: dict[str, Callable[[OpContext], dict[str, Any]]] = {
     "binding_put": binding_put,
     "snapshot_get": snapshot_get,
     "hub_where": hub_where,
+    "closing_get": closing_get,
     "publish_out": publish_out,
     "route_out": route_out,
     "audit_get": audit_get,

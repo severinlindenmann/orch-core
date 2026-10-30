@@ -35,6 +35,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Protocol, Self
 
 from ..backup.hubop import FENCE as RESTORE_FENCE
+from ..closing import LINK_ALLOWED as CLOSING_ALLOWED_OPS
 from ..contract import hub as H
 from ..contract import remote as R
 from ..contract import suite as S
@@ -101,6 +102,10 @@ class _PreAuth:
                 self._sem.release()
 
 
+#: #1463: the only link ops served once the hub is closing (default deny; see :mod:`orch_hub.closing`)
+CLOSING_LINK_ALLOWED = CLOSING_ALLOWED_OPS
+
+
 class LinkServer:
     def __init__(
         self,
@@ -124,6 +129,7 @@ class LinkServer:
         hooks: Any = None,
         activity: Any = None,
         where: Callable[[], dict[str, Any]] | None = None,
+        closing: Any = None,
         deliveries: Any = None,
         streams: StreamSink | None = None,
         remote: RemoteEndpoint | None = None,
@@ -164,6 +170,9 @@ class LinkServer:
         self._hooks = hooks
         self._activity = activity
         self._where = where
+        self._closing = closing  # orch_hub.closing.Closing: the guard, the notice (#1463); None = never closing
+        self._live: dict[str, set[_Port]] = {}  # ws -> the plain links attached now (the closing notice goes out on them)
+        self._live_mu = threading.Lock()
         self._deliveries = deliveries  # custodial.DeliveryQueue: event_deliver out, its replies in (§8.7)
         self._retry_at = float("-inf")
         self._dev, self._now = dev_mode, now_ms
@@ -424,7 +433,28 @@ class LinkServer:
         self._detach(ws, port)
         return False
 
+    def push_closing(self, ws: str, notice: dict[str, Any]) -> bool:
+        """Send the signed ``hub.closing`` notice (h2w ``closing_notice``) on every plain link of ``ws`` that is still its
+        current bound one. Best effort: True if at least one write went out; a host that is offline pulls it (``closing_get``)."""
+        with self._live_mu:
+            ports = list(self._live.get(ws, ()))
+        sent = False
+        for port in ports:
+            try:
+                if port.attached_seq is not None and self._bound_seq(ws, port.wsk) == port.attached_seq:
+                    port.send_request("closing_notice", {"notice": notice})
+                    sent = True
+            except Exception:  # noqa: BLE001  # a dead link: the host pulls it
+                continue
+        return sent
+
     def _detach(self, ws: str, port: _Port) -> None:
+        with self._live_mu:
+            ports = self._live.get(ws)
+            if ports is not None:
+                ports.discard(port)
+                if not ports:
+                    del self._live[ws]
         if self._router is not None and port.live is not None:
             self._router.detach(ws, port.live)
             port.live = None
@@ -461,6 +491,9 @@ class LinkServer:
                 _log.warning("stream sink attach raised %s", type(e).__name__)
         if port.live is not None or port.delivery is not None or port.streams_attached:
             port.attached_seq = seq
+        if not port.stream_link:
+            with self._live_mu:
+                self._live.setdefault(ws, set()).add(port)
 
     def _pinned_to(self, ws: str, wsk: bytes) -> bool:
         pin = self._reg.pin(ws)
@@ -477,6 +510,9 @@ class LinkServer:
         started = time.monotonic()
         if port.stream_link and self._bound_seq(ws, wsk) is None:
             self._refuse(conn, "not_bound")  # a stream link exists only for a pinned, bound workspace (no join on it)
+            return
+        if port.stream_link and self._closing is not None and self._closing.active():
+            self._refuse(conn, "hub_closing")  # no new remote access stream link while the hub is being removed
             return
         self._attach(ws, port)
         last_seq = 0  # R1: the w2h seq of the previous frame on THIS link (the first frame must be 1)
@@ -605,6 +641,8 @@ class LinkServer:
         try:
             if RESTORE_FENCE.is_set():
                 raise Refused("restore_busy")  # a restore is swapping the state dir; the host retries
+            if self._closing is not None and self._closing.active() and o["op"] not in CLOSING_LINK_ALLOWED:
+                raise Refused("hub_closing")  # the hub is being removed: default deny (allow list), nothing else is served
             if handler is None:
                 raise Refused("unknown_op")  # an op of a later phase: in the table, not served yet
             if o["op"] != "join" and self._reg.pin(ws) is None:
@@ -642,6 +680,7 @@ class LinkServer:
                 hooks=self._hooks,
                 activity=self._activity,
                 where=self._where,
+                closing=self._closing,
                 same_computer=same,
             )
             return handler(ctx)

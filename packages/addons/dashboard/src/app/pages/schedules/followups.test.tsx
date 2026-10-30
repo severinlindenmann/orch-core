@@ -33,6 +33,11 @@ describe('follow-up rules', () => {
       expect(reasonText(row({ state: 'cancelled', reason }))).not.toMatch(/_/)
     expect(reasonText(row({ state: 'failed', reason: null }))).toBe('No reason was recorded.')
   })
+  it('a follow-up cancelled by its add-on says so in plain words (the add-on it waited on, not only Schedules)', () => {
+    const s = reasonText(row({ state: 'cancelled', reason: 'addon_disabled' }))
+    expect(s).toMatch(/add-on this follow-up was waiting on/)
+    expect(s).not.toMatch(/_/)
+  })
   it('kinds, the latest follow-up per ticket, and the 7-day window', () => {
     const now = Date.parse('2026-10-20T00:00:00Z')
     expect(kindOf(row({ state: 'ran', late_by: 25200 }))).toBe('ran_late')

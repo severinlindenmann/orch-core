@@ -156,6 +156,22 @@ class Client:
             raise ClientError("unavailable") from None
         return status, rest[: MAX_CARD + 1]
 
+    def connect_with_link(self, link: str, user: str, password: str, totp: str, *, now_ms: int) -> dict[str, Any]:
+        """Sign in with the hub's connect link: the link names the hub's id, its card is signed by the key that id
+        names, so the TLS pin comes from that card -- never from the connection that signs in. Plain errors:
+        ``remote_client.no_hub`` (no usable link), ``remote_client.no_pin`` (the card has no link endpoint)."""
+        from orch.hubclient import connectlink
+
+        try:
+            found = connectlink.resolve(link.strip(), now_ms=now_ms, dev_mode=False)
+            u = connectlink.parse_link(link.strip())
+        except HubRefused:
+            raise ClientError("remote_client.no_hub") from None
+        if not found["endpoint"]:
+            raise ClientError("remote_client.no_pin")
+        pin = found["hub_card"]["tls_spki_sha256"]
+        return self.connect_hub(u.origin, found["endpoint"], user.strip(), password, totp.strip(), pin=pin)
+
     def connect_hub(
         self, origin: str, link: str, user: str, password: str, totp: str, *, pin: str | None = None
     ) -> dict[str, Any]:

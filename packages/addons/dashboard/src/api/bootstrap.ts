@@ -69,6 +69,14 @@ export async function confirmSwitch(fetcher: typeof fetch = fetch): Promise<stri
 const listeners = new Set<() => void>()
 export const isForeignNavigation = () => document.querySelector('meta[name="orch-nav"][content="foreign"]') !== null
 export const getToken = () => currentToken
+/** The remote client's server marks the page it serves: the workspace is reached through the client. */
+export const isRemoteClient = () => document.querySelector('meta[name="orch-nav"][content="remote"]') !== null
+/** The sub-protocol that carries the page's bearer on a WebSocket (a browser cannot set headers there). Only in a
+ * remote session; the client's server checks it and never forwards it. */
+export const remoteSocketProtocols = (): string[] | undefined => {
+  const token = isRemoteClient() ? currentToken : null
+  return token ? ['orch.b', `orch.b.${token}`] : undefined  // the server selects 'orch.b' (a browser needs an offered one)
+}
 export function onSessionChange(listener: () => void) {
   listeners.add(listener)
   return () => { listeners.delete(listener) }
@@ -105,8 +113,9 @@ export async function bootstrap(fetcher: typeof fetch = fetch): Promise<string |
   channel?.close()
   channel = null
   // The server marker governs this document: never request or receive shared tokens,
-  // even after a successful launch exchange. Other tabs cannot verify our marker.
-  if (!foreign && typeof BroadcastChannel !== 'undefined') {
+  // even after a successful launch exchange. Other tabs cannot verify our marker. A remote session (the client's
+  // marker) never shares its token over BroadcastChannel either.
+  if (!foreign && !isRemoteClient() && typeof BroadcastChannel !== 'undefined') {
     channel = new BroadcastChannel('orch-session')
     channel.onmessage = ({ data }) => {
       if (data?.type === 'request' && currentToken) channel?.postMessage({ type: 'token', token: currentToken })

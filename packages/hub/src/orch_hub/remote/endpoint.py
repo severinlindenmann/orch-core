@@ -2,9 +2,11 @@
 ``recv_exact``, ``send_all`` and ``close`` of the connection (a TLS connection today, a tunnel carrier in R6).
 
 One stream per connection: the stream ends when the connection ends and the reverse; the client never names a stream
-id. Frames (4-byte length + strict canonical JSON, at most 96 KiB), exact keys everywhere, else ``malformed``::
+id. Frames (4-byte length + strict canonical JSON, at most 96 KiB), exact keys everywhere, else ``malformed``
+(contract: protocol.md §10.2d, reference ``orch_hub.contract.remote.ClientConn``, vectors ``client_*``)::
 
     c->h {"t":"hello","v":1,"token"}  h->c {"t":"ready","hub_id"} | {"t":"error","error"} + close
+    c->h {"t":"rail"} (optional, once)  h->c {"t":"rail","workspaces":[{workspace_id,name,online}],"more"} | error
     c->h {"t":"open","workspace_id","device_id","kind"}  h->c {"t":"opened","stream_id"} | {"t":"refused","error"} + close
     c<->h {"t":"data","b":b64u(1..65535)}     c<->h {"t":"close","reason"}  (reason in CLOSE_REASONS)
 
@@ -187,6 +189,24 @@ class RemoteEndpoint:
         except LinkClosed, LinkTimeout, framing.FrameError, OSError:
             pass
 
+    def _rail(self, conn: Any, token: str) -> bool:
+        """Answer ``rail``: the person's rail rows (only id, name, online), re-checking the token first. False when the
+        connection ends here (``error``)."""
+        try:
+            user = self._authz.authenticate(token)
+        except AuthzError as e:
+            self._fail(conn, e.code)
+            return False
+        try:
+            msg = R.rail_message(self._authz.rail_rows(user))
+            R.client_msg_check("h2c", msg)
+        except Exception as e:  # noqa: BLE001  # fail closed: no partial or unchecked rail
+            _log.warning("remote_rail_error type=%s", type(e).__name__)
+            self._fail(conn, "unavailable")
+            return False
+        self._send(conn, msg)
+        return True
+
     def _serve(self, conn: Any, pre: _Once) -> None:
         deadline = time.monotonic() + self._t_setup
         try:
@@ -197,6 +217,7 @@ class RemoteEndpoint:
         if (
             set(hello) != {"t", "v", "token"}
             or hello["t"] != "hello"
+            or type(hello["v"]) is not int  # True == 1 in Python
             or hello["v"] != 1
             or type(hello["token"]) is not str
         ):
@@ -220,11 +241,15 @@ class RemoteEndpoint:
                 signed_in()  # the link server's own slot too (idempotent)
             try:
                 op = self._read(conn, deadline)
+                if op == {"t": "rail"}:  # at most once, before open (§10.2d)
+                    if not self._rail(conn, hello["token"]):
+                        return
+                    op = self._read(conn, deadline)
             except framing.FrameError:
                 self._refuse(conn, "malformed")
                 return
             if set(op) != {"t", "workspace_id", "device_id", "kind"} or op["t"] != "open":
-                self._refuse(conn, "malformed")
+                self._refuse(conn, "malformed")  # also a second rail, data or close before opened
                 return
             ws, dev, kind = op["workspace_id"], op["device_id"], op["kind"]
             want = R.DEVICE_ID if kind == "session" else R.CODE_ID

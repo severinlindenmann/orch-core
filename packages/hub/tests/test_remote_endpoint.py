@@ -2,17 +2,22 @@
 
 from __future__ import annotations
 
+import copy
+import json
 import logging
 import threading
 import time
+from pathlib import Path
 
 import pytest
-from remote_helpers import CODE, DEV, DEV2, HUB, WS_A, WS_B, FakeConn, FakePort, answer, data_frame
+from remote_helpers import CODE, DEV, DEV2, HUB, WS_A, WS_B, FakeConn, FakePort, answer, close_frame, data_frame
+from test_remote_vectors import client_wire
 from webapi_helpers import Web
 
-from orch_hub.channels.service import REMOTE_SESSION_TTL_MS
+from orch_hub.channels.service import REMOTE_SESSION_TTL_MS, ChannelError
 from orch_hub.contract import remote as R
-from orch_hub.contract.canon import b64u
+from orch_hub.contract.canon import b64u, unb64u
+from orch_hub.link.tls import LinkClosed
 from orch_hub.remote import Authz, AuthzError, RemoteEndpoint, StreamRouter, wire_remote
 from orch_hub.webapi.api import ROUTES, SCOPE_ROUTES
 
@@ -441,3 +446,148 @@ def test_stream_endpoint_logs_hold_no_token_device_or_bytes(w, caplog, capsys):
     for hay in (text, out.out, out.err):
         assert tok not in hay and DEV not in hay and secret.decode() not in hay and b64u(secret) not in hay
     assert "stream_close" in text
+
+
+# --- rail (§10.2d, R5): the person's rail rows, cut to id, name and online ----------------------------------------
+
+
+def test_stream_rail_answers_the_users_rail_rows_only(w):
+    from webapi_helpers import WS
+
+    rig = RealRig(w)
+    stranger_ws = "77" * 16
+    w.reg.add(stranger_ws, "selective")  # owned by nobody ann is: not in ann's rail
+    c = rig.connect()
+    c.put({"t": "hello", "v": 1, "token": remote_token(w)})
+    c.get()
+    c.put({"t": "rail"})
+    got = c.get()
+    want = R.rail_message(
+        [r for r in __import__("orch_hub.switch", fromlist=["x"]).workspace_rows(w.reg, w.env.acc, w.ann)]
+    )
+    assert got == want and got["t"] == "rail" and got["more"] is False
+    ids = [r["workspace_id"] for r in got["workspaces"]]
+    assert WS_A in ids and WS in ids and stranger_ws not in ids
+    assert all(set(r) == {"workspace_id", "name", "online"} for r in got["workspaces"])
+    assert rig.port.ops("stream_open") == []  # a rail never reaches a host
+    c.put({"t": "open", "workspace_id": WS_A, "device_id": DEV, "kind": "session"})  # same connection, then open
+    sid = answer(rig.router, WS_A, rig.port)
+    assert c.get() == {"t": "opened", "stream_id": sid}
+
+
+def test_stream_rail_without_a_rows_source_is_unavailable(w):
+    rig = Rig(w)  # Authz without rows: never a made-up rail
+    c = rig.connect()
+    c.put({"t": "hello", "v": 1, "token": remote_token(w)})
+    c.get()
+    c.put({"t": "rail"})
+    assert c.get() == {"t": "error", "error": "unavailable"}
+
+
+def test_stream_rail_token_signed_out_after_ready(w):
+    rig = RealRig(w)
+    tok = remote_token(w)
+    c = rig.connect()
+    c.put({"t": "hello", "v": 1, "token": tok})
+    c.get()
+    w.env.svc.sign_out(tok)
+    c.put({"t": "rail"})
+    assert c.get() == {"t": "error", "error": "no_session"}
+
+
+# --- the client_* vectors on the real endpoint ----------------------------------------------------------------------
+
+_VEC = json.loads((Path(__file__).resolve().parents[3] / "contracts" / "hub" / "vectors_remote.json").read_text())
+_ENV = _VEC["client_env"]
+_ENDPOINT_CASES = [c for c in _VEC["cases"] if c["check"] == "client_seq" and c["args"]["endpoint"]]
+
+
+class _Channels:
+    def __init__(self, tokens: dict) -> None:
+        self.tokens = dict(tokens)
+
+    def session_info(self, token: str) -> dict:
+        if token not in self.tokens:
+            raise ChannelError("no_session")
+        return dict(self.tokens[token])
+
+
+def test_vector_client_endpoint_cases_present():
+    assert len(_ENDPOINT_CASES) >= 30
+    assert {"client_seq_session", "client_seq_rail_then_open", "client_seq_rail_twice"} <= {
+        c["name"] for c in _ENDPOINT_CASES
+    }
+
+
+@pytest.mark.parametrize("c", _ENDPOINT_CASES, ids=[c["name"] for c in _ENDPOINT_CASES])
+def test_vector_client_seq_on_the_real_endpoint(c):
+    """Play the client's frames into the real ``RemoteEndpoint`` (host side faked at the link port) and require exactly
+    the hub frames of the vector; on a bad client frame, exactly the vector's answer, then the connection ends."""
+    env = c["args"].get("env", {})
+    exp = c["expect"]
+    ch = _Channels(_ENV["tokens"])
+    rows = _ENV["rail_rows"]
+
+    def rail_rows(user):
+        if env.get("rail") == "fail":
+            raise RuntimeError("rail store down")
+        return copy.deepcopy(rows.get(user, []))
+
+    authz = Authz(ch, lambda u: [r["workspace_id"] for r in rows.get(u, [])], rail_rows)
+    router = StreamRouter(hub_id=_ENV["hub_id"])
+    ports = {ws: FakePort() for ws in _ENV["links"]}
+    for ws, p in ports.items():
+        router.attach(ws, p)
+    ep = RemoteEndpoint(router, authz, setup_timeout=5, idle_poll=0.2)
+    srv, cli = FakeConn.pair()
+    t = threading.Thread(target=ep.serve, args=(srv,), daemon=True)
+    t.start()
+    frames = c["args"]["frames"]
+    stop = exp["index"] if "error" in exp else len(frames) - 1
+    ws = sid = None
+    host_seq = client_data = 0
+    client_closed = False
+    for i, f in enumerate(frames[: stop + 1]):
+        if f["dir"] == "c2h":
+            o = f.get("frame")
+            if o and o["t"] == "rail" and env.get("signed_out_after_ready"):
+                ch.tokens.pop("tok-remote")
+            cli.send_all(client_wire(f), time.monotonic() + 5)
+            if i == stop and "error" in exp:
+                break
+            if o and o["t"] == "open":
+                ws = o["workspace_id"]
+            elif o and o["t"] == "data":
+                client_data += 1
+                got = ports[ws].wait_op("stream_data", client_data)[client_data - 1][1]
+                assert got == {"stream_id": sid, "seq": client_data, "bytes": o["b"]}
+            elif o and o["t"] == "close":
+                client_closed = True
+                assert ports[ws].wait_op("stream_close")[0][1] == {"stream_id": sid, "reason": o["reason"]}
+            continue
+        want = f["frame"]
+        if want["t"] in ("opened", "refused") and ws in ports and (want["t"] == "opened" or "host" in env):
+            body = {} if want["t"] == "opened" else {"error": env["host"]}
+            sid = answer(router, ws, ports[ws], body)
+        elif want["t"] == "data":
+            host_seq += 1
+            router.on_frame(ws, ports[ws], data_frame(sid, host_seq, unb64u(want["b"])), 1024)
+        elif want["t"] == "close" and not client_closed:
+            router.on_frame(ws, ports[ws], close_frame(sid, want["reason"]), 1024)
+        got = cli.get()
+        if want["t"] == "opened":
+            assert got == {"t": "opened", "stream_id": sid}  # drawn by the hub, the id it sent the host
+        else:
+            assert got == want, (i, got)
+    if "error" in exp:
+        assert cli.get() == exp["answer"]
+        if ws in ports and sid:  # a stream error is a stream_close to the host too
+            assert ports[ws].wait_op("stream_close")[-1][1] == {"stream_id": sid, "reason": exp["error"]}
+    if "error" in exp or exp["end"] == "ended":
+        with pytest.raises(LinkClosed):
+            cli.get(timeout=3)
+    else:
+        cli.close()
+    t.join(5)
+    assert not t.is_alive()
+    assert router.open_count() == 0

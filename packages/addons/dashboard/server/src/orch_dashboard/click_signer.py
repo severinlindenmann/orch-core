@@ -16,6 +16,8 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
+from orch import childenv
+
 from .errors import HostError, fail
 from .remote_identity import REMOTE_STREAM
 
@@ -77,8 +79,9 @@ SEQUENCE_FEATURE = "sequence"  # `prepare {sequence}`: one review, N signatures 
 
 def child_env(state: Path) -> dict[str, str]:
     """The signer's environment: ours, with the state directory made explicit (it must be the registry we read) and
-    no PYTHONPATH (`-I` ignores it, and a path to another core is never part of a running server)."""
-    env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+    no loader variable (PYTHONPATH, DYLD_*, LD_*: `-I` ignores the first, and none belongs to a running server);
+    the one cleaner is `orch.childenv`."""
+    env = childenv.sanitize(os.environ)
     env["ORCH_STATE_DIR"] = str(state)
     return env
 

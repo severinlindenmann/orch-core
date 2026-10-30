@@ -58,7 +58,7 @@ def _module_installed(env: Mapping[str, str] | None = None) -> bool:
     try:
         res = subprocess.run(
             [sys.executable, "-P", "-c", _PROBE, MODULE],
-            env=dict(env) if env is not None else None,
+            env=childenv.sanitize(env if env is not None else os.environ, absolute_pythonpath=True),
             stdin=subprocess.DEVNULL,
             capture_output=True,
             timeout=10,
@@ -96,7 +96,7 @@ def find_entry_point(env: Mapping[str, str], err: TextIO | None = None) -> list[
 
 
 def _exec(argv: list[str], env: Mapping[str, str]) -> None:  # a seam: tests replace it
-    os.execve(argv[0], argv, dict(env))
+    os.execve(argv[0], argv, childenv.sanitize(env, absolute_pythonpath=True))
 
 
 def launch_env(env: Mapping[str, str]) -> dict[str, str]:

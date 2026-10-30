@@ -530,7 +530,7 @@ def client_env(env: Mapping[str, str]) -> dict[str, str]:
 
 
 def _exec(argv: list[str], env: Mapping[str, str]) -> None:  # a seam: tests replace it
-    os.execve(argv[0], argv, dict(env))
+    os.execve(argv[0], argv, childenv.sanitize(env))
 
 
 def _client(args: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextIO) -> int:

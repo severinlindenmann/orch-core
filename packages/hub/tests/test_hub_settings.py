@@ -791,3 +791,18 @@ def test_the_real_serve_hook_refuses_an_http_origin_behind_the_edge(tmp_path):
     assert (state / S.SETTINGS_FILE).read_bytes() == before and not execs
     stop.set()
     t.join(15)
+
+
+def test_exec_self_drops_loader_variables_from_the_new_process(tmp_path):
+    child = "import os; print(sorted(k for k in os.environ if k.startswith(('PYTHON', 'DYLD_', 'LD_'))), os.environ['KEEP'])"
+    parent = textwrap.dedent(
+        f"""
+        import os
+        from orch_hub.restart import exec_self
+        os.environ.update(PYTHONPATH=":", DYLD_INSERT_LIBRARIES="/x.dylib", LD_PRELOAD="/y.so", KEEP="1")
+        exec_self(["python", "-c", {child!r}])
+        """
+    )
+    r = subprocess.run([sys.executable, "-c", parent], check=False, capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == "[] 1"

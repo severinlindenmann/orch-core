@@ -241,7 +241,10 @@ def pick_runner(layout: Layout, env: Mapping[str, str]) -> Runner:
 def _systemd_user() -> bool:
     try:
         return subprocess.run(
-            ["systemctl", "--user", "is-system-running"], capture_output=True, timeout=5
+            ["systemctl", "--user", "is-system-running"],
+            capture_output=True,
+            timeout=5,
+            env=childenv.sanitize(os.environ),
         ).returncode in (0, 1)
     except (OSError, subprocess.SubprocessError):
         return False

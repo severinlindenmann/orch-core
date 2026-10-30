@@ -4,6 +4,7 @@ export const TABS = [
   { id: 'general', label: 'General' },
   { id: 'members', label: 'Members' },
   { id: 'gates', label: 'Gates' },
+  { id: 'profile', label: 'Profile' },
   { id: 'relay', label: 'Relay & devices', preview: true },
   { id: 'addons', label: 'Addons' },
   { id: 'skills', label: 'Skills' },
@@ -22,6 +23,8 @@ export const HOST_TABS = [
   { id: 'grants', label: 'Agent access' },
   /** Phone pairing and the devices that can approve. */
   { id: 'devices', label: 'Devices' },
+  /** What this workspace does, for the hub's directory. Works without a hub. */
+  { id: 'profile', label: 'Profile' },
   /** Only while a hub is connected. */
   { id: 'hub', label: 'Hub', feature: 'hub' },
   /** Company skills and tools the hub offers: the same condition as the Hub tab. */

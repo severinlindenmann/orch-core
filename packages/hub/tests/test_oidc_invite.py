@@ -175,20 +175,48 @@ def test_cookies_of_other_purposes_do_not_cross(e):
 
 
 def test_finish_has_no_wildcard_bind():
+    """The fake IdP would ACCEPT every one of these exchanges (right nonce, no PKCE check): only the purpose and bind rules refuse."""
+    from urllib.parse import parse_qs, urlsplit
+
     from oidc_fake_idp import FakeIdp, entra_cfg
 
     from orch_hub.oidc import Oidc, OidcError
 
     idp = FakeIdp(entra_cfg())
     o = Oidc(entra_cfg(), idp, b"k" * 32, lambda: NOW, frozenset({"idp.example"}))
-    url, cookie = o.start(source="s", purpose="invite", bind="a" * 64)
-    from urllib.parse import parse_qs, urlsplit
+    idp.claims = {"oid": "oid-x"}
 
-    st = parse_qs(urlsplit(url).query)["state"][0]
-    for kw in ({"purpose": "invite", "bind": "a" * 64}, {"purpose": "invite", "bind": None}, {"purpose": "invite"}):
-        with pytest.raises(OidcError):
-            o.finish(cookie, st, "c", "S", "s", **kw)  # finish() never finishes an invite login, with or without a bind
-    assert o.purpose_of(cookie) == "invite"
+    def started(purpose, bind):
+        url, cookie = o.start(source="s", purpose=purpose, bind=bind)
+        q = {k: v[0] for k, v in parse_qs(urlsplit(url).query).items()}
+        idp.nonce_of[q["nonce"]] = q["nonce"]  # the code IS the nonce: each login is answered with its own
+        return q["state"], cookie, q["nonce"]
+
+    st, cookie, n1 = started("invite", "a" * 64)
+    for kw in (
+        {"purpose": "invite", "bind": "a" * 64},
+        {"purpose": "invite", "bind": None},
+        {"purpose": "invite"},
+        {"bind": "a" * 64},
+    ):
+        with pytest.raises(OidcError) as err:
+            o.finish(cookie, st, n1, "S", "s", **kw)  # finish() never finishes an invite login, with or without a bind
+        assert err.value.code == "bad_state", kw
+    # a non-str bind is refused on an ordinary login too (no "any bind")
+    st2, cookie2, n2 = started("signin", "")
+    for bad in (None, 0, b"", ["x"]):
+        with pytest.raises(OidcError) as err:
+            o.finish(cookie2, st2, n2, "S", "s", bind=bad)
+        assert err.value.code == "bad_state", bad
+    # the same cookies DO finish through their own door, so the refusals above were the rules, not a failing exchange
+    ident, bind = o.finish_invite(cookie, st, n1, "S", "s")
+    assert ident.subject == "oid-x" and bind == "a" * 64
+    assert o.finish(cookie2, st2, n2, "S", "s").subject == "oid-x"
+    # and finish_invite takes no other purpose
+    st3, cookie3, n3 = started("signin", "")
+    with pytest.raises(OidcError) as err:
+        o.finish_invite(cookie3, st3, n3, "S", "s")
+    assert err.value.code == "bad_state"
 
 
 def start_login(e, token, oid):
@@ -283,10 +311,15 @@ def test_a_failure_inside_the_claim_undoes_the_person_and_keeps_the_invite(e, mo
         real("someone-else", *a)  # another login took the identity between the pre-check and the insert
         return real(uid, *a)
 
+    keys = e.w.env.keys
+    key_dirs = [keys.state / "uk", keys._gen_dir() / "uk"]
+    files = lambda: {str(p) for d in key_dirs for p in d.iterdir()}
+    files_before = files()
     monkeypatch.setattr(e.store, "link", racing_link)
     s, o, h, _, _ = go(e, token, oid="oid-julia")
     assert (s, o["error"]) == (409, "oidc_already_linked")
     assert users(e) == before  # the half-made person was removed
+    assert files() == files_before  # and so were uk/<uid>.key and the generation's uk/<uid>.json
     assert e.call("GET", f"/admin/invites/{iid}", token=e.admin_tok)[1]["state"] == "waiting"
 
 
@@ -362,3 +395,18 @@ def test_the_people_list_says_who_joined_with_which_company_account(e):
     assert by[uid]["company"] == {"email": "julia@acme.example", "name": "Mallory Admin"}
     assert "company" not in by[e.w.ann] and "company" not in by[e.w.admin]
     assert e.call("GET", "/admin/users", token=e.w.login(e.w.ann))[0] == 403  # admins only
+
+
+def test_no_session_after_the_claim_gives_the_plain_answer_and_clears_the_cookie(e, monkeypatch):
+    from orch_hub.channels.service import ChannelError
+
+    e.configure()
+    token, iid = make_invite(e)
+
+    def boom(uid):
+        raise ChannelError("store_error")
+
+    monkeypatch.setattr(e.w.env.svc, "open_company_session", boom)
+    s, o, h, _, _ = go(e, token, oid="oid-julia")
+    assert (s, o["error"]) == (403, "oidc_not_allowed") and "Max-Age=0" in e.cookies(h)[COOKIE]
+    assert e.w.api._cookie_name not in e.cookies(h)  # no session cookie

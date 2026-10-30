@@ -190,7 +190,6 @@ class OidcHandlers:
             if not mfa_ok(ident):
                 raise OidcError("not_allowed")
             out = self._inv().redeem_hash(th, lambda row: self._apply_company_invite(svc, row, ident))
-            s = self.d.channels.open_company_session(out["user_id"])
         except InviteError:
             return 403, {"error": "bad_invite"}, [self._tx_clear()]
         except OidcError as e:
@@ -198,6 +197,10 @@ class OidcHandlers:
                 return 409, {"error": "oidc_already_linked", "message": PLAIN["already_linked"]}, [self._tx_clear()]
             return self._oidc_fail(e, c)
         uid = out["user_id"]
+        try:
+            s = self.d.channels.open_company_session(uid)
+        except Exception:  # noqa: BLE001 - the person exists and the invite is used; no session: the plain answer, cookie cleared
+            return self._oidc_fail(OidcError("not_allowed"), c)
         self._record("invite.redeemed", actor_id=uid, subject_user=uid, detail={"invite_id": out["invite_id"]})
         self._record("oidc.linked", actor_id=uid, subject_user=uid)
         ttl = max(0, (s["expires_ms"] - self.d.now_ms()) // 1000)

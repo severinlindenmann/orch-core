@@ -39,6 +39,7 @@ def test_browser_sign_in_sets_http_only_strict_cookie_and_no_token_in_body(w):
         "name": "ann",
         "is_admin": False,
         "needs_sign_in": False,
+        "company_login": False,
         "recovery": None,
     }
 

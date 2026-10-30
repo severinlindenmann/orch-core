@@ -14,6 +14,7 @@ import { adminView } from "./admin.js";
 import { changesView, checkChange, sentence as changeSentence } from "./changes.js";
 import { KEY_GONE_NOTE, totpPanel } from "./totp.js";
 import { inviteView } from "./invite.js";
+import { KEY_WORDS, WHY as COMPANY_WHY, accountCard as companyAccountCard, begin as beginCompany, finishCallback, signInButton as companyButton } from "./oidc.js";
 import { rememberDashboard, rememberName } from "./connect.js";
 import { servicesView } from "./services.js";
 import { VERBS, checkServiceAction, resultWords, needsConfirm, hubStopConfirm, logsDialog } from "./service_actions.js";
@@ -128,7 +129,12 @@ function loginView(err) {
       await afterLogin();
     },
   }, field("Your name", id), field("Password", pw), field("6-digit code", code), h("div", { class: "row top" }, h("button", { class: "pri", type: "submit", text: "Sign in" })));
-  show(h("h1", { text: "Sign in to your hub" }), err ? banner("bad", "Not signed in", err) : null, form);
+  show(h("h1", { text: "Sign in to your hub" }), err ? banner("bad", "Not signed in", err) : null, h("div", { id: "company-slot" }), form);
+  void api("GET", "/oidc/options").then((o) => { // company login (HUB-PE-04): a button only when the admin turned it on
+    const btn = o.status === 200 ? companyButton(o.body, async () => { const r = await beginCompany(api, "signin"); if (!r.ok) loginView(COMPANY_WHY[r.error] ?? say(r.error)); }) : null;
+    const slot = document.getElementById("company-slot");
+    if (btn && slot) slot.append(btn);
+  });
 }
 
 // First admin (prototype): the installer's one-time link opens this page; the hub shows the authenticator QR once and signs the new admin in.
@@ -620,7 +626,12 @@ async function account() {
       copy: copyText,
       signInAgain: async () => { await api("DELETE", "/session"); clearSession(); loginView(); },
     };
-    shell("account", state.notice, accountView({ user: state.user, channels: r.body.channels, thisBrowserId: state.me?.channelId, needsSignIn: !!state.user.needs_sign_in }, { remove: removeChannel, security }));
+    const me = await api("GET", "/oidc/me");
+    const company = me.status === 200 ? companyAccountCard(me.body, {
+      link: (c) => beginCompany(api, "link", c),
+      unlink: async () => { const x = await api("DELETE", "/oidc/link"); if (x.status === 200) void account(); return x; },
+    }) : null;
+    shell("account", state.notice, accountView({ user: state.user, channels: r.body.channels, thisBrowserId: state.me?.channelId, needsSignIn: !!state.user.needs_sign_in }, { remove: removeChannel, security }), company);
     state.notice = null;
   } finally { finishLoading(); }
 }
@@ -887,7 +898,7 @@ async function registerBrowser(label, password, totp) {
     gen = await generateKey();
     const me0 = { keyPub: gen.keyPub, userId: state.user.user_id, hubId: state.me?.hubId ?? null };
     const begun = await api("POST", "/channels/register/begin", { kind: "browser", key_pub: gen.keyPub, label, password, totp });
-    if (begun.status !== 200) return say(begun.body.error);
+    if (begun.status !== 200) return state.user?.company_login ? KEY_WORDS : say(begun.body.error); // no hub password: a set-up link from an admin, never a dead end
     const signed = await signRegistration(gen.pair.privateKey, begun.body.challenge, me0, Date.now());
     const done = await api("POST", "/channels/register/complete", { challenge_id: begun.body.challenge_id, signed });
     if (done.status !== 200) return say(done.body.error);
@@ -1421,4 +1432,14 @@ async function renderRoute() {
   finally { routing = false; }
 }
 window.addEventListener("hashchange", renderRoute);
-renderRoute();
+if (location.pathname === "/oidc/callback") { // the company's sign-in page sent the browser back: finish, then leave this address
+  const search = location.search;
+  history.replaceState(null, "", "/");
+  finishCallback(api, search).then(async (r) => {
+    if (r.ok) { if (r.where) location.hash = r.where; await renderRoute(); return; }
+    if (r.purpose === "signin") { loginView(COMPANY_WHY[r.body?.error] ?? say(r.body?.error)); return; }
+    state.notice = banner("bad", "Company login did not finish", r.body?.reason ?? COMPANY_WHY[r.body?.error] ?? say(r.body?.error));
+    if (r.where) location.hash = r.where;
+    await renderRoute();
+  });
+} else renderRoute();

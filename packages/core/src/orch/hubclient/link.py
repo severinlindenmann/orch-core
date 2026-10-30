@@ -25,6 +25,7 @@ W2H_OPS: dict[str, str | None] = {
     "binding_put": None,
     "snapshot_get": None,
     "org_skills_get": None,
+    "closing_get": None,  # #1463 (hub protocol 9.7): {} -> {"closing": <hub.closing> | null}
     "mcp_servers_get": None,
     "org_secrets_get": None,
     "secret_use": None,

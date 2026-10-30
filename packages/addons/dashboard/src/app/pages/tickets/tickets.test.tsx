@@ -3,6 +3,7 @@ import { screen, waitFor, within } from '@testing-library/react'
 import { api, mockStore } from '@/api/client'
 import { renderApp } from '@/test/renderApp'
 import { COLD } from '@/test/cold'
+import { markJustCreated } from '@/app/pages/new-ticket/justCreated'
 
 describe('Tickets page', () => {
   it('shows what others shared through the hub as read-only "Shared by" rows, and nothing without a hub', async () => {
@@ -76,6 +77,15 @@ describe('Tickets page', () => {
     renderApp('/tickets')
     const count = await screen.findByText(/^\d+ tickets?/)
     expect(count.className).not.toMatch(/font-mono/)
+  })
+  it('P19: the ticket just created is highlighted with a New tag in the list', async () => {
+    markJustCreated('DEMO-0043')
+    renderApp('/tickets')
+    const table = await screen.findByRole('table', { name: 'Tickets' })
+    const tag = await within(table).findByTestId('ticket-new-DEMO-0043', {}, COLD)
+    expect(tag).toHaveTextContent('New')
+    expect(tag.closest('tr')).toHaveClass('bg-brand-soft')
+    expect(within(table).queryByTestId('ticket-new-DEMO-0042')).toBeNull()
   })
   it('opens a ticket with Enter on the focused row', async () => {
     const { user } = renderApp('/tickets')

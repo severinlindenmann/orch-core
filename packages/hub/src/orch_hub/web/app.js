@@ -18,7 +18,7 @@ import { rememberDashboard, rememberName } from "./connect.js";
 import { servicesView } from "./services.js";
 import { handoffsView } from "./handoffs.js";
 import { phonesView } from "./phones.js";
-import { workspacesView, workspaceDetailsView, newWorkspaces } from "./workspaces.js";
+import { workspacesView, workspaceDetailsView, newWorkspaces, privateRows } from "./workspaces.js";
 import { OPEN_FIRST, colour, initials, landing, landingPlan, railRows, safeUrl } from "./switch.js";
 import { Refusal, grantTermsOk, grantSentence, grantFacts, addonFacts, addonTermsOk, settingsFacts, settingsTermsOk, checkBindings, checkPrepared, describe, renderMulti, renderText, shortHash, verifyQuestion, DECISIONS } from "./render.js";
 
@@ -491,7 +491,8 @@ async function workspaces(joined = [], known = null) {
       // Watch for joins while this page is open (3 s, paused while the tab is hidden, stopped by leaving the route).
       clearInterval(workspacesTimer);
       // Diff only against a successful first read: a failed one must not make every workspace look newly joined.
-      let seen = known ?? (ws.status === 200 ? new Set(rows.map((w) => w.workspace_id)) : null);
+      // For an admin the set includes the private workspaces that only the admin list shows (selective mode).
+      let seen = known ?? (ws.status === 200 ? new Set([...rows, ...privateRows(rows, adminRows)].map((w) => w.workspace_id)) : null);
       const mine = ++viewRevision;
       pageRev = mine;
       let checking = false;
@@ -499,10 +500,13 @@ async function workspaces(joined = [], known = null) {
         if (document.hidden || checking || mine !== viewRevision) return;
         checking = true;
         try {
-          const r = await api("GET", "/me/workspaces");
+          const [r, ar] = await Promise.all([api("GET", "/me/workspaces"), canAdmin() ? api("GET", "/admin/workspaces") : Promise.resolve(null)]);
           if (mine !== viewRevision || r.status !== 200) return;
           if (seen === null) return void (await workspaces([], null)); // the first good read: draw it, nothing is "joined"
-          const fresh = newWorkspaces(seen, r.body.workspaces);
+          // A failed admin read falls back to /me/workspaces only: it never marks anything as joined.
+          const now = r.body.workspaces ?? [];
+          const merged = [...now, ...privateRows(now, ar?.status === 200 ? ar.body.workspaces ?? [] : null)];
+          const fresh = newWorkspaces(seen, merged);
           if (!fresh.length) return;
           for (const w of fresh) seen.add(w.workspace_id);
           void pollLive();

@@ -210,10 +210,12 @@ export const newWorkspaces = (known, rows) => (rows ?? []).filter((w) => w.works
 
 /** The green message that replaces the used link box once a workspace has joined. */
 export function joinedBannerView(row, actions = {}) {
+  // A private (selective-mode) workspace: only its owner can open it, so no Open button and nothing else about it.
+  const note = row.private ? "It is online now. Only " + (row.owner_name || "its owner") + " can open it." : "It is online now. You can open it from here.";
   return h("div", { class: "banner ok ws-joined", role: "status", "data-joined": row.workspace_id },
     h("div", { class: "row" },
-      h("div", { class: "grow" }, h("b", { text: "✓ " + nameOf(row) + " joined" }), small("It is online now. You can open it from here.")),
-      button("Open " + nameOf(row), () => actions.open?.(row), { class: "pri" })));
+      h("div", { class: "grow" }, h("b", { text: "✓ " + nameOf(row) + " joined" }), small(note)),
+      row.private ? null : button("Open " + nameOf(row), () => actions.open?.(row), { class: "pri" })));
 }
 
 /** data: {workspaces, handoffs, admin: rows|null, hub, actions, joined?: rows that joined while the page was open}. */

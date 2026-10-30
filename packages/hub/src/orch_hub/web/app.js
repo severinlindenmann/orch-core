@@ -115,7 +115,7 @@ const WORDS = {
 const say = (code) => WORDS[code] ?? "That did not work. Please try again.";
 
 // --- views -------------------------------------------------------------------------------------------------------------
-function loginView(err) {
+function loginView(err, opts = {}) {
   clearSession();
   const id = h("input", { id: "user", autocomplete: "username", required: true });
   const pw = h("input", { id: "pw", type: "password", autocomplete: "current-password", required: true });
@@ -129,7 +129,9 @@ function loginView(err) {
       await afterLogin();
     },
   }, field("Your name", id), field("Password", pw), field("6-digit code", code), h("div", { class: "row top" }, h("button", { class: "pri", type: "submit", text: "Sign in" })));
-  show(h("h1", { text: "Sign in to your hub" }), err ? banner("bad", "Not signed in", err) : null, h("div", { id: "company-slot" }), form);
+  if (opts.prefill) id.value = opts.prefill; // P02: arriving from the person's own workspace, the name is already known
+  show(h("h1", { text: opts.title ?? "Sign in to your hub" }), opts.why ? h("p", { class: "muted", text: opts.why }) : null, err ? banner("bad", "Not signed in", err) : null, h("div", { id: "company-slot" }), form);
+  if (opts.prefill) pw.focus?.();
   void api("GET", "/oidc/options").then((o) => { // company login (HUB-PE-04): a button only when the admin turned it on
     const btn = o.status === 200 ? companyButton(o.body, async () => { const r = await beginCompany(api, "signin"); if (!r.ok) loginView(COMPANY_WHY[r.error] ?? say(r.error)); }) : null;
     const slot = document.getElementById("company-slot");
@@ -353,9 +355,11 @@ async function landFromTicket(t) {
 }
 
 // A session that came from a workspace ticket cannot use admin tools until a real password sign-in.
-function reauthView() {
-  show(h("div", { class: "plain" }, h("h1", { text: "Sign in again to use admin tools" }), h("p", { class: "muted", text: "You opened the hub from your workspace, so you can see your things here. Admin tools need your password and code once; you come straight back to this page." }),
-    h("button", { class: "pri", text: "Sign in again", onclick: async () => { const back = globalThis.location?.hash ?? null; await api("DELETE", "/session"); clearSession(); returnHash = back; loginView(); } })));
+async function reauthView() {
+  const name = state.user?.user_id ?? "", back = globalThis.location?.hash ?? null;
+  const admin = /^#\/admin/.test(back ?? "");
+  await api("DELETE", "/session"); clearSession(); returnHash = back;
+  loginView(null, { prefill: name, title: admin ? "Sign in to open Admin" : "Sign in to open this page", why: "You came from your workspace. Confirm it is you, then you go straight " + (admin ? "to Admin." : "back to this page.") });
 }
 
 // P17: an admin whose session came from a workspace keeps "Connect a workspace" in reach. The click explains why one real
@@ -1444,9 +1448,9 @@ async function renderRoute() {
     // A page that throws is a bug in the page, never a sign-in problem: api() returns 401s as data and each page sends a
     // real 401 to the sign-in form itself. So say the page did not load, offer Retry, and keep the error for the console.
     console.error("orch hub: the page did not load", e);
-    show(h("h1", { text: "This page did not load" }),
-      h("p", { role: "alert", text: "Something went wrong on this page. Try again. If it keeps happening, tell whoever runs this hub." }),
-      h("button", { type: "button", class: "primary", "data-retry": "page", text: "Retry", onclick: () => renderRoute() }));
+    show(h("h1", { text: "This page did not open" }),
+      h("p", { role: "alert", text: "You are still signed in. Nothing was lost. If it keeps happening, tell whoever runs this hub." }),
+      h("button", { type: "button", class: "primary", "data-retry": "page", text: "Try again", onclick: () => renderRoute() }));
   }
   finally { routing = false; }
 }

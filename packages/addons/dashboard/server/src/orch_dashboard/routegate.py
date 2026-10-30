@@ -264,6 +264,9 @@ def _rows(rule, level, method, *templates):
 
 
 REMOTE_DEVICE: dict[tuple[str, str], tuple[str, str]] = {
+    # the hub profile (who this workspace is on the hub) is changed and shown on this computer only
+    **_rows(REFUSED, VIEW, GET, W + "/hub/profile"),
+    **_rows(REFUSED, VIEW, PUT, W + "/hub/profile"),
     **_rows(
         ALLOWED,
         VIEW,

@@ -22,6 +22,9 @@ def test_a_channel_session_never_reaches_an_admin_route(w):  # noqa: F811
     assert (s, o) == (403, {"error": "forbidden_role"})  # §6.4: no admin routes for a channel session
 
 
+from route_paths import concrete_path
+
+
 def test_a_pairing_token_reaches_nothing_beyond_pair_bind_sign_out(w):  # noqa: F811
     _, cid, tok = pair(w, w.ann)
     allowed = {("POST", "/session/channel"), ("DELETE", "/session")}
@@ -32,24 +35,9 @@ def test_a_pairing_token_reaches_nothing_beyond_pair_bind_sign_out(w):  # noqa: 
             continue
         if rt.handler in ("reg_begin", "reg_complete"):
             continue
-        path = rt.path.removeprefix("/api/v1")
-        for k in (
-            "channel_id",
-            "user_id",
-            "workspace_id",
-            "item_id",
-            "prepared_id",
-            "group",
-            "change_id",
-            "name",
-            "space_id",
-            "share_id",
-            "app_id",
-        ):
-            path = path.replace("{" + k + "}", cid if k == "channel_id" else "ab" * 16)
-        path = path.replace("{invite}", "ab" * 8)  # invite ids are 16 hex
-        path = path.replace("{part}", "relay")  # service parts are a closed set
+        path = concrete_path(rt, {"channel_id": cid}).removeprefix("/api/v1")
         s, o, _ = w.call(rt.method, path, {} if rt.method != "GET" else None, token=tok)
+        assert o != {"error": "unknown_op"}, (rt.method, rt.path)  # the sweep must really route
         assert o == {"error": "forbidden_role"}, (rt.method, rt.path, s, o)
 
 

@@ -928,3 +928,26 @@ def test_a_crash_between_the_two_renames_is_recovered_on_the_next_run(root, env,
     os.rename(root, aside)  # the state a crash between the renames leaves
     bk.restore(b, root, env)
     assert (root / "events/a.jsonl").read_text() == "e1\n" and not aside.exists()
+
+
+@pytest.mark.parametrize(
+    "rel",
+    ["hosts/w/heads.sqlite", "hosts/w/heads.sqlite-wal", "hosts/w/transitions/t1"]
+    + ["hosts/w/pending-transitions/p", ".state/applied", ".state/intents/i"],
+)  # fmt: skip
+def test_the_remaining_durable_host_files_are_protected(root, rel):
+    assert is_signed_path(rel)
+    assert not bk.is_derived(".state/heads.sqlite")
+
+
+def test_a_step_that_wipes_heads_sqlite_is_caught(root):
+    (root / "hosts/w").mkdir(parents=True)
+    (root / "hosts/w/heads.sqlite").write_text("ancestry")
+
+    def wipe(ctx):
+        (root / "hosts/w/heads.sqlite").unlink()
+
+    reg = Registry([Step("workspace", 1, 2, "wipe", wipe)], {"workspace": 2})
+    with pytest.raises(OrchError):
+        apply(root, "workspace", reg)
+    assert read_format(root, "workspace") == 1 and (root / "hosts/w/heads.sqlite").exists() is False  # the step ran

@@ -3,7 +3,8 @@
 A backup of one root goes to ``<data home>/orch/backups/<ts>-<kind>-<from>-<to>/`` (``manifest.json`` plus ``data/``):
 mode 0700 under umask 077, **local only**, never inside a synced folder (iCloud Drive, Dropbox, Google Drive, OneDrive).
 It holds the root's keys (they are as protected there as on disk); that is why it never leaves the machine.
-The last 3 per root are kept. Derived data (``.state/``, ``.orch-work/``, ``install/tools``) is left out.
+The last 3 per root are kept. Left out: only derived or runtime data (the ``.state`` index and lock,
+``.orch-work/``, ``install/tools``).
 
 macOS on one volume: APFS clonefile (``cp -c``), instant and free of space. Otherwise a plain copy.
 

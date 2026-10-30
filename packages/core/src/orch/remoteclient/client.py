@@ -4,10 +4,9 @@ One :class:`Client` per OS user: it keeps the hub it talks to, the hub token, th
 to and
 the presence key, and offers the screens' verbs:
 
-* :meth:`connect_hub` -- first run, on the office network: fetch the hub card (TOFU over the private network), verify
-it,
-  pin its TLS key and link address, sign in with ``client: "remote"`` for a 7 day token that grants nothing at a
-  workspace;
+* :meth:`connect_hub` -- first run, on the office network: fetch the hub card over TLS pinned to the key from the
+  connect link or enrollment code (never learned from the connection itself), verify it, keep that pin and link
+  address, sign in with ``client: "remote"`` for a 7 day token that grants nothing at a workspace;
 * :meth:`workspaces` -- the person's rail from the hub (``name`` is "from the hub" until the workspace's own name is
 known);
 * :meth:`enroll` -- add this computer from a pasted code; ``on_words`` gets the six words to compare;
@@ -124,12 +123,13 @@ class Client:
     ) -> tuple[int, bytes]:
         """THE function that builds a connection to the hub's web API (card fetch and sign-in). Credentials only ever go
         over TLS pinned to the hub's SPKI, where the pin came from the connect link or the enrollment code and is never
-        learned from the same connection (no trust on first use). Plain http is for loopback only. No pin and not
-        loopback: refused before any connection is made."""
+        learned from the same connection (no trust on first use). A known pin is always used, loopback included.
+        Plain http only when there is no pin AND the hub is on loopback. No pin and not loopback: refused before any
+        connection is made."""
         u = urllib.parse.urlsplit(origin)
         host, port = u.hostname or "", u.port
         headers = {"Accept": "application/json", **({"Content-Type": "application/json"} if body is not None else {})}
-        if u.scheme == "http" and host in ("127.0.0.1", "::1"):
+        if pin is None and u.scheme == "http" and host in ("127.0.0.1", "::1"):
             return self._http(method, origin + path, body, headers)
         if u.scheme != "https" or not host or pin is None:
             raise ClientError("remote_client.no_pin")

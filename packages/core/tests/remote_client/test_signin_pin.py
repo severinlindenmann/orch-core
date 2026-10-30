@@ -64,3 +64,19 @@ def test_loopback_http_goes_through_the_plain_path(tmp_path):
             c.connect_hub(origin, "127.0.0.1:9443", "ann", "pw", "1")
         assert e.value.code == "remote_client.no_hub"
     assert len(calls["http"]) == 2 and calls["tls"] == []
+
+
+def test_loopback_hub_with_a_pin_uses_pinned_tls_never_plain_http(tmp_path):
+    c, calls = client(tmp_path, tls_result=ClientError("remote_client.hub_key_changed"))
+    with pytest.raises(ClientError) as e:
+        c.connect_hub("https://127.0.0.1:8443", "127.0.0.1:9443", "ann", "pw", "1", pin=PIN)
+    assert e.value.code == "remote_client.hub_key_changed"
+    assert calls == {"http": [], "tls": [("127.0.0.1", 8443, PIN)]}
+
+
+@pytest.mark.parametrize("origin", ["http://127.0.0.1:8443", "http://[::1]:8443"])
+def test_loopback_http_with_a_pin_is_refused_not_sent_in_clear(tmp_path, origin):
+    c, calls = client(tmp_path)
+    with pytest.raises(ClientError) as e:
+        c.connect_hub(origin, "127.0.0.1:9443", "ann", "pw", "1", pin=PIN)
+    assert e.value.code == "remote_client.no_pin" and calls == {"http": [], "tls": []}

@@ -79,9 +79,6 @@ remote.agents_risk 3 retry:false
 remote.needs_selective 3 retry:false
 remote.no_pending 3 retry:false
 remote.full 3 retry:false
-remote.no_stream 3 retry:false
-remote.presence_replay 3 retry:false
-remote.busy 3 retry:false
 switch.refused 3 retry:false
 hub.already_joined 3 retry:false
 hub.not_joined 3 retry:false

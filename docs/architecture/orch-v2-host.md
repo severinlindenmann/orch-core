@@ -475,6 +475,9 @@ Codes from P1 (`orch.ops.errors`, F1 §10.4a) keep their exit codes and retryabi
 | `term.not_attachable` | 3 | no | stays | `term.attach` on a run that is `starting` or `lost`, or `exited` with no ring kept; `detail.state` names it | — |
 | `run.limit` | 9 | yes | stays | a run limit of §0.11; `detail.which` is `agent_ws`, `agent_person`, `shell_person` or `runner` | when a run ends |
 | `attach.limit` | 9 | yes | stays | an attachment limit (4 per run, 16 per person, 64 per runner) | when one ends |
+| `remote.no_stream` | 3 | no | stays | the remote session is closed, unknown or another person's (R3, `remote.stream`, `remote.presence_used`, `remote.session_end`) | never |
+| `remote.presence_replay` | 3 | no | stays | a remote presence batch whose FIDO2 signature counter did not rise (R3, `remote.presence_used`) | never |
+| `remote.busy` | 3 | no | stays | another dashboard is attached to the workspace's remote access (R3, `remote.attach`) | when its lease ends |
 | `term.writer_busy` | 3 | no | stays | a write attach while another attachment holds the lease and `take` is false (the term socket's `{t:"end", reason:"writer_busy"}` has the same meaning) | — |
 | `host.limit` | 3 | no | stays | `relay.link` above the relay-linked workspace cap (8 per host, §11A.7; H12a). Not retryable: a slot frees only when another workspace is unlinked | — |
 | `relay.not_linked` | 3 | no | stays | `host.relay_unlink` on a workspace with no `relay/link.json` (R5, §11A.6; 11A.15.9 lists it for R6's ops too) | — |

@@ -139,6 +139,7 @@ def args_for(op: str, ref: str) -> dict:
         "remote.status",
         "remote.pending",
         "remote.sessions",
+        "remote.attach",
         "remote.off",
         "remote.code",
         "remote.key_rotate",

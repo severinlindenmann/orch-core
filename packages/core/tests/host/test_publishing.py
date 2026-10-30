@@ -1523,7 +1523,7 @@ def test_an_app_release_cannot_be_prepared_without_a_staged_release_the_host_bui
     """#1457: ``app.release`` names only a staged release; with none from the host module nothing is prepared, so nobody
     (and no agent) can obtain a signature over words of their own."""
     res = w.human.prepare_res("app.release", {"staged_id": "pa_" + "1" * 32})
-    assert err(res) == "human_only"
+    assert err(res) == "not_found"  # no such staged release; the words are never taken from the request
     res = w.human.prepare_res(
         "app.release", {"staged_id": "pa_" + "1" * 32, "text": "App approval: let an app go live"}
     )

@@ -383,6 +383,10 @@ def main(
         from orch.cli.publish import main as publish_main
 
         return publish_main(args[1:], env=env, out=out, err=err, now=now)
+    if args[:1] == ["app"]:  # shared apps, pages and forms (#1455): a host client, like publish
+        from orch.cli.app import main as app_main
+
+        return app_main(args[1:], env=env, out=out, err=err, now=now)
     if args[:2] == ["quick", "start"]:  # B11 step (ii): a person's quick task on one review (a host client, like sign)
         from orch.host.quickstart import main as start_main
 

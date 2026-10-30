@@ -20,12 +20,12 @@ const find = (n, pred) => n.all().filter(pred);
 const data = {
   max_chars: 2400,
   workspaces: [{ workspace_id: "a".repeat(32), name: "Product" }, { workspace_id: "b".repeat(32), name: null }],
-  skills: [{ name: "invoices", text: "Write <b>INV</b> numbers.", digest: "sha256:x", offered_to: ["a".repeat(32)] }],
+  skills: [{ name: "invoices", text: "Write <b>INV</b> numbers.", digest: "sha256:x", shared: "chosen", offered_to: ["a".repeat(32)] }],
 };
 
 test("a skill shows its text as text, offer boxes reflect who has it, and the page says nothing is on until accepted", () => {
   const calls = [];
-  const view = skillsView(data, { save: (n, t) => calls.push(["save", n, t]), offer: (n, ws) => calls.push(["offer", n, ws]), remove: (s) => calls.push(["remove", s.name]) });
+  const view = skillsView(data, { save: (n, t) => calls.push(["save", n, t]), offer: (n, sh, ws) => calls.push(["offer", n, sh, ws]), remove: (s) => calls.push(["remove", s.name]) });
   assert.match(view.textContent, /Nothing is switched on for anyone until their workspace owner accepts it\./);
   assert.equal(find(view, (n) => n.tag === "b" && n.textContent === "INV").length, 0); // text, never markup
   const boxes = find(view, (n) => n.tag === "input" && n.attrs["data-ws"]);
@@ -33,7 +33,7 @@ test("a skill shows its text as text, offer boxes reflect who has it, and the pa
   assert.match(view.textContent, /A workspace/);
   boxes[1].checked = true;
   find(view, (n) => n.tag === "button" && n.textContent === "Save who gets it")[0].listeners.click();
-  assert.deepEqual(calls[0], ["offer", "invoices", ["a".repeat(32), "b".repeat(32)]]);
+  assert.deepEqual(calls[0], ["offer", "invoices", "chosen", ["a".repeat(32), "b".repeat(32)]]);
   find(view, (n) => n.tag === "button" && n.textContent === "Save text")[0].listeners.click();
   assert.deepEqual(calls[1], ["save", "invoices", "Write <b>INV</b> numbers."]);
   const remove = find(view, (n) => n.tag === "button" && n.textContent === "Remove")[0];
@@ -69,4 +69,30 @@ test("an offer target is named like the rail names it, with a friendly fallback 
   assert.equal(wsLabel({ workspace_id: id, name: "Own" }, [{ id, name: "Rail" }]), "Own");
   assert.equal(wsLabel({ workspace_id: id, owner_name: "Ben Test" }, []), "Ben Test's workspace");
   assert.equal(withNames([{ workspace_id: id }], [])[0].name, "A workspace");
+});
+
+test("who gets a skill defaults to all workspaces, hides the boxes, and saves no list", () => {
+  const calls = [];
+  const all = { ...data, skills: [{ name: "invoices", text: "x", digest: "sha256:x", offered_to: [] }] };
+  const view = skillsView(all, { offer: (n, sh, ws) => calls.push([n, sh, ws]) });
+  const pick = find(view, (n) => n.tag === "select" && n.attrs["aria-label"] === "Who gets it")[0];
+  assert.equal(pick.value, "all");
+  assert.match(view.textContent, /All workspaces \(also new ones\)/);
+  assert.equal(find(view, (n) => n.className === "share-list")[0].hidden, true);
+  find(view, (n) => n.tag === "button" && n.textContent === "Save who gets it")[0].listeners.click();
+  assert.deepEqual(calls[0], ["invoices", "all", []]);
+  pick.value = "chosen"; pick.listeners.change();
+  assert.equal(find(view, (n) => n.className === "share-list")[0].hidden, false);
+});
+
+test("needs attention sits at the top, one line and one action link each, and is absent when empty", () => {
+  const items = [{ kind: "secret_expiring", text: "crm-key expires in 5 days.", page: "secrets", action: "Enter a new value" }];
+  const view = skillsView({ ...data, attention: items });
+  const kids = view.children.map((c) => c.textContent);
+  assert.match(kids[1], /^Needs attention/);
+  assert.match(view.textContent, /crm-key expires in 5 days\./);
+  const link = find(view, (n) => n.tag === "a")[0];
+  assert.equal(link.attrs.href, "#/secrets");
+  assert.equal(link.textContent, "Enter a new value");
+  assert.doesNotMatch(skillsView({ ...data, attention: [] }).textContent, /Needs attention/);
 });

@@ -2,10 +2,9 @@
 // enabling: a workspace's owner sees the exact address and turns a server on at their own host, and agents reach it only
 // through the host's own proxy. There is no way to offer a program to run, only an https address.
 import { emptyState, loading } from "../feel.js";
-import { h, text, withNames } from "../ui.js";
+import { attentionList, h, sharePicker, text, withNames } from "../ui.js";
 
 const info = (label, body) => h("details", { class: "info" }, h("summary", { "aria-label": label, text: "i" }), h("p", { class: "small muted", text: body }));
-const wsName = (w) => text(w?.name || "A workspace");
 const NAME = /^[a-z][a-z0-9-]{1,39}$/;
 
 // Mirrors the hub's own check so a typo is caught before sending; the hub decides in the end.
@@ -43,11 +42,6 @@ export function mcpView(data, actions = {}) {
     return [nameIn, url, desc, auth, secret, note, save];
   };
   const card = (s) => {
-    const boxes = workspaces.map((w) => {
-      const box = h("input", { type: "checkbox", "data-ws": w.workspace_id });
-      box.checked = (s.offered_to ?? []).includes(w.workspace_id);
-      return { w, box };
-    });
     let sure = false;
     const remove = h("button", { type: "button", text: "Remove", onclick: () => {
       if (!sure) { sure = true; remove.textContent = "Sure? Remove it"; return; }
@@ -60,13 +54,12 @@ export function mcpView(data, actions = {}) {
       h("div", { class: "row" }, h("span", { class: "status small", "data-status": s.status?.status ?? "not_checked", text: word }), check),
       form(s, false),
       h("p", { class: "small muted", text: "Saving changes the server, so each workspace owner has to accept it again." }),
-      h("h4", { text: "Offer to" }),
-      workspaces.length ? boxes.map(({ w, box }) => h("label", { class: "list-row row" }, box, h("span", { class: "grow", text: wsName(w) }))) : h("p", { class: "small muted", text: "No workspaces are connected yet." }),
-      workspaces.length ? h("button", { type: "button", text: "Save who gets it", onclick: () => actions.offer?.(s.name, boxes.filter((x) => x.box.checked).map((x) => x.w.workspace_id)) }) : null);
+      sharePicker(s, workspaces, (shared, ids) => actions.offer?.(s.name, shared, ids)));
   };
   return h("div", { class: "mcp-servers" },
     h("div", { class: "row" }, h("h1", { class: "grow", text: "Tool servers" }),
       info("About tool servers", "A tool server gives your agents extra tools over the internet, such as your CRM. Each workspace owner sees the address and turns it on. Agents never see the sign-in secret: the workspace connects for them, and you can switch single tools off there. Tools that change things start off; each workspace owner turns them on.")),
+    attentionList(data.attention),
     h("p", { class: "banner warn", role: "note", text: "Nothing is switched on for anyone until their workspace owner accepts it." }),
     (data.servers ?? []).length ? (data.servers ?? []).map(card) : emptyState("mcp"),
     h("section", { class: "card" }, h("h3", { text: "New server" }), form(null, true)));
@@ -83,12 +76,13 @@ export async function mcpPage(d, retried = false) {
     const r = await d.api("GET", "/admin/mcp-servers");
     if (r.status === 403 && r.body.error === "reauth_required") return d.reauthView();
     if (r.status !== 200) return d.shell("mcp", h("h1", { text: "Tool servers" }), h("p", { role: "alert", text: "Cannot read the tool servers. " + d.say(r.body.error) }));
+    const att = await d.api("GET", "/admin/needs-attention");
     const say = (ok, x) => { d.state.notice = x.status === 200 ? d.banner("ok", ok, null) : d.banner("bad", "Not changed", d.say(x.body.error ?? "unavailable")); };
     const save = async (name, body) => { say("Saved", await d.api("PUT", "/admin/mcp-servers/" + name, body)); await mcpPage(d); };
     const remove = async (s) => { say("Removed", await d.api("DELETE", "/admin/mcp-servers/" + s.name)); await mcpPage(d); };
     const check = async (name) => { const x = await d.api("POST", "/admin/mcp-servers/" + name + "/check"); if (x.status !== 200) say("", x); await mcpPage(d); };
-    const offer = async (name, workspaces) => { say("Saved", await d.api("PUT", "/admin/mcp-servers/" + name + "/offers", { workspaces })); await mcpPage(d); };
-    d.shell("mcp", d.state.notice, mcpView({ ...r.body, workspaces: withNames(r.body.workspaces, d.state.rail?.rows ?? []) }, { save, remove, offer, check }));
+    const offer = async (name, shared, workspaces) => { say("Saved", await d.api("PUT", "/admin/mcp-servers/" + name + "/offers", { shared, workspaces })); await mcpPage(d); };
+    d.shell("mcp", d.state.notice, mcpView({ ...r.body, attention: att.status === 200 ? att.body.items : [], workspaces: withNames(r.body.workspaces, d.state.rail?.rows ?? []) }, { save, remove, offer, check }));
     d.state.notice = null;
     // The hub checks stale servers in the background when this page opens; ask once more shortly for the answer.
     if (!retried && (r.body.servers ?? []).some((x) => x.status?.status === "not_checked")) setTimeout(() => mcpPage(d, true), 4000);

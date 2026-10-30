@@ -66,6 +66,7 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/hub/share/sync",  # one click: confirm the shown selection (same rules)
         "/api/w/{ws}/org",  # M3 H-5: company offers (a read)
         "/api/w/{ws}/org/item",  # a read of one item
+        "/api/w/{ws}/org/secrets",  # #1434: a read of the company secrets received (names, expiry, status)
         "/api/w/{ws}/org/accept",  # one click: turn a company item on (owner, full LOCAL session, the digest shown)
         "/api/w/{ws}/org/decline",  # one click: turn it off (owner, full session)
         "/api/w/{ws}/org/sync",  # one click: get the latest from the hub

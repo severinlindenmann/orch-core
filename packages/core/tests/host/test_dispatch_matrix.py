@@ -268,8 +268,9 @@ def test_every_served_op_in_every_row_of_the_effective_column_table():
                 "org.offers": ("pg_read", "read"),
                 "org.sync": ("pg_write", "write"),
                 "org.show": ("person_read", "read"),
+                "org.secrets": ("person_read", "read"),
             }.get(op, ("person_write", "write"))
-            assert op in ORG_READS or kind[1] == "write" or op == "org.show"
+            assert op in ORG_READS or kind[1] == "write" or op in ("org.show", "org.secrets")
         elif op in SPACE_OPS:  # V3 C13: list and get for P and G, the rest P only (owner role)
             want = ("pg_read", "read") if op in SPACE_READS else ("person_write", "write")
             assert kind == (("pg_write", "write") if op in SPACE_AGENT_WRITES else want)
@@ -581,5 +582,22 @@ def test_hub_profile_dispatch_get_and_put(lab, role):
             else:
                 data = ok(response)["data"]
                 assert data == ({"profile": profile, "pushed": False} if args else {"profile": _DEFAULT_PROFILE})
+    finally:
+        s.close()
+
+
+def test_a_non_owner_member_is_role_denied_on_org_secrets(lab):
+    """#1434: the list of company secrets is the owner's: a member (a person, column P) gets role.denied."""
+    person = lab.add_member()
+    s = Served.__new__(Served)
+    s.lab = lab
+    s.h = lab.host(clock=lambda: lab.ws.clock[0])
+    s.h.__enter__()
+    s.control = s.h.client()
+    s.wid = ok(lab.register(s.control, peers=lab.peers(person.ref)))["data"]["workspace_id"]
+    s.service = s.h.host.services[s.wid]
+    s.clients = []
+    try:
+        assert err(s.client().req("org.secrets", {})) == "role.denied"
     finally:
         s.close()

@@ -12,6 +12,7 @@ from ..access.mcpprobe import mcp_probes
 from ..access.orgmcp import org_mcp
 from ..access.orgskills import org_skills
 from ..contract.org_bundles import SKILL_TEXT_MAX
+from ..view.skills_attention import needs_attention
 
 
 def _need(b: dict | None, **types: type) -> dict:
@@ -46,10 +47,15 @@ class OrgHandlers:
         return 200, {"ok": True}
 
     def _h_a_skill_offer(self, c: Any, p: dict, q: dict, b: dict | None):
-        b = _need(b, workspaces=list)
-        ids = org_skills(self.d.access).set_offers(p["name"], b["workspaces"], actor=c.user_id)
-        self._record("skill.offered", actor_id=c.user_id, detail={"skill": p["name"], "count": len(ids)})
-        return 200, {"offered_to": ids}
+        b = _need(b, workspaces=list, shared=str)
+        out = org_skills(self.d.access).set_share(p["name"], b["shared"], b["workspaces"], actor=c.user_id)
+        self._record("skill.offered", actor_id=c.user_id, detail={"skill": p["name"], "count": len(out["offered_to"])})
+        return 200, out
+
+    def _h_a_attention(self, c: Any, p: dict, q: dict, b: dict | None):
+        """#1617 step 1: what needs an admin's attention in skills, tool servers and secrets, computed from hub data."""
+        _, out = self._h_a_secrets(c, p, q, b)  # type: ignore[attr-defined]
+        return 200, {"items": needs_attention(out["secrets"], out["workspaces"], self._now_ms())}  # type: ignore[attr-defined]
 
     # --- remote MCP servers (#1435) -------------------------------------------------------------------------------------
 
@@ -94,7 +100,7 @@ class OrgHandlers:
         return 200, {"ok": True}
 
     def _h_a_mcp_offer(self, c: Any, p: dict, q: dict, b: dict | None):
-        b = _need(b, workspaces=list)
-        ids = org_mcp(self.d.access).set_offers(p["name"], b["workspaces"], actor=c.user_id)
-        self._record("mcp.offered", actor_id=c.user_id, detail={"server": p["name"], "count": len(ids)})
-        return 200, {"offered_to": ids}
+        b = _need(b, workspaces=list, shared=str)
+        out = org_mcp(self.d.access).set_share(p["name"], b["shared"], b["workspaces"], actor=c.user_id)
+        self._record("mcp.offered", actor_id=c.user_id, detail={"server": p["name"], "count": len(out["offered_to"])})
+        return 200, out

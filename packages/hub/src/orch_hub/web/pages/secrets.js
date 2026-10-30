@@ -4,7 +4,7 @@
 // there is no automatic retry: after any outcome the box is empty and the person types it again.
 import { sealOrgSecret } from "../seal.js";
 import { loading } from "../feel.js";
-import { h, text, withNames } from "../ui.js";
+import { attentionList, h, text, withNames } from "../ui.js";
 
 const DAY = 86400000;
 const NAME = /^[a-z][a-z0-9-]{0,39}$/;
@@ -128,11 +128,19 @@ export function secretsView(data, actions = {}) {
       if (!sure) { sure = true; remove.textContent = "Sure? Remove it"; return; }
       actions.remove?.(s);
     } });
+    // Per-workspace use numbers (reported by the workspaces), one small click away.
+    const useLine = "Used this week: " + (Object.keys(s.state ?? {}).length
+      ? Object.entries(s.state).map(([id, x]) => wsName(wsById[id]) + " " + (x.used_this_week ?? 0)).join(", ")
+      : "no workspace yet");
+    const useNote = h("p", { class: "small muted", "data-use": s.name, text: useLine });
+    useNote.hidden = true;
+    const useBtn = h("button", { type: "button", class: "link small", "data-use-toggle": s.name, text: "Who used it", onclick: () => { useNote.hidden = !useNote.hidden; } });
     const reenter = needs ? h("button", { type: "button", class: "primary", text: "Enter the value", onclick: () => { again.node.hidden = !again.node.hidden; } }) : null;
     return h("article", { class: "card secret", "data-secret": s.name },
       h("div", { class: "row" }, h("h3", { class: "grow", text: s.name }), remove),
       h("p", { class: "small muted", text: (s.expired ? "Expired on " : "Expires on ") + plainDate(s.expires_ms) + ". " + (s.shared === "all" ? "Shared with all workspaces." : "Shared with chosen workspaces only.") }),
       h("p", { class: "small muted", text: "Used " + (s.used_this_week ?? 0) + " times this week (as reported by the workspaces)." }),
+      h("div", { class: "row" }, useBtn), useNote,
       rows,
       reenter ? h("div", { class: "row" }, reenter) : null,
       again.node,
@@ -147,6 +155,7 @@ export function secretsView(data, actions = {}) {
   return h("div", { class: "secrets" },
     h("div", { class: "row" }, h("h1", { class: "grow", text: "Company secrets" }),
       info("About company secrets", "A secret is a key your tools need, such as the sign-in key of your CRM. You type it here once. It is locked in your browser for each workspace you choose, and only those workspaces can read it. Agents never see it.")),
+    attentionList(data.attention),
     h("p", { class: "banner warn", role: "note", text: "The hub could read this value if it were taken over." }),
     (data.secrets ?? []).length ? (data.secrets ?? []).map(card) : none(),
     h("section", { class: "card" }, h("h3", { text: "New secret" }),
@@ -164,6 +173,7 @@ export async function secretsPage(d) {
     const r = await d.api("GET", "/admin/secrets");
     if (r.status === 403 && r.body.error === "reauth_required") return d.reauthView();
     if (r.status !== 200) return d.shell("secrets", h("h1", { text: "Company secrets" }), h("p", { role: "alert", text: "Cannot read the company secrets. " + d.say(r.body.error) }));
+    const att = await d.api("GET", "/admin/needs-attention");
     const say = (ok, x) => { d.state.notice = x.status === 200 ? d.banner("ok", ok, null) : d.banner("bad", "Not changed", d.say(x.body.error ?? "unavailable")); };
     const save = async (f) => {
       const out = await saveSecret({ api: d.api, ...f });
@@ -172,7 +182,7 @@ export async function secretsPage(d) {
     };
     const remove = async (s) => { say("Removed", await d.api("DELETE", "/admin/secrets/" + s.name)); await secretsPage(d); };
     const share = async (name, shared, workspaces) => { say("Saved", await d.api("PUT", "/admin/secrets/" + name + "/share", { shared, workspaces })); await secretsPage(d); };
-    d.shell("secrets", d.state.notice, secretsView({ ...r.body, workspaces: withNames(r.body.workspaces, d.state.rail?.rows ?? []) }, { save, remove, share }));
+    d.shell("secrets", d.state.notice, secretsView({ ...r.body, attention: att.status === 200 ? att.body.items : [], workspaces: withNames(r.body.workspaces, d.state.rail?.rows ?? []) }, { save, remove, share }));
     d.state.notice = null;
   } finally { finish(); }
 }

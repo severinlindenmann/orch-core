@@ -128,12 +128,25 @@ def sync(served):
 
 
 def test_the_ops_are_declared():
-    assert set(orgops.ORG_OPS) == {"org.offers", "org.show", "org.accept", "org.decline", "org.tool", "org.sync"}
+    assert set(orgops.ORG_OPS) == {
+        "org.offers",
+        "org.show",
+        "org.secrets",
+        "org.accept",
+        "org.decline",
+        "org.tool",
+        "org.sync",
+    }
     assert orgops.ORG_READS == {"org.offers"} and orgops.NETWORK_OPS == {"org.sync"}
 
 
 def test_without_a_hub_every_org_op_is_hub_not_joined(served):
-    for op, args in (("org.offers", {}), ("org.sync", {}), ("org.show", {"kind": "skill", "name": "invoices"})):
+    for op, args in (
+        ("org.offers", {}),
+        ("org.sync", {}),
+        ("org.secrets", {}),
+        ("org.show", {"kind": "skill", "name": "invoices"}),
+    ):
         assert err(req(served, op, args)) == "hub.not_joined", op
 
 
@@ -169,6 +182,7 @@ def test_an_agent_can_never_show_accept_or_decline(served, org):
     digest = OB.skill_digest("invoices", TEXT)
     for op, args in (
         ("org.show", {"kind": "skill", "name": "invoices"}),
+        ("org.secrets", {}),
         ("org.accept", {"kind": "skill", "name": "invoices", "digest": digest}),
         ("org.decline", {"kind": "skill", "name": "invoices"}),
     ):

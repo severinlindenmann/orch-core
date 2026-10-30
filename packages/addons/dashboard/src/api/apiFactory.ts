@@ -160,6 +160,7 @@ export function createApi(transport: Transport) {
     getHubLink: (ws: string, link: string) => call<import('./hub').HubLinkInfo>('POST', `/api/w/${ws}/hub/link`, { link }),
     /** M3 H-5: company skills and tools offered by the hub (the owner's Company tab). */
     getOrgOffers: (ws: string) => call<import('./org').OrgOffers>('GET', `/api/w/${ws}/org`),
+    getOrgSecrets: (ws: string) => call<import('./org').OrgSecrets>('GET', `/api/w/${ws}/org/secrets`),
     getOrgItem: (ws: string, kind: import('./org').OrgKind, name: string) =>
       call<import('./org').OrgShown>('GET', `/api/w/${ws}/org/item?kind=${kind}&name=${encodeURIComponent(name)}`),
     acceptOrgItem: (ws: string, kind: import('./org').OrgKind, name: string, digest: string) =>

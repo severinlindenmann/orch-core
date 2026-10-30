@@ -242,3 +242,11 @@ def test_share_stores_what_the_owner_was_shown_not_what_the_hub_has_now(world) -
     assert e.value.code == "not_shared"
     a.client.share(sid, members_of(a, sid))  # looked again: now a, b and c
     assert a.client.st.rules[sid]["members"] == sorted([a.ws, b.ws, c.ws])
+
+
+def test_space_list_carries_the_display_name_and_kind_from_the_hub(world) -> None:
+    hub, a, b, c = world
+    sid = make_space(hub, a, b)
+    (row,) = a.client.list_spaces()
+    assert row["space_id"] == sid and row["name"] == "launch" and row["kind"] == ""
+    assert c.client.list_spaces() == []

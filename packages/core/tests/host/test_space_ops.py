@@ -68,7 +68,7 @@ class SpaceHub:
     def handle(self, h: TlsHub, o: dict):
         op, body = o["op"], o["body"]
         if op == "space_list":
-            return h.reply(o, body={"spaces": [self.record()]}, ts_ms=o["ts_ms"])
+            return h.reply(o, body={"spaces": [self.record()], "meta": {self.space_id: {"name": "Team notes", "kind": "wiki"}}}, ts_ms=o["ts_ms"])
         if op == "space_get":
             es = [e for e in self.entries if e["seq"] > body["since"]]
             return h.reply(o, ts_ms=o["ts_ms"], body={"space": self.record(), "wraps": [self.wrap()], "entries": es,
@@ -173,7 +173,10 @@ def test_list_share_put_and_get_in_both_modes(served, request, mode):
     sh = request.getfixturevalue(mode)
     pin_peer(served)
     rows = ok(req(served, "space.list"))["data"]["spaces"]
-    assert rows == [{"space_id": sh.space_id, "epoch": 1, "members": sh.members, "shared": False, "key": False}]
+    assert rows == [
+        {"space_id": sh.space_id, "epoch": 1, "members": sh.members, "shared": False, "key": False,
+         "name": "Team notes", "kind": "wiki"}  # fmt: skip
+    ]
     put_args = {"space_id": sh.space_id, "name": "report.txt", "data": crypto.b64u(b"hello")}
     res = req(served, "space.put", put_args)
     assert err(res) == "invalid.input" and "not approved" in res["error"]["message"] and sh.puts == []

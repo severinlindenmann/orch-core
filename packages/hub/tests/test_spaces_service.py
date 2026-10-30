@@ -37,7 +37,9 @@ def test_create_signs_a_record_and_wraps_every_member(shub):
         host.sync(rec["space_id"])
     assert ha.sk[1] != b"" and ha.sk[1] == hb.sk[1]  # both hosts opened the same SK_e
     assert SP.sk_commit(rec["space_id"], 1, ha.sk[1]) == rec["sk_commit"]
-    assert [s["o"]["space_id"] for s in a.request("space_list", {})["spaces"]] == [rec["space_id"]]
+    listed = a.request("space_list", {})
+    assert [s["o"]["space_id"] for s in listed["spaces"]] == [rec["space_id"]]
+    assert listed["meta"] == {rec["space_id"]: {"name": "finance", "kind": ""}}  # unsigned display data
 
 
 def test_item_roundtrip_between_two_members(shub):
@@ -121,7 +123,7 @@ def test_removing_a_member_ends_its_future_access(shub):
     hb.sync(sid)
     h.svc.remove(sid, G.WS_B, ADMIN)
     refused(b, "space_get", {"space_id": sid, "since": 0}, "not_member")
-    assert b.request("space_list", {}) == {"spaces": []}
+    assert b.request("space_list", {}) == {"spaces": [], "meta": {}}
     ha = Host(a, G.WS_A)
     r = ha.sync(sid)
     assert r["space"]["o"]["epoch"] == 2 and r["space"]["o"]["members"] == [G.WS_A]

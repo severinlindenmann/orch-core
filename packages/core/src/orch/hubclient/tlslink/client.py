@@ -98,7 +98,9 @@ W2H_OPS: dict[str, str | None] = {
     "log_sync": "full",
 }
 _REPLY: dict[str, Callable[[dict[str, Any]], bool]] = {
-    "space_list": lambda b: set(b) == {"spaces"} and type(b["spaces"]) is list,
+    "space_list": lambda b: (
+        set(b) == {"spaces", "meta"} and type(b["spaces"]) is list and type(b["meta"]) is dict
+    ),
     "space_put": lambda b: set(b) == {"seq"} and type(b["seq"]) is int,
     "space_revoke": lambda b: set(b) == {"seq"} and type(b["seq"]) is int,
     "space_get": lambda b: (

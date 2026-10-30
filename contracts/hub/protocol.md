@@ -1457,7 +1457,7 @@ unknown `op` is `unknown_op`.
 | `audit_get` | w2h | both | `{"since"}` | `{"records": [{"record": <hub.audit>, "event"?}], "head", "op_certs": [<hub.op_cert>]}` (D4, §10.5; added) |
 | `share_put` | w2h | selective | `{"item_id", "sealed": b64u}` | `{}` |
 | `share_revoke` | w2h | selective | `{"item_id"}` | `{}` |
-| `space_list` | w2h | both | `{}` | `{"spaces": [<hub.space>]}` (V3-D8, §10.4) |
+| `space_list` | w2h | both | `{}` | `{"spaces": [<hub.space>], "meta": {space_id: {"name", "kind"}}}` (V3-D8, §10.4; `meta` is unsigned display data, a host shows it as "from the hub") |
 | `space_accept` | w2h | both | `{"accept": <space.accept>}` | `{}` (L2P-2) |
 | `space_put` | w2h | both | `{"space_id", "epoch", "item_id", "sealed": b64u}` | `{"seq"}` |
 | `space_revoke` | w2h | both | `{"space_id", "item_id"}` | `{"seq"}` |

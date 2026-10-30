@@ -729,9 +729,13 @@ def test_pings_pongs_and_frames_for_ended_exchanges_do_not_keep_a_session_alive(
     w.ad.take(10)
     c.say(head(1))
     c.say(frame("RESET", 1, b"cancelled"))
+    for n in range(2, 10):
+        c.say(head(n))  # eight open exchanges: the ninth is reset busy
     w.advance(2 * 3600 - 60)
     w.pump()
     assert s.state == "live"  # the last accepted frame was 2 h - 1 min ago
+    c.say(head(10))  # a frame the host itself resets (remote.busy) is not an accepted one either
+    assert frame("RESET", 10, b"remote.busy") in c.hear()
     w.advance(120)
     c.say(frame("BODY", 1, b"x"))  # an ended exchange: dropped, does not count
     c.say(frame("PING", 0))

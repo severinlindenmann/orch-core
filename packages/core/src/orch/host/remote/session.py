@@ -487,13 +487,13 @@ class Session:
             return
         if verdict == "drop":
             return  # an exchange that ended: the peer sent it before it saw the RESET; it does not keep a session alive
-        self.last_in_ms = now_ms
         if verdict.startswith("reset:"):
             code = verdict[6:]
             self._emit(frame(RESET, i, code.encode()))
             if code == "too_large":  # the adapter has the head: it must stop the exchange too
                 self._forward({"t": "frame", "stream_id": self.sid, "bytes": b64u(frame(RESET, i, b"too_large"))})
             return
+        self.last_in_ms = now_ms  # only a frame the host accepted keeps the session from going idle
         msg: dict[str, Any] = {"t": "frame", "stream_id": self.sid, "bytes": b64u(pt)}
         if kind in (HEAD, WS_OPEN):
             msg["identity"] = self._on_worker(lambda: self._recheck(now_ms))

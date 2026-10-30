@@ -18,10 +18,13 @@ import base64
 import hashlib
 import os
 import re
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 
 __all__ = [
-    "IDLE_CLOSE_S", "LINK_PATH", "MAX_FRAME", "MAX_HEAD", "MAX_SEND_CHUNK", "PING_AFTER_S", "SUBPROTOCOL",
+    "IDLE_CLOSE_S", "LINK_PATH", "MAX_CONTROL_PER_READ", "MAX_CONTROL_PER_S", "MAX_FRAME", "MAX_HEAD",
+    "MAX_SEND_CHUNK", "PING_AFTER_S", "SUBPROTOCOL",
     "Frame", "HandshakeFailed", "Receiver", "WsError", "accept_key", "build_request", "check_response",
     "decode_frame", "encode_frame", "new_key",
 ]  # fmt: skip
@@ -137,18 +140,37 @@ def decode_frame(buf: bytes, *, sender: str, max_payload: int = MAX_FRAME) -> tu
     return Frame(fin, op, payload), end
 
 
+MAX_CONTROL_PER_READ = 64  # ping / pong frames accepted from one read (a flood is closed, not answered)
+MAX_CONTROL_PER_S = 100  # ... and per second over a link
+
+
 class Receiver:
     """One direction as a byte stream: binary and continuation payloads in order (boundaries mean nothing); a
     continuation with no open message or a binary frame inside one is 1002; a ping is answered with a pong of the same
-    payload, a pong ignored; a close ends the stream (``closed`` = its code or ``None``) and is answered with 1000.
-    A ping alone yields no stream bytes, so a reader never wakes for it."""
+    payload (only the most recent ping of one read is answered), a pong ignored; a close ends the stream (``closed`` =
+    its code or ``None``) and is answered with 1000. A ping alone yields no stream bytes: a reader never wakes for it.
 
-    def __init__(self, sender: str, *, max_payload: int = MAX_FRAME) -> None:
-        self._sender, self._max = sender, max_payload
-        self._buf = b""
+    Bounded work: frames are decoded in place with a read cursor over a memoryview (the buffer is compacted once per
+    ``feed``, never per frame, so a flood of tiny frames is linear); more than :data:`MAX_CONTROL_PER_READ` control
+    frames in one read, or :data:`MAX_CONTROL_PER_S` in a second, is ``WsError(1008, "flood")``."""
+
+    def __init__(
+        self, sender: str, *, max_payload: int = MAX_FRAME, clock: Callable[[], float] = time.monotonic
+    ) -> None:
+        self._sender, self._max, self._clock = sender, max_payload, clock
+        self._buf = bytearray()
         self._open = False
         self.ended = False
         self.closed: int | None = None
+        self._win_start, self._win_n = clock(), 0
+
+    def _control_seen(self, n_read: int) -> None:
+        now = self._clock()
+        if now - self._win_start >= 1.0:
+            self._win_start, self._win_n = now, 0
+        self._win_n += 1
+        if n_read > MAX_CONTROL_PER_READ or self._win_n > MAX_CONTROL_PER_S:
+            raise WsError(1008, "flood")
 
     def feed(self, data: bytes) -> tuple[bytes, list[tuple[int, bytes]]]:
         if self.ended:
@@ -156,23 +178,42 @@ class Receiver:
         self._buf += data
         out: list[bytes] = []
         answers: list[tuple[int, bytes]] = []
-        while not self.ended:
-            got = decode_frame(self._buf, sender=self._sender, max_payload=self._max)
-            if got is None:
-                break
-            f, used = got
-            self._buf = self._buf[used:]
-            if f.opcode in (CONT, BINARY):
-                if (f.opcode == CONT) is not self._open:
-                    raise WsError(1002, "continuation" if f.opcode == CONT else "interleaved")
-                out.append(f.payload)
-                self._open = not f.fin
-            elif f.opcode == PING:
-                answers.append((PONG, f.payload))
-            elif f.opcode == CLOSE:
-                self.ended, self._buf = True, b""
-                self.closed = int.from_bytes(f.payload[:2], "big") if f.payload else None
-                answers.append((CLOSE, (1000).to_bytes(2, "big")))
+        last_pong: tuple[int, bytes] | None = None
+        controls = pos = 0
+        view = memoryview(self._buf)
+        try:
+            while not self.ended:
+                got = decode_frame(view[pos:], sender=self._sender, max_payload=self._max)
+                if got is None:
+                    break
+                f, used = got
+                pos += used
+                if f.opcode in (CONT, BINARY):
+                    if (f.opcode == CONT) is not self._open:
+                        raise WsError(1002, "continuation" if f.opcode == CONT else "interleaved")
+                    out.append(f.payload)
+                    self._open = not f.fin
+                elif f.opcode == PING:
+                    controls += 1
+                    self._control_seen(controls)
+                    last_pong = (PONG, f.payload)
+                elif f.opcode == PONG:
+                    controls += 1
+                    self._control_seen(controls)
+                elif f.opcode == CLOSE:
+                    self.ended = True
+                    self.closed = int.from_bytes(f.payload[:2], "big") if f.payload else None
+                    if last_pong is not None:
+                        answers.append(last_pong)
+                        last_pong = None
+                    answers.append((CLOSE, (1000).to_bytes(2, "big")))
+        finally:
+            view.release()
+            del self._buf[:pos]
+            if self.ended:
+                self._buf.clear()
+        if last_pong is not None:
+            answers.append(last_pong)
         return b"".join(out), answers
 
 

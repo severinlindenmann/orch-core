@@ -170,12 +170,18 @@ class WsFront(Listener):
     ) -> None:  # fmt: skip
         self.target, self.ping_interval, self.misbehave = target, ping_interval, misbehave
         self.no_pong, self.silent = no_pong, silent
+        self._conn: socket.socket | None = None
         self.heads: list[bytes] = []
         self.client_frames: list[tuple[int, int]] = []  # (opcode, payload length) of every client frame, all masked
         self.errors: list[W.WsError] = []
         self.pings = 0
         self.target_dials = 0
         super().__init__(pki)
+
+    def flood(self, n: int) -> None:
+        """Send ``n`` tiny pings at once on the open connection."""
+        assert self._conn is not None
+        self._conn.sendall(W.encode_frame(W.PING, b"") * n)
 
     def _respond(self, key: str) -> bytes:
         acc = W.accept_key(key)
@@ -208,10 +214,19 @@ class WsFront(Listener):
             s.sendall(bad)
             self.stop.wait(1.0)
             return
+        if self.misbehave == "firehose":  # binary garbage without end, before any TLS record is valid
+            chunk = W.encode_frame(W.BINARY, b"\x00" * 60000)
+            try:
+                for _ in range(100):
+                    s.sendall(chunk)
+            except OSError:
+                pass
+            return
         if self.misbehave or self.silent:
             self.stop.wait(1.0)
             return
         self.target_dials += 1
+        self._conn = s
         hub = socket.create_connection(("127.0.0.1", self.target))
         hub.settimeout(0.2)
         lock = threading.Lock()

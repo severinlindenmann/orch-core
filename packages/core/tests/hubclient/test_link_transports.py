@@ -478,9 +478,8 @@ def test_outer_wss_is_checked_but_the_pin_still_decides(rig: Rig) -> None:
 def test_big_payload_goes_in_chunks_of_at_most_64k(rig: Rig) -> None:
     addr, _, front = rig.build("ws")
     with rig.open(addr, None) as link:
-        link._c.send_all(b"\x00\x00\x03\x00" + b"x" * 0x300, time.monotonic() + 3)  # a frame the test hub ignores
-        big = b"\x00" * 200_000
-        link._c.send_all(big, time.monotonic() + 3)
+        n = 200_000  # one frame of that length (the test hub reads it whole, then drops the junk)
+        link._c.send_all(n.to_bytes(4, "big") + b"x" * n, time.monotonic() + 5)
     sizes = [n for op, n in front.client_frames if op == W.BINARY]
     assert sizes and max(sizes) <= W.MAX_SEND_CHUNK + 64  # TLS record overhead on top of the app chunks
 
@@ -492,3 +491,76 @@ def test_a_closed_listener_is_just_unreachable(rig: Rig) -> None:
 
 def test_listener_base_is_abstract() -> None:
     assert Listener is not None
+
+
+# --- the receiver is bounded (no flood amplification) ---
+
+
+def test_receiver_decodes_in_linear_time_and_answers_only_the_last_ping() -> None:
+    r = W.Receiver("server")
+    data = b"".join(W.encode_frame(W.BINARY, b"x") for _ in range(20_000))
+    t0 = time.monotonic()
+    out, answers = r.feed(data)
+    assert len(out) == 20_000 and time.monotonic() - t0 < 2.0
+    r = W.Receiver("server")
+    out, answers = r.feed(b"".join(W.encode_frame(W.PING, bytes([i])) for i in range(10)))
+    assert out == b"" and answers == [(W.PONG, bytes([9]))]  # one pong for the most recent ping
+
+
+def test_control_flood_per_read_and_per_second_is_closed() -> None:
+    r = W.Receiver("server")
+    with pytest.raises(W.WsError) as e:
+        r.feed(W.encode_frame(W.PING, b"") * 10_000)
+    assert (e.value.code, e.value.reason) == (1008, "flood")
+    now = [0.0]
+    r = W.Receiver("server", clock=lambda: now[0])
+    for _ in range(W.MAX_CONTROL_PER_S):
+        r.feed(W.encode_frame(W.PING, b""))
+    with pytest.raises(W.WsError):
+        r.feed(W.encode_frame(W.PING, b""))
+    now[0] = 2.0  # a new second: the budget is back
+    r = W.Receiver("server", clock=lambda: now[0])
+    r.feed(W.encode_frame(W.PING, b""))
+
+
+def test_ping_flood_from_the_front_is_bounded_and_wakes_nothing(rig: Rig) -> None:
+    front = rig.add(WsFront(rig.hub.port))
+    addr = parse_link_address(f"ws://127.0.0.1:{front.port}")
+    with rig.open(addr, None) as link:
+        conn = link._c
+        assert conn.wait_readable(0.1) is False
+        front.flood(10_000)
+        t0 = time.monotonic()
+        woke = conn.wait_readable(3.0)  # True only because the link was closed on the flood, never for data
+        assert time.monotonic() - t0 < 2.0
+        assert woke is True and conn._c.pending() == 0
+        with pytest.raises(LinkClosed, match="ws_(flood|closed)"):
+            conn.recv_exact(1, time.monotonic() + 1)
+        assert rig.hub.requests == []
+
+
+def test_bytes_before_the_inner_handshake_are_bounded(rig: Rig) -> None:
+    class Pipe(transport.Pipe):
+        def __init__(self) -> None:
+            self.n = 0
+
+        def poll(self, timeout: float) -> bytes | None:
+            self.n += 1
+            return W.encode_frame(W.BINARY, b"\x00" * 60)
+
+        def write(self, data: bytes, deadline: float) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    p = transport.WsPipe(Pipe())
+    p.handshake_budget = 200
+    with pytest.raises(LinkClosed, match="ws_flood"):
+        for _ in range(10):
+            p.poll(0.1)
+    assert p._inner.n <= 4
+    # a real link sets the bound while dialling and lifts it once the link's TLS has completed
+    addr, _, _ = rig.build("ws")
+    with rig.open(addr, None) as link:
+        assert link._c._p.handshake_budget is None

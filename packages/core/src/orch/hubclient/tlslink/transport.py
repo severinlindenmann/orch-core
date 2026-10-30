@@ -37,6 +37,7 @@ __all__ = ["Path", "Pipe", "SockPipe", "TlsPipe", "WsPipe", "dial_tcp", "open_pa
 CHUNK = 65536
 WRITE_S = 10.0
 CONTROL_WRITE_S = 3.0
+HANDSHAKE_BYTES = 262144  # a WebSocket link may carry this many inbound bytes before its TLS handshake has completed
 
 
 def _now() -> float:
@@ -253,6 +254,7 @@ class WsPipe(Pipe):
         self._ended = False
         self._last_in = self._last_out = _now()
         self._closed = False
+        self.handshake_budget: int | None = None  # inbound bytes allowed until the link's TLS has completed
 
     @classmethod
     def connect(cls, inner: Pipe, addr: LinkAddr, deadline: float) -> WsPipe:
@@ -270,7 +272,7 @@ class WsPipe(Pipe):
             raise LinkClosed(f"ws_{e.reason}") from None
         pipe = cls(inner)
         if rest:
-            pipe._pending = pipe._ingest(rest)
+            pipe._pending = pipe._ingest(rest)  # whatever followed the head counts as its first read
         return pipe
 
     _pending = b""
@@ -319,6 +321,11 @@ class WsPipe(Pipe):
             raw = self._inner.poll(min(max(left, 0.0), 1.0))
             if raw is not None:
                 self._last_in = _now()
+                if self.handshake_budget is not None:
+                    self.handshake_budget -= len(raw)
+                    if self.handshake_budget < 0:
+                        self._fail(1008)
+                        raise LinkClosed("ws_flood")
                 return self._ingest(raw)
             if left <= 0:
                 return None
@@ -457,6 +464,8 @@ def open_path(addr: LinkAddr, net: NetSettings | None, deadline: float, *, conne
             if addr.scheme == "wss":
                 base = TlsPipe(base, addr.host, deadline)
             pipe = WsPipe.connect(base, addr, deadline)
+        if isinstance(pipe, WsPipe):
+            pipe.handshake_budget = HANDSHAKE_BYTES
         return Path(sock, pipe, via=proxy is not None or addr.scheme != "tcp")
     except BaseException:
         if pipe is not None:

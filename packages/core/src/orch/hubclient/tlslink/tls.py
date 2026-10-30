@@ -248,6 +248,8 @@ def dial_link(
             c.set_tlsext_host_name(addr.sni.encode("ascii"))
         c.set_connect_state()
         t.handshake(deadline)
+        if isinstance(path.pipe, transport.WsPipe):
+            path.pipe.handshake_budget = None  # the bound was for the time before the link's TLS completed
         if not hmac.compare_digest(t.peer_spki_sha256().encode(), pinned_spki_sha256.encode()):
             raise LinkInspected if path.via else PinMismatch
     except BaseException:

@@ -292,6 +292,18 @@ def test_stream_malformed_hello_fails_closed(w, hello):
     assert c.get() == {"t": "error", "error": "malformed"}
 
 
+def test_stream_token_signed_out_after_ready_is_refused_at_open(w):
+    rig = Rig(w)
+    tok = remote_token(w)
+    c = rig.connect()
+    c.put({"t": "hello", "v": 1, "token": tok})
+    assert c.get() == {"t": "ready", "hub_id": HUB}
+    w.env.svc.sign_out(tok)  # signed out between ready and open: the open re-authenticates
+    c.put({"t": "open", "workspace_id": WS_A, "device_id": DEV, "kind": "session"})
+    assert c.get() == {"t": "error", "error": "no_session"}
+    assert rig.port.ops("stream_open") == [] and rig.router.open_count() == 0
+
+
 @pytest.mark.parametrize(
     "op",
     [

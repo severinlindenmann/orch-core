@@ -39,6 +39,8 @@ class FakeIdp(Http):
         self.header_extra: dict[str, Any] = {}
         self.last_form: dict[str, str] = {}
         self.nonce = ""
+        self.oid_of: dict[str, str] = {}  # nonce -> oid, same purpose
+        self.nonce_of: dict[str, str] = {}  # code -> nonce, for tests that run several logins at once
         self.challenge: str | None = None  # when set, the token endpoint checks PKCE like a real IdP
 
     def get_json(self, url: str) -> dict[str, Any]:
@@ -54,14 +56,14 @@ class FakeIdp(Http):
             raise OSError("down")
         return KeySet([self.key, *self.extra]).as_dict(private=False)
 
-    def base_claims(self) -> dict[str, Any]:
+    def base_claims(self, nonce: str | None = None) -> dict[str, Any]:
         c: dict[str, Any] = {
             "iss": self.cfg.issuer,
             "aud": CLIENT,
             "sub": "sub-1",
             "exp": NOW + 300,
             "iat": NOW - 5,
-            "nonce": self.nonce,
+            "nonce": self.nonce if nonce is None else nonce,
             "email": "anna@acme.example",
             "name": "Anna",
         }
@@ -72,9 +74,9 @@ class FakeIdp(Http):
         return c
 
     def token(self, nonce: str | None = None) -> str:
-        if nonce is not None:
-            self.nonce = nonce
-        c = {**self.base_claims(), **self.claims}
+        c = {**self.base_claims(nonce), **self.claims}
+        if nonce in self.oid_of:
+            c["oid"] = self.oid_of[nonce]
         for k in self.drop:
             c.pop(k, None)
         h = {"alg": self.alg, "kid": self.key.kid, **self.header_extra}
@@ -88,7 +90,7 @@ class FakeIdp(Http):
             )
             if got != self.challenge:
                 raise OSError("invalid_grant: PKCE verification failed")
-        return {"id_token": self.token(), "access_token": "x"}
+        return {"id_token": self.token(self.nonce_of.get(data["code"])), "access_token": "x"}
 
 
 def verifier_ok(idp: FakeIdp, auth_url: str) -> dict[str, str]:

@@ -15,7 +15,13 @@ from typing import Any
 from ..oidc import PLAIN, TX_TTL_S, Identity, OidcError, mfa_ok
 from ..oidc.store import MODES, validate
 
-STATUS = {"oidc_failed": 400, "oidc_not_allowed": 403, "oidc_not_ready": 409, "oidc_rate_limited": 429}
+STATUS = {
+    "oidc_failed": 400,
+    "oidc_not_allowed": 403,
+    "oidc_not_ready": 409,
+    "oidc_rate_limited": 429,
+    "oidc_already_linked": 409,
+}
 CALLBACK_PATH = "/oidc/callback"
 #: settings whose change means the old links belong to another identity provider
 REALM_FIELDS = ("provider", "tenant", "domain")
@@ -40,6 +46,14 @@ def oidc_routes(r: Any) -> tuple[Any, ...]:
             "none",
             "oidc_finish",
             "Finish a company login: signs me in (a session, never a key)",
+        ),
+        r("POST", "/oidc/invite/start", "none", "oidc_invite_start", "Begin the company login of an invitation link"),
+        r(
+            "POST",
+            "/oidc/invite/finish",
+            "none",
+            "oidc_invite_finish",
+            "Finish it: the invited person joins and is signed in (a session, never a key)",
         ),
         r("GET", "/oidc/me", "session", "oidc_me", "Is my account linked to a company login"),
         r(
@@ -68,6 +82,11 @@ def oidc_routes(r: Any) -> tuple[Any, ...]:
             "Test company login: finish; passing allows turning it on",
         ),
     )
+
+
+def _label(x: object) -> str:
+    """A display label from the provider: printable only, at most 200 characters. Shown as text to the invite's maker, never matched."""
+    return "".join(ch for ch in str(x or "") if ch.isprintable())[:200]
 
 
 def _err(code: str) -> Exception:
@@ -135,6 +154,89 @@ class OidcHandlers:
         svc = getattr(self.d, "oidc", None)
         o = svc.instance() if svc is not None else None
         return 200, {"purpose": o.purpose_of(c.cookie_of(self._tx_cookie_name())) if o is not None else None}
+
+    def _h_oidc_invite_start(self, c: Any, p: dict, q: dict, b: dict | None):
+        from ..invites import InviteError
+        from .api import SIGNIN_SOURCE_LIMIT, _need
+
+        self._need_browser(c)
+        b = _need(b, token=str)
+        self._limit.hit("invite-peek", c.source, SIGNIN_SOURCE_LIMIT)
+        try:
+            row = self._inv().peek(b["token"])
+            self._creator_standing(row)
+            if row.kind != "join" or not row.company:
+                raise InviteError()
+            o, _cfg, _secret = self._oidc_svc().ready()
+            url, cookie = o.start(
+                source=c.source, purpose="invite", bind=row.token_hash
+            )  # the token never leaves the POST body
+        except InviteError:
+            return 403, {"error": "bad_invite"}, [self._tx_clear()]
+        except OidcError as e:
+            return self._oidc_fail(e, c)
+        return 200, {"url": url}, [self._tx_set(cookie)]
+
+    def _h_oidc_invite_finish(self, c: Any, p: dict, q: dict, b: dict | None):
+        from ..invites import InviteError
+        from .api import _need
+
+        self._need_browser(c)
+        b = _need(b, code=str, state=str)
+        svc = self._oidc_svc()
+        try:
+            o, _cfg, secret = svc.ready()
+            ident, th = o.finish_invite(c.cookie_of(self._tx_cookie_name()), b["state"], b["code"], secret, c.source)
+            if not mfa_ok(ident):
+                raise OidcError("not_allowed")
+            out = self._inv().redeem_hash(th, lambda row: self._apply_company_invite(svc, row, ident))
+            s = self.d.channels.open_company_session(out["user_id"])
+        except InviteError:
+            return 403, {"error": "bad_invite"}, [self._tx_clear()]
+        except OidcError as e:
+            if e.code == "already_linked":
+                return 409, {"error": "oidc_already_linked", "message": PLAIN["already_linked"]}, [self._tx_clear()]
+            return self._oidc_fail(e, c)
+        uid = out["user_id"]
+        self._record("invite.redeemed", actor_id=uid, subject_user=uid, detail={"invite_id": out["invite_id"]})
+        self._record("oidc.linked", actor_id=uid, subject_user=uid)
+        ttl = max(0, (s["expires_ms"] - self.d.now_ms()) // 1000)
+        body = {"user_id": uid, "name": out["name"], "expires_ms": s["expires_ms"]}
+        return 200, body, [self._session_cookie(s["token"], ttl), self._tx_clear()]
+
+    def _apply_company_invite(self, svc: Any, row: Any, ident: Identity) -> dict[str, Any]:
+        """Run INSIDE the invite's claim. Order: the person, then the link, then the claim commits. The links table's primary
+        key is the arbiter (a pre-check is only a courtesy). Any failure undoes the person and the link, so the invite stays
+        usable; a crash before the commit leaves at most a linked bare member with the invite unused."""
+        from ..access import AccessError
+        from ..invites import InviteError
+
+        if not row.company or row.kind != "join":
+            raise InviteError()
+        self._creator_standing(row)
+        if svc.store.user_for(ident.provider, ident.realm, ident.subject) is not None:
+            raise OidcError("already_linked")
+        keys = self.d.keys
+        uid = keys.issue_uk(None)["o"]["user_id"]
+        try:
+            self.d.access.add_user(uid, row.name or "")  # no group: a bare member, never an admin
+            svc.store.link(uid, ident.provider, ident.realm, ident.subject)  # IntegrityError -> already_linked
+        except BaseException:
+            svc.store.unlink(uid)
+            try:
+                self.d.access.remove_user(uid)
+            except AccessError:
+                pass
+            for f in (keys.state / "uk" / f"{uid}.key", keys._gen_dir() / "uk" / f"{uid}.json"):
+                f.unlink(missing_ok=True)
+            raise
+        return {
+            "user_id": uid,
+            "name": row.name,
+            "invite_id": row.id,
+            "company_label": _label(ident.email),
+            "company_idp_name": _label(ident.name),
+        }
 
     def _h_oidc_cancel(self, c: Any, p: dict, q: dict, b: dict | None):
         return 200, {"ok": True}, [self._tx_clear()]
@@ -339,6 +441,8 @@ class OidcHandlers:
             if realm_changed:  # another provider, tenant or domain: every old link and every company-login session ends
                 svc.store.unlink_all()
                 self.d.channels.end_company_sessions(None)
+                if self.d.user_invites is not None:  # links made for the old provider can no longer be redeemed
+                    self.d.user_invites.void_company()
         except OidcError:
             raise _err("malformed") from None
         self._record("oidc.settings_changed", actor_id=c.user_id, subject_user=c.user_id)

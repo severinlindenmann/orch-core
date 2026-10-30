@@ -51,7 +51,10 @@ CREATE TABLE IF NOT EXISTS invites (
   created_ms INTEGER NOT NULL,
   expires_ms INTEGER NOT NULL,
   used_ms INTEGER,
-  redeemed_user TEXT
+  redeemed_user TEXT,
+  company INTEGER NOT NULL DEFAULT 0,
+  label TEXT,
+  idp_name TEXT
 );
 CREATE INDEX IF NOT EXISTS invites_for_user ON invites(for_user);
 """
@@ -75,6 +78,7 @@ class Invite:
     created_by: str
     created_ms: int
     expires_ms: int
+    company: bool = False  # a join link that is redeemed ONLY by a company login (HUB-PE-04), never with a password
 
 
 def token_hash(token: str) -> str:
@@ -98,6 +102,10 @@ class Invites:
             if "redeemed_user" not in {r[1] for r in self._db.execute("PRAGMA table_info(invites)")}:
                 # r11 P12b: a store made before the column (hub.dev, the run hubs); redeem() writes it in its transaction
                 self._db.execute("ALTER TABLE invites ADD COLUMN redeemed_user TEXT")
+            have = {r[1] for r in self._db.execute("PRAGMA table_info(invites)")}
+            for col, decl in (("company", "INTEGER NOT NULL DEFAULT 0"), ("label", "TEXT"), ("idp_name", "TEXT")):
+                if col not in have:  # a store made before company login
+                    self._db.execute(f"ALTER TABLE invites ADD COLUMN {col} {decl}")
         except PrivateFileError as e:
             raise InviteError("store_error") from e
         except (sqlite3.Error, OSError) as e:
@@ -110,11 +118,13 @@ class Invites:
     # --- making and reading -------------------------------------------------------------------------------------------
 
     def create(
-        self, kind: str, *, created_by: str, name: str | None = None, for_user: str | None = None
+        self, kind: str, *, created_by: str, name: str | None = None, for_user: str | None = None, company: bool = False
     ) -> tuple[str, str, int]:
         """A new link. Returns ``(token, invite_id, expires_ms)``; the token is returned here and never again. A reset or
         recovery for a person voids that person's earlier unused links (one live link at a time)."""
         if kind not in KINDS or (kind == "join") != (for_user is None) or (kind == "join" and not name):
+            raise InviteError("store_error")
+        if company and kind != "join":
             raise InviteError("store_error")
         token = secrets.token_urlsafe(32)  # 32 random bytes, URL-safe base64 (256 bits)
         iid, now = secrets.token_hex(8), self._now()
@@ -128,9 +138,19 @@ class Invites:
                             "UPDATE invites SET used_ms=? WHERE for_user=? AND used_ms IS NULL", (now, for_user)
                         )
                     self._db.execute(
-                        "INSERT INTO invites(id, token_hash, kind, for_user, name, created_by, created_ms, expires_ms) "
-                        "VALUES (?,?,?,?,?,?,?,?)",
-                        (iid, token_hash(token), kind, for_user, name, created_by, now, now + INVITE_TTL_MS),
+                        "INSERT INTO invites(id, token_hash, kind, for_user, name, created_by, created_ms, expires_ms, company) "
+                        "VALUES (?,?,?,?,?,?,?,?,?)",
+                        (
+                            iid,
+                            token_hash(token),
+                            kind,
+                            for_user,
+                            name,
+                            created_by,
+                            now,
+                            now + INVITE_TTL_MS,
+                            int(company),
+                        ),
                     )
                     self._db.execute("COMMIT")
                 except BaseException:
@@ -148,6 +168,18 @@ class Invites:
                     "UPDATE invites SET used_ms=? WHERE for_user=? AND used_ms IS NULL", (self._now(), user_id)
                 )
                 self._challenges = {}
+        except sqlite3.Error as e:
+            raise InviteError("store_error") from e
+
+    def void_company(self) -> int:
+        """End every unused company-login link (the provider, tenant or domain changed: they were made for the old one)."""
+        try:
+            with self._lock:
+                n = self._db.execute(
+                    "UPDATE invites SET used_ms=? WHERE company=1 AND used_ms IS NULL", (self._now(),)
+                ).rowcount
+                self._challenges = {}
+                return n
         except sqlite3.Error as e:
             raise InviteError("store_error") from e
 
@@ -172,13 +204,13 @@ class Invites:
 
     def _row(self, h: str, now: int) -> Invite:
         rows = self._db.execute(
-            "SELECT id, token_hash, kind, for_user, name, created_by, created_ms, expires_ms FROM invites "
+            "SELECT id, token_hash, kind, for_user, name, created_by, created_ms, expires_ms, company FROM invites "
             "WHERE token_hash=? AND used_ms IS NULL AND expires_ms>?",
             (h, now),
         ).fetchall()
         if not rows:
             raise InviteError()
-        return Invite(*rows[0])
+        return Invite(*rows[0][:8], bool(rows[0][8]))
 
     def peek(self, token: object) -> Invite:
         """The link's row, without using it. ``bad_invite`` for unknown, expired, used or malformed."""
@@ -195,7 +227,13 @@ class Invites:
         """Claim the link and run ``apply(row)`` (the account change) in ONE transaction; return what ``apply`` returns.
         Not claimable (unknown, expired, used, malformed) is ``bad_invite`` before ``apply`` runs; if ``apply`` raises,
         the claim is rolled back and the link is still unused."""
-        h = self._hash_of(token)
+        return self.redeem_hash(self._hash_of(token), apply)
+
+    def redeem_hash(self, h: str, apply: Callable[[Invite], T]) -> T:
+        """:meth:`redeem` for a link known by its hash (the company login keeps only the hash in its sealed cookie). The claim
+        is the same atomic UPDATE, so the link is still single use."""
+        if type(h) is not str or not re.fullmatch(r"[0-9a-f]{64}", h):
+            raise InviteError()
         try:
             with self._lock:
                 now = self._now()
@@ -211,6 +249,13 @@ class Invites:
                     uid = out.get("user_id") if isinstance(out, dict) else None
                     if type(uid) is str and uid:  # r11 P12b: who redeemed it, in the claim's own transaction
                         self._db.execute("UPDATE invites SET redeemed_user=? WHERE token_hash=?", (uid, h))
+                    if (
+                        isinstance(out, dict) and out.get("company_label") is not None
+                    ):  # admin-only display labels, never matched
+                        self._db.execute(
+                            "UPDATE invites SET label=?, idp_name=? WHERE token_hash=?",
+                            (out["company_label"], out.get("company_idp_name"), h),
+                        )
                     self._db.execute("COMMIT")
                 except BaseException:
                     self._db.execute("ROLLBACK")
@@ -229,25 +274,29 @@ class Invites:
         try:
             with self._lock:
                 r = self._db.execute(
-                    "SELECT kind, created_by, expires_ms, used_ms, redeemed_user FROM invites WHERE id=?", (invite_id,)
+                    "SELECT kind, created_by, expires_ms, used_ms, redeemed_user, company, label, idp_name FROM invites WHERE id=?",
+                    (invite_id,),
                 ).fetchone()
         except sqlite3.Error as e:
             raise InviteError("store_error") from e
         if r is None or r[0] != "join" or r[1] != created_by:
             return None
+        extra = {"company": True} if r[5] else {}
         if r[4]:
-            return {"state": "joined", "user_id": r[4]}
+            if r[5]:  # only the maker sees what the company login said about the person (display text, never matched)
+                extra.update(company_email=r[6] or "", company_name=r[7] or "")
+            return {"state": "joined", "user_id": r[4], **extra}
         if r[3] is None and r[2] > self._now():
-            return {"state": "waiting"}
-        return {"state": "ended"}
+            return {"state": "waiting", **extra}
+        return {"state": "ended", **extra}
 
     def _row_any(self, h: str) -> Invite:
         r = self._db.execute(
-            "SELECT id, token_hash, kind, for_user, name, created_by, created_ms, expires_ms FROM invites "
+            "SELECT id, token_hash, kind, for_user, name, created_by, created_ms, expires_ms, company FROM invites "
             "WHERE token_hash=?",
             (h,),
         ).fetchone()
-        return Invite(*r)
+        return Invite(*r[:8], bool(r[8]))
 
     # --- proof challenges --------------------------------------------------------------------------------------------
 

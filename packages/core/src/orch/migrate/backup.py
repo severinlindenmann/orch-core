@@ -24,7 +24,7 @@ import time
 from collections.abc import Mapping
 from pathlib import Path
 
-from orch import childenv
+from orch import childenv, oslock
 from orch.layout import STATE_DIR, WORK_DIR
 from orch.ops.errors import OrchError
 
@@ -344,10 +344,30 @@ def restore(
             "migrate.backup_refused",
             "restore is only possible before an update is committed, and only for a backup this update made",
         )
-    _recover(root)
-    fd = lock_root(root, exclusive=True) if lock_fd is None else lock_fd
+    # a sidecar lock next to the root serialises restores (the root itself may be missing in a half-done swap)
+    side = os.open(
+        root.with_name(f".{root.name}.restore.lock"), os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600
+    )
+    try:
+        oslock.flock(side, oslock.LOCK_EX | oslock.LOCK_NB)
+    except BlockingIOError:
+        os.close(side)
+        raise OrchError("migrate.running", "a restore is already running") from None
+    fd = -1
+    try:
+        if root.exists():  # the root lock first: a refused invocation must not touch the first run's leftovers
+            fd = lock_root(root, exclusive=True) if lock_fd is None else lock_fd
+        _recover(root)  # only under the locks (a missing root = a half-done swap, only the sidecar lock exists)
+        if fd < 0:
+            fd = lock_root(root, exclusive=True) if lock_fd is None else lock_fd
+    except BaseException:
+        if fd >= 0 and lock_fd is None:
+            os.close(fd)
+        os.close(side)
+        raise
     staging = root.with_name(f".{root.name}.restore-{secrets.token_hex(4)}")
     aside = root.with_name(f".{root.name}.replaced-{secrets.token_hex(4)}")
+    carried: list[str] = []  # entries moved into staging, so a failure can put them back
     created = read_journal(env) is None  # no journal yet: this restore makes one, and removes it again
     old = os.umask(0o077)
     try:
@@ -361,6 +381,7 @@ def restore(
             merged = have + [x for x in current.get(rel, []) if x not in set(have)]
             atomic_write(staging / rel, ("\n".join(merged) + "\n").encode() if merged else b"")
         carry = [*sorted(_SKIP_TOP), *sorted(_SKIP_REL)]
+        moved = carried
         st = root / STATE_DIR
         if st.is_dir():
             carry += [f"{STATE_DIR}/{n}" for n in sorted(os.listdir(st)) if is_derived(f"{STATE_DIR}/{n}")]
@@ -373,6 +394,7 @@ def restore(
                 shutil.copy2(have, staging / rel)
             else:
                 os.rename(have, staging / rel)
+                moved.append(rel)
         if _exchange(staging, root):  # now ``staging`` holds the old data
             shutil.rmtree(staging, ignore_errors=True)
         else:
@@ -391,7 +413,12 @@ def restore(
                 write_journal(doc["phase"], env, restoring=None)
     finally:
         os.umask(old)
+        if staging.exists():
+            for rel in carried:  # a failed restore puts the carried entries back before staging is deleted
+                if (staging / rel).exists() and root.exists() and not (root / rel).exists():
+                    (root / rel).parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+                    os.rename(staging / rel, root / rel)
+            shutil.rmtree(staging, ignore_errors=True)
         if lock_fd is None:
             os.close(fd)
-        if staging.exists():
-            shutil.rmtree(staging, ignore_errors=True)
+        os.close(side)

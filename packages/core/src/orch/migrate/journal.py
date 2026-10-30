@@ -93,7 +93,7 @@ def unfinished(env: Mapping[str, str] | None = None) -> bool:
         doc = read_journal(env)
     except OrchError:
         return True
-    return doc is not None and doc["phase"] != "committed"
+    return doc is not None and (doc["phase"] != "committed" or bool(doc.get("restoring")))
 
 
 def clear_journal(env: Mapping[str, str] | None = None) -> None:

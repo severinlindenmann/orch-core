@@ -708,7 +708,7 @@ def test_an_error_during_restore_leaves_the_original_untouched(root, env, monkey
     with pytest.raises(OSError):
         bk.restore(b, root, env)
     assert tree_digest(root) == before
-    assert [p.name for p in root.parent.iterdir() if p.name.startswith(".root.")] == []
+    assert [p.name for p in root.parent.iterdir() if p.name.startswith(".root.") and not p.name.endswith(".lock")] == []
 
 
 def test_restore_rejects_a_backup_with_a_link(root, env):
@@ -886,7 +886,7 @@ def test_restore_swaps_in_and_carries_what_was_left_out(root, env, monkeypatch, 
     assert (root / "events/a.jsonl").read_text() == "e1\n"
     assert (root / ".state/index.sqlite").read_text() == "kept-index"
     assert (root / "install/tools/orch-1/bin").read_text() == "tool"
-    assert [p.name for p in root.parent.iterdir() if p.name.startswith(".root.")] == []
+    assert [p.name for p in root.parent.iterdir() if p.name.startswith(".root.") and not p.name.endswith(".lock")] == []
     assert jr.read_journal(env)["phase"] == "installed" and not jr.read_journal(env).get("restoring")
 
 
@@ -919,7 +919,7 @@ def test_a_crash_inside_restore_never_leaves_the_root_open_or_without_its_journa
     # the next run cleans up and can restore again
     bk.restore(b, root, env)
     assert (root / "events/a.jsonl").read_text() == "e1\n"
-    assert [p.name for p in root.parent.iterdir() if p.name.startswith(".root.")] == []
+    assert [p.name for p in root.parent.iterdir() if p.name.startswith(".root.") and not p.name.endswith(".lock")] == []
 
 
 def test_a_crash_between_the_two_renames_is_recovered_on_the_next_run(root, env, monkeypatch):
@@ -951,3 +951,56 @@ def test_a_step_that_wipes_heads_sqlite_is_caught(root):
     with pytest.raises(OrchError):
         apply(root, "workspace", reg)
     assert read_format(root, "workspace") == 1 and (root / "hosts/w/heads.sqlite").exists() is False  # the step ran
+
+
+@pytest.mark.parametrize("phase", ["committed", "installed"])
+def test_restoring_always_counts_as_unfinished(root, env, phase):
+    jr.write_journal("stopped", env)
+    jr.write_journal(phase, env, restoring=str(root))
+    assert jr.unfinished(env) and code_of(open_root, root, "workspace", env) == "update.interrupted"
+    jr.write_journal(phase, env, restoring=None)
+    assert jr.unfinished(env) is (phase != "committed")
+
+
+def test_a_crash_in_restore_after_commit_marks_still_refuses_open(root, env, monkeypatch):
+    b = swap_setup(root, env)
+    jr.write_journal("committed", env, backups={str(b.resolve()): 1})
+    assert code_of(bk.restore, b, root, env) == "migrate.backup_refused"  # allowed only before commit
+    jr.write_journal("stopped", env, backups={str(b.resolve()): 1})
+    monkeypatch.setattr(bk.shutil, "copytree", lambda *a, **k: (_ for _ in ()).throw(OSError("crash")))
+    with pytest.raises(OSError):
+        bk.restore(b, root, env)
+    assert jr.read_journal(env)["restoring"] and code_of(open_root, root, "workspace", env) == "update.interrupted"
+
+
+def test_a_refused_second_restore_touches_nothing_of_the_first(root, env):
+    b = swap_setup(root, env)
+    leftover = root.with_name(".root.restore-other")
+    leftover.mkdir()
+    (leftover / "x").write_text("first run's staging")
+    with lock_shared(root):
+        assert code_of(bk.restore, b, root, env) == "migrate.running"
+    assert (leftover / "x").read_text() == "first run's staging"
+
+
+@pytest.mark.parametrize("fallback", [False, True])
+def test_a_failed_restore_puts_carried_entries_back(root, env, monkeypatch, fallback):
+    b = swap_setup(root, env)
+    monkeypatch.setattr(bk, "_exchange", lambda a, c: False)
+    real = os.rename
+
+    def flaky(src, dst, *a, **k):
+        if (fallback and str(src) == str(root.resolve()) and ".replaced-" in str(dst)) or (
+            not fallback and ".restore-" in str(src) and "tools" in str(src) is False
+        ):
+            raise OSError("crash")
+        if not fallback and str(dst) == str(root.resolve()) and ".restore-" in str(src):
+            raise OSError("crash")
+        return real(src, dst, *a, **k)
+
+    monkeypatch.setattr(bk.os, "rename", flaky)
+    with pytest.raises(OSError):
+        bk.restore(b, root, env)
+    monkeypatch.setattr(bk.os, "rename", real)
+    assert (root / "install/tools/orch-1/bin").read_text() == "tool"
+    assert (root / ".state/index.sqlite").read_text() == "kept-index"

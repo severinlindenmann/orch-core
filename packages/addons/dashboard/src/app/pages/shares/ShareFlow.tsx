@@ -173,7 +173,7 @@ export function ShareFlow({ ws, ticket, resume, only, onClose }: { ws: string; t
     try {
       const got = await sharesApi.prepare(ws, { ticket: ticket.key, artifacts: [only], kind: 'secret', days: 7 }, prepareIdem)
       void refreshShares(qc, ws)
-      setStage({ at: 'sign', staged: got.staged })
+      setStage({ at: 'confirm', staged: got.staged })
     } catch (e) {
       setError(shareError(e))
     } finally {

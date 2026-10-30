@@ -29,7 +29,6 @@ import {
   unpickable,
   kindText,
   newIdem,
-  shareError,
   shareQueries,
   sharesApi,
   unshareable,
@@ -42,11 +41,13 @@ import {
 } from '@/api/shares'
 import type { Artifact } from '@/api/types'
 import { fmtDateTime } from '@/lib/time'
+import { publishError as shareError } from './hubErrors'
 
 export const refreshShares = (qc: ReturnType<typeof useQueryClient>, ws: string) => qc.invalidateQueries({ queryKey: ['shares', ws] })
 
 type Stage =
   | { at: 'form' }
+  | { at: 'one' }
   | { at: 'confirm'; staged: Staged }
   | { at: 'sign'; staged: Staged }
   | { at: 'send'; staged: Staged; connected?: boolean; error?: { text: string; unknown: boolean; unreachable: boolean } }
@@ -82,9 +83,9 @@ function Where({ server, share }: { server: string | null; share: string | null 
  * The whole flow for one ticket. `resume` starts at the confirm step for a copy that is already prepared (an agent
  * prepared it, or an earlier attempt stopped before the signature).
  */
-export function ShareFlow({ ws, ticket, resume, onClose }: { ws: string; ticket: { key: string; artifacts: Artifact[] }; resume?: Staged; onClose: () => void }) {
+export function ShareFlow({ ws, ticket, resume, only, onClose }: { ws: string; ticket: { key: string; artifacts: Artifact[] }; resume?: Staged; /** Publish as link (run-14 P01): the one file named, a small panel instead of the form, then Sign and publish. */ only?: string; onClose: () => void }) {
   const qc = useQueryClient()
-  const [stage, setStage] = useState<Stage>(resume ? { at: 'confirm', staged: resume } : { at: 'form' })
+  const [stage, setStage] = useState<Stage>(resume ? { at: 'confirm', staged: resume } : only ? { at: 'one' } : { at: 'form' })
   const info = useQuery(shareQueries.ofTicket(ws, ticket.key))
   const data = info.data && info.data.available ? info.data : null
   const server = data?.server ?? null
@@ -162,6 +163,23 @@ export function ShareFlow({ ws, ticket, resume, onClose }: { ws: string; ticket:
     }
   }
 
+  // Publish as link: one file, "Anyone with the link", 7 days. One press prepares the copy and goes straight to the
+  // signature (its review names the file, the server and the link kind); nothing leaves until it is signed.
+  const publishOne = async () => {
+    if (busy || !only) return
+    setBusy(true)
+    setError('')
+    try {
+      const got = await sharesApi.prepare(ws, { ticket: ticket.key, artifacts: [only], kind: 'secret', days: 7 }, prepareIdem)
+      void refreshShares(qc, ws)
+      setStage({ at: 'sign', staged: got.staged })
+    } catch (e) {
+      setError(shareError(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const send = async (staged: Staged) => {
     if (sending.current) return
     sending.current = true
@@ -198,6 +216,35 @@ export function ShareFlow({ ws, ticket, resume, onClose }: { ws: string; ticket:
     } finally {
       sending.current = false
     }
+  }
+
+  // ---- one file: Publish as link
+  if (stage.at === 'one' && only) {
+    const file = ticket.artifacts.find((a) => a.name === only)
+    return (
+      <Dialog open onOpenChange={(o) => !o && !busy && onClose()}>
+        <DialogContent className="max-w-md gap-3 border-border bg-surface">
+          <DialogHeader>
+            <DialogTitle>Publish {only} as a link?</DialogTitle>
+            <DialogDescription>Anyone with the link can open this file. Only this file leaves your computer. You see the link once, so copy it right away.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 text-[13px]">
+            {file?.bytes != null && <p className="text-text-muted">{fmtSize(file.bytes)} · works for 7 days</p>}
+            {data && !data.configured && <p className="text-warning">No publish server is set up yet. Set one up on the Add-ons page, then come back.</p>}
+            <Where server={server} share={share} />
+            {error && <Failure text={error} />}
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={onClose} disabled={busy}>
+              Cancel
+            </Button>
+            <Button onClick={() => void publishOne()} disabled={busy || (!!data && !data.configured)}>
+              {busy ? 'Preparing…' : 'Sign and publish'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    )
   }
 
   // ---- form

@@ -36,6 +36,7 @@ let sendRefusal: { code: string; reason?: string } | null = null
 let registerRefusal: { code: string; reason?: string } | null = null
 let sendRefusalOnce: { code: string; reason?: string } | null = null
 let uploadN = 0
+let prepareRefusal: { code: string } | null = null
 const state = useFakeHost(() => [workspace({ id: A, features: [...READS, 'publish'], addOns: { available: true, add_ons: [{ id: 'publish', title: 'Publish', desc: 'Share files.', state: 'on', locked: null, blocked: null }] } })])
 const refusal = (r: { code: string; reason?: string }) =>
   Response.json({ ok: false, error: { code: r.code, message: r.code, retryable: false, ...(r.reason ? { detail: { reason: r.reason } } : {}) } }, { status: 409 })
@@ -51,6 +52,7 @@ const route = () => {
   registerRefusal = null
   sendRefusalOnce = null
   uploadN = 0
+  prepareRefusal = null
   state.host.override = (path, method, body) => {
     if (path.endsWith('/tickets/DEMO-0001') && method === 'GET')
       return Response.json({ ...ticket, artifacts: [{ name: 'report.md', kind: 'report', bytes: 2048, sha256: 'ab'.repeat(32), added_by: 'p_x', at: '2026-10-18T08:00:00Z' }, { name: 'bad/name.md', kind: 'report', bytes: 1, sha256: 'cd'.repeat(32), added_by: 'p_x', at: '2026-10-18T08:00:00Z' }] })
@@ -59,6 +61,7 @@ const route = () => {
     if (method === 'GET')
       return Response.json({ available: true, configured, server: configured ? 'http://127.0.0.1:8103' : null, share: configured ? 'http://127.0.0.1:8104' : null, workspace: A, owner: 'p_owner', live: configured && live && serverUp, shares: configured ? shares : [], staged })
     if (path.endsWith('/shares/prepare')) {
+      if (prepareRefusal) return refusal(prepareRefusal)
       staged = [{ staged_id: STAGED, ticket: 'DEMO-0001', kind: body?.kind, days: body?.days, views: body?.views ?? 0, origin: 'person', files: [FILE], created_at: '2026-10-18T08:00:00Z' }]
       return Response.json({ staged: staged[0], server: 'http://127.0.0.1:8103', share: 'http://127.0.0.1:8104' })
     }
@@ -561,4 +564,84 @@ it('sharing not reachable: plain words, the signature stays good, Try again send
   await screen.findByRole('dialog', { name: 'Your link' }, { timeout: 9000 })
   expect(calls('/shares/send')).toHaveLength(2)
   expect(calls('/shares/register')).toEqual([])
+})
+
+// Run 14 P01: Publish as link on a result card: one button, one small panel, Sign and publish, the link once.
+async function onResults(user: ReturnType<typeof userEvent.setup>) {
+  state.host.workspaces[0].features = [...state.host.workspaces[0].features, 'actions']
+  clickOn(state.host.workspaces[0])
+  window.innerWidth = 1400
+  show('/w/DEMO/ticket/DEMO-0001')
+  await user.click(await screen.findByRole('tab', { name: /Results/ }, T))
+  return await screen.findByRole('list', { name: 'Artifacts' }, T)
+}
+
+it('Publish as link: a button on the result card, a panel that names the file, Sign and publish, then the link shows ONCE', async () => {
+  route()
+  const user = userEvent.setup()
+  const setItem = vi.spyOn(Storage.prototype, 'setItem')
+  const list = await onResults(user)
+  // a file the server would not take has no button
+  expect(within(list).queryByRole('button', { name: 'Publish bad/name.md as a link' })).toBeNull()
+  await user.click(within(list).getByRole('button', { name: 'Publish report.md as a link' }))
+  const panel = await screen.findByRole('dialog', { name: 'Publish report.md as a link?' }, T)
+  expect(panel).toHaveTextContent('Anyone with the link can open this file. Only this file leaves your computer.')
+  expect(panel).toHaveTextContent('http://127.0.0.1:8103') // where it goes
+  expect(calls('/shares/prepare')).toEqual([]) // nothing is prepared before the press
+  await user.click(within(panel).getByRole('button', { name: 'Sign and publish' }))
+  await waitFor(() => expect(calls('/shares/prepare')).toHaveLength(1), T)
+  expect(calls('/shares/prepare')[0].body).toMatchObject({ ticket: 'DEMO-0001', artifacts: ['report.md'], kind: 'secret', days: 7 })
+  expect(calls('/shares/send')).toEqual([]) // nothing leaves before the signature
+  const sign = await readyToSign() // the existing click-to-sign dialog, no typed word
+  expect(calls('/shares/send')).toEqual([])
+  sign()
+  const dialog = await screen.findByRole('dialog', { name: 'Your link' }, { timeout: 9000 })
+  expect(state.host.clickSigned).toHaveLength(1)
+  expect((within(dialog).getByLabelText('Link') as HTMLInputElement).value).toBe(LINK)
+  expect(within(dialog).getByRole('button', { name: /Copy/ })).toBeInTheDocument()
+  expect(dialog).toHaveTextContent('You can copy this link only now.')
+  expect(setItem.mock.calls.some((c) => JSON.stringify(c).includes(TOKEN))).toBe(false)
+  await user.click(within(dialog).getByRole('button', { name: /saved the link/ }))
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Your link' })).toBeNull(), T)
+  expect(document.body.textContent).not.toContain(TOKEN)
+  expect(JSON.stringify([...queryClient.getQueryCache().getAll().map((q) => q.state.data), ...queryClient.getMutationCache().getAll().map((m) => m.state.data)])).not.toContain(TOKEN)
+})
+
+it('Publish as link: Cancel prepares nothing and sends nothing', async () => {
+  route()
+  const user = userEvent.setup()
+  const list = await onResults(user)
+  await user.click(within(list).getByRole('button', { name: 'Publish report.md as a link' }))
+  const panel = await screen.findByRole('dialog', { name: 'Publish report.md as a link?' }, T)
+  await user.click(within(panel).getByRole('button', { name: 'Cancel' }))
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull(), T)
+  expect(calls('/shares/prepare')).toEqual([])
+  expect(calls('/shares/send')).toEqual([])
+})
+
+it.each([
+  ['hub.not_joined', /Connect this workspace to a hub in Settings, Hub/],
+  ['hub.state_mismatch', /does not match what the workspace has signed/],
+])('Publish as link: a hub refusal (%s) is said in plain words before anything is signed, never as a code', async (code, words) => {
+  route()
+  prepareRefusal = { code }
+  const user = userEvent.setup()
+  const list = await onResults(user)
+  await user.click(within(list).getByRole('button', { name: 'Publish report.md as a link' }))
+  const panel = await screen.findByRole('dialog', { name: 'Publish report.md as a link?' }, T)
+  await user.click(within(panel).getByRole('button', { name: 'Sign and publish' }))
+  const alert = await within(panel).findByRole('alert', {}, T)
+  expect(alert).toHaveTextContent(words)
+  expect(alert).toHaveTextContent('Nothing was shared')
+  expect(alert.textContent).not.toMatch(/\bhub\.[a-z_]+|state_mismatch|not_joined|selective/)
+  expect(calls('/shares/send')).toEqual([])
+  expect(state.host.clickPrepares()).toEqual([]) // no signature was asked for
+})
+
+it('Publish as link: a viewer sees no button', async () => {
+  route()
+  state.host.workspaces[0].roster = state.host.workspaces[0].roster.map((m) => (m.role === 'owner' ? { ...m, role: 'viewer' as const } : m))
+  const user = userEvent.setup()
+  const list = await onResults(user)
+  expect(within(list).queryByRole('button', { name: /as a link/ })).toBeNull()
 })

@@ -80,7 +80,8 @@
           "addon",
           "invalid",
           "hub",
-          "relay"
+          "relay",
+          "remote"
         ]
       }
     },
@@ -114,7 +115,8 @@
         "addon",
         "invalid",
         "hub",
-        "relay"
+        "relay",
+        "remote"
       ]
     },
     "personId": {
@@ -1110,6 +1112,21 @@
     "hex64": {
       "type": "string",
       "pattern": "^[0-9a-f]{64}(?![\\s\\S])"
+    },
+    "remoteDeviceId": {
+      "type": "string",
+      "pattern": "^(?:rd_[0-9a-f]{32})(?![\\s\\S])",
+      "description": "Remote access R2: a remote device id, rd_ plus 32 lowercase hex (the hub's d_ devices can never name one)"
+    },
+    "remoteCodeId": {
+      "type": "string",
+      "pattern": "^(?:rc_[0-9a-f]{32})(?![\\s\\S])",
+      "description": "Remote access R2: an enrollment code id, rc_ plus 32 lowercase hex"
+    },
+    "b64u32": {
+      "type": "string",
+      "pattern": "^(?:[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048])(?![\\s\\S])",
+      "description": "canonical unpadded base64url of exactly 32 bytes"
     },
     "eventRef": {
       "type": "string",

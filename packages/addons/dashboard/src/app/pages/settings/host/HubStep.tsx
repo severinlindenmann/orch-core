@@ -8,7 +8,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { queries } from '@/api/queries'
 import { useWorkspace } from '@/app/workspace'
-import { backupViewOk, plainHubViewOk, type HubJoinAction, type HubLeaveAction, type HubModeFullAction } from '@/api/click'
+import { backupViewOk, plainHubViewOk, type HubJoinAction, type HubLeaveAction, type HubModeFullAction, type RemoteDeviceConfirmAction, type RemoteSetAction } from '@/api/click'
 import { ApiError } from '@/api/types'
 import { seal } from '@/api/sealed'
 import { ClickSignPanel } from '@/components/sign/ClickSignPanel'
@@ -19,7 +19,7 @@ import { Button } from '@/components/ui/button'
 
 export interface HubStepProps {
   ws: string
-  action: HubJoinAction | HubModeFullAction | HubLeaveAction
+  action: HubJoinAction | HubModeFullAction | HubLeaveAction | RemoteSetAction | RemoteDeviceConfirmAction
   onClose: () => void
   /** The hub state changed (the step was signed). */
   onChanged?: () => void
@@ -113,10 +113,14 @@ export function HubStep({ ws, action, onClose, onChanged, onFailedChange, doneTe
     /agent access (?:on this computer )?(?:ends|is revoked|will end|will be revoked)/i.test(line),
   )
   const failureText = action.action === 'hub_leave' ? "Couldn't leave the hub. Nothing changed. Try again."
-    : action.action === 'hub_mode_full' ? "Couldn't switch. Try again." : "Couldn't connect. Try again."
+    : action.action === 'hub_mode_full' ? "Couldn't switch. Try again."
+      : action.action === 'remote_set' ? "Couldn't turn on remote access. Nothing changed. Try again."
+        : action.action === 'remote_device_confirm' ? "Couldn't add the device. Nothing changed. Try again." : "Couldn't connect. Try again."
+  const label = action.action === 'hub_leave' ? 'Leave the hub' : action.action === 'hub_mode_full' ? 'Let the hub read everything'
+    : action.action === 'remote_set' ? 'Turn on remote access' : action.action === 'remote_device_confirm' ? 'Add a device' : 'Join the hub'
 
   return (
-    <section aria-label={action.action === 'hub_leave' ? 'Leave the hub' : action.action === 'hub_mode_full' ? 'Let the hub read everything' : 'Join the hub'} data-testid="hub-step" className="space-y-3">
+    <section aria-label={label} data-testid="hub-step" className="space-y-3">
       {(click.phase === 'idle' || click.phase === 'preparing' || click.phase === 'viewing') && (
         <p className="flex items-center gap-2 text-[13px] text-text-muted"><Loader2 className="size-4 animate-spin" aria-hidden />Preparing the review…</p>
       )}

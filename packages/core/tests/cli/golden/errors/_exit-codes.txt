@@ -74,6 +74,12 @@ conflict.field 8 retry:true
 quick.unlabelled 9 retry:true
 hub.refused 3 retry:false
 hub.proof_invalid 3 retry:false
+remote.proof_invalid 3 retry:false
+remote.agents_risk 3 retry:false
+remote.needs_selective 3 retry:false
+remote.no_pending 3 retry:false
+remote.full 3 retry:false
+switch.refused 3 retry:false
 hub.already_joined 3 retry:false
 hub.not_joined 3 retry:false
 device.lockout 3 retry:false

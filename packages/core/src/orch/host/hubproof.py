@@ -29,16 +29,30 @@ from orch.hubclient.errors import HubRefused
 
 from .errors import HostError
 
-__all__ = ["OPS", "check", "payload_of", "refusal"]
+__all__ = ["HUB_OPS", "OPS", "REMOTE_OPS", "check", "payload_of", "refusal"]
 
 #: the ops that append a hub event (the type is fixed by the op: hub.leave -> hub.left, the others -> hub.joined)
-OPS = frozenset(wire.OWNER_PROOF_OPS)
+HUB_OPS = frozenset(wire.OWNER_PROOF_OPS)
+#: R2 (#1590): the ops that append a remote access event (remote.set -> remote.changed, remote.device_confirm ->
+#: remote.device_added). Same checker, their OWN proof kind and label (``wire.REMOTE_PROOF_OPS``): a hub proof can never
+#: stand in for a remote one or the reverse.
+REMOTE_OPS = frozenset(wire.REMOTE_PROOF_OPS)
+OPS = HUB_OPS | REMOTE_OPS
 _REASONS = ("proof_invalid", "proof_expired", "proof_missing", "dev_mismatch", "dev_refused")
 
 
-def refusal(code: str) -> HostError:
-    """``hub.proof_invalid`` for the contract code ``code`` (anything unknown counts as ``proof_invalid``)."""
+def refusal(code: str, *, remote: bool = False) -> HostError:
+    """``hub.proof_invalid`` (``remote.proof_invalid`` for a remote step) for the contract code ``code`` (anything
+    unknown counts as ``proof_invalid``)."""
     reason = code if code in _REASONS else "proof_invalid"
+    if remote:
+        return HostError(
+            "remote.proof_invalid",
+            f"the remote access step needs your backup key: {reason}",
+            hint="repeat the step and enter your backup key",
+            fix=["orch", "status"],
+            detail={"reason": reason},
+        )
     return HostError(
         "hub.proof_invalid",
         f"the hub step needs your backup key: {reason}",
@@ -50,7 +64,7 @@ def refusal(code: str) -> HostError:
 
 def payload_of(event: dict[str, Any]) -> dict[str, Any]:
     """The event's contract members without ``owner_proof``: what the proof is over."""
-    keys = wire.LEFT_KEYS if event.get("type") == "hub.left" else wire.JOINED_KEYS
+    keys = wire.recorded_keys(event.get("type") if event.get("type") in wire.RECORDED_OPS else "hub.joined")
     return {k: event[k] for k in keys if k in event}
 
 
@@ -59,8 +73,9 @@ def check(service: Any, *, person: str, op: str, request_id: str, event: dict[st
     payload, bound to ``request_id``, at the host's clock and dev state. ``person`` is the request's person."""
     from . import hubops
 
+    remote = op in REMOTE_OPS
     if proof is None:
-        raise refusal("proof_missing")
+        raise refusal("proof_missing", remote=remote)
     state = service.store.state
     view = state.workspace.members.get(person)
     key = state.person_key(person)  # the roster's PK (b64u) of a current member; never a request or event field
@@ -73,4 +88,4 @@ def check(service: Any, *, person: str, op: str, request_id: str, event: dict[st
             request_id=request_id, now_ms=int(service.clock() * 1000), dev_mode=bool(hubops.workspace_dev(service)),
         )  # fmt: skip
     except (HubRefused, EncodingError) as exc:
-        raise refusal(getattr(exc, "code", "proof_invalid")) from None
+        raise refusal(getattr(exc, "code", "proof_invalid"), remote=remote) from None

@@ -55,7 +55,7 @@ TECHNICAL_KEYS = frozenset(
         "v", "id", "type", "actor", "auth", "hash_v", "roster_v", "based_on", "sig", "seq", "at", "prev", "ws_seq",
         "host_sig",
         # hashes and attestations the details carry
-        "gate_gen", "hash", "policy_hash", "base_rev", "secret_hash", "owner_proof",
+        "gate_gen", "hash", "policy_hash", "base_rev", "secret_hash", "owner_proof", "remote_v",
         # C10: the id of the grant.requested a host-actor grant.issued answers; a person never signs it
         "request",
     }
@@ -91,6 +91,21 @@ SHOWN: dict[str, frozenset[str]] = {
     "verdict.given": frozenset({"outcome", "text", "source_sha"}),
     "hub.joined": frozenset({"hub_id", "hk_root_pub", "mode", "binding_seq", "aliases"}),
     "hub.left": frozenset({"hub_id", "binding_seq"}),
+    "remote.changed": frozenset({"on", "level", "until_ms", "premises", "agents_risk", "hub_mode"}),
+    "remote.device_added": frozenset(
+        {
+            "name",
+            "level_cap",
+            "device_id",
+            "person",
+            "presence_kind",
+            "transport_pub",
+            "presence_pub",
+            "expires_ms",
+            "fingerprint",
+            "code_id",
+        }
+    ),  # fmt: skip
     "grant.issued": frozenset({"grant", "scope", "verbs", "label", "hours", "issued_at", "expires_at"}),
     "grant.revoked": frozenset({"grant", "reason"}),
     "log.added": frozenset({"text"}),
@@ -115,6 +130,20 @@ SHOWN: dict[str, frozenset[str]] = {
 DETAILS_ONLY: dict[str, frozenset[str]] = {
     "grant.issued": frozenset({"grant", "scope", "verbs", "issued_at", "expires_at"}),
     "grant.revoked": frozenset({"grant"}),
+    # R2: shown in words (an end date, the six words of a fingerprint), the raw values stay in the technical details
+    "remote.changed": frozenset({"on", "until_ms", "premises", "agents_risk", "hub_mode"}),
+    "remote.device_added": frozenset(
+        {
+            "device_id",
+            "person",
+            "presence_kind",
+            "transport_pub",
+            "presence_pub",
+            "expires_ms",
+            "fingerprint",
+            "code_id",
+        }
+    ),
     "addon.granted": frozenset(
         {"staged"}
     ),  # D3: the stage id is an opaque handle; the digest and capabilities are shown
@@ -177,6 +206,17 @@ def _show(value: Any) -> str | None:
 def _short(digest: Any) -> str:
     """The first 12 hex digits of a ``sha256:`` digest."""
     return _s(digest).removeprefix("sha256:")[:12]
+
+
+def _remote_end(ms: Any) -> str:
+    """An end date of remote access or a remote device (UTC, to the minute), or "when you turn it off"."""
+    if ms is None:
+        return "when you turn it off"
+    if type(ms) is not int or ms < 0:
+        raise PlainUnavailable("the end date is not a time")
+    from datetime import UTC, datetime
+
+    return datetime.fromtimestamp(ms // 1000, UTC).strftime("%Y-%m-%d %H:%M UTC")
 
 
 def _fp(value: Any) -> str:
@@ -1353,6 +1393,36 @@ def _event(
             "never gets."
         )
         return f"Leave hub {_short(ev.get('hub_id'))}"
+    if typ == "remote.changed":  # R2: the owner's remote policy; the words say what a remote device can then do
+        _row(out, "level", ev.get("level"))
+        _row(out, "ends", _remote_end(ev.get("until_ms")))
+        _row(out, "at a customer's place", "yes" if ev.get("premises") == "yes" else "no")
+        _row(out, "owner proof", OWNER_PROOF_LINE)
+        if ev.get("agents_risk") is True:
+            out.setdefault("notes", []).append("Agents on this computer can act as you.")
+        if ev.get("hub_mode") == "full":
+            out.setdefault("notes", []).append(
+                "The hub can already act for people in this workspace. Remote access does not change that."
+            )
+        out.setdefault("notes", []).append(
+            "Only devices you add at this computer can use this workspace from afar, and only up to this level. "
+            "You can turn it off here at any time."
+        )
+        return f"Turn on remote access ({_s(ev.get('level'))})"
+    if typ == "remote.device_added":  # R2: the six words are the device's own fingerprint, shown on both sides
+        from orch.hubclient import wire
+
+        try:
+            words = wire.fingerprint_words(bytes.fromhex(_s(ev.get("fingerprint"))))
+        except Exception:  # noqa: BLE001
+            raise PlainUnavailable("the device fingerprint is not a fingerprint") from None
+        _row(out, "device", ev.get("name"))
+        _row(out, "fingerprint", words)
+        _row(out, "level", ev.get("level_cap"))
+        _row(out, "ends", _remote_end(ev.get("expires_ms")))
+        _row(out, "owner proof", OWNER_PROOF_LINE)
+        out.setdefault("notes", []).append("Check that the device shows the same six words before you sign.")
+        return f"Add the remote device {_s(ev.get('name'))}"
     if typ == "people.changed":
         role = _s(ev.get("role"))
         add, remove = ev.get("add") or [], ev.get("remove") or []

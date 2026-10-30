@@ -152,13 +152,13 @@ def _open_link(service: WorkspaceService, alpn: bytes | None = None) -> Any:
     from . import hubaddr
 
     for one in dict.fromkeys([addr, *hubops._more_addrs(state, dev)]):  # noqa: SLF001 - current first, then verified
-        host, port = parse_addr(one)
+        a = parse_addr(one)
         try:
-            host = hubaddr.checked_ip(host, allow_loopback=hubaddr.is_loopback(addr))  # resolve once, policy, that IP
+            host = hubaddr.checked_ip(a.host, allow_loopback=hubaddr.is_loopback(addr))  # resolve once, policy, that IP
             return LinkClient.open(
-                host, port, tls_spki_sha256=state.tls_spki, hub_id=state.hub_id, workspace_id=service.workspace_id,
-                sign=sign, hk_op_pub=unb64u(state.hk_op_pub, 65), mode=state.mode, timeout=10.0,
-                now_ms=lambda: int(service.clock() * 1000), alpn=alpn,
+                host, a.port, addr=a, tls_spki_sha256=state.tls_spki, hub_id=state.hub_id,
+                workspace_id=service.workspace_id, sign=sign, hk_op_pub=unb64u(state.hk_op_pub, 65),
+                mode=state.mode, timeout=10.0, now_ms=lambda: int(service.clock() * 1000), alpn=alpn,
             )  # fmt: skip
         except (OSError, PinMismatch) as exc:  # unreachable or not the pinned certificate: the next verified address
             last = exc

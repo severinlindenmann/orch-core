@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from typing import Any
 
 import pytest
@@ -16,6 +17,8 @@ from orch.hubclient import HubRefused
 from orch.hubclient.linkaddr import parse_link_address
 from orch.hubclient.tlsadapter import parse_addr
 from orch.hubclient.tlslink import wsframe as W
+from orch.hubclient.tlslink.errors import LinkClosed
+from orch.hubclient.tlslink.transport import Pipe, WsPipe
 from orch.hubclient.where import check_hub_where
 
 from .vec import CONTRACT_DIR
@@ -129,14 +132,91 @@ def test_receiver_one_byte_at_a_time() -> None:
         assert replay({**c, "args": args}) == c["expect"], c["name"]
 
 
-def test_parse_addr_stays_direct_only() -> None:
-    """Until T-A adds the transports, the dial path takes only direct ``host:port`` (a ``ws(s)://`` hint from
-    ``hub_where`` fails its pinned probe instead of being dialled as raw TLS)."""
-    assert parse_addr("[::1]:8105") == ("::1", 8105)
-    for t in ("wss://hub-link.example.com", "ws://10.0.0.5:8106"):
-        parse_link_address(t)
+def test_parse_addr_takes_the_whole_grammar() -> None:
+    """The dial path takes every form of the grammar (T-A): the parsed address names the transport."""
+    a = parse_addr("[::1]:8105")
+    assert (a.scheme, a.host, a.port) == ("tcp", "::1", 8105)
+    for t, scheme, port in (("wss://hub-link.example.com", "wss", 443), ("ws://10.0.0.5:8106", "ws", 8106)):
+        got = parse_addr(t)
+        assert (got.scheme, got.port) == (scheme, port) and got == parse_link_address(t)
+    for t in ("http://h:80", "ws://h/x", "h"):
         with pytest.raises(HubRefused):
             parse_addr(t)
+
+
+class ScriptedPipe(Pipe):
+    """A pipe that hands out scripted chunks and records what is written (the real WebSocket layer runs on it)."""
+
+    def __init__(self, chunks: list[bytes]) -> None:
+        self.chunks, self.written = list(chunks), b""
+
+    def poll(self, timeout: float) -> bytes | None:
+        if not self.chunks:
+            raise LinkClosed("eof")
+        return self.chunks.pop(0)
+
+    def write(self, data: bytes, deadline: float) -> None:
+        self.written += data
+
+    def close(self) -> None:
+        pass
+
+
+def _written_frames(raw: bytes) -> list[list[Any]]:
+    out, buf = [], raw
+    while buf:
+        got = W.decode_frame(buf, sender="client")  # every frame this side wrote is masked
+        assert got is not None
+        f, used = got
+        out.append([f.opcode, f.payload.hex()])
+        buf = buf[used:]
+    return out
+
+
+def test_real_ws_layer_replays_build_request_and_check_response(monkeypatch: pytest.MonkeyPatch) -> None:
+    for c in (c for c in MINE if c["check"] == "build_request"):
+        a = c["args"]
+        monkeypatch.setattr(W, "new_key", lambda key=a["key"]: key)
+        pipe = ScriptedPipe([b"HTTP/1.1 400 x\r\n\r\n"])
+        with pytest.raises(LinkClosed):
+            WsPipe.connect(pipe, parse_link_address(a["address"]), time.monotonic() + 2)
+        assert pipe.written.decode() == c["expect"]["ok"], c["name"]
+    for c in (c for c in MINE if c["check"] == "check_response"):
+        a = c["args"]
+        monkeypatch.setattr(W, "new_key", lambda key=a["key"]: key)
+        pipe = ScriptedPipe([a["head"].encode("utf-8")])
+        try:
+            WsPipe.connect(pipe, parse_link_address("wss://hub-link.example.com"), time.monotonic() + 2)
+            got: Any = {"ok": None}
+        except LinkClosed as e:
+            got = {"error": "failed", "reason": str(e).removeprefix("ws_")}
+        assert got == c["expect"], c["name"]
+
+
+def test_real_ws_layer_replays_the_server_streams() -> None:
+    for c in (c for c in MINE if c["check"] == "frame_stream" and c["args"]["sender"] == "server"):
+        pipe = WsPipe(ScriptedPipe([bytes.fromhex(h) for h in c["args"]["chunks_hex"]]))
+        data, err = b"", None
+        try:
+            while True:
+                try:
+                    got = pipe.poll(0.1)
+                except LinkClosed as e:
+                    if str(e) not in ("eof", "ws_closed"):
+                        err = str(e)
+                    break
+                data += got or b""
+        except Exception as e:  # noqa: BLE001
+            raise AssertionError(c["name"]) from e
+        exp = c["expect"]
+        if "error" in exp:
+            assert err == "ws_" + exp["reason"], c["name"]
+            continue
+        ok = exp["ok"]
+        assert err is None and data.hex() == ok["data_hex"], c["name"]
+        sent = _written_frames(pipe._inner.written)  # type: ignore[attr-defined]
+        assert [x for x in sent if x[0] in (W.PONG,)] == [list(a) for a in ok["answers"] if a[0] == W.PONG], c["name"]
+        assert pipe._ended is (ok["ended"]), c["name"]
 
 
 def test_new_key_is_fresh_and_valid() -> None:

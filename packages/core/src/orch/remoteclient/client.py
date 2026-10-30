@@ -32,6 +32,7 @@ from orch.crypto.encoding import EncodingError, b64u, unb64u
 from orch.hubclient import wire as hubwire
 from orch.hubclient.custodial_shape import text_ok
 from orch.hubclient.errors import HubRefused
+from orch.hubclient.netconfig import NetSettings
 from orch.hubclient.tlsadapter import parse_addr
 
 from . import enroll as E
@@ -106,9 +107,11 @@ class Client:
         rand: Callable[[int], bytes] | None = None,
         batch_window: float = 1.0,
         tls_request: Callable[[str, int, str, bytes], bytes] | None = None,
+        net: NetSettings | None = None,
     ) -> None:
         self.store, self.presence, self._http = store, presence, http
-        self._connector = connector or (lambda host, port, spki: dial(host, port, spki))
+        self._net = net  # this computer's own proxy settings (never from the hub); None: dial direct
+        self._connector = connector
         self._clock, self._dev, self.api, self._rand = clock, dev_mode, api, rand
         self._batch_window = batch_window
         self._tls_request = tls_request or _pinned_tls_request
@@ -206,8 +209,10 @@ class Client:
         return hub, token
 
     def _wire(self, hub: dict[str, Any]) -> Wire:
-        host, port = parse_addr(hub["link"])
-        return self._connector(host, port, hub["spki"])
+        a = parse_addr(hub["link"])
+        if self._connector is not None:
+            return self._connector(a.host, a.port, hub["spki"])
+        return dial(a.host, a.port, hub["spki"], addr=a, net=self._net)
 
     # -- the rail --
 

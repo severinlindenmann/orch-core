@@ -30,7 +30,8 @@ def reachable(scope: str, addr: str | None, *, now: float | None = None) -> bool
     from orch.hubclient.tlsadapter import parse_addr
 
     try:
-        host, port = parse_addr(addr)
+        a = parse_addr(addr)
+        host, port = a.host, a.port  # a ws(s):// address is probed at its TCP host:port
     except HubRefused:
         return None
     t = time.monotonic() if now is None else now

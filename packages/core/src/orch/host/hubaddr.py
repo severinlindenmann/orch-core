@@ -116,7 +116,7 @@ def is_loopback(addr: str | None) -> bool:
     if not addr:
         return False
     try:
-        host = parse_addr(addr)[0]
+        host = parse_addr(addr).host
     except HubRefused:
         return False
     if host == "localhost":
@@ -155,15 +155,15 @@ def handshake_ok(addr: str, spki: str | None, *, allow_loopback: bool = False) -
     if not spki:
         return False
     try:
-        host, port = parse_addr(addr)
-        ip = checked_ip(host, allow_loopback=allow_loopback)
+        a = parse_addr(addr)
+        ip = checked_ip(a.host, allow_loopback=allow_loopback)
     except (HubRefused, OSError):
         return False
     try:
         if PROBE is not None:
-            PROBE(ip, port, spki)
+            PROBE(ip, a.port, spki)
         else:
-            tls.connect_pinned(ip, port, spki, timeout=PROBE_TIMEOUT_S).close()
+            tls.dial_link(a, spki, timeout=PROBE_TIMEOUT_S, connect_host=ip).close()
     except Exception:  # noqa: BLE001 - refused, timed out, wrong certificate: all the same answer, "not verified"
         return False
     return True

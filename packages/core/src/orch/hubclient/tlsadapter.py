@@ -9,25 +9,33 @@ that does not verify is :class:`HubRefused` with the contract code."""
 from __future__ import annotations
 
 import threading
+import time
 from collections.abc import Callable
 from typing import Any
 
 from .errors import HubRefused
-from .linkaddr import parse_link_address
+from .linkaddr import LinkAddr, parse_link_address
+from .netconfig import NetSettings
+from .tlslink import transport
 from .tlslink.client import LinkClient, LinkError
-from .tlslink.tls import PinMismatch
+from .tlslink.tls import LinkInspected, PinMismatch
 
-__all__ = ["FailoverTransport", "TlsTransport", "parse_addr"]
+__all__ = ["INSPECTED_WAIT_S", "FailoverTransport", "LinkInspectedError", "TlsTransport", "parse_addr"]
+
+INSPECTED_WAIT_S = 300.0  # after a pin mismatch behind a proxy or front, no new dial of that address for this long
 
 
-def parse_addr(text: object) -> tuple[str, int]:
-    """A direct ``host:port`` (host a name, an IPv4 address or ``[v6]``), port 1..65535: the grammar of
-    :func:`orch.hubclient.linkaddr.parse_link_address` without the ``ws(s)://`` forms (R6 T-A adds those transports);
-    anything else is ``malformed``."""
-    a = parse_link_address(text)
-    if a.scheme != "tcp":
-        raise HubRefused("malformed")
-    return a.host, a.port
+class LinkInspectedError(ConnectionError):
+    """The link's certificate was not the card's pin on a path through a proxy or a WebSocket front: something on this
+    network opens encrypted connections. Host code ``hub.link_inspected``. The link stays down; there is no fallback."""
+
+    code = "hub.link_inspected"
+
+
+def parse_addr(text: object) -> LinkAddr:
+    """One link address (``host:port`` direct, ``ws://host[:port]``, ``wss://host[:port]``): the grammar of
+    :func:`orch.hubclient.linkaddr.parse_link_address`; anything else is ``malformed`` (:class:`HubRefused`)."""
+    return parse_link_address(text)
 
 
 class TlsTransport:
@@ -45,8 +53,13 @@ class TlsTransport:
         timeout: float = 10.0,
         now_ms: Callable[[], int] | None = None,
         resolve: Callable[[str], str] | None = None,
+        net: NetSettings | None = None,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
-        self._host, self._port = parse_addr(addr)
+        self._addr = parse_addr(addr)
+        self._net = net  # the host's own proxy settings; never anything the hub said
+        self._clock = clock
+        self._blocked_until = 0.0
         self._resolve = resolve  # host -> the checked IP to dial (raises OSError); None: dial the host as is
         self._kw: dict[str, Any] = dict(
             tls_spki_sha256=tls_spki_sha256, hub_id=hub_id, workspace_id=workspace_id, sign=sign,
@@ -66,8 +79,14 @@ class TlsTransport:
 
     def _run(self, op: object, go: Callable[[LinkClient], dict[str, Any]]) -> dict[str, Any]:
         with self._lock:
+            if self._clock() < self._blocked_until:
+                raise LinkInspectedError("the network inspects encrypted connections")  # no dial: next try later
             try:
                 return go(self._open(op))
+            except LinkInspected:
+                self._drop()
+                self._blocked_until = self._clock() + INSPECTED_WAIT_S
+                raise LinkInspectedError("the network inspects encrypted connections") from None
             except PinMismatch:
                 self._drop()
                 raise ConnectionError("the hub's certificate is not the card's pin") from None
@@ -80,9 +99,13 @@ class TlsTransport:
 
     def _open(self, op: object) -> LinkClient:
         if self._client is None:
-            host = self._host if self._resolve is None else self._resolve(self._host)  # resolved and checked per dial
+            a = self._addr
+            if self._resolve is None or (a.sni is not None and transport.proxy_applies(a, self._net) is not None):
+                host = a.host  # a name behind a proxy is the proxy's to resolve, as text; no local lookup
+            else:
+                host = self._resolve(a.host)  # resolved and checked per dial
             self._client = LinkClient.open(
-                host, self._port, wsk_pub=self._wsk_pub if op == "join" else None, **self._kw
+                host, a.port, wsk_pub=self._wsk_pub if op == "join" else None, addr=a, net=self._net, **self._kw
             )
         return self._client
 
@@ -118,16 +141,20 @@ class FailoverTransport:
             if self._chosen is not None:
                 return self._chosen
             last: OSError | None = None
+            inspected: LinkInspectedError | None = None
             for t in self._ts:
                 try:
                     t.ensure_open(op)
+                except LinkInspectedError as exc:
+                    inspected = last = exc
+                    continue
                 except OSError as exc:
                     last = exc
                     continue
                 self._chosen = t
                 return t
             assert last is not None
-            raise last
+            raise inspected or last  # an inspecting network is what the person has to hear about
 
     def send_next(self, op: str, build: Callable[[int, bytes], dict[str, Any]]) -> dict[str, Any]:
         return self._pick(op).send_next(op, build)

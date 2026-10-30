@@ -25,6 +25,9 @@ import time
 from typing import Any, Protocol
 
 from orch.crypto.encoding import EncodingError, b64u, unb64u
+from orch.hubclient.linkaddr import LinkAddr
+from orch.hubclient.netconfig import NetSettings
+from orch.hubclient.tlslink.errors import ProxyError
 
 from .codes import ClientError
 
@@ -102,12 +105,27 @@ class TlsWire:
         self._c.close()
 
 
-def dial(host: str, port: int, spki: str, *, timeout: float = 10.0) -> TlsWire:
-    """TLS 1.3 to the hub's link address, SPKI-pinned, ALPN ``orch-remote/1`` (refused when not selected)."""
+def dial(
+    host: str,
+    port: int,
+    spki: str,
+    *,
+    timeout: float = 10.0,
+    addr: LinkAddr | None = None,
+    net: NetSettings | None = None,
+) -> TlsWire:
+    """The link's TLS 1.3 to the hub's link address, SPKI-pinned, ALPN ``orch-remote/1`` (refused when not selected).
+    ``addr`` (a parsed ``ws(s)://`` or direct address) and ``net`` (this computer's own proxy settings) go through the
+    one dial function of the link, :func:`orch.hubclient.tlslink.tls.dial_link`; ``host``/``port`` alone mean direct."""
     from orch.hubclient.tlslink import tls
 
+    a = addr or LinkAddr("tcp", host, port, f"{host}:{port}")
     try:
-        conn = tls.connect_pinned(host, port, spki, timeout=timeout, alpn=(ALPN,))
+        conn = tls.dial_link(a, spki, timeout=timeout, alpn=(ALPN,), net=net)
+    except tls.LinkInspected:
+        raise ClientError("remote_client.link_inspected") from None
+    except ProxyError as e:
+        raise ClientError("remote_client." + e.code.removeprefix("hub.")) from None
     except tls.PinMismatch:
         raise ClientError("remote_client.hub_key_changed") from None
     except (tls.LinkClosed, tls.LinkTimeout, OSError):

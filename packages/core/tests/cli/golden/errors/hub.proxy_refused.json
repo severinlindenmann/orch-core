@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "hub.proxy_refused",
+    "message": "the company proxy refused the connection to the hub",
+    "hint": "ask your IT team to allow the hub's address through the proxy",
+    "fix": {
+      "argv": [
+        "orch",
+        "hub",
+        "network"
+      ]
+    },
+    "retryable": false
+  }
+}

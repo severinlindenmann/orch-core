@@ -8,7 +8,7 @@ from starlette.concurrency import run_in_threadpool
 
 from . import widget_frame
 from .errors import HostError, host_response, presence_required_response, response, step_up_response
-from .policy import ListenerPolicy, clean_path
+from .policy import LOOPBACK, ListenerPolicy, accepted_on_loopback, clean_path
 from .remote_identity import REMOTE_STREAM, RemoteIdentity, route_digest, workspace_key
 from .routegate import ALLOWED, PRE_LOGIN, PRESENCE, STEP_UP, TERMINALS, RouteGate, rule_device
 from .testrun import UPLOAD_LIMIT
@@ -66,6 +66,7 @@ READONLY_REFUSED = (
     "/market/add",
     "/hub/share/revoke",
     "/hub/profile",
+    "/hub/network",
     "/hub/share/rule-remove",
     "/shares/register",
     "/hub/share/rule-add",
@@ -244,7 +245,10 @@ class Security:
                     ]
                 else:
                     hs += [
-                        (b"content-security-policy", policy.csp().encode()),
+                        (
+                            b"content-security-policy",
+                            (policy.setup_csp() if path == "/setup" else policy.csp()).encode(),
+                        ),
                         (b"x-content-type-options", b"nosniff"),
                         (b"x-frame-options", b"DENY"),
                         (b"referrer-policy", b"no-referrer"),
@@ -263,6 +267,12 @@ class Security:
         host = values(b"host")
         setup_host = setup or path.startswith("/assets/") or path in ("/favicon.svg", "/loading.css", "/theme-boot.js")
         allowed = policy.hosts_for(setup_host)
+        if policy.name == LOOPBACK and not policy.stream and policy.alt_hosts:
+            # The network address (`serve --listen`) is a second socket of this same policy. Tie Host and socket: the
+            # loopback socket answers only its loopback names, the network socket only the network address, so a
+            # network client cannot pass as local by sending `Host: 127.0.0.1:<port>`.
+            local = accepted_on_loopback(scope, missing=True)
+            allowed = tuple(h for h in allowed if (h not in policy.alt_hosts) == local)
         origin = policy.origin_for(host[0]) if len(host) == 1 else ""
         if len(host) != 1 or host[0] not in allowed:
             return await reject("host.bad", 421)
@@ -455,7 +465,10 @@ class Security:
             return [v.decode("latin1") for k, v in headers if k.lower() == name]
 
         if (
-            not policy.websocket_ok(scope["path"], values(b"host"), values(b"origin"))
+            # the terminal socket is for this computer only: a loopback Host on a connection accepted on the network
+            # socket is refused (the Host header proves nothing); the network Host never passes `websocket_ok`
+            (policy.name == LOOPBACK and not policy.stream and not accepted_on_loopback(scope, missing=True))
+            or not policy.websocket_ok(scope["path"], values(b"host"), values(b"origin"))
             or values(b"sec-websocket-protocol")
             or scope.get("subprotocols")
             or scope.get("query_string")

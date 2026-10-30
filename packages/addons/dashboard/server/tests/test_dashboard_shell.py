@@ -66,6 +66,7 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/hub/share/sync",  # one click: confirm the shown selection (same rules)
         "/api/w/{ws}/org",  # M3 H-5: company offers (a read)
         "/api/w/{ws}/org/item",  # a read of one item
+        "/api/w/{ws}/org/secrets",  # #1434: a read of the company secrets received (names, expiry, status)
         "/api/w/{ws}/org/accept",  # one click: turn a company item on (owner, full LOCAL session, the digest shown)
         "/api/w/{ws}/org/decline",  # one click: turn it off (owner, full session)
         "/api/w/{ws}/org/sync",  # one click: get the latest from the hub
@@ -173,6 +174,7 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/add-ons/{name}/settings",
         "/api/w/{ws}/hub/link",  # run-9 feedback 6: read a connect link
         "/api/w/{ws}/hub/profile",  # HUB-WS-09: the owner's workspace profile (GET and PUT)
+        "/api/w/{ws}/hub/network",  # R6: the company proxy (GET and PUT, loopback owner only)
         "/api/w/{ws}/runner",
         "/api/w/{ws}/runner/deposits/{deposit_id}",
         "/api/w/{ws}/runner/forget",

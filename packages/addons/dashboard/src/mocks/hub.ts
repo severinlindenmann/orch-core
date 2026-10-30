@@ -56,7 +56,7 @@ const SHARED = [
 ]
 
 function mockShare(): HubShare {
-  const joined = scenario() === 'selective' || scenario() === 'offline'
+  const joined = scenario() === 'selective' || scenario() === 'offline' || scenario() === 'full'
   if (!joined) return { available: true, rules: [], shared: 0, refused: [], tickets: [], tickets_complete: true }
   return {
     available: true,
@@ -111,6 +111,7 @@ function mockPreview(body: { add?: HubRule; remove?: HubRule } | null): HubPrevi
     later_edits: 'Later edits are shared too, until you stop sharing.',
     leaves_short: added ? (withText ? 'the title, status, labels, deadline and description' : 'the title, status, labels and deadline') : null,
     later_edits_short: 'Later edits are shared too.',
+    ...(scenario() === 'full' ? { mode: 'full' as const, scope_short: 'The hub already holds this workspace. These people will see this ticket in their own workspace: the title, status, labels and deadline.' } : {}),
   }
   return { count: items.length, new: added, revoked: removed, more: 0, items, rules: [], plan: 'P'.repeat(42) + String(items.length % 10), review }
 }
@@ -127,6 +128,18 @@ function registerHubProfileRoutes(r: MockRouter) {
     mockProfile = { ...EMPTY_PROFILE, ...b }
     const s = scenario()
     return ok({ ...mockProfile, pushed: s === 'selective' || s === 'full' })
+  })
+}
+
+/** The proxy for hub links (R6): kept in memory; the password is never kept in the answer. */
+let mockNet = { proxy: null as string | null, user: null as string | null, has_password: false, broken: false }
+function registerHubNetworkRoutes(r: MockRouter) {
+  r.add('GET', '/api/w/:ws/hub/network', () => ok({ ...mockNet }))
+  r.add('PUT', '/api/w/:ws/hub/network', (_s, c) => {
+    const b = c.body as { proxy?: unknown; user?: unknown; password?: unknown } | null
+    if (!b || (b.proxy !== null && (typeof b.proxy !== 'string' || !/^https?:\/\/[^/@\s]+:\d+$/.test(b.proxy)))) return fail(400, 'invalid.input', 'The proxy address must look like http://name:3128 or https://name:3128.')
+    mockNet = b.proxy === null ? { proxy: null, user: null, has_password: false, broken: false } : { proxy: b.proxy, user: typeof b.user === 'string' ? b.user : null, has_password: typeof b.password === 'string', broken: false }
+    return ok({ ...mockNet })
   })
 }
 
@@ -159,6 +172,7 @@ export function registerHubRoutes(r: MockRouter) {
     return ok({ synced: true, pending: null, put: 0 })
   })
   registerHubProfileRoutes(r)
+  registerHubNetworkRoutes(r)
   registerHubClickRoutes(r)
 }
 

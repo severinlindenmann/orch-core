@@ -20,13 +20,29 @@ async function openMenu(scenario: HubScenario, opts: { viewer?: string; ticket?:
 }
 
 describe('the ticket Actions menu and sharing', () => {
+  it('offers sharing in full hub mode too, says what the hub already holds, and shares with one click', async () => {
+    vi.spyOn(gesture, 'trustedPress').mockReturnValue(true)
+    const add = vi.spyOn(api, 'addHubRule')
+    const view = await openMenu('full')
+    await view.user.click(await screen.findByRole('menuitem', { name: 'Share with the hub' }, T))
+    const dialog = await screen.findByRole('dialog', { name: 'Share this ticket' }, T)
+    const go = await within(dialog).findByTestId('hub-add-go', {}, T)
+    await waitFor(() => expect(go).toBeEnabled(), T)
+    const boxes = within(dialog).getAllByRole('checkbox').filter(b => (b as HTMLElement).dataset.testid?.startsWith('hub-rule-person-'))
+    if (boxes.length && !(boxes[0] as HTMLInputElement).checked) await view.user.click(boxes[0])
+    await waitFor(() => expect(within(dialog).getByTestId('hub-add-scope')).toHaveTextContent('The hub already holds this workspace'), T)
+    await waitFor(() => expect(within(dialog).getByTestId('hub-add-go')).toBeEnabled(), T)
+    fireEvent.click(within(dialog).getByTestId('hub-add-go'))
+    await waitFor(() => expect(add).toHaveBeenCalledTimes(1), T)
+  })
+
   it('offers "Share with the hub" to the owner in share-some mode', async () => {
     await openMenu('selective')
     expect(await screen.findByRole('menuitem', { name: 'Share with the hub' }, T)).toBeTruthy()
   })
 
-  it.each(['standalone', 'full'] as const)('offers nothing in %s mode', async scenario => {
-    await openMenu(scenario)
+  it('offers nothing in standalone mode', async () => {
+    await openMenu('standalone')
     await new Promise(r => setTimeout(r, 300))
     expect(screen.queryByRole('menuitem', { name: /Share with the hub|Stop sharing/ })).toBeNull()
   })

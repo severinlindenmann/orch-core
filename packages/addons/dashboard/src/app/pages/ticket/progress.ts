@@ -104,6 +104,14 @@ export function agentWorking(ticket: Pick<TicketDocument, 'claim'>, wait?: strin
   return !!ticket.claim && ticket.claim.live !== false && !wait
 }
 
+/**
+ * One rule for Terminals, the dock and the ticket page: an agent session that still runs although its ticket is done or
+ * closed is "finished" (the process ends when the person presses Close). An unknown status (list not loaded) is not finished.
+ */
+export function agentFinished(run: { kind: string; state: string }, ticketStatus: string | null | undefined): boolean {
+  return run.kind === 'agent' && (run.state === 'running' || run.state === 'starting') && (ticketStatus === 'done' || ticketStatus === 'closed')
+}
+
 export function phaseOf(ticket: TicketDocument, o: { needsYou: boolean; mark?: Mark; run?: ProgressRun | null; now: number; wait?: string | null }): Phase {
   if (ticket.status === 'done' || ticket.status === 'closed') return { kind: 'idle' }
   if (o.needsYou) return { kind: 'needs' }

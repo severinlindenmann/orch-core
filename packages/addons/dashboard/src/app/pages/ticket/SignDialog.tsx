@@ -32,7 +32,7 @@ function describe(ticket: TicketDocument, a: Exclude<HumanAction, { kind: 'appro
   const gate: GateName = a.kind === 'verdict' ? 'verify' : a.gate
   const g = ticket.gates[gate]
   const name = gateActionName(gate)
-  const title = a.kind === 'approve' ? `Approve ${name}` : a.kind === 'verdict' ? 'Give verdict (Verify)' : `Request changes on ${name}`
+  const title = a.kind === 'approve' ? `Approve ${name}` : a.kind === 'verdict' ? 'Give verdict' : `Request changes on ${name}`
   return { title, gate, hash: g.hash ?? '', covers: g.covers ?? [], policy: policyText(gate, g) }
 }
 

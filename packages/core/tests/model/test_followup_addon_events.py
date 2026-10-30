@@ -150,3 +150,10 @@ def test_deadline_fallback_is_addon_silent(env):
 
 def test_canon_hash_import_is_used():
     assert canon.grant_secret_hash(b"s" * 32)
+
+
+def test_the_cli_parses_an_addon_event_with_an_optional_status_filter(env):
+    w, *_ = env
+    ad = addons(w)
+    assert fe.parse_on(DBX + ":8812", w.state()._core.ws.workspace_id, ad)["ref"] == "8812"
+    assert fe.parse_on(DBX + ":8812", "w", ad, only="succeeded")["status"] == "succeeded"

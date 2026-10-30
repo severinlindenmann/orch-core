@@ -25,7 +25,11 @@ def build(c, p, args):
     event = {"type": "followup.set", "followup": fid, "brief": brief}
     if "on" in args:
         try:
-            on = fe.parse_on(args["on"], c.store.workspace_id)
+            from orch.addons.install import as_addons
+
+            on = fe.parse_on(
+                args["on"], c.store.workspace_id, as_addons(c.store.state.workspace.addons), args.get("on_status")
+            )
         except ValueError as e:
             raise OrchError("invalid.input", str(e)) from None
         # an event follow-up carries its deadline (the fallback); `due` stays absent
@@ -56,9 +60,14 @@ OP = operation(
         "brief_file": FILE,
         "brief": S("instructions for the fresh session", **{"x-metavar": "TEXT"}),
         "label": S("optional label", maxLength=200),
+        "on_status": S(
+            "with --on <add-on event>: wake only when the add-on reports this status (default: any status it declared)",
+            **{"x-metavar": "STATUS"},
+        ),
         "on": S(
             "wake on an event instead of a time (--in/--at is then the deadline): question.answered, "
-            "ticket.changed:testing, gate.approved:plan or webhook:<id from orch webhook new>",
+            "ticket.changed:testing, gate.approved:plan, webhook:<id from orch webhook new> or an add-on event "
+            "such as databricks.run.finished:<run id> (the add-on checks it in the background; verify the result)",
             **{"x-metavar": "EVENT"},
         ),
     },

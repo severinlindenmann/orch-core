@@ -7,7 +7,7 @@
     "cli": "orch follow-up",
     "summary": "Schedule a fresh session, release your claim, then end this session.",
     "who": "agent",
-    "usage": "orch follow-up [REF] [--in DURATION] [--at WHEN] [--brief-file PATH] [--brief TEXT] [--label LABEL] [--on EVENT] [--dry-run]",
+    "usage": "orch follow-up [REF] [--in DURATION] [--at WHEN] [--brief-file PATH] [--brief TEXT] [--label LABEL] [--on-status STATUS] [--on EVENT] [--dry-run]",
     "pre": [],
     "emits": [
       "followup.set"
@@ -48,9 +48,14 @@
           "description": "optional label",
           "maxLength": 200
         },
+        "on_status": {
+          "type": "string",
+          "description": "with --on <add-on event>: wake only when the add-on reports this status (default: any status it declared)",
+          "x-metavar": "STATUS"
+        },
         "on": {
           "type": "string",
-          "description": "wake on an event instead of a time (--in/--at is then the deadline): question.answered, ticket.changed:testing, gate.approved:plan or webhook:<id from orch webhook new>",
+          "description": "wake on an event instead of a time (--in/--at is then the deadline): question.answered, ticket.changed:testing, gate.approved:plan, webhook:<id from orch webhook new> or an add-on event such as databricks.run.finished:<run id> (the add-on checks it in the background; verify the result)",
           "x-metavar": "EVENT"
         }
       },

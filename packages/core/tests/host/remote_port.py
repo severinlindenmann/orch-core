@@ -4,7 +4,8 @@ Written apart from the hub's reference (``orch_hub.contract.remote``) and from c
 ``orch.canon.jcs``, the custodial checks of ``orch.hubclient``), so ``test_remote_vectors.py`` is a second, independent
 reading of ``contracts/hub/vectors_remote.json``. R2 and R3 build the real host paths (stream gate, device list,
 enrollment, Noise responder, presence in the click signer) and replay the same file against them; this port is what
-they must agree with until then. Every refusal raises :class:`orch.hubclient.errors.HubRefused`.
+they must agree with until then; R3's in-session part (app frames, exchanges, ``route_digest``, #1591) is at the end.
+Every refusal raises :class:`orch.hubclient.errors.HubRefused`.
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
 from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
 
-from orch.canon.jcs import JcsError, dumps
+from orch.canon.jcs import JcsError, dumps, loads_strict
 from orch.crypto import suite
 from orch.crypto.encoding import EncodingError, unb64u
 from orch.hubclient.custodial_shape import text_ok
@@ -35,6 +36,7 @@ LABEL = {
     "prologue": b"orch/v2/remote-prologue|",
     "wrk": b"orch/v2/remote-wrk|",
     "fp": b"orch/v2/remote-device-fp|",
+    "route": b"orch/v2/remote-route|",
 }
 LINK_LABEL = {"w2h": b"orch/v2/sig/hub-link|", "h2w": b"orch/v2/hub-route|"}
 RV, KIND_BYTE, PKIND_BYTE = 1, {"session": 1, "enroll": 2}, {"platform": 1, "fido2": 2}
@@ -505,3 +507,194 @@ def gate(body: Mapping[str, Any], st: Mapping[str, Any], now: int) -> None:
     lookup(st["devices"], body["device_id"], now)
     if st["streams_device"] >= 4 or st["streams_workspace"] >= 16 or st["handshakes_device"] >= 10:
         raise no("remote.busy")
+
+
+# --- R3: inside a session (app frames, exchanges, route_digest) -----------------------------------------------------
+# Written from protocol.md §10.2c "Inside a session" alone; the hub reference's names are not reused on purpose.
+
+KIND = (None, "HEAD", "BODY", "END", "RESET", "WS_OPEN", "WS_TEXT", "WS_BINARY", "WS_CLOSE", "PING", "PONG")
+PLAIN_MAX = FRAME_MAX - 16
+VERBS = frozenset({"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"})
+RESETS = frozenset({"cancelled", "timeout", "too_large", "remote.busy"})
+NEVER_IN_HEAD = frozenset(
+    "content-length transfer-encoding connection upgrade keep-alive te trailer proxy-connection sec-websocket-key "
+    "sec-websocket-version sec-websocket-extensions sec-websocket-accept".split()
+)
+TOKEN_CHARS = frozenset("abcdefghijklmnopqrstuvwxyz0123456789!#$%&'*+-.^_`|~")
+QUERY_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~!$&'()*+,;=:@%/?")
+MAX_HTTP, MAX_WS, MAX_REQ_BODY = 8, 2, 1 << 20
+
+
+def _graphic(s: str) -> bool:
+    return all(0x21 <= ord(c) <= 0x7E for c in s)
+
+
+def plain_path(p: Any) -> bool:
+    if type(p) is not str or not 0 < len(p) <= 2048 or p[:1] != "/" or not _graphic(p):
+        return False
+    if set(p) & set("%\\;?#"):
+        return False
+    return p == "/" or "" not in (segs := p[1:].split("/")) and "." not in segs and ".." not in segs
+
+
+def query_ok(q: Any) -> bool:
+    return type(q) is str and len(q) <= 4096 and set(q) <= QUERY_CHARS
+
+
+def _header_list(h: Any, also_refused: set[str]) -> bool:
+    if type(h) is not list or len(h) > 64:
+        return False
+    for item in h:
+        if type(item) is not list or len(item) != 2 or type(item[0]) is not str or type(item[1]) is not str:
+            return False
+        n, v = item
+        if not 0 < len(n) <= 64 or not set(n) <= TOKEN_CHARS or n in NEVER_IN_HEAD or n in also_refused:
+            return False
+        if len(v) > 4096 or not all(0x20 <= ord(c) <= 0x7E for c in v) or v != v.strip(" "):
+            return False
+    return True
+
+
+def _cj_object(p: bytes, keys: set[str]) -> dict[str, Any]:
+    if len(p) > 16384:
+        raise no()
+    try:
+        o = loads_strict(p)
+    except JcsError:
+        raise no() from None
+    if type(o) is not dict or set(o) != keys or dumps(o) != p:
+        raise no()
+    return o
+
+
+def app_parse(d: str, pt: bytes) -> tuple[str, int, Any]:
+    """(kind, id, value) of one app frame; value as the vectors write it (byte payloads by length)."""
+    if not 5 <= len(pt) <= PLAIN_MAX or not 1 <= pt[0] <= 10:
+        raise no()
+    kind, ident, p = KIND[pt[0]], int.from_bytes(pt[1:5], "big"), pt[5:]
+    if (kind in ("PING", "PONG")) is not (ident == 0):
+        raise no()
+    if kind in ("END", "PING", "PONG"):
+        if p:
+            raise no()
+        return kind, ident, None
+    if kind == "BODY":
+        if not p:
+            raise no()
+        return kind, ident, len(p)
+    if kind == "WS_BINARY":
+        return kind, ident, len(p)
+    if kind == "WS_TEXT":
+        try:
+            return kind, ident, p.decode("utf-8")
+        except UnicodeDecodeError:
+            raise no() from None
+    if kind == "RESET":
+        code = p.decode("latin-1")
+        if code not in RESETS:
+            raise no()
+        return kind, ident, code
+    if kind == "WS_CLOSE":
+        c = int.from_bytes(p, "big") if len(p) == 2 else 0
+        if not (1000 <= c <= 1003 or 1007 <= c <= 1011 or 3000 <= c <= 4999):
+            raise no()
+        return kind, ident, c
+    if kind == "HEAD" and d == "h2d":
+        o = _cj_object(p, {"status", "headers"})
+        if type(o["status"]) is not int or not (o["status"] == 101 or 200 <= o["status"] <= 599):
+            raise no()
+        if not _header_list(o["headers"], {"set-cookie"}):
+            raise no()
+        return kind, ident, o
+    if kind == "WS_OPEN" and d != "d2h":
+        raise no()
+    keys = {"path", "query", "headers"} | ({"method"} if kind == "HEAD" else set())
+    o = _cj_object(p, keys)
+    if kind == "HEAD" and o["method"] not in VERBS:
+        raise no()
+    if not plain_path(o["path"]) or not query_ok(o["query"]) or not _header_list(o["headers"], {"host", "origin"}):
+        raise no()
+    return kind, ident, o
+
+
+def no_bearer(head: Mapping[str, Any]) -> None:
+    if any(n in ("authorization", "cookie", "x-setup-token") or n.startswith("x-orch-") for n, _ in head["headers"]):
+        raise no("remote.bearer")
+
+
+class Exchanges:
+    """Per-stream exchange state. Each side feeds its sent and received frames, in its local order, into ``step``,
+    which gives "ok" / "drop" / "reset:<code>" or raises ``malformed``."""
+
+    def __init__(self) -> None:
+        self.top = 0
+        self.live: dict[int, dict[str, Any]] = {}
+        self.pinged = {"d2h": False, "h2d": False}
+
+    def step(self, d: str, pt: bytes) -> str:
+        kind, i, v = app_parse(d, pt)
+        back = "h2d" if d == "d2h" else "d2h"
+        if kind == "PING":
+            if self.pinged[d]:
+                raise no()
+            self.pinged[d] = True
+            return "ok"
+        if kind == "PONG":
+            if not self.pinged[back]:
+                raise no()
+            self.pinged[back] = False
+            return "ok"
+        x = self.live.get(i)
+        if x is None:
+            if d == "d2h" and kind in ("HEAD", "WS_OPEN"):
+                if i <= self.top:
+                    raise no()
+                self.top = i
+                ws = kind == "WS_OPEN"
+                if sum(e["ws"] == ws for e in self.live.values()) >= (MAX_WS if ws else MAX_HTTP):
+                    return "reset:remote.busy"
+                self.live[i] = {"ws": ws, "up": None if ws else "open", "down": "wait", "n": 0, "shut": set()}
+                return "ok"
+            if i > self.top:
+                raise no()
+            return "drop"
+        if kind == "RESET":
+            del self.live[i]
+            return "ok"
+        side = "up" if d == "d2h" else "down"
+        if side == "up" and not x["ws"] and x["up"] == "open" and kind in ("BODY", "END"):
+            if kind == "END":
+                x["up"] = "end"
+            else:
+                x["n"] += v
+                if x["n"] > MAX_REQ_BODY:
+                    del self.live[i]
+                    return "reset:too_large"
+        elif side == "down" and x["down"] == "wait" and kind == "HEAD":
+            if v["status"] == 101 and not x["ws"]:
+                raise no()
+            x["down"] = "ws" if v["status"] == 101 else "open"
+        elif side == "down" and x["down"] == "open" and kind in ("BODY", "END"):
+            if kind == "END":
+                x["down"] = "end"
+        elif x["ws"] and x["down"] == "ws" and kind in ("WS_TEXT", "WS_BINARY", "WS_CLOSE") and d not in x["shut"]:
+            if kind == "WS_CLOSE":
+                x["shut"].add(d)
+        else:
+            raise no()
+        if (x["up"] in (None, "end") and x["down"] == "end") or len(x["shut"]) == 2:
+            del self.live[i]
+        return "ok"
+
+
+def route_preimage(ws: str, method: str, template: str, path: str, query: str, body: bytes) -> bytes:
+    if method not in VERBS | {"WEBSOCKET"} or (method == "WEBSOCKET" and body):
+        raise no()
+    if type(template) is not str or not 0 < len(template) <= 1024 or not _graphic(template):
+        raise no()
+    if not plain_path(path) or not query_ok(query):
+        raise no()
+    parts = [LABEL["route"], hx(ws, 16), len(method).to_bytes(1, "big"), method.encode()]
+    for s in (template, path, query):
+        parts += [len(s).to_bytes(2, "big"), s.encode()]
+    return b"".join(parts) + hashlib.sha256(body).digest()

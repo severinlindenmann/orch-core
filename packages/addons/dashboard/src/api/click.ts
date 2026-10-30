@@ -417,9 +417,15 @@ export function clickProblem(e: unknown, minLeadS?: number): ClickProblem {
     }
     default:
       // a message that is only its own code ("some.new_code") says nothing: one plain sentence and Try again instead
-      if (e.message === e.code) return { title: 'That could not be used', body: PLAIN_INVALID, next: 'retry' }
+      // (Opus P02 L2: the sentence changes, the retry decision does not: a non-retryable code never offers Try again)
+      if (e.message === e.code) {
+        return e.retryable
+          ? { title: 'That could not be used', body: PLAIN_INVALID, next: 'retry' }
+          : { title: 'Refused', body: PLAIN_REFUSED, next: 'unavailable' }
+      }
       return { title: 'Refused', body: e.message || `The host refused this (${e.code}). Nothing was signed.`, next: e.retryable ? 'retry' : 'unavailable' }
   }
 }
 
 const PLAIN_INVALID = 'That could not be used. Check it and try again.'
+const PLAIN_REFUSED = 'This could not be done here. Nothing was signed.'

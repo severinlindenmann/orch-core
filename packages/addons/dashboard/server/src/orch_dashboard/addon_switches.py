@@ -217,10 +217,15 @@ def suggested_publish() -> str | None:
     from orch.wsproto import wire
 
     try:
-        url = state.load(state.Layout(os.environ))["parts"]["publish"]["url"]
-        return wire.check_origin(url)
+        url = wire.check_origin(state.load(state.Layout(os.environ))["parts"]["publish"]["url"])
     except Exception:  # noqa: BLE001 - unreadable or odd installer state is "nothing to suggest"
         return None
+    # the dialog says "on this computer": only a loopback address may be called that (a public or office address in a
+    # tampered or odd installer file is not suggested; the person types it and the signed review names its reach)
+    from urllib.parse import urlsplit
+
+    host = (urlsplit(url).hostname or "").lower()
+    return url if host in ("localhost", "127.0.0.1", "::1") else None
 
 
 def check_off(gateway: Gateway, ws: str, name: str) -> None:

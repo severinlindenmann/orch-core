@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from orch.ops.human import review_prompt
+from orch.publishclient import approval
 
 __all__ = ["main"]
 
@@ -41,7 +42,6 @@ _USAGE = (
     "[--days D] | share STAGED | send STAGED | revoke SHARE | extend SHARE --days D | password SHARE | "
     "list [REF] [--live] | discard STAGED} [--json]"
 )
-_PREPARE_DAYS = (1, 3, 7, 30)  # the same set the host and the dashboard offer (approval.DAYS)
 _AGENT_OK = frozenset({"prepare", "list", "discard"})
 _PERSON_ONLY_MESSAGE = "a person does this; an agent only prepares (orch publish prepare)"
 
@@ -427,8 +427,9 @@ def _check_shape(a: argparse.Namespace) -> None:
         raise PubError("invalid.input", _USAGE, 2)
     if a.cmd == "setup":
         _check_setup(a)
-    if a.cmd == "prepare" and a.days is not None and a.days not in _PREPARE_DAYS:
-        raise PubError("invalid.input", "a link works for 1, 3, 7 or 30 days: use --days 1, 3, 7 or 30\n" + _USAGE, 2)
+    if a.cmd == "prepare" and a.days is not None and a.days not in approval.DAYS:
+        days = ", ".join(str(d) for d in approval.DAYS[:-1]) + f" or {approval.DAYS[-1]}"
+        raise PubError("invalid.input", f"a link works for {days} days: use --days {days}\n" + _USAGE, 2)
     if a.cmd == "extend" and (a.days is None or not 1 <= a.days <= 30):
         raise PubError("invalid.input", "extend needs --days D with D from 1 to 30\n" + _USAGE, 2)
 

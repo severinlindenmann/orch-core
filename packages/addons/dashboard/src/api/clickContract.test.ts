@@ -69,13 +69,22 @@ describe('P02: a code is never the sentence', () => {
   it.each([
     ['invalid.input', 'invalid.input'],
     ['invalid.input', 'That could not be used. Check it and try again.'],
-    ['some.new_code', 'some.new_code'], // a message equal to its own code, whatever the code
+    ['some.new_code', 'some.new_code'], // a retryable message equal to its own code
   ])('%s with message %j says one plain sentence and offers Try again', (code, message) => {
-    const p = clickProblem(new ApiError(400, { code, message, retryable: false }))
+    const p = clickProblem(new ApiError(400, { code, message, retryable: code === 'some.new_code' }))
     expect(p.body).toBe(PLAIN)
     expect(p.next).toBe('retry')
     expect(`${p.title} ${p.body}`).not.toContain(code)
   })
+  it.each(['session.readonly', 'switch.unverified', 'passkey.invalid', 'enroll.expired', 'internal'])(
+    'a non-retryable %s with only its code says a plain sentence and never offers Try again',
+    (code) => {
+      const p = clickProblem(new ApiError(400, { code, message: code, retryable: false }))
+      expect(p.next).toBe('unavailable')
+      expect(p.body).toBe('This could not be done here. Nothing was signed.')
+      expect(`${p.title} ${p.body}`).not.toContain(code)
+    },
+  )
   it('keeps a real message of an unknown code', () => {
     expect(clickProblem(new ApiError(400, { code: 'some.new_code', message: 'The folder is gone.', retryable: false })).body).toBe('The folder is gone.')
   })

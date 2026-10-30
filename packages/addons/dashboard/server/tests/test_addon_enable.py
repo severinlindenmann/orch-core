@@ -135,7 +135,9 @@ def test_rows_report_setup(client, token, stub, gateway, monkeypatch, settings, 
     "state,want",
     [
         ({"parts": {"publish": {"url": "http://127.0.0.1:8102"}}}, "http://127.0.0.1:8102"),
-        ({"parts": {"publish": {"url": "https://pub.example.org"}}}, "https://pub.example.org"),
+        ({"parts": {"publish": {"url": "https://pub.example.org"}}}, None),  # not "on this computer": never suggested
+        ({"parts": {"publish": {"url": "http://192.168.1.5:8102"}}}, None),
+        ({"parts": {"publish": {"url": "http://localhost:8102"}}}, "http://localhost:8102"),
         ({"parts": {"publish": {"url": "http://example.com"}}}, None),  # not an address core accepts
         ({"parts": {"publish": {"url": "https://pub.example.org/x"}}}, None),
         ({"parts": {"publish": {}}}, None),

@@ -20,6 +20,7 @@ from ..contract.canon import unb64u
 from ..contract.hub import Refused
 from ..contract.keystore import OpSigner
 from ..contract.market_policy import default_policy
+from ..versions import version_state
 from .registry import Registry
 
 if TYPE_CHECKING:
@@ -727,6 +728,10 @@ def status_put(c: OpContext) -> dict[str, Any]:
     if c.registry.pin(c.workspace_id) is None:
         raise Refused("unknown_workspace")
     c.registry.put_status(c.workspace_id, c.body)
+    # HUB-WS-04: an admin asked the owner to update. Only the version, never text; sent only while still older.
+    ask = c.registry.update_ask(c.workspace_id)
+    if ask is not None and version_state(c.body["version"], ask["target_version"], "0") == "older":
+        return {"update_requested": {"target_version": ask["target_version"]}}
     return {}
 
 

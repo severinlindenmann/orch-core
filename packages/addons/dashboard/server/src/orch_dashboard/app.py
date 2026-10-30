@@ -28,6 +28,7 @@ from . import (
     org_routes,
     passkey_routes,
     phone,
+    profile_routes,
     reads,
     remote_routes,
     riskack,
@@ -72,6 +73,7 @@ SETTINGS_TABS = (
     "gates",
     "grants",
     "devices",
+    "profile",
     "hub",
     "company",
 )  # HOST_TABS (settings/tabs.ts)
@@ -330,6 +332,7 @@ def create_app(
     hubapprove.register(app, gateway)
     hub.register(app, gateway)
     remote_routes.register(app, gateway)
+    profile_routes.register(app, gateway)
     org_routes.register(app, gateway)
     switch.register(app, gateway, auth)
     trust_routes.register(app, auth, gateway)

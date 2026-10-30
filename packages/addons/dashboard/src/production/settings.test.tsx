@@ -21,7 +21,7 @@ it('the Settings link is offered when the host serves it, with only the reduced 
   await userEvent.setup().click(await screen.findByText('Advanced', {}, T))
   expect(await screen.findByText('Advanced', {}, T)).toBeInTheDocument()
   const nav = within(screen.getByRole('navigation', { name: 'Settings' }))
-  expect(nav.getAllByRole('link').map((a) => a.textContent)).toEqual(['General', 'Members', 'Approvals', 'Agent access', 'Devices'])
+  expect(nav.getAllByRole('link').map((a) => a.textContent)).toEqual(['General', 'Members', 'Approvals', 'Agent access', 'Devices', 'Profile'])
   expect(screen.getByRole('link', { name: 'Settings' })).toBeInTheDocument()
   expect(screen.queryByText('Relay & devices')).not.toBeInTheDocument()
 })

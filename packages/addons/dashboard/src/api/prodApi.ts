@@ -411,6 +411,9 @@ const click = {
  */
 const cosmetic = {
   setCosmetic: (ws: string, body: CosmeticBody) => call<Cosmetic>(`${w(ws)}/workspace/cosmetic`, 'PUT', body),
+  /** HUB-WS-09: the owner's workspace profile (the host pushes it to a bound hub; `pushed` says whether it has). */
+  getHubProfile: (ws: string) => call<import('./profile').WorkspaceProfile>(`${w(ws)}/hub/profile`),
+  putHubProfile: (ws: string, profile: import('./profile').ProfileFields) => call<import('./profile').WorkspaceProfile>(`${w(ws)}/hub/profile`, 'PUT', profile),
 }
 
 const implemented: Record<string, unknown> = { ...reads, ...empty, ...repos, ...click, ...records, ...cosmetic }

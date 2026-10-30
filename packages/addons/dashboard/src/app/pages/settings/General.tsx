@@ -18,6 +18,7 @@ import { useSettingsSign } from './useSettingsSign'
 import { WorkspaceIconPicker } from './WorkspaceIconPicker'
 import { useCosmetic } from './useCosmetic'
 import { queries } from '@/api/queries'
+import { ThemeSection } from './ThemeSection'
 
 export function CopyButton({ value, label }: { value: string; label: string }) {
   const [done, setDone] = useState(false)
@@ -116,6 +117,8 @@ export function General({ workspace, canEdit }: { workspace: Workspace; canEdit:
           <Row label="Created">{id ? fmtTime(id.created_at) : '…'}</Row>
         </dl>
       </Section>
+
+      <ThemeSection />
 
       {workspace.icon_known !== false && (
         <Section title="Icon">

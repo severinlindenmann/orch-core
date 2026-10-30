@@ -273,7 +273,7 @@ export function SignContent({ content, ws, technical, compact = false, quick }: 
     {choice && <p data-testid="sign-choice">Your answer will be <Inline>{choice}</Inline>.</p>}
     {facts.length > 0 && <section data-testid="sign-summary"><ul className="space-y-1.5">{facts.map((line, i) => <li key={i}><Inline>{line}</Inline></li>)}</ul></section>}
     {summary && content.ticket && <p data-testid="sign-ticket"><Raw>{content.ticket.key}</Raw> · signed id …<Raw>{content.ticket.uid_tail}</Raw></p>}
-    {summary?.risk && <p role="note" data-testid="sign-risk" className="flex items-start gap-2 rounded-md border border-warning/50 bg-warning/10 px-3 py-2 font-medium text-text"><ShieldAlert className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden /><span><Inline>{summary.risk}</Inline></span></p>}
+    {summary?.risk && <p role="note" data-testid="sign-risk" className="flex items-start gap-2 rounded-md border border-warning/50 border-l-[3px] border-l-risk-bar bg-warning-soft px-3 py-2 font-medium text-text"><ShieldAlert className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden /><span><Inline>{summary.risk}</Inline></span></p>}
     {!summary ? <div data-testid="sign-exact" className="min-w-0 space-y-5">{rest}</div> : <details data-testid="sign-exact" className="space-y-3 rounded-md border border-border p-3">
       <summary className="cursor-pointer text-[12px] font-medium text-text-muted">What you sign</summary>
       <div className="mt-2 min-w-0 space-y-5">

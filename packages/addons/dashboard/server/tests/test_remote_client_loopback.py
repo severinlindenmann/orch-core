@@ -40,8 +40,13 @@ def session_origin(static):
 
 
 def login(lst, origin):
-    st, _, body = raw(lst.port, "POST", "/auth/session", headers={"Origin": origin.origin, "Content-Type": "application/json"},
-                      body=json.dumps({"code": origin.launch_code()}).encode())
+    st, _, body = raw(
+        lst.port,
+        "POST",
+        "/auth/session",
+        headers={"Origin": origin.origin, "Content-Type": "application/json"},
+        body=json.dumps({"code": origin.launch_code()}).encode(),
+    )
     assert st == 200
     return json.loads(body)["token"]
 
@@ -71,10 +76,25 @@ def test_home_serves_its_own_page(static):
 
 
 def test_package_imports_no_http_client_and_not_the_dashboard_app():
-    banned = {"httpx", "requests", "urllib.request", "http.client", "aiohttp", "urllib3", "orch_dashboard.app", "orch_dashboard.gateway"}
+    banned = {
+        "httpx",
+        "requests",
+        "urllib.request",
+        "http.client",
+        "aiohttp",
+        "urllib3",
+        "orch_dashboard.app",
+        "orch_dashboard.gateway",
+    }
     for f in PKG.glob("*.py"):
         for node in ast.walk(ast.parse(f.read_text())):
-            names = [a.name for a in node.names] if isinstance(node, ast.Import) else [node.module or ""] if isinstance(node, ast.ImportFrom) else []
+            names = (
+                [a.name for a in node.names]
+                if isinstance(node, ast.Import)
+                else [node.module or ""]
+                if isinstance(node, ast.ImportFrom)
+                else []
+            )
             for n in names:
                 assert n not in banned and not any(n.startswith(b + ".") for b in banned), (f.name, n)
 
@@ -91,7 +111,9 @@ def test_wrong_host_is_refused(session_origin, host):
     assert sess.requests == []
 
 
-@pytest.mark.parametrize("origin_for", ["null", "http://127.0.0.1:1", "https://127.0.0.1:{p}", "http://localhost:{p}", None])
+@pytest.mark.parametrize(
+    "origin_for", ["null", "http://127.0.0.1:1", "https://127.0.0.1:{p}", "http://localhost:{p}", None]
+)
 def test_wrong_origin_is_refused_on_every_change(session_origin, origin_for):
     lst, origin, sess = session_origin
     token = login(lst, origin)
@@ -152,13 +174,28 @@ def test_launch_codes_expire():
 def test_no_cors_no_service_worker_and_security_headers_everywhere(session_origin):
     lst, origin, sess = session_origin
     token = login(lst, origin)
-    sess.answer = (200, [("content-type", "text/plain"), ("access-control-allow-origin", "*"),
-                         ("content-security-policy", "default-src *"), ("service-worker-allowed", "/")], [b"x"])
+    sess.answer = (
+        200,
+        [
+            ("content-type", "text/plain"),
+            ("access-control-allow-origin", "*"),
+            ("content-security-policy", "default-src *"),
+            ("service-worker-allowed", "/"),
+        ],
+        [b"x"],
+    )
     ok = {"Authorization": f"Bearer {token}", "Origin": origin.origin}
     answers = [
-        raw(lst.port, "GET", "/"), raw(lst.port, "GET", "/nope"), raw(lst.port, "GET", "/api/x", headers=ok),
-        raw(lst.port, "GET", "/api/x"), raw(lst.port, "OPTIONS", "/api/x", headers={"Origin": "http://evil.example",
-                                                                                   "Access-Control-Request-Method": "POST"}),
+        raw(lst.port, "GET", "/"),
+        raw(lst.port, "GET", "/nope"),
+        raw(lst.port, "GET", "/api/x", headers=ok),
+        raw(lst.port, "GET", "/api/x"),
+        raw(
+            lst.port,
+            "OPTIONS",
+            "/api/x",
+            headers={"Origin": "http://evil.example", "Access-Control-Request-Method": "POST"},
+        ),
         raw(lst.port, "GET", "/", host="evil.com"),
     ]
     assert answers[4][0] == 405
@@ -194,14 +231,35 @@ def test_escaped_or_dotted_paths_are_refused(session_origin, path):
 def test_authorization_and_x_orch_headers_are_never_forwarded(session_origin):
     lst, origin, sess = session_origin
     token = login(lst, origin)
-    st, h, body = raw(lst.port, "POST", f"/api/w/{WS_A}/click/prepare?a=1", body=b'{"action":"x"}', headers={
-        "Authorization": f"Bearer {token}", "Origin": origin.origin, "Content-Type": "application/json",
-        "X-Orch-Click-Contract": "4", "X-Orch-Anything": "1", "Cookie": "a=b", "Accept": "application/json",
-        "Referer": origin.origin + "/x", "User-Agent": "x"})
+    st, h, body = raw(
+        lst.port,
+        "POST",
+        f"/api/w/{WS_A}/click/prepare?a=1",
+        body=b'{"action":"x"}',
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Origin": origin.origin,
+            "Content-Type": "application/json",
+            "X-Orch-Click-Contract": "4",
+            "X-Orch-Anything": "1",
+            "Cookie": "a=b",
+            "Accept": "application/json",
+            "Referer": origin.origin + "/x",
+            "User-Agent": "x",
+        },
+    )
     assert st == 200 and body == b'{"ok":true}'
     (got,) = sess.requests
     names = [n for n, _ in got["head"]["headers"]]
-    assert set(names) <= {"accept", "accept-language", "content-type", "if-none-match", "if-modified-since", "range", "cache-control"}
+    assert set(names) <= {
+        "accept",
+        "accept-language",
+        "content-type",
+        "if-none-match",
+        "if-modified-since",
+        "range",
+        "cache-control",
+    }
     assert "content-type" in names and "accept" in names
     blob = json.dumps(got["head"]).lower()
     assert token.lower() not in blob and "authorization" not in blob and "x-orch" not in blob and "cookie" not in blob
@@ -221,14 +279,21 @@ def test_an_ended_session_answers_410(session_origin):
     lst, origin, sess = session_origin
     token = login(lst, origin)
     sess.closed = "expired"
-    assert raw(lst.port, "GET", "/api/x", headers={"Authorization": f"Bearer {token}", "Origin": origin.origin})[0] == 410
+    assert (
+        raw(lst.port, "GET", "/api/x", headers={"Authorization": f"Bearer {token}", "Origin": origin.origin})[0] == 410
+    )
 
 
 def test_a_big_body_is_refused(session_origin):
     lst, origin, sess = session_origin
     token = login(lst, origin)
-    st, *_ = raw(lst.port, "POST", "/api/x", body=b"x" * (1 << 20 + 1) if False else b"x" * ((1 << 20) + 5),
-                 headers={"Authorization": f"Bearer {token}", "Origin": origin.origin})
+    st, *_ = raw(
+        lst.port,
+        "POST",
+        "/api/x",
+        body=b"x" * (1 << 20 + 1) if False else b"x" * ((1 << 20) + 5),
+        headers={"Authorization": f"Bearer {token}", "Origin": origin.origin},
+    )
     assert st == 413 and sess.requests == []
 
 
@@ -240,7 +305,7 @@ def ws_url(lst, path="/term"):
 
 
 def test_websocket_origin_rules_and_relay(session_origin):
-    from websockets.exceptions import InvalidStatus, InvalidHandshake  # noqa: F401
+    from websockets.exceptions import InvalidHandshake, InvalidStatus  # noqa: F401
     from websockets.sync.client import connect
 
     lst, origin, sess = session_origin
@@ -287,18 +352,38 @@ def test_binds_127_0_0_1_only(session_origin):
 
 
 def run_home(client, static, gate=None, opened=None):
-    ctl = Controller(client, static, gate=gate, opener=(opened.append if opened is not None else (lambda u: None)), computer_name="Test Mac")
+    ctl = Controller(
+        client,
+        static,
+        gate=gate,
+        opener=(opened.append if opened is not None else (lambda u: None)),
+        computer_name="Test Mac",
+    )
     url = ctl.start_home()
     port = ctl.home_listener.port
     code = url.split("#launch=")[1]
-    st, _, body = raw(port, "POST", "/auth/session", headers={"Origin": f"http://127.0.0.1:{port}", "Content-Type": "application/json"},
-                      body=json.dumps({"code": code}).encode())
+    st, _, body = raw(
+        port,
+        "POST",
+        "/auth/session",
+        headers={"Origin": f"http://127.0.0.1:{port}", "Content-Type": "application/json"},
+        body=json.dumps({"code": code}).encode(),
+    )
     assert st == 200
     token = json.loads(body)["token"]
 
     def api(method, path, doc=None):
-        st, _, b = raw(port, method, "/api/remote-client" + path, body=None if doc is None else json.dumps(doc).encode(),
-                       headers={"Authorization": f"Bearer {token}", "Origin": f"http://127.0.0.1:{port}", "Content-Type": "application/json"})
+        st, _, b = raw(
+            port,
+            method,
+            "/api/remote-client" + path,
+            body=None if doc is None else json.dumps(doc).encode(),
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Origin": f"http://127.0.0.1:{port}",
+                "Content-Type": "application/json",
+            },
+        )
         return st, json.loads(b)
 
     return ctl, api
@@ -325,10 +410,17 @@ def test_open_starts_one_origin_per_workspace_and_end_stops_it(static):
         sport = int(url.split(":")[2].split("/")[0])
         assert sport != ctl.home_listener.port
         assert api("GET", "/state")[1]["open"] == [WS_A]
-        st, _, b = raw(sport, "POST", "/auth/session", headers={"Origin": f"http://127.0.0.1:{sport}", "Content-Type": "application/json"},
-                       body=json.dumps({"code": url.split("#launch=")[1]}).encode())
+        st, _, b = raw(
+            sport,
+            "POST",
+            "/auth/session",
+            headers={"Origin": f"http://127.0.0.1:{sport}", "Content-Type": "application/json"},
+            body=json.dumps({"code": url.split("#launch=")[1]}).encode(),
+        )
         assert st == 200
-        assert api("POST", "/open", {"workspace_id": WS_A})[0] == 200 and len(opened) == 2  # open again: a new tab, no new session
+        assert (
+            api("POST", "/open", {"workspace_id": WS_A})[0] == 200 and len(opened) == 2
+        )  # open again: a new tab, no new session
         assert [c[0] for c in client.calls].count("open") == 1
         assert api("POST", "/end", {"workspace_id": WS_A})[0] == 200
         assert api("GET", "/state")[1]["open"] == []
@@ -364,7 +456,13 @@ def test_the_confirm_screen_names_the_workspace_from_the_session_not_the_hub(sta
 
         def ask():
             with C._for_workspace(WS_A):
-                out.append(gate.assert_("ref", b"m", Prompt("Confirm in Billing service", ("Start an agent on AT-12", "Open a terminal"), "r")))
+                out.append(
+                    gate.assert_(
+                        "ref",
+                        b"m",
+                        Prompt("Confirm in Billing service", ("Start an agent on AT-12", "Open a terminal"), "r"),
+                    )
+                )
 
         t = threading.Thread(target=ask)
         t.start()
@@ -485,15 +583,23 @@ def test_sign_in_error_does_not_say_which_field(static):
     client.connect_hub = bad
     ctl, api = run_home(client, static)
     try:
-        import orch_dashboard.remote_client.controller as C
         from orch.hubclient import connectlink
 
+        import orch_dashboard.remote_client.controller as C
+
         orig = connectlink.resolve
-        connectlink.resolve = lambda text, **k: {"endpoint": "hub.example:8444", "hub_card": {"tls_spki_sha256": "p" * 43}}
+        connectlink.resolve = lambda text, **k: {
+            "endpoint": "hub.example:8444",
+            "hub_card": {"tls_spki_sha256": "p" * 43},
+        }
         orig_parse = connectlink.parse_link
         connectlink.parse_link = lambda t: type("L", (), {"origin": "https://hub.example"})()
         try:
-            st, err = api("POST", "/connect", {"link": "https://hub.example/c#h1.x", "user": "u", "password": "p", "code": "123456"})
+            st, err = api(
+                "POST",
+                "/connect",
+                {"link": "https://hub.example/c#h1.x", "user": "u", "password": "p", "code": "123456"},
+            )
         finally:
             connectlink.resolve, connectlink.parse_link = orig, orig_parse
         assert st == 400 and err["error"]["message"] == "Check your details and try again."

@@ -1,4 +1,5 @@
-"""Shared pieces of the remote client's loopback tests: a static build in tmp_path, a fake end-to-end session that builds
+"""Shared pieces of the remote client's loopback tests: a static build in tmp_path, a fake end-to-end session that
+builds
 its request head with the REAL ``orch.remoteclient.frames`` (so the header allow-list is the product's), and a tiny
 HTTP/WebSocket driver that can send any Host / Origin."""
 
@@ -61,7 +62,11 @@ class FakeSession:
         self.workspace_id, self.name, self.closed = ws, name, None
         self.requests: list[dict[str, Any]] = []
         self.ws_opens: list[dict[str, Any]] = []
-        self.answer: tuple[int, list[tuple[str, str]], list[bytes]] = (200, [("content-type", "application/json")], [b'{"ok":true}'])
+        self.answer: tuple[int, list[tuple[str, str]], list[bytes]] = (
+            200,
+            [("content-type", "application/json")],
+            [b'{"ok":true}'],
+        )
         self.ws = FakeWs()
 
     def request(self, method, path, query="", headers=(), body=b""):
@@ -69,7 +74,9 @@ class FakeSession:
         self.requests.append({"head": head, "body": bytes(body)})
         status, hs, chunks = self.answer
         chunks = list(chunks)
-        return Response(status, F.clean_response_headers(hs), lambda timeout: chunks.pop(0) if chunks else None, lambda: None)
+        return Response(
+            status, F.clean_response_headers(hs), lambda timeout: chunks.pop(0) if chunks else None, lambda: None
+        )
 
     def websocket(self, path, query="", headers=()):
         self.ws_opens.append(json.loads(F.build_request_head(None, path, query, headers)))
@@ -79,8 +86,16 @@ class FakeSession:
         self.closed = "closed"
 
 
-def raw(port: int, method: str, path: str, *, headers: dict[str, str] | None = None, body: bytes | None = None,
-        host: str | None = "default", timeout: float = 10) -> tuple[int, dict[str, str], bytes]:
+def raw(
+    port: int,
+    method: str,
+    path: str,
+    *,
+    headers: dict[str, str] | None = None,
+    body: bytes | None = None,
+    host: str | None = "default",
+    timeout: float = 10,
+) -> tuple[int, dict[str, str], bytes]:
     """One request with exactly the headers given (``host=None``: no Host header at all)."""
     c = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout)
     try:
@@ -108,7 +123,14 @@ def fake_client(*, hub_name: str = "Hub Name", own_name: str | None = None) -> S
     c = SimpleNamespace(store=store, calls=calls, sessions={}, hub_name=hub_name)
     c.signed_in = lambda: True
     c.workspaces = lambda: [
-        {"workspace_id": WS_A, "online": True, "added": True, "name": own_name or hub_name, "name_from_hub": own_name is None, "hub_name": hub_name}
+        {
+            "workspace_id": WS_A,
+            "online": True,
+            "added": True,
+            "name": own_name or hub_name,
+            "name_from_hub": own_name is None,
+            "hub_name": hub_name,
+        }
     ]
 
     def open_(ws, notify=None):

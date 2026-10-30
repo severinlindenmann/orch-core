@@ -3,7 +3,8 @@
 An :class:`Origin` is a plain ASGI app bound to ONE port. The guard in front of every request is the same for the home
 page and for a workspace session:
 
-* ``Host`` exactly ``127.0.0.1:<port>``; ``Origin`` exactly ``http://127.0.0.1:<port>`` on every non-GET request and every
+* ``Host`` exactly ``127.0.0.1:<port>``; ``Origin`` exactly ``http://127.0.0.1:<port>`` on every non-GET request and
+  every
   WebSocket (and on a GET when present); ``Sec-Fetch-Site`` (when present) ``same-origin`` or ``none``;
 * ``OPTIONS`` is 405 and no response ever carries an ``access-control-*`` header (no CORS at all); a request that comes
   from a service worker is refused and the page's CSP forbids workers;
@@ -11,9 +12,9 @@ page and for a workspace session:
 * the path must be plain (no escape, no dot segment), checked on the raw bytes too.
 
 A **session** origin turns ``/api/...`` and WebSockets into app frames of its session; the UI itself is served only
-from the installed build (:class:`~orch_dashboard.remote_client.static.StaticSite`). A **home** origin serves the client's
-own screens and ``/api/remote-client/...``. The browser's ``Authorization`` and ``X-Orch-*`` headers are consumed here:
-the session's header allow-list (``orch.remoteclient.frames``) means they are never forwarded."""
+from the installed build (:class:`~orch_dashboard.remote_client.static.StaticSite`). A **home** origin serves the
+client's own screens and ``/api/remote-client/...``. The browser's ``Authorization`` and ``X-Orch-*`` headers are
+consumed here: the session's header allow-list (``orch.remoteclient.frames``) means they are never forwarded."""
 
 from __future__ import annotations
 
@@ -94,7 +95,7 @@ class Origin:
     # -- credentials --
 
     def launch_code(self) -> str:
-        """A single-use code (valid 60 s) for ``POST /auth/session``; it goes in the address of the page, never logged."""
+        """A single-use code (valid 60 s) for ``POST /auth/session``; it goes in the page address, never in a log."""
         now = self._clock()
         self._codes = {c: t for c, t in self._codes.items() if t > now}
         code = secrets.token_urlsafe(32)
@@ -187,7 +188,9 @@ class Origin:
                 kept = [
                     (k, v)
                     for k, v in message.get("headers", [])
-                    if k.lower() not in names and not k.lower().startswith(b"access-control-") and k.lower() != b"set-cookie"
+                    if k.lower() not in names
+                    and not k.lower().startswith(b"access-control-")
+                    and k.lower() != b"set-cookie"
                 ]
                 message = {**message, "headers": [*kept, *extra]}
             await send(message)
@@ -244,7 +247,9 @@ class Origin:
             code = None
         token = self._redeem(code)
         if token is None:
-            return await self._json(send, 401, error_doc("remote_client.launch", "Open this page again from the client."))
+            return await self._json(
+                send, 401, error_doc("remote_client.launch", "Open this page again from the client.")
+            )
         await self._json(send, 200, {"token": token})
 
     # -- the UI, from the installed build only --

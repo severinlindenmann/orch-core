@@ -2,7 +2,8 @@
 sections 1, 3 and 6). The loopback app (:mod:`.origin`) only moves bytes; every decision is here.
 
 Names: a workspace's name in a prompt is the one the workspace itself told us through the end-to-end session (stored by
-the client core); until then it reads "workspace <last 8 of the id>". The hub's name for a workspace is shown in the list
+the client core); until then it reads "workspace <last 8 of the id>". The hub's name for a workspace is shown in
+the list
 only, as plain text, labelled as the hub's, and is NEVER put in a prompt."""
 
 from __future__ import annotations
@@ -102,7 +103,7 @@ class GatedPresence:
 
 
 def workspace_label(client: Client, ws: str | None) -> str:
-    """What a prompt calls a workspace: the name the workspace gave through the end-to-end session, else its short id."""
+    """What a prompt calls a workspace: the name it gave through the end-to-end session, else its short id."""
     if ws is None:
         return "this workspace"
     try:
@@ -179,7 +180,11 @@ class Controller:
         try:
             return self._route(method, path, body)
         except ClientError as exc:
-            msg = "Check your details and try again." if exc.code == "no_session" and path.endswith("/connect") else exc.message
+            msg = (
+                "Check your details and try again."
+                if exc.code == "no_session" and path.endswith("/connect")
+                else exc.message
+            )
             return (409 if exc.code.startswith("remote_client.") else 400), error_doc(exc.code, msg)
 
     def _route(self, method: str, path: str, body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
@@ -257,7 +262,9 @@ class Controller:
     def workspaces(self) -> list[dict[str, Any]]:
         rows = self.client.workspaces()
         self._reap()
-        return [{**r, "open": r["workspace_id"] in self._open, "ended": self._ended.get(r["workspace_id"])} for r in rows]
+        return [
+            {**r, "open": r["workspace_id"] in self._open, "ended": self._ended.get(r["workspace_id"])} for r in rows
+        ]
 
     # -- adding this computer --
 

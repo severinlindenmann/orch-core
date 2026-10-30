@@ -65,6 +65,7 @@ def _interrupted(why: str) -> OrchError:
 def restore_pending(root: Path) -> str | None:
     """If a restore of ``root`` was interrupted (its sidecar record exists), the plain sentence that says where the
     data is and what to do; else None. Reads only."""
+    root = Path(os.path.realpath(root))  # a symlinked root: the sidecar sits beside the real folder
     rec = root.with_name(f".{root.name}.restore") / "record.json"
     if not os.path.lexists(rec):
         return None

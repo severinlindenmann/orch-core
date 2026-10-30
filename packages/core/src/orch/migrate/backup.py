@@ -384,7 +384,13 @@ class _Sidecar:
         else:
             os.mkdir(self.dir, 0o700)
         flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
-        fd = os.open(self.dir / "lock", flags, 0o600)
+        try:
+            fd = os.open(self.dir / "lock", flags, 0o600)
+        except OSError as exc:
+            raise OrchError(
+                "migrate.backup_refused",
+                f"the restore lock in {self.dir.name} cannot be used ({exc.strerror or exc}); it may be a link",
+            ) from None
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid():
             os.close(fd)
@@ -618,7 +624,7 @@ def _swap_in(
 def recover_interrupted(root: Path, say: Callable[[str], None] | None = None) -> bool:
     """Finish or refuse a restore of ``root`` that was killed. True if there was one to recover. Takes the sidecar lock
     (so a restore that is still running is never touched) and raises plain-worded errors when it cannot be sure."""
-    root = Path(root).resolve() if root.exists() else root.parent.resolve() / root.name
+    root = Path(os.path.realpath(root))
     if journal_restore_pending(root) is None:
         return False
     side = _Sidecar(root)

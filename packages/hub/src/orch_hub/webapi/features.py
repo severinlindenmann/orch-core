@@ -16,6 +16,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from .ask_phone_api import STATUS as ASK_PHONE_STATUS
+from .ask_phone_api import AskPhoneHandlers, ask_phone_routes
 from .backup_api import STATUS as BACKUP_STATUS
 from .backup_api import BackupHandlers, backup_routes
 from .changes_api import ChangeHandlers
@@ -43,6 +45,7 @@ FEATURES: tuple[Feature, ...] = (
     Feature(mixin=PublishedHandlers, routes=published_routes),
     Feature(mixin=BackupHandlers, routes=backup_routes, status=BACKUP_STATUS),
     Feature(mixin=SpaceHandlers, routes=space_routes),
+    Feature(mixin=AskPhoneHandlers, routes=ask_phone_routes, status=ASK_PHONE_STATUS),
     Feature(mixin=InviteStatusHandlers, routes=invite_status_routes, status=INVITE_STATUS),
 )
 

@@ -598,7 +598,7 @@ SWITCH_HANDLERS = frozenset(
 #: E4: routes only the console PAGE may call (its cookie session, from its own origin). The console's own session sent
 #: as a bearer is ``not_allowed``; an unknown bearer stays ``no_session`` and an app (pairing/channel) one
 #: ``forbidden_role``, as on every route.
-BROWSER_ONLY = frozenset({"switch_ticket", "my_pairing", "my_channels_seen"})
+BROWSER_ONLY = frozenset({"switch_ticket", "my_pairing", "my_channels_seen", "ask_phone"})
 
 
 def route_scopes(rt: Route) -> frozenset[str]:

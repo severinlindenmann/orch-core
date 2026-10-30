@@ -226,7 +226,7 @@ function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil
   const danger = !!story?.danger
   // r14-P07: with one workspace and a review that has its own fold, the workspace line sits inside that fold (still one click
   // away, still naming the workspace); with several workspaces it stays on the main surface (D6).
-  const folded = !!story?.foldWorkspace && !manyWorkspaces
+  const folded = !!story?.foldWorkspace && !manyWorkspaces && (!!story.foldInRisk || (!auto && risk.length === 0))
   const inFold = folded && !!view.content
   const wsLine = <WorkspaceLine workspace={view.workspace} many={manyWorkspaces} always={auto || risk.length > 0 || inFold} folded={folded && !inFold} target={view.content?.ticket?.key} />
   return (

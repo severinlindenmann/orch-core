@@ -81,7 +81,7 @@ export function JoinFlow({ ws, onClose, initialLink }: { ws: string; onClose: ()
         {choosing && !signed
           ? <ModeChoice mode={mode} onChange={setMode} />
           : <div className={'rounded-md border p-2 ' + violet} data-testid="hub-mode-box">
-            <p className="text-sm">{mode === 'full' ? 'The hub can read every ticket and file.' : 'The hub sees only the tickets you pick, plus this workspace\'s name.'}{!signed && <> <button type="button" data-testid="hub-mode-other" className="underline" onClick={() => setChoosing(true)}>Change</button></>}</p>
+            <p className="text-sm">{mode === 'full' ? 'The hub can read every ticket and file.' : 'The hub sees the tickets you pick, notes that need you, and this workspace\'s name.'}{!signed && <> <button type="button" data-testid="hub-mode-other" className="underline" onClick={() => setChoosing(true)}>Change</button></>}</p>
           </div>}
         <details className="text-sm text-text-muted" data-testid="hub-link-details" onToggle={e => setDetailsOpen(e.currentTarget.open)}>
           <summary className="cursor-pointer">Details</summary>

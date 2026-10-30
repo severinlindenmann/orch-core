@@ -117,7 +117,7 @@ describe('P10: a short join dialog', () => {
     const view = await open()
     fireEvent.change(await screen.findByTestId('hub-link-text', {}, T), { target: { value: LINK } })
     const box = await screen.findByTestId('hub-mode-box', {}, T)
-    expect(box.textContent).toContain("The hub sees only the tickets you pick, plus this workspace's name.")
+    expect(box.textContent).toContain("The hub sees the tickets you pick, notes that need you, and this workspace's name.")
     // one question naming the hub by its address, one Details fold in the hub box; Connect stays the only way on
     expect(screen.getByTestId('hub-link-hub').textContent).toContain('Connect to the hub at')
     expect(screen.getByTestId('hub-link-hub').querySelectorAll('details')).toHaveLength(1)

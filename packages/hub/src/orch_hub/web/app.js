@@ -100,7 +100,7 @@ const WORDS = {
   unknown_change: "This request is no longer waiting for you.",
   not_pending: "This request has already been answered.",
   expired: "This request has lapsed. Ask for it again.",
-  no_channel: "Set up this browser first (Home > Where you can sign).",
+  no_channel: "Set up signing in this browser first (Home > Where you can sign).",
   owner_protected: "This would take away the workspace owner's own admin access, which is never allowed.",
   last_admin: "This is the last administrator. Make someone else an administrator first.",
   self_disable: "You cannot disable yourself.",
@@ -275,7 +275,7 @@ function railView() {
   const hub = h("button", { class: "ra hub" + (parseRoute(location.hash).workspace ? "" : " on"), "data-workspace": "", "data-live-key": "hub", title: renderText(state.rail.hubName), "aria-label": "Hub " + renderText(state.rail.hubName), "aria-current": parseRoute(location.hash).workspace ? null : "page", text: initials(state.rail.hubName), onclick: () => navigate("#/home") });
   const items = state.rail.rows.map((w) => {
     const b = h("button", { "data-workspace": w.id, "data-live-key": w.id, class: "ra " + colour(w.id) + (w.online ? "" : " offline") + (parseRoute(location.hash).workspace === w.id ? " on" : ""), "aria-label": "Open " + renderText(w.name) + (w.online ? "" : " (offline)"),
-      title: renderText(w.name), onclick: () => navigate("#/w/" + w.id) },
+      title: renderText(w.name), onclick: () => openOrPage(w.id) },
       initials(w.name, w.id), w.badge ? h("span", { class: "bd", text: String(w.badge) }) : null);
     return b;
   });
@@ -293,10 +293,19 @@ async function loadRail() {
   state.rail.hubName = typeof n === "string" && n ? n : "Hub";
 }
 
-async function openWorkspace(w) {
+/** P08: one click opens an online, openable workspace (a selective one never is, #1752: no Open for it). Anything else
+ * lands on the workspace page, which says why. */
+function openOrPage(id) {
+  const w = state.rail.rows.find((x) => x.id === id);
+  if (w && w.online && w.canOpen) return openWorkspace(w);
+  navigate("#/w/" + id);
+}
+
+const HUB_SETTINGS = "/settings/hub"; // the one landing besides "/": the workspace's hub settings (the hub allows it for the owner only)
+async function openWorkspace(w, returnTo = "/") {
   const o = openingState(w.name); // at once, before the request and the navigation: the same dark page, no white frame
   plain(h("div", { class: "opening", role: "status" }, h("b", { text: o.title }), h("span", { class: "muted", text: o.note })));
-  const r = await api("POST", "/switch/ticket", { workspace_id: w.id, return_to: "/", kind: "open" });
+  const r = await api("POST", "/switch/ticket", { workspace_id: w.id, return_to: returnTo === HUB_SETTINGS ? HUB_SETTINGS : "/", kind: "open" }); // a fixed value, never a free path
   const url = r.status === 200 ? safeUrl(r.body.url) : null;
   if (!url) { state.notice = banner("bad", "Cannot open " + renderText(w.name), say(r.status === 200 ? "malformed" : r.body.error)); return home(); }
   // r11 P03: remembered for the signed-in person only when this is THEIR workspace (the hub's owner alias is them), so a
@@ -809,9 +818,9 @@ async function home() {
       ended,
       channels: state.channels.map((c) => ({ ...c, status: c.status + (state.me?.channelId === c.channel_id ? " (this browser)" : "") })),
       newChannels: state.newChannels,
-      thisBrowser: state.user.needs_sign_in ? { state: "from_workspace" } : mine ? { state: "active", label: state.me.label } : dead ? { state: "dead", label: state.me?.label } : { state: "unregistered" },
+      thisBrowser: state.user.needs_sign_in ? (state.me?.userId === user.user_id ? { state: "active", label: state.me.label, needsSignIn: true } : { state: "unregistered" }) : mine ? { state: "active", label: state.me.label } : dead ? { state: "dead", label: state.me?.label } : { state: "unregistered" },
       notice: state.notice,
-      actions: { review: (it) => navigate("#/w/" + it.workspace_id + "/item/" + encodeURIComponent(it.key || it.item_id)), open: (id) => navigate("#/w/" + id), dismissEnded: (id) => { dismissEnded(user.user_id, id); void home(); }, openShared: (it) => navigate("#/shared/" + it.workspace_id + "/" + encodeURIComponent(it.key)), connect: () => navigate("#/workspaces"), register: () => registerView(), removeChannel, forgetLocal, dismissNew },
+      actions: { review: (it) => navigate("#/w/" + it.workspace_id + "/item/" + encodeURIComponent(it.key || it.item_id)), open: (id) => openOrPage(id), dismissEnded: (id) => { dismissEnded(user.user_id, id); void home(); }, openShared: (it) => navigate("#/shared/" + it.workspace_id + "/" + encodeURIComponent(it.key)), connect: () => navigate("#/workspaces"), register: () => registerView(), removeChannel, forgetLocal, dismissNew },
     };
     liveItems = { user_id: user.user_id, items: homeData.items };
     shell("home", homeView(homeData), workspaces.some((w) => w.can_start) ? advancedForm(workspaces) : null);
@@ -889,12 +898,12 @@ function registerForm({ onDone, onCancel, rerender, intro }) {
       if (out) return rerender(out);
       await onDone();
     },
-  }, intro ?? h("p", { class: "muted small", text: "Type your password and a new 6-digit code. Each code works only once, so wait for the next one if you just signed in." }), field("Browser name", label), field("Password", pw), field("6-digit code", code), h("div", { class: "row top" }, h("button", { type: "button", text: "Cancel", onclick: onCancel }), h("button", { class: "pri", type: "submit", "data-sign": "", text: intro ? "Continue" : "Register this browser" })));
+  }, intro ?? h("p", { class: "muted small", text: "Type your password and a new 6-digit code. Each code works only once, so wait for the next one if you just signed in." }), field("Browser name", label), field("Password", pw), field("6-digit code", code), h("div", { class: "row top" }, h("button", { type: "button", text: "Cancel", onclick: onCancel }), h("button", { class: "pri", type: "submit", "data-sign": "", text: intro ? "Continue" : "Set up signing" })));
   return form;
 }
 function registerView(err) {
   const form = registerForm({ rerender: registerView, onCancel: home, onDone: async () => { state.notice = banner("ok", "This browser is ready", "It holds a signing key for you. You can remove it any time."); await home(); } });
-  show(h("h1", { text: "Register this browser" }), err ? banner("bad", "Browser not registered. Nothing was kept.", err) : null, form);
+  show(h("h1", { text: "Set up signing" }), err ? banner("bad", "Browser not registered. Nothing was kept.", err) : null, form);
 }
 // The same step as a small box on top of the page the admin is on; `resume` carries on with what they pressed (P04).
 function registerDialog(title, resume, err) {
@@ -1089,7 +1098,7 @@ function nothingSigned(code, extra) {
 }
 
 async function startSign(workspaceId, action, qv = null) {
-  if (!state.me) { state.notice = banner("warn", "Register this browser first", null); return home(); }
+  if (!state.me) { state.notice = banner("warn", "Set up signing first", null); return home(); }
   const me = state.me;
   const sent = { workspaceId, action };
   const r = await api("POST", "/sign/prepare", { workspace_id: workspaceId, channel_id: me.channelId, action });
@@ -1390,8 +1399,9 @@ async function workspacePage(route) {
       return shell("workspaces", h("h1", { text: "This item is no longer waiting for you" }));
     }
     shell("workspaces", h("h1", { text: renderText(w.name) + (w.online ? "" : " is " + workspaceStatus(w)) }),
-      h("p", { text: w.online ? "Online" : "Hand-offs and approvals wait until this workspace is back." }),
-      h("p", { text: needs.status === 200 && w.online ? items.length + " things need you" : w.badge ? w.badge + " things need you. They wait until the workspace is back." : "Waiting items will be shown when the workspace is back." }),
+      // P08: this page is only the fallback (offline, or not openable from here): it says why, not "Online" and a count
+      w.online ? (items.length ? h("p", { text: items.length === 1 ? "1 thing needs you" : items.length + " things need you" }) : null)
+        : h("p", { text: "It cannot be opened until it is back." + (w.badge ? " " + w.badge + (w.badge === 1 ? " thing waits" : " things wait") + " for you." : "") }),
       sharedTicketsView(sharedTickets),
       w.online && w.switchable ? h("button", { text: "Open workspace", disabled: !w.canOpen, onclick: () => openWorkspace(w) }) : null,
       w.online && w.switchable && !w.canOpen ? h("p", { text: OPEN_FIRST }) : null,
@@ -1422,7 +1432,7 @@ const pageRender = (kind) => {
     if (pg.nav.admin && !state.user?.is_admin) return home();
     let first = true;
     const pageRefresh = async () => (first ? ((first = false), true) : refresh());
-    return pg.render({ api, refresh: pageRefresh, loadRail, state, loginView, home, reauthView, pageLoading, shell, say, banner });
+    return pg.render({ api, refresh: pageRefresh, loadRail, state, loginView, home, reauthView, pageLoading, shell, say, banner, openSettings: (id) => { const w = state.rail.rows.find((x) => x.id === id); return w && w.online && w.canOpen && ["admin", "owner"].includes(w.role) ? openWorkspace(w, HUB_SETTINGS) : null; } });
   };
 };
 registerPages(PAGES.map((x) => x.path));

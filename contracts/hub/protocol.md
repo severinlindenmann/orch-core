@@ -1844,6 +1844,9 @@ never opens one. Per exchange and direction:
   non-101 head followed by WebSocket frames, `WS_TEXT` before 101), or a `PONG` with no outstanding `PING` (or a
   second `PING` before its `PONG`) is `malformed`. A frame for an exchange that already ended (an id at or below the
   highest, no longer open) is **dropped** silently: the peer may have sent it before it saw a `RESET`.
+- A request body is complete only at its `END`. A stream closed (`stream_close`, or any other end) before a request's
+  `END` means the client disconnected: the route never acts on a partial request. The device treats a response without
+  its `END` as failed.
 - Order is the Noise nonce order (per direction, from the first transport message) and so the link's `seq`; app frames
   carry no counter of their own, and a lost, repeated or reordered message has already closed the stream (§10.2c
   transport rule).
@@ -1853,18 +1856,20 @@ per stream (one more is `RESET remote.busy` at once); a request body (the sum of
 too_large` (a route may set a lower limit and answer 413); a request without its `END` 60 s after its `HEAD` is `RESET
 timeout`. A response body has no size limit (event streams), but every frame is charged on the outbound byte budget and
 the terminator holds at most 64 unsent frames per stream: a device that stops reading closes the stream `remote.busy`.
-A frame error is a stream error: the receiver closes the stream `malformed` (host: `stream_close`; device: through its
+Owed R3 adapter test: `stream_closed_before_request_end_never_dispatches_body`. A frame error is a stream error: the receiver closes the stream `malformed` (host: `stream_close`; device: through its
 hub). There is no in-session close frame: a session ends with the link's `stream_close`.
 
 **Timeouts** (host terminator): handshake 60 s from `stream_open` to `open`; stream life 12 h (`expired`); 2 h with no
-inbound device frame other than `PING`/`PONG` (`idle`; keepalives never keep a session alive). A remote-device `/term`
+accepted (`ok`) inbound device frame other than `PING`/`PONG` (`idle`; keepalives never keep a session alive, and
+dropped frames do not count). A remote-device `/term`
 WebSocket closes 1000 after 10 min with no inbound `WS_TEXT`/`WS_BINARY` from the device.
 
 **How a request is bound to its stream** (D89). The host reads only the kind byte and the id of each frame (it counts
 exchanges and stamps identity); it hands each frame to the dashboard's in-process adapter together with the stream id,
 and on every `HEAD`/`WS_OPEN` it adds `{workspace_id, device_id, person, level}` computed from its model at that moment
 (remote on, device listed for a current owner, level = min(device cap, policy level); any failure closes the stream
-`revoked` / `remote.off` and the request is never forwarded). The adapter answers on the same stream and id only.
+`revoked` / `remote.off` and the request is never forwarded). The adapter answers on the same stream and id only, and refuses with 404 any request path whose `{ws}` segment is
+not the stream's `workspace_id` (owed R3 runtime test `remote_device_other_workspace_path_refused`).
 Nothing in a frame (header, query, body, token) names or changes the identity; a credential the dashboard mints inside
 a stream is bound to its stream id.
 
@@ -1881,7 +1886,7 @@ route_digest = SHA-256(route)                                         (lengths b
 template that matched (for example `/api/w/{ws}/runs/{run}/attach`); `path` and `query` exactly as in the head; `body`
 the whole request body (empty for a WebSocket). The concrete path and body are covered, so a batch that lists the attach
 to one run never authorizes the attach to another. A signed op's `view_digest` stays the signer's
-`SHA-256(cj(view))`: its input starts with `{`, a route's with the label, so no route digest is an op digest. Both kinds
+`SHA-256(cj(view))`, with `view` the review view whose checks' `at` times are removed (`click/view.py` `digest`): its input starts with `{`, a route's with the label, so no route digest is an op digest. Both kinds
 may share one batch (`presence_bytes` above binds the batch to `hh`, so a batch is never valid on another stream).
 Flow: the request without a covering batch is answered `428 {"error": "remote.presence_required", "view_digest":
 "sha256:<hex>", "template"}`; the remote client recomputes the digest from the request it sent and that template (and
@@ -3316,8 +3321,8 @@ transport in the action).
 | 62 | Exchange ids (R3) | chosen by the device, strictly rising per stream (not merely unique while open), so a late frame of an ended exchange is told from a new one with one integer; such late frames are dropped, every other state error is `malformed` | a `RESET` and a frame cross on the wire |
 | 63 | Ordering and counters (R3) | no app-level counter: the Noise nonce and the link `seq` already order and number every frame per direction | §10.2c transport rule |
 | 64 | Heads (R3) | exact keys, canonical; framing and WebSocket handshake headers `malformed`; `host`/`origin` from the device `malformed` (the terminator sets Host `orch-remote`, no Origin); `set-cookie` never to the device; outside bearers `400 remote.bearer` (refused, never stripped) | D89; the design's "replaced" Host/Origin made strict |
-| 65 | Exchange limits (R3) | 8 HTTP, 2 WebSockets open per stream (`RESET remote.busy`), request body 1 MiB (`RESET too_large`), 60 s to the request `END` (`RESET timeout`), a WebSocket message fits one frame (else 1009); `PING`/`PONG` never count as activity for the 2 h idle timer | D88 terminal idle, D91 |
-| 66 | `route_digest` (R3) | label `orch/v2/remote-route\|`, length-prefixed method, template, concrete path and query, then `SHA-256(body)`; covers the concrete target (the design's template-only form would let one confirmed attach authorize every run) | D88 "fixed list" |
+| 65 | Exchange limits (R3) | 8 HTTP, 2 WebSockets open per stream (`RESET remote.busy`), request body 1 MiB (`RESET too_large`), 60 s to the request `END` (`RESET timeout`), a WebSocket message fits one frame (else 1009); only accepted (`ok`) device frames other than `PING`/`PONG` reset the 2 h idle timer (dropped frames and keepalives do not); a request body is complete only at its `END` (a stream closed before it never dispatches a partial request) | D88 terminal idle, D91 |
+| 66 | `route_digest` (R3) | label `orch/v2/remote-route\|`, length-prefixed method, template, concrete path and query, then `SHA-256(body)`; covers the concrete target; the adapter 404s a path whose `{ws}` is not the stream's workspace (the design's template-only form would let one confirmed attach authorize every run) | D88 "fixed list" |
 
 ## 17. Hub backup (M4, #1462; design `m4-settings-design.md` 4.2-4.3 and the Opus conditions 9-17)
 

@@ -1266,6 +1266,24 @@ def app_frame_cases() -> None:
     ):
         bad(f"app_frame_head_path_{nm}", fr("d2h", "HEAD", 1, cj(h | {"path": path})), "the dashboard's clean_path")
     bad("app_frame_head_path_too_long", fr("d2h", "HEAD", 1, cj(h | {"path": "/" + "a" * 2048})))
+    ok("app_frame_head_query_at_limit", fr("d2h", "HEAD", 1, cj(h | {"query": "a" * 4096})), "4096 bytes")
+    bad("app_frame_head_query_too_long", fr("d2h", "HEAD", 1, cj(h | {"query": "a" * 4097})), "one byte over 4096")
+    ok(
+        "app_frame_head_header_value_at_limit",
+        fr("d2h", "HEAD", 1, cj(h | {"headers": [["x-a", "v" * 4096]]})),
+        "4096 bytes",
+    )
+    bad(
+        "app_frame_head_header_value_too_long",
+        fr("d2h", "HEAD", 1, cj(h | {"headers": [["x-a", "v" * 4097]]})),
+        "one byte over 4096",
+    )
+    ok("app_frame_head_header_name_at_limit", fr("d2h", "HEAD", 1, cj(h | {"headers": [["a" * 64, "x"]]})), "64 bytes")
+    bad(
+        "app_frame_head_header_name_too_long",
+        fr("d2h", "HEAD", 1, cj(h | {"headers": [["a" * 65, "x"]]})),
+        "one byte over 64",
+    )
     bad("app_frame_head_query_hash", fr("d2h", "HEAD", 1, cj(h | {"query": "a=1#frag"})))
     bad("app_frame_head_query_space", fr("d2h", "HEAD", 1, cj(h | {"query": "a=1 2"})))
     bad("app_frame_head_header_upper_name", fr("d2h", "HEAD", 1, cj(h | {"headers": [["Accept", "x"]]})))
@@ -1719,6 +1737,9 @@ REQUIRED = [
     "app_frame_head_extra_key",
     "app_frame_head_not_canonical",
     "app_frame_head_path_dotdot",
+    "app_frame_head_query_too_long",
+    "app_frame_head_header_value_too_long",
+    "app_frame_head_header_name_too_long",
     "app_frame_head_host",
     "app_frame_head_header_newline",
     "app_frame_response_set_cookie",

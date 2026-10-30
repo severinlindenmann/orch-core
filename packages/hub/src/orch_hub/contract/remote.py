@@ -710,8 +710,8 @@ class _Exchange:
 
 @dataclass
 class AppStream:
-    """The exchange state of one session stream, checked frame by frame in the order the frames were decrypted (both
-    directions in one place: each side checks the frames it receives with the same rules).
+    """The exchange state of one session stream, checked frame by frame (both directions in one
+    place: each side feeds its sent and received frames, in its local order, into the same state machine).
 
     :meth:`feed` returns ``"ok"``, ``"drop"`` (a frame of an exchange that already ended) or ``"reset:<code>"`` (the
     receiver resets this exchange and the stream stays), and raises ``malformed`` for a frame error (the stream

@@ -623,7 +623,8 @@ def no_bearer(head: Mapping[str, Any]) -> None:
 
 
 class Exchanges:
-    """Per-stream exchange state; ``step`` gives "ok" / "drop" / "reset:<code>" or raises ``malformed``."""
+    """Per-stream exchange state. Each side feeds its sent and received frames, in its local order, into ``step``,
+    which gives "ok" / "drop" / "reset:<code>" or raises ``malformed``."""
 
     def __init__(self) -> None:
         self.top = 0

@@ -67,7 +67,6 @@ export function HubTab({ workspace }: { workspace: Workspace }) {
   // The network settings, the hub's name and its id: in the connected pages they sit behind "More about sharing".
   const extra = <>
     <Network workspace={workspace} standalone={s.mode === 'standalone'} />
-    {(s.mode === 'selective' || s.mode === 'full') && <HubSharing workspace={workspace} />}
     {hubName && <p className="text-sm font-semibold">Hub <Raw>{hubName}</Raw></p>}
     {s.hub_id && <InfoDrawer testId="hub-status-details"><p className="break-words text-sm">Hub id (from the hub, not signed): <Raw>{s.hub_id}</Raw></p></InfoDrawer>}
   </>
@@ -90,6 +89,8 @@ export function HubTab({ workspace }: { workspace: Workspace }) {
       </Panel>}
       {s.reachable !== false && s.mode === 'selective' && <SelectivePage ws={ws} fullAllowed={fullAllowed} onShare={() => setFlow('share')} onFull={() => setFlow('full')} onLeave={() => setFlow('leave')} extra={extra} />}
       {s.reachable !== false && s.mode === 'full' && <FullPage ws={ws} status={s} onLeave={() => setFlow('leave')} extra={extra} />}
+      {/* #1838: the one-line sharing offer stays visible, not behind More about sharing */}
+      {(s.mode === 'selective' || s.mode === 'full') && <HubSharing workspace={workspace} />}
     </>}
     {flow === 'join' && <JoinFlow ws={ws} initialLink={initialLink} onClose={() => setFlow(undefined)} />}
     {flow === 'full' && <FullSwitch ws={ws} onClose={() => setFlow(undefined)} />}

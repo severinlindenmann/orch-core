@@ -9,7 +9,8 @@
     orch publish revoke  SHARE [--yes]                          a person: the link stops working at once (asks first)
     orch publish extend  SHARE --days D                         a person: the link works D more days from now (1..30)
     orch publish password SHARE                                 a person: a generated password for the link, shown once
-    orch publish list    [REF] [--live]                        staged copies and shares (never a link)
+    orch publish list    [REF] [--local]                       staged copies and shares (never a link)
+    (list asks the server for each share's state and views; --local shows only this computer's record)
     orch publish discard STAGED                                drop a staged copy
 
 An agent (``ORCH_GRANT`` set) may ``prepare``, ``list`` and ``discard`` on its own ticket and nothing else: ``share``,
@@ -40,8 +41,13 @@ __all__ = ["main"]
 _USAGE = (
     "usage: orch publish {setup --server ADDRESS --share ADDRESS | register | prepare REF FILE... [--once [N]] "
     "[--days D] | share STAGED | send STAGED | revoke SHARE | extend SHARE --days D | password SHARE | "
-    "list [REF] [--live] | discard STAGED} [--json]"
+    "list [REF] [--local] | discard STAGED} [--json]"
 )
+_NOT_CHECKED = "(not checked with the server: showing this computer's record)"
+_WHY = {
+    "unreachable": "(the server could not be reached: this is this computer's last record)",
+    "not_allowed": "(the hub has not switched on publishing for this workspace: this is this computer's last record)",
+}  # `local` says nothing
 _AGENT_OK = frozenset({"prepare", "list", "discard"})
 _PERSON_ONLY_MESSAGE = "a person does this; an agent only prepares (orch publish prepare)"
 
@@ -67,7 +73,8 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--share", dest="share_addr")
     p.add_argument("--once", nargs="?", const=1, type=int, default=None)
     p.add_argument("--days", type=int, default=None)
-    p.add_argument("--live", action="store_true")
+    p.add_argument("--live", action="store_true")  # a no-op alias: the live view is the default now
+    p.add_argument("--local", action="store_true")
     p.add_argument("--yes", action="store_true")
     p.add_argument("--json", action="store_true")
     p.add_argument("--workspace")
@@ -404,13 +411,25 @@ def main(
             got = _call(target, "publish.revoke", {"share_id": a.rest[0]}, env)
             out.write(f"ok publish revoked {got.get('share_id')}: the link no longer works\n")
             return 0
-        data = _call(
-            target,
-            "publish.list",
-            {**({"ref": a.rest[0]} if a.rest else {}), **({"live": True} if a.live else {})},
-            env,
-        )
-        out.write((json.dumps({"ok": True, "data": data}) if as_json else _list_text(data)) + "\n")
+        # One source: the same `publish.list {live}` the dashboard's Shares page reads. `--local` skips the check.
+        ref = {"ref": a.rest[0]} if a.rest else {}
+        note = None
+        if a.local:
+            data = _call(target, "publish.list", ref, env)
+        else:
+            try:
+                data = _call(target, "publish.list", {**ref, "live": True}, env)
+            except OrchError as exc:
+                if exc.code != "op.not_allowed":
+                    raise
+                note = _NOT_CHECKED  # an agent may only read this computer's record
+                data = _call(target, "publish.list", ref, env)
+        if as_json:
+            out.write(json.dumps({"ok": True, "data": data}) + "\n")
+        else:
+            if note is None and data.get("live") is False:
+                note = _WHY.get(str(data.get("why")))
+            out.write((note + "\n" if note else "") + _list_text(data) + "\n")
         return 0
     except PubError as exc:
         return fail(exc)

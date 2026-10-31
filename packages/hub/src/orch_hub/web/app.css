@@ -311,7 +311,11 @@ button[aria-busy="true"]::before { content:""; display:inline-block; width:12px;
 
 /* Shared spaces: item text is plain text (white space kept, nothing interpreted) */
 .space-text { white-space:pre-wrap; overflow-wrap:anywhere; max-height:240px; overflow:auto; margin:6px 0; padding:10px; border:1px solid var(--line); border-radius:8px; background:var(--bg); font:inherit; }
-.space-type.on { border-color:var(--pri); }
+.space-type.on { background:var(--brand-soft); color:var(--brand); border-color:var(--brand); }
+.space-type.on .muted { color:var(--brand); }
+.space-tag { font-size:12px; color:var(--brand); margin-left:8px; }
+.space-hint { text-align:right; margin:8px 0 0; }
+.space-hint[hidden] { display:none; }
 .qr { width:176px; height:176px; border-radius:8px; overflow:hidden; background:#fff; }
 .qr svg { display:block; width:100%; height:100%; }
 .totp-key { margin-top:8px; }

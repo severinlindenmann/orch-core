@@ -490,7 +490,10 @@ def serialized_with_update(fn: Callable[..., dict[str, Any]]) -> Callable[..., d
         try:
             fd = take_update_lock(UpdateLayout.of(ctx.env))
         except OrchError as exc:
-            raise InstallError("an update is running: wait until it is done, then run this again") from exc
+            if exc.code != "migrate.running":
+                raise InstallError(exc.message) from exc  # the lock could not be made at all: say what it said
+            # held by `orch update` or by another install: the lock cannot tell which
+            raise InstallError("an update or install is running: wait until it is done, then run this again") from exc
         try:
             return fn(ctx, part, **kw)
         finally:
@@ -528,6 +531,10 @@ def _is_born(data: Path) -> bool:
     return not data.exists() or not any(data.iterdir())
 
 
+class DataInUse(InstallError):
+    """The root's ``format.lock`` is still held after :data:`MARKER_WAIT`: a stale part process (or a migration)."""
+
+
 #: how long the marker write waits for the root's ``format.lock`` (seconds). A stopped part has let go of it, so a lock
 #: still held after this is a stale part process, and the install refuses.
 MARKER_WAIT = 5.0
@@ -542,8 +549,10 @@ def _write_marker(data: Path, part: str, n: int) -> None:
             fd = lock_root(data, exclusive=True)
             break
         except OrchError as exc:
-            if exc.code != "migrate.running" or time.monotonic() >= deadline:
+            if exc.code != "migrate.running":
                 raise InstallError(f"the {part}'s data is in use: {exc.message}") from None
+            if time.monotonic() >= deadline:
+                raise DataInUse(f"the {part}'s data is in use: {exc.message}") from None
             time.sleep(0.1)
     try:
         write_format(data, part, n)
@@ -607,9 +616,18 @@ def install_part(
         stopped = True
 
     def mark(data: Path, born: bool) -> None:
-        """``_mark_root``; a refusal after the stop puts the old part back (it is not left stopped, unmarked)."""
+        """``_mark_root``; a refusal after the stop puts the old part back (it is not left stopped, unmarked), except
+        a lock that stays held: a stale holder is still running, and the old part is not started next to it (the
+        binary may be the new one already)."""
         try:
             _mark_root(data, part, born)
+        except DataInUse:
+            if stopped:
+                ctx.say(
+                    f"  note: the old {part} was stopped and is NOT started again: a process still holds its data. "
+                    f"Stop that process, then run `orch install {part}`"
+                )
+            raise
         except InstallError:
             if stopped:
                 try:

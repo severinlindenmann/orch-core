@@ -32,6 +32,7 @@ __all__ = [
     "DEFAULT",
     "KINDS",
     "NESTED_PART_ROOTS",
+    "PART_RUNTIME",
     "PARTS_DIR",
     "PART_KINDS",
     "PROTECTED_NAMES",
@@ -60,6 +61,10 @@ PART_KINDS = ("hub", "relay", "publish")
 #: carries the current ones over untouched), and each part root is snapshotted, backed up and restored on its own.
 #: The rest of ``install/parts`` belongs to the host root.
 NESTED_PART_ROOTS: tuple[str, ...] = tuple(f"install/parts/{p}/data" for p in PART_KINDS)
+#: ``pid`` is RUNTIME: a running part (re)writes it, so the host's backup leaves it out and a restore carries the
+#: current one over, like the data dirs (a stale pid would orphan the live process). ``cmd.json`` is version-bound
+#: config and stays in the backup.
+PART_RUNTIME: tuple[str, ...] = tuple(f"install/parts/{p}/pid" for p in PART_KINDS)
 #: The folder that holds them: no host migration step may touch it (see :func:`parts_snapshot`).
 PARTS_DIR = "install/parts"
 
@@ -128,20 +133,38 @@ def protected_snapshot(root: Path) -> dict[str, str | None]:
 
 
 def parts_snapshot(root: Path) -> dict[str, tuple[Any, ...]]:
-    """What a host step must never touch: every entry below ``<root>/install/parts`` (the part data dirs included, which
-    :func:`protected_snapshot` leaves out) by lstat: kind, size, mtime, link target. Nothing is read or followed."""
+    """What a host step must never touch, STRUCTURALLY: the entries of ``<root>/install/parts`` and of each
+    ``install/parts/<part>``, by lstat (kind, size, mtime, link target), and the inode of every subfolder (so a part
+    data dir that is replaced or moved shows). Never the contents of a part's data tree, and never ``pid``: running
+    parts write there. Nothing is read or followed."""
     base = Path(root) / PARTS_DIR
     snap: dict[str, tuple[Any, ...]] = {}
-    for dirpath, dirnames, filenames in os.walk(base):
-        for name in [*dirnames, *filenames]:
-            p = Path(dirpath) / name
+
+    def entries(d: Path, rel: str) -> list[str]:
+        out: list[str] = []
+        try:
+            names = sorted(os.listdir(d))
+        except OSError:
+            return out
+        for name in names:
+            erel = f"{rel}/{name}" if rel else name
+            if name == "pid" and rel:
+                continue  # the runner's pid file: runtime (see PART_RUNTIME)
             try:
-                st = os.lstat(p)
+                st = os.lstat(d / name)
             except OSError:
-                snap[p.relative_to(base).as_posix()] = ("gone",)
+                snap[erel] = ("gone",)
                 continue
-            link = os.readlink(p) if stat.S_ISLNK(st.st_mode) else None
-            snap[p.relative_to(base).as_posix()] = (st.st_mode, st.st_size, st.st_mtime_ns, link)
+            if stat.S_ISDIR(st.st_mode):
+                snap[erel] = ("dir", st.st_dev, st.st_ino)
+                out.append(name)
+            else:
+                link = os.readlink(d / name) if stat.S_ISLNK(st.st_mode) else None
+                snap[erel] = (st.st_mode, st.st_size, st.st_mtime_ns, link)
+        return out
+
+    for part in entries(base, ""):
+        entries(base / part, part)
     return snap
 
 

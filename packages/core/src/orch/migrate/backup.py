@@ -40,7 +40,7 @@ from orch.ops.errors import OrchError
 
 from .format import LOCK_FILE, lock_root
 from .journal import restore_pending as journal_restore_pending
-from .steps import NESTED_PART_ROOTS, atomic_write, is_derived
+from .steps import NESTED_PART_ROOTS, PART_RUNTIME, atomic_write, is_derived
 
 __all__ = ["KEEP", "backups_dir", "create_backup", "list_backups", "prune_backups", "restore"]
 
@@ -52,7 +52,8 @@ _SKIP_TOP = frozenset({WORK_DIR, LOCK_FILE})
 #: NESTED_PART_ROOTS: the part data dirs are roots of their own (backed up and restored by themselves). A restore of
 #: the host root carries the CURRENT ones over (``_carry_list``): it never replaces, merges or reads them. Order of a
 #: rollback (``orch.update.engine``): the part roots first, then the host, so the host's swap cannot undo a part.
-_SKIP_REL = frozenset({"install/tools", "install/current", "install/update.json", *NESTED_PART_ROOTS})
+#: PART_RUNTIME (``install/parts/<part>/pid``) is runtime like them: left out of the backup, current one carried over.
+_SKIP_REL = frozenset({"install/tools", "install/current", "install/update.json", *NESTED_PART_ROOTS, *PART_RUNTIME})
 _REVOCATIONS = "revocations.jsonl"
 _SYNC_NAMES = frozenset(
     {"mobile documents", "dropbox", "google drive", "googledrive", "onedrive", "icloud drive", "clouddocs"}

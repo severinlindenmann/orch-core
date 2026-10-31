@@ -1261,14 +1261,15 @@ async function pollLive() {
       reconcileRows(frame.querySelector(".rail"), railView());
       railSnapshot = JSON.stringify(state.rail);
     }
-    if (frame?.isConnected && parseRoute(location.hash).kind === "home" && frame.querySelector(".first-run-root") && firstRunOutgrown(state.rail.rows, liveItems.items)) {
-      void home(); // the first workspace connected while this page was open: draw the full home
-      return;
-    }
     // P04: the hub Home's Shared tickets card follows the same list; a change (or an ended share) redraws Home once
     if (frame?.isConnected && parseRoute(location.hash).kind === "home" && homeData?.user_id === user.user_id) {
       const sharedNow = await api("GET", "/me/shared");
       if (user !== state.user) return;
+      const sharedItems = sharedNow.status === 200 && Array.isArray(sharedNow.body.items) ? sharedNow.body.items : [];
+      if (frame?.isConnected && parseRoute(location.hash).kind === "home" && frame.querySelector(".first-run-root") && firstRunOutgrown(state.rail.rows, liveItems.items, sharedItems)) {
+        void home(); // a workspace, item or share arrived while the first-run page was open
+        return;
+      }
       if (sharedNow.status === 200 && Array.isArray(sharedNow.body.items)) {
         const before = JSON.stringify(homeData.shared) + JSON.stringify(homeData.ended);
         const ended = trackShared(user.user_id, sharedNow.body.items);

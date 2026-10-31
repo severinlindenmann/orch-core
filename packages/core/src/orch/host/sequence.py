@@ -1468,8 +1468,15 @@ def _addon_content(
 
     # Fail closed: only a verified review of exactly [settings, ONE grant of the built-in Publish package] drops it.
     grants = [e for e in events if e.get("type") == "addon.granted"]
+    settings = [e for e in events if e.get("type") == "settings.changed"]
     others = [e for e in events if e.get("type") not in ("addon.granted", "settings.changed")]
-    if verified and len(grants) == 1 and not others and builtin.is_builtin_package(grants[0], "publish"):
+    if (
+        verified
+        and len(grants) == 1
+        and len(settings) <= 1
+        and not others
+        and builtin.is_builtin_package(grants[0], "publish")
+    ):
         notes[:] = [x for x in notes if x != signcontent.ADDON_TRUST]
     # "Settings are signed first, then the add-on is turned on; if signing stops in between ..." is in the technical
     # details (:func:`steps_line`), where the signer's full review shows it.

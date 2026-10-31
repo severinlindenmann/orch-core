@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, expect, it, vi } from 'vitest'
 import { queryClient } from '@/production/Shell'
 import ticket from '@/test/fixtures/server-m2/ticket.json'
-import { READS, clickOn, show, useFakeHost, workspace } from '@/test/hostHarness'
+import { READS, clickOn, show, trustedPresses, useFakeHost, workspace } from '@/test/hostHarness'
 import { market, installedAddon, stage } from '@/test/fixtures/market'
 
 // P05 (J07-08): Publish is easy to find while it is off. It is listed in Add-ons > Browse with Turn on, and the ticket's
@@ -120,17 +120,31 @@ it('P04: Cancel at the review withdraws the open request and leaves Publish off'
   expect(screen.queryByRole('dialog', { name: 'Share files' })).toBeNull()
 })
 
-it('P04: when the settings step lands (set_up flips to true) the review stays mounted and no list dialog returns', async () => {
+it('P04: when the settings step lands (set_up flips to true) the review stays mounted; Sign runs through and the share dialog follows', async () => {
   notSetUp('http://127.0.0.1:8102')
   const user = userEvent.setup()
   await openShare(user)
+  const inner = state.host.override!
+  state.host.override = (path, method, body) => (path.includes('/shares') && method === 'GET' ? Response.json({ available: true, configured: true, server: 'http://127.0.0.1:8102', share: 'http://127.0.0.1:8102', workspace: A, owner: 'p_owner', live: true, shares: [], staged: [] }) : inner(path, method, body))
   await user.click(within(await screen.findByRole('dialog', { name: 'Turn on Publish' }, T)).getByRole('button', { name: 'Turn on and sign' }))
   await screen.findByTestId('click-panel', {}, T)
-  // the first step is in: the host now says the settings are set, Publish still off
+  // the first step is in: the host now says the settings are set, Publish still off; the page refetches
   ws().addOns = { available: true, add_ons: [{ ...row('off'), set_up: true }] } as never
+  const reads = () => state.host.calls.filter((c) => c.path.endsWith('/add-ons') && c.method === 'GET').length
+  const before = reads()
   await queryClient.invalidateQueries({ queryKey: ['add-ons', A] })
-  await new Promise((r) => setTimeout(r, 300))
-  expect(screen.getByTestId('click-panel')).toBeInTheDocument()
-  expect(screen.queryByRole('list', { name: 'Publish' })).toBeNull()
-  expect(screen.queryByRole('button', { name: 'Turn on Publish' })).toBeNull()
+  await waitFor(() => expect(reads()).toBeGreaterThan(before), T)
+  expect(screen.getByTestId('click-panel')).toBeInTheDocument() // the review did not unmount between the steps
+  expect(screen.queryByRole('list', { name: 'Publish' })).toBeNull() // and no list dialog came back
+  const sign = await screen.findByRole('button', { name: /^Sign( |$)/ }, T)
+  await waitFor(() => expect(sign).toBeEnabled(), { timeout: 8000 })
+  trustedPresses() // the armed Sign signs only on a trusted press
+  await user.click(sign)
+  await waitFor(() => expect(state.host.clickSigned).toHaveLength(1), T)
+  // the host now reports Publish on (the onOn path): the share dialog follows, the turn-on review is gone
+  ws().features = [...ws().features, 'publish']
+  ws().addOns = { available: true, add_ons: [row('on')] } as never
+  await queryClient.invalidateQueries({ queryKey: ['add-ons', A] })
+  expect(await screen.findByRole('dialog', { name: 'Share files' }, T)).toBeInTheDocument()
+  expect(screen.queryByTestId('click-panel')).toBeNull()
 })

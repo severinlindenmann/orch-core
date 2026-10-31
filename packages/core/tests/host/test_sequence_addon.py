@@ -789,6 +789,12 @@ def test_p04_the_trust_warning_is_dropped_only_for_a_verified_single_built_in_pu
         lambda ev: [{**e, "name": "terminals"} if e is grant(ev) else e for e in ev]
     )
     assert signcontent.ADDON_TRUST in notes(lambda ev: [*ev, copy.deepcopy(grant(ev))])  # two grants
+
+    def settings(events):
+        return next(e for e in events if e["type"] == "settings.changed")
+
+    two_settings = notes(lambda ev: [*ev, copy.deepcopy(settings(ev))])  # two settings events
+    assert signcontent.ADDON_TRUST in two_settings
     extra = {"type": "addon.disabled", "name": "usage"}  # an extra event
     assert signcontent.ADDON_TRUST in notes(lambda ev: [*ev, extra])
     assert signcontent.ADDON_TRUST in notes(

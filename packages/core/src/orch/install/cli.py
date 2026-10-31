@@ -924,8 +924,14 @@ def status(ctx: Ctx, as_json: bool) -> int:
         ver, sha, url = r.get("version") or "-", _short(r.get("ref")), r.get("url") or "-"
         ctx.say(f"{r['part']:<10}{r['state']:<15}{ver:<12}{sha:<14}{url:<28}{where}")
     pinned = st["parts"].get("publish", {}).get("pinned_hub_id")
-    if st.get("edge_trust") and pinned:
+    wanted = (st.get("edge_trust") or {}).get("hub_id")
+    if wanted and pinned:
         ctx.say(f"Publish trusts hub {pinned}")
+    if wanted and pinned != wanted and _HUB_ID.fullmatch(str(wanted)):
+        ctx.say(
+            f"Publish does not trust hub {wanted} yet. "
+            f"Run `orch setup --server --role edge --trust-hub {wanted}` again."
+        )
     if dash:
         ctx.say(f"workspace dashboard login link (single use, 5 min):  {dashboard_login_hint(dash)}")
     return 0

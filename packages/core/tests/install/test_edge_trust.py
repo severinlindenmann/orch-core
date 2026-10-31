@@ -227,3 +227,20 @@ def test_failed_trust_after_untrust_clears_the_old_pin(tmp_path):
         edge(ctx, trust_hub="b" * 32)
     assert [c[-2:] for c in admins(calls)][-2:] == [["untrust", HUB_ID], ["trust", "b" * 32]]
     assert load(ctx.layout)["parts"]["publish"]["pinned_hub_id"] is None
+
+
+def test_status_says_when_a_new_hub_id_has_not_landed(tmp_path):
+    ctx, out, _, _ = stub_ctx(tmp_path)
+    edge(ctx, trust_hub=HUB_ID, address="192.168.1.20")
+    st = load(ctx.layout)
+    st["edge_trust"]["hub_id"] = "b" * 32
+    save(ctx.layout, st)
+    out.seek(0)
+    out.truncate()
+    cli.status(ctx, False)
+    text = out.getvalue()
+    assert f"Publish trusts hub {HUB_ID}" in text
+    assert (
+        f"Publish does not trust hub {'b' * 32} yet. "
+        f"Run `orch setup --server --role edge --trust-hub {'b' * 32}` again." in text
+    )

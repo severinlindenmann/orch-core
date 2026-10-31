@@ -186,7 +186,7 @@ test("P07: the result of Back up now shows inside the Backup card in plain words
 test("P07: Back up now is greyed out with the reason while the next time is in the future", () => {
   const wait = card(hubSettingsView({ ...BASE, backup: { ...SET, next_manual_ms: Date.now() + 4 * 60000 } }, { wordsMayShow: true }));
   assert.equal(button(wait, "Back up now").attrs.disabled, "disabled");
-  assert.match(wait.all().find((x) => x.attrs["data-backup-wait"]).textContent, /You just made one\. You can make another in [45] minutes\./);
+  assert.match(wait.all().find((x) => x.attrs["data-backup-wait"]).textContent, /Backup made just now\. The next one can be made in [45] minutes\./);
   const free = card(hubSettingsView({ ...BASE, backup: { ...SET, next_manual_ms: Date.now() - 1000 } }, { wordsMayShow: true }));
   assert.equal(button(free, "Back up now").attrs.disabled, undefined);
   assert.ok(!free.all().some((x) => x.attrs["data-backup-wait"]));
@@ -380,3 +380,18 @@ test("P10: if the hub does not come back in time the page says so and offers Try
   up = true; button(shown.at(-1), "Try now").listeners.click(); await done;
   assert.equal(logins.length, 1);
 }); });
+
+test("P12: the wait line says the backup was just made and counts the minutes (1 and 10)", () => {
+  const line = (min) => card(hubSettingsView({ ...BASE, backup: { ...SET, next_manual_ms: Date.now() + min * 60000 - 500 } }, { wordsMayShow: true }))
+    .all().find((x) => x.attrs["data-backup-wait"]).textContent;
+  assert.equal(line(1), "Backup made just now. The next one can be made in 1 minute.");
+  assert.equal(line(10), "Backup made just now. The next one can be made in 10 minutes.");
+});
+
+test("P12: a set-up Backup card with no note has no stray text node and no 'null' anywhere", () => {
+  for (const extra of [{}, { next_manual_ms: Date.now() + 5 * 60000 }, { key_pending: true }]) {
+    const c = card(hubSettingsView({ ...BASE, backup: { ...SET, ...extra } }, { wordsMayShow: true }));
+    assert.ok(!/null|undefined/.test(c.textContent), JSON.stringify(extra));
+    assert.ok(c.all().every((n) => n.tag !== "#text" || n._text.trim() !== "" ));
+  }
+});

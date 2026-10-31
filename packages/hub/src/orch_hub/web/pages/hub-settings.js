@@ -285,7 +285,7 @@ function waitWord(b, now = Date.now()) {
   const left = Number(b.next_manual_ms ?? 0) - now;
   if (!(left > 0)) return null;
   const min = Math.max(1, Math.ceil(left / 60000));
-  return "You just made one. You can make another in " + min + (min === 1 ? " minute." : " minutes.");
+  return "Backup made just now. The next one can be made in " + min + (min === 1 ? " minute." : " minutes.");
 }
 function backupNow(b, actions) {
   const wait = waitWord(b);

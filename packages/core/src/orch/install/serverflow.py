@@ -75,7 +75,13 @@ def _ops(
     ops_dir = lay.root / "ops"
     ops_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     cfg = {
-        "parts": [{"name": p, "url": f"http://{(hosts or {}).get(p, '127.0.0.1')}:{ports[p]}{'/' if p == 'hub' else '/healthz'}"} for p in parts],
+        "parts": [
+            {
+                "name": p,
+                "url": f"http://{(hosts or {}).get(p, '127.0.0.1')}:{ports[p]}{'/' if p == 'hub' else '/healthz'}",
+            }
+            for p in parts
+        ],
         "cert_names": [n for p in parts if (n := names.get(p))],
         "disk_path": str(lay.home),
         "status_file": str(ops_dir / "health-status.json"),
@@ -145,7 +151,9 @@ def server_setup(
     if behind_proxy and role != "edge":
         raise InstallError("--behind-proxy belongs to --role edge (the hub is never served through a proxy)")
     if behind_proxy and (hub_vpn_only or address):
-        raise InstallError("--behind-proxy listens on the private-network address only: no --address, no --hub-vpn-only")
+        raise InstallError(
+            "--behind-proxy listens on the private-network address only: no --address, no --hub-vpn-only"
+        )
     if backup_drop:
         drop_check(backup_drop)
     user = user or real_user()

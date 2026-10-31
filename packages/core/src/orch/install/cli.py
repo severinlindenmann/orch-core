@@ -492,7 +492,9 @@ def install_part(
         exact_bind=exact_bind or bool(link_address),
     )
     log = lay.logs / f"{part}.log"
-    started = ctx.runner.start(part, argv, P.env_for(part, data, behind_edge=behind_edge, trusted_proxy=trusted_proxy), log)
+    started = ctx.runner.start(
+        part, argv, P.env_for(part, data, behind_edge=behind_edge, trusted_proxy=trusted_proxy), log
+    )
     # a part on every interface is dialled on loopback (a computer cannot dial its own overlay IP). A part that binds
     # exactly one address (the server role: the VPN IP) answers ONLY there: probe that address, never 127.0.0.1.
     check_host = bind if (exact_bind or link_address) else dial_host(bind)

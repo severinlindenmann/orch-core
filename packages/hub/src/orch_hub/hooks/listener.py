@@ -21,8 +21,8 @@ import time
 from collections.abc import Callable
 from urllib.parse import urlsplit
 
-from ..contract import hooks as HK
 from .. import forwarded as FW
+from ..contract import hooks as HK
 from . import inbox as IB
 
 MAX_HEAD = 8 * 1024

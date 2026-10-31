@@ -1276,19 +1276,19 @@ def test_behind_proxy_needs_a_vpn_address_the_edge_role_and_no_address(tmp_path)
 
 
 def test_the_proxy_networks_include_the_interfaces_ipv6_subnet():
-    text = IP_ADDR + "3: wt0    inet6 fd0f:80b5:c7cd:bbad::7/64 scope global wt0\n4: wt0    inet6 fe80::1/64 scope link\n"
+    text = (
+        IP_ADDR + "3: wt0    inet6 fd0f:80b5:c7cd:bbad::7/64 scope global wt0\n4: wt0    inet6 fe80::1/64 scope link\n"
+    )
     addrs = server.local_interfaces(lambda argv: text if argv[0] == "ip" else "")
     chosen = server.detect_vpn_ip(addrs)
     assert server.proxy_networks(chosen, None, addrs) == ["100.64.0.0/16", "fd0f:80b5:c7cd:bbad::/64"]
 
 
 def test_the_ops_timers_are_installed_in_the_no_domain_fallback_and_the_proxy_mode(tmp_path):
-    for kw, user_role in (({}, "edge"), ({"behind_proxy": True}, "edge")):
-        ctx, out, err, calls = stub_ctx(tmp_path / ("p" if kw else "f"), SystemdFake())
-        server_setup(ctx, user_role, names=server.Names(), address="127.0.0.1", local=local, user="orch-edge", **kw) if not kw else server_setup(
-            ctx, user_role, names=server.Names(), local=local, user="orch-edge", **kw
-        )
-        assert ["systemctl", "--user", "enable", "--now", "orch-health.timer"] in calls, kw
+    for tag, kw in (("f", {"address": "127.0.0.1"}), ("p", {"behind_proxy": True})):
+        ctx, out, err, calls = stub_ctx(tmp_path / tag, SystemdFake())
+        server_setup(ctx, "edge", names=server.Names(), local=local, user="orch-edge", **kw)
+        assert ["systemctl", "--user", "enable", "--now", "orch-health.timer"] in calls, tag
     ctx, out, err, calls = stub_ctx(tmp_path / "hub", SystemdFake())
     server_setup(ctx, "hub", names=server.Names(), local=local, user="orch-hub")
     assert ["systemctl", "--user", "enable", "--now", "orch-health.timer"] in calls

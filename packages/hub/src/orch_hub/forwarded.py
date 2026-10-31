@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import ipaddress
 
-__all__ = ["FORWARDING", "NOT_PROXIED", "carries", "refuse", "source_of", "norm_ip"]
+__all__ = ["FORWARDING", "NOT_PROXIED", "carries", "norm_ip", "refuse", "source_of"]
 
 FORWARDING = (
     "x-forwarded-for",

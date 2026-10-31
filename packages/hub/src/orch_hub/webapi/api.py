@@ -42,6 +42,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from .. import __version__ as hub_version
+from .. import forwarded as FW
 from ..access import Access, AccessError
 from ..access.orgcleanup import org_cleanup
 from ..access.store import ADMIN_GROUP, DAY_MS, EXTEND_MS, check_name
@@ -52,7 +53,6 @@ from ..channels import Channels
 from ..channels.cli import pair_link
 from ..channels.service import MIN_PASSWORD, ChannelError
 from ..closing import WEB_ALLOWED as CLOSING_ALLOWED
-from .. import forwarded as FW
 from ..config import dev_of
 from ..connect import LinkError, build_link
 from ..contract import channelapi as CA

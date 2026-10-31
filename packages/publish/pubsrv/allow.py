@@ -18,7 +18,7 @@ itself, in a ``hub.allow`` signed by its HK_op. What makes that safe, in order:
 
 from __future__ import annotations
 
-from . import auth, db
+from . import auth, cleanup, db
 from . import hub_path as H
 from . import published as P
 
@@ -72,36 +72,34 @@ def _store(conn, o, now, cert):
         bh = conn.execute("SELECT hub_id FROM hub_bindings WHERE workspace_id=?", (ws,)).fetchone()[
             "hub_id"
         ]
-    held = conn.execute(
-        "SELECT hub_id, binding_seq FROM hub_allows WHERE workspace_id=?", (ws,)
-    ).fetchone()
-    # Who may write the row. Precondition of the whole store, nothing is written otherwise:
-    #  - bound to the REQUESTING hub: that hub's allowance for the live epoch (it may overwrite any older row);
-    #  - bound to another hub: refused (other_hub);
-    #  - unbound from this hub: not at or below its unbound seq (unbound);
-    #  - no binding row yet (the join: publish learns the hub's allowance BEFORE the card and the binding it depends on,
-    #    because the binding needs the registered workspace): first writer only: another hub's row is never replaced (a same-hub row only by an equal or newer epoch).
+    # Each hub's allowance is its OWN row (workspace, hub): nothing here reads or replaces another hub's. The workspace's
+    # own signed binding (it names the hub) later selects the row that counts (registry.hub_allowed) and drops the others.
     if b is not None and bh != hub and b["status"] == "bound":
-        raise H.Refused("other_hub")
+        raise H.Refused("other_hub")  # bound to another hub: this one has nothing to say about it
     if b is not None and bh == hub:
         if seq < b["binding_seq"]:
             raise H.Refused("stale_binding")
         if b["status"] == "unbound" and seq <= b["binding_seq"]:
             raise H.Refused("unbound")
-    if (
-        held is not None
-        and held["hub_id"] != hub
-        and not (b is not None and bh == hub and b["status"] == "bound")
-    ):
-        raise H.Refused(
-            "other_hub"
-        )  # another hub's row is replaced only by the hub the workspace is bound to
-    if held is not None and held["hub_id"] == hub and seq < held["binding_seq"]:
+    cleanup.drop_expired(conn, now)
+    held = conn.execute(
+        "SELECT binding_seq FROM hub_allows WHERE workspace_id=? AND hub_id=?", (ws, hub)
+    ).fetchone()
+    if held is not None and seq < held["binding_seq"]:
         raise H.Refused("stale_binding")
+    if (
+        held is None
+    ):  # a new row: one hub may hold only so many that no workspace is bound to it yet
+        pending = conn.execute(
+            "SELECT COUNT(*) n FROM hub_allows a WHERE a.hub_id=? AND NOT EXISTS (SELECT 1 FROM hub_bindings b"
+            " WHERE b.workspace_id=a.workspace_id AND b.hub_id=a.hub_id AND b.status='bound')",
+            (hub,),
+        ).fetchone()["n"]
+        if pending >= cleanup.ALLOW_PENDING_CAP:
+            raise H.Refused("quota_exceeded")
     conn.execute(
         "INSERT INTO hub_allows(workspace_id, hub_id, person_id, binding_seq, cert_id, updated_ms)"
-        " VALUES (?,?,?,?,?,?) ON CONFLICT(workspace_id) DO UPDATE SET hub_id=excluded.hub_id,"
-        " person_id=excluded.person_id, binding_seq=excluded.binding_seq, cert_id=excluded.cert_id,"
+        " VALUES (?,?,?,?,?,?) ON CONFLICT(workspace_id, hub_id) DO UPDATE SET person_id=excluded.person_id, binding_seq=excluded.binding_seq, cert_id=excluded.cert_id,"
         " updated_ms=excluded.updated_ms",
         (ws, hub, person, seq, cert, now),
     )

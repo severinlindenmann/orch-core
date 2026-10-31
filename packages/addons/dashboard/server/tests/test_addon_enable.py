@@ -203,3 +203,38 @@ def test_the_model_choice_is_offered_by_the_choose_model_capability_not_by_the_n
     ):
         link.rows = rows
         assert "model_routing" not in gateway.features(stub.ws)
+
+
+@pytest.mark.parametrize(
+    "local,hub,want",
+    [
+        (None, {"hub_publish": "http://127.0.0.1:8102", "hub_says": {"name": "Anna's hub", "from": "hub"}}, ("http://127.0.0.1:8102", "hub", "Anna's hub")),
+        ({"parts": {"publish": {"url": "http://127.0.0.1:9999"}}}, {"hub_publish": "http://127.0.0.1:8102"}, ("http://127.0.0.1:9999", "computer", None)),  # local install wins
+        (None, {"hub_publish": None}, (None, None, None)),  # not joined
+        (None, {"hub_publish": "http://evil.example.com"}, (None, None, None)),  # not an address core accepts
+        (None, "boom", (None, None, None)),  # hub.status unreadable
+    ],
+)
+def test_rows_suggest_the_hubs_publish_address_when_joined(
+    client, token, stub, gateway, monkeypatch, tmp_path, local, hub, want
+):
+    import json
+
+    from test_addon_switches import _get, _VersionLink
+
+    (tmp_path / "install").mkdir()
+    if local is not None:
+        (tmp_path / "install" / "install.json").write_text(json.dumps(local))
+    monkeypatch.setenv("ORCH_STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(gateway, "enabled", lambda ws: _VersionLink())
+
+    def call(ws, op, args=None):
+        if op == "hub.status":
+            if hub == "boom":
+                raise RuntimeError("down")
+            return hub
+        return {"runner": None} if op == "whoami" else {"publish": None}
+
+    monkeypatch.setattr(gateway, "call", call)
+    row = {r["id"]: r for r in _get(client, token, stub, "add-ons").json()["add_ons"]}["publish"]
+    assert (row["suggest"], row.get("suggest_from"), row.get("suggest_hub")) == want

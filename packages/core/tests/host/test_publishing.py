@@ -755,8 +755,11 @@ def test_an_unknown_workspace_says_what_the_admin_must_do_and_keeps_the_copy(w):
     info = ok(w.req("publish.list", {}))["data"]
     assert re.fullmatch(r"[0-9a-f]{32}", info["workspace"]) and re.fullmatch(r"[0-9a-f]{32}", info["owner"])
     assert (w.stage_dir(staged) / "meta.json").exists()
+    # P02: the refusal leaves no "Sending" row in the list and the record is marked failed
+    assert ok(w.req("publish.list", {}))["data"]["shares"] == []
     w.hub.error = None
     ok(w.send(staged))  # the admin allowed it; the same copy goes
+    assert len(ok(w.req("publish.list", {}))["data"]["shares"]) == 1
 
 
 @pytest.mark.parametrize(

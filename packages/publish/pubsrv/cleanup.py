@@ -42,3 +42,23 @@ def drop_hub(conn, hub):
 def drop_cert(conn, hub, cert_id):
     """An op cert of a hub was revoked: the allowances it signed."""
     conn.execute("DELETE FROM hub_allows WHERE hub_id=? AND cert_id=?", (hub, cert_id))
+
+
+ALLOW_TTL_MS = (
+    24 * 3600 * 1000
+)  # a pending allowance (the workspace never bound to that hub) lives this long
+ALLOW_PENDING_CAP = 500  # pending rows one hub may hold at once
+
+
+def drop_other_allows(conn, ws, keep_hub):
+    """The workspace's own signed binding named `keep_hub`: every other hub's pending row for it goes."""
+    conn.execute("DELETE FROM hub_allows WHERE workspace_id=? AND hub_id<>?", (ws, keep_hub))
+
+
+def drop_expired(conn, now_ms):
+    """Pending rows past their TTL (a row whose hub the workspace is bound to never expires: it follows the binding)."""
+    conn.execute(
+        "DELETE FROM hub_allows WHERE updated_ms < ? AND NOT EXISTS (SELECT 1 FROM hub_bindings b"
+        " WHERE b.workspace_id=hub_allows.workspace_id AND b.hub_id=hub_allows.hub_id AND b.status='bound')",
+        (now_ms - ALLOW_TTL_MS,),
+    )

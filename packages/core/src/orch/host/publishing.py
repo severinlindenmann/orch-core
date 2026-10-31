@@ -991,6 +991,8 @@ def _list(call: Call, args: dict[str, Any]) -> dict[str, Any]:
             continue
         if call.column.name == "G" and not _claim_ok(call, view):
             continue
+        if rec.get("state") == "failed":  # a refused send leaves nothing to show (P02)
+            continue
         shares.append(_row({**rec, "ticket": view.key}))
     staged = []
     for meta in _stages(service):
@@ -1316,23 +1318,30 @@ def _send(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
         with _MU:  # a share can go live from here on (a lost commit answer): revoke must find it, with no token in it
             rows = [r for r in _records(service) if r.get("id") != rec["id"]]
             _save_records(service, [*rows, {**rec, "state": "sending"}])
-        if "reg" in plan and not plan.get("registered"):
-            _register(call, {**plan, "op": "publish.register"})
-        registered_again = relabelled = False
-        while True:
-            try:
-                flow.put_meta(client, service.workspace_id, meta["share_id"], body)
-                break
-            except (PublishError, HubRefused) as exc:
-                if exc.code == "unknown_workspace" and not registered_again and "reg" in plan:
-                    registered_again = True
-                    _register(call, {**plan, "op": "publish.register"})  # the server lost the binding: once more
-                    continue
-                if exc.code == "bad_label" and not relabelled:
-                    relabelled = True  # an older server refuses a text the contract allows: the ticket key instead
-                    body = flow.meta_bytes(**{**meta_args, "label": meta["ticket"]["key"]})
-                    continue
-                raise
+        try:  # P02: a refusal before anything was stored leaves no "Sending" row behind
+            if "reg" in plan and not plan.get("registered"):
+                _register(call, {**plan, "op": "publish.register"})
+            registered_again = relabelled = False
+            while True:
+                try:
+                    flow.put_meta(client, service.workspace_id, meta["share_id"], body)
+                    break
+                except (PublishError, HubRefused) as exc:
+                    if exc.code == "unknown_workspace" and not registered_again and "reg" in plan:
+                        registered_again = True
+                        _register(call, {**plan, "op": "publish.register"})  # the server lost the binding: once more
+                        continue
+                    if exc.code == "bad_label" and not relabelled:
+                        relabelled = True  # an older server refuses a text the contract allows: the ticket key instead
+                        body = flow.meta_bytes(**{**meta_args, "label": meta["ticket"]["key"]})
+                        continue
+                    raise
+        except Exception as exc:
+            if _refused_outright(exc):
+                with _MU:
+                    rows = [r for r in _records(service) if r.get("id") != rec["id"]]
+                    _save_records(service, [*rows, {**rec, "state": "failed"}])
+            raise
         for entry, data in zip(meta["files"], blobs, strict=True):
             flow.put_file(client, service.workspace_id, meta["share_id"], entry["name"], data)
         flow.commit(client, service.workspace_id, meta["share_id"])
@@ -1365,6 +1374,24 @@ def _send(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
     finally:
         with _MU:
             _SENDING.discard(key)
+
+
+def _refused_outright(exc: Exception) -> bool:
+    """The server said no to the first request (the meta) in so many words, so nothing of this share exists there. A
+    timeout, a 5xx or a lost answer proves nothing and keeps the "sending" record (revoke must still find it)."""
+    from orch.hubclient import HubRefused
+    from orch.publishclient import PublishError
+
+    if isinstance(exc, HostError):  # the register step turns the server's refusal into this closed code
+        return exc.code == "publish.server_refused"
+    if isinstance(exc, PublishError):
+        return 400 <= exc.status < 500
+    return isinstance(exc, HubRefused) and getattr(exc, "code", "") in _REFUSED_CODES
+
+
+_REFUSED_CODES = frozenset(
+    {"unknown_workspace", "owner_not_allowed", "workspace_blocked", "not_bound", "unknown_hub", "other_hub", "revoked"}
+)
 
 
 def _read_token(service: WorkspaceService, path: Path) -> str:

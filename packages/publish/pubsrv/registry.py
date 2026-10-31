@@ -2,6 +2,7 @@
 
 import sqlite3
 
+from . import cleanup
 from . import relay_proto as proto
 from .auth import Refusal
 
@@ -21,7 +22,7 @@ def check_delegation(delegation, pk, ws_hex, path_ws=None):
     return o
 
 
-def hub_allowed(conn, ws_hex, person_id, live):
+def hub_allowed(conn, ws_hex, person_id, live, now_ms=0):
     """P02, the ONE check every use of a hub allowance goes through. A TRUSTED hub (`trusted_hubs`) said by a signed
     `hub.allow` that this workspace and owner are its own, AND all of: the operator never unbound the workspace
     (`hub_denied`), the op cert that signed it is not revoked, and (`live`, every use) the workspace's binding is
@@ -34,7 +35,7 @@ def hub_allowed(conn, ws_hex, person_id, live):
             " JOIN hub_bindings b ON b.workspace_id=a.workspace_id AND b.hub_id=a.hub_id"
             " AND b.binding_seq=a.binding_seq AND b.status='bound'"
             if live
-            else ""
+            else f" AND a.updated_ms >= {int(now_ms - cleanup.ALLOW_TTL_MS)}"  # pending rows expire
         )
         + " WHERE a.workspace_id=? AND a.person_id=?"
         " AND NOT EXISTS (SELECT 1 FROM hub_op_revoked r WHERE r.hub_id=a.hub_id AND r.cert_id=a.cert_id)"
@@ -49,7 +50,7 @@ def owner_listed(conn, person_id):
     )
 
 
-def require_prebound(conn, ws_hex, person_id):
+def require_prebound(conn, ws_hex, person_id, now_ms=0):
     """An unknown workspace may register only if the admin pre-bound it to this owner (M2) and the
     owner is on the allowlist, or a trusted hub allowed exactly this workspace and owner (P02). Every
     failure is the same 401, whatever the reason (L3)."""
@@ -60,7 +61,7 @@ def require_prebound(conn, ws_hex, person_id):
             (ws_hex, person_id),
         ).fetchone()
         is not None
-    ) or hub_allowed(conn, ws_hex, person_id, live=False)
+    ) or hub_allowed(conn, ws_hex, person_id, live=False, now_ms=now_ms)
     if not ok:
         raise Refusal(401, "unknown_workspace")
 
@@ -109,9 +110,9 @@ def register(conn, ws_hex, delegation, pk, now_ms, guard=None, after=None):
             guard(conn, row is not None)
         if row is None:
             # checked on freshly read state, inside the lock (M2)
-            require_prebound(conn, ws_hex, o["owner_person_id"])
+            require_prebound(conn, ws_hex, o["owner_person_id"], now_ms)
             if not owner_listed(conn, o["owner_person_id"]) and not hub_allowed(
-                conn, ws_hex, o["owner_person_id"], live=False
+                conn, ws_hex, o["owner_person_id"], live=False, now_ms=now_ms
             ):
                 raise Refusal(401, "unknown_workspace")
             conn.execute(

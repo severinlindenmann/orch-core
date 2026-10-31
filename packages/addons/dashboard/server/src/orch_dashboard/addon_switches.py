@@ -197,7 +197,7 @@ def register(app: FastAPI, gateway: Gateway) -> None:
                     "state": state,
                     "needs": setting,
                     "set_up": set_up,
-                    "suggest": suggested_publish() if info.id == "publish" else None,
+                    **(suggest_fields(gateway, ws) if info.id == "publish" else {"suggest": None}),
                     "locked": None,
                     "blocked": blocked,
                     "runner_switch": (not on) and can_sign and runner_fix(info.id, runner),
@@ -205,6 +205,27 @@ def register(app: FastAPI, gateway: Gateway) -> None:
                 }
             )
         return {"available": True, "add_ons": rows}
+
+
+def suggest_fields(gateway: Gateway, ws: str) -> dict:
+    """The Publish form's one-sentence suggestion and where it comes from. The Publish server installed on this computer
+    wins; otherwise, when this workspace is joined to a hub, the publish address that hub says it has (a hint: whatever is
+    turned on is still signed and shown in the review). ``suggest_from`` is ``computer`` or ``hub``."""
+    local = suggested_publish()
+    if local:
+        return {"suggest": local, "suggest_from": "computer", "suggest_hub": None}
+    try:
+        st = gateway.call(ws, "hub.status")
+        from orch.wsproto import wire
+
+        url = wire.check_origin(st.get("hub_publish")) if st.get("hub_publish") else None
+        says = st.get("hub_says")
+        name = says.get("name") if isinstance(says, dict) and isinstance(says.get("name"), str) else None
+    except Exception:  # noqa: BLE001 - an unreadable hub status is "nothing to suggest"
+        return {"suggest": None}
+    if not url:
+        return {"suggest": None}
+    return {"suggest": url, "suggest_from": "hub", "suggest_hub": name}
 
 
 def suggested_publish() -> str | None:

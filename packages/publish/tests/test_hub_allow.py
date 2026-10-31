@@ -287,8 +287,12 @@ def test_rebinding_to_a_new_hub_works_and_the_old_row_is_dead(env):
         NOW,
     )
     assert put_allow(env, allow_obj(other, seq=2)).status_code == 200
-    row = env.sql("SELECT hub_id, binding_seq FROM hub_allows")[0]
-    assert (row["hub_id"], row["binding_seq"]) == (other.id, 2)
+    rows = {
+        r["hub_id"]: r["binding_seq"] for r in env.sql("SELECT hub_id, binding_seq FROM hub_allows")
+    }
+    assert (
+        rows[other.id] == 2
+    )  # the new bound hub has its own row; the old hub's stale one is dead by construction
 
 
 def test_operator_unbind_leaves_no_allowance_and_a_hub_cannot_readmit(env):
@@ -305,39 +309,96 @@ def test_operator_unbind_leaves_no_allowance_and_a_hub_cannot_readmit(env):
     assert put_allow(env, allow_obj(env.hub)).status_code == 200
 
 
-def test_guard_every_delete_on_the_admission_tables_goes_through_cleanup():
-    """The invariant is kept in ONE place: no other module may DELETE from these tables."""
+def test_guard_every_write_that_removes_or_overwrites_admission_state_goes_through_cleanup():
+    """The invariant is kept in ONE place: no other module may DELETE from or REPLACE rows of these tables."""
     import pathlib
     import re
 
     root = pathlib.Path(__file__).resolve().parent.parent / "pubsrv"
+    tables = "workspaces|hub_bindings|trusted_hubs|hub_allows|hub_denied|prebinds"
     pat = re.compile(
-        r"DELETE\s+FROM\s+(workspaces|hub_bindings|trusted_hubs|hub_allows|hub_denied)\b",
-        re.IGNORECASE,
+        rf"DELETE\s+FROM\s+({tables})\b|INSERT\s+OR\s+REPLACE\s+INTO\s+({tables})\b", re.IGNORECASE
     )
-    offenders = [
-        f.name for f in root.glob("*.py") if f.name != "cleanup.py" and pat.search(f.read_text())
-    ]
+    offenders = []
+    for f in root.rglob("*.py"):
+        if f.name == "cleanup.py":
+            continue
+        for m in pat.finditer(f.read_text()):
+            if f.name == "cli.py" and "prebinds" in m.group(0).lower():
+                continue  # the operator's own `ws allow` / `dev --workspace` pre-bind
+            offenders.append((f.name, m.group(0)))
     assert offenders == []
+    # and the only upserts of hub_allows are allow.py's
+    ups = [
+        f.name
+        for f in root.rglob("*.py")
+        if re.search(r"INSERT\s+INTO\s+hub_allows", f.read_text())
+    ]
+    assert ups == ["allow.py"]
 
 
-def test_no_binding_another_hubs_row_is_never_replaced(env):
-    admitted(env)
+def pre_write(e, hub, person):
+    trust(e, hub)
+    put_card(e, hub)
+    assert put_allow(e, allow_obj(hub, person=person)).status_code == 200
+
+
+@pytest.mark.parametrize("person", [OTHER_PERSON, PERSON])
+def test_another_hubs_pre_written_row_blocks_nobody_and_goes_on_bind(env, person):
     other = Hub()
-    trust(env, other)
-    put_card(env, other)
-    # a second, unbound workspace id: hub A takes the first-writer row, hub B cannot replace it
-    ws2 = "9" * 32
-    assert put_allow(env, allow_obj(env.hub, ws=ws2), ws=ws2).status_code == 200
-    r = put_allow(env, allow_obj(other, ws=ws2), ws=ws2)
-    assert (r.status_code, err(r)) == (403, "other_hub")
+    pre_write(env, other, person)  # hub B squats first, with a wrong owner or even the real one
+    admitted(env)  # hub A: allow -> card -> binding -> first request all succeed
+    assert env.status().status_code == 200
+    assert [r["hub_id"] for r in env.sql("SELECT hub_id FROM hub_allows")] == [
+        env.hub.id
+    ]  # B's row is gone
+
+
+def test_a_hub_that_was_pre_written_but_not_bound_never_counts(env):
+    other = Hub()
+    pre_write(env, other, PERSON)
+    trust(env)
+    put_card(env)
     assert (
-        env.sql("SELECT hub_id FROM hub_allows WHERE workspace_id=?", ws2)[0]["hub_id"]
-        == env.hub.id
-    )
+        env.register().status_code == 200
+    )  # B's pending row admits the registration (registration needs no binding)
+    bind(env)  # bound to A, which sent no allow: B's row is dropped, nothing counts
+    assert err(env.status()) == "owner_not_allowed"
 
 
-def test_bound_to_b_a_asks_refused_and_b_asks_overwrites(env):
+def test_a_pending_row_expires_after_the_ttl(env):
+    from pubsrv import cleanup
+
+    other = Hub()
+    pre_write(env, other, PERSON)
+    env.now = NOW + cleanup.ALLOW_TTL_MS + 1000
+    assert (
+        env.register().status_code == 401
+    )  # expired at use (registration path), not only by a sweep
+    # and a later allow of anyone prunes it
+    trust(env)
+    put_card(env)
+    assert put_allow(env, allow_obj(env.hub, ts=env.now)).status_code == 200
+    assert [r["hub_id"] for r in env.sql("SELECT hub_id FROM hub_allows")] == [env.hub.id]
+
+
+def test_the_per_hub_cap_refuses_the_next_pending_row(env, monkeypatch):
+    from pubsrv import cleanup
+
+    monkeypatch.setattr(cleanup, "ALLOW_PENDING_CAP", 2)
+    trust(env)
+    put_card(env)
+    for i in range(2):
+        w = f"{i + 1:032x}"
+        assert put_allow(env, allow_obj(env.hub, ws=w), ws=w).status_code == 200
+    w = f"{9:032x}"
+    r = put_allow(env, allow_obj(env.hub, ws=w), ws=w)
+    assert (r.status_code, err(r)) == (400, "quota_exceeded")
+    w1 = f"{1:032x}"  # an existing row of the same hub can still be refreshed
+    assert put_allow(env, allow_obj(env.hub, ws=w1), ws=w1).status_code == 200
+
+
+def test_bound_to_b_a_asks_refused_and_b_asks_stores_its_own_row(env):
     from pubsrv import db
 
     admitted(env)
@@ -353,4 +414,5 @@ def test_bound_to_b_a_asks_refused_and_b_asks_overwrites(env):
     r = put_allow(env, allow_obj(env.hub, seq=3))
     assert (r.status_code, err(r)) == (403, "other_hub")
     assert put_allow(env, allow_obj(other, seq=2)).status_code == 200
-    assert env.sql("SELECT hub_id FROM hub_allows")[0]["hub_id"] == other.id
+    assert [r["hub_id"] for r in env.sql("SELECT hub_id FROM hub_allows")] == [other.id]
+    assert env.status(headers=None) is not None

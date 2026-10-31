@@ -3496,10 +3496,13 @@ the admin bound at the invite and that user is a hub admin; the hub setting "Let
 | 5 | the held, current hub card for `hub_id`, verified again now, and the `HK_op` signature | `unknown_hub`, `bad_hub_signature` |
 | 6 | the nonce is unseen for this hub; then recorded | `replay` |
 
-Then, in one transaction on freshly read state (publish tests): a workspace already registered must have the same
-`owner_person_id` (`other_person`); a binding to ANOTHER hub that is `bound` refuses (`other_hub`); a `binding_seq` below the
-stored binding or allowance refuses (`stale_binding`); at or below an `unbound` of this hub refuses (`unbound`); another hub's
-allowance row is never replaced (`other_hub`).
+Then, in one transaction on freshly read state (publish tests): a denied workspace (the operator unbound it; `workspace_blocked`) and
+a registered workspace of another owner (`other_person`) are refused; a workspace `bound` to ANOTHER hub is refused (`other_hub`);
+a `binding_seq` below this hub's stored binding or row refuses (`stale_binding`), at or below its `unbound` refuses (`unbound`);
+a hub holds at most 500 rows no workspace is bound to (`quota_exceeded`). The row is keyed `(workspace_id, hub_id)`: every hub's
+pending allowance is its own, no hub reads, blocks or overwrites another's. Expired pending rows (24 h without a binding) are
+pruned and never count. The workspace's own signed `hub.binding` (it names the hub) selects the row that counts and, in the same
+transaction, drops every other hub's row for it.
 
 **What it grants, exactly.** Registration of THIS workspace by `PUT /v2/hub/cards/{ws}` is admitted when the card's owner is
 `owner_person_id` (instead of the operator's pre-bind plus owner-allowlist row), and, on every request, the owner counts as

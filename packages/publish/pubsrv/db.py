@@ -75,13 +75,15 @@ CREATE TABLE IF NOT EXISTS trusted_hubs(
   added_ms INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS hub_allows(
-  workspace_id TEXT PRIMARY KEY,  -- no FK: it may arrive before the workspace registers
-  hub_id TEXT NOT NULL,
+  workspace_id TEXT NOT NULL,  -- no FK: it may arrive before the workspace registers
+  hub_id TEXT NOT NULL,  -- one row per (workspace, hub): a hub's pending allowance is its own, nobody blocks or overwrites it
   person_id TEXT NOT NULL,
   binding_seq INTEGER NOT NULL,  -- the epoch: counts only while the live binding is THIS hub's at exactly this seq
   cert_id TEXT NOT NULL,  -- the op cert that signed it: a revoked cert's allowances are dead
-  updated_ms INTEGER NOT NULL
+  updated_ms INTEGER NOT NULL,  -- a row the workspace never bound to expires 24 h after this (cleanup.ALLOW_TTL_MS)
+  PRIMARY KEY(workspace_id, hub_id)
 );
+CREATE INDEX IF NOT EXISTS hub_allows_hub ON hub_allows(hub_id);
 CREATE TABLE IF NOT EXISTS hub_denied(
   workspace_id TEXT PRIMARY KEY,  -- the operator unbound it: no hub may allow it again until the operator clears this
   added_ms INTEGER NOT NULL

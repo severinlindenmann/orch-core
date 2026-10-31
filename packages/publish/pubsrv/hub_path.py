@@ -797,9 +797,11 @@ def _store_update(conn, ws_hex, now_ms, dev_mode, signed, kind):
             new = apply_unbound(state, o)
             hub_hex = o["hub_id"]
         _write_state(conn, ws_hex, new, hub_hex, now_ms)
-        if (
-            kind == "unbound"
-        ):  # P02: leaving the hub ends its allowance now (it also stops counting by itself)
+        # P02, same transaction as the binding write: the workspace's own signed binding names the hub, so only that hub's
+        # pending row stays; leaving the hub ends its allowance now (it also stops counting by itself)
+        if kind == "binding":
+            cleanup.drop_other_allows(conn, ws_hex, hub_hex)
+        else:
             cleanup.drop_allow(conn, ws_hex, hub_hex)
         conn.execute("COMMIT")
         return new

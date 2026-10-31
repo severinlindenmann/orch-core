@@ -15,7 +15,9 @@ Ops:
   is a known
   gap, tracked in orch-core#1263).
 * ``org.tool {server, tool, on, pin?}``: turn one tool of an accepted company server On (for exactly the pin shown;
-  ``changed`` if it moved) or Off. P only, owner. Every tool starts Off.
+  ``changed`` if it moved) or Off. P only, owner. Every tool starts Off. ``org.tool {server, on: true, tools:
+  [{tool, pin}]}`` is the "Turn on reading tools" click: the listed tools, all or nothing, each for its shown pin and
+  only if its pinned label is ``reads``; same owner gate.
 * ``org.decline {kind, name}``: turn an item off again. P only, owner.
 * ``org.sync``: fetch both bundles from the bound hub and verify them (no rollback). Grants nothing. P, and G at
   most once
@@ -70,8 +72,28 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
             "tool": {"type": "string", "pattern": "^[A-Za-z0-9_.-]{1,128}$"},
             "on": {"type": "boolean"},
             "pin": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+            "tools": {
+                "type": "array", "minItems": 1, "maxItems": 200,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "tool": {"type": "string", "pattern": "^[A-Za-z0-9_.-]{1,128}$"},
+                        "pin": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+                    },
+                    "required": ["tool", "pin"],
+                    "additionalProperties": False,
+                },
+            },
         },
-        "required": ["server", "tool", "on"],
+        "required": ["server", "on"],
+        "oneOf": [
+            {"required": ["tool"], "not": {"required": ["tools"]}},
+            {
+                "required": ["tools", "on"],
+                "properties": {"on": {"const": True}},
+                "not": {"anyOf": [{"required": ["tool"]}, {"required": ["pin"]}]},
+            },
+        ],
         "additionalProperties": False,
     },
     "org.accept": {
@@ -157,6 +179,10 @@ def serve(call: Call) -> dict[str, Any]:
     if op == "org.accept":
         return ok_result(orgstate.accept(service, args["kind"], args["name"], args["digest"], call.viewer or ""))
     if op == "org.tool":
+        if "tools" in args:
+            if args["on"] is not True:
+                raise HostError("invalid.input", "org.tool: a list of tools can only be turned on")
+            return ok_result(orgstate.set_tools_reading(service, args["server"], args["tools"], call.viewer or ""))
         if args["on"] and "pin" not in args:
             raise HostError("invalid.input", "org.tool: pin is required to turn a tool on")
         got = orgstate.set_tool(service, args["server"], args["tool"], args["on"], args.get("pin"), call.viewer or "")
@@ -207,6 +233,9 @@ def _sync(service: WorkspaceService) -> dict[str, Any]:
                     bodies[kind] = exc.code  # a refusal (an older hub: unknown_op) is the result of that kind
             if "secrets" in bodies:
                 _report_use(service, link)
+            from . import hubclosing
+
+            hubclosing.pull(service, peerops._hub_state(service, full=False), link)  # noqa: SLF001 - #1463
         finally:
             link.close()
     except (OSError, LinkClosed, LinkTimeout):

@@ -235,6 +235,15 @@ def _update_target(notice) -> str | None:
     return v if isinstance(v, str) and re.fullmatch(r"[0-9A-Za-z.+-]{1,32}", v) else None
 
 
+def _closing(raw) -> dict | None:
+    """#1463: the host's own word that the hub is being removed: exactly `{since_ms, ends_ms}`, two plain integers.
+    Nothing of the hub's notice passes; the page shows its own words."""
+    if not isinstance(raw, dict) or set(raw) != {"since_ms", "ends_ms"}:
+        return None
+    since, ends = _int(raw["since_ms"], 10**15), _int(raw["ends_ms"], 10**15)
+    return {"since_ms": since, "ends_ms": ends} if since is not None and ends is not None else None
+
+
 def status_view(raw) -> dict:
     """Of `hub.status` only the closed fields, each checked. An unknown mode is `unknown` (fail closed in the page)."""
     raw = raw if isinstance(raw, dict) else {}
@@ -259,6 +268,7 @@ def status_view(raw) -> dict:
         "key_change_pending": raw.get("rotation") == "pending",
         "log_sync_stuck": isinstance(raw.get("log_sync"), dict) and bool(raw["log_sync"].get("stuck")),
         "update_target": _update_target(raw.get("update_notice")),
+        "closing": _closing(raw.get("closing")),
         "groups": counts if snap else None,  # from the hub, not signed
         "snapshot_version": _int(snap.get("version")) if snap else None,
         "hub_card": json.dumps(raw["hub_card"], separators=(",", ":")) if isinstance(raw.get("hub_card"), dict)

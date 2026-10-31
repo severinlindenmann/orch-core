@@ -108,6 +108,22 @@ def test_update_request_from_the_hub_is_only_a_plain_version(notice, want):
     assert got["update_target"] == want
 
 
+@pytest.mark.parametrize(
+    "closing,want",
+    [
+        ({"since_ms": 1, "ends_ms": 2}, {"since_ms": 1, "ends_ms": 2}),
+        (None, None),
+        ({"since_ms": 1, "ends_ms": 2, "removal_id": "x"}, None),  # exactly the two members, nothing else passes
+        ({"since_ms": "1", "ends_ms": 2}, None),
+        ({"since_ms": True, "ends_ms": 2}, None),
+        ("closing", None),
+    ],
+)
+def test_closing_is_only_the_hosts_two_integers(closing, want):
+    got = client(Link({"hub.status": {**STATUS, "closing": closing}})).get(f"/api/w/{WS}/hub").json()
+    assert got["closing"] == want
+
+
 def test_share_view_lists_rules_and_shared_tickets():
     link = Link({"share.rules": RULES, "share.preview": PREVIEW})
     got = client(link).get(f"/api/w/{WS}/hub/share").json()

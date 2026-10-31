@@ -222,3 +222,99 @@ def test_cli_trust_untrust_list(tmp_path, capsys):
     assert "a" * 32 in capsys.readouterr().out
     assert cli.main(["admin", "--data", d, "hub", "untrust", "a" * 32]) == 0
     assert "untrusted" in capsys.readouterr().out
+
+
+# --- the class: an allowance is dead by construction unless every dependency holds ------------------------------------
+
+
+def revoke_op_cert(e, hub):
+    from pubsrv import db
+
+    cert = hub.card["op_cert"]["o"]["cert_id"]
+    conn = db.connect(e.path)
+    try:
+        conn.execute("INSERT INTO hub_op_revoked VALUES (?,?,?)", (hub.id, cert, NOW))
+    finally:
+        conn.close()
+
+
+def test_a_revoked_op_cert_ends_its_allowances(env):
+    admitted(env)
+    assert env.status().status_code == 200
+    revoke_op_cert(env, env.hub)  # the row stays, the check refuses
+    assert err(env.status()) in ("owner_not_allowed", "revoked", "unknown_hub", "bad_hub_signature")
+    assert env.sql("SELECT COUNT(*) n FROM hub_allows")[0]["n"] == 1
+
+
+def test_accepting_an_op_revocation_drops_the_rows_it_signed(env):
+    from pubsrv import db
+
+    admitted(env)
+    cert = env.hub.card["op_cert"]["o"]["cert_id"]
+    conn = db.connect(env.path)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        from pubsrv import cleanup
+
+        cleanup.drop_cert(conn, env.hub.id, cert)
+        conn.execute("COMMIT")
+    finally:
+        conn.close()
+    assert env.sql("SELECT COUNT(*) n FROM hub_allows")[0]["n"] == 0
+
+
+def test_rebinding_to_a_new_hub_works_and_the_old_row_is_dead(env):
+    admitted(env)
+    other = Hub()
+    trust(env, other)
+    put_card(env, other)
+    from pubsrv import db
+
+    conn = db.connect(env.path)
+    try:
+        H.accept_unbound(conn, WS_A, unbound(env.wsk, env.hub, seq=1), NOW, True)
+        H.accept_binding(conn, WS_A, binding(env.wsk, other, seq=2), NOW, True)
+    finally:
+        conn.close()
+    # a stale row of the old hub (re-inserted by hand: dead by construction) does not block the new hub
+    env.sql(
+        "INSERT OR REPLACE INTO hub_allows VALUES (?,?,?,?,?,?)",
+        WS_A,
+        env.hub.id,
+        PERSON,
+        1,
+        "c" * 32,
+        NOW,
+    )
+    assert put_allow(env, allow_obj(other, seq=2)).status_code == 200
+    row = env.sql("SELECT hub_id, binding_seq FROM hub_allows")[0]
+    assert (row["hub_id"], row["binding_seq"]) == (other.id, 2)
+
+
+def test_operator_unbind_leaves_no_allowance_and_a_hub_cannot_readmit(env):
+    from pubsrv import cli
+
+    admitted(env)
+    assert cli.main(["admin", "--data", env.data, "ws", "unbind", WS_A]) == 0
+    assert env.sql("SELECT COUNT(*) n FROM hub_allows")[0]["n"] == 0
+    r = put_allow(env, allow_obj(env.hub))
+    assert (r.status_code, err(r)) == (400, "workspace_blocked")
+    assert env.register().status_code == 401
+    # only the operator clears it
+    assert cli.main(["admin", "--data", env.data, "ws", "allow", WS_A, PERSON]) == 0
+    assert put_allow(env, allow_obj(env.hub)).status_code == 200
+
+
+def test_guard_every_delete_on_the_admission_tables_goes_through_cleanup():
+    """The invariant is kept in ONE place: no other module may DELETE from these tables."""
+    import pathlib
+    import re
+
+    root = pathlib.Path(__file__).resolve().parent.parent / "pubsrv"
+    pat = re.compile(
+        r"DELETE\s+FROM\s+(workspaces|hub_bindings|trusted_hubs|hub_allows|hub_denied)\b", re.I
+    )
+    offenders = [
+        f.name for f in root.glob("*.py") if f.name != "cleanup.py" and pat.search(f.read_text())
+    ]
+    assert offenders == []

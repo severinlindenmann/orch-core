@@ -22,21 +22,24 @@ def check_delegation(delegation, pk, ws_hex, path_ws=None):
 
 
 def hub_allowed(conn, ws_hex, person_id, live):
-    """P02: a TRUSTED hub (the operator's pin, `trusted_hubs`) said, by a signed `hub.allow`, that this workspace and
-    this owner are its own. `live` (use): the workspace's binding must be bound to that same hub at exactly the
-    allowed `binding_seq`, so leaving, unbinding, re-joining or a hub the operator stopped trusting ends it at once.
-    Without `live` (registration, before the binding exists) only the row and the pin count."""
+    """P02, the ONE check every use of a hub allowance goes through. A TRUSTED hub (`trusted_hubs`) said by a signed
+    `hub.allow` that this workspace and owner are its own, AND all of: the operator never unbound the workspace
+    (`hub_denied`), the op cert that signed it is not revoked, and (`live`, every use) the workspace's binding is
+    `bound` to that same hub at exactly the allowed `binding_seq`. Leaving, unbinding, a re-join, another hub, a revoked
+    cert, an untrusted hub or an operator unbind each end it on the very next request; a stale row is dead by
+    construction. Without `live` (registration, before the binding exists) the epoch rule waits for the binding."""
     q = (
         "SELECT 1 FROM hub_allows a JOIN trusted_hubs t ON t.hub_id=a.hub_id"
-        " WHERE a.workspace_id=? AND a.person_id=?"
-    )
-    if live:
-        q = (
-            "SELECT 1 FROM hub_allows a JOIN trusted_hubs t ON t.hub_id=a.hub_id"
+        + (
             " JOIN hub_bindings b ON b.workspace_id=a.workspace_id AND b.hub_id=a.hub_id"
             " AND b.binding_seq=a.binding_seq AND b.status='bound'"
-            " WHERE a.workspace_id=? AND a.person_id=?"
+            if live
+            else ""
         )
+        + " WHERE a.workspace_id=? AND a.person_id=?"
+        " AND NOT EXISTS (SELECT 1 FROM hub_op_revoked r WHERE r.hub_id=a.hub_id AND r.cert_id=a.cert_id)"
+        " AND NOT EXISTS (SELECT 1 FROM hub_denied d WHERE d.workspace_id=a.workspace_id)"
+    )
     return conn.execute(q, (ws_hex, person_id)).fetchone() is not None
 
 

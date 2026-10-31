@@ -5,7 +5,7 @@ import re
 import sys
 import time
 
-from . import db
+from . import cleanup, db
 
 _ID = re.compile(r"[0-9a-f]{32}")
 LOOPBACK = {"127.0.0.1", "[::1]", "localhost"}
@@ -57,7 +57,7 @@ def admin(args, out=None):
                 )
                 print(f"hub {args.id} may admit its own workspaces", file=out)
             elif args.action == "untrust":
-                n = conn.execute("DELETE FROM trusted_hubs WHERE hub_id=?", (args.id,)).rowcount
+                n = cleanup.drop_hub(conn, args.id)
                 print(
                     f"hub {args.id} untrusted" if n else f"hub {args.id} was not trusted", file=out
                 )
@@ -93,6 +93,9 @@ def admin(args, out=None):
                     )
                 return 0
             if args.action == "allow":
+                cleanup.clear_deny(
+                    conn, args.id
+                )  # the operator's word: this workspace may be admitted again
                 conn.execute(
                     "INSERT OR REPLACE INTO prebinds(workspace_id, person_id, added_ms) VALUES (?,?,?)",
                     (args.id, args.person, _now()),
@@ -120,8 +123,7 @@ def _unbind(conn, ws, out):
     transaction. Files are removed by the share lifecycle (P2); the tombstone rows stay."""
     conn.execute("BEGIN IMMEDIATE")
     try:
-        n = conn.execute("DELETE FROM workspaces WHERE workspace_id=?", (ws,)).rowcount
-        conn.execute("DELETE FROM prebinds WHERE workspace_id=?", (ws,))
+        n = cleanup.drop_workspace(conn, ws, _now())  # also the hub allowance, and a deny marker
         # nonces are left to expire on their own: a replay after unbind + re-register stays refused.
         # Every share row (tombstones included) is re-keyed to a value no workspace id can equal, so
         # a later registration of the same id inherits nothing and owned_share(ws, id) never matches.

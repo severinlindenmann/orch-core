@@ -78,8 +78,13 @@ CREATE TABLE IF NOT EXISTS hub_allows(
   workspace_id TEXT PRIMARY KEY,  -- no FK: it may arrive before the workspace registers
   hub_id TEXT NOT NULL,
   person_id TEXT NOT NULL,
-  binding_seq INTEGER NOT NULL,  -- counts only while the live binding is THIS hub's at exactly this seq
+  binding_seq INTEGER NOT NULL,  -- the epoch: counts only while the live binding is THIS hub's at exactly this seq
+  cert_id TEXT NOT NULL,  -- the op cert that signed it: a revoked cert's allowances are dead
   updated_ms INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS hub_denied(
+  workspace_id TEXT PRIMARY KEY,  -- the operator unbound it: no hub may allow it again until the operator clears this
+  added_ms INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS shares(
   id TEXT PRIMARY KEY,

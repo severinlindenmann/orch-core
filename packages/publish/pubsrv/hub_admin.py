@@ -211,7 +211,9 @@ async def handle(scope, receive, send, settings):
             body = await asyncio.to_thread(narrow.handle, settings, settings.app_ops.store, obj)
             return await _send(send, 200, body)
         if _ALLOW.fullmatch(path):
-            body = await asyncio.to_thread(allow.handle, settings, _ALLOW.fullmatch(path).group(1), obj)
+            body = await asyncio.to_thread(
+                allow.handle, settings, _ALLOW.fullmatch(path).group(1), obj
+            )
             return await _send(send, 200, body)
         conn = db.connect(settings.db_path)
         try:

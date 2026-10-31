@@ -19,6 +19,7 @@ import re
 import sqlite3
 import struct
 
+from . import cleanup
 from . import relay_proto as proto
 from .auth import WINDOW_MS, Refusal
 
@@ -796,10 +797,10 @@ def _store_update(conn, ws_hex, now_ms, dev_mode, signed, kind):
             new = apply_unbound(state, o)
             hub_hex = o["hub_id"]
         _write_state(conn, ws_hex, new, hub_hex, now_ms)
-        if kind == "unbound":  # P02: leaving the hub ends its allowance now (it also stops counting by itself)
-            conn.execute(
-                "DELETE FROM hub_allows WHERE workspace_id=? AND hub_id=?", (ws_hex, hub_hex)
-            )
+        if (
+            kind == "unbound"
+        ):  # P02: leaving the hub ends its allowance now (it also stops counting by itself)
+            cleanup.drop_allow(conn, ws_hex, hub_hex)
         conn.execute("COMMIT")
         return new
     except BaseException:
@@ -904,6 +905,7 @@ def accept_op_revoked(conn, signed, now_ms):
             "INSERT OR IGNORE INTO hub_op_revoked(hub_id, cert_id, revoked_ms) VALUES (?,?,?)",
             (hub_hex, o["cert_id"], now_ms),
         )
+        cleanup.drop_cert(conn, hub_hex, o["cert_id"])
         conn.execute("COMMIT")
     except BaseException:
         try:

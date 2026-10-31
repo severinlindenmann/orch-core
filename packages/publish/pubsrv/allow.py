@@ -37,12 +37,13 @@ def handle(settings, ws, obj):
             conn.execute("SELECT 1 FROM trusted_hubs WHERE hub_id=?", (hub,)).fetchone() is not None
         )
         held = H.held_hub_card(conn, hub, now, settings.dev_mode) if trusted else None
+        cert = held["op_cert"]["cert_id"] if held is not None else ""
         o = P.check_allow(
             obj, path_ws=ws, trusted=trusted, held=held, nonces=auth.DbNonces(conn), now_ms=now
         )
         conn.execute("BEGIN IMMEDIATE")
         try:
-            _store(conn, o, now)
+            _store(conn, o, now, cert)
             conn.execute("COMMIT")
         except BaseException:
             if conn.in_transaction:
@@ -53,9 +54,13 @@ def handle(settings, ws, obj):
     return {"ok": True}
 
 
-def _store(conn, o, now):
+def _store(conn, o, now, cert):
     ws, hub, person, seq = o["workspace_id"], o["hub"], o["owner_person_id"], o["binding_seq"]
     # on freshly read state, inside the lock
+    if conn.execute("SELECT 1 FROM hub_denied WHERE workspace_id=?", (ws,)).fetchone() is not None:
+        raise H.Refused(
+            "workspace_blocked"
+        )  # the operator removed it; only the operator clears that
     row = conn.execute(
         "SELECT owner_person_id FROM workspaces WHERE workspace_id=?", (ws,)
     ).fetchone()
@@ -75,14 +80,14 @@ def _store(conn, o, now):
     held = conn.execute(
         "SELECT hub_id, binding_seq FROM hub_allows WHERE workspace_id=?", (ws,)
     ).fetchone()
-    if held is not None:
-        if held["hub_id"] != hub:
-            raise H.Refused("other_hub")
-        if seq < held["binding_seq"]:
-            raise H.Refused("stale_binding")
+    if held is not None and held["hub_id"] == hub and seq < held["binding_seq"]:
+        raise H.Refused("stale_binding")
+    # a row of ANOTHER hub is stale by construction here (the workspace is not bound to that hub any more, checked
+    # above): the new bound hub simply overwrites it
     conn.execute(
-        "INSERT INTO hub_allows(workspace_id, hub_id, person_id, binding_seq, updated_ms) VALUES (?,?,?,?,?)"
-        " ON CONFLICT(workspace_id) DO UPDATE SET person_id=excluded.person_id,"
-        " binding_seq=excluded.binding_seq, updated_ms=excluded.updated_ms",
-        (ws, hub, person, seq, now),
+        "INSERT INTO hub_allows(workspace_id, hub_id, person_id, binding_seq, cert_id, updated_ms)"
+        " VALUES (?,?,?,?,?,?) ON CONFLICT(workspace_id) DO UPDATE SET hub_id=excluded.hub_id,"
+        " person_id=excluded.person_id, binding_seq=excluded.binding_seq, cert_id=excluded.cert_id,"
+        " updated_ms=excluded.updated_ms",
+        (ws, hub, person, seq, cert, now),
     )

@@ -3505,7 +3505,9 @@ allowance row is never replaced (`other_hub`).
 `owner_person_id` (instead of the operator's pre-bind plus owner-allowlist row), and, on every request, the owner counts as
 allowed only while the workspace's live binding is `bound` to that same hub at exactly the allowed `binding_seq` and the hub
 is still pinned. It adds no row to the owner allowlist and no authority to anyone else. Leaving or unbinding (`hub.unbound`),
-a re-join (a higher seq), a binding to another hub, or `admin hub untrust` ends it on the very next request.
+a re-join (a higher seq), a binding to another hub, a revoked op cert of the hub, an operator unbind (it leaves a deny marker
+that only the operator clears) or `admin hub untrust` ends it on the very next request. A row of a hub the workspace left is dead
+by construction and is simply overwritten by the new bound hub's allowance.
 
 ### 11.11 `hub_where` carries the publish address (P02)
 

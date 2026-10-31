@@ -60,7 +60,7 @@ export function mcpView(data, actions = {}) {
     h("div", { class: "row" }, h("h1", { class: "grow", text: "Tool servers" }),
       info("About tool servers", "A tool server gives your agents extra tools over the internet, such as your CRM. Each workspace owner sees the address and turns it on. Agents never see the sign-in secret: the workspace connects for them, and you can switch single tools off there. Tools that change things start off; each workspace owner turns them on.")),
     attentionList(data.attention),
-    h("p", { class: "banner warn", role: "note", text: "Nothing is switched on for anyone until their workspace owner accepts it." }),
+    h("p", { class: "banner warn", role: "note", text: "Nothing is switched on for anyone until their workspace owner accepts it. Each workspace owner approves it again after a change." }),
     (data.servers ?? []).length ? (data.servers ?? []).map(card) : emptyState("mcp"),
     h("section", { class: "card" }, h("h3", { text: "New server" }), form(null, true)));
 }

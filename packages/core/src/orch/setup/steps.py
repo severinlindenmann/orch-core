@@ -704,7 +704,7 @@ class Creator:
         self.run.workspace = {"id": g.wid, "prefix": self.profile["prefix"]}
 
     def _perms(self) -> None:
-        """P08: the review said "Folders made private": remove group/other write from our own folders (best effort)."""
+        """P08/P14 (new and Finish): the review said "Folders made private": remove group/other write from ours."""
         if not any(f["id"] == "perms" for f in self.plan.flags):
             return
         self.run.set("perms", "doing")

@@ -74,16 +74,31 @@ def test_group_shared_as_primary_group_by_another_account_is_refused(monkeypatch
     assert privdir.others_can_write(st(0o775), UID)
 
 
-def test_shared_group_with_empty_member_list_is_refused(monkeypatch):
-    monkeypatch.setattr(privdir, "grp", SimpleNamespace(getgrgid=lambda g: SimpleNamespace(gr_name="users", gr_mem=[])))
-    assert privdir.others_can_write(st(0o775), UID)
+def test_stock_ubuntu_layout_is_allowed(monkeypatch):
+    """Stock Ubuntu: umask 002, user "ubuntu", private group "ubuntu" (gid 1000), another account with its own group."""
+    monkeypatch.setattr(privdir, "pwd", Pwd([pw("ubuntu", UID, GID), pw("other", 1001, 1001)]))
+    monkeypatch.setattr(
+        privdir, "grp", SimpleNamespace(getgrgid=lambda g: SimpleNamespace(gr_name="ubuntu", gr_mem=[]))
+    )
+    assert not privdir.others_can_write(st(0o775), UID)  # ~/.config, ~/.local, ~/.local/share, ~/.local/state
 
 
-def test_group_named_differently_from_the_user_is_refused(monkeypatch):
+def test_private_group_with_another_name_but_the_users_number_is_allowed(monkeypatch):
     monkeypatch.setattr(
         privdir, "grp", SimpleNamespace(getgrgid=lambda g: SimpleNamespace(gr_name="staff", gr_mem=["me"]))
     )
-    assert privdir.others_can_write(st(0o775), UID)
+    assert not privdir.others_can_write(st(0o775), UID)
+
+
+def test_shared_group_with_another_name_and_number_is_refused(monkeypatch):
+    monkeypatch.setattr(privdir, "pwd", Pwd([pw("me", UID, 100), pw("other", 1001, 1001)]))
+    monkeypatch.setattr(privdir, "grp", SimpleNamespace(getgrgid=lambda g: SimpleNamespace(gr_name="users", gr_mem=[])))
+    assert privdir.others_can_write(st(0o775, gid=100), UID)
+
+
+def test_parent_group_writable_and_owned_by_another_real_user_is_refused():
+    assert privdir.others_can_write(st(0o775, uid=1001, gid=1001), UID)
+    assert privdir.others_can_write(st(0o770, uid=1001, gid=GID), UID)
 
 
 def test_foreign_group_is_refused():

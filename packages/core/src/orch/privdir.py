@@ -24,13 +24,13 @@ _cache: dict[tuple[int, int], tuple[float, bool]] = {}
 
 
 def _private_group_lookup(uid: int, gid: int) -> bool:
-    """Is ``gid`` a group only ``uid`` belongs to: their primary group, no other account has it as primary group, and
-    the group lists no member but them, and it is named after them (a user-private group; a shared primary group such as
-    ``users`` looks empty when enumeration is off). Group passwords/``newgrp`` via gshadow are not consulted: a
-    private group has no password. The rule applies to files too where a caller uses it (discovery ``config.json``,
-    gitsafe ``.git/config``). Any failure to read the account databases (NSS, LDAP, no pwd/grp module) is
-    "not private": the caller then refuses. The answer is cached for 30 s, so a group change (someone added to the
-    group, a new account with that primary group) can take up to 30 s to be noticed."""
+    """Is ``gid`` a group only ``uid`` belongs to: their primary group, no other account has it as primary group, the
+    group lists no member but them, and it is named after them or numbered like them (a user-private group; a shared
+    primary group such as ``users`` looks empty when enumeration is off, and has neither). Group passwords/``newgrp``
+    via gshadow are not consulted: a private group has no password. The rule applies to files too where a caller uses
+    it (discovery ``config.json``, gitsafe ``.git/config``). Any failure to read the account databases (NSS, LDAP, no
+    pwd/grp module) is "not private": the caller then refuses. The answer is cached for 30 s, so a group change
+    (someone added to the group, a new account with that primary group) can take up to 30 s to be noticed."""
     try:
         me = pwd.getpwuid(uid)
         if me.pw_gid != gid:
@@ -38,7 +38,12 @@ def _private_group_lookup(uid: int, gid: int) -> bool:
         if any(p.pw_gid == gid and p.pw_uid != uid for p in pwd.getpwall()):
             return False
         group = grp.getgrgid(gid)
-        return group.gr_name == me.pw_name and all(m == me.pw_name for m in group.gr_mem)
+        if not all(m == me.pw_name for m in group.gr_mem):
+            return False
+        # a user-private group is named after the user, or numbered like the user (gid == uid, the useradd/adduser
+        # convention on cloud images where the group has another name). A shared group such as ``users`` (gid 100)
+        # has neither, so an account database that hides its other members is still not taken for private.
+        return group.gr_name == me.pw_name or gid == uid
     except Exception:  # noqa: BLE001 - fail closed on anything
         return False
 
@@ -142,7 +147,16 @@ def privatize(paths: Iterable[str | os.PathLike[str]], uid: int) -> list[Path]:
 
 def setup_paths(root: Path, store: Path, state: Path, home: Path) -> list[Path]:
     """The ONE list of directories setup makes private: shown in the signed review and changed by the run."""
-    return [root, store, state, home / ".local" / "share" / "orch", home / ".config", home / ".local"]
+    out = [root, store, state, home / ".local" / "share" / "orch", home / ".config", home / ".local"]
+    # the ancestors of the state dir inside the XDG folders (~/.local/share, ~/.local/state, ...): the custody walk to
+    # the state dir checks each one, and a 002 umask leaves them group-writable. Never a folder of the person's own
+    # outside ~/.config and ~/.local (a custom state dir under ~/work does not make ~/work "ours").
+    for parent in state.parents:
+        if not any(base in parent.parents for base in (home / ".local", home / ".config")):
+            break
+        out.append(parent)
+    out += [home / ".local" / "share", home / ".local" / "state"]
+    return list(dict.fromkeys(out))
 
 
 def shown(path: Path, home: Path) -> str:

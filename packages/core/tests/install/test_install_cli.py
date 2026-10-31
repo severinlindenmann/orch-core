@@ -41,14 +41,18 @@ def make(home, **kw):
     out, err = io.StringIO(), io.StringIO()
     calls = []
     ids = [HUB_ID]  # the hub id the fake hub reports (append to change it)
+    card_out = []  # a test may put the exact stdout of `keys card` here
 
     def run(argv, env=None):
         calls.append(list(argv))
         if argv[:3] == ["uv", "tool", "list"]:
             return 0, "orch-hub v0.1.0\norch-relay v0.2.0\norch-publish v0.3.0\n"
-        if len(argv) > 1 and argv[1] == "keys" and argv[-1] == "card":
-            return 0, json.dumps({"o": {"kind": "hub.card", "hub_id": ids[-1]}, "sig": "x"})
         return 0, ""
+
+    def run_stdout(argv, env=None):
+        calls.append(list(argv))
+        assert argv[1] == "keys" and argv[-1] == "card"  # the only stdout-only call
+        return 0, card_out[-1] if card_out else json.dumps({"o": {"kind": "hub.card", "hub_id": ids[-1]}, "sig": "x"})
 
     ctx = cli.Ctx(
         env={"HOME": str(home)},
@@ -56,6 +60,7 @@ def make(home, **kw):
         err=err,
         runner=FakeRunner(),
         run=run,
+        run_stdout=run_stdout,
         resolve_ref=lambda url, ref: "a" * 40,
         core_commit=lambda: None,
         health=lambda h, p: True,
@@ -65,7 +70,7 @@ def make(home, **kw):
         dashboard_entry=lambda: ["/bin/orch-dashboard"],
         **kw,
     )
-    ctx.ids = ids
+    ctx.ids, ctx.card_out = ids, card_out
     return ctx, out, err, calls
 
 
@@ -489,16 +494,44 @@ def test_removing_the_hub_untrusts_the_pinned_id(home):
     assert "pinned_hub_id" not in load(ctx.layout)["parts"]["publish"]
 
 
-def test_a_card_without_o_hub_id_is_not_pinned(home):
+def _card(**o):
+    return {"o": {"kind": "hub.card", "hub_id": HUB_ID, **o}, "sig": "x"}
+
+
+@pytest.mark.parametrize(
+    "stdout",
+    [
+        json.dumps({"hub_id": HUB_ID}),  # no envelope
+        json.dumps(_card()) + "\n" + json.dumps(_card()),  # a second object
+        json.dumps(_card()) + "\ntrailing text",
+        "note: " + json.dumps(_card()),  # leading text
+        json.dumps({**_card(), "extra": 1}),  # an extra key
+        json.dumps({"o": _card()["o"]}),  # a missing key
+        json.dumps({"o": {"kind": "hub.card", "hub_id": "AB" * 16}, "sig": "x"}),  # not lower-case hex
+        json.dumps({"o": {"kind": "hub.card", "hub_id": "ab" * 15}, "sig": "x"}),  # too short
+        json.dumps([_card()]),
+        "",
+    ],
+)
+def test_a_card_that_is_not_exactly_the_envelope_is_not_pinned(home, stdout):
     ctx, out, err, calls = make(home)
-    inner = ctx.run
-
-    def run(argv, env=None):
-        if len(argv) > 1 and argv[1] == "keys" and argv[-1] == "card":
-            return 0, json.dumps({"hub_id": HUB_ID})
-        return inner(argv, env)
-
-    ctx.run = run
+    ctx.card_out.append(stdout)
     _install(ctx, out, err, "hub", "--address", "127.0.0.1")
     _install(ctx, out, err, "publish", "--address", "127.0.0.1")
-    assert _trusts(calls) == [] and "could not be allowed to share" in out.getvalue()
+    assert _trusts(calls) == []
+    assert len([ln for ln in out.getvalue().splitlines() if "could not be allowed to share" in ln]) == 1
+    assert "publish" in load(ctx.layout)["parts"]
+
+
+def test_stderr_noise_next_to_a_valid_card_still_pins(home):
+    """The card is read from stdout only; the real runner drops stderr."""
+    ctx, out, err, calls = make(home)
+    ctx.card_out.append(json.dumps(_card()) + "\n")
+    _install(ctx, out, err, "hub", "--address", "127.0.0.1")
+    _install(ctx, out, err, "publish", "--address", "127.0.0.1")
+    assert [c[-1] for c in _trusts(calls)] == [HUB_ID]
+
+
+def test_run_stdout_drops_stderr():
+    rc, out = cli._run_stdout(["sh", "-c", "echo noise >&2; echo '{}'"])
+    assert (rc, out) == (0, "{}\n")

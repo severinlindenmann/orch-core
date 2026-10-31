@@ -53,6 +53,13 @@ def _run(argv: Sequence[str], env: Mapping[str, str] | None = None) -> tuple[int
     return r.returncode, (r.stdout + r.stderr)
 
 
+def _run_stdout(argv: Sequence[str], env: Mapping[str, str] | None = None) -> tuple[int, str]:
+    """Like :func:`_run` but the output is stdout only (stderr is dropped): for reading a machine-made answer."""
+    r = subprocess.run(list(argv), env=childenv.sanitize(env if env else os.environ, absolute_pythonpath=True),
+                       capture_output=True, text=True)  # fmt: skip
+    return r.returncode, r.stdout
+
+
 def core_commit() -> str | None:
     """The git commit the installed orch-core was installed from (``direct_url.json``), or None (editable, wheel)."""
     from importlib import metadata
@@ -109,6 +116,7 @@ class Ctx:
     interactive: bool = False
     ask: Callable[[str, str], str] = lambda prompt, default: default
     run: Callable[..., tuple[int, str]] = _run
+    run_stdout: Callable[..., tuple[int, str]] = _run_stdout  # stdout only; used to read the hub's card
     resolve_ref: Callable[[str, str], str] = _resolve_ref
     core_commit: Callable[[], str | None] = core_commit
     health: Callable[..., bool] = _health  # (host, port[, timeout]): something listens there
@@ -400,7 +408,7 @@ def pin_hub_at_publish(ctx: Ctx, env: Mapping[str, str]) -> bool:
         return False
     hub_data, pub_data = ctx.layout.data("hub"), ctx.layout.data("publish")
     try:
-        rc, out = ctx.run([hub["binary"], "keys", "--state", str(hub_data), "card"], env)
+        rc, out = ctx.run_stdout([hub["binary"], "keys", "--state", str(hub_data), "card"], env)
         hub_id = _card_hub_id(out) if rc == 0 else None
         if hub_id is None:
             raise InstallError("the hub's id could not be read")
@@ -420,15 +428,15 @@ def pin_hub_at_publish(ctx: Ctx, env: Mapping[str, str]) -> bool:
 
 
 def _card_hub_id(out: str) -> str | None:
-    """The hub id of ``orch-hub keys card`` output: ``card["o"]["hub_id"]``, 32 lower-case hex characters."""
-    i = out.find("{")
-    if i < 0:
-        return None
+    """The hub id of ``orch-hub keys card`` stdout. Strict: the whole output is exactly one JSON object with exactly
+    the card envelope's keys (``o``, ``sig``), and ``o.hub_id`` is 32 lower-case hex characters."""
     try:
-        card, _ = json.JSONDecoder().raw_decode(out[i:])
+        card = json.loads(out.strip())
     except ValueError:
         return None
-    o = card.get("o") if isinstance(card, dict) else None
+    if not isinstance(card, dict) or set(card) != {"o", "sig"}:
+        return None
+    o = card["o"]
     hub_id = o.get("hub_id") if isinstance(o, dict) else None
     return hub_id if isinstance(hub_id, str) and _HUB_ID.fullmatch(hub_id) else None
 

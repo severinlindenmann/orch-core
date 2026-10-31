@@ -11,7 +11,7 @@ from typing import Any
 
 from . import ops, server
 from . import parts as P
-from .cli import Ctx, check_block, choose_address, install_part, load, save
+from .cli import Ctx, _hub_accepts, check_block, choose_address, install_part, load, save
 from .helper import sync_helper
 from .parts import InstallError
 from .server import (
@@ -140,6 +140,8 @@ def server_setup(
     behind_proxy: bool = False,
     hub_name: str | None = None,
     no_hub_name: bool = False,
+    publish_url: str | None = None,
+    relay_url: str | None = None,
 ) -> Plan:
     """Install the parts of ``role`` for this OS user. ``resolve``/``local`` are the DNS seams of the tests."""
     if role not in ROLES:
@@ -185,6 +187,7 @@ def server_setup(
                 "it. To keep the name, leave out --domain, --domain-hub, --domain-relay, --domain-publish, "
                 "--hub-vpn-only, --behind-proxy and --address 127.0.0.1. To drop the name, add --no-hub-name."
             )
+    hub_urls = _hub_urls(ctx, role, publish_url, relay_url)
     if backup_drop:
         drop_check(backup_drop)
     user = user or real_user()
@@ -247,6 +250,7 @@ def server_setup(
             backup_drop=backup_drop,
             hub_name=hub_name,
             forget_hub_name=no_hub_name,
+            hub_urls=hub_urls,
         )
         return plan
 
@@ -269,8 +273,10 @@ def server_setup(
                 web_origin=https,
                 vpn_only=hub_vpn_only,
                 forget_hub_name=no_hub_name,
-                publish_url=names.url("publish") if "publish" in tls_all(names, plan, role) else None,
-                relay_url=names.url("relay") if "relay" in tls_all(names, plan, role) else None,
+                publish_url=hub_urls.get("publish")
+                or (names.url("publish") if "publish" in tls_all(names, plan, role) else None),
+                relay_url=hub_urls.get("relay")
+                or (names.url("relay") if "relay" in tls_all(names, plan, role) else None),
             )
         if p == "relay":
             extra = dict(behind_edge=edge, exact_bind=True)
@@ -287,6 +293,7 @@ def server_setup(
                 vpn_net=plan.vpn_net or server.VPN_NET,
             )
     sync_helper(ctx)
+    _remember_hub_urls(ctx, hub_urls)
 
     st = load(ctx.layout)
     st["server"] = {
@@ -313,6 +320,36 @@ def server_setup(
     return plan
 
 
+def _hub_urls(ctx: Ctx, role: str, publish_url: str | None, relay_url: str | None) -> dict[str, str]:
+    """``--publish-url`` / ``--relay-url`` of the hub (split install: relay and publish run as another user). Explicit
+    values win; a rerun keeps the saved ones (checked again: the state file is input). Nothing is written here."""
+    if role != "hub":
+        if publish_url or relay_url:
+            raise InstallError("--publish-url and --relay-url belong to --role hub")
+        return {}
+    saved = load(ctx.layout).get("hub_urls")
+    saved = saved if isinstance(saved, dict) else {}
+    out: dict[str, str] = {}
+    for key, given, flag in (("publish", publish_url, "--publish-url"), ("relay", relay_url, "--relay-url")):
+        url = given or saved.get(key)
+        if not url:
+            continue
+        if not isinstance(url, str) or not _hub_accepts(url):
+            raise InstallError(
+                f"{flag} {url!r}: the hub accepts https, or http on a loopback or private-network address only"
+                + ("" if given else " (the saved value is not valid: give the flag again)")
+            )
+        out[key] = url
+    return out
+
+
+def _remember_hub_urls(ctx: Ctx, urls: dict[str, str]) -> None:
+    st = load(ctx.layout)
+    if urls:
+        st["hub_urls"] = urls
+        save(ctx.layout, st)
+
+
 def tls_all(names: Names, plan: Plan, role: str) -> set[str]:
     """Parts of the OTHER role of this server are not checked from here; their names are advertised as given
     (the edge user sets up relay and publish; the hub only needs their addresses)."""
@@ -331,6 +368,7 @@ def _fallback(
     backup_drop: str | None = None,
     hub_name: str | None = None,
     forget_hub_name: bool = False,
+    hub_urls: dict[str, str] | None = None,
 ) -> None:
     """No names: the IP:port behaviour of ``orch install`` (a private-network hub takes its VPN address)."""
     st = load(ctx.layout)
@@ -348,8 +386,10 @@ def _fallback(
             if hub_name:
                 extra["hub_name"] = hub_name
             extra["forget_hub_name"] = forget_hub_name
+            extra.update({f"{k}_url": v for k, v in (hub_urls or {}).items()})
         recs[p] = install_part(ctx, p, address=addr, source=source, ref=ref, dev=dev, sync=False, **extra)
     sync_helper(ctx)
+    _remember_hub_urls(ctx, hub_urls or {})
     if hub_name:
         st = load(ctx.layout)
         st["hub_name"] = hub_name

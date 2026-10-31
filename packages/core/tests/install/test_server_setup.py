@@ -14,7 +14,7 @@ import pytest
 from orch.install import cli, ops, server
 from orch.install.parts import InstallError
 from orch.install.serverflow import server_setup
-from orch.install.state import load
+from orch.install.state import load, save
 
 from .test_install_cli import FakeRunner, make
 
@@ -1655,3 +1655,76 @@ def test_normalisation_strips_a_zone_and_compares_the_parsed_address():
     server.check_hub_name_target(NAME, "fd00:0:0::1", lambda n: ["fd00::1%wt0"])  # same address, other spelling
     with pytest.raises(InstallError):
         server.check_hub_name_target(NAME, "fd00::1", lambda n: ["fd00::2"])
+
+
+# ------------------------------------------------------------------------ --publish-url / --relay-url of a split hub
+
+PUB = "http://100.71.130.135:8102"
+REL = "https://core.relay.example.com"
+
+
+def _arg(ctx, flag):
+    argv, _ = ctx.runner.started["hub"]
+    return argv[argv.index(flag) + 1] if flag in argv else None
+
+
+def test_the_hub_unit_gets_the_given_publish_and_relay_urls(tmp_path):
+    ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+    server_setup(ctx, "hub", names=server.Names(), local=local, publish_url=PUB, relay_url=REL)
+    assert _arg(ctx, "--publish-url") == PUB and _arg(ctx, "--relay-url") == REL
+    assert load(ctx.layout)["hub_urls"] == {"publish": PUB, "relay": REL}
+
+
+def test_a_rerun_keeps_the_urls_and_a_given_one_wins(tmp_path):
+    ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+    server_setup(ctx, "hub", names=server.Names(), local=local, publish_url=PUB, relay_url=REL)
+    ctx2, *_ = stub_ctx(tmp_path, SystemdFake())
+    server_setup(ctx2, "hub", names=server.Names(), local=local)
+    assert _arg(ctx2, "--publish-url") == PUB and _arg(ctx2, "--relay-url") == REL
+    ctx3, *_ = stub_ctx(tmp_path, SystemdFake())
+    server_setup(ctx3, "hub", names=server.Names(), local=local, publish_url="http://100.71.130.136:8102")
+    assert _arg(ctx3, "--publish-url") == "http://100.71.130.136:8102" and _arg(ctx3, "--relay-url") == REL
+
+
+@pytest.mark.parametrize("bad", ["http://example.com:8102", "ftp://100.64.1.1", "nonsense"])
+def test_a_refused_hub_url_installs_nothing(tmp_path, bad):
+    for kw in ({"publish_url": bad}, {"relay_url": bad}):
+        ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+        with pytest.raises(InstallError, match="--(publish|relay)-url"):
+            server_setup(ctx, "hub", names=server.Names(), local=local, **kw)
+        assert ctx.runner.started == {} and not load(ctx.layout)["parts"]
+
+
+def test_a_damaged_saved_url_is_refused(tmp_path):
+    ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+    server_setup(ctx, "hub", names=server.Names(), local=local, publish_url=PUB)
+    st = load(ctx.layout)
+    st["hub_urls"] = {"publish": "http://evil.example.com"}
+    save(ctx.layout, st)
+    ctx2, *_ = stub_ctx(tmp_path, SystemdFake())
+    with pytest.raises(InstallError, match="saved value"):
+        server_setup(ctx2, "hub", names=server.Names(), local=local)
+    assert ctx2.runner.started == {}
+
+
+def test_urls_are_for_the_hub_role_only(tmp_path):
+    ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+    with pytest.raises(InstallError, match="belong to --role hub"):
+        server_setup(ctx, "edge", names=server.Names(), local=local, publish_url=PUB)
+
+
+def test_a_domain_derived_url_still_works_and_an_explicit_one_wins(tmp_path):
+    root = tmp_path / "orch.d"
+    (root / "orch-hub").mkdir(parents=True)
+    ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+    server_setup(
+        ctx, "hub", names=server.derive_names("example.com"), hub_vpn_only=True, caddy_dir=str(root),
+        resolve=lambda n: [VPS], local=local, user="orch-hub",
+    )  # fmt: skip
+    assert _arg(ctx, "--publish-url") == "https://publish.example.com"
+    ctx2, *_ = stub_ctx(tmp_path, SystemdFake())
+    server_setup(
+        ctx2, "hub", names=server.derive_names("example.com"), hub_vpn_only=True, caddy_dir=str(root),
+        resolve=lambda n: [VPS], local=local, user="orch-hub", publish_url=PUB,
+    )  # fmt: skip
+    assert _arg(ctx2, "--publish-url") == PUB and _arg(ctx2, "--relay-url") == "https://relay.example.com"

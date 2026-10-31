@@ -145,6 +145,16 @@ orch setup --server --role hub --hub-name core.hub.example.com
   combines a saved name with `--domain`, `--domain-hub`, `--domain-relay`, `--domain-publish`, `--hub-vpn-only`,
   `--behind-proxy` or `--address 127.0.0.1` is refused until you add `--no-hub-name`. A rerun also checks again that the
   name still points at the VPN address only (IPv4 and IPv6).
+- Split install (the hub as one OS user, relay and publish as another, the edge behind the proxy on the VPN address):
+  give the hub the addresses of the other two, otherwise it looks for publish on its own `127.0.0.1:8102` and push is off:
+
+  ```
+  orch install server --role hub --hub-name core.hub.example.com \
+      --publish-url http://<VPN-IP>:8102 --relay-url https://core.relay.example.com
+  ```
+
+  The hub reaches publish privately, and the relay through its public name, because phones use that one too. The hub
+  accepts https, or http on a loopback or private-network address only. A rerun keeps both; a flag you give wins.
 - Not combinable with `--domain`, `--domain-hub`, `--domain-relay`, `--domain-publish`, `--hub-vpn-only` or
   `--behind-proxy`; hub role only. A rerun without the flag keeps the name; a rerun with one of those flags is refused
   until you add `--no-hub-name`. The name comes only from the install: Settings in the console never adds one.

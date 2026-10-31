@@ -1004,6 +1004,8 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextI
                 behind_proxy=a.behind_proxy,
                 hub_name=a.hub_name,
                 no_hub_name=a.no_hub_name,
+                publish_url=a.publish_url,
+                relay_url=a.relay_url,
             )
             return 0
         if a.cmd == "remove":

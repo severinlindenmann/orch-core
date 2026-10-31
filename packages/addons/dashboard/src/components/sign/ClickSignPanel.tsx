@@ -66,12 +66,14 @@ interface Props {
   pressed?: boolean
   /** The arm was cancelled (Esc, a second press, a press elsewhere, blur, hidden page). Default: `onCancel`. */
   onDisarm?: () => void
+  /** The words of the arm status line, before ". Press again or Esc to stop." (P07: "Creating in a moment"). Default: "Signs in a moment". */
+  armLine?: string
 }
 
-export function ClickSignPanel({ answer, problem, signing, onSign, onCancel, waitUntil = 0, ws, story, label, extra, ready = true, manyWorkspaces = false, pressed = false, onDisarm }: Props) {
+export function ClickSignPanel({ answer, problem, signing, onSign, onCancel, waitUntil = 0, ws, story, label, extra, ready = true, manyWorkspaces = false, pressed = false, onDisarm, armLine }: Props) {
   const { view, view_digest: digest } = answer
   // A new View (a new digest) is a new confirmation: the timer, a half-done hold and any half-begun press start over.
-  return <Presented key={digest} view={view} digest={digest} problem={problem} signing={signing} onSign={onSign} onCancel={onCancel} waitUntil={waitUntil} ws={ws} story={story} label={label} extra={extra} ready={ready} manyWorkspaces={manyWorkspaces} pressed={pressed} onDisarm={onDisarm} />
+  return <Presented key={digest} view={view} digest={digest} problem={problem} signing={signing} onSign={onSign} onCancel={onCancel} waitUntil={waitUntil} ws={ws} story={story} label={label} extra={extra} ready={ready} manyWorkspaces={manyWorkspaces} pressed={pressed} onDisarm={onDisarm} armLine={armLine} />
 }
 
 /** The 1 s progress fill of the arm, inside the button (restarts with its `key`). */
@@ -187,7 +189,7 @@ export function TechnicalFacts({ view, action }: { view: ClickViewAnswer['view']
   )
 }
 
-function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil, ws, story, label: given, extra, ready = true, manyWorkspaces = false, pressed = false, onDisarm }: Omit<Props, 'answer'> & { view: ClickViewAnswer['view']; digest: string; waitUntil: number }) {
+function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil, ws, story, label: given, extra, ready = true, manyWorkspaces = false, pressed = false, onDisarm, armLine }: Omit<Props, 'answer'> & { view: ClickViewAnswer['view']; digest: string; waitUntil: number }) {
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     if (waitUntil <= Date.now()) return
@@ -252,7 +254,7 @@ function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil
           )}
           {arming && (
             <span data-testid="sign-arm-status" role="status" className="mr-auto text-[12px] text-text-muted">
-              Signs in a moment. Press again or Esc to stop.
+              {armLine ?? 'Signs in a moment'}. Press again or Esc to stop.
             </span>
           )}
           <Button type="button" variant="ghost" onClick={onCancel} disabled={signing}>

@@ -231,4 +231,4 @@ export async function spacesPage(d) {
 }
 
 // The registry entry: the console's router, tabs and file list are built from this one export (no other file names a page).
-export const page = { path: "spaces", nav: { label: "Spaces", admin: true, needsWorkspace: true, after: "mcp" }, render: spacesPage };
+export const page = { path: "spaces", nav: { group: "Sharing & apps", label: "Shared folders", admin: true, needsWorkspace: true, after: "mcp" }, render: spacesPage };

@@ -7,6 +7,7 @@ import { parseRoute } from "../../src/orch_hub/web/route.js";
 
 class Element {
   constructor(tag) { this.tag = tag; this.nodeType = 1; this.childNodes = []; this.attrs = {}; this.className = ""; this.listeners = {}; }
+  get isConnected() { return true; }
   append(...nodes) { for (const n of nodes) { n.parent = this; this.childNodes.push(n); } }
   replaceChildren(...nodes) { this.childNodes = []; this.append(...nodes); }
   replaceWith(node) { const p = this.parent; p.childNodes[p.childNodes.indexOf(this)] = node; node.parent = p; }
@@ -265,6 +266,42 @@ test("P14: an empty hub shows 6 menu entries; every area appears once a workspac
   assert.deepEqual(paint({ hubName: "H", rows: [], ready: true }).sort(), ["account", "admin", "home", "hub-settings", "phones", "workspaces"]);
   assert.equal(paint({ hubName: "H", rows: [{ id: "ab".repeat(16), name: "Legal", online: true }], ready: true }).length, 17);
   assert.equal(paint({ hubName: "H", rows: [], ready: false }).length, 17, "a rail that could not be read hides nothing");
+});
+
+test("P08: sidebar groups preserve destinations, open the active page and remember toggles", async () => {
+  const { readdirSync } = await import("node:fs");
+  const dir = new URL("../../src/orch_hub/web/pages/", import.meta.url);
+  const PAGES = await Promise.all(readdirSync(dir).filter(f => f.endsWith(".js")).map(async f => (await import(new URL(f, dir))).page));
+  const paint = ({ admin = true, empty = false, active = "home", stored = {} } = {}) => {
+    const root = new Element("main"), location = { hash: "#/" + active };
+    const state = { navGroups: stored, user: { name: "Ann", is_admin: admin }, rail: { hubName: "H", ready: true, rows: empty ? [] : [{ id: "ab".repeat(16), name: "Legal" }] } };
+    const context = vm.createContext({ clearInterval, root, state, PAGES, location, parseRoute, enter, replaceContent, renderText: String, initials: s => s.slice(0, 2), colour: () => "c0", navigate() {}, signOutMenu: () => new Element("button"), document: { createElement: t => new Element(t), createTextNode: text => Object.assign(new Element("#text"), { textContent: text }) } });
+    vm.runInContext(source.slice(source.indexOf("function h("), source.indexOf("const field =")) + source.slice(source.indexOf("function shell("), source.indexOf("async function loadRail(")), context);
+    context.shell(active, new Element("h1"));
+    return root.querySelector(".side");
+  };
+  const ids = nodes => nodes.map(n => n.attrs["data-tab"]);
+  const side = paint(), groups = side.querySelectorAll(".grp");
+  assert.deepEqual(ids(side.childNodes.filter(n => n.tag === "a")), ["home", "approvals", "workspaces", "activity"]);
+  assert.deepEqual(groups.map(g => g.childNodes[0].textContent), ["Sharing & apps", "People & settings"]);
+  assert.ok(groups.every(g => g.getAttribute("open") === null));
+  assert.equal(side.querySelector(".who").querySelector("[data-tab]").attrs["data-tab"], "account");
+  assert.equal(side.querySelectorAll("[data-tab]").length, 17);
+  assert.deepEqual(ids(paint({ empty: true }).childNodes.filter(n => n.tag === "a")), ["home", "workspaces"]);
+  assert.equal(paint({ empty: true }).querySelectorAll(".grp").length, 0);
+  const activeGroup = paint({ active: "secrets" }).querySelectorAll(".grp")[0];
+  assert.equal(activeGroup.getAttribute("open"), "");
+  assert.ok(ids(activeGroup.querySelectorAll("[data-tab]")).includes("secrets"));
+  const people = groups[1].querySelectorAll("[data-tab]");
+  assert.equal(people.find(n => n.attrs["data-tab"] === "admin").textContent, "People");
+  assert.match(people.find(n => n.attrs["data-tab"] === "hub-settings").textContent, /[Bb]ackups/);
+  assert.deepEqual(ids(paint({ admin: false }).querySelectorAll("[data-tab]")).sort(), ["account", "approvals", "handoffs", "home", "phones", "workspaces"]);
+  const stored = {}, group = paint({ stored }).querySelectorAll(".grp")[0];
+  group.open = true; group.listeners.toggle();
+  assert.equal(paint({ stored }).querySelectorAll(".grp")[0].getAttribute("open"), "");
+  group.open = false; group.listeners.toggle();
+  assert.equal(paint({ stored }).querySelectorAll(".grp")[0].getAttribute("open"), null);
+  assert.equal(paint({ stored, active: "secrets" }).querySelectorAll(".grp")[0].getAttribute("open"), "");
 });
 
 test("P20: a failed sign-in says name, never user id", () => {

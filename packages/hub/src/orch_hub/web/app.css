@@ -159,7 +159,16 @@ main#app.shelled { max-width:none; padding:0; margin:0; }
 .side a.nv { display:flex; align-items:center; gap:9px; padding:7px 9px; border-radius:8px; color:var(--text-muted); text-decoration:none; }
 .side a.nv:hover { color:var(--text); }
 .side a.nv.on { background:var(--surface-2); color:var(--text); }
-.side .grp { font:600 10px "Geist Mono",ui-monospace,monospace; letter-spacing:.12em; color:var(--text-faint); padding:12px 9px 4px; }
+.side .grp { margin-top:6px; }
+.side .grp summary { list-style:none; cursor:pointer; padding:7px 9px; border-radius:8px; color:var(--text-muted); display:flex; justify-content:space-between; gap:8px; }
+.side .grp summary::-webkit-details-marker { display:none; }
+.side .grp summary::after { content:"›"; }
+.side .grp[open] summary::after { content:"⌄"; }
+.side .grp[open] summary, .side .grp summary:hover { color:var(--text); }
+.side .grp a.nv { padding-left:22px; }
+.side .grp summary:focus-visible, .who a:focus-visible { outline:2px solid var(--brand); outline-offset:2px; }
+.who .account-link { margin-left:auto; color:var(--text-muted); text-decoration:none; }
+.who .account-link:hover, .who .account-link.on { color:var(--text); }
 .side .sp { flex:1; }
 .who { display:flex; align-items:center; gap:8px; padding:6px 9px; font-size:12px; color:var(--text-muted); border-top:1px solid var(--border); margin-top:8px; }
 .main { min-width:0; display:flex; flex-direction:column; }

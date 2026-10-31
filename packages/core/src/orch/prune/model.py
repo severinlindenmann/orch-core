@@ -13,6 +13,7 @@ import os
 import stat
 import subprocess
 import sys
+import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -177,6 +178,11 @@ class Ctx:
     euid: int = field(default_factory=lambda: os.geteuid() if hasattr(os, "geteuid") else 1)
     uid: int = field(default_factory=lambda: os.getuid() if hasattr(os, "getuid") else 1)
     root_exists: Callable[[str], bool] = lambda p: os.path.lexists(p)
+    #: hub removal order (:mod:`orch.prune.hub_order`) seams: wall clock in seconds, sleep, and the path of the orch
+    #: program that runs this prune (``None``: ``sys.argv[0]`` and the interpreter)
+    clock: Callable[[], float] = time.time
+    sleep: Callable[[float], None] = time.sleep
+    orch_exe: str | None = None
 
     def __post_init__(self) -> None:
         if self.keychain is None and self.platform == "darwin":

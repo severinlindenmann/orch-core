@@ -210,8 +210,8 @@ def test_source_comes_from_the_edge_only_when_the_peer_is_trusted(lst):
     raw(ls, post(extra=b"X-Forwarded-For: 6.6.6.6, 203.0.113.9\r\n"))
     assert seen[0][2] == "203.0.113.9"
     ls2, _st2, _ib2, seen2 = lst()
-    raw(ls2, post(extra=b"X-Forwarded-For: 203.0.113.9\r\n"))
-    assert seen2[0][2] == "127.0.0.1"
+    assert raw(ls2, post(extra=b"X-Forwarded-For: 203.0.113.9\r\n")).startswith(b"HTTP/1.1 400")  # not proxied
+    assert not seen2
 
 
 def test_request_and_secrets_are_never_logged(lst, caplog):

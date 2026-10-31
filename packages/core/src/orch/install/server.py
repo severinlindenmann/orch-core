@@ -37,6 +37,7 @@ __all__ = [
     "check_dns",
     "derive_names",
     "detect_vpn_ip",
+    "proxy_networks",
     "local_addresses",
     "local_interfaces",
     "vpn_network",
@@ -175,6 +176,23 @@ def vpn_network(chosen: Addr, given_prefix: int | None = None) -> ipaddress.IPv4
     if not net.subnet_of(_CGNAT) and not net.is_private:
         raise InstallError(f"--vpn-ip {chosen.ip}/{prefix}: that network is not a private one")
     return net  # type: ignore[return-value]
+
+
+def proxy_networks(chosen: Addr, given_prefix: int | None, addresses: Iterable[Addr]) -> list[str]:
+    """The networks of the VPN interface (IPv4 and any global IPv6 on the same interface): the peers whose forwarded
+    client address is a rate-limit key. The private network's proxy connects from anywhere in them. It grants no
+    trust and no locality; every request stays public."""
+    nets = [str(vpn_network(chosen, given_prefix))]
+    for a in addresses:
+        if not chosen.iface or a.iface != chosen.iface or ":" not in a.ip or a.prefix is None:
+            continue
+        ip = ipaddress.ip_address(a.ip)
+        if ip.is_link_local or ip.is_loopback or a.prefix > 64:
+            continue
+        n = str(ipaddress.ip_interface(f"{a.ip}/{a.prefix}").network)
+        if n not in nets:
+            nets.append(n)
+    return nets
 
 
 def check_vpn_ip(given: str, addresses: Iterable[Addr], *, allow_non_cgnat: bool = False) -> tuple[Addr, int | None]:
@@ -445,6 +463,8 @@ class Plan:
     vpn_only: bool = False
     vpn_ip: str | None = None
     vpn_net: str | None = None
+    behind_proxy: bool = False
+    proxy_nets: tuple[str, ...] = ()
     loopback: bool = False
     dns: list[DnsResult] = field(default_factory=list)
     snippets: dict[str, str] = field(default_factory=dict)

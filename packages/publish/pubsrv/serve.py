@@ -22,11 +22,12 @@ import stat
 import threading
 import time
 import unicodedata
-from collections import deque
+from collections import OrderedDict, deque
 from urllib.parse import parse_qs, quote
 
 from . import db
 from . import published as P
+from .forwarded import parse_trusted, rate_key
 
 ID32 = r"[0-9a-f]{32}"
 TOKEN = re.compile(r"[A-Za-z0-9_-]{43}")  # base64url of the host's 32 random bytes
@@ -36,6 +37,8 @@ MAX_POST = 2048
 CHUNK = 64 * 1024
 IP_BURST = 120  # L1: per-IP token bucket for landing GETs and opens, wrong tokens included
 IP_REFILL_PER_S = 5
+IP_EVICT_SCAN = 64  # entries looked at when the table is full
+IP_TABLE_MAX = 10_000  # the per-client bucket table never holds more
 MAX_FILE = 60 * 1024 * 1024
 _ROUTE_SHARE = re.compile(rf"/s/({ID32})")
 _ROUTE_OPEN = re.compile(rf"/s/({ID32})/open")
@@ -234,13 +237,21 @@ def not_found():
 
 
 class ShareServer:
-    def __init__(self, data_dir, clock=None, share_origin=None, api_host=None):
+    def __init__(self, data_dir, clock=None, share_origin=None, api_host=None, trusted_proxy=None):
+        # addresses / CIDR networks whose forwarded client address is used as the RATE KEY (forwarded.py); default none
+        self._trusted = parse_trusted(
+            trusted_proxy
+            if trusted_proxy is not None
+            else os.environ.get("ORCH_PUBLISH_TRUSTED_PROXY")
+        )
         self.db_path = db.prepare_dir(data_dir)
         self.shares_dir = os.path.realpath(os.path.join(data_dir, "shares"))
         self.clock = clock or _now
         self._opens = {}  # share_id -> deque of recent open times (ms); per process
         self._lock = threading.Lock()
-        self._ips = {}  # ip -> (tokens, last monotonic time)
+        self._ips = (
+            OrderedDict()
+        )  # key (IPv4 address / IPv6 /64) -> (tokens, last time); bounded LRU, oldest first
         db.init(self.db_path)
         from .appserve import AppServer  # late: it imports this module
 
@@ -285,20 +296,35 @@ class ShareServer:
         return page(status, text)
 
     def _ip_ok(self, scope):
-        """Cheap bucket before any DB work. Behind a proxy this is the proxy's address, so the
-        real per-IP limit then belongs to Caddy as well (documented)."""
-        ip = (scope.get("client") or ("?", 0))[0]
+        """Cheap bucket before any DB work, keyed by the client (forwarded.py: a rate key only, honoured from the
+        trusted-proxy list, never a trust or locality input). A bounded table; when full, _victim() picks the entry to evict."""
+        key = rate_key(
+            (scope.get("client") or ("?", 0))[0], scope.get("headers") or [], self._trusted
+        )
         now = time.monotonic()
         with self._lock:
-            tokens, last = self._ips.get(ip, (IP_BURST, now))
+            tokens, last = self._ips.pop(key, (IP_BURST, now))
             tokens = min(IP_BURST, tokens + (now - last) * IP_REFILL_PER_S)
-            if len(self._ips) > 10_000:
-                self._ips = {k: v for k, v in self._ips.items() if v[0] < IP_BURST}
-            if tokens < 1:
-                self._ips[ip] = (tokens, now)
-                return False
-            self._ips[ip] = (tokens - 1, now)
-            return True
+            ok = tokens >= 1
+            self._ips[key] = (tokens - 1 if ok else tokens, now)  # most recent at the end
+            while len(self._ips) > IP_TABLE_MAX:
+                del self._ips[self._victim(now)]
+            return ok
+
+    def _victim(self, now):
+        """The key to evict when the table is full (the relay's policy): among the IP_EVICT_SCAN least recently used,
+        the first whose bucket has refilled completely (evicting it loses nothing), else the one closest to full. A
+        depleted bucket is never reset by a flood of fresh keys while fuller entries remain."""
+        best, best_tokens = None, -1.0
+        for n, (key, (tokens, last)) in enumerate(self._ips.items()):
+            if n == IP_EVICT_SCAN:
+                break
+            tokens = min(IP_BURST, tokens + (now - last) * IP_REFILL_PER_S)
+            if tokens >= IP_BURST:
+                return key
+            if tokens > best_tokens:
+                best, best_tokens = key, tokens
+        return best
 
     async def _route(self, scope, receive, method):
         # The raw path is matched as is. Percent-escapes survive into the view-file path, where
@@ -573,5 +599,5 @@ class ShareServer:
         return page(200, ("Shared files", ""), body=f"<h1>Shared files</h1><ul>{items}</ul>")
 
 
-def create_share_app(data_dir, clock=None, share_origin=None, api_host=None):
-    return ShareServer(data_dir, clock, share_origin, api_host)
+def create_share_app(data_dir, clock=None, share_origin=None, api_host=None, trusted_proxy=None):
+    return ShareServer(data_dir, clock, share_origin, api_host, trusted_proxy)

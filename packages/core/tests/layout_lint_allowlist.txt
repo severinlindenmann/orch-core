@@ -1,10 +1,16 @@
 # path count: store-name path literals still outside orch/layout.py and orch/store/. Only ever lowered (tests/test_layout_lint.py).
+# the hub policy's JSON key "addons" (not a store path)
+# the ticket field and the addon.list row key "addons" (JSON keys, not store paths; AP D5)
 addons/builtin.py 3
 addons/install.py 2
+addons/manifest.py 1
 addons/needs.py 1
 addons/runner.py 1
 addons/settings_value.py 1
 canon/hashing.py 2
+cli/app.py 1
+cli/dashboard.py 1
+cli/main.py 1
 cli/quick.py 3
 click/records.py 6
 click/signer.py 4
@@ -29,9 +35,12 @@ host/review.py 1
 host/signcontent.py 3
 host/signer.py 15
 hostclient.py 2
+hubclient/marketpolicy.py 2
 importer/plan.py 1
 importer/v1.py 12
 instructions/harness.py 3
+market/__init__.py 1
+migrate/steps.py 10
 model/edits.py 2
 model/gates.py 2
 model/types.py 1
@@ -46,6 +55,7 @@ ops/commands/show.py 2
 ops/health.py 24
 ops/human.py 1
 ops/import_run.py 1
+ops/plans.py 1
 ops/runtime.py 14
 ops/workspace_init.py 1
 records/__init__.py 15
@@ -56,12 +66,3 @@ setup/flow.py 4
 setup/protocol.py 6
 setup/review.py 6
 setup/steps.py 2
-market/__init__.py 1
-# the hub policy's JSON key "addons" (not a store path)
-hubclient/marketpolicy.py 2
-cli/dashboard.py 1
-# the ticket field and the addon.list row key "addons" (JSON keys, not store paths; AP D5)
-cli/main.py 1
-ops/plans.py 1
-addons/manifest.py 1
-migrate/steps.py 10

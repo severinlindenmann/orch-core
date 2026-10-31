@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "update.after_commit",
+    "message": "orch was updated but is not healthy; the data stays",
+    "hint": "orch update --use VERSION",
+    "fix": {
+      "argv": [
+        "orch",
+        "update",
+        "--check"
+      ]
+    },
+    "retryable": false
+  }
+}

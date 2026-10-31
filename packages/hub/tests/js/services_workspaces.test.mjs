@@ -221,9 +221,9 @@ test("details Open passes the plain workspace with no pending mode or deep-link 
   assert.deepEqual(args, [w]);
   const { readFile } = await import("node:fs/promises");
   const app = await readFile(new URL("../../src/orch_hub/web/app.js", import.meta.url), "utf8");
-  const start = app.indexOf("async function openWorkspace(w)");
+  const start = app.indexOf("async function openWorkspace(w, returnTo");
   const open = app.slice(start, app.indexOf("\n}\n", start)); // the whole function, not a fixed length
-  assert.match(open, /workspace_id: w.id, return_to: "\/", kind: "open"/);
+  assert.match(open, /workspace_id: w.id, return_to: returnTo === HUB_SETTINGS \? HUB_SETTINGS : "\/", kind: "open"/); // "/" or the one fixed settings path
   assert.doesNotMatch(open, /pending|mode|return_to: "[^" ]*[?#]/);
 });
 

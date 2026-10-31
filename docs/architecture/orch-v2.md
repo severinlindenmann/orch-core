@@ -857,3 +857,57 @@ The owner reports pass or fail per step, and screenshots go into Drop.
    deployed, and the e2e harness with one green "hello" scenario.
 4. Phased GitHub issues are created across the three repos from §13. Implementation starts with P0, group 2:
    dev mode #251.
+
+## 25. Data across updates (D100)
+
+Owner decision, 30 Oct 2026 (pilot on a production VPS; design review by Opus the same day). Code: `orch/migrate/`.
+Until the cut, the no-legacy rule holds: nothing in the field needs a migration. From the cut on, an update never
+costs a person their data.
+
+1. **The cut.** The first signed release (**2.0.0**, one version for every part) is the **baseline**: every data root
+   is at format 1. From then on every change to a persisted format needs a migration step and an upgrade test; CI
+   fails a changed format fingerprint without one (P1-D).
+2. **One format number per data root, not per file.** A root is a folder with `format.json`
+   (`{"orch": "<kind>", "format": N}`, written atomically): the host state dir (`host`) and a workspace store
+   `<project>/.orch` (`workspace`). Hub, relay and publish keep `PRAGMA user_version` per database (P1-B). Per-file `v`
+   fields stay as validation and are raised by the step that changes the file. A root made by the code gets its
+   `format.json` at creation; a folder without one is "not orch data".
+3. **The open-time rule, in one place: `open_root(path, kind)`.** Format equal to the code's: run, holding a shared
+   `flock` on `<root>/format.lock` for as long as the root is open. Older: refuse, "made by an older orch: run
+   `orch update`". Newer: refuse, "made by a newer orch (format N): update orch". An unfinished update journal
+   (`<state>/install/update.json`, any phase but `committed`): refuse, "an update was interrupted: run `orch update`
+   to finish or roll back". Opening never migrates; only `orch update` / `orch migrate` does (a person's commands,
+   refused to an agent), under the exclusive lock without waiting: "orch is running" if anything holds the root.
+4. **Steps.** `Step(kind, from_n, to_n, name, apply, verify)`, ordered and contiguous (checked at import, baseline 1).
+   A step is idempotent; `format.json` is written after EACH step, so a crash resumes at the next step and a second
+   run is a no-op. A sqlite step and its `user_version` bump are one transaction; a file step writes tmp, fsync,
+   rename. No step reads another root.
+5. **Signed data is never rewritten.** Event logs, checkpoints, revocations, cards, the remote device list, key logs and
+   every append-only chained log are refused by the step helpers (a deny list of path globs). A step may add a derived
+   index or a sidecar, never edit a signed line. Derived caches (`.state/index.sqlite`, `ticket.json`) are rebuilt by
+   version. **Reader before writer:** a reader for a new signed shape ships in release R; writers emit it from R+1.
+   Verification always runs over the stored bytes. A **frozen corpus** of signed data made by 2.0.0 (events,
+   checkpoints, cards, revocations, the hub audit chain) must verify in every later build, forever.
+6. **The commit point.** The update journal records `stopped`, `backed-up`, `installed`, `migrated:<root>`,
+   `committed`. Before `committed` (migrated, health-checked in quarantine: the hub link not listening, the host
+   refusing agents and signing nothing) everything rolls back: the code and a raw restore of the stopped state from the
+   backup, where `revocations.jsonl` is MERGED (union of lines) and never replaced. After `committed` (services
+   opened) only forward: the code may roll back, the data stays, and the older code refuses the newer format. This
+   prevents reused sequence, snapshot and card numbers (equivocation) and lost revocations. The rollback is never an
+   ORCHBAK1 restore, which is disaster recovery (it revokes channels and rotates the op certificate).
+7. **Skew (N-1).** Hub, relay and publish on N accept workspaces on N-1 (tested in P1-E). A link-protocol mismatch
+   refuses cleanly; the server is updated first.
+8. **Backups.** `orch migrate --apply` and `orch update` always back up what they touch first, to
+   `~/.local/share/orch/backups/<time>-<kind>-<from>-<to>/` (`$XDG_DATA_HOME` is honoured): mode 0700 under umask 077,
+   **with the keys** (they are as protected there as on disk), **local only**, refused inside a synced folder (iCloud
+   Drive, Dropbox, Google Drive, OneDrive), the last 3 per root kept. APFS clonefile (`cp -c`) on macOS on one volume,
+   a plain copy otherwise. Derived data (`.state/`, `.orch-work/`, `install/tools`) is left out. A workspace that
+   cannot be reached is skipped and listed; it refuses to open until `orch migrate` reaches it, the others keep working.
+   `orch migrate` warns when the project's `.orch` is tracked by git.
+9. **Restore rules.** A restore is refused once the journal says `committed` (or names no such root), except on
+   `orch migrate`'s own failure path. It never touches what the backup left out (`.state`, `.orch-work`,
+   `install/tools`, the update journal): it builds the result in a staging folder next to the root and swaps it in, so an
+   error leaves the original as it was. A backup that holds a link is not restored. Nothing is pruned until the
+   migration has succeeded, and the oldest backup of the format being migrated is kept. A step may write only the
+   paths it declares (default deny), never a protected path, and the runner compares hashes of every protected file
+   before and after each step and refuses to move the format if one changed.

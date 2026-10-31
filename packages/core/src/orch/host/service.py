@@ -173,6 +173,10 @@ class Host:
         #: §11A.17: the passed start-up proof of ``--dev-sim-convenience`` (:class:`orch.host.devmode.DevHost`), fixed
         #: for the life of the process; ``None`` on every normal host
         self.dev = dev
+        #: ``orch update`` health check (orch.update.quarantine): control socket only, nothing signed
+        from orch.update.quarantine import active as quarantine_active
+
+        self.quarantine = quarantine_active(self.state_dir)
         #: V3-D38: the workspace id a pending dev host (:attr:`dev` pending) admitted as its one genesis in this process
         self.pending_claim: str | None = None
         self.pending_lock = threading.Lock()
@@ -335,16 +339,22 @@ class Host:
         ensure_private_dir(self.state_dir / "hosts", self.host_uid)
         self._take_host_lock()
         try:
+            from orch.update.guard import hold_state_root
+
+            self._root = hold_state_root(
+                self.state_dir, quarantine_ok=True
+            )  # the shared format lock for the life of this process
             self.cursors = Cursors(cursor_key(host_dir(self.state_dir)))
             self.registry.load()
             self._check_dev_registry()
             self.intents.open()
             self.jobs.open()
             self.runners.load()
-            self.recovered = self.control.recover()
-            self.control.sweep_keys()
-            self.intents.sweep()
-            self.jobs.sweep()
+            if not self.quarantine:
+                self.recovered = self.control.recover()
+                self.control.sweep_keys()
+                self.intents.sweep()
+                self.jobs.sweep()
         except BaseException:
             self._release_host_lock()
             raise
@@ -362,6 +372,9 @@ class Host:
         return any(a["workspace_id"] == workspace_id for a in self.dev_alarms)
 
     def _release_host_lock(self) -> None:
+        root, self._root = getattr(self, "_root", None), None
+        if root is not None:
+            root.close()
         if self._lock_fd is not None:
             os.close(self._lock_fd)
             self._lock_fd = None
@@ -399,6 +412,9 @@ class Host:
         }
         server = Server(listener, self.registry, self.limits, ControlGate(self), welcome)
         self.servers["control"] = (server, asyncio.create_task(server.serve()))
+        if self.quarantine:
+            LOG.warning("QUARANTINE (orch update health check): control socket only, no runner, no workspaces, no link")
+            return
         await self._serve_runner()
         if not self.hook_listen:  # the persisted setting of `orch host webhooks on` (the unit carries no flags)
             from .hooks import read_settings

@@ -132,11 +132,14 @@ OPS = {
         # command the person runs in their Terminal (hub.py); this process never sends hub.join/mode/leave/connect.
         "hub.status",
         "hub.handoff",
+        "hub.network",  # R6 #1594: the proxy for hub links (a read; the password is never in the answer)
+        "hub.network_set",  # R6: the owner's write (idem); the route is loopback-only and refused on remote
         "hub.link",  # run-9 feedback 6: reads the connect link (a read; without it call() demanded an idem)
         "hub.switch",  # H1: one-time switch tickets and the rail list over the hub link (no log line, no idem)
         "share.rules",
         "share.preview",
         "hub.shared",  # P02: tickets other workspaces of the hub shared with this owner (a read, unsigned)
+        "space.list",  # run-15c P03: the shared spaces this workspace is in and their item names (a read, unsigned)
         "share.audience",  # P02: the hub people and teams the owner may name as readers (a read of the hub, unsigned)
         # the two share writes that only take sharing away: one click as the session's person, owner only (hub.py)
         "share.revoke",
@@ -159,6 +162,7 @@ OPS = {
         # clicks (org_routes.py).
         "org.offers",
         "org.show",
+        "org.secrets",
         "org.accept",
         "org.decline",
         "org.sync",

@@ -75,7 +75,7 @@ test("first-run home shows only the connect card", () => {
   const member = homeView({ user: { name: "Ben" }, workspaces: [], items: [], channels: [], thisBrowser: { state: "unregistered" }, actions: {} }).map((n) => n.textContent).join(" ");
   assert.match(member, /Ask your hub admin to connect a workspace for you\./);
   assert.doesNotMatch(text, /Where you can sign|Register this browser|Needs you|My workspaces/);
-  const withWs = homeView({ user: { name: "Anna" }, workspaces: [{ workspace_id: "a", name: "P", online: true }], items: [], channels: [], thisBrowser: { state: "unregistered" }, actions: {} });
+  const withWs = homeView({ user: { name: "Anna", is_admin: true }, workspaces: [{ workspace_id: "a", name: "P", online: true }], items: [], channels: [], thisBrowser: { state: "unregistered" }, actions: {} });
   const t2 = withWs.map((n) => n.textContent).join(" ");
   assert.match(t2, /Where you can sign/);
   assert.doesNotMatch(t2, /Connect your first workspace/);
@@ -92,14 +92,56 @@ test("the first-run home carries a root marker and gives way once a workspace or
   assert.match(src, /querySelector\("\.first-run-root"\) && firstRunOutgrown\(/);
 });
 
-test("P03: a nameless workspace uses its owner's name; a workspace session explains why signing is not set up", () => {
-  const out = homeView({ user: { name: "Anna" }, workspaces: [{ workspace_id: "a", owner_name: "Ben", online: true }], items: [], channels: [],
-    thisBrowser: { state: "from_workspace" }, actions: { register() {} } });
+test("P03: a nameless workspace uses its owner's name", () => {
+  const out = homeView({ user: { name: "Anna", is_admin: true }, workspaces: [{ workspace_id: "a", owner_name: "Ben", online: true }], items: [], channels: [],
+    thisBrowser: { state: "unregistered" }, actions: { register() {} } });
   const t = out.map((n) => n.textContent ?? "").join(" ");
   assert.match(t, /Ben's workspace/);
   assert.doesNotMatch(t, /A workspace\b|not registered/i);
-  assert.match(t, /You came here from a workspace/);
-  assert.doesNotMatch(t, /Register this browser/);
+});
+
+const all = (n) => [n, ...n.children.flatMap(all)];
+const textOf = (out) => out.flatMap(all).map((n) => n.textContent).join(" ");
+test("run15 P03 N4: a switch session that holds a local key says it is ready and needs one sign-in", () => {
+  const out = homeView({ user: { name: "Anna", is_admin: true }, workspaces: [{ workspace_id: "a", name: "P", online: true }], items: [], channels: [],
+    thisBrowser: { state: "active", label: "Chrome", needsSignIn: true }, actions: {} });
+  const t = out.flatMap((n) => n.all()).map((n) => n.textContent).join(" ");
+  assert.match(t, /Ready\. Sign in once to approve\./);
+  assert.doesNotMatch(t, /holds a signing key/);
+});
+
+test("run15 P03: a browser with no key gets one green button, Set up signing, and no 'sign in here once' detour", () => {
+  let called = 0;
+  for (const state of ["unregistered", "dead"]) {
+    const out = homeView({ user: { name: "Anna", is_admin: true }, workspaces: [{ workspace_id: "a", name: "P", online: true }], items: [], channels: [],
+      thisBrowser: { state }, actions: { register: () => { called++; }, forgetLocal() {} } });
+    const t = textOf(out);
+    assert.match(t, /Approvals need a signing key in this browser/);
+    assert.doesNotMatch(t, /cannot sign yet|Sign in here once|You came here from a workspace|Register this browser/);
+    const btn = out.flatMap(all).filter((n) => n.tag === "button" && n.textContent === "Set up signing");
+    assert.equal(btn.length, 1);
+    assert.equal(btn[0].className, "pri");
+    btn[0].listeners.click();
+  }
+  assert.equal(called, 2);
+  const ok = textOf(homeView({ user: { name: "Anna", is_admin: true }, workspaces: [{ workspace_id: "a", name: "P", online: true }], items: [], channels: [], thisBrowser: { state: "active", label: "Chrome" }, actions: {} }));
+  assert.match(ok, /This browser holds a signing key for you/);
+  assert.doesNotMatch(ok, /Set up signing/);
+});
+
+test("run15c P08: a member with nothing to sign sees no 'Where you can sign'; it appears with an item, a phone, a key or admin rights", () => {
+  const ws = [{ workspace_id: "a", name: "P", online: true, mode: "full" }];
+  const base = { user: { name: "Ben" }, workspaces: ws, items: [], channels: [], thisBrowser: { state: "unregistered" }, actions: {} };
+  assert.doesNotMatch(textOf(homeView(base)), /Where you can sign|signing key/);
+  const signable = homeView({ ...base, items: [{ workspace_id: "a", title: "Q", signable: true }] });
+  assert.match(textOf(signable), /Where you can sign/);
+  assert.match(textOf(signable), /Set up signing/);
+  const summaryOnly = homeView({ ...base, workspaces: [{ ...ws[0], mode: "selective" }], items: [{ workspace_id: "a", title: "Q", summary_only: true }] });
+  assert.doesNotMatch(textOf(summaryOnly), /Where you can sign/);  // nothing here that this person can sign
+  assert.match(textOf(homeView({ ...base, channels: [{ channel_id: "c", kind: "phone", status: "active" }] })), /Where you can sign/);
+  assert.match(textOf(homeView({ ...base, user: { name: "Anna", is_admin: true } })), /Where you can sign/);
+  assert.match(textOf(homeView({ ...base, thisBrowser: { state: "active", label: "x" } })), /Where you can sign/);
+  assert.match(textOf(homeView({ ...base, thisBrowser: { state: "dead" } })), /Forget the key/);
 });
 
 test("P07: Shared tickets card lists tickets shared with me with workspace and who shared; hidden when none", () => {

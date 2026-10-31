@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as boot from './bootstrap'
-import { bootstrap, clearSession, confirmSwitch, declineSwitch, getPendingSwitch, getToken, landSwitch, safeDestination, switchWasRefused } from './bootstrap'
+import { bootstrap, clearSession, confirmSwitch, declineSwitch, getPendingSwitch, getToken, landSwitch, safeDestination, switchFailureCode, switchHubOrigin } from './bootstrap'
 
 beforeEach(() => {
   sessionStorage.clear()
@@ -62,7 +62,7 @@ describe('hub switch link, E4: the key proves itself before the ticket is used',
     await bootstrap(vi.fn())
     vi.mocked(switchProof).mockResolvedValueOnce({ name: 'Product', proof: PROOF })
     const refused = Response.json({ ok: false, error: { code: 'session.required' } }, { status: 401 })
-    expect(await landSwitch(vi.fn(async () => refused) as unknown as typeof fetch)).toEqual({ kind: 'failed' })
+    expect(await landSwitch(vi.fn(async () => refused) as unknown as typeof fetch)).toEqual({ kind: 'failed', code: 'session.required' })
     expect(getPendingSwitch()).toBeNull()
     expect(getToken()).toBeNull()
   })
@@ -72,13 +72,34 @@ describe('hub switch link, E4: the key proves itself before the ticket is used',
 })
 
 describe('run-15 J02: a switch the workspace refuses by design (D93)', () => {
-  it('is remembered as refused, so the error page can say to open it on its own computer', async () => {
+  it('keeps its error code, so the error page can say to open it on its own computer', async () => {
     history.replaceState(null, '', `/#t=${TICKET}`)
     await bootstrap(vi.fn())
     vi.mocked(switchProof).mockResolvedValueOnce({ name: 'Product', proof: PROOF })
     const fetcher = vi.fn(async () => Response.json({ ok: false, error: { code: 'switch.refused' } }, { status: 403 })) as unknown as typeof fetch
-    expect(await landSwitch(fetcher)).toEqual({ kind: 'failed' })
-    expect(switchWasRefused()).toBe(true)
+    expect(await landSwitch(fetcher)).toEqual({ kind: 'failed', code: 'switch.refused' })
+    expect(switchFailureCode()).toBe('switch.refused')
+    expect(switchHubOrigin()).toBeNull() // the server named no hub
+  })
+})
+
+describe('P01: the joined hub origin from the server', () => {
+  const failWith = async (hub_origin: unknown) => {
+    history.replaceState(null, '', `/#t=${TICKET}`)
+    await bootstrap(vi.fn())
+    vi.mocked(switchProof).mockResolvedValueOnce({ name: 'Product', proof: PROOF })
+    const body = { ok: false, error: { code: 'session.required', hub_origin } }
+    await landSwitch(vi.fn(async () => Response.json(body, { status: 401 })) as unknown as typeof fetch)
+  }
+  it('keeps a closed http(s) origin, drops anything else', async () => {
+    await failWith('https://hub.example.org')
+    expect(switchHubOrigin()).toBe('https://hub.example.org')
+    await failWith('javascript:alert(1)')
+    expect(switchHubOrigin()).toBeNull()
+    await failWith('https://hub.example.org/path')
+    expect(switchHubOrigin()).toBeNull()
+    await failWith(42)
+    expect(switchHubOrigin()).toBeNull()
   })
 })
 

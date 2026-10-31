@@ -17,7 +17,7 @@ from typing import Any
 
 from .. import colocation as CO
 from ..contract.phase4 import render_text, strip_text, text_ok
-from ..settings import ADDRESSES_MAX, KINDS, NAME_MAX, SettingsError, load, save
+from ..settings import ADDRESSES_MAX, KINDS, NAME_MAX, SettingsError, load, origin_of, save
 
 #: how people sign in today (read only: password + code is the one method, so it cannot be turned off; later methods are not listed)
 SIGN_IN = ({"id": "password", "label": "Name + password + 6-digit code", "note": "For everyone", "on": True},)
@@ -301,7 +301,7 @@ class SettingsHandlers:
                 return 200, {"ok": True, "changed": False, "restarting": False}
             if ctl.check_origins is not None:
                 try:
-                    ctl.check_origins(frozenset(e["web"] for e in entries), entries[0]["web"])
+                    ctl.check_origins(frozenset(origin_of(e["web"]) for e in entries), origin_of(entries[0]["web"]))
                 except ValueError:
                     raise _err(
                         "malformed"

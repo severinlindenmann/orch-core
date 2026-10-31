@@ -329,7 +329,7 @@ def op_kind(name: str) -> tuple[OpKind, Phase] | None:
             return ("pg_read", "read")
         return ("pg_write", "write") if name in ("app.prepare", "app.discard") else ("person_write", "write")
     if name in HUB_OPS:  # V3 C2a: column P only (the op checks the owner role)
-        reads = ("hub.status", "hub.handoff", "hub.link", "hub.switch", "hub.directory", "hub.shared")
+        reads = ("hub.status", "hub.handoff", "hub.link", "hub.switch", "hub.directory", "hub.shared", "hub.network")
         return ("person_read", "read") if name in reads else ("person_write", "write")
     if name in REMOTE_OPS:  # R2 #1590: column P only (the op checks the owner role)
         return ("person_read", "read") if name in REMOTE_READS else ("person_write", "write")
@@ -349,7 +349,7 @@ def op_kind(name: str) -> tuple[OpKind, Phase] | None:
         return (
             ("pg_write", "write")
             if name == "org.sync"
-            else (("person_read", "read") if name == "org.show" else ("person_write", "write"))
+            else (("person_read", "read") if name in ("org.show", "org.secrets") else ("person_write", "write"))
         )
     if name in MARKET_OPS:  # V3 G2: P and G; the op itself refuses an agent's add and --commit (market.actor_refused)
         return ("pg_read", "read") if name in MARKET_READS else ("pg_write", "write")

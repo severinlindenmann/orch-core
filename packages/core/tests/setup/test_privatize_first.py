@@ -7,7 +7,6 @@ import os
 import stat
 from pathlib import Path
 
-from orch import layout as layout_mod
 from orch import privdir
 from orch.setup.flow import SetupFlow
 
@@ -28,8 +27,8 @@ def _mode(p: Path) -> int:
 
 
 def _privatizer(home: Path, state: Path):
-    def run(root: Path) -> None:
-        privdir.privatize(privdir.setup_paths(root, layout_mod.store_of(root), state, home), os.getuid())
+    def run() -> None:
+        privdir.privatize(privdir.orch_paths(state, home), os.getuid())
 
     return run
 
@@ -74,7 +73,7 @@ def test_finish_setup_makes_them_private_before_the_facts_are_read(tmp):
 
 
 def test_a_failing_privatize_never_stops_setup_from_starting(tmp):
-    def boom(_root):
+    def boom():
         raise OSError("read-only")
 
     f = SetupFlow(make_env(tmp, ports=lambda: FakePorts(), privatize=boom))
@@ -93,3 +92,25 @@ def test_finish_review_names_the_private_folders_in_the_same_words(tmp):
     perms = next(x for x in rv["flags"] if x["id"] == "perms")
     assert perms["text"].startswith("Folders made private")
     assert "~/.local/state" in perms["detail"] and "~/.local/share" in perms["detail"]
+
+
+def test_launch_leaves_a_group_writable_project_folder_alone_until_the_run(tmp):
+    """A team folder that is group-writable on purpose keeps its mode at launch and after a cancel; only the run step,
+    after the review, privatizes it."""
+    home = tmp.home
+    state = home / ".local" / "state" / "orch"
+    _loose_tree(home)
+    state.mkdir()
+    os.chmod(tmp.work, 0o775)
+    f = SetupFlow(make_env(tmp, state_dir=state, ports=lambda: FakePorts(), privatize=_privatizer(home, state)))
+    f.launch(str(tmp.work))
+    assert _mode(tmp.work) == 0o775
+    f.end("cancelled")
+    assert _mode(tmp.work) == 0o775
+
+
+def test_orch_paths_never_name_the_project_folder_or_its_store(tmp):
+    root = tmp.work
+    state = tmp.home / ".local" / "state" / "orch"
+    assert root not in privdir.orch_paths(state, tmp.home)
+    assert root in privdir.setup_paths(root, root / ".orch", state, tmp.home)

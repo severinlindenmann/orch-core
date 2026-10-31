@@ -55,7 +55,7 @@ class Env:
     #: the real or a fake :class:`orch.setup.steps.Ports`
     ports: Callable[[], Any] | None = None
     #: P14: make orch's own folders private once at the start (before any host call); production fills it in
-    privatize: Callable[[Path], None] | None = None
+    privatize: Callable[[], None] | None = None
     #: where "Open the workspace" goes after Finish (the dashboard route of the workspace)
     workspace_url: Callable[[str], str] = lambda wid: "/"
     clock: Callable[[], float] = time.time
@@ -132,7 +132,7 @@ class SetupFlow:
                 config_dirs=self.e.config_dirs,
                 registered=self.e.registered,
             )
-            self._privatize_first(real)
+            self._privatize_first()
             if mode == "finish":
                 self.entry = self.e.registered(str(real))
                 if self.e.read_facts is None:
@@ -142,14 +142,15 @@ class SetupFlow:
             self._drop_secrets()
             self.profile, self.review, self.phase, self.error = None, None, "profile", None
 
-    def _privatize_first(self, real: Path) -> None:
-        """P14: make orch's own folders private ONCE, before the first host call, for a new workspace and for Finish
-        setup alike (a 002 umask leaves ~/.config and ~/.local group-writable, which custody refuses). Same exact
-        paths as the review names; best effort, the strict custody check still refuses what stays loose."""
+    def _privatize_first(self) -> None:
+        """P14: make orch's OWN folders (state dir, XDG ancestors; never the project folder or its store, those wait for
+        the review and the run) private ONCE, before the first host call, for a new workspace and for Finish setup
+        alike (a 002 umask leaves ~/.config and ~/.local group-writable, which custody refuses). Best effort; the
+        strict custody check still refuses what stays loose."""
         if self.e.privatize is None:
             return
         with contextlib.suppress(Exception):
-            self.e.privatize(real)
+            self.e.privatize()
 
     def end(self, why: str) -> None:
         with self.lock:
@@ -587,7 +588,7 @@ def default_env(environ: Mapping[str, str]) -> Env:
         reserved=reserved,
         read_facts=read_facts,
         ports=lambda: steps.RealPorts(environ, state, uid),
-        privatize=lambda root: steps.RealPorts(environ, state, uid).privatize(root),
+        privatize=lambda: steps.RealPorts(environ, state, uid).privatize_orch(),
     )
 
 

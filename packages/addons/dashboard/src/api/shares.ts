@@ -242,15 +242,20 @@ export function hostOf(address: string): string {
 }
 
 /** The same address, compared by origin so a trailing slash does not matter; an address that does not parse is compared as given. */
+/** Two addresses name the same http(s) server. Fails closed: an address that does not parse, or has an opaque origin
+ * (`new URL('a:b').origin` is the string "null" for every non-http scheme), never matches anything, since this is
+ * the gate for a "this computer" or hub-name claim. */
 export function sameOrigin(a: string, b: string): boolean {
-  const origin = (x: string) => {
+  const origin = (x: string): string | null => {
     try {
-      return new URL(x).origin
+      const o = new URL(x).origin
+      return o === 'null' ? null : o
     } catch {
-      return x
+      return null
     }
   }
-  return origin(a) === origin(b)
+  const oa = origin(a)
+  return oa !== null && oa === origin(b)
 }
 
 export const adminCommand = (workspace: string | null, owner: string | null): string => `orch-publish admin ws allow ${workspace ?? 'WORKSPACE_ID'} ${owner ?? 'OWNER_ID'}`

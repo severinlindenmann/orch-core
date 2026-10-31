@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { destinationLine, hostOf } from '@/api/shares'
+import { destinationLine, hostOf, sameOrigin } from '@/api/shares'
 
 // The one plain line every publish review keeps in its main view: where the files go, by name.
 it('"this computer" only when the Publish server on this computer is the known source', () => {
@@ -37,4 +37,12 @@ it('an address that does not parse is shown whole, as given', () => {
   expect(destinationLine(null, null, 'not a url')).toBe('Files go to not a url.')
   // this one does parse (scheme "pub.example.org:", path "8102/x") but with an empty hostname, so the whole address is shown
   expect(hostOf('pub.example.org:8102/x')).toBe('pub.example.org:8102/x')
+})
+
+it('sameOrigin fails closed: opaque or unparsable addresses never match, a trailing slash does', () => {
+  expect(sameOrigin('http://127.0.0.1:8103/', 'http://127.0.0.1:8103')).toBe(true)
+  expect(sameOrigin('a:b', 'c:d')).toBe(false)
+  expect(sameOrigin('pub.example.org:8102/x', 'other.example.org:8102/y')).toBe(false)
+  expect(sameOrigin('not an address', 'not an address')).toBe(false)
+  expect(sameOrigin('http://a.example', 'https://a.example')).toBe(false)
 })

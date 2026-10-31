@@ -123,6 +123,7 @@ class FakeUpstream:
     def __init__(self) -> None:
         self.requests: list[dict[str, Any]] = []
         self.status, self.headers, self.body, self.delay = 200, {}, b'{"ok":true}', 0.0
+        self.script: list[tuple[int, bytes]] = []  # per-request (status, body) answers, used before the defaults
         up = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -138,12 +139,13 @@ class FakeUpstream:
                 )
                 if up.delay:
                     threading.Event().wait(up.delay)
-                self.send_response(up.status)
+                status, body = up.script.pop(0) if up.script else (up.status, up.body)
+                self.send_response(status)
                 for k, v in up.headers.items():
                     self.send_header(k, v)
-                self.send_header("Content-Length", str(len(up.body)))
+                self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
-                self.wfile.write(up.body)
+                self.wfile.write(body)
 
             do_GET = do_PUT = do_POST = do_DELETE = _do
 

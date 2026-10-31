@@ -67,6 +67,8 @@ export type SharesData =
       owner: string | null
       /** The server answered with its own numbers; false: these are this computer's records. */
       live: boolean
+      /** Only when `live` is false: no answer (`unreachable`), an answer that refused (`not_allowed`), or no hub (`local`). */
+      why?: 'unreachable' | 'not_allowed' | 'local'
       shares: Share[]
       staged: Staged[]
     }

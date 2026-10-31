@@ -6,6 +6,7 @@ import dataclasses
 import io
 import json
 import os
+import threading
 from pathlib import Path
 
 import pytest
@@ -18,8 +19,21 @@ from orch.migrate import cli as mcli
 from orch.migrate import init_root, read_format, write_format
 from orch.migrate.format import lock_root
 from orch.migrate.journal import journal_path, read_journal, unfinished, write_journal
-from orch.migrate.steps import CURRENT, DEFAULT, KINDS, protected_snapshot
-from orch.update.engine import Crash
+from orch.migrate.runner import apply
+from orch.migrate.steps import (
+    CURRENT,
+    DEFAULT,
+    KINDS,
+    NESTED_PART_ROOTS,
+    PART_KINDS,
+    Registry,
+    Step,
+    parts_snapshot,
+    protected_snapshot,
+)
+from orch.ops.errors import OrchError
+from orch.update.engine import Crash, take_update_lock
+from orch.update.layout import InstallLayout
 from tests.install.test_install_cli import make
 from tests.update_cli.world import OLD, World, use_test_root
 
@@ -350,11 +364,15 @@ def test_the_host_snapshot_and_backup_leave_the_nested_part_roots_out(w):
     (hub / "keys").mkdir()
     (hub / "keys" / "hub.key").write_text("K")
     (hub / "revocations.jsonl").write_text("r1\n")
+    (hub.parent / "pid").write_text("4242")  # the runner's own files beside the data dir belong to the host root
+    (hub.parent / "cmd.json").write_text("{}")
     snap = protected_snapshot(w.state)
-    assert snap["keys/wsk"] and not [k for k in snap if k.startswith("install/parts")]
+    assert snap["keys/wsk"] and not [k for k in snap if k.startswith("install/parts/hub/data")]
     assert protected_snapshot(hub)["keys/hub.key"]  # the part root has its own
     b = bk.create_backup(w.state, "host", 1, 1, w.env)
-    assert (b / "data" / "data.txt").exists() and not (b / "data" / "install" / "parts").exists()
+    assert (b / "data" / "data.txt").exists() and not (b / "data" / "install" / "parts" / "hub" / "data").exists()
+    assert (b / "data" / "install" / "parts" / "hub" / "pid").read_text() == "4242"  # only the data dirs are left out
+    assert (b / "data" / "install" / "parts" / "hub" / "cmd.json").exists()
     pb = bk.create_backup(hub, "hub", 1, 1, w.env)  # and is backed up on its own
     assert (pb / "data" / "keys" / "hub.key").read_text() == "K" and (pb / "data" / "format.json").exists()
 
@@ -555,7 +573,8 @@ def test_a_committed_journal_does_not_block_install(tmp_path):
 
 
 @pytest.mark.parametrize("held_exclusive", [False, True])
-def test_format_json_is_written_under_the_exclusive_lock_and_a_busy_root_refuses(tmp_path, held_exclusive):
+def test_format_json_is_written_under_the_exclusive_lock_and_a_busy_root_refuses(tmp_path, held_exclusive, monkeypatch):
+    monkeypatch.setattr(icli, "MARKER_WAIT", 0.0)  # no waiting: the lock stays held
     ctx, out, err, _ = make(tmp_path)
     data = ctx.layout.data("relay")
     data.mkdir(parents=True)
@@ -570,3 +589,332 @@ def test_format_json_is_written_under_the_exclusive_lock_and_a_busy_root_refuses
     assert install(ctx, out, err, "relay") == 0, err.getvalue()
     assert read_format(data, "relay") == 1
     os.close(lock_root(data, exclusive=True))  # the install let go of the lock again
+
+
+def test_a_marker_lock_that_is_let_go_of_in_time_is_waited_for(tmp_path, monkeypatch):
+    monkeypatch.setattr(icli, "MARKER_WAIT", 5.0)
+    ctx, out, err, _ = make(tmp_path)
+    data = ctx.layout.data("relay")
+    data.mkdir(parents=True)
+    (data / "old.db").write_text("x\n")
+    fd = lock_root(data, exclusive=False)  # a part that was just stopped, still letting go
+    timer = threading.Timer(0.4, os.close, args=(fd,))
+    timer.start()
+    try:
+        assert install(ctx, out, err, "relay") == 0, err.getvalue()
+    finally:
+        timer.join()
+    assert read_format(data, "relay") == 1
+
+
+@pytest.mark.parametrize("part", PARTS)
+def test_a_marker_refusal_after_the_stop_puts_the_old_part_back(tmp_path, monkeypatch, part):
+    monkeypatch.setattr(icli, "MARKER_WAIT", 0.0)
+    ctx, out, err, calls = make(tmp_path)
+    assert install(ctx, out, err, part) == 0, err.getvalue()
+    data = ctx.layout.data(part)
+    (data / "format.json").unlink()  # an unmarked dir at the baseline: the install adopts it, which needs the lock
+    resumed: list[str] = []
+    ctx.runner.resume = resumed.append
+    fd = lock_root(data, exclusive=False)  # a stale part process holds the root
+    try:
+        assert install(ctx, out, err, part) == 1
+    finally:
+        os.close(fd)
+    assert f"the {part}'s data is in use" in err.getvalue()
+    assert ctx.runner.stopped == [part]  # it WAS stopped (the refusal came after) ...
+    assert resumed == [part]  # ... and is started again, never left stopped, new code, no marker
+    assert read_format(data, part) is None
+
+
+# ------------------------------------------------------------------- 5: install and update are serialized by one lock
+
+
+def update_lock_of(ctx):
+    return take_update_lock(InstallLayout.of(ctx.env))
+
+
+@pytest.mark.parametrize("part", PARTS)
+def test_install_refuses_before_it_stops_anything_while_the_update_lock_is_held(tmp_path, part):
+    ctx, out, err, calls, before = with_running_relay(tmp_path)
+    fd = update_lock_of(ctx)  # an `orch update` is running
+    try:
+        assert install(ctx, out, err, part) == 1
+        assert "an update is running" in err.getvalue()
+        assert_nothing_changed(ctx, calls, before)
+        write_journal("backed-up", ctx.env)  # the lock comes first: the same answer, still nothing touched
+        err.truncate(0), err.seek(0)
+        assert install(ctx, out, err, part) == 1 and "an update is running" in err.getvalue()
+        assert_nothing_changed(ctx, calls, before)
+    finally:
+        os.close(fd)
+    assert read_format(ctx.layout.data("relay"), "relay") == 1
+
+
+def test_the_lock_is_held_for_the_whole_install_and_let_go_of_after_it(tmp_path):
+    ctx, out, err, _ = make(tmp_path)
+    seen: dict[str, str] = {}
+
+    def update_is_refused(at: str) -> None:
+        try:
+            os.close(update_lock_of(ctx))
+            seen[at] = "free"
+        except OrchError as exc:
+            seen[at] = exc.code
+
+    inner_run, inner_health = ctx.run, ctx.health
+
+    def run(argv, env=None):
+        update_is_refused("uv " + argv[1] if argv[0] == "uv" else "keys")
+        return inner_run(argv, env)
+
+    def health(h, p):
+        update_is_refused("ready")  # long after the marker is written
+        return inner_health(h, p)
+
+    ctx.run, ctx.health = run, health
+    assert install(ctx, out, err, "hub") == 0, err.getvalue()
+    assert read_format(ctx.layout.data("hub"), "hub") == 1
+    assert seen and set(seen.values()) == {"migrate.running"}, seen
+    assert {"uv tool", "keys", "ready"} <= set(seen)
+    os.close(update_lock_of(ctx))  # released again
+
+
+def test_the_lock_is_released_after_a_refused_install(tmp_path):
+    ctx, out, err, _, _ = with_running_relay(tmp_path)
+    write_journal("backed-up", ctx.env)
+    assert install(ctx, out, err, "relay") == 1
+    os.close(update_lock_of(ctx))
+
+
+def test_the_update_uses_the_same_lock_file(w):
+    fd = take_update_lock(InstallLayout.of(w.env))
+    try:
+        with pytest.raises(OrchError) as e:
+            w.updater().update()
+        assert e.value.code == "migrate.running"
+    finally:
+        os.close(fd)
+    assert w.updater().update().ok
+
+
+# ------------------------------------------------------------------ 6: an unmarked part dir, an empty one
+
+
+def test_an_unmarked_part_dir_refuses_the_update_before_anything_is_stopped_once_the_format_is_raised(w, monkeypatch):
+    data = Layout(w.env).data("hub")  # the world made it: hub.db, no format.json
+    installed(w, "hub")
+    monkeypatch.setitem(CURRENT, "hub", 2)
+    with pytest.raises(OrchError) as e:
+        real_roots(w)
+    assert e.value.code == "format.missing" and "no format.json" in e.value.message
+    with pytest.raises(OrchError) as e:
+        real_updater(w).update()
+    assert e.value.code == "format.missing"
+    assert w.services.events == [] and read_journal(w.env) is None  # nothing stopped, nothing journalled
+    assert not (data / "format.json").exists() and (data / "hub.db").read_text() == "hub-state\n"
+
+
+def test_an_empty_unmarked_part_dir_is_only_a_note_even_when_the_format_is_raised(w, monkeypatch):
+    data = Layout(w.env).data("relay")
+    data.mkdir(parents=True)
+    installed(w, "relay")
+    monkeypatch.setitem(CURRENT, "relay", 2)
+    roots, notes = real_roots(w)
+    assert [r[1] for r in roots] == ["host"] and notes == [
+        "the relay's data has no format yet: run `orch install relay` again"
+    ]
+
+
+def test_migrate_refuses_an_unmarked_part_dir_once_the_format_is_raised_and_migrates_nothing(tmp_path, monkeypatch):
+    env = {"HOME": str(tmp_path / "home"), "ORCH_STATE_DIR": str(tmp_path / "state")}
+    init_root(Path(env["ORCH_STATE_DIR"]), "host")
+    lay = Layout(env)
+    save(lay, {"v": 1, "address": None, "domain": None, "parts": {"hub": {}}, "workspaces": []})
+    lay.data("hub").mkdir(parents=True)
+    (lay.data("hub") / "hub.db").write_text("x\n")
+    monkeypatch.setitem(CURRENT, "hub", 2)
+    for mode in ("--check", "--apply"):
+        out, err = io.StringIO(), io.StringIO()
+        assert mcli.main([mode, "--json"], env=env, out=out, err=err) == 3
+        assert json.loads(out.getvalue())["code"] == "format.missing"
+    assert not bk.backups_dir(env).exists()
+
+
+@pytest.mark.parametrize("part", PARTS)
+def test_an_empty_existing_dir_is_born_at_the_raised_format_and_never_refused(tmp_path, monkeypatch, part):
+    ctx, out, err, _ = make(tmp_path)
+    ctx.layout.data(part).mkdir(parents=True)  # exists, empty
+    monkeypatch.setitem(CURRENT, part, 2)
+    icli._check_root(ctx.layout.data(part), part)  # the early check lets it through ...
+    assert install(ctx, out, err, part) == 0, err.getvalue()  # ... and the marker write agrees
+    assert read_format(ctx.layout.data(part), part) == 2
+
+
+# ------------------------------------------------------------ 7: only the data dirs are the part roots' own
+
+
+def test_the_nested_roots_are_exactly_the_layouts_data_dirs_and_nothing_else_of_install_parts_is_left_out(tmp_path):
+    lay = Layout({"HOME": str(tmp_path), "ORCH_STATE_DIR": str(tmp_path / "state")})
+    assert NESTED_PART_ROOTS == tuple(lay.data(p).relative_to(lay.root.parent).as_posix() for p in PART_KINDS)
+    assert set(bk._SKIP_REL) >= set(NESTED_PART_ROOTS) and "install/parts" not in bk._SKIP_REL
+    # what lives under install/parts/<part>/: data (the root), and the runner's pid and cmd.json (see install.service)
+    from orch.install.service import PidfileRunner
+
+    runner = PidfileRunner(lay)
+    for p in PART_KINDS:
+        assert runner._pidfile(p).parent == lay.data(p).parent and runner._cmdfile(p).parent == lay.data(p).parent
+
+
+@pytest.fixture
+def host_root(tmp_path):
+    root = tmp_path / "state"
+    init_root(root, "host")
+    (root / "data.txt").write_text("before\n")
+    for p in ("hub", "relay"):
+        d = root / "install" / "parts" / p / "data"
+        d.mkdir(parents=True)
+        (d / "db").write_text(f"{p}\n")
+        (root / "install" / "parts" / p / "pid").write_text("1")
+    return root
+
+
+def host_registry(step):
+    return Registry([step], {"host": 2})
+
+
+@pytest.mark.parametrize(
+    "rel",
+    [
+        "install/parts/hub/data/db",  # a part's data, rewritten
+        "install/parts/hub/data/new.txt",  # a new file in a part's data
+        "install/parts/relay/pid",  # the runner's pid, outside the data dir
+        "install/parts/publish/cmd.json",  # a file in a part's folder that did not exist
+    ],
+)
+def test_a_host_step_that_touches_install_parts_is_refused(host_root, rel):
+    def touch(ctx):
+        (host_root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (host_root / rel).write_text("touched")
+
+    with pytest.raises(OrchError) as e:
+        apply(host_root, "host", host_registry(Step("host", 1, 2, "touch", touch)))
+    assert e.value.code == "migrate.signed_path" and "install/parts" in e.value.message
+    assert read_format(host_root, "host") == 1  # the format was not moved
+
+
+def test_a_host_step_that_removes_a_part_dir_is_refused(host_root):
+    import shutil
+
+    def wipe(ctx):
+        shutil.rmtree(host_root / "install" / "parts" / "hub")
+
+    with pytest.raises(OrchError) as e:
+        apply(host_root, "host", host_registry(Step("host", 1, 2, "wipe", wipe)))
+    assert e.value.code == "migrate.signed_path" and read_format(host_root, "host") == 1
+
+
+def test_a_host_step_may_not_declare_a_write_under_install_parts(host_root):
+    def write(ctx):
+        ctx.write_file("install/parts/hub/data/db", b"x")
+
+    step = Step("host", 1, 2, "write", write, writes=("install/parts/*",))
+    with pytest.raises(OrchError) as e:
+        apply(host_root, "host", host_registry(step))
+    assert e.value.code == "migrate.signed_path" and "parts' folders" in e.value.message
+    assert (host_root / "install/parts/hub/data/db").read_text() == "hub\n"
+
+
+def test_a_host_step_that_leaves_the_parts_alone_goes_through(host_root):
+    before = parts_snapshot(host_root)
+    assert "hub/data/db" in before and "relay/pid" in before
+
+    def fine(ctx):
+        ctx.write_file("data.txt", b"after\n")
+
+    apply(host_root, "host", host_registry(Step("host", 1, 2, "fine", fine, writes=("data.txt",))))
+    assert read_format(host_root, "host") == 2 and (host_root / "data.txt").read_text() == "after\n"
+    assert parts_snapshot(host_root) == before
+
+
+def test_the_parts_snapshot_is_for_the_host_only(tmp_path):
+    root = tmp_path / "hub"
+    init_root(root, "hub")
+
+    def touch(ctx):  # a part root has no install/parts of its own to guard: nothing special happens
+        (root / "install" / "parts").mkdir(parents=True)
+
+    apply(root, "hub", Registry([Step("hub", 1, 2, "touch", touch)], {"hub": 2}))
+    assert read_format(root, "hub") == 2
+
+
+# ------------------------------------------------- 8: a crash in the host's swap after the parts were restored
+
+
+class Kill(BaseException):
+    """A SIGKILL: no finally block runs."""
+
+
+def kill_the_host_swap(mp, state: Path, hub: Path, where: str) -> None:
+    """Every restore is real, except the host's: it dies in its swap (``between``: the root is renamed aside and the
+    staged one is not in place yet; ``swapped``: the exchange is done, nothing after it ran). A part's restore is real
+    and leaves a file in the part root afterwards: what the host's swap and recovery must carry over."""
+    real_restore, real_exchange, real_rename = bk.restore, bk._exchange, os.rename
+
+    def rename(s, d, *a, **k):
+        if (".restore-" in Path(s).name or ".replaced-" in Path(s).name) and Path(d) == state.resolve():
+            raise Kill()
+        return real_rename(s, d, *a, **k)
+
+    def exchange(a, c):
+        assert real_exchange(a, c)
+        raise Kill()
+
+    def restore(backup, root, *a, **k):
+        if Path(root).resolve() != state.resolve():
+            real_restore(backup, root, *a, **k)
+            (hub / "after-own-restore").write_text("x")
+            return
+        with mp.context() as m:  # a SIGKILL runs no cleanup
+            m.setattr(bk, "_put_back", lambda s, r: None)
+            m.setattr(bk.shutil, "rmtree", lambda *a, **k: None)
+            if where == "between":
+                m.setattr(bk, "_exchange", lambda a, c: False)
+                m.setattr(bk.os, "rename", rename)
+            else:
+                m.setattr(bk, "_exchange", exchange)
+            real_restore(backup, root, *a, **k)
+
+    mp.setattr(bk, "restore", restore)
+
+
+@pytest.mark.parametrize("assume", ["rollback", "finish"])
+@pytest.mark.parametrize("where, host_after_recovery", [("between", "host-mutated\n"), ("swapped", "before\n")])
+def test_a_crash_in_the_host_swap_after_the_parts_were_restored_keeps_the_part_data(
+    w, monkeypatch, where, host_after_recovery, assume
+):
+    """``between`` is recovery that rolls the swap BACK (the old host root returns), ``swapped`` is recovery that rolls
+    it FORWARD (the restored host root stays). Either way the part root the update restored is carried through in
+    place."""
+    installed(w, "hub")
+    hub = Layout(w.env).data("hub")
+    write_format(hub, "hub", 1)
+
+    def mutate():
+        (w.state / "data.txt").write_text("host-mutated\n")
+        (hub / "hub.db").write_text("hub-mutated\n")
+
+    fail_migrate(w, mutate)
+    with monkeypatch.context() as mp:
+        kill_the_host_swap(mp, w.state, hub, where)
+        with pytest.raises(Kill):
+            real_updater(w).update()
+    assert bk.recover_interrupted(w.state) is True  # what `orch migrate --apply` or the next update does first
+    assert (hub / "hub.db").read_text() == "hub-state\n"  # the part's own restore survived the host's crash ...
+    assert (hub / "after-own-restore").read_text() == "x"  # ... and nothing replaced the part's folder
+    assert read_format(hub, "hub") == 1
+    assert (w.state / "data.txt").read_text() == host_after_recovery
+    o = real_updater(w).update(assume=assume)  # `finish` goes forward, hits the failing migrate and rolls back again
+    assert o.action == "rolled-back", o.message
+    assert (hub / "hub.db").read_text() == "hub-state\n" and (w.state / "data.txt").read_text() == "before\n"
+    assert read_format(hub, "hub") == 1 and read_journal(w.env) is None

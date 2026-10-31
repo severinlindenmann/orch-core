@@ -58,7 +58,7 @@ from .layout import (
 from .quarantine import QUARANTINE_KEYS
 from .verify import UpdateRefused, Verified, verify_envelope
 
-__all__ = ["Crash", "Outcome", "Seams", "Source", "Updater"]
+__all__ = ["Crash", "Outcome", "Seams", "Source", "Updater", "take_update_lock"]
 
 
 class Crash(BaseException):
@@ -158,14 +158,7 @@ class Updater:
             self.s.after_phase(phase)
 
     def _lock(self) -> int:
-        self.layout.ensure()
-        fd = os.open(self.layout.lock, os.O_RDWR | os.O_CREAT | getattr(os, "O_CLOEXEC", 0), 0o600)
-        try:
-            oslock.flock(fd, oslock.LOCK_EX | oslock.LOCK_NB)
-        except BlockingIOError:
-            os.close(fd)
-            raise OrchError("migrate.running", "another `orch update` is running") from None
-        return fd
+        return take_update_lock(self.layout)
 
     # ------------------------------------------------------------------------------------------ verify
     def check(self, channel: str | None = None) -> tuple[Record, str, Verified]:
@@ -633,6 +626,20 @@ def read_journal_safe(env: Mapping[str, str]) -> dict[str, Any] | None:
             "Nothing was changed. Your backups are in the backups folder next to orch's data (see the log of that "
             "update); ask for help before running the installer again",
         ) from None
+
+
+def take_update_lock(layout: InstallLayout) -> int:
+    """The update engine's own lock (``<data>/update.lock``, flock, not waiting): held by ``orch update`` for the whole
+    update and by ``orch install hub|relay|publish`` for the whole install, so the two never run together. Returns the
+    open fd (the caller closes it); raises ``migrate.running`` when it is held."""
+    layout.ensure()
+    fd = os.open(layout.lock, os.O_RDWR | os.O_CREAT | getattr(os, "O_CLOEXEC", 0), 0o600)
+    try:
+        oslock.flock(fd, oslock.LOCK_EX | oslock.LOCK_NB)
+    except BlockingIOError:
+        os.close(fd)
+        raise OrchError("migrate.running", "another `orch update` is running") from None
+    return fd
 
 
 def restore_order(entries: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:

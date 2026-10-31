@@ -15,7 +15,7 @@ from pathlib import Path
 from orch.ops.errors import OrchError
 
 from .format import lock_root, read_format, write_format
-from .steps import DEFAULT, Registry, Step, StepContext, protected_snapshot
+from .steps import DEFAULT, PARTS_DIR, Registry, Step, StepContext, parts_snapshot, protected_snapshot
 
 __all__ = ["Plan", "apply", "plan"]
 
@@ -72,10 +72,18 @@ def apply(
                 return done
             step = p.steps[0]
             before = protected_snapshot(root)
+            parts_before = parts_snapshot(root) if kind == "host" else None
             step.apply(StepContext(root, step.writes))
             if protected_snapshot(root) != before:
                 raise OrchError(
                     "migrate.signed_path", f"step {step.name} changed signed data; the format was not moved"
+                )
+            if parts_before is not None and parts_snapshot(root) != parts_before:
+                # the part data dirs are roots of their own, outside the host's snapshot and backup: a host step that
+                # touched them could not be undone by the host's rollback
+                raise OrchError(
+                    "migrate.signed_path",
+                    f"step {step.name} changed the parts' folders ({PARTS_DIR}); the format was not moved",
                 )
             if step.verify is not None:
                 step.verify(root)

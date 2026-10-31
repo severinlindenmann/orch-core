@@ -52,7 +52,7 @@ _SKIP_TOP = frozenset({WORK_DIR, LOCK_FILE})
 #: NESTED_PART_ROOTS: the part data dirs are roots of their own (backed up and restored by themselves). A restore of
 #: the host root carries the CURRENT ones over (``_carry_list``): it never replaces, merges or reads them. Order of a
 #: rollback (``orch.update.engine``): the part roots first, then the host, so the host's swap cannot undo a part.
-_SKIP_REL = frozenset({"install/tools", "install/current", "install/update.json", NESTED_PART_ROOTS})
+_SKIP_REL = frozenset({"install/tools", "install/current", "install/update.json", *NESTED_PART_ROOTS})
 _REVOCATIONS = "revocations.jsonl"
 _SYNC_NAMES = frozenset(
     {"mobile documents", "dropbox", "google drive", "googledrive", "onedrive", "icloud drive", "clouddocs"}

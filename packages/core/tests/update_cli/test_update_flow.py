@@ -269,7 +269,7 @@ def test_only_the_host_runs_in_quarantine_and_parts_data_is_never_rolled_back(w)
     assert quarantined == [["host"]]  # no hub, relay, publish or dashboard before the commit
     assert [names for names, q in w.services.started_names if not q][-1] == ["host", "runner", "dashboard", "hub"]
     backup = next((w.home / ".local/share/orch/backups").iterdir())
-    assert not (backup / "data" / "install" / "parts").exists()
+    assert not (backup / "data" / "install" / "parts" / "hub" / "data").exists()  # the part's data dir is no host data
     assert hub_db.read_text() == "hub-state-changed\n"  # the rollback did not touch it either way
 
 

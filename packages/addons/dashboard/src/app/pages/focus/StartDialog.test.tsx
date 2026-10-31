@@ -67,11 +67,11 @@ it('on a real host "No ticket" previews and opens a person-run Claude terminal, 
 
 it('a blocked preview cannot be started', async () => {
   vi.spyOn(features, 'isRealHost').mockReturnValue(true)
-  vi.spyOn(runsApi, 'preview').mockResolvedValue(preview({ blocked: { code: 'runner.disabled', message: 'Terminals are off here.' } }))
+  vi.spyOn(runsApi, 'preview').mockResolvedValue(preview({ blocked: { code: 'runner.disabled', message: 'Command window is off here.' } }))
   const open = vi.spyOn(runsApi, 'open')
   const { user } = renderApp('/focus', { setup })
   await user.click(await screen.findByRole('button', { name: /^Scratch session/ }))
-  expect(await screen.findByRole('alert')).toHaveTextContent('Terminals are off here.')
+  expect(await screen.findByRole('alert')).toHaveTextContent('Command window is off here.')
   expect(within(screen.getByTestId('focus-scratch-preview')).getByRole('button', { name: 'Start' })).toBeDisabled()
   expect(open).not.toHaveBeenCalled()
 })

@@ -31,6 +31,7 @@ let shares: unknown[] = []
 let staged: unknown[] = []
 let configured = true
 let live = true
+let why: 'unreachable' | 'not_allowed' | 'local' = 'unreachable'
 let listRefusal: { code: string } | null = null
 let sendRefusal: { code: string; reason?: string } | null = null
 let registerRefusal: { code: string; reason?: string } | null = null
@@ -53,6 +54,7 @@ const route = () => {
   staged = []
   configured = true
   live = true
+  why = 'unreachable'
   listRefusal = null
   sendRefusal = null
   registerRefusal = null
@@ -73,7 +75,7 @@ const route = () => {
     if (!path.includes('/shares')) return undefined
     if (method === 'GET' && listRefusal) return refusal(listRefusal)
     if (method === 'GET')
-      return Response.json({ available: true, configured, server: configured ? 'http://127.0.0.1:8103' : null, share: configured ? 'http://127.0.0.1:8104' : null, workspace: A, owner: 'p_owner', live: configured && live && serverUp, shares: configured ? shares : [], staged })
+      return Response.json({ available: true, configured, server: configured ? 'http://127.0.0.1:8103' : null, share: configured ? 'http://127.0.0.1:8104' : null, workspace: A, owner: 'p_owner', live: configured && live && serverUp, ...(configured && live && serverUp ? {} : { why }), shares: configured ? shares : [], staged })
     if (path.endsWith('/shares/prepare')) {
       if (prepareRefusal) return refusal(prepareRefusal)
       staged = [{ staged_id: STAGED, ticket: 'DEMO-0001', kind: body?.kind, days: body?.days, views: body?.views ?? 0, origin: 'person', files: [FILE], created_at: '2026-10-18T08:00:00Z' }]
@@ -167,6 +169,28 @@ it('a server that is not running: the Shares page says sharing is not reachable 
   expect(note).not.toHaveTextContent('orch-publish')
   expect(within(note).getByRole('button', { name: 'Try again' })).toBeInTheDocument()
   expect(screen.getByRole('table', { name: 'Shares' })).toBeInTheDocument()
+})
+
+it('a hub that answers and refuses says it has not switched publishing on, and not "cannot be reached"', async () => {
+  route()
+  live = false
+  why = 'not_allowed'
+  show('/w/DEMO/shares')
+  const note = await screen.findByTestId('shares-not-allowed', {}, T)
+  expect(note).toHaveTextContent('Your hub has not switched on publishing for this workspace yet. Nothing was sent.')
+  expect(screen.queryByTestId('shares-unreachable')).toBeNull()
+  expect(screen.queryByText(/cannot be reached/)).toBeNull()
+  expect(within(note).getByRole('button', { name: 'Try again' })).toBeInTheDocument()
+})
+
+it('no hub route (local) shows neither note', async () => {
+  route()
+  live = false
+  why = 'local'
+  show('/w/DEMO/shares')
+  expect(await screen.findByRole('table', { name: 'Shares' }, T)).toBeInTheDocument()
+  expect(screen.queryByTestId('shares-unreachable')).toBeNull()
+  expect(screen.queryByTestId('shares-not-allowed')).toBeNull()
 })
 
 it('a failed load names the reason in plain words (here: no server set up), Settings keeps its Publish box', async () => {

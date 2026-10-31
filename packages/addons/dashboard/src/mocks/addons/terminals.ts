@@ -195,7 +195,7 @@ registerAddon({
       // Without a session (the "Open terminal" command) go back to the default: your running shell, else the first visible.
       if (body.session === undefined) {
         delete navOf(state)[viewer]
-        return { ok: true, message: 'Your terminal is under Terminals in the sidebar.', changed: true }
+        return { ok: true, message: 'Your terminal is under Command window in the sidebar.', changed: true }
       }
       const s = sessionsOf(state).find((x) => x.id === body.session && visibleTo(ctx, x))
       if (!s) return notFound('No such terminal session.')
@@ -298,7 +298,7 @@ function ptyGranted(c: Pick<AddonCtx, 'store' | 'ws'>): boolean {
   const a = c.store.workspaces.find((w) => w.id === c.ws)?.addons.terminals
   return !!a && a.enabled && a.capabilities.includes('pty') && grantCovers(a, a.granted) && a.granted.capabilities.includes('pty')
 }
-const noPty = () => refusal(409, 'terminals.no_pty', 'Terminals is not granted pty in this workspace.', 'An owner grants it in Settings → Addons.')
+const noPty = () => refusal(409, 'terminals.no_pty', 'Command window is not granted pty in this workspace.', 'An owner grants it in Settings → Addons.')
 
 /** The session this one resumed, as the viewer may see it (a source the viewer cannot see is left out). */
 function resumedFromView(c: Pick<AddonCtx, 'store' | 'ws' | 'viewer'>, state: Record<string, unknown>, s: Session): TerminalSessionView['resumedFrom'] {

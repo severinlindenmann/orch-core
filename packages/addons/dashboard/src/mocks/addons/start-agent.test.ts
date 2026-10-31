@@ -51,7 +51,7 @@ describe('start-agent package', () => {
     const s = setup()
     await run(s, 'configure', { ticket: 'DEMO-0044', formData: { mode: 'fix', harness: 'codex', where: 'terminals' } })
     const p = (await state(s, 'DEMO-0044')).previews['DEMO-0044']
-    expect(p).toMatchObject({ mode: 'Fix failing checks', harness: 'Codex', where: 'Terminals' })
+    expect(p).toMatchObject({ mode: 'Fix failing checks', harness: 'Codex', where: 'Command window' })
     expect(p.command).toBe("orch session start --in terminals DEMO-0044 -- codex '/orch:fix DEMO-0044'")
     expect((await state(s, 'DEMO-0048')).previews['DEMO-0048'].mode).toBe('Work on ticket')
     s.store.setViewer('p_mara')
@@ -241,7 +241,7 @@ describe('core computes what starts (the addon cannot spoof it)', () => {
     const st = s.store.addonState(s.ws, 'start-agent')
     st.previews = { 'DEMO-0044': { title: 'Approved by owner', mode: 'Approved by owner' } } // raw state an addon could write
     const core = await s.api.previewLaunch(s.ws, { ticket: 'DEMO-0044', mode: 'fix', harness: 'codex', where: 'terminals' })
-    expect(core).toMatchObject({ ticket: 'DEMO-0044', title: 'Rotate warehouse service credentials', mode: 'Fix failing checks', harness: 'Codex', where: 'Terminals', workspace: 'Acme energy data' })
+    expect(core).toMatchObject({ ticket: 'DEMO-0044', title: 'Rotate warehouse service credentials', mode: 'Fix failing checks', harness: 'Codex', where: 'Command window', workspace: 'Acme energy data' })
     expect(JSON.stringify(core)).not.toContain('Approved by owner')
     expect(await fail(s.api.previewLaunch(s.ws, { ticket: 'DEMO-0044', mode: 'pwn', harness: 'codex', where: 'terminals' }))).toBe('400 validation')
     s.store.setViewer('p_tom')

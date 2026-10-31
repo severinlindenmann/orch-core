@@ -2,6 +2,8 @@
 
 import json
 import os
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -255,6 +257,91 @@ def test_part_budget_boundaries():
     assert not limiter.allow("a", 0)
     now = 60_000
     assert limiter.allow("a", 64 * 1024 * 1024)
+
+
+def test_part_byte_budget_refuses_over_64_mib_and_recovers(two):
+    chunk = b"x" * (1024 * 1024)
+    stage(two, chunk + b"x")
+    # Retried prefixes consume bandwidth too; keep the manifest small and valid.
+    for _ in range(64):
+        response = part(two, 0, chunk)
+        assert response.status_code == 200, response.text
+    response = part(two, len(chunk), b"x")
+    assert response.status_code == 429
+    assert response.json() == {"error": "rate_limited"}
+    assert partial(two).stat().st_size == len(chunk)
+    two.now += 60_000
+    response = part(two, len(chunk), b"x")
+    assert response.status_code == 200, response.text
+    assert response.json()["done"] is True
+
+
+def test_part_count_budget_refuses_601st_tiny_part(two):
+    stage(two, b"x")
+    for _ in range(600):
+        response = part(two, 0, b"")
+        assert response.status_code == 200, response.text
+    response = part(two, 0, b"")
+    assert response.status_code == 429
+    assert response.json() == {"error": "rate_limited"}
+    two.now += 60_000
+    assert part(two, 0, b"x").json()["done"] is True
+
+
+def test_finalize_hash_allows_other_workspace_write(two, monkeypatch):
+    chunk = b"x" * (1024 * 1024)
+    stage(two, chunk * 3)
+    for offset in (0, len(chunk)):
+        assert part(two, offset, chunk).status_code == 200
+    hashing = threading.Event()
+    release = threading.Event()
+    timed_out = threading.Event()
+    digest = shares._part_digest
+
+    class PausedReader:
+        def __init__(self, data):
+            self.data = data
+            self.reads = 0
+
+        def seek(self, offset):
+            return self.data.seek(offset)
+
+        def read(self, size):
+            assert size == 1024 * 1024
+            if self.reads == 1:
+                # The real digest loop has consumed and hashed its first chunk.
+                hashing.set()
+                assert release.wait(10), "finalize hash was never released"
+            self.reads += 1
+            return self.data.read(size)
+
+    monkeypatch.setattr(shares, "_part_digest", lambda data: digest(PausedReader(data)))
+
+    def deadline():
+        timed_out.set()
+        release.set()  # Let both requests unwind even if the write lock regresses.
+
+    watchdog = threading.Timer(2, deadline)
+    with ThreadPoolExecutor(1) as pool:
+        final = pool.submit(part, two, len(chunk) * 2, chunk)
+        try:
+            assert hashing.wait(5), "finalize did not reach the first hash chunk"
+            started = time.monotonic()
+            watchdog.start()
+            response = two.put_meta("b", "2" * 32, two.meta({"small": b"ok"}))
+            elapsed = time.monotonic() - started
+            assert not timed_out.is_set() and elapsed < 2, (
+                "other workspace write timed out while finalize hash was blocked"
+            )
+            assert response.status_code == 200, response.text
+            assert not release.is_set()
+            assert not final.done()
+        finally:
+            watchdog.cancel()
+            release.set()
+        response = final.result(timeout=5)
+        assert response.status_code == 200, response.text
+        assert response.json()["done"] is True
 
 
 @pytest.mark.parametrize("complete", [False, True])

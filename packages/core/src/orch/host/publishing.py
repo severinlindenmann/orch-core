@@ -1471,6 +1471,7 @@ def _send(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
                     FreshPartsClient(), service.workspace_id, meta["share_id"], entry["name"], data, part_size=HUB_PART
                 )
             else:
+                still_valid()
                 flow.put_file(client, service.workspace_id, meta["share_id"], entry["name"], data)
         still_valid()
         flow.commit(client, service.workspace_id, meta["share_id"])

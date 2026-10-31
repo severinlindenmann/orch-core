@@ -160,7 +160,8 @@ def put_file_parts(
         before, offset = offset, received(got.get("received"))
         if got["done"] and offset != len(data):
             raise PublishError("bad_reply", reply.status, method="PUT")
-        if not got["done"] and offset <= before and before < len(data):  # an answer that does not move forward
+        # an answer that does not move forward (also a full length that is not done); a lower received is resumed from
+        if not got["done"] and offset <= before:
             failures += 1
             if failures >= 5:
                 raise PublishError("bad_reply", reply.status, method="PUT")

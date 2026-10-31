@@ -71,7 +71,8 @@ HUB_FILE_MAX = (REQUEST_MAX - REQUEST_OVERHEAD) // 2
 #: share upload part size, comfortably within one signed link frame (the rest of the frame is left for the target and
 #: the signed headers; a long nested name fits in that room)
 HUB_PART = 384 * 1024
-assert HUB_PART <= HUB_FILE_MAX - 16 * 1024, "a part must fit one publish_out frame with room for its target"
+if HUB_PART > HUB_FILE_MAX - 16 * 1024:  # checked at import, also under python -O
+    raise RuntimeError("a part must fit one publish_out frame with room for its target")
 
 Approver = Callable[[str], "Mapping[str, Any] | None"]
 

@@ -371,6 +371,16 @@ details.company-login-fold { border-top:0; padding:8px 0; margin:12px 0; }
 details.company-login-fold > summary { display:flex; flex-wrap:wrap; align-items:center; gap:8px; font-weight:400; }
 details.company-login-fold > summary .link { margin-left:auto; color:var(--accent, #2fc6a3); }
 
+/* run19 P04: Company secrets: one calm row per secret; Manage folds the share box and "Who used it" */
+.secret-row > .row:first-child { align-items:flex-start; }
+.secret-row h3 + .small { margin-top:2px; }
+.secret-row .manage-panel { border-top:1px solid var(--line); margin-top:14px; padding-top:6px; }
+.secret-row .manage-panel h4 { margin:10px 0 6px; font-size:13px; color:var(--muted); font-weight:550; }
+.secret-row .manage-panel > .row { margin-top:12px; }
+.secrets button.primary { background:var(--pri); color:var(--priText); border-color:var(--pri); }
+.secrets button.primary:hover:not(:disabled) { filter:brightness(.94); background:var(--pri); }
+.secrets button.link { border:0; background:none; color:var(--pri); padding:0; min-height:0; text-decoration:underline; text-underline-offset:3px; font-weight:500; }
+
 /* the first paint and the slow-load card (run17 P05): the same centred card; the bar moves until a page replaces it */
 .opening { max-width:520px; margin:12vh auto 0; }
 .opening .bar { height:3px; margin-top:18px; border-radius:2px; background:var(--surface-3); overflow:hidden; }

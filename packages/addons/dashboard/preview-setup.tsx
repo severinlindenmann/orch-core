@@ -4,8 +4,11 @@ import './src/styles/tokens.css'
 import { createRoot } from 'react-dom/client'
 import { Setup, mount } from './src/setup/Setup'
 import { SetupAPI, SetupError } from './src/api/setup'
+const params = new URLSearchParams(location.search)
+// ?host=NAME: setup over ssh on another computer (P43); ?grant: the review issues this computer's runner grant
+const host = params.get('host') ?? undefined
 const state = {
-  phase: 'profile', mode: 'new', dir: '/Users/demo/project', dir_name: 'project',
+  phase: 'profile', mode: 'new', dir: '/Users/demo/project', dir_name: 'project', ...(host ? { host } : {}),
   suggested: { name: 'Demo', prefix: 'TST', method: 'click', agent_hours: 72, agent_grant: true },
   addons: [
     { id: 'dashboard', title: 'Dashboard', desc: 'Browser', required: true, default: true, kind: 'addon', capabilities: [] },
@@ -16,18 +19,22 @@ const state = {
   click_risk: 'Convenience signing: agents running as you, or anything that takes over this dashboard, could sign.',
   agent_hours: [8, 24, 72, 168], relay: { available: true, enabled: true }, missing: [],
   labels: { runner_grant: "Agent access for this computer's runner", custody: 'One-click approval on this computer' },
-  git: { repo: !new URLSearchParams(location.search).has('nogit') },
+  git: { repo: !params.has('nogit') },
 }
 const review = {
   review_id: 'r', digest: 'd', fingerprint: ['a', 'b', 'c'],
-  items: [{ id: 'settings', title: 'Settings', lines: [], details: [], volatile: [], type: 'settings.changed', fields: { set: { grant_hours: 72 } }, placeholders: [], placeholder_details: [] }],
-  runner_grant: new URLSearchParams(location.search).has('grant') ? { hours: 72, scope: 'workable', holder: "this machine's runner, never shown" } : null,
+  items: [
+    { id: 'settings', title: 'Settings', lines: [], details: [], volatile: [], type: 'settings.changed', fields: { set: { grant_hours: 72 } }, placeholders: [], placeholder_details: [] },
+    // the item the server applies when agents may start on this computer (P44/P69: Review reads it, not the profile)
+    ...(params.has('grant') ? [{ id: 'runner_grant', title: "Agent access for this computer's runner", lines: [], details: [], volatile: [], type: 'grant.issued', fields: { hours: 72, scope: 'workable', verbs: 'agent' }, placeholders: [], placeholder_details: [] }] : []),
+  ],
+  runner_grant: params.has('grant') ? { hours: 72, scope: 'workable', holder: "this machine's runner, never shown" } : null,
   flags: [
     { id: 'custody', text: 'Approvals on this computer need only one click. Anything running as you could approve too.' },
     { id: 'records', text: "Keep a history of your tickets on this computer, saved automatically (never uploaded)." },
   ],
   risk: { text: 'Convenience signing: agents running as you, or anything that takes over this dashboard, could sign.' },
-  tty_confirm: new URLSearchParams(location.search).has('grant'),
+  tty_confirm: params.has('grant'),
   workspace: { prefix: 'TST', name: 'Demo', dir: '/Users/demo/project', lines: ['Workspace TST for Demo', 'Folder: /Users/demo/project'] },
 }
 const fetcher = async (url: RequestInfo | URL, init?: RequestInit) => {
@@ -46,5 +53,5 @@ const fetcher = async (url: RequestInfo | URL, init?: RequestInit) => {
   void body
   return new Response(JSON.stringify(r), { status: 200 })
 }
-if (new URLSearchParams(location.search).has('used')) void mount(Promise.reject(new SetupError('session.required')))
+if (params.has('used')) void mount(Promise.reject(new SetupError('session.required')))
 else createRoot(document.getElementById('root')!).render(<Setup api={new SetupAPI('t', fetcher as typeof fetch)} />)

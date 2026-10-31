@@ -28,6 +28,15 @@ export function connectFromHash(hash: string): string | null {
   } catch { return null }
 }
 
+/** The host a connect link dials, as shown to the person: no scheme, the port only when it is not 443. '' for a link that does not parse. */
+export function hostOf(link: string): string {
+  try {
+    const u = new URL(link)
+    const port = u.port || (u.protocol === 'https:' ? '443' : '80')
+    return port === '443' ? u.hostname : `${u.hostname}:${port}`
+  } catch { return '' }
+}
+
 export function JoinFlow({ ws, onClose, initialLink }: { ws: string; onClose: () => void; initialLink?: string }) {
   const refreshHub = useHubRefresh(ws)
   // Closing after the signature (waiting, failed or confirmed) reads the hub status again: allowed while paused.
@@ -94,8 +103,11 @@ export function JoinFlow({ ws, onClose, initialLink }: { ws: string; onClose: ()
   }, [ws, link, valid, armed])
 
   // P08: the hub is named as its card names itself; the address that was really looked up and is dialled sits under Details.
-  const hubAt = found ? found.link.replace(/^https?:\/\/([^/]+).*$/, '$1') : ''
-  const hubName = info?.name?.trim() || 'this hub'
+  // The consent line names the verified host (from the link that was looked up, no scheme, port only when it is not 443):
+  // the hub's own name is self-declared, so it never stands alone in the question the owner signs under.
+  const hubHost = found ? hostOf(found.link) : ''
+  const hubAt = found ? found.link.replace(/^(https?:\/\/[^/]+).*$/, '$1') : ''
+  const hubName = info?.name?.trim() || ''
   if (signed && info) return <Flow title="Connect a hub" onClose={leave} finish="here"><ConnectStage ws={ws} info={info} mode={mode} onClose={leave} /></Flow>
 
   return <Flow title="Connect a hub" onClose={onClose} finish="here">
@@ -109,7 +121,7 @@ export function JoinFlow({ ws, onClose, initialLink }: { ws: string; onClose: ()
         </div>
         {noCopied && <p role="status" data-testid="hub-link-nocopied" className="text-sm text-text-muted">Copy the link in the hub first.</p>}
       </div>
-      {info && valid && <p role="status" data-testid="hub-link-found" className="font-medium text-success">Link found: <Raw>{hubName}</Raw></p>}
+      {info && valid && <p role="status" data-testid="hub-link-found" className="font-medium text-success">Link found: <Raw>{hubName || hubHost}</Raw></p>}
     </div>}
     {link && !valid && <p role="alert" data-testid="hub-link-bad" className="text-danger">This does not look like a connect link. Paste all of it, from https:// to the end.</p>}
     {valid && !armed && <div className="space-y-1"><p data-testid="hub-link-from">Link found. This link points to <Raw>{link.replace(/^(https?:\/\/[^/]+).*$/, '$1')}</Raw></p><Action id="hub-link-lookup" onClick={() => setArmed(true)}>Look up this hub</Action></div>}
@@ -117,7 +129,7 @@ export function JoinFlow({ ws, onClose, initialLink }: { ws: string; onClose: ()
     {problem && <p role="alert" data-testid="hub-link-problem" className="text-danger">{problem}</p>}
     {info && <>
       {!failed && <><div className="space-y-2 rounded-md border border-border p-3" data-testid="hub-link-hub">
-        <p className="font-bold">Connect to <Raw>{hubName}</Raw>?</p>
+        <p className="font-bold" data-testid="hub-link-question">{hubName ? <>Connect to <Raw>{hubName}</Raw> at <Raw>{hubHost}</Raw>?</> : <>Connect to <Raw>{hubHost}</Raw>?</>}</p>
         <ModeChoice mode={mode} onChange={setMode} />
         {mode === 'selective' && <p className="text-[13px] text-text-muted" data-testid="hub-link-later">Leaving later does not take back what the hub already read.</p>}
         <details className="text-sm text-text-muted" data-testid="hub-link-details" onToggle={e => setDetailsOpen(e.currentTarget.open)}>

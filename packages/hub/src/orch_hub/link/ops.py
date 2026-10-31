@@ -125,9 +125,29 @@ class OpContext:
     activity: Any = None  # orch_hub.activity.ActivityLog; None: agent_events is `unavailable`
     switch: Any = None  # orch_hub.switch.SwitchService; None = switch/rail ops not served (unknown_op)
     where: Callable[[], dict[str, Any]] | None = None  # settings.where_answer: the advertised addresses and the name
+    #: #1838: gives the signed hub.publish_where now (signed by the current op key); None, or a call that gives None, = the
+    #: hub advertises none
+    publish_where: Callable[[], dict[str, Any] | None] | None = None
     hooks: Any = None  # orch_hub.hooks.HookInbox; None = the webhook inbox is off (hook ops answer `unavailable`)
     closing: Any = None  # orch_hub.closing.Closing; None = no removal service (closing_get answers null)
     same_computer: bool = False  # the link's socket shows the peer is on this computer (never a peer-sent claim)
+
+
+def safe_publish_where(
+    fn: Callable[[], dict[str, Any] | None],
+) -> Callable[[], dict[str, Any] | None]:
+    """``fn`` (a hub's ``publish_where`` provider) that never raises: any exception is "this hub advertises none right
+    now" (``None``: ``{}`` in the join reply, no ``publish_where`` member in ``hub_where``). The join is committed
+    before its reply is built, so a failure here must never turn it into an error reply (#1840 N1)."""
+
+    def call() -> dict[str, Any] | None:
+        try:
+            return fn()
+        except Exception as e:  # noqa: BLE001
+            logging.getLogger("orch_hub.link").info("publish_where not available: %s", type(e).__name__)
+            return None
+
+    return call
 
 
 def _require_pin(c: OpContext) -> dict[str, str]:
@@ -246,8 +266,12 @@ def join(c: OpContext) -> dict[str, Any]:
         c.downstream.card(c.workspace_id, join_msg["card"], join_msg["pk_pub"])
     except Refused as e:
         logging.getLogger("orch_hub.link").info("card not admitted by publish at join: %s", e.code)
-    c.downstream.binding(c.workspace_id, join_msg["binding"])
-    return {}
+    try:  # the same: committed is committed, a downstream that fails or refuses must not turn the join into an error
+        c.downstream.binding(c.workspace_id, join_msg["binding"])
+    except Exception:
+        logging.getLogger("orch_hub.link").exception("binding not passed to publish at join")
+    signed = None if c.publish_where is None else safe_publish_where(c.publish_where)()
+    return {} if signed is None else {"publish_where": signed}  # §10.2, §10.9.1
 
 
 def card_put(c: OpContext) -> dict[str, Any]:

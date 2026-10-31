@@ -119,6 +119,7 @@ class OpSigner(_Signer):
             "hub.release_narrow": "sig_hub_release_narrow",
             "hub.app_pass": "sig_hub_app_pass",
             "hub.allow": "sig_hub_allow",
+            "hub.publish_where": "sig_hub_publish_where",
             "hub.org_secrets": "sig_hub_org_secrets",
             "hub.api_origin": "sig_hub_api_origin",
         }

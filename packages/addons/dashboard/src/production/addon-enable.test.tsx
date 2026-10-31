@@ -112,6 +112,38 @@ it('Change on a suggested address reveals the field, filled with the suggestion'
   expect(form.getByLabelText('Publish server address')).toHaveValue('http://127.0.0.1:8102')
 })
 
+it('#1838 the pair: a suggest_where with different server and share signs both, with no typing', async () => {
+  setup('publish', false, false, 'https://pub.example.org')
+  const row = state.host.workspaces[0].addOns as unknown as { add_ons: Record<string, unknown>[] }
+  Object.assign(row.add_ons[0], { suggest_where: { server: 'https://pub.example.org', share: 'https://share.example.org' }, suggest_from: 'hub', suggest_hub: 'Anna’s hub' })
+  const user = userEvent.setup()
+  show('/w/DEMO/addons')
+  await user.click(await screen.findByRole('switch', { name: 'Publish' }, T))
+  const form = within(await screen.findByRole('dialog', { name: 'Turn on Publish' }, T))
+  expect(form.queryByLabelText('Publish server address')).toBeNull() // the pair is the suggestion: no field
+  await user.click(form.getByRole('button', { name: 'Details' }))
+  expect(await screen.findByTestId('info-drawer-content')).toHaveTextContent('Links open at share.example.org')
+  await user.keyboard('{Escape}')
+  trusted()
+  await user.click(form.getByRole('button', { name: 'Turn on and sign' }))
+  await screen.findByTestId('click-panel', {}, T)
+  expect(prepared()).toEqual([{ action: 'addon_enable', name: 'publish', publish: { server: 'https://pub.example.org', share: 'https://share.example.org' } }])
+})
+
+it('#1838 suggest_where wins over a different legacy suggest', async () => {
+  setup('publish', false, false, 'http://127.0.0.1:1')
+  const row = state.host.workspaces[0].addOns as unknown as { add_ons: Record<string, unknown>[] }
+  Object.assign(row.add_ons[0], { suggest_where: { server: 'https://pub.example.org', share: 'https://share.example.org' }, suggest_from: 'hub' })
+  const user = userEvent.setup()
+  show('/w/DEMO/addons')
+  await user.click(await screen.findByRole('switch', { name: 'Publish' }, T))
+  const form = within(await screen.findByRole('dialog', { name: 'Turn on Publish' }, T))
+  trusted()
+  await user.click(form.getByRole('button', { name: 'Turn on and sign' }))
+  await screen.findByTestId('click-panel', {}, T)
+  expect(prepared()).toEqual([{ action: 'addon_enable', name: 'publish', publish: { server: 'https://pub.example.org', share: 'https://share.example.org' } }])
+})
+
 it('with nothing suggested the field shows and has no example in it', async () => {
   setup('publish')
   const user = userEvent.setup()

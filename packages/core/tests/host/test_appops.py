@@ -376,3 +376,78 @@ def test_a_viewer_cannot_send(a):
     finally:
         mp.undo()
     assert [r for r in a.server.requests if "/apps/" in r["target"]] == []
+
+
+# -- the security check of #1784: TOCTOU and self-reach ----------------------------------------------------------------
+
+
+def _before_send(a, monkeypatch, action):
+    """Run ``action`` after the plan reserved the version and before the upload: the window of the race."""
+    from orch.host import appops
+
+    real = appops._send  # noqa: SLF001
+
+    def wrapped(call, plan):
+        action(plan)
+        return real(call, plan)
+
+    monkeypatch.setattr(appops, "_send", wrapped)
+
+
+def test_two_concurrent_sends_of_one_stage_upload_once_and_the_other_is_refused(a, monkeypatch):
+    """The version is reserved from the plan until the record is saved: a second send meanwhile is refused at once."""
+    uid, key = ticket(a)
+    staged = ok(prepare(a, key, "index.html", "app.js"))["data"]["staged_id"]
+    a.human.run("app.release", {"staged_id": staged})
+    second = []
+    _before_send(
+        a, monkeypatch, lambda plan: second.append(err(a.served.client().req("app.send", {"staged_id": staged})))
+    )
+    ok(a.req("app.send", {"staged_id": staged}))
+    assert second == ["lock.busy"]
+    puts = [r for r in a.server.requests if r["method"] == "PUT" and r["target"].endswith("/versions/1")]
+    assert len(puts) == 1
+    ok(a.req("app.list", {}))  # the reservation is gone with the record saved
+
+
+def test_a_stage_changed_between_plan_and_send_is_refused_and_nothing_is_uploaded(a, monkeypatch):
+    uid, key = ticket(a)
+    staged = ok(prepare(a, key, "index.html", "app.js"))["data"]["staged_id"]
+    a.human.run("app.release", {"staged_id": staged})
+    path = a.served.lab.state / "hosts" / a.served.wid / "publish" / "appstage" / staged / "files" / "app.js"
+    _before_send(a, monkeypatch, lambda plan: path.write_bytes(bytes(len(APPJS))))  # same size, other bytes
+    assert err(a.req("app.send", {"staged_id": staged})) == "publish.changed"
+    assert [r for r in a.server.requests if "/apps/" in r["target"]] == []
+    # the reservation was released: the stage can be sent after it is prepared and signed again
+    again = ok(prepare(a, key, "index.html", "app.js", slug="sales-board-2"))["data"]["staged_id"]
+    a.human.run("app.release", {"staged_id": again})
+    ok(a.req("app.send", {"staged_id": again}))  # the hook only touched the first stage
+
+
+def test_a_record_that_moved_between_plan_and_send_is_refused(a, monkeypatch):
+    from orch.host import appops
+
+    uid, key = ticket(a)
+    first = ok(prepare(a, key, "index.html", "app.js"))["data"]
+    a.human.run("app.release", {"staged_id": first["staged_id"]})
+    rec = {"id": first["app_id"], "slug": "x", "ticket": uid, "versions": {"1": {}}, "live": None}
+    _before_send(a, monkeypatch, lambda plan: appops._save_records(a.served.service, [rec]))  # noqa: SLF001
+    assert err(a.req("app.send", {"staged_id": first["staged_id"]})) == "publish.changed"
+    assert [r for r in a.server.requests if "/apps/" in r["target"]] == []
+
+
+def test_an_app_may_not_reach_any_address_the_host_dials_for_the_hub(a, monkeypatch):
+    """The forbidden set is the hub's whole dial list (``publish_route['addrs']``), not only its first address."""
+    from orch.host import hubops
+
+    uid, key = ticket(a)
+    real = hubops.publish_route
+
+    def route(service):
+        got = real(service)
+        return {**got, "addrs": ["hub-one.example.org:443", "hub-two.example.org:8443"]}
+
+    monkeypatch.setattr(hubops, "publish_route", route)
+    for origin in ("https://hub-one.example.org", "https://hub-two.example.org"):
+        assert err(prepare(a, key, "index.html", "app.js", reach=[origin])) == "invalid.input", origin
+    ok(prepare(a, key, "index.html", "app.js", reach=["https://api.example.com"]))

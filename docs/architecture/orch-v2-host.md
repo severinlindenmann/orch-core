@@ -13428,6 +13428,29 @@ The add-on `publish` ships inside orch-core (capability `network`); `addon.grant
   what it is about to send and sends the commit only when a person's note with exactly these words exists, at most an
   hour old; a changed file, access, reach or version makes the old signature cover nothing else. orch-publish still
   checks the owner's approval of the request itself (`hub.publish_approval`, 11.3) on commit, rollback and start.
+* **Apps, pages and forms** (#1455, HUB-PU-05, with #1454: a "landing page" is a published item of kind `page`).
+  `orch.host.appops` serves `app.prepare {ref, name, kind, access, artifacts[], reach?, slug?, audience?, app_id?}`
+  (P and G; G only on its claimed ticket; copies the named artifacts aside by manifest and digest, builds the version
+  meta with the same rules as orch-publish's `meta_problem`; access is `public`, `company` or `group`, a password app
+  is not served yet), `app.list`, `app.discard` (P and G) and `app.send {staged_id}` (P only). `app.send` builds the
+  `app.release` words again from the stage and requires a person-signed note with exactly these words (at most an hour
+  old, locally signed) before it uploads `PUT apps/<id>/versions/<n>` and every file (`WSK`-signed, through the hub).
+  `app.prepare {app_id, op: rollback|start, version}` makes a stage with no files for a version the server already
+  holds; its words say "go back to this older version" or "start this app again" and compare with the live version.
+  CLI: `orch app prepare|release|send|list|discard` (an agent: prepare, list, discard only).
+  **Going live (the second signature).** orch-publish serves a version only after a `commit`, `rollback` or `start`
+  that carries the owner's `hub.publish_approval` (11.3): the device key's signature over ONE exact request (its `ts`,
+  `nonce`, host, target and body hash, single use, 120 s). When the caller is the workspace card's owner, `app.send`
+  also answers with `commit`, a request the host drew and keeps for 90 s, once. The owner's client
+  (`orch.publishclient.golive.check_commit_request`) rebuilds the words and the body from the release facts itself and
+  signs, with the device key under `sig_hub_publish_approval` (a `DEVICE_KEY_LABELS` entry, never the PK's or the
+  WSK's), only if they equal the note it just signed, the target and host are the release's own and its clock agrees.
+  `app.commit {request_id, approval}` (P only, the card owner) then sends the pinned request with the approval
+  (`HubPublishSigner.pin`: the same `ts` and `nonce`, once, the approval must name this request). Anyone else's release
+  uploads and waits ("the workspace owner makes it live"). `app.commit_request {app_id, op, version}` draws a fresh
+  request when the first expired (the same note still binds it, an hour at most). The One click tier signs both in one
+  click; the passphrase tier asks for the passphrase again for the second signature.
+  Artifact names are flat file names today: an app whose files live in subfolders is not supported yet.
 
 ## 13. Tier B: agents and add-ons as their own OS user (#1198 H1, #287)
 

@@ -24,6 +24,7 @@ PLANNED = {
     "sig_drop_handoff": "orch/v2/sig/drop-handoff|",
     "sig_hub_binding": "orch/v2/sig/hub-binding|",  # V3 C2a: what the WSK signs for a hub
     "sig_hub_unbound": "orch/v2/sig/hub-unbound|",
+    "sig_hub_publish_approval": "orch/v2/sig/hub-publish-approval|",
     "sig_hub_link": "orch/v2/sig/hub-link|",
     "sig_hub_link_auth": "orch/v2/sig/hub-link-auth|",
     "sig_publish_hub": "orch/v2/publish-hub|",  # V3 C7: publish through the hub

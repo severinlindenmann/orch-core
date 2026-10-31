@@ -92,6 +92,10 @@ PLANNED_LABELS: dict[str, str] = {
     # V3 C7 (hub contract 11.1): the WSK signature of a publish request that goes through the hub (its own label, so it
     # never verifies as a direct v2 12.1 request).
     "sig_publish_hub": "orch/v2/publish-hub|",
+    # #1455 (hub contract 11.3): the owner's approval of one exact publish request (an app commit, rollback or start),
+    # signed by the person's DEVICE key (dk_sig) after the person signed the release note. Produced only by
+    # ``publishclient.golive``; the verifier is orch-publish's (``pubsrv.hub_path.verify_approval``).
+    "sig_hub_publish_approval": "orch/v2/sig/hub-publish-approval|",
     # V3 C13 (hub contract 10.4, shared spaces): what the WSK signs (an item, an accept) and the hashes / AAD.
     # The HK_op labels of hub.space and hub.space_wrap are the hub's and are only verified (hubclient/spaces.py).
     "sig_space_item": "orch/v2/sig/space-item|",

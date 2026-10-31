@@ -139,6 +139,9 @@ DEVICE_KEY_LABELS: tuple[bytes, ...] = (  # dk_sig: person events and device req
     _p("sig_drop_object"),
     _e("sig_reader_decl"),  # H12d: the device's own reader declaration (orch-v2-host §0.8.6 item 9.3)
     _p("sig_genesis_pin"),  # B1: the genesis pin of a first link (relay.genesis_pin, orch-v2-host 11A.2)
+    # #1455: the owner's approval of one app commit, rollback or start (hub contract 11.3). dk_sig only: not PK, not
+    # WSK. Signed only by ``publishclient.golive`` after the signer's own check against the release note just signed.
+    _p("sig_hub_publish_approval"),
 )
 HOST_LABELS: tuple[bytes, ...] = (  # WSK: host events and workspace-signed objects
     _e("sig_host_event"),

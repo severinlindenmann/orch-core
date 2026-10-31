@@ -107,15 +107,17 @@ function addressCard(data, actions) {
     if (kind === "public") continue; // the public address is set up with the edge, not here; an installed one stays as it is
     const choices = detected.filter((d) => d.kind === kind);
     const select = h("select", { id: "addr-" + kind, "aria-label": label }, h("option", { value: "", text: "Not used" }),
-      choices.map((d) => h("option", { value: d.ip, text: d.ip })));
+      choices.map((d) => h("option", { value: d.ip, text: d.iface ? d.ip + " (" + text(d.iface) + ")" : d.ip })));
     select.value = cur ? hostOf(cur) : ""; picks[kind] = select;
     if (!cur && server && kind === "office" && choices.length > 0) select.value = choices[0].ip; // "Make phones reach this hub": the office network is preselected; Save is still the admin's click
     const using = cur && here && cur === here;
+    const exposes = kind === "office" ? h("span", { class: "small muted", "data-exposes": "office", hidden: !select.value || using, text: "Anyone on this office network can open the hub's sign-in page." }) : null;
+    if (exposes) select.addEventListener("change", () => { exposes.hidden = !select.value; });
     if (using) select.disabled = true;
-    fields.push(h("div", { class: "field", "data-kind": kind }, h("label", { for: "addr-" + kind, text: label }), select,
+    fields.push(h("div", { class: "field", "data-kind": kind }, h("label", { for: "addr-" + kind, text: label }), select, exposes,
       using ? h("span", { class: "small muted", text: "You are using this one now." }) : null));
   }
-  const opened = detected.length > 0; // the choices arrived: the form was opened by "Change address"
+  const opened = actions.opened === true; // set by the button: the form is open only after the admin asked for it
   const form = h("div", { class: "address-form", hidden: !opened }, fields,
     h("p", { class: "small muted", text: "Workspaces pick up the new address the next time they connect. Nothing signed changes, so no connection breaks. The hub restarts for a moment." }),
     h("button", { type: "button", class: "primary", text: "Save", onclick: () => {
@@ -515,7 +517,7 @@ async function afterRestore(d, madeMs) {
   return d.loginView(null, { title: "Sign in to your hub", ok: at });
 }
 
-export async function hubSettingsPage(d, detected = [], words = null) {
+export async function hubSettingsPage(d, detected = [], words = null, opened = false) {
   const finish = loading();
   d.pageLoading("hub-settings");
   try {
@@ -542,6 +544,7 @@ export async function hubSettingsPage(d, detected = [], words = null) {
     if (r.body.backup && d.state.backupNote) { r.body.backup.note = d.state.backupNote; d.state.backupNote = null; }
     const actions = {
       detected,
+      opened, // the admin pressed the address button (not "the list happens to be non-empty")
       words,
       remove: removeActions(d),
       wordsMayShow: wordsMayShow(globalThis.location, (r.body.addresses ?? []).filter((a) => a.kind === "private").map((a) => a.web)),
@@ -582,7 +585,7 @@ export async function hubSettingsPage(d, detected = [], words = null) {
         copy: async (t) => { try { await globalThis.navigator?.clipboard?.writeText(t); return true; } catch { return false; } },
       },
       saveGeneral: async (body) => { say("Saved", await d.api("PUT", "/admin/settings/general", body)); await hubSettingsPage(d); },
-      loadDetected: async () => { const x = await d.api("GET", "/admin/settings/addresses/detected"); if (x.status === 200) await hubSettingsPage(d, x.body.addresses ?? []); },
+      loadDetected: async () => { const x = await d.api("GET", "/admin/settings/addresses/detected"); if (x.status === 200) await hubSettingsPage(d, x.body.addresses ?? [], null, true); },
       saveAddresses: async (body) => {
         const x = await d.api("PUT", "/admin/settings/addresses", body);
         if (x.status === 202) { d.state.notice = d.banner("ok", "Saved. The hub is restarting.", null); await comesBack(d); say("Saved", { status: 200 }); }

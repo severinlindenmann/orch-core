@@ -49,18 +49,34 @@ def address_kind(ip: str) -> str:
     return "office" if a.is_private else "public"
 
 
+_VIRTUAL = re.compile(r"^(docker|br-|virbr|veth|cni|flannel|cali|lxc|lxd)")  # bridges and container links: never a good first pick
+_IP_O = re.compile(r"^\d+:\s+(\S+?)(?:@\S+)?\s+inet (\d+\.\d+\.\d+\.\d+)")
+_IFC_HEAD = re.compile(r"^([A-Za-z0-9_.@-]+?):\s+flags")
+
+
 def detect_addresses(text: str | None = None) -> list[dict[str, str]]:
-    """This server's IPv4 addresses with their kind (loopback first). ``text`` is ``ip -o -4 addr`` or ``ifconfig`` output."""
+    """This server's IPv4 addresses with their kind (loopback first, then real interfaces, virtual bridges last) and, when
+    the output names it, the interface. ``text`` is ``ip -o -4 addr`` or ``ifconfig`` output."""
     found: list[dict[str, str]] = [{"ip": "127.0.0.1", "kind": "server"}]
-    for m in re.finditer(r"\binet (\d+\.\d+\.\d+\.\d+)", _inet_lines() if text is None else text):
+    iface = ""
+    for line in (_inet_lines() if text is None else text).splitlines():
+        head = _IFC_HEAD.match(line)
+        if head:
+            iface = head.group(1)
+        flat = _IP_O.match(line)
+        m = re.search(r"\binet (\d+\.\d+\.\d+\.\d+)", line)
+        if m is None:
+            continue
         ip = m.group(1)
+        name = flat.group(1) if flat else iface
         try:
             ok = not ipaddress.ip_address(ip).is_loopback and not ip.startswith("169.254.")
         except ValueError:
             ok = False
         if ok and all(f["ip"] != ip for f in found):
-            found.append({"ip": ip, "kind": address_kind(ip)})
-    return found[:16]
+            found.append({"ip": ip, "kind": address_kind(ip), **({"iface": name} if name else {})})
+    rest = sorted(found[1:], key=lambda f: bool(_VIRTUAL.match(f.get("iface", ""))))  # stable: real interfaces first
+    return [found[0], *rest][:16]
 
 
 @dataclass

@@ -53,7 +53,7 @@ test("General: the two fields hold the current words and ONE Save sends both (no
 });
 
 test("Address: the help says workspaces pick the new address up when they connect; the phone address is not editable", () => {
-  const view = hubSettingsView(DEMO, { detected: DETECTED });
+  const view = hubSettingsView(DEMO, { opened: true, detected: DETECTED });
   const a = card(view, "address");
   assert.match(a.textContent, /Workspaces pick up the new address the next time they connect/);
   assert.equal(a.all().find((n) => n.attrs["data-kind"] === "private").tag, "div");
@@ -77,7 +77,7 @@ test("Address: Change address opens the picker and asks for this server's addres
 
 test("Address: Save sends the phone address first, the chosen ones after it, and leaves a cleared kind out", () => {
   const sent = [];
-  const view = hubSettingsView(DEMO, { detected: DETECTED, saveAddresses: (b) => sent.push(b) });
+  const view = hubSettingsView(DEMO, { opened: true, detected: DETECTED, saveAddresses: (b) => sent.push(b) });
   const a = card(view, "address");
   const sel = (kind) => byTag(a.all().find((n) => n.attrs["data-kind"] === kind), "select")[0];
   sel("office").value = "10.1.1.4"; sel("server").value = "";
@@ -173,17 +173,36 @@ test("r14 P11: a server-only address says 'this computer only', never 'phones us
 
 test("P02: a server-only hub that may change addresses offers 'Make phones reach this hub', which preselects the office network", () => {
   const d = { ...DEMO, phone_kind: "server", addresses: [{ kind: "server", web: "http://127.0.0.1:8100" }], can_change_addresses: true };
-  let loaded = 0;
-  const before = card(hubSettingsView(d, { loadDetected: () => loaded++ }), "address");
+  let loaded = 0; const sent = [];
+  // before the click: only the button and its note; no form, nothing sent, Save has no autofocus
+  const before = card(hubSettingsView(d, { loadDetected: () => loaded++, saveAddresses: (b) => sent.push(b) }), "address");
   const btn = button(before, "Make phones reach this hub");
   assert.ok(btn); assert.match(before.textContent, /Uses your office network/);
-  btn.listeners.click(); assert.equal(loaded, 1);
-  const sent = [];
-  const a = card(hubSettingsView(d, { detected: DETECTED, saveAddresses: (b) => sent.push(b) }), "address");
+  assert.equal(before.all().find((n) => n.className === "address-form").attrs.hidden, "", "the form stays closed until the button is pressed");
+  assert.equal(button(before, "Save").attrs.autofocus, undefined);
+  assert.deepEqual(sent, []);
+  btn.listeners.click(); assert.equal(loaded, 1); assert.deepEqual(sent, [], "pressing the button sends nothing");
+  // the list alone does not open the form; the explicit flag does
+  const listOnly = card(hubSettingsView(d, { detected: DETECTED }), "address");
+  assert.equal(listOnly.all().find((n) => n.className === "address-form").attrs.hidden, "");
+  const a = card(hubSettingsView(d, { opened: true, detected: DETECTED, saveAddresses: (b) => sent.push(b) }), "address");
+  assert.equal(a.all().find((n) => n.className === "address-form").attrs.hidden, undefined);
   const office = byTag(a.all().find((n) => n.attrs["data-kind"] === "office"), "select")[0];
   assert.equal(office.value, "192.168.60.30");
+  assert.match(a.textContent, /Anyone on this office network can open the hub's sign-in page\./);
+  assert.deepEqual(sent, []);
+  assert.equal(button(a, "Save").attrs.autofocus, undefined);
   button(a, "Save").listeners.click();   // Save stays the admin's click
   assert.ok(sent[0].addresses.some((x) => x.kind === "office" && x.host === "192.168.60.30"));
+});
+
+test("P02: the interface name shows next to the address, and without helper rights there is no button", () => {
+  const d = { ...DEMO, phone_kind: "server", addresses: [{ kind: "server", web: "http://127.0.0.1:8100" }], can_change_addresses: true };
+  const a = card(hubSettingsView(d, { opened: true, detected: [{ ip: "10.1.1.4", kind: "office", iface: "eth0" }] }), "address");
+  assert.match(a.textContent, /10\.1\.1\.4 \(eth0\)/);
+  const none = card(hubSettingsView({ ...d, can_change_addresses: false }, { opened: true, detected: DETECTED }), "address");
+  assert.equal(button(none, "Make phones reach this hub"), undefined);
+  assert.deepEqual(byTag(none, "button"), []);
 });
 
 test("r14 P12: Company and Hub name boxes have an example; Company says optional; an empty company still saves as empty", () => {

@@ -78,6 +78,61 @@ def _clean(name: str, flag: str) -> str:
     return n
 
 
+_LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
+
+
+_NUMERIC_LAST = re.compile(r"[0-9]+|0x[0-9a-f]*")
+
+
+def check_hub_name(given: str) -> str:
+    """``--hub-name``: a strict private host name (lower-cased ASCII; ``xn--`` labels are fine). No whitespace,
+    wildcard, IP literal (also the odd numeric spellings a resolver accepts), port, trailing dot or ``localhost``."""
+    bad = InstallError(f"--hub-name {given!r}: that is not a host name (example: core.hub.example.com)")
+    if not isinstance(given, str) or not given.isascii():  # before lower(): the Kelvin sign lower-cases to "k"
+        raise bad
+    n = given.lower()
+    if not n or len(n) > 253 or n.endswith(".") or "*" in n or ":" in n:
+        raise bad
+    labels = n.split(".")
+    if len(labels) < 2 or not all(_LABEL.fullmatch(x) for x in labels):
+        raise bad
+    if _NUMERIC_LAST.fullmatch(labels[-1]):  # "ends in a number" (WHATWG): an IPv4 spelling, not a name
+        raise bad
+    if n == "localhost" or n.endswith(".localhost"):
+        raise bad
+    try:
+        socket.inet_aton(n)
+    except (OSError, ValueError):
+        pass
+    else:
+        raise bad
+    return n
+
+
+def check_hub_name_target(name: str, vpn_ip: str, resolve: Callable[[str], list[str]]) -> None:
+    """The name must resolve, and EVERY answer (IPv4 and IPv6) must be the hub's private-network address."""
+    got: set[str] = set()
+    try:
+        answers = resolve(name)
+    except (OSError, UnicodeError):  # includes socket.gaierror: a failed lookup is a refusal, never a pass
+        answers = []
+    for raw in answers:
+        try:
+            got.add(str(ipaddress.ip_address(str(raw).split("%", 1)[0])))
+        except ValueError:
+            got.add(str(raw))  # not an address: never equal to the VPN IP
+    if not got:
+        raise InstallError(
+            f"--hub-name {name}: it does not resolve. Make a private DNS record that points it at {vpn_ip}, then run "
+            "this command again."
+        )
+    if got != {str(ipaddress.ip_address(vpn_ip))}:
+        raise InstallError(
+            f"--hub-name {name} resolves to {', '.join(sorted(got))}, not only to this hub's private-network address "
+            f"{vpn_ip}. Fix the DNS record so it points at {vpn_ip} only."
+        )
+
+
 def derive_names(
     base: str | None, hub: str | None = None, relay: str | None = None, publish: str | None = None
 ) -> Names:
@@ -271,7 +326,7 @@ class DnsResult:
 
 def default_resolver(name: str) -> list[str]:
     try:
-        return sorted({i[4][0] for i in socket.getaddrinfo(name, None, proto=socket.IPPROTO_TCP)})
+        return sorted({i[4][0] for i in socket.getaddrinfo(name, None, socket.AF_UNSPEC, proto=socket.IPPROTO_TCP)})
     except OSError:
         return []
 

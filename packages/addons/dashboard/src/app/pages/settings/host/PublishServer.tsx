@@ -5,7 +5,8 @@ import { useQuery } from '@tanstack/react-query'
 import { InfoDrawer } from '@/components/InfoDrawer'
 import { Link } from '@tanstack/react-router'
 import { useState } from 'react'
-import { adminCommand, isUnknownWorkspace, newIdem, reachNote, shareError, shareQueries, sharesApi } from '@/api/shares'
+import { queries } from '@/api/queries'
+import { adminCommand, destinationLine, isUnknownWorkspace, newIdem, reachNote, sameOrigin, shareError, shareQueries, sharesApi } from '@/api/shares'
 import { Inline } from '@/components/sign/visible'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -25,6 +26,11 @@ export function PublishServer({ workspace, owner, embedded = false }: { workspac
   const ws = workspace.id
   const list = useQuery(shareQueries.list(ws))
   const data = list.data && list.data.available ? list.data : null
+  // "this computer" in the note only when the Publish add-on row names this computer as the source of this very address
+  const addOns = useQuery(queries.addOns(ws))
+  const row = addOns.data?.available ? addOns.data.add_ons.find((r) => r.id === 'publish') : undefined
+  const from = !!row?.suggest && !!data?.server && sameOrigin(row.suggest, data.server) ? row.suggest_from ?? null : null
+  const note = data?.configured ? reachNote(data.server, data.share, from) : null
   const [editing, setEditing] = useState(false)
   const [server, setServer] = useState('')
   const [share, setShare] = useState('')
@@ -76,9 +82,9 @@ export function PublishServer({ workspace, owner, embedded = false }: { workspac
         ) : (
           <p className="text-warning">No server is set up yet, so nothing can be shared.</p>
         )}
-        {data.configured && reachNote(data.server, data.share) && (
+        {note && (
           <p data-testid="publish-local-note" className="text-text-muted">
-            {reachNote(data.server, data.share)}
+            {note}
           </p>
         )}
         {owner ? (
@@ -193,19 +199,26 @@ export function PublishForm({ server, share, setServer, setShare, suggested, sug
   // P02: a Publish server installed on this computer is named in one sentence; the address field only appears behind "Change"
   if (suggested && !changing && server === suggested && share === suggested)
     return (
-      <div className="space-y-1.5 text-[13px]" data-testid="publish-suggested">
-        {suggestedFrom === 'hub' ? (
-          <p>
-            Files and links go through your hub{hubName ? <>: <Inline>{hubName}</Inline></> : ''}.
-          </p>
-        ) : (
-          <p>
-            Files and links use the Publish server on this computer: <Inline>{suggested}</Inline>
-          </p>
-        )}
-        <button type="button" className="text-[12px] text-accent hover:underline" onClick={() => setChanging(true)}>
-          Change
-        </button>
+      <div className="flex items-center gap-1.5 text-[13px]" data-testid="publish-suggested">
+        <span>{destinationLine(suggestedFrom, hubName, suggested)}</span>
+        <InfoDrawer text="Details">
+          {(close) => (
+            <>
+              {suggestedFrom === 'hub' ? (
+                <p>
+                  Files and links go through your hub{hubName ? <>: <Inline>{hubName}</Inline></> : ''}.
+                </p>
+              ) : (
+                <p>
+                  Files and links use the Publish server on this computer: <Inline>{suggested}</Inline>
+                </p>
+              )}
+              <button type="button" className="text-[12px] text-text-muted hover:underline" onClick={() => { close(); setChanging(true) }}>
+                Change
+              </button>
+            </>
+          )}
+        </InfoDrawer>
       </div>
     )
   return (

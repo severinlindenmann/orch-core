@@ -25,6 +25,8 @@ export interface HandoffSpec {
   /** The person's own press (a button in a dialog that said what happens) opened this: the host's review opens at once.
    * Prepare only, never armed: Sign stays the person's own press. */
   prepareOnOpen?: boolean
+  /** Lines kept in the review's main view above the host's review (e.g. where files go, by name). */
+  lead?: ReactNode
 }
 
 export function useSettingsHandoff(ws: string | undefined, onSettled?: () => void | Promise<unknown>): { ask: (spec: HandoffSpec) => void; dialog: ReactNode; inline: boolean } {
@@ -41,6 +43,7 @@ export function useSettingsHandoff(ws: string | undefined, onSettled?: () => voi
       confirmLabel={spec.confirmLabel}
       hint={spec.hint}
       summary={spec.summary}
+      lead={spec.lead}
       inline={spec.inline}
       doneToast={spec.doneToast}
       onSigning={spec.onSigning}

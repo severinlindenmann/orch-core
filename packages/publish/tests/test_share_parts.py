@@ -233,7 +233,7 @@ def test_finalized_part_conflict(two):
 
 def test_part_budgets(two, monkeypatch):
     stage(two)
-    monkeypatch.setattr(shares, "PART_BYTES_PER_MIN", 6)
+    monkeypatch.setattr(shares, "PART_BYTES_PER_MIN", 12)
     assert part(two, 0, b"abcdef").status_code == 200
     assert part(two, 0, b"a").json() == {"error": "rate_limited"}
     # Reads and the ordinary write budget remain separate.
@@ -369,19 +369,33 @@ def test_noop_rolls_back_without_db_write(two, monkeypatch, complete):
     )
 
 
-@pytest.mark.parametrize("change", ["inode", "size", "present", "revoked"])
+@pytest.mark.parametrize(
+    "change",
+    ["inode", "size", "present", "revoked", "manifest_size", "manifest_sha", "mtime", "ctime"],
+)
 @pytest.mark.parametrize("bad_hash", [False, True])
 def test_finalize_rechecks_after_unlocked_hash(two, monkeypatch, change, bad_hash):
     stage(two)
     digest = shares._part_digest
 
     def race(data):
+        checked_digest = digest(data)
+        # Change state after hashing, before the finalization re-check.
         # This second writer succeeds only if hashing released BEGIN IMMEDIATE.
         conn = shares.db.connect(two.path)
         conn.execute("PRAGMA busy_timeout=1")
         conn.execute("BEGIN IMMEDIATE")
         if change == "present":
             conn.execute("UPDATE share_files SET present=1 WHERE share_id=?", (SID,))
+        elif change == "manifest_size":
+            conn.execute("UPDATE share_files SET size=7 WHERE share_id=?", (SID,))
+        elif change == "manifest_sha":
+            conn.execute("UPDATE share_files SET sha256=? WHERE share_id=?", ("0" * 64, SID))
+        elif change == "mtime":
+            info = partial(two).stat()
+            os.utime(partial(two), ns=(info.st_atime_ns, info.st_mtime_ns + 1_000_000))
+        elif change == "ctime":
+            os.chmod(partial(two), 0o400)
         elif change == "revoked":
             conn.execute("UPDATE shares SET state='revoked' WHERE id=?", (SID,))
         elif change == "inode":
@@ -393,11 +407,15 @@ def test_finalize_rechecks_after_unlocked_hash(two, monkeypatch, change, bad_has
                 out.write(b"x")
         conn.execute("COMMIT")
         conn.close()
-        return digest(data)
+        return checked_digest
 
     monkeypatch.setattr(shares, "_part_digest", race)
     r = part(two, 0, b"XXXXXX" if bad_hash else b"abcdef")
-    assert r.status_code == (410 if change == "revoked" else 409)
+    expected = 410 if change == "revoked" else 409
+    if change == "present" and not bad_hash:
+        expected = 200
+        assert r.json() == {"received": 6, "done": True, "result": "unchanged"}
+    assert r.status_code == expected
     assert partial(two).exists()  # A stale mismatch must never unlink the replacement.
 
 
@@ -477,6 +495,7 @@ def test_handler_uses_authenticated_target(two):
         "method": "PUT",
         "path": "/irrelevant",
         "raw_path": b"/different/\xff",
+        "headers": [],
         "orch_target": f"/v1/ws/{WS_A}/shares/{SID}/parts/0/f",
         "orch_ws": WS_A,
         "orch_wsk": wsk,
@@ -484,7 +503,11 @@ def test_handler_uses_authenticated_target(two):
     }
     request = Request(scope)
     request._body = b"ab"
-    response = asyncio.run(endpoint("2" * 32, "9", "different", request))
+    with pytest.raises(shares.Refusal) as exc:
+        asyncio.run(endpoint("2" * 32, "9", "different", request))
+    assert exc.value.status == 404
+    scope["path_params"]["sid"] = SID
+    response = asyncio.run(endpoint(SID, "9", "different", request))
     assert response.status_code == 200
     assert partial(two).read_bytes() == b"ab"
     scope["orch_target"] = scope["orch_target"].replace(WS_A, "f" * 32)
@@ -493,9 +516,10 @@ def test_handler_uses_authenticated_target(two):
     assert exc.value.body() == {"error": "wrong_workspace"}
 
 
-def test_non_ascii_raw_path_is_404(two):
+@pytest.mark.parametrize("tail", [f"/shares/{SID}/parts/0/", f"/shares/{SID}/", "/status/"])
+def test_non_ascii_raw_path_is_404(two, tail):
     async def raw_app(scope, receive, send):
-        scope["raw_path"] = f"/v1/ws/{WS_A}/shares/{SID}/parts/0/".encode() + b"\xff"
+        scope["raw_path"] = f"/v1/ws/{WS_A}{tail}".encode() + b"\xff"
         await two.app(scope, receive, send)
 
     response = TestClient(raw_app).put(f"/v1/ws/{WS_A}/shares/{SID}/parts/0/f", content=b"a")
@@ -509,3 +533,124 @@ def test_zero_length_recovers_interrupted_finalize(two, offset):
     partial(two).write_bytes(b"abcdef")
     assert part(two, offset, b"").json() == {"received": 6, "done": True, "result": "stored"}
     assert part(two, offset, b"").json() == {"received": 6, "done": True, "result": "unchanged"}
+
+
+def test_staged_manifest_cannot_be_replaced(two):
+    stage(two)
+    assert two.put_meta("a", SID, two.meta({"f": b"changed"})).status_code == 409
+    assert part(two, 0, b"abcdef").json()["done"]
+
+
+def test_symlink_leaf_is_malformed(two):
+    stage(two)
+    partial(two).symlink_to("missing")
+    response = part(two, 0, b"a")
+    assert response.status_code == 400
+    assert response.json() == {"error": "malformed"}
+
+
+def test_concurrent_last_parts_hash_once(two, monkeypatch):
+    stage(two)
+    assert part(two, 0, b"ab").status_code == 200
+    digest = shares._part_digest
+    hashing, release = threading.Event(), threading.Event()
+    calls = []
+    barrier = threading.Barrier(8)
+
+    def paused(data):
+        calls.append(1)
+        hashing.set()
+        assert release.wait(5)
+        return digest(data)
+
+    monkeypatch.setattr(shares, "_part_digest", paused)
+    wsk = two.sql("SELECT wsk_pub FROM workspaces WHERE workspace_id=?", WS_A)[0][0]
+
+    def send():
+        barrier.wait(timeout=5)
+        return shares.op_put_part(
+            two.app.state.settings, two.app.state.store, WS_A, wsk, SID, "f", 2, b"cdef"
+        )
+
+    with ThreadPoolExecutor(8) as pool:
+        futures = [pool.submit(send) for _ in range(8)]
+        try:
+            assert hashing.wait(5)
+        finally:
+            release.set()
+        replies = [future.result(timeout=5) for future in futures]
+    assert len(calls) == 1
+    assert all(reply["done"] for reply in replies)
+    assert sum(reply["result"] == "stored" for reply in replies) == 1
+    assert not shares._part_flights
+
+
+def test_rediscover_hash_charges_file_size(two, monkeypatch):
+    stage(two)
+    partial(two).write_bytes(b"abcdef")
+    monkeypatch.setattr(shares, "PART_BYTES_PER_MIN", 5)
+    calls = []
+    digest = shares._part_digest
+    monkeypatch.setattr(shares, "_part_digest", lambda data: calls.append(1) or digest(data))
+    assert part(two, 6, b"").status_code == 429
+    assert not calls
+    monkeypatch.setattr(shares, "PART_BYTES_PER_MIN", 6)
+    assert part(two, 6, b"").json()["done"]
+    assert calls == [1]
+    assert part(two, 0, b"a").status_code == 429
+
+
+@pytest.mark.parametrize("length", ["7", None])
+def test_budget_checks_before_and_after_body(two, monkeypatch, length):
+    import asyncio
+
+    from starlette.requests import Request
+
+    stage(two)
+    monkeypatch.setattr(shares, "PART_BYTES_PER_MIN", 6)
+    endpoint = next(
+        r.endpoint
+        for included in two.app.routes
+        for r in getattr(getattr(included, "original_router", None), "routes", [included])
+        if getattr(r, "path", "").endswith("/parts/{offset}/{fpath:path}")
+    )
+    wsk = two.sql("SELECT wsk_pub FROM workspaces WHERE workspace_id=?", WS_A)[0][0]
+    reads = []
+
+    async def receive():
+        reads.append(1)
+        return {"type": "http.request", "body": b"abcdefg", "more_body": False}
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "PUT",
+            "path": "/irrelevant",
+            "headers": [] if length is None else [(b"content-length", length.encode())],
+            "orch_target": f"/v1/ws/{WS_A}/shares/{SID}/parts/0/f",
+            "orch_ws": WS_A,
+            "orch_wsk": wsk,
+            "path_params": {"ws": WS_A, "sid": SID},
+        },
+        receive,
+    )
+    with pytest.raises(shares.Refusal) as exc:
+        asyncio.run(endpoint(SID, "0", "f", request))
+    assert exc.value.status == 429
+    assert reads == ([] if length is not None else [1])
+    assert not partial(two).exists()
+
+
+def test_exhausted_budget_refuses_before_network_body(two, monkeypatch):
+    from pubsrv import app
+
+    stage(two)
+    assert two.app.state.store.part_limiter.allow(WS_A, shares.PART_BYTES_PER_MIN)
+
+    async def unread(*args):
+        pytest.fail("exhausted part budget must refuse before reading the network body")
+
+    monkeypatch.setattr(app, "_read_body", unread)
+    response = part(two, 0, b"a")
+    assert response.status_code == 429
+    assert response.json() == {"error": "rate_limited"}

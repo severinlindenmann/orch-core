@@ -113,8 +113,9 @@ class SignedRequestMiddleware:
     body limit); the body is read after that, capped by the route, and only then `_verify` runs
     steps 4-5 (the signature covers the body hash)."""
 
-    def __init__(self, app, settings):
+    def __init__(self, app, settings, part_limiter=None):
         self.app, self.s = app, settings
+        self.part_limiter = part_limiter
         self.limiter = shares._Limiter(
             settings.clock
         )  # 60 app writes per minute per workspace (I14)
@@ -138,6 +139,15 @@ class SignedRequestMiddleware:
             declared = dict(scope["headers"]).get(b"content-length")
             if declared is not None and (not declared.isdigit() or int(declared) > ctx.limit):
                 raise _TooLarge
+            part = shares.part_route(ctx.method, ctx.target)
+            if (
+                declared is not None
+                and part is not None
+                and part[0] == ctx.ws_hex
+                and self.part_limiter is not None
+                and not self.part_limiter.allow(ctx.ws_hex, int(declared), check_only=True)
+            ):
+                raise Refusal(429, "rate_limited")
             body = await _read_body(receive, ctx.limit)
             scope["orch_ws"] = self._verify(ctx, body)
             scope["orch_wsk"] = ctx.row["wsk_pub"] if ctx.row is not None else None
@@ -306,7 +316,9 @@ def create_app(
 
     shares.install(app, settings)
     settings.app_ops = apps.AppOps(settings, app.state.store)
-    app.add_middleware(SignedRequestMiddleware, settings=settings)
+    app.add_middleware(
+        SignedRequestMiddleware, settings=settings, part_limiter=app.state.store.part_limiter
+    )
     return app
 
 

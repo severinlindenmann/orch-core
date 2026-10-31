@@ -17,6 +17,8 @@ import re
 import secrets
 import sqlite3
 import stat
+import threading
+import time
 from collections import defaultdict, deque
 from contextlib import contextmanager
 
@@ -159,6 +161,7 @@ def manifest_hash(m):
 
 class Store:
     def __init__(self, data_dir):
+        self.part_limiter = _PartLimiter(lambda: time.time_ns() // 1_000_000)
         self.root = os.path.abspath(data_dir)
         for d in ("incoming", "shares", "apps"):
             os.makedirs(os.path.join(self.root, d), mode=0o700, exist_ok=True)
@@ -482,7 +485,33 @@ def _part_digest(data):
     return digest.hexdigest()
 
 
+_part_flights = {}
+_part_flights_guard = threading.Lock()
+
+
+@contextmanager
+def _part_flight(sid, path):
+    key = (sid, path)
+    with _part_flights_guard:
+        entry = _part_flights.setdefault(key, [threading.Lock(), 0])
+        entry[1] += 1
+    try:
+        with entry[0]:
+            yield
+    finally:
+        with _part_flights_guard:
+            entry[1] -= 1
+            if not entry[1]:
+                del _part_flights[key]
+
+
 def op_put_part(settings, store, ws, wsk, sid, path, offset, body):
+    # Wait before opening a transaction; followers re-read the completed DB state.
+    with _part_flight(sid, path):
+        return _put_part(settings, store, ws, wsk, sid, path, offset, body)
+
+
+def _put_part(settings, store, ws, wsk, sid, path, offset, body):
     # BEGIN IMMEDIATE is the existing cross-process write lock. It is stronger than
     # a per-file lock and also serializes whole PUT, commit, revoke and expiry.
     conn = db.connect(settings.db_path)
@@ -550,7 +579,9 @@ def op_put_part(settings, store, ws, wsk, sid, path, offset, body):
                     # A complete but unpresent file needs finalization, even after a crash.
                     # This changes durable state, so it is a stored operation, not a no-op.
                     result = "stored"
-                if received == f["size"]:
+                    if not store.part_limiter.allow(ws, f["size"], count=0):
+                        raise Refusal(429, "rate_limited")
+                    identity = os.fstat(data.fileno())
                     digest = _part_digest(data)
                     _txn(conn, ws, wsk)
                     row = owned_share(conn, ws, sid)
@@ -561,19 +592,31 @@ def op_put_part(settings, store, ws, wsk, sid, path, offset, body):
                     if settings.clock() >= row["expires_ms"]:
                         raise Refusal(410, "gone", state="expired")
                     current = conn.execute(
-                        "SELECT present FROM share_files WHERE share_id=? AND path=?", (sid, path)
+                        "SELECT present, size, sha256 FROM share_files WHERE share_id=? AND path=?",
+                        (sid, path),
                     ).fetchone()
+                    if (
+                        current is None
+                        or current["size"] != f["size"]
+                        or current["sha256"] != f["sha256"]
+                    ):
+                        raise Refusal(409, "part_conflict", received=received)
+                    if current["present"] and current["sha256"] == digest:
+                        conn.execute("ROLLBACK")
+                        return {"received": current["size"], "done": True, "result": "unchanged"}
                     # Re-walk from the staging root: the old directory fd may have been detached.
                     try:
                         with store.staging_parent(sid, path) as (parent, leaf):
                             final = os.stat(leaf, dir_fd=parent, follow_symlinks=False)
                             if (
-                                current is None
-                                or current["present"]
+                                current["present"]
                                 or not stat.S_ISREG(final.st_mode)
                                 or final.st_ino != identity.st_ino
                                 or final.st_dev != identity.st_dev
+                                or final.st_size != identity.st_size
                                 or final.st_size != f["size"]
+                                or final.st_mtime_ns != identity.st_mtime_ns
+                                or final.st_ctime_ns != identity.st_ctime_ns
                             ):
                                 raise Refusal(409, "part_conflict", received=final.st_size)
                             if digest != f["sha256"]:
@@ -587,7 +630,7 @@ def op_put_part(settings, store, ws, wsk, sid, path, offset, body):
                     conn.execute("COMMIT")
         return {"received": received, "done": received == f["size"], "result": result}
     except OSError as exc:
-        if exc.errno in (errno.ENOTDIR, errno.EEXIST, errno.EISDIR):
+        if exc.errno in (errno.ENOTDIR, errno.EEXIST, errno.EISDIR, errno.ELOOP):
             raise Refusal(400, "malformed") from None
         raise
     finally:
@@ -833,30 +876,40 @@ class _Limiter:
 
 
 class _PartLimiter:
-    """Sliding per-workspace request and byte budgets; called on the event loop."""
+    """Sliding per-workspace request and byte budgets, shared with hash workers."""
 
     def __init__(self, clock):
         self.clock = clock
+        self.lock = threading.Lock()
+        # Keys are bounded by the authenticated workspaces, like _Limiter.
         self.hits = defaultdict(deque)
         self.bytes = defaultdict(int)
+        self.counts = defaultdict(int)
 
-    def allow(self, ws, size):
-        now = self.clock()
-        q = self.hits[ws]
-        while q and q[0][0] <= now - 60_000:
-            _, expired = q.popleft()
-            self.bytes[ws] -= expired
-        if len(q) >= PARTS_PER_MIN or self.bytes[ws] + size > PART_BYTES_PER_MIN:
-            return False
-        q.append((now, size))
-        self.bytes[ws] += size
-        return True
+    def allow(self, ws, size, *, count=1, check_only=False):
+        with self.lock:
+            now = self.clock()
+            q = self.hits[ws]
+            while q and q[0][0] <= now - 60_000:
+                _, expired, requests = q.popleft()
+                self.bytes[ws] -= expired
+                self.counts[ws] -= requests
+            if (
+                self.counts[ws] + count > PARTS_PER_MIN
+                or self.bytes[ws] + size > PART_BYTES_PER_MIN
+            ):
+                return False
+            if not check_only:
+                q.append((now, size, count))
+                self.bytes[ws] += size
+                self.counts[ws] += count
+            return True
 
 
 def install(app, settings):
     store = Store(os.path.dirname(settings.db_path))
     limiter = _Limiter(settings.clock)
-    part_limiter = _PartLimiter(settings.clock)
+    part_limiter = store.part_limiter = _PartLimiter(settings.clock)
     router = APIRouter(prefix="/v1/ws/{ws}")
 
     def ok(body, status=200):
@@ -913,6 +966,18 @@ def install(app, settings):
         signed_ws, sid, path, position = route
         if signed_ws != request.scope.get("orch_ws"):
             raise Refusal(403, "wrong_workspace")
+        if not _ID.fullmatch(sid) or sid != request.path_params.get("sid"):
+            raise Refusal(404, "not_found")
+        length = request.headers.get("content-length")
+        if length is not None:
+            try:
+                size = int(length)
+            except ValueError:
+                raise Refusal(400, "malformed") from None
+            if size < 0:
+                raise Refusal(400, "malformed")
+            if not part_limiter.allow(signed_ws, size, check_only=True):
+                raise Refusal(429, "rate_limited")
         body = await request.body()
         return await guarded(
             request,

@@ -3460,9 +3460,15 @@ finalization is `unchanged`, `received == size`, `done: true` (until commit, whi
 A client that lost a `done:true` reply rediscovers the state with a zero-length part at its last known offset.
 Finalizing a complete but unpresent file after interruption returns `stored`; an already finalized file returns
 `unchanged`. Hashing uses 1 MiB chunks outside the write transaction; a short second transaction rechecks staged
-state, `present=0`, and file identity and size before marking present or unlinking a mismatched file.
-Parts have a separate per-workspace budget of 64 MiB and 600 requests per minute. Exhaustion returns
-429 `rate_limited`, with `received` when cheaply available.
+state, manifest size and SHA-256, and file identity (`st_dev`, `st_ino`, `st_size`, `st_mtime_ns`,
+`st_ctime_ns`) before marking present or unlinking a mismatched file. Finalization is single-flight per
+`(sid, path)` in process; waiting requests re-read the DB and matching finalized parts return `unchanged`
+with `done: true`.
+Parts have a separate per-workspace budget of 64 MiB and 600 requests per minute. Each started finalization
+hash additionally charges the manifest file size to that byte budget, including zero-length rediscovery
+requests. Exhaustion returns 429 `rate_limited`. The budget is checked before reading a part body when
+Content-Length is known, and checked and charged again using the actual body length after reading.
+A non-ASCII raw path returns 404 `not_found` on every signed Publish API route, not only parts.
 
 Partial bytes occupy the normal staging file, `incoming/<sid>/files/<path>`, while `share_files.present = 0`.
 The file's current size is `received` (zero if absent); there is no side file or new storage layout.

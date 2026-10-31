@@ -65,6 +65,26 @@ def sign_with(key, label: str, o: Json, exporter: bytes = TEST_EXPORTER) -> Json
     return {"o": o, "sig": b64u(S.sign(key, msg))}
 
 
+def signed_publish_where(
+    *,
+    seq: int = 1,
+    server: str = "https://pub.example.org",
+    share: str = "https://apps.example.org",
+    hub_id: str | None = None,
+    dev: bool = True,
+    key: str = "hk_op",
+) -> Json:
+    """A ``hub.publish_where`` (protocol 10.9.1) signed by ``key`` (the vector HK_op by default), test support."""
+    from orch.canon.jcs import dumps as cj
+    from orch.hubclient.publish_where import SIG_PUBLISH_WHERE
+
+    o = {
+        "v": 2, "suite": 2, "kind": "hub.publish_where", "hv": 0, "hub_id": hub_id or V["ids"]["hub"], "server": server,
+        "share": share, "seq": seq, "issued_ms": V["now_ms"], "dev": dev,
+    }  # fmt: skip
+    return {"o": o, "sig": b64u(S.sign(private_key(key), SIG_PUBLISH_WHERE + cj(o)))}
+
+
 class BareLink:
     """Mixin for an in-process ``HubTransport`` with a ``send(message)`` method: ``HubLink`` numbers and signs through
     ``send_next`` like a real link (one counter per transport, the fake exporter ``TEST_EXPORTER``)."""
@@ -380,7 +400,7 @@ class FakeHub(BareLink):
         self.published_cards[ws_id] = body["card"]
         if self.invites is not None:
             self.invites.pop(body["invite"], None)  # single use, consumed by a successful join
-        return {}
+        return dict(getattr(self, "join_answer", None) or {})  # set by a test: {"publish_where": ...} (#1838)
 
     def _op_card_put(self, body: Json, ws_id: str, ws: _Ws | None) -> Json:
         pin = self.pins.get(ws_id)

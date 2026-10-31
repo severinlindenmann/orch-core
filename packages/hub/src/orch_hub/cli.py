@@ -80,7 +80,16 @@ def _parser() -> argparse.ArgumentParser:
         required=True,
         help="orch-publish base URL (https, or http on loopback, private or 100.64/10 addresses)",
     )
-    sv.add_argument("--api-host", help="host the workspaces sign (default: the host:port of --publish-url)")
+    sv.add_argument(
+        "--api-host",
+        help="host the workspaces sign (default: the host:port of --publish-url); with --publish-share-url it is also "
+        "the public API origin the hub signs in its publish_where: https://<api-host> (http on loopback for a dev hub)",
+    )
+    sv.add_argument(
+        "--publish-share-url",
+        help="the public origin of the share links, https://name[:port] (http on loopback for a dev hub); with "
+        "--api-host the hub signs and serves both as its publish_where (#1838). Never the private --publish-url",
+    )
     sv.add_argument("--invite", action="append", default=[], help="invite code accepted once (repeatable)")
     sv.add_argument(
         "--web-listen",
@@ -273,6 +282,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 link_ws_public=args.link_ws_public,
                 link_ws_behind_front=args.link_ws_behind_front,
                 api_host=args.api_host,
+                publish_share_url=args.publish_share_url,
                 web_listen=args.web_listen,
                 relay_url=args.relay_url,
                 trusted_peers=frozenset(args.trusted_peer),

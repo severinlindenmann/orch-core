@@ -23,6 +23,8 @@ import { GateNotes } from './Gates'
 import { TicketHeader, TicketProgressLive } from './Header'
 import { FollowupBanner, FollowupLine } from '../schedules/FollowupStrip'
 import { History } from './History'
+import { Work } from './Work'
+import { PreviewTag } from '../focus/live/parts'
 import { Overview } from './Overview'
 import { Questions } from './Questions'
 import { Raw } from './Raw'
@@ -240,6 +242,7 @@ export function TicketPage({ ticketKey }: { ticketKey: string }) {
               Results
               <span className="font-mono text-[11px] text-text-faint">{ticket.artifacts.length}</span>
             </TabsTrigger>
+            {!isRealHost() && <TabsTrigger value="work">Work <PreviewTag className="px-0.5 text-[8px]" /></TabsTrigger>}
             <TabsTrigger value="history">History</TabsTrigger>
           </TabsList>
           <TabsContent value="overview">
@@ -259,6 +262,7 @@ export function TicketPage({ ticketKey }: { ticketKey: string }) {
           <TabsContent value="artifacts">
             <Artifacts {...props} focus={focus} />
           </TabsContent>
+          {!isRealHost() && <TabsContent value="work"><Work {...props} /></TabsContent>}
           <TabsContent value="history">
             <History {...props} />
           </TabsContent>

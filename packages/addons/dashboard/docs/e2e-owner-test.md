@@ -35,7 +35,7 @@ from the decided design and becomes runnable when the relay pairing ships.
 | B7 | Settings: General, Members, Gates, Records; the switcher with a second workspace if you have one | every page loads; settings changes ask for a signature | an error box with a raw host error |
 | B8 | Quick tasks (`/w/TEST/quick`): add one (two signatures), "Make a normal ticket", close one | the dialogs show which labels are removed and kept; the list updates live | |
 | B9 | Records (Settings → Records): Commit; with a remote, Commit and push | the push confirm shows the export warning with the **last known** destination; a failure shows the tool's own output in a separate box | the push publishes without the warning |
-| B10 | Terminals (once M7 is merged): open your own shell, type, open the same terminal in a second tab | the second tab is read-only with "Take control"; closing the writer releases control | two tabs both typing; output in the server log |
+| B10 | Command window (once M7 is merged): open your own shell, type, open the same terminal in a second tab | the second tab is read-only with "Take control"; closing the writer releases control | two tabs both typing; output in the server log |
 
 ## Part C: stop, restart, undo (first-use step 8)
 

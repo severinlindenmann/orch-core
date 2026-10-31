@@ -93,7 +93,7 @@ export const SCENARIOS: TourScenario[] = [
     { title: 'GitHub', detail: 'Review on GitHub, Approve; the issues lane on the Board imports an issue as a ticket.', go: { path: '/addon/github/reviews' } },
     { title: 'Usage', detail: 'Overview and By model; every number says its period.', go: { path: '/addon/usage/overview' } },
     { title: 'Wiki', detail: 'Open a page, edit it, link it to a ticket.', go: { path: '/addon/wiki/pages' } },
-    { title: 'Terminals', detail: 'Run `orch status`, `git log`, arrow-up history; an agent mirror is read-only.', go: { path: '/addon/terminals/sessions' } },
+    { title: 'Command window', detail: 'Run `orch status`, `git log`, arrow-up history; an agent mirror is read-only.', go: { path: '/addon/terminals/sessions' } },
     { title: 'Estimate', detail: 'Estimate a card in its ticket panel; the Board column shows the sum.', go: { path: '/board' } },
     { title: 'Work copies', detail: 'Add a work copy, Remove is refused on a dirty one, Open terminal here.', go: { path: '/addon/worktrees/worktrees', dataset: 'busy' } },
     { title: 'Quick tasks', detail: 'Add, close with proof, make a ticket, the outgrew decision.', go: { path: '/addon/quick/quick', dataset: 'busy' } },

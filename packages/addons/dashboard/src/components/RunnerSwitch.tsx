@@ -86,7 +86,7 @@ export function RunnerSwitch({ ws, on, initiallyOpen = false, onClosed, terminal
       {on && withTerminals && (
         <label className="flex items-center gap-2 text-text-muted">
           <input type="checkbox" data-testid={`${testId}-terminals`} checked={terminals} disabled={busy} onChange={(e) => { setTerminals(e.target.checked); void read(e.target.checked) }} />
-          Also allow terminals in the dashboard (an extra: a shell that runs as you)
+          Also allow the Command window in the dashboard (an extra: a shell that runs as you)
         </label>
       )}
       {error && <p role="alert" id={errorId} data-testid={`${testId}-error`} className="text-warning">{error}</p>}

@@ -472,7 +472,7 @@ def handle_remote_set(ctx: Context, args: dict[str, Any]) -> Result:
     level, premises, days = args["level"], args["premises"], args.get("days")
     if days is None and (premises == "yes" or level == "terminals"):
         raise OrchError(
-            "invalid.input", "remote access needs an end date here (a computer at a customer's place, or Terminals)"
+            "invalid.input", "remote access needs an end date here (a customer's place, or the Command window level)"
         )
     if premises == "yes" and facts.hub_mode == "full":
         raise OrchError("remote.needs_selective", "remote access is off while the hub reads this workspace (full mode)")

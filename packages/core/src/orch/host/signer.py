@@ -276,6 +276,12 @@ def _person_op(prepared: Mapping[str, Any]) -> None:
         _refuse(f"{op} carries a manual acceptance statement")
     events = prepared["events"]
     for e in events:  # every event, before the op-specific dispatch below (which returns at its first unknown op)
+        if e["type"] == "log.added":  # reserved approval lines are written only by their own click op
+            from orch.publishclient.approval import reserved_note_op
+
+            owner = reserved_note_op(e.get("text"))
+            if owner is not None and owner != op:
+                _refuse(f"{op} cannot write a note that starts with the approval line of {owner}")
         label = e.get("label")
         if (
             e["type"] in ARTIFACT_TYPES
@@ -335,6 +341,16 @@ def _person_op(prepared: Mapping[str, Any]) -> None:
                 and ticket is not None
                 and isinstance(e.get("text"), str)
                 and e["text"].startswith(MARK + "\n")
+            )
+        elif op == "app.release":  # #1457: one note on a ticket, whose words are the host-built release text
+            from orch.publishclient.approval import APP_MARK
+
+            ok = (
+                e["type"] == "log.added"
+                and log != "workspace"
+                and ticket is not None
+                and isinstance(e.get("text"), str)
+                and e["text"].startswith(APP_MARK + "\n")
             )
         elif op in ("hub.join", "hub.mode"):
             # V3 C2a/C2b: one hub.joined on the workspace log, exactly the contract's members. hub.mode only ever
@@ -843,6 +859,7 @@ _PLAIN = {
     "settings.set": "change the workspace settings {set}",
     "people.set": "change the {role} of {ticket}",
     "publish.share": "let the staged copy of files of {ticket} be shared outside this computer",
+    "app.release": "let the staged app release of {ticket} go live",
     "hub.join": (
         "join hub {hub_id} in {mode} mode: the hub sees only what you share, plus this workspace's name, "
         "and never gets the workspace key"

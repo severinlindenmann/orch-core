@@ -163,6 +163,21 @@ describe('the hub admin asks for an update (HUB-WS-04)', () => {
   })
 })
 
+describe('the hub is being removed (#1463)', () => {
+  it('shows only our own words and Leave opens the normal leave review', async () => {
+    const view = hubPage('closing', '/w/DEMO')
+    const banner = await screen.findByTestId('hub-closing-banner', {}, T)
+    expect(within(banner).getByText('Your company hub is being removed.')).toBeTruthy()
+    await view.user.click(within(banner).getByTestId('hub-leave-closing'))
+    expect(await screen.findByText('Leave the hub', {}, T)).toBeTruthy()
+    expect(screen.queryByText('Leave without the hub')).toBeNull()
+    cleanup()
+    hubPage('full', '/w/DEMO')
+    await screen.findByTestId('hub-chip', {}, T)
+    expect(screen.queryByTestId('hub-closing-banner')).toBeNull()
+  })
+})
+
 describe('stopping sharing one ticket', () => {
   it('reviews what stops and offers one Stop sharing button: no terminal command, no typed word, no backup key', async () => {
     const view = hubPage('selective')

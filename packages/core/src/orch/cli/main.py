@@ -327,6 +327,10 @@ def main(
         from orch.migrate.cli import main as migrate_main
 
         return migrate_main(args[1:], env=env, out=out, err=err)
+    if args[:1] == ["update"]:  # orch itself, with its data (orch.update): a person's command, not a registry op
+        from orch.cli.update import main as update_main
+
+        return update_main(args[1:], env=env, out=out, err=err)
     if args[:1] == ["install"]:  # hub, relay and publish as background services of this person (run-9 fb 6)
         from orch.install.cli import main as install_main
 

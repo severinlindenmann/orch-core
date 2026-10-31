@@ -2,6 +2,8 @@
 // General and Address are editable (one Save per card, plain clicks, no typed confirm word). The page signs nothing: the
 // hub checks every value again, writes it to its settings file and records the change in its audit log.
 import { loading } from "../feel.js";
+import { hubRemoveDigest, signProof } from "../channel.js";
+import { hex } from "../cj.js";
 import { chip, h, text, when } from "../ui.js";
 import { WHY as COMPANY_WHY, begin as beginCompany, companyCard } from "../oidc.js";
 
@@ -186,11 +188,11 @@ function wordsInput(id) {
 }
 
 /** Password + code, then one button. `onSubmit({password, totp})` resolves nothing; the page re-renders afterwards. */
-function stepUpForm(id, label, onSubmit, withWords = false, onCancel = null) {
+function stepUpForm(id, label, onSubmit, withWords = false, onCancel = null, cls = "primary") {
   const words = withWords ? wordsInput(id) : null;
   const pw = h("input", { id: id + "-pw", type: "password", autocomplete: "current-password", "aria-label": "Password" });
   const code = h("input", { id: id + "-totp", inputmode: "numeric", autocomplete: "one-time-code", maxlength: "6", "aria-label": "6-digit code" });
-  const go = h("button", { type: "button", class: "primary", text: label, onclick: async () => {
+  const go = h("button", { type: "button", class: cls, text: label, onclick: async () => {
     const body = { password: pw.value ?? "", totp: String(code.value ?? "").trim() };
     if (words) body.words = words.get();
     pw.value = ""; code.value = "";
@@ -334,6 +336,131 @@ function backupCard(b, actions) {
   return card;
 }
 
+// --- Danger zone: Remove hub (#1463). One sheet, the step-up fields, one red button, no typed word. -----------------------
+const RM_WHY = {
+  hub_closing: "The hub is already being removed.",
+  bad_credentials: WHY.bad_credentials,
+  bad_channel_proof: "The signature was not accepted.",
+  factor_too_weak: "Sign in again with your password and a new code, then try once more.",
+  nonce_invalid: "This request ran out. Try again.",
+  nonce_used: "This request was already used. Try again.",
+  no_backup_key: "Set up the backup words first.",
+  removal_failed: "The hub could not be removed. Nothing was changed.",
+  preflight_failed: "The hub is not ready to be removed. Nothing was changed.",
+  rate_limited: "Too many tries. Wait a moment and try again.",
+  forbidden_role: "Only an admin can remove the hub.",
+  cancel_refused: "The hub has already withdrawn company content. Finish removing it, or restore the last backup.",
+};
+const RM_STEP = {
+  closing: "Stopping changes",
+  preflight: "Checking everything is ready",
+  backed_up: "Last backup made",
+  withdrawn: "Company secrets, skills and tools withdrawn",
+  notified: "Workspaces told",
+  ordered: "Taking this hub down",
+  stalled: "Removing stopped part way",
+  failed: "Removing failed",
+};
+
+/** The facts of the sheet, in plain words, from the preview. */
+export function removeFacts(pv) {
+  const n = Number(pv.workspaces) || 0;
+  const out = [(n === 1 ? "1 workspace is" : n + " workspaces are") + " connected. They keep working on their own and are asked to leave. Published links and shared spaces stop. Company secrets, skills and tools are withdrawn.",
+    "A last backup is kept in your home folder" + (pv.backup_folder_hint ? " (" + text(pv.backup_folder_hint) + ")" : "") + ". You need the 24 backup words to restore it."];
+  if (pv.relay || pv.publish) out.push("The relay and publish service on this server are removed too.");
+  return out;
+}
+
+function removeStatusLines(st) {
+  const lines = [h("p", { role: "status", "data-step": st.state, text: text(st.plain || RM_STEP[st.state] || "Removing") })];
+  if (Number(st.total) > 0 && st.state === "notified") lines.push(h("p", { class: "small muted", text: Number(st.told) + " of " + Number(st.total) + " workspaces told" }));
+  return lines;
+}
+
+/** The Danger zone card. `rm` is {preview, status}; `ac` is actions.remove ({start, status, cancel, poll}). */
+export function removeCard(rm, ac = {}) {
+  const slot = h("div", { class: "remove-sheet", "data-sheet": "remove" });
+  const poll = { pause: 1000, goneMs: 10000, ...(ac.poll ?? {}) };
+  const say = (code, plain) => text(RM_WHY[code] ?? plain ?? "This did not work. Nothing was changed.");
+  const close = () => slot.replaceChildren();
+  async function watch() {
+    let misses = 0;
+    for (;;) {
+      let st = null;
+      try { st = await ac.status?.(); } catch { st = null; }
+      if (!st) {
+        misses++;
+        if (misses * poll.pause >= poll.goneMs) { slot.replaceChildren(h("p", { role: "status", "data-gone": "", text: "The hub is gone." })); return "gone"; }
+      } else {
+        misses = 0;
+        const kids = removeStatusLines(st);
+        if (st.state === "stalled") kids.push(h("p", { class: "small muted", text: "Removing stopped part way. Sign in again to finish." }), startForm("Finish removing"));
+        if (st.state === "failed" || st.result?.ok === false) kids.push(h("p", { role: "alert", text: say(st.result?.code, st.result?.plain) }));
+        if (st.cancel_allowed) kids.push(h("button", { type: "button", "data-act": "cancel", text: "Cancel", onclick: async () => {
+          const x = await ac.cancel?.();
+          if (x?.ok) close(); else slot.append(h("p", { role: "alert", text: say(x?.error, x?.plain) }));
+        } }));
+        slot.replaceChildren(...kids);
+        if (st.state === "stalled" || st.state === "failed") return st.state;
+        if (st.result?.ok === true) return "done";
+      }
+      await new Promise((r) => setTimeout(r, poll.pause));
+    }
+  }
+  function startForm(label) {
+    return stepUpForm("rm", label, async (c) => {
+      const x = await ac.start?.(c);
+      if (x?.ok) { slot.replaceChildren(h("p", { role: "status", text: "Removing. This page will stop answering." })); return watch(); }
+      if (x?.reauth) return ac.reauth?.();
+      slot.append(h("p", { role: "alert", "data-why": "", text: say(x?.error, x?.plain) }));
+    }, false, close, "primary danger");
+  }
+  function sheet() {
+    const pv = rm.preview ?? {};
+    const kids = [h("h3", { text: "Remove this hub" }), ...removeFacts(pv).map((t) => h("p", { text: t }))];
+    if (pv.refusal) kids.push(h("p", { role: "alert", text: text(pv.refusal) }));
+    if (pv.backup_key_ok === false) kids.push(h("p", { role: "alert", text: "Set up the backup words first." }), h("button", { type: "button", text: "Close", onclick: close }));
+    else if (!pv.refusal) kids.push(startForm("Remove this hub"));
+    slot.replaceChildren(...kids);
+  }
+  const node = h("div", { class: "card", "data-card": "danger" }, h("h2", { text: "Danger zone" }),
+    h("p", { class: "small muted", text: "Removing the hub does not delete your workspaces. They keep working on their own." }),
+    h("button", { type: "button", "data-act": "remove-hub", text: "Remove hub", onclick: async () => {
+      if (rm.preview?.state && rm.preview.state !== "open") return watch();
+      sheet();
+    } }), slot);
+  if (rm.preview?.state && rm.preview.state !== "open") void watch();
+  return node;
+}
+
+/** The actions behind the Danger zone card: prepare, check the digest here, sign with this browser's key, confirm. */
+export function removeActions(d) {
+  const err = (x) => ({ ok: false, error: x.body?.error, plain: x.body?.plain });
+  return {
+    poll: d.removePoll,
+    reauth: () => d.reauthView(),
+    status: async () => { const x = await d.api("GET", "/admin/hub/remove/status"); return x.status === 200 ? x.body : null; },
+    cancel: async () => { const x = await d.api("POST", "/admin/hub/remove/cancel", {}); return x.status < 300 ? { ok: true } : err(x); },
+    start: async (c) => {
+      const me = d.state.me;
+      if (!me) return { ok: false, plain: "Register this browser first." };
+      const p = await d.api("POST", "/admin/hub/remove/prepare", { channel_id: me.channelId });
+      if (p.status === 403 && p.body?.error === "reauth_required") return { reauth: true };
+      if (p.status !== 200) return err(p);
+      let digest;
+      try {
+        digest = await hubRemoveDigest(p.body.ctx);
+        if (p.body.ctx.kind !== "orch.hub_remove.v1" || p.body.ctx.nonce !== p.body.nonce || p.body.ctx.hub_id !== me.hubId || p.body.ctx.user_id !== me.userId || hex(digest) !== p.body.digest) throw new Error("mismatch");
+      } catch { return { ok: false, plain: "The request could not be checked, so nothing was signed. Nothing was changed." }; }
+      let proof;
+      try { proof = await signProof(me.pair.privateKey, digest); } catch { return { ok: false, plain: "This browser could not sign. Nothing was changed." }; }
+      const x = await d.api("POST", "/admin/hub/remove/confirm", { nonce: p.body.nonce, proof, password: c.password, totp: c.totp });
+      if (x.status === 403 && x.body?.error === "reauth_required") return { reauth: true };
+      return x.status === 202 ? { ok: true } : err(x);
+    },
+  };
+}
+
 export function hubSettingsView(data, actions = {}) {
   if (!data.configured) {
     return h("div", { class: "hub-settings" }, h("h1", { text: "Hub settings" }),
@@ -348,7 +475,8 @@ export function hubSettingsView(data, actions = {}) {
     h("div", { class: "card", "data-card": "sign-in" }, h("h2", { text: "Sign-in" }),
       (data.sign_in ?? []).map((m) => row(m.label, m.on ? m.note : null, m.on)),
       h("p", { class: "small muted", text: "Always on: the password and the code make the key that approves things, so they cannot be turned off." }),
-      data.company_login ? companyCard(data.company_login, actions.company ?? {}, { inside: true }) : null));
+      data.company_login ? companyCard(data.company_login, actions.company ?? {}, { inside: true }) : null),
+    data.remove ? removeCard(data.remove, actions.remove ?? {}) : null);
 }
 
 // Wait until the restarted hub answers again (it keeps its port), at most about 30 seconds.
@@ -376,6 +504,8 @@ export async function hubSettingsPage(d, detected = [], words = null) {
     if (co.status === 200 && typeof co.body?.has_secret === "boolean") r.body.company_login = co.body; // the company login card (its own key: `company` is the company name), when the hub has the routes
     const bk = await d.api("GET", "/admin/backup");
     if (bk.status === 200) r.body.backup = bk.body;
+    const rv = await d.api("GET", "/admin/hub/remove/preview");
+    if (rv.status === 200) r.body.remove = { preview: rv.body };
     const say = (ok, x) => { d.state.notice = x.status < 300 ? d.banner("ok", ok, null) : d.banner("bad", "Not changed", WHY[x.body.error] ?? d.say(x.body.error ?? "unavailable")); };
     const backupNote = (x, ok) => { d.state.notice = x.status < 300 ? d.banner("ok", ok, null) : d.banner("bad", "Not done", WHY[x.body.error] ?? d.say(x.body.error ?? "unavailable")); };
     // P07: the result of Back up now and Download shows in the Backup card, not at the top of the page. It lives for one render.
@@ -387,6 +517,7 @@ export async function hubSettingsPage(d, detected = [], words = null) {
     const actions = {
       detected,
       words,
+      remove: removeActions(d),
       wordsMayShow: wordsMayShow(globalThis.location, (r.body.addresses ?? []).filter((a) => a.kind === "private").map((a) => a.web)),
       copy: async (t) => { try { await globalThis.navigator?.clipboard?.writeText(t); return true; } catch { return false; } },
       wordsSaved: async () => {

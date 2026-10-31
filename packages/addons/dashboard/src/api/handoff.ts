@@ -81,6 +81,8 @@ export type HandoffAction =
   | { action: 'publish_setup'; server: string; share: string }
   /** Publish (P6): a person's signature over the exact words of one staged copy (`publish.share`), one click. */
   | { action: 'publish_share'; key: string; staged_id: string }
+  /** Apps (#1457): a person's signature over the exact words of one staged app release (`app.release`), one click. */
+  | { action: 'app_release'; key: string; staged_id: string }
   /** The runner grant, deposited by the signer. */
   | { action: 'runner_grant'; hours: number; scope: 'workable' | 'all'; extend?: string }
 

@@ -703,7 +703,9 @@ def test_a_note_an_agent_wrote_with_the_same_words_is_no_signature(w):
     staged = w.prepare(key, "report.md")
     agent = w.served.client()
     ok(agent.req("claim", {"ref": key}, grant=w.served.grant, session=SESSION, idem=True))
-    ok(agent.req("log", {"text": staged["words"], "ref": key}, grant=w.served.grant, session=SESSION, idem=True))
+    # the ordinary note op refuses the reserved first line outright (F1); the send finds no signature either way
+    res = agent.req("log", {"text": staged["words"], "ref": key}, grant=w.served.grant, session=SESSION, idem=True)
+    assert err(res) == "invalid.input"
     assert err(w.send(staged["staged_id"])) == "publish.not_approved"
     assert w.server.requests == []
 
@@ -1517,3 +1519,69 @@ def test_a_label_refused_again_is_not_retried_forever(w):
     w.server.fail.extend([("PUT", r"/shares/[0-9a-f]{32}$", 400, "bad_label")] * 2)
     assert err(w.send(staged))
     assert len([r for r in w.server.requests if r["method"] == "PUT"]) == 2
+
+
+def test_an_app_release_cannot_be_prepared_without_a_staged_release_the_host_built(w):
+    """#1457: ``app.release`` names only a staged release; with none from the host module nothing is prepared, so nobody
+    (and no agent) can obtain a signature over words of their own."""
+    res = w.human.prepare_res("app.release", {"staged_id": "pa_" + "1" * 32})
+    assert err(res) == "human_only"
+    res = w.human.prepare_res(
+        "app.release", {"staged_id": "pa_" + "1" * 32, "text": "App approval: let an app go live"}
+    )
+    assert err(res) == "invalid.input"
+    res = w.human.prepare_res("app.release", {"staged_id": "ps_" + "1" * 32})
+    assert err(res) == "invalid.input"
+
+
+# -- reserved approval lines are written only by their own click op (Opus review of #1781, F1) -----------------------
+
+RESERVED = (approval.MARK, approval.APP_MARK)
+
+
+@pytest.mark.parametrize("line", RESERVED)
+def test_an_ordinary_person_note_cannot_start_with_a_reserved_approval_line(w, click, line):  # noqa: F811
+    from orch.click.protocol import ClickError
+
+    uid, key = w.ticket_with(**{"report.md": REPORT})
+    for text in (line, line + "\nTicket: " + key + "\nStaged copy: ps_" + "a" * 32):
+        with pytest.raises(ClickError):
+            click.prepare("log", {"ref": key, "text": text})
+    ok_note = click.prepare("log", {"ref": key, "text": "a normal note about the " + line.lower()})
+    assert ok_note["request_id"]  # the same words later in a note are not a reserved first line
+
+
+@pytest.mark.parametrize("line", RESERVED)
+def test_an_agent_note_cannot_start_with_a_reserved_approval_line(w, line):
+    uid, key = w.ticket_with(**{"report.md": REPORT})
+    ok(w.served.client().req("claim", {"ref": key}, grant=w.served.grant, session=SESSION, idem=True))
+    res = w.req("log", {"ref": key, "text": line + "\nTicket: " + key}, agent=True, idem=True)
+    assert err(res) == "invalid.input"
+    ok(w.req("log", {"ref": key, "text": "all fine"}, agent=True, idem=True))
+
+
+def test_the_signer_refuses_a_reserved_line_from_any_other_op(w):
+    """The signer's own check, independent of the registry: a note whose text starts with a reserved line is accepted
+    only under its own op, whatever else is right about it."""
+    from orch.host import signer
+
+    uid, key = w.ticket_with(**{"report.md": REPORT})
+    got = w.prepare(key, "report.md")
+    prepared = w.human.prepare("publish.share", {"staged_id": got["staged_id"]})
+    w.human.check(prepared)  # its own op: accepted
+    for op, text in (
+        ("log", prepared["events"][0]["text"]),  # the share approval written as an ordinary note
+        ("app.release", prepared["events"][0]["text"]),  # one approval kind under the other's op
+        ("publish.share", approval.APP_MARK + "\nTicket: " + key),
+        ("log", approval.APP_MARK + "\nTicket: " + key),
+        ("move", approval.APP_MARK + "\nTicket: " + key),
+    ):
+        bad = json.loads(json.dumps(prepared))
+        bad["op"], bad["events"][0]["text"] = op, text
+        with pytest.raises(signer.SignerRefused):
+            w.human.check(bad)
+    on_workspace = json.loads(json.dumps(prepared))
+    on_workspace["op"], on_workspace["log"] = "app.release", "workspace"
+    on_workspace["events"][0]["text"] = approval.APP_MARK + "\nTicket: " + key
+    with pytest.raises(signer.SignerRefused):
+        w.human.check(on_workspace)  # notes on the workspace log are refused too

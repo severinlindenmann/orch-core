@@ -123,6 +123,7 @@ def test_welcome_lists_exactly_the_registry_ops_and_the_host_ops(served):
         "settings.set",
         "people.set",
         "publish.share",
+        "app.release",
         "ac.accept",
         "ac.unaccept",
         "task.mark_done",

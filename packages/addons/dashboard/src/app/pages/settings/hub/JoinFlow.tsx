@@ -191,7 +191,7 @@ function ConnectStage({ ws, info, mode, onClose }: { ws: string; info: HubLinkIn
   }
   const check = () => {
     setState('working'); setWhy('')
-    api.refreshHub(ws).then(got => { if (got.confirmed === true) done(got.mode); else setState('waiting') }, failure)
+    api.refreshHub(ws).then(got => { if (got.confirmed === true) done(); else setState('waiting') }, failure)
   }
   useEffect(() => { if (!started.current) { started.current = true; run() } }, []) // eslint-disable-line react-hooks/exhaustive-deps
   return <div className="space-y-3" data-testid="hub-connect-stage">

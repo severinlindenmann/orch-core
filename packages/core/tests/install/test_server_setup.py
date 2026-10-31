@@ -1306,3 +1306,105 @@ def test_a_rerun_keeps_the_port_of_the_part_this_user_already_runs(tmp_path):
     assert load(ctx.layout)["parts"]["hub"]["port"] == 8100  # not 8103
     held.add(8101)  # a port held by something else is still refused or skipped, never taken over
     assert ctx.port_free(8101, "x") is False
+
+
+# ------------------------------------------------------------------------------------------------------ --hub-name
+
+NAME = "core.hub.example.com"
+
+
+def _name_setup(ctx, name=NAME, resolve=None, role="hub", **kw):
+    return server_setup(
+        ctx,
+        role,
+        names=kw.pop("names", server.Names()),
+        local=local,
+        hub_name=name,
+        resolve=resolve or (lambda n: [VPN]),
+        **kw,
+    )
+
+
+def test_hub_name_writes_one_private_http_entry_and_the_link_keeps_the_ip(tmp_path):
+    ctx, out, err, _ = stub_ctx(tmp_path, SystemdFake())
+    _name_setup(ctx, "Core.Hub.Example.com")  # upper case is normalised
+    card = json.loads((ctx.layout.data("hub") / "hub-settings.json").read_text())
+    assert card["addresses"] == [{"kind": "private", "web": f"http://{NAME}:8100", "link": f"{VPN}:8105"}]
+    argv, _ = ctx.runner.started["hub"]
+    assert argv[argv.index("--link-listen") + 1] == f"{VPN}:8105"
+    assert load(ctx.layout)["hub_name"] == NAME
+    assert f"http://{NAME}:8100" in out.getvalue() and "the name only" in out.getvalue()
+    assert "caddy" not in out.getvalue().lower()
+
+
+def test_a_rerun_without_the_flag_keeps_the_name(tmp_path):
+    ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+    _name_setup(ctx)
+    ctx2, *_ = stub_ctx(tmp_path, SystemdFake())
+    server_setup(ctx2, "hub", names=server.Names(), local=local, resolve=lambda n: [VPN])
+    card = json.loads((ctx2.layout.data("hub") / "hub-settings.json").read_text())
+    assert card["addresses"][0]["web"] == f"http://{NAME}:8100"
+    assert load(ctx2.layout)["hub_name"] == NAME
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "core",  # one label
+        "*.hub.example.com",
+        "-a.example.com",
+        "a-.example.com",
+        "a..example.com",
+        "core.hub.example.com.",
+        "core.hub.example.com:8100",
+        "100.64.7.9",
+        "[::1]",
+        "core_x.example.com",
+        "x" * 64 + ".example.com",
+        ".".join(["abcdefghi"] * 30),
+        "",
+    ],
+)
+def test_a_bad_hub_name_is_refused_before_anything_is_installed(tmp_path, bad):
+    ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+    with pytest.raises(InstallError, match="--hub-name"):
+        _name_setup(ctx, bad)
+    assert ctx.runner.started == {} and not load(ctx.layout)["parts"]
+
+
+def test_a_name_that_resolves_elsewhere_or_not_at_all_is_refused(tmp_path):
+    for answers, words in (([VPS], VPS), ([VPN, VPS], VPS), ([], "does not resolve"), (["100.64.7.10"], "100.64.7.10")):
+        ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+        with pytest.raises(InstallError, match=words):
+            _name_setup(ctx, resolve=lambda n, a=answers: a)
+        assert ctx.runner.started == {} and not load(ctx.layout)["parts"] and "hub_name" not in load(ctx.layout)
+
+
+@pytest.mark.parametrize(
+    "kw",
+    [
+        {"names": server.derive_names("example.com")},
+        {"names": server.derive_names(None, hub="hub.example.com")},
+        {"hub_vpn_only": True},
+        {"behind_proxy": True},
+        {"address": "127.0.0.1"},
+    ],
+)
+def test_hub_name_conflicts_are_refused(tmp_path, kw):
+    ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+    with pytest.raises(InstallError):
+        _name_setup(ctx, **kw)
+    assert ctx.runner.started == {} and not load(ctx.layout)["parts"]
+
+
+def test_hub_name_is_refused_for_the_edge_role(tmp_path):
+    ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+    with pytest.raises(InstallError, match="belongs to --role hub"):
+        _name_setup(ctx, role="edge")
+    assert ctx.runner.started == {}
+
+
+def test_hub_name_reaches_the_install_flag(tmp_path):
+    ctx, out, err, _ = stub_ctx(tmp_path, SystemdFake())
+    rc = cli.main(["server", "--role", "hub", "--hub-name", "NOT A NAME"], env=ctx.env, out=out, err=err, ctx=ctx)
+    assert rc == 1 and "--hub-name" in err.getvalue()

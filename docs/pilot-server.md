@@ -124,6 +124,24 @@ is installed (and, for the hub, the nightly backup copy).
 After the root block has run (and Caddy reloaded), open `https://hub.example.com` from a Mac on the private network. The
 first-admin link is printed by the hub setup.
 
+### Hub without a domain: `--hub-name`
+
+For a hub on the private network only, with no domain, no Caddy and no certificate:
+
+```
+orch setup --server --role hub --hub-name core.hub.example.com
+```
+
+- The name must be a private DNS record (or an `/etc/hosts` line) that points at the hub's private-network (VPN) address,
+  and at nothing else. The command checks this first and refuses (installing nothing) if the name does not resolve, or
+  resolves to any other address.
+- The console is plain http: `http://core.hub.example.com:8100`. The hub link keeps the IP (`100.x.y.z:8105`), so the
+  workspaces never depend on DNS.
+- The console then answers to the name only: the IP address no longer opens it. The name is the one address the phone
+  pairs with.
+- Not combinable with `--domain`, `--domain-hub`, `--hub-vpn-only` or `--behind-proxy`; hub role only. A rerun without the
+  flag keeps the name. The name comes only from the install: Settings in the console never adds one.
+
 ## 5b. Public relay and publish through the private network's proxy
 
 The production server needs no public port except SSH when the private network's public proxy fronts the relay and

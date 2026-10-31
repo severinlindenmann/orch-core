@@ -78,6 +78,38 @@ def _clean(name: str, flag: str) -> str:
     return n
 
 
+_LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
+
+
+def check_hub_name(given: str) -> str:
+    """``--hub-name``: a strict private host name (lower-cased). No wildcard, IP literal, port or trailing dot."""
+    n = given.strip().lower()
+    bad = InstallError(f"--hub-name {given!r}: that is not a host name (example: core.hub.example.com)")
+    if not n or len(n) > 253 or n.endswith(".") or "*" in n or ":" in n:
+        raise bad
+    labels = n.split(".")
+    if len(labels) < 2 or not all(_LABEL.fullmatch(x) for x in labels):
+        raise bad
+    if all(x.isdigit() for x in labels):  # a dotted number is an IP literal, not a name
+        raise bad
+    return n
+
+
+def check_hub_name_target(name: str, vpn_ip: str, resolve: Callable[[str], list[str]]) -> None:
+    """The name must resolve, and EVERY answer must be the hub's private-network address."""
+    got = sorted(set(resolve(name)))
+    if not got:
+        raise InstallError(
+            f"--hub-name {name}: it does not resolve. Make a private DNS record that points it at {vpn_ip}, then run "
+            "this command again."
+        )
+    if got != [vpn_ip]:
+        raise InstallError(
+            f"--hub-name {name} resolves to {', '.join(got)}, not only to this hub's private-network address "
+            f"{vpn_ip}. Fix the DNS record so it points at {vpn_ip} only."
+        )
+
+
 def derive_names(
     base: str | None, hub: str | None = None, relay: str | None = None, publish: str | None = None
 ) -> Names:

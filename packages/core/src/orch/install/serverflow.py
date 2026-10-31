@@ -138,6 +138,7 @@ def server_setup(
     drop_check: Callable[[str], None] = server.check_drop_path,
     bus_check: Callable[[str], None] | None = None,
     behind_proxy: bool = False,
+    hub_name: str | None = None,
 ) -> Plan:
     """Install the parts of ``role`` for this OS user. ``resolve``/``local`` are the DNS seams of the tests."""
     if role not in ROLES:
@@ -154,6 +155,20 @@ def server_setup(
         raise InstallError(
             "--behind-proxy listens on the private-network address only: no --address, no --hub-vpn-only"
         )
+    saved_name = (load(ctx.layout).get("hub_name") if role == "hub" else None) if hub_name is None else None
+    if hub_name is not None:
+        if role != "hub":
+            raise InstallError("--hub-name belongs to --role hub")
+        if names.hub or hub_vpn_only or behind_proxy:
+            raise InstallError(
+                "--hub-name is for a hub without a domain (plain http on the private network): "
+                "not with --domain, --domain-hub, --hub-vpn-only or --behind-proxy"
+            )
+        hub_name = server.check_hub_name(hub_name)
+        if address in (P.ADDRESS_LOOPBACK, "localhost"):
+            raise InstallError("--hub-name needs the private-network address: not with --address 127.0.0.1")
+    elif saved_name and not (names.hub or hub_vpn_only or behind_proxy or address in (P.ADDRESS_LOOPBACK, "localhost")):
+        hub_name = saved_name  # a rerun keeps the name (it is checked again below)
     if backup_drop:
         drop_check(backup_drop)
     user = user or real_user()
@@ -196,13 +211,19 @@ def server_setup(
         if chosen and hub_vpn_only:  # the gate lets in the VPN's real network, not the whole 100.64.0.0/10
             plan.vpn_net = str(vpn_network(chosen, given_prefix))
         plan.loopback = loopback
+        if hub_name:
+            if not plan.vpn_ip:
+                raise InstallError("--hub-name needs the private-network (VPN) address of this computer")
+            server.check_hub_name_target(hub_name, plan.vpn_ip, resolve)  # before anything is stopped or written
 
     if behind_proxy:
         _proxied(ctx, plan, names, ifaces, vpn_ip, allow_non_cgnat, source=source, ref=ref, dev=dev)
         return plan
 
     if not wanted:
-        _fallback(ctx, plan, address=address, source=source, ref=ref, dev=dev, backup_drop=backup_drop)
+        _fallback(
+            ctx, plan, address=address, source=source, ref=ref, dev=dev, backup_drop=backup_drop, hub_name=hub_name
+        )
         return plan
 
     plan.dns = check_dns(wanted, resolve, mine)
@@ -283,6 +304,7 @@ def _fallback(
     ref: str | None,
     dev: bool,
     backup_drop: str | None = None,
+    hub_name: str | None = None,
 ) -> None:
     """No names: the IP:port behaviour of ``orch install`` (a private-network hub takes its VPN address)."""
     st = load(ctx.layout)
@@ -297,8 +319,18 @@ def _fallback(
             extra["workspace_side"] = False  # the edge user has no workspace; the Macs set publish up themselves
         if p == "hub" and not plan.loopback:
             extra["link_address"] = plan.vpn_ip
+            if hub_name:
+                extra["hub_name"] = hub_name
         recs[p] = install_part(ctx, p, address=addr, source=source, ref=ref, dev=dev, sync=False, **extra)
     sync_helper(ctx)
+    if hub_name:
+        st = load(ctx.layout)
+        st["hub_name"] = hub_name
+        save(ctx.layout, st)
+        ctx.say(
+            f"The hub console answers at http://{hub_name}:{recs['hub']['port']} (the name only, not the IP address)."
+        )
+        ctx.say(f"Each Mac must resolve {hub_name} to {plan.vpn_ip} (private DNS); the hub link stays on the IP.")
     for p, rec in recs.items():
         ctx.say(f"  {p} address: http://{rec['bind']}:{rec['port']}")
     _ops(

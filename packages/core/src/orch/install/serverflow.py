@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import getpass
 import json
+import os
+import pwd
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -98,6 +99,11 @@ def _ops(
         ctx.say(f"  nightly backup copy: {out} (sealed files; the hub itself makes the backup)")
 
 
+def real_user() -> str:
+    """The OS user this process runs as, from the password database by euid (not LOGNAME/USER, which anyone can set)."""
+    return pwd.getpwuid(os.geteuid()).pw_name
+
+
 def server_setup(
     ctx: Ctx,
     role: str,
@@ -116,6 +122,7 @@ def server_setup(
     allow_non_cgnat: bool = False,
     backup_drop: str | None = None,
     drop_check: Callable[[str], None] = server.check_drop_path,
+    bus_check: Callable[[str], None] | None = None,
 ) -> Plan:
     """Install the parts of ``role`` for this OS user. ``resolve``/``local`` are the DNS seams of the tests."""
     if role not in ROLES:
@@ -128,11 +135,15 @@ def server_setup(
         raise InstallError("--hub-vpn-only needs a name for the hub (--domain or --domain-hub)")
     if backup_drop:
         drop_check(backup_drop)
+    user = user or real_user()
+    if bus_check is not None:
+        bus_check(user)
+    elif sys.platform.startswith("linux") and ctx.runner.kind == "systemd":
+        server.ensure_user_bus(os.environ, os.geteuid(), user)  # before anything is installed
     check_block(ctx, parts)  # --port-base: refuse a busy port before anything is written
     ifaces = (local or (lambda: local_interfaces(lambda argv: ctx.run(argv, dict(ctx.env))[1])))()
     mine = {a.ip for a in ifaces}
     plan = Plan(role=role, parts=tuple(parts), names=names, vpn_only=hub_vpn_only)
-    user = user or getpass.getuser()
 
     if role == "hub":
         # Never wider than asked: an explicit loopback is honoured, no address means the VPN address, any other address

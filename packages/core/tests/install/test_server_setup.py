@@ -1121,3 +1121,44 @@ def test_command_for_exact_bind_keeps_loopback_loopback():
     kw = dict(binary=Path("/b"), data=Path("/d"), port=8101, publish_url=None, relay_url=None, dev=False)
     assert "127.0.0.1" in P.command_for("relay", address="127.0.0.1", exact_bind=True, **kw)
     assert "0.0.0.0" not in P.command_for("relay", address=VPS, exact_bind=True, **kw)
+
+
+# ---------------------------------------------------------------------------------------- sudo -iu: user bus
+
+
+def test_user_bus_is_found_when_linger_is_on_and_set_for_systemctl():
+    env: dict[str, str] = {}
+    server.ensure_user_bus(env, 1001, "orch-edge", exists=lambda p: p == "/run/user/1001/bus")
+    assert env == {"XDG_RUNTIME_DIR": "/run/user/1001", "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1001/bus"}
+    full = {"XDG_RUNTIME_DIR": "/run/user/5", "DBUS_SESSION_BUS_ADDRESS": "unix:path=/x"}
+    server.ensure_user_bus(full, 1, "u", exists=lambda p: False)  # both set: untouched, no check
+    assert full["XDG_RUNTIME_DIR"] == "/run/user/5"
+
+
+def test_no_user_bus_stops_before_installing_in_plain_words(tmp_path, monkeypatch):
+    with pytest.raises(InstallError, match=r"loginctl enable-linger orch-edge.*machinectl shell orch-edge@"):
+        server.ensure_user_bus({}, 1001, "orch-edge", exists=lambda p: False)
+    ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+    monkeypatch.setattr("sys.platform", "linux")
+    monkeypatch.setattr(server, "ensure_user_bus", lambda *a, **k: (_ for _ in ()).throw(InstallError("no session")))
+    with pytest.raises(InstallError, match="no session"):
+        server_setup(ctx, "edge", names=server.Names(), address="127.0.0.1", local=local, user="orch-edge")
+    assert not ctx.runner.started and not ctx.layout.root.exists()  # nothing installed
+
+
+def test_a_failing_system_command_is_plain_words_not_a_traceback(tmp_path):
+    import subprocess
+
+    ctx, out, err, _ = stub_ctx(tmp_path)
+
+    def boom(*a, **k):
+        raise subprocess.CalledProcessError(
+            1, ["systemctl", "--user", "daemon-reload"], stderr=b"Failed to connect to bus\n"
+        )
+
+    ctx.runner.start = boom
+    rc = cli.main(["relay", "--address", "127.0.0.1"], env=ctx.env, out=out, err=err, ctx=ctx)
+    assert rc == 1 and "Traceback" not in err.getvalue()
+    text = err.getvalue()
+    assert "systemctl --user daemon-reload" in text and "Failed to connect to bus" in text
+    assert "machinectl shell" in text and "linger" in text

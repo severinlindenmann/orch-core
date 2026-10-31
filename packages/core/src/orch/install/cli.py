@@ -593,6 +593,23 @@ def _report(ctx: Ctx, part: str, rec: dict[str, Any]) -> None:
         )
 
 
+def command_failed(e: subprocess.CalledProcessError) -> str:
+    """Plain words for a system command that failed (the command, its last output line, the usual fix)."""
+    cmd = " ".join(str(x) for x in e.cmd) if isinstance(e.cmd, (list, tuple)) else str(e.cmd)
+    raw = e.stderr or e.output or b""
+    text = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else str(raw)
+    last = " ".join(text.strip().splitlines()[-1:]) if text.strip() else f"exit code {e.returncode}"
+    last = "".join(ch if ch.isprintable() else " " for ch in last)[:200]
+    hint = ""
+    if cmd.startswith("systemctl --user"):
+        hint = (
+            " If this user has no systemd session: ask an administrator to run the linger line of the root block, "
+            "then log in with `sudo machinectl shell <user>@` (or set XDG_RUNTIME_DIR=/run/user/<id>) and run this "
+            "command again."
+        )
+    return f"a step failed: `{cmd}` ({last}).{hint}"
+
+
 def hub_console_url(rec: dict[str, Any]) -> str:
     if rec.get("console_url"):
         return rec["console_url"]
@@ -990,4 +1007,7 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextI
         return 0
     except InstallError as e:
         err.write(f"orch install: {e}\n")
+        return 1
+    except subprocess.CalledProcessError as e:  # never a raw traceback from a setup step
+        err.write(f"orch install: {command_failed(e)}\n")
         return 1

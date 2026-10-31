@@ -1782,7 +1782,7 @@ test('security review: Back on Review discards the review, so Create needs a new
 test('security review: setup says exactly what it adds to the folder, never that files stay untouched', async () => {
   const f = fake()
   const { container } = render(<Setup api={f.api} />)
-  expect(await screen.findByText("Setup adds orch's own files to this folder and a short orch section to a few instruction files.")).toBeVisible()
+  expect(await screen.findByText("Setup adds orch's own files to this folder and a few lines to AGENTS.md, CLAUDE.md and .gitignore.")).toBeVisible()
   const details = screen.getByText('What exactly changes?').closest('details')!
   expect(details).not.toHaveAttribute('open')
   expect(within(details).getByText(/Existing orch instructions may be updated/)).not.toBeVisible()

@@ -975,7 +975,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                     </p>
                   )}
                   <p>We will set this up in {folder}.</p>
-                  <p>Setup adds orch&apos;s own files to this folder and a short orch section to a few instruction files.</p>
+                  <p>Setup adds orch&apos;s own files to this folder and a few lines to AGENTS.md, CLAUDE.md and .gitignore.</p>
                   <details className="file-changes">
                     <summary>What exactly changes?</summary>
                     <p>Setup adds orch&apos;s own files to this folder (a hidden .orch folder, AGENTS.orch.md and skill folders) and an orch section in AGENTS.md, lines in CLAUDE.md that load the instructions, and one line in .gitignore to keep orch’s private folder out of git, creating these files if needed (and a git repository if you choose one). Existing orch instructions may be updated; other content in these three files stays as it is.</p>

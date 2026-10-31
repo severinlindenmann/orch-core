@@ -1,5 +1,5 @@
 {
-  "fingerprint": "c440b1ada0fc7521f257393615ba31cecb8fabd741b6a6d49486ef5ecbae7443",
+  "fingerprint": "08494beb97b405d8d8f64dafeb3a66604fdf1eac31eff6b2cc4ad34db57659e1",
   "format": 1,
   "kind": "hub",
   "sources": [
@@ -37,6 +37,7 @@
     "packages/hub/src/orch_hub/link/registry.py",
     "packages/hub/src/orch_hub/link/wkseal.py",
     "packages/hub/src/orch_hub/oidc/store.py",
+    "packages/hub/src/orch_hub/pubwhere.py",
     "packages/hub/src/orch_hub/router/queue.py",
     "packages/hub/src/orch_hub/serve.py",
     "packages/hub/src/orch_hub/services/helper_backends.py",

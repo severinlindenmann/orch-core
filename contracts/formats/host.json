@@ -1,5 +1,5 @@
 {
-  "fingerprint": "b07a532a37d5ca86436c0cf628d3bb611f681e5eab6bcaa9e37e347aa8a0daf5",
+  "fingerprint": "e7d150623e8f0aa37bd86bc59007c1ea3f89f8dcaecf65364f32f5606e9ddf03",
   "format": 1,
   "kind": "host",
   "sources": [
@@ -27,6 +27,7 @@
     "packages/core/src/orch/host/diff.py",
     "packages/core/src/orch/host/grantoff.py",
     "packages/core/src/orch/host/hubops.py",
+    "packages/core/src/orch/host/hubpublish.py",
     "packages/core/src/orch/host/marketinstall.py",
     "packages/core/src/orch/host/marketstate.py",
     "packages/core/src/orch/host/phonehints.py",

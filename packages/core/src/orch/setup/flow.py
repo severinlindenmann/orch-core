@@ -636,6 +636,7 @@ _LINK = re.compile(
 USAGE = (
     "usage: orch setup [--no-browser] [--role workspace|full|pick] [--address ADDRESS] [--port-base N]\n"
     "       orch setup --server --role hub|edge [--domain BASE] [--hub-vpn-only | --hub-name NAME]\n"
+    "                                                 [--trust-hub ID (edge only)]\n"
     "                                                 (a server, no workspace)\n"
     "  (run it in the folder you want to make a workspace; it asks what this computer should be, then opens the page)\n"
 )

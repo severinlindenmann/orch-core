@@ -584,18 +584,16 @@ def test_stderr_noise_next_to_a_valid_card_still_pins(home):
     assert [c[-1] for c in _trusts(calls)] == [HUB_ID]
 
 
-def test_the_real_orch_hub_card_is_accepted(tmp_path):
-    """Integration: the real `orch-hub keys init` and `keys card` (skipped when orch-hub is not importable here)."""
-    import subprocess
-    import sys
-
-    pytest.importorskip("orch_hub")
-    state = tmp_path / "hub"
-    base = [sys.executable, "-m", "orch_hub", "keys", "--state", str(state)]
-    for argv in (["init"], ["card"]):
-        r = subprocess.run([*base, *argv], capture_output=True, text=True)
-        assert r.returncode == 0, r.stderr
-    got = cli._card_hub_id(r.stdout)
+def test_the_real_orch_hub_card_is_accepted(tmp_path, capsys):
+    """Integration: the real `orch-hub keys init` and `keys card`, run in this process through the hub's own CLI
+    entry (skipped when orch-hub is not importable here). In process, not `python -m orch_hub`: in CI the hub is
+    importable here only through this interpreter's test path, which a child process does not inherit."""
+    hub_cli = pytest.importorskip("orch_hub.cli")
+    state = str(tmp_path / "hub")
+    assert hub_cli.main(["keys", "--state", state, "init"]) == 0
+    capsys.readouterr()  # init's own output is not the card
+    assert hub_cli.main(["keys", "--state", state, "card"]) == 0
+    got = cli._card_hub_id(capsys.readouterr().out)
     assert got is not None and len(got) == 32
 
 

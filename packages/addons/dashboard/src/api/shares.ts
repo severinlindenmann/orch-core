@@ -209,16 +209,55 @@ export const isUnknownWorkspace = (e: unknown): boolean => e instanceof ApiError
 /** Is this address one that opens only on this computer? */
 export const isLoopback = (origin: string | null): boolean => !!origin && /^http:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?$/.test(origin)
 
-/** What the two addresses mean for who can open the links. null: nothing to add (both public, or one is not known). */
-export function reachNote(server: string | null, share: string | null): string | null {
+/**
+ * What the two addresses mean for who can open the links. null: nothing to add (both public, or one is not known).
+ * "This computer" (and "nobody else") only when `from` says the Publish server is on this computer: a loopback address alone
+ * does not say so, a hub can be reached through one.
+ */
+export function reachNote(server: string | null, share: string | null, from: 'computer' | 'hub' | null = null): string | null {
   if (!server || !share) return null
   const s = isLoopback(server)
   const l = isLoopback(share)
-  const host = (o: string) => o.replace(/^https?:\/\//, '')
-  if (s && l) return 'Local test link: opens only on this computer, so nobody else can use it.'
-  if (l) return `Links open only on this computer, but files are uploaded to ${host(server)}, which other people can reach.`
-  if (s) return `Links open from ${host(share)}, which other people can reach; files are uploaded to this computer only.`
+  const here = from === 'computer'
+  if (s && l) return here ? 'Local test link: opens only on this computer, so nobody else can use it.' : null
+  if (l) return `Links open only ${here ? 'on this computer' : `at ${hostOf(share)}`}, but files are uploaded to ${hostOf(server)}, which other people can reach.`
+  if (s) return `Links open from ${hostOf(share)}, which other people can reach; files are uploaded to ${here ? 'this computer only' : hostOf(server)}.`
   return null
+}
+
+/** Where files go, by name and never by address: the one plain line every publish review keeps in its main view (full addresses stay in Details). */
+export function destinationLine(from: 'computer' | 'hub' | null | undefined, hubName?: string | null, server?: string | null): string | null {
+  if (!server) return null // unknown: no line, never a guess
+  if (from === 'hub') return hubName ? `Files go to your hub, ${hubName}.` : 'Files go to your hub.'
+  // "this computer" only when the Publish server on this computer is the known source; a loopback address alone does not say so (a hub can be reached through one)
+  if (from === 'computer') return 'Files go to this computer.'
+  return `Files go to ${hostOf(server)}.`
+}
+
+/** The host name of an address, parsed (never cut out by pattern). An address that does not parse is shown whole, as given. */
+export function hostOf(address: string): string {
+  try {
+    return new URL(address).hostname || address
+  } catch {
+    return address
+  }
+}
+
+/** The same address, compared by origin so a trailing slash does not matter; an address that does not parse is compared as given. */
+/** Two addresses name the same http(s) server. Fails closed: an address that does not parse, or has an opaque origin
+ * (`new URL('a:b').origin` is the string "null" for every non-http scheme), never matches anything, since this is
+ * the gate for a "this computer" or hub-name claim. */
+export function sameOrigin(a: string, b: string): boolean {
+  const origin = (x: string): string | null => {
+    try {
+      const o = new URL(x).origin
+      return o === 'null' ? null : o
+    } catch {
+      return null
+    }
+  }
+  const oa = origin(a)
+  return oa !== null && oa === origin(b)
 }
 
 export const adminCommand = (workspace: string | null, owner: string | null): string => `orch-publish admin ws allow ${workspace ?? 'WORKSPACE_ID'} ${owner ?? 'OWNER_ID'}`

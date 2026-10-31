@@ -349,8 +349,8 @@ def test_concurrent_joins_for_one_workspace_pin_exactly_one(hub):
     results = {}
 
     def go(name, pk, wsk):
-        c = hub.open(wsk=wsk, first=True)
-        try:
+        try:  # the handshake too: a loser that connects after the winner pinned is refused there (auth_failed)
+            c = hub.open(wsk=wsk, first=True)
             c.request("join", hub.join_body(f"inv{1 if name == 'a' else 2}", pk=pk, wsk=wsk))
             results[name] = "ok"
         except LinkError as e:
@@ -359,8 +359,13 @@ def test_concurrent_joins_for_one_workspace_pin_exactly_one(hub):
     ts = [threading.Thread(target=go, args=a) for a in (("a", "pk_alice", "wsk_a"), ("m", "pk_mallory", "wsk_b"))]
     [t.start() for t in ts]
     [t.join(10) for t in ts]
-    assert sorted(results.values()) == ["ok", "other_person"] or sorted(results.values()) == ["ok", "wsk_mismatch"]
-    assert hub.registry.pin(G.WS_A) is not None
+    assert sorted(results) == ["a", "m"]  # both finished with an answer
+    winners = [n for n, r in results.items() if r == "ok"]
+    assert len(winners) == 1  # exactly one pin, whichever came first
+    (loser,) = set(results) - set(winners)
+    assert results[loser] in ("other_person", "wsk_mismatch", "auth_failed")
+    pin = hub.registry.pin(G.WS_A)
+    assert pin is not None and pin["wsk_pub"] == G.K.b("wsk_a" if winners == ["a"] else "wsk_b")
 
 
 def test_link_opened_before_the_pin_dies_when_the_owner_joins_elsewhere(hub):

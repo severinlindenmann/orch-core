@@ -141,3 +141,16 @@ def test_workdir_delete_is_a_persons_op_needs_an_idem_and_refuses_a_running_fold
     ok(start(c, ticket=key, harness="codex", mode="work", spec=pre["spec"]))
     assert err(c.call("workdir.delete", {"ticket": key}, idem=True)) == "worktree.in_use"
     assert (Path(world.lab.root) / ".orch-work" / key).is_dir()
+
+
+def test_a_claude_agent_in_a_work_folder_gets_a_prompt_without_any_path(ready):  # noqa: F811
+    # run 16 P01: a path outside the work folder raised a hidden "read outside the working directories" question
+    world = ready
+    c = world.conn()
+    _, key = world.ticket()
+    pre = preview(c, ticket=key, harness="claude-code", mode="work")
+    assert pre["cwd"] == {"kind": "workdir", "ticket": key}
+    prompt_text = pre["argv"][-1]
+    assert prompt_text == f"Run orch status, then work on ticket {key}. Your rules are in your system prompt."
+    assert "--append-system-prompt-file" in pre["argv"]
+    assert not any(str(world.lab.root) in a for a in pre["argv"][5:])

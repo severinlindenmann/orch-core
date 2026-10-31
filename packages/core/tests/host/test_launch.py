@@ -47,7 +47,7 @@ def test_codex_and_claude_argv_through_the_login_shell():
         "@orch-mcp",
         "--append-system-prompt-file",
         "@orch-rules",
-        REFINE,
+        REFINE.replace("Follow AGENTS.orch.md.", "Your rules are in your system prompt."),
     ]
     assert LOGIN_EXEC == 'exec "$0" "$@"'
 
@@ -210,3 +210,55 @@ def test_the_refine_prompt_keeps_the_session_for_the_build():
     assert text.startswith("Run orch status, then refine ticket ORC-7.")
     assert "orch wait" in text and "build" in text and "this session" in text
     assert text.endswith("Follow AGENTS.orch.md.")
+
+
+# -- run 16 P01: a launch in a ticket work folder names no path --------------------------------------------------------
+
+_FU = "fu_" + "0" * 26
+_ALL_MODES = ["refine", "work", "fix", "continue", "followup"]
+
+
+def _inline(mode):
+    task = {"followup": _FU} if mode == "followup" else None
+    return prompt(mode, "ORC-7", "/abs/outside/.orch/AGENTS.orch.md", task, rules_inline=True)
+
+
+@pytest.mark.parametrize("mode", _ALL_MODES)
+def test_a_claude_work_folder_prompt_names_no_path(mode):
+    text = _inline(mode)
+    assert text.endswith("Your rules are in your system prompt.")
+    assert "AGENTS.orch.md" not in text and "/" not in text.replace("sc_", "")  # no absolute or any other path
+    assert not any(tok.startswith(("/", "~", "..")) for tok in text.split())
+
+
+def test_claude_in_a_work_folder_gets_the_inline_prompt_through_launch_argv():
+    argv, _, _ = launch_argv(
+        "claude-code", "work", None, "ORC-7", LOGIN, instructions="/abs/AGENTS.orch.md", workdir=True
+    )
+    assert argv[-1] == "Run orch status, then work on ticket ORC-7. Your rules are in your system prompt."
+    assert "/abs/AGENTS.orch.md" not in argv and "--append-system-prompt-file" in argv
+
+
+def test_other_launches_keep_the_pointer():
+    # a worktree/repo Claude Code loads CLAUDE.md itself; codex has no appended system prompt
+    for harness, workdir in (("claude-code", False), ("codex", True), ("codex", False)):
+        argv, _, _ = launch_argv("claude-code" if harness == "claude-code" else harness, "work", None, "ORC-7", LOGIN,
+                                 instructions="/p/.orch/AGENTS.orch.md", workdir=workdir)  # fmt: skip
+        assert argv[-1].endswith("Follow /p/.orch/AGENTS.orch.md.")
+
+
+def test_rule_map_every_rule_of_the_old_prompt_is_still_delivered():
+    """The old prompt carried (1) the mode text, (2) ``orch status`` first, (3) for refine: wait for approval then
+    build in this session, (4) "Follow <AGENTS.orch.md>". 1-3 stay in the prompt; 4 is the appended system prompt."""
+    for mode in ("refine", "work", "fix", "continue"):
+        old, new = prompt(mode, "ORC-7"), _inline(mode)
+        assert old.removesuffix("Follow AGENTS.orch.md.") == new.removesuffix("Your rules are in your system prompt.")
+        assert new.startswith("Run orch status, then")
+    refine = _inline("refine")
+    assert "orch wait" in refine and "build the ticket in this session" in refine
+    from orch.host.launch import RULES_FLAG
+    from orch.instructions.harness import AGENTS_FILE
+    from orch.runner import rules
+
+    assert RULES_FLAG == rules.FLAG  # delivery (4): the runner writes AGENTS.orch.md + AGENTS.md into this file
+    assert AGENTS_FILE == "AGENTS.orch.md" and "AGENTS.orch.md first" in rules.HEADER

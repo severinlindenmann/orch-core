@@ -3,6 +3,7 @@
 // dashboard-direct host write with one idem per dialog opening. Every string from the host is untrusted.
 
 import { api } from '@/api/client'
+import { isRealHost } from '@/api/features'
 import { queryOptions } from '@tanstack/react-query'
 import { call, newIdem } from './runs'
 import { ApiError } from './types'
@@ -28,7 +29,9 @@ export interface WorkFolder {
 const w = (ws: string) => `/api/w/${encodeURIComponent(ws)}`
 
 export const workdirApi = {
-  get: (ws: string, ticket: string) => api.getWorkFolder(ws, ticket),
+  // the real host is asked directly, as before; only the mockup (no real host) answers through the mock router (P11)
+  get: (ws: string, ticket: string) =>
+    isRealHost() ? call<WorkFolder>('GET', `${w(ws)}/tickets/${encodeURIComponent(ticket)}/workdir`) : api.getWorkFolder(ws, ticket),
   remove: (ws: string, ticket: string, idem: string) => call<{ deleted: boolean }>('POST', `${w(ws)}/workdir/delete`, { ticket, idem }),
 }
 

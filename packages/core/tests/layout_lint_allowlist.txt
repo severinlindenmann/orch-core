@@ -64,3 +64,4 @@ cli/dashboard.py 1
 cli/main.py 1
 ops/plans.py 1
 addons/manifest.py 1
+migrate/steps.py 10

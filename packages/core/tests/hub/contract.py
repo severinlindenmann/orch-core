@@ -49,6 +49,7 @@ HUB_LABELS = {
     "sig_hub_uk_cert": "orch/v2/hub-uk-cert|",
     "sig_hub_channel_cert": "orch/v2/hub-channel-cert|",
     "sig_hub_snapshot": "orch/v2/hub-snapshot|",
+    "sig_hub_closing": "orch/v2/hub-closing|",  # #1463 (protocol 9.7)
     "sig_hub_route": "orch/v2/hub-route|",
     "sig_hub_publish": "orch/v2/hub-publish|",
     "sig_hub_audit": "orch/v2/hub-audit|",
@@ -237,6 +238,16 @@ FIELDS: dict[str, dict[str, Check]] = {
         "market_policy": lambda x: _wire._policy_ok(x),  # the production validator (orch.hubclient.marketpolicy)
         "dev": _bool,
     },
+    "hub.closing": {  # #1463 (protocol 9.7)
+        "hub_id": _hex16,
+        "op_cert_id": _hex16,
+        "workspace_id": _hex16,
+        "binding_seq": _int_min(1),
+        "removal_id": _hex16,
+        "issued_ms": _int_min(0),
+        "ends_ms": _int_min(1),
+        "dev": _bool,
+    },
     "hub.binding": {
         "workspace_id": _hex16,
         "wsk_pub": _pub,
@@ -280,6 +291,7 @@ LABEL_OF_KIND = {
     "hub.uk_cert": "sig_hub_uk_cert",
     "hub.channel_cert": "sig_hub_channel_cert",
     "hub.snapshot": "sig_hub_snapshot",
+    "hub.closing": "sig_hub_closing",
     "hub.binding": "sig_hub_binding",
     "hub.unbound": "sig_hub_unbound",
     "hub.publish_approval": "sig_hub_publish_approval",
@@ -478,6 +490,31 @@ def verify_channel_cert(
 
 
 # --- HK_op: the group snapshot --------------------------------------------------------------------------------------
+
+
+def verify_closing(
+    signed: Any,
+    held: Mapping[str, Any],
+    *,
+    workspace_id: str,
+    binding_seq: int,
+    now_ms: int,
+    dev_mode: bool,
+    revoked_op_certs: frozenset[str] = frozenset(),
+) -> dict[str, Any]:
+    """#1463 (protocol 9.7): a ``hub.closing`` notice against the host's own workspace and CURRENT binding."""
+    o = _under_card(signed, "hub.closing", held, dev_mode, revoked_op_certs)
+    if now_ms >= held["op_cert"]["expires_ms"]:
+        raise Refused("cert_expired")
+    if o["workspace_id"] != workspace_id:
+        raise Refused("other_workspace")
+    if o["binding_seq"] != binding_seq:
+        raise Refused("stale_binding")
+    if o["issued_ms"] > now_ms + CLOCK_SKEW_MS or not o["issued_ms"] < o["ends_ms"] <= o["issued_ms"] + 7 * 86_400_000:
+        raise Refused("cert_invalid")
+    if now_ms >= o["ends_ms"]:
+        raise Refused("cert_expired")
+    return o
 
 
 def verify_snapshot(
@@ -785,6 +822,8 @@ def check_joined_payload(p: Any, *, prior_aliases: Mapping[str, str] = {}) -> di
 LINK_OPS: dict[str, tuple[str, str | None, dict[str, Check]]] = {
     "snapshot_get": ("w2h", None, {}),
     "hub_where": ("w2h", None, {}),
+    "closing_notice": ("h2w", None, {"notice": lambda x: type(x) is dict}),  # #1463 (protocol 9.7, 10.2)
+    "closing_get": ("w2h", None, {}),
     "event_deliver": ("h2w", None, {"log": lambda x: type(x) is str, "event": lambda x: type(x) is dict}),
     "route_out": ("w2h", None, {"envelope": _b64u_any}),
     "route_in": ("h2w", None, {"envelope": _b64u_any}),

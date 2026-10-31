@@ -27,7 +27,7 @@ from .access.orgcleanup import org_cleanup
 from .activity import ActivityLog
 from .audit import open_log
 from .backup.hubop import FENCE as RESTORE_FENCE
-from .backup.hubop import hold_serve_lock
+from .backup.hubop import hold_serve_lock, hold_state, release_state
 from .backup.restore import finish as finish_restore
 from .backup.restore import recover as recover_swap
 from .backup.service import BackupService
@@ -42,16 +42,19 @@ from .connections import ConnectionAuthz, Connections
 from .contract.hub import Refused
 from .custodial import CustodialEngine
 from .custodial.deliver import build_delivery
+from .dataformat import check_update
 from .hooks.inbox import HookInbox
 from .hooks.listener import HookListener, parse_public_url
 from .hooks.store import HookStore
 from .invites import INVITES_FILE, Invites
 from .keys import HubKeys
 from .link import LinkServer, Registry
+from .link.ops import safe_publish_where
 from .link.wkseal import WkSeals
 from .oidc.service import OidcService
 from .oidc.store import OidcStore
 from .publish import HttpPublishSync, HubPublish, PublishConfig
+from .pubwhere import publisher as publish_where_for
 from .reconcile import reconcile_full_only, reconcile_relay_purge
 from .relay import PushNotifier, RelayClient, RelayError
 from .relay.client import Transport
@@ -170,18 +173,6 @@ def parse_web_listen(value: str, *, assigned: Callable[[str], bool] = CO.locally
     return CO.parse_link_listen(value, assigned=assigned)
 
 
-def publish_hint(publish_url: str | None) -> str | None:
-    """The publish address a joined workspace may keep as a hint (P02): an origin core accepts (https anywhere, plain http on
-    loopback only), else None: a workspace is then asked as before. It carries no authority."""
-    from .contract.where import publish_ok
-
-    if publish_url is None:
-        return None
-    u = urllib.parse.urlsplit(publish_url)
-    origin = f"{u.scheme}://{u.netloc}".lower()
-    return origin if publish_ok(origin) and u.path in ("", "/") else None
-
-
 def make_admission(
     state: Path, registry: Registry, access: Access, hub_id: str
 ) -> Callable[[str], tuple[str, int] | None]:
@@ -225,6 +216,7 @@ def serve(
     accounts: CO.Accounts | None = None,
     assigned: Callable[[str], bool] = CO.locally_assigned,
     api_host: str | None = None,
+    publish_share_url: str | None = None,
     web_listen: str | None = None,
     relay_url: str | None = None,
     trusted_peers: frozenset[str] = frozenset(),
@@ -268,9 +260,22 @@ def serve(
             raise ValueError("--link-ws-public must be ws://host[:port] or wss://host[:port]") from None
     gate = FixedInvites(invites)  # a bad invite refuses before any state is opened
     u = urllib.parse.urlsplit(publish_url)
+    sign_host = api_host  # #1838: only an explicit --api-host names the public server origin (never the private URL's)
     api_host = api_host or u.netloc
     hold_serve_lock(state)  # first: an offline `orch-hub restore` (mid-swap) refuses us, and refuses while we live
+    # The format lock first, then the recovery: recover_swap renames and writes the state dir, which must not happen under an
+    # `orch update` (it takes the lock exclusive, and refuses on an unfinished journal). A state dir that is gone (a restore
+    # stopped between its two renames) cannot be locked yet: only the journal and the sidecar are checked, and the lock is taken
+    # as soon as recover_swap has put a dir in place. recover_swap takes the lock again on a dir it swaps (the lock follows the file).
+    state = Path(state)
+    held = state.exists()
+    if held:
+        hold_state(state)  # also refuses a state that is not at this code's format, before any database
+    else:
+        check_update(state)
     recover_swap(state)  # a restore that stopped between its two renames is completed or undone first
+    if not held:
+        hold_state(state)
     keys = HubKeys.open(state)
     # Opus condition 5: once `orch install` wrote hub-settings.json, the advertised addresses, the console origins and the
     # API origin come from that file ONLY. The start arguments keep the listen sockets; --web-origin / --api-origin are
@@ -292,6 +297,17 @@ def serve(
         allowed_origins=web_origins,
         api_origin=api_origin,
     )
+    published = safe_publish_where(
+        publish_where_for(
+            state,
+            keys,
+            api_host=sign_host,
+            share_url=publish_share_url,
+            publish_url=publish_url,
+            dev=cfg.dev,
+            say=lambda line: print(line, file=out, flush=True),
+        )
+    )  # never raises: a join reply and a hub_where answer fall back to no publish_where
     bind_warn: str | None = None
     ws_net = ws_bind is not None and not ipaddress.ip_address(ws_bind[0]).is_loopback
     if link_listen is not None or ws_net:  # the same machine rules as the link port for any non-loopback bind
@@ -517,7 +533,8 @@ def serve(
         switch=switch,
         hooks=hook_inbox,
         activity=activity,
-        where=lambda: where_answer(state, extra_public=link_ws_public, publish=publish_hint(publish_url)),
+        where=lambda: where_answer(state, extra_public=link_ws_public, publish_where=published()),
+        publish_where=published,
         closing=closing,
         deliveries=deliveries,
         streams=stream_router,
@@ -618,6 +635,7 @@ def serve(
             except Exception as e:  # noqa: BLE001  # keep closing the rest, then exit non-zero (a service manager restarts us)
                 failed = True
                 print(f"orch-hub WARN close failed: {type(e).__name__}", file=out, flush=True)
+        release_state()  # last: no database is open any more, `orch update` may take the data now
     if failed:  # also when a restart was asked for: no exec on top of a half-closed process
         return 1
     if (

@@ -10,6 +10,7 @@ import socket
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from orch import childenv
 
@@ -149,6 +150,36 @@ def _run(argv: list[str]) -> str:
         return ""
 
 
+def _publish_origin(url: str, dev: bool = False) -> tuple[str, str]:
+    """The canonical publish origin and API host, as the hub signs and its forwarder compares them. The origin rule is
+    the protocol's (``orch.hubclient.publish_where.canonical_origin``, the same contract as the hub's copy); a path,
+    query or fragment of ``url`` is dropped first. ``InstallError`` when the URL has a bad port, no scheme or host, a
+    scheme other than http(s), userinfo, or an origin the rule refuses: a hub that quietly never offers is worse than a
+    refusal."""
+    from orch.hubclient.errors import HubRefused
+    from orch.hubclient.publish_where import canonical_origin
+
+    def bad() -> InstallError:
+        return InstallError(
+            f"the publish address {url!r} is not usable: give the public origin, like https://publish.example.com"
+        )
+
+    try:
+        public = urlsplit(url)
+        port = public.port
+        host = public.hostname
+    except ValueError:
+        raise bad() from None
+    if public.scheme.lower() not in ("http", "https") or not host or "@" in public.netloc:
+        raise bad()
+    shown = f"[{host}]" if ":" in host else host
+    try:
+        origin = canonical_origin(f"{public.scheme.lower()}://{shown}" + (f":{port}" if port is not None else ""), dev)
+    except HubRefused:
+        raise bad() from None
+    return origin, origin.partition("://")[2]
+
+
 def command_for(
     part: str,
     *,
@@ -165,8 +196,13 @@ def command_for(
     publish_port: int = DEFAULT_PORTS["publish"],
     behind_edge: bool = False,
     exact_bind: bool = False,
+    publish_share_url: str | None = None,
 ) -> list[str]:
-    """The ``serve`` command line of a part (argv; environment is :func:`env_for`)."""
+    """The ``serve`` command line of a part (argv; environment is :func:`env_for`).
+
+    ``publish_share_url`` (hub only) is the public origin of this server's publish part, https://<name>: in the server
+    role it is the API host the workspaces sign and the origin of the share links (#1838), so the hub signs both in its
+    ``publish_where``."""
     bind = address if address else ADDRESS_LOOPBACK
     if part == "hub":
         loop = bind in (ADDRESS_LOOPBACK, "localhost")
@@ -191,6 +227,11 @@ def command_for(
         ]
         if relay_url:
             cmd += ["--relay-url", relay_url]
+        if publish_share_url:
+            # known only for a publish part with a public name: nothing is guessed from --publish-url; both flags get
+            # the canonical bare origin, the form the hub signs and its forwarder compares
+            origin, host = _publish_origin(publish_share_url, dev)
+            cmd += ["--api-host", host, "--publish-share-url", origin]
         if behind_edge:  # Caddy on this computer is the edge: it states the client (XFF), the origin is the https name
             cmd += ["--behind-edge", "--trusted-peer", ADDRESS_LOOPBACK]
         if dev and not loop:  # one user on one dev machine: the hub allows its link on a network address

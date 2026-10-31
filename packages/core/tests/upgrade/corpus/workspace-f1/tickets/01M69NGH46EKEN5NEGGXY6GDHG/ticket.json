@@ -1,0 +1,24 @@
+{
+  "schema": "orch.ticket/2",
+  "uid": "01M69NGH46EKEN5NEGGXY6GDHG",
+  "key": "DEMO-0001",
+  "title": "Corpus ticket, edited",
+  "type": "feature",
+  "priority": "high",
+  "size": null,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "due": null,
+  "visibility": "workspace",
+  "links": {
+    "repos": [],
+    "branches": {},
+    "prs": [],
+    "external": []
+  },
+  "acceptance": [],
+  "tasks": [],
+  "questions": [],
+  "addons": {}
+}

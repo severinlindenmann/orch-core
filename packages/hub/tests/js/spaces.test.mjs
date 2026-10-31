@@ -62,6 +62,8 @@ test("New shared space: three steps, the statement is on the page and in the dia
   const made = [];
   const view = spacesView({ ...data, workspaces: WS }, { create: (f) => made.push(f) }, NOW);
   assert.ok(view.textContent.includes(STATEMENT));
+  assert.equal(find(view, (n) => n.attrs.id === "space-no-start").length, 0);
+  assert.equal(find(view, (n) => n.attrs.id === "new-space")[0].disabled, false);
   find(view, (n) => n.attrs.id === "new-space")[0].listeners.click();
   const dlg = find(view, (n) => n.attrs.id === "space-dialog")[0];
   assert.match(dlg.textContent, /step 1 of 3/);
@@ -85,7 +87,7 @@ test("New shared space: three steps, the statement is on the page and in the dia
   name.value = " Launches "; name.listeners.input(); purpose.value = "Dates"; purpose.listeners.input();
   clickAll(dlg, "Next")[0].listeners.click();
   assert.match(dlg.textContent, /step 3 of 3/);
-  assert.ok(dlg.textContent.includes(STATEMENT) && dlg.textContent.includes("shares only selected items") && dlg.textContent.includes("joins now"));
+  assert.ok(dlg.textContent.includes(STATEMENT) && dlg.textContent.includes("joins now")) // the no-start reason now lives on the page, not hidden in the dialog;
   const create = clickAll(dlg, "Create")[0];
   const hint = find(dlg, (n) => n.attrs.id === "space-hint")[0];
   const [box_a] = find(dlg, (n) => n.tag === "input" && n.attrs.type === "checkbox" && n.attrs["aria-label"] === "Product");
@@ -116,12 +118,11 @@ test("New shared space: a waiting workspace is greyed out with its reason from t
   clickAll(dlg, "Next")[0].listeners.click();
   const box = (label) => find(dlg, (n) => n.tag === "input" && n.attrs["aria-label"] === label)[0];
   const create = clickAll(dlg, "Create")[0];
-  const reason = find(dlg, (n) => n.attrs.id === "space-no-start")[0];
   const tick = find(dlg, (n) => n.attrs.id === "space-understood")[0]; tick.checked = true; tick.listeners.change();
   assert.equal(box("Legal").disabled, true); assert.equal(box("Product").disabled, undefined);
   assert.ok(dlg.textContent.includes(LATER));
   assert.equal(find(dlg, (n) => n.tag === "label" && n.className === "check disabled").length, 1, "the row is dimmed");
-  assert.equal(reason.hidden, true, "no warning when one workspace can start");
+  assert.equal(find(dlg, (n) => n.attrs.id === "space-no-start").length, 0, "no late warning");
   assert.equal(find(dlg, (n) => n.attrs.class === "banner warn" && !n.hidden).length, 0);
   assert.equal(box("Product").checked, true);                                     // preselected
   assert.equal(create.disabled, false);
@@ -133,19 +134,39 @@ test("New shared space: a waiting workspace is greyed out with its reason from t
   create.listeners.click(); assert.deepEqual(made[0].members, ["a"]);
 });
 
-test("New shared space: when no workspace can start, the reason is shown at once and Create stays off", () => {
-  const view = spacesView({ ...data, workspaces: [WS[1]] }, { create: () => assert.fail("nothing may be created") }, NOW);
-  find(view, (n) => n.attrs.id === "new-space")[0].listeners.click();
-  const dlg = find(view, (n) => n.attrs.id === "space-dialog")[0];
-  clickAll(dlg, "Next")[0].listeners.click();
-  const name = find(dlg, (n) => n.tag === "input")[0]; name.value = "X"; name.listeners.input();
-  clickAll(dlg, "Next")[0].listeners.click();
-  const reason = find(dlg, (n) => n.attrs.id === "space-no-start")[0];
-  assert.equal(reason.hidden, false); assert.equal(reason.textContent, NO_START); assert.match(NO_START, /None of your workspaces can start a space yet/);
-  const tick = find(dlg, (n) => n.attrs.id === "space-understood")[0]; tick.checked = true; tick.listeners.change();
-  const create = clickAll(dlg, "Create")[0];
-  assert.equal(create.disabled, true); assert.equal(create.attrs["aria-describedby"], "space-no-start");
-  create.listeners.click();
+test("New shared space: selective workspaces get the fix on the page instead of a dead-end wizard", () => {
+  const view = spacesView({ spaces: [], workspaces: [WS[1]] }, { create: () => assert.fail("nothing may be created") }, NOW);
+  const reason = find(view, (n) => n.attrs.id === "space-no-start")[0];
+  assert.equal(reason.attrs.role, "note");
+  assert.ok(reason.textContent.includes("No space can be started yet."));
+  assert.ok(reason.textContent.includes(NO_START));
+  assert.equal(NO_START, "A space needs a workspace that shares everything with the hub.");
+  assert.ok(reason.textContent.includes("Legal shares only what you choose."));
+  assert.equal(find(reason, (n) => n.tag === "summary")[0].textContent, "Show me how");
+  assert.deepEqual(find(reason, (n) => n.tag === "li").map((n) => n.textContent), [
+    "Open Legal on its own computer.",
+    "Go to Settings > Hub.",
+    "Choose Share everything. Then come back here.",
+  ]);
+  const button = find(view, (n) => n.attrs.id === "new-space")[0];
+  assert.equal(button.disabled, true);
+  assert.equal(button.attrs["aria-describedby"], "space-no-start");
+  button.listeners.click();
+  assert.equal(find(view, (n) => n.attrs.id === "space-dialog")[0].children.length, 0);
+  assert.match(view.textContent, /No shared spaces yet/);
+});
+
+test("New shared space: only connected candidates count, and every selective workspace is named", () => {
+  const view = spacesView({ spaces: [], workspaces: [
+    WS[1], { workspace_id: "d", name: "<b>Anna</b>", mode: "selective" },
+    { ...WS[0], status: "unbound" },
+  ] }, {}, NOW);
+  const reason = find(view, (n) => n.attrs.id === "space-no-start")[0];
+  assert.ok(reason.textContent.includes("Legal shares only what you choose."));
+  assert.ok(reason.textContent.includes("<b>Anna</b> shares only what you choose."));
+  assert.doesNotMatch(reason.textContent, /Product/);
+  assert.equal(find(reason, (n) => n.tag === "b" && n.textContent === "Anna").length, 0);
+  assert.equal(find(view, (n) => n.attrs.id === "new-space")[0].disabled, true);
 });
 
 test("history: the person / agent note shows only once there are entries", () => {

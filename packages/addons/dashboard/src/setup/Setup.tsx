@@ -858,6 +858,7 @@ export function Setup({ api }: { api: SetupAPI }) {
               ? 'No typing. Best on your own computer.'
               : clickOffText(state.click_reason).replace('this computer', host || 'this computer')}
         </small>
+        {method === 'click' && state.click_available && <small>Anything running as you on {host || 'this computer'} could approve too.</small>}
         {method === 'terminal' && profile.method === 'terminal' && <small>{terminalStepCopy}</small>}
       </span>
     </label>
@@ -893,7 +894,7 @@ export function Setup({ api }: { api: SetupAPI }) {
       Continue →
     </button>
   )
-  // The dots carry their names (compact on a phone: only the current one). Finish setup has its own two steps.
+  // The current step stays readable at every width. Finish setup has its own two steps.
   const finishing = state?.mode === 'finish'
   const names = finishing ? finishSteps : steps
   // P75: when setup is finished every step is done (none is current, none stays grey)
@@ -928,6 +929,7 @@ export function Setup({ api }: { api: SetupAPI }) {
           orch<span>.</span>
         </strong>
         <nav aria-label="Setup progress">
+          <p className="step-position">{allDone ? 'Setup complete' : `Step ${at + 1} of ${names.length}: ${names[at]}`}</p>
           <ol>
             {names.map((s, i) => (
               <li
@@ -973,7 +975,11 @@ export function Setup({ api }: { api: SetupAPI }) {
                     </p>
                   )}
                   <p>We will set this up in {folder}.</p>
-                  <p>Setup adds orch&apos;s own files to this folder (a hidden .orch folder, AGENTS.orch.md and skill folders) and an orch section in AGENTS.md, lines in CLAUDE.md that load the instructions, and one line in .gitignore to keep orch’s private folder out of git, creating these files if needed (and a git repository if you choose one). Existing orch instructions may be updated; other content in these three files stays as it is.</p>
+                  <p>Setup adds orch&apos;s own files to this folder and a short orch section to a few instruction files.</p>
+                  <details className="file-changes">
+                    <summary>What exactly changes?</summary>
+                    <p>Setup adds orch&apos;s own files to this folder (a hidden .orch folder, AGENTS.orch.md and skill folders) and an orch section in AGENTS.md, lines in CLAUDE.md that load the instructions, and one line in .gitignore to keep orch’s private folder out of git, creating these files if needed (and a git repository if you choose one). Existing orch instructions may be updated; other content in these three files stays as it is.</p>
+                  </details>
                   <p>{profile.addons.includes('worktrees') ? 'With work copies on, agents change their own copies until you merge them.' : 'Agents change the files in this folder directly.'}</p>
                   {profile.method === 'terminal' && <p>{terminalStepCopy}</p>}
                   <p>Everything stays on {host ? <Inline>{host}</Inline> : 'this computer'} unless you choose to connect your phone.</p>
@@ -1087,6 +1093,7 @@ export function Setup({ api }: { api: SetupAPI }) {
               </label>
               <p>Allowing agents to work does not start a task.</p>
               {access !== 'none' && <>
+                <p>Access starts when you create the workspace and ends after {duration(profile.agent_hours)}; after that, agents need your permission again.</p>
                 <h2>How long can agents work on their own?</h2>
                 <div className="segments">
                   {state.agent_hours.map((h) => (
@@ -1096,7 +1103,7 @@ export function Setup({ api }: { api: SetupAPI }) {
               </>}
               <div className="agents-summary" data-testid="agents-summary">
                 <strong>Recommended for most people</strong>
-                <small>{agentsCan(profile.addons)} Setup adds orch&apos;s own files to this folder (a hidden .orch folder, AGENTS.orch.md and skill folders) and an orch section in AGENTS.md, lines in CLAUDE.md that load the instructions, and one line in .gitignore to keep orch’s private folder out of git, creating these files if needed (and a git repository if you choose one). Existing orch instructions may be updated; other content in these three files stays as it is.{profile.addons.includes('worktrees') ? ' With work copies on, agents change their own copies until you merge them.' : ' Agents change the files in this folder directly.'}</small>
+                <small>{agentsCan(profile.addons)}{profile.addons.includes('worktrees') ? ' With work copies on, agents change their own copies until you merge them.' : ' Agents change the files in this folder directly.'}</small>
               </div>
               {/* the fold opens by itself when the recommendation does not apply (a switch differs from its default, or the folder question was answered Skip) */}
               <details className="approval-more" data-testid="agents-more" open={agentsDiffer || undefined}>

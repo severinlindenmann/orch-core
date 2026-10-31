@@ -378,8 +378,8 @@
     padding: 6px 4px;
     font-size: 12px;
   }
-  /* Only the current step keeps its name on a phone; the dots still show the progress. */
-  .setup nav li:not(.current) .name {
+  /* The position line keeps the current name visible above the compact dots. */
+  .setup nav li .name {
     display: none;
   }
   .setup header {
@@ -644,4 +644,22 @@ body:has(> #root > .setup) {
 }
 @media (max-width: 480px) {
   .setup .approval-methods { grid-template-columns: 1fr; }
+}
+
+.setup nav {
+  min-width: 0;
+}
+.setup nav .step-position {
+  margin: 0 0 8px;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.setup .file-changes {
+  font-size: 13px;
+}
+.setup .file-changes summary {
+  cursor: pointer;
+  color: var(--text-muted);
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }

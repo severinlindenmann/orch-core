@@ -118,7 +118,12 @@ def test_publish_serves_without_a_server_header():
     )  # `serve` (uvicorn.run) and the shared _uvicorn_server config
 
 
-def test_eviction_never_resets_a_depleted_bucket(tmp_path):
+def test_eviction_never_resets_a_depleted_bucket(tmp_path, monkeypatch):
+    from pubsrv import serve as S
+
+    monkeypatch.setattr(
+        S.time, "monotonic", lambda: 1000.0
+    )  # a frozen clock: no bucket refills during the test
     srv = ShareServer(tmp_path, trusted_proxy="100.71.0.0/16")
     victim = scope("100.71.0.5", x_forwarded_for="198.51.100.1")
     while srv._ip_ok(victim):  # drain key A

@@ -5,7 +5,7 @@ import re
 import sys
 import time
 
-from . import db
+from . import cleanup, db
 
 _ID = re.compile(r"[0-9a-f]{32}")
 LOOPBACK = {"127.0.0.1", "[::1]", "localhost"}
@@ -21,6 +21,23 @@ def _now():
     return int(time.time() * 1000)
 
 
+def _trust_hubs(args):
+    """`--trust-hub HUB_ID` (repeatable) on serve / run: the operator pins these hubs (additive; `admin hub untrust` removes)."""
+    ids = getattr(args, "trust_hub", None) or []
+    if not ids:
+        return
+    path = db.prepare_dir(args.data)
+    db.init(path)
+    conn = db.connect(path)
+    try:
+        for h in ids:
+            conn.execute(
+                "INSERT OR IGNORE INTO trusted_hubs(hub_id, added_ms) VALUES (?,?)", (h, _now())
+            )
+    finally:
+        conn.close()
+
+
 def admin(args, out=None):
     out = out or sys.stdout
     path = db.prepare_dir(args.data)
@@ -32,6 +49,23 @@ def admin(args, out=None):
 
             counts = sweep.run(path, args.data, _now())
             print(" ".join(f"{k}={v}" for k, v in counts.items()), file=out)
+        elif args.group == "hub":
+            if args.action == "trust":
+                conn.execute(
+                    "INSERT OR IGNORE INTO trusted_hubs(hub_id, added_ms) VALUES (?,?)",
+                    (args.id, _now()),
+                )
+                print(f"hub {args.id} may admit its own workspaces", file=out)
+            elif args.action == "untrust":
+                n = cleanup.drop_hub(conn, args.id)
+                print(
+                    f"hub {args.id} untrusted" if n else f"hub {args.id} was not trusted", file=out
+                )
+            else:
+                for r in conn.execute(
+                    "SELECT hub_id, added_ms FROM trusted_hubs ORDER BY added_ms"
+                ):
+                    print(f"{r['hub_id']} added_ms={r['added_ms']}", file=out)
         elif args.group == "owners":
             if args.action == "add":
                 conn.execute(
@@ -59,6 +93,9 @@ def admin(args, out=None):
                     )
                 return 0
             if args.action == "allow":
+                cleanup.clear_deny(
+                    conn, args.id
+                )  # the operator's word: this workspace may be admitted again
                 conn.execute(
                     "INSERT OR REPLACE INTO prebinds(workspace_id, person_id, added_ms) VALUES (?,?,?)",
                     (args.id, args.person, _now()),
@@ -86,8 +123,7 @@ def _unbind(conn, ws, out):
     transaction. Files are removed by the share lifecycle (P2); the tombstone rows stay."""
     conn.execute("BEGIN IMMEDIATE")
     try:
-        n = conn.execute("DELETE FROM workspaces WHERE workspace_id=?", (ws,)).rowcount
-        conn.execute("DELETE FROM prebinds WHERE workspace_id=?", (ws,))
+        n = cleanup.drop_workspace(conn, ws, _now())  # also the hub allowance, and a deny marker
         # nonces are left to expire on their own: a replay after unbind + re-register stays refused.
         # Every share row (tombstones included) is re-keyed to a value no workspace id can equal, so
         # a later registration of the same id inherits nothing and owned_share(ws, id) never matches.
@@ -119,6 +155,7 @@ def serve(args):
         return 2
     # --api-host is what clients sign (it may be a public name when a proxy sits in front); it
     # defaults to the bind address
+    _trust_hubs(args)
     app = create_app(
         args.data,
         args.api_host or args.bind,
@@ -170,6 +207,7 @@ def run_cmd(args):
     if u.scheme not in ("http", "https") or not u.netloc or u.path not in ("", "/"):
         print("--public-origin must be http(s)://HOST[:PORT] with no path", file=sys.stderr)
         return 2
+    _trust_hubs(args)
     try:
         app = combined_app(
             args.data,
@@ -311,6 +349,12 @@ def main(argv=None):
         default=None,
         help="http(s)://HOST[:PORT] apps are served from (the share server's origin); without it apps cannot be uploaded",
     )
+    s.add_argument(
+        "--trust-hub",
+        action="append",
+        type=_id,
+        help="pin a hub id that may admit its own workspaces (repeatable)",
+    )
     r = sub.add_parser("run", help="no domain: API and share links on ONE address and port")
     r.add_argument("--data", required=True)
     r.add_argument("--listen", required=True, help="ADDRESS:PORT to bind, e.g. 100.64.0.5:8102")
@@ -326,6 +370,12 @@ def main(argv=None):
         "--allow-direct",
         action="store_true",
         help="also accept the direct v2 12.1 request on APP routes (a workspace with no hub); off by default",
+    )
+    r.add_argument(
+        "--trust-hub",
+        action="append",
+        type=_id,
+        help="pin a hub id that may admit its own workspaces (repeatable)",
     )
     w2 = sub.add_parser("share", help="run the share server (public origin) on loopback")
     w2.add_argument("--data", required=True)
@@ -353,6 +403,10 @@ def main(argv=None):
     for name in ("add", "remove"):
         o.add_parser(name).add_argument("id", type=_id)
     o.add_parser("list")
+    hb = g.add_parser("hub").add_subparsers(dest="action", required=True)
+    for name in ("trust", "untrust"):
+        hb.add_parser(name).add_argument("id", type=_id)
+    hb.add_parser("list")
     w = g.add_parser("ws").add_subparsers(dest="action", required=True)
     for name in ("block", "unblock"):
         w.add_parser(name).add_argument("id", type=_id)

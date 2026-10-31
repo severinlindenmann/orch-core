@@ -97,8 +97,8 @@ def test_every_reason_is_covered_by_a_vector_and_maps_to_a_catalog_code():
 
 
 def test_test_root_is_only_trusted_inside_the_hook():
-    assert "root-1" in keys_mod.embedded_roots()
-    assert "root-1" not in keys_mod.PRODUCTION_ROOTS
+    assert "test-root-1" in keys_mod.embedded_roots()
+    assert "test-root-1" not in keys_mod.PRODUCTION_ROOTS
     case = CORE[0]
     assert case["expect"]["reason"] == "ok"
     st = case["state"]
@@ -113,7 +113,7 @@ def test_test_root_is_only_trusted_inside_the_hook():
     # outside the hook (nested exits restore the state): the production set does not contain the TEST root
     keys_mod._test_hook_depth = 0
     try:
-        assert "root-1" not in keys_mod.embedded_roots()
+        assert "test-root-1" not in keys_mod.embedded_roots()
         with pytest.raises(UpdateRefused) as e:
             verify_envelope(case["envelope"].encode(), **args)
         assert (e.value.reason, e.value.code) == (Reason.UNKNOWN_ROOT, "update.unverified")
@@ -122,7 +122,7 @@ def test_test_root_is_only_trusted_inside_the_hook():
 
 
 def test_the_embedded_test_root_is_the_vector_root():
-    assert base64.b64encode(keys_mod.TEST_ROOTS["root-1"]).decode() == KEYS["trusted_roots"]["root-1"]
+    assert base64.b64encode(keys_mod.TEST_ROOTS["test-root-1"]).decode() == KEYS["trusted_roots"]["test-root-1"]
 
 
 # --- property tests ----------------------------------------------------------------------------------------------

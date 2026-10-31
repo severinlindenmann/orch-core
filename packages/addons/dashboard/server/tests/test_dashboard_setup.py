@@ -118,7 +118,11 @@ def claim(client, auth=None):
 
 def test_scope_claim_and_no_workspace(setup):
     client, auth, _, _, _ = setup
-    assert client.get("/setup").status_code == 200
+    page = client.get("/setup")
+    assert page.status_code == 200
+    csp = page.headers["content-security-policy"]  # run16 P06: the document at /setup carries the setup CSP ...
+    assert "connect-src 'self' http://127.0.0.1:*" in csp
+    assert "http://127.0.0.1:*" not in client.get("/").headers["content-security-policy"]  # ... and / does not
     headers = claim(client)
     token = headers["X-Setup-Token"]
     assert not auth.valid(token) and auth.valid_setup(token)

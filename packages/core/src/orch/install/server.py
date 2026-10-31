@@ -32,6 +32,8 @@ __all__ = [
     "Names",
     "caddy_snippet",
     "check_drop_path",
+    "check_user_name",
+    "ensure_user_bus",
     "check_dns",
     "derive_names",
     "detect_vpn_ip",
@@ -315,9 +317,14 @@ def caddy_snippet(part: str, name: str, port: int, *, vpn_only: bool = False, vp
 
 def user_dir(root: str | Path, user: str) -> Path:
     """The snippet directory of one OS user: ``<root>/<user>`` (root creates it, owned by that user, mode 0755)."""
+    check_user_name(user)
+    return Path(root) / user
+
+
+def check_user_name(user: str) -> None:
+    """The same rule for the snippet folder and for the root block: a plain Linux user name, nothing else."""
     if not re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", user):
         raise InstallError(f"{user!r} is not a usable user name for the Caddy snippet folder")
-    return Path(root) / user
 
 
 def write_snippets(directory: Path, snippets: dict[str, str]) -> list[Path]:
@@ -362,6 +369,7 @@ def root_block(user: str, directory: str = CADDY_DIR, *, caddyfile: str = "/etc/
     """The ONE sudo block for a person with root; printed, never executed by orch. No shared writable folder: each OS
     user gets its own folder, and the Caddyfile imports it with its own line, ``<dir>/<user>/*.caddy`` (Caddy allows
     only one wildcard per glob, so there is no ``<dir>/*/*.caddy``)."""
+    check_user_name(user)  # a bad name stops here: no block is printed
     d, mine = shell_quote(directory), shell_quote(f"{directory}/{user}")
     imp = f"import {directory}/{user}/*.caddy"
     return "\n".join(
@@ -376,6 +384,30 @@ def root_block(user: str, directory: str = CADDY_DIR, *, caddyfile: str = "/etc/
             f"sudo loginctl enable-linger {shell_quote(user)}",
             "",
         ]
+    )
+
+
+def ensure_user_bus(
+    env: dict[str, str],
+    uid: int,
+    user: str,
+    exists: Callable[[str], bool] = os.path.exists,
+) -> None:
+    """``systemctl --user`` needs XDG_RUNTIME_DIR and the session bus. Under ``sudo -iu`` they are unset: when the
+    user's bus is there (linger is on), set both in ``env`` (``os.environ`` of this process). Otherwise refuse BEFORE
+    anything is installed, in plain words naming the fix."""
+    if env.get("XDG_RUNTIME_DIR") and env.get("DBUS_SESSION_BUS_ADDRESS"):
+        return
+    run = env.get("XDG_RUNTIME_DIR") or f"/run/user/{uid}"
+    bus = f"{run}/bus"
+    if exists(bus):
+        env["XDG_RUNTIME_DIR"] = run
+        env.setdefault("DBUS_SESSION_BUS_ADDRESS", f"unix:path={bus}")
+        return
+    raise InstallError(
+        f"there is no systemd session for {user} ({bus} is missing), so its services cannot be started. Ask an "
+        f"administrator to run the linger line of the root block (`sudo loginctl enable-linger {user}`), then log in "
+        f"with `sudo machinectl shell {user}@` (or set XDG_RUNTIME_DIR={run}) and run this command again."
     )
 
 

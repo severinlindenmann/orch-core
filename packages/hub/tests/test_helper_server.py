@@ -315,14 +315,17 @@ def test_bind_refuses_when_a_helper_already_answers_but_replaces_a_stale_socket(
     path = short / "d.sock"
     a = HS.HelperServer(rig.svc, path)
     a.bind()
-    threading.Thread(target=a.serve_forever, daemon=True).start()
+    t = threading.Thread(target=a.serve_forever, daemon=True)
+    t.start()
     try:
         with pytest.raises(P.HelperError) as e:
             HS.HelperServer(rig.svc, path).bind()
         assert e.value.code == "already_running"
     finally:
         a._stop.set()
-        a._sock.close()  # dead server, socket file stays: stale
+        a.close_listener()  # dead server, socket file stays: stale
+        t.join(5)
+    assert not t.is_alive()
     HS.HelperServer(rig.svc, path).bind()
 
 

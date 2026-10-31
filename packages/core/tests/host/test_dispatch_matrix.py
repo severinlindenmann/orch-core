@@ -13,6 +13,7 @@ import pytest
 import orch.ops as ops
 from orch.host import frames
 from orch.host.agents import AGENT_OPS
+from orch.host.appops import APP_OPS
 from orch.host.columns import Column, refusal, resolve
 from orch.host.cosmeticops import COSMETIC_OPS
 from orch.host.dispatch import (
@@ -99,6 +100,7 @@ def test_welcome_lists_exactly_the_registry_ops_and_the_host_ops(served):
     host |= set(WORKTREE_OPS)  # H11d
     host |= set(TRANSCRIPT_OPS)  # focus/1
     host |= set(PUBLISH_OPS)  # P5
+    host |= set(APP_OPS)  # #1455
     host |= set(HUB_OPS)  # V3 C2a
     host |= set(REMOTE_OPS)  # R2 #1590
     host |= set(PEER_OPS)  # V3 C12
@@ -246,6 +248,13 @@ def test_every_served_op_in_every_row_of_the_effective_column_table():
                 "publish.prepare": ("pg_write", "write"),
                 "publish.discard": ("pg_write", "write"),
                 "publish.list": ("pg_read", "read"),
+            }.get(op, ("person_write", "write"))
+            assert kind == want
+        elif op in APP_OPS:  # #1455: prepare and discard P and G, list reads, send P only
+            want = {
+                "app.prepare": ("pg_write", "write"),
+                "app.discard": ("pg_write", "write"),
+                "app.list": ("pg_read", "read"),
             }.get(op, ("person_write", "write"))
             assert kind == want
         elif op in HUB_OPS:  # V3 C2a: P only (the op checks the owner role); status reads

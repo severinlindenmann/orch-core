@@ -31,6 +31,7 @@ LABEL_REQUEST_DIRECT = b"orch/v2/publish-request|"
 LABELS = {
     "sig_hub_release_narrow": b"orch/v2/hub-release-narrow|",
     "sig_hub_app_pass": b"orch/v2/hub-app-pass|",
+    "sig_hub_allow": b"orch/v2/hub-allow|",  # P02: hub to orch-publish only; the host never verifies one
     "h_publish_request_direct": LABEL_REQUEST_DIRECT,
     "h_app_meta": LABEL_APP_META,
     "h_app_reach": LABEL_APP_REACH,

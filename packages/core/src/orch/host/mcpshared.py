@@ -6,7 +6,7 @@ into the pin and (c) forwarded to the agent. Nothing is truncated anywhere: a de
 has no view (only ``{"name", "problem": "too_long"}``), so it can never be pinned, turned On or forwarded.
 
 * :func:`plain`: every server-controlled string that is shown anywhere goes through it (no control characters).
-* :func:`tool_view`: the one builder of the view (name, title if any, description, inputSchema).
+* :func:`tool_view`: the one builder of the view (name, title if any, description, inputSchema, reads).
 * :func:`tool_pin`: what the owner turned On for one tool of a company MCP server: sha256 of the view. The proxy serves
   a tool only while the definition upstream still has this pin (Opus host condition 8: a changed tool is Off and
   ``changed`` until the owner clicks again).
@@ -106,10 +106,23 @@ def _texts_ok(obj: Any) -> bool:
     return True
 
 
+def reads_label(raw: dict[str, Any]) -> bool:
+    """The conservative label: ``True`` only when the server says ``readOnlyHint`` is exactly ``true`` and does not say
+    ``destructiveHint`` is ``true``. Everything else (no annotations, a string "true", a missing hint) is "changes
+    things". A label only sorts and warns: it never switches a tool On, and it is inside the pinned view, so a server
+    that flips the hint gets a new pin (the tool turns Off and shows as changed)."""
+    ann = raw.get("annotations")
+    if not isinstance(ann, dict):
+        return False
+    destructive = ann.get("destructiveHint")
+    return ann.get("readOnlyHint") is True and (destructive is None or destructive is False)
+
+
 def tool_view(raw: object) -> tuple[dict[str, Any] | None, str | None]:
     """``(view, problem)`` for one tool definition from a company server.
 
-    ``view`` is the canonical entry ``{"name", "description", "inputSchema"}`` (+ ``"title"`` when non-empty) with
+    ``view`` is the canonical entry ``{"name", "description", "inputSchema", "reads"}`` (+ ``"title"`` when non-empty)
+    with
     :func:`plain` applied to every string. Problems: ``"shape"`` (not a tool: no view), ``"text"`` (hidden or odd
     characters in any text, also in outputSchema or annotations: no view), ``"too_long"`` (a limit is passed: the view
     is ``{"name": name}`` only, nothing is cut). A tool with a problem is never pinned."""
@@ -140,7 +153,7 @@ def tool_view(raw: object) -> tuple[dict[str, Any] | None, str | None]:
         return None, "shape"
     if len(description) > TOOL_DESCRIPTION_MAX or len(title) > TOOL_TITLE_MAX or size > TOOL_SCHEMA_MAX:
         return {"name": name}, "too_long"
-    view: dict[str, Any] = {"name": name, "description": description, "inputSchema": schema}
+    view: dict[str, Any] = {"name": name, "description": description, "inputSchema": schema, "reads": reads_label(raw)}
     if title:
         view["title"] = title
     return view, None

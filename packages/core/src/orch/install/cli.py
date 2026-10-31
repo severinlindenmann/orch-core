@@ -403,6 +403,7 @@ def install_part(
     public_origin: str | None = None,  # server role, publish: https://<publish name> (server = share)
     workspace_side: bool = True,
     behind_edge: bool = False,  # server role with TLS: Caddy on this computer is the edge in front of the part
+    exact_bind: bool = False,  # server role: the part listens on exactly ``address`` (not on every interface)
 ) -> dict[str, Any]:
     spec = P.PARTS[part]
     source = source or ctx.env.get(f"ORCH_INSTALL_SOURCE_{part.upper()}")  # a local checkout (dev machines, tests)
@@ -485,10 +486,13 @@ def install_part(
         link_port=ports_of(ctx, st)["link"],
         publish_port=ports_of(ctx, st)["publish"],
         behind_edge=behind_edge,
+        exact_bind=exact_bind or bool(link_address),
     )
     log = lay.logs / f"{part}.log"
     started = ctx.runner.start(part, argv, P.env_for(part, data, behind_edge=behind_edge), log)
-    check_host = dial_host(bind)  # the part listens on every interface; this computer dials itself on loopback
+    # a part on every interface is dialled on loopback (a computer cannot dial its own overlay IP). A part that binds
+    # exactly one address (the server role: the VPN IP) answers ONLY there: probe that address, never 127.0.0.1.
+    check_host = bind if (exact_bind or link_address) else dial_host(bind)
 
     # a computer often cannot dial its own overlay IP (NetBird): then a held port on that IP and a live process count
     def answers() -> bool:
@@ -535,7 +539,12 @@ def install_part(
     _report(ctx, part, rec)
     if part == "publish":
         url = public_origin or url  # server = share = the https name when there is one
-        if not workspace_side:
+        if not workspace_side and not public_origin:
+            ctx.say(
+                "  publish needs a name and https before the Macs can use it (shares need a secure address). "
+                "This follows once DNS is in: run this command again with --domain <your domain>."
+            )
+        elif not workspace_side:
             ctx.say(f"  on each Mac, once: orch publish setup --server {url} --share {url}")
         else:
             hint = ctx.publish_setup(url)
@@ -587,6 +596,23 @@ def _report(ctx: Ctx, part: str, rec: dict[str, Any]) -> None:
             f"  domain {rec['domain']}: point its DNS at this computer yourself and put your own TLS in front of "
             f"{rec['bind']}:{rec['port']}; orch does not do that for you."
         )
+
+
+def command_failed(e: subprocess.CalledProcessError) -> str:
+    """Plain words for a system command that failed (the command, its last output line, the usual fix)."""
+    cmd = " ".join(str(x) for x in e.cmd) if isinstance(e.cmd, (list, tuple)) else str(e.cmd)
+    raw = e.stderr or e.output or b""
+    text = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else str(raw)
+    last = " ".join(text.strip().splitlines()[-1:]) if text.strip() else f"exit code {e.returncode}"
+    last = "".join(ch if ch.isprintable() else " " for ch in last)[:200]
+    hint = ""
+    if cmd.startswith("systemctl --user"):
+        hint = (
+            " If this user has no systemd session: ask an administrator to run the linger line of the root block, "
+            "then log in with `sudo machinectl shell <user>@` (or set XDG_RUNTIME_DIR=/run/user/<id>) and run this "
+            "command again."
+        )
+    return f"a step failed: `{cmd}` ({last}).{hint}"
 
 
 def hub_console_url(rec: dict[str, Any]) -> str:
@@ -986,4 +1012,7 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextI
         return 0
     except InstallError as e:
         err.write(f"orch install: {e}\n")
+        return 1
+    except subprocess.CalledProcessError as e:  # never a raw traceback from a setup step
+        err.write(f"orch install: {command_failed(e)}\n")
         return 1

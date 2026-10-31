@@ -160,32 +160,6 @@ class LifecycleServices:
                 except LifecycleError as exc:
                     raise OrchError("host.unavailable", str(exc)) from None
 
-        if not quarantine:  # also reapply trust for an installed Publish that was stopped before the update
-            from orch.install.cli import _HUB_ID, default_ctx
-            from orch.install.parts import InstallError
-            from orch.install.state import load
-            from orch.install.trust import apply
-
-            ctx = default_ctx(self.e.env, self.e.out, self.e.err)
-            try:
-                apply(ctx, self.e.env, fetch_fingerprint=False)
-            except (InstallError, OSError) as exc:
-                reason = "".join(c if c.isprintable() else " " for c in str(exc))
-                reason = " ".join(reason.split())[:200].rstrip(".")
-                try:
-                    st = load(ctx.layout)
-                    wanted = st.get("edge_trust")
-                    hub_id = wanted.get("hub_id") if isinstance(wanted, dict) else None
-                    pub = st.get("parts", {}).get("publish")
-                    pinned = pub.get("pinned_hub_id") if isinstance(pub, dict) else None
-                except (InstallError, OSError, ValueError, AttributeError):
-                    raise OrchError("host.unavailable", reason) from None
-                if not isinstance(hub_id, str) or not _HUB_ID.fullmatch(hub_id):
-                    raise OrchError("host.unavailable", reason) from None
-                ctx.say(f"Publish could not confirm its trust in hub {hub_id}: {reason}. Run the edge setup again.")
-                if pinned != hub_id:  # a requested hub change did not land
-                    raise OrchError("host.unavailable", reason) from None
-
     def _host_health(self) -> list[str]:
         """``host.health``: the host opens every workspace root with the real rule (a read: works in quarantine)."""
         from orch.host.control_client import ControlClient

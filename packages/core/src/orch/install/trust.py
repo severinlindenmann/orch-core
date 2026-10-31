@@ -34,7 +34,7 @@ def fingerprint(origin: str | None, hub_id: str) -> str | None:
         return None
 
 
-def apply(ctx: Ctx, env: Mapping[str, str], *, fetch_fingerprint: bool = True) -> None:
+def apply(ctx: Ctx, env: Mapping[str, str]) -> None:
     st = load(ctx.layout)
     wanted = st.get("edge_trust")
     if not wanted:
@@ -53,7 +53,7 @@ def apply(ctx: Ctx, env: Mapping[str, str], *, fetch_fingerprint: bool = True) -
     save(ctx.layout, st)
     if old and old != hub_id:
         ctx.say(f"Publish no longer trusts hub {old}; it now trusts {hub_id}")
-    fp = fingerprint(wanted.get("origin"), hub_id) if fetch_fingerprint else None
+    fp = fingerprint(wanted.get("origin"), hub_id)
     ctx.say(f"Publish trusts hub {hub_id}" + (f" (hub card fingerprint {fp})" if fp else ""))
 
 

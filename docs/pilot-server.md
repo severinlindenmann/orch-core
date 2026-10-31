@@ -112,7 +112,7 @@ orch setup --server --role edge --trust-hub <hub id>
 ```
 
 This keeps the other edge settings and prints `Publish trusts hub <hub id>` (with a hub card fingerprint when
-the edge can read the hub card). Trust is saved and reapplied on reruns and updates. If the hub id changes, run
+the edge can read the hub card). Trust is saved in Publish's data, so it survives updates, and is reapplied on reruns. If the hub id changes, run
 the command with the new id; Publish untrusts the old id first. `orch install status` shows the trusted hub.
 
 What happens, in order: the names are derived (`hub.`, `relay.`, `publish.` + your domain; override one with

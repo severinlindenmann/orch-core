@@ -111,25 +111,6 @@ def test_setup_and_install_flag(tmp_path):
     assert not calls
 
 
-@pytest.mark.parametrize("running", [False, True])
-def test_update_reapplies_trust(tmp_path, monkeypatch, running):
-    import io
-    from pathlib import Path
-
-    from orch.lifecycle.units import Env
-    from orch.update.services import LifecycleServices
-
-    ctx, out, _, calls = stub_ctx(tmp_path)
-    edge(ctx, trust_hub=HUB_ID, address="192.168.1.20")
-    monkeypatch.setattr(cli, "default_ctx", lambda *args: ctx)
-    services = LifecycleServices(Env(env=ctx.env, out=out, err=io.StringIO()))
-    monkeypatch.setattr(services, "_svcs", lambda: [])
-    calls.clear()
-    monkeypatch.setattr(trust, "fingerprint", lambda *args: pytest.fail("update fetched a fingerprint"))
-    services.start(Path("/fake/orch"), ["publish"] if running else [], quarantine=False)
-    assert [c[-2:] for c in admins(calls)] == [["trust", HUB_ID]]
-
-
 def test_failed_untrust_never_trusts_replacement(tmp_path):
     ctx, _, _, calls = stub_ctx(tmp_path)
     edge(ctx, trust_hub=HUB_ID, address="192.168.1.20")
@@ -173,49 +154,6 @@ def test_setup_edge_saves_trust(tmp_path):
     st = load(ctx.layout)
     assert st["edge_trust"]["hub_id"] == HUB_ID
     assert st["parts"]["publish"]["pinned_hub_id"] == HUB_ID
-
-
-@pytest.mark.parametrize("pending", [False, True])
-@pytest.mark.parametrize("running", [False, True])
-def test_update_failed_retrust_only_raises_for_pending_change(tmp_path, monkeypatch, pending, running):
-    import io
-    from pathlib import Path
-
-    from orch.lifecycle.units import Env
-    from orch.ops.errors import OrchError
-    from orch.update.services import LifecycleServices
-
-    ctx, out, _, calls = stub_ctx(tmp_path)
-    edge(ctx, trust_hub=HUB_ID, address="192.168.1.20")
-    st = load(ctx.layout)
-    wanted = "b" * 32 if pending else HUB_ID
-    st["edge_trust"] = {"hub_id": wanted, "origin": "https://hub.example.com"}
-    save(ctx.layout, st)
-    monkeypatch.setattr(cli, "default_ctx", lambda *args: ctx)
-    monkeypatch.setattr(trust, "fingerprint", lambda *args: pytest.fail("update fetched a fingerprint"))
-    services = LifecycleServices(Env(env=ctx.env, out=out, err=io.StringIO()))
-    monkeypatch.setattr(services, "_svcs", lambda: [])
-    original = ctx.run
-
-    def fail(argv, env=None):
-        if "admin" in argv:
-            calls.append(argv)
-            return 1, "database\n unavailable."
-        return original(argv, env)
-
-    ctx.run = fail
-    out.seek(0)
-    out.truncate()
-    names = ["publish"] if running else []
-    if pending:
-        with pytest.raises(OrchError, match="database"):
-            services.start(Path("/fake/orch"), names, quarantine=False)
-    else:
-        services.start(Path("/fake/orch"), names, quarantine=False)
-    assert out.getvalue() == (
-        f"Publish could not confirm its trust in hub {wanted}: database unavailable. Run the edge setup again.\n"
-    )
-    assert load(ctx.layout)["parts"]["publish"]["pinned_hub_id"] == HUB_ID
 
 
 @pytest.mark.parametrize(
@@ -271,55 +209,6 @@ def test_hub_hint_skips_a_bad_card_id(tmp_path, monkeypatch):
     out.truncate()
     trust.hub_hint(ctx)
     assert out.getvalue() == ""
-
-
-def _failing_update(tmp_path, monkeypatch, admin_out, *, fail_on="admin"):
-    import io
-
-    from orch.lifecycle.units import Env
-    from orch.update.services import LifecycleServices
-
-    ctx, out, _, calls = stub_ctx(tmp_path)
-    edge(ctx, trust_hub=HUB_ID, address="192.168.1.20")
-    monkeypatch.setattr(cli, "default_ctx", lambda *args: ctx)
-    services = LifecycleServices(Env(env=ctx.env, out=out, err=io.StringIO()))
-    monkeypatch.setattr(services, "_svcs", lambda: [])
-    original = ctx.run
-
-    def fail(argv, env=None):
-        if fail_on in argv:
-            calls.append(argv)
-            return 1, admin_out
-        return original(argv, env)
-
-    ctx.run = fail
-    out.seek(0)
-    out.truncate()
-    return ctx, out, services
-
-
-def test_update_with_a_bad_hub_id_in_state_fails_without_printing_it(tmp_path, monkeypatch):
-    from pathlib import Path
-
-    from orch.ops.errors import OrchError
-
-    ctx, out, services = _failing_update(tmp_path, monkeypatch, "x")
-    st = load(ctx.layout)
-    st["edge_trust"]["hub_id"] = "bad\x1b[2Jid"
-    save(ctx.layout, st)
-    with pytest.raises(OrchError) as excinfo:
-        services.start(Path("/fake/orch"), [], quarantine=False)
-    assert out.getvalue() == ""
-    assert "\x1b" not in str(excinfo.value) and "bad" not in str(excinfo.value)
-
-
-def test_update_warning_strips_control_characters(tmp_path, monkeypatch):
-    from pathlib import Path
-
-    _, out, services = _failing_update(tmp_path, monkeypatch, "db\x1b[2J gone")
-    services.start(Path("/fake/orch"), [], quarantine=False)
-    assert "\x1b" not in out.getvalue()
-    assert f"hub {HUB_ID}: db [2J gone. Run" in out.getvalue()
 
 
 def test_failed_trust_after_untrust_clears_the_old_pin(tmp_path):

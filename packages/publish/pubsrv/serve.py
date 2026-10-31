@@ -26,6 +26,7 @@ from collections import deque
 from urllib.parse import parse_qs, quote
 
 from . import db
+from .forwarded import rate_key
 from . import published as P
 
 ID32 = r"[0-9a-f]{32}"
@@ -285,9 +286,9 @@ class ShareServer:
         return page(status, text)
 
     def _ip_ok(self, scope):
-        """Cheap bucket before any DB work. Behind a proxy this is the proxy's address, so the
-        real per-IP limit then belongs to Caddy as well (documented)."""
-        ip = (scope.get("client") or ("?", 0))[0]
+        """Cheap bucket before any DB work, keyed by the forwarded client address when one is sent (forwarded.py:
+        a rate key only, never a trust or locality input)."""
+        ip = rate_key(scope)
         now = time.monotonic()
         with self._lock:
             tokens, last = self._ips.get(ip, (IP_BURST, now))

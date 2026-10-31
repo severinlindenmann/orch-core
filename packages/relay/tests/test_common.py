@@ -45,10 +45,10 @@ def test_buckets_evict_full_entries_first_and_refill():
     assert len(b.table) == 2
 
 
-def test_client_address_trusts_one_proxy_hop_only():
-    assert (
-        C.canonical_address("10.0.0.1", "203.0.113.5, 198.51.100.7", "10.0.0.1") == "198.51.100.7"
-    )
-    assert C.canonical_address("192.0.2.1", "203.0.113.5", "10.0.0.1") == "192.0.2.1"
-    assert C.canonical_address("2001:db8::1", None, None) == "2001:db8::/64"
+def test_client_address_is_a_rate_key_only():
+    from orch_relay.forwarded import rate_key
+
+    assert rate_key("10.0.0.1", {"x-forwarded-for": "203.0.113.5, 198.51.100.7"}) == "198.51.100.7"
+    assert rate_key("192.0.2.1", {}) == "192.0.2.1"
+    assert rate_key("2001:db8::1", {}) == "2001:db8::/64"
     assert C.ipv6_parent("2001:db8:0:1::/64") == "2001:db8::/56"

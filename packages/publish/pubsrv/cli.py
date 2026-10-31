@@ -170,6 +170,7 @@ def serve(args):
         port=port,
         access_log=False,
         log_level="warning",
+        proxy_headers=False,  # forwarded.py is the only reader of forwarded headers
     )
     return 0
 
@@ -249,6 +250,7 @@ def _uvicorn_server(app, host, port):
             port=port,
             access_log=False,
             log_level="warning",
+            proxy_headers=False,
             server_header=False,
             workers=1,
         )

@@ -24,15 +24,22 @@ from orch.wsproto.localdial import dial_host
 from . import parts as P
 from .helper import remove_helper, sync_helper, wait_for_socket
 from .parts import InstallError
+from .server import CADDY_DIR, ROLES, derive_names
 from .service import Runner, pick_runner
 from .state import Layout, load, save
 
 __all__ = ["Ctx", "main", "add_workspace", "choose_role", "full_server", "default_ctx"]
 
 USAGE = (
+    "usage: orch install server --role hub|edge [--domain BASE] [--domain-hub N] [--domain-relay N]\n"
+    "                    [--domain-publish N] [--hub-vpn-only] [--vpn-ip IP[/PREFIX]]\n"
+    "                    [--allow-non-cgnat] [--caddy-dir DIR]\n"
+    "                    [--backup-drop DIR]\n"
+    "                    [--port-base N] [--yes]\n"
     "usage: orch install phone [--user ID]\n"
     "usage: orch install {hub|relay|publish} [--address A] [--port N] [--domain D] [--source PATH] [--ref REF]\n"
-    "                    [--publish-url U] [--relay-url U] [--dev] [--yes] | status [--json] | remove PART [--purge]\n"
+    "                    [--publish-url U] [--relay-url U] [--port-base N] [--dev] [--yes]\n"
+    "                    | status [--json] | remove PART [--purge]\n"
 )
 # Git ref the parts are installed from. Prototype: develop carries the current work; this moves to release tags later.
 DEFAULT_REF = "develop"  # only when the installed orch-core has no known commit (e.g. an editable dev install)
@@ -65,7 +72,8 @@ def _resolve_ref(url: str, ref: str) -> str:
     return line.split()[0]
 
 
-def _health(host: str, port: int, timeout: float = 30.0) -> bool:
+def _health(host: str, port: int, timeout: float = 2.0) -> bool:
+    """One short probe; :func:`wait_ready` repeats it until its deadline."""
     end = time.time() + timeout
     while time.time() < end:
         try:
@@ -74,6 +82,20 @@ def _health(host: str, port: int, timeout: float = 30.0) -> bool:
         except OSError:
             time.sleep(0.3)
     return False
+
+
+READY_DEADLINE = 60.0
+
+
+def wait_ready(ctx: Ctx, probe: Callable[[], bool]) -> bool:
+    """Poll ``probe`` until it is true or the deadline passes (``ctx.ready_deadline`` seconds)."""
+    end = ctx.clock() + ctx.ready_deadline
+    while True:
+        if probe():
+            return True
+        if ctx.clock() >= end:
+            return False
+        ctx.sleep(0.5)
 
 
 @dataclass
@@ -97,6 +119,10 @@ class Ctx:
     mint_login: Callable[[list[str], Mapping[str, str]], str | None] = lambda argv, env: _mint_login(argv, env)
     qr: Callable[[str], str | None] = lambda link: _qr(link)
     publish_setup: Callable[[str], str | None] = lambda url: None  # configure the workspace; returns a hint on failure
+    port_base: int | None = None  # --port-base N: hub N, relay N+1, publish N+2, hub link N+5 (None: as before, 8100)
+    ready_deadline: float = READY_DEADLINE  # seconds a part gets to answer (polled, not a single check)
+    clock: Callable[[], float] = time.monotonic
+    sleep: Callable[[float], None] = time.sleep
     helper_ready: Callable[[Path], bool] = (
         wait_for_socket  # the service helper's socket shows up (seconds, not forever)
     )
@@ -238,7 +264,35 @@ def _taken(st: dict[str, Any], skip: str = "") -> set[int]:
     return t | {w["port"] for w in st["workspaces"]}
 
 
+def ports_of(ctx: Ctx, st: dict[str, Any]) -> dict[str, int]:
+    """The port block in force: this run's ``--port-base``, else the one an earlier run saved, else 8100."""
+    return P.port_block(ctx.port_base or st.get("port_base") or P.DEFAULT_PORT_BASE)
+
+
+def check_block(ctx: Ctx, parts: Sequence[str]) -> None:
+    """``--port-base``: validate the block and bind-test the ports of ``parts`` BEFORE anything is installed. A port
+    held by a part of THIS install (a rerun) is fine; one held by anything else is refused, never freed."""
+    if ctx.port_base is None:
+        return
+    st = load(ctx.layout)
+    block = P.port_block(ctx.port_base)
+    ours = {p["port"] for p in st["parts"].values()} | {
+        p["link_port"] for p in st["parts"].values() if p.get("link_port")
+    }
+    need = [(part, block[part]) for part in parts] + ([("hub link", block["link"])] if "hub" in parts else [])
+    for what, port in need:
+        if port not in ours and not ctx.port_free(port, P.ADDRESS_ALL):
+            raise InstallError(
+                f"port {port} ({what}) is already used by another program on this computer; pick another --port-base"
+            )
+
+
 def choose_port(ctx: Ctx, part: str, given: int | None, st: dict[str, Any], address: str) -> int:
+    if given is None and ctx.port_base is not None:  # an explicit block: exactly these ports (check_block tested them)
+        port = ports_of(ctx, st)[part]
+        if port in _taken(st, part):
+            raise InstallError(f"port {port} is already used by another part of this install")
+        return port
     if given is not None:
         port = P.valid_port(given)
         if port in _taken(st, part):
@@ -246,7 +300,7 @@ def choose_port(ctx: Ctx, part: str, given: int | None, st: dict[str, Any], addr
         return port
     if part in st["parts"]:
         return st["parts"][part]["port"]
-    start = P.DEFAULT_PORTS[part]
+    start = ports_of(ctx, st)[part]
     host = address if address not in ("localhost",) else "127.0.0.1"
     return P.free_port(start, _taken(st), lambda p: ctx.port_free(p, host if not _is_domain(host) else "127.0.0.1"))
 
@@ -270,7 +324,17 @@ def hub_address_kind(address: str) -> str:
     return {"private network": "private", "local network": "office"}.get(label, "public")
 
 
-def write_hub_settings(data: Path, *, address: str, domain: str | None, port: int) -> None:
+def write_hub_settings(
+    data: Path,
+    *,
+    address: str,
+    domain: str | None,
+    port: int,
+    link_port: int = P.HUB_LINK_PORT,
+    web_origin: str | None = None,
+    link_host: str | None = None,
+    vpn_only: bool = False,
+) -> None:
     """Seed ``hub-settings.json`` (the hub's own words and the addresses it advertises) with the address chosen now.
 
     The hub validates the same shape when it reads it (``orch_hub.settings``). A re-run keeps the name and company an
@@ -291,8 +355,15 @@ def write_hub_settings(data: Path, *, address: str, domain: str | None, port: in
             os.close(fd)
     except (OSError, ValueError, AttributeError):
         pass
-    link = P.HUB_LINK_PORT
+    link = link_port
     loop = address in ("localhost", P.ADDRESS_LOOPBACK)
+    if link_host:  # server role: the card advertises the VPN address for the link and the https name for the console
+        own = P.ADDRESS_LOOPBACK if loop else address  # no name: the console answers on the VPN address itself
+        web = f"{web_origin}:443" if web_origin else f"http://{own}:{port}"
+        # one entry: behind Caddy every allowed origin must be https (hub config); the settings shape wants host:port,
+        # the hub drops the default port when it builds the allowed Origin (settings.origin_of)
+        addrs = [{"kind": "private" if vpn_only else "public", "web": web, "link": f"{link_host}:{link}"}]
+        return _save_hub_settings(f, {"v": 1, "name": name, "company": company, "addresses": addrs})
     host = P.ADDRESS_LOOPBACK if loop else (f"[{address}]" if ":" in address else address)
     addrs = [{"kind": hub_address_kind(address), "web": f"http://{host}:{port}", "link": f"{host}:{link}"}]
     if not loop:  # a network install also answers on the computer itself
@@ -301,7 +372,10 @@ def write_hub_settings(data: Path, *, address: str, domain: str | None, port: in
         )
     if domain:  # the scheme of a domain address (http here) is revisited in S2 with the address picker
         addrs.append({"kind": "public", "web": f"http://{domain}:{port}", "link": None})
-    body = {"v": 1, "name": name, "company": company, "addresses": addrs}
+    _save_hub_settings(f, {"v": 1, "name": name, "company": company, "addresses": addrs})
+
+
+def _save_hub_settings(f: Path, body: dict[str, Any]) -> None:
     tmp = f.with_name(f".{f.name}.tmp")
     tmp.unlink(missing_ok=True)
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
@@ -323,6 +397,12 @@ def install_part(
     relay_url: str | None = None,
     dev: bool = False,
     sync: bool = True,  # False: the caller (full_server) syncs the service helper once at the end
+    link_address: str | None = None,  # server role, hub: the VPN address the link binds (the console stays on loopback)
+    web_origin: str | None = None,  # server role, hub: https://<hub name>, advertised in the card
+    vpn_only: bool = False,
+    public_origin: str | None = None,  # server role, publish: https://<publish name> (server = share)
+    workspace_side: bool = True,
+    behind_edge: bool = False,  # server role with TLS: Caddy on this computer is the edge in front of the part
 ) -> dict[str, Any]:
     spec = P.PARTS[part]
     source = source or ctx.env.get(f"ORCH_INSTALL_SOURCE_{part.upper()}")  # a local checkout (dev machines, tests)
@@ -381,7 +461,16 @@ def install_part(
             tf.write_text(token + "\n")
             tf.chmod(0o600)
     if part == "hub":
-        write_hub_settings(data, address=address, domain=domain, port=port)
+        write_hub_settings(
+            data,
+            address=address,
+            domain=domain,
+            port=port,
+            link_port=ports_of(ctx, st)["link"],
+            web_origin=web_origin,
+            link_host=link_address,
+            vpn_only=vpn_only,
+        )
     argv = P.command_for(
         part,
         binary=binary,
@@ -391,9 +480,14 @@ def install_part(
         publish_url=publish_url,
         relay_url=relay_url,
         dev=dev,
+        link_address=link_address,
+        public_origin=public_origin,
+        link_port=ports_of(ctx, st)["link"],
+        publish_port=ports_of(ctx, st)["publish"],
+        behind_edge=behind_edge,
     )
     log = lay.logs / f"{part}.log"
-    started = ctx.runner.start(part, argv, P.env_for(part, data), log)
+    started = ctx.runner.start(part, argv, P.env_for(part, data, behind_edge=behind_edge), log)
     check_host = dial_host(bind)  # the part listens on every interface; this computer dials itself on loopback
 
     # a computer often cannot dial its own overlay IP (NetBird): then a held port on that IP and a live process count
@@ -402,9 +496,11 @@ def install_part(
             ctx.runner.info(part)["running"] and not ctx.port_free(port, check_host)
         )
 
-    if not answers():
+    if not wait_ready(ctx, answers):
         tail = log.read_text()[-500:] if log.exists() else ""
-        raise InstallError(f"{part} did not answer on {check_host}:{port}; log {log}\n{tail}")
+        raise InstallError(
+            f"{part} did not answer on {check_host}:{port} within {ctx.ready_deadline:.0f} seconds; log {log}\n{tail}"
+        )
     url = f"http://{bind}:{port}"
     rec: dict[str, Any] = {
         "port": port,
@@ -422,21 +518,33 @@ def install_part(
         "started": int(time.time()),
     }
     if part == "hub":
-        rec["link_port"] = P.HUB_LINK_PORT
+        rec["link_port"] = ports_of(ctx, st)["link"]
+        if link_address:
+            rec["link_host"] = link_address
+        if web_origin:
+            rec["console_url"] = web_origin + "/"
         rec["setup_token"] = token
     st = load(lay)
     st["address"], st["domain"] = address, domain or st.get("domain")
+    if ctx.port_base is not None:
+        st["port_base"] = ctx.port_base
     st["parts"][part] = rec
     save(lay, st)
     _version(ctx, rec, spec.binary, tool_env)
     save(lay, {**st, "parts": {**st["parts"], part: rec}})
     _report(ctx, part, rec)
     if part == "publish":
-        hint = ctx.publish_setup(url)
-        if hint:
-            ctx.say(f"  publish settings: not set yet ({hint}); run: orch publish setup --server {url} --share {url}")
+        url = public_origin or url  # server = share = the https name when there is one
+        if not workspace_side:
+            ctx.say(f"  on each Mac, once: orch publish setup --server {url} --share {url}")
         else:
-            ctx.say(f"  publish settings: server = share = {url}")
+            hint = ctx.publish_setup(url)
+            if hint:
+                ctx.say(
+                    f"  publish settings: not set yet ({hint}); run: orch publish setup --server {url} --share {url}"
+                )
+            else:
+                ctx.say(f"  publish settings: server = share = {url}")
     if sync:
         sync_helper(ctx)
     return rec
@@ -471,7 +579,7 @@ def _report(ctx: Ctx, part: str, rec: dict[str, Any]) -> None:
         ctx.say(f"  first admin:  {hub_console_url(rec)}#setup={rec['setup_token']}")
         if rec["bind"] != P.ADDRESS_LOOPBACK:
             ctx.say(f"  on this computer: http://{P.ADDRESS_LOOPBACK}:{rec['port']}/#setup={rec['setup_token']}")
-        ctx.say(f"  workspaces connect to the hub link at {rec['bind']}:{rec['link_port']}")
+        ctx.say(f"  workspaces connect to the hub link at {rec.get('link_host') or rec['bind']}:{rec['link_port']}")
     if part != "hub" and rec["bind"] != P.ADDRESS_LOOPBACK:
         ctx.say(f"  on this computer: http://{P.ADDRESS_LOOPBACK}:{rec['port']}")
     if rec.get("domain"):
@@ -482,6 +590,8 @@ def _report(ctx: Ctx, part: str, rec: dict[str, Any]) -> None:
 
 
 def hub_console_url(rec: dict[str, Any]) -> str:
+    if rec.get("console_url"):
+        return rec["console_url"]
     return f"http://{rec['bind']}:{rec['port']}/"
 
 
@@ -702,6 +812,7 @@ def full_server(
     out: dict[str, dict[str, Any]] = {}
     if not parts:  # a workspace-only setup installs no part, so it has no address to ask for
         return out
+    check_block(ctx, parts)
     st = load(ctx.layout)
     address = choose_address(ctx, address, st)
     for p in parts:
@@ -746,8 +857,15 @@ def start_dashboard(ctx: Ctx, bind: str, port: int) -> dict[str, Any] | None:
         "dashboard", P.dashboard_command(entry, address=bind, port=port), env, lay.logs / "dashboard.log"
     )
     check = "127.0.0.1"
-    if not ctx.health(check, port) and not (ctx.runner.info("dashboard")["running"] and not ctx.port_free(port, check)):
-        ctx.say(f"  the dashboard did not answer on {bind}:{port}; log {lay.logs / 'dashboard.log'}")
+
+    def up() -> bool:
+        return ctx.health(check, port) or (ctx.runner.info("dashboard")["running"] and not ctx.port_free(port, check))
+
+    if not wait_ready(ctx, up):
+        ctx.say(
+            f"  the dashboard did not answer on {bind}:{port} within {ctx.ready_deadline:.0f} seconds; "
+            f"log {lay.logs / 'dashboard.log'}"
+        )
     rec = {
         "port": port,
         "bind": bind,
@@ -782,7 +900,7 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextI
         err.write("orch install: installing parts is a person's job; an agent never does it\n")
         return 3
     p = argparse.ArgumentParser(prog="orch install", add_help=False)
-    p.add_argument("cmd", choices=("hub", "relay", "publish", "status", "remove", "phone"))
+    p.add_argument("cmd", choices=("hub", "relay", "publish", "status", "remove", "phone", "server"))
     p.add_argument("rest", nargs="*")
     p.add_argument("--address")
     p.add_argument("--port", type=int)
@@ -796,6 +914,16 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextI
     p.add_argument("--json", action="store_true")
     p.add_argument("--purge", action="store_true")
     p.add_argument("--user")
+    p.add_argument("--role", choices=tuple(ROLES))
+    p.add_argument("--domain-hub")
+    p.add_argument("--domain-relay")
+    p.add_argument("--domain-publish")
+    p.add_argument("--hub-vpn-only", action="store_true")
+    p.add_argument("--vpn-ip")
+    p.add_argument("--allow-non-cgnat", action="store_true")
+    p.add_argument("--port-base", type=int)
+    p.add_argument("--caddy-dir", default=CADDY_DIR)
+    p.add_argument("--backup-drop")
     try:
         a = p.parse_args(list(argv))
     except SystemExit:
@@ -804,11 +932,34 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextI
     ctx = ctx or default_ctx(env, out, err)
     if a.yes:
         ctx.interactive = False
+    if a.port_base is not None:
+        ctx.port_base = a.port_base
     try:
         if a.cmd == "status":
             return status(ctx, a.json)
         if a.cmd == "phone":
             return phone(ctx, a.user)
+        if a.cmd == "server":
+            from .serverflow import server_setup
+
+            if not a.role or a.rest:
+                err.write(USAGE)
+                return 2
+            server_setup(
+                ctx,
+                a.role,
+                names=derive_names(a.domain, a.domain_hub, a.domain_relay, a.domain_publish),
+                hub_vpn_only=a.hub_vpn_only,
+                vpn_ip=a.vpn_ip,
+                allow_non_cgnat=a.allow_non_cgnat,
+                address=a.address,
+                caddy_dir=a.caddy_dir,
+                backup_drop=a.backup_drop,
+                source=a.source,
+                ref=a.ref,
+                dev=a.dev,
+            )
+            return 0
         if a.cmd == "remove":
             if len(a.rest) != 1:
                 err.write(USAGE)
@@ -817,6 +968,9 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextI
         if a.rest:
             err.write(USAGE)
             return 2
+        if ctx.port_base is not None:
+            P.port_block(ctx.port_base)
+            check_block(ctx, [a.cmd])
         address = a.address or a.domain
         install_part(
             ctx,

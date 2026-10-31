@@ -1099,12 +1099,17 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
                 raise ChannelError("weak_password", f"at least {MIN_PASSWORD} characters")
             uid = self.d.keys.issue_uk(None)["o"]["user_id"]
             self.d.access.add_user(uid, b["name"])
-            self.d.access.add_member(ADMIN_GROUP, uid)
             self.d.channels.set_password(uid, b["password"])
             t = self.d.channels.new_totp(uid)
+            # #1837 review: the admin membership is the LAST step, so a failure above leaves no half-made admin that
+            # would lock /setup (not_allowed) for good; the code stays usable for another try
+            self.d.access.add_member(ADMIN_GROUP, uid)
             # the admin exists by now: a failure here leaves the token file, but /setup answers not_allowed from then on
             s = self.d.channels.open_setup_session(uid)
-            f.unlink(missing_ok=True)  # single use
+            try:
+                f.unlink(missing_ok=True)  # single use
+            except OSError:
+                pass  # the admin exists: /setup answers not_allowed from now on; never lose the TOTP over this
         ttl = max(0, (s["expires_ms"] - self.d.now_ms()) // 1000)
         cookie = [self._session_cookie(s["token"], ttl)]
         return 200, {"user_id": uid, "totp_secret": t["secret"], "totp_uri": t["uri"]}, cookie

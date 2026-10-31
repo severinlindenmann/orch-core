@@ -37,7 +37,8 @@ class Settings:
         self.dev_mode = bool(
             dev_mode
         )  # a dev publish accepts only dev hub objects, a real one only real (2.4)
-        self.db_path = db.prepare_dir(data_dir)
+        # the format rule, then the dir checks; the handle keeps the shared format lock while this lives
+        self.db_path, self.data_handle = db.open_dir(data_dir)
         self.clock = clock or (lambda: int(time.time() * 1000))
         # the direct v2 12.1 path for APP routes only (protocol 11.2 amendment); off unless the operator turns it on
         self.allow_direct = bool(allow_direct)

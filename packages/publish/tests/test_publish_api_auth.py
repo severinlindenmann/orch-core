@@ -217,7 +217,7 @@ def test_older_data_dir_refuses_to_start(tmp_path):
     conn.execute("CREATE TABLE workspaces(workspace_id TEXT, card_seq INTEGER, card_json TEXT)")
     conn.execute("PRAGMA user_version=1")
     conn.close()
-    with pytest.raises(db.SchemaError, match="delete the data dir"):
+    with pytest.raises(db.SchemaError, match="run `orch update`"):
         create_app(data, HOST)
     assert cli.main(["admin", "--data", data, "owners", "list"]) == 2
 

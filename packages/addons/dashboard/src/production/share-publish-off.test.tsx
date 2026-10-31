@@ -108,7 +108,7 @@ it('run17 P01b: a hub-suggested address shows "Files go to your hub, <name>." in
   const user = userEvent.setup()
   await openShare(user)
   await screen.findByTestId('click-panel', {}, T)
-  expect(await screen.findByTestId('where-files-go', {}, T)).toHaveTextContent('Files go to your hub, Anna’s hub.')
+  expect(await screen.findByTestId('where-files-go', {}, T)).toHaveTextContent('Files go to your hub, Anna’s hub (127.0.0.1).') // the name is not signed: the signed server host is named with it
   expect(screen.getByRole('button', { name: /^Sign( |$)/ })).toBeInTheDocument()
   expect(state.host.clickSigned).toEqual([])
 })

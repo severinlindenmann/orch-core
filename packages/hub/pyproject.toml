@@ -25,7 +25,10 @@ dev = ["pytest>=8", "ruff>=0.6", "pytest-timeout>=2.3"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src", "tests"]
-markers = ["slow: tests taking more than 2 s"]
+markers = [
+    "slow: tests taking more than 2 s",
+    "raw_state: HubKeys.init does not also write format.json (the test makes the state dir by hand)",
+]
 timeout = 120
 
 [tool.ruff]

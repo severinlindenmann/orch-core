@@ -114,3 +114,26 @@ def test_orch_paths_never_name_the_project_folder_or_its_store(tmp):
     state = tmp.home / ".local" / "state" / "orch"
     assert root not in privdir.orch_paths(state, tmp.home)
     assert root in privdir.setup_paths(root, root / ".orch", state, tmp.home)
+
+
+def test_the_real_launch_wiring_spares_the_project_folder_and_tightens_orchs_own(tmp):
+    """Production wiring: ``default_env(...).privatize`` (RealPorts, not a test-local stand-in) driven by the real
+    ``SetupFlow.launch`` must never touch the project folder, and must tighten orch's own folders."""
+    from orch.setup.flow import default_env
+    from orch.setup.steps import RealPorts
+
+    home = tmp.home
+    loose = _loose_tree(home)
+    state = home / ".config" / "orch"
+    state.mkdir()
+    os.chmod(state, 0o775)
+    os.chmod(tmp.work, 0o775)
+    env = default_env({"HOME": str(home)})
+    assert env.state_dir == state
+    SetupFlow(env).launch(str(tmp.work))
+    assert _mode(tmp.work) == 0o775
+    assert all(_mode(d) == 0o755 for d in [*loose, state])
+    # the port itself, called directly, takes no project folder at all
+    os.chmod(state, 0o775)
+    RealPorts({"HOME": str(home)}, state, os.getuid()).privatize_orch()
+    assert _mode(state) == 0o755 and _mode(tmp.work) == 0o775

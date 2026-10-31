@@ -412,7 +412,8 @@ class Workspace:
 
 
 # -- `orch setup` without a browser: the page played over the setup socket ----------------------------------------------
-_LINK = re.compile(r"http://127\.0\.0\.1:(\d{1,5})/#launch=([A-Za-z0-9_-]{20,100})&to=")
+# the setup link is `/setup#launch=..` since run16 P06; other kinds keep `/#launch=..&to=..`. Only the port is used.
+_LINK = re.compile(r"http://127\.0\.0\.1:(\d{1,5})/(?:setup)?#launch=([A-Za-z0-9_-]{20,100})")
 
 
 def setup_driver(ws: Workspace, *, timeout: int = 180) -> None:

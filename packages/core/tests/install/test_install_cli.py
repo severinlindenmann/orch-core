@@ -586,14 +586,19 @@ def test_stderr_noise_next_to_a_valid_card_still_pins(home):
 
 def test_the_real_orch_hub_card_is_accepted(tmp_path):
     """Integration: the real `orch-hub keys init` and `keys card` (skipped when orch-hub is not importable here)."""
+    import os
     import subprocess
     import sys
 
     pytest.importorskip("orch_hub")
     state = tmp_path / "hub"
-    base = [sys.executable, "-m", "orch_hub", "keys", "--state", str(state)]
+    # orch_hub has no __main__: run its console entry point (orch-hub = orch_hub.cli:main) the way the script does
+    run = "import sys; from orch_hub.cli import main; sys.argv[0] = 'orch-hub'; sys.exit(main())"
+    base = [sys.executable, "-c", run, "keys", "--state", str(state)]
+    # the child must import orch_hub the way this process does (CI finds it on sys.path, not in the core venv)
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join(p for p in sys.path if p)}
     for argv in (["init"], ["card"]):
-        r = subprocess.run([*base, *argv], capture_output=True, text=True)
+        r = subprocess.run([*base, *argv], capture_output=True, text=True, env=env)
         assert r.returncode == 0, r.stderr
     got = cli._card_hub_id(r.stdout)
     assert got is not None and len(got) == 32

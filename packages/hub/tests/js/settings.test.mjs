@@ -215,6 +215,7 @@ test("P02: the address the admin is connected through is kept by Save even when 
     const dd = { ...DEMO, phone_kind: "private", addresses: [{ kind: "private", web: "http://100.71.188.237:8100" }, { kind: "office", web: "http://10.9.9.9:8100" }] };
     const b = card(hubSettingsView(dd, { opened: true, detected: DETECTED, saveAddresses: (x) => sent.push(x) }), "address");
     assert.equal(byTag(b.all().find((n) => n.attrs["data-kind"] === "office"), "select")[0].disabled, true);
+    byTag(b.all().find((n) => n.attrs["data-kind"] === "office"), "select")[0].value = "";   // the DOM no longer says it: the data does
     button(b, "Save").listeners.click();
     assert.ok(sent[1].addresses.some((x) => x.kind === "office" && x.host === "10.9.9.9"));
   } finally { globalThis.location = prev; }

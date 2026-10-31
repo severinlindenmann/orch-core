@@ -829,7 +829,7 @@ def test_run18_the_plain_name_command_window_is_only_for_the_real_builtin_packag
     fake = build(_addon(package_sha256="sha256:" + "bb" * 32))
     assert "Command window" not in flat(fake) and fake["title"] == "Turn on Terminals"
     assert {r["field"]: r["after"] for r in fake["fields_changed"]}["add-on"] == "terminals"
-    # turning it off carries no digest here: the mechanical name
+    # turning it off carries no package: the display name goes by id (safe direction); the raw name stays in the event
     off = build(
         {
             "op": "addon.disable",
@@ -837,7 +837,16 @@ def test_run18_the_plain_name_command_window_is_only_for_the_real_builtin_packag
             "material": {"kind": "payload", "ticket": None},
         }
     )
-    assert "Command window" not in flat(off)
+    assert off["headline"] == "Turn off Command window"
+    assert "Turn off Terminals" not in flat(off)
+    other = build(
+        {
+            "op": "addon.disable",
+            "events": [{"type": "addon.disabled", "name": "worktrees"}],
+            "material": {"kind": "payload", "ticket": None},
+        }
+    )
+    assert other["headline"] == "Turn off Worktrees"
 
 
 def test_run18_the_two_terminals_manifests_are_byte_identical():

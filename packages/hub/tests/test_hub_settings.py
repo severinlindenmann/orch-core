@@ -547,6 +547,8 @@ def test_run18_detected_addresses_never_lead_with_a_virtual_bridge_and_name_the_
         "5: veth9    inet 10.99.0.1/24 brd x scope global veth9\n"
         "2: eth0    inet 192.168.1.9/24 brd x scope global eth0\n"
         "6: virbr0    inet 192.168.122.1/24 brd x scope global virbr0\n"
+        "7: wg0    inet 10.66.0.2/24 scope global wg0\n"
+        "8: tap0    inet 10.67.0.2/24 scope global tap0\n"
     )
     got = SA.detect_addresses(text)
     assert [g["ip"] for g in got] == [
@@ -556,6 +558,8 @@ def test_run18_detected_addresses_never_lead_with_a_virtual_bridge_and_name_the_
         "172.18.0.1",
         "10.99.0.1",
         "192.168.122.1",
+        "10.66.0.2",
+        "10.67.0.2",
     ]
     assert got[1] == {"ip": "192.168.1.9", "kind": "office", "iface": "eth0"}
     ifc = "en0: flags=8863<UP> mtu 1500\n\tinet 10.1.1.4 netmask 0xffffff00\nbridge100: flags=8863<UP>\n\tinet 192.168.64.1 netmask 0xffffff00\n"

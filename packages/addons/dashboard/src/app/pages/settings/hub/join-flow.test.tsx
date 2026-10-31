@@ -11,10 +11,11 @@ import { renderApp } from '@/test/renderApp'
 
 void gesture
 const T = { timeout: 4000 }
+const HUB_NAME = 'Acme Hub'
 const LINK = 'http://10.0.0.5:8106/c#h1.9f3c1ab277de40c8aa11bb22cc33dd44.7QK2M9XD.10.0.0.5:8105'
 beforeAll(async () => { await Promise.all([import('@/app/pages/settings'), import('@/app/pages/tickets')]) }, 60000)
 beforeEach(() => {
-  setHubScenario('standalone'); setMockOneClick(true); setMockVault(true); setMockConnectError(null); setMockConfirmAfter(0)
+    setHubScenario('standalone'); setMockOneClick(true); setMockVault(true); setMockConnectError(null); setMockConfirmAfter(0)
   vi.spyOn(sealed, 'seal').mockResolvedValue({ v: 1, alg: 'P256-HKDF-SHA256-A256GCM', epk: 'e', ct: 'c' } as sealed.Envelope)
 })
 afterEach(() => { cleanup(); setHubScenario(null); setMockConfirmAfter(0); vi.restoreAllMocks() })
@@ -109,9 +110,14 @@ describe('P10: a short join dialog', () => {
   it('the Standalone page does not mention a backup key and the link hint is one sentence', async () => {
     const view = await open()
     expect(document.body.textContent).not.toMatch(/backup key/i)
-    expect(document.body.textContent).toContain('Paste the connect link from your hub admin.')
-    expect(await screen.findByRole('button', { name: 'Use copied link' }, T)).toBeTruthy() // the clipboard button is the first step; the field is folded
-    expect(screen.getByText('Paste a different link')).toBeTruthy()
+    expect(document.body.textContent).toContain('Paste the connect link from your hub admin')
+    // P08: nothing to unfold: the field is there at once with the clipboard button beside it
+    expect(await screen.findByRole('button', { name: 'Paste from clipboard' }, T)).toBeTruthy()
+    expect(screen.getByLabelText('Paste the connect link from your hub admin')).toBe(screen.getByTestId('hub-link-text'))
+    expect(screen.getByTestId('hub-link-text')).toBeVisible()
+    expect(screen.getByTestId('hub-link-paste').closest('details')).toBeNull()
+    expect(screen.queryByText('Paste a different link')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Use copied link' })).toBeNull()
     view.unmount()
   })
   it('shows both choices at once with the first chosen, no Change link, and the caveat only for Everything', async () => {
@@ -125,9 +131,9 @@ describe('P10: a short join dialog', () => {
     expect(screen.queryByText('Change')).toBeNull()
     expect(screen.getByTestId('hub-link-later').textContent).toBe('Leaving later does not take back what the hub already read.')
     // one question naming the hub by its address, one Details fold in the hub box; Connect stays the only way on
-    expect(hub.textContent).toContain('Connect to the hub at')
+    expect(hub.textContent).toContain('Connect to 10.0.0.5:8106?')
     expect(hub.querySelectorAll('details')).toHaveLength(1)
-    expect(screen.getByTestId('hub-link-found').textContent).toContain('Link found. Hub at 10.0.0.5:8106')
+    expect(screen.getByTestId('hub-link-found').textContent).toBe('Link found: 10.0.0.5:8106')
     expect(screen.queryByText('What the hub has already read cannot be taken back.')).toBeNull()
     await view.user.click(screen.getByTestId('hub-mode-full'))
     expect(screen.getByText('What the hub has already read cannot be taken back.')).toBeTruthy()
@@ -145,8 +151,7 @@ describe('a connect link in the address fragment', () => {
     expect((await screen.findByTestId('hub-link-text', {}, T) as HTMLInputElement).value).toBe(LINK)
     expect(screen.getByTestId('hub-link-from').textContent).toContain('http://10.0.0.5:8106') // no lookup yet: the target is named
     await view.user.click(await screen.findByRole('button', { name: 'Look up this hub' }, T))
-    expect((await screen.findByTestId('hub-link-hub', {}, T)).textContent).toContain('Connect to the hub at')
-    expect(screen.getByTestId('hub-link-hub').textContent).toContain('Connect to the hub at 10.0.0.5:8106?')
+    expect((await screen.findByTestId('hub-link-hub', {}, T)).textContent).toContain('Connect to 10.0.0.5:8106?')
     await waitFor(() => expect(view.address()).not.toContain('connect'), T)
     view.unmount()
   })
@@ -160,7 +165,7 @@ describe('a connect link in the address fragment', () => {
 })
 
 // P12: "Use copied link" reads the clipboard only on a click, validates it with LINK and never signs by itself.
-describe('P12: Use copied link', () => {
+describe('P12 / P08: Paste from clipboard', () => {
   const clip = (read: () => Promise<string>) => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { readText: vi.fn(read) } })
   const open = async () => { const view = renderApp('/w/DEMO/settings/hub'); await view.user.click(await screen.findByTestId('hub-connect', {}, T)); return view }
   afterEach(() => { Reflect.deleteProperty(navigator, 'clipboard') })
@@ -170,9 +175,9 @@ describe('P12: Use copied link', () => {
     clip(async () => LINK) // after render: user-event installs its own clipboard stub in renderApp
     expect(navigator.clipboard.readText).not.toHaveBeenCalled()
     expect(screen.getByTestId('hub-link-text').getAttribute('placeholder')).toBeNull()
-    await view.user.click(await screen.findByRole('button', { name: 'Use copied link' }, T))
+    await view.user.click(await screen.findByRole('button', { name: 'Paste from clipboard' }, T))
     expect((screen.getByTestId('hub-link-text') as HTMLInputElement).value).toBe(LINK)
-    expect((await screen.findByTestId('hub-link-hub', {}, T)).textContent).toContain('Connect to the hub at') // r14 P07: the address is the question; the hub name sits under Details
+    expect((await screen.findByTestId('hub-link-hub', {}, T)).textContent).toContain('Connect to 10.0.0.5:8106?') // P08: the hub is named
     expect(navigator.clipboard.readText).toHaveBeenCalledTimes(1)
     expect(join).not.toHaveBeenCalled() // the person still presses Connect
     view.unmount()
@@ -180,18 +185,18 @@ describe('P12: Use copied link', () => {
   it('junk on the clipboard fills nothing and says so in plain words', async () => {
     const view = await open()
     clip(async () => 'javascript:alert(1)')
-    await view.user.click(await screen.findByRole('button', { name: 'Use copied link' }, T))
-    expect((await screen.findByTestId('hub-link-nocopied', {}, T)).textContent).toBe('There is no connect link copied yet.')
+    await view.user.click(await screen.findByRole('button', { name: 'Paste from clipboard' }, T))
+    expect((await screen.findByTestId('hub-link-nocopied', {}, T)).textContent).toBe('Copy the link in the hub first.')
     expect((screen.getByTestId('hub-link-text') as HTMLInputElement).value).toBe('')
     view.unmount()
   })
   it('a refused clipboard read leaves the paste field as the way in', async () => {
     const view = await open()
     clip(async () => { throw new Error('denied') })
-    await view.user.click(await screen.findByRole('button', { name: 'Use copied link' }, T))
+    await view.user.click(await screen.findByRole('button', { name: 'Paste from clipboard' }, T))
     expect(await screen.findByTestId('hub-link-nocopied', {}, T)).toBeTruthy()
     fireEvent.change(screen.getByTestId('hub-link-text'), { target: { value: LINK } })
-    expect((await screen.findByTestId('hub-link-hub', {}, T)).textContent).toContain('Connect to the hub at') // r14 P07: the address is the question; the hub name sits under Details
+    expect((await screen.findByTestId('hub-link-hub', {}, T)).textContent).toContain('Connect to 10.0.0.5:8106?') // P08: the hub is named
     view.unmount()
   })
   it('with clipboard permission already granted the copied link only fills the field: no lookup until the click', async () => {
@@ -207,12 +212,65 @@ describe('P12: Use copied link', () => {
       expect(lookup).not.toHaveBeenCalled()
       expect(screen.queryByTestId('hub-link-hub')).toBeNull()
       await view.user.click(await screen.findByRole('button', { name: 'Look up this hub' }, T))
-      expect((await screen.findByTestId('hub-link-hub', {}, T)).textContent).toContain('Connect to the hub at')
+      expect((await screen.findByTestId('hub-link-hub', {}, T)).textContent).toContain('Connect to 10.0.0.5:8106?')
       expect(lookup).toHaveBeenCalledTimes(1)
       expect(lookup.mock.calls[0][1]).toBe(LINK)
       expect(join).not.toHaveBeenCalled()
       view.unmount()
     } finally { Reflect.deleteProperty(navigator, 'permissions') }
+  })
+  it('P08: the clipboard button reads only on its click; the address that was looked up sits under Details', async () => {
+    const view = await open()
+    clip(async () => LINK)
+    expect(navigator.clipboard.readText).not.toHaveBeenCalled()
+    await view.user.click(await screen.findByRole('button', { name: 'Paste from clipboard' }, T))
+    const hub = await screen.findByTestId('hub-link-hub', {}, T)
+    expect(hub.textContent).toContain('Connect to 10.0.0.5:8106?')
+    await view.user.click(hub.querySelector('summary') as HTMLElement)
+    expect(screen.getByTestId('hub-link-details').textContent).toContain('Address: http://10.0.0.5:8106')
+    view.unmount()
+  })
+  it('P08: the consent line carries the verified host even when the hub names itself like another host', async () => {
+    vi.spyOn(api, 'getHubLink').mockImplementation(async (_ws, link) => ({ hub_id: 'a'.repeat(32), name: 'hub.acme.com', code: 'c', endpoint: null, dev: true, hub_card: '{}', owner_user: null, link } as never))
+    const view = await open()
+    fireEvent.change(screen.getByTestId('hub-link-text'), { target: { value: LINK } })
+    expect((await screen.findByTestId('hub-link-question', {}, T)).textContent).toBe('Connect to hub.acme.com at 10.0.0.5:8106?')
+    view.unmount()
+  })
+  it('P08: a real distinct name reads "<name> at <host>"; a name that is only the address (the real shape) reads "<host>" once', async () => {
+    const real = api.getHubLink.bind(api)
+    vi.spyOn(api, 'getHubLink').mockImplementation(async (ws, link) => ({ ...(await real(ws, link)), name: HUB_NAME }))
+    const view = await open()
+    fireEvent.change(screen.getByTestId('hub-link-text'), { target: { value: LINK } })
+    expect((await screen.findByTestId('hub-link-question', {}, T)).textContent).toBe('Connect to Acme Hub at 10.0.0.5:8106?')
+    expect(screen.getByTestId('hub-link-found').textContent).toBe('Link found: Acme Hub')
+    view.unmount()
+  })
+  it('P08: the name is the address in other spellings (case, :443): single-host wording', async () => {
+    vi.spyOn(api, 'getHubLink').mockImplementation(async () => ({ hub_id: 'a'.repeat(32), name: 'Hub.Example.org:443', code: 'c', endpoint: null, dev: true, hub_card: '{}', owner_user: null } as never))
+    const view = await open()
+    fireEvent.change(screen.getByTestId('hub-link-text'), { target: { value: 'https://hub.example.org/c#h1.9f3c1ab277de40c8aa11bb22cc33dd44.7QK2M9XD' } })
+    expect((await screen.findByTestId('hub-link-question', {}, T)).textContent).toBe('Connect to hub.example.org?')
+    view.unmount()
+  })
+  it('P08: no name: the question is the host; the port 443 is not shown', async () => {
+    vi.spyOn(api, 'getHubLink').mockImplementation(async () => ({ hub_id: 'a'.repeat(32), name: ' ', code: 'c', endpoint: null, dev: true, hub_card: '{}', owner_user: null } as never))
+    const view = await open()
+    fireEvent.change(screen.getByTestId('hub-link-text'), { target: { value: 'https://hub.example.org:443/c#h1.9f3c1ab277de40c8aa11bb22cc33dd44.7QK2M9XD' } })
+    expect((await screen.findByTestId('hub-link-question', {}, T)).textContent).toBe('Connect to hub.example.org?')
+    view.unmount()
+  })
+  it('P08: while the hub is looked up it says so; editing the link drops the shown hub until the new link is looked up', async () => {
+    vi.spyOn(api, 'getHubLink')
+    const view = await open()
+    fireEvent.change(screen.getByTestId('hub-link-text'), { target: { value: LINK } })
+    await screen.findByTestId('hub-link-hub', {}, T)
+    const other = 'http://10.0.0.9:9/c#h1.00000000000000000000000000000000.AAAAAAAA'
+    fireEvent.change(screen.getByTestId('hub-link-text'), { target: { value: other } })
+    expect(screen.queryByTestId('hub-link-hub')).toBeNull() // the old hub's name never stands next to another link
+    expect(screen.queryByTestId('hub-link-found')).toBeNull()
+    await waitFor(() => expect(api.getHubLink).toHaveBeenLastCalledWith(expect.anything(), other), T)
+    view.unmount()
   })
   it('the automatic clipboard read never replaces a link the person already typed', async () => {
     let grant: (v: { state: string }) => void = () => {}
@@ -229,14 +287,14 @@ describe('P12: Use copied link', () => {
       view.unmount()
     } finally { Reflect.deleteProperty(navigator, 'permissions') }
   })
-  it('without permission the button is the first step and the field is folded under "Paste a different link"', async () => {
+  it('without permission the field and the button are both there at once, nothing folded, nothing read', async () => {
     Object.defineProperty(navigator, 'permissions', { configurable: true, value: { query: vi.fn(async () => ({ state: 'prompt' })) } })
     try {
       const view = await open()
       clip(async () => LINK)
-      expect(await screen.findByRole('button', { name: 'Use copied link' }, T)).toBeTruthy()
-      expect(screen.getByTestId('hub-link-paste').hasAttribute('open')).toBe(false)
-      expect(screen.getByText('Paste a different link')).toBeTruthy()
+      expect(await screen.findByRole('button', { name: 'Paste from clipboard' }, T)).toBeTruthy()
+      expect(screen.getByTestId('hub-link-text')).toBeVisible()
+      expect(screen.getByTestId('hub-link-paste').closest('details')).toBeNull()
       expect(navigator.clipboard.readText).not.toHaveBeenCalled()
       view.unmount()
     } finally { Reflect.deleteProperty(navigator, 'permissions') }

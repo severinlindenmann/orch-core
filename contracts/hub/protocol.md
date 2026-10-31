@@ -3007,6 +3007,8 @@ included. Vectors: `publish_approval_reused_on_second_request` (same body, fresh
 uses `orch/v2/publish-request|` and no hub part; and `access` may be any of `public`, `password`, `company`, `group`. For an
 app commit, rollback or start the approval is required whatever the access.
 
+**Who makes it, and when (#1455; text only, no new field).** For an app commit, rollback or start the host draws the request (its `ts` and `nonce`) after the version is uploaded, and the owner's approval is made then by the same signing client, in the same click session that signed the release note: it rebuilds the release words and the request body itself and signs only if they equal the note it just signed (`orch.publishclient.golive`). The request is sent once, with exactly that `ts`, `nonce` and approval.
+
 Requests for `secret` or `sealed` access keep the v2 path: the host evaluates the charter (spec §5.5, §8 "the agent
 `publish(...)` path is unchanged") and no approval is needed. An approval on such a request is still verified, and its
 `access` (`"public"`) then mismatches → `bad_approval`.

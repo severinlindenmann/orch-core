@@ -42,7 +42,8 @@ const data = {
 function fill(view, name, value) {
   const nameIn = find(view, (n) => n.tag === "input" && n.attrs["aria-label"] === "Name of the new secret")[0];
   nameIn.value = name;
-  const input = find(view, (n) => n.tag === "input" && n.attrs.type === "password")[0];
+  const scope = find(view, (n) => n.attrs["data-new-secret"] !== undefined)[0] ?? view;
+  const input = find(scope, (n) => n.tag === "input" && n.attrs.type === "password")[0];
   input.value = value;
   return input;
 }
@@ -180,7 +181,7 @@ test("who can read it and remove go to the page's actions; remove asks twice", (
   const calls = [];
   const view = secretsView(data, { share: (n, s, w) => calls.push(["share", n, s, w]), remove: (s) => calls.push(["remove", s.name]) });
   const boxes = find(view, (n) => n.tag === "input" && n.attrs["data-ws"]);
-  boxes[1].checked = false;
+  boxes[1].checked = false; boxes[1].listeners.change();
   button(view, "Save who can read it").listeners.click();
   assert.deepEqual(calls[0], ["share", "crm-key", "chosen", [WS[0]]]);
   const rm = button(view, "Remove");
@@ -232,7 +233,7 @@ test("P10: no Enter-the-value button, hint or warning when every row is ready", 
   const view = secretsView(ready, {});
   assert.equal(button(view, "Enter the value"), undefined);
   assert.ok(!/Waiting for you|Needs the value|Enter the value/.test(view.textContent));
-  assert.match(view.textContent, /\u2713 Available/);
+  assert.ok(!/Available/.test(view.textContent), "no Available chip when nothing needs the value");
 });
 
 test("P07: the new-secret form starts on chosen workspaces with a reason, and the share box sits above Save", () => {
@@ -271,16 +272,90 @@ test("P07: Save with nothing ticked says so and sends nothing; after a good save
   assert.equal(find(view, (n) => n.attrs["aria-label"] === "Name of the new secret")[0].value, "", "name cleared");
 });
 
-test("P07: the card says Not used yet, 'as reported' lives only behind the i, and Available has one explanation", () => {
+test("P07: the card says Not used yet, and has no 'i' buttons; the page heading keeps its one", () => {
   const view = secretsView({ ...data, secrets: [{ ...data.secrets[0], used_this_week: 0 }] }, {});
   const card = find(view, (n) => n.attrs["data-secret"] === "crm-key")[0];
   assert.match(card.textContent, /Valid until .* \u00b7 Not used yet/);
-  const details = find(card, (n) => n.tag === "details").map((d) => d.textContent);
-  const inside = details.join("|");
-  const outside = details.reduce((t, d) => t.replace(d, ""), card.textContent);
-  assert.ok(!/as reported/.test(outside)); assert.match(inside, /as reported by the workspaces/);
-  assert.match(inside, /Available means the workspace has received the secret\./);
+  assert.equal(find(card, (n) => n.tag === "details").length, 0, "no per-card info buttons");
+  assert.equal(find(view, (n) => n.tag === "details").length, 1, "only the heading's");
   assert.match(card.textContent, /Needs the value/);
+});
+
+test("P04: one calm row: a single Shared with line, Manage and Remove, and no Available chip when every workspace is ready", () => {
+  const ready = { ...data, secrets: [{ ...data.secrets[0], state: { [WS[0]]: { state: "ready" }, [WS[1]]: { state: "ready" } } }] };
+  const card = find(secretsView(ready, {}), (n) => n.attrs["data-secret"] === "crm-key")[0];
+  assert.equal((card.textContent.match(/Shared with/g) ?? []).length, 1);
+  assert.ok(!/Available/.test(card.textContent));
+  assert.equal(find(card, (n) => n.className.includes("chip")).length, 0);
+  assert.ok(button(card, "Manage")); assert.ok(button(card, "Remove"));
+  // with a workspace that still needs the value the chips come back
+  const need = find(secretsView(data, {}), (n) => n.attrs["data-secret"] === "crm-key")[0];
+  assert.match(need.textContent, /\u2713 Available/); assert.match(need.textContent, /Needs the value/);
+});
+
+test("P04: Manage opens the panel with who can read it and Who used it", () => {
+  const card = find(secretsView(data, {}), (n) => n.attrs["data-secret"] === "crm-key")[0];
+  const panel = find(card, (n) => n.attrs["data-manage"] === "crm-key")[0];
+  assert.equal(panel.hidden, true);
+  assert.ok(find(panel, (n) => n.tag === "select" && n.attrs["aria-label"] === "Who can read it").length);
+  assert.ok(find(panel, (n) => n.attrs["data-use-toggle"] === "crm-key").length);
+  button(card, "Manage").listeners.click();
+  assert.equal(panel.hidden, false);
+  button(card, "Manage").listeners.click();
+  assert.equal(panel.hidden, true);
+});
+
+test("P04: the who-can-read select is never empty, whatever the saved value", () => {
+  for (const [shared, want] of [["all", "all"], ["chosen", "chosen"], ["weird", "chosen"], [undefined, "chosen"], [null, "chosen"]]) {
+    const view = secretsView({ ...data, secrets: [{ ...data.secrets[0], shared }] }, {});
+    const sel = find(view, (n) => n.tag === "select" && n.attrs["aria-label"] === "Who can read it")[0];
+    assert.equal(sel.value, want, String(shared));
+    assert.ok(["all", "chosen"].includes(sel.value));
+  }
+});
+
+test("P04: Save who can read it stays hidden until something changes, and shows No changes yet meanwhile", () => {
+  const view = secretsView(data, {});
+  const card = find(view, (n) => n.attrs["data-secret"] === "crm-key")[0];
+  const save = button(card, "Save who can read it");
+  const hint = find(card, (n) => n.attrs["data-nochange"] === "crm-key")[0];
+  assert.equal(save.hidden, true); assert.ok(!hint.hidden); assert.equal(hint.textContent, "No changes yet");
+  const boxes = find(card, (n) => n.tag === "input" && n.attrs["data-ws"]);
+  boxes[1].checked = false; boxes[1].listeners.change();
+  assert.equal(save.hidden, false); assert.equal(hint.hidden, true);
+  boxes[1].checked = true; boxes[1].listeners.change();
+  assert.equal(save.hidden, true, "back to the saved state hides it again"); assert.ok(!hint.hidden);
+  const sel = find(card, (n) => n.tag === "select" && n.attrs["aria-label"] === "Who can read it")[0];
+  sel.value = "all"; sel.listeners.change();
+  assert.equal(save.hidden, false);
+  // a re-render (as after a save) starts clean again
+  const again = button(secretsView(data, {}), "Save who can read it");
+  assert.equal(again.hidden, true);
+});
+
+test("P04: the New secret form is folded behind Add a secret when a secret exists, and open when there are none", () => {
+  const view = secretsView(data, {});
+  const section = find(view, (n) => n.attrs["data-new-secret"] !== undefined)[0];
+  assert.equal(section.hidden, true);
+  const add = button(view, "Add a secret");
+  assert.equal(add.className, "primary pri");
+  assert.equal(add.hidden, undefined);
+  add.listeners.click();
+  assert.equal(section.hidden, false);
+  assert.equal(find(section, (n) => n.attrs["aria-label"] === "Name of the new secret")[0].value, "", "always opens empty");
+  const empty = secretsView({ ...data, secrets: [] }, {});
+  assert.equal(find(empty, (n) => n.attrs["data-new-secret"] !== undefined)[0].hidden, undefined, "open with no secrets");
+  assert.equal(button(empty, "Add a secret"), undefined);
+});
+
+test("P04: after save resolves the name field is empty, and the page's clear hook runs before the re-render", async () => {
+  let cleared = false;
+  const view = secretsView(data, { save: async (f) => { f.clear(); cleared = true; return { ok: true }; } });
+  const nameIn = find(view, (n) => n.attrs["aria-label"] === "Name of the new secret")[0];
+  tickAll(view);
+  fill(view, "demo-key", VALUE);
+  await button(view, "Save secret").listeners.click();
+  assert.ok(cleared); assert.equal(nameIn.value, "");
 });
 
 test("P07: the card's share box shows the hub warning above its Save only while All workspaces is picked", () => {

@@ -27,6 +27,10 @@ describe('AgentStatus', () => {
     const t = screen.getByTestId('agent-status')
     expect(t).toHaveTextContent('is waiting for you')
     expect(t).not.toHaveTextContent('is working')
-    expect(t).toHaveTextContent('since')
+    expect(t).not.toHaveTextContent('since') // run17 P06: the card and the pill say when; the line does not repeat it
+  })
+  it('a working agent keeps its "since <time>"', () => {
+    render(<AgentStatus ticket={doc(true)} viewer={viewer} />)
+    expect(screen.getByTestId('agent-status')).toHaveTextContent('since')
   })
 })

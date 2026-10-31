@@ -76,7 +76,7 @@ export function AgentStatus({ ticket, viewer, wait, needsYou = false, liveRun = 
                 {agentWorking(ticket, wait) ? 'is working' : 'may be waiting for the next step'} for <span className="text-text">{viewer.name(c.for)}</span>
               </>
             )}
-            {' · '}since {fmtClock(c.since)}
+            {!needsYou && <>{' · '}since {fmtClock(c.since)}</>}
             {subagents > 0 && ` · ${subagents} ${subagents === 1 ? 'subagent' : 'subagents'}`}
           </>
         ) : wait ? (
@@ -671,7 +671,8 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
       )}
 
       <BlockedByConnection ticket={ticket} />
-      {phase.kind !== 'starting' && phase.kind !== 'failed' && phase.kind !== 'waiting' && phase.kind !== 'open' && <AgentStatus ticket={ticket} viewer={viewer} wait={wait} needsYou={phase.kind === 'needs'} liveRun={run?.state === 'running' || run?.state === 'starting'} />}
+      {/* run17 P06: a finished ticket has no agent line; a ticket that waits for you says so once (the card), unless the agent idles at its prompt */}
+      {ticket.status !== 'done' && ticket.status !== 'closed' && !ticket.closed && (phase.kind !== 'needs' || !!wait) && phase.kind !== 'starting' && phase.kind !== 'failed' && phase.kind !== 'waiting' && phase.kind !== 'open' && <AgentStatus ticket={ticket} viewer={viewer} wait={wait} needsYou={phase.kind === 'needs'} liveRun={run?.state === 'running' || run?.state === 'starting'} />}
     </header>
   )
 }

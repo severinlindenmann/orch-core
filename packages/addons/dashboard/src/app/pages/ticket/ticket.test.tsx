@@ -10,7 +10,7 @@ describe('ticket page', () => {
   it('shows DEMO-0043 with tasks T1-T4 and the open question Q2', async () => {
     const { user } = renderApp('/ticket/DEMO-0043')
     expect(await screen.findByRole('heading', { level: 1, name: 'Load tariff tables as dbt seeds' }, T)).toBeInTheDocument()
-    expect(screen.getByTestId('agent-status')).toHaveTextContent(/Claude Code is waiting for you/)
+    expect(screen.queryByTestId('agent-status')).toBeNull() // needs the person, agent not idle at its prompt: the pill and the card say it (run17 P06)
     expect(screen.getByTestId('stepper')).toBeInTheDocument()
 
     await user.click(screen.getByRole('tab', { name: /Acceptance & tasks/ }))
@@ -188,18 +188,21 @@ describe('ticket page structure: next action first, gates as a stepper, a rail t
     expect(text).not.toMatch(/seq \d+ ·/)
   })
 
-  it('the agent is one status line, without Claim or Release buttons', async () => {
+  it('a ticket that waits for the person has no agent line and no Claim or Release buttons', async () => {
     renderApp('/ticket/DEMO-0043')
     await screen.findByRole('heading', { level: 1, name: /Load tariff tables/ }, T)
-    expect(screen.getByTestId('agent-status')).toHaveTextContent('Claude Code is waiting for you · since 08:05 · 2 subagents')
+    expect(screen.queryByTestId('agent-status')).toBeNull()
     expect(screen.queryByRole('button', { name: /^Claim/ })).toBeNull()
     expect(screen.queryByRole('button', { name: /^Release/ })).toBeNull()
   })
 
-  it('a ticket nobody works on says so', async () => {
+  // DEMO-0041: status testing, claim released, both tasks done, waiting for the verdict = phase needs, no agent waiting at a prompt.
+  it('a ticket that only waits for the verdict has no agent line, not "No agent is working"', async () => {
     renderApp('/ticket/DEMO-0041')
     await screen.findByRole('heading', { level: 1, name: /billing reconciliation/ }, T)
-    expect(screen.getByTestId('agent-status')).toHaveTextContent('No agent is working on this ticket')
+    expect(screen.queryByTestId('agent-status')).toBeNull()
+    expect(screen.getByTestId('next-step')).toBeInTheDocument() // the card still says what is due
+    expect(screen.queryByText('No agent is working on this ticket')).toBeNull()
   })
 
   it('a pull request appears once in the rail', async () => {

@@ -45,7 +45,7 @@ __all__ = [
 ]
 
 #: the format number the code writes and reads, per root kind (baseline 1 at the 2.0.0 cut)
-CURRENT: dict[str, int] = {"host": 1, "workspace": 1}
+CURRENT: dict[str, int] = {"host": 1, "workspace": 1, "hub": 1, "relay": 1, "publish": 1}
 KINDS = tuple(CURRENT)
 
 #: Signed, chained or key data a migration may never touch (matched on the casefolded, symlink-resolved relative path).

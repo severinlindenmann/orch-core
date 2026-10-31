@@ -19,6 +19,10 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from orch import childenv
+from orch.migrate.format import init_root, read_format, write_format
+from orch.migrate.journal import journal_path
+from orch.migrate.steps import CURRENT
+from orch.ops.errors import OrchError
 from orch.wsproto import wire
 from orch.wsproto.localdial import dial_host
 
@@ -458,6 +462,31 @@ def _admin_hub(ctx: Ctx, pub: Mapping[str, Any], data: Path, action: str, hub_id
         raise InstallError(out.strip()[-200:] or "orch-publish refused")
 
 
+def _read_root_format(data: Path, part: str) -> int | None:
+    try:
+        return read_format(data, part)
+    except OrchError as exc:
+        raise InstallError(exc.message) from None
+
+
+def _refuse_newer_root(data: Path, part: str) -> None:
+    fmt = _read_root_format(data, part) if data.is_dir() else None
+    if fmt is not None and fmt > CURRENT[part]:
+        raise InstallError(f"this data was made by a newer orch (format {fmt}): update orch")
+
+
+def _mark_root(data: Path, part: str, born: bool) -> None:
+    """The part's data dir is a migration root (``format.json``). A fresh dir is born at the code's format. An
+    existing format.json is left as it is. A dir without one is a pre-2.0.0 dev install: it is adopted at the
+    baseline (format 1). That is allowed only because there is no legacy promise before the 2.0.0 cut."""
+    if _read_root_format(data, part) is not None:
+        return
+    if born:
+        init_root(data, part)
+    else:
+        write_format(data, part, 1)  # adopt: pre-2.0.0 data has the baseline shape
+
+
 def install_part(
     ctx: Ctx,
     part: str,
@@ -487,6 +516,7 @@ def install_part(
     source = source or ctx.env.get(f"ORCH_INSTALL_SOURCE_{part.upper()}")  # a local checkout (dev machines, tests)
     lay = ctx.layout
     st = load(lay)
+    _refuse_newer_root(lay.data(part), part)  # before anything is stopped or installed
     if part in st["parts"] or ctx.runner.info(part)["running"]:
         # a re-run replaces this user's own running part (its port is then free again), also when an earlier run died
         # before it recorded the part: that port is ours, not another program's
@@ -517,6 +547,7 @@ def install_part(
     binary = lay.bin / spec.binary
     data = lay.data(part)
     data.mkdir(parents=True, exist_ok=True, mode=0o700)
+    born = not any(data.iterdir())  # a fresh data dir: it is born at the code's format
     pubs = st["parts"].get("publish")
     rels = st["parts"].get("relay")
     if part == "hub":
@@ -541,6 +572,7 @@ def install_part(
             tf = data / "setup-token"
             tf.write_text(token + "\n")
             tf.chmod(0o600)
+    _mark_root(data, part, born)  # after the hub's key init: that needs an empty folder
     if part == "hub":
         write_hub_settings(
             data,
@@ -571,7 +603,10 @@ def install_part(
     )
     log = lay.logs / f"{part}.log"
     started = ctx.runner.start(
-        part, argv, P.env_for(part, data, behind_edge=behind_edge, trusted_proxy=trusted_proxy), log
+        part,
+        argv,
+        P.env_for(part, data, behind_edge=behind_edge, trusted_proxy=trusted_proxy, journal=journal_path(ctx.env)),
+        log,
     )
     # a part on every interface is dialled on loopback (a computer cannot dial its own overlay IP). A part that binds
     # exactly one address (the server role: the VPN IP) answers ONLY there: probe that address, never 127.0.0.1.

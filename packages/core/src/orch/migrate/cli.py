@@ -48,6 +48,23 @@ def _workspace_roots(env: Mapping[str, str], only: str | None) -> tuple[list[tup
     return out, notes
 
 
+def _part_roots(env: Mapping[str, str]) -> list[tuple[str, str, Path]]:
+    """(label, kind, data dir) of every installed part (hub, relay, publish) whose data dir exists. The kind is the
+    part's name."""
+    from orch.install.parts import PARTS
+    from orch.install.state import Layout as InstallLayout
+    from orch.install.state import load
+
+    layout = InstallLayout(env)
+    installed = load(layout).get("parts") or {}
+    out: list[tuple[str, str, Path]] = []
+    for part in PARTS:
+        data = layout.data(part)
+        if part in installed and data.is_dir():
+            out.append((f"the {part}'s data", part, data))
+    return out
+
+
 def _may_be_committed(project: Path) -> bool:
     """Could the store folder be committed to git? Decided WITHOUT running git (a project's own git config can run a
     program: fsmonitor, hooks): true when the project is a git checkout and neither ``.gitignore`` nor
@@ -102,6 +119,7 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextI
     wss, notes = _workspace_roots(env, only)
     if only is None:
         targets.append(("this computer's orch data", "host", state_dir(env)))
+        targets.extend(_part_roots(env))
     for label, project, store in wss:
         targets.append((label, "workspace", store))
         projects[label] = project

@@ -1,7 +1,8 @@
 """``format.json`` of a data root and the one open-time rule.
 
-A root is a folder with ``format.json`` (``{"orch": <kind>, "format": N}``): the host state dir (kind ``host``) or a
-workspace store ``<project>/.orch`` (kind ``workspace``). :func:`open_root` is the only way in:
+A root is a folder with ``format.json`` (``{"orch": <kind>, "format": N}``): the host state dir (kind ``host``), a
+workspace store ``<project>/.orch`` (kind ``workspace``) or the data dir of an installed part (kind ``hub``,
+``relay`` or ``publish``). :func:`open_root` is the only way in:
 
 * format equals the code's: run, holding a SHARED lock on ``<root>/format.lock`` for as long as the handle lives;
 * older: refuse (only ``orch update`` / ``orch migrate`` migrates, never an open);

@@ -289,10 +289,10 @@ class Updater:
     def _roots(self) -> tuple[list[tuple[str, str, Path]], list[str]]:
         if self.s.roots is not None:
             return self.s.roots()
-        from orch.migrate.cli import _workspace_roots
+        from orch.migrate.cli import _part_roots, _workspace_roots
 
         wss, notes = _workspace_roots(self.env, None)
-        roots = [("this computer's orch data", "host", self.state)]
+        roots = [("this computer's orch data", "host", self.state), *_part_roots(self.env)]
         for label, _project, store in wss:
             if store.is_dir():
                 roots.append((label, "workspace", store))

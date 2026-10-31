@@ -17,16 +17,22 @@ update). :func:`open_data` refuses, in this order:
 * no ``format.json`` (or a damaged one, a link, one of another kind): ``format.missing``;
 * an older / a newer format: ``format.older`` / ``format.newer``.
 
+The pending-restore and journal checks run again under the lock (an update may start meanwhile).
+
 POSIX only. Keep the returned :class:`Handle` referenced while serving: closing it (or collecting
-it) drops the lock.
+it) drops the lock. A forked child (no exec) gives its copy of the descriptor up at once, so a
+child never keeps the lock past the service's death. The lock follows the file, not the path:
+code that swaps the folder calls :meth:`Handle.relock` right after the swap.
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
 import stat
+import weakref
 from collections.abc import Mapping
 from types import TracebackType
 from typing import Self
@@ -85,10 +91,16 @@ def _valid_phase(phase: object) -> bool:
 def _unfinished(env: Mapping[str, str]) -> bool:
     """The same decision as ``orch.migrate.journal.unfinished``. An unreadable or malformed
     journal counts as unfinished (fail closed); a missing one is no update; else any phase but
-    ``committed``, or ``restoring`` set."""
+    ``committed``, or ``restoring`` set.
+
+    The contract with ``orch install``: it sets ``ORCH_UPDATE_JOURNAL`` in the environment of every
+    part's unit, so a service always looks at the journal. Unset means a service started by hand
+    (or a test), and only then is there no journal to look at (fail open). The journal is written by
+    ``orch update`` as the same OS user the parts run as (one user per install), so it is readable
+    here; a journal that is not readable still counts as unfinished."""
     path = env.get(JOURNAL_ENV)
     if not path:
-        return False  # not started by `orch install` (by hand, in tests): no journal to look at
+        return False  # unset: by hand or in a test (`orch install` always sets it for a unit)
     try:
         with open(path, "rb") as f:
             raw = f.read(_JOURNAL_LIMIT + 1)
@@ -151,17 +163,81 @@ def _read_format(path: str, kind: str) -> int:
     return n
 
 
+_LIVE: weakref.WeakSet[Handle] = weakref.WeakSet()
+
+
+def _drop_in_child() -> None:
+    # A fork without exec (multiprocessing, a pre-fork helper) would keep the shared lock alive past
+    # the death of the service: the child lets go of its copy. The parent's descriptor is its own
+    # and keeps the lock (closing a duplicate does not release a flock).
+    for handle in list(_LIVE):
+        fd, handle._fd = handle._fd, None
+        if fd is not None:
+            with contextlib.suppress(OSError):
+                os.close(fd)
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_drop_in_child)
+
+
+def _lock_shared(path: str) -> int:
+    """Open ``<path>/format.lock`` and take the SHARED lock without waiting; the descriptor, or a
+    :class:`DataFormatError` (``update.busy``, ``format.missing`` for a lock file that cannot be
+    used). ``flock`` needs no write access, so the file is opened read only: a lock file that
+    ``orch install`` made for the service user stays usable (``O_CREAT`` only makes it when it is
+    not there yet, 0600, as the user of the service)."""
+    try:
+        import fcntl
+    except ImportError:
+        raise RuntimeError(
+            "orch parts run on Linux and macOS only: the data format lock needs POSIX flock",
+        ) from None
+    flags = os.O_RDONLY | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    try:
+        fd = os.open(os.path.join(path, LOCK_FILE), flags, 0o600)
+    except OSError as exc:
+        why = f"the lock file cannot be used ({exc.strerror or exc}); it may be a link"
+        raise _not_data(path, why) from None
+    try:
+        fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+    except BlockingIOError:
+        os.close(fd)
+        raise DataFormatError(
+            "update.busy",
+            "orch is being updated right now: wait until it has finished, then try again",
+        ) from None
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
 class Handle:
     """An opened data dir: holds the shared lock until :meth:`close`."""
 
     def __init__(self, path: str, kind: str, fmt: int, fd: int) -> None:
         self.path, self.kind, self.format = path, kind, fmt
         self._fd: int | None = fd
+        _LIVE.add(self)
 
     def close(self) -> None:
         fd, self._fd = self._fd, None
         if fd is not None:
             os.close(fd)  # closing the descriptor drops the lock
+
+    def relock(self) -> None:
+        """Take the shared lock again on the ``format.lock`` that is at ``path`` NOW, and give the old
+        one up. ``flock`` follows the file, not the path: after the folder was swapped (an in-place
+        restore, or a crashed swap put right) the old descriptor holds a lock on the folder that was
+        moved aside, and an update could take the new folder exclusive. Call it right after the
+        swap, before anything else touches the new folder. Raises :class:`DataFormatError`
+        (``update.busy``) if an update got the new folder first; the old lock is kept then."""
+        if self._fd is None:
+            return
+        fd = _lock_shared(self.path)
+        old, self._fd = self._fd, fd
+        os.close(old)
 
     def __enter__(self) -> Self:
         return self
@@ -187,32 +263,14 @@ def open_data(
     """Open the data dir ``path`` of part ``kind`` whose code is at format ``current``, or raise
     :class:`DataFormatError`. The returned handle holds the SHARED lock of
     ``<path>/format.lock``: keep it for as long as the data is in use."""
-    try:
-        import fcntl
-    except ImportError:
-        raise RuntimeError(
-            "orch parts run on Linux and macOS only: the data format lock needs POSIX flock",
-        ) from None
     path = os.fspath(path)
     check_update(path, env)
     if not os.path.isdir(path):
         raise _not_data(path, "no such folder")
-    flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    fd = _lock_shared(path)
     try:
-        fd = os.open(os.path.join(path, LOCK_FILE), flags, 0o600)
-    except OSError as exc:
-        why = f"the lock file cannot be used ({exc.strerror or exc}); it may be a link"
-        raise _not_data(path, why) from None
-    try:
-        try:
-            fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
-        except BlockingIOError:
-            raise DataFormatError(
-                "update.busy",
-                "orch is being updated right now: wait until it has finished, then try again",
-            ) from None
-        if _unfinished(env):  # re-check under the lock: an update may have started meanwhile
-            raise DataFormatError("update.interrupted", _INTERRUPTED)
+        # again under the lock: an update or a restore may have started meanwhile
+        check_update(path, env)
         fmt = _read_format(path, kind)
         if fmt < current:
             raise DataFormatError(

@@ -20,12 +20,31 @@ import tempfile
 from pathlib import Path
 
 from ..contract import backup as B
+from .hubop import DATA_KIND
 
 #: files the backup writes from the key material it is given, never from the disk
 KEY_FILE = "backup-key.json"
 GENERATED = frozenset({KEY_FILE})
-#: files that describe THIS install's data dir (``orch install`` writes them): never in a backup, a restore writes its own
-INSTALL_FILES = frozenset({"format.json"})
+#: The data format of the backup's state (``format.json``): listed in the backup (sealed and hashed like every file) so a
+#: restore writes THAT format, never the live one: an older backup then opens as ``format.older`` and ``orch update``
+#: migrates it. A backup without it (made before formats were recorded) is format 1.
+FORMAT_FILE = "format.json"
+
+
+def format_bytes(n: int) -> bytes:
+    return (json.dumps({"orch": DATA_KIND, "format": n}, sort_keys=True) + "\n").encode()
+
+
+def read_format(raw: bytes) -> int:
+    """The format number of a ``format.json`` of the hub, else ``ValueError``."""
+    doc = json.loads(raw) if len(raw) <= 4096 else None
+    if not isinstance(doc, dict) or set(doc) != {"orch", "format"} or doc["orch"] != DATA_KIND:
+        raise ValueError("format.json")
+    n = doc["format"]
+    if type(n) is not int or n < 1:
+        raise ValueError("format.json")
+    return n
+
 
 #: ``store -> statements`` run on the COPY. A table that does not exist is skipped (older stores).
 STRIP: dict[str, tuple[tuple[str, str], ...]] = {
@@ -117,9 +136,14 @@ def collect(state: Path) -> tuple[dict[str, bytes], dict[str, int]]:
                 continue
             if not e.is_file(follow_symlinks=False):
                 continue  # a socket or other special file: never part of a backup
-            if not B.valid_path(path) or B.is_excluded(path) or path in GENERATED or path in INSTALL_FILES:
+            if not B.valid_path(path) or B.is_excluded(path) or path in GENERATED:
                 continue
-            if path.endswith(".db"):
+            if path == FORMAT_FILE:
+                try:
+                    data = format_bytes(read_format(_read_regular(e.path)))
+                except OSError, ValueError:
+                    raise SnapshotError("format") from None
+            elif path.endswith(".db"):
                 data, newest = copy_db(Path(e.path), STRIP.get(path, ()) if "/" not in path else ())
                 if path == "access.db":
                     snapshot_seq = newest

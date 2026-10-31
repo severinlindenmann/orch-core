@@ -647,17 +647,133 @@ def test_the_server_command_opens_the_state_by_the_format_rule(w, tmp_path, monk
     assert not (tmp_path / "fresh" / "d").exists()
 
 
-def test_a_restore_keeps_this_installs_format_and_never_takes_one_from_a_backup(w, tmp_path):
+def _format_of(state) -> dict:
+    return json.loads((Path(state) / "format.json").read_text())
+
+
+def _newer_code(monkeypatch, n: int = 2) -> None:
+    """This code is at data format ``n`` from now on (an `orch update` to a newer orch)."""
+    from orch_hub.backup import hubop
+
+    monkeypatch.setattr(hubop, "DATA_FORMAT", n)
+    monkeypatch.setattr(RS, "DATA_FORMAT", n)
+
+
+def test_the_backup_records_its_data_format_and_a_restore_writes_that_format(w, tmp_path):
     words, data = _backup(w)
-    live = (w.state / "format.json").read_bytes()
-    assert "format.json" not in [f["path"] for f in B.read_header(data, dev_mode=True, live=None)[1]["files"]]
+    files = {f["path"]: f for f in B.read_header(data, dev_mode=True, live=None)[1]["files"]}
+    assert "format.json" in files  # sealed and hashed like every other file
     _restore(w, data, words, actor=w.admin)
-    assert (w.state / "format.json").read_bytes() == live  # in place: the live file is carried over
+    assert _format_of(w.state) == {"orch": "hub", "format": 1}
+    assert (w.state / "format.json").stat().st_mode & 0o777 == 0o600
     fresh = tmp_path / "srv" / "data"
     RS.restore(fresh, data, words, dev_mode=True, now_ms=lambda: 1_900_000_000_000)
-    # a fresh server gets its own format.json
-    assert json.loads((fresh / "format.json").read_text()) == {"orch": "hub", "format": 1}
+    assert _format_of(fresh) == {"orch": "hub", "format": 1}
     assert (fresh / "format.json").stat().st_mode & 0o777 == 0o600
+
+
+def test_an_older_backup_opens_as_format_older_after_an_update_and_a_restore(w, tmp_path, monkeypatch):
+    from format_helpers import write_format
+
+    from orch_hub.backup.hubop import open_state
+    from orch_hub.dataformat import DataFormatError
+
+    words, data = _backup(w)  # taken at format 1
+    _newer_code(monkeypatch)  # `orch update`: the code and the live data are at format 2 now
+    write_format(w.state, fmt=2)
+    held = open_state(w.state)  # the hub that serves it
+    try:
+        _restore(w, data, words, actor=w.admin)
+        assert _format_of(w.state) == {"orch": "hub", "format": 1}  # NOT labelled current
+        assert _exclusive_refused(w.state)  # still locked: the lock needs no format check
+    finally:
+        held.close()
+    with pytest.raises(DataFormatError) as e:
+        open_state(w.state)
+    assert e.value.code == "format.older" and "orch update" in str(e.value)
+    fresh = tmp_path / "srv" / "data"  # and on a fresh server
+    RS.restore(fresh, data, words, dev_mode=True, now_ms=lambda: 1_900_000_000_000)
+    assert _format_of(fresh)["format"] == 1
+    with pytest.raises(DataFormatError) as e:
+        open_state(fresh)
+    assert e.value.code == "format.older"
+
+
+def test_a_backup_of_a_newer_format_is_refused_before_anything_is_written(w, tmp_path):
+    from format_helpers import write_format
+
+    write_format(w.state, fmt=2)  # a newer orch made this state (its backup says so)
+    words, data = _backup(w)
+    write_format(w.state)  # the live hub is at format 1
+    before = _tree(w.state)
+    with pytest.raises(RS.RestoreError) as e:
+        _restore(w, data, words, actor=w.admin)
+    assert (e.value.code, e.value.reason) == ("backup_invalid", "format_newer")
+    assert _tree(w.state) == before and not any(tmp_path.glob("hub.new"))
+    with pytest.raises(RS.RestoreError):
+        RS.restore(tmp_path / "srv" / "data", data, words, dev_mode=True)
+    assert not (tmp_path / "srv" / "data").exists()
+
+
+def test_a_backup_without_a_format_is_format_1_and_a_damaged_format_is_not_backed_up(w, tmp_path):
+    (w.state / "format.json").unlink()
+    words, data = _backup(w)  # a state of before formats were recorded
+    assert "format.json" not in [f["path"] for f in B.read_header(data, dev_mode=True, live=None)[1]["files"]]
+    _restore(w, data, words, actor=w.admin)
+    assert _format_of(w.state) == {"orch": "hub", "format": 1}
+    for raw in (b"{", b'{"orch": "relay", "format": 1}', b'{"orch": "hub", "format": 0}'):
+        (w.state / "format.json").write_bytes(raw)
+        with pytest.raises(SN.SnapshotError):
+            SN.collect(w.state)
+
+
+def _exclusive_refused(state) -> bool:
+    """True when somebody holds ``<state>/format.lock`` (an `orch update` takes it exclusive and is refused)."""
+    import fcntl
+
+    try:
+        fd = os.open(Path(state) / "format.lock", os.O_RDONLY)
+    except FileNotFoundError:
+        return False
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return True
+    finally:
+        os.close(fd)
+    return False
+
+
+def test_the_format_lock_follows_the_swapped_dir_so_an_update_cannot_take_the_new_one(w):
+    from orch_hub.backup.hubop import open_state
+
+    words, data = _backup(w)
+    held = open_state(w.state)  # what the serving hub (or the restore command) holds
+    try:
+        assert _exclusive_refused(w.state)
+        _restore(w, data, words, actor=w.admin)  # in place: the dir is swapped, the old one is aside
+        assert _exclusive_refused(w.state)  # the NEW dir's format.lock is held, not only the aside one
+    finally:
+        held.close()
+    assert not _exclusive_refused(w.state)  # and it lets go when the hub stops: `orch update` runs exclusive
+
+
+def test_a_swap_put_right_by_recover_takes_the_lock_on_the_dir_it_puts_in_place(w):
+    from orch_hub.backup.hubop import open_state
+
+    held = open_state(w.state)
+    new, old = RS.paths(w.state)
+    try:
+        os.mkdir(new)  # a restore that stopped between its renames: the staged dir is whole (notice written last)
+        (new / RS.NOTICE_FILE).write_text("{}")
+        os.rename(w.state, old)
+        assert _exclusive_refused(old) and not w.state.exists()
+        RS.recover(w.state)  # completes the swap
+        assert (w.state / RS.NOTICE_FILE).exists()
+        assert _exclusive_refused(w.state)
+    finally:
+        held.close()
+    assert not _exclusive_refused(w.state)
 
 
 # --- recovery of a swap that stopped between its two renames ------------------------------------------------------------------------

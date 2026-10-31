@@ -34,11 +34,12 @@ from typing import Any
 from ..contract import backup as B
 from ..contract.canon import CanonError, b64u, cj
 from ..contract.hub import Refused
+from ..dataformat import DataFormatError
 from ..keys import HubKeys, KeysError
 from ..keys.fsutil import FILE_MODE, StateError, check_dir, fsync_dir, make_dir, read_file
 from . import guard as G
 from . import snapshot as SN
-from .hubop import DATA_FORMAT, DATA_KIND, HubOpBusy, hub_op
+from .hubop import DATA_FORMAT, HubOpBusy, hub_op, relock_state
 from .words import WordsError, check_words
 
 FORMAT_FILE = "format.json"
@@ -114,10 +115,13 @@ def recover(state: Path) -> None:
     new, old = paths(state)
     if not state.exists():
         if old.is_dir():
+            # format.lock follows the dir: whoever holds the lock takes it on this one right after the rename
             if new.is_dir() and (new / NOTICE_FILE).exists():
                 os.rename(new, state)
+                relock_state(state)
             else:
                 os.rename(old, state)
+                relock_state(state)
                 _rescue_backups(state, new)
                 _rm(new)
     elif new.exists():
@@ -193,6 +197,21 @@ def _put(root: Path, rel: str, data: bytes) -> None:
         raise
 
 
+def backup_format(files: dict[str, bytes]) -> int:
+    """The data format of the backup's files (its ``format.json``; none = a backup from before formats were recorded =
+    format 1). ``backup_invalid`` when it is damaged or from a NEWER orch than this code (a newer layout is not read)."""
+    raw = files.get(FORMAT_FILE)
+    if raw is None:
+        return 1
+    try:
+        n = SN.read_format(raw)
+    except ValueError:
+        raise RestoreError("backup_invalid", "format") from None
+    if n > DATA_FORMAT:
+        raise RestoreError("backup_invalid", "format_newer")
+    return n
+
+
 def _stage(new: Path, files: dict[str, bytes], state: Path, in_place: bool) -> None:
     """Write the backup's listed files (not the ones that stay live) and, in place, the live files that are never taken from
     a backup. The live logs are copied last, by :func:`_copy_logs`."""
@@ -200,7 +219,7 @@ def _stage(new: Path, files: dict[str, bytes], state: Path, in_place: bool) -> N
     os.mkdir(new, 0o700)
     os.chmod(new, 0o700)
     check_dir(new)
-    skip = set(KEEP_LIVE) | SN.INSTALL_FILES | (LIVE_IN_PLACE if in_place else set())
+    skip = set(KEEP_LIVE) | {FORMAT_FILE} | (LIVE_IN_PLACE if in_place else set())
     for rel in sorted(files):
         if rel not in skip:
             _put(new, rel, files[rel])
@@ -209,14 +228,9 @@ def _stage(new: Path, files: dict[str, bytes], state: Path, in_place: bool) -> N
             src = state / rel
             if src.is_file() and not src.is_symlink():
                 _put(new, rel, SN.copy_db(src)[0] if rel.endswith(".db") else read_file(src))
-    # format.json describes this install's data dir, never the backup's: the live one stays; a fresh server gets the
-    # current format (the restored state is written by this code)
-    live_format = state / FORMAT_FILE
-    if in_place:
-        if live_format.is_file() and not live_format.is_symlink():
-            _put(new, FORMAT_FILE, live_format.read_bytes())
-    else:
-        _put(new, FORMAT_FILE, (json.dumps({"orch": DATA_KIND, "format": DATA_FORMAT}, sort_keys=True) + "\n").encode())
+    # the restored files are of the BACKUP's format, so that is what format.json says (never the live one, never "current"):
+    # an older backup opens as format.older and `orch update` migrates it
+    _put(new, FORMAT_FILE, SN.format_bytes(backup_format(files)))
     for sub in ("uk", "op", "revoked"):
         if not (new / sub).exists():
             make_dir(new / sub)
@@ -444,6 +458,7 @@ def _restore(
             live={"hub_id": live.hub_id, "hk_root_pub": b64u(live.hk_root_pub)} if live is not None else None,
         )
         h = opened.header
+        backup_format(opened.files)  # a damaged or newer format.json refuses here, before anything is written
         now = now_ms()
         floor = B.restore_floor(
             {"op_seq": live.op_seq, "card_seq": live.card_seq, "snapshot_seq": live_snapshot_seq(state)}
@@ -527,6 +542,9 @@ def _restore(
         else:
             os.rename(new, state)
         swapped = True
+        # the format lock follows the dir, not the path: take it again on the new dir at once (an update could take it
+        # exclusive otherwise). A lock only: an older backup's data is refused by the next open, not by this restore.
+        relock_state(state)
         fsync_dir(state.parent)
     except RestoreError:
         if not swapped:
@@ -536,7 +554,18 @@ def _restore(
         if not swapped:
             _rm(new)
         if isinstance(
-            e, (OSError, sqlite3.Error, KeysError, StateError, CanonError, ValueError, KeyError, RuntimeError)
+            e,
+            (
+                OSError,
+                sqlite3.Error,
+                KeysError,
+                StateError,
+                CanonError,
+                ValueError,
+                KeyError,
+                RuntimeError,
+                DataFormatError,
+            ),
         ):
             raise RestoreError("restore_failed") from None
         raise

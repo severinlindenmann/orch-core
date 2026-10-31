@@ -313,6 +313,83 @@ def test_serve_command_holds_the_handle_for_the_process(data, monkeypatch):
     assert not lock_is_shared(data)
 
 
+@pytest.mark.raw_data
+def test_create_app_gives_the_lock_up_when_the_construction_fails_after_the_open(data, monkeypatch):
+    def boom(app, data_dir):
+        raise RuntimeError("construction failed")
+
+    monkeypatch.setattr(app_mod, "install_core", boom)
+    with pytest.raises(RuntimeError):
+        app_mod.create_app(data)
+    assert not lock_is_shared(data)  # closed at once, not whenever the garbage collector gets to it
+
+
+@pytest.mark.raw_data
+def test_serve_command_runs_one_worker_so_no_forked_copy_of_the_service_exists(data, monkeypatch):
+    monkeypatch.setenv("ORCH_RELAY_DATA", str(data))
+    monkeypatch.setattr(cli, "_HELD", [])
+    with mock.patch("uvicorn.run") as run:
+        assert cli.main(["serve"]) == 0
+    assert (
+        run.call_args.kwargs["workers"] == 1
+    )  # a pre-fork worker pool would share the lock descriptor
+    cli._HELD.pop().close()
+
+
+# --- the journal is readable by the service user; a fork does not keep the lock ----------------
+
+
+def test_the_journal_in_a_private_install_dir_is_readable_by_the_user_the_parts_run_as(
+    data, tmp_path
+):
+    # `orch update` writes the journal as the one OS user of the install, and the parts run as that
+    # same user, so a journal under install/ (0700) can be read here: a committed one opens, an
+    # unfinished one refuses for ITS phase, not for a permission error. (A journal that cannot be
+    # read still refuses: fail closed.)
+    install = tmp_path / "install"
+    install.mkdir(mode=0o700)
+    jf = install / "update.json"
+    jf.write_text(json.dumps({"v": 1, "phase": "committed"}))
+    jf.chmod(0o600)
+    assert os.access(jf, os.R_OK) and DF._unfinished({"ORCH_UPDATE_JOURNAL": str(jf)}) is False
+    open_data(data, "relay", 1, {"ORCH_UPDATE_JOURNAL": str(jf)}).close()
+    if os.geteuid() != 0:  # root reads everything
+        jf.chmod(0)
+        assert DF._unfinished({"ORCH_UPDATE_JOURNAL": str(jf)}) is True
+
+
+FORKER = """
+import os, sys, time
+from {module} import open_data
+h = open_data(sys.argv[1], {kind!r}, 1, {{}})
+pid = os.fork()
+if pid == 0:
+    null = os.open(os.devnull, os.O_RDWR)
+    os.dup2(null, 1)  # let go of the pipes the test reads
+    os.dup2(null, 2)
+    time.sleep(60)
+    os._exit(0)
+print(pid, flush=True)
+os._exit(0)  # the service dies; the child is still there
+"""
+
+
+def test_a_forked_child_does_not_keep_the_lock_past_the_service(data):
+    import signal
+    import subprocess
+    import sys
+
+    script = FORKER.format(module="orch_relay.dataformat", kind="relay")
+    cmd = [sys.executable, "-c", script, str(data)]
+    out = subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=30)
+    pid = int(out.stdout.split()[0])
+    try:
+        os.kill(pid, 0)  # the child lives
+        assert not lock_is_shared(data)  # but the lock died with the service
+    finally:
+        os.kill(pid, signal.SIGKILL)
+
+
 # --- one file in three packages ----------------------------------------------------------------
 
 

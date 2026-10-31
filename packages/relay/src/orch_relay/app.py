@@ -8,7 +8,7 @@ from starlette.concurrency import run_in_threadpool
 
 from . import __version__, db
 from .common import install as install_core
-from .dataformat import open_data
+from .dataformat import Handle, open_data
 
 DEFAULT_DATA = "./data"
 DATA_KIND = "relay"
@@ -25,7 +25,14 @@ def create_app(data_dir: Path | str | None = None, instance: str | None = None) 
     # First, before any database: the data dir must be at this code's format, and the shared lock of
     # format.lock is held for the life of the app (`orch update` waits for it). Raises DataFormatError.
     handle = open_data(data, DATA_KIND, DATA_FORMAT)
+    try:
+        return _build_app(data, name, handle)
+    except BaseException:
+        handle.close()  # a construction that fails after the open must not keep the lock until the GC runs
+        raise
 
+
+def _build_app(data: Path, name: str, handle: Handle) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         await run_in_threadpool(db.init_schema, data / db.DB_NAME)

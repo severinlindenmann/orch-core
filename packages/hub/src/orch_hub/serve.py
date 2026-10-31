@@ -42,6 +42,7 @@ from .connections import ConnectionAuthz, Connections
 from .contract.hub import Refused
 from .custodial import CustodialEngine
 from .custodial.deliver import build_delivery
+from .dataformat import check_update
 from .hooks.inbox import HookInbox
 from .hooks.listener import HookListener, parse_public_url
 from .hooks.store import HookStore
@@ -270,8 +271,19 @@ def serve(
     u = urllib.parse.urlsplit(publish_url)
     api_host = api_host or u.netloc
     hold_serve_lock(state)  # first: an offline `orch-hub restore` (mid-swap) refuses us, and refuses while we live
+    # The format lock first, then the recovery: recover_swap renames and writes the state dir, which must not happen under an
+    # `orch update` (it takes the lock exclusive, and refuses on an unfinished journal). A state dir that is gone (a restore
+    # stopped between its two renames) cannot be locked yet: only the journal and the sidecar are checked, and the lock is taken
+    # as soon as recover_swap has put a dir in place. recover_swap takes the lock again on a dir it swaps (the lock follows the file).
+    state = Path(state)
+    held = state.exists()
+    if held:
+        hold_state(state)  # also refuses a state that is not at this code's format, before any database
+    else:
+        check_update(state)
     recover_swap(state)  # a restore that stopped between its two renames is completed or undone first
-    hold_state(state)  # before any database: the state is at this code's format, and `orch update` waits for us
+    if not held:
+        hold_state(state)
     keys = HubKeys.open(state)
     # Opus condition 5: once `orch install` wrote hub-settings.json, the advertised addresses, the console origins and the
     # API origin come from that file ONLY. The start arguments keep the listen sockets; --web-origin / --api-origin are

@@ -187,6 +187,7 @@ def serve(args):
         log_level="warning",
         proxy_headers=False,  # forwarded.py is the only reader of forwarded headers
         server_header=False,
+        workers=1,  # one process: a pre-fork pool would share the format lock descriptor past the service's death
     )
     return 0
 

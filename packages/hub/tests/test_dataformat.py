@@ -331,6 +331,159 @@ def test_serve_holds_the_shared_lock_while_it_serves_and_lets_go_when_it_stops(t
     assert result == [0] and not lock_is_shared(state)
 
 
+def test_serve_does_not_recover_a_swap_while_an_update_runs_or_is_unfinished(tmp_path, monkeypatch):
+    from orch_hub.backup.restore import paths
+
+    state = tmp_path / "hub"
+    HubKeys.init(state)
+    new, old = paths(state)
+    new.mkdir()  # a leftover staged dir: recover would remove it
+    fd = os.open(state / "format.lock", os.O_RDWR | os.O_CREAT, 0o600)
+    fcntl.flock(fd, EXCLUSIVE)  # `orch update` runs
+    try:
+        with pytest.raises(DataFormatError) as e:
+            SV.serve(*serve_args(state), stop=threading.Event(), out=io.StringIO())
+        assert e.value.code == "update.busy" and new.is_dir()  # refused BEFORE recover_swap touched anything
+    finally:
+        os.close(fd)
+    new.rmdir()
+    # a swap that stopped between its renames (the state dir is gone) and an update that stopped: nothing is renamed
+    os.rename(state, old)
+    for k, v in journal(tmp_path, {"v": 1, "phase": "migrated:/x"}).items():
+        monkeypatch.setenv(k, v)
+    with pytest.raises(DataFormatError) as e:
+        SV.serve(*serve_args(state), stop=threading.Event(), out=io.StringIO())
+    assert e.value.code == "update.interrupted" and old.is_dir() and not state.exists()
+
+
+# --- every admin command opens the state by the format rule -----------------------------------------------------------
+
+WS = "ab" * 16
+COMMANDS = [
+    ["users", "list"],
+    ["groups", "list"],
+    ["groups", "add", "ops"],
+    ["grants", "list"],
+    ["channels", "list"],
+    ["access", "check", "--user", "u", "--workspace", WS, "--action", "read"],
+    ["spaces", "list"],
+    ["keys", "card"],
+    ["keys", "rotate-op"],
+    ["relay", "register"],
+    ["releases", "--publish-url", "http://127.0.0.1:9", "--json"],
+]
+
+
+def tree(root: Path) -> dict[str, bytes]:
+    return {str(p.relative_to(root)): p.read_bytes() for p in sorted(root.rglob("*")) if p.is_file()}
+
+
+@pytest.mark.parametrize("argv", COMMANDS, ids=lambda a: " ".join(a[:2]))
+def test_every_state_command_refuses_under_an_exclusive_lock_an_old_format_and_an_unfinished_update(
+    tmp_path, capsys, monkeypatch, argv
+):
+    state = tmp_path / "hub"
+    HubKeys.init(state)
+    before = tree(state)
+    cmd = [argv[0], "--state", str(state), *argv[1:]]
+    fd = os.open(state / "format.lock", os.O_RDWR | os.O_CREAT, 0o600)
+    fcntl.flock(fd, EXCLUSIVE)  # an update runs
+    try:
+        assert cli.main(cmd) == 1
+    finally:
+        os.close(fd)
+    assert "being updated" in capsys.readouterr().err
+    j = journal(tmp_path, {"v": 1, "phase": "installed"})
+    monkeypatch.setenv("ORCH_UPDATE_JOURNAL", j["ORCH_UPDATE_JOURNAL"])
+    assert cli.main(cmd) == 1
+    assert "run `orch update`" in capsys.readouterr().err
+    monkeypatch.delenv("ORCH_UPDATE_JOURNAL")
+    monkeypatch.setattr(hubop, "DATA_FORMAT", 2)  # the code is newer than the data
+    assert cli.main(cmd) == 1
+    assert "run `orch update`" in capsys.readouterr().err
+    assert {k: v for k, v in tree(state).items() if k != "format.lock"} == {
+        k: v for k, v in before.items() if k != "format.lock"
+    }  # nothing was written
+
+
+def test_a_state_command_holds_the_shared_lock_while_it_runs(tmp_path, monkeypatch):
+    state = tmp_path / "hub"
+    HubKeys.init(state)
+    seen = []
+    monkeypatch.setattr("orch_hub.access.cli.run", lambda args: seen.append(lock_is_shared(state)) or 0)
+    assert cli.main(["users", "--state", str(state), "list"]) == 0
+    assert seen == [True] and not lock_is_shared(state)  # and it lets go when it ends
+
+
+def test_keys_init_opens_a_fresh_dir_but_refuses_a_formatted_one_under_an_update(tmp_path, capsys):
+    fresh = tmp_path / "fresh"
+    assert cli.main(["keys", "--state", str(fresh), "init"]) == 0  # no dir yet: nothing to lock
+    installed = tmp_path / "installed"
+    write_format(installed)  # `orch install hub` ran: format.json is there, the keys are not
+    assert cli.main(["keys", "--state", str(installed), "init"]) == 0
+    assert (installed / "meta.json").exists() and lock_is_shared(installed) is False
+    locked = tmp_path / "locked"
+    write_format(locked)
+    fd = os.open(locked / "format.lock", os.O_RDWR | os.O_CREAT, 0o600)
+    fcntl.flock(fd, EXCLUSIVE)
+    try:
+        assert cli.main(["keys", "--state", str(locked), "init"]) == 1
+    finally:
+        os.close(fd)
+    assert not (locked / "meta.json").exists() and "being updated" in capsys.readouterr().err
+
+
+# --- the journal is readable by the service user; a fork does not keep the lock --------------------------------------------
+
+
+def test_the_journal_in_a_private_install_dir_is_readable_by_the_user_the_parts_run_as(data, tmp_path):
+    # `orch update` writes the journal as the one OS user of the install, and the parts run as that same user, so a journal
+    # under install/ (0700) can be read here: a committed one opens, an unfinished one refuses for ITS phase, not for a
+    # permission error. (A journal that cannot be read still refuses: fail closed.)
+    install = tmp_path / "install"
+    install.mkdir(mode=0o700)
+    jf = install / "update.json"
+    jf.write_text(json.dumps({"v": 1, "phase": "committed"}))
+    jf.chmod(0o600)
+    assert os.access(jf, os.R_OK) and DF._unfinished({"ORCH_UPDATE_JOURNAL": str(jf)}) is False
+    open_data(data, "hub", 1, {"ORCH_UPDATE_JOURNAL": str(jf)}).close()
+    if os.geteuid() != 0:  # root reads everything
+        jf.chmod(0)
+        assert DF._unfinished({"ORCH_UPDATE_JOURNAL": str(jf)}) is True
+
+
+FORKER = """
+import os, sys, time
+from {module} import open_data
+h = open_data(sys.argv[1], {kind!r}, 1, {{}})
+pid = os.fork()
+if pid == 0:
+    null = os.open(os.devnull, os.O_RDWR)
+    os.dup2(null, 1)  # let go of the pipes the test reads
+    os.dup2(null, 2)
+    time.sleep(60)
+    os._exit(0)
+print(pid, flush=True)
+os._exit(0)  # the service dies; the child is still there
+"""
+
+
+def test_a_forked_child_does_not_keep_the_lock_past_the_service(data):
+    import signal
+    import subprocess
+    import sys
+
+    script = FORKER.format(module="orch_hub.dataformat", kind="hub")
+    cmd = [sys.executable, "-c", script, str(data)]
+    out = subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=30)
+    pid = int(out.stdout.split()[0])
+    try:
+        os.kill(pid, 0)  # the child lives
+        assert not lock_is_shared(data)  # but the lock died with the service
+    finally:
+        os.kill(pid, signal.SIGKILL)
+
+
 # --- one file in three packages ----------------------------------------------------------------------------------------
 
 

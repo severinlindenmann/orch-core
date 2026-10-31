@@ -9,6 +9,7 @@ import contextlib
 import fcntl
 import os
 import threading
+import weakref
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -83,10 +84,27 @@ DATA_FORMAT = 1  # the format of the hub state dir this code reads and writes (f
 _DATA: list[Handle] = []  # the handle of the serving process: the shared format lock lives as long as it is referenced
 
 
+_OPEN: weakref.WeakSet[Handle] = weakref.WeakSet()  # every handle open_state made and nobody closed or dropped yet
+
+
 def open_state(state: Path) -> Handle:
     """Open the state dir at its format (see :mod:`orch_hub.dataformat`) and hold the shared format lock. For a command
     that works on the state and then ends: close the handle when done."""
-    return open_data(state, DATA_KIND, DATA_FORMAT)
+    handle = open_data(state, DATA_KIND, DATA_FORMAT)
+    _OPEN.add(handle)
+    return handle
+
+
+def relock_state(state: Path) -> None:
+    """The state dir was swapped (an in-place restore, or :func:`orch_hub.backup.restore.recover` put a crashed swap right).
+    The format lock follows the file, not the path, so every handle of this process on this state takes the shared lock
+    again on the new dir's ``format.lock``: call it right after the rename, before anything else touches the new dir (an
+    ``orch update`` could take it exclusive). A lock only: the data may be at an older format after a restore, which the
+    next open refuses with ``format.older``. Raises :class:`DataFormatError` (``update.busy``) if an update got there first."""
+    here = os.path.realpath(state)
+    for handle in list(_OPEN):
+        if os.path.realpath(handle.path) == here:
+            handle.relock()
 
 
 def hold_state(state: Path) -> Handle:

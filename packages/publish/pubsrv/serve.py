@@ -246,25 +246,29 @@ class ShareServer:
         )
         # the format rule, then the dir checks; the handle keeps the shared format lock while this lives
         self.db_path, self.data_handle = db.open_dir(data_dir)
-        self.shares_dir = os.path.realpath(os.path.join(data_dir, "shares"))
-        self.clock = clock or _now
-        self._opens = {}  # share_id -> deque of recent open times (ms); per process
-        self._lock = threading.Lock()
-        self._ips = (
-            OrderedDict()
-        )  # key (IPv4 address / IPv6 /64) -> (tokens, last time); bounded LRU, oldest first
-        db.init(self.db_path)
-        from .appserve import AppServer  # late: it imports this module
+        try:
+            self.shares_dir = os.path.realpath(os.path.join(data_dir, "shares"))
+            self.clock = clock or _now
+            self._opens = {}  # share_id -> deque of recent open times (ms); per process
+            self._lock = threading.Lock()
+            self._ips = (
+                OrderedDict()
+            )  # key (IPv4 address / IPv6 /64) -> (tokens, last time); bounded LRU, oldest first
+            db.init(self.db_path)
+            from .appserve import AppServer  # late: it imports this module
 
-        # apps are served from the CONFIGURED origin (never a Host header); without one every /a/ answer is a 404
-        self.apps = AppServer(
-            self.db_path,
-            os.path.join(os.path.realpath(data_dir), "apps"),
-            self.clock,
-            share_origin,
-            api_host,
-            self._ip_ok,
-        )
+            # apps are served from the CONFIGURED origin (never a Host header); without one every /a/ answer is a 404
+            self.apps = AppServer(
+                self.db_path,
+                os.path.join(os.path.realpath(data_dir), "apps"),
+                self.clock,
+                share_origin,
+                api_host,
+                self._ip_ok,
+            )
+        except BaseException:
+            self.data_handle.close()  # a failed construction must not keep the lock until the GC runs
+            raise
 
     # -- ASGI -----------------------------------------------------------------------------------
 

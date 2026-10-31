@@ -30,6 +30,7 @@ def client(tmp_path):
     with TestClient(create_app(tmp_path), client=(PROXY, 50000)) as client:
         d = client.app.state.core
         d.clock = lambda: NOW
+        d.trusted_proxy = PROXY
         yield client
 
 

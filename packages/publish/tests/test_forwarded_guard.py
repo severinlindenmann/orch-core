@@ -3,35 +3,71 @@
 import pathlib
 import re
 
-from pubsrv.forwarded import rate_key
+import pytest
+
+from pubsrv.forwarded import headers_of_scope, parse_trusted, rate_key
+from pubsrv.serve import IP_TABLE_MAX, ShareServer
 
 SRC = pathlib.Path(__file__).resolve().parent.parent / "pubsrv"
+
+
+VPN = parse_trusted("100.71.0.0/16, fd0f:80b5:c7cd:bbad::/64")
 
 
 def scope(peer, **h):
     return {"client": (peer, 1), "headers": [(k.replace("_", "-").encode(), v.encode()) for k, v in h.items()]}
 
 
-def test_forwarded_is_the_key():
-    assert rate_key(scope("100.71.0.5", x_forwarded_for="198.51.100.7")) == "198.51.100.7"
-    assert rate_key(scope("100.71.0.5", x_forwarded_for="1.1.1.1, 198.51.100.7")) == "198.51.100.7"
-    assert rate_key(scope("100.71.0.5", x_real_ip="198.51.100.8")) == "198.51.100.8"
+def key(peer, nets=VPN, **h):
+    sc = scope(peer, **h)
+    return rate_key(sc["client"][0], headers_of_scope(sc), nets)
 
 
-def test_ipv6_is_its_64():
-    assert rate_key(scope("100.71.0.5", x_forwarded_for="2001:db8:1:2:3:4:5:6")) == "2001:db8:1:2::/64"
+def test_spoofed_xff_from_a_non_trusted_peer_is_keyed_on_the_socket():
+    assert key("203.0.113.9", x_forwarded_for="1.2.3.4") == "203.0.113.9"
+    assert key("100.71.0.5", nets=(), x_forwarded_for="1.2.3.4") == "100.71.0.5"
+
+
+def test_xff_from_a_trusted_peer_is_keyed_on_the_rightmost_value():
+    assert key("100.71.0.5", x_forwarded_for="1.1.1.1, 198.51.100.7") == "198.51.100.7"
+    assert key("100.71.0.5", x_real_ip="198.51.100.8") == "198.51.100.8"
+    assert key("100.71.0.5", x_forwarded_for="2001:db8:1:2:3:4:5:6") == "2001:db8:1:2::/64"
 
 
 def test_missing_or_malformed_uses_the_socket():
-    assert rate_key(scope("100.71.0.5")) == "100.71.0.5"
-    assert rate_key(scope("100.71.0.5", x_forwarded_for="not-an-ip")) == "100.71.0.5"
+    assert key("100.71.0.5") == "100.71.0.5"
+    assert key("100.71.0.5", x_forwarded_for="not-an-ip") == "100.71.0.5"
 
 
-def test_forged_loopback_is_only_a_key():
-    # a forged 127.0.0.1 is a bucket name, nothing more; no module treats any address as local
-    assert rate_key(scope("100.71.0.5", x_forwarded_for="127.0.0.1")) == "127.0.0.1"
+def test_forged_loopback_is_only_a_key(tmp_path):
+    assert key("100.71.0.5", x_forwarded_for="127.0.0.1", host="127.0.0.1") == "127.0.0.1"
     for f in SRC.glob("*.py"):
-        assert not re.search(r"is_loopback|is_private|trusted_proxy", f.read_text()), f.name
+        assert not re.search(r"is_private", f.read_text()), f.name
+
+
+def test_the_table_is_a_bounded_lru(tmp_path):
+    srv = ShareServer(tmp_path, trusted_proxy="100.71.0.0/16")
+    for i in range(20_000):
+        srv._ip_ok(scope("100.71.0.5", x_forwarded_for=f"10.{i // 65536}.{(i // 256) % 256}.{i % 256}"))
+    assert len(srv._ips) == IP_TABLE_MAX
+
+
+def test_a_spoofing_peer_cannot_mint_keys(tmp_path):
+    srv = ShareServer(tmp_path, trusted_proxy="100.71.0.0/16")
+    for i in range(500):
+        srv._ip_ok(scope("203.0.113.9", x_forwarded_for=f"10.9.{i // 256}.{i % 256}"))
+    assert list(srv._ips) == ["203.0.113.9"]
+
+
+def test_a_malformed_trusted_list_is_refused(tmp_path):
+    with pytest.raises(ValueError):
+        ShareServer(tmp_path, trusted_proxy="nope")
+
+
+def test_the_copy_in_relay_is_identical():
+    other = SRC.parent.parent.parent / "relay" / "src" / "orch_relay" / "forwarded.py"
+    if other.exists():
+        assert other.read_bytes() == (SRC / "forwarded.py").read_bytes()
 
 
 def test_only_forwarded_py_reads_forwarded_headers():

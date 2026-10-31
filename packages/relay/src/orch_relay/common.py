@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from fastapi.responses import JSONResponse
 
 from . import db
-from .forwarded import rate_key
+from .forwarded import parse_trusted, rate_key
 
 MINUTE, HOUR, DAY = 60_000, 3_600_000, 86_400_000
 # Buckets kept per key class (ORCH_RELAY_THROTTLE_TABLE), evicting full buckets first.
@@ -217,8 +217,9 @@ def throttle_table(env):
 class Core:
     """The process lock, the in-memory budgets and the pooled SQLite connections."""
 
-    def __init__(self, path):
+    def __init__(self, path, trusted_proxy=None):
         self.path = path
+        self.trusted_proxy = trusted_proxy  # addresses or CIDR networks (comma-separated); default none
         self.lock = threading.RLock()
         # In-memory rate windows. Taken alone by pre-checks and inside self.lock by transactions,
         # never the other way round; held only for dict/heap updates.
@@ -252,13 +253,28 @@ class Core:
         with self.budget:
             window_rate(self, purpose, identity, duration, cap, now, charge)
 
+    @property
+    def trusted_proxy(self):
+        return self._trusted_text
+
+    @trusted_proxy.setter
+    def trusted_proxy(self, value):
+        self._trusted_nets = parse_trusted(value)  # a malformed entry refuses to start
+        self._trusted_text = value or None
+
     def client_address(self, peer, headers):
-        """The rate-limit key of a request (forwarded address if sent, else the socket peer). Never a trust input."""
-        return rate_key(peer, headers)
+        """The rate-limit key of a request (forwarded.py). Never a trust or locality input."""
+        if headers.get("x-forwarded-for") and not self._trusted_nets and not self.proxy_warned:
+            self.proxy_warned = True
+            logging.getLogger(__name__).warning(
+                "X-Forwarded-For received but ORCH_RELAY_TRUSTED_PROXY is unset: behind a reverse proxy every "
+                "client shares the proxy's address (address windows); set it to the proxy's network"
+            )
+        return rate_key(peer, headers, self._trusted_nets)
 
 
 def install(app, data):
-    core = Core(data / db.DB_NAME)
+    core = Core(data / db.DB_NAME, os.environ.get("ORCH_RELAY_TRUSTED_PROXY"))
     core.table_limit = throttle_table(os.environ)
     app.state.core = core
     return core

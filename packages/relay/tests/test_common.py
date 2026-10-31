@@ -48,7 +48,11 @@ def test_buckets_evict_full_entries_first_and_refill():
 def test_client_address_is_a_rate_key_only():
     from orch_relay.forwarded import rate_key
 
-    assert rate_key("10.0.0.1", {"x-forwarded-for": "203.0.113.5, 198.51.100.7"}) == "198.51.100.7"
+    from orch_relay.forwarded import parse_trusted
+
+    nets = parse_trusted("10.0.0.0/8")
+    assert rate_key("10.0.0.1", {"x-forwarded-for": "203.0.113.5, 198.51.100.7"}, nets) == "198.51.100.7"
+    assert rate_key("192.0.2.1", {"x-forwarded-for": "203.0.113.5"}, nets) == "192.0.2.1"  # not trusted
     assert rate_key("192.0.2.1", {}) == "192.0.2.1"
     assert rate_key("2001:db8::1", {}) == "2001:db8::/64"
     assert C.ipv6_parent("2001:db8:0:1::/64") == "2001:db8::/56"

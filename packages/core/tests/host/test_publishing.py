@@ -1618,3 +1618,71 @@ def test_only_a_clear_refusal_marks_a_share_failed_and_old_failed_records_are_pr
     ids = [r["id"] for r in out]
     assert "old" not in ids and "live" in ids
     assert sum(r["state"] == "failed" for r in out) == 50 and ids[-1] == "f59"
+
+
+# -- P03: files of the ticket's own work folder --------------------------------------------------------------------
+
+
+def work_dir(w, key: str) -> Path:
+    path = Path(w.served.lab.root) / ".orch-work" / key
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def test_prepare_stages_a_work_folder_file_and_the_one_signature_covers_it(w):
+    uid, key = w.ticket_with()
+    folder = work_dir(w, key)
+    (folder / "hello.txt").write_bytes(b"hello from work\n")
+    got = ok(w.req("publish.prepare", {"ref": key, "workfiles": ["hello.txt"]}))["data"]
+    assert [(f["name"], f["size"], f["sha256"]) for f in got["files"]] == [
+        ("hello.txt", 16, hashlib.sha256(b"hello from work\n").hexdigest())
+    ]
+    stage = w.stage_dir(got["staged_id"])
+    assert (stage / "files" / "hello.txt").read_bytes() == b"hello from work\n"
+    assert "hello.txt" in got["words"] and w.server.requests == []
+    w.approve(got["staged_id"])
+    data = ok(w.send(got["staged_id"]))["data"]
+    assert w.server.shares[data["share_id"]]["files"]["hello.txt"] == b"hello from work\n"
+
+
+def test_a_work_file_cannot_escape_the_folder_or_be_a_link_or_empty_or_big(w, monkeypatch):
+    uid, key = w.ticket_with()
+    folder = work_dir(w, key)
+    outside = Path(w.served.lab.root) / "secret.txt"
+    outside.write_bytes(b"outside")
+    (folder / "link.txt").symlink_to(outside)
+    (folder / "sub").mkdir()
+    (folder / "sub" / "deep.txt").write_bytes(b"deep")
+    (folder / "empty.txt").write_bytes(b"")
+    os.link(outside, folder / "hard.txt")
+    (folder / "big.bin").write_bytes(b"x" * 50)
+    for bad in ("../secret.txt", "/etc/passwd", "sub/deep.txt", "..", ".hidden", "a\\b"):
+        assert err(w.req("publish.prepare", {"ref": key, "workfiles": [bad]})) == "invalid.input"
+    assert err(w.req("publish.prepare", {"ref": key, "workfiles": ["link.txt"]})) == "not_found"
+    assert err(w.req("publish.prepare", {"ref": key, "workfiles": ["hard.txt"]})) == "not_found"
+    assert err(w.req("publish.prepare", {"ref": key, "workfiles": ["sub"]})) == "not_found"
+    assert err(w.req("publish.prepare", {"ref": key, "workfiles": ["nope.txt"]})) == "not_found"
+    assert err(w.req("publish.prepare", {"ref": key, "workfiles": ["empty.txt"]})) == "invalid.input"
+    monkeypatch.setitem(approval.LIMITS, "file_bytes", 10)
+    assert err(w.req("publish.prepare", {"ref": key, "workfiles": ["big.bin"]})) == "not_found"
+    assert not (w.base() / "stage").exists() or not list((w.base() / "stage").glob("ps_*"))
+
+
+def test_a_linked_work_folder_is_refused(w):
+    uid, key = w.ticket_with()
+    real = Path(w.served.lab.root) / "elsewhere"
+    real.mkdir()
+    (real / "x.txt").write_bytes(b"x")
+    (Path(w.served.lab.root) / ".orch-work").mkdir(exist_ok=True)
+    (Path(w.served.lab.root) / ".orch-work" / key).symlink_to(real)
+    assert err(w.req("publish.prepare", {"ref": key, "workfiles": ["x.txt"]})) == "not_found"
+
+
+def test_work_files_are_a_persons_act_and_another_tickets_folder_is_not_reachable(w):
+    uid, key = w.ticket_with()
+    work_dir(w, key)
+    (work_dir(w, key) / "a.txt").write_bytes(b"a")
+    assert err(w.req("publish.prepare", {"ref": key, "workfiles": ["a.txt"]}, agent=True)) == "op.not_allowed"
+    uid2, key2 = w.ticket_with()
+    assert err(w.req("publish.prepare", {"ref": key2, "workfiles": ["a.txt"]})) == "not_found"
+    assert err(w.req("publish.prepare", {"ref": key, "workfiles": ["a.txt", "A.txt"]})) == "invalid.input"

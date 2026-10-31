@@ -32,7 +32,10 @@ WRITE_OPS = frozenset({"workdir.delete"})
 CAPS = ["workdir/1"]
 _SCHEMA = {
     "type": "object",
-    "properties": {"ticket": {"type": "string", "minLength": 1, "maxLength": 80}},
+    "properties": {
+        "ticket": {"type": "string", "minLength": 1, "maxLength": 80},
+        "list": {"type": "boolean"},  # workdir.get: also name the files directly in the folder (P03, at most 20)
+    },
     "required": ["ticket"],
     "additionalProperties": False,
 }
@@ -82,6 +85,8 @@ def serve(call: Call) -> dict[str, Any]:
         out: dict[str, Any] = {"codebase": False, "exists": found is not None, "folder": f".orch-work/{view.key}"}
         if found is not None:
             out.update(files=found["files"], bytes=found["bytes"], truncated=bool(found["truncated"]))
+            if args.get("list") is True:
+                out["items"] = _items(layout, view.key)
         return ok_result(out)
     from .auth import Redactor
 
@@ -122,6 +127,25 @@ def serve(call: Call) -> dict[str, Any]:
         session=(call.frame.get("auth") or {}).get("session"),
         redactor=Redactor((call.frame.get("auth") or {}).get("grant")),
     )  # fmt: skip
+
+
+def _items(layout: Any, key: str) -> list[dict[str, Any]]:
+    """P03: the plain files directly in the folder a share could take (names the server accepts), 20 at most."""
+    from orch.layout import LayoutError, workdir_files
+    from orch.publishclient import approval
+
+    try:
+        found = workdir_files(layout, key, limit=1000)
+    except LayoutError:
+        return []
+    out: list[dict[str, Any]] = []
+    for name, size in found:
+        try:
+            approval.check_name(name)
+        except ValueError:
+            continue
+        out.append({"name": name, "bytes": size})
+    return out[: approval.LIMITS["files"]]
 
 
 def _live() -> frozenset[str]:

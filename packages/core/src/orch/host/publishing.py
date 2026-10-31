@@ -131,6 +131,13 @@ _SCHEMAS = {
                 "uniqueItems": True,
             },
             "uploads": {"type": "array", "items": _UPLOAD, "maxItems": approval.LIMITS["files"], "uniqueItems": True},
+            # P03: plain names of files directly in the ticket's own work folder (the host resolves them, never a path)
+            "workfiles": {
+                "type": "array",
+                "items": {"type": "string", "minLength": 1, "maxLength": 128},
+                "maxItems": approval.LIMITS["files"],
+                "uniqueItems": True,
+            },
             "kind": {"enum": list(approval.KINDS)},
             "days": {"enum": list(approval.DAYS)},
             "views": {"enum": list(approval.VIEWS)},
@@ -620,6 +627,39 @@ def _artifact_bytes(call: Call, view: Any, name: str, room: int) -> tuple[bytes,
     return data, digest.removeprefix("sha256:")
 
 
+def _work_files(
+    call: Call, view: Any, names: list[str], files: list[dict[str, Any]], blobs: list[bytes], used: int, total: int
+) -> None:
+    """P03: files of the ticket's own work folder, by plain name. The host resolves each below
+    ``<project>/.orch-work/<KEY>`` through descriptors (no link followed, no path), checks the name like any share
+    file, and reads and hashes the bytes now; the stage's copy is what the person signs."""
+    from orch.layout import LayoutError, workdir_read
+    from orch.ops.workdir import has_codebase
+
+    service = call.service
+    if has_codebase(service.store, view):
+        raise HostError("invalid.input", f"{view.key} has a codebase: it has no work folder")
+    for name in names:
+        try:
+            approval.check_name(name)
+        except ValueError as exc:
+            raise HostError("invalid.input", f"{name[:60]!r}: {exc}"[:300]) from None
+        room = min(STAGE_BYTES - used - total, approval.LIMITS["share_bytes"] - total, approval.LIMITS["file_bytes"])
+        try:
+            data = workdir_read(service.store.layout, view.key, name, max(room, 0))
+        except LayoutError as exc:
+            raise HostError("not_found", str(exc)[:300]) from None
+        if not data:
+            raise HostError("invalid.input", f"{name} is empty")
+        total += len(data)
+        if total > approval.LIMITS["share_bytes"]:
+            raise HostError(
+                "quota.host", f"a share holds at most {approval.human_size(approval.LIMITS['share_bytes'])}"
+            )
+        files.append({"name": name, "size": len(data), "sha256": hashlib.sha256(data).hexdigest()})
+        blobs.append(data)
+
+
 def _claim_ok(call: Call, view: Any) -> bool:
     from .worktrees import _claim_ok as claim_ok
 
@@ -650,12 +690,15 @@ def _prepare(call: Call, args: dict[str, Any]) -> dict[str, Any]:
     used = sum(f["size"] for m in stages for f in m.get("files", []))
     names = list(args.get("artifacts", []))
     upload_ids = list(args.get("uploads", []))
-    if not names and not upload_ids:
+    work_names = list(args.get("workfiles", []))
+    if not names and not upload_ids and not work_names:
         raise HostError("invalid.input", "publish.prepare: pick at least one file")
+    if work_names and call.column.name != "P":
+        raise HostError("op.not_allowed", "only a person adds a file from the ticket's work folder")
     if upload_ids and call.column.name != "P":
         raise HostError("op.not_allowed", "only a person adds a file from this computer")
     picked = [_load_upload(service, u, str(call.viewer)) for u in upload_ids]
-    lowered = [n.lower() for n in [*names, *(m["name"] for m in picked)]]
+    lowered = [n.lower() for n in [*names, *work_names, *(m["name"] for m in picked)]]
     if len(set(lowered)) != len(lowered):
         raise HostError(
             "invalid.input", "two file names differ only in upper and lower case: the server would merge them"
@@ -676,6 +719,9 @@ def _prepare(call: Call, args: dict[str, Any]) -> dict[str, Any]:
             )
         files.append({"name": name, "size": len(data), "sha256": digest})
         blobs.append(data)
+    if work_names:
+        _work_files(call, view, work_names, files, blobs, used, total)
+        total = sum(f["size"] for f in files)
     for meta_up in picked:  # the picked files: read and hashed again now; the stage's hash is what is signed
         room = min(STAGE_BYTES - used - total, approval.LIMITS["share_bytes"] - total)
         data = _upload_read(service, meta_up, room)

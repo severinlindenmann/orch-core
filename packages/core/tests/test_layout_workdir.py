@@ -13,6 +13,8 @@ from orch.layout import (
     LayoutError,
     delete_workdir,
     ensure_workdir,
+    workdir_files,
+    workdir_read,
     workdir_stat,
     workdir_summary,
 )
@@ -223,3 +225,25 @@ def test_a_directory_swapped_after_the_scan_refuses(lay, monkeypatch, tmp_path):
     with pytest.raises(LayoutError):
         delete_workdir(lay, KEY)
     assert (root / "sub" / "g").exists()
+
+
+def test_files_and_read_see_only_plain_files_directly_in_the_folder(lay, tmp_path):
+    assert workdir_files(lay, KEY) == []
+    ensure_workdir(lay, KEY)
+    root = lay.workdir(KEY)
+    (root / "b.txt").write_text("bb")
+    (root / "a.txt").write_text("a")
+    (root / "sub").mkdir()
+    (root / "sub" / "c.txt").write_text("c")
+    outside = tmp_path / "o.txt"
+    outside.write_text("secret")
+    (root / "link.txt").symlink_to(outside)
+    os.link(outside, root / "hard.txt")
+    assert workdir_files(lay, KEY) == [("a.txt", 1), ("b.txt", 2)]
+    assert workdir_files(lay, KEY, limit=1) == [("a.txt", 1)]
+    assert workdir_read(lay, KEY, "b.txt", 10) == b"bb"
+    for bad in ("../o.txt", "sub/c.txt", "sub", "link.txt", "hard.txt", "..", ".", "", "x\0y", "gone.txt"):
+        with pytest.raises(LayoutError):
+            workdir_read(lay, KEY, bad, 10)
+    with pytest.raises(LayoutError):
+        workdir_read(lay, KEY, "b.txt", 1)  # over the cap

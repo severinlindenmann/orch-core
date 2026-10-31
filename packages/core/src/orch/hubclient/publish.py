@@ -173,6 +173,23 @@ class HubPublishSigner:
     def public_key(self) -> bytes:
         return self._pub
 
+    def pin(self, ts_ms: int, nonce: bytes, approval: Mapping[str, Any]) -> _PinnedSigner:
+        """A one-shot signer for a request whose ``ts``, ``nonce`` and approval were drawn and signed before."""
+        return _PinnedSigner(self, ts_ms, nonce, approval)
+
+    def _request_pinned(
+        self, method: str, target: str, body: bytes, ts: int, nonce: bytes, approval: Mapping[str, Any]
+    ) -> SignedPublish:
+        _target_ok(target, self.ctx.workspace_id)
+        if method not in METHODS or type(body) is not bytes or len(nonce) != _NONCE_LEN:
+            raise SignerRefused("method, body or nonce")
+        ws = bytes.fromhex(self.ctx.workspace_id)
+        want = b64u(request_hash(ws, ts, nonce, method, self.ctx.host, target, body, self.hub_id))
+        o = approval.get("o")
+        if not isinstance(o, Mapping) or o.get("request_hash") != want or o.get("hub_id") != self.hub_id:
+            raise SignerRefused("the approval names another request")
+        return self._sign_request(method, target, body, ws, ts, nonce, approval)
+
     def request(self, method: str, target: str, body: bytes = b"") -> SignedPublish:
         _target_ok(target, self.ctx.workspace_id)
         if method not in METHODS or type(body) is not bytes:
@@ -186,6 +203,18 @@ class HubPublishSigner:
             approval = self._approver(rh) if self._approver is not None else None
             if approval is None:
                 raise SignerRefused("approval_required")
+        return self._sign_request(method, target, body, ws, ts, nonce, approval)
+
+    def _sign_request(
+        self,
+        method: str,
+        target: str,
+        body: bytes,
+        ws: bytes,
+        ts: int,
+        nonce: bytes,
+        approval: Mapping[str, Any] | None,
+    ) -> SignedPublish:
         signed = hub_path_signed_bytes(ws, ts, nonce, method, self.ctx.host, target, body, self.hub_id, approval)
         with self._lock:
             if nonce in self._seen:
@@ -203,6 +232,30 @@ class HubPublishSigner:
         if approval is not None:
             headers["Orch-Owner-Approval"] = b64u(cj(dict(approval)))
         return SignedPublish(method, self.ctx.host, target, headers)
+
+
+class _PinnedSigner:
+    """One request with a ``ts``, a ``nonce`` and an owner's approval that were fixed BEFORE (#1455, hub contract 11.3):
+    an app commit, rollback or start. The approval names this request's ``request_hash``; it is checked here against the
+    request about to be signed, so a mismatch fails closed before anything is sent. It signs exactly once and never
+    retries with a new ``ts`` (that would be another request than the one the owner approved)."""
+
+    __slots__ = ("_approval", "_nonce", "_parent", "_ts", "_used", "ctx")
+
+    def __init__(self, parent: HubPublishSigner, ts_ms: int, nonce: bytes, approval: Mapping[str, Any]) -> None:
+        self._parent, self._ts, self._nonce, self._approval = parent, ts_ms, bytes(nonce), dict(approval)
+        self._used = False
+        self.ctx = parent.ctx
+
+    @property
+    def public_key(self) -> bytes:
+        return self._parent.public_key
+
+    def request(self, method: str, target: str, body: bytes = b"") -> SignedPublish:
+        if self._used:
+            raise SignerRefused("an approved request is sent once")
+        self._used = True
+        return self._parent._request_pinned(method, target, body, self._ts, self._nonce, self._approval)  # noqa: SLF001
 
 
 def card_put(link: Any, card: Mapping[str, Any], owner_pk_pub: str) -> dict[str, Any]:

@@ -20,6 +20,7 @@ from .client import PublishClient, PublishError, share_target
 
 __all__ = [
     "commit",
+    "app_release",
     "extend",
     "list_shares",
     "meta_bytes",
@@ -90,6 +91,13 @@ def put_app_file(
 ) -> dict[str, Any]:
     parts = ("apps", app_id, "versions", version, "files", *path.split("/"))
     got = client.request("PUT", share_target(workspace_id, *parts), data).json()
+    return got if isinstance(got, dict) else {}
+
+
+def app_release(client: PublishClient, workspace_id: str, app_id: str, op: str, body: bytes) -> dict[str, Any]:
+    """``POST apps/<id>/<op>`` (commit, rollback or start) with a signer that carries the owner's approval (a pinned
+    request). Never retried: the approval names this one request."""
+    got = client.request("POST", share_target(workspace_id, "apps", app_id, op), body, idempotent=False).json()
     return got if isinstance(got, dict) else {}
 
 

@@ -46,6 +46,11 @@ function fill(view, name, value) {
   input.value = value;
   return input;
 }
+// Ticks every workspace box in the new-secret form (it starts on "Only chosen workspaces").
+function tickAll(view) {
+  const form = find(view, (n) => n.className === "share-box")[0];
+  for (const b of find(form, (n) => n.tag === "input" && n.attrs["data-ws"])) b.checked = true;
+}
 
 test("the page is a registry entry for admins and names a plain tab", () => {
   assert.equal(page.path, "secrets");
@@ -63,8 +68,8 @@ test("every value box is a password field that browsers do not remember or spell
 test("the page says in plain words who can read it and never uses the crypto words", () => {
   const t = secretsView(data, {}).textContent;
   assert.match(t, /The hub could read this value if it were taken over\./);
-  assert.match(t, /Ready/); assert.match(t, /Needs the value/); assert.match(t, /Enter the value/); assert.match(t, /Waiting for you to type the value again for this workspace/);
-  assert.match(t, /Used 12 times this week \(as reported by the workspaces\)/);
+  assert.match(t, /\u2713 Available/); assert.ok(!/Ready/.test(t)); assert.match(t, /Needs the value/); assert.match(t, /Enter the value/); assert.match(t, /Waiting for you to type the value again for this workspace/);
+  assert.match(t, /Valid until .*Used 12 times this week/); assert.match(t, /Shared with: Product, A workspace/);
   assert.match(t, /Product/); assert.match(t, /A workspace/);
   assert.ok(!/WXK|\bseal|\bwrap|encrypt|ciphertext/i.test(t.replace(/\blocked\b/g, "")), t);
   assert.ok(!t.includes(WS[0]), "no ids on screen");
@@ -74,6 +79,7 @@ test("a bad name or value is caught in the page and nothing is sent", async () =
   const calls = [];
   const view = secretsView({ ...data, secrets: [] }, { save: async (...a) => { calls.push(a); return { ok: true }; } });
   assert.match(view.textContent, /No company secrets yet/);
+  tickAll(view);
   fill(view, "Bad Name", VALUE);
   await button(view, "Save secret").listeners.click();
   fill(view, "crm-key", "short");
@@ -96,6 +102,7 @@ test("submit: the box is empty before anything is sent, the value is in no reque
   const actions = { save: (f) => saveSecret({ api, ...f }) };
   const view = secretsView({ ...data, secrets: [] }, actions);
   input = fill(view, "crm-key", VALUE);
+  tickAll(view);
   find(view, (n) => n.tag === "select" && n.attrs["aria-label"] === "Valid for")[0].value = "30";
   await button(view, "Save secret").listeners.click();
   assert.equal(requests.length, 2);
@@ -128,6 +135,7 @@ test("a failed save: generic words, an empty box, and no second try on its own",
     const api = async (_m, path) => { calls++; if (path.endsWith("/recipients")) return { status: 200, body: REC }; return failure; };
     const view = secretsView({ ...data, secrets: [] }, { save: (f) => saveSecret({ api, ...f }) });
     const input = fill(view, "crm-key", VALUE);
+    tickAll(view);
     await button(view, "Save secret").listeners.click();
     assert.equal(calls, 2, "exactly one try");
     assert.equal(input.value, "");
@@ -141,6 +149,7 @@ test("an exception while locking or sending is a generic message too, and the bo
   const boom = async () => { throw new Error("details with " + VALUE); };
   const view = secretsView({ ...data, secrets: [] }, { save: (f) => saveSecret({ api: async () => ({ status: 200, body: REC }), seal: boom, ...f }) });
   const input = fill(view, "crm-key", VALUE);
+  tickAll(view);
   await button(view, "Save secret").listeners.click();
   assert.equal(input.value, "");
   const note = find(view, (n) => n.attrs.role === "alert")[0].textContent;
@@ -223,7 +232,67 @@ test("P10: no Enter-the-value button, hint or warning when every row is ready", 
   const view = secretsView(ready, {});
   assert.equal(button(view, "Enter the value"), undefined);
   assert.ok(!/Waiting for you|Needs the value|Enter the value/.test(view.textContent));
-  assert.match(view.textContent, /Ready/);
+  assert.match(view.textContent, /\u2713 Available/);
+});
+
+test("P07: the new-secret form starts on chosen workspaces with a reason, and the share box sits above Save", () => {
+  const view = secretsView({ ...data, secrets: [] }, {});
+  const box = find(view, (n) => n.className === "share-box")[0];
+  const sel = find(box, (n) => n.tag === "select")[0];
+  assert.equal(sel.value, "chosen");
+  assert.match(box.textContent, /Recommended: only the workspaces that need it\./);
+  assert.equal(find(box, (n) => n.attrs.role === "note")[0].hidden, true, "the hub warning shows only for All workspaces");
+  sel.value = "all"; sel.listeners.change();
+  assert.equal(find(box, (n) => n.attrs.role === "note")[0].hidden, false);
+  const all = find(view, (n) => n.className === "secret-entry")[0].all();
+  assert.ok(all.indexOf(box) < all.indexOf(button(view, "Save secret")), "above Save");
+  assert.equal(find(view, (n) => n.tag === "select" && n.attrs["aria-label"] === "Who can read it").length, 1, "no duplicate block");
+  assert.ok(!view.children.some((n) => n.className === "banner warn"), "no page-wide warning");
+});
+
+test("P07: a sole workspace is already ticked; with two, none is", () => {
+  const one = secretsView({ workspaces: [data.workspaces[0]], secrets: [] }, {});
+  assert.equal(find(one, (n) => n.attrs["data-ws"])[0].checked, true);
+  const two = secretsView({ ...data, secrets: [] }, {});
+  assert.deepEqual(find(two, (n) => n.attrs["data-ws"]).map((b) => b.checked), [false, false]);
+});
+
+test("P07: Save with nothing ticked says so and sends nothing; after a good save the name is empty again", async () => {
+  const calls = [];
+  const view = secretsView({ ...data, secrets: [] }, { save: async (f) => { calls.push(f); return { ok: true }; } });
+  const input = fill(view, "crm-key", VALUE);
+  await button(view, "Save secret").listeners.click();
+  assert.equal(calls.length, 0);
+  assert.equal(find(view, (n) => n.attrs.role === "alert")[0].textContent, "Pick at least one workspace.");
+  assert.equal(input.value, VALUE, "the value stays so nothing is lost");
+  tickAll(view);
+  await button(view, "Save secret").listeners.click();
+  assert.equal(calls.length, 1); assert.equal(calls[0].shared, "chosen"); assert.deepEqual(calls[0].workspaces, WS);
+  assert.equal(find(view, (n) => n.attrs["aria-label"] === "Name of the new secret")[0].value, "", "name cleared");
+});
+
+test("P07: the card says Not used yet, 'as reported' lives only behind the i, and Available has one explanation", () => {
+  const view = secretsView({ ...data, secrets: [{ ...data.secrets[0], used_this_week: 0 }] }, {});
+  const card = find(view, (n) => n.attrs["data-secret"] === "crm-key")[0];
+  assert.match(card.textContent, /Valid until .* \u00b7 Not used yet/);
+  const details = find(card, (n) => n.tag === "details").map((d) => d.textContent);
+  const inside = details.join("|");
+  const outside = details.reduce((t, d) => t.replace(d, ""), card.textContent);
+  assert.ok(!/as reported/.test(outside)); assert.match(inside, /as reported by the workspaces/);
+  assert.match(inside, /Available means the workspace has received the secret\./);
+  assert.match(card.textContent, /Needs the value/);
+});
+
+test("P07: the card's share box shows the hub warning above its Save only while All workspaces is picked", () => {
+  const view = secretsView(data, {});
+  const card = find(view, (n) => n.attrs["data-secret"] === "crm-key")[0];
+  const sel = find(card, (n) => n.tag === "select" && n.attrs["aria-label"] === "Who can read it")[0];
+  const warn = () => find(card, (n) => n.attrs.role === "note" && /hub could read/.test(n.textContent))[0];
+  assert.equal(sel.value, "chosen"); assert.equal(warn().hidden, true);
+  sel.value = "all"; sel.listeners.change();
+  assert.equal(warn().hidden, false);
+  const all = card.all();
+  assert.ok(all.indexOf(warn()) < all.indexOf(button(card, "Save who can read it")), "above Save");
 });
 
 test("#1431: per-workspace use is behind a small click, in plain words, with the expiry shown", () => {
@@ -234,5 +303,5 @@ test("#1431: per-workspace use is behind a small click, in plain words, with the
   const btn = find(view, (n) => n.attrs["data-use-toggle"] === "crm-key")[0];
   btn.listeners.click();
   assert.equal(note.hidden, false);
-  assert.match(view.textContent, /Expires on /);
+  assert.match(view.textContent, /Valid until /); // run15c P07 wording
 });

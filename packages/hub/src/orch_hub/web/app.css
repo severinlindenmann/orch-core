@@ -342,3 +342,5 @@ label .optional { font-weight:400; color:var(--text-faint); }
 .ws-server input { min-width:140px; }
 .ws-who { display:flex; gap:8px; align-items:center; }
 .ws-who input { flex:1; width:auto; min-width:0; }
+label.check.disabled { opacity:.55; cursor:not-allowed; }
+label.check.disabled input { cursor:not-allowed; }

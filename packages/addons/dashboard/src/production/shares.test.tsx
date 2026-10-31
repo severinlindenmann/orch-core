@@ -43,7 +43,9 @@ let workMore = false
 let newResult = false
 let emptyResult = false
 let onlyEmpty = false
-const state = useFakeHost(() => [workspace({ id: A, features: [...READS, 'publish'], addOns: { available: true, add_ons: [{ id: 'publish', title: 'Publish', desc: 'Share files.', state: 'on', locked: null, blocked: null }] } })])
+// the Publish server installed on this computer, as the host's add-on row says it (the source of "Files go to this computer.")
+const PUBLISH_ROW = { id: 'publish', title: 'Publish', desc: 'Share files.', state: 'on' as const, locked: null, blocked: null, suggest: 'http://127.0.0.1:8103', suggest_from: 'computer' as const, suggest_hub: null }
+const state = useFakeHost(() => [workspace({ id: A, features: [...READS, 'publish'], addOns: { available: true, add_ons: [PUBLISH_ROW] } })])
 const refusal = (r: { code: string; reason?: string }) =>
   Response.json({ ok: false, error: { code: r.code, message: r.code, retryable: false, ...(r.reason ? { detail: { reason: r.reason } } : {}) } }, { status: 409 })
 let serverUp = true
@@ -627,9 +629,11 @@ it('Publish as link: one press prepares the copy and opens exactly ONE sign shee
   expect(sheet).toHaveTextContent('Anyone with the link can read this file. A copy cannot be taken back. You see the link once.')
   expect((sheet.textContent ?? '').match(/Anyone with the link/g)).toHaveLength(1)
   expect(within(sheet).getByTestId('where-files-go')).toHaveTextContent('Files go to this computer.') // by name, before Sign
-  // Enter right after the sheet opened does not sign (focus is not on Sign, and a press must begin after the review)
-  expect(document.activeElement).not.toBe(within(sheet).queryByRole('button', { name: 'Publish' }))
+  // Enter on the loaded review does not sign: focus is not on the Publish button, and a press must begin on it
+  const publishButton = await within(sheet).findByRole('button', { name: 'Publish' }, T)
+  expect(document.activeElement).not.toBe(publishButton)
   await user.keyboard('{Enter}')
+  expect(calls('click/sign').filter((c) => c.method === 'POST')).toEqual([])
   expect(state.host.clickSigned).toEqual([])
   // the address and the prepared-copy id sit behind Details
   expect(sheet).not.toHaveTextContent('http://127.0.0.1:8103')
@@ -650,6 +654,60 @@ it('Publish as link: one press prepares the copy and opens exactly ONE sign shee
   await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Your link' })).toBeNull(), T)
   expect(document.body.textContent).not.toContain(TOKEN)
   expect(JSON.stringify([...queryClient.getQueryCache().getAll().map((q) => q.state.data), ...queryClient.getMutationCache().getAll().map((m) => m.state.data)])).not.toContain(TOKEN)
+})
+
+it('Publish as link: a hub reached at 127.0.0.1 says "Files go to your hub, <name>.", never "this computer", and no "nobody else" note', async () => {
+  route()
+  const user = userEvent.setup()
+  state.host.workspaces[0].addOns = { available: true, add_ons: [{ ...PUBLISH_ROW, suggest: 'http://127.0.0.1:8103', suggest_from: 'hub', suggest_hub: 'Anna’s hub' }] } as never
+  const inner = state.host.override!
+  // one address for files and links, both on 127.0.0.1 (the hub is reached through it)
+  state.host.override = (path, method, body) => (path.includes('/shares') && method === 'GET' && !path.includes('/shares/') ? Response.json({ available: true, configured: true, server: 'http://127.0.0.1:8103', share: 'http://127.0.0.1:8103', workspace: A, owner: 'p_owner', live: true, shares: [], staged }) : inner(path, method, body))
+  const list = await onResults(user)
+  await user.click(within(list).getByRole('button', { name: 'Publish report.md as a link' }))
+  await readyToSign('Publish')
+  const sheet = screen.getByRole('dialog')
+  expect(within(sheet).getByTestId('where-files-go')).toHaveTextContent('Files go to your hub, Anna’s hub.')
+  expect(sheet).not.toHaveTextContent('Files go to this computer')
+  expect(sheet).not.toHaveTextContent('nobody else can use it')
+})
+
+it('Publish as link: when the server is not known there is no destination line, no "this computer", and Publish stays off', async () => {
+  route()
+  const user = userEvent.setup()
+  const inner = state.host.override!
+  state.host.override = (path, method, body) => (path.includes('/shares') && method === 'GET' && !path.includes('/shares/') ? Response.json({ available: true, configured: true, server: null, share: null, workspace: A, owner: 'p_owner', live: true, shares: [], staged }) : inner(path, method, body))
+  const list = await onResults(user)
+  await user.click(within(list).getByRole('button', { name: 'Publish report.md as a link' }))
+  const button = await screen.findByRole('button', { name: 'Publish' }, T)
+  const sheet = button.closest('[role="dialog"]') as HTMLElement
+  expect(button).toBeDisabled()
+  expect(within(sheet).queryByTestId('where-files-go')).toBeNull()
+  expect(sheet).not.toHaveTextContent('Files go to')
+  expect(sheet).toHaveTextContent('Where the files go is not known')
+  expect(state.host.clickPrepares()).toEqual([])
+  expect(state.host.clickSigned).toEqual([])
+})
+
+it('Publish as link: the one-file lead needs the staged copy to be that file; otherwise the generic lead shows', async () => {
+  route()
+  const user = userEvent.setup()
+  const inner = state.host.override!
+  state.host.override = (path, method, body) => {
+    const got = inner(path, method, body)
+    if (!path.endsWith('/shares/prepare')) return got
+    // the host staged another file than the one that was named
+    staged = [{ ...(staged[0] as object), files: [{ ...FILE, name: 'other.md' }, FILE] }]
+    return Response.json({ staged: staged[0], server: 'http://127.0.0.1:8103', share: 'http://127.0.0.1:8104' })
+  }
+  const list = await onResults(user)
+  await user.click(within(list).getByRole('button', { name: 'Publish report.md as a link' }))
+  await readyToSign('Share files')
+  const sheet = screen.getByRole('dialog')
+  expect(sheet).toHaveTextContent('Anyone with the link can read these files. A copy cannot be taken back.')
+  expect(sheet).not.toHaveTextContent('works for 7 days')
+  expect(sheet).not.toHaveTextContent('You see the link once')
+  expect(sheet).not.toHaveTextContent('Publish report.md as a link?')
 })
 
 it('Publish as link: closing the flow while the copy is being prepared discards the copy that arrives later', async () => {

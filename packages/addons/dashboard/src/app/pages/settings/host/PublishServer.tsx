@@ -194,7 +194,7 @@ export function PublishForm({ server, share, setServer, setShare, suggested, sug
   if (suggested && !changing && server === suggested && share === suggested)
     return (
       <div className="flex items-center gap-1.5 text-[13px]" data-testid="publish-suggested">
-        <span>{destinationLine(suggestedFrom, hubName, suggested)}</span>
+        <span>{destinationLine(suggestedFrom, hubName, suggested) ?? ''}</span>
         <InfoDrawer text="Details">
           {(close) => (
             <>

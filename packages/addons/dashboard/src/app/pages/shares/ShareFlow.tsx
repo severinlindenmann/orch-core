@@ -13,6 +13,7 @@ import { useEffect, useRef, useState } from 'react'
 import { copyText } from '@/app/copyLink'
 import { SignPopover } from '@/components/sign/SignPopover'
 import { Inline } from '@/components/sign/visible'
+import { queries } from '@/api/queries'
 import { workdirQueries } from '@/api/workdir'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -25,6 +26,7 @@ import {
   fileBase64,
   LIMITS,
   fmtSize,
+  isLoopback,
   reachNote,
   isUnknownWorkspace,
   isUnreachable,
@@ -44,6 +46,9 @@ import {
 import type { Artifact } from '@/api/types'
 import { fmtDateTime } from '@/lib/time'
 import { publishError as shareError } from './hubErrors'
+
+/** Publish as link: how long the one-file link works, sent with the prepare call and the fallback of the sheet's lead when the staged copy does not say. */
+const PUBLISH_DAYS = 7
 
 export const refreshShares = (qc: ReturnType<typeof useQueryClient>, ws: string) => qc.invalidateQueries({ queryKey: ['shares', ws] })
 
@@ -91,6 +96,17 @@ export function ShareFlow({ ws, ticket, resume, only, onClose }: { ws: string; t
   const data = info.data && info.data.available ? info.data : null
   const server = data?.server ?? null
   const share = data?.share ?? null
+  // Where the files go is told by the Publish add-on row (the same facts TurnOnPublish reads): from a hub, or from the
+  // Publish server on this computer. Its suggestion only counts for the address that is actually configured.
+  const addOns = useQuery(queries.addOns(ws))
+  const row = addOns.data?.available ? addOns.data.add_ons.find((r) => r.id === 'publish') : undefined
+  const sameAddress = !row?.suggest || row.suggest === server
+  const from = sameAddress ? row?.suggest_from ?? null : null
+  const hubName = sameAddress ? row?.suggest_hub ?? null : null
+  // No line, and no Sign, until the server is known and the row has answered: never a guess.
+  const where = addOns.isPending ? null : destinationLine(from, hubName, server)
+  // files going to a hub: "nobody else can use it" (a local test link) would be wrong
+  const reach = from === 'hub' && isLoopback(server) && isLoopback(share) ? null : reachNote(server, share)
 
   // form
   const [picked, setPicked] = useState<string[]>([])
@@ -189,7 +205,7 @@ export function ShareFlow({ ws, ticket, resume, only, onClose }: { ws: string; t
     setBusy(true)
     setError('')
     try {
-      const got = await sharesApi.prepare(ws, { ticket: ticket.key, artifacts: [only], kind: 'secret', days: 7 }, prepareIdem)
+      const got = await sharesApi.prepare(ws, { ticket: ticket.key, artifacts: [only], kind: 'secret', days: PUBLISH_DAYS }, prepareIdem)
       if (!alive.current) return discard(got.staged)
       void refreshShares(qc, ws)
       setStage({ at: 'confirm', staged: got.staged })
@@ -422,30 +438,34 @@ export function ShareFlow({ ws, ticket, resume, only, onClose }: { ws: string; t
   // (prepare only: nothing is armed and nothing signs by itself, Sign is the person's own press), and "Share files" signs.
   if (stage.at === 'confirm') {
     const s = stage.staged
-    const note = reachNote(server, share)
+    // the one-file wording (title, button and lead) only when the staged copy is exactly the file that was named
+    const one = !!only && s.files.length === 1 && s.files[0].name === only
+    const lasts = s.days ?? PUBLISH_DAYS
     return (
       <SignPopover
-        key={s.staged_id}
-        title={only && s.files.length === 1 && s.files[0].name === only ? `Publish ${only} as a link?` : `Share files of ${s.ticket ?? ticket.key}`}
+        key={`${s.staged_id}:${where ? 'known' : 'unknown'}`}
+        title={one ? `Publish ${only} as a link?` : `Share files of ${s.ticket ?? ticket.key}`}
         ws={ws}
-        action={{ action: 'publish_share', key: s.ticket ?? ticket.key, staged_id: s.staged_id }}
+        // where the files go is not known: nothing is prepared and Sign stays off
+        action={where ? { action: 'publish_share', key: s.ticket ?? ticket.key, staged_id: s.staged_id } : null}
+        hint={where ? null : addOns.isPending || info.isPending ? 'Checking where the files go…' : 'Where the files go is not known, so nothing can be signed.'}
         anchor={null}
         prepareOnOpen
         autoStart={false}
-        confirmLabel={only && s.files.length === 1 && s.files[0].name === only ? 'Publish' : 'Share files'}
+        confirmLabel={one ? 'Publish' : 'Share files'}
         lead={
-          only ? (
+          one ? (
             <div className="space-y-2 text-[13px]">
               <ul aria-label="Files to share" className="divide-y divide-border rounded border border-border px-2">
                 {s.files.map((f) => (
                   <li key={f.name} className="py-1.5">
                     <Inline>{f.name}</Inline> <span className="text-text-faint">· {fmtSize(f.size)}</span>
-                    <span className="block text-[12px] text-text-muted">works for 7 days</span>
+                    <span className="block text-[12px] text-text-muted">works for {lasts} day{lasts === 1 ? '' : 's'}</span>
                   </li>
                 ))}
               </ul>
-              <p data-testid="where-files-go" className="font-medium">{destinationLine(null, null, server)}</p>
-              {note && <p className="text-[12px] text-text-muted">{note}</p>}
+              {where && <p data-testid="where-files-go" className="font-medium">{where}</p>}
+              {reach && <p className="text-[12px] text-text-muted">{reach}</p>}
               <p role="note" className="text-[12px] text-warning">Anyone with the link can read this file. A copy cannot be taken back. You see the link once.</p>
               <InfoDrawer text="Details">
                 {server && <p className="break-all font-mono">Files are sent to {server}</p>}
@@ -471,8 +491,8 @@ export function ShareFlow({ ws, ticket, resume, only, onClose }: { ws: string; t
                 </li>
               ))}
             </ul>
-            <p data-testid="where-files-go" className="font-medium">{destinationLine(null, null, server)}</p>
-            {note && <p className="text-[12px] text-text-muted">{note}</p>}
+            {where && <p data-testid="where-files-go" className="font-medium">{where}</p>}
+            {reach && <p className="text-[12px] text-text-muted">{reach}</p>}
             <p role="note" className="text-[12px] text-warning">Anyone with the link can read these files. A copy cannot be taken back.</p>
             <InfoDrawer>
               {server && <p className="break-all font-mono">Files are sent to {server}</p>}

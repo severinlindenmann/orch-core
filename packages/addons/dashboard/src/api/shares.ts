@@ -220,10 +220,21 @@ export function reachNote(server: string | null, share: string | null): string |
 }
 
 /** Where files go, by name and never by address: the one plain line every publish review keeps in its main view (full addresses stay in Details). */
-export function destinationLine(from: 'computer' | 'hub' | null | undefined, hubName?: string | null, server?: string | null): string {
+export function destinationLine(from: 'computer' | 'hub' | null | undefined, hubName?: string | null, server?: string | null): string | null {
+  if (!server) return null // unknown: no line, never a guess
   if (from === 'hub') return hubName ? `Files go to your hub, ${hubName}.` : 'Files go to your hub.'
-  if (from === 'computer' || !server || isLoopback(server)) return 'Files go to this computer.'
-  return `Files go to ${server.replace(/^https?:\/\//, '').replace(/[:/].*$/, '')}.`
+  // "this computer" only when the Publish server on this computer is the known source; a loopback address alone does not say so (a hub can be reached through one)
+  if (from === 'computer') return 'Files go to this computer.'
+  return `Files go to ${hostOf(server)}.`
+}
+
+/** The host name of an address, parsed (never cut out by pattern). An address that does not parse is shown whole, as given. */
+export function hostOf(address: string): string {
+  try {
+    return new URL(address).hostname || address
+  } catch {
+    return address
+  }
 }
 
 export const adminCommand = (workspace: string | null, owner: string | null): string => `orch-publish admin ws allow ${workspace ?? 'WORKSPACE_ID'} ${owner ?? 'OWNER_ID'}`

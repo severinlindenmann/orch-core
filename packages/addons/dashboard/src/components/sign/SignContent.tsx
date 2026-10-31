@@ -222,7 +222,7 @@ function QuickSigned({ typed, also, members, notes = [] }: { typed: QuickTyped; 
 /** The host's own share summary (signcontent.py _share_summary): only then are the ids folded; the client's action never decides. */
 const HOST_SHARE_SUMMARY = 'Share these files'
 
-export function SignContent({ content, ws, technical, compact = false, quick, workspaceLine, foldIds = false }: { content: Content; /** Ids and the add-on's capability line under the fold only (display; the content is unchanged). */ foldIds?: boolean; ws?: string; technical?: ReactNode; /** The workspace line, kept one click away inside this review's own fold (hub join) instead of a second fold of its own. */ workspaceLine?: ReactNode; compact?: boolean; /** A quick task: the typed values, for the folded "Also signed" view. */ quick?: QuickTyped }) {
+export function SignContent({ content, ws, technical, compact = false, quick, workspaceLine, foldIds = false }: { content: Content; /** Only the signed id and the workspace lines fold under "What you sign" (display; the content is unchanged). The capability line is not folded. */ foldIds?: boolean; ws?: string; technical?: ReactNode; /** The workspace line, kept one click away inside this review's own fold (hub join) instead of a second fold of its own. */ workspaceLine?: ReactNode; compact?: boolean; /** A quick task: the typed values, for the folded "Also signed" view. */ quick?: QuickTyped }) {
   const members = useWorkspaceMembers(ws)
   // Every signed person id appears in full somewhere in the view: the plain view shows it short, this list in full.
   const ids = [...new Set((content.fields_changed ?? []).flatMap(f => [f.before, f.after]).filter((v): v is string => personLabel(v, members)?.full != null))]

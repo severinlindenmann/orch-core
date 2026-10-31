@@ -41,12 +41,13 @@ export function TurnOnPublish({ workspace, onOn, onClose }: { workspace: Workspa
   useEffect(() => {
     if (!suggested || asked || !row) return
     setAsked(true)
+    const where = destinationLine(row.suggest_from, row.suggest_hub, suggested)
     ask({
       title: 'Turn on Publish',
       confirmLabel: 'Sign and turn on',
       action: { action: 'addon_enable', name: 'publish', publish: { server: suggested, share: suggested } },
       prepareOnOpen: true,
-      lead: <p data-testid="where-files-go" className="text-[13px] font-medium text-text">{destinationLine(row.suggest_from, row.suggest_hub, suggested)}</p>,
+      lead: where ? <p data-testid="where-files-go" className="text-[13px] font-medium text-text">{where}</p> : undefined,
       onEnd: (signed) => { if (!signed) onClose() },
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps

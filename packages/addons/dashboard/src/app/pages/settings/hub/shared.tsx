@@ -73,10 +73,10 @@ export function Field({ label, value, onChange, hint, testId }: { label: string;
   </div>
 }
 /** A small "Details" link: counts, ids and "not signed" notes stay one click away, never hidden from the person. */
-export function Details({ children, testId }: { children: ReactNode; testId?: string }) {
+export function Details({ children, testId, label }: { children: ReactNode; testId?: string; /** A named link ("More about sharing"): it keeps its words when open. Without it the link reads Details / Hide details. */ label?: string }) {
   const [open, setOpen] = useState(false)
   return <div className="space-y-2">
-    <button type="button" data-testid={testId} aria-expanded={open} className="text-[13px] text-text-muted underline" onClick={() => setOpen(v => !v)}>{open ? 'Hide details' : 'Details'}</button>
+    <button type="button" data-testid={testId} aria-expanded={open} className="text-[13px] text-text-muted underline" onClick={() => setOpen(v => !v)}>{label ?? (open ? 'Hide details' : 'Details')}</button>
     {open && <div className="space-y-2 text-text-muted">{children}</div>}
   </div>
 }

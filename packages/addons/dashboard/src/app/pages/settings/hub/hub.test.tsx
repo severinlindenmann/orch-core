@@ -42,25 +42,47 @@ describe('the Hub tab has a different page for each mode', () => {
     expect(screen.queryByTestId('hub-leave')).toBeNull()
   })
 
-  it('selective: notes and questions are always shared, with no switch', async () => {
-    hubPage('selective')
-    expect(await screen.findByText('Connected · Hub sees only what you share', {}, T)).toBeTruthy()
-    expect(await screen.findAllByText('Always shared', {}, T)).toHaveLength(2)
+  it('selective: one status line, three actions, the rest behind "More about sharing"', async () => {
+    const view = hubPage('selective')
+    expect(await screen.findByText('Connected. The hub sees only what you share.', {}, T)).toBeTruthy()
+    const tab = screen.getByTestId('hub-tab')
+    expect(within(tab).getAllByRole('button', { name: 'Open hub' })).toHaveLength(1)
+    expect(within(tab).getAllByTestId('hub-open')).toHaveLength(1)
+    expect(screen.getByTestId('hub-choose-share')).toBeTruthy()
+    expect(screen.getByTestId('hub-leave')).toBeTruthy()
+    expect(within(tab).getAllByRole('button', { name: 'More about sharing' })).toHaveLength(1)
+    expect(within(tab).queryAllByRole('button', { name: /^Details$/ })).toHaveLength(0)
+    expect(screen.queryByText('Let the hub read everything')).toBeNull() // the risky option is one click deeper
+    expect(screen.queryByTestId('hub-full-switch')).toBeNull()
+    expect(screen.queryByText('Always shared')).toBeNull()
+    expect(screen.queryByText('What the hub can see')).toBeNull()
     expect(screen.queryAllByRole('switch')).toHaveLength(0)
     expect(screen.queryAllByRole('checkbox')).toHaveLength(0)
-    expect(screen.getByTestId('hub-choose-share')).toBeTruthy()
+    await view.user.click(screen.getByRole('button', { name: 'More about sharing' }))
+    expect(screen.getByText('Notes that need you and questions are always shared.')).toBeTruthy()
     expect(screen.getByTestId('hub-full-switch')).toBeTruthy() // one click, also with One click on
+    expect(screen.getByText('Let the hub read everything', { selector: 'h3' })).toBeTruthy()
   })
 
-  it('full: says the hub reads everything and keeps "from the hub, not signed" behind Details', async () => {
-    hubPage('full')
+  it('selective: the sharing rule count has correct grammar', async () => {
+    const view = hubPage('selective')
+    await view.user.click(await screen.findByRole('button', { name: 'More about sharing' }, T))
+    expect(await screen.findByText(/^\d+ sharing rules?$/, {}, T)).toBeTruthy()
+    expect(screen.queryByText(/^1 sharing rules$/)).toBeNull()
+  })
+
+  it('full: says the hub reads everything and keeps "from the hub, not signed" behind More', async () => {
+    const view = hubPage('full')
     expect(await screen.findByText('The hub can read everything in this workspace', {}, T)).toBeTruthy()
+    expect(screen.getAllByTestId('hub-open')).toHaveLength(1)
+    expect(screen.getByTestId('hub-leave')).toBeTruthy()
     expect(screen.queryByText(/not signed/)).toBeNull()
+    await view.user.click(screen.getByRole('button', { name: 'More about sharing' }))
     fireEvent.click(screen.getByTestId('hub-access-details'))
     expect(screen.getByText('From the hub, not signed.')).toBeTruthy()
     expect(screen.getByText('8 people')).toBeTruthy()
     expect(screen.queryByTestId('hub-full-switch')).toBeNull() // already full: the only way back is leave and join again
-    expect(screen.getByText(/Leave this hub, then rejoin/)).toBeTruthy()
+    expect(screen.getByText(/leave this hub, then rejoin/i)).toBeTruthy()
   })
 
   it('hubTitle never doubles the word hub', () => {
@@ -77,7 +99,8 @@ describe('the Hub tab has a different page for each mode', () => {
     const status = vi.spyOn(api, 'getHubStatus').mockImplementation(async ws => ({
       ...await original(ws), hub_name: 'Acme hub', groups: { read: 0, edit: 1, admin: 2 },
     }))
-    hubPage('full')
+    const view = hubPage('full')
+    await view.user.click(await screen.findByRole('button', { name: 'More about sharing' }, T))
     expect(await screen.findByText('Acme hub', {}, T)).toBeTruthy()
     expect(screen.getByText('0 people')).toBeTruthy()
     expect(screen.getByText('1 person')).toBeTruthy()
@@ -126,6 +149,7 @@ describe('switching to full access (run-9 feedback 6): one click, no backup key'
     const connectHub = vi.spyOn(api, 'connectHub')
     const prepare = vi.spyOn(api, 'prepareClick')
     const view = hubPage('selective')
+    await view.user.click(await screen.findByRole('button', { name: 'More about sharing' }, T))
     await view.user.click(await screen.findByTestId('hub-full-switch', {}, T))
     expect(screen.getByText(/To share less/)).toBeTruthy()
     const dialog = screen.getByRole('dialog')
@@ -245,7 +269,8 @@ describe('share rules (A3.3)', () => {
     const view = hubPage('selective')
     await view.user.click(await screen.findByTestId('hub-choose-share', {}, T))
     expect(await screen.findByText('Choose what to share', {}, T)).toBeTruthy()
-    expect(await screen.findAllByText('Always shared', {}, T)).toHaveLength(2)
+    expect(await screen.findByText('Notes that need you and questions are always shared.', {}, T)).toBeTruthy()
+    expect(screen.queryByText('Always shared')).toBeNull()
     await view.user.click(screen.getByTestId('hub-rule-add'))
     await view.user.click((await screen.findByTestId('hub-rule-chips', {}, T)).querySelector('button')!)
     await waitFor(() => expect(screen.getByText(/1 now visible/)).toBeTruthy(), T)
@@ -378,7 +403,7 @@ describe('by click (#1198 C11)', () => {
     expect(screen.queryByText(/Review it here/)).toBeNull()
     expect(screen.queryByTestId('hub-card-text')).toBeNull() // no card file, no separate invite, no mode step
     await sign('Connect')
-    expect(await screen.findByText('Connected · Hub sees only what you share', {}, T)).toBeTruthy() // the page behind says it
+    expect(await screen.findByText('Connected. The hub sees only what you share.', {}, T)).toBeTruthy() // the page behind says it
     expect(screen.queryByRole('dialog')).toBeNull() // and the dialog closed by itself: nothing left to press
     expect(seal).toHaveBeenCalledTimes(1)
     expect(seal.mock.calls[0][1]).toBe(WORDS)
@@ -434,7 +459,7 @@ describe('by click (#1198 C11)', () => {
     expect(within(screen.getByRole('dialog')).queryByText(/^Connected\./)).toBeNull()
     setMockConnectError(null)
     await view.user.click(screen.getByTestId('hub-connect-retry'))
-    expect(await screen.findByText('Connected · Hub sees only what you share', {}, T)).toBeTruthy()
+    expect(await screen.findByText('Connected. The hub sees only what you share.', {}, T)).toBeTruthy()
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 
@@ -467,6 +492,7 @@ describe('by click (#1198 C11)', () => {
   it('switches to full with the backup key when the person key is not kept: one click, sealed, then the hub is told', async () => {
     const connectHub = vi.spyOn(api, 'connectHub')
     const view = hubPage('selective')
+    await view.user.click(await screen.findByRole('button', { name: 'More about sharing' }, T))
     await view.user.click(await screen.findByTestId('hub-full-switch', {}, T))
     expect(screen.queryByTestId('hub-command')).toBeNull()
     await sign('Sign and let the hub read everything')

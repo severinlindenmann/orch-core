@@ -178,7 +178,7 @@ function ConnectStage({ ws, info, mode, onClose }: { ws: string; info: HubLinkIn
     startJoinPolling(ws)
     refresh()
     void qc.invalidateQueries() // the hub confirmed: the whole page behind the dialog is read once, now
-    toast.success(mode === 'full' ? 'Connected. The hub can read everything in this workspace.' : 'Connected. The hub sees only what you choose to share, plus this workspace\'s name.')
+    toast.success(mode === 'full' ? 'Connected. The hub can read everything in this workspace.' : 'Connected.')
     onClose()
   }
   const failure = (e: unknown) => { setWhy(e instanceof ApiError && e.message ? e.message : 'The hub did not answer.'); setState('failed') }

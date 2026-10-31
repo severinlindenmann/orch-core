@@ -3,7 +3,7 @@ what the hub already holds, one plain line each with one action (a page to open)
 workspace anything.
 
 What it lists:
-  - a secret that has expired, or expires within 14 days;
+  - a secret that has expired, or expires within 3 days;
   - a secret shared with workspaces that have no value yet (a workspace bound later gets no wrap until an admin types the
     value again: the hub holds no key that could make one);
 Not listed yet: a tool server offered but not accepted for more than 7 days. The hub does not learn what a workspace owner
@@ -18,7 +18,7 @@ from typing import Any
 from ..contract import phase4 as P4
 
 DAY_MS = 86_400_000
-SOON_DAYS = 14
+SOON_DAYS = 3
 ENTER = "Enter the value"
 
 

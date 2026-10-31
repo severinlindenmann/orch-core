@@ -403,6 +403,7 @@ def install_part(
     public_origin: str | None = None,  # server role, publish: https://<publish name> (server = share)
     workspace_side: bool = True,
     behind_edge: bool = False,  # server role with TLS: Caddy on this computer is the edge in front of the part
+    exact_bind: bool = False,  # server role: the part listens on exactly ``address`` (not on every interface)
 ) -> dict[str, Any]:
     spec = P.PARTS[part]
     source = source or ctx.env.get(f"ORCH_INSTALL_SOURCE_{part.upper()}")  # a local checkout (dev machines, tests)
@@ -488,7 +489,9 @@ def install_part(
     )
     log = lay.logs / f"{part}.log"
     started = ctx.runner.start(part, argv, P.env_for(part, data, behind_edge=behind_edge), log)
-    check_host = dial_host(bind)  # the part listens on every interface; this computer dials itself on loopback
+    # a part on every interface is dialled on loopback (a computer cannot dial its own overlay IP). A part that binds
+    # exactly one address (the server role: the VPN IP) answers ONLY there: probe that address, never 127.0.0.1.
+    check_host = bind if (exact_bind or link_address) else dial_host(bind)
 
     # a computer often cannot dial its own overlay IP (NetBird): then a held port on that IP and a live process count
     def answers() -> bool:

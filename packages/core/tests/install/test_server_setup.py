@@ -1060,3 +1060,38 @@ def test_expired_boundary_matches_install_sh_exactly_30_days(tmp_path):
     assert verdict(30 * 86400) == "expired"  # (now - issued).days >= 30
     assert verdict(30 * 86400 - 1) == "expires"
     assert verdict(30 * 86400 + 5) == "expired"
+
+
+# ------------------------------------------------------------------------ readiness probes the bound address
+
+
+def test_readiness_probes_the_vpn_address_the_hub_binds_not_loopback(tmp_path, monkeypatch):
+    probed = []
+    monkeypatch.setattr(cli, "dial_host", lambda h: "127.0.0.1")  # as on the VPS: own addresses redirect to loopback
+    ctx, out, *_ = stub_ctx(tmp_path)
+    ctx.ready_deadline = 3.0
+    t = {"now": 0.0}
+    ctx.clock = lambda: t["now"]
+    ctx.sleep = lambda s: t.__setitem__("now", t["now"] + s)
+
+    def health(host, port, *a):
+        probed.append((host, port))
+        return (host, port) == (VPN, 8100)  # the hub answers ONLY on the VPN address (no --bind-all)
+
+    ctx.health = health
+    ctx.runner.info = lambda part: {"running": False, "pid": None, "service": "x"}
+    server_setup(ctx, "hub", names=server.Names(), local=local)  # no domain: VPN-only bind
+    assert (VPN, 8100) in probed and ("127.0.0.1", 8100) not in probed
+    assert "The hub listens on" in out.getvalue()  # the setup went on to the end
+
+
+def test_a_hub_that_answers_nowhere_gives_plain_words_naming_the_probed_address(tmp_path):
+    ctx, *_ = stub_ctx(tmp_path)
+    ctx.ready_deadline = 1.0
+    t = {"now": 0.0}
+    ctx.clock = lambda: t["now"]
+    ctx.sleep = lambda s: t.__setitem__("now", t["now"] + s)
+    ctx.health = lambda h, p, *a: False
+    ctx.runner.info = lambda part: {"running": False, "pid": None, "service": "x"}
+    with pytest.raises(InstallError, match=f"did not answer on {VPN}:8100"):
+        server_setup(ctx, "hub", names=server.Names(), local=local)

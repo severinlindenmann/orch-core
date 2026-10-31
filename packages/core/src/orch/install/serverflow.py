@@ -181,6 +181,7 @@ def server_setup(
         edge = https is not None
         if p == "hub":
             extra = dict(
+                exact_bind=True,
                 behind_edge=edge,
                 link_address=plan.vpn_ip,
                 web_origin=https,
@@ -244,7 +245,9 @@ def _fallback(ctx: Ctx, plan: Plan, *, address: str | None, source: str | None, 
     ctx.say("No domain name given: the parts listen on an IP address and a port (no secure https address).")
     recs = {}
     for p in plan.parts:
-        extra = dict(link_address=plan.vpn_ip) if p == "hub" and not plan.loopback else {}  # never --bind-all
+        extra = (
+            dict(link_address=plan.vpn_ip, exact_bind=True) if p == "hub" and not plan.loopback else {}
+        )  # never --bind-all
         recs[p] = install_part(ctx, p, address=addr, source=source, ref=ref, dev=dev, sync=False, **extra)
     sync_helper(ctx)
     for p, rec in recs.items():

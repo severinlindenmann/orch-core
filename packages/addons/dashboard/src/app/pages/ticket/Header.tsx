@@ -91,7 +91,7 @@ export function AgentStatus({ ticket, viewer, wait, needsYou = false, liveRun = 
           'No agent is working on this ticket'
         )}
       </span>
-      {!c && wait && (
+      {wait && (
         <Button type="button" size="sm" variant="outline" className="h-6 shrink-0 px-2 text-[12px]" onClick={() => openDockOn(wait)}>
           Open agent
         </Button>

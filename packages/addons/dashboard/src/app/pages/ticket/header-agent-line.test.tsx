@@ -1,6 +1,6 @@
 // Run17full P06: when the header shows the agent line (data-testid=agent-status) and when it does not.
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import type { TicketDocument } from '@/api/types'
 import { TicketHeader } from './Header'
@@ -57,6 +57,20 @@ describe('the agent line in the ticket header (run17 P06)', () => {
     const line = await screen.findByTestId('agent-status')
     expect(line).toHaveTextContent('is waiting for you')
     expect(line).not.toHaveTextContent('since')
+  })
+
+  it('claimed and idle at its prompt: exactly one "Open agent", on the waiting line', async () => {
+    await header({ patch: { status: 'in-progress' }, claim: 'live', wait: true })
+    const line = await screen.findByTestId('agent-status')
+    expect(within(line).getByRole('button', { name: 'Open agent' })).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: 'Open agent' })).toHaveLength(1)
+  })
+
+  it('unclaimed and idle at its prompt: exactly one "Open agent", next to the Needs you label, no agent line', async () => {
+    await header({ patch: { status: 'in-progress' }, claim: null, wait: true })
+    expect(await screen.findByTestId('progress-pill')).toHaveTextContent('Needs you')
+    expect(screen.queryByTestId('agent-status')).toBeNull()
+    expect(screen.getAllByRole('button', { name: 'Open agent' })).toHaveLength(1)
   })
 
   it('a working agent keeps the line, with "since"', async () => {

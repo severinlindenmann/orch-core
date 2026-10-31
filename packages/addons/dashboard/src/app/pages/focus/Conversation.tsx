@@ -19,17 +19,19 @@ function scratchRuns(ws: string): string[] {
   } catch { return [] }
 }
 
-export function Conversation({ ticket, scratchRun, onReview }: { ticket?: string; scratchRun?: string; onReview?: () => void }) {
+/** `forcedMode`: the live agent view picks Chat or Terminal itself, so the pane hides its own switch. */
+export function Conversation({ ticket, scratchRun, onReview, forcedMode }: { ticket?: string; scratchRun?: string; onReview?: () => void; forcedMode?: 'terminal' | 'chat' }) {
   const { workspace } = useWorkspace()
-  return workspace ? <ConversationPane key={`${workspace.id}:${ticket ?? ''}:${scratchRun ?? ''}`} ws={workspace.id} ticket={ticket} scratchRun={scratchRun} onReview={onReview} /> : null
+  return workspace ? <ConversationPane key={`${workspace.id}:${ticket ?? ''}:${scratchRun ?? ''}`} ws={workspace.id} ticket={ticket} scratchRun={scratchRun} onReview={onReview} forcedMode={forcedMode} /> : null
 }
 
-function ConversationPane({ ws, ticket, scratchRun, onReview }: { ws: string; ticket?: string; scratchRun?: string; onReview?: () => void }) {
+function ConversationPane({ ws, ticket, scratchRun, onReview, forcedMode }: { ws: string; ticket?: string; scratchRun?: string; onReview?: () => void; forcedMode?: 'terminal' | 'chat' }) {
   const client = useQueryClient()
   const hint = useId()
   const [starting, setStarting] = useState(false)
   const [scratch, setScratch] = useState(() => scratchRuns(ws))
-  const [mode, setMode] = useState<'terminal' | 'chat'>('terminal')
+  const [pickedMode, setMode] = useState<'terminal' | 'chat'>('terminal')
+  const mode = forcedMode ?? pickedMode
   const [lease, setLease] = useState<LeaseState>('reading')
   const terminal = useRef<RealTerminalHandle>(null)
   // The mock host has no PTY API: it answers with the demo run of DEMO-0043 and draws a canned terminal.
@@ -55,13 +57,13 @@ function ConversationPane({ ws, ticket, scratchRun, onReview }: { ws: string; ti
   const chat = mode === 'chat' && !!run
   const demo = !!run && isDemoRun(run.run)
   return <section data-testid="focus-conversation" aria-label={ticket ? 'Ticket conversation' : 'Scratch conversation'} className="flex min-h-0 min-w-0 flex-1 flex-col">
-    <header className="flex shrink-0 flex-nowrap items-center gap-3 border-b border-border px-4 py-2">
+    {!forcedMode && <header className="flex shrink-0 flex-nowrap items-center gap-3 border-b border-border px-4 py-2">
       <div role="group" aria-label="Conversation view" className="inline-flex rounded-lg border border-border bg-bg p-1">
         <Button size="sm" variant={chat ? 'ghost' : 'secondary'} aria-pressed={!chat} onClick={() => setMode('terminal')}>Terminal</Button>
         <Button size="sm" variant={chat ? 'secondary' : 'ghost'} aria-pressed={chat} aria-disabled={!run || undefined} aria-describedby={run ? undefined : hint}
           className={run ? undefined : 'cursor-not-allowed text-text-muted'} onClick={() => { if (run) setMode('chat') }}>Chat</Button>
       </div>
-    </header>
+    </header>}
     <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
       {run ? <>
         <div className={`absolute inset-0 ${chat ? 'invisible' : ''}`} aria-hidden={chat || undefined}>{!isDemoRun(run.run) ? <RealTerminal key={run.run} ws={ws} run={run} initial={scratchRun && !ticket ? 'write' : 'read'} handle={terminal} onLease={setLease} /> : <DemoTerminal />}</div>

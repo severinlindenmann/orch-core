@@ -291,7 +291,9 @@ def secrets_view(service: WorkspaceService) -> dict[str, Any]:
     """The company secrets this workspace was given, for the owner's list: ``{name, status, expires_ms, used_by}``.
     NEVER a value, a length or a digest of one (the wraps are read for ``name`` and ``expires_ms`` only). A secret is
     listed when an offered company server names it or a stored wrap carries it; ``used_by`` are server names. Status:
-    ``ready``, ``expired``, ``not_received`` (not shared any more) or ``needs_isolation``."""
+    ``ready``, ``expired``, ``not_received`` (not shared any more) or ``needs_isolation``. ``isolated`` (a bool, no
+    secret data) says whether this host fetches secrets at all (tier B);
+    on tier A an empty list is not a final answer."""
     from . import orgsecrets
 
     state = _state(service)
@@ -313,7 +315,7 @@ def secrets_view(service: WorkspaceService) -> dict[str, Any]:
             "expires_ms": expiry.get(name) if status in ("ready", "expired") else None,
             "used_by": sorted(used.get(name, [])),
         })  # fmt: skip
-    return {"hub_id": state.hub_id, "secrets": rows}
+    return {"hub_id": state.hub_id, "secrets": rows, "isolated": isolated(service)}
 
 
 def show(service: WorkspaceService, kind: str, name: str) -> dict[str, Any]:

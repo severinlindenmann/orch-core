@@ -223,6 +223,28 @@ describe('the Company tab', () => {
     expect(screen.getByTestId('company-open-style-guide')).toBeTruthy() // the saved list stays
   })
 
+  it.each([
+    ['session.readonly', 403, /opened this workspace from the hub.*Open it from this computer/],
+    ['op.not_allowed', 403, /opened this workspace from the hub.*Open it from this computer/],
+    ['role.denied', 403, /Only the workspace owner can get the latest/],
+    ['weird.thing', 500, /^That did not work\. Try again\.$/],
+  ])('Get the latest names the real reason for %s, not "could not be reached"', async (code, status, text) => {
+    vi.spyOn(api, 'syncOrg').mockRejectedValue(new ApiError(status, { code, message: 'x', retryable: false }))
+    page()
+    fireEvent.click(await screen.findByTestId('company-sync', {}, T))
+    const note = (await screen.findByTestId('company-note', {}, T)).textContent ?? ''
+    expect(note).toMatch(text)
+    expect(note).not.toMatch(/could not be reached/)
+  })
+
+  it('says the secrets are not fetched on this computer when agents do not run as a separate user', async () => {
+    vi.spyOn(api, 'getOrgSecrets').mockResolvedValue({ available: true, secrets: [], isolated: false })
+    page()
+    const t = (await screen.findByTestId('company-secrets-empty', {}, T)).textContent ?? ''
+    expect(t).toMatch(/only work when agents run as a separate user.*none were fetched/)
+    expect(t).not.toMatch(/No company secrets are shared/)
+  })
+
   it('shows each tool in full: title, whole description, input schema as plain text; control characters are removed', async () => {
     const long = 'x'.repeat(1500)
     const shown: OrgShown = { kind: 'mcp', status: 'on', notes: [], untrusted: true, needs_isolation: null,

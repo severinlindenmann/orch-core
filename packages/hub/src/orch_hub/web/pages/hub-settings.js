@@ -156,7 +156,7 @@ function wordsFrom(raw) {
 function wordsInput(id) {
   let fromFile = "";
   const status = h("span", { class: "small muted", role: "status" });
-  const area = h("textarea", { id: id + "-words", rows: "3", autocomplete: "off", spellcheck: "false", hidden: true, "aria-label": "The 24 backup words" });
+  const area = h("textarea", { id: id + "-words", rows: "3", autocomplete: "off", spellcheck: "false", hidden: true, placeholder: "Type the 24 words, separated by spaces", "aria-label": "The 24 backup words" });
   const take = (raw, label) => {
     const w = wordsFrom(raw);
     fromFile = w ?? "";
@@ -175,7 +175,7 @@ function wordsInput(id) {
     try { t = await globalThis.navigator?.clipboard?.readText(); } catch { t = ""; }
     take(t, "Words pasted");
   } });
-  const typed = h("button", { type: "button", class: "link", text: "Type them instead", onclick: () => { area.removeAttribute("hidden"); typed.setAttribute("hidden", ""); } });
+  const typed = h("button", { type: "button", class: "link", "data-words-details": "1", title: "Type the words instead", text: "Details", onclick: () => { area.removeAttribute("hidden"); typed.setAttribute("hidden", ""); } });
   const node = h("div", { class: "field", "data-words-input": "1" },
     h("label", { text: "The 24 backup words" }),
     h("div", { class: "row" }, choose, paste, status), file, area, typed);
@@ -285,7 +285,7 @@ function waitWord(b, now = Date.now()) {
   const left = Number(b.next_manual_ms ?? 0) - now;
   if (!(left > 0)) return null;
   const min = Math.max(1, Math.ceil(left / 60000));
-  return "You just made one. You can make another in " + min + (min === 1 ? " minute." : " minutes.");
+  return "Backup made just now. The next one can be made in " + min + (min === 1 ? " minute." : " minutes.");
 }
 function backupNow(b, actions) {
   const wait = waitWord(b);
@@ -319,12 +319,13 @@ function backupCard(b, actions) {
     else card.append(h("p", { class: "small muted", text: NO_WORDS_HERE }), cli);
     return card;
   }
-  card.append(
+  // append() writes the text "null" for a null child (the note slot is empty most of the time): keep only real nodes.
+  card.append(...[
     h("p", { class: "small muted", text: "A backup is made every day. The " + text(b.keep) + " newest are kept on this server. The files are sealed: only the 24 words open them." }),
     backupRows(b, actions),
     backupNow(b, actions),
     backupNoteView(b.note),
-    h("p", { class: "small muted", text: "To keep a copy in another place, download a file and store it away from this server." }));
+    h("p", { class: "small muted", text: "To keep a copy in another place, download a file and store it away from this server." })].filter(Boolean));
   const more = h("div", { class: "replace" });
   if (mayShow) {
     const open = h("button", { type: "button", text: "Replace the backup key", onclick: () => {
@@ -489,6 +490,26 @@ async function comesBack(d) {
   return false;
 }
 
+/** After a restore the hub restarts and every session is gone: show progress at once, wait for the hub, then open the sign-in page
+ *  with a note that says the restore worked. `state.restarting` pauses the "No connection" bar meanwhile. */
+async function afterRestore(d, madeMs) {
+  d.state.restarting = true;
+  try {
+    const wait = h("div", { class: "card restoring", role: "status", "data-restoring": "1" },
+      h("div", { class: "spin", "aria-hidden": "true" }),
+      h("div", {}, h("b", { text: "Restoring your hub…" }), h("div", { class: "small muted", text: "This takes a few seconds. Please keep this page open." })));
+    d.shell("hub-settings", null, h("div", { class: "hub-settings" }, h("h1", { text: "Hub settings" }), wait));
+    while (!(await comesBack(d))) {
+      await new Promise((resolve) => {
+        wait.replaceChildren(h("div", {}, h("b", { text: "The hub is taking longer than usual." }), h("div", { class: "small muted", text: "Try again in a moment." }),
+          h("button", { type: "button", class: "primary", text: "Try now", onclick: () => { wait.replaceChildren(h("div", { class: "spin", "aria-hidden": "true" }), h("b", { text: "Restoring your hub…" })); resolve(); } })));
+      });
+    }
+  } finally { d.state.restarting = false; }
+  const at = madeMs ? "Restored from the backup of " + text(when(madeMs)) + ". Sign in again." : "Restored. Sign in again.";
+  return d.loginView(null, { title: "Sign in to your hub", ok: at });
+}
+
 export async function hubSettingsPage(d, detected = [], words = null) {
   const finish = loading();
   d.pageLoading("hub-settings");
@@ -532,7 +553,7 @@ export async function hubSettingsPage(d, detected = [], words = null) {
       },
       restore: async (name, c) => {
         const x = await d.api("POST", "/admin/backup/restore", { name, ...c });
-        if (x.status === 202) { d.state.notice = d.banner("ok", "Restored. The hub is restarting: sign in again.", null); await comesBack(d); return d.refresh().then(() => hubSettingsPage(d)); }
+        if (x.status === 202) return afterRestore(d, (bk.body?.backups ?? []).find((b) => b.name === name)?.made_ms);
         backupNote(x, "Restored"); await hubSettingsPage(d);
       },
       confirmPending: async (id) => { backupNote(await d.api("POST", "/admin/backup/restore/pending/confirm", { id }), "Turned on"); await hubSettingsPage(d); },

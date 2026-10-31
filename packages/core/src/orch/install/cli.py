@@ -35,7 +35,9 @@ USAGE = (
     "usage: orch install server --role hub|edge [--domain BASE] [--domain-hub N] [--domain-relay N]\n"
     "                    [--domain-publish N] [--hub-vpn-only] [--vpn-ip IP[/PREFIX]]\n"
     "                    [--allow-non-cgnat] [--caddy-dir DIR] [--behind-proxy]\n"
+    "                    [--hub-name NAME | --no-hub-name]\n"
     "                    [--backup-drop DIR]\n"
+    "                    [--publish-url U | --no-publish-url] [--relay-url U | --no-relay-url]\n"
     "                    [--port-base N] [--yes]\n"
     "usage: orch install phone [--user ID]\n"
     "usage: orch install {hub|relay|publish} [--address A] [--port N] [--domain D] [--source PATH] [--ref REF]\n"
@@ -343,6 +345,7 @@ def write_hub_settings(
     web_origin: str | None = None,
     link_host: str | None = None,
     vpn_only: bool = False,
+    hub_name: str | None = None,
 ) -> None:
     """Seed ``hub-settings.json`` (the hub's own words and the addresses it advertises) with the address chosen now.
 
@@ -368,10 +371,10 @@ def write_hub_settings(
     loop = address in ("localhost", P.ADDRESS_LOOPBACK)
     if link_host:  # server role: the card advertises the VPN address for the link and the https name for the console
         own = P.ADDRESS_LOOPBACK if loop else address  # no name: the console answers on the VPN address itself
-        web = f"{web_origin}:443" if web_origin else f"http://{own}:{port}"
+        web = f"{web_origin}:443" if web_origin else f"http://{hub_name or own}:{port}"  # --hub-name: http, no Caddy
         # one entry: behind Caddy every allowed origin must be https (hub config); the settings shape wants host:port,
         # the hub drops the default port when it builds the allowed Origin (settings.origin_of)
-        addrs = [{"kind": "private" if vpn_only else "public", "web": web, "link": f"{link_host}:{link}"}]
+        addrs = [{"kind": "private" if vpn_only or hub_name else "public", "web": web, "link": f"{link_host}:{link}"}]
         return _save_hub_settings(f, {"v": 1, "name": name, "company": company, "addresses": addrs})
     host = P.ADDRESS_LOOPBACK if loop else (f"[{address}]" if ":" in address else address)
     addrs = [{"kind": hub_address_kind(address), "web": f"http://{host}:{port}", "link": f"{host}:{link}"}]
@@ -471,6 +474,8 @@ def install_part(
     link_address: str | None = None,  # server role, hub: the VPN address the link binds (the console stays on loopback)
     web_origin: str | None = None,  # server role, hub: https://<hub name>, advertised in the card
     vpn_only: bool = False,
+    hub_name: str | None = None,  # server role, hub: a private DNS name for the console (http)
+    forget_hub_name: bool = False,  # server role, hub: --no-hub-name, dropped from the install record with the rewrite
     public_origin: str | None = None,  # server role, publish: https://<publish name> (server = share)
     workspace_side: bool = True,
     behind_edge: bool = False,  # server role with TLS: Caddy on this computer is the edge in front of the part
@@ -546,6 +551,7 @@ def install_part(
             web_origin=web_origin,
             link_host=link_address,
             vpn_only=vpn_only,
+            hub_name=hub_name,
         )
     argv = P.command_for(
         part,
@@ -609,9 +615,13 @@ def install_part(
             rec["link_host"] = link_address
         if web_origin:
             rec["console_url"] = web_origin + "/"
+        elif hub_name:
+            rec["console_url"] = f"http://{hub_name}:{port}/"
         rec["setup_token"] = token
     st = load(lay)
     st["address"], st["domain"] = address, domain or st.get("domain")
+    if forget_hub_name and part == "hub":
+        st.pop("hub_name", None)
     if ctx.port_base is not None:
         st["port_base"] = ctx.port_base
     st["parts"][part] = rec
@@ -1050,6 +1060,10 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextI
     p.add_argument("--allow-non-cgnat", action="store_true")
     p.add_argument("--behind-proxy", action="store_true")
     p.add_argument("--port-base", type=int)
+    p.add_argument("--hub-name")
+    p.add_argument("--no-hub-name", action="store_true")
+    p.add_argument("--no-publish-url", action="store_true")
+    p.add_argument("--no-relay-url", action="store_true")
     p.add_argument("--caddy-dir", default=CADDY_DIR)
     p.add_argument("--backup-drop")
     try:
@@ -1087,6 +1101,12 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextI
                 ref=a.ref,
                 dev=a.dev,
                 behind_proxy=a.behind_proxy,
+                hub_name=a.hub_name,
+                no_hub_name=a.no_hub_name,
+                publish_url=a.publish_url,
+                relay_url=a.relay_url,
+                no_publish_url=a.no_publish_url,
+                no_relay_url=a.no_relay_url,
             )
             return 0
         if a.cmd == "remove":
@@ -1094,7 +1114,7 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextI
                 err.write(USAGE)
                 return 2
             return remove(ctx, a.rest[0], a.purge)
-        if a.rest:
+        if a.rest or a.no_publish_url or a.no_relay_url:  # the --no-…-url flags belong to `install server`
             err.write(USAGE)
             return 2
         if ctx.port_base is not None:

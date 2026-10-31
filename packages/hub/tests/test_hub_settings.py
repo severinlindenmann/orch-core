@@ -847,3 +847,61 @@ def test_exec_self_drops_loader_variables_from_the_new_process(tmp_path):
     r = subprocess.run([sys.executable, "-c", parent], check=False, capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, r.stderr
     assert r.stdout.strip() == "[] 1"
+
+
+# --- #1817: `orch install server --role hub --hub-name` seeds one private http entry with a name -------------------
+
+
+NAMED = {"kind": "private", "web": "http://core.hub.example.com:8100", "link": "100.64.1.2:8105"}
+
+
+def _named(w, state):
+    S.save(state, {**UP, "addresses": [NAMED]})
+    w.api.d.settings_file = state / S.SETTINGS_FILE
+    return S.serve_origins(state)
+
+
+def test_a_named_hub_answers_to_the_exact_name_and_port_only(w, state):
+    origins, api_origin = _named(w, state)
+    assert api_origin == "http://core.hub.example.com:8100"
+    w.api.d.allowed_origins = frozenset()
+    for o in sorted(origins):
+        w.api.allow_origin(o)
+    ok = w.call("GET", "/admin/settings", host="core.hub.example.com:8100")
+    assert ok[0] == 401  # past the Host check (no session)
+    for bad in (
+        "core.hub.example.com:8101",
+        "x.core.hub.example.com:8100",
+        "100.64.1.2:8100",  # the VPN IP: the console answers to the name only
+        "core.hub.example.com",
+        "core.hub.example.com.:8100",
+    ):
+        s, o, _ = w.call("GET", "/admin/settings", host=bad)
+        assert (s, o["error"]) == (403, "not_allowed"), bad
+    from orch_hub.webapi.api import ApiError
+
+    w.api._static("GET", "/", {"host": "core.hub.example.com:8100"})
+    for bad in ("core.hub.example.com:8101", "x.core.hub.example.com:8100", "100.64.1.2:8100", "core.hub.example.com"):
+        with pytest.raises(ApiError):
+            w.api._static("GET", "/", {"host": bad})
+
+
+def test_settings_shows_the_named_entry_as_private_and_save_keeps_it(w, state):
+    restarts = _wired(w, state)
+    S.save(state, {**UP, "addresses": [NAMED]})
+    tok = w.login(w.admin)
+    s, o, _ = w.call("GET", "/admin/settings", token=tok)
+    assert s == 200 and o["addresses"] == [{"kind": "private", "web": "http://core.hub.example.com:8100"}]
+    assert o["phone_kind"] == "private"
+    # the install's own entry, named back unchanged (host = the name), is kept verbatim and nothing restarts
+    same = {"kind": "private", "host": "core.hub.example.com"}
+    assert _put_addrs(w, tok, same)[:2] == (200, {"ok": True, "changed": False, "restarting": False})
+    assert S.load(state)["addresses"] == [NAMED] and restarts == []
+    # an admin adds an own IP: the named entry stays first and untouched
+    s, o, _ = _put_addrs(w, tok, same, {"kind": "office", "host": "10.0.0.7"})
+    assert s == 202, o
+    assert S.load(state)["addresses"][0] == NAMED
+    # a name never comes from the web: another name is refused
+    other = {"kind": "office", "host": "evil.example.com"}
+    assert _put_addrs(w, tok, same, other)[:2] == (400, {"error": "malformed"})
+    assert S.load(state)["addresses"][0] == NAMED

@@ -233,6 +233,9 @@ def _sync(service: WorkspaceService) -> dict[str, Any]:
                     bodies[kind] = exc.code  # a refusal (an older hub: unknown_op) is the result of that kind
             if "secrets" in bodies:
                 _report_use(service, link)
+            from . import hubclosing
+
+            hubclosing.pull(service, peerops._hub_state(service, full=False), link)  # noqa: SLF001 - #1463
         finally:
             link.close()
     except (OSError, LinkClosed, LinkTimeout):

@@ -13414,6 +13414,20 @@ The add-on `publish` ships inside orch-core (capability `network`); `addon.grant
   `settings.set` that touches `publish` are plain clicks after the review (they were terminal-only); the View names both
   `click/protocol.op_class` still classes `settings.set` by key (`SETTINGS_TERMINAL_KEYS`, now empty) from the
   request's `set` before prepare and from the prepared events at sign time; the sign-time class wins.
+* **App releases** (#1457, HUB-PU-07). Making an app live (a new version, an update, a rollback, a start after a stop)
+  runs code in other people's browsers, so it needs a PERSON's one-click signature, never an agent's. `app.release
+  {staged_id}` (`pa_` + 32 hex; through `human.prepare`/`submit`) is one `log.added` note on the ticket whose text
+  `orch.publishclient.approval.app_release_text` builds from the staged release alone (the request names only the staged
+  id): the ticket, who prepared it, the action, the app's name, kind and address, the version, **who can open it**, **what
+  it may contact (reach)**, where the files go, the files (name, size, hash; the first 25 listed, the rest counted),
+  what changed against the live version (access, reach, files), and `App hash` / `Reach hash`, which are `meta_hash`
+  and `reach_hash` of the stored meta (`contracts/hub/protocol.md` 11.4), so every byte and field that goes live is
+  bound. The first line is `App approval: let an app go live`; the signer accepts only a `log.added` on a ticket with
+  that line. The View is a click op (`click.protocol.CLICK_OPS`, `OP_TITLES`, `RISK_BUILDERS`: never one-press), and
+  a remote device stream never signs it (`remote_kinds`: refused). The sender (#1455) builds the same words again from
+  what it is about to send and sends the commit only when a person's note with exactly these words exists, at most an
+  hour old; a changed file, access, reach or version makes the old signature cover nothing else. orch-publish still
+  checks the owner's approval of the request itself (`hub.publish_approval`, 11.3) on commit, rollback and start.
 
 ## 13. Tier B: agents and add-ons as their own OS user (#1198 H1, #287)
 

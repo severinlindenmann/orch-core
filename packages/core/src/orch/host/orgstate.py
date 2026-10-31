@@ -246,7 +246,9 @@ def secrets_view(service: WorkspaceService) -> dict[str, Any]:
     """The company secrets this workspace was given, for the owner's list: ``{name, status, expires_ms, used_by}``.
     NEVER a value, a length or a digest of one (the wraps are read for ``name`` and ``expires_ms`` only). A secret is
     listed when an offered company server names it or a stored wrap carries it; ``used_by`` are server names. Status:
-    ``ready``, ``expired``, ``not_received`` (not shared any more) or ``needs_isolation``."""
+    ``ready``, ``expired``, ``not_received`` (not shared any more) or ``needs_isolation``. ``isolated`` (a bool, no
+    secret data) says whether this host fetches secrets at all (tier B);
+    on tier A an empty list is not a final answer."""
     from . import orgsecrets
 
     state = _state(service)
@@ -268,7 +270,7 @@ def secrets_view(service: WorkspaceService) -> dict[str, Any]:
             "expires_ms": expiry.get(name) if status in ("ready", "expired") else None,
             "used_by": sorted(used.get(name, [])),
         })  # fmt: skip
-    return {"hub_id": state.hub_id, "secrets": rows}
+    return {"hub_id": state.hub_id, "secrets": rows, "isolated": isolated(service)}
 
 
 def show(service: WorkspaceService, kind: str, name: str) -> dict[str, Any]:
@@ -296,6 +298,10 @@ def show(service: WorkspaceService, kind: str, name: str) -> dict[str, Any]:
 def accept(service: WorkspaceService, kind: str, name: str, digest: str, who: str) -> dict[str, Any]:
     with _MU:
         state = _state(service)
+        from . import hubclosing
+
+        if hubclosing.active(state) is not None:  # #1463: no new company grants while the hub is being removed
+            raise HostError("hub.refused", "your company hub is being removed: nothing new can be accepted from it")
         item = next((i for i in current_offers(service, state)[kind] if i["name"] == name), None)
         if item is None:
             raise HostError("not_found", f"no offered {kind} called {name!r}: orch org sync")
@@ -560,14 +566,17 @@ def served(service: WorkspaceService) -> dict[str, list[dict[str, Any]]]:
         state = _state(service)
     except HostError:
         return {"skills": [], "mcp": []}
+    from . import hubclosing, orgsecrets
+
+    if hubclosing.active(state) is not None:  # #1463: the hub is being removed: no company content, no opened secret
+        orgsecrets.drop_cache(service)
+        return {"skills": [], "mcp": []}
     offers = current_offers(service, state)
     accepts = {(r["kind"], r["name"]): r["digest"] for r in accepted_entries(service, state)}
     out: dict[str, list[dict[str, Any]]] = {"skills": [], "mcp": []}
     for kind, key in (("skill", "skills"), ("mcp", "mcp")):
         out[key] = [i for i in offers[kind] if accepts.get((kind, i["name"])) == i["digest"]]
     if out["mcp"] and not isolated(service):
-        from . import orgsecrets
-
         orgsecrets.drop_cache(service)  # isolation lost: no opened company secret stays in memory
         out["mcp"] = [i for i in out["mcp"] if i["auth"] != "hub_secret"]  # tier A: no credential servers (condition 3)
     return out

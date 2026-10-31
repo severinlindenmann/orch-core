@@ -579,7 +579,8 @@ def default_env(environ: Mapping[str, str]) -> Env:
 
 _LINK = re.compile(r"http://127\.0\.0\.1:\d{1,5}/#launch=[A-Za-z0-9_-]{20,100}&to=%2Fsetup")
 USAGE = (
-    "usage: orch setup [--no-browser] [--role workspace|full|pick] [--address ADDRESS]\n"
+    "usage: orch setup [--no-browser] [--role workspace|full|pick] [--address ADDRESS] [--port-base N]\n"
+    "       orch setup --server --role hub|edge [--domain BASE] [--hub-vpn-only]   (a server, no workspace)\n"
     "  (run it in the folder you want to make a workspace; it asks what this computer should be, then opens the page)\n"
 )
 
@@ -678,12 +679,21 @@ def main(
     from .server import SetupServer
     from .steps import set_no_core_dumps
 
-    no_browser, role_arg, address_arg = False, None, None
+    if "--server" in argv:  # a server role for this OS user: no workspace, no browser (docs/pilot-server.md)
+        if "ORCH_GRANT" in env or env.get("ORCH_SESSION"):
+            err.write("orch setup: setting up a server is a person's job; an agent never does it\n")
+            return 3
+        from orch.install import cli as icli
+
+        return icli.main(["server", *[a for a in argv if a != "--server"]], env=env, out=out, err=err, ctx=install_ctx)
+    no_browser, role_arg, address_arg, port_base = False, None, None, None
     rest = list(argv)
     while rest:
         flag = rest.pop(0)
         if flag == "--no-browser":
             no_browser = True
+        elif flag == "--port-base" and rest and rest[0].isdigit():
+            port_base = int(rest.pop(0))
         elif (
             flag in ("--role", "--address") and rest and (flag != "--role" or rest[0] in ("workspace", "full", "pick"))
         ):
@@ -712,6 +722,7 @@ def main(
         from orch.install.parts import InstallError
 
         role, server_parts = icli.choose_role(ictx, role_arg)
+        ictx.port_base = port_base
         try:
             icli.full_server(ictx, server_parts, address=address_arg)
         except InstallError as e:

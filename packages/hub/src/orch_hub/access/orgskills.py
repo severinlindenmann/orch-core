@@ -122,6 +122,15 @@ class OrgSkillStore:
         """Unbind or leave: no skill is offered to that workspace any more (same transaction as the caller's)."""
         self._a._w("DELETE FROM org_skill_offer WHERE workspace_id=?", (_hex(workspace_id, "workspace_id"),))
 
+    def withdraw_all(self) -> int:
+        """The hub is being removed (#1463): every skill and every offer goes in ONE transaction, so the next
+        ``org_skills_get`` of each workspace signs an EMPTY bundle at a higher version."""
+        with self._a.tx() as db:
+            n = db.execute("SELECT COUNT(*) FROM org_skill").fetchone()[0]
+            db.execute("DELETE FROM org_skill_offer")
+            db.execute("DELETE FROM org_skill")
+        return int(n)
+
 
 def org_skills(a: Access) -> OrgSkillStore:
     """One store per Access (the tables are created once)."""

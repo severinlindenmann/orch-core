@@ -9,6 +9,7 @@ the id exists. Ids are 128-bit random, so this cannot be used to enumerate. Shar
 The write rate limiter is in memory: run the API as a single worker process (as the share server).
 """
 
+import errno
 import hashlib
 import json
 import os
@@ -35,6 +36,8 @@ MAX_DAYS = 30
 MAX_VIEW_LIMIT = 10
 MAX_META_BODY = 512 * 1024
 WRITES_PER_MIN = 60
+PARTS_PER_MIN = 600
+PART_BYTES_PER_MIN = 64 * 1024 * 1024
 _HEADERS = {"cache-control": "no-store", "x-content-type-options": "nosniff"}
 _ID = re.compile(registry.ID32)
 _HEX64 = re.compile(r"[0-9a-f]{64}")
@@ -244,8 +247,12 @@ class Store:
             for part in ["files", *path.split("/")[:-1]]:
                 cur = self._open_dir(part, cur)
                 fds.append(cur)
-            fd = os.open(path.split("/")[-1], os.O_RDONLY | os.O_NOFOLLOW, dir_fd=cur)
+            fd = os.open(
+                path.split("/")[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=cur
+            )
             with os.fdopen(fd, "rb") as data:
+                if not stat.S_ISREG(os.fstat(data.fileno()).st_mode):
+                    raise Refusal(400, "malformed")
                 data.seek(offset)
                 return data.read(length)
         finally:
@@ -466,6 +473,15 @@ def op_put_file(settings, store, ws, wsk, sid, path, body):
         conn.close()
 
 
+def _part_digest(data):
+    """Hash outside the write transaction with bounded memory."""
+    data.seek(0)
+    digest = hashlib.sha256()
+    while chunk := data.read(1024 * 1024):
+        digest.update(chunk)
+    return digest.hexdigest()
+
+
 def op_put_part(settings, store, ws, wsk, sid, path, offset, body):
     # BEGIN IMMEDIATE is the existing cross-process write lock. It is stronger than
     # a per-file lock and also serializes whole PUT, commit, revoke and expiry.
@@ -473,10 +489,10 @@ def op_put_part(settings, store, ws, wsk, sid, path, offset, body):
     try:
         _txn(conn, ws, wsk)
         row = owned_share(conn, ws, sid)
-        if row["state"] in ("revoked", "expired"):
-            _gone(row)
         if row["state"] == "live":
             raise Refusal(409, "share_committed")
+        if row["state"] != "staged":
+            _gone(row)
         if settings.clock() >= row["expires_ms"]:
             raise Refusal(410, "gone", state="expired")
         pathrules.check(path)
@@ -490,17 +506,23 @@ def op_put_part(settings, store, ws, wsk, sid, path, offset, body):
         if f["present"]:
             if store.file_range(sid, path, offset, len(body)) != body:
                 raise Refusal(409, "part_conflict", received=f["size"])
-            conn.execute(
-                "UPDATE share_files SET present=1 WHERE share_id=? AND path=?", (sid, path)
-            )
-            conn.execute("COMMIT")
+            conn.execute("ROLLBACK")
             return {"received": f["size"], "done": True, "result": "unchanged"}
         # Quota was reserved for ALL manifest bytes by op_put_meta, including partials.
         with store.staging_parent(sid, path) as (directory, name):
-            fd = os.open(name, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600, dir_fd=directory)
+            fd = os.open(
+                name,
+                os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK,
+                0o600,
+                dir_fd=directory,
+            )
+            identity = os.fstat(fd)
+            if not stat.S_ISREG(identity.st_mode):
+                os.close(fd)
+                raise Refusal(400, "malformed")
             with os.fdopen(fd, "r+b") as data:
                 # The staging file length is authoritative, including after interruption.
-                received = os.fstat(data.fileno()).st_size
+                received = identity.st_size
                 if offset > received:
                     raise Refusal(409, "part_out_of_order", received=received)
                 if offset < received:
@@ -520,17 +542,54 @@ def op_put_part(settings, store, ws, wsk, sid, path, offset, body):
                     if os.fstat(data.fileno()).st_size != received:
                         raise OSError("partial length mismatch")
                     result = "stored"
+                # Duplicate prefixes are read-only, including at the DB transaction level.
+                conn.execute("ROLLBACK" if result == "unchanged" else "COMMIT")
+                if result == "unchanged" and received < f["size"]:
+                    return {"received": received, "done": False, "result": result}
                 if received == f["size"]:
-                    data.seek(0)
-                    whole = data.read()
-                    if hashlib.sha256(whole).hexdigest() != f["sha256"]:
-                        os.unlink(name, dir_fd=directory)
-                        raise Refusal(422, "content_mismatch", received=0)
+                    # A complete but unpresent file needs finalization, even after a crash.
+                    # This changes durable state, so it is a stored operation, not a no-op.
+                    result = "stored"
+                if received == f["size"]:
+                    digest = _part_digest(data)
+                    _txn(conn, ws, wsk)
+                    row = owned_share(conn, ws, sid)
+                    if row["state"] == "live":
+                        raise Refusal(409, "share_committed")
+                    if row["state"] != "staged":
+                        _gone(row)
+                    if settings.clock() >= row["expires_ms"]:
+                        raise Refusal(410, "gone", state="expired")
+                    current = conn.execute(
+                        "SELECT present FROM share_files WHERE share_id=? AND path=?", (sid, path)
+                    ).fetchone()
+                    # Re-walk from the staging root: the old directory fd may have been detached.
+                    try:
+                        with store.staging_parent(sid, path) as (parent, leaf):
+                            final = os.stat(leaf, dir_fd=parent, follow_symlinks=False)
+                            if (
+                                current is None
+                                or current["present"]
+                                or not stat.S_ISREG(final.st_mode)
+                                or final.st_ino != identity.st_ino
+                                or final.st_dev != identity.st_dev
+                                or final.st_size != f["size"]
+                            ):
+                                raise Refusal(409, "part_conflict", received=final.st_size)
+                            if digest != f["sha256"]:
+                                os.unlink(leaf, dir_fd=parent)
+                                raise Refusal(422, "content_mismatch", received=0)
+                    except FileNotFoundError:
+                        raise Refusal(409, "part_conflict", received=0) from None
                     conn.execute(
                         "UPDATE share_files SET present=1 WHERE share_id=? AND path=?", (sid, path)
                     )
-        conn.execute("COMMIT")
+                    conn.execute("COMMIT")
         return {"received": received, "done": received == f["size"], "result": result}
+    except OSError as exc:
+        if exc.errno in (errno.ENOTDIR, errno.EEXIST, errno.EISDIR):
+            raise Refusal(400, "malformed") from None
+        raise
     finally:
         if conn.in_transaction:
             conn.execute("ROLLBACK")
@@ -773,20 +832,45 @@ class _Limiter:
         return True
 
 
+class _PartLimiter:
+    """Sliding per-workspace request and byte budgets; called on the event loop."""
+
+    def __init__(self, clock):
+        self.clock = clock
+        self.hits = defaultdict(deque)
+        self.bytes = defaultdict(int)
+
+    def allow(self, ws, size):
+        now = self.clock()
+        q = self.hits[ws]
+        while q and q[0][0] <= now - 60_000:
+            _, expired = q.popleft()
+            self.bytes[ws] -= expired
+        if len(q) >= PARTS_PER_MIN or self.bytes[ws] + size > PART_BYTES_PER_MIN:
+            return False
+        q.append((now, size))
+        self.bytes[ws] += size
+        return True
+
+
 def install(app, settings):
     store = Store(os.path.dirname(settings.db_path))
     limiter = _Limiter(settings.clock)
+    part_limiter = _PartLimiter(settings.clock)
     router = APIRouter(prefix="/v1/ws/{ws}")
 
     def ok(body, status=200):
         return JSONResponse(body, status, _HEADERS)
 
-    async def guarded(request, fn, *a, write=True):
+    async def guarded(request, fn, *a, write=True, part_bytes=None):
         """Resolve the signed workspace, rate-limit writes, run the sync op in a thread."""
         ws = request.scope.get("orch_ws")
         if not ws or request.path_params.get("ws") != ws:
             raise Refusal(403, "wrong_workspace")  # the middleware already enforced this
-        if write and not limiter.allow(ws):
+        if part_bytes is not None:
+            if not part_limiter.allow(ws, part_bytes):
+                raise Refusal(429, "rate_limited")
+        elif write and not limiter.allow(ws):
             raise Refusal(429, "rate_limited")
         sid = request.path_params.get("sid")
         if sid is not None and not _ID.fullmatch(sid):
@@ -822,18 +906,18 @@ def install(app, settings):
 
     @router.put("/shares/{sid}/parts/{offset}/{fpath:path}")
     async def put_part(sid: str, offset: str, fpath: str, request: Request):
-        target = request.scope["raw_path"].decode("ascii")
-        if request.scope.get("query_string"):
-            target += "?" + request.scope["query_string"].decode("ascii")
+        target = request.scope["orch_target"]
         route = part_route(request.method, target)
         if route is None:
             raise Refusal(404, "not_found")
-        _, _, path, position = route
+        signed_ws, sid, path, position = route
+        if signed_ws != request.scope.get("orch_ws"):
+            raise Refusal(403, "wrong_workspace")
         body = await request.body()
         return await guarded(
             request,
             lambda ws, wsk: op_put_part(settings, store, ws, wsk, sid, path, position, body),
-            write=False,
+            part_bytes=len(body),
         )
 
     @router.post("/shares/{sid}/commit")

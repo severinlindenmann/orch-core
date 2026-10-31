@@ -3247,8 +3247,9 @@ Orch-Hub-Signature: b64u(Sign(HK_op, "orch/v2/hub-publish|" || suite || hub_id (
 The hub's signature is transport only (spec §8): it adds no authority, it only proves which hub delivered the request.
 
 **Size.** Each request travels as one `publish_out` frame with the body hex-encoded, bounded by the link frame
-(§10.3: 1.5 MB), less the headers and target. A body over one link frame is split by the client into Publish part
-requests; the hub is unaware. Each part is signed separately with a fresh timestamp and nonce. The hub continues to
+(§10.3: 1.5 MB). Hex encoding halves the body allowance: one request body is about half a frame minus the
+headers and target, about 431 KB raw. A file whose body would exceed one frame is sent as Publish part requests;
+the hub is unaware. Each part is signed separately with a fresh timestamp and nonce. The hub continues to
 refuse an oversized frame as `malformed`. Share files may be up to 25 MiB; Publish part bodies are at most 1 MiB,
 with the smaller hub frame allowance determining the actual client part size.
 
@@ -3424,7 +3425,7 @@ App operations are classified **only** through `app_route` over the raw request 
 | `PUT /v1/ws/{ws}/apps/{id}/versions/{n}` (meta), `PUT .../versions/{n}/files/{path}` | `app.meta`, `app.file` | no |
 | `POST .../apps/{id}/commit`, `.../rollback`, `.../start` | `app.commit`, `app.rollback`, `app.start` | **yes** |
 | `POST .../apps/{id}/stop`, `DELETE .../apps/{id}` | `app.stop`, `app.remove` | no (narrowing; `WSK` only) |
-| `PUT /v1/ws/{ws}/shares/{id}` (meta), `PUT .../shares/{id}/files/{path}` | `share.meta`, `share.file` | no (`WSK`, hub transport) |
+| `PUT /v1/ws/{ws}/shares/{id}` (meta), `PUT .../shares/{id}/files/{path}` | `share.meta`, `share.file` | no (`WSK`, hub transport; the manifest is the person-signed part) |
 | `PUT /v1/ws/{ws}/shares/{id}/parts/{offset}/{path}` | `share.part` | same as whole-file PUT |
 | `POST .../shares/{id}/commit`, `DELETE .../shares/{id}` | `share.commit`, `share.revoke` | no (`WSK`, hub transport) |
 | `POST /v1/ws/{ws}/shares/{id}/extend` `{days}` | `share.extend` | no (`WSK` plus the person's signed note at the host) |
@@ -3437,7 +3438,7 @@ form rows, and the slug stays taken.
 
 **Share parts (offset append).** The part route is classified on the signed raw target, without decoding:
 no query, `%`, `//`, `#` or dot segments; the path must pass the existing upload path rules. `offset` is canonical decimal (`0` or a nonzero digit followed by digits), at most
-26 MiB. Invalid spellings are not part routes (404 `not_found`). The files namespace is unchanged, including paths containing `parts/0/` or `at/12`.
+27262976 (26 MiB). Invalid spellings are not part routes (404 `not_found`). The files namespace is unchanged, including paths containing `parts/0/` or `at/12`.
 Authentication is exactly the whole-file PUT authentication (§11.2); this does not enable direct share publishing.
 
 Under the existing process-safe write transaction lock, Publish requires an owned, staged share and a manifest file:
@@ -3456,6 +3457,12 @@ Success is JSON `{"received": N, "done": false|true, "result": "stored"|"unchang
 bytes. A mismatch deletes that path's partial state and returns 422 `content_mismatch` with `received: 0`; a match
 sets `share_files.present = 1` in place. A matching part after
 finalization is `unchanged`, `received == size`, `done: true` (until commit, which refuses parts).
+A client that lost a `done:true` reply rediscovers the state with a zero-length part at its last known offset.
+Finalizing a complete but unpresent file after interruption returns `stored`; an already finalized file returns
+`unchanged`. Hashing uses 1 MiB chunks outside the write transaction; a short second transaction rechecks staged
+state, `present=0`, and file identity and size before marking present or unlinking a mismatched file.
+Parts have a separate per-workspace budget of 64 MiB and 600 requests per minute. Exhaustion returns
+429 `rate_limited`, with `received` when cheaply available.
 
 Partial bytes occupy the normal staging file, `incoming/<sid>/files/<path>`, while `share_files.present = 0`.
 The file's current size is `received` (zero if absent); there is no side file or new storage layout.

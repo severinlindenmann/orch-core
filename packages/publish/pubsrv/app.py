@@ -197,10 +197,14 @@ class SignedRequestMiddleware:
             raise Refusal(400, "malformed")
         try:
             c.target = raw_path.decode("ascii")
+        except UnicodeError:
+            raise Refusal(404, "not_found") from None
+        try:
             if scope.get("query_string"):
                 c.target += "?" + scope["query_string"].decode("ascii")
         except UnicodeError:
             raise Refusal(400, "malformed") from None
+        scope["orch_target"] = c.target
         c.method = scope["method"]
         c.hdrs, c.path = raw_headers, scope["path"]
         c.info = None

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import pwd
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -101,6 +100,8 @@ def _ops(
 
 def real_user() -> str:
     """The OS user this process runs as, from the password database by euid (not LOGNAME/USER, which anyone can set)."""
+    import pwd  # POSIX only: imported where used (modules import on every OS, tests/test_oslock.py)
+
     return pwd.getpwuid(os.geteuid()).pw_name
 
 

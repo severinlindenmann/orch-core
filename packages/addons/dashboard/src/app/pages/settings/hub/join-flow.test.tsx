@@ -54,6 +54,16 @@ describe('the join waits for the hub', () => {
     expect(success).toHaveBeenCalledTimes(1)
   })
 
+  it('shows the connected page at once even while the next status read has not come back', async () => {
+    const real = api.getHubStatus.bind(api)
+    let joined = false
+    vi.spyOn(api, 'getHubStatus').mockImplementation((ws: string) => joined ? new Promise<never>(() => {}) : real(ws))
+    await joinUntilSigned(() => { joined = true })
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull(), T)
+    expect(await screen.findByText('Connected · Hub sees only what you share', {}, T)).toBeTruthy()
+    expect(screen.queryByTestId('hub-connect')).toBeNull()
+  })
+
   it('a hub that is still silent keeps the dialog open with the same button', async () => {
     setMockConfirmAfter(99)
     const success = vi.spyOn(toast, 'success')

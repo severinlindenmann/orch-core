@@ -151,8 +151,21 @@ export interface HubRefreshed { confirmed: boolean }
 /** Does this host serve the hub reads (and so the pages)? The mock lists every feature. */
 export const hubServed = (ws: string | undefined): boolean => hasFeature('hub', ws)
 
+const joinTries = new Map<string, number>()
+/** Called when the hub confirmed a join: lets the status query re-ask a few times while the host still says standalone. */
+export const startJoinPolling = (ws: string): void => { joinTries.set(ws, 0) }
+function joinPolls(ws: string, mode: HubMode | undefined): boolean {
+  const n = joinTries.get(ws)
+  if (n === undefined) return false
+  if (mode !== 'standalone' || n >= 5) { joinTries.delete(ws); return false }
+  joinTries.set(ws, n + 1)
+  return true
+}
+
 export const hubQueries = {
-  status: (ws: string) => queryOptions({ queryKey: ['hub', ws, 'status'], queryFn: () => api.getHubStatus(ws), staleTime: 15_000, retry: false }),
+  status: (ws: string) => queryOptions({ queryKey: ['hub', ws, 'status'], queryFn: () => api.getHubStatus(ws), staleTime: 15_000, retry: false,
+    // Right after a confirmed join the host status can lag: ask again every 2 s, at most 5 times, while it still says standalone.
+    refetchInterval: (q) => (joinPolls(ws, q.state.data?.mode) ? 2_000 : false) }),
   shared: (ws: string) => queryOptions({ queryKey: ['hub', ws, 'shared'], queryFn: () => api.getHubShared(ws), staleTime: 3_000, refetchInterval: 5_000, retry: false, refetchOnWindowFocus: true }),
   spaces: (ws: string) => queryOptions({ queryKey: ['hub', ws, 'spaces'], queryFn: () => api.getSpaces(ws), staleTime: 15_000, refetchInterval: 30_000, retry: false, refetchOnWindowFocus: true }),
   spaceItems: (ws: string, id: string) => queryOptions({ queryKey: ['hub', ws, 'spaces', id], queryFn: () => api.getSpaceItems(ws, id), staleTime: 5_000, refetchInterval: 15_000, retry: false }),

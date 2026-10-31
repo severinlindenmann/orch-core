@@ -27,7 +27,7 @@ from .access.orgcleanup import org_cleanup
 from .activity import ActivityLog
 from .audit import open_log
 from .backup.hubop import FENCE as RESTORE_FENCE
-from .backup.hubop import hold_serve_lock
+from .backup.hubop import hold_serve_lock, hold_state, release_state
 from .backup.restore import finish as finish_restore
 from .backup.restore import recover as recover_swap
 from .backup.service import BackupService
@@ -42,6 +42,7 @@ from .connections import ConnectionAuthz, Connections
 from .contract.hub import Refused
 from .custodial import CustodialEngine
 from .custodial.deliver import build_delivery
+from .dataformat import check_update
 from .hooks.inbox import HookInbox
 from .hooks.listener import HookListener, parse_public_url
 from .hooks.store import HookStore
@@ -262,7 +263,19 @@ def serve(
     sign_host = api_host  # #1838: only an explicit --api-host names the public server origin (never the private URL's)
     api_host = api_host or u.netloc
     hold_serve_lock(state)  # first: an offline `orch-hub restore` (mid-swap) refuses us, and refuses while we live
+    # The format lock first, then the recovery: recover_swap renames and writes the state dir, which must not happen under an
+    # `orch update` (it takes the lock exclusive, and refuses on an unfinished journal). A state dir that is gone (a restore
+    # stopped between its two renames) cannot be locked yet: only the journal and the sidecar are checked, and the lock is taken
+    # as soon as recover_swap has put a dir in place. recover_swap takes the lock again on a dir it swaps (the lock follows the file).
+    state = Path(state)
+    held = state.exists()
+    if held:
+        hold_state(state)  # also refuses a state that is not at this code's format, before any database
+    else:
+        check_update(state)
     recover_swap(state)  # a restore that stopped between its two renames is completed or undone first
+    if not held:
+        hold_state(state)
     keys = HubKeys.open(state)
     # Opus condition 5: once `orch install` wrote hub-settings.json, the advertised addresses, the console origins and the
     # API origin come from that file ONLY. The start arguments keep the listen sockets; --web-origin / --api-origin are
@@ -622,6 +635,7 @@ def serve(
             except Exception as e:  # noqa: BLE001  # keep closing the rest, then exit non-zero (a service manager restarts us)
                 failed = True
                 print(f"orch-hub WARN close failed: {type(e).__name__}", file=out, flush=True)
+        release_state()  # last: no database is open any more, `orch update` may take the data now
     if failed:  # also when a restart was asked for: no exec on top of a half-closed process
         return 1
     if (

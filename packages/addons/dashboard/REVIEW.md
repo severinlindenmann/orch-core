@@ -117,7 +117,7 @@ Every addon page, panel and Today card, each marked with the orange A.
 - [ ] **GitHub** — Review on GitHub, Approve; the issues lane on the Board imports an issue as a ticket. Page: `/addon/github/reviews`.
 - [ ] **Usage** — Overview and By model; every number says its period. Page: `/addon/usage/overview`.
 - [ ] **Wiki** — Open a page, edit it, link it to a ticket. Page: `/addon/wiki/pages`.
-- [ ] **Terminals** — Run `orch status`, `git log`, arrow-up history; an agent mirror is read-only. Page: `/addon/terminals/sessions`.
+- [ ] **Command window** — Run `orch status`, `git log`, arrow-up history; an agent mirror is read-only. Page: `/addon/terminals/sessions`.
 - [ ] **Estimate** — Estimate a card in its ticket panel; the Board column shows the sum. Page: `/board`.
 - [ ] **Work copies** — Add a work copy, Remove is refused on a dirty one, Open terminal here. Page: `/addon/worktrees/worktrees`, Busy day.
 - [ ] **Quick tasks** — Add, close with proof, make a ticket, the outgrew decision. Page: `/addon/quick/quick`, Busy day.
@@ -277,7 +277,7 @@ Nothing here talks to a real system. Each simulation says so where you meet it (
 | Thing | In the mockup |
 |---|---|
 | Touch ID and signatures | Every human signature shows core's sign dialog with what you sign; "Touch ID" is a 600 ms pause. Signatures, hashes and key fingerprints are made up. No OS prompt. |
-| Terminals (PTY) | A scripted fake shell in xterm.js. `orch status`, `orch show`, `orch wait`, `git status`, `git log`, `ls`, `help` and a few more answer from the demo state; nothing runs on your machine. |
+| Command window (PTY) | A scripted fake shell in xterm.js. `orch status`, `orch show`, `orch wait`, `git status`, `git log`, `ls`, `help` and a few more answer from the demo state; nothing runs on your machine. |
 | Claude Code and Codex in the dock | Scripted CLI screens. Your own session answers each prompt with a short canned reply marked simulated; agent sessions are replayed transcripts that end on the ticket's real blocker. |
 | Agent runs | "Start agent" plays a script on a timer: claim after 1.5 s, a task lease, a log line, T1 done, then a question to you. The Busy day adds a live script (an event every 4–8 s). AI Factory "Run demo activity" and the Landing "Run the worker (demo)" are scripts too. |
 | GitHub | Pull requests and issues live in the addon's demo state. "Review on GitHub" opens a github.com address; approve and import change only the demo. |

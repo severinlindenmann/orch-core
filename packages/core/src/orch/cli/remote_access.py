@@ -124,7 +124,7 @@ def _check_shape(a: argparse.Namespace) -> None:
             raise usage("remote on takes --level and --premises")
     elif a.cmd == "level":
         if len(rest) != 1 or rest[0] not in _LEVELS or a.level or a.premises:
-            raise usage("remote level takes one of view, work, terminals")
+            raise usage("remote level takes one of view, work, terminals (terminals is the Command window)")
     elif a.cmd == "end":
         if len(rest) != 1 or not rest[0].isdigit() or int(rest[0]) < 1 or a.level or a.premises or a.days is not None:
             raise usage("remote end takes the number of a session from orch remote sessions")

@@ -125,7 +125,7 @@ docs/         design (docs/architecture), guides
 | **Workspace** | Plain files: `config.json`, `keys.jsonl` and, per ticket, `ticket.json`, `body.md`, `events.jsonl` and `artifacts/`. Every change is an appended, signed event. | your repo or folder |
 | **Host** (`orch serve`, `orch host`) | The only process that loads keys (OS keychain or Secure Enclave). It enforces gates, roles and policies, and agents reach it through a narrow local socket. | [`packages/core`](packages/core) |
 | **Mission Control** | The desktop dashboard. It's an addon itself. | [`packages/addons/dashboard`](packages/addons/dashboard) |
-| **Addons** | Wiki, terminals, worktrees, schedules, quick tasks, usage and more, or your own. Each one runs only after you trust that exact version. | [`packages/addons`](packages/addons) |
+| **Addons** | Wiki, Command window, worktrees, schedules, quick tasks, usage and more, or your own. Each one runs only after you trust that exact version. | [`packages/addons`](packages/addons) |
 | **orch-relay** | Directory, relay, Drop (files) and push. It stores and forwards ciphertext only, and runs as a public instance or self-hosted inside a company. | [`packages/relay`](packages/relay) |
 | **orch hub** | One hub per company between workspaces and the relay: groups, shared spaces, the phone pairing. | [`packages/hub`](packages/hub) |
 | **orch mobile** | iPhone app: questions, approvals and verdicts signed with Face ID, push notifications and Drop. | [`packages/mobile`](packages/mobile) |

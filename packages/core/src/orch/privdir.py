@@ -25,8 +25,8 @@ _cache: dict[tuple[int, int], tuple[float, bool]] = {}
 
 def _private_group_lookup(uid: int, gid: int) -> bool:
     """Is ``gid`` a group only ``uid`` belongs to: their primary group, no other account has it as primary group, the
-    group lists no member but them, and it is named after them or numbered like them (a user-private group; a shared
-    primary group such as ``users`` looks empty when enumeration is off, and has neither). Group passwords/``newgrp``
+    group lists no member but them, and it is named after them (a user-private group; a shared primary group such
+    as ``users`` looks empty when enumeration is off). Group passwords/``newgrp``
     via gshadow are not consulted: a private group has no password. The rule applies to files too where a caller uses
     it (discovery ``config.json``, gitsafe ``.git/config``). Any failure to read the account databases (NSS, LDAP, no
     pwd/grp module) is "not private": the caller then refuses. The answer is cached for 30 s, so a group change
@@ -38,12 +38,7 @@ def _private_group_lookup(uid: int, gid: int) -> bool:
         if any(p.pw_gid == gid and p.pw_uid != uid for p in pwd.getpwall()):
             return False
         group = grp.getgrgid(gid)
-        if not all(m == me.pw_name for m in group.gr_mem):
-            return False
-        # a user-private group is named after the user, or numbered like the user (gid == uid, the useradd/adduser
-        # convention on cloud images where the group has another name). A shared group such as ``users`` (gid 100)
-        # has neither, so an account database that hides its other members is still not taken for private.
-        return group.gr_name == me.pw_name or gid == uid
+        return group.gr_name == me.pw_name and all(m == me.pw_name for m in group.gr_mem)
     except Exception:  # noqa: BLE001 - fail closed on anything
         return False
 

@@ -83,11 +83,16 @@ def test_stock_ubuntu_layout_is_allowed(monkeypatch):
     assert not privdir.others_can_write(st(0o775), UID)  # ~/.config, ~/.local, ~/.local/share, ~/.local/state
 
 
-def test_private_group_with_another_name_but_the_users_number_is_allowed(monkeypatch):
+def test_group_numbered_like_the_user_but_named_differently_is_refused(monkeypatch):
+    """gid == uid is no proof of a private group: a differently named group (even with no local entry listing others)
+    stays "not private" and fail closed."""
+    monkeypatch.setattr(privdir, "grp", SimpleNamespace(getgrgid=lambda g: SimpleNamespace(gr_name="staff", gr_mem=[])))
+    assert privdir.others_can_write(st(0o775), UID)
     monkeypatch.setattr(
         privdir, "grp", SimpleNamespace(getgrgid=lambda g: SimpleNamespace(gr_name="staff", gr_mem=["me"]))
     )
-    assert not privdir.others_can_write(st(0o775), UID)
+    privdir._cache.clear()
+    assert privdir.others_can_write(st(0o775), UID)
 
 
 def test_shared_group_with_another_name_and_number_is_refused(monkeypatch):

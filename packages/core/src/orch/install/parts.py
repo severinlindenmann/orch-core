@@ -219,10 +219,14 @@ def dashboard_command(entry: list[str], *, address: str, port: int) -> list[str]
     return cmd if address in (ADDRESS_LOOPBACK, "localhost") else [*cmd, "--listen", address]
 
 
-def env_for(part: str, data: Path, *, behind_edge: bool = False) -> dict[str, str]:
-    if part != "relay":
+def env_for(part: str, data: Path, *, behind_edge: bool = False, trusted_proxy: str | None = None) -> dict[str, str]:
+    """The environment of a part. ``trusted_proxy`` (comma-separated CIDR networks, the private network's) names the
+    peers whose forwarded client address is a rate-limit key (relay, publish); it grants no trust."""
+    if part not in ("relay", "publish"):
         return {}
-    env = {"ORCH_RELAY_DATA": str(data)}
-    if behind_edge:  # the relay trusts X-Forwarded-For only from the Caddy on this computer
+    env = {"ORCH_RELAY_DATA": str(data)} if part == "relay" else {}
+    if trusted_proxy:
+        env["ORCH_RELAY_TRUSTED_PROXY" if part == "relay" else "ORCH_PUBLISH_TRUSTED_PROXY"] = trusted_proxy
+    elif behind_edge and part == "relay":  # Caddy on this computer: its loopback address is the proxy
         env["ORCH_RELAY_TRUSTED_PROXY"] = ADDRESS_LOOPBACK
     return env

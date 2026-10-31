@@ -246,7 +246,8 @@ def secrets_view(service: WorkspaceService) -> dict[str, Any]:
     NEVER a value, a length or a digest of one (the wraps are read for ``name`` and ``expires_ms`` only). A secret is
     listed when an offered company server names it or a stored wrap carries it; ``used_by`` are server names. Status:
     ``ready``, ``expired``, ``not_received`` (not shared any more) or ``needs_isolation``. ``isolated`` (a bool, no
-    secret data) says whether this host fetches secrets at all (tier B); on tier A an empty list is not a final answer."""
+    secret data) says whether this host fetches secrets at all (tier B);
+    on tier A an empty list is not a final answer."""
     from . import orgsecrets
 
     state = _state(service)

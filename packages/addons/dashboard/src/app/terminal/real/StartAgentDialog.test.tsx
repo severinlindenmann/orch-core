@@ -423,11 +423,12 @@ describe('a short, calm dialog (U6)', () => {
     expect(screen.queryByTestId('agent-access')).toBeNull() // access is valid: no select
   })
 
-  it('the login-shell notice is shown in the first-time notice', async () => {
+  it('P16: the login-shell notice is never in the amber box; the host sentence sits under Details', async () => {
     s.preview.mockResolvedValue(preview({ login_shell: true, warnings: [LOGIN_NOTICE] }))
     mount()
     expect(await screen.findByTestId('agent-login-notice', {}, T)).toHaveTextContent('login shell')
-    expect(within(screen.getByTestId('agent-risk-full')).getByTestId('agent-login-notice')).toBeInTheDocument()
+    expect(within(screen.getByTestId('agent-risk-full')).queryByTestId('agent-login-notice')).toBeNull()
+    expect(within(screen.getByTestId('agent-details')).getByTestId('agent-login-notice')).toBeInTheDocument()
   })
 
   it('acknowledged: one small line, the same words under Details, the login-shell notice there too', async () => {
@@ -443,20 +444,27 @@ describe('a short, calm dialog (U6)', () => {
     expect(within(details).getByTestId('agent-login-notice')).toHaveTextContent('login shell')
   })
 
-  it('MED-2: the login-shell notice is its own notice: full the first time even when the main notice was read', async () => {
+  it('P16: only the login-shell notice open: a plain muted line, no amber box, no I understand; Start is the one click and saves it', async () => {
     s.notices.mockResolvedValue({ acknowledged: { start_agent: true } })
     s.acknowledge.mockResolvedValue({ acknowledged: { start_agent: true, login_shell: true } })
     s.preview.mockResolvedValue(preview({ login_shell: true, warnings: [LOGIN_NOTICE] }))
     mount()
-    const full = await screen.findByTestId('agent-risk-full', {}, T)
-    expect(within(full).getByTestId('agent-login-notice')).toHaveTextContent('login shell')
-    expect(within(full).queryByTestId('execution-line')).toBeNull()
-    expect(within(screen.getByTestId('agent-details')).getByTestId('execution-line')).toBeInTheDocument()
-    fireEvent.click(screen.getByTestId('agent-risk-ack'))
-    await waitFor(() => expect(s.acknowledge).toHaveBeenCalledWith(WS, 'login_shell'))
+    await screen.findByTestId('agent-preview', {}, T)
+    expect(screen.queryByTestId('agent-risk-full')).toBeNull()
+    expect(screen.queryByTestId('agent-risk-ack')).toBeNull()
+    expect(screen.queryByText('I understand')).toBeNull()
+    const details = screen.getByTestId('agent-details')
+    expect(details).not.toHaveAttribute('open')
+    expect(within(details).getByText(/Runs as you, with your usual terminal settings\./)).toBeInTheDocument()
+    expect(details.querySelector('summary')).not.toHaveTextContent(/login shell|shell profile/) // the visible line is plain; the host's words are inside the fold
+    expect(within(details).getByTestId('agent-login-notice')).toHaveTextContent('your login shell') // still one click away
+    expect(within(details).getByTestId('execution-line')).toHaveTextContent(EXECUTION_LINE)
+    await waitFor(() => expect(screen.getByTestId('agent-start')).toBeEnabled(), T)
+    expect(s.acknowledge).not.toHaveBeenCalled() // reading nothing yet, Start counts as reading
+    fireEvent.click(screen.getByTestId('agent-start'))
+    await waitFor(() => expect(s.acknowledge).toHaveBeenCalledWith(WS, 'login_shell'), T)
     expect(s.acknowledge).not.toHaveBeenCalledWith(WS, 'start_agent')
-    await waitFor(() => expect(screen.queryByTestId('agent-risk-full')).toBeNull())
-    expect(within(screen.getByTestId('agent-details')).getByTestId('agent-login-notice')).toBeInTheDocument()
+    expect(s.start).toHaveBeenCalledTimes(1)
   })
 
   it('MED-2: only the host\'s exact sentence is the login-shell notice; other warnings stay visible', async () => {

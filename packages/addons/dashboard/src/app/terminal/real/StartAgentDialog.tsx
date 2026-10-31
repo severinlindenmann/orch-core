@@ -12,7 +12,7 @@ import { toast } from 'sonner'
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   AGENT_MODES, agentsApi, blockedText, HARNESSES, cwdText, DEPOSIT_UNKNOWN, depositReason, runnerQuery, SHARED_COPY, TERMINAL_GRANT,
-  TERMINAL_ONLY, LOGIN_NOTICE, worktreeLine, type AgentArgs, type AgentMode, type AgentPreview, type Harness, type Runner,
+  TERMINAL_ONLY, LOGIN_NOTICE, LOGIN_PLAIN, worktreeLine, type AgentArgs, type AgentMode, type AgentPreview, type Harness, type Runner,
 } from '@/api/agents'
 import { clickReady, DEPOSIT_RISK, depositViewOk, type ClickAction } from '@/api/click'
 import { newIdem, runsApi, type Run } from '@/api/runs'
@@ -475,24 +475,25 @@ const isLoginNotice = (w: string) => w === LOGIN_NOTICE
  * says they read it. After that: one small line, and the same words under Details. Never removed, only folded.
  */
 function RiskNotice({ startFull, loginFull, loginNotice, onAcknowledge, single, children }: { /** Opened right after "Create and start agent": Start is the one button, and starting counts as reading the notice (as it always did). */ single?: boolean; startFull: boolean; loginFull: boolean; loginNotice: string[]; onAcknowledge: () => void; children: ReactNode }) {
-  const full = startFull || loginFull
+  // P16: only the "runs as you" notice is an amber box with a button. The login-shell notice is a muted plain line with the
+  // host's sentence under Details; starting counts as reading it (the start acknowledges everything that was on screen).
+  const full = startFull
   const start = <p data-testid="execution-line">{EXECUTION_LINE}</p>
-  const login = <>{loginNotice.map((x, i) => <p key={i} role="note" className="text-warning" data-testid="agent-login-notice"><Prose inline>{x}</Prose></p>)}</>
+  const login = <>{loginNotice.map((x, i) => <p key={i} data-testid="agent-login-notice"><Prose inline>{x}</Prose></p>)}</>
   return (
     <section aria-label="Runs as you" className="-mb-1 space-y-2 text-xs leading-5" data-testid="agent-risk">
       {full && (
         <div role="note" className="grid gap-2 rounded-md border border-warning/40 bg-warning-soft px-3 py-2 font-normal text-warning sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start sm:[&>p]:col-start-1" data-testid="agent-risk-full">
-          {startFull && start}
-          {loginFull && login}
+          {start}
           {single
             ? <p className="font-normal" data-testid="agent-risk-single">Starting the agent confirms you have read this.</p>
             : <Button size="xs" variant="outline" className="justify-self-end font-normal sm:col-start-2 sm:row-start-1" onClick={onAcknowledge} data-testid="agent-risk-ack">I understand</Button>}
         </div>
       )}
       <details className="group/risk" data-testid="agent-details">
-        <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 text-text-muted underline-offset-4 before:size-1.5 before:shrink-0 before:rotate-45 before:border-t before:border-r before:border-current hover:underline [&::-webkit-details-marker]:hidden group-open/risk:before:rotate-[135deg]">{startFull ? 'Details' : <>Runs as you on this computer <span aria-hidden>·</span> Details</>}</summary>
+        <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 text-text-muted underline-offset-4 before:size-1.5 before:shrink-0 before:rotate-45 before:border-t before:border-r before:border-current hover:underline [&::-webkit-details-marker]:hidden group-open/risk:before:rotate-[135deg]">{startFull ? 'Details' : <>{loginFull ? LOGIN_PLAIN : 'Runs as you on this computer'} <span aria-hidden>·</span> Details</>}</summary>
         <div className="mt-2 space-y-2">
-          {(!startFull || !loginFull) && <div className="space-y-1 text-text-muted">{!startFull && start}{!loginFull && login}</div>}
+          {(!startFull || loginNotice.length > 0) && <div className="space-y-1 text-text-muted">{!startFull && start}{login}</div>}
           {children}
         </div>
       </details>

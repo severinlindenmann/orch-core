@@ -240,6 +240,8 @@ def test_an_agent_cannot_read_or_change_the_rules(served, selective):
                      ("share.revoke", {"ref": "K-1"})):  # fmt: skip
         res = agent(served, op, args)
         assert err(res) in ("op.not_allowed", "human_only"), (op, res)
+        assert "tickets_state" not in res.get("data", {})
+        assert "not_sent_count" not in res.get("data", {})
     assert selective.ops == []
     rules = ok(req(served, "share.rules"))["data"]["rules"]
     assert [r["kind"] for r in rules] == ["needs_you"]

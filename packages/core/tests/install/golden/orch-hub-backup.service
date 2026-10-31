@@ -1,0 +1,9 @@
+[Unit]
+Description=copy the sealed hub backups to the pull folder
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -P -m orch.install.ops backup-copy --src /home/u/data/backups --dest /home/u/orch-backup-out
+Nice=10
+NoNewPrivileges=yes
+PrivateTmp=yes

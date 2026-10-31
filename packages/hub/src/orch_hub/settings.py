@@ -122,6 +122,14 @@ def where_answer(state: Path, *, extra_public: str | None = None) -> dict[str, A
     return check_hub_where({"addresses": entries, "name": s["name"]})
 
 
+def origin_of(web: str) -> str:
+    """The Origin a browser sends for a settings ``web`` address: the default port of the scheme (443 for https, 80 for
+    http) is not part of it. The card keeps ``host:port`` (the settings shape); the allowed origin is exact."""
+    scheme, _, rest = web.partition("://")
+    host, _, port = rest.rpartition(":")
+    return f"{scheme}://{host}" if (scheme, port) in (("https", "443"), ("http", "80")) else web
+
+
 def serve_origins(state: Path) -> tuple[frozenset[str], str] | None:
     """What ``serve`` takes from the file after install (Opus condition 5): the exact console origins (every advertised
     web address) and the API origin the phone pairs with (the FIRST address; changing it is its own, later step). None when
@@ -129,4 +137,4 @@ def serve_origins(state: Path) -> tuple[frozenset[str], str] | None:
     s = load(state)
     if s is None:
         return None
-    return frozenset(a["web"] for a in s["addresses"]), s["addresses"][0]["web"]
+    return frozenset(origin_of(a["web"]) for a in s["addresses"]), origin_of(s["addresses"][0]["web"])

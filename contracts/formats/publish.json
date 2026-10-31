@@ -1,0 +1,16 @@
+{
+  "fingerprint": "bc93dd2cef39a70fd3c3cc4b8f907fbaf89d0de8b50b3a5f2e6771b278769142",
+  "format": 1,
+  "kind": "publish",
+  "sources": [
+    "packages/publish/pubsrv/apps.py",
+    "packages/publish/pubsrv/appserve.py",
+    "packages/publish/pubsrv/cli.py",
+    "packages/publish/pubsrv/db.py",
+    "packages/publish/pubsrv/published.py",
+    "packages/publish/pubsrv/relay_proto.py",
+    "packages/publish/pubsrv/serve.py",
+    "packages/publish/pubsrv/shares.py",
+    "packages/publish/pubsrv/sweep.py"
+  ]
+}

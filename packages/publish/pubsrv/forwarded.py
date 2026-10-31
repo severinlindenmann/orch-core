@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import ipaddress
 
-__all__ = ["parse_trusted", "headers_of_scope", "rate_key"]
+__all__ = ["parse_trusted", "rate_key"]
 
 
 def parse_trusted(spec):
@@ -27,7 +27,9 @@ def parse_trusted(spec):
         return ()
     if not isinstance(spec, str):
         return tuple(spec)
-    return tuple(ipaddress.ip_network(p.strip(), strict=False) for p in spec.split(",") if p.strip())
+    return tuple(
+        ipaddress.ip_network(p.strip(), strict=False) for p in spec.split(",") if p.strip()
+    )
 
 
 def _addr(text):
@@ -39,23 +41,36 @@ def _norm(a):
     return str(ipaddress.ip_network(f"{a}/64", strict=False)) if a.version == 6 else str(a)
 
 
-def headers_of_scope(scope):
-    """The request headers of an ASGI scope as ``{lower-case name: value}`` (last one wins)."""
-    return {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope.get("headers") or ()}
+def _forwarded(raw_headers):
+    """``(joined X-Forwarded-For values, X-Real-IP)`` from the RAW ASGI header list, names case-insensitive. Repeated
+    X-Forwarded-For headers are joined with "," in arrival order, as a proxy chain would; there is no dict, so no parser
+    can pick a different one of them."""
+    if not isinstance(raw_headers, (list, tuple)):
+        raise TypeError("rate_key takes the raw ASGI scope['headers'] list, never a mapping")
+    xff, real = [], ""
+    for k, v in raw_headers:
+        name = bytes(k).lower()
+        if name == b"x-forwarded-for":
+            xff.append(bytes(v).decode("latin-1"))
+        elif name == b"x-real-ip":
+            real = bytes(v).decode("latin-1")
+    return ",".join(xff), real
 
 
-def rate_key(peer, headers, nets=()):
-    """The rate-limit identity: IPv4 per address, IPv6 per /64. The rightmost X-Forwarded-For entry, else X-Real-IP,
-    is used ONLY when ``peer`` is inside ``nets``; otherwise (and when it is missing or malformed) the socket peer."""
+def rate_key(peer, raw_headers, nets=()):
+    """The rate-limit identity: IPv4 per address, IPv6 per /64. The rightmost X-Forwarded-For entry (X-Real-IP only when
+    there is no X-Forwarded-For) is used ONLY when ``peer`` is inside ``nets``; otherwise (and when it is missing or
+    malformed) the socket peer. ``raw_headers`` is the ASGI ``scope['headers']`` list of (bytes, bytes) pairs."""
+    xff, real = _forwarded(raw_headers)
     try:
         me = _addr(peer)
     except ValueError:
         return str(peer)
     if any(me in n for n in nets if n.version == me.version):
-        for c in ((headers.get("x-forwarded-for") or "").split(",")[-1], headers.get("x-real-ip") or ""):
-            if c.strip():
-                try:
-                    return _norm(_addr(c))
-                except ValueError:
-                    break  # malformed: the socket address, never a fresh identity
+        c = xff.split(",")[-1] if xff.strip() else real
+        if c.strip():
+            try:
+                return _norm(_addr(c))
+            except ValueError:
+                pass  # malformed: the socket address, never a fresh identity
     return _norm(me)

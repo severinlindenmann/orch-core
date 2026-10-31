@@ -219,7 +219,9 @@ class Core:
 
     def __init__(self, path, trusted_proxy=None):
         self.path = path
-        self.trusted_proxy = trusted_proxy  # addresses or CIDR networks (comma-separated); default none
+        self.trusted_proxy = (
+            trusted_proxy  # addresses or CIDR networks (comma-separated); default none
+        )
         self.lock = threading.RLock()
         # In-memory rate windows. Taken alone by pre-checks and inside self.lock by transactions,
         # never the other way round; held only for dict/heap updates.
@@ -262,15 +264,21 @@ class Core:
         self._trusted_nets = parse_trusted(value)  # a malformed entry refuses to start
         self._trusted_text = value or None
 
-    def client_address(self, peer, headers):
-        """The rate-limit key of a request (forwarded.py). Never a trust or locality input."""
-        if headers.get("x-forwarded-for") and not self._trusted_nets and not self.proxy_warned:
+    def client_address(self, peer, raw_headers):
+        """The rate-limit key of a request (forwarded.py; ``raw_headers`` is the ASGI ``scope['headers']`` list).
+        Never a trust or locality input."""
+        key = rate_key(peer, raw_headers, self._trusted_nets)
+        if (
+            not self._trusted_nets
+            and not self.proxy_warned
+            and any(k.lower() == b"x-forwarded-for" for k, _ in raw_headers)
+        ):
             self.proxy_warned = True
             logging.getLogger(__name__).warning(
                 "X-Forwarded-For received but ORCH_RELAY_TRUSTED_PROXY is unset: behind a reverse proxy every "
                 "client shares the proxy's address (address windows); set it to the proxy's network"
             )
-        return rate_key(peer, headers, self._trusted_nets)
+        return key
 
 
 def install(app, data):

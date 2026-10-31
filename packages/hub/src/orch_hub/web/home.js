@@ -51,16 +51,34 @@ export function workspaceStatus(w) {
   return "offline since " + (Number.isNaN(date.getTime()) ? "an unknown time" : date.toLocaleString());
 }
 
-/** The first-run home is replaced by the full home once a workspace or an item shows up. */
-export const firstRunOutgrown = (rows, items) => (rows ?? []).length > 0 || (items ?? []).length > 0;
+/** The first-run home is redrawn once a workspace, an item or a shared ticket shows up. */
+export const firstRunOutgrown = (rows, items, shared = []) => (rows ?? []).length > 0 || (items ?? []).length > 0 || shared.length > 0;
 
-/** A brand-new hub shows one thing: connect a workspace. No signing or developer widgets yet. */
+/** Tickets shared with this person: read-only, hidden when there are none or no ended notices. */
+export function sharedCardView(d, nameOf = () => null) {
+  const sharedItems = (d.shared ?? []).filter((it) => it && typeof it === "object");
+  const endedItems = (d.ended ?? []).filter((e) => e && typeof e === "object");
+  return sharedItems.length || endedItems.length ? h("section", { class: "card shared-tickets", "aria-labelledby": "shared-heading" },
+    h("h2", { id: "shared-heading", text: "Shared with you (" + sharedItems.length + ")" }),
+    endedItems.map((e) => h("div", { class: "list-row row ended", role: "status" },
+      h("div", { class: "grow" }, note(text(e.by) + " stopped sharing " + text(e.title))),
+      d.actions?.dismissEnded ? h("button", { text: "Dismiss", onclick: () => d.actions.dismissEnded(e.id) }) : null)),
+    sharedItems.map((it) => h("article", { class: "list-row row" },
+      h("div", { class: "grow" }, h("b", { text: text(it.title ?? it.key ?? "Ticket") }),
+        note([nameOf(it.workspace_id), it.shared_by ? "Shared by " + text(it.shared_by) : "Shared with you"].filter(Boolean).join(" · "))),
+      d.actions?.openShared && it.workspace_id ? h("button", { text: "Open", onclick: () => d.actions.openShared(it) }) : null))) : null;
+}
+
+/** Without a workspace, keep shared tickets in reach without signing or developer widgets. */
 function firstRunHome(d) {
   const notice = d.notice?.nodeType ? d.notice : d.notice ? h("div", { class: "banner", role: "status", text: text(d.notice) }) : null;
   const added = newChannelsNotice(d.newChannels, { remove: (c) => d.actions?.removeChannel(c.channel_id), dismiss: () => d.actions?.dismissNew?.() });
+  const sharedCount = (d.shared ?? []).length;
+  const sharedCard = sharedCardView(d);
   return [h("h1", { text: "Hello, " + text(d.user?.name ?? "you") }), notice, ...added,
-    h("p", { class: "company-summary muted", text: "Nothing connected yet." }),
-    h("section", { class: "card first-run first-run-root", "aria-labelledby": "first-run-heading" },
+    h("p", { class: "company-summary muted", text: sharedCount ? sharedCount + (sharedCount === 1 ? " ticket shared with you." : " tickets shared with you.") : "Nothing connected yet." }),
+    sharedCard,
+    sharedCard && !d.user?.is_admin ? note("Want a workspace of your own? Ask your hub admin.") : h("section", { class: "card first-run first-run-root", "aria-labelledby": "first-run-heading" },
       h("h2", { id: "first-run-heading", text: "Connect your first workspace" }),
       d.user?.is_admin && d.actions?.connect
         ? [h("p", { text: "We make a link for your workspace. You use it once." }), h("button", { class: "pri", text: "Connect a workspace", onclick: () => d.actions.connect() })]
@@ -109,17 +127,7 @@ export function homeView(d) {
       d.actions.open ? h("button", { text: "Open", onclick: () => d.actions.open(w.workspace_id) }) : null))
       : emptyState("workspaces"));
   // Tickets shared with this person (GET /me/shared, the same filter as search): read-only, hidden when there are none.
-  const sharedItems = (d.shared ?? []).filter((it) => it && typeof it === "object");
-  const endedItems = (d.ended ?? []).filter((e) => e && typeof e === "object");
-  const sharedCard = sharedItems.length || endedItems.length ? h("section", { class: "card shared-tickets", "aria-labelledby": "shared-heading" },
-    h("h2", { id: "shared-heading", text: "Shared tickets (" + sharedItems.length + ")" }),
-    endedItems.map((e) => h("div", { class: "list-row row ended", role: "status" },
-      h("div", { class: "grow" }, note(text(e.by) + " stopped sharing " + text(e.title))),
-      d.actions?.dismissEnded ? h("button", { text: "Dismiss", onclick: () => d.actions.dismissEnded(e.id) }) : null)),
-    sharedItems.map((it) => h("article", { class: "list-row row" },
-      h("div", { class: "grow" }, h("b", { text: text(it.title ?? it.key ?? "Ticket") }),
-        note([workspaceName(it.workspace_id), it.shared_by ? "shared by " + text(it.shared_by) : "shared with you"].join(" · "))),
-      d.actions?.openShared && it.workspace_id ? h("button", { text: "Read", onclick: () => d.actions.openShared(it) }) : null))) : null;
+  const sharedCard = sharedCardView(d, (id) => byId.has(id) ? workspaceName(id) : null);
   const browser = d.thisBrowser;
   const active = browser?.state === "active";
   const dead = browser?.state === "dead";

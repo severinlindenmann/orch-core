@@ -147,7 +147,8 @@ class HubKeys:
         self = cls(state, **kw)
         self.dev = DEV and not real
         try:
-            if self.state.exists() and any(self.state.iterdir()):
+            # `orch install` may have written format.json (and a service its format.lock) before the keys exist
+            if self.state.exists() and any(p.name not in ("format.json", "format.lock") for p in self.state.iterdir()):
                 raise KeysError("already_initialised", "the state dir is not empty")
             self.state.parent.mkdir(parents=True, exist_ok=True)
             make_dir(self.state)

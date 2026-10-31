@@ -27,7 +27,10 @@ dev = ["pytest>=8", "ruff>=0.6", "pytest-timeout>=2.3"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = [".", "src", "tests"]
-markers = ["slow: tests taking more than 2 s"]
+markers = [
+    "slow: tests taking more than 2 s",
+    "raw_data: create_app opens the data dir by the real format rule (no format.json is written for it)",
+]
 timeout = 120
 
 [tool.ruff]

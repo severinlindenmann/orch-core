@@ -27,6 +27,7 @@ HUB_LABELS: dict[str, str] = {
     "sig_hub_closing": "orch/v2/hub-closing|",  # #1463: the hub is being removed; offered to one workspace's owner
     "sig_hub_release_narrow": "orch/v2/hub-release-narrow|",  # M4 (#1357): a hub admin revokes a link / stops an app
     "sig_hub_allow": "orch/v2/hub-allow|",  # P02 (#1290): the hub admits one of its own workspaces at orch-publish
+    "sig_hub_publish_where": "orch/v2/hub-publish-where|",  # #1838: where the hub's workspaces publish and share
     "sig_hub_app_pass": "orch/v2/hub-app-pass|",  # M4 (#1357): single-use pass into a company or group app
     "sig_hub_space_proposal": "orch/v2/hub-space-proposal|",  # p4 (#1020): a proposed member transition, to an invitee
     "sig_hub_relay_request": "orch/v2/hub-relay-req|",

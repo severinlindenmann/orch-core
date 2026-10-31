@@ -21,7 +21,7 @@ import { checkServiceAction, resultWords, logsDialog, serviceDialog, stopLabel, 
 import { handoffsView } from "./handoffs.js";
 import { phonesView } from "./phones.js";
 import { workspacesView, workspaceDetailsView, newWorkspaces, privateRows } from "./workspaces.js";
-import { OPEN_FIRST, OPEN_ON_ITS_COMPUTER, colour, initials, landing, landingPlan, openingState, railRows, safeUrl } from "./switch.js";
+import { OPEN_FIRST, OPEN_ON_ITS_COMPUTER, colour, initials, landing, landingPlan, openingState, railRows, safeUrl, backToWorkspace } from "./switch.js";
 import { Refusal, grantTermsOk, grantSentence, grantFacts, addonFacts, addonTermsOk, settingsFacts, settingsTermsOk, checkBindings, checkPrepared, describe, renderMulti, renderText, shortHash, verifyQuestion, DECISIONS } from "./render.js";
 
 const root = document.getElementById("app");
@@ -369,7 +369,7 @@ async function landFromTicket(t) {
   const plan = landingPlan(p.body);
   if (plan === "redeem") return redeemTicket(t, false);
   if (plan === "confirm") return plain(h("h1", { text: "Continue as " + name + "?" }), h("p", { class: "muted", text: "You opened the hub from your workspace. Nothing happens until you continue." }),
-    h("div", { class: "row" }, h("button", { class: "pri", text: "Continue", onclick: () => redeemTicket(t, false) }), h("button", { text: "Cancel", onclick: () => loginView() })));
+    h("div", { class: "row" }, h("button", { class: "pri", text: "Continue", onclick: () => redeemTicket(t, false) }), h("button", { "data-back": "", text: "Back to my workspace", onclick: () => backToWorkspace(p.body.workspace, { assign: (u) => location.assign(u), back: () => history.back(), canBack: () => history.length > 1, login: () => loginView() }) })));
   const cur = renderText(p.body.signed_in_as?.name ?? "someone else");
   return plain(h("h1", { text: "Different person" }), h("p", { text: "You are signed in as " + cur + " here. This link is for " + name + "." }),
     h("div", { class: "row" }, h("button", { text: "Stay signed in as " + cur, onclick: () => home() }), h("button", { class: "pri", text: "Sign out and continue as " + name, onclick: () => redeemTicket(t, true) })));
@@ -1261,14 +1261,15 @@ async function pollLive() {
       reconcileRows(frame.querySelector(".rail"), railView());
       railSnapshot = JSON.stringify(state.rail);
     }
-    if (frame?.isConnected && parseRoute(location.hash).kind === "home" && frame.querySelector(".first-run-root") && firstRunOutgrown(state.rail.rows, liveItems.items)) {
-      void home(); // the first workspace connected while this page was open: draw the full home
-      return;
-    }
     // P04: the hub Home's Shared tickets card follows the same list; a change (or an ended share) redraws Home once
     if (frame?.isConnected && parseRoute(location.hash).kind === "home" && homeData?.user_id === user.user_id) {
       const sharedNow = await api("GET", "/me/shared");
       if (user !== state.user) return;
+      const sharedItems = sharedNow.status === 200 && Array.isArray(sharedNow.body.items) ? sharedNow.body.items : [];
+      if (frame?.isConnected && parseRoute(location.hash).kind === "home" && frame.querySelector(".first-run-root") && firstRunOutgrown(state.rail.rows, liveItems.items, sharedItems)) {
+        void home(); // a workspace, item or share arrived while the first-run page was open
+        return;
+      }
       if (sharedNow.status === 200 && Array.isArray(sharedNow.body.items)) {
         const before = JSON.stringify(homeData.shared) + JSON.stringify(homeData.ended);
         const ended = trackShared(user.user_id, sharedNow.body.items);

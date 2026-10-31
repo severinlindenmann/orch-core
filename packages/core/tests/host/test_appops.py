@@ -209,3 +209,59 @@ def test_a_stage_whose_meta_names_another_ticket_is_never_sent(a):
     path.write_text(json.dumps(doc))
     assert err(a.req("app.send", {"staged_id": staged})) == "publish.changed"
     assert a.server.requests == []
+
+
+class _Store:
+    def __init__(self, events):
+        self._events = events
+
+    def log_seq(self, uid):
+        return len(self._events)
+
+    def events(self, uid, after=0, limit=200):
+        return self._events[after : after + limit]
+
+
+def _note(text, **more):
+    return {"type": "log.added", "text": text, "at": "2026-10-31T10:00:00Z", "sig": "x",
+            "actor": {"kind": "person", "id": "p_me"}, **more}  # fmt: skip
+
+
+def _call(events):
+    import types
+
+    service = types.SimpleNamespace(store=_Store(events), clock=lambda: 1_793_440_800.0)
+    return types.SimpleNamespace(service=service, viewer="p_me")
+
+
+def test_only_a_locally_signed_note_of_the_matching_op_counts_as_the_approval():
+    """#1781 Opus delta: a hub-signed note (auth hub, actor.via) with the right words is no approval, and neither is a
+    note that does not start with the app approval line."""
+    from orch.host import appops
+
+    stage = {"ticket": {"uid": "01J9ZP0000000000000000EVT1", "key": "TST-0001"}}
+    text = approval.APP_MARK + "\nTicket: TST-0001\nStaged release: pa_" + "a" * 32
+    assert appops.signed_release(_call([_note(text)]), stage, text) is True
+    hub_auth = _note(text, auth="hub")
+    hub_via = _note(text)
+    hub_via["actor"] = {"kind": "person", "id": "p_me", "via": "hub_x"}
+    for bad in (hub_auth, hub_via):
+        assert appops.signed_release(_call([bad]), stage, text) is False
+    other = "Some other note\nStaged release: pa_" + "a" * 32
+    assert appops.signed_release(_call([_note(other)]), stage, other) is False
+    unsigned = _note(text)
+    del unsigned["sig"]
+    assert appops.signed_release(_call([unsigned]), stage, text) is False
+    agent = _note(text)
+    agent["actor"] = {"kind": "agent", "id": "p_me"}
+    assert appops.signed_release(_call([agent]), stage, text) is False
+
+
+def test_a_staged_file_with_other_bytes_of_the_same_size_is_not_sent(a):
+    uid, key = ticket(a)
+    staged = ok(prepare(a, key, "index.html", "app.js"))["data"]["staged_id"]
+    a.human.run("app.release", {"staged_id": staged})
+    path = a.served.lab.state / "hosts" / a.served.wid / "publish" / "appstage" / staged / "files" / "app.js"
+    path.write_bytes(bytes(len(APPJS)))  # same size, other bytes: the recomputed sha256 differs
+    assert err(a.req("app.send", {"staged_id": staged})) == "publish.changed"
+    assert [r for r in a.server.requests if "/apps/" in r["target"]] == []

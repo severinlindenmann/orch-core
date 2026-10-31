@@ -326,9 +326,8 @@ def apply_where(service: WorkspaceService, state: Any, answer: dict[str, Any]) -
         try:
             net = _net(service)
         except OSError:
-            net = None  # settings unusable: no probe and no new address, but the name and publish_where still count
-        if net is not None:
-            passed = _probe_new(f"{service.workspace_id}:{state.hub_id}", state, fresh, net)
+            return False  # settings unusable: no probe, nothing stored, nothing dialled
+        passed = _probe_new(f"{service.workspace_id}:{state.hub_id}", state, fresh, net)
     return _store(
         service, state, passed, [e["link"] for e in answer["addresses"]], answer["name"], answer.get("publish_where")
     )

@@ -1,0 +1,76 @@
+{
+  "schema": "orch.workspace/2",
+  "workspace": {
+    "id": "705d40abbb8c1c90354a1acaa94c935c",
+    "prefix": "DEMO",
+    "name": "Acme"
+  },
+  "host": {
+    "id": "h_01M69NGH2JNW280ATS0HT37BY4",
+    "wsk_pub": "BBG7WFX0V-FkgcEmM3EO1lxdsrKLAvM8HsDppHr9hh3JxYM_XBN4G3dkudFRr5JI_ZTVlk_xhA8pSVBxN729F2w"
+  },
+  "members": [
+    {
+      "person": "p_98a8f05a881ce127006afa3ad790b151",
+      "name": "Owner",
+      "role": "owner"
+    }
+  ],
+  "gates": {
+    "requirements": {
+      "approvers": [
+        "owner"
+      ],
+      "count": 1,
+      "not": [],
+      "applies": "all",
+      "independent": false
+    },
+    "plan": {
+      "approvers": [
+        "owner"
+      ],
+      "count": 1,
+      "not": [],
+      "applies": "all",
+      "independent": false
+    },
+    "verify": {
+      "approvers": [
+        "reviewers"
+      ],
+      "count": 1,
+      "not": [
+        "assignees"
+      ],
+      "applies": "all",
+      "independent": false
+    },
+    "code": {
+      "approvers": [
+        "maintainer",
+        "owner"
+      ],
+      "count": 1,
+      "not": [
+        "assignees"
+      ],
+      "applies": "off",
+      "independent": true
+    }
+  },
+  "settings": {
+    "grant_hours": 8,
+    "claim_ttl_min": 120,
+    "lease_ttl_min": 60,
+    "repos": {}
+  },
+  "agents": {
+    "run_for": [
+      "owner",
+      "maintainer",
+      "member"
+    ]
+  },
+  "addons": {}
+}

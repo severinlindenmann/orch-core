@@ -1596,6 +1596,8 @@ def _addon(typ: str, ev: Mapping[str, Any], out: dict[str, Any]) -> str:
     if typ == "addon.disabled":
         # turning off is the safe direction and carries no package: the display name goes by id alone
         nice = _ADDON_PLAIN_NAMES.get(name, nice) if named else nice
+        if named:
+            _row(out, "add-on", name)  # the real signed value stays visible next to the display name
         return f"Turn off {nice}" if named else f"Disable the add-on {name}"
     if typ == "addon.purged":
         return f"Purge the add-on {name}"

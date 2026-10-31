@@ -838,6 +838,9 @@ def test_run18_the_plain_name_command_window_is_only_for_the_real_builtin_packag
         }
     )
     assert off["headline"] == "Turn off Command window"
+    assert {r["field"]: r["after"] for r in off["fields_changed"]} == {
+        "add-on": "terminals"
+    }  # the signed value is visible
     assert "Turn off Terminals" not in flat(off)
     other = build(
         {

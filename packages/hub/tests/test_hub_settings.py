@@ -540,33 +540,32 @@ def test_detected_addresses_are_this_computers_own_with_their_kind(w, state):
     ]
 
 
-def test_run18_detected_addresses_never_lead_with_a_virtual_bridge_and_name_the_interface():
+def test_run18_detected_addresses_never_lead_with_a_virtual_interface_and_name_the_interface():
+    virt_ip = {
+        "docker0": "172.17.0.1",
+        "br-1a2b3c": "172.18.0.1",
+        "veth9": "10.99.0.1",
+        "virbr0": "192.168.122.1",
+        "wg0": "10.66.0.2",
+        "tap0": "10.67.0.2",
+        "tun0": "10.68.0.2",
+    }
+    lines = [f"{i}: {n}    inet {ip}/24 brd x scope global {n}\n" for i, (n, ip) in enumerate(virt_ip.items(), 3)]
     text = (
-        "3: docker0    inet 172.17.0.1/16 brd x scope global docker0\n"
-        "4: br-1a2b3c    inet 172.18.0.1/16 brd x scope global br-1a2b3c\n"
-        "5: veth9    inet 10.99.0.1/24 brd x scope global veth9\n"
-        "2: eth0    inet 192.168.1.9/24 brd x scope global eth0\n"
-        "6: virbr0    inet 192.168.122.1/24 brd x scope global virbr0\n"
-        "7: wg0    inet 10.66.0.2/24 scope global wg0\n"
-        "8: tap0    inet 10.67.0.2/24 scope global tap0\n"
-    )
+        "".join(lines) + "2: eth0    inet 192.168.1.9/24 brd x scope global eth0\n"
+    )  # the real interface comes LAST in the input
     got = SA.detect_addresses(text)
-    assert [g["ip"] for g in got] == [
-        "127.0.0.1",
-        "192.168.1.9",
-        "172.17.0.1",
-        "172.18.0.1",
-        "10.99.0.1",
-        "192.168.122.1",
-        "10.66.0.2",
-        "10.67.0.2",
-    ]
+    assert got[0]["ip"] == "127.0.0.1"
     assert got[1] == {"ip": "192.168.1.9", "kind": "office", "iface": "eth0"}
-    ifc = "en0: flags=8863<UP> mtu 1500\n\tinet 10.1.1.4 netmask 0xffffff00\nbridge100: flags=8863<UP>\n\tinet 192.168.64.1 netmask 0xffffff00\n"
-    assert [(g["ip"], g.get("iface")) for g in SA.detect_addresses(ifc)[1:]] == [
-        ("10.1.1.4", "en0"),
-        ("192.168.64.1", "bridge100"),
-    ]
+    assert {g["iface"] for g in got[2:]} == set(virt_ip) and len(got) == 2 + len(virt_ip)
+    mac_virtual = ("awdl0", "llw0", "bridge100", "utun3", "vmnet8", "zt0", "tun0")
+    ifc = "".join(
+        f"{n}: flags=8863<UP>\n\tinet 10.{100 + i}.0.1 netmask 0xffffff00\n" for i, n in enumerate(mac_virtual)
+    )
+    ifc += "en0: flags=8863<UP> mtu 1500\n\tinet 10.1.1.4 netmask 0xffffff00\n"  # again last in the input
+    got = SA.detect_addresses(ifc)
+    assert got[1] == {"ip": "10.1.1.4", "kind": "office", "iface": "en0"}
+    assert {g["iface"] for g in got[2:]} == set(mac_virtual) and len(got) == 2 + len(mac_virtual)
 
 
 def test_the_audit_event_is_closed_and_has_plain_words():

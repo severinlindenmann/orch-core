@@ -784,6 +784,8 @@ def _signed_approval(call: Call, meta: dict[str, Any], text: str) -> bool:
             if ev.get("type") != "log.added" or ev.get("text") != text:
                 continue
             actor = ev.get("actor") or {}
+            if ev.get("auth") == "hub" or "via" in actor:  # a signature made at this computer only, never over a hub
+                continue
             if (
                 actor.get("kind") == "person"
                 and actor.get("id") == call.viewer

@@ -547,6 +547,23 @@ def _without(key):
         json.dumps([_card()]),
         "",
     ],
+    ids=[
+        "no-envelope",
+        "two-keys",
+        "no-op-cert",
+        "no-sig",
+        "wrong-kind",
+        "id-not-of-root",
+        "bad-root",
+        "two-objects",
+        "trailing-text",
+        "leading-text",
+        "extra-key",
+        "upper-hex",
+        "short-id",
+        "list",
+        "empty",
+    ],  # fixed ids: the cards hold random signatures, and xdist workers must collect the same names
 )
 def test_a_card_that_is_not_exactly_the_real_card_is_not_pinned(home, stdout):
     ctx, out, err, calls = make(home)

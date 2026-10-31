@@ -139,6 +139,7 @@ def server_setup(
     bus_check: Callable[[str], None] | None = None,
     behind_proxy: bool = False,
     hub_name: str | None = None,
+    no_hub_name: bool = False,
 ) -> Plan:
     """Install the parts of ``role`` for this OS user. ``resolve``/``local`` are the DNS seams of the tests."""
     if role not in ROLES:
@@ -155,20 +156,35 @@ def server_setup(
         raise InstallError(
             "--behind-proxy listens on the private-network address only: no --address, no --hub-vpn-only"
         )
-    saved_name = (load(ctx.layout).get("hub_name") if role == "hub" else None) if hub_name is None else None
+    named = any(names.get(p) for p in ("hub", "relay", "publish"))  # any domain name: the Caddy and https path
+    conflicts = named or hub_vpn_only or behind_proxy or address in (P.ADDRESS_LOOPBACK, "localhost")
+    if no_hub_name and hub_name is not None:
+        raise InstallError("--hub-name and --no-hub-name exclude each other")
+    if (hub_name is not None or no_hub_name) and role != "hub":
+        raise InstallError(f"{'--hub-name' if hub_name is not None else '--no-hub-name'} belongs to --role hub")
     if hub_name is not None:
-        if role != "hub":
-            raise InstallError("--hub-name belongs to --role hub")
-        if names.hub or hub_vpn_only or behind_proxy:
+        if named or hub_vpn_only or behind_proxy:
             raise InstallError(
                 "--hub-name is for a hub without a domain (plain http on the private network): "
-                "not with --domain, --domain-hub, --hub-vpn-only or --behind-proxy"
+                "not with --domain, --domain-hub, --domain-relay, --domain-publish, --hub-vpn-only or --behind-proxy"
             )
         hub_name = server.check_hub_name(hub_name)
         if address in (P.ADDRESS_LOOPBACK, "localhost"):
             raise InstallError("--hub-name needs the private-network address: not with --address 127.0.0.1")
-    elif saved_name and not (names.hub or hub_vpn_only or behind_proxy or address in (P.ADDRESS_LOOPBACK, "localhost")):
-        hub_name = saved_name  # a rerun keeps the name (it is checked again below)
+    elif role == "hub" and not no_hub_name and (saved := load(ctx.layout).get("hub_name")):
+        try:  # the state file is input too
+            hub_name = server.check_hub_name(saved)
+        except (InstallError, TypeError):
+            raise InstallError(
+                "the hub name saved by an earlier setup is not a valid host name. Run this command again with "
+                "--no-hub-name (the hub then answers on its private-network address) or give --hub-name."
+            ) from None
+        if conflicts:
+            raise InstallError(
+                f"this hub has the private name {hub_name} from an earlier setup, and the options you gave do not fit "
+                "it. To keep the name, leave out --domain, --domain-hub, --domain-relay, --domain-publish, "
+                "--hub-vpn-only, --behind-proxy and --address 127.0.0.1. To drop the name, add --no-hub-name."
+            )
     if backup_drop:
         drop_check(backup_drop)
     user = user or real_user()
@@ -178,6 +194,10 @@ def server_setup(
     elif sys.platform.startswith("linux") and ctx.runner.kind == "systemd":
         server.ensure_user_bus(os.environ, os.geteuid(), user)  # before anything is installed
     check_block(ctx, parts)  # --port-base: refuse a busy port before anything is written
+    if no_hub_name:  # forget the saved name now; the address goes back to the VPN IP below
+        st0 = load(ctx.layout)
+        if st0.pop("hub_name", None) is not None:
+            save(ctx.layout, st0)
     ifaces = (local or (lambda: local_interfaces(lambda argv: ctx.run(argv, dict(ctx.env))[1])))()
     mine = {a.ip for a in ifaces}
     plan = Plan(role=role, parts=tuple(parts), names=names, vpn_only=hub_vpn_only)

@@ -139,6 +139,12 @@ orch setup --server --role hub --hub-name core.hub.example.com
   workspaces never depend on DNS.
 - The console then answers to the name only: the IP address no longer opens it. The name is the one address the phone
   pairs with.
+- The console is plain http, so use a name only in a zone you control, served by the private network's DNS. Names that
+  look like numbers (`0x7f.1`, `core.hub.123`), `localhost` names and non-ASCII names are refused.
+- Drop the name again with `--no-hub-name`: the console then answers on the private-network address. A rerun that
+  combines a saved name with `--domain`, `--domain-hub`, `--domain-relay`, `--domain-publish`, `--hub-vpn-only`,
+  `--behind-proxy` or `--address 127.0.0.1` is refused until you add `--no-hub-name`. A rerun also checks again that the
+  name still points at the VPN address only (IPv4 and IPv6).
 - Not combinable with `--domain`, `--domain-hub`, `--hub-vpn-only` or `--behind-proxy`; hub role only. A rerun without the
   flag keeps the name. The name comes only from the install: Settings in the console never adds one.
 

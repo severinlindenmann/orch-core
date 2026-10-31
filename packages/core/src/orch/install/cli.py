@@ -34,7 +34,7 @@ USAGE = (
     "usage: orch install server --role hub|edge [--domain BASE] [--domain-hub N] [--domain-relay N]\n"
     "                    [--domain-publish N] [--hub-vpn-only] [--vpn-ip IP[/PREFIX]]\n"
     "                    [--allow-non-cgnat] [--caddy-dir DIR] [--behind-proxy]\n"
-    "                    [--hub-name NAME]\n"
+    "                    [--hub-name NAME | --no-hub-name]\n"
     "                    [--backup-drop DIR]\n"
     "                    [--port-base N] [--yes]\n"
     "usage: orch install phone [--user ID]\n"
@@ -962,6 +962,7 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextI
     p.add_argument("--behind-proxy", action="store_true")
     p.add_argument("--port-base", type=int)
     p.add_argument("--hub-name")
+    p.add_argument("--no-hub-name", action="store_true")
     p.add_argument("--caddy-dir", default=CADDY_DIR)
     p.add_argument("--backup-drop")
     try:
@@ -1000,6 +1001,7 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextI
                 dev=a.dev,
                 behind_proxy=a.behind_proxy,
                 hub_name=a.hub_name,
+                no_hub_name=a.no_hub_name,
             )
             return 0
         if a.cmd == "remove":

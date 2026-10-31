@@ -170,6 +170,28 @@ describe('the Company tab', () => {
     expect(within(sheet).queryByTestId('company-reading-open')).toBeNull() // nothing left to turn on
   })
 
+  it('a changed server says what changed and marks a new tool; one click turns it on again', async () => {
+    const shown: OrgShown = { kind: 'mcp', status: 'changed', notes: [], untrusted: true, needs_isolation: null,
+      changed: [{ field: 'url', word: 'address', was: 'https://old.example.com/mcp' }, { field: 'auth', word: 'sign-in', was: 'none' }],
+      item: { kind: 'mcp', name: 'crm', digest: 'sha256:' + 'c'.repeat(64), url: 'https://crm.example.com/mcp', auth: 'hub_secret', secret: 'crm-key', description: null,
+        tools: [{ name: 'find_customer', description: null, pin: 'p1', status: 'off', new: true }, { name: 'open_deals', description: null, pin: 'p2', status: 'off', new: false }] } }
+    vi.spyOn(api, 'getOrgItem').mockResolvedValue(shown)
+    page()
+    const sheet = await openRow('crm')
+    const changed = await within(sheet).findByTestId('company-changed', {}, T)
+    expect(within(changed).getByTestId('company-changed-url').textContent).toBe('Address (before: https://old.example.com/mcp)')
+    expect(within(changed).getByTestId('company-changed-auth').textContent).toBe('Sign-in (before: no sign-in)')
+    expect(within(sheet).getByTestId('company-tool-new-find_customer').textContent).toBe('New')
+    expect(within(sheet).queryByTestId('company-tool-new-open_deals')).toBeNull()
+  })
+
+  it('a skill whose text changed says so without showing the old text', async () => {
+    page()
+    const sheet = await openRow('support-tone')
+    const changed = await within(sheet).findByTestId('company-changed', {}, T)
+    expect(within(changed).getByTestId('company-changed-text').textContent).toBe('Text')
+  })
+
   it('a changed tool says so and stays off', async () => {
     const shown: OrgShown = { kind: 'mcp', status: 'on', notes: [], untrusted: true, needs_isolation: null,
       item: { kind: 'mcp', name: 'crm', digest: 'sha256:' + 'c'.repeat(64), url: 'https://crm.example.com/mcp', auth: 'none', secret: null, description: null,

@@ -468,6 +468,10 @@ class HumanOps:
             from . import publishing
 
             capture.publish = publishing.facts_for(service, inner, call)
+        if name == "app.release":  # #1457: the staged release's own words (the args name only the staged id)
+            from . import appops
+
+            capture.app = appops.facts_for(service, inner, call)
         if name in ("remote.set", "remote.device_confirm"):  # R2: the host's own facts, never the request's
             from . import remotefacts
 

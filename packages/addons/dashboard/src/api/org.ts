@@ -15,10 +15,14 @@ export interface OrgOffers { available: boolean; hub_id: string | null; skills: 
 /** One tool as the host pins it. `too_long`: too long to review, so no pin and no On switch. `input_schema` is pretty-printed JSON text. */
 export interface OrgTool { name: string; title?: string | null; description: string | null; input_schema?: string | null; pin: string; status: 'on' | 'off' | 'changed' | 'too_long'
   /** The label from the pinned view: true only when the server says it just reads. A label never turns anything on. */
-  reads?: boolean }
+  reads?: boolean
+  /** The server added this tool after its first listing: a badge only, it starts off like every tool. */
+  new?: boolean }
 
 /** Server-controlled text drawn as plain text: C0/C1 control characters (U+0000-U+001F except newline, U+007F-U+009F) and format, line and paragraph separators (bidi, zero-width) are removed first. */
 export const plain = (s: string | null | undefined): string => (s ?? '').replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]|\p{Cf}|\p{Zl}|\p{Zp}/gu, '')
+
+export interface OrgChange { field: 'url' | 'auth' | 'secret' | 'description' | 'text'; word: string; was: string | null }
 
 export interface OrgSkillItem { kind: 'skill'; name: string | null; digest: string | null; text: string | null; text_hidden: boolean }
 export interface OrgServerItem {
@@ -38,6 +42,8 @@ export interface OrgShown {
   notes: string[]
   untrusted: boolean
   needs_isolation: string | null
+  /** What differs from the version the owner turned on (empty when nothing changed). `was` is the accepted text; a skill's long text has none. */
+  changed?: OrgChange[]
 }
 
 /** One company secret this workspace was given. Never the value, never a length or a hash of it. `expires_ms` is null when unknown. */

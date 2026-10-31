@@ -11,5 +11,6 @@
   },
   "capabilities": [
     "network"
-  ]
+  ],
+  "agents_md": "Publish: share ticket files by link (orch publish prepare) or an app/page/form you built (orch app prepare REF FILE.. --name N --kind app --access company). A person signs and sends it."
 }

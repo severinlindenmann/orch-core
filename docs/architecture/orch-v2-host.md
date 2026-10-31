@@ -13428,6 +13428,17 @@ The add-on `publish` ships inside orch-core (capability `network`); `addon.grant
   what it is about to send and sends the commit only when a person's note with exactly these words exists, at most an
   hour old; a changed file, access, reach or version makes the old signature cover nothing else. orch-publish still
   checks the owner's approval of the request itself (`hub.publish_approval`, 11.3) on commit, rollback and start.
+* **Apps, pages and forms** (#1455, HUB-PU-05, with #1454: a "landing page" is a published item of kind `page`).
+  `orch.host.appops` serves `app.prepare {ref, name, kind, access, artifacts[], reach?, slug?, audience?, app_id?}`
+  (P and G; G only on its claimed ticket; copies the named artifacts aside by manifest and digest, builds the version
+  meta with the same rules as orch-publish's `meta_problem`; access is `public`, `company` or `group`, a password app
+  is not served yet), `app.list`, `app.discard` (P and G) and `app.send {staged_id}` (P only). `app.send` builds the
+  `app.release` words again from the stage and requires a person-signed note with exactly these words (at most an hour
+  old) before it uploads `PUT apps/<id>/versions/<n>` and every file (`WSK`-signed, through the hub). It does **not**
+  send `commit`: orch-publish needs the owner's `hub.publish_approval` (`dk_sig` over that request, 11.3) and the click
+  signer signs events, not that object, so a version stays "uploaded, not live" until that approval object is
+  produced (follow-up). CLI: `orch app prepare|release|send|list|discard` (an agent: prepare, list, discard only).
+  Artifact names are flat file names today: an app whose files live in subfolders is not supported yet.
 
 ## 13. Tier B: agents and add-ons as their own OS user (#1198 H1, #287)
 

@@ -376,3 +376,23 @@ def test_min_factor_is_required_everywhere_so_step_8_cannot_be_skipped_by_forget
         assert code(CASE["event"], min_factor=bad) == "factor_too_weak"
     assert code(CASE["event"], min_factor="passkey") == "factor_too_weak"  # the vector event is se-unlocked
     assert verify(CASE["event"], min_factor="se-unlocked")["factor"] == "se-unlocked"
+
+
+_GATE_FIELDS = ("gate", "hash", "gate_gen", "policy_hash")
+
+
+def _note(text: str) -> dict[str, Any]:
+    return mint({"type": "log.added", "text": text}, drop=_GATE_FIELDS)
+
+
+def test_an_ordinary_custodial_note_is_accepted_but_a_reserved_approval_line_is_refused_end_to_end():
+    """#1781 Opus delta, end to end through ``verify_custodial``: a correctly signed hub note whose text starts with the
+    first line of a share approval or an app approval is refused (``malformed``); the same event with ordinary text is
+    verified, so only the reserved line is the difference."""
+    from orch.publishclient.approval import APP_MARK, MARK
+
+    assert verify(_note("an ordinary note"))["user_id"]
+    for line in (MARK, APP_MARK):
+        assert code(_note(line + "\nTicket: ORCH-0001")) == "malformed"
+        assert code(_note(line)) == "malformed"
+    verify(_note("see: " + APP_MARK))  # not the first line: only text

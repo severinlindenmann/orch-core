@@ -5,7 +5,7 @@ import { InfoDrawer } from '@/components/InfoDrawer'
 import type { Workspace } from '@/api/types'
 import { hubQueries, hubServed, type HubStatus } from '@/api/hub'
 import { Raw } from '@/components/sign/visible'
-import { Action, Details, Panel, useFullAllowed, useHub, violet } from './shared'
+import { Action, Details, Panel, hubTitle, useFullAllowed, useHub, violet } from './shared'
 import { JoinFlow, connectFromHash } from './JoinFlow'
 import { FullSwitch } from './FullSwitch'
 import { LeaveFlow } from './LeaveFlow'
@@ -21,7 +21,7 @@ function OpenHub({ ws }: { ws: string }) {
   const open = useOpenHub(ws)
   if (rail.data && !rail.data.hub) return null // the rail says there is no hub: nothing to open
   const name = rail.data?.hub?.name
-  return <Panel title={name ? `${name} hub` : 'Hub'}><p>See your company's workspaces and what needs you.</p><Action id="hub-open" variant="default" onClick={() => open('/')}>Open hub</Action></Panel>
+  return <Panel title={hubTitle(name)}><p>See your company's workspaces and what needs you.</p><Action id="hub-open" variant="default" onClick={() => open('/')}>Open hub</Action></Panel>
 }
 
 export function HubTab({ workspace }: { workspace: Workspace }) {

@@ -56,6 +56,8 @@ export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits
   // Only an agent that still runs and names a ticket needs the ticket's status (shared rule: agentFinished).
   const tickets = useQuery({ ...queries.ticketsAll(ws ?? ''), enabled: !!ws && runs.some((r) => r.kind === 'agent' && r.state === 'running' && !!r.ticket) })
   const statusOf = new Map((tickets.data ?? []).map((t) => [t.key, t.status]))
+  // The ticket is done but the session is left over: the same stop call, worded Close, with a grey dot (the person ends it).
+  const finishedOf = (r: Run) => agentFinished(r, r.ticket ? statusOf.get(r.ticket) : null)
   // Ended terminals can be cleared from the dock (this browser only; the run itself stays in the host's list).
   const [dismissed, setDismissed] = useState<ReadonlySet<string>>(new Set())
   const ended = (r: Run) => r.state !== 'running' && r.state !== 'starting'
@@ -108,7 +110,7 @@ export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits
         <AddonBadge name={DOCK_ADDON} title="Terminals" />
         <SquareTerminal aria-hidden="true" className="size-3.5 shrink-0 text-text-muted" />
         <h2 className="shrink-0 text-xs font-semibold">Terminal</h2>
-        {!right && <RunTabs runs={shown} current={current?.run ?? null} onSelect={setSelected} doubt={doubt} onDismiss={(id) => dismiss([id])} />}
+        {!right && <RunTabs finished={finishedOf} runs={shown} current={current?.run ?? null} onSelect={setSelected} doubt={doubt} onDismiss={(id) => dismiss([id])} />}
         {right && <span className="flex-1" />}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -124,7 +126,7 @@ export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits
           </DropdownMenuContent>
         </DropdownMenu>
         {current && current.state === 'running' && (
-          <Button variant="ghost" size={right ? 'icon-xs' : 'xs'} aria-label={`Stop ${runName(current)}`} onClick={() => void stop(current)}><Square />{!right && 'Stop'}</Button>
+          <Button variant="ghost" size={right ? 'icon-xs' : 'xs'} aria-label={`${finishedOf(current) ? 'Close' : 'Stop'} ${runName(current)}`} onClick={() => void stop(current)}><Square />{!right && (finishedOf(current) ? 'Close' : 'Stop')}</Button>
         )}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -147,7 +149,7 @@ export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits
       </header>
       {right && (
         <div className="flex h-8 shrink-0 items-center border-b border-border bg-surface-2 px-2">
-          <RunTabs runs={shown} current={current?.run ?? null} onSelect={setSelected} doubt={doubt} onDismiss={(id) => dismiss([id])} />
+          <RunTabs finished={finishedOf} runs={shown} current={current?.run ?? null} onSelect={setSelected} doubt={doubt} onDismiss={(id) => dismiss([id])} />
         </div>
       )}
       {error && <p role="alert" className="shrink-0 border-b border-danger/40 bg-danger-soft px-3 py-1 text-xs text-danger">{error}</p>}
@@ -169,7 +171,7 @@ export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits
               <p>{runName(current) === current.label ? <Inline>{current.label}</Inline> : runName(current)} ended{current.exit?.code != null ? ` with code ${current.exit.code}` : ''}. Its output is no longer kept.</p>
             </div>
           ) : ws ? <div className="flex h-full min-h-0 flex-col">
-            {current.kind === 'agent' && <p data-testid="dock-summary" className="shrink-0 border-b border-border bg-surface px-3 py-1 text-xs text-text-muted">{agentSummary(current, agentFinished(current, current.ticket ? statusOf.get(current.ticket) : null))}</p>}
+            {current.kind === 'agent' && <p data-testid="dock-summary" className="shrink-0 border-b border-border bg-surface px-3 py-1 text-xs text-text-muted">{agentSummary(current, finishedOf(current))}</p>}
             <div className="min-h-0 flex-1"><RealTerminal key={current.run} ws={ws} run={current} initial={opened === current.run ? 'write' : 'read'} /></div>
           </div> : null}
       </div>
@@ -179,7 +181,7 @@ export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits
   )
 }
 
-function RunTabs({ runs, current, onSelect, doubt, onDismiss }: { runs: Run[]; current: string | null; onSelect: (id: string) => void; doubt: Record<string, boolean>; onDismiss: (id: string) => void }) {
+function RunTabs({ finished, runs, current, onSelect, doubt, onDismiss }: { runs: Run[]; current: string | null; onSelect: (id: string) => void; doubt: Record<string, boolean>; onDismiss: (id: string) => void; finished: (r: Run) => boolean }) {
   if (runs.length === 0) return <span className="min-w-0 flex-1 truncate text-xs text-text-faint">No terminal open</span>
   return (
     <div role="tablist" aria-label="Terminals" className="relative flex min-w-0 flex-1 items-center gap-1 overflow-x-auto" data-scroll-x>
@@ -187,10 +189,10 @@ function RunTabs({ runs, current, onSelect, doubt, onDismiss }: { runs: Run[]; c
         <span key={r.run} className="flex shrink-0 items-center">
         <button type="button" role="tab" aria-selected={r.run === current} onClick={() => onSelect(r.run)}
           className={cn('flex h-6 max-w-[180px] shrink-0 items-center gap-1 rounded px-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-brand', r.run === current ? 'bg-surface-3 text-text' : 'text-text-muted hover:bg-surface-3')}>
-          <span aria-hidden="true" className={cn('size-1.5 shrink-0 rounded-full', r.state === 'running' ? 'bg-success' : 'bg-text-faint')} />
+          <span aria-hidden="true" className={cn('size-1.5 shrink-0 rounded-full', r.state === 'running' && !finished(r) ? 'bg-success' : 'bg-text-faint')} />
           <span className="tabular-nums text-text-faint">{i + 1}</span>
           <span className="min-w-0 truncate [&>bdi]:whitespace-nowrap" title={r.label || runName(r)}>{r.label ? <Inline>{r.label}</Inline> : runName(r)}</span>
-          <span className="sr-only">{r.state === 'running' ? 'Running' : 'Ended'}{doubt[r.run] ? ', some processes may still be running' : ''}</span>
+          <span className="sr-only">{finished(r) ? 'Finished' : r.state === 'running' ? 'Running' : 'Ended'}{doubt[r.run] ? ', some processes may still be running' : ''}</span>
         </button>
         {r.state !== 'running' && r.state !== 'starting' && <button type="button" aria-label={`Clear ${runName(r)}`} title="Clear this ended terminal" onClick={() => onDismiss(r.run)} className="ml-0.5 flex size-5 shrink-0 items-center justify-center rounded text-text-faint hover:bg-surface-3 hover:text-text"><X className="size-3" aria-hidden /></button>}
         </span>

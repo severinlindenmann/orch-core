@@ -1234,3 +1234,75 @@ def test_every_printed_import_line_has_exactly_one_wildcard_and_names_its_user()
             timeout=60,
         )
         assert r.returncode == 0, r.stderr
+
+
+# ----------------------------------------------------------------------------- #1796: behind the proxy, ops, rerun
+
+
+def test_behind_proxy_binds_the_vpn_ip_only_writes_no_snippet_and_trusts_the_vpn_network(tmp_path):
+    ctx, out, err, calls = stub_ctx(tmp_path, SystemdFake())
+    plan = server_setup(
+        ctx,
+        "edge",
+        names=server.derive_names(None, relay="core.relay.example.com", publish="publish.example.com"),
+        behind_proxy=True,
+        local=local,
+        user="orch-edge",
+        caddy_dir=str(tmp_path / "caddy"),
+    )
+    relay_argv, relay_env = ctx.runner.started["relay"]
+    assert relay_argv[relay_argv.index("--host") + 1] == VPN
+    assert relay_env["ORCH_RELAY_TRUSTED_PROXY"] == "100.64.0.0/16"
+    pub_argv, pub_env = ctx.runner.started["publish"]
+    assert pub_argv[pub_argv.index("--listen") + 1] == f"{VPN}:8102"
+    assert pub_argv[pub_argv.index("--public-origin") + 1] == "https://publish.example.com"
+    assert pub_env["ORCH_PUBLISH_TRUSTED_PROXY"] == "100.64.0.0/16"
+    assert plan.snippets == {} and not (tmp_path / "caddy").exists()
+    assert not any(c[:1] == ["systemctl"] and "caddy" in c for c in calls)
+    assert load(ctx.layout)["server"]["behind_proxy"] is True
+    # no listener on loopback or on every interface
+    for argv in (relay_argv, pub_argv):
+        assert "0.0.0.0" not in " ".join(argv) and "127.0.0.1" not in " ".join(argv)
+
+
+def test_behind_proxy_needs_a_vpn_address_the_edge_role_and_no_address(tmp_path):
+    ctx, *_ = stub_ctx(tmp_path)
+    with pytest.raises(InstallError, match="no private-network"):
+        server_setup(ctx, "edge", names=server.Names(), behind_proxy=True, local=lambda: [server.Addr(VPS)])
+    with pytest.raises(InstallError, match="role edge"):
+        server_setup(ctx, "hub", names=server.Names(), behind_proxy=True, local=local)
+    with pytest.raises(InstallError, match="address only"):
+        server_setup(ctx, "edge", names=server.Names(), behind_proxy=True, address="1.2.3.4", local=local)
+
+
+def test_the_proxy_networks_include_the_interfaces_ipv6_subnet():
+    text = (
+        IP_ADDR + "3: wt0    inet6 fd0f:80b5:c7cd:bbad::7/64 scope global wt0\n4: wt0    inet6 fe80::1/64 scope link\n"
+    )
+    addrs = server.local_interfaces(lambda argv: text if argv[0] == "ip" else "")
+    chosen = server.detect_vpn_ip(addrs)
+    assert server.proxy_networks(chosen, None, addrs) == ["100.64.0.0/16", "fd0f:80b5:c7cd:bbad::/64"]
+
+
+def test_the_ops_timers_are_installed_in_the_no_domain_fallback_and_the_proxy_mode(tmp_path):
+    for tag, kw in (("f", {"address": "127.0.0.1"}), ("p", {"behind_proxy": True})):
+        ctx, out, err, calls = stub_ctx(tmp_path / tag, SystemdFake())
+        server_setup(ctx, "edge", names=server.Names(), local=local, user="orch-edge", **kw)
+        assert ["systemctl", "--user", "enable", "--now", "orch-health.timer"] in calls, tag
+    ctx, out, err, calls = stub_ctx(tmp_path / "hub", SystemdFake())
+    server_setup(ctx, "hub", names=server.Names(), local=local, user="orch-hub")
+    assert ["systemctl", "--user", "enable", "--now", "orch-health.timer"] in calls
+    assert ["systemctl", "--user", "enable", "--now", "orch-hub-backup.timer"] in calls
+    cfg = json.loads((ctx.layout.root / "ops" / "health.json").read_text())
+    assert cfg["parts"][0]["url"].startswith(f"http://{VPN}:")  # the part answers on the address it listens on
+
+
+def test_a_rerun_keeps_the_port_of_the_part_this_user_already_runs(tmp_path):
+    ctx, out, err, calls = stub_ctx(tmp_path, SystemdFake())
+    ctx.runner.started["hub"] = (["orch-hub"], {})  # an earlier run died after starting the hub, before recording it
+    held = {8100}
+    ctx.port_free = lambda p, h: p not in held or ("hub" not in ctx.runner.started)
+    server_setup(ctx, "hub", names=server.Names(), local=local, user="orch-hub")
+    assert load(ctx.layout)["parts"]["hub"]["port"] == 8100  # not 8103
+    held.add(8101)  # a port held by something else is still refused or skipped, never taken over
+    assert ctx.port_free(8101, "x") is False

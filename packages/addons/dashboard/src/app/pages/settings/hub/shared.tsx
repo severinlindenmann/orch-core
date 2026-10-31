@@ -7,6 +7,12 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 
+/** One name for the hub everywhere: "Acme hub" for Acme, but never "Hub hub" (a name that already says hub is used as is). */
+export function hubTitle(name?: string): string {
+  const n = (name ?? '').trim()
+  if (!n) return 'Hub'
+  return /\bhub\b/i.test(n) ? n : `${n} hub`
+}
 export const violet = 'border-chart-4/40 bg-chart-4/10 text-chart-4'
 export const caveat = 'What the hub has already read cannot be taken back.'
 /** The one-ticket dialog's caveat, naming the reader (P09): "What Ben Test has already seen cannot be taken back." */

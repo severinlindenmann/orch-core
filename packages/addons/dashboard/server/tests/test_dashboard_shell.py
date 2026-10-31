@@ -59,6 +59,8 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/hub/share",
         "/api/w/{ws}/hub/share/audience",
         "/api/w/{ws}/hub/shared",
+        "/api/w/{ws}/spaces",
+        "/api/w/{ws}/spaces/{sid}",
         "/api/w/{ws}/hub/share/preview",
         "/api/w/{ws}/hub/share/revoke",  # one click: stop sharing a ticket (owner, full session)
         "/api/w/{ws}/hub/share/rule-remove",  # one click: stop sharing by a rule (owner, full session)

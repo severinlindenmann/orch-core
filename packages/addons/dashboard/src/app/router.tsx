@@ -31,6 +31,7 @@ const ChecklistPage = lazyPage(() => import('./checklist/ChecklistPage'), 'Check
 const FeedbackPage = lazyPage(() => import('./feedback/FeedbackPage'), 'FeedbackPage')
 const GuidePage = lazyPage(() => import('./pages/guide'), 'GuidePage')
 const MarketPage = lazyPage(() => import('./pages/market'), 'MarketPage')
+const SpacesPage = lazyPage(() => import('./pages/spaces'), 'SpacesPage')
 const SharesPage = lazyPage(() => import('./pages/shares'), 'SharesPage')
 const WorktreesPage = lazyPage(() => import('./pages/worktrees'), 'WorktreesPage')
 const ExplorerPage = lazyPage(() => import('./pages/explorer'), 'ExplorerPage')
@@ -224,6 +225,16 @@ const sharesRoute = createRoute({
   loader: pageLoader(() => [], [SharesPage.preload]),
   component: SharesPage,
 })
+/** Shared spaces of the hub this workspace is in (run-15c P03): read-only; the sidebar lists it only when there is one. */
+const spacesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'spaces',
+  beforeLoad: () => {
+    if (!isRealHost()) throw redirect({ to: '/' })
+  },
+  loader: pageLoader(() => [], [SpacesPage.preload]),
+  component: SpacesPage,
+})
 /** Activity of a real host (#595): the mock keeps its own addon page; a real host that serves `activity/1` gets this route. */
 const activityRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -369,7 +380,7 @@ const addonRoute = createRoute({
   },
 })
 
-const routeTree = rootRoute.addChildren([todayRoute, boardRoute, ticketsRoute, newTicketRoute, ticketRoute, artifactsRoute, agentsRoute, quickRoute, dropRoute, checklistRoute, feedbackRoute, worktreesRoute, terminalsRoute, explorerRoute, marketRoute, sharesRoute, activityRoute, usageRoute, schedulesRoute, wikiRedirectRoute, focusRoute, focusTicketRoute, guideRoute, layoutPreviewRoute, settingsRoute, settingsTabRoute, settingsAddonRoute, settingsAddonsAliasRoute, addonRoute])
+const routeTree = rootRoute.addChildren([todayRoute, boardRoute, ticketsRoute, newTicketRoute, ticketRoute, artifactsRoute, agentsRoute, quickRoute, dropRoute, checklistRoute, feedbackRoute, worktreesRoute, terminalsRoute, explorerRoute, marketRoute, sharesRoute, spacesRoute, activityRoute, usageRoute, schedulesRoute, wikiRedirectRoute, focusRoute, focusTicketRoute, guideRoute, layoutPreviewRoute, settingsRoute, settingsTabRoute, settingsAddonRoute, settingsAddonsAliasRoute, addonRoute])
 
 /**
  * The app's router. Without `initialPath` it owns the address bar (browser history); tests pass an in-app or

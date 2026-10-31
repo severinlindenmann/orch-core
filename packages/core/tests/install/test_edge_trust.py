@@ -263,12 +263,76 @@ def test_first_explicit_trust_reports_replaced_same_user_pin(tmp_path):
     assert f"Publish no longer trusts hub {old}; it now trusts {HUB_ID}\n" in out.getvalue()
 
 
-def test_hub_hint_validates_card_id_before_printing(tmp_path, monkeypatch):
+def test_hub_hint_skips_a_bad_card_id(tmp_path, monkeypatch):
     ctx, out, _, _ = stub_ctx(tmp_path)
     server_setup(ctx, "hub", names=server.Names(), local=local)
     monkeypatch.setattr(trust, "_card_hub_id", lambda _: "bad\nid")
     out.seek(0)
     out.truncate()
-    with pytest.raises(InstallError, match="exactly 32 lowercase hex"):
-        trust.hub_hint(ctx)
+    trust.hub_hint(ctx)
     assert out.getvalue() == ""
+
+
+def _failing_update(tmp_path, monkeypatch, admin_out, *, fail_on="admin"):
+    import io
+
+    from orch.lifecycle.units import Env
+    from orch.update.services import LifecycleServices
+
+    ctx, out, _, calls = stub_ctx(tmp_path)
+    edge(ctx, trust_hub=HUB_ID, address="192.168.1.20")
+    monkeypatch.setattr(cli, "default_ctx", lambda *args: ctx)
+    services = LifecycleServices(Env(env=ctx.env, out=out, err=io.StringIO()))
+    monkeypatch.setattr(services, "_svcs", lambda: [])
+    original = ctx.run
+
+    def fail(argv, env=None):
+        if fail_on in argv:
+            calls.append(argv)
+            return 1, admin_out
+        return original(argv, env)
+
+    ctx.run = fail
+    out.seek(0)
+    out.truncate()
+    return ctx, out, services
+
+
+def test_update_with_a_bad_hub_id_in_state_fails_without_printing_it(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from orch.ops.errors import OrchError
+
+    ctx, out, services = _failing_update(tmp_path, monkeypatch, "x")
+    st = load(ctx.layout)
+    st["edge_trust"]["hub_id"] = "bad\x1b[2Jid"
+    save(ctx.layout, st)
+    with pytest.raises(OrchError):
+        services.start(Path("/fake/orch"), [], quarantine=False)
+    assert out.getvalue() == ""
+
+
+def test_update_warning_strips_control_characters(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    _, out, services = _failing_update(tmp_path, monkeypatch, "db\x1b[2J gone")
+    services.start(Path("/fake/orch"), [], quarantine=False)
+    assert "\x1b" not in out.getvalue()
+    assert f"hub {HUB_ID}: db [2J gone. Run" in out.getvalue()
+
+
+def test_failed_trust_after_untrust_clears_the_old_pin(tmp_path):
+    ctx, _, _, calls = stub_ctx(tmp_path)
+    edge(ctx, trust_hub=HUB_ID, address="192.168.1.20")
+    original = ctx.run
+
+    def fail(argv, env=None):
+        if "admin" in argv and "trust" in argv:
+            calls.append(argv)
+            return 1, "refused"
+        return original(argv, env)
+
+    ctx.run = fail
+    with pytest.raises(InstallError):
+        edge(ctx, trust_hub="b" * 32)
+    assert load(ctx.layout)["parts"]["publish"]["pinned_hub_id"] is None

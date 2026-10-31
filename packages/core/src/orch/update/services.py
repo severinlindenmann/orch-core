@@ -161,7 +161,7 @@ class LifecycleServices:
                     raise OrchError("host.unavailable", str(exc)) from None
 
         if not quarantine:  # also reapply trust for an installed Publish that was stopped before the update
-            from orch.install.cli import default_ctx
+            from orch.install.cli import _HUB_ID, default_ctx
             from orch.install.parts import InstallError
             from orch.install.state import load
             from orch.install.trust import apply
@@ -170,14 +170,18 @@ class LifecycleServices:
             try:
                 apply(ctx, self.e.env, fetch_fingerprint=False)
             except (InstallError, OSError) as exc:
-                st = load(ctx.layout)
-                wanted = st.get("edge_trust")
-                if wanted:
-                    hub_id = wanted["hub_id"]
-                    reason = " ".join(str(exc).split())[:200].rstrip(".")
-                    ctx.say(f"Publish could not confirm its trust in hub {hub_id}: {reason}. Run the edge setup again.")
-                    if st["parts"].get("publish", {}).get("pinned_hub_id") != hub_id:
-                        raise OrchError("host.unavailable", str(exc)) from None
+                try:
+                    st = load(ctx.layout)
+                except (InstallError, OSError, ValueError):
+                    raise OrchError("host.unavailable", str(exc)) from None
+                hub_id = (st.get("edge_trust") or {}).get("hub_id")
+                if not isinstance(hub_id, str) or not _HUB_ID.fullmatch(hub_id):
+                    raise OrchError("host.unavailable", str(exc)) from None
+                reason = "".join(c if c.isprintable() else " " for c in str(exc))
+                reason = " ".join(reason.split())[:200].rstrip(".")
+                ctx.say(f"Publish could not confirm its trust in hub {hub_id}: {reason}. Run the edge setup again.")
+                if (st["parts"].get("publish") or {}).get("pinned_hub_id") != hub_id:
+                    raise OrchError("host.unavailable", str(exc)) from None
 
     def _host_health(self) -> list[str]:
         """``host.health``: the host opens every workspace root with the real rule (a read: works in quarantine)."""

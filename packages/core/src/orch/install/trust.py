@@ -27,7 +27,7 @@ def fingerprint(origin: str | None, hub_id: str) -> str | None:
         card = fetch_card(Link(origin, hub_id, "", None))
         if _card_hub_id(json.dumps(card)) != hub_id:
             return None
-        # _card_hub_id binds the id to hk_root_pub, so the right id cannot have a different fingerprint.
+        # _card_hub_id accepts the id only when it equals wire.hub_id(hk_root_pub), so the fingerprint is bound to it.
         # Same hub-key fingerprint as the core signing review (host.signcontent._fp).
         return hashlib.sha256(card["o"]["hk_root_pub"].encode("utf-8")).hexdigest()[:12]
     except (HubRefused, OSError, ValueError, TypeError, KeyError):
@@ -46,6 +46,8 @@ def apply(ctx: Ctx, env: Mapping[str, str], *, fetch_fingerprint: bool = True) -
     old = pub.get("pinned_hub_id")
     if old and old != hub_id:
         _admin_hub(ctx, pub, ctx.layout.data("publish"), "untrust", check_hub_id(old), env)
+        pub["pinned_hub_id"] = None  # the old trust is gone even if the new one fails below
+        save(ctx.layout, st)
     _admin_hub(ctx, pub, ctx.layout.data("publish"), "trust", hub_id, env)
     pub["pinned_hub_id"] = hub_id
     save(ctx.layout, st)
@@ -61,8 +63,7 @@ def hub_hint(ctx: Ctx) -> None:
         return
     rc, out = ctx.run_stdout([hub["binary"], "keys", "--state", str(ctx.layout.data("hub")), "card"], ctx.env)
     hub_id = _card_hub_id(out) if rc == 0 else None
-    if hub_id:
-        hub_id = check_hub_id(hub_id)
+    if hub_id and _HUB_ID.fullmatch(hub_id):  # a hint only: a bad card skips it, never fails the setup
         # Publish exposes no read endpoint listing trusted hubs; its local admin list needs the other user's data.
         ctx.say(
             "On the computer user that runs Publish, run: "

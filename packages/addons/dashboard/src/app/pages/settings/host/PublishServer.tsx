@@ -186,7 +186,7 @@ export function publishValidation(server: string, share: string) {
 }
 
 /** One address by default (files and links both use it). `share` follows `server` until the person opens "Links open at a different address". */
-export function PublishForm({ server, share, setServer, setShare, suggested }: { server: string; share: string; setServer: (value: string) => void; setShare: (value: string) => void; suggested?: string | null }) {
+export function PublishForm({ server, share, setServer, setShare, suggested, suggestedFrom, hubName }: { server: string; share: string; setServer: (value: string) => void; setShare: (value: string) => void; suggested?: string | null; suggestedFrom?: 'computer' | 'hub' | null; hubName?: string | null }) {
   const { problem } = publishValidation(server, share)
   const [separate, setSeparate] = useState(share !== '' && share !== server)
   const [changing, setChanging] = useState(false)
@@ -194,9 +194,15 @@ export function PublishForm({ server, share, setServer, setShare, suggested }: {
   if (suggested && !changing && server === suggested && share === suggested)
     return (
       <div className="space-y-1.5 text-[13px]" data-testid="publish-suggested">
-        <p>
-          Files and links use the Publish server on this computer: <Inline>{suggested}</Inline>
-        </p>
+        {suggestedFrom === 'hub' ? (
+          <p>
+            Files and links go through your hub{hubName ? <>: <Inline>{hubName}</Inline></> : ''}.
+          </p>
+        ) : (
+          <p>
+            Files and links use the Publish server on this computer: <Inline>{suggested}</Inline>
+          </p>
+        )}
         <button type="button" className="text-[12px] text-accent hover:underline" onClick={() => setChanging(true)}>
           Change
         </button>

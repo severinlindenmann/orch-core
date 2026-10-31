@@ -145,9 +145,9 @@ const addonSentence = (id: string, fallback: string): string => ({
   worktrees: 'Agents get their own copy of each ticket’s files.',
   quick: 'You can run quick tasks.',
 }[id] ?? fallback)
-/** The short card of a review (plain words only): from the review's items and flags, checked against the chosen profile. What this
+/** The short card of a review (plain words only): from the review's own items and flags, never the chosen profile. What this
  * mapping cannot describe is added as extra lines by the caller (`summarize().odd`); everything stays in the fold. */
-export function reviewFacts(review: Review, host?: string, newWorkspace = false, profile?: Pick<Profile, 'agent_hours' | 'agent_grant'>): Fact[] {
+export function reviewFacts(review: Review, host?: string, newWorkspace = false): Fact[] {
   const facts: Fact[] = []
   const ws = review.workspace
   // P43: the computer is named (over ssh "this computer" is not the one in front of the person)
@@ -163,17 +163,14 @@ export function reviewFacts(review: Review, host?: string, newWorkspace = false,
   const settings = review.items.filter((item) => item.type === 'settings.changed')
     .map((item) => item.fields?.set as Record<string, unknown> | undefined)
   const hours = settings.find((set) => typeof set?.grant_hours === 'number')?.grant_hours
-  // The default eight hours grants nothing; a duration setting does not issue a runner grant.
-  let agents = "Agents' access stays as it is."
-  if (grant && typeof grant.hours === 'number' && (!profile || (profile.agent_grant && profile.agent_hours === grant.hours))) {
+  // Only an applied runner grant permits agents to start; a duration setting alone does not.
+  let agents = newWorkspace ? 'Agents may not work on their own.' : "Agents' access stays as it is."
+  if (grant && typeof grant.hours === 'number') {
     agents = grant.scope === 'workable' && grant.verbs === 'agent'
-      ? `Agents may work on their own for ${duration(grant.hours)}.`
+      ? `Agents may work on their own on ${host || 'this computer'} for ${duration(grant.hours)}.`
       : `agent access for ${duration(grant.hours)} (scope ${String(grant.scope)}, verbs ${String(grant.verbs)})`
-  } else if (newWorkspace && profile?.agent_grant === false && profile.agent_hours === 8 && !grant && (hours === undefined || hours === 8)) {
-    agents = 'Agents may not work on their own.'
-  }
-  if (typeof hours === 'number' && hours !== grant?.hours) {
-    facts.push({ label: 'Access duration', value: `Agent access duration is set to ${duration(hours)}.` })
+  } else if (typeof hours === 'number') {
+    agents = `Agent access time is set to ${duration(hours)}. This alone lets no agent start.`
   }
   for (const item of review.items.filter((i) => i.type === 'addon.granted' && i.id !== 'addon:dashboard')) {
     facts.push({ label: item.title, value: addonSentence(item.id.replace(/^addon:/, ''), item.title) })
@@ -1304,7 +1301,7 @@ export function Setup({ api }: { api: SetupAPI }) {
           {step === 5 && review && (
             <>
               <dl className="current review-facts review-summary">
-                {reviewFacts(review, host, state.mode !== 'finish', profile).map((f, i) => (
+                {reviewFacts(review, host, state.mode !== 'finish').map((f, i) => (
                   <Fragment key={i}>
                     <dt>{f.label}</dt>
                     <dd><Inline>{f.value}</Inline></dd>

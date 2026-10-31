@@ -355,7 +355,7 @@ test('long runner access is one plain click after the review; digest and fingerp
   await screen.findByRole('heading', { name: 'Your recovery words' })
   await check()
   await screen.findByRole('heading', { name: 'Review your setup' })
-  expect(document.querySelector('.review-summary')).toHaveTextContent('Agents may work on their own for 3 days.')
+  expect(document.querySelector('.review-summary')).toHaveTextContent('Agents may work on their own on this computer for 3 days.')
   expect(screen.queryByText(/scope workable/)).toBeNull() // the raw values are only in the technical details
   expect(screen.getByText(/Return to the terminal window where you started orch setup/)).toBeInTheDocument()
   expect(screen.getByText(/Check the terminal shows/)).toHaveTextContent('demo not real. If it does, press Enter there.')
@@ -857,8 +857,8 @@ test('when the terminal setup ends the page notices within 2 seconds, clears the
   expect(screen.getByRole('alert')).toHaveTextContent('The setup in your terminal has ended')
 })
 
-function withReview(patch: Partial<Review>) {
-  const f = fake()
+function withReview(patch: Partial<Review>, options: Parameters<typeof fake>[0] = {}) {
+  const f = fake(options)
   const fetcher: typeof fetch = async (url, init) => {
     const res = await f.fetcher(url, init)
     if (String(url).endsWith('/review')) return new Response(JSON.stringify({ ...(await res.json()), ...patch }))
@@ -878,9 +878,9 @@ test('the summary comes from the review core returned, not from the choices on t
   await check()
   await screen.findByRole('heading', { name: 'Review your setup' })
   const summary = document.querySelector('.review-summary')!
-  expect(summary).toHaveTextContent("Agents' access stays as it is.")
   expect(summary).not.toHaveTextContent('3 days')
-  expect(summary).toHaveTextContent('Agent access duration is set to 1 day.')
+  expect(summary).toHaveTextContent('Agent access time is set to 1 day. This alone lets no agent start.')
+  expect(summary).not.toHaveTextContent('Agent access duration is set to')
   expect(summary).toHaveTextContent('You approve in a terminal, with your password.')
 })
 
@@ -902,7 +902,7 @@ test('P06: the git flag is no row on the short card (no Also row either); its si
   expect(fold).toHaveTextContent('git init')
 })
 
-test('P69: enabled access without a grant stays neutral without inventing a duration or approval method', async () => {
+test('P69: a new workspace without access items says agents may not work on their own', async () => {
   const { api } = withReview({ items: [], flags: [] })
   render(<Setup api={api} />)
   await approval()
@@ -913,7 +913,7 @@ test('P69: enabled access without a grant stays neutral without inventing a dura
   await screen.findByRole('heading', { name: 'Review your setup' })
   const summary = document.querySelector('.review-summary')!
   expect(summary).not.toHaveTextContent(/7 days|terminal|one click/)
-  expect(summary).toHaveTextContent("Agents' access stays as it is.")
+  expect(summary).toHaveTextContent('Agents may not work on their own.')
 })
 
 test('a review item of a kind this page does not know is named in the summary and the details stay closed', async () => {
@@ -991,21 +991,21 @@ test('an unrecognised flag is shown in the summary and the details stay closed',
   expect(screen.getByText('Details').closest('details')).not.toHaveAttribute('open')
 })
 
-test('the runner line comes from the signed grant item, not from review.runner_grant', async () => {
+test('the runner line follows the applied item even when the profile disables grants and has different hours', async () => {
   const grant = { id: 'runner_grant', title: 'Agent access held by this machine', lines: ['Give agents access'], details: [], volatile: [], type: 'grant.issued', placeholders: [], placeholder_details: [] }
-  const { api } = withReview({
+  const { api, f } = withReview({
     items: [{ ...grant, fields: { type: 'grant.issued', hours: 24, scope: 'workable', verbs: 'agent' } }],
     runner_grant: { hours: 168, scope: 'everything', holder: 'x' },
   })
   render(<Setup api={api} />)
   await approval()
-  chooseAgentDuration('1 day')
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Your recovery words' })
   await check()
   await screen.findByRole('heading', { name: 'Review your setup' })
+  expect(f.calls.find((c) => c.path === 'profile')?.body).toMatchObject({ agent_grant: false, agent_hours: 8 })
   const summary = document.querySelector('.review-summary')!
-  expect(summary).toHaveTextContent('Agents may work on their own for 1 day.')
+  expect(summary).toHaveTextContent('Agents may work on their own on this computer for 1 day.')
   expect(summary).not.toHaveTextContent(/7 days|everything/)
 })
 
@@ -1364,7 +1364,7 @@ test('reviewFacts builds the short card in plain words from the review', () => {
   const facts = reviewFacts(review)
   expect(facts.map((f) => f.label)).toEqual(['Workspace', 'Agents', 'How you approve'])
   expect(facts.find((f) => f.label === 'Workspace')!.value).toBe('Marketing') // r11-P15: no ticket prefix on the card
-  expect(facts.find((f) => f.label === 'Agents')!.value).toBe('Agents may work on their own for 3 days.')
+  expect(facts.find((f) => f.label === 'Agents')!.value).toBe('Agents may work on their own on this computer for 3 days.')
   expect(facts.find((f) => f.label === 'Add-ons')).toBeUndefined()
   // P06: owner, folder, own copy and history are Details, not decisions
   for (const gone of ['Owner', 'Your project', 'Own copy per ticket', 'History']) expect(facts.find((f) => f.label === gone)).toBeUndefined()
@@ -1943,7 +1943,7 @@ test('P69: Review repeats capability sentences without symbols or chips and dist
   expect(summary.querySelector('.chip')).toBeNull()
   for (const hours of [8, 24, 72, 168]) {
     const facts = reviewFacts({ ...review, items: [{ ...addon, id: 'runner_grant', type: 'grant.issued', fields: { hours, scope: 'workable', verbs: 'agent' } }] })
-    expect(facts.find((f) => f.label === 'Agents')!.value).toBe(`Agents may work on their own for ${hours === 8 ? '8 hours' : `${hours / 24} ${hours === 24 ? 'day' : 'days'}`}.`)
+    expect(facts.find((f) => f.label === 'Agents')!.value).toBe(`Agents may work on their own on this computer for ${hours === 8 ? '8 hours' : `${hours / 24} ${hours === 24 ? 'day' : 'days'}`}.`)
   }
   expect(reviewFacts({ ...review, items: [{ ...addon, id: 'addon:terminals', title: 'Command window' }] }).find((f) => f.label === 'Command window')!.value).toBe('You can use the Command window, an optional advanced tool.')
 })
@@ -1980,18 +1980,28 @@ test.each([undefined, 'build-server'])('access switch explains the runner grant 
   expect(screen.getByText('Allowing agents to work does not start a task.')).toBeVisible()
 })
 
-test('review access matches the profile and applied items, including defaults and existing access', () => {
-  const grant = { ...review.items[0], id: 'runner_grant', type: 'grant.issued', fields: { hours: 72, scope: 'workable', verbs: 'agent' } }
-  const access = (items: Review['items'], agent_grant: boolean, agent_hours: number, isNew = true) =>
-    reviewFacts({ ...review, items }, undefined, isNew, { agent_grant, agent_hours }).find((f) => f.label === 'Agents')!.value
-  expect(access([grant], true, 72)).toBe('Agents may work on their own for 3 days.')
-  expect(access([{ ...grant, fields: { ...grant.fields, hours: 8 } }], true, 8)).toBe('Agents may work on their own for 8 hours.')
-  expect(access([], false, 8)).toBe('Agents may not work on their own.')
-  expect(access([], true, 72)).toBe("Agents' access stays as it is.")
-  expect(access(review.items, true, 24)).toBe("Agents' access stays as it is.")
-  expect(access([], false, 8, false)).toBe("Agents' access stays as it is.")
-  expect(access([grant], false, 8)).toBe("Agents' access stays as it is.")
-  expect(access([grant], true, 24)).toBe("Agents' access stays as it is.")
+test('finish review without access items keeps existing access', () => {
+  expect(reviewFacts({ ...review, items: [] }, undefined, false).find((f) => f.label === 'Agents')!.value)
+    .toBe("Agents' access stays as it is.")
+})
+
+test('finish review with agent_grant false and nonzero hours never claims agents can work on their own', async () => {
+  const { api, f } = withReview({ items: [] }, { finish: true })
+  render(<Setup api={api} />)
+  fireEvent.click(await screen.findByLabelText(/Own copy per ticket/))
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  await screen.findByRole('heading', { name: 'Review your setup' })
+  expect(f.calls.find((c) => c.path === 'profile')?.body).toMatchObject({ agent_grant: false, agent_hours: 72 })
+  const summary = document.querySelector('.review-summary')!
+  expect(summary).toHaveTextContent("Agents' access stays as it is.")
+  expect(summary).not.toHaveTextContent(/(?:may|can) work on their own/)
+})
+
+test('review grant names the host and takes precedence over a different duration setting', () => {
+  const grant = { ...review.items[0], id: 'runner_grant', type: 'grant.issued', fields: { hours: 8, scope: 'workable', verbs: 'agent' } }
+  const facts = reviewFacts({ ...review, items: [...review.items, grant] }, 'build-server', true)
+  expect(facts.find((f) => f.label === 'Agents')!.value).toBe('Agents may work on their own on build-server for 8 hours.')
+  expect(facts.some((f) => f.value.includes('access time') || f.value.includes('access duration'))).toBe(false)
 })
 
 test('review fact keys tolerate add-on titles colliding with core labels and each other', async () => {

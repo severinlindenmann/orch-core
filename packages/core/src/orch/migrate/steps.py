@@ -18,6 +18,7 @@ import hashlib
 import os
 import secrets
 import sqlite3
+import stat
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -30,6 +31,10 @@ __all__ = [
     "CURRENT",
     "DEFAULT",
     "KINDS",
+    "NESTED_PART_ROOTS",
+    "PART_RUNTIME",
+    "PARTS_DIR",
+    "PART_KINDS",
     "PROTECTED_NAMES",
     "PROTECTED_PATHS",
     "SIGNED_DENY",
@@ -38,6 +43,7 @@ __all__ = [
     "StepContext",
     "atomic_write",
     "is_signed_path",
+    "parts_snapshot",
     "protected_snapshot",
     "is_derived",
     "DERIVED_NAMES",
@@ -45,8 +51,22 @@ __all__ = [
 ]
 
 #: the format number the code writes and reads, per root kind (baseline 1 at the 2.0.0 cut)
-CURRENT: dict[str, int] = {"host": 1, "workspace": 1}
+CURRENT: dict[str, int] = {"host": 1, "workspace": 1, "hub": 1, "relay": 1, "publish": 1}
 KINDS = tuple(CURRENT)
+#: the root kinds that are the data dir of an installed part
+PART_KINDS = ("hub", "relay", "publish")
+#: Under ``install/parts/<part>/`` live: ``data`` (the part's root, ``install.state.Layout.data``), and the runner's own
+#: ``pid`` and ``cmd.json`` (``install.service``). Only the ``data`` dirs are roots of their own, nested INSIDE the host
+#: root. The roots are disjoint: the host root's snapshot, backup and restore leave exactly these out (a restore
+#: carries the current ones over untouched), and each part root is snapshotted, backed up and restored on its own.
+#: The rest of ``install/parts`` belongs to the host root.
+NESTED_PART_ROOTS: tuple[str, ...] = tuple(f"install/parts/{p}/data" for p in PART_KINDS)
+#: ``pid`` is RUNTIME: a running part (re)writes it, so the host's backup leaves it out and a restore carries the
+#: current one over, like the data dirs (a stale pid would orphan the live process). ``cmd.json`` is version-bound
+#: config and stays in the backup.
+PART_RUNTIME: tuple[str, ...] = tuple(f"install/parts/{p}/pid" for p in PART_KINDS)
+#: The folder that holds them: no host migration step may touch it (see :func:`parts_snapshot`).
+PARTS_DIR = "install/parts"
 
 #: Signed, chained or key data a migration may never touch (matched on the casefolded, symlink-resolved relative path).
 #: ``PROTECTED_PATHS`` are globs on the whole relative path, ``PROTECTED_NAMES`` globs on any one component.
@@ -90,8 +110,8 @@ def protected_snapshot(root: Path) -> dict[str, str | None]:
     snap: dict[str, str | None] = {}
     for dirpath, dirnames, filenames in os.walk(root):
         rel_dir = Path(dirpath).relative_to(root)
-        if rel_dir.parts[:1] and rel_dir.parts[0] == WORK_DIR:
-            dirnames.clear()
+        if (rel_dir.parts[:1] and rel_dir.parts[0] == WORK_DIR) or rel_dir.as_posix() in NESTED_PART_ROOTS:
+            dirnames.clear()  # derived data, and the part roots nested in the host root (their own snapshots)
             continue
         for name in filenames:
             rel = (rel_dir / name).as_posix()
@@ -109,6 +129,42 @@ def protected_snapshot(root: Path) -> dict[str, str | None]:
                 snap[rel] = h.hexdigest()
             except OSError:
                 snap[rel] = None
+    return snap
+
+
+def parts_snapshot(root: Path) -> dict[str, tuple[Any, ...]]:
+    """What a host step must never touch, STRUCTURALLY: the entries of ``<root>/install/parts`` and of each
+    ``install/parts/<part>``, by lstat (kind, size, mtime, link target), and the inode of every subfolder (so a part
+    data dir that is replaced or moved shows). Never the contents of a part's data tree, and never ``pid``: running
+    parts write there. Nothing is read or followed."""
+    base = Path(root) / PARTS_DIR
+    snap: dict[str, tuple[Any, ...]] = {}
+
+    def entries(d: Path, rel: str) -> list[str]:
+        out: list[str] = []
+        try:
+            names = sorted(os.listdir(d))
+        except OSError:
+            return out
+        for name in names:
+            erel = f"{rel}/{name}" if rel else name
+            if name == "pid" and rel:
+                continue  # the runner's pid file: runtime (see PART_RUNTIME)
+            try:
+                st = os.lstat(d / name)
+            except OSError:
+                snap[erel] = ("gone",)
+                continue
+            if stat.S_ISDIR(st.st_mode):
+                snap[erel] = ("dir", st.st_dev, st.st_ino)
+                out.append(name)
+            else:
+                link = os.readlink(d / name) if stat.S_ISLNK(st.st_mode) else None
+                snap[erel] = (st.st_mode, st.st_size, st.st_mtime_ns, link)
+        return out
+
+    for part in entries(base, ""):
+        entries(base / part, part)
     return snap
 
 
@@ -151,6 +207,8 @@ class StepContext:
             raise OrchError("migrate.signed_path", f"a step may only touch files inside the data folder: {rel}")
         if is_signed_path(rel):
             raise OrchError("migrate.signed_path", f"a step may never change signed data: {rel}")
+        if p.as_posix() == PARTS_DIR or p.as_posix().startswith(PARTS_DIR + "/"):
+            raise OrchError("migrate.signed_path", f"a step may never touch the parts' folders: {rel}")
         target = self.root / rel
         real_root = Path(os.path.realpath(self.root))
         real = Path(os.path.realpath(target))

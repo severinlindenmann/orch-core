@@ -1,0 +1,1 @@
+hub-f1: made by tests/upgrade/make_corpus.py at commit b15e994c67313584367fbdbaeda321277526f6b4 (format 1): keys init, one user ('Corpus User'), one group ('corpus-group') with that user as its member, the audit chain of those changes. Throwaway test keys only. Frozen: never edit, never regenerate in place.

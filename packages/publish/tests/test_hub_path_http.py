@@ -578,8 +578,9 @@ def test_op_cert_revocation_stops_the_hub_at_once(env):
 
 
 @pytest.mark.parametrize("version", [1, 2, 3, 4, 5, 6, 99])
-def test_any_other_schema_version_is_refused_with_a_reset_message(tmp_path, version):
-    """Nothing is in production: there is no upgrade path, an older or unknown data dir says to delete it."""
+def test_any_other_schema_version_is_refused_with_an_update_message(tmp_path, version):
+    """format.json let the data dir in, so a database of another schema is an internal mismatch: it is
+    refused, untouched, and the message says to run `orch update`."""
     path = db.prepare_dir(str(tmp_path / "d"))
     conn = sqlite3.connect(path)
     conn.executescript(db.SCHEMA)
@@ -587,7 +588,7 @@ def test_any_other_schema_version_is_refused_with_a_reset_message(tmp_path, vers
     conn.commit()
     conn.close()
     with pytest.raises(
-        db.SchemaError, match="different orch-publish version: stop the server, delete the data dir"
+        db.SchemaError, match="does not match this orch-publish version: run `orch update`"
     ):
         db.init(path)
     conn = sqlite3.connect(path)  # and nothing was touched

@@ -13434,6 +13434,7 @@ The add-on `publish` ships inside orch-core (capability `network`); `addon.grant
   send `commit`: orch-publish needs the owner's `hub.publish_approval` (`dk_sig` over that request, 11.3) and the click
   signer signs events, not that object, so a version stays "uploaded, not live" until that approval object is
   produced (follow-up). CLI: `orch app prepare|release|send|list|discard` (an agent: prepare, list, discard only).
+  Artifact names are flat file names today: an app whose files live in subfolders is not supported yet.
 
 ## 13. Tier B: agents and add-ons as their own OS user (#1198 H1, #287)
 

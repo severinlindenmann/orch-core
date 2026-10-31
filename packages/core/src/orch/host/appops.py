@@ -130,6 +130,16 @@ def _load_stage(service: WorkspaceService, staged_id: str) -> dict[str, Any]:
     return meta
 
 
+def _sweep(service: WorkspaceService) -> None:
+    """Drop staged releases no one finished with (older than :data:`P.STAGE_KEEP`). Never raises."""
+    with contextlib.suppress(Exception):
+        now = service.clock()
+        for name in os.listdir(_root(service)):
+            path = _root(service) / name
+            if _STAGE_ID.fullmatch(name) and now - os.lstat(path).st_mtime > P.STAGE_KEEP:  # noqa: SLF001
+                shutil.rmtree(path, ignore_errors=True)
+
+
 def _stages(service: WorkspaceService) -> list[dict[str, Any]]:
     out = []
     try:
@@ -229,6 +239,26 @@ def _files_of(call: Call, view: Any, names: list[str]) -> tuple[list[dict[str, A
     return files, blobs
 
 
+def _forbidden(cfg: dict[str, str], route: dict[str, Any] | None) -> tuple[str, ...]:
+    """The origins an app may not reach: the publish server, the share origin and the hub (self-reach is refused before
+    anybody signs, as orch-publish refuses it at the upload)."""
+    return tuple(x for x in (cfg["server"], cfg["share"], (route or {}).get("addr")) if isinstance(x, str) and x)
+
+
+def _fresh(service: WorkspaceService, stage: dict[str, Any]) -> None:
+    """The version and the live version the stage was made against are still the record's (``publish.changed``
+    otherwise): a second stage of the same app, sent after the first, is refused, and a record that moved on since the
+    person signed is never overwritten. Checked again at the signature (``facts_for``) and at the send (``_plan``)."""
+    rec = next((r for r in _records(service) if r.get("id") == stage["app_id"]), None)
+    prev = (stage.get("previous") or {}).get("version")
+    if rec is None:
+        ok = stage["version"] == 1 and prev is None
+    else:
+        ok = str(stage["version"]) not in rec["versions"] and rec.get("live") == prev
+    if not ok:
+        raise HostError("publish.changed", "this app changed since the release was prepared: prepare it again")
+
+
 def _prepare(call: Call, args: dict[str, Any]) -> dict[str, Any]:
     service = call.service
     view = P._ticket(call, args["ref"])  # noqa: SLF001
@@ -236,7 +266,7 @@ def _prepare(call: Call, args: dict[str, Any]) -> dict[str, Any]:
         raise HostError("op.not_allowed", "an agent prepares apps only on the ticket its session claims")
     P._gate(call)  # noqa: SLF001
     cfg = P._config(service)  # noqa: SLF001
-    P._hub_route(service)  # noqa: SLF001 - a hub that cannot carry the app is said now, before anything is copied
+    route = P._hub_route(service)  # noqa: SLF001 - a hub that cannot carry the app is said now, before anything is copied
     access = args["access"]
     audience = "company" if access == "company" else args.get("audience")  # a company app has one audience
     if (bad := pub.audience_problem(access, audience)) is not None:
@@ -261,7 +291,7 @@ def _prepare(call: Call, args: dict[str, Any]) -> dict[str, Any]:
         "pw": None, "reach": sorted(set(args.get("reach", []))), "files": files,
         "label": P._display(view.title, 80) or view.key, "ticket": view.uid,
     }  # fmt: skip
-    if (bad := pub.meta_problem(meta)) is not None:
+    if (bad := pub.meta_problem(meta, _forbidden(cfg, route))) is not None:
         raise HostError("invalid.input", f"app.prepare: the app is not valid ({bad})")
     version = 1
     previous = None
@@ -270,6 +300,7 @@ def _prepare(call: Call, args: dict[str, Any]) -> dict[str, Any]:
         version = max((int(v) for v in rec["versions"]), default=0) + 1
         if live is not None and str(live) in rec["versions"]:
             previous = {"version": int(live), "meta": rec["versions"][str(live)]}
+    _sweep(service)
     stages = _stages(service)
     origin = "person" if call.column.name == "P" else "agent"
     if origin == "agent" and sum(1 for m in stages if m.get("origin") == "agent") >= AGENT_STAGES:
@@ -316,6 +347,7 @@ def facts_for(service: WorkspaceService, args: dict[str, Any], call: Call) -> ap
     cfg = P._config(service)  # noqa: SLF001
     stage = _load_stage(service, args["staged_id"])
     _verify_stage(service, stage)
+    _fresh(service, stage)
     view = P._ticket(call, stage["ticket"]["uid"])  # noqa: SLF001
     P._may_share(call, view)  # noqa: SLF001
     P._hub_route(service)  # noqa: SLF001 - refuse BEFORE the person signs when the hub path is not usable
@@ -368,6 +400,7 @@ def _plan(call: Call, args: dict[str, Any]) -> dict[str, Any]:
     view = P._ticket(call, stage["ticket"]["uid"])  # noqa: SLF001
     P._may_share(call, view)  # noqa: SLF001
     _verify_stage(service, stage)  # the bytes and the ticket first: only then are the words worth comparing
+    _fresh(service, stage)
     text = _text(service, stage, cfg)
     if not signed_release(call, stage, text):
         raise HostError(
@@ -431,8 +464,11 @@ def _discard(call: Call, args: dict[str, Any]) -> dict[str, Any]:
     service = call.service
     stage = _load_stage(service, args["staged_id"])
     view = P._ticket(call, stage["ticket"]["uid"])  # noqa: SLF001
-    if call.column.name != "P" and (stage["origin"] != "agent" or not P._claim_ok(call, view)):  # noqa: SLF001
-        raise HostError("op.not_allowed", "an agent discards only the releases it prepared, on its own ticket")
+    if call.column.name != "P":
+        if stage["origin"] != "agent" or not P._claim_ok(call, view):  # noqa: SLF001
+            raise HostError("op.not_allowed", "an agent discards only the releases it prepared, on its own ticket")
+    elif stage.get("by") != str(call.viewer):  # a person: the one who prepared it, or one who may release it
+        P._may_share(call, view)  # noqa: SLF001
     P._gate(call)  # noqa: SLF001
     shutil.rmtree(_stage_dir(service, stage["staged_id"]), ignore_errors=True)
     P._audit(call, "app.discard", ticket=view.key, staged=stage["staged_id"])  # noqa: SLF001

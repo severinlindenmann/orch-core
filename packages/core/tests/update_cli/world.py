@@ -80,7 +80,7 @@ class FakeServices:
 
 def record(version: str = OLD, seq: dict | None = None, rev: str | None = "2026-10-20T00:00:00Z", min_serial: int = 1):
     return Record(
-        "main", version, {"main": 41} if seq is None else seq, rev, min_serial, "root-1", "rk-3", ["root-1"],
+        "main", version, {"main": 41} if seq is None else seq, rev, min_serial, "test-root-1", "rk-3", ["test-root-1"],
         "2026-10-01T00:00:00Z", "/x", {"path": "/bin/true", "version": "0.13.3"}, [],
     )  # fmt: skip
 

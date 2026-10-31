@@ -19,6 +19,7 @@ import re
 import sqlite3
 import struct
 
+from . import cleanup
 from . import relay_proto as proto
 from .auth import WINDOW_MS, Refusal
 
@@ -46,6 +47,7 @@ LABELS = {
     "h_app_reach": b"orch/v2/app-reach|",
     "sig_hub_release_narrow": b"orch/v2/hub-release-narrow|",
     "sig_hub_app_pass": b"orch/v2/hub-app-pass|",
+    "sig_hub_allow": b"orch/v2/hub-allow|",
 }
 
 # HTTP status of every code this module raises (contracts/hub/protocol.md 11.2, 14); anything else is 400.
@@ -245,6 +247,15 @@ FIELDS = {
         "target": _enum("share", "app"),
         "id": _hex16,
         "action": _enum("revoke", "stop"),
+        "ts_ms": _int_min(0),
+        "nonce": _b64u32,
+    },
+    # P02 (protocol 11.9): signed by the hub's HK_op; admits ONE workspace of the hub for ONE owner at ONE binding_seq
+    "hub.allow": {
+        "hub_id": _hex16,
+        "workspace_id": _hex16,
+        "owner_person_id": _hex16,
+        "binding_seq": _int_min(1),
         "ts_ms": _int_min(0),
         "nonce": _b64u32,
     },
@@ -786,6 +797,12 @@ def _store_update(conn, ws_hex, now_ms, dev_mode, signed, kind):
             new = apply_unbound(state, o)
             hub_hex = o["hub_id"]
         _write_state(conn, ws_hex, new, hub_hex, now_ms)
+        # P02, same transaction as the binding write: the workspace's own signed binding names the hub, so only that hub's
+        # pending row stays; leaving the hub ends its allowance now (it also stops counting by itself)
+        if kind == "binding":
+            cleanup.drop_other_allows(conn, ws_hex, hub_hex)
+        else:
+            cleanup.drop_allow(conn, ws_hex, hub_hex)
         conn.execute("COMMIT")
         return new
     except BaseException:
@@ -890,6 +907,7 @@ def accept_op_revoked(conn, signed, now_ms):
             "INSERT OR IGNORE INTO hub_op_revoked(hub_id, cert_id, revoked_ms) VALUES (?,?,?)",
             (hub_hex, o["cert_id"], now_ms),
         )
+        cleanup.drop_cert(conn, hub_hex, o["cert_id"])
         conn.execute("COMMIT")
     except BaseException:
         try:

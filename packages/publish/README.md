@@ -36,6 +36,10 @@ orch-publish run --data <STATE_DIR> --listen <IP>:<PORT> [--public-origin http:/
   (default `http://<listen>`; no path). Add `--dev-mode` for a dev instance.
 - The workspace's publish setting is then `server = share = <public-origin>` (same origin; the link is
   `<share>/s/<id>#t=<token>`, built by the workspace).
+- A hub admits its OWN workspaces by itself once you pin it: `orch-publish admin --data D hub trust <hub_id>` (or
+  `--trust-hub <hub_id>` on `run`/`serve`; `hub untrust` removes the pin and its allowances). Without the pin only
+  `admin ws allow` + `admin owners add` admit a workspace. `admin ws unbind` also leaves a deny marker: no hub can admit that
+  workspace again until you run `admin ws allow` for it. A revoked hub op cert ends the allowances it signed.
 - Trust comes from the pinned hub key, not TLS. All shares sit on one origin, so they are not isolated from each other
   (the per-share sandbox/CSP still applies); use the domain setup (`serve` + `share`, separate origins) when that matters.
 - With a domain nothing changes: `orch-publish serve` (API) and `orch-publish share` (share origin) behind Caddy.

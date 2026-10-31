@@ -628,6 +628,8 @@ def publish_route(service: WorkspaceService) -> dict[str, Any] | None:
         "hub_id": state.hub_id,
         "hk_op": unb64u(state.hk_op_pub, 65),
         "addr": _addr({}, state, dev),
+        #: every address the host would dial for this hub (the dial order of :func:`_transport`): one list, one policy
+        "addrs": [a for a in [_addr({}, state, dev), *_more_addrs(state, dev)] if a],
         "spki": state.tls_spki,
         "mode": state.mode,
     }
@@ -1032,6 +1034,8 @@ def serve(call: Call) -> dict[str, Any]:
                 # what the hub says of itself (hub_where): its own words, a hint; never part of a workspace's own text
                 "closing": None if state is None else hubclosing.view(state),  # #1463: {since_ms, ends_ms} | None
                 "hub_says": None if state is None or not state.hub_name else {"name": state.hub_name, "from": "hub"},
+                # P02: where the hub says its publish server is (a hint; the Publish form suggests it, the owner signs)
+                "hub_publish": None if state is None or state.status != "bound" else state.hub_publish,
                 "unbound_pending": state is not None and bool(state.outbox),
                 "owed": [] if state is None else sorted(state.outbox),
             }

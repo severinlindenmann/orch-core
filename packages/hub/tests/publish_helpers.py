@@ -111,6 +111,11 @@ class RecordingSync:
             raise self.fail
         self.calls.append(("binding", workspace_id, dict(obj)))
 
+    def put_allow(self, workspace_id, obj):
+        if self.fail:
+            raise self.fail
+        self.calls.append(("allow", workspace_id, dict(obj)))
+
 
 class FakeUpstream:
     """A loopback HTTP server standing in for orch-publish: records requests, answers a scripted response."""

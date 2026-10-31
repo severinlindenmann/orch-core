@@ -10,6 +10,7 @@ from orch.migrate.journal import read_journal
 from orch.ops.errors import OrchError
 from orch.update import quarantine
 from orch.update.engine import Crash
+from orch.update.keys import embedded_roots
 from orch.update.layout import read_record
 
 from .world import OLD, World, record, use_test_root
@@ -51,8 +52,10 @@ def test_happy_path(w):
     assert read_journal(w.env)["phase"] == "committed"
     rec = read_record(w.layout)
     assert (rec.version, rec.seq("main"), rec.min_serial) == (NEW, 42, 2)
-    assert rec.uv["path"] == "/bin/true" and rec.release_key_id == "rk-3" and rec.trusted_roots == ["root-1"]
-    assert rec.root_key_id == "root-1" and rec.revocations_issued_at == "2026-10-20T00:00:00Z"
+    assert (
+        rec.uv["path"] == "/bin/true" and rec.release_key_id == "rk-3" and rec.trusted_roots == sorted(embedded_roots())
+    )
+    assert rec.root_key_id == "test-root-1" and rec.revocations_issued_at == "2026-10-20T00:00:00Z"
     assert {f["name"] for f in rec.files} == set(w.source.blobs) and rec.tool_dir.endswith(f"orch-{NEW}")
     # order: stop, quarantine start, stop, normal start; both versions kept
     assert w.services.events == ["stop", "start-q", "stop", "start"]

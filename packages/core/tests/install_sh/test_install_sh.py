@@ -75,7 +75,7 @@ def test_happy_path_layout_record_and_rerun(tmp_path, script, bin_dir):
     assert rec["channel"] == "main" and rec["version"] == "2.0.0"
     assert rec["seq_seen"] == {"main": 5}
     assert rec["revocations_issued_at"] == rel.revs_issued
-    assert rec["root_key_id"] == "root-1" and rec["trusted_roots"] == ["root-1"]
+    assert rec["root_key_id"] == "test-root-1" and rec["trusted_roots"] == ["test-root-1"]
     assert {f["role"] for f in rec["files"]} == {"core", "dashboard", "constraints"}
     assert all(len(f["sha256"]) == 64 for f in rec["files"])
     assert rec["tool_dir"] == str(tool)
@@ -230,11 +230,20 @@ def test_a_stale_revocation_list_is_refused_with_plain_guidance(tmp_path, script
 
 
 @pytest.mark.slow
-def test_the_shipped_installer_has_no_key_yet_and_trusts_nothing(tmp_path, bin_dir):
-    rel = build_release(tmp_path / "rel")
+def test_the_shipped_installer_trusts_only_the_production_root_not_the_test_root(tmp_path, bin_dir):
+    rel = build_release(tmp_path / "rel")  # signed by the public TEST root
     shipped = tmp_path / "shipped.sh"
-    shutil.copy(INSTALL_SH, shipped)  # the production roots (none yet), not the TEST root
+    shutil.copy(INSTALL_SH, shipped)  # the production roots, not the TEST root
     res = run_install(tmp_path, shipped, "--from", str(rel.dir), path_dirs=[bin_dir])
+    assert_untouched(tmp_path, res)
+    assert "could not be verified" in res.stderr
+
+
+def test_an_installer_with_no_embedded_root_trusts_nothing(tmp_path, bin_dir):
+    rel = build_release(tmp_path / "rel")
+    bare = tmp_path / "bare.sh"
+    bare.write_text(re.sub(r"^ROOTS_B64 = \{.*\}$", "ROOTS_B64 = {}", INSTALL_SH.read_text(), flags=re.M))
+    res = run_install(tmp_path, bare, "--from", str(rel.dir), path_dirs=[bin_dir])
     assert_untouched(tmp_path, res)
     assert "no release key" in res.stderr
 

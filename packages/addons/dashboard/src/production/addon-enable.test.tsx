@@ -49,13 +49,13 @@ it.each(['publish'] as const)('off %s opens settings; Turn on prepares one enabl
   const title = name === 'publish' ? 'Publish' : 'Model routing'
   await user.click(await screen.findByRole('switch', { name: title }, T))
   const form = within(await screen.findByRole('dialog', { name: `Turn on ${title}` }, T))
-  expect(form.getByRole('button', { name: 'Turn on' })).toBeDisabled()
+  expect(form.getByRole('button', { name: 'Turn on and sign' })).toBeDisabled()
   expect(screen.getByRole('dialog', { name: `Turn on ${title}` })).not.toHaveTextContent(/terminal/i)
   await user.type(form.getByLabelText('Publish server address'), 'https://files.example.test')
   await user.click(form.getByRole('button', { name: 'Links open at a different address' }))
   await user.type(form.getByLabelText('Links open at'), 'https://links.example.test')
   trusted()
-  await user.click(form.getByRole('button', { name: 'Turn on' }))
+  await user.click(form.getByRole('button', { name: 'Turn on and sign' }))
   await screen.findByTestId('click-panel', {}, T)
   expect(prepared()).toEqual([{ action: 'addon_enable', name, publish: { server: 'https://files.example.test', share: 'https://links.example.test' } }])
   expect(posted()).toEqual([]) // no hand-off is ever prepared
@@ -70,13 +70,16 @@ it('one valid address enables Turn on and signs server equal to share; a bad add
   expect(form.queryByLabelText('Links open at')).toBeNull()
   await user.type(form.getByLabelText('Publish server address'), 'http://evil.example')
   expect(form.getByRole('alert')).toHaveTextContent('must start with https://')
-  expect(form.getByRole('button', { name: 'Turn on' })).toBeDisabled()
+  expect(form.getByRole('button', { name: 'Turn on and sign' })).toBeDisabled()
   await user.clear(form.getByLabelText('Publish server address'))
   await user.type(form.getByLabelText('Publish server address'), 'http://127.0.0.1:8102')
-  expect(form.getByRole('button', { name: 'Turn on' })).toBeEnabled()
-  trusted()
-  await user.click(form.getByRole('button', { name: 'Turn on' }))
+  expect(form.getByRole('button', { name: 'Turn on and sign' })).toBeEnabled()
+  // P04: no trusted press needed: the pressed button opens the review at once (prepare only), and nothing else stacks on it
+  await user.click(form.getByRole('button', { name: 'Turn on and sign' }))
   await screen.findByTestId('click-panel', {}, T)
+  expect(screen.queryByRole('button', { name: 'Turn on and sign' })).toBeNull()
+  expect(screen.queryByRole('dialog', { name: 'Turn on Publish' })).toBeNull() // no empty second dialog, no Turn on to press again
+  expect(state.host.clickSigned).toEqual([]) // never signed by itself
   expect(prepared()).toEqual([{ action: 'addon_enable', name: 'publish', publish: { server: 'http://127.0.0.1:8102', share: 'http://127.0.0.1:8102' } }])
 })
 
@@ -88,9 +91,9 @@ it('a suggested address makes Turn on one click, and Change shows the field', as
   const form = within(await screen.findByRole('dialog', { name: 'Turn on Publish' }, T))
   expect(form.getByText(/Files and links use the Publish server on this computer/)).toHaveTextContent('http://127.0.0.1:8102')
   expect(form.queryByLabelText('Publish server address')).toBeNull()
-  expect(form.getByRole('button', { name: 'Turn on' })).toBeEnabled()
+  expect(form.getByRole('button', { name: 'Turn on and sign' })).toBeEnabled()
   trusted()
-  await user.click(form.getByRole('button', { name: 'Turn on' }))
+  await user.click(form.getByRole('button', { name: 'Turn on and sign' }))
   await screen.findByTestId('click-panel', {}, T)
   expect(prepared()).toEqual([{ action: 'addon_enable', name: 'publish', publish: { server: 'http://127.0.0.1:8102', share: 'http://127.0.0.1:8102' } }])
 })
@@ -112,7 +115,7 @@ it('with nothing suggested the field shows and has no example in it', async () =
   await user.click(await screen.findByRole('switch', { name: 'Publish' }, T))
   const form = within(await screen.findByRole('dialog', { name: 'Turn on Publish' }, T))
   expect(form.getByLabelText('Publish server address')).not.toHaveAttribute('placeholder')
-  expect(form.getByRole('button', { name: 'Turn on' })).toBeDisabled()
+  expect(form.getByRole('button', { name: 'Turn on and sign' })).toBeDisabled()
 })
 
 it.each(['publish'] as const)('on %s without settings signs settings only', async (name) => {

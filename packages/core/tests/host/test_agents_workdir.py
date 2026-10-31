@@ -141,3 +141,21 @@ def test_workdir_delete_is_a_persons_op_needs_an_idem_and_refuses_a_running_fold
     ok(start(c, ticket=key, harness="codex", mode="work", spec=pre["spec"]))
     assert err(c.call("workdir.delete", {"ticket": key}, idem=True)) == "worktree.in_use"
     assert (Path(world.lab.root) / ".orch-work" / key).is_dir()
+
+
+def test_workdir_get_lists_plain_files_only_when_asked(ready, tmp_path):  # noqa: F811
+    c = ready.conn()
+    _, key = ready.ticket()
+    folder = Path(ready.lab.root) / ".orch-work" / key
+    folder.mkdir(parents=True)
+    (folder / "hello.txt").write_text("hi")
+    (folder / "bad name!.txt").write_text("x")  # a name the server would not take
+    (folder / "sub").mkdir()
+    (folder / "link").symlink_to(tmp_path)
+    assert "items" not in ok(c.call("workdir.get", {"ticket": key}))["data"]
+    got = ok(c.call("workdir.get", {"ticket": key, "list": True}))["data"]
+    assert got["items"] == [{"name": "hello.txt", "bytes": 2}]
+    for i in range(30):
+        (folder / f"f{i:02}.txt").write_text("z")
+    got = ok(c.call("workdir.get", {"ticket": key, "list": True}))["data"]
+    assert len(got["items"]) == 20 and got["items_truncated"] is True

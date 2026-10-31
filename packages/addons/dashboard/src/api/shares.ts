@@ -92,7 +92,7 @@ export const sharesApi = {
   list: (ws: string, ticket?: string) => call<SharesData>('GET', `${w(ws)}/shares${ticket ? `?ticket=${encodeURIComponent(ticket)}` : ''}`),
   /** One picked file (P05): its bytes as base64. At most `PICK_MAX_BYTES`. */
   upload: (ws: string, body: { name: string; data: string }, idem: string) => call<Picked>('POST', `${w(ws)}/shares/upload`, { ...body, idem }),
-  prepare: (ws: string, body: { ticket: string; artifacts: string[]; uploads?: string[]; kind: ShareKind; days: Days; views?: Views }, idem: string) =>
+  prepare: (ws: string, body: { ticket: string; artifacts: string[]; uploads?: string[]; /** Files of the ticket's own work folder, by name; the host finds them there. */ workfiles?: string[]; kind: ShareKind; days: Days; views?: Views }, idem: string) =>
     call<{ staged: Staged; server: string | null; share: string | null }>('POST', `${w(ws)}/shares/prepare`, { ...body, idem }),
   /** The one answer with a link. Do not store the result anywhere but the component that shows it. */
   send: (ws: string, staged_id: string, idem: string) => call<Sent>('POST', `${w(ws)}/shares/send`, { staged_id, idem }),

@@ -170,11 +170,15 @@ def serve(args):
         port=port,
         access_log=False,
         log_level="warning",
+        proxy_headers=False,  # forwarded.py is the only reader of forwarded headers
+        server_header=False,
     )
     return 0
 
 
-def combined_app(data_dir, api_host, dev_mode=False, allow_direct=False, share_origin=None):
+def combined_app(
+    data_dir, api_host, dev_mode=False, allow_direct=False, share_origin=None, trusted_proxy=None
+):
     """No-domain mode: one ASGI app on one port. `/s/...` is the share server (path-based links), every other path
     is the signed API; `/a/...` serves apps. With a domain the two stay on separate origins (`serve` + `share`)."""
     from .app import create_app
@@ -183,7 +187,9 @@ def combined_app(data_dir, api_host, dev_mode=False, allow_direct=False, share_o
     api = create_app(
         data_dir, api_host, dev_mode=dev_mode, allow_direct=allow_direct, share_origin=share_origin
     )
-    share = create_share_app(data_dir, share_origin=share_origin, api_host=api_host)
+    share = create_share_app(
+        data_dir, share_origin=share_origin, api_host=api_host, trusted_proxy=trusted_proxy
+    )
 
     async def app(scope, receive, send):
         if scope["type"] == "http" and (scope.get("path") or "").startswith(("/s/", "/a/")):
@@ -215,6 +221,7 @@ def run_cmd(args):
             dev_mode=args.dev_mode,
             allow_direct=args.allow_direct,
             share_origin=f"{u.scheme}://{u.netloc}".lower(),
+            trusted_proxy=args.trusted_proxy,
         )
     except ValueError as e:
         print(e, file=sys.stderr)
@@ -249,6 +256,7 @@ def _uvicorn_server(app, host, port):
             port=port,
             access_log=False,
             log_level="warning",
+            proxy_headers=False,
             server_header=False,
             workers=1,
         )
@@ -357,6 +365,11 @@ def main(argv=None):
     )
     r = sub.add_parser("run", help="no domain: API and share links on ONE address and port")
     r.add_argument("--data", required=True)
+    r.add_argument(
+        "--trusted-proxy",
+        default=None,
+        help="addresses or CIDR networks whose forwarded client address is the rate key (default: ORCH_PUBLISH_TRUSTED_PROXY, else none)",
+    )
     r.add_argument("--listen", required=True, help="ADDRESS:PORT to bind, e.g. 100.64.0.5:8102")
     r.add_argument(
         "--public-origin",

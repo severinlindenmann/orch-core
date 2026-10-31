@@ -13,7 +13,6 @@
 
 from __future__ import annotations
 
-import ipaddress
 import queue
 import re
 import socket
@@ -22,6 +21,7 @@ import time
 from collections.abc import Callable
 from urllib.parse import urlsplit
 
+from .. import forwarded as FW
 from ..contract import hooks as HK
 from . import inbox as IB
 
@@ -44,33 +44,6 @@ def parse_public_url(value: str, *, dev: bool) -> str:
     if not ok_scheme or not u.hostname or u.path not in ("", "/") or u.query or u.fragment or u.username:
         raise ValueError("--public-hooks-url must be an origin: https://host[:port] (http only for a dev hub)")
     return f"{u.scheme}://{u.netloc}/h/"
-
-
-def _norm_ip(addr: str) -> str:
-    ip = ipaddress.ip_address(addr)
-    if isinstance(ip, ipaddress.IPv6Address):
-        return (
-            str(ip.ipv4_mapped) if ip.ipv4_mapped is not None else str(ipaddress.ip_network(f"{ip}/64", strict=False))
-        )
-    return str(ip)
-
-
-def source_of(headers: dict[str, str], peer: str, trusted: frozenset[str]) -> str:
-    """Same rule as the web API: the socket peer, or, only when it is the configured edge, the rightmost
-    ``X-Forwarded-For`` entry that is not itself a trusted proxy. An IPv6 source is its /64."""
-    if peer in trusted:
-        for entry in reversed(headers.get("x-forwarded-for", "").split(",")):
-            entry = entry.strip()
-            if entry in trusted:
-                continue
-            try:
-                return _norm_ip(entry)
-            except ValueError:
-                break
-    try:
-        return _norm_ip(peer)
-    except ValueError:
-        return peer or "unknown"
 
 
 class HookListener:
@@ -178,6 +151,8 @@ class HookListener:
             name = k.strip().lower().decode("latin-1")
             if sep and name == "transfer-encoding":
                 chunked = True
+            if sep and FW.refuse((name,), peer, self._trusted):
+                return 400  # not served through a proxy (forwarded.py)
             if sep and name in KEEP:
                 headers[name] = v.strip().decode("latin-1")
         if m is None:
@@ -192,7 +167,7 @@ class HookListener:
             return 411
         if n > HK.BODY_CAP:
             return IB.TOO_LARGE  # before the lookup and before any body byte
-        source = source_of(headers, peer, self._trusted)
+        source = FW.source_of(headers, peer, self._trusted)
         if not self.inbox.enabled or not self.inbox.admit(source):
             return IB.TOO_MANY if self.inbox.enabled else 404
         hook = self.inbox.find(m.group(1).decode("ascii"), source)

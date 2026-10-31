@@ -221,3 +221,19 @@ def test_a_workspace_unbound_while_the_call_succeeds_is_not_shown(w):
     r.published = unbind_then_answer
     w.api.d.published = r
     assert [x["label"] for x in get(w)[1]["links"]] == ["Q3 report"]
+
+
+def test_b03_the_page_pushes_full_mode_bindings_before_it_reads(w):
+    order = []
+
+    class Reader(FakeReader):
+        def published(self, workspace=None):
+            order.append("read")
+            return super().published(workspace)
+
+    w.api.d.published = Reader([link()])
+    w.api.d.publish_sync = lambda ws: order.append(("sync", list(ws)))
+    assert get(w)[0] == 200
+    (sync, synced), read = order
+    assert sync == "sync" and read == "read"  # before the read
+    assert WS_FULL in synced and WS_SEL not in synced  # only full-mode workspaces

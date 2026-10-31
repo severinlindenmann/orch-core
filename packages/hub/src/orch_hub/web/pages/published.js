@@ -67,7 +67,7 @@ function hiddenRow(w, rows, openSettings) {
     ? (row.online && row.canOpen && openSettings ? null : "Open it on its own computer, then choose Share everything in Settings > Hub.")
     : "Ask " + who + " to share them.";
   return h("div", { class: "row published-hidden", "data-hidden": w.workspace_id },
-    h("div", { class: "grow small" }, h("b", { text: text(w.name) }), h("span", { text: " keeps its links and apps to itself, so they are not listed here." }),
+    h("div", { class: "grow small" }, h("b", { text: text(w.name) }), h("span", { text: " keeps its links and apps to itself, so they are not listed here. Stop them on that workspace's Shares page." }),
       todo ? h("div", { class: "muted", text: todo }) : null),
     own && !todo ? h("button", { type: "button", class: "pri", "data-share-hub": w.workspace_id, text: "Let the hub see them", onclick: () => openSettings(w.workspace_id) }) : null);
 }

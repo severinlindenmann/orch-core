@@ -64,7 +64,7 @@ test("P08: each workspace that keeps its links private gets a line naming it and
   const view = publishedView(data({ hidden: [ben, mine] }), { now: NOW, rows: [rail({ name: mine.name }), rail({ id: ben.workspace_id, role: "view" })], openSettings: (id) => { opened = id; } });
   const rows = find(view, (n) => n.attrs["data-hidden"]);
   assert.equal(rows.length, 2);
-  assert.match(rows[0].textContent, /^Ben Test's workspace keeps its links and apps to itself, so they are not listed here\.Ask Ben Test to share them\.$/);
+  assert.match(rows[0].textContent, /^Ben Test's workspace keeps its links and apps to itself, so they are not listed here\. Stop them on that workspace's Shares page\.Ask Ben Test to share them\.$/);
   assert.equal(find(rows[0], (n) => n.tag === "button").length, 0);
   assert.match(rows[1].textContent, /^Anna Test's workspace keeps its links and apps to itself.*Let the hub see them$/);
   const btn = find(rows[1], (n) => n.tag === "button")[0];

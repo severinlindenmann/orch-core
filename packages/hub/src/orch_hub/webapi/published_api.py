@@ -58,6 +58,13 @@ def _text(x: Any) -> str | None:
 class PublishedHandlers:
     d: Any
 
+    def _sync_full(self) -> None:
+        """B03: push the latest binding of every full-mode workspace first (best effort, never raises)."""
+        sync = getattr(self.d, "publish_sync", None)
+        if sync is not None:
+            reg = self.d.registry
+            sync([ws for ws in sorted(reg.pins()) if reg.mode(ws) == "full"])
+
     def _published_reader(self) -> Any:
         """Anything with ``published(workspace=None) -> rows``: injected (tests), else built from the publish address."""
         injected = getattr(self.d, "published", None)
@@ -91,6 +98,7 @@ class PublishedHandlers:
         if type(item_id) is not str or len(item_id) != 32 or any(ch not in "0123456789abcdef" for ch in item_id):
             raise _err("unknown_item")
         reg = self.d.registry
+        self._sync_full()
         try:
             raw = self._published_reader().published()
         except AdminReadError:
@@ -127,6 +135,7 @@ class PublishedHandlers:
         reg = self.d.registry
         now = int(self.d.now_ms())
         failed, raw = False, []
+        self._sync_full()
         try:
             raw = self._published_reader().published()
         except AdminReadError:

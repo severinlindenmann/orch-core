@@ -838,7 +838,8 @@ P.phones = () => `<h1>Phones &amp; browsers</h1><p class="lead">Every phone and 
 let pubTab = "apps";
 P.publish = () => `<h1>Published</h1><p class="lead">Everything workspaces put out through Publish: apps and pages people can use, and files shared by link.</p>${note("publish")}
   <div class="tabs"><button class="${pubTab === "apps" ? "on" : ""}" data-pubtab="apps">Apps &amp; pages (${D.apps.length})</button><button class="${pubTab === "links" ? "on" : ""}" data-pubtab="links">Shared files (${D.links.length})</button></div>
-  ${pubTab === "apps" ? pubApps() : pubLinks()}`;
+  ${pubTab === "apps" ? pubApps() : pubLinks()}
+  <div class="card" data-hidden="ben"><div class="row"><div class="tx"><b>Ben Test's workspace</b> keeps its links and apps to itself, so they are not listed here. Stop them on that workspace's Shares page.<div class="s">Ask Ben Test to share them.</div></div></div></div>`;
 const pubApps = () => `<div style="display:flex;margin-bottom:12px"><span style="flex:1"></span><button class="btn pri" data-toast="Mockup: pick a ticket whose result is an app; a person approves the publish">${ic("pl")} Publish an app</button></div>
   <div class="card tw"><table><tr><th>App</th><th>From</th><th>Who can open it</th><th>Version</th><th>Visits</th><th></th></tr>
   ${D.apps.map((a, i) => `<tr style="${a.state === "stopped" ? "opacity:.6" : ""}"><td><b>${esc(a.name)}</b> <span class="tag">${esc(a.kind)}</span><div class="small mono faint">${esc(a.url)}</div><div class="small">${a.state === "running" ? `<span style="color:var(--success)">● running</span>` : `<span style="color:var(--text-faint)">● stopped</span>`}</div></td>

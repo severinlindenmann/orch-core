@@ -197,3 +197,42 @@ def test_1452_who_and_what_of_a_share_reach_the_admin_list_end_to_end(env, tmp_p
         assert link["expires_ms"] == exp and link["views"] == 0 and link["state"] == "live"
     finally:
         w.close()
+
+
+def test_b03_a_mode_switch_whose_sync_failed_is_pushed_before_the_admin_read(env, monkeypatch):
+    """B03 (full-mode case): the workspace switches selective -> full while orch-publish is not reachable. The binding
+    call swallows the failed sync, so orch-publish keeps the selective binding until the next forward. The hub's
+    registry already says full, so the Published page neither lists the link nor shows the hidden line for it."""
+    import hashlib
+
+    from orch_hub.publish import AdminReadClient, PublishSyncError
+
+    e = env
+    e.fw.binding(e.ws, binding(e.wsk, e.hub, e.ws, seq=1, mode="selective"))
+    sid = os.urandom(16).hex()
+    meta = {
+        "ticket": "TST-0001", "kind": "secret", "expires_ms": NOW + 86_400_000, "view_limit": 0,
+        "token_hash": hashlib.sha256(b"t").hexdigest(),
+        "files": [{"path": "a.txt", "size": 3, "sha256": hashlib.sha256(b"abc").hexdigest()}],
+    }  # fmt: skip
+    for method, target, body in (
+        ("PUT", f"/v1/ws/{e.ws}/shares/{sid}", json.dumps(meta).encode()),
+        ("PUT", f"/v1/ws/{e.ws}/shares/{sid}/files/a.txt", b"abc"),
+        ("POST", f"/v1/ws/{e.ws}/shares/{sid}/commit", b""),
+    ):
+        req = host_request(e.wsk, e.hub.hub_id, e.ws, host=e.host, method=method, target=target, body=body)
+        assert e.fw.forward(e.ws, req)["status"] == 200
+
+    real = e.fw._sync.put_binding
+
+    def down(ws, obj):
+        raise PublishSyncError("unavailable")
+
+    monkeypatch.setattr(e.fw._sync, "put_binding", down)
+    e.fw.binding(e.ws, binding(e.wsk, e.hub, e.ws, seq=2, mode="full"))  # swallowed: publish is down
+    monkeypatch.setattr(e.fw._sync, "put_binding", real)  # publish is back; no forward happens before the read
+
+    reader = AdminReadClient(f"http://{e.host}", e.hub.op_signer, e.hub.hub_id, now_ms=lambda: NOW)
+    assert reader.published() == []  # the bug: publish still holds the selective binding
+    e.fw.resync([e.ws])  # what the Published page now does before it reads
+    assert [r["id"] for r in reader.published()] == [sid]

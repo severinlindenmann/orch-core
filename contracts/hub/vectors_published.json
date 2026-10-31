@@ -1,4 +1,1389 @@
 {
+ "allow_cases": [
+  {
+   "args": {
+    "dev_mode": true,
+    "hub_card": {
+     "o": {
+      "card_seq": 1,
+      "dev": true,
+      "hk_root_pub": "BI_UMykYqAqu1C9i1pPLsPGXktAHAqZlKB_EpiicGtikqSoV9hdFn8S3nWlSvAmzbCp1iQ79iiLjD9tWA1p39ik",
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "hxk_pub": "BPL5BSYzK4pViSYlGYnw-Ow5FIY3-D1et4PP74_LVjLF1s_FvTIh8KJq3syjmkJN6B2VQoHH14tnC7fsxzTtuX0",
+      "issued_ms": 1789913600000,
+      "kind": "hub.card",
+      "reader": 1,
+      "relay_url": null,
+      "suite": 2,
+      "tls_spki_sha256": "19dzV-BWnXf27oDtjqrK-6FGcfYbFEPuMUYMTzOrlY4",
+      "v": 2
+     },
+     "op_cert": {
+      "o": {
+       "cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+       "dev": true,
+       "expires_ms": 1821536000000,
+       "hk_op_pub": "BGKyaYh6M5-PTj4pcMYwjvcmBflbTMCaHcCtr8J0vV4knajypjV15SXhIGpnZO404RAfMhkTi9R1g6_7JxV96s4",
+       "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+       "hv": 0,
+       "issued_ms": 1789913600000,
+       "kind": "hub.op_cert",
+       "op_seq": 1,
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "IkiDO7ivIMFh9v4YZOITIZ4S2fsRo8hL5q7RBkafUZ5q3ZMpIXjeXU-g16p8YbpDLpjxC4N0eCWK-IRhCkW1bg"
+     },
+     "sig": "d0rBLWzgy0K4VFAnAQ8tNGP0wbe8qLVXs_OLHN6ynAnrAx09-gjRuC-nYdKl8CHFLYh0289CgvUU0B10fZShRA"
+    },
+    "now_ms": 1790000000000,
+    "path_ws": "336afd0fd4c349f575c2ec155d7258ad",
+    "seen_nonces": [],
+    "signed": {
+     "o": {
+      "binding_seq": 1,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "kind": "hub.allow",
+      "nonce": "RmcPF1X-P_v1_uzpIyL7n5NYUSegr9pq6kM5cPsrq18",
+      "owner_person_id": "4cfef66f1dc7bee794e9d949f2a216c3",
+      "suite": 2,
+      "ts_ms": 1790000000000,
+      "v": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "ZPAvLMV-go42dAUXKOfTH5IMmP_HN66s9GUg5BJgsgh3JOGXiQs5ozLZcKkAnG7cn_klRzgzMSIRN6jkCY2_vw"
+    },
+    "trusted": true
+   },
+   "expect": {
+    "ok": {
+     "binding_seq": 1,
+     "hub": "38d8abed52ccfb538da401fd54e64bdc",
+     "owner_person_id": "4cfef66f1dc7bee794e9d949f2a216c3",
+     "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+    }
+   },
+   "name": "allow_ok"
+  },
+  {
+   "args": {
+    "dev_mode": true,
+    "hub_card": {
+     "o": {
+      "card_seq": 1,
+      "dev": true,
+      "hk_root_pub": "BI_UMykYqAqu1C9i1pPLsPGXktAHAqZlKB_EpiicGtikqSoV9hdFn8S3nWlSvAmzbCp1iQ79iiLjD9tWA1p39ik",
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "hxk_pub": "BPL5BSYzK4pViSYlGYnw-Ow5FIY3-D1et4PP74_LVjLF1s_FvTIh8KJq3syjmkJN6B2VQoHH14tnC7fsxzTtuX0",
+      "issued_ms": 1789913600000,
+      "kind": "hub.card",
+      "reader": 1,
+      "relay_url": null,
+      "suite": 2,
+      "tls_spki_sha256": "19dzV-BWnXf27oDtjqrK-6FGcfYbFEPuMUYMTzOrlY4",
+      "v": 2
+     },
+     "op_cert": {
+      "o": {
+       "cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+       "dev": true,
+       "expires_ms": 1821536000000,
+       "hk_op_pub": "BGKyaYh6M5-PTj4pcMYwjvcmBflbTMCaHcCtr8J0vV4knajypjV15SXhIGpnZO404RAfMhkTi9R1g6_7JxV96s4",
+       "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+       "hv": 0,
+       "issued_ms": 1789913600000,
+       "kind": "hub.op_cert",
+       "op_seq": 1,
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "IkiDO7ivIMFh9v4YZOITIZ4S2fsRo8hL5q7RBkafUZ5q3ZMpIXjeXU-g16p8YbpDLpjxC4N0eCWK-IRhCkW1bg"
+     },
+     "sig": "d0rBLWzgy0K4VFAnAQ8tNGP0wbe8qLVXs_OLHN6ynAnrAx09-gjRuC-nYdKl8CHFLYh0289CgvUU0B10fZShRA"
+    },
+    "now_ms": 1790000000000,
+    "path_ws": "336afd0fd4c349f575c2ec155d7258ad",
+    "seen_nonces": [],
+    "signed": {
+     "o": {
+      "binding_seq": 1,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "kind": "hub.allow",
+      "nonce": "RmcPF1X-P_v1_uzpIyL7n5NYUSegr9pq6kM5cPsrq18",
+      "owner_person_id": "4cfef66f1dc7bee794e9d949f2a216c3",
+      "suite": 2,
+      "ts_ms": 1789999880000,
+      "v": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "QKqMUie-eJYaMoYvnMFk0BHCP36ZWyGryZYWazqE8SOLzLEDFYZ2w0xqDWOoqHeCjZuiOtX_x6-VbzuGucMyQA"
+    },
+    "trusted": true
+   },
+   "expect": {
+    "ok": {
+     "binding_seq": 1,
+     "hub": "38d8abed52ccfb538da401fd54e64bdc",
+     "owner_person_id": "4cfef66f1dc7bee794e9d949f2a216c3",
+     "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+    }
+   },
+   "name": "allow_window_edge"
+  },
+  {
+   "args": {
+    "dev_mode": true,
+    "hub_card": {
+     "o": {
+      "card_seq": 1,
+      "dev": true,
+      "hk_root_pub": "BI_UMykYqAqu1C9i1pPLsPGXktAHAqZlKB_EpiicGtikqSoV9hdFn8S3nWlSvAmzbCp1iQ79iiLjD9tWA1p39ik",
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "hxk_pub": "BPL5BSYzK4pViSYlGYnw-Ow5FIY3-D1et4PP74_LVjLF1s_FvTIh8KJq3syjmkJN6B2VQoHH14tnC7fsxzTtuX0",
+      "issued_ms": 1789913600000,
+      "kind": "hub.card",
+      "reader": 1,
+      "relay_url": null,
+      "suite": 2,
+      "tls_spki_sha256": "19dzV-BWnXf27oDtjqrK-6FGcfYbFEPuMUYMTzOrlY4",
+      "v": 2
+     },
+     "op_cert": {
+      "o": {
+       "cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+       "dev": true,
+       "expires_ms": 1821536000000,
+       "hk_op_pub": "BGKyaYh6M5-PTj4pcMYwjvcmBflbTMCaHcCtr8J0vV4knajypjV15SXhIGpnZO404RAfMhkTi9R1g6_7JxV96s4",
+       "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+       "hv": 0,
+       "issued_ms": 1789913600000,
+       "kind": "hub.op_cert",
+       "op_seq": 1,
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "IkiDO7ivIMFh9v4YZOITIZ4S2fsRo8hL5q7RBkafUZ5q3ZMpIXjeXU-g16p8YbpDLpjxC4N0eCWK-IRhCkW1bg"
+     },
+     "sig": "d0rBLWzgy0K4VFAnAQ8tNGP0wbe8qLVXs_OLHN6ynAnrAx09-gjRuC-nYdKl8CHFLYh0289CgvUU0B10fZShRA"
+    },
+    "now_ms": 1790000000000,
+    "path_ws": "336afd0fd4c349f575c2ec155d7258ad",
+    "seen_nonces": [],
+    "signed": {
+     "o": {
+      "binding_seq": 7,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "kind": "hub.allow",
+      "nonce": "RmcPF1X-P_v1_uzpIyL7n5NYUSegr9pq6kM5cPsrq18",
+      "owner_person_id": "4cfef66f1dc7bee794e9d949f2a216c3",
+      "suite": 2,
+      "ts_ms": 1790000000000,
+      "v": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "CVMwNlfGGlwV5Pp5kGiMii9SiUmMl2cMB-yMfLkDC8B08bCuG1wrcHzkYigahGa0xg4118tq6dhMXjQy6ctt-w"
+    },
+    "trusted": true
+   },
+   "expect": {
+    "ok": {
+     "binding_seq": 7,
+     "hub": "38d8abed52ccfb538da401fd54e64bdc",
+     "owner_person_id": "4cfef66f1dc7bee794e9d949f2a216c3",
+     "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+    }
+   },
+   "name": "allow_higher_epoch"
+  },
+  {
+   "args": {
+    "dev_mode": true,
+    "hub_card": {
+     "o": {
+      "card_seq": 1,
+      "dev": true,
+      "hk_root_pub": "BI_UMykYqAqu1C9i1pPLsPGXktAHAqZlKB_EpiicGtikqSoV9hdFn8S3nWlSvAmzbCp1iQ79iiLjD9tWA1p39ik",
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "hxk_pub": "BPL5BSYzK4pViSYlGYnw-Ow5FIY3-D1et4PP74_LVjLF1s_FvTIh8KJq3syjmkJN6B2VQoHH14tnC7fsxzTtuX0",
+      "issued_ms": 1789913600000,
+      "kind": "hub.card",
+      "reader": 1,
+      "relay_url": null,
+      "suite": 2,
+      "tls_spki_sha256": "19dzV-BWnXf27oDtjqrK-6FGcfYbFEPuMUYMTzOrlY4",
+      "v": 2
+     },
+     "op_cert": {
+      "o": {
+       "cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+       "dev": true,
+       "expires_ms": 1821536000000,
+       "hk_op_pub": "BGKyaYh6M5-PTj4pcMYwjvcmBflbTMCaHcCtr8J0vV4knajypjV15SXhIGpnZO404RAfMhkTi9R1g6_7JxV96s4",
+       "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+       "hv": 0,
+       "issued_ms": 1789913600000,
+       "kind": "hub.op_cert",
+       "op_seq": 1,
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "IkiDO7ivIMFh9v4YZOITIZ4S2fsRo8hL5q7RBkafUZ5q3ZMpIXjeXU-g16p8YbpDLpjxC4N0eCWK-IRhCkW1bg"
+     },
+     "sig": "d0rBLWzgy0K4VFAnAQ8tNGP0wbe8qLVXs_OLHN6ynAnrAx09-gjRuC-nYdKl8CHFLYh0289CgvUU0B10fZShRA"
+    },
+    "now_ms": 1790000000000,
+    "path_ws": "336afd0fd4c349f575c2ec155d7258ad",
+    "seen_nonces": [],
+    "signed": {
+     "o": {
+      "binding_seq": 1,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "kind": "hub.allow",
+      "nonce": "RmcPF1X-P_v1_uzpIyL7n5NYUSegr9pq6kM5cPsrq18",
+      "owner_person_id": "4cfef66f1dc7bee794e9d949f2a216c3",
+      "suite": 2,
+      "ts_ms": 1790000000000,
+      "v": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "ZPAvLMV-go42dAUXKOfTH5IMmP_HN66s9GUg5BJgsgh3JOGXiQs5ozLZcKkAnG7cn_klRzgzMSIRN6jkCY2_vw"
+    },
+    "trusted": false
+   },
+   "expect": {
+    "error": "unknown_hub"
+   },
+   "name": "allow_unpinned_hub"
+  },
+  {
+   "args": {
+    "dev_mode": true,
+    "hub_card": {
+     "o": {
+      "card_seq": 1,
+      "dev": true,
+      "hk_root_pub": "BI_UMykYqAqu1C9i1pPLsPGXktAHAqZlKB_EpiicGtikqSoV9hdFn8S3nWlSvAmzbCp1iQ79iiLjD9tWA1p39ik",
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "hxk_pub": "BPL5BSYzK4pViSYlGYnw-Ow5FIY3-D1et4PP74_LVjLF1s_FvTIh8KJq3syjmkJN6B2VQoHH14tnC7fsxzTtuX0",
+      "issued_ms": 1789913600000,
+      "kind": "hub.card",
+      "reader": 1,
+      "relay_url": null,
+      "suite": 2,
+      "tls_spki_sha256": "19dzV-BWnXf27oDtjqrK-6FGcfYbFEPuMUYMTzOrlY4",
+      "v": 2
+     },
+     "op_cert": {
+      "o": {
+       "cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+       "dev": true,
+       "expires_ms": 1821536000000,
+       "hk_op_pub": "BGKyaYh6M5-PTj4pcMYwjvcmBflbTMCaHcCtr8J0vV4knajypjV15SXhIGpnZO404RAfMhkTi9R1g6_7JxV96s4",
+       "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+       "hv": 0,
+       "issued_ms": 1789913600000,
+       "kind": "hub.op_cert",
+       "op_seq": 1,
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "IkiDO7ivIMFh9v4YZOITIZ4S2fsRo8hL5q7RBkafUZ5q3ZMpIXjeXU-g16p8YbpDLpjxC4N0eCWK-IRhCkW1bg"
+     },
+     "sig": "d0rBLWzgy0K4VFAnAQ8tNGP0wbe8qLVXs_OLHN6ynAnrAx09-gjRuC-nYdKl8CHFLYh0289CgvUU0B10fZShRA"
+    },
+    "now_ms": 1790000000000,
+    "path_ws": "336afd0fd4c349f575c2ec155d7258ad",
+    "seen_nonces": [],
+    "signed": {
+     "o": {
+      "binding_seq": 1,
+      "hub_id": "cf7d4d0936b39def78de4be819b079a3",
+      "hv": 0,
+      "kind": "hub.allow",
+      "nonce": "RmcPF1X-P_v1_uzpIyL7n5NYUSegr9pq6kM5cPsrq18",
+      "owner_person_id": "4cfef66f1dc7bee794e9d949f2a216c3",
+      "suite": 2,
+      "ts_ms": 1790000000000,
+      "v": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "dU3rXYBAubMuMaiqqfpSSv7a32n2EHLdJlTBk-F2Yqp1iAcCvaVxWIonM-B6YBMMDa957e2KpR1BOC8TbvXLMQ"
+    },
+    "trusted": true
+   },
+   "expect": {
+    "error": "unknown_hub"
+   },
+   "name": "allow_unknown_hub"
+  },
+  {
+   "args": {
+    "dev_mode": true,
+    "hub_card": {
+     "o": {
+      "card_seq": 1,
+      "dev": true,
+      "hk_root_pub": "BI_UMykYqAqu1C9i1pPLsPGXktAHAqZlKB_EpiicGtikqSoV9hdFn8S3nWlSvAmzbCp1iQ79iiLjD9tWA1p39ik",
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "hxk_pub": "BPL5BSYzK4pViSYlGYnw-Ow5FIY3-D1et4PP74_LVjLF1s_FvTIh8KJq3syjmkJN6B2VQoHH14tnC7fsxzTtuX0",
+      "issued_ms": 1789913600000,
+      "kind": "hub.card",
+      "reader": 1,
+      "relay_url": null,
+      "suite": 2,
+      "tls_spki_sha256": "19dzV-BWnXf27oDtjqrK-6FGcfYbFEPuMUYMTzOrlY4",
+      "v": 2
+     },
+     "op_cert": {
+      "o": {
+       "cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+       "dev": true,
+       "expires_ms": 1821536000000,
+       "hk_op_pub": "BGKyaYh6M5-PTj4pcMYwjvcmBflbTMCaHcCtr8J0vV4knajypjV15SXhIGpnZO404RAfMhkTi9R1g6_7JxV96s4",
+       "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+       "hv": 0,
+       "issued_ms": 1789913600000,
+       "kind": "hub.op_cert",
+       "op_seq": 1,
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "IkiDO7ivIMFh9v4YZOITIZ4S2fsRo8hL5q7RBkafUZ5q3ZMpIXjeXU-g16p8YbpDLpjxC4N0eCWK-IRhCkW1bg"
+     },
+     "sig": "d0rBLWzgy0K4VFAnAQ8tNGP0wbe8qLVXs_OLHN6ynAnrAx09-gjRuC-nYdKl8CHFLYh0289CgvUU0B10fZShRA"
+    },
+    "now_ms": 1790000000000,
+    "path_ws": "336afd0fd4c349f575c2ec155d7258ad",
+    "seen_nonces": [],
+    "signed": {
+     "o": {
+      "binding_seq": 1,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "kind": "hub.allow",
+      "nonce": "RmcPF1X-P_v1_uzpIyL7n5NYUSegr9pq6kM5cPsrq18",
+      "owner_person_id": "4cfef66f1dc7bee794e9d949f2a216c3",
+      "suite": 2,
+      "ts_ms": 1790000000000,
+      "v": 2,
+      "workspace_id": "f6d7c85d726aa1e390c7280d5ed7d6bb"
+     },
+     "sig": "0KOZbbz5_5tDi9KKdIGJiBkfdLBhep9jR5hH5Dy87lvUo7Jm4Q2zKoYHN1VAmnjOCtzbtjfmYosFf7iaW8wh8w"
+    },
+    "trusted": true
+   },
+   "expect": {
+    "error": "other_workspace"
+   },
+   "name": "allow_other_workspace_than_the_path"
+  },
+  {
+   "args": {
+    "dev_mode": true,
+    "hub_card": {
+     "o": {
+      "card_seq": 1,
+      "dev": true,
+      "hk_root_pub": "BI_UMykYqAqu1C9i1pPLsPGXktAHAqZlKB_EpiicGtikqSoV9hdFn8S3nWlSvAmzbCp1iQ79iiLjD9tWA1p39ik",
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "hxk_pub": "BPL5BSYzK4pViSYlGYnw-Ow5FIY3-D1et4PP74_LVjLF1s_FvTIh8KJq3syjmkJN6B2VQoHH14tnC7fsxzTtuX0",
+      "issued_ms": 1789913600000,
+      "kind": "hub.card",
+      "reader": 1,
+      "relay_url": null,
+      "suite": 2,
+      "tls_spki_sha256": "19dzV-BWnXf27oDtjqrK-6FGcfYbFEPuMUYMTzOrlY4",
+      "v": 2
+     },
+     "op_cert": {
+      "o": {
+       "cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+       "dev": true,
+       "expires_ms": 1821536000000,
+       "hk_op_pub": "BGKyaYh6M5-PTj4pcMYwjvcmBflbTMCaHcCtr8J0vV4knajypjV15SXhIGpnZO404RAfMhkTi9R1g6_7JxV96s4",
+       "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+       "hv": 0,
+       "issued_ms": 1789913600000,
+       "kind": "hub.op_cert",
+       "op_seq": 1,
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "IkiDO7ivIMFh9v4YZOITIZ4S2fsRo8hL5q7RBkafUZ5q3ZMpIXjeXU-g16p8YbpDLpjxC4N0eCWK-IRhCkW1bg"
+     },
+     "sig": "d0rBLWzgy0K4VFAnAQ8tNGP0wbe8qLVXs_OLHN6ynAnrAx09-gjRuC-nYdKl8CHFLYh0289CgvUU0B10fZShRA"
+    },
+    "now_ms": 1790000000000,
+    "path_ws": "336afd0fd4c349f575c2ec155d7258ad",
+    "seen_nonces": [
+     "RmcPF1X-P_v1_uzpIyL7n5NYUSegr9pq6kM5cPsrq18"
+    ],
+    "signed": {
+     "o": {
+      "binding_seq": 1,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "kind": "hub.allow",
+      "nonce": "RmcPF1X-P_v1_uzpIyL7n5NYUSegr9pq6kM5cPsrq18",
+      "owner_person_id": "4cfef66f1dc7bee794e9d949f2a216c3",
+      "suite": 2,
+      "ts_ms": 1790000000000,
+      "v": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "ZPAvLMV-go42dAUXKOfTH5IMmP_HN66s9GUg5BJgsgh3JOGXiQs5ozLZcKkAnG7cn_klRzgzMSIRN6jkCY2_vw"
+    },
+    "trusted": true
+   },
+   "expect": {
+    "error": "replay"
+   },
+   "name": "allow_replay"
+  },
+  {
+   "args": {
+    "dev_mode": true,
+    "hub_card": {
+     "o": {
+      "card_seq": 1,
+      "dev": true,
+      "hk_root_pub": "BI_UMykYqAqu1C9i1pPLsPGXktAHAqZlKB_EpiicGtikqSoV9hdFn8S3nWlSvAmzbCp1iQ79iiLjD9tWA1p39ik",
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "hxk_pub": "BPL5BSYzK4pViSYlGYnw-Ow5FIY3-D1et4PP74_LVjLF1s_FvTIh8KJq3syjmkJN6B2VQoHH14tnC7fsxzTtuX0",
+      "issued_ms": 1789913600000,
+      "kind": "hub.card",
+      "reader": 1,
+      "relay_url": null,
+      "suite": 2,
+      "tls_spki_sha256": "19dzV-BWnXf27oDtjqrK-6FGcfYbFEPuMUYMTzOrlY4",
+      "v": 2
+     },
+     "op_cert": {
+      "o": {
+       "cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+       "dev": true,
+       "expires_ms": 1821536000000,
+       "hk_op_pub": "BGKyaYh6M5-PTj4pcMYwjvcmBflbTMCaHcCtr8J0vV4knajypjV15SXhIGpnZO404RAfMhkTi9R1g6_7JxV96s4",
+       "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+       "hv": 0,
+       "issued_ms": 1789913600000,
+       "kind": "hub.op_cert",
+       "op_seq": 1,
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "IkiDO7ivIMFh9v4YZOITIZ4S2fsRo8hL5q7RBkafUZ5q3ZMpIXjeXU-g16p8YbpDLpjxC4N0eCWK-IRhCkW1bg"
+     },
+     "sig": "d0rBLWzgy0K4VFAnAQ8tNGP0wbe8qLVXs_OLHN6ynAnrAx09-gjRuC-nYdKl8CHFLYh0289CgvUU0B10fZShRA"
+    },
+    "now_ms": 1790000000000,
+    "path_ws": "336afd0fd4c349f575c2ec155d7258ad",
+    "seen_nonces": [],
+    "signed": {
+     "o": {
+      "binding_seq": 1,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "kind": "hub.allow",
+      "nonce": "RmcPF1X-P_v1_uzpIyL7n5NYUSegr9pq6kM5cPsrq18",
+      "owner_person_id": "4cfef66f1dc7bee794e9d949f2a216c3",
+      "suite": 2,
+      "ts_ms": 1789999879000,
+      "v": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "4BH_mtBVn08iiFPSD6Lb4BI2kuBy3lauKau3eIKvNXtbvw3cnyjYvtY34my1PvikknIJGJJ9Hs-CLoY9QAiXGw"
+    },
+    "trusted": true
+   },
+   "expect": {
+    "error": "stale_timestamp"
+   },
+   "name": "allow_stale_timestamp"
+  },
+  {
+   "args": {
+    "dev_mode": true,
+    "hub_card": {
+     "o": {
+      "card_seq": 1,
+      "dev": true,
+      "hk_root_pub": "BI_UMykYqAqu1C9i1pPLsPGXktAHAqZlKB_EpiicGtikqSoV9hdFn8S3nWlSvAmzbCp1iQ79iiLjD9tWA1p39ik",
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "hxk_pub": "BPL5BSYzK4pViSYlGYnw-Ow5FIY3-D1et4PP74_LVjLF1s_FvTIh8KJq3syjmkJN6B2VQoHH14tnC7fsxzTtuX0",
+      "issued_ms": 1789913600000,
+      "kind": "hub.card",
+      "reader": 1,
+      "relay_url": null,
+      "suite": 2,
+      "tls_spki_sha256": "19dzV-BWnXf27oDtjqrK-6FGcfYbFEPuMUYMTzOrlY4",
+      "v": 2
+     },
+     "op_cert": {
+      "o": {
+       "cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+       "dev": true,
+       "expires_ms": 1821536000000,
+       "hk_op_pub": "BGKyaYh6M5-PTj4pcMYwjvcmBflbTMCaHcCtr8J0vV4knajypjV15SXhIGpnZO404RAfMhkTi9R1g6_7JxV96s4",
+       "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+       "hv": 0,
+       "issued_ms": 1789913600000,
+       "kind": "hub.op_cert",
+       "op_seq": 1,
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "IkiDO7ivIMFh9v4YZOITIZ4S2fsRo8hL5q7RBkafUZ5q3ZMpIXjeXU-g16p8YbpDLpjxC4N0eCWK-IRhCkW1bg"
+     },
+     "sig": "d0rBLWzgy0K4VFAnAQ8tNGP0wbe8qLVXs_OLHN6ynAnrAx09-gjRuC-nYdKl8CHFLYh0289CgvUU0B10fZShRA"
+    },
+    "now_ms": 1790000000000,
+    "path_ws": "336afd0fd4c349f575c2ec155d7258ad",
+    "seen_nonces": [],
+    "signed": {
+     "o": {
+      "binding_seq": 1,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "kind": "hub.allow",
+      "nonce": "RmcPF1X-P_v1_uzpIyL7n5NYUSegr9pq6kM5cPsrq18",
+      "owner_person_id": "4cfef66f1dc7bee794e9d949f2a216c3",
+      "suite": 2,
+      "ts_ms": 1790000121000,
+      "v": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "yPC42_N6GqGORa0yKinje-hPflWMFhK2JNJNgKueb4sf445r4o_vsei8XVSCZ6qq_LFioi9bocSs8e_WZ6y0hA"
+    },
+    "trusted": true
+   },
+   "expect": {
+    "error": "stale_timestamp"
+   },
+   "name": "allow_future_timestamp"
+  },
+  {
+   "args": {
+    "dev_mode": true,
+    "hub_card": {
+     "o": {
+      "card_seq": 1,
+      "dev": true,
+      "hk_root_pub": "BI_UMykYqAqu1C9i1pPLsPGXktAHAqZlKB_EpiicGtikqSoV9hdFn8S3nWlSvAmzbCp1iQ79iiLjD9tWA1p39ik",
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "hxk_pub": "BPL5BSYzK4pViSYlGYnw-Ow5FIY3-D1et4PP74_LVjLF1s_FvTIh8KJq3syjmkJN6B2VQoHH14tnC7fsxzTtuX0",
+      "issued_ms": 1789913600000,
+      "kind": "hub.card",
+      "reader": 1,
+      "relay_url": null,
+      "suite": 2,
+      "tls_spki_sha256": "19dzV-BWnXf27oDtjqrK-6FGcfYbFEPuMUYMTzOrlY4",
+      "v": 2
+     },
+     "op_cert": {
+      "o": {
+       "cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+       "dev": true,
+       "expires_ms": 1821536000000,
+       "hk_op_pub": "BGKyaYh6M5-PTj4pcMYwjvcmBflbTMCaHcCtr8J0vV4knajypjV15SXhIGpnZO404RAfMhkTi9R1g6_7JxV96s4",
+       "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+       "hv": 0,
+       "issued_ms": 1789913600000,
+       "kind": "hub.op_cert",
+       "op_seq": 1,
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "IkiDO7ivIMFh9v4YZOITIZ4S2fsRo8hL5q7RBkafUZ5q3ZMpIXjeXU-g16p8YbpDLpjxC4N0eCWK-IRhCkW1bg"
+     },
+     "sig": "d0rBLWzgy0K4VFAnAQ8tNGP0wbe8qLVXs_OLHN6ynAnrAx09-gjRuC-nYdKl8CHFLYh0289CgvUU0B10fZShRA"
+    },
+    "now_ms": 1790000000000,
+    "path_ws": "336afd0fd4c349f575c2ec155d7258ad",
+    "seen_nonces": [],
+    "signed": {
+     "o": {
+      "binding_seq": 1,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "kind": "hub.allow",
+      "nonce": "RmcPF1X-P_v1_uzpIyL7n5NYUSegr9pq6kM5cPsrq18",
+      "owner_person_id": "4cfef66f1dc7bee794e9d949f2a216c3",
+      "suite": 2,
+      "ts_ms": 1790000000000,
+      "v": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "aQ94V-tp37UamjsVswR4KjUIzQ8wTV0-NYg_CTj3sKtu1wQTH8YtZWNdPfgaaMzvRL0K_j48emluudJAg8I4hg"
+    },
+    "trusted": true
+   },
+   "expect": {
+    "error": "bad_hub_signature"
+   },
+   "name": "allow_signed_by_another_hub_key"
+  },
+  {
+   "args": {
+    "dev_mode": true,
+    "hub_card": {
+     "o": {
+      "card_seq": 1,
+      "dev": true,
+      "hk_root_pub": "BI_UMykYqAqu1C9i1pPLsPGXktAHAqZlKB_EpiicGtikqSoV9hdFn8S3nWlSvAmzbCp1iQ79iiLjD9tWA1p39ik",
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "hxk_pub": "BPL5BSYzK4pViSYlGYnw-Ow5FIY3-D1et4PP74_LVjLF1s_FvTIh8KJq3syjmkJN6B2VQoHH14tnC7fsxzTtuX0",
+      "issued_ms": 1789913600000,
+      "kind": "hub.card",
+      "reader": 1,
+      "relay_url": null,
+      "suite": 2,
+      "tls_spki_sha256": "19dzV-BWnXf27oDtjqrK-6FGcfYbFEPuMUYMTzOrlY4",
+      "v": 2
+     },
+     "op_cert": {
+      "o": {
+       "cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+       "dev": true,
+       "expires_ms": 1821536000000,
+       "hk_op_pub": "BGKyaYh6M5-PTj4pcMYwjvcmBflbTMCaHcCtr8J0vV4knajypjV15SXhIGpnZO404RAfMhkTi9R1g6_7JxV96s4",
+       "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+       "hv": 0,
+       "issued_ms": 1789913600000,
+       "kind": "hub.op_cert",
+       "op_seq": 1,
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "IkiDO7ivIMFh9v4YZOITIZ4S2fsRo8hL5q7RBkafUZ5q3ZMpIXjeXU-g16p8YbpDLpjxC4N0eCWK-IRhCkW1bg"
+     },
+     "sig": "d0rBLWzgy0K4VFAnAQ8tNGP0wbe8qLVXs_OLHN6ynAnrAx09-gjRuC-nYdKl8CHFLYh0289CgvUU0B10fZShRA"
+    },
+    "now_ms": 1790000000000,
+    "path_ws": "336afd0fd4c349f575c2ec155d7258ad",
+    "seen_nonces": [],
+    "signed": {
+     "o": {
+      "binding_seq": 1,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "kind": "hub.allow",
+      "nonce": "RmcPF1X-P_v1_uzpIyL7n5NYUSegr9pq6kM5cPsrq18",
+      "owner_person_id": "4cfef66f1dc7bee794e9d949f2a216c3",
+      "suite": 2,
+      "ts_ms": 1790000000000,
+      "v": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "pT_skxj1tRinNLVASIIlZtaUl7BJoZYDEE8kEHEbu-tW4_xE9HTwcrWbNrfq7iIg8SiU8wtcqkabCfbpU5G6LQ"
+    },
+    "trusted": true
+   },
+   "expect": {
+    "error": "bad_hub_signature"
+   },
+   "name": "allow_signed_by_the_workspace"
+  },
+  {
+   "args": {
+    "dev_mode": true,
+    "hub_card": {
+     "o": {
+      "card_seq": 1,
+      "dev": true,
+      "hk_root_pub": "BI_UMykYqAqu1C9i1pPLsPGXktAHAqZlKB_EpiicGtikqSoV9hdFn8S3nWlSvAmzbCp1iQ79iiLjD9tWA1p39ik",
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "hxk_pub": "BPL5BSYzK4pViSYlGYnw-Ow5FIY3-D1et4PP74_LVjLF1s_FvTIh8KJq3syjmkJN6B2VQoHH14tnC7fsxzTtuX0",
+      "issued_ms": 1789913600000,
+      "kind": "hub.card",
+      "reader": 1,
+      "relay_url": null,
+      "suite": 2,
+      "tls_spki_sha256": "19dzV-BWnXf27oDtjqrK-6FGcfYbFEPuMUYMTzOrlY4",
+      "v": 2
+     },
+     "op_cert": {
+      "o": {
+       "cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+       "dev": true,
+       "expires_ms": 1821536000000,
+       "hk_op_pub": "BGKyaYh6M5-PTj4pcMYwjvcmBflbTMCaHcCtr8J0vV4knajypjV15SXhIGpnZO404RAfMhkTi9R1g6_7JxV96s4",
+       "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+       "hv": 0,
+       "issued_ms": 1789913600000,
+       "kind": "hub.op_cert",
+       "op_seq": 1,
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "IkiDO7ivIMFh9v4YZOITIZ4S2fsRo8hL5q7RBkafUZ5q3ZMpIXjeXU-g16p8YbpDLpjxC4N0eCWK-IRhCkW1bg"
+     },
+     "sig": "d0rBLWzgy0K4VFAnAQ8tNGP0wbe8qLVXs_OLHN6ynAnrAx09-gjRuC-nYdKl8CHFLYh0289CgvUU0B10fZShRA"
+    },
+    "now_ms": 1790000000000,
+    "path_ws": "336afd0fd4c349f575c2ec155d7258ad",
+    "seen_nonces": [],
+    "signed": {
+     "o": {
+      "binding_seq": 1,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "kind": "hub.allow",
+      "nonce": "RmcPF1X-P_v1_uzpIyL7n5NYUSegr9pq6kM5cPsrq18",
+      "owner_person_id": "4cfef66f1dc7bee794e9d949f2a216c3",
+      "suite": 2,
+      "ts_ms": 1790000000000,
+      "v": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "SyMR7b-bFEL9M-0oTXs2K1DcEklZpGlicd-G4AG_7k23gUbBrm27ATHIYoKoUfptuOCwfqkVAy7swLutvKvT6w"
+    },
+    "trusted": true
+   },
+   "expect": {
+    "error": "bad_hub_signature"
+   },
+   "name": "allow_signed_under_the_narrow_label"
+  },
+  {
+   "args": {
+    "dev_mode": true,
+    "hub_card": {
+     "o": {
+      "card_seq": 1,
+      "dev": true,
+      "hk_root_pub": "BI_UMykYqAqu1C9i1pPLsPGXktAHAqZlKB_EpiicGtikqSoV9hdFn8S3nWlSvAmzbCp1iQ79iiLjD9tWA1p39ik",
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "hxk_pub": "BPL5BSYzK4pViSYlGYnw-Ow5FIY3-D1et4PP74_LVjLF1s_FvTIh8KJq3syjmkJN6B2VQoHH14tnC7fsxzTtuX0",
+      "issued_ms": 1789913600000,
+      "kind": "hub.card",
+      "reader": 1,
+      "relay_url": null,
+      "suite": 2,
+      "tls_spki_sha256": "19dzV-BWnXf27oDtjqrK-6FGcfYbFEPuMUYMTzOrlY4",
+      "v": 2
+     },
+     "op_cert": {
+      "o": {
+       "cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+       "dev": true,
+       "expires_ms": 1821536000000,
+       "hk_op_pub": "BGKyaYh6M5-PTj4pcMYwjvcmBflbTMCaHcCtr8J0vV4knajypjV15SXhIGpnZO404RAfMhkTi9R1g6_7JxV96s4",
+       "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+       "hv": 0,
+       "issued_ms": 1789913600000,
+       "kind": "hub.op_cert",
+       "op_seq": 1,
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "IkiDO7ivIMFh9v4YZOITIZ4S2fsRo8hL5q7RBkafUZ5q3ZMpIXjeXU-g16p8YbpDLpjxC4N0eCWK-IRhCkW1bg"
+     },
+     "sig": "d0rBLWzgy0K4VFAnAQ8tNGP0wbe8qLVXs_OLHN6ynAnrAx09-gjRuC-nYdKl8CHFLYh0289CgvUU0B10fZShRA"
+    },
+    "now_ms": 1790000000000,
+    "path_ws": "336afd0fd4c349f575c2ec155d7258ad",
+    "seen_nonces": [],
+    "signed": {
+     "o": {
+      "binding_seq": 1,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "kind": "hub.allow",
+      "nonce": "RmcPF1X-P_v1_uzpIyL7n5NYUSegr9pq6kM5cPsrq18",
+      "owner_person_id": "4cfef66f1dc7bee794e9d949f2a216c3",
+      "suite": 2,
+      "ts_ms": 1790000000000,
+      "v": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "OyMGNDAUEzL0rr2DT7qPiU1Bp-X8r-DMDfKIu3Z0DuP_b_sRWgqFqQz_8CodMYWft23nFbNKNUNVZNVb6rpHIg"
+    },
+    "trusted": true
+   },
+   "expect": {
+    "error": "bad_hub_signature"
+   },
+   "name": "allow_signed_under_the_pass_label"
+  },
+  {
+   "args": {
+    "dev_mode": true,
+    "hub_card": {
+     "o": {
+      "card_seq": 1,
+      "dev": true,
+      "hk_root_pub": "BI_UMykYqAqu1C9i1pPLsPGXktAHAqZlKB_EpiicGtikqSoV9hdFn8S3nWlSvAmzbCp1iQ79iiLjD9tWA1p39ik",
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "hxk_pub": "BPL5BSYzK4pViSYlGYnw-Ow5FIY3-D1et4PP74_LVjLF1s_FvTIh8KJq3syjmkJN6B2VQoHH14tnC7fsxzTtuX0",
+      "issued_ms": 1789913600000,
+      "kind": "hub.card",
+      "reader": 1,
+      "relay_url": null,
+      "suite": 2,
+      "tls_spki_sha256": "19dzV-BWnXf27oDtjqrK-6FGcfYbFEPuMUYMTzOrlY4",
+      "v": 2
+     },
+     "op_cert": {
+      "o": {
+       "cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+       "dev": true,
+       "expires_ms": 1821536000000,
+       "hk_op_pub": "BGKyaYh6M5-PTj4pcMYwjvcmBflbTMCaHcCtr8J0vV4knajypjV15SXhIGpnZO404RAfMhkTi9R1g6_7JxV96s4",
+       "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+       "hv": 0,
+       "issued_ms": 1789913600000,
+       "kind": "hub.op_cert",
+       "op_seq": 1,
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "IkiDO7ivIMFh9v4YZOITIZ4S2fsRo8hL5q7RBkafUZ5q3ZMpIXjeXU-g16p8YbpDLpjxC4N0eCWK-IRhCkW1bg"
+     },
+     "sig": "d0rBLWzgy0K4VFAnAQ8tNGP0wbe8qLVXs_OLHN6ynAnrAx09-gjRuC-nYdKl8CHFLYh0289CgvUU0B10fZShRA"
+    },
+    "now_ms": 1790000000000,
+    "path_ws": "336afd0fd4c349f575c2ec155d7258ad",
+    "seen_nonces": [],
+    "signed": {
+     "o": {
+      "binding_seq": 1,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "kind": "hub.allow",
+      "nonce": "RmcPF1X-P_v1_uzpIyL7n5NYUSegr9pq6kM5cPsrq18",
+      "owner_person_id": "5e1248b612518adaa7a7fa1a93741b5e",
+      "suite": 2,
+      "ts_ms": 1790000000000,
+      "v": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "ZPAvLMV-go42dAUXKOfTH5IMmP_HN66s9GUg5BJgsgh3JOGXiQs5ozLZcKkAnG7cn_klRzgzMSIRN6jkCY2_vw"
+    },
+    "trusted": true
+   },
+   "expect": {
+    "error": "bad_hub_signature"
+   },
+   "name": "allow_owner_changed_after_signing"
+  },
+  {
+   "args": {
+    "dev_mode": true,
+    "hub_card": {
+     "o": {
+      "card_seq": 1,
+      "dev": true,
+      "hk_root_pub": "BI_UMykYqAqu1C9i1pPLsPGXktAHAqZlKB_EpiicGtikqSoV9hdFn8S3nWlSvAmzbCp1iQ79iiLjD9tWA1p39ik",
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "hxk_pub": "BPL5BSYzK4pViSYlGYnw-Ow5FIY3-D1et4PP74_LVjLF1s_FvTIh8KJq3syjmkJN6B2VQoHH14tnC7fsxzTtuX0",
+      "issued_ms": 1789913600000,
+      "kind": "hub.card",
+      "reader": 1,
+      "relay_url": null,
+      "suite": 2,
+      "tls_spki_sha256": "19dzV-BWnXf27oDtjqrK-6FGcfYbFEPuMUYMTzOrlY4",
+      "v": 2
+     },
+     "op_cert": {
+      "o": {
+       "cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+       "dev": true,
+       "expires_ms": 1821536000000,
+       "hk_op_pub": "BGKyaYh6M5-PTj4pcMYwjvcmBflbTMCaHcCtr8J0vV4knajypjV15SXhIGpnZO404RAfMhkTi9R1g6_7JxV96s4",
+       "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+       "hv": 0,
+       "issued_ms": 1789913600000,
+       "kind": "hub.op_cert",
+       "op_seq": 1,
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "IkiDO7ivIMFh9v4YZOITIZ4S2fsRo8hL5q7RBkafUZ5q3ZMpIXjeXU-g16p8YbpDLpjxC4N0eCWK-IRhCkW1bg"
+     },
+     "sig": "d0rBLWzgy0K4VFAnAQ8tNGP0wbe8qLVXs_OLHN6ynAnrAx09-gjRuC-nYdKl8CHFLYh0289CgvUU0B10fZShRA"
+    },
+    "now_ms": 1790000000000,
+    "path_ws": "336afd0fd4c349f575c2ec155d7258ad",
+    "seen_nonces": [],
+    "signed": {
+     "o": {
+      "binding_seq": 1,
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "kind": "hub.allow",
+      "nonce": "RmcPF1X-P_v1_uzpIyL7n5NYUSegr9pq6kM5cPsrq18",
+      "owner_person_id": "4cfef66f1dc7bee794e9d949f2a216c3",
+      "suite": 2,
+      "ts_ms": 1790000000000,
+      "v": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "rImQMBs99HPybhV0TG2CIhW1TRiMzgw5YTCameGdpE50l7JOR-pJA2VmoEMiuUoQsSW9ulLVNbpel8mFLabEIw"
+    },
+    "trusted": true
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "allow_extra_member"
+  },
+  {
+   "args": {
+    "dev_mode": true,
+    "hub_card": {
+     "o": {
+      "card_seq": 1,
+      "dev": true,
+      "hk_root_pub": "BI_UMykYqAqu1C9i1pPLsPGXktAHAqZlKB_EpiicGtikqSoV9hdFn8S3nWlSvAmzbCp1iQ79iiLjD9tWA1p39ik",
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "hxk_pub": "BPL5BSYzK4pViSYlGYnw-Ow5FIY3-D1et4PP74_LVjLF1s_FvTIh8KJq3syjmkJN6B2VQoHH14tnC7fsxzTtuX0",
+      "issued_ms": 1789913600000,
+      "kind": "hub.card",
+      "reader": 1,
+      "relay_url": null,
+      "suite": 2,
+      "tls_spki_sha256": "19dzV-BWnXf27oDtjqrK-6FGcfYbFEPuMUYMTzOrlY4",
+      "v": 2
+     },
+     "op_cert": {
+      "o": {
+       "cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+       "dev": true,
+       "expires_ms": 1821536000000,
+       "hk_op_pub": "BGKyaYh6M5-PTj4pcMYwjvcmBflbTMCaHcCtr8J0vV4knajypjV15SXhIGpnZO404RAfMhkTi9R1g6_7JxV96s4",
+       "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+       "hv": 0,
+       "issued_ms": 1789913600000,
+       "kind": "hub.op_cert",
+       "op_seq": 1,
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "IkiDO7ivIMFh9v4YZOITIZ4S2fsRo8hL5q7RBkafUZ5q3ZMpIXjeXU-g16p8YbpDLpjxC4N0eCWK-IRhCkW1bg"
+     },
+     "sig": "d0rBLWzgy0K4VFAnAQ8tNGP0wbe8qLVXs_OLHN6ynAnrAx09-gjRuC-nYdKl8CHFLYh0289CgvUU0B10fZShRA"
+    },
+    "now_ms": 1790000000000,
+    "path_ws": "336afd0fd4c349f575c2ec155d7258ad",
+    "seen_nonces": [],
+    "signed": {
+     "o": {
+      "binding_seq": 1,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "kind": "hub.allow",
+      "nonce": "RmcPF1X-P_v1_uzpIyL7n5NYUSegr9pq6kM5cPsrq18",
+      "suite": 2,
+      "ts_ms": 1790000000000,
+      "v": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "hECmsSjbN3E_kLW-5ryKTodDbrcld53iMeLfWr69dfTHH6j1CnYPK-Vj20E8UCOlyAj3Qb_LlwNUopxe5vRRsA"
+    },
+    "trusted": true
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "allow_missing_owner"
+  },
+  {
+   "args": {
+    "dev_mode": true,
+    "hub_card": {
+     "o": {
+      "card_seq": 1,
+      "dev": true,
+      "hk_root_pub": "BI_UMykYqAqu1C9i1pPLsPGXktAHAqZlKB_EpiicGtikqSoV9hdFn8S3nWlSvAmzbCp1iQ79iiLjD9tWA1p39ik",
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "hxk_pub": "BPL5BSYzK4pViSYlGYnw-Ow5FIY3-D1et4PP74_LVjLF1s_FvTIh8KJq3syjmkJN6B2VQoHH14tnC7fsxzTtuX0",
+      "issued_ms": 1789913600000,
+      "kind": "hub.card",
+      "reader": 1,
+      "relay_url": null,
+      "suite": 2,
+      "tls_spki_sha256": "19dzV-BWnXf27oDtjqrK-6FGcfYbFEPuMUYMTzOrlY4",
+      "v": 2
+     },
+     "op_cert": {
+      "o": {
+       "cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+       "dev": true,
+       "expires_ms": 1821536000000,
+       "hk_op_pub": "BGKyaYh6M5-PTj4pcMYwjvcmBflbTMCaHcCtr8J0vV4knajypjV15SXhIGpnZO404RAfMhkTi9R1g6_7JxV96s4",
+       "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+       "hv": 0,
+       "issued_ms": 1789913600000,
+       "kind": "hub.op_cert",
+       "op_seq": 1,
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "IkiDO7ivIMFh9v4YZOITIZ4S2fsRo8hL5q7RBkafUZ5q3ZMpIXjeXU-g16p8YbpDLpjxC4N0eCWK-IRhCkW1bg"
+     },
+     "sig": "d0rBLWzgy0K4VFAnAQ8tNGP0wbe8qLVXs_OLHN6ynAnrAx09-gjRuC-nYdKl8CHFLYh0289CgvUU0B10fZShRA"
+    },
+    "now_ms": 1790000000000,
+    "path_ws": "336afd0fd4c349f575c2ec155d7258ad",
+    "seen_nonces": [],
+    "signed": {
+     "o": {
+      "binding_seq": 0,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "kind": "hub.allow",
+      "nonce": "RmcPF1X-P_v1_uzpIyL7n5NYUSegr9pq6kM5cPsrq18",
+      "owner_person_id": "4cfef66f1dc7bee794e9d949f2a216c3",
+      "suite": 2,
+      "ts_ms": 1790000000000,
+      "v": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "2Yf52WoGhLdueqXVyBbUSePO4t3bmVXL_u_ZnRQ_cbHc1zJEySKUEuhFqCgR2EcEPT9FKPzMTINJA1w6GARHug"
+    },
+    "trusted": true
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "allow_seq_zero"
+  },
+  {
+   "args": {
+    "dev_mode": true,
+    "hub_card": {
+     "o": {
+      "card_seq": 1,
+      "dev": true,
+      "hk_root_pub": "BI_UMykYqAqu1C9i1pPLsPGXktAHAqZlKB_EpiicGtikqSoV9hdFn8S3nWlSvAmzbCp1iQ79iiLjD9tWA1p39ik",
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "hxk_pub": "BPL5BSYzK4pViSYlGYnw-Ow5FIY3-D1et4PP74_LVjLF1s_FvTIh8KJq3syjmkJN6B2VQoHH14tnC7fsxzTtuX0",
+      "issued_ms": 1789913600000,
+      "kind": "hub.card",
+      "reader": 1,
+      "relay_url": null,
+      "suite": 2,
+      "tls_spki_sha256": "19dzV-BWnXf27oDtjqrK-6FGcfYbFEPuMUYMTzOrlY4",
+      "v": 2
+     },
+     "op_cert": {
+      "o": {
+       "cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+       "dev": true,
+       "expires_ms": 1821536000000,
+       "hk_op_pub": "BGKyaYh6M5-PTj4pcMYwjvcmBflbTMCaHcCtr8J0vV4knajypjV15SXhIGpnZO404RAfMhkTi9R1g6_7JxV96s4",
+       "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+       "hv": 0,
+       "issued_ms": 1789913600000,
+       "kind": "hub.op_cert",
+       "op_seq": 1,
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "IkiDO7ivIMFh9v4YZOITIZ4S2fsRo8hL5q7RBkafUZ5q3ZMpIXjeXU-g16p8YbpDLpjxC4N0eCWK-IRhCkW1bg"
+     },
+     "sig": "d0rBLWzgy0K4VFAnAQ8tNGP0wbe8qLVXs_OLHN6ynAnrAx09-gjRuC-nYdKl8CHFLYh0289CgvUU0B10fZShRA"
+    },
+    "now_ms": 1790000000000,
+    "path_ws": "336afd0fd4c349f575c2ec155d7258ad",
+    "seen_nonces": [],
+    "signed": {
+     "o": {
+      "binding_seq": 1,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "kind": "hub.allow",
+      "nonce": "RmcPF1X-P_v1_uzpIyL7n5NYUSegr9pq6kM5cPsrq18",
+      "owner_person_id": "not-hex",
+      "suite": 2,
+      "ts_ms": 1790000000000,
+      "v": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "-yJZTgQbIWgPq8zEi_IeDLHQjVSy8DUQvuBgwqR_G0z2iiSxkMfGKTqnDQn4_4_We-FeYbmyKw2kMmQeeH6Hjw"
+    },
+    "trusted": true
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "allow_bad_owner_id"
+  },
+  {
+   "args": {
+    "dev_mode": true,
+    "hub_card": {
+     "o": {
+      "card_seq": 1,
+      "dev": true,
+      "hk_root_pub": "BI_UMykYqAqu1C9i1pPLsPGXktAHAqZlKB_EpiicGtikqSoV9hdFn8S3nWlSvAmzbCp1iQ79iiLjD9tWA1p39ik",
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "hxk_pub": "BPL5BSYzK4pViSYlGYnw-Ow5FIY3-D1et4PP74_LVjLF1s_FvTIh8KJq3syjmkJN6B2VQoHH14tnC7fsxzTtuX0",
+      "issued_ms": 1789913600000,
+      "kind": "hub.card",
+      "reader": 1,
+      "relay_url": null,
+      "suite": 2,
+      "tls_spki_sha256": "19dzV-BWnXf27oDtjqrK-6FGcfYbFEPuMUYMTzOrlY4",
+      "v": 2
+     },
+     "op_cert": {
+      "o": {
+       "cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+       "dev": true,
+       "expires_ms": 1821536000000,
+       "hk_op_pub": "BGKyaYh6M5-PTj4pcMYwjvcmBflbTMCaHcCtr8J0vV4knajypjV15SXhIGpnZO404RAfMhkTi9R1g6_7JxV96s4",
+       "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+       "hv": 0,
+       "issued_ms": 1789913600000,
+       "kind": "hub.op_cert",
+       "op_seq": 1,
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "IkiDO7ivIMFh9v4YZOITIZ4S2fsRo8hL5q7RBkafUZ5q3ZMpIXjeXU-g16p8YbpDLpjxC4N0eCWK-IRhCkW1bg"
+     },
+     "sig": "d0rBLWzgy0K4VFAnAQ8tNGP0wbe8qLVXs_OLHN6ynAnrAx09-gjRuC-nYdKl8CHFLYh0289CgvUU0B10fZShRA"
+    },
+    "now_ms": 1790000000000,
+    "path_ws": "336afd0fd4c349f575c2ec155d7258ad",
+    "seen_nonces": [],
+    "signed": {
+     "o": {
+      "binding_seq": 1,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "kind": "hub.allow",
+      "nonce": "c2hvcnQ",
+      "owner_person_id": "4cfef66f1dc7bee794e9d949f2a216c3",
+      "suite": 2,
+      "ts_ms": 1790000000000,
+      "v": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "_vK2pvtY9xw6lCv_zmiyErSxZUvTdXO94bSaU4-4yhKGL6nHGXefyUhLRVGOvIQ6YlXFAI2j_CrdGAJ_O7duBg"
+    },
+    "trusted": true
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "allow_short_nonce"
+  },
+  {
+   "args": {
+    "dev_mode": true,
+    "hub_card": {
+     "o": {
+      "card_seq": 1,
+      "dev": true,
+      "hk_root_pub": "BI_UMykYqAqu1C9i1pPLsPGXktAHAqZlKB_EpiicGtikqSoV9hdFn8S3nWlSvAmzbCp1iQ79iiLjD9tWA1p39ik",
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "hxk_pub": "BPL5BSYzK4pViSYlGYnw-Ow5FIY3-D1et4PP74_LVjLF1s_FvTIh8KJq3syjmkJN6B2VQoHH14tnC7fsxzTtuX0",
+      "issued_ms": 1789913600000,
+      "kind": "hub.card",
+      "reader": 1,
+      "relay_url": null,
+      "suite": 2,
+      "tls_spki_sha256": "19dzV-BWnXf27oDtjqrK-6FGcfYbFEPuMUYMTzOrlY4",
+      "v": 2
+     },
+     "op_cert": {
+      "o": {
+       "cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+       "dev": true,
+       "expires_ms": 1821536000000,
+       "hk_op_pub": "BGKyaYh6M5-PTj4pcMYwjvcmBflbTMCaHcCtr8J0vV4knajypjV15SXhIGpnZO404RAfMhkTi9R1g6_7JxV96s4",
+       "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+       "hv": 0,
+       "issued_ms": 1789913600000,
+       "kind": "hub.op_cert",
+       "op_seq": 1,
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "IkiDO7ivIMFh9v4YZOITIZ4S2fsRo8hL5q7RBkafUZ5q3ZMpIXjeXU-g16p8YbpDLpjxC4N0eCWK-IRhCkW1bg"
+     },
+     "sig": "d0rBLWzgy0K4VFAnAQ8tNGP0wbe8qLVXs_OLHN6ynAnrAx09-gjRuC-nYdKl8CHFLYh0289CgvUU0B10fZShRA"
+    },
+    "now_ms": 1790000000000,
+    "path_ws": "336afd0fd4c349f575c2ec155d7258ad",
+    "seen_nonces": [],
+    "signed": {
+     "o": {
+      "binding_seq": 1,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "kind": "hub.allow",
+      "nonce": "RmcPF1X-P_v1_uzpIyL7n5NYUSegr9pq6kM5cPsrq18",
+      "owner_person_id": "4cfef66f1dc7bee794e9d949f2a216c3",
+      "suite": 3,
+      "ts_ms": 1790000000000,
+      "v": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "XlunJLJeAvL2OLLJ0gI_qwxUx-ASDgxYhqP6JmwwfEDo8D1IRYDLKPjWOV2M2AKmCjiDGcUrnoZE03OqPWpcAg"
+    },
+    "trusted": true
+   },
+   "expect": {
+    "error": "wrong_suite"
+   },
+   "name": "allow_wrong_suite"
+  },
+  {
+   "args": {
+    "dev_mode": true,
+    "hub_card": {
+     "o": {
+      "card_seq": 1,
+      "dev": true,
+      "hk_root_pub": "BI_UMykYqAqu1C9i1pPLsPGXktAHAqZlKB_EpiicGtikqSoV9hdFn8S3nWlSvAmzbCp1iQ79iiLjD9tWA1p39ik",
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "hxk_pub": "BPL5BSYzK4pViSYlGYnw-Ow5FIY3-D1et4PP74_LVjLF1s_FvTIh8KJq3syjmkJN6B2VQoHH14tnC7fsxzTtuX0",
+      "issued_ms": 1789913600000,
+      "kind": "hub.card",
+      "reader": 1,
+      "relay_url": null,
+      "suite": 2,
+      "tls_spki_sha256": "19dzV-BWnXf27oDtjqrK-6FGcfYbFEPuMUYMTzOrlY4",
+      "v": 2
+     },
+     "op_cert": {
+      "o": {
+       "cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+       "dev": true,
+       "expires_ms": 1821536000000,
+       "hk_op_pub": "BGKyaYh6M5-PTj4pcMYwjvcmBflbTMCaHcCtr8J0vV4knajypjV15SXhIGpnZO404RAfMhkTi9R1g6_7JxV96s4",
+       "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+       "hv": 0,
+       "issued_ms": 1789913600000,
+       "kind": "hub.op_cert",
+       "op_seq": 1,
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "IkiDO7ivIMFh9v4YZOITIZ4S2fsRo8hL5q7RBkafUZ5q3ZMpIXjeXU-g16p8YbpDLpjxC4N0eCWK-IRhCkW1bg"
+     },
+     "sig": "d0rBLWzgy0K4VFAnAQ8tNGP0wbe8qLVXs_OLHN6ynAnrAx09-gjRuC-nYdKl8CHFLYh0289CgvUU0B10fZShRA"
+    },
+    "now_ms": 1790000000000,
+    "path_ws": "336afd0fd4c349f575c2ec155d7258ad",
+    "seen_nonces": [],
+    "signed": {
+     "o": {
+      "binding_seq": 1,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "kind": "hub.snapshot",
+      "nonce": "RmcPF1X-P_v1_uzpIyL7n5NYUSegr9pq6kM5cPsrq18",
+      "owner_person_id": "4cfef66f1dc7bee794e9d949f2a216c3",
+      "suite": 2,
+      "ts_ms": 1790000000000,
+      "v": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "ZPAvLMV-go42dAUXKOfTH5IMmP_HN66s9GUg5BJgsgh3JOGXiQs5ozLZcKkAnG7cn_klRzgzMSIRN6jkCY2_vw"
+    },
+    "trusted": true
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "allow_wrong_kind"
+  },
+  {
+   "args": {
+    "dev_mode": true,
+    "hub_card": {
+     "o": {
+      "card_seq": 1,
+      "dev": true,
+      "hk_root_pub": "BI_UMykYqAqu1C9i1pPLsPGXktAHAqZlKB_EpiicGtikqSoV9hdFn8S3nWlSvAmzbCp1iQ79iiLjD9tWA1p39ik",
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "hxk_pub": "BPL5BSYzK4pViSYlGYnw-Ow5FIY3-D1et4PP74_LVjLF1s_FvTIh8KJq3syjmkJN6B2VQoHH14tnC7fsxzTtuX0",
+      "issued_ms": 1789913600000,
+      "kind": "hub.card",
+      "reader": 1,
+      "relay_url": null,
+      "suite": 2,
+      "tls_spki_sha256": "19dzV-BWnXf27oDtjqrK-6FGcfYbFEPuMUYMTzOrlY4",
+      "v": 2
+     },
+     "op_cert": {
+      "o": {
+       "cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+       "dev": true,
+       "expires_ms": 1821536000000,
+       "hk_op_pub": "BGKyaYh6M5-PTj4pcMYwjvcmBflbTMCaHcCtr8J0vV4knajypjV15SXhIGpnZO404RAfMhkTi9R1g6_7JxV96s4",
+       "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+       "hv": 0,
+       "issued_ms": 1789913600000,
+       "kind": "hub.op_cert",
+       "op_seq": 1,
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "IkiDO7ivIMFh9v4YZOITIZ4S2fsRo8hL5q7RBkafUZ5q3ZMpIXjeXU-g16p8YbpDLpjxC4N0eCWK-IRhCkW1bg"
+     },
+     "sig": "d0rBLWzgy0K4VFAnAQ8tNGP0wbe8qLVXs_OLHN6ynAnrAx09-gjRuC-nYdKl8CHFLYh0289CgvUU0B10fZShRA"
+    },
+    "now_ms": 1790000000000,
+    "path_ws": "336afd0fd4c349f575c2ec155d7258ad",
+    "seen_nonces": [],
+    "signed": [
+     {
+      "o": {
+       "binding_seq": 1,
+       "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+       "hv": 0,
+       "kind": "hub.allow",
+       "nonce": "RmcPF1X-P_v1_uzpIyL7n5NYUSegr9pq6kM5cPsrq18",
+       "owner_person_id": "4cfef66f1dc7bee794e9d949f2a216c3",
+       "suite": 2,
+       "ts_ms": 1790000000000,
+       "v": 2,
+       "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+      },
+      "sig": "ZPAvLMV-go42dAUXKOfTH5IMmP_HN66s9GUg5BJgsgh3JOGXiQs5ozLZcKkAnG7cn_klRzgzMSIRN6jkCY2_vw"
+     }
+    ],
+    "trusted": true
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "allow_not_an_object"
+  }
+ ],
  "approval_cases": [
   {
    "args": {
@@ -3667,6 +5052,7 @@
   "h_app_meta": "orch/v2/app-meta|",
   "h_app_reach": "orch/v2/app-reach|",
   "h_publish_request_direct": "orch/v2/publish-request|",
+  "sig_hub_allow": "orch/v2/hub-allow|",
   "sig_hub_app_pass": "orch/v2/hub-app-pass|",
   "sig_hub_release_narrow": "orch/v2/hub-release-narrow|"
  },
@@ -14268,6 +15654,13 @@
   }
  ],
  "required": {
+  "allow": [
+   "allow_unpinned_hub",
+   "allow_other_workspace_than_the_path",
+   "allow_replay",
+   "allow_stale_timestamp",
+   "allow_signed_by_another_hub_key"
+  ],
   "approval": [
    "app_commit_hub_path",
    "app_commit_direct_path_no_hub",

@@ -3,11 +3,12 @@
 import os
 import sqlite3
 
-SCHEMA_VERSION = 6  # 2: workspaces.delegation_json replaces card_seq/card_json (design 2.6b)
+SCHEMA_VERSION = 7  # 2: workspaces.delegation_json replaces card_seq/card_json (design 2.6b)
 # 3: hub path (orch-core #898): hub_bindings, hub_cards, hub_op_revoked, hub_revoked_devices (additive only)
 # 4: apps (M4 #1357 S3): apps, app_versions, app_files, app_views, app_visits (additive only)
 # 5: shares.label / by_kind / by_name, the display columns of the company list
 # 6: hub_narrowings, shares.pw (M4 S2 #1453: hub revoke/stop, link password)
+# 7: trusted_hubs (operator pin) and hub_allows (hub.allow, P02: a trusted hub admits its own workspaces)
 # Only the current schema exists: any other user_version is refused (nothing is in production, no upgrade path).
 
 
@@ -68,6 +69,17 @@ CREATE TABLE IF NOT EXISTS hub_op_revoked(
 CREATE TABLE IF NOT EXISTS hub_revoked_devices(
   device_id TEXT PRIMARY KEY,
   revoked_ms INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS trusted_hubs(
+  hub_id TEXT PRIMARY KEY,  -- the operator's pin: only these hubs may send hub.allow (admin hub trust / --trust-hub)
+  added_ms INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS hub_allows(
+  workspace_id TEXT PRIMARY KEY,  -- no FK: it may arrive before the workspace registers
+  hub_id TEXT NOT NULL,
+  person_id TEXT NOT NULL,
+  binding_seq INTEGER NOT NULL,  -- counts only while the live binding is THIS hub's at exactly this seq
+  updated_ms INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS shares(
   id TEXT PRIMARY KEY,

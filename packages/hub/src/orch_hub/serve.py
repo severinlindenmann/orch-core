@@ -59,7 +59,7 @@ from .router import AccessAuthz, RouteQueue, Router
 from .services import Services
 from .services.helper_client import HelperClient
 from .services.helper_server import SOCK_FILE
-from .settings import SETTINGS_FILE, serve_origins, where_answer
+from .settings import SETTINGS_FILE, SettingsError, serve_origins, where_answer
 from .settings import load as load_settings
 from .shares import ShareService, ShareStore, hxk_handle
 from .spaces import SpaceService, SpaceStore
@@ -166,6 +166,46 @@ def parse_web_listen(value: str, *, assigned: Callable[[str], bool] = CO.locally
     except ValueError:
         pass
     return CO.parse_link_listen(value, assigned=assigned)
+
+
+def publish_hint(publish_url: str | None) -> str | None:
+    """The publish address a joined workspace may keep as a hint (P02): an origin core accepts (https anywhere, plain http on
+    loopback only), else None: a workspace is then asked as before. It carries no authority."""
+    from .contract.where import publish_ok
+
+    if publish_url is None:
+        return None
+    u = urllib.parse.urlsplit(publish_url)
+    origin = f"{u.scheme}://{u.netloc}".lower()
+    return origin if publish_ok(origin) and u.path in ("", "/") else None
+
+
+def make_admission(
+    state: Path, registry: Registry, access: Access, hub_id: str
+) -> Callable[[str], tuple[str, int] | None]:
+    """Who the hub vouches for at orch-publish (``hub.allow``, protocol 11.9), as ``workspace -> (owner, binding_seq)``:
+    only a workspace that is bound to THIS hub right now, whose owner is the hub user the admin bound at the invite and that
+    user is a hub admin, and only while the hub setting "Let this hub's workspaces share files" is not off. Read live on
+    every call: switching it off or removing the admin stops the next admission. Anything unknown is None (fail closed)."""
+
+    def admission(ws: str) -> tuple[str, int] | None:
+        try:
+            cfg = load_settings(state)
+        except SettingsError:
+            return None
+        if cfg is not None and cfg.get("share_files", True) is not True:
+            return None
+        st, pin, alias = registry.binding_state(ws), registry.pin(ws), registry.owner_alias(ws)
+        b = None if st is None else st.get("binding")
+        if st is None or pin is None or alias is None or st.get("status") != "bound" or type(b) is not dict:
+            return None
+        if b.get("hub_id") != hub_id or type(st.get("binding_seq")) is not int:
+            return None
+        if not access.is_hub_admin(alias):
+            return None
+        return pin["owner_person_id"], st["binding_seq"]
+
+    return admission
 
 
 def serve(
@@ -423,7 +463,12 @@ def serve(
             if bind_all or adv in ("127.0.0.1", "::1"):  # loopback answers: tell switch tickets (FB10)
                 loop_origin = f"http://127.0.0.1:{web.address[1]}"
                 switch.set_loopback_origin(lambda: loop_origin)
-    fw = HubPublish(keys, HttpPublishSync(publish_url), PublishConfig(publish_url, api_host))
+    fw = HubPublish(
+        keys,
+        HttpPublishSync(publish_url),
+        PublishConfig(publish_url, api_host),
+        admission=make_admission(state, registry, access, keys.hub_id),
+    )
     # #1285: the public webhook inbox. Off unless BOTH the public URL and its own listener are given (a half setting
     # is refused: a hook URL that nothing serves, or a listener nobody can name, would only mislead)
     hook_inbox: HookInbox | None = None
@@ -459,7 +504,7 @@ def serve(
         switch=switch,
         hooks=hook_inbox,
         activity=activity,
-        where=lambda: where_answer(state, extra_public=link_ws_public),
+        where=lambda: where_answer(state, extra_public=link_ws_public, publish=publish_hint(publish_url)),
         deliveries=deliveries,
         streams=stream_router,
         remote=remote_endpoint,

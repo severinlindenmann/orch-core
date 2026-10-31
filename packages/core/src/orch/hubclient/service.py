@@ -22,6 +22,7 @@ from orch.crypto.encoding import b64u, unb64u
 from . import wire
 from .errors import HubRefused
 from .link import HubLink, HubTransport
+from .where import publish_ok
 
 __all__ = [
     "EpochKeys",
@@ -62,7 +63,7 @@ class EpochKeys(Protocol):
 _ENTRY = {"unbound", "addr", "tls_spki", "hk_op_pub", "mode"}
 _OPTIONAL = {
     "outbox", "addr", "tls_spki", "hxk_pub", "sealed", "rotate_after", "card", "revoked_op_certs", "snapshot",
-    "revoked_op_objs", "publish_owed", "snapshot_floors",
+    "revoked_op_objs", "publish_owed", "snapshot_floors", "hub_publish",
 }  # fmt: skip
 MAX_ADDRS = 4  # M4 (#1461): other addresses of the hub the host has verified (next to ``addr``)
 
@@ -121,6 +122,8 @@ class HubState:
     #: passed against ``tls_spki`` (never from a card or a hint alone); dialled after ``addr``, in this order
     addrs: list[str] = field(default_factory=list)
     hub_name: str | None = None  # the display name the hub says of itself (``hub_where``); the hub's words, a hint
+    #: P02: the origin of the hub's publish server (``hub_where`` ``publish``), a hint for the Publish form
+    hub_publish: str | None = None
     tls_spki: str | None = None  # b64u SPKI hash from the verified hub card: the pin of that dial
     hxk_pub: str | None = None  # b64u, from the verified card: the key a full-mode ``WK_e`` is sealed to
     #: full mode only: ``{"epoch", "hxk_pub"}`` of the last ``wk_seal`` the hub accepted (``None``: nothing sealed)
@@ -166,6 +169,7 @@ class HubState:
             "addr": self.addr,
             "addrs": list(self.addrs),
             "hub_name": self.hub_name,
+            "hub_publish": self.hub_publish,
             "tls_spki": self.tls_spki,
             "hxk_pub": self.hxk_pub,
             "sealed": self.sealed,
@@ -202,6 +206,7 @@ class HubState:
             and (d.get("addr") is None or (type(d["addr"]) is str and len(d["addr"]) <= 300))
             and _addrs_ok(d["addrs"])
             and (d["hub_name"] is None or (type(d["hub_name"]) is str and len(d["hub_name"]) <= 60))
+            and (d.get("hub_publish") is None or publish_ok(d["hub_publish"]))
             and (d.get("tls_spki") is None or type(d["tls_spki"]) is str)
             and (d.get("hxk_pub") is None or wire.is_pub(d["hxk_pub"]))
             and _sealed_ok(d.get("sealed"))
@@ -233,6 +238,7 @@ class HubState:
             addr=d.get("addr"),
             addrs=list(d["addrs"]),
             hub_name=d["hub_name"],
+            hub_publish=d.get("hub_publish"),
             tls_spki=d.get("tls_spki"),
             hxk_pub=d.get("hxk_pub"),
             sealed=None if d.get("sealed") is None else dict(d["sealed"]),

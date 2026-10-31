@@ -200,6 +200,7 @@ literal `orch/v2/hub-…|` names.
 | `h_app_reach` | `orch/v2/app-reach\|` | hash | the approved reach list of one app version (`reach_hash`, M4) | 11.4 |
 | `sig_hub_release_narrow` | `orch/v2/hub-release-narrow\|` | `HK_op` | `cj(o)` of `hub.release_narrow` (revoke a link, stop an app; M4) | 11.6 |
 | `sig_hub_app_pass` | `orch/v2/hub-app-pass\|` | `HK_op` | `cj(o)` of `hub.app_pass` (single-use pass into a company/group app; M4) | 11.8 |
+| `sig_hub_allow` | `orch/v2/hub-allow\|` | `HK_op` | `cj(o)` of `hub.allow` (the hub admits one of its own workspaces at orch-publish; P02) | 11.10 |
 
 **The removal proof label (§9.7, #1463).** `orch/v2/hub-remove|` is the domain of the digest an admin's channel key signs
 to start removing the hub (`orch_hub.contract.labels.HUB_REMOVE_LABEL`). Like the access-change label it names no object
@@ -2874,7 +2875,7 @@ to the push-configuration `404`):
 admin can change which addresses the hub advertises (private network, office network, this server, public address)
 without touching a card, a binding or a certificate. Bound hosts learn the list with this op on every link session.
 
-**Request** `{}`. **Reply** `{"addresses": [{"kind", "link"}], "name"}`, and nothing else (exact keys):
+**Request** `{}`. **Reply** `{"addresses": [{"kind", "link"}], "name"}` and, optionally, `publish` (§11.11), and nothing else (exact keys):
 
 - `addresses`: 1 to 4 entries, each exactly `kind` and `link`; `kind` is one of `private`, `office`, `server`, `public`
   (the UI words "Private network (VPN)", "Office network", "On this server", "Public address"); `link` is a **link
@@ -3467,6 +3468,50 @@ group apps (and only those); that is said in the release review text and in §13
 `meta_mismatch` (409), `file_mismatch` (409), `not_found` (404), `expired` (401), `pass_too_long` (400), `bad_nonce` (401),
 `not_company_app` (403), `audience_mismatch` (403), and the validation codes of §11.4 and §11.7. All other refusals reuse
 §14.
+
+### 11.10 The hub admits its own workspace: `hub.allow` (P02, #1290)
+
+Until now a workspace reached orch-publish only after the operator typed `orch-publish admin ws allow` and `admin owners add`,
+although the hub had already verified the workspace and its owner at `card_put` (§9.5). With a hub that is a second
+admission nobody can do from the dashboard. The hub now says it itself. It signs, under `HK_op`, `orch/v2/hub-allow|`:
+
+```
+hub.allow {v, suite, kind: "hub.allow", hv, hub_id, workspace_id, owner_person_id (32 hex), binding_seq (>= 1), ts_ms, nonce (b64u 32 bytes)}
+PUT /v2/hub/allow/{workspace_id}    body = the signed object, no other header
+```
+
+**The hub sends it** before it forwards the workspace's card (join and `card_put`) and after every new `hub.binding` (a new epoch),
+and only when ALL hold: the workspace is bound to this hub now, with the `binding_seq` it names; its owner is the hub user
+the admin bound at the invite and that user is a hub admin; the hub setting "Let this hub's workspaces share files" is not off
+(`hub-settings.json` `share_files`, default on). A refused or unreachable send is only logged: the old admission rules decide.
+
+**Checks at orch-publish** (vectors `allow_cases`: the signed part, replayed by the hub, orch-publish and orch-core):
+
+| # | Check | Refusal |
+|---|---|---|
+| 1 | envelope, `kind`, `v`, `hv` (`wrong_suite`), exact field set and types | `malformed`, `wrong_suite` |
+| 2 | `workspace_id` equals the one in the path | `other_workspace` |
+| 3 | `\|now − ts_ms\| ≤ 120 s` | `stale_timestamp` |
+| 4 | the hub is one the OPERATOR pinned (`orch-publish admin hub trust <hub_id>` or `--trust-hub`); a hub that only sent its card is not | `unknown_hub` |
+| 5 | the held, current hub card for `hub_id`, verified again now, and the `HK_op` signature | `unknown_hub`, `bad_hub_signature` |
+| 6 | the nonce is unseen for this hub; then recorded | `replay` |
+
+Then, in one transaction on freshly read state (publish tests): a workspace already registered must have the same
+`owner_person_id` (`other_person`); a binding to ANOTHER hub that is `bound` refuses (`other_hub`); a `binding_seq` below the
+stored binding or allowance refuses (`stale_binding`); at or below an `unbound` of this hub refuses (`unbound`); another hub's
+allowance row is never replaced (`other_hub`).
+
+**What it grants, exactly.** Registration of THIS workspace by `PUT /v2/hub/cards/{ws}` is admitted when the card's owner is
+`owner_person_id` (instead of the operator's pre-bind plus owner-allowlist row), and, on every request, the owner counts as
+allowed only while the workspace's live binding is `bound` to that same hub at exactly the allowed `binding_seq` and the hub
+is still pinned. It adds no row to the owner allowlist and no authority to anyone else. Leaving or unbinding (`hub.unbound`),
+a re-join (a higher seq), a binding to another hub, or `admin hub untrust` ends it on the very next request.
+
+### 11.11 `hub_where` carries the publish address (P02)
+
+The reply of §10.9 may carry one more exact member, `publish`: the origin of this hub's publish server (`https://host[:port]`,
+or `http://localhost|127.0.0.1[:port]`), no path, no userinfo. Absent when the hub's publish address is not such an origin.
+It is a hint: a host keeps it only to suggest it in the Publish form, and the owner still signs what is turned on.
 
 ## 12. Who verifies what (summary)
 

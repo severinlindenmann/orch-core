@@ -9,6 +9,7 @@ address passed against the pin it already holds (that step is the caller's, M4 S
 
 from __future__ import annotations
 
+import re
 import unicodedata
 from typing import Any
 
@@ -35,12 +36,26 @@ def clean_name(raw: object) -> str:
     return name
 
 
+_PUBLISH = re.compile(r"https://[a-z0-9.\-]{1,100}(:[0-9]{1,5})?|http://(localhost|127\.0\.0\.1)(:[0-9]{1,5})?")
+
+
+def publish_ok(x: object) -> bool:
+    """The hub's publish address (P02): an origin, https anywhere or plain http on loopback only, no path. A hint that
+    carries no authority; the host keeps it only to suggest it in the Publish form."""
+    if type(x) is not str or not x.isascii() or len(x) > 120 or _PUBLISH.fullmatch(x) is None:
+        return False
+    port = x.rpartition(":")[2]
+    return not port.isdigit() or 0 < int(port) < 65536
+
+
 def check_hub_where(answer: Any) -> dict[str, Any]:
     """Validate ``{addresses: [{kind, link}], name}`` and return it normalised: 1-4 entries with exactly ``kind``
     (one of :data:`WHERE_KINDS`) and ``link`` (an address of protocol 10.10: ``host:port``, ``ws://host[:port]`` or
     ``wss://host[:port]``, by :func:`parse_link_address`), no address twice (same scheme, lower-case host and port),
     the name cleaned. A ``ws(s)://`` entry is only a hint: it is stored only after a pinned handshake at it passed."""
-    if type(answer) is not dict or set(answer) != {"addresses", "name"}:
+    if type(answer) is not dict or set(answer) - {"publish"} != {"addresses", "name"}:
+        raise HubRefused("malformed")
+    if "publish" in answer and not publish_ok(answer["publish"]):
         raise HubRefused("malformed")
     entries = answer["addresses"]
     if type(entries) is not list or not 1 <= len(entries) <= MAX_ADDRESSES:
@@ -56,4 +71,7 @@ def check_hub_where(answer: Any) -> dict[str, Any]:
         out.append({"kind": e["kind"], "link": e["link"]})
     if len(seen) != len(out):
         raise HubRefused("malformed")
-    return {"addresses": out, "name": clean_name(answer["name"])}
+    res = {"addresses": out, "name": clean_name(answer["name"])}
+    if "publish" in answer:
+        res["publish"] = answer["publish"]
+    return res

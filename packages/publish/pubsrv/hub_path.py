@@ -46,6 +46,7 @@ LABELS = {
     "h_app_reach": b"orch/v2/app-reach|",
     "sig_hub_release_narrow": b"orch/v2/hub-release-narrow|",
     "sig_hub_app_pass": b"orch/v2/hub-app-pass|",
+    "sig_hub_allow": b"orch/v2/hub-allow|",
 }
 
 # HTTP status of every code this module raises (contracts/hub/protocol.md 11.2, 14); anything else is 400.
@@ -245,6 +246,15 @@ FIELDS = {
         "target": _enum("share", "app"),
         "id": _hex16,
         "action": _enum("revoke", "stop"),
+        "ts_ms": _int_min(0),
+        "nonce": _b64u32,
+    },
+    # P02 (protocol 11.9): signed by the hub's HK_op; admits ONE workspace of the hub for ONE owner at ONE binding_seq
+    "hub.allow": {
+        "hub_id": _hex16,
+        "workspace_id": _hex16,
+        "owner_person_id": _hex16,
+        "binding_seq": _int_min(1),
         "ts_ms": _int_min(0),
         "nonce": _b64u32,
     },
@@ -786,6 +796,10 @@ def _store_update(conn, ws_hex, now_ms, dev_mode, signed, kind):
             new = apply_unbound(state, o)
             hub_hex = o["hub_id"]
         _write_state(conn, ws_hex, new, hub_hex, now_ms)
+        if kind == "unbound":  # P02: leaving the hub ends its allowance now (it also stops counting by itself)
+            conn.execute(
+                "DELETE FROM hub_allows WHERE workspace_id=? AND hub_id=?", (ws_hex, hub_hex)
+            )
         conn.execute("COMMIT")
         return new
     except BaseException:

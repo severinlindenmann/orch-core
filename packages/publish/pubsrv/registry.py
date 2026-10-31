@@ -21,9 +21,35 @@ def check_delegation(delegation, pk, ws_hex, path_ws=None):
     return o
 
 
+def hub_allowed(conn, ws_hex, person_id, live):
+    """P02: a TRUSTED hub (the operator's pin, `trusted_hubs`) said, by a signed `hub.allow`, that this workspace and
+    this owner are its own. `live` (use): the workspace's binding must be bound to that same hub at exactly the
+    allowed `binding_seq`, so leaving, unbinding, re-joining or a hub the operator stopped trusting ends it at once.
+    Without `live` (registration, before the binding exists) only the row and the pin count."""
+    q = (
+        "SELECT 1 FROM hub_allows a JOIN trusted_hubs t ON t.hub_id=a.hub_id"
+        " WHERE a.workspace_id=? AND a.person_id=?"
+    )
+    if live:
+        q = (
+            "SELECT 1 FROM hub_allows a JOIN trusted_hubs t ON t.hub_id=a.hub_id"
+            " JOIN hub_bindings b ON b.workspace_id=a.workspace_id AND b.hub_id=a.hub_id"
+            " AND b.binding_seq=a.binding_seq AND b.status='bound'"
+            " WHERE a.workspace_id=? AND a.person_id=?"
+        )
+    return conn.execute(q, (ws_hex, person_id)).fetchone() is not None
+
+
+def owner_listed(conn, person_id):
+    return (
+        conn.execute("SELECT 1 FROM owners WHERE person_id=?", (person_id,)).fetchone() is not None
+    )
+
+
 def require_prebound(conn, ws_hex, person_id):
     """An unknown workspace may register only if the admin pre-bound it to this owner (M2) and the
-    owner is on the allowlist. Every failure is the same 401, whatever the reason (L3)."""
+    owner is on the allowlist, or a trusted hub allowed exactly this workspace and owner (P02). Every
+    failure is the same 401, whatever the reason (L3)."""
     ok = (
         conn.execute(
             "SELECT 1 FROM prebinds p JOIN owners o ON o.person_id = p.person_id"
@@ -31,7 +57,7 @@ def require_prebound(conn, ws_hex, person_id):
             (ws_hex, person_id),
         ).fetchone()
         is not None
-    )
+    ) or hub_allowed(conn, ws_hex, person_id, live=False)
     if not ok:
         raise Refusal(401, "unknown_workspace")
 
@@ -57,9 +83,8 @@ def check_admitted(conn, row):
     with no cache in front, so a block or an allowlist removal bites on the very next request."""
     if row["status"] != "active":
         raise Refusal(403, "workspace_blocked")
-    if (
-        conn.execute("SELECT 1 FROM owners WHERE person_id=?", (row["owner_person_id"],)).fetchone()
-        is None
+    if not owner_listed(conn, row["owner_person_id"]) and not hub_allowed(
+        conn, row["workspace_id"], row["owner_person_id"], live=True
     ):
         raise Refusal(403, "owner_not_allowed")
 
@@ -82,11 +107,8 @@ def register(conn, ws_hex, delegation, pk, now_ms, guard=None, after=None):
         if row is None:
             # checked on freshly read state, inside the lock (M2)
             require_prebound(conn, ws_hex, o["owner_person_id"])
-            if (
-                conn.execute(
-                    "SELECT 1 FROM owners WHERE person_id=?", (o["owner_person_id"],)
-                ).fetchone()
-                is None
+            if not owner_listed(conn, o["owner_person_id"]) and not hub_allowed(
+                conn, ws_hex, o["owner_person_id"], live=False
             ):
                 raise Refusal(401, "unknown_workspace")
             conn.execute(

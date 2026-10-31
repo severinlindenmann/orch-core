@@ -31,3 +31,7 @@ class PublishSync(Protocol):
 
     def put_binding(self, workspace_id: str, obj: Mapping[str, Any]) -> None:
         """A WSK-signed ``hub.binding`` or ``hub.unbound`` of the workspace, as ``accept_binding`` / ``accept_unbound``."""
+
+    def put_allow(self, workspace_id: str, obj: Mapping[str, Any]) -> None:
+        """An HK_op-signed ``hub.allow`` (protocol 11.9): this hub says this workspace and its owner are its own. Only a hub
+        the operator pinned at orch-publish is believed; any refusal is orch-publish's code."""

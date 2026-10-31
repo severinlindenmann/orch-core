@@ -92,6 +92,8 @@ export interface HubShare {
   /** Keys of the tickets the hub has; complete only when `tickets_complete`. */
   tickets: string[]
   tickets_complete: boolean
+  tickets_state?: Record<string, string>
+  not_sent_count?: number
 }
 
 /** `POST /api/w/<ws>/hub/share/preview`: what the hub would see after ONE rule change. */

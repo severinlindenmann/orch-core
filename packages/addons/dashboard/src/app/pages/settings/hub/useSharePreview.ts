@@ -9,7 +9,7 @@ export const TOO_MANY = 'This rule reaches too many people. Narrow it to share.'
 /** What the host's refusal always contains (it may be prefixed by the relay); the page matches this, not the whole sentence. */
 const TOO_MANY_MARK = 'reaches too many people'
 
-export type ShareChange = { add: HubRule; remove?: never } | { remove: HubRule; add?: never }
+export type ShareChange = { add?: never; remove?: never } | { add: HubRule; remove?: never } | { remove: HubRule; add?: never }
 
 /**
  * The preview of ONE share change (`share.preview`), asked 300 ms after the last edit. `current` is the answer to exactly

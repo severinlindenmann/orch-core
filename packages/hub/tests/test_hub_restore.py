@@ -610,6 +610,74 @@ def test_the_server_command_restores_in_place_and_on_a_fresh_server(w, tmp_path,
     )
 
 
+def _installed(tmp_path) -> Path:
+    """What `orch install` (or any command that opened the empty dir) leaves: a state dir holding only format.lock (0644)."""
+    state = tmp_path / "srv" / "hub"
+    state.mkdir(parents=True)
+    lock = state / "format.lock"
+    lock.touch()
+    lock.chmod(0o644)
+    return state
+
+
+def test_a_restore_onto_an_install_prepared_dir_takes_its_lock_file_along(w, tmp_path):
+    words, data = _backup(w)
+    f = tmp_path / "x.orchbak"
+    f.write_bytes(data)
+    state = _installed(tmp_path)
+    before = os.stat(state / "format.lock")
+    args = CLI._parser().parse_args(["restore", str(f), "--state", str(state)])
+    out: list[str] = []
+    rc = BCLI.run_restore(
+        args,
+        out=out.append,
+        now_ms=lambda: 1_900_000_000_000,
+        tty=lambda: True,
+        read_words=lambda: words,
+        confirm=lambda _p: "yes",
+    )
+    after = os.stat(state / "format.lock")
+    assert rc == 0 and any("no hub yet" in x for x in out)
+    assert (after.st_dev, after.st_ino) == (before.st_dev, before.st_ino)  # the installer's file, not a new one
+    assert stat.S_IMODE(after.st_mode) == 0o644
+    assert HubKeys.open(state, now_ms=lambda: 1_900_000_000_000).op_seq == 1_900_000_000_000
+    assert not RS.paths(state)[0].exists() and not _exclusive_refused(state)  # nobody holds the lock any more
+
+
+def test_the_console_restore_onto_an_install_prepared_dir_works_without_a_handle(w, tmp_path):
+    words, data = _backup(w)
+    state = _installed(tmp_path)
+    got = RS.restore(state, data, words, dev_mode=True, now_ms=lambda: 1_900_000_000_000)
+    assert got["in_place"] is False and (state / "meta.json").exists() and (state / "format.lock").is_file()
+
+
+def test_a_restore_refuses_a_fresh_dir_with_anything_else_in_it_before_writing(w, tmp_path):
+    words, data = _backup(w)
+    state = _installed(tmp_path)
+    (state / "stray").write_text("x")
+    new, old = RS.paths(state)
+    with pytest.raises(RS.RestoreError) as e:
+        RS.restore(state, data, words, dev_mode=True, now_ms=lambda: 1_900_000_000_000)
+    assert e.value.code == "restore_failed" and not new.exists() and not old.exists()
+    assert sorted(p.name for p in state.iterdir()) == ["format.lock", "stray"]
+
+
+def test_a_restore_onto_an_install_prepared_dir_under_an_update_changes_nothing(w, tmp_path):
+    import fcntl
+
+    words, data = _backup(w)
+    state = _installed(tmp_path)
+    fd = os.open(state / "format.lock", os.O_RDWR)
+    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)  # an `orch update` holds it
+    try:
+        with pytest.raises(RS.RestoreError) as e:
+            RS.restore(state, data, words, dev_mode=True, now_ms=lambda: 1_900_000_000_000)
+    finally:
+        os.close(fd)
+    assert e.value.code == "restore_failed" and not RS.paths(state)[0].exists()
+    assert sorted(p.name for p in state.iterdir()) == ["format.lock"]  # the lock file is back where it was
+
+
 def test_the_server_command_refuses_agents_pipes_a_wrong_answer_and_a_bad_file(w, tmp_path, monkeypatch, capsys):
     words, data = _backup(w)
     f = tmp_path / "x.orchbak"

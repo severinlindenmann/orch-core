@@ -27,14 +27,14 @@ import os
 import shutil
 import sqlite3
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
 from ..contract import backup as B
 from ..contract.canon import CanonError, b64u, cj
 from ..contract.hub import Refused
-from ..dataformat import DataFormatError, lock_shared
+from ..dataformat import LOCK_FILE, DataFormatError, lock_shared
 from ..keys import HubKeys, KeysError
 from ..keys.fsutil import FILE_MODE, StateError, check_dir, fsync_dir, make_dir, read_file
 from . import guard as G
@@ -134,6 +134,46 @@ def recover(state: Path) -> None:
             _rm(new)
         finally:
             os.close(fd)
+
+
+def _bare_state(state: Path) -> bool:
+    """A fresh server's state dir: absent or empty (False), or holding only ``format.lock`` (True: ``orch install`` or any
+    command that opened the empty dir made it). Anything else in the way is refused (``restore_failed``) before a byte is
+    written: the staged dir could not be renamed onto it."""
+    if not os.path.lexists(state):
+        return False
+    if state.is_symlink() or not state.is_dir():
+        raise RestoreError("restore_failed")
+    names = os.listdir(state)
+    if not names:
+        return False
+    lock = state / LOCK_FILE
+    if names != [LOCK_FILE] or lock.is_symlink() or not lock.is_file():
+        raise RestoreError("restore_failed")
+    return True
+
+
+@contextlib.contextmanager
+def _carry_lock(state: Path, new: Path, bare: bool) -> Iterator[None]:
+    """Fresh server whose state dir holds only the installer's ``format.lock``: the file moves into the staged dir (it keeps
+    its owner and mode, and the locks held on it follow it) so the staged dir can be renamed onto the now empty dir. The
+    shared lock is held on it across the move (an `orch update` holding it refuses first, ``update.busy``). A swap that
+    fails puts the file back."""
+    if not bare:
+        yield
+        return
+    guard = lock_shared(state)
+    try:
+        os.rename(state / LOCK_FILE, new / LOCK_FILE)
+        try:
+            yield
+        except BaseException:
+            with contextlib.suppress(OSError):
+                if (new / LOCK_FILE).exists() and not (state / LOCK_FILE).exists():
+                    os.rename(new / LOCK_FILE, state / LOCK_FILE)
+            raise
+    finally:
+        os.close(guard)
 
 
 def _rescue_backups(state: Path, new: Path) -> None:
@@ -454,9 +494,10 @@ def _restore(
 ) -> dict[str, Any]:
     try:
         recover(state)
-    except DataFormatError:  # an `orch update` holds the lock: nothing was touched
+    except DataFormatError:  # the format lock cannot be taken: nothing was touched
         raise RestoreError("restore_failed") from None
     new, old = paths(state)
+    bare = not in_place and _bare_state(state)  # refuses any other leftover before anything is written
     live: HubKeys | None = None
     if in_place:
         live = keys if keys is not None else HubKeys.open(state, prune=False, now_ms=now_ms)
@@ -546,7 +587,8 @@ def _restore(
         # The format lock follows the dir, not the path: the shared lock is taken on the staged dir BEFORE it is renamed
         # into place (also for every handle of this process on the state), so no `orch update` can take the new dir between
         # the rename and the handover. A lock only: an older backup's data is refused by the next open, not by this restore.
-        with SwapLock(state, new) as lock:
+        # A DataFormatError from here (update busy, no usable lock file) is mapped to restore_failed below.
+        with _carry_lock(state, new, bare), SwapLock(state, new) as lock:
             if in_place:
                 for sub in CARRY_DIRS:
                     if (state / sub).is_dir() and not (state / sub).is_symlink():

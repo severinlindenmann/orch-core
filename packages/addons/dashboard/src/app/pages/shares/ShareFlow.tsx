@@ -12,6 +12,7 @@ import { toast } from 'sonner'
 import { Check, Copy, Loader2, Plus } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { copyText } from '@/app/copyLink'
+import { ReservedLead, reviewFacts } from './reviewFacts'
 import { SignPopover } from '@/components/sign/SignPopover'
 import { Inline } from '@/components/sign/visible'
 import { queries } from '@/api/queries'
@@ -462,20 +463,21 @@ export function ShareFlow({ ws, ticket, resume, only, onClose }: { ws: string; t
         doneToast=""
         confirmLabel={one ? 'Publish' : 'Share files'}
         lead={(content) => {
-          const hostSummary = content?.summary?.title === 'Share these files'
-          return one ? (
+          const facts = reviewFacts(content, lasts)
+          return <ReservedLead>{one ? (
             <div className="space-y-2 text-[13px]">
               <ul aria-label="Files to share" className="divide-y divide-border rounded border border-border px-2">
                 {s.files.map((f) => (
                   <li key={f.name} className="py-1.5">
                     <Inline>{f.name}</Inline> <span className="text-text-faint">· {fmtSize(f.size)}</span>
-                    {!hostSummary && <span className="block text-[12px] text-text-muted">works for {lasts} day{lasts === 1 ? '' : 's'}</span>}
+                    {!facts.duration && <span className="block text-[12px] text-text-muted">works for {lasts} day{lasts === 1 ? '' : 's'}</span>}
                   </li>
                 ))}
               </ul>
-              {!hostSummary && where && <p data-testid="where-files-go" className="font-medium">{where}</p>}
-              {!hostSummary && reach && <p className="text-[12px] text-text-muted">{reach}</p>}
-              {!hostSummary && <p className="text-[12px]">Anyone with the link can open it.</p>}
+              {!facts.destination && where && <p data-testid="where-files-go" className="font-medium">{where}</p>}
+              {!content?.summary?.lines.includes(reach ?? '') && reach && <p className="text-[12px] text-text-muted">{reach}</p>}
+              {!facts.publicAccess && <p role="note" className="text-[12px] text-warning">Anyone with the link can open it.</p>}
+              {!facts.linkOnce && <p className="text-[12px] text-text-muted">You see the link once.</p>}
               <InfoDrawer text="Details">
                 {server && <p className="break-all font-mono">Files are sent to {server}</p>}
                 {share && <p className="break-all font-mono">The link opens at {share}</p>}
@@ -500,9 +502,11 @@ export function ShareFlow({ ws, ticket, resume, only, onClose }: { ws: string; t
                 </li>
               ))}
             </ul>
-            {!hostSummary && where && <p data-testid="where-files-go" className="font-medium">{where}</p>}
-            {!hostSummary && reach && <p className="text-[12px] text-text-muted">{reach}</p>}
-            {!hostSummary && <p className="text-[12px]">Anyone with the link can open it. Works for {lasts} days.</p>}
+            {!facts.destination && where && <p data-testid="where-files-go" className="font-medium">{where}</p>}
+            {!content?.summary?.lines.includes(reach ?? '') && reach && <p className="text-[12px] text-text-muted">{reach}</p>}
+            {!facts.publicAccess && <p role="note" className="text-[12px] text-warning">Anyone with the link can open it.</p>}
+            {!facts.duration && <p className="text-[12px]">Works for {lasts} day{lasts === 1 ? '' : 's'}.</p>}
+            {!facts.linkOnce && <p className="text-[12px] text-text-muted">You see the link once.</p>}
             <InfoDrawer>
               {server && <p className="break-all font-mono">Files are sent to {server}</p>}
               {share && <p className="break-all font-mono">The link opens at {share}</p>}
@@ -514,7 +518,7 @@ export function ShareFlow({ ws, ticket, resume, only, onClose }: { ws: string; t
               ))}
             </InfoDrawer>
           </div>
-          )
+          )}</ReservedLead>
         }}
         onSettled={(phase) => {
           if (phase === 'done') {
@@ -620,6 +624,7 @@ export function LinkOnce({ sent, onDone }: { sent: Sent; onDone: () => void }) {
           <p role="note" className="font-medium text-warning">
             Save this link now: it is shown only once.
           </p>
+          <p>Lost it? Stop sharing on the Shares page and share again.</p>
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={onDone}>I’ve saved the link — close</Button>

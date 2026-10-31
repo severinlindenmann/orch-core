@@ -4,6 +4,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { queries } from '@/api/queries'
+import { ReservedLead, reviewFacts } from './reviewFacts'
 import { destinationLine } from '@/api/shares'
 import type { Workspace } from '@/api/types'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -48,7 +49,7 @@ export function TurnOnPublish({ workspace, onOn, onClose }: { workspace: Workspa
       confirmLabel: 'Sign and turn on',
       action: { action: 'addon_enable', name: 'publish', publish: { server: suggested, share: suggested } },
       prepareOnOpen: true,
-      lead: (content) => !content?.summary && where ? <p data-testid="where-files-go" className="text-[13px] font-medium text-text">{where}</p> : undefined,
+      lead: (content) => <ReservedLead>{!reviewFacts(content).destination && where ? <p data-testid="where-files-go" className="text-[13px] font-medium text-text">{where}</p> : null}</ReservedLead>,
       onEnd: (signed) => { if (!signed) onClose() },
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps

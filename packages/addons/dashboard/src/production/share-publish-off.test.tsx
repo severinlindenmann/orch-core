@@ -1,3 +1,4 @@
+import { api } from '@/api/client'
 import { toast } from 'sonner'
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -187,4 +188,31 @@ it('P04: when the settings step lands (set_up flips to true) the review stays mo
   await queryClient.invalidateQueries({ queryKey: ['add-ons', A] })
   expect(await screen.findByRole('dialog', { name: 'Share files' }, T)).toBeInTheDocument()
   expect(screen.queryByTestId('click-panel')).toBeNull()
+})
+
+it.each([false, true])('destination and risk remain with quiet built-ins: %s', async quiet => {
+  if (!quiet) notSetUp('https://publish.example.test')
+  const original = api.viewClick
+  vi.spyOn(api, 'viewClick').mockImplementation(async (...args) => {
+    const answer = await original(...args)
+    return { ...answer, view: { ...answer.view, content: { headline: 'Turn on Publish', summary: { title: 'Unrelated', lines: quiet ? ['Files go to publish.example.test.'] : ['Runs on this computer.'], risk: 'Anyone with the link can read the files.' } } } }
+  })
+  const success = vi.spyOn(toast, 'success')
+  const user = userEvent.setup()
+  await openShare(user)
+  if (quiet) {
+    await user.click(await screen.findByRole('button', { name: 'Turn on Publish' }, T))
+    const accordion = await screen.findByTestId('addon-publish-accordion', {}, T)
+    await user.click(within(accordion).getByRole('button', { name: 'Turn on Publish' }))
+  }
+  await screen.findByTestId('sign-summary', {}, T)
+  if (quiet) expect(screen.getByTestId('sign-summary')).toHaveTextContent('Files go to publish.example.test.')
+  else expect(screen.getByTestId('where-files-go')).toHaveTextContent('Files go to publish.example.test.')
+  expect(screen.getByTestId('sign-risk')).toHaveTextContent('Anyone with the link can read the files.')
+  const sign = await screen.findByRole('button', { name: /^Sign( |$)/ }, T)
+  await waitFor(() => expect(sign).toBeEnabled(), T)
+  trustedPresses()
+  await user.click(sign)
+  await waitFor(() => expect(state.host.clickSigned).toHaveLength(1), T)
+  expect(success).not.toHaveBeenCalled()
 })

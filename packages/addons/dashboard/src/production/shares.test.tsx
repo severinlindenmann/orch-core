@@ -286,6 +286,7 @@ it('share files end to end: pick, prepare, read every file with its size, sign, 
   expect((within(dialog).getByLabelText('Link') as HTMLInputElement).value).toBe(LINK)
   expect(within(dialog).getByRole('button', { name: /Copy/ })).toBeInTheDocument()
   expect(dialog).toHaveTextContent('Save this link now: it is shown only once.')
+  expect(dialog).toHaveTextContent('Lost it? Stop sharing on the Shares page and share again.')
   expect(within(dialog).queryByRole('button', { name: 'Close' })).toBeNull() // no dead X: only the explicit button ends it
   // Escape does not lose it; only Done ends it
   await user.keyboard('{Escape}')
@@ -682,6 +683,7 @@ it('Publish as link: one press prepares the copy and opens exactly ONE sign shee
   expect((within(dialog).getByLabelText('Link') as HTMLInputElement).value).toBe(LINK)
   expect(within(dialog).getByRole('button', { name: /Copy/ })).toBeInTheDocument()
   expect(dialog).toHaveTextContent('Save this link now: it is shown only once.')
+  expect(dialog).toHaveTextContent('Lost it? Stop sharing on the Shares page and share again.')
   expect(setItem.mock.calls.some((c) => JSON.stringify(c).includes(TOKEN))).toBe(false)
   await user.click(within(dialog).getByRole('button', { name: /saved the link/ }))
   await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Your link' })).toBeNull(), T)
@@ -789,16 +791,18 @@ it('Publish as link: the one-file lead needs the staged copy to be that file; ot
     const got = inner(path, method, body)
     if (!path.endsWith('/shares/prepare')) return got
     // the host staged another file than the one that was named
-    staged = [{ ...(staged[0] as object), files: [{ ...FILE, name: 'other.md' }, FILE] }]
+    staged = [{ ...(staged[0] as object), days: 1, files: [{ ...FILE, name: 'other.md' }, FILE] }]
     return Response.json({ staged: staged[0], server: 'http://127.0.0.1:8103', share: 'http://127.0.0.1:8104' })
   }
   const list = await onResults(user)
   await user.click(within(list).getByRole('button', { name: 'Publish report.md as a link' }))
   await readyToSign('Share files')
   const sheet = screen.getByRole('dialog')
-  expect(sheet).toHaveTextContent('Anyone with the link can open it. Works for 7 days.')
+  expect(sheet).toHaveTextContent('Anyone with the link can open it.')
+  expect(sheet).toHaveTextContent('Works for 1 day.')
+  expect(sheet).not.toHaveTextContent('1 days')
   expect(sheet).not.toHaveTextContent('works for 7 days')
-  expect(sheet).not.toHaveTextContent('You see the link once')
+  expect(sheet).toHaveTextContent('You see the link once')
   expect(sheet).not.toHaveTextContent('Publish report.md as a link?')
 })
 

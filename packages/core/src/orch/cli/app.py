@@ -63,6 +63,23 @@ def _check_shape(a: argparse.Namespace) -> None:
         raise PubError("invalid.input", "prepare needs --name, --kind and --access\n" + _USAGE, 2)
 
 
+def _local_hub_id(target: Any) -> str | None:
+    """The hub this workspace has joined, read from this computer's own join state (``hub.json`` of the host's state
+    directory), or ``None``: no hub, or a state that cannot be read, is a refusal further on. Not the host's answer."""
+    from pathlib import Path
+
+    from orch.host.custody import read_json
+    from orch.hubclient import HubState
+
+    path = Path(os.path.realpath(target.state)) / "hosts" / target.workspace_id / "hub" / "hub.json"
+    try:
+        doc = read_json(path, os.getuid(), limit=1 << 20)
+        state = HubState.from_json(doc) if doc is not None else None
+    except Exception:  # noqa: BLE001 - fail closed: an unreadable state is "no hub"
+        return None
+    return state.hub_id if state is not None and state.status == "bound" else None
+
+
 def _approve(target: Any, commit: Mapping[str, Any], note_text: str, now_ms: int) -> dict[str, Any]:
     """The second signature, in the same click session: the device key signs the owner's approval of the one commit
     request the host drew, but only after :func:`golive.check_commit_request` found it to be exactly what the note just
@@ -80,21 +97,15 @@ def _approve(target: Any, commit: Mapping[str, Any], note_text: str, now_ms: int
     except (CustodyError, Exception) as exc:  # noqa: BLE001
         raise PubError("custody.no_key", f"no key to approve with: {str(exc)[:200]}", 3) from None
     device_id = crypto.device_id(pub).hex()
-    req = {
-        "target": commit["target"], "body": bytes.fromhex(commit["body_hex"]), "ts_ms": commit["ts_ms"],
-        "nonce": bytes.fromhex(commit["nonce_hex"]),
-    }  # fmt: skip
+    hub_id = _local_hub_id(target)  # from this computer's own join state, never from the host's answer
     try:
-        req["o"] = golive.approval_object(
-            wid, commit["hub_id"], device_id,
-            golive.request_hash_b64(wid, commit["hub_id"], req["ts_ms"], req["nonce"], commit["host"], req["target"],
-                                    req["body"]),
-            commit["facts"]["meta"]["access"],
-        )  # fmt: skip
+        req = {
+            "target": commit["target"], "body": bytes.fromhex(commit["body_hex"]), "ts_ms": commit["ts_ms"],
+            "nonce": bytes.fromhex(commit["nonce_hex"]), "host": commit["host"], "hub_id": commit["hub_id"],
+        }  # fmt: skip
         o = golive.check_commit_request(
-            req, commit["facts"], note_text, workspace_id=wid, host=commit["host"], hub_id=commit["hub_id"],
-            device_id=device_id, now_ms=now_ms,
-        )  # fmt: skip
+            req, commit["facts"], note_text, workspace_id=wid, hub_id=hub_id, device_id=device_id, now_ms=now_ms
+        )
     except (HubRefused, KeyError, TypeError, ValueError):
         raise PubError(
             "publish.changed", "the request does not match what you signed: nothing was approved", 3

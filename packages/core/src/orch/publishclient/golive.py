@@ -86,16 +86,25 @@ def check_commit_request(
     note_text: str,
     *,
     workspace_id: str,
-    host: str,
     hub_id: str | None,
     device_id: str,
     now_ms: int,
 ) -> dict[str, Any]:
-    """Every check of the second signature. ``req`` = {target, body (bytes), ts_ms, nonce (bytes), o} as the host
-    drew it; ``facts`` = {op, app_id, version, meta, previous, staged_id, ticket_key, origin, server, share};
-    ``note_text`` is the text of the note this client signed. Returns the object to sign (a copy of ``req["o"]``) or
-    raises :class:`HubRefused` ``malformed``: the caller says only that the request could not be checked."""
+    """Every check of the second signature, and the object to sign.
+
+    **The invariant: every signed field comes from local trusted state, or is checked equal to it.** ``workspace_id``,
+    ``hub_id`` and ``device_id`` are the CALLER's own (the workspace the CLI is pinned to, the hub in this computer's
+    join state, this computer's key): ``hub_id`` is required, and ``None`` (no hub joined here) refuses. The host's
+    ``req`` = {target, body (bytes), ts_ms, nonce (bytes), host, hub_id} may only *agree*: its ``hub_id`` must equal the
+    local one, its ``host`` the host of the server in the release the person signed (``facts["server"]``), its
+    ``target`` this workspace's route for that op and app, its ``body`` the one rebuilt from the release. The approval
+    object ``o`` is built here from those local values and the request hash of the checked fields, never taken from the
+    host. ``facts`` = {op, app_id, version, meta, previous, staged_id, ticket_key, origin, server, share};
+    ``note_text`` is the text of the note this client signed. Raises :class:`HubRefused` ``malformed`` (the caller says
+    only that the request could not be checked); nothing is signed unless this returns."""
     try:
+        if type(hub_id) is not str or len(hub_id) != 32:
+            raise ValueError("no hub joined here")
         op, app_id, version, meta = facts["op"], facts["app_id"], facts["version"], facts["meta"]
         want_words = approval.app_release_text(
             staged_id=facts["staged_id"], ticket_key=facts["ticket_key"], origin=facts["origin"], op=op,
@@ -111,21 +120,20 @@ def check_commit_request(
             raise ValueError("target")
         from orch.wsproto.pubsign import PublishContext
 
-        if host != PublishContext(workspace_id, facts["server"]).host:  # the server the person's words name
+        host = PublishContext(workspace_id, facts["server"]).host  # the server the person's words name
+        if req["host"] != host:
             raise ValueError("host")
+        if req["hub_id"] != hub_id:  # the host may not choose the hub the signature is bound to
+            raise ValueError("hub")
         if type(req["nonce"]) is not bytes or len(req["nonce"]) != 16 or type(req["ts_ms"]) is not int:
             raise ValueError("nonce or ts")
         if abs(req["ts_ms"] - now_ms) > SKEW_MS:
             raise ValueError("clock")
-        o = dict(req["o"])
-        want = approval_object(
+        return approval_object(
             workspace_id, hub_id, device_id,
             request_hash_b64(workspace_id, hub_id, req["ts_ms"], req["nonce"], host, req["target"], body),
             meta["access"],
         )  # fmt: skip
-        if o != want:
-            raise ValueError("object")
-        return o
     except (ValueError, KeyError, TypeError, AttributeError):
         raise HubRefused("malformed") from None
 

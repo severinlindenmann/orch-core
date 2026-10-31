@@ -609,18 +609,17 @@ def approve(g, commit, note, *, now_ms=None):
     device_id = crypto.device_id(owner.sig_pub).hex()
     req = {
         "target": commit["target"], "body": bytes.fromhex(commit["body_hex"]), "ts_ms": commit["ts_ms"],
-        "nonce": bytes.fromhex(commit["nonce_hex"]),
+        "nonce": bytes.fromhex(commit["nonce_hex"]), "host": commit["host"], "hub_id": commit["hub_id"],
     }  # fmt: skip
-    req["o"] = golive.approval_object(
-        g.served.wid, commit["hub_id"], device_id,
-        golive.request_hash_b64(g.served.wid, commit["hub_id"], req["ts_ms"], req["nonce"], commit["host"],
-                                req["target"], req["body"]),
-        commit["facts"]["meta"]["access"],
-    )  # fmt: skip
     o = golive.check_commit_request(
-        req, commit["facts"], note, workspace_id=g.served.wid, host=commit["host"], hub_id=commit["hub_id"],
-        device_id=device_id, now_ms=commit["ts_ms"] if now_ms is None else now_ms,
-    )  # fmt: skip
+        req,
+        commit["facts"],
+        note,
+        workspace_id=g.served.wid,
+        hub_id=HUB_ID,
+        device_id=device_id,
+        now_ms=commit["ts_ms"] if now_ms is None else now_ms,
+    )  # the hub is this test world's own (what the CLI reads from hub.json)
     cert = next(c for c in commit["device_certs"] if c["o"]["device_id"] == device_id)
     return golive.build_approval(o, owner.dk_sign, cert, commit["pk_pub"])
 

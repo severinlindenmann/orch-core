@@ -165,11 +165,12 @@ class _Backend:
         return self.person.dk_sign(payload)
 
 
-def _approve_with(monkeypatch, commit, note, ws, person, now_ms=1_790_000_000_000):
+def _approve_with(monkeypatch, commit, note, ws, person, now_ms=1_790_000_000_000, local_hub="cd" * 16):
     from orch.ops import human
 
     backend = _Backend(person)
     monkeypatch.setattr(human, "device_backend", lambda state, wid, convenience=False: backend)
+    monkeypatch.setattr(app, "_local_hub_id", lambda target: local_hub)
     target = SimpleNamespace(workspace_id=ws, state=None)
     return app._approve(target, commit, note, now_ms), backend  # noqa: SLF001
 
@@ -226,3 +227,32 @@ def test_release_makes_it_live_when_the_host_draws_a_request(rec, monkeypatch):
         "approval": {"signed": "App approval: let an app go live\nx", "for": 1},
     }
     assert "ok app live" in out
+
+
+def test_a_host_that_names_another_hub_gets_no_signature(monkeypatch):
+    """The hub a signature is bound to is this computer's own (``hub.json``), never the host's answer."""
+    from tests.identity.helpers import Person
+
+    person = Person()
+    commit, note, ws = _commit_for(person)
+    with pytest.raises(app.PubError):  # the host says hub 00..., this computer's join state says cd...
+        _approve_with(monkeypatch, {**commit, "hub_id": "00" * 16}, note, ws, person)
+    with pytest.raises(app.PubError):  # a computer with no hub signs nothing
+        _approve_with(monkeypatch, commit, note, ws, person, local_hub=None)
+    # and when the join state is the host's claim, it is accepted: only agreement signs
+    _approve_with(monkeypatch, {**commit, "hub_id": "ab" * 16}, note, ws, person, local_hub="ab" * 16)
+
+
+def test_the_local_hub_is_read_from_the_join_state_and_unreadable_means_none(tmp_path):
+    import json
+    import os
+
+    target = SimpleNamespace(state=tmp_path, workspace_id="ab" * 16)
+    assert app._local_hub_id(target) is None  # noqa: SLF001 - no join state at all
+    d = tmp_path / "hosts" / target.workspace_id / "hub"
+    d.mkdir(parents=True, mode=0o700)
+    (d / "hub.json").write_text("{not json")
+    os.chmod(d / "hub.json", 0o600)
+    assert app._local_hub_id(target) is None  # noqa: SLF001 - unreadable: fail closed
+    (d / "hub.json").write_text(json.dumps({}))
+    assert app._local_hub_id(target) is None  # noqa: SLF001 - not a bound hub state

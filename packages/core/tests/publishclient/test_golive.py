@@ -3,7 +3,6 @@ verifies like the vectors' (``contracts/hub/vectors_published.json``): core is a
 
 from __future__ import annotations
 
-import copy
 import json
 from pathlib import Path
 
@@ -46,26 +45,30 @@ def note(f):
     return approval.app_release_text(**{k: f[k] for k in _NOTE_KEYS})
 
 
-def request(f, *, hub=HUB, ts=NOW, nonce=NONCE, target=None, body=None, device=DEVICE, **over):
+def request(f, *, hub=HUB, ts=NOW, nonce=NONCE, target=None, body=None, host=HOST, **over):
+    """The host's commit request as the client sees it: no approval object, only the claims the check verifies."""
     body = body if body is not None else golive.commit_body(f["meta"], f["op"], f["app_id"], f["version"])
     target = target or golive.commit_target(WS, f["app_id"], f["op"])
-    rh = golive.request_hash_b64(WS, hub, ts, nonce, HOST, target, body)
-    o = golive.approval_object(WS, hub, device, rh, f["meta"]["access"])
-    return {"target": target, "body": body, "ts_ms": ts, "nonce": nonce, "o": o} | over
+    return {"target": target, "body": body, "ts_ms": ts, "nonce": nonce, "host": host, "hub_id": hub} | over
 
 
 _SAME = object()
 
 
 def check(f, req, text=_SAME, **kw):
-    args = dict(workspace_id=WS, host=HOST, hub_id=HUB, device_id=DEVICE, now_ms=NOW) | kw
+    args = dict(workspace_id=WS, hub_id=HUB, device_id=DEVICE, now_ms=NOW) | kw
     return golive.check_commit_request(req, f, note(f) if text is _SAME else text, **args)
+
+
+def expected_object(f, req=None, device=DEVICE):
+    req = req or request(f)
+    rh = golive.request_hash_b64(WS, HUB, req["ts_ms"], req["nonce"], HOST, req["target"], req["body"])
+    return golive.approval_object(WS, HUB, device, rh, f["meta"]["access"])
 
 
 def test_a_request_that_matches_the_note_is_accepted_and_returns_the_object_to_sign():
     f = facts()
-    req = request(f)
-    assert check(f, req) == req["o"]
+    assert check(f, request(f)) == expected_object(f)
 
 
 @pytest.mark.parametrize("op, version, previous", [
@@ -91,32 +94,33 @@ def test_each_field_of_the_request_is_checked_alone():
         ("meta_hash", pub.meta_hash(make_meta(name="Other"))), ("reach_hash", pub.reach_hash(["https://x.example.com"])),
         ("access", "company"), ("audience", "company"), ("version", 9), ("app_id", "00" * 16), ("op", "start"),
     ):  # fmt: skip
-        tampered = cj({**body, key: value})
-        refused(f, request(f, body=tampered))  # the body is not the one rebuilt from the release
+        refused(f, request(f, body=cj({**body, key: value})))  # the body is not the one rebuilt from the release
     refused(f, request(f, target=golive.commit_target(WS, f["app_id"], "start")))  # another op's route
     refused(f, request(f, target=golive.commit_target("00" * 16, f["app_id"], "commit")))  # another workspace
     refused(f, request(f, target=golive.commit_target(WS, "00" * 16, "commit")))  # another app
-    refused(f, good, hub_id="00" * 16)  # another hub than the workspace's
-    refused(f, good, host="evil.example.org")  # another host than the signed setting
-    refused(f, good, device_id="00" * 16)  # another device
-    refused(f, good, workspace_id="00" * 16)
+    refused(f, request(f, host="evil.example.org"))  # another host than the server the person's words name
+    refused(f, good, workspace_id="00" * 16)  # the caller's own workspace is another one
     refused(f, good, now_ms=NOW + golive.SKEW_MS + 1)  # skew, both ways
     refused(f, good, now_ms=NOW - golive.SKEW_MS - 1)
     check(f, good, now_ms=NOW + golive.SKEW_MS)  # at the edge it is fine
-    refused(f, request(f, ts=NOW + 1, o=good["o"]))  # an object for another ts
-    refused(f, request(f, nonce=bytes(16), o=good["o"]))  # ... another nonce
-    other = copy.deepcopy(good)
-    other["o"]["access"] = "company"
-    refused(f, other)
-    other = copy.deepcopy(good)
-    other["o"]["request_hash"] = b64u(bytes(32))
-    refused(f, other)
-    other = copy.deepcopy(good)
-    other["o"]["extra"] = 1
-    refused(f, other)
-    other = copy.deepcopy(good)
-    other["o"]["kind"] = "hub.card"
-    refused(f, other)
+    refused(f, request(f, nonce=b"short"))
+    refused(f, request(f, ts="1"))
+    for key in ("target", "body", "ts_ms", "nonce", "host", "hub_id"):
+        refused(f, {k: v for k, v in good.items() if k != key})
+
+
+def test_the_hub_is_the_callers_own_and_a_host_cannot_choose_it():
+    """The invariant: every signed field comes from local trusted state or is checked equal to it. The host's
+    ``hub_id`` only agrees; with no hub joined here (``None``) nothing is signed."""
+    f = facts()
+    refused(f, request(f, hub="00" * 16))  # the host names another hub than this computer's
+    refused(f, request(f), hub_id="00" * 16)  # ... or this computer's hub is another one
+    refused(f, request(f), hub_id=None)  # no hub joined here: refused, whatever the host says
+    refused(f, request(f, hub=None), hub_id=None)
+    refused(f, request(f, hub=None))
+    # the object that is signed names the LOCAL hub, built here and not taken from the request
+    assert check(f, request(f))["hub_id"] == HUB
+    assert "o" not in request(f)  # the request has no object of the host's making
 
 
 def test_the_note_must_be_the_one_the_client_signed_to_the_byte():
@@ -136,11 +140,8 @@ def test_garbage_facts_or_requests_are_malformed_never_a_crash():
     for bad in ({}, {"op": "commit"}, {**f, "meta": None}, {**f, "version": "2"}, {**f, "op": "stop"}):
         with pytest.raises(HubRefused):
             golive.check_commit_request(
-                request(f), bad, note(f), workspace_id=WS, host=HOST, hub_id=HUB, device_id=DEVICE, now_ms=NOW
+                request(f), bad, note(f), workspace_id=WS, hub_id=HUB, device_id=DEVICE, now_ms=NOW
             )
-    for key in ("target", "body", "ts_ms", "nonce", "o"):
-        broken = {k: v for k, v in request(f).items() if k != key}
-        refused(f, broken)
     good = request(f)
     refused(f, {**good, "nonce": b"short"})
     refused(f, {**good, "ts_ms": "1"})

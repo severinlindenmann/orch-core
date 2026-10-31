@@ -2169,3 +2169,20 @@ def test_hub_parts_resume_after_publish_reply_is_lost(w, monkeypatch):
     assert sleeps == [1]
     requests = [r for r in w.server.requests if "/parts/" in r["target"]]
     assert [int(r["target"].split("/")[-2]) for r in requests] == [0, 0, 393216, 786432]
+
+
+def test_hub_upload_rechecks_the_share_end_before_the_commit(w, monkeypatch):
+    """Opus X1: the commit comes after a possibly long upload, so the share's end is checked again first."""
+    uid, key = w.ticket_with(**{"big.bin": b"x" * 1_000_000})
+    staged = w.prepare(key, "big.bin")["staged_id"]
+    w.approve(staged)
+    original = flow.put_file_parts
+
+    def parts(*args, **kwargs):
+        got = original(*args, **kwargs)
+        monkeypatch.setattr(publishing, "_now_ms", lambda service: 2**52)  # the share ended during the upload
+        return got
+
+    monkeypatch.setattr(flow, "put_file_parts", parts)
+    assert err(w.send(staged)) == "publish.changed"
+    assert not any(r["target"].endswith("/commit") for r in w.server.requests)

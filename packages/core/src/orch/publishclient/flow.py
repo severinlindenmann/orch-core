@@ -157,9 +157,15 @@ def put_file_parts(
             or got.get("result") not in {"stored", "unchanged"}
         ):
             raise PublishError("bad_reply", reply.status, method="PUT")
-        offset = received(got.get("received"))
+        before, offset = offset, received(got.get("received"))
         if got["done"] and offset != len(data):
             raise PublishError("bad_reply", reply.status, method="PUT")
+        if not got["done"] and offset <= before and before < len(data):  # an answer that does not move forward
+            failures += 1
+            if failures >= 5:
+                raise PublishError("bad_reply", reply.status, method="PUT")
+            sleep(min(2 ** (failures - 1), 16))
+            continue
         failures = 0
         conflict_offset = None
         if on_progress is not None:

@@ -1452,13 +1452,17 @@ def _send(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
             raise
         from orch.hubclient.publish import HUB_PART
 
+        def still_valid() -> None:
+            # A long upload (parts, backoff) must not outlive the person's signature or the share's end: checked before
+            # every part and again before the commit that makes the share live.
+            if not _signed_approval(call, meta, _text(service, meta, cfg)):
+                raise HostError("publish.not_approved", "the share approval is no longer valid: sign this share again")
+            if _now_ms(service) >= send["expires_ms"]:
+                raise HostError("publish.changed", "the share expired: prepare the share again")
+
         class FreshPartsClient:
             def request(self, *args: Any, **kwargs: Any) -> Any:
-                # Check before every part, including resumes after backoff or conflict.
-                if not _signed_approval(call, meta, _text(service, meta, cfg)):
-                    raise HostError("publish.not_approved", "the share approval expired: sign this share again")
-                if _now_ms(service) >= send["expires_ms"]:
-                    raise HostError("publish.changed", "the share expired: prepare the share again")
+                still_valid()
                 return client.request(*args, **kwargs)
 
         for entry, data in zip(meta["files"], blobs, strict=True):
@@ -1468,6 +1472,7 @@ def _send(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
                 )
             else:
                 flow.put_file(client, service.workspace_id, meta["share_id"], entry["name"], data)
+        still_valid()
         flow.commit(client, service.workspace_id, meta["share_id"])
         link = f"{cfg['share']}/s/{meta['share_id']}#t={token}"
         with _MU:

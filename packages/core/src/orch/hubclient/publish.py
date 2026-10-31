@@ -68,8 +68,10 @@ REQUEST_OVERHEAD = 16 * 1024
 #: the largest file body that fits one ``publish_out`` frame: the body travels hex-encoded (2 characters per byte), so
 #: it is what is left of ``REQUEST_MAX`` after the overhead allowance, halved
 HUB_FILE_MAX = (REQUEST_MAX - REQUEST_OVERHEAD) // 2
-#: share upload part size, comfortably within one signed link frame
+#: share upload part size, comfortably within one signed link frame (the rest of the frame is left for the target and
+#: the signed headers; a long nested name fits in that room)
 HUB_PART = 384 * 1024
+assert HUB_PART <= HUB_FILE_MAX - 16 * 1024, "a part must fit one publish_out frame with room for its target"
 
 Approver = Callable[[str], "Mapping[str, Any] | None"]
 

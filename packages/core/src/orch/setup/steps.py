@@ -631,9 +631,7 @@ class Creator:
         if blocked and not service_failed:
             self._fail(SetupError("background.blocked", BLOCKED_TEXT, 409), True)
         else:
-            first_service = next(
-                (k for k, code in self.run.reason_codes.items() if code.startswith("service.")), None
-            )
+            first_service = next((k for k, code in self.run.reason_codes.items() if code.startswith("service.")), None)
             message = self.run.reasons.get(first_service) if first_service else None
             self._fail(
                 SetupError("steps.failed", message or "Some steps did not work: " + ", ".join(bad) + ".", 409), True

@@ -109,8 +109,9 @@ def _tty_ok() -> bool:
         os.close(fd)
 
 
-def _sign(target: Any, op: str, args: dict[str, Any]) -> dict[str, Any]:
-    """The person's signature of ``op`` on their own terminal (the same composite as every person command)."""
+def _sign(target: Any, op: str, args: dict[str, Any], capture: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    """The person's signature of ``op`` on their own terminal (the same composite as every person command). ``capture``
+    receives the prepared review (``human.prepare``'s answer): the events the person was shown and signed."""
     from orch import hostclient
     from orch.custody import CustodyError
     from orch.host import signer
@@ -131,8 +132,18 @@ def _sign(target: Any, op: str, args: dict[str, Any]) -> dict[str, Any]:
     link = [conn]
     try:
         device = device_ref(backend.public_key(human.KEY_ID))
+        call = hostclient._durable(target, link, idem)
+        if capture is not None:
+            inner = call
+
+            def call(op_: str, args_: dict[str, Any], **kw: Any) -> Any:  # noqa: F811 - the same call, recording the review
+                got = inner(op_, args_, **kw)
+                if op_ == "human.prepare":
+                    capture.append(got["data"])
+                return got
+
         return signer.run(
-            hostclient._durable(target, link, idem),
+            call,
             op,
             args,
             backend=backend,

@@ -69,8 +69,10 @@ class Rec:
             return {"staged_id": STAGED, "ticket": "TST-0001", "files": [{}, {}], "access": args["access"]}
         return {}
 
-    def sign(self, target, op, args):
+    def sign(self, target, op, args, capture=None):
         self.calls.append(("sign:" + op, args))
+        if capture is not None:
+            capture.append({"events": [{"type": "log.added", "text": "App approval: let an app go live\nx"}]})
         return {}
 
 
@@ -98,7 +100,7 @@ def test_release_without_a_terminal_stops_before_anything_is_signed(rec, monkeyp
 
 
 def test_a_refused_signature_sends_nothing(rec, monkeypatch):
-    def refused(target, op, args):
+    def refused(target, op, args, capture=None):
         raise app.PubError("invalid.input", "not confirmed: nothing was signed", 5)
 
     monkeypatch.setattr(app, "_sign", refused)
@@ -117,3 +119,110 @@ def test_an_agent_prepare_passes_the_choices_and_says_nothing_is_live(rec):
                          "access": "company", "slug": "board", "reach": ["https://api.example.com"]})
     ]  # fmt: skip
     assert "nothing is live" in out and f"orch app release {STAGED}" in out
+
+
+# -- the second signature of `orch app release` -----------------------------------------------------------------
+
+
+def _commit_for(person, *, host="pub.example.org", hub="cd" * 16, ws="ab" * 16, **over):
+    """A commit request as the host draws it, and the note text the person signed, for the first version of an app."""
+    from orch import crypto
+    from orch.publishclient import approval, golive
+    from tests.publishclient.test_app_release import SERVER, SHARE, make_meta
+
+    meta = make_meta(access="company", audience="company")
+    facts = {
+        "op": "commit", "app_id": "ef" * 16, "version": 1, "meta": meta, "previous": None, "staged_id": STAGED,
+        "ticket_key": "TST-0001", "origin": "agent", "server": SERVER, "share": SHARE,
+    }  # fmt: skip
+    keys = ("staged_id", "ticket_key", "origin", "op", "app_id", "version", "meta", "previous", "server", "share")
+    note = approval.app_release_text(**{k: facts[k] for k in keys})
+    from orch.wsproto.pubsign import PublishContext
+
+    host = PublishContext(ws, SERVER).host
+    body = golive.commit_body(meta, "commit", facts["app_id"], 1)
+    commit = {
+        "request_id": "cr_" + "0" * 32, "op": "commit", "app_id": facts["app_id"], "version": 1, "method": "POST",
+        "host": host, "target": golive.commit_target(ws, facts["app_id"], "commit"), "body_hex": body.hex(),
+        "ts_ms": 1_790_000_000_000, "nonce_hex": "07" * 16, "hub_id": hub, "facts": facts,
+        "pk_pub": crypto.b64u(person.pk_pub), "device_certs": [person.cert()],
+    }  # fmt: skip
+    commit.update(over)
+    return commit, note, ws
+
+
+class _Backend:
+    auth = "key"
+
+    def __init__(self, person):
+        self.person, self.signed = person, []
+
+    def public_key(self, key_id):
+        return self.person.sig_pub
+
+    def sign(self, key_id, payload, *, action):
+        self.signed.append((payload, action))
+        return self.person.dk_sign(payload)
+
+
+def _approve_with(monkeypatch, commit, note, ws, person, now_ms=1_790_000_000_000):
+    from orch.ops import human
+
+    backend = _Backend(person)
+    monkeypatch.setattr(human, "device_backend", lambda state, wid, convenience=False: backend)
+    target = SimpleNamespace(workspace_id=ws, state=None)
+    return app._approve(target, commit, note, now_ms), backend  # noqa: SLF001
+
+
+def test_the_client_approves_only_what_the_note_it_signed_says(monkeypatch):
+    from orch.canon.jcs import dumps as cj
+    from orch.crypto import suite as S
+    from orch.crypto.encoding import unb64u
+    from orch.crypto.labels import L
+    from tests.identity.helpers import Person
+
+    person = Person()
+    commit, note, ws = _commit_for(person)
+    ap, backend = _approve_with(monkeypatch, commit, note, ws, person)
+    assert S.verify(person.sig_pub, unb64u(ap["sig"], 64), L["sig_hub_publish_approval"] + cj(ap["o"]))
+    assert len(backend.signed) == 1 and backend.signed[0][1] == "let an app go live"
+    # every deviation is refused and NOTHING is signed
+    for tamper in (
+        {"target": commit["target"].replace("commit", "start")}, {"host": "evil.example.org"},
+        {"body_hex": commit["body_hex"][:-2] + "00"}, {"ts_ms": commit["ts_ms"] + 10**6},
+    ):  # fmt: skip
+        with pytest.raises(app.PubError) as caught:
+            _approve_with(monkeypatch, {**commit, **tamper}, note, ws, person)
+        assert caught.value.code == "publish.changed", tamper
+    with pytest.raises(app.PubError):
+        _approve_with(monkeypatch, commit, note + " ", ws, person)  # not the note that was signed
+    swapped = {**commit, "facts": {**commit["facts"], "meta": {**commit["facts"]["meta"], "name": "Other"}}}
+    with pytest.raises(app.PubError):
+        _approve_with(monkeypatch, swapped, note, ws, person)  # a host that swapped the release has other words
+    other = Person()
+    with pytest.raises(app.PubError):  # no certificate for this key in the list the host gave
+        _approve_with(monkeypatch, {**commit, "device_certs": [other.cert()]}, note, ws, person)
+
+
+def test_release_makes_it_live_when_the_host_draws_a_request(rec, monkeypatch):
+    commit_doc = {"request_id": "cr_" + "1" * 32, "marker": 1}
+    seen = {}
+
+    def call(target, op, args, env):
+        rec.calls.append((op, args))
+        if op == "app.send":
+            return {"app_id": "a" * 32, "version": 1, "uploaded": True, "live": False, "commit": commit_doc}
+        if op == "app.commit":
+            seen["args"] = args
+            return {"app_id": "a" * 32, "version": 1, "op": "commit", "live": True}
+        return {}
+
+    monkeypatch.setattr(app, "_call", call)
+    monkeypatch.setattr(app, "_approve", lambda target, commit, note, now: {"signed": note, "for": commit["marker"]})
+    code, out = run(["release", STAGED], {})
+    assert code == 0 and [c[0] for c in rec.calls] == ["sign:app.release", "app.send", "app.commit"]
+    assert seen["args"] == {
+        "request_id": commit_doc["request_id"],
+        "approval": {"signed": "App approval: let an app go live\nx", "for": 1},
+    }
+    assert "ok app live" in out

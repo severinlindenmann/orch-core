@@ -17,6 +17,7 @@ from orch.crypto.labels import L
 from orch.hubclient import published as pub
 from orch.hubclient.errors import HubRefused
 from orch.publishclient import approval, golive
+from orch.wsproto.pubsign import PublishContext
 
 from .test_app_release import SERVER, SHARE, make_meta
 
@@ -24,7 +25,7 @@ WS = "ab" * 16
 HUB = "cd" * 16
 APP = "ef" * 16
 DEVICE = "12" * 16
-HOST = "pub.example.org"
+HOST = PublishContext(WS, SERVER).host  # the host of the server the person's words name
 NOW = 1_790_000_000_000
 NONCE = bytes(range(16))
 STAGED = "pa_" + "c" * 32

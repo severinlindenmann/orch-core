@@ -63,10 +63,67 @@ def _check_shape(a: argparse.Namespace) -> None:
         raise PubError("invalid.input", "prepare needs --name, --kind and --access\n" + _USAGE, 2)
 
 
-def _send(target: Any, staged: str, env: Mapping[str, str], out: TextIO, as_json: bool) -> int:
+def _approve(target: Any, commit: Mapping[str, Any], note_text: str, now_ms: int) -> dict[str, Any]:
+    """The second signature, in the same click session: the device key signs the owner's approval of the one commit
+    request the host drew, but only after :func:`golive.check_commit_request` found it to be exactly what the note just
+    signed says (the words and the body are rebuilt here, not taken from the host)."""
+    from orch import crypto
+    from orch.custody import CustodyError
+    from orch.hubclient.errors import HubRefused
+    from orch.ops import human
+    from orch.publishclient import golive
+
+    wid = target.workspace_id
+    try:
+        backend = human.device_backend(target.state, wid, convenience=True)
+        pub = backend.public_key(human.KEY_ID)
+    except (CustodyError, Exception) as exc:  # noqa: BLE001
+        raise PubError("custody.no_key", f"no key to approve with: {str(exc)[:200]}", 3) from None
+    device_id = crypto.device_id(pub).hex()
+    req = {
+        "target": commit["target"], "body": bytes.fromhex(commit["body_hex"]), "ts_ms": commit["ts_ms"],
+        "nonce": bytes.fromhex(commit["nonce_hex"]),
+    }  # fmt: skip
+    try:
+        req["o"] = golive.approval_object(
+            wid, commit["hub_id"], device_id,
+            golive.request_hash_b64(wid, commit["hub_id"], req["ts_ms"], req["nonce"], commit["host"], req["target"],
+                                    req["body"]),
+            commit["facts"]["meta"]["access"],
+        )  # fmt: skip
+        o = golive.check_commit_request(
+            req, commit["facts"], note_text, workspace_id=wid, host=commit["host"], hub_id=commit["hub_id"],
+            device_id=device_id, now_ms=now_ms,
+        )  # fmt: skip
+    except (HubRefused, KeyError, TypeError, ValueError):
+        raise PubError(
+            "publish.changed", "the request does not match what you signed: nothing was approved", 3
+        ) from None
+    b64 = crypto.b64u(pub)
+    cert = next((c for c in commit.get("device_certs") or [] if c.get("o", {}).get("dk_sig_pub") == b64), None)
+    if cert is None or cert["o"].get("device_id") != device_id:
+        raise PubError("publish.changed", "this computer's key has no certificate for this workspace", 3)
+    return golive.build_approval(
+        o, lambda payload: backend.sign(human.KEY_ID, payload, action="let an app go live"), cert, commit["pk_pub"]
+    )
+
+
+def _send(
+    target: Any, staged: str, env: Mapping[str, str], out: TextIO, as_json: bool, note_text: str | None = None
+) -> int:
     got = _call(target, "app.send", {"staged_id": staged}, env)
+    commit = got.pop("commit", None)
+    live = None
+    if commit is not None and note_text is not None:
+        approval = _approve(target, commit, note_text, int(time.time() * 1000))
+        live = _call(target, "app.commit", {"request_id": commit["request_id"], "approval": approval}, env)
     if as_json:
-        out.write(json.dumps({"ok": True, "data": got}) + "\n")
+        out.write(json.dumps({"ok": True, "data": {**got, **(live or {})}}) + "\n")
+    elif live is not None:
+        out.write(f"ok app live {live.get('app_id')} version {live.get('version')} ({live.get('op')})\n")
+    elif commit is not None:
+        out.write(f"ok app uploaded {got.get('app_id')} version {got.get('version')}: not live yet\n")
+        out.write(f"to make it live: orch app release {staged}\n")
     else:
         out.write(f"ok app uploaded {got.get('app_id')} version {got.get('version')}: not live yet\n")
         out.write(f"{got.get('needs')}\n")
@@ -143,9 +200,11 @@ def main(
         if a.cmd == "release":
             if not _tty_ok():
                 raise PubError("tty.required", "no terminal to sign on: run this in a terminal; nothing was signed", 3)
-            _sign(target, "app.release", {"staged_id": a.rest[0]})
+            shown: list[dict[str, Any]] = []
+            _sign(target, "app.release", {"staged_id": a.rest[0]}, shown)
+            note = shown[0]["events"][0]["text"] if shown else None
             try:
-                return _send(target, a.rest[0], env, out, as_json)
+                return _send(target, a.rest[0], env, out, as_json, note)
             except (PubError, OrchError):
                 out.write(f"your signature stays good for an hour: orch app send {a.rest[0]}\n")
                 raise

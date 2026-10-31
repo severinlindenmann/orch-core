@@ -109,6 +109,10 @@ def check_commit_request(
             raise ValueError("body")
         if req["target"] != commit_target(workspace_id, app_id, op):
             raise ValueError("target")
+        from orch.wsproto.pubsign import PublishContext
+
+        if host != PublishContext(workspace_id, facts["server"]).host:  # the server the person's words name
+            raise ValueError("host")
         if type(req["nonce"]) is not bytes or len(req["nonce"]) != 16 or type(req["ts_ms"]) is not int:
             raise ValueError("nonce or ts")
         if abs(req["ts_ms"] - now_ms) > SKEW_MS:

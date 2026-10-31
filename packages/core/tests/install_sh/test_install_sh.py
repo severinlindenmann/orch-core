@@ -7,6 +7,7 @@ import base64
 import getpass
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -314,7 +315,7 @@ def _tools_without(tmp_path: Path, missing: str) -> Path:
     out.mkdir(exist_ok=True)
     for d in ("/usr/bin", "/bin"):
         for p in Path(d).iterdir():
-            if p.name != missing and not (out / p.name).exists():
+            if p.name != missing and not os.path.lexists(out / p.name):  # /bin may be /usr/bin; links may dangle
                 (out / p.name).symlink_to(p)
     return out
 

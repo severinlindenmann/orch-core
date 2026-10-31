@@ -118,4 +118,4 @@ export async function publishedPage(d) {
   } finally { finish(); }
 }
 
-export const page = { path: "published", nav: { label: "Published", admin: true, needsWorkspace: true, after: "services" }, render: publishedPage };
+export const page = { path: "published", nav: { group: "Sharing & apps", label: "Published pages", admin: true, needsWorkspace: true, after: "services" }, render: publishedPage };

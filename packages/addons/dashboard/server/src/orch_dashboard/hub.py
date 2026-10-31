@@ -332,6 +332,23 @@ def _tickets_of(preview) -> tuple[list[str], bool]:
     return sorted(set(keys)), more == 0
 
 
+def _tickets_state(raw) -> dict[str, str]:
+    if not isinstance(raw, dict):
+        return {}
+    out = {}
+    for key, state in list(raw.items())[:200]:
+        key = display(key)
+        if key is None or not isinstance(state, str):
+            continue
+        if state.startswith("refused:"):
+            code = state.removeprefix("refused:")
+            codes = {"unknown_user", "other_person", "too_large", "malformed"}
+            state = "refused:" + (code if code in codes else "unknown")
+        if state in {"sent", "waiting", "not_sent"} or state.startswith("refused:"):
+            out[key[:200]] = state
+    return out
+
+
 def share_view(rules, preview) -> dict:
     rules = rules if isinstance(rules, dict) else {}
     tickets, complete = _tickets_of(preview)
@@ -339,6 +356,8 @@ def share_view(rules, preview) -> dict:
         "rules": [row for row in (_rule_row(r) for r in rules.get("rules") or []) if row],
         "shared": _int(rules.get("shared")) or 0,
         "refused": _refused(rules.get("refused_items")),
+        "tickets_state": _tickets_state(rules.get("tickets_state")),
+        "not_sent_count": _int(rules.get("not_sent_count")) or 0,
         "tickets": tickets,
         "tickets_complete": complete,
     }

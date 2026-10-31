@@ -153,10 +153,17 @@ def server_setup(
     relay_url: str | None = None,
     no_publish_url: bool = False,
     no_relay_url: bool = False,
+    trust_hub: str | None = None,
 ) -> Plan:
     """Install the parts of ``role`` for this OS user. ``resolve``/``local`` are the DNS seams of the tests."""
     if role not in ROLES:
         raise InstallError("--role is hub or edge")
+    from . import trust
+
+    if trust_hub is not None:
+        if role != "edge":
+            raise InstallError("--trust-hub belongs to --role edge")
+        trust.check_hub_id(trust_hub)
     refuse_unfinished_update(ctx)  # before anything is stopped, written or installed
     parts = [p for p in ROLES[role]]
     wanted = {p: n for p in parts if (n := names.get(p))}
@@ -202,6 +209,37 @@ def server_setup(
     hub_urls = _hub_urls(ctx, role, names, publish_url, relay_url, no_publish_url, no_relay_url)
     if backup_drop:
         drop_check(backup_drop)
+    edge_trust = None
+    if trust_hub is not None:
+        st = load(ctx.layout)
+        edge_trust = {
+            "hub_id": trust_hub,
+            "origin": names.url("hub") or st.get("edge_hub_origin") or st.get("edge_trust", {}).get("origin"),
+        }
+        if st["parts"].get("publish") and not any(
+            (
+                named,
+                behind_proxy,
+                address,
+                vpn_ip,
+                source,
+                ref,
+                dev,
+                backup_drop,
+                ctx.port_base,
+                publish_url is not None,
+                relay_url is not None,
+                no_publish_url,
+                no_relay_url,
+                hub_name is not None,
+                no_hub_name,
+                allow_non_cgnat,
+            )
+        ):
+            st["edge_trust"] = edge_trust
+            save(ctx.layout, st)
+            trust.apply(ctx, ctx.env)
+            return Plan(role=role, parts=tuple(parts), names=names)
     user = user or real_user()
     server.check_user_name(user)  # before anything is installed or printed
     if bus_check is not None:
@@ -247,6 +285,18 @@ def server_setup(
                 raise InstallError("--hub-name needs the private-network (VPN) address of this computer")
             server.check_hub_name_target(hub_name, plan.vpn_ip, resolve)  # before anything is stopped or written
 
+    if edge_trust is not None:
+        st = load(ctx.layout)
+        st["edge_trust"] = edge_trust
+        save(ctx.layout, st)
+
+    if role == "edge" and names.hub:
+        st = load(ctx.layout)
+        st["edge_hub_origin"] = names.url("hub")
+        if st.get("edge_trust"):
+            st["edge_trust"]["origin"] = names.url("hub")
+        save(ctx.layout, st)
+
     if behind_proxy:
         _proxied(ctx, plan, names, ifaces, vpn_ip, allow_non_cgnat, source=source, ref=ref, dev=dev)
         return plan
@@ -264,6 +314,8 @@ def server_setup(
             forget_hub_name=no_hub_name,
             hub_urls=hub_urls,
         )
+        if role == "hub":
+            trust.hub_hint(ctx)
         return plan
 
     plan.dns = check_dns(wanted, resolve, mine)
@@ -330,6 +382,8 @@ def server_setup(
             if p == "hub"
         },
     )
+    if role == "hub":
+        trust.hub_hint(ctx)
     return plan
 
 

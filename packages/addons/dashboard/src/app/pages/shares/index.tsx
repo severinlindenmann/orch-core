@@ -1,3 +1,4 @@
+import { UnsentShares } from '../settings/hub/SendShares'
 // Shares of a real host (the Publish add-on): every link made from a ticket's files, with its kind, end time, opens
 // and state, and Stop sharing. A link itself is never listed: orch keeps none, it is shown once when it is made.
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -75,6 +76,7 @@ function SharesBody({ onRevoke, onSign }: { onRevoke: (s: Share) => void; onSign
     return (
       <div className="max-w-2xl space-y-2">
         <h1 className="text-xl font-semibold tracking-tight">Shares</h1>
+        <UnsentShares workspace={workspace} />
         <p data-testid="shares-unavailable" className="text-[13px] text-text-muted">
           Publish is not on for this workspace, so there is nothing to list here. Turn it on on the Add-ons page.
         </p>
@@ -114,6 +116,7 @@ function SharesBody({ onRevoke, onSign }: { onRevoke: (s: Share) => void; onSign
           </Link>
         </p>
       )}
+      <UnsentShares workspace={workspace} />
       <SharingPaused workspace={workspace} />
       {data && data.configured && !data.live && (data.why === undefined || data.why === 'unreachable') && (
         <p role="status" data-testid="shares-unreachable" className="flex flex-wrap items-center gap-2 rounded-lg border border-warning/40 px-3 py-2 text-[12px]">

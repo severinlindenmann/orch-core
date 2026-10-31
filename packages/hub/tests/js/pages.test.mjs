@@ -27,6 +27,7 @@ function problems(entries) {
     if (typeof page.nav?.label !== "string" || !page.nav.label || page.nav.label.length > 24) out.push(f + ": nav.label");
     if (typeof page.nav?.admin !== "boolean") out.push(f + ": nav.admin");
     if (page.nav?.needsWorkspace !== undefined && typeof page.nav.needsWorkspace !== "boolean") out.push(f + ": nav.needsWorkspace");
+    if (page.nav?.group != null && !["Sharing & apps", "People & settings"].includes(page.nav.group)) out.push(f + ": nav.group");
     if (typeof page.render !== "function") out.push(f + ": render");
     if (JSON.stringify(Object.keys(page).sort()) !== '["nav","path","render"]') out.push(f + ": a page exports exactly path, nav, render");
   }
@@ -47,6 +48,7 @@ test("every file of pages/ is a well-formed page whose path is its file name", (
 test("the checks catch what they are for: a core route name, a wrong path, an unresolved position, a duplicate", () => {
   const ok = () => ({ path: "x", nav: { label: "X", admin: true, after: "services" }, render() {} });
   assert.deepEqual(problems([["x.js", ok()]]), []);
+  assert.match(problems([["x.js", { ...ok(), nav: { ...ok().nav, group: "Unknown" } }]]).join("\n"), /nav\.group/);
   assert.match(problems([["home.js", { ...ok(), path: "home" }]]).join("\n"), /home collides with a route of orch's own/);
   assert.match(problems([["admin.js", { ...ok(), path: "admin" }]]).join("\n"), /admin collides/);
   assert.match(problems([["y.js", ok()]]).join("\n"), /path "x" is not the file name/);

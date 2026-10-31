@@ -2146,3 +2146,9 @@ Revert: Restore the prior gate only together with a coordinated click contract c
 - **Decision:** Default New schedule to “A new ticket each run”, with a literal title limited to 100 characters. Keep the existing ticket picker as the other choice; preserve the row’s target when undoing cancellation.
 - **Why:** Repeated checks need a fresh ticket for each run. Keep the form short, with the longer explanation behind the information button. Preserve existing-ticket action arguments.
 - **Revert:** Remove the target choice and optional action/model fields, and restore the ticket picker as the first control.
+
+### 2026-10-31 — X3 share delivery states
+
+- **Decision:** Show core's current delivery state, and reuse the existing share review for a confirming sync. Send now opens a preview; Sign explicitly confirms its plan through the existing owner-only endpoint. No new signing operation or automatic confirmation.
+- **Why:** A rule retained before joining has no confirmed selection, so an automatic retry cannot deliver it. A selected ticket is not evidence of delivery.
+- **Revert:** Remove the new entry points and delivery badges together; retain core's confirmation boundary.

@@ -3,13 +3,14 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import { busyButton } from "../../src/orch_hub/web/feel.js";
+import { namePrefill } from "../../src/orch_hub/web/switch.js";
 
 const source = readFileSync(new URL("../../src/orch_hub/web/app.js", import.meta.url), "utf8");
 const section = (start, end) => source.slice(source.indexOf(start), source.indexOf(end, source.indexOf(start)));
 function session(extra = {}) {
   const c = vm.createContext({ state: { user: { user_id: "old" }, rail: { rows: [1] } }, homeData: { user_id: "old" }, liveItems: { user_id: "old", items: [1] },
     api: async () => ({ status: 401, body: {} }), loadChannel: async () => null,
-    h: (_tag, props, ...children) => ({ ...props, children }), show(node) { c.output = node; }, plain() {}, landing: () => ({ kind: "signout" }),
+    h: (_tag, props, ...children) => ({ ...props, children }), show(node) { c.output = node; }, plain() {}, landing: () => ({ kind: "signout" }), namePrefill,
     loginView() { c.clearSession(); c.login = true; }, ...extra });
   vm.runInContext(section("function clearSession()", "function registerView(") + section("async function refresh()", "function pageLoading(") + section("async function reauthView()", "async function admin()") + section("async function redeemTicket(", "async function landFromTicket("), c);
   return c;
@@ -107,12 +108,12 @@ test("in-flight rail and live responses cannot restore data after sign-out", asy
 
 test("P02: reauth goes straight to the sign-in form with the name filled in and returns to the asked page", async () => {
   const calls = [];
-  const c = session({ state: { user: { user_id: "anna", needs_sign_in: true }, rail: { rows: [] } }, location: { hash: "#/admin" },
+  const c = session({ state: { user: { user_id: "61106ff84ccd4f6c9a2e3b4d5c6e7f80", name: "Anna Test", needs_sign_in: true }, rail: { rows: [] } }, location: { hash: "#/admin" },
     loginView(err, opts) { calls.push(opts); c.clearSession(); } });
   c.api = async (m, p) => { calls.push(m + " " + p); return { status: 200, body: {} }; };
   await c.reauthView();
   assert.equal(calls[0], "DELETE /session");
-  assert.equal(calls[1].prefill, "anna");
+  assert.equal(calls[1].prefill, "Anna Test"); // QA b1852: the person's name, never the 32-hex user id
   assert.match(calls[1].title, /Sign in to open Admin/);
   assert.equal(c.returnHash, "#/admin");
 });

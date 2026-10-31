@@ -626,7 +626,7 @@ export function adminView(d) {
     }, view())));
   }
   void load();
-  const view = [h("h1", { text: "Admin" }), message, tabs, panels];
+  const view = [h("h1", { text: "People" }), message, tabs, panels];
   view.reload = load;
   return view;
 }

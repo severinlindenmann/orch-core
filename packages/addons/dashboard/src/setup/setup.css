@@ -303,9 +303,14 @@
   background: none;
   border: 0;
   padding: 0;
-  color: var(--accent, inherit);
+  color: var(--brand);
+  font-weight: 600;
   text-decoration: underline;
   cursor: pointer;
+}
+.setup .why-disabled {
+  color: var(--text);
+  font-size: 13px;
 }
 .setup .progress-note {
   margin: 8px 0 0;
@@ -373,8 +378,8 @@
     padding: 6px 4px;
     font-size: 12px;
   }
-  /* Only the current step keeps its name on a phone; the dots still show the progress. */
-  .setup nav li:not(.current) .name {
+  /* The position line keeps the current name visible above the compact dots. */
+  .setup nav li .name {
     display: none;
   }
   .setup header {
@@ -508,18 +513,6 @@ body:has(> #root > .setup) {
 .confirm-words summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; }
 .words-confirmed { margin: 12px 0; font-weight: 600; }
 .confirm-words .word-tiles li bdi { max-width: 100%; font: inherit; }
-.setup .addon-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.setup .addon-chips .chip {
-  padding: 1px 10px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  font-size: 13px;
-}
-
 .setup .badge {
   display: inline-block;
   margin-left: 8px;
@@ -540,7 +533,7 @@ body:has(> #root > .setup) {
   font-size: 13px;
   text-decoration: underline;
 }
-/* r11-P16: the approval step's defaults in one line, the other choices behind "Change these settings" */
+/* Approval summary and optional settings; both approval methods remain visible. */
 .setup .approval-summary {
   margin: 12px 0 4px;
   padding: 10px 12px;
@@ -616,4 +609,57 @@ body:has(> #root > .setup) {
 }
 .setup .ask-unsaved .segments {
   margin-top: 8px;
+}
+
+.setup nav .finished .dot {
+  width: auto;
+  height: auto;
+  background: none;
+  color: var(--brand);
+}
+
+.setup .approval-methods {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.setup label.method-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  padding: 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+}
+.setup .method-card:has(input:checked) {
+  border-color: var(--brand);
+  background: var(--brand-soft);
+}
+.setup .method-card input { margin: 3px 0 0; }
+.setup button.secondary {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-muted);
+}
+@media (max-width: 480px) {
+  .setup .approval-methods { grid-template-columns: 1fr; }
+}
+
+.setup nav {
+  min-width: 0;
+}
+.setup nav .step-position {
+  margin: 0 0 8px;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.setup .file-changes {
+  font-size: 13px;
+}
+.setup .file-changes summary {
+  cursor: pointer;
+  color: var(--text-muted);
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }

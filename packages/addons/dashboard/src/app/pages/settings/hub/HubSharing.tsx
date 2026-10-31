@@ -1,3 +1,4 @@
+import { UnsentShares } from './SendShares'
 // Sharing links through the hub (#1838). The Publish add-on row from the dashboard server carries what the hub SIGNED and core
 // verified: where files go and where links open (`suggest_where`), and, when the hub has moved since, its new values
 // (`hub_moved`). Nothing here reads a URL or local state for those values: the pre-fill is the row, and the signed change is
@@ -53,6 +54,7 @@ export function HubSharing({ workspace }: { workspace: Workspace }) {
   const reading = own && current.isPending
   return (
     <>
+      <UnsentShares workspace={workspace} />
       {row?.hub_moved ? (
         <Panel title="Sharing paused" tone="border-warning/40 bg-warning-soft">
           <Paused workspace={workspace} row={row} owner={owner} ask={ask} />

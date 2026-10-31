@@ -122,4 +122,4 @@ export async function connectionsPage(d) {
 }
 
 // The registry entry: the console's router, tabs and file list are built from this one export (no other file names a page).
-export const page = { path: "connections", nav: { label: "Connections", admin: true, needsWorkspace: true, after: "phones" }, render: connectionsPage };
+export const page = { path: "connections", nav: { group: "Sharing & apps", label: "Connections", admin: true, needsWorkspace: true, after: "phones" }, render: connectionsPage };

@@ -37,7 +37,7 @@ let sendRefusal: { code: string; reason?: string } | null = null
 let registerRefusal: { code: string; reason?: string } | null = null
 let sendRefusalOnce: { code: string; reason?: string } | null = null
 let uploadN = 0
-let prepareRefusal: { code: string } | null = null
+let prepareRefusal: { code: string; message?: string } | null = null
 let ticketOwner: string | null | undefined
 let workItems: { name: string; bytes: number }[] = []
 let workMore = false
@@ -47,8 +47,8 @@ let onlyEmpty = false
 // the Publish server installed on this computer, as the host's add-on row says it (the source of "Files go to this computer.")
 const PUBLISH_ROW = { id: 'publish', title: 'Publish', desc: 'Share files.', state: 'on' as const, locked: null, blocked: null, suggest: 'http://127.0.0.1:8103', suggest_from: 'computer' as const, suggest_hub: null }
 const state = useFakeHost(() => [workspace({ id: A, features: [...READS, 'publish'], addOns: { available: true, add_ons: [PUBLISH_ROW] } })])
-const refusal = (r: { code: string; reason?: string }) =>
-  Response.json({ ok: false, error: { code: r.code, message: r.code, retryable: false, ...(r.reason ? { detail: { reason: r.reason } } : {}) } }, { status: 409 })
+const refusal = (r: { code: string; reason?: string; message?: string }) =>
+  Response.json({ ok: false, error: { code: r.code, message: r.message ?? r.code, retryable: false, ...(r.reason ? { detail: { reason: r.reason } } : {}) } }, { status: 409 })
 let serverUp = true
 const route = () => {
   serverUp = true
@@ -842,6 +842,34 @@ it.each([
   expect(alert.textContent).not.toMatch(/\bhub\.[a-z_]+|state_mismatch|not_joined|selective/)
   expect(calls('/shares/send')).toEqual([])
   expect(state.host.clickPrepares()).toEqual([]) // no signature was asked for
+})
+
+it.each([
+  ["Files over 431.5 KB can't go through the hub yet. (report.md is 2.0 MB.)", /Files over 431\.5 KB can't go through the hub yet\. \(report\.md is 2\.0 MB\.\)/],
+  ["Files over 431.5 KB can't go through the hub yet.", /Files over 431\.5 KB can't go through the hub yet\./],
+])('Publish as link: a file too big for the hub says its limit before anything is signed (%s)', async (message, words) => {
+  route()
+  prepareRefusal = { code: 'quota.host', message }
+  const user = userEvent.setup()
+  const list = await onResults(user)
+  await user.click(within(list).getByRole('button', { name: 'Publish report.md as a link' }))
+  const alert = await screen.findByRole('alert', {}, T)
+  expect(alert).toHaveTextContent(words)
+  expect(alert).toHaveTextContent('Nothing was shared')
+  expect(alert.textContent).not.toMatch(/quota\.host|Discard some/)
+  expect(calls('/shares/send')).toEqual([])
+  expect(state.host.clickPrepares()).toEqual([])
+})
+
+it('Publish as link: any other quota text of the host is not echoed', async () => {
+  route()
+  prepareRefusal = { code: 'quota.host', message: "Files over 1 KB can't go through the hub yet. <b>x</b>" }
+  const user = userEvent.setup()
+  const list = await onResults(user)
+  await user.click(within(list).getByRole('button', { name: 'Publish report.md as a link' }))
+  const alert = await screen.findByRole('alert', {}, T)
+  expect(alert).toHaveTextContent('Too many prepared copies are waiting, or they are too large. Discard some.')
+  expect(alert.textContent).not.toMatch(/<b>/)
 })
 
 it('Publish as link: a viewer sees no button', async () => {

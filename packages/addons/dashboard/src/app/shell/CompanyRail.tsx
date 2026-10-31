@@ -31,8 +31,24 @@ export function useOpenHub(ws: string | undefined) {
   // `busy` is true from the press until the browser leaves (location.assign) or the ticket fails: buttons say "Opening hub…".
   const open = (returnTo: string = '/') => {
     if (!ws || busy) return
+    // ux-audit P02: the hub itself opens in a new tab, so this workspace stays where it was. The tab is opened in the
+    // press itself (a tab opened after the ticket arrives would be blocked as a pop-up) and is sent on once the ticket
+    // is there; a hop to another workspace (/open/<id>) stays in this tab.
+    const tab = returnTo === '/' ? window.open('', '_blank') : null
+    if (tab) tab.opener = null
     setBusy(true)
-    void hubUrl(ws, 'open', returnTo).then((u) => location.assign(u)).catch((e: unknown) => { setBusy(false); toastApiError(e, 'The hub could not be reached.') })
+    void hubUrl(ws, 'open', returnTo)
+      .then((u) => {
+        if (tab) {
+          tab.location.href = u
+          setBusy(false)
+        } else location.assign(u)
+      })
+      .catch((e: unknown) => {
+        tab?.close()
+        setBusy(false)
+        toastApiError(e, 'The hub could not be reached.')
+      })
   }
   return Object.assign(open, { busy })
 }

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import type { PublishWhere } from '@/api/addOnSwitches'
 import type { HandoffAction } from '@/api/handoff'
 import { Inline } from '@/components/sign/visible'
 import { Button } from '@/components/ui/button'
@@ -6,11 +7,13 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { PublishForm, publishValidation } from './PublishServer'
 
 /** The settings an add-on needs before it can be on (only Publish is built in; other add-ons keep their settings in the generic panel). */
-export function AddonSetup({ name, enabling, suggested, suggestedFrom, hubName, description, notice, close, submit }: { name: 'publish'; enabling: boolean; suggested?: string | null; suggestedFrom?: 'computer' | 'hub' | null; hubName?: string | null; description?: string; notice?: string; close: () => void; submit: (title: string, action: HandoffAction) => void }) {
+export function AddonSetup({ name, enabling, suggested, suggestedFrom, hubName, description, notice, close, submit }: { name: 'publish'; enabling: boolean; suggested?: string | PublishWhere | null; suggestedFrom?: 'computer' | 'hub' | null; hubName?: string | null; description?: string; notice?: string; close: () => void; submit: (title: string, action: HandoffAction) => void }) {
   const title = `${enabling ? 'Turn on' : 'Set up'} Publish`
-  // P02: the Publish server installed on this computer is the starting address for files and links; the field hides behind "Change"
-  const [server, setServer] = useState(suggested ?? '')
-  const [share, setShare] = useState(suggested ?? '')
+  // P02: the Publish server installed on this computer is the starting address for files and links; the field hides behind "Change".
+  // #1838: a pair keeps `server` and `share` apart; a plain string (older caller) is one address for both.
+  const start = typeof suggested === 'string' ? { server: suggested, share: suggested } : suggested
+  const [server, setServer] = useState(start?.server ?? '')
+  const [share, setShare] = useState(start?.share ?? '')
   const ready = publishValidation(server, share).ready
   const action: HandoffAction = enabling ? { action: 'addon_enable', name, publish: { server, share } } : { action: 'publish_setup', server, share }
   return (

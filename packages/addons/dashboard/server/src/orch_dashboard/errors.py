@@ -232,6 +232,8 @@ DETAIL_KEYS: dict[str, dict[str, tuple[str, ...] | str]] = {
             "clock",
             "delegation",
             "rejected",
+            "hub_left",
+            "hub_moved",
         ),
     },
     # core D1 (orch-v2-host 11A.17): the Simulator dev gate's closed reason

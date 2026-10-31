@@ -1255,10 +1255,17 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
         is signed in here already. The ticket is not used."""
         b = _need(b, t=str)
         self._limit.hit("switch-peek", c.source, SWITCH_PEEK_LIMIT)
+        sw = self._switch()
         try:
-            r = self._switch().peek(b["t"], "to_hub")
+            r = sw.peek(b["t"], "to_hub")
         except SwitchError:
             raise ApiError("bad_ticket") from None
+        # ux-audit P02: the way back to the workspace the person came from (its dashboard origin, as the switch holds
+        # it; the page only ever navigates to an http(s) origin through safeUrl). Told only to the holder of the
+        # ticket, which is a one-time secret handed to that person.
+        ws = r.get("ws")
+        origin = sw.origin_of(ws) if type(ws) is str else None
+        name = self.d.registry.display_name(ws) if origin is not None else None
         return (
             200,
             {
@@ -1266,6 +1273,7 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
                 "user_id": r["user"],
                 "name": self._user_name(r["user"]),
                 "signed_in_as": self._session_name(c.cookie_value),
+                "workspace": None if origin is None else {"name": name, "origin": origin},
             },
             [],
         )

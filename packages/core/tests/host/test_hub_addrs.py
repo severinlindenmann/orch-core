@@ -199,17 +199,118 @@ def test_the_name_is_carried_as_the_hubs_own_words_and_cleaned(human, served, mo
 
 def test_the_legacy_publish_string_of_the_hub_is_ignored_and_never_suggested(human, served, monkeypatch, probe):
     """#1838 (contract 10.9.1): the unsigned ``publish`` string is accepted in shape and dropped; only a signed
-    ``publish_where`` can ever be suggested (a later step), so nothing is kept or shown from the legacy string."""
+    ``publish_where`` is ever suggested, so nothing is kept or shown from the legacy string."""
     hub = bound(served, human, monkeypatch)
     probe.live = {"10.0.0.5:8105"}
-    assert status(served)["hub_publish"] is None
+    assert status(served)["publish_where"] is None and "hub_publish" not in status(served)
     hub.where_answer = {**where("10.0.0.5:8105"), "publish": "http://127.0.0.1:8102"}
     refresh(served)
-    assert _state(served).hub_publish is None and status(served)["hub_publish"] is None
+    assert _state(served).publish_where is None and status(served)["publish_where"] is None
+    assert "hub_publish" not in _state(served).to_json()
     for bad in ("http://evil.example.com", "https://x.com/p", "ftp://x"):
         hub.where_answer = {**where("10.0.0.5:8105"), "publish": bad}
         refresh(served)
-        assert _state(served).hub_publish is None  # malformed answer: the host keeps what it holds
+        assert _state(served).publish_where is None  # malformed answer: the host keeps what it holds
+
+
+# --- the signed publish_where of hub_where (#1838) ----------
+
+
+def with_pw(*links, **kw):
+    from tests.hub.fake import signed_publish_where
+
+    return {**where(*links), "publish_where": signed_publish_where(**kw)}
+
+
+def held_of(served):
+    held = _state(served).publish_where
+    return None if held is None else (held["o"]["seq"], held["o"]["share"])
+
+
+def test_a_signed_publish_where_is_verified_stored_and_shown_by_status(human, served, monkeypatch, probe):
+    hub = bound(served, human, monkeypatch)
+    hub.where_answer = with_pw("10.0.0.5:8105", seq=3)
+    refresh(served)
+    assert held_of(served) == (3, "https://apps.example.org")
+    assert status(served)["publish_where"] == {
+        "hub_id": HUB_ID, "hub_name": "Acme hub", "server": "https://pub.example.org",
+        "share": "https://apps.example.org",
+    }  # fmt: skip
+    assert status(served)["publish_from"] is None and status(served)["publish_moved"] is None
+
+
+def test_the_seq_rule_higher_replaces_equal_must_match_lower_and_bad_signature_keep_the_last_good(
+    human, served, monkeypatch, probe
+):
+    hub = bound(served, human, monkeypatch)
+    hub.where_answer = with_pw("10.0.0.5:8105", seq=3)
+    refresh(served)
+    hub.where_answer = with_pw("10.0.0.5:8105", seq=4, share="https://new.example.org")
+    refresh(served)
+    assert held_of(served) == (4, "https://new.example.org")
+    same = hub.where_answer
+    refresh(served)  # byte-identical at the same seq: nothing changes
+    assert held_of(served) == (4, "https://new.example.org")
+    for bad in (
+        with_pw("10.0.0.5:8105", seq=4, share="https://other.example.org"),  # equal seq, other content
+        with_pw("10.0.0.5:8105", seq=2),  # lower seq
+        with_pw("10.0.0.5:8105", seq=9, key="wsk_a"),  # bad signature on a NEW object
+        with_pw("10.0.0.5:8105", seq=9, hub_id="ab" * 16),  # another hub
+        with_pw("10.0.0.5:8105", seq=9, server="https://10.0.0.9"),  # a private origin
+    ):
+        hub.where_answer = bad
+        refresh(served)
+        assert held_of(served) == (4, "https://new.example.org")
+    hub.where_answer = same
+    refresh(served)
+    assert held_of(served) == (4, "https://new.example.org")
+
+
+def test_a_hub_that_stops_advertising_it_loses_the_object_but_not_the_tombstone(human, served, monkeypatch, probe):
+    hub = bound(served, human, monkeypatch)
+    hub.where_answer = with_pw("10.0.0.5:8105", seq=3)
+    refresh(served)
+    hub.where_answer = where("10.0.0.5:8105")
+    refresh(served)
+    assert held_of(served) is None and status(served)["publish_where"] is None
+    assert _state(served).publish_where_floors == {HUB_ID: 3}
+    hub.where_answer = with_pw("10.0.0.5:8105", seq=2)  # older than the tombstone: refused
+    refresh(served)
+    assert held_of(served) is None
+
+
+def test_a_revoked_op_cert_makes_the_held_object_absent_on_the_next_read_and_deletes_it(
+    human, served, monkeypatch, probe
+):
+    hub = bound(served, human, monkeypatch)
+    hub.where_answer = with_pw("10.0.0.5:8105", seq=3)
+    refresh(served)
+    assert status(served)["publish_where"] is not None
+    st = _state(served)
+    st.revoked_op_certs.append(st.card["op_cert"]["o"]["cert_id"])
+    hubops._save_state(_service(served), st)  # noqa: SLF001
+    assert status(served)["publish_where"] is None  # absent, no suggestion
+    assert held_of(served) is None  # and gone from hub.json
+
+
+def test_the_tombstone_survives_leave_and_a_rejoin_never_takes_an_older_seq(human, served, monkeypatch, probe):
+    hub = bound(served, human, monkeypatch)
+    hub.where_answer = with_pw("10.0.0.5:8105", seq=7)
+    refresh(served)
+    human.run("hub.leave", {})
+    ok(served.client().req("hub.unbind", {}, idem=True))
+    assert held_of(served) is None and _state(served).publish_where_floors == {HUB_ID: 7}
+    from tests.hub.fake import signed_publish_where
+
+    card = copy.deepcopy(CARD)
+    hub.join_answer = {"publish_where": signed_publish_where(seq=3)}
+    human.run("hub.join", {"hub_card": card, "mode": "selective"})
+    ok(served.client().req("hub.connect", {"invite": "invite-2", "hub_card": card, "addr": "127.0.0.1:9"}, idem=True))
+    assert _state(served).status == "bound" and held_of(served) is None  # the join stands, the old object is refused
+    assert _state(served).publish_where_floors == {HUB_ID: 7}
+    hub.where_answer = with_pw("10.0.0.5:8105", seq=8)
+    refresh(served)
+    assert held_of(served) == (8, "https://apps.example.org")
 
 
 def test_a_hub_without_hub_where_still_refreshes(human, served, monkeypatch, probe):

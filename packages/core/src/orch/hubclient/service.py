@@ -13,16 +13,17 @@ committed) and never resurrects (a later binding needs a higher ``binding_seq``)
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from orch.crypto.encoding import b64u, unb64u
 
-from . import wire
+from . import publish_held, wire
 from .errors import HubRefused
 from .link import HubLink, HubTransport
-from .where import publish_ok
+from .publish_where import check_publish_where_shape
 
 __all__ = [
     "EpochKeys",
@@ -63,8 +64,12 @@ class EpochKeys(Protocol):
 _ENTRY = {"unbound", "addr", "tls_spki", "hk_op_pub", "mode"}
 _OPTIONAL = {
     "outbox", "addr", "tls_spki", "hxk_pub", "sealed", "rotate_after", "card", "revoked_op_certs", "snapshot",
-    "revoked_op_objs", "publish_owed", "snapshot_floors", "closing", "hub_publish",
+    "revoked_op_objs", "publish_owed", "snapshot_floors", "closing", "publish_where", "publish_where_floors",
 }  # fmt: skip
+#: the unsigned ``hub_publish`` hint of an earlier build: read and dropped (never kept, never written), so a
+#: ``hub.json`` of that build is not refused as unreadable (#1838)
+_LEGACY = {"hub_publish"}
+_LOG = logging.getLogger("orch.hubclient.service")
 MAX_ADDRS = 4  # M4 (#1461): other addresses of the hub the host has verified (next to ``addr``)
 
 
@@ -134,8 +139,6 @@ class HubState:
     #: passed against ``tls_spki`` (never from a card or a hint alone); dialled after ``addr``, in this order
     addrs: list[str] = field(default_factory=list)
     hub_name: str | None = None  # the display name the hub says of itself (``hub_where``); the hub's words, a hint
-    #: P02: the origin of the hub's publish server (``hub_where`` ``publish``), a hint for the Publish form
-    hub_publish: str | None = None
     tls_spki: str | None = None  # b64u SPKI hash from the verified hub card: the pin of that dial
     hxk_pub: str | None = None  # b64u, from the verified card: the key a full-mode ``WK_e`` is sealed to
     #: full mode only: ``{"epoch", "hxk_pub"}`` of the last ``wk_seal`` the hub accepted (``None``: nothing sealed)
@@ -169,6 +172,13 @@ class HubState:
     #: #1463 (protocol 9.7): the verified ``hub.closing`` notice of THIS binding, only its four recorded members
     #: (``verify_closing``'s result). Host-local; cleared by leave, unbind, rebind or a ``closing_get`` answer ``null``.
     closing: dict[str, Any] | None = None
+    #: #1838 (protocol 10.9.1): the signed ``hub.publish_where`` of THIS binding as received (``{o, sig}``), kept only
+    #: after it verified. Every read goes through :func:`orch.hubclient.publish_held.read`, which checks it again
+    #: against the current pinned card; deleted by leave and unbind.
+    publish_where: dict[str, Any] | None = None
+    #: #1838: ``{hub_id: the highest publish_where seq ever stored from that hub}``, the tombstone. It survives leave
+    #: and a rebind (the new state carries every entry): an older object is never stored again (``stale_seq``).
+    publish_where_floors: dict[str, int] = field(default_factory=dict)
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -184,7 +194,6 @@ class HubState:
             "addr": self.addr,
             "addrs": list(self.addrs),
             "hub_name": self.hub_name,
-            "hub_publish": self.hub_publish,
             "tls_spki": self.tls_spki,
             "hxk_pub": self.hxk_pub,
             "sealed": self.sealed,
@@ -196,6 +205,8 @@ class HubState:
             "revoked_op_objs": {k: self.revoked_op_objs[k] for k in sorted(self.revoked_op_objs)},
             "publish_owed": {k: self.publish_owed[k] for k in sorted(self.publish_owed)},
             "closing": None if self.closing is None else dict(self.closing),
+            "publish_where": self.publish_where,
+            "publish_where_floors": {k: self.publish_where_floors[k] for k in sorted(self.publish_where_floors)},
         }
 
     @classmethod
@@ -205,7 +216,7 @@ class HubState:
             "hub_id", "hk_root_pub", "hk_op_pub", "mode", "binding_seq", "status", "binding", "aliases",
             "addrs", "hub_name",
         }  # fmt: skip
-        if type(d) is not dict or set(d) - _OPTIONAL != keys:
+        if type(d) is not dict or set(d) - _OPTIONAL - _LEGACY != keys:
             raise HubRefused("malformed")
         ok = (
             wire.hex16(d["hub_id"])
@@ -222,7 +233,6 @@ class HubState:
             and (d.get("addr") is None or (type(d["addr"]) is str and len(d["addr"]) <= 300))
             and _addrs_ok(d["addrs"])
             and (d["hub_name"] is None or (type(d["hub_name"]) is str and len(d["hub_name"]) <= 60))
-            and (d.get("hub_publish") is None or publish_ok(d["hub_publish"]))
             and (d.get("tls_spki") is None or type(d["tls_spki"]) is str)
             and (d.get("hxk_pub") is None or wire.is_pub(d["hxk_pub"]))
             and _sealed_ok(d.get("sealed"))
@@ -238,6 +248,12 @@ class HubState:
             and type(d.get("publish_owed", {})) is dict
             and all(wire.hex16(k) and type(v) is dict for k, v in d.get("publish_owed", {}).items())
             and _closing_ok(d.get("closing"))
+            and _publish_where_ok(d.get("publish_where"))
+            and type(d.get("publish_where_floors", {})) is dict
+            and all(
+                wire.hex16(k) and type(v) is int and 0 <= v <= publish_held.SEQ_MAX
+                for k, v in d.get("publish_where_floors", {}).items()
+            )
             and d["hub_id"] == wire.hub_id(unb64u(d["hk_root_pub"], 65))
         )
         if not ok:
@@ -255,7 +271,6 @@ class HubState:
             addr=d.get("addr"),
             addrs=list(d["addrs"]),
             hub_name=d["hub_name"],
-            hub_publish=d.get("hub_publish"),
             tls_spki=d.get("tls_spki"),
             hxk_pub=d.get("hxk_pub"),
             sealed=None if d.get("sealed") is None else dict(d["sealed"]),
@@ -267,7 +282,20 @@ class HubState:
             revoked_op_objs=dict(d.get("revoked_op_objs", {})),
             publish_owed=dict(d.get("publish_owed", {})),
             closing=None if d.get("closing") is None else dict(d["closing"]),
+            publish_where=d.get("publish_where"),
+            publish_where_floors=dict(d.get("publish_where_floors", {})),
         )
+
+
+def _publish_where_ok(v: Any) -> bool:
+    """Shape only (the signature is checked on every read, :func:`orch.hubclient.publish_held.read`)."""
+    if v is None:
+        return True
+    try:
+        check_publish_where_shape(v)
+    except HubRefused:
+        return False
+    return True
 
 
 def _floors_of(state: HubState | None) -> dict[str, int]:
@@ -348,6 +376,7 @@ def _join(
         _owe(state, workspace_id, sign_wsk, now_ms, dev=bool(state.binding["o"]["dev"]))
         state.status = "unbound"
         state.closing = None
+        state.publish_where = None
         save(state)
     if state is not None and state.status == "joining" and binding_seq is not None and binding_seq > state.binding_seq:
         # the log left and joined again (#1198 C9: the owner proof of the first join ran out before the hub took it):
@@ -421,6 +450,7 @@ def _join(
             card=hub_card,
             revoked_op_certs=[] if state is None else list(state.revoked_op_certs),  # only ever grows
             snapshot_floors=_floors_of(state),
+            publish_where_floors=publish_held.floors_of(state),
         )
         record_joined(payload)  # the owner's signature first: nothing leaves the host before it
         save(new)
@@ -428,7 +458,7 @@ def _join(
         transport, hub_id=new.hub_id, workspace_id=workspace_id, hk_op_pub=hk_op, sign=sign_wsk,
         mode=mode, now_ms=now_ms,
     )  # fmt: skip
-    link.call(
+    reply = link.call(
         "join",
         {
             "invite": invite,
@@ -439,7 +469,15 @@ def _join(
             "alias_users": sorted(new.aliases.values()),  # the owner-signed aliases: the hub holds them to its invite
         },
     )
+    if type(reply) is not dict or set(reply) - {"publish_where"}:
+        raise HubRefused("malformed")  # the reply is {} or {publish_where}: any other member is not the protocol's
+    if "publish_where" in reply:
+        check_publish_where_shape(reply["publish_where"])
     new.status = "bound"
+    if "publish_where" in reply:  # #1838: kept only if it verifies; a bad one is dropped and the join stands
+        code, _ = publish_held.offer(new, reply["publish_where"], now_ms())
+        if code is not None:
+            _LOG.info("publish_where of the join answer not used (%s)", code)
     save(new)
     if mode == "full":
         assert epochs is not None
@@ -701,6 +739,7 @@ def leave(
     state.sealed = None
     state.status = "unbound"
     state.closing = None
+    state.publish_where = None  # the held object goes with the binding; the seq tombstone stays
     save(state)
     done = settle_rotation(state=state, epochs=epochs, save=save, request=False)  # the retire already asked
     told = flush_publish(state=state, put=publish_put, save=save)  # publish first: it ends hub-forwarded publish

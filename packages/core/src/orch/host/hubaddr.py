@@ -329,7 +329,7 @@ def apply_where(service: WorkspaceService, state: Any, answer: dict[str, Any]) -
             return False  # settings unusable: no probe, nothing stored, nothing dialled
         passed = _probe_new(f"{service.workspace_id}:{state.hub_id}", state, fresh, net)
     return _store(
-        service, state, passed, [e["link"] for e in answer["addresses"]], answer["name"], answer.get("publish")
+        service, state, passed, [e["link"] for e in answer["addresses"]], answer["name"], answer.get("publish_where")
     )
 
 
@@ -373,8 +373,14 @@ def wait_idle(timeout: float = 30.0) -> None:
 
 
 def _store(
-    service: Any, started: Any, passed: list[str], advertised: list[str], name: str | None, publish: str | None = None
+    service: Any,
+    started: Any,
+    passed: list[str],
+    advertised: list[str],
+    name: str | None,
+    publish_where: dict[str, Any] | None = None,
 ) -> bool:
+    from orch.hubclient import publish_held
     from orch.hubclient.service import MAX_ADDRS
 
     from . import hubops
@@ -393,13 +399,21 @@ def _store(
         # the hub's preference first, then the verified ones it no longer names (kept: they cost only a dial)
         ordered = [a for a in advertised if a in pool] + [a for a in pool if a not in advertised]
         merged = list(dict.fromkeys(ordered))[:MAX_ADDRS]
-        # P02: the hub's own statement of where its publish server is; absent now = none (a hint that was withdrawn)
-        changed = merged != cur.addrs or (name is not None and name != cur.hub_name) or publish != cur.hub_publish
-        if changed:
-            cur.addrs, cur.hub_name = merged, name if name is not None else cur.hub_name
-            cur.hub_publish = publish
+        changed = merged != cur.addrs or (name is not None and name != cur.hub_name)
+        cur.addrs, cur.hub_name = merged, name if name is not None else cur.hub_name
+        # #1838: the hub's signed statement of where its workspaces publish and share. Verified against the card now
+        # pinned and kept only if the seq rule allows; a bad or older one leaves the held object alone. An answer
+        # without it means the hub no longer advertises one: the held object goes (the seq tombstone stays).
+        now_ms = int(service.clock() * 1000)
+        if publish_where is not None:
+            code, moved = publish_held.offer(cur, publish_where, now_ms)
+            if code is not None:
+                _LOG.info("publish_where of hub_where not used (%s)", code)
+        else:
+            moved = publish_held.read(cur, now_ms)[1] or publish_held.drop(cur)
+        if changed or moved:
             hubops._write_state(service, cur)  # noqa: SLF001
-        return changed
+        return changed or moved
 
 
 def move(call: Call, link_text: str, *, now_ms: int, dev: bool) -> dict[str, Any]:

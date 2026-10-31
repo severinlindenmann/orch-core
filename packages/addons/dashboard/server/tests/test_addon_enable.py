@@ -205,21 +205,27 @@ def test_the_model_choice_is_offered_by_the_choose_model_capability_not_by_the_n
         assert "model_routing" not in gateway.features(stub.ws)
 
 
+HUB_WHERE = {
+    "hub_id": "ab" * 16,
+    "hub_name": "Anna's hub",
+    "server": "https://pub.example.org",
+    "share": "https://s.example.org",
+}
+
+
 @pytest.mark.parametrize(
     "local,hub,want",
     [
-        (
-            None,
-            {"hub_publish": "http://127.0.0.1:8102", "hub_says": {"name": "Anna's hub", "from": "hub"}},
-            ("http://127.0.0.1:8102", "hub", "Anna's hub"),
-        ),
+        (None, {"publish_where": HUB_WHERE}, ("https://pub.example.org", "hub", "Anna's hub")),
         (
             {"parts": {"publish": {"url": "http://127.0.0.1:9999"}}},
-            {"hub_publish": "http://127.0.0.1:8102"},
+            {"publish_where": HUB_WHERE},
             ("http://127.0.0.1:9999", "computer", None),
         ),  # local install wins
-        (None, {"hub_publish": None}, (None, None, None)),  # not joined
-        (None, {"hub_publish": "http://evil.example.com"}, (None, None, None)),  # not an address core accepts
+        (None, {"publish_where": None}, (None, None, None)),  # not joined, or nothing verified
+        (None, {"publish_where": {**HUB_WHERE, "share": "http://evil.example.com"}}, (None, None, None)),  # refused
+        # the legacy unsigned string of an older core is never a suggestion
+        (None, {"hub_publish": "http://127.0.0.1:8102", "hub_says": {"name": "Anna's hub"}}, (None, None, None)),
         (None, "boom", (None, None, None)),  # hub.status unreadable
     ],
 )
@@ -246,3 +252,26 @@ def test_rows_suggest_the_hubs_publish_address_when_joined(
     monkeypatch.setattr(gateway, "call", call)
     row = {r["id"]: r for r in _get(client, token, stub, "add-ons").json()["add_ons"]}["publish"]
     assert (row["suggest"], row.get("suggest_from"), row.get("suggest_hub")) == want
+    assert row.get("suggest_where") == (
+        None if want[0] is None else {"server": want[0], "share": HUB_WHERE["share"] if want[1] == "hub" else want[0]}
+    )
+    assert "hub_moved" not in row
+
+
+def test_the_row_says_hub_moved_with_the_hubs_new_values(client, token, stub, gateway, monkeypatch, tmp_path):
+    from test_addon_switches import _get, _VersionLink
+
+    (tmp_path / "install").mkdir()
+    monkeypatch.setenv("ORCH_STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(gateway, "enabled", lambda ws: _VersionLink())
+    moved = {"server": "https://pub.example.org", "share": "https://new.example.org"}
+    hub = {"publish_where": HUB_WHERE | moved, "publish_moved": moved}
+
+    def call(ws, op, args=None):
+        if op == "hub.status":
+            return hub
+        return {"runner": None} if op == "whoami" else {"publish": None}
+
+    monkeypatch.setattr(gateway, "call", call)
+    row = {r["id"]: r for r in _get(client, token, stub, "add-ons").json()["add_ons"]}["publish"]
+    assert row["hub_moved"] == moved and row["why"] == "hub_moved" and row["suggest_where"] == moved

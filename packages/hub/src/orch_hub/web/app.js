@@ -803,7 +803,8 @@ async function home() {
     if (!user || state.user !== user) return;
     const mine = state.me && state.channels.find((c) => c.channel_id === state.me.channelId && c.status === "active");
     const workspaces = ws.status === 200 ? ws.body.workspaces : [];
-    const dead = !mine && (state.me || state.channels.some((c) => c.status === "active" && c.kind === "browser"));
+    // dead = this browser holds THIS person'"'"'s own key that the hub no longer lists as active. Another person'"'"'s stored key, or none, is just "not set up here" (and is never touched from here).
+    const dead = !mine && state.me?.userId === user.user_id;
     const shared = sharedRes.status === 200 ? sharedRes.body.items ?? [] : [];
     // P04: per person, in this browser; diffed only after a successful read, dropped on sign out (clearSession)
     const ended = sharedRes.status === 200 ? trackShared(user.user_id, shared) : loadEnded(user.user_id);
@@ -820,20 +821,12 @@ async function home() {
       newChannels: state.newChannels,
       thisBrowser: state.user.needs_sign_in ? (state.me?.userId === user.user_id ? { state: "active", label: state.me.label, needsSignIn: true } : { state: "unregistered" }) : mine ? { state: "active", label: state.me.label } : dead ? { state: "dead", label: state.me?.label } : { state: "unregistered" },
       notice: state.notice,
-      actions: { review: (it) => navigate("#/w/" + it.workspace_id + "/item/" + encodeURIComponent(it.key || it.item_id)), open: (id) => openOrPage(id), dismissEnded: (id) => { dismissEnded(user.user_id, id); void home(); }, openShared: (it) => navigate("#/shared/" + it.workspace_id + "/" + encodeURIComponent(it.key)), connect: () => navigate("#/workspaces"), register: () => registerView(), removeChannel, forgetLocal, dismissNew },
+      actions: { review: (it) => navigate("#/w/" + it.workspace_id + "/item/" + encodeURIComponent(it.key || it.item_id)), open: (id) => openOrPage(id), dismissEnded: (id) => { dismissEnded(user.user_id, id); void home(); }, openShared: (it) => navigate("#/shared/" + it.workspace_id + "/" + encodeURIComponent(it.key)), connect: () => navigate("#/workspaces"), register: () => registerView(), removeChannel, dismissNew },
     };
     liveItems = { user_id: user.user_id, items: homeData.items };
     shell("home", homeView(homeData), workspaces.some((w) => w.can_start) ? advancedForm(workspaces) : null);
     state.notice = null;
   } finally { finishLoading(); }
-}
-
-async function forgetLocal() {
-  // only reached when the hub no longer lists this key as active (revoked or unknown): a dead key is harmless, but we tidy up
-  const c = state.channels.find((x) => x.channel_id === state.me?.channelId);
-  if (c && c.status === "active") return;
-  if (!c || c.status === "revoked") await deleteChannel().catch(() => {});
-  await home();
 }
 
 async function removeChannel(id) {

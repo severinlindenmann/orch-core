@@ -124,11 +124,10 @@ export function homeView(d) {
   const active = browser?.state === "active";
   const dead = browser?.state === "dead";
   const local = h("div", { class: "browser-card" },
-    h("b", { text: active && browser.needsSignIn ? "Ready. Sign in once to approve." : active ? "This browser holds a signing key for you" : "Approvals need a signing key in this browser" }),
+    h("b", { text: active && browser.needsSignIn ? "Ready. Sign in once to approve." : active ? "This browser holds a signing key for you" : dead ? "This browser's key no longer works" : "Approvals need a signing key in this browser" }),
     active ? note("Name: " + text(browser.label || "this browser"))
-      : note(dead ? "The key is missing here or was removed at the hub. Set up signing again to sign here." : "One step: confirm with your password and a code."),
-    dead ? h("button", { text: "Forget the key in this browser", onclick: () => d.actions.forgetLocal() }) : null,
-    !active ? h("button", { class: "pri", text: "Set up signing", onclick: () => d.actions.register() }) : null);
+      : note(dead ? "Set it up again to keep approving here." : "One step: confirm with your password and a code."),
+    !active ? h("button", { class: "pri", text: dead ? "Set up signing again" : "Set up signing", onclick: () => d.actions.register() }) : null);
   // P08: a person with nothing to sign (not an admin, nothing shared for approval, no key or phone) is not shown the card;
   // it appears by itself as soon as something needs their approval.
   const canSign = active || dead || (d.channels ?? []).length > 0 || !!d.user?.is_admin || items.some((it) => !summary(it));

@@ -799,7 +799,8 @@ export function ArtifactDrawer({
         {open && (
           <>
             <SheetHeader className="gap-1 border-b border-border pr-10">
-              <SheetTitle className="break-all font-mono text-[14px]">{denied ? 'Artifact not available' : cardTitle(open)}</SheetTitle>
+              {/* the Artifacts page lists files by name; on a ticket an agent check reads as one, not as its log name (W02) */}
+              <SheetTitle className="break-all font-mono text-[14px]">{denied ? 'Artifact not available' : context !== undefined ? open.name : cardTitle(open)}</SheetTitle>
               {denied ? (
                 <SheetDescription>You can no longer see this artifact.</SheetDescription>
               ) : isAgentCheck(open) ? (

@@ -32,10 +32,12 @@ def _builtin_manifest(name: str) -> bytes:
     return builtin.manifest_bytes(name)
 
 
-def _dashboard_tunnel(url: object) -> str | None:
+def _dashboard_tunnel(url: object, environ: Mapping[str, str]) -> str | None:
     """Run18 P01: on a headless computer the dashboard port needs its own ssh -L; the ready line for it. Only the port
+    of a local http(s) address is used. ``environ`` is the setup process's own environment (``Env.env``, the one the
+    terminal hint reads), never ``os.environ``. Only the port
     of a local http(s) address is used: the single-use login link (path, query, fragment) never reaches the line."""
-    if not isinstance(url, str) or not is_headless(os.environ):
+    if not isinstance(url, str) or not is_headless(environ):
         return None
     try:
         parts = urlsplit(url)
@@ -45,7 +47,7 @@ def _dashboard_tunnel(url: object) -> str | None:
     if parts.scheme not in ("http", "https") or parts.hostname not in ("127.0.0.1", "localhost") or not port:
         return None
     try:
-        return tunnel_line(port, os.environ)
+        return tunnel_line(port, environ)
     except ValueError:
         return None
 
@@ -493,7 +495,7 @@ class SetupFlow:
             ) from None
         self._closed = True
         out: dict[str, Any] = {"url": url, "workspace_id": str(wid)}
-        tunnel = _dashboard_tunnel(url)
+        tunnel = _dashboard_tunnel(url, self.e.env)
         if tunnel:
             out["tunnel"] = tunnel
         return out

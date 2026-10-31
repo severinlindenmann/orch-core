@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import secrets as _secrets
 import threading
@@ -10,6 +11,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from orch import childenv
 
@@ -27,6 +29,24 @@ def _builtin_manifest(name: str) -> bytes:
     from orch.addons import builtin
 
     return builtin.manifest_bytes(name)
+
+
+def _dashboard_tunnel(url: object) -> str | None:
+    """Run18 P01: on a headless computer the dashboard port needs its own ssh -L; the ready line for it. Only the port
+    of a local http(s) address is used: the single-use login link (path, query, fragment) never reaches the line."""
+    if not isinstance(url, str) or not is_headless(os.environ):
+        return None
+    try:
+        parts = urlsplit(url)
+        port = parts.port
+    except ValueError:
+        return None
+    if parts.scheme not in ("http", "https") or parts.hostname not in ("127.0.0.1", "localhost") or not port:
+        return None
+    try:
+        return tunnel_line(port, os.environ)
+    except ValueError:
+        return None
 
 
 @dataclass
@@ -458,7 +478,11 @@ class SetupFlow:
                 "setup.dashboard_unavailable", "the dashboard did not open yet; try again", 503, retry=True
             ) from None
         self._closed = True
-        return {"url": url, "workspace_id": str(wid)}
+        out: dict[str, Any] = {"url": url, "workspace_id": str(wid)}
+        tunnel = _dashboard_tunnel(url)
+        if tunnel:
+            out["tunnel"] = tunnel
+        return out
 
     def cancel_run(self) -> None:
         """Ctrl-C on the setup terminal: the run stops between steps (a conversion in flight is undone)."""

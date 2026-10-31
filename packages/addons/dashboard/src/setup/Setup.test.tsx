@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, expect, test, vi } from 'vitest'
-import { answers, groupProgress, plainReason, Setup, reviewFacts, summarize } from './Setup'
+import { agentsCan, answers, groupProgress, plainReason, Setup, reviewFacts, summarize } from './Setup'
 import { SetupAPI, SetupError, bootstrapSetup, isSetupPage, type SetupState, type Review } from '../api/setup'
 
 const state: SetupState = {
@@ -1878,4 +1878,11 @@ test('security review (c): own-copy wording follows the work copies choice', asy
   fireEvent.click(screen.getByLabelText(/Own copy per ticket/))
   expect(summary).not.toHaveTextContent('get their own copy')
   expect(summary).toHaveTextContent('Agents change the files in this folder directly.')
+})
+
+test('security review: the agents summary names only the add-ons that are on', () => {
+  expect(agentsCan(['start-agent', 'terminals', 'worktrees', 'quick'])).toBe('Agents can start from the dashboard, open a terminal, get their own copy of each ticket’s files and run quick tasks.')
+  expect(agentsCan(['terminals'])).toBe('Agents can open a terminal.')
+  expect(agentsCan(['start-agent', 'quick'])).toBe('Agents can start from the dashboard and run quick tasks.')
+  expect(agentsCan([])).toBe('Agents start only when you start them in a terminal.')
 })

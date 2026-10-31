@@ -434,6 +434,18 @@ export function ConfirmWords({ words }: { words: string[] | null }) {
     </section>
   )
 }
+/** Security review (W1a): the summary names only what the chosen add-ons really allow. */
+export function agentsCan(addons: readonly string[]): string {
+  const can = [
+    addons.includes('start-agent') && 'start from the dashboard',
+    addons.includes('terminals') && 'open a terminal',
+    addons.includes('worktrees') && 'get their own copy of each ticket’s files',
+    addons.includes('quick') && 'run quick tasks',
+  ].filter((x): x is string => !!x)
+  if (!can.length) return 'Agents start only when you start them in a terminal.'
+  return `Agents can ${can.length === 1 ? can[0] : `${can.slice(0, -1).join(', ')} and ${can[can.length - 1]}`}.`
+}
+
 export function Setup({ api }: { api: SetupAPI }) {
   const [state, setState] = useState<SetupState>()
   const [profile, setProfile] = useState<Profile>({
@@ -1061,7 +1073,7 @@ export function Setup({ api }: { api: SetupAPI }) {
             <>
               <div className="agents-summary" data-testid="agents-summary">
                 <strong>Recommended for most people</strong>
-                <small>Agents can start from the dashboard, open a terminal{profile.addons.includes('worktrees') ? ', get their own copy of each ticket’s files,' : ''} and run quick tasks. Setup adds orch&apos;s own files to this folder (a hidden .orch folder, AGENTS.orch.md and skill folders) and an orch section in AGENTS.md, lines in CLAUDE.md that load the instructions, and one line in .gitignore to keep orch’s private folder out of git, creating these files if needed (and a git repository if you choose one). Existing orch instructions may be updated; other content in these three files stays as it is.{profile.addons.includes('worktrees') ? ' With work copies on, agents change their own copies until you merge them.' : ' Agents change the files in this folder directly.'}</small>
+                <small>{agentsCan(profile.addons)} Setup adds orch&apos;s own files to this folder (a hidden .orch folder, AGENTS.orch.md and skill folders) and an orch section in AGENTS.md, lines in CLAUDE.md that load the instructions, and one line in .gitignore to keep orch’s private folder out of git, creating these files if needed (and a git repository if you choose one). Existing orch instructions may be updated; other content in these three files stays as it is.{profile.addons.includes('worktrees') ? ' With work copies on, agents change their own copies until you merge them.' : ' Agents change the files in this folder directly.'}</small>
               </div>
               {/* the fold opens by itself when the recommendation does not apply (a switch differs from its default, or the folder question was answered Skip) */}
               <details className="approval-more" data-testid="agents-more" open={agentsDiffer || undefined}>

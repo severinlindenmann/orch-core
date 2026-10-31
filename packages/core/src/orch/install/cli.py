@@ -36,6 +36,7 @@ USAGE = (
     "                    [--allow-non-cgnat] [--caddy-dir DIR] [--behind-proxy]\n"
     "                    [--hub-name NAME | --no-hub-name]\n"
     "                    [--backup-drop DIR]\n"
+    "                    [--publish-url U | --no-publish-url] [--relay-url U | --no-relay-url]\n"
     "                    [--port-base N] [--yes]\n"
     "usage: orch install phone [--user ID]\n"
     "usage: orch install {hub|relay|publish} [--address A] [--port N] [--domain D] [--source PATH] [--ref REF]\n"
@@ -965,6 +966,8 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextI
     p.add_argument("--port-base", type=int)
     p.add_argument("--hub-name")
     p.add_argument("--no-hub-name", action="store_true")
+    p.add_argument("--no-publish-url", action="store_true")
+    p.add_argument("--no-relay-url", action="store_true")
     p.add_argument("--caddy-dir", default=CADDY_DIR)
     p.add_argument("--backup-drop")
     try:
@@ -1006,6 +1009,8 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextI
                 no_hub_name=a.no_hub_name,
                 publish_url=a.publish_url,
                 relay_url=a.relay_url,
+                no_publish_url=a.no_publish_url,
+                no_relay_url=a.no_relay_url,
             )
             return 0
         if a.cmd == "remove":
@@ -1013,7 +1018,7 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextI
                 err.write(USAGE)
                 return 2
             return remove(ctx, a.rest[0], a.purge)
-        if a.rest:
+        if a.rest or a.no_publish_url or a.no_relay_url:  # the --no-…-url flags belong to `install server`
             err.write(USAGE)
             return 2
         if ctx.port_base is not None:

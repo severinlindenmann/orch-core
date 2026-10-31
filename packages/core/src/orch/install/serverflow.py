@@ -142,6 +142,8 @@ def server_setup(
     no_hub_name: bool = False,
     publish_url: str | None = None,
     relay_url: str | None = None,
+    no_publish_url: bool = False,
+    no_relay_url: bool = False,
 ) -> Plan:
     """Install the parts of ``role`` for this OS user. ``resolve``/``local`` are the DNS seams of the tests."""
     if role not in ROLES:
@@ -187,7 +189,7 @@ def server_setup(
                 "it. To keep the name, leave out --domain, --domain-hub, --domain-relay, --domain-publish, "
                 "--hub-vpn-only, --behind-proxy and --address 127.0.0.1. To drop the name, add --no-hub-name."
             )
-    hub_urls = _hub_urls(ctx, role, publish_url, relay_url)
+    hub_urls = _hub_urls(ctx, role, names, publish_url, relay_url, no_publish_url, no_relay_url)
     if backup_drop:
         drop_check(backup_drop)
     user = user or real_user()
@@ -293,7 +295,7 @@ def server_setup(
                 vpn_net=plan.vpn_net or server.VPN_NET,
             )
     sync_helper(ctx)
-    _remember_hub_urls(ctx, hub_urls)
+    _remember_hub_urls(ctx, role, hub_urls)
 
     st = load(ctx.layout)
     st["server"] = {
@@ -320,34 +322,70 @@ def server_setup(
     return plan
 
 
-def _hub_urls(ctx: Ctx, role: str, publish_url: str | None, relay_url: str | None) -> dict[str, str]:
-    """``--publish-url`` / ``--relay-url`` of the hub (split install: relay and publish run as another user). Explicit
-    values win; a rerun keeps the saved ones (checked again: the state file is input). Nothing is written here."""
+def _hub_urls(
+    ctx: Ctx,
+    role: str,
+    names: Names,
+    publish_url: str | None,
+    relay_url: str | None,
+    no_publish_url: bool = False,
+    no_relay_url: bool = False,
+) -> dict[str, str]:
+    """``--publish-url`` / ``--relay-url`` of the hub (split install: relay and publish run as another user), per key:
+    an explicit flag wins and is saved; else a name-derived (domain) URL wins and the saved value is dropped; else the
+    saved value is reused (checked again: the state file is input). ``--no-…-url`` drops the saved value. The result is
+    what the record keeps. Nothing is written here."""
     if role != "hub":
-        if publish_url or relay_url:
-            raise InstallError("--publish-url and --relay-url belong to --role hub")
+        if publish_url is not None or relay_url is not None or no_publish_url or no_relay_url:
+            raise InstallError("--publish-url, --relay-url, --no-publish-url and --no-relay-url belong to --role hub")
         return {}
-    saved = load(ctx.layout).get("hub_urls")
-    saved = saved if isinstance(saved, dict) else {}
+    keys = (
+        ("publish", publish_url, no_publish_url, "--publish-url", "--no-publish-url"),
+        ("relay", relay_url, no_relay_url, "--relay-url", "--no-relay-url"),
+    )
+    for _, given, forget, flag, no_flag in keys:
+        if forget and given is not None:
+            raise InstallError(f"{flag} and {no_flag} exclude each other")
+    raw = load(ctx.layout).get("hub_urls")
+    damaged = raw is not None and not isinstance(raw, dict)
+    saved: dict[str, Any] = raw if isinstance(raw, dict) else {}
     out: dict[str, str] = {}
-    for key, given, flag in (("publish", publish_url, "--publish-url"), ("relay", relay_url, "--relay-url")):
-        url = given or saved.get(key)
-        if not url:
+    for key, given, forget, flag, no_flag in keys:
+        url = given
+        if given is None and not forget and not names.get(key):  # nothing overrides it: the saved value is reused
+            if damaged:
+                raise InstallError(
+                    "the hub URLs saved by an earlier setup are damaged (the saved value is not valid): "
+                    f"give {flag} or {no_flag} again"
+                )
+            url = saved.get(key)
+            if key in saved and not isinstance(url, str):
+                raise InstallError(
+                    f"{flag} {url!r}: the saved value is not valid (not a text): give the flag again or add {no_flag}"
+                )
+        if url is None:
             continue
-        if not isinstance(url, str) or not _hub_accepts(url):
+        if not _hub_accepts(url):
             raise InstallError(
                 f"{flag} {url!r}: the hub accepts https, or http on a loopback or private-network address only"
-                + ("" if given else " (the saved value is not valid: give the flag again)")
+                + ("" if given is not None else " (the saved value is not valid: give the flag again)")
             )
         out[key] = url
     return out
 
 
-def _remember_hub_urls(ctx: Ctx, urls: dict[str, str]) -> None:
+def _remember_hub_urls(ctx: Ctx, role: str, urls: dict[str, str]) -> None:
+    """Written after the install: the record keeps exactly ``urls`` (a dropped key is gone). Hub role only."""
+    if role != "hub":
+        return
     st = load(ctx.layout)
+    if st.get("hub_urls") == (urls or None):
+        return
     if urls:
         st["hub_urls"] = urls
-        save(ctx.layout, st)
+    else:
+        st.pop("hub_urls", None)
+    save(ctx.layout, st)
 
 
 def tls_all(names: Names, plan: Plan, role: str) -> set[str]:
@@ -389,7 +427,7 @@ def _fallback(
             extra.update({f"{k}_url": v for k, v in (hub_urls or {}).items()})
         recs[p] = install_part(ctx, p, address=addr, source=source, ref=ref, dev=dev, sync=False, **extra)
     sync_helper(ctx)
-    _remember_hub_urls(ctx, hub_urls or {})
+    _remember_hub_urls(ctx, plan.role, hub_urls or {})
     if hub_name:
         st = load(ctx.layout)
         st["hub_name"] = hub_name

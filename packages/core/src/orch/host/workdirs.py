@@ -50,7 +50,14 @@ def _spoofing(ch: str) -> bool:
     o = ord(ch)
     if ch in "\t\r\n":
         return False
-    return o < 32 or 0x7F <= o <= 0x9F or 0x200B <= o <= 0x200F or 0x202A <= o <= 0x202E or 0x2066 <= o <= 0x2069
+    return (
+        o < 32
+        or 0x7F <= o <= 0x9F
+        or o in (0x061C, 0x180E, 0x2028, 0x2029, 0xFEFF)
+        or 0x200B <= o <= 0x200F
+        or 0x202A <= o <= 0x202E
+        or 0x2060 <= o <= 0x2069
+    )
 
 
 def may_manage_workdir(viewer: Viewer, view: Any) -> bool:

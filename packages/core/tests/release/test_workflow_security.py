@@ -157,8 +157,15 @@ def _run_plan(tmp_path, event, version, channel=""):
     (bin_dir / "gh").chmod(0o755)
     out = tmp_path / "out"
     env = {
-        "PATH": f"{bin_dir}:{os.environ['PATH']}", "EVENT": event, "INPUT_CHANNEL": channel, "RUN_NUMBER": "7",
-        "SEQ_OFFSET": "0", "SHA": "a" * 40, "KEY_ID_PROD": "rk-1", "KEY_ID_TEST": "tk-1", "GITHUB_OUTPUT": str(out),
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "EVENT": event,
+        "INPUT_CHANNEL": channel,
+        "RUN_NUMBER": "7",
+        "SEQ_OFFSET": "0",
+        "SHA": "a" * 40,
+        "KEY_ID_PROD": "rk-1",
+        "KEY_ID_TEST": "tk-1",
+        "GITHUB_OUTPUT": str(out),
     }
     subprocess.run(["bash", "-c", step["run"]], cwd=tmp_path, env=env, check=True, capture_output=True)
     return dict(line.split("=", 1) for line in out.read_text().splitlines())

@@ -4,13 +4,16 @@ import { Artifacts } from './panel/Artifacts'
 import { Decisions } from './panel/Decisions'
 import { Context, useContextPages } from './panel/Context'
 import { Research, useSources } from './panel/Research'
+import { Commands } from './live/Commands'
+import { useLive } from './live/useLive'
 import { decisionGates, useChanges, usePanelTicket } from './panel/data'
 
-const tabs = { Changes, Artifacts, Decisions, Research, Context }
+const tabs = { Changes, Artifacts, Decisions, Research, Context, Commands }
 export type PanelTab = keyof typeof tabs
 
 /** A scratch session has no ticket: Changes and Decisions are hidden (P2-6). */
 const SCRATCH_HIDDEN = ['Changes', 'Decisions']
+/** Commands is part of the live preview: shown only while the live view is on. */
 
 export function Panel({ ticket, scratch, tab, onTab }: { ticket?: string; scratch?: boolean; tab?: PanelTab; onTab?: (tab: PanelTab) => void }) {
   const { data } = usePanelTicket(ticket)
@@ -18,7 +21,8 @@ export function Panel({ ticket, scratch, tab, onTab }: { ticket?: string; scratc
   const wiki = useContextPages(ticket)
   const research = useSources(ticket).sources.data
   const counts: Record<string, number> = { Changes: changes.data?.files.length ?? 0, Artifacts: data?.artifacts.length ?? 0, Decisions: (data?.questions_state.length ?? 0) + decisionGates(data).length, Context: (data?.acceptance_state.length ?? 0) + wiki.pages.length, Research: research?.available ? research.sources.length : 0 }
-  const shown = Object.keys(tabs).filter((name) => !(scratch && SCRATCH_HIDDEN.includes(name)))
+  const live = !!useLive()
+  const shown = Object.keys(tabs).filter((name) => !(scratch && SCRATCH_HIDDEN.includes(name)) && (live || name !== 'Commands'))
   const value = tab && shown.includes(tab) ? tab : shown[0]
   return (
     <Tabs value={value} onValueChange={(next) => onTab?.(next as PanelTab)} data-testid="focus-panel" className="min-h-0 min-w-0 flex-1 gap-0 overflow-hidden">

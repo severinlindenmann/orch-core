@@ -3,7 +3,7 @@
 import { z } from 'zod'
 import type { TabId } from './pages/ticket/shared'
 
-const TICKET_TABS = ['overview', 'acceptance', 'changes', 'questions', 'artifacts', 'history', 'raw'] as const satisfies readonly TabId[]
+const TICKET_TABS = ['overview', 'acceptance', 'changes', 'questions', 'artifacts', 'work', 'history', 'raw'] as const satisfies readonly TabId[]
 const BOARD_VIEWS = ['board', 'list'] as const
 const ARTIFACT_VIEWS = ['list', 'grid'] as const
 

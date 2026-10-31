@@ -27,20 +27,22 @@ import os
 import shutil
 import sqlite3
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
 from ..contract import backup as B
 from ..contract.canon import CanonError, b64u, cj
 from ..contract.hub import Refused
+from ..dataformat import LOCK_FILE, DataFormatError, lock_shared
 from ..keys import HubKeys, KeysError
 from ..keys.fsutil import FILE_MODE, StateError, check_dir, fsync_dir, make_dir, read_file
 from . import guard as G
 from . import snapshot as SN
-from .hubop import HubOpBusy, hub_op
+from .hubop import DATA_FORMAT, HubOpBusy, SwapLock, hub_op, serving
 from .words import WordsError, check_words
 
+FORMAT_FILE = "format.json"
 ADMIN_GROUP = "hub-admin"
 #: never taken from a backup: the live file stays (cond: a restored backup-key file would bring back an old key)
 KEEP_LIVE = frozenset({SN.KEY_FILE})
@@ -113,15 +115,65 @@ def recover(state: Path) -> None:
     new, old = paths(state)
     if not state.exists():
         if old.is_dir():
-            if new.is_dir() and (new / NOTICE_FILE).exists():
-                os.rename(new, state)
-            else:
-                os.rename(old, state)
-                _rescue_backups(state, new)
-                _rm(new)
+            complete = new.is_dir() and (new / NOTICE_FILE).exists()
+            # format.lock follows the dir: the shared lock is taken on the dir that comes in BEFORE its rename (also for the
+            # handles this process holds), and kept until the repair is done. Raises DataFormatError (update.busy) first.
+            with SwapLock(state, new if complete else old) as lock:
+                if complete:
+                    os.rename(new, state)
+                    lock.commit()
+                else:
+                    os.rename(old, state)
+                    lock.commit()
+                    _rescue_backups(state, new)
+                    _rm(new)
     elif new.exists():
-        _rescue_backups(state, new)
-        _rm(new)
+        fd = lock_shared(state)  # the repair writes into the live dir: not under an `orch update`
+        try:
+            _rescue_backups(state, new)
+            _rm(new)
+        finally:
+            os.close(fd)
+
+
+def _bare_state(state: Path) -> bool:
+    """A fresh server's state dir: absent or empty (False), or holding only ``format.lock`` (True: ``orch install`` or any
+    command that opened the empty dir made it). Anything else in the way is refused (``restore_failed``) before a byte is
+    written: the staged dir could not be renamed onto it."""
+    if not os.path.lexists(state):
+        return False
+    if state.is_symlink() or not state.is_dir():
+        raise RestoreError("restore_failed")
+    names = os.listdir(state)
+    if not names:
+        return False
+    lock = state / LOCK_FILE
+    if names != [LOCK_FILE] or lock.is_symlink() or not lock.is_file():
+        raise RestoreError("restore_failed")
+    return True
+
+
+@contextlib.contextmanager
+def _carry_lock(state: Path, new: Path, bare: bool) -> Iterator[None]:
+    """Fresh server whose state dir holds only the installer's ``format.lock``: the file moves into the staged dir (it keeps
+    its owner and mode, and the locks held on it follow it) so the staged dir can be renamed onto the now empty dir. The
+    shared lock is held on it across the move (an `orch update` holding it refuses first, ``update.busy``). A swap that
+    fails puts the file back."""
+    if not bare:
+        yield
+        return
+    guard = lock_shared(state)
+    try:
+        os.rename(state / LOCK_FILE, new / LOCK_FILE)
+        try:
+            yield
+        except BaseException:
+            with contextlib.suppress(OSError):
+                if (new / LOCK_FILE).exists() and not (state / LOCK_FILE).exists():
+                    os.rename(new / LOCK_FILE, state / LOCK_FILE)
+            raise
+    finally:
+        os.close(guard)
 
 
 def _rescue_backups(state: Path, new: Path) -> None:
@@ -192,6 +244,21 @@ def _put(root: Path, rel: str, data: bytes) -> None:
         raise
 
 
+def backup_format(files: dict[str, bytes]) -> int:
+    """The data format of the backup's files (its ``format.json``; none = a backup from before formats were recorded =
+    format 1). ``backup_invalid`` when it is damaged or from a NEWER orch than this code (a newer layout is not read)."""
+    raw = files.get(FORMAT_FILE)
+    if raw is None:
+        return 1
+    try:
+        n = SN.read_format(raw)
+    except ValueError:
+        raise RestoreError("backup_invalid", "format") from None
+    if n > DATA_FORMAT:
+        raise RestoreError("backup_invalid", "format_newer")
+    return n
+
+
 def _stage(new: Path, files: dict[str, bytes], state: Path, in_place: bool) -> None:
     """Write the backup's listed files (not the ones that stay live) and, in place, the live files that are never taken from
     a backup. The live logs are copied last, by :func:`_copy_logs`."""
@@ -199,7 +266,7 @@ def _stage(new: Path, files: dict[str, bytes], state: Path, in_place: bool) -> N
     os.mkdir(new, 0o700)
     os.chmod(new, 0o700)
     check_dir(new)
-    skip = set(KEEP_LIVE) | (LIVE_IN_PLACE if in_place else set())
+    skip = set(KEEP_LIVE) | {FORMAT_FILE} | (LIVE_IN_PLACE if in_place else set())
     for rel in sorted(files):
         if rel not in skip:
             _put(new, rel, files[rel])
@@ -208,6 +275,9 @@ def _stage(new: Path, files: dict[str, bytes], state: Path, in_place: bool) -> N
             src = state / rel
             if src.is_file() and not src.is_symlink():
                 _put(new, rel, SN.copy_db(src)[0] if rel.endswith(".db") else read_file(src))
+    # the restored files are of the BACKUP's format, so that is what format.json says (never the live one, never "current"):
+    # an older backup opens as format.older and `orch update` migrates it
+    _put(new, FORMAT_FILE, SN.format_bytes(backup_format(files)))
     for sub in ("uk", "op", "revoked"):
         if not (new / sub).exists():
             make_dir(new / sub)
@@ -391,7 +461,9 @@ def restore(
     key store, else it is opened from disk); otherwise a fresh server (``dev_mode`` is the installed part's flag). Returns
     ``{"made_ms", "gap_ms", "op_seq", "card_seq", "snapshot_seq", "suspended", "channels_revoked", "in_place"}``. Raises
     :class:`RestoreError` (``code``: ``wrong_backup_key``, ``backup_invalid``, ``other_hub``, ``dev_mismatch``, ``dev_refused``,
-    ``words``, ``restore_busy``, ``no_admin``, ``audit_failed``, ``restore_failed``). The words are used for key derivation only."""
+    ``words``, ``restore_busy``, ``no_admin``, ``audit_failed``, ``restore_failed``, ``restore_stop_hub``: a running hub is not
+    restored in place from a backup of an older data format; stop the hub, restore, then run ``orch update``). The words are
+    used for key derivation only."""
     now = now_ms or (lambda: int(time.time() * 1000))
     state = Path(state)
     try:
@@ -420,8 +492,12 @@ def _restore(
     activity: Any,
     now_ms: Callable[[], int],
 ) -> dict[str, Any]:
-    recover(state)
+    try:
+        recover(state)
+    except DataFormatError:  # the format lock cannot be taken: nothing was touched
+        raise RestoreError("restore_failed") from None
     new, old = paths(state)
+    bare = not in_place and _bare_state(state)  # refuses any other leftover before anything is written
     live: HubKeys | None = None
     if in_place:
         live = keys if keys is not None else HubKeys.open(state, prune=False, now_ms=now_ms)
@@ -435,6 +511,11 @@ def _restore(
             live={"hub_id": live.hub_id, "hk_root_pub": b64u(live.hk_root_pub)} if live is not None else None,
         )
         h = opened.header
+        fmt = backup_format(opened.files)  # a damaged or newer format.json refuses here, before anything is written
+        if in_place and fmt < DATA_FORMAT and serving(state):
+            # the running hub would go on serving this code's format over older data until its next start: restore with the
+            # hub stopped (`orch-hub restore`), then `orch update` brings the data to this code's format
+            raise RestoreError("restore_stop_hub", "format_older")
         now = now_ms()
         floor = B.restore_floor(
             {"op_seq": live.op_seq, "card_seq": live.card_seq, "snapshot_seq": live_snapshot_seq(state)}
@@ -503,21 +584,27 @@ def _restore(
         fsync_dir(new)
         if old.exists():
             _rm(old)
-        if in_place:
-            for sub in CARRY_DIRS:
-                if (state / sub).is_dir() and not (state / sub).is_symlink():
-                    os.rename(state / sub, new / sub)
-            os.rename(state, old)
-            try:
+        # The format lock follows the dir, not the path: the shared lock is taken on the staged dir BEFORE it is renamed
+        # into place (also for every handle of this process on the state), so no `orch update` can take the new dir between
+        # the rename and the handover. A lock only: an older backup's data is refused by the next open, not by this restore.
+        # A DataFormatError from here (update busy, no usable lock file) is mapped to restore_failed below.
+        with _carry_lock(state, new, bare), SwapLock(state, new) as lock:
+            if in_place:
+                for sub in CARRY_DIRS:
+                    if (state / sub).is_dir() and not (state / sub).is_symlink():
+                        os.rename(state / sub, new / sub)
+                os.rename(state, old)
+                try:
+                    os.rename(new, state)
+                except OSError:
+                    os.rename(old, state)  # put the live state back (and its kept backups)
+                    if (new / "backups").is_dir():
+                        os.rename(new / "backups", state / "backups")
+                    raise
+            else:
                 os.rename(new, state)
-            except OSError:
-                os.rename(old, state)  # put the live state back (and its kept backups)
-                if (new / "backups").is_dir():
-                    os.rename(new / "backups", state / "backups")
-                raise
-        else:
-            os.rename(new, state)
-        swapped = True
+            swapped = True
+            lock.commit()
         fsync_dir(state.parent)
     except RestoreError:
         if not swapped:
@@ -527,7 +614,18 @@ def _restore(
         if not swapped:
             _rm(new)
         if isinstance(
-            e, (OSError, sqlite3.Error, KeysError, StateError, CanonError, ValueError, KeyError, RuntimeError)
+            e,
+            (
+                OSError,
+                sqlite3.Error,
+                KeysError,
+                StateError,
+                CanonError,
+                ValueError,
+                KeyError,
+                RuntimeError,
+                DataFormatError,
+            ),
         ):
             raise RestoreError("restore_failed") from None
         raise

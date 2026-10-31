@@ -14,6 +14,7 @@ import textwrap
 from pathlib import Path
 
 import pytest
+from format_helpers import write_format
 from push_support import configure, push_env
 
 from orch_relay import db
@@ -53,6 +54,8 @@ SCRIPT = textwrap.dedent(
 
 def test_shutdown_while_a_sweep_waits_on_the_lock_does_not_crash(tmp_path):
     db.init_schema(tmp_path / db.DB_NAME)
+    # the subprocess has no test fixture: the dir is as `orch install relay` left it
+    write_format(tmp_path)
     env, _keys = push_env(tmp_path)  # the sweep runs only on a relay with push configured
     r = subprocess.run(
         [sys.executable, "-X", "faulthandler", "-c", SCRIPT, str(tmp_path)],

@@ -23,11 +23,14 @@ from ..contract.canon import b64u, cj
 from ..contract.hub import Refused, hub_path_signed_bytes
 from ..contract.keystore import KeyUseError, OpSigner
 from ..keys.store import HubKeys
+from ..link.framing import MAX_FRAME
 from ..localdial import dialling_locally
 from . import request as R
 from .sync import PublishSync, PublishSyncError
 
-MAX_REQUEST_BODY = 8 * 1024 * 1024
+# The request arrives as one link frame with the body hex-encoded (2 characters per byte), so a body over half the frame
+# cap cannot arrive through a link frame anyway: the frame cap is the one source of this number.
+MAX_REQUEST_BODY = MAX_FRAME // 2
 MAX_RESPONSE_BODY = 16 * 1024 * 1024
 #: orch-publish answers with these when the hub's card or the binding is not (or no longer) held: forget what we synced
 #: refusal codes of contracts/hub/protocol.md §14 / v2 that orch-publish's store can answer a card or binding with; any

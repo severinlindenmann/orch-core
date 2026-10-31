@@ -75,9 +75,9 @@ it('with Publish on, Share files... opens the share dialog straight away', async
   await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Turn on Publish' })).toBeNull(), T)
 })
 
-// P04 (J07-04): Share files... with Publish off and not set up is ONE dialog (the address), and its button goes straight to
-// the review with Sign. The list dialog and the empty second 'Turn on Publish' dialog are gone; nothing is prepared or
-// signed before that press, Cancel withdraws the open request, and Sign stays the person's own press.
+// P04 (J07-04) + run17 P01b: Share files... with Publish off and not set up. When the address is already known (suggested)
+// there is NO address dialog: the host's review opens at once, prepared only, and Sign stays the person's own press.
+// Only when nothing is suggested does the one address dialog remain (its button goes straight to the review).
 const notSetUp = (suggest: string | null) => {
   ws().addOns = { available: true, add_ons: [{ ...row('off'), set_up: false, suggest }] } as never
 }
@@ -90,29 +90,64 @@ const openShare = async (user: ReturnType<typeof userEvent.setup>) => {
   await user.click(await screen.findByRole('menuitem', { name: 'Share files…' }, T))
 }
 
-it('P04: Share files... with Publish not set up is one dialog; Turn on and sign leads straight to Sign', async () => {
+it('run17 P01b: a suggested address skips the address dialog; the review opens at once, nothing is signed', async () => {
   notSetUp('http://127.0.0.1:8102')
+  const user = userEvent.setup()
+  await openShare(user)
+  await screen.findByTestId('click-panel', {}, T)
+  expect(screen.queryByRole('button', { name: 'Turn on and sign' })).toBeNull() // no address dialog
+  expect(screen.queryByLabelText('Publish server address')).toBeNull()
+  expect(screen.getAllByRole('dialog')).toHaveLength(1)
+  expect(state.host.clickPrepares().map((c) => c.body)).toEqual([{ action: 'addon_enable', name: 'publish', publish: { server: 'http://127.0.0.1:8102', share: 'http://127.0.0.1:8102' } }])
+  expect(await screen.findByRole('button', { name: /^Sign( |$)/ }, T)).toBeInTheDocument()
+  expect(state.host.clickSigned).toEqual([]) // never armed or signed by itself
+})
+
+it('run17 P01b: a hub-suggested address shows "Files go to your hub, <name>." in the review lead before Sign', async () => {
+  ws().addOns = { available: true, add_ons: [{ ...row('off'), set_up: false, suggest: 'http://127.0.0.1:8102', suggest_from: 'hub', suggest_hub: 'Anna’s hub' }] } as never
+  const user = userEvent.setup()
+  await openShare(user)
+  await screen.findByTestId('click-panel', {}, T)
+  expect(await screen.findByTestId('where-files-go', {}, T)).toHaveTextContent('Files go to your hub, Anna’s hub.')
+  expect(screen.getByRole('button', { name: /^Sign( |$)/ })).toBeInTheDocument()
+  expect(state.host.clickSigned).toEqual([])
+})
+
+it('run17 P01b: a suggestion that appears after the form was shown does not replace the form', async () => {
+  notSetUp(null)
+  const user = userEvent.setup()
+  await openShare(user)
+  const dialog = await screen.findByRole('dialog', { name: 'Turn on Publish' }, T)
+  await user.type(within(dialog).getByLabelText('Publish server address'), 'http://127.0.0.1:9')
+  notSetUp('http://127.0.0.1:8102')
+  await queryClient.invalidateQueries({ queryKey: ['add-ons', A] })
+  await new Promise((r) => setTimeout(r, 300))
+  expect(screen.queryByTestId('click-panel')).toBeNull()
+  expect(within(screen.getByRole('dialog')).getByLabelText('Publish server address')).toHaveValue('http://127.0.0.1:9')
+  expect(state.host.clickPrepares()).toEqual([])
+})
+
+it('P04: with nothing suggested the one address dialog stays and its button goes straight to Sign', async () => {
+  notSetUp(null)
   const user = userEvent.setup()
   await openShare(user)
   const dialog = await screen.findByRole('dialog', { name: 'Turn on Publish' }, T)
   expect(screen.getAllByRole('dialog')).toHaveLength(1)
   expect(within(dialog).queryByRole('list')).toBeNull() // no add-on list inside
-  expect(within(dialog).getByText(/Publish server on this computer/)).toHaveTextContent('http://127.0.0.1:8102')
-  expect(within(dialog).queryByText(/Nothing leaves this computer until you sign/)).toBeNull() // no wall of text
+  expect(within(dialog).getByLabelText('Publish server address')).toBeInTheDocument()
   expect(state.host.clickPrepares()).toEqual([]) // nothing prepared before the press
+  await user.type(within(dialog).getByLabelText('Publish server address'), 'http://127.0.0.1:8102')
   await user.click(within(dialog).getByRole('button', { name: 'Turn on and sign' }))
   await screen.findByTestId('click-panel', {}, T)
   expect(state.host.clickPrepares().map((c) => c.body)).toEqual([{ action: 'addon_enable', name: 'publish', publish: { server: 'http://127.0.0.1:8102', share: 'http://127.0.0.1:8102' } }])
-  expect(await screen.findByRole('button', { name: /^Sign( |$)/ }, T)).toBeInTheDocument()
-  expect(screen.queryByRole('button', { name: 'Turn on and sign' })).toBeNull() // the address dialog is gone, no second dialog
-  expect(state.host.clickSigned).toEqual([]) // never signed by itself
+  expect(screen.queryByRole('button', { name: 'Turn on and sign' })).toBeNull()
+  expect(state.host.clickSigned).toEqual([])
 })
 
 it('P04: Cancel at the review withdraws the open request and leaves Publish off', async () => {
   notSetUp('http://127.0.0.1:8102')
   const user = userEvent.setup()
   await openShare(user)
-  await user.click(within(await screen.findByRole('dialog', { name: 'Turn on Publish' }, T)).getByRole('button', { name: 'Turn on and sign' }))
   await screen.findByTestId('click-panel', {}, T)
   await user.click(await screen.findByRole('button', { name: 'Cancel' }, T))
   await waitFor(() => expect(new Set(state.host.clickCancelled).size).toBe(1), T) // the one prepared request, withdrawn
@@ -126,7 +161,6 @@ it('P04: when the settings step lands (set_up flips to true) the review stays mo
   await openShare(user)
   const inner = state.host.override!
   state.host.override = (path, method, body) => (path.includes('/shares') && method === 'GET' ? Response.json({ available: true, configured: true, server: 'http://127.0.0.1:8102', share: 'http://127.0.0.1:8102', workspace: A, owner: 'p_owner', live: true, shares: [], staged: [] }) : inner(path, method, body))
-  await user.click(within(await screen.findByRole('dialog', { name: 'Turn on Publish' }, T)).getByRole('button', { name: 'Turn on and sign' }))
   await screen.findByTestId('click-panel', {}, T)
   // the first step is in: the host now says the settings are set, Publish still off; the page refetches
   ws().addOns = { available: true, add_ons: [{ ...row('off'), set_up: true }] } as never

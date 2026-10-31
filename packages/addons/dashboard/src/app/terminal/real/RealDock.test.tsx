@@ -243,6 +243,19 @@ describe('the real dock', () => {
     expect(await screen.findByText(/runner grant ended/)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /^Stop/ })).toBeInTheDocument()
   })
+  it('r17 P04: a finished agent (ticket done) offers Close with a grey dot, not Stop', async () => {
+    const { api } = await import('@/api/client')
+    vi.spyOn(api, 'listTickets').mockResolvedValue([{ key: 'DEMO-0001', status: 'done' }] as never)
+    const stop = vi.spyOn(runsApi, 'stop').mockResolvedValue({ state: 'exited', cleanup: 'complete' })
+    list = { ...list, runs: [run('AG', { kind: 'agent', harness: 'claude-code', ticket: 'DEMO-0001' })] }
+    mount()
+    const close = await screen.findByRole('button', { name: /^Close/ })
+    expect(screen.queryByRole('button', { name: /^Stop/ })).toBeNull()
+    expect(screen.getByRole('tab')).toHaveTextContent('Finished')
+    expect(screen.getByRole('tab').querySelector('span.bg-success')).toBeNull()
+    fireEvent.click(close)
+    await waitFor(() => expect(stop).toHaveBeenCalled())
+  })
   it('P15: an agent run has a one-line summary above its terminal; a shell does not', async () => {
     list = { ...list, runs: [run('AG', { kind: 'agent', harness: 'claude-code', ticket: 'DEMO-0001' })] }
     mount()

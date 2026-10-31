@@ -91,7 +91,9 @@ test("Address: a hub that only answers on this server says plainly who to ask in
   const view = hubSettingsView({ ...DEMO, can_change_addresses: false });
   const a = card(view, "address");
   assert.deepEqual(byTag(a, "button"), []); assert.deepEqual(byTag(a, "select"), []);
-  assert.match(a.textContent, /Addresses can't be changed on this page\. To add or change one, ask the person who installed this hub\./);
+  assert.match(a.textContent, /This hub was installed without address changes\./);
+  assert.doesNotMatch(a.textContent, /can't be changed on this page/);
+  assert.ok(a.all().some((n) => n.tag === "details"));   // the "ask the person" hint is behind Details
 });
 
 test("addressBody and hostOf: the phone address is kept as it is, blanks are dropped, IPv6 loses its brackets", () => {
@@ -164,8 +166,24 @@ test("r14 P11: a server-only address says 'this computer only', never 'phones us
     const out = t(can);
     assert.ok(out.includes("this computer only"));
     assert.ok(!out.includes("hones use this one"), "no phones hint on a server address");
-    assert.ok(out.includes("Phones can't reach this hub yet. To add an address they can use, ask the person who installed it."));
+    assert.ok(out.includes("Phones can't reach this hub yet."));
+    assert.ok(!out.includes("ask the person who installed it."), "one sentence, no repeated 'ask' line");
   }
+});
+
+test("P02: a server-only hub that may change addresses offers 'Make phones reach this hub', which preselects the office network", () => {
+  const d = { ...DEMO, phone_kind: "server", addresses: [{ kind: "server", web: "http://127.0.0.1:8100" }], can_change_addresses: true };
+  let loaded = 0;
+  const before = card(hubSettingsView(d, { loadDetected: () => loaded++ }), "address");
+  const btn = button(before, "Make phones reach this hub");
+  assert.ok(btn); assert.match(before.textContent, /Uses your office network/);
+  btn.listeners.click(); assert.equal(loaded, 1);
+  const sent = [];
+  const a = card(hubSettingsView(d, { detected: DETECTED, saveAddresses: (b) => sent.push(b) }), "address");
+  const office = byTag(a.all().find((n) => n.attrs["data-kind"] === "office"), "select")[0];
+  assert.equal(office.value, "192.168.60.30");
+  button(a, "Save").listeners.click();   // Save stays the admin's click
+  assert.ok(sent[0].addresses.some((x) => x.kind === "office" && x.host === "192.168.60.30"));
 });
 
 test("r14 P12: Company and Hub name boxes have an example; Company says optional; an empty company still saves as empty", () => {

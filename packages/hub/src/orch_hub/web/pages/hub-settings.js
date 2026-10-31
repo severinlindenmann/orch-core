@@ -90,9 +90,12 @@ function addressCard(data, actions) {
       kind === data.phone_kind && kind !== "server" && web ? h("span", { class: "small muted", text: " (phones use this one)" }) : null)];
   }).flat();
   const card = h("div", { class: "card", "data-card": "address" }, h("h2", { text: "Address" }), h("dl", { class: "facts" }, facts));
-  if (data.phone_kind === "server") card.append(h("p", { class: "small muted", id: "phones-cannot", text: "Phones can't reach this hub yet. To add an address they can use, ask the person who installed it." }));
+  const server = data.phone_kind === "server";
+  if (server) card.append(h("p", { class: "small muted", id: "phones-cannot", text: "Phones can't reach this hub yet." }));
   if (!data.can_change_addresses) {
-    card.append(h("p", { class: "small muted", text: "Addresses can't be changed on this page. To add or change one, ask the person who installed this hub." }));
+    card.append(h("p", { class: "small muted", text: "This hub was installed without address changes." }),
+      h("details", { class: "small muted" }, h("summary", { text: "Details" }),
+        h("p", { class: "small muted", text: "To add or change an address, ask the person who installed this hub." })));
     return card;
   }
   const detected = actions.detected ?? [];
@@ -106,6 +109,7 @@ function addressCard(data, actions) {
     const select = h("select", { id: "addr-" + kind, "aria-label": label }, h("option", { value: "", text: "Not used" }),
       choices.map((d) => h("option", { value: d.ip, text: d.ip })));
     select.value = cur ? hostOf(cur) : ""; picks[kind] = select;
+    if (!cur && server && kind === "office" && choices.length > 0) select.value = choices[0].ip; // "Make phones reach this hub": the office network is preselected; Save is still the admin's click
     const using = cur && here && cur === here;
     if (using) select.disabled = true;
     fields.push(h("div", { class: "field", "data-kind": kind }, h("label", { for: "addr-" + kind, text: label }), select,
@@ -118,8 +122,9 @@ function addressCard(data, actions) {
       const chosen = {}; for (const [k, el] of Object.entries(picks)) if (k !== "secure") chosen[k] = el.value ?? "";
       actions.saveAddresses?.(addressBody(data, chosen));
     } }));
-  const open = h("button", { type: "button", text: "Change address", hidden: opened, onclick: () => { form.hidden = false; open.hidden = true; actions.loadDetected?.(); } });
-  card.append(open, form);
+  const open = h("button", { type: "button", class: server ? "primary" : "", text: server ? "Make phones reach this hub" : "Change address", hidden: opened, onclick: () => { form.hidden = false; open.hidden = true; note.hidden = true; actions.loadDetected?.(); } });
+  const note = h("span", { class: "small muted", hidden: opened || !server, text: " Uses your office network. Workspaces reconnect by themselves." });
+  card.append(h("div", { class: "row" }, open, note), form);
   return card;
 }
 

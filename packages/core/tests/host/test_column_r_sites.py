@@ -99,6 +99,7 @@ SITES: dict[tuple[str, str], tuple[int, str]] = {
     ("appops.py", "_prepare"): (2, "unreachable (app.* are not R ops); R is not P or G, so it would be refused"),
     ("appops.py", "facts_for"): (2, "unreachable (app.release is prepared through human.prepare, P only)"),
     ("appops.py", "_list"): (4, "unreachable (app.list is not an R op); R would see what P sees"),
+    ("appops.py", "_prepare_again"): (2, "unreachable (app.* are not R ops); R is not P or G, so it would be refused"),
     ("appops.py", "_discard"): (2, "unreachable (app.* are not R ops)"),
     ("hubops.py", "_owner"): (2, "unreachable (hub.* are not R ops); R is not P, so it would be refused"),
     ("remote/__init__.py", "_owner"): (2, "unreachable (remote.* are not R ops); R is not P, so it would be refused"),

@@ -356,6 +356,13 @@ _CARD = (
     (("o", "hk_root_pub"), "pub"), (("o", "hxk_pub"), "pub"), (("o", "tls_spki_sha256"), "hash"),
     (("op_cert", "o", "hk_op_pub"), "pub"), (("op_cert", "sig"), "sig"), (("sig",), "sig"),
 )  # fmt: skip
+_APP_CERT = (
+    (("pk_pub",), "pub"),
+    (("device_certs", "*", "sig"), "sig"),
+    (("device_certs", "*", "o", "dk_sig_pub"), "pub"),
+    (("device_certs", "*", "o", "dk_kx_pub"), "pub"),
+    (("device_certs", "*", "o", "label_sealed"), "sealed"),
+)
 ANSWER_KEY_PATHS: dict[str, tuple[tuple[tuple[str, ...], str], ...]] = {
     "reader.list": ((("data", "readers", "*", "decl", "sig"), "sig"),),  # re-verified by clients (#832)
     # the hub card of a link and the held card: the CLI and the dashboard send it back in hub.connect / hub.mode
@@ -365,6 +372,10 @@ ANSWER_KEY_PATHS: dict[str, tuple[tuple[tuple[str, ...], str], ...]] = {
     "space.get": ((("data", "data"), "data"),),  # the item's file bytes (redacting base64 cannot find a token anyway)
     "term.attach": ((("data", "ticket"), "hash"),),  # the single-use attach capability, presented to the runner
     "publish.send": ((("data", "link"), "link"),),  # shown once: the link's token is its only copy
+    # #1455: the owner's PK and device certificates the client signs the go-live approval with: random keys and a
+    # signature, sent back inside the approval, so a token-shaped run by chance must not be rewritten
+    "app.send": tuple((("data", "commit", *p), k) for p, k in _APP_CERT),
+    "app.commit_request": tuple((("data", *p), k) for p, k in _APP_CERT),
 }
 _LINK = re.compile(r"(https://[^\s#]*)#t=([A-Za-z0-9_-]{43})")
 

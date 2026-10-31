@@ -13,15 +13,18 @@ import re
 import pytest
 
 from orch.canon.jcs import dumps as cj
-from orch.host import signcontent
+from orch.host import hubops, signcontent
 from orch.host.appops import APP_OPS
 from orch.hubclient import published as pub
 from orch.publishclient import approval
 from tests.host import human_helpers
 from tests.host.dispatch_helpers import SESSION, err, ok
 from tests.host.test_click import Click, click  # noqa: F401
-from tests.host.test_hub_ops import keystore  # noqa: F401
-from tests.host.test_publishing import FakeServer, World
+from tests.host.test_hub_ops import (
+    HUB_ID,
+    keystore,  # noqa: F401
+)
+from tests.host.test_publishing import FakeServer, PublishHub, World
 
 lab, served, human = human_helpers.lab, human_helpers.served, human_helpers.human
 
@@ -72,7 +75,9 @@ def ticket(a):
 
 
 def test_the_app_ops_are_declared():
-    assert set(APP_OPS) == {"app.prepare", "app.send", "app.list", "app.discard"}
+    assert set(APP_OPS) == {
+        "app.prepare", "app.send", "app.list", "app.discard", "app.commit", "app.commit_request",
+    }  # fmt: skip
 
 
 def test_prepare_stages_the_files_and_the_meta_and_nothing_leaves(a):
@@ -451,3 +456,265 @@ def test_an_app_may_not_reach_any_address_the_host_dials_for_the_hub(a, monkeypa
     for origin in ("https://hub-one.example.org", "https://hub-two.example.org"):
         assert err(prepare(a, key, "index.html", "app.js", reach=[origin])) == "invalid.input", origin
     ok(prepare(a, key, "index.html", "app.js", reach=["https://api.example.com"]))
+
+
+# -- going live: the second signature (#1455 go-live) ------------------------------------------------------------------
+
+
+class LiveServer(AppServer):
+    """AppServer that also takes the owner's approval on a commit, rollback or start, and checks it as orch-publish does
+    (device key signature under the approval label, ``request_hash`` of THIS request, the body's access, the single-use
+    nonce, the 120 s window)."""
+
+    def __init__(self, wsk_pub, **kw):
+        super().__init__(wsk_pub, **kw)
+        self.apps = {}
+        self.live = {}
+        self.approvals = []
+        self.seen_nonces = set()
+        self.owner = None  # the Person whose approval counts
+
+    def _authentic(self, headers, method, netloc, target, body):
+        import base64
+
+        from orch.canon.jcs import loads_strict
+        from orch.hubclient.publish import approval_hash
+        from tests.hub import contract as H
+
+        h = {k.lower(): v for k, v in headers.items()}
+        raw = h.get("orch-owner-approval")
+        if raw is None:
+            return super()._authentic(headers, method, netloc, target, body)
+        ap = loads_strict(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)))
+        signed = H.hub_path_signed_bytes(
+            bytes.fromhex(h["orch-workspace"]), int(h["orch-ts"]), bytes.fromhex(h["orch-nonce"]), method, netloc,
+            target, body, h["orch-hub"], ap,
+        )  # fmt: skip
+        assert approval_hash(ap) != bytes(32)
+        from orch import crypto
+        from orch.crypto import suite as S
+        from tests.hub.vec import pub as vec_pub
+
+        return (
+            h["orch-hub"] == HUB_ID
+            and S.verify(self.wsk_pub, crypto.unb64u(h["orch-signature"], 64), signed)
+            and S.verify(
+                vec_pub("hk_op"), crypto.unb64u(h["orch-hub-signature"], 64), H.hub_publish_bytes(HUB_ID, signed)
+            )
+        )
+
+    def _serve(self, scheme, netloc, method, target, headers, body, timeout):
+        import base64
+        import re as _re
+
+        from orch import crypto
+        from orch.canon.jcs import dumps as _cj
+        from orch.canon.jcs import loads_strict
+        from orch.crypto import suite as S
+        from orch.crypto.labels import L
+        from orch.hubclient.publish import request_hash
+
+        m = _re.fullmatch(r"/v1/ws/([0-9a-f]{32})/apps/([0-9a-f]{32})/(commit|rollback|start)", target)
+        if method != "POST" or m is None:
+            return super()._serve(scheme, netloc, method, target, headers, body, timeout)
+        self.requests.append({"method": method, "target": target, "body": body, "netloc": netloc, "headers": headers})
+        h = {k.lower(): v for k, v in headers.items()}
+        if not self._authentic(headers, method, netloc, target, body):
+            self.bad_signatures.append(f"{method} {target}")
+            return 401, b'{"error":"bad_signature"}'
+        raw = h.get("orch-owner-approval")
+        if raw is None:
+            return 403, b'{"error":"approval_required"}'
+        ap = loads_strict(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)))
+        nonce = h["orch-nonce"]
+        if nonce in self.seen_nonces:
+            return 403, b'{"error":"replay"}'
+        self.seen_nonces.add(nonce)
+        ws, ts = bytes.fromhex(h["orch-workspace"]), int(h["orch-ts"])
+        o, cert = ap["o"], ap["device_cert"]["o"]
+        want = crypto.b64u(request_hash(ws, ts, bytes.fromhex(nonce), method, netloc, target, body, HUB_ID))
+        bad = (
+            not S.verify(crypto.unb64u(cert["dk_sig_pub"], 65), crypto.unb64u(ap["sig"], 64),
+                         L["sig_hub_publish_approval"] + _cj(o))
+            or ap["pk_pub"] != crypto.b64u(self.owner.pk_pub)
+            or o["request_hash"] != want
+            or o["access"] != json.loads(body)["access"]
+            or o["device_id"] != cert["device_id"]
+        )  # fmt: skip
+        if bad:
+            return 403, b'{"error":"bad_approval"}'
+        self.approvals.append(ap)
+        self.live[m.group(2)] = (m.group(3), json.loads(body)["version"])
+        return 200, b'{"result":"live"}'
+
+
+class LiveHub(PublishHub):
+    """The hub link as the host sees it, forwarding the owner's approval header too (hub ``publish/request.py``)."""
+
+    def _forward(self, req):
+        from orch import crypto
+        from orch.crypto import suite as S
+        from orch.hubclient.publish import approval_hash  # noqa: F401
+        from tests.hub import contract as H
+        from tests.hub.vec import private_key
+
+        h = {k.lower(): v for k, v in req["headers"].items()}
+        assert set(h) <= {"orch-workspace", "orch-ts", "orch-nonce", "orch-signature", "orch-owner-approval"}
+        headers = dict(req["headers"]) | {"Orch-Hub": HUB_ID}
+        approval = None
+        if "orch-owner-approval" in h:
+            import base64
+
+            from orch.canon.jcs import loads_strict
+
+            raw = h["orch-owner-approval"]
+            approval = loads_strict(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)))
+        signed = H.hub_path_signed_bytes(
+            bytes.fromhex(h["orch-workspace"]), int(h["orch-ts"]), bytes.fromhex(h["orch-nonce"]), req["method"],
+            req["host"], req["target"], bytes.fromhex(req["body_hex"]), HUB_ID, approval,
+        )  # fmt: skip
+        assert S.verify(self.server.wsk_pub, crypto.unb64u(h["orch-signature"], 64), signed), "host signature"
+        headers["Orch-Hub-Signature"] = crypto.b64u(S.sign(private_key("hk_op"), H.hub_publish_bytes(HUB_ID, signed)))
+        try:
+            status, data = self.server(
+                "https", req["host"], req["method"], req["target"], headers, bytes.fromhex(req["body_hex"]), 1.0
+            )
+        except OSError:
+            return {}
+        return {"status": status, "body_hex": data.hex()}
+
+
+@pytest.fixture
+def g(served, human, monkeypatch):
+    """A world whose publish server takes approvals; the lab owner is the card owner."""
+    world = World(served, human, monkeypatch)
+    old = world.server
+    srv = LiveServer(old.wsk_pub)
+    srv.owner = world.served.lab.ws.owner
+    world.hub = LiveHub(srv)
+    monkeypatch.setattr(hubops, "TRANSPORT", lambda service, hub_id: world.hub)
+    world.server = srv
+    world.addon()
+    world.configure()
+    return world
+
+
+def approve(g, commit, note, *, now_ms=None):
+    """What the person's client does with the commit request of ``app.send``: check it against the note it signed and
+    sign it with its device key (the CLI does the same with ``golive``)."""
+    from orch import crypto
+    from orch.publishclient import golive
+
+    owner = g.served.lab.ws.owner
+    device_id = crypto.device_id(owner.sig_pub).hex()
+    req = {
+        "target": commit["target"], "body": bytes.fromhex(commit["body_hex"]), "ts_ms": commit["ts_ms"],
+        "nonce": bytes.fromhex(commit["nonce_hex"]),
+    }  # fmt: skip
+    req["o"] = golive.approval_object(
+        g.served.wid, commit["hub_id"], device_id,
+        golive.request_hash_b64(g.served.wid, commit["hub_id"], req["ts_ms"], req["nonce"], commit["host"],
+                                req["target"], req["body"]),
+        commit["facts"]["meta"]["access"],
+    )  # fmt: skip
+    o = golive.check_commit_request(
+        req, commit["facts"], note, workspace_id=g.served.wid, host=commit["host"], hub_id=commit["hub_id"],
+        device_id=device_id, now_ms=commit["ts_ms"] if now_ms is None else now_ms,
+    )  # fmt: skip
+    cert = next(c for c in commit["device_certs"] if c["o"]["device_id"] == device_id)
+    return golive.build_approval(o, owner.dk_sign, cert, commit["pk_pub"])
+
+
+def release(g, key, *names, **args):
+    data = ok(prepare(g, key, *names, **args))["data"]
+    prepared, _, _ = g.human.run("app.release", {"staged_id": data["staged_id"]})
+    return data, prepared["events"][0]["text"]
+
+
+def test_the_owner_signs_twice_in_one_click_and_the_app_goes_live(g):
+    uid, key = ticket(g)
+    data, note = release(g, key, "index.html", "app.js")
+    sent = ok(g.req("app.send", {"staged_id": data["staged_id"]}))["data"]
+    assert sent["uploaded"] is True and sent["live"] is False and "commit" in sent
+    commit = sent["commit"]
+    ap = approve(g, commit, note)
+    done = ok(g.req("app.commit", {"request_id": commit["request_id"], "approval": ap}))["data"]
+    assert done == {"app_id": data["app_id"], "version": 1, "op": "commit", "live": True}
+    assert g.server.live == {data["app_id"]: ("commit", 1)} and g.server.bad_signatures == []
+    rows = ok(g.req("app.list", {}))["data"]["apps"]
+    assert rows[0]["live"] == 1
+
+
+def test_the_request_is_used_once_and_expires(g):
+    uid, key = ticket(g)
+    data, note = release(g, key, "index.html", "app.js")
+    commit = ok(g.req("app.send", {"staged_id": data["staged_id"]}))["data"]["commit"]
+    ap = approve(g, commit, note)
+    ok(g.req("app.commit", {"request_id": commit["request_id"], "approval": ap}))
+    assert err(g.req("app.commit", {"request_id": commit["request_id"], "approval": ap})) == "publish.changed"
+    # an expired request is gone too
+    data2, note2 = release(g, key, "index.html", "app.js", app_id=data["app_id"], name="Sales board v2")
+    commit2 = ok(g.req("app.send", {"staged_id": data2["staged_id"]}))["data"]["commit"]
+    ap2 = approve(g, commit2, note2)
+    g.served.service.clock = (lambda c: lambda: c() + 91)(g.served.service.clock)
+    assert err(g.req("app.commit", {"request_id": commit2["request_id"], "approval": ap2})) == "publish.changed"
+    assert data["app_id"] not in {k for k, v in g.server.live.items() if v[1] == 2}
+
+
+def test_an_approval_for_another_request_is_refused_before_it_is_sent(g):
+    uid, key = ticket(g)
+    data, note = release(g, key, "index.html", "app.js")
+    first = ok(g.req("app.send", {"staged_id": data["staged_id"]}))["data"]["commit"]
+    stale = approve(g, first, note)
+    again = ok(g.req("app.commit_request", {"app_id": data["app_id"], "op": "commit", "version": 1}))["data"]
+    assert again["request_id"] != first["request_id"] and again["nonce_hex"] != first["nonce_hex"]
+    before = len([r for r in g.server.requests if r["target"].endswith("/commit")])
+    res = g.req("app.commit", {"request_id": again["request_id"], "approval": stale})  # the approval of the first draw
+    assert err(res) in {"publish.server_refused", "publish.changed"}
+    assert len([r for r in g.server.requests if r["target"].endswith("/commit")]) == before  # nothing was sent
+    # the failed attempt used the request up; a fresh one, approved for itself, goes through
+    third = ok(g.req("app.commit_request", {"app_id": data["app_id"], "op": "commit", "version": 1}))["data"]
+    ok(g.req("app.commit", {"request_id": third["request_id"], "approval": approve(g, third, note)}))
+    assert g.server.live == {data["app_id"]: ("commit", 1)}
+
+
+def test_nothing_goes_live_for_an_agent_or_a_non_owner(g):
+    uid, key = ticket(g)
+    data, note = release(g, key, "index.html", "app.js")
+    sent = ok(g.req("app.send", {"staged_id": data["staged_id"]}))["data"]
+    commit = sent["commit"]
+    for op, args in (
+        ("app.commit", {"request_id": commit["request_id"], "approval": {}}),
+        ("app.commit_request", {"app_id": data["app_id"], "op": "commit", "version": 1}),
+    ):
+        assert err(g.req(op, args, agent=True)) == "op.not_allowed", op
+    assert g.server.live == {}
+
+
+def test_a_commit_request_needs_a_fresh_signature_and_a_rollback_goes_through_a_fileless_stage(g):
+    uid, key = ticket(g)
+    one, note1 = release(g, key, "index.html", "app.js")
+    c1 = ok(g.req("app.send", {"staged_id": one["staged_id"]}))["data"]["commit"]
+    ok(g.req("app.commit", {"request_id": c1["request_id"], "approval": approve(g, c1, note1)}))
+    two, note2 = release(g, key, "index.html", "app.js", app_id=one["app_id"], name="Sales board 2")
+    c2 = ok(g.req("app.send", {"staged_id": two["staged_id"]}))["data"]["commit"]
+    ok(g.req("app.commit", {"request_id": c2["request_id"], "approval": approve(g, c2, note2)}))
+    assert g.server.live[one["app_id"]] == ("commit", 2)
+    # go back to version 1: a stage with no files, signed like any release, then only the commit request
+    back = ok(g.req("app.prepare", {"ref": key, "app_id": one["app_id"], "op": "rollback", "version": 1}))["data"]
+    assert back["files"] == [] and back["op"] == "rollback"
+    prepared, _, _ = g.human.run("app.release", {"staged_id": back["staged_id"]})
+    note3 = prepared["events"][0]["text"]
+    assert "Action: go back to this older version" in note3 and "Compared with the live version 2:" in note3
+    sent = ok(g.req("app.send", {"staged_id": back["staged_id"]}))["data"]
+    assert sent["uploaded"] is False and sent["op"] == "rollback"
+    ok(g.req("app.commit", {"request_id": sent["commit"]["request_id"], "approval": approve(g, sent["commit"], note3)}))
+    assert g.server.live[one["app_id"]] == ("rollback", 1)
+    # a rollback to a version that is not below the live one, and a start of another version, are refused up front
+    assert (
+        err(g.req("app.prepare", {"ref": key, "app_id": one["app_id"], "op": "rollback", "version": 1}))
+        == "invalid.input"
+    )
+    assert (
+        err(g.req("app.prepare", {"ref": key, "app_id": one["app_id"], "op": "start", "version": 2})) == "invalid.input"
+    )

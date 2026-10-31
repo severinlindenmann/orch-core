@@ -6764,6 +6764,303 @@
       "issued_ms": 1790000000000,
       "kind": "hub.publish_where",
       "seq": 5,
+      "server": "https://[2002:c000:204::1]",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "bNvYhZ-h1FLc7bIa-gKSrWWSisE25xSCEBNeDnLxy1ioMWKTiAvP-gc3QyDRGD5aFcXWOgM7fADSQWu5_BebGQ"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_sixtofour_ip_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://[2002:0a00:0001::1]",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "olnDl1n0sMuX15e_hcpz1ceAw_vxBZY-DJDEwQZtKiv76pJy0lsGQwhXc2IIa-CvX5SHb6g30oouTx9CL0mnPQ"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_sixtofour_ip_private_inside_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://[2001:0:4136:e378:8000:63bf:3fff:fdd2]",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "LxpCYZEI6SjT7Nn55KpgiqolhPYuPWt1wDCmfHbvqXtEII8QQ8WcuCr2bwaljg4VEA5S6UQJaE2tuOTJAT7oAg"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_teredo_ip_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://[2001::1]:8443",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "9lvSpa8Im5T87N_Ljdd5ikX-iuNGvg35_RIzDIj8rMpWegRMKVFQP3-UQCy0Ob8M9-rKSatNHcOvWJhYY6vyzg"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_teredo_ip_port_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://publish",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "p6fJskSwoFT-krayMivz8uW36rVh2261PbIVyPz4byE2bnS_-7tnKfOkvVyBHLfAK9Lvbz3i8YZ3ljSU2BrKFQ"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_single_label_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://publish:8443",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "8cpjHoFDa_tBFSIZtE8HjhGYT5ZtzLKJ2NhSb7O2d03jPK6F5KsJ2jvkc44XwPqjI1hEtCXlHYeParypQQT6WQ"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_single_label_port_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://publish.",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "i4j94K_l-yadgnxLXjo8J89J5ig8jN2JtK5Om8h4TUe0tmZPFK9R4-VREbcsnro5FhB9V-pwa0K2jT11F8YSew"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_single_label_trailing_dot_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://hub.home.arpa",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "8cpagiSGJT7-SOyrF9FofRszzP2EFmyb3yMl4Y18F_thQsTJ7mfaU6KC6goRu3XNw9rWvJWUcVk3yJYVqpTdkA"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_home_arpa_name_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://home.arpa",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "Yx6asbVUM1a63LpTn1ru-bnRa_l6cy5sm1EpJhXcF8Fqb0wv485i8-AIl2ufnqMQyk1uHnlSeSK86CUhwJecaQ"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_home_arpa_bare_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.lan",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "XGz9NOaeP1nmGbSawRtqL_rlQwx8npl1NdmfMIiYhKPyqWsDzIvJtVSmCBZoceh1WWEcTMyplITmFIM7a3qF5Q"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_lan_name_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://lan",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "C-q3QL4G8jXVwS6JOuO1xBQ24SksQO5mCbc8rn7b9VzPVWfIxY2Rux0wFw_HfE5cwEEWMbc6cVLptKZ_hOETVA"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_lan_bare_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
       "server": "https://pub.example.com",
       "share": "http://127.0.0.1:8103",
       "suite": 2,
@@ -7209,6 +7506,114 @@
     "error": "bad_origin"
    },
    "name": "pw_dev_server_link_local_http_refused"
+  },
+  {
+   "args": {
+    "dev": true,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": true,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://[2002:c000:204::1]",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "kWupS20ObrYMKqzOW9zPyLPoNRICKti3rThgd-0gPYiOKrQewJ8lS7mzPP5GmuKayBZysiubcM1W6f8Y8yZHrQ"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_dev_server_sixtofour_ip_refused"
+  },
+  {
+   "args": {
+    "dev": true,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": true,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://[2001:0:4136:e378:8000:63bf:3fff:fdd2]",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "Mq9-FuTSZ1y_93xGgTwQEA2DMhspI6U8t1o_5BNklFyzyLUy61NuC00sOH3zDOZf9o_W8hxnqAsRGu8ss9Fhag"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_dev_server_teredo_ip_refused"
+  },
+  {
+   "args": {
+    "dev": true,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": true,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://hub.home.arpa",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "pRr3gxwr1LDa6-rki2pFyXTCWDl2RYLy0XNRWGp3gZEKczbIsUPCbj61PNbo4UbUeLtCLMgT3321E1IJ2Kc6oQ"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_dev_server_home_arpa_name_refused"
+  },
+  {
+   "args": {
+    "dev": true,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": true,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.lan",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "crfOgkENQ2q6ybH1j2M0EEDiqDurDmKF0HLyHI_hFSaMTxV5CxAvgb2gaJcM-EqcSFisC2cZeCGtcPh0T6beDQ"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_dev_server_lan_name_refused"
   },
   {
    "args": {
@@ -7817,6 +8222,158 @@
     }
    },
    "name": "pw_server_100_128_is_public"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://[2001:4860:4860::8888]",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "cfddFeKpzO5mr3W1CbNmDZgFndJOuNEse4PgivF53M7mDy078gEtWJ7t7Bh-_STDX7Xc4rXLvcTmwUY-tyhUhw"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "ok": {
+     "dev": false,
+     "hub_id": "133254fb2011fce38b33b02440eedda2",
+     "hv": 0,
+     "issued_ms": 1790000000000,
+     "kind": "hub.publish_where",
+     "seq": 5,
+     "server": "https://[2001:4860:4860::8888]",
+     "share": "https://share.example.com:8443",
+     "suite": 2,
+     "v": 2
+    }
+   },
+   "name": "pw_server_v6_2001_outside_teredo"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://[2003::1]",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "HZVHPSnQLGWtKARmxfH8YHdUBLZcuHy7T_gJVGdlQ-5y61Ug1-Y0g3Igc_C8YQB9hrPE6IYIeQxZ7hGrYe9zFw"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "ok": {
+     "dev": false,
+     "hub_id": "133254fb2011fce38b33b02440eedda2",
+     "hv": 0,
+     "issued_ms": 1790000000000,
+     "kind": "hub.publish_where",
+     "seq": 5,
+     "server": "https://[2003::1]",
+     "share": "https://share.example.com:8443",
+     "suite": 2,
+     "v": 2
+    }
+   },
+   "name": "pw_server_v6_2003_is_public"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://lan.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "AIAM5Ki9Ku1ToyxIk-Zj_TOL7w7Z8DQplapwN8nZzqnLoPelnUApNxBz5nnfG51Lb_aBWsw217Rrh86bVR3d5w"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "ok": {
+     "dev": false,
+     "hub_id": "133254fb2011fce38b33b02440eedda2",
+     "hv": 0,
+     "issued_ms": 1790000000000,
+     "kind": "hub.publish_where",
+     "seq": 5,
+     "server": "https://lan.example.com",
+     "share": "https://share.example.com:8443",
+     "suite": 2,
+     "v": 2
+    }
+   },
+   "name": "pw_server_lan_in_the_middle"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://home.arpa.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "1-5TfQQAsRA-QRjTDM-Ny0fZ09ScLenGLuzFYCCeoPhIj3RVjlJDVtH1N4rQJXXz0LEujV6kAum7BQuOweM1eQ"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "ok": {
+     "dev": false,
+     "hub_id": "133254fb2011fce38b33b02440eedda2",
+     "hv": 0,
+     "issued_ms": 1790000000000,
+     "kind": "hub.publish_where",
+     "seq": 5,
+     "server": "https://home.arpa.example.com",
+     "share": "https://share.example.com:8443",
+     "suite": 2,
+     "v": 2
+    }
+   },
+   "name": "pw_server_home_arpa_in_the_middle"
   },
   {
    "args": {
@@ -8565,6 +9122,71 @@
     "error": "bad_origin"
    },
    "name": "pw_dev_only_server_loopback_v6_long_refused_at_a_real_pin"
+  },
+  {
+   "args": {
+    "dev": true,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": true,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://publish",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "SPoJj9Ir0E9yBVqih6TxLhYe3xap-mhl2ZGFDY3d_v68LtOLnXWH95aOFcDYUO8BvDzqcJ97ihqBoCbZPUvGUw"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "ok": {
+     "dev": true,
+     "hub_id": "133254fb2011fce38b33b02440eedda2",
+     "hv": 0,
+     "issued_ms": 1790000000000,
+     "kind": "hub.publish_where",
+     "seq": 5,
+     "server": "https://publish",
+     "share": "https://share.example.com:8443",
+     "suite": 2,
+     "v": 2
+    }
+   },
+   "name": "pw_dev_server_single_label_https"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://publish",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "p6fJskSwoFT-krayMivz8uW36rVh2261PbIVyPz4byE2bnS_-7tnKfOkvVyBHLfAK9Lvbz3i8YZ3ljSU2BrKFQ"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_dev_only_server_single_label_https_refused_at_a_real_pin"
   },
   {
    "args": {
@@ -10185,6 +10807,127 @@
   },
   {
    "args": {
+    "dev": false,
+    "origin": "https://[2002:c000:204::1]"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_sixtofour_ip_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://[2002:0a00:0001::1]"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_sixtofour_ip_private_inside_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://[2001:0:4136:e378:8000:63bf:3fff:fdd2]"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_teredo_ip_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://[2001::1]:8443"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_teredo_ip_port_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://publish"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_single_label_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://publish:8443"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_single_label_port_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://publish."
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_single_label_trailing_dot_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://hub.home.arpa"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_home_arpa_name_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://home.arpa"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_home_arpa_bare_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://pub.lan"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_lan_name_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://lan"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_lan_bare_refused"
+  },
+  {
+   "args": {
     "dev": true,
     "origin": "https://10.0.0.5"
    },
@@ -10270,6 +11013,50 @@
     "error": "bad_origin"
    },
    "name": "origin_dev_link_local_http_refused"
+  },
+  {
+   "args": {
+    "dev": true,
+    "origin": "https://[2002:c000:204::1]"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_dev_sixtofour_ip_refused"
+  },
+  {
+   "args": {
+    "dev": true,
+    "origin": "https://[2001:0:4136:e378:8000:63bf:3fff:fdd2]"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_dev_teredo_ip_refused"
+  },
+  {
+   "args": {
+    "dev": true,
+    "origin": "https://hub.home.arpa"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_dev_home_arpa_name_refused"
+  },
+  {
+   "args": {
+    "dev": true,
+    "origin": "https://pub.lan"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_dev_lan_name_refused"
   },
   {
    "args": {
@@ -10625,6 +11412,94 @@
   },
   {
    "args": {
+    "dev": false,
+    "origin": "https://[2001:4860:4860::8888]"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "ok": "https://[2001:4860:4860::8888]"
+   },
+   "name": "origin_v6_2001_outside_teredo"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://[2001:4860:4860::8888]"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "ok": "https://[2001:4860:4860::8888]"
+   },
+   "name": "origin_v6_2001_outside_teredo_idempotent"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://[2003::1]"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "ok": "https://[2003::1]"
+   },
+   "name": "origin_v6_2003_is_public"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://[2003::1]"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "ok": "https://[2003::1]"
+   },
+   "name": "origin_v6_2003_is_public_idempotent"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://lan.example.com"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "ok": "https://lan.example.com"
+   },
+   "name": "origin_lan_in_the_middle"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://lan.example.com"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "ok": "https://lan.example.com"
+   },
+   "name": "origin_lan_in_the_middle_idempotent"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://home.arpa.example.com"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "ok": "https://home.arpa.example.com"
+   },
+   "name": "origin_home_arpa_in_the_middle"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://home.arpa.example.com"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "ok": "https://home.arpa.example.com"
+   },
+   "name": "origin_home_arpa_in_the_middle_idempotent"
+  },
+  {
+   "args": {
     "dev": true,
     "origin": "http://127.0.0.1:8103"
    },
@@ -10798,6 +11673,28 @@
     "error": "bad_origin"
    },
    "name": "origin_dev_loopback_v6_long_without_dev_refused"
+  },
+  {
+   "args": {
+    "dev": true,
+    "origin": "https://publish"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "ok": "https://publish"
+   },
+   "name": "origin_dev_single_label_https"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://publish"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_dev_single_label_https_without_dev_refused"
   },
   {
    "args": {

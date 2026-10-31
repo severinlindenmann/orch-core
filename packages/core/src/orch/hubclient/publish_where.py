@@ -63,7 +63,9 @@ _NETS_V6 = tuple(
         "::ffff:0:0/96",  # IPv4-mapped
         "64:ff9b::/96",  # NAT64
         "100::/64",  # discard
+        "2001::/32",  # Teredo (embeds an IPv4 address)
         "2001:db8::/32",  # documentation
+        "2002::/16",  # 6to4 (embeds an IPv4 address)
         "fc00::/7",  # unique local (ULA)
         "fe80::/10",  # link-local
         "fec0::/10",  # site-local (deprecated)
@@ -72,8 +74,8 @@ _NETS_V6 = tuple(
 )
 _LOOPBACK_V4 = ipaddress.ip_network("127.0.0.0/8")
 _LOOPBACK_V6 = ipaddress.ip_address("::1")
-_BLOCKED_NAMES = ("localhost", "local", "internal")
-_BLOCKED_SUFFIXES = (".localhost", ".local", ".internal")
+_BLOCKED_NAMES = ("localhost", "local", "internal", "lan", "home.arpa")
+_BLOCKED_SUFFIXES = (".localhost", ".local", ".internal", ".lan", ".home.arpa")
 _LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
 _PORT = re.compile(r"[1-9][0-9]{0,4}")
 _DEFAULT_PORT = {"https": "443", "http": "80"}
@@ -91,9 +93,10 @@ def canonical_origin(x: object, dev: bool) -> str:
     ``https://host[:port]`` or, only with ``dev``, ``http://`` on a loopback host (``localhost``, ``127.0.0.0/8``,
     ``[::1]``). No userinfo, path (not even ``/``), query or fragment. The host is lower-case, an IDN host is its
     A-label form, one trailing dot is dropped, the default port of the scheme is dropped. Outside that loopback case
-    the scheme must be ``https`` and a host that is ``localhost``, ``local``, ``internal`` or under ``.localhost``,
-    ``.local``, ``.internal``, or an IP literal in a loopback, private, link-local, ULA, CGNAT, documentation, multicast
-    or reserved block is refused. Public IP literals are allowed (a no-domain install). Idempotent."""
+    the scheme must be ``https`` and a host that is ``localhost``, ``local``, ``internal``, ``lan``, ``home.arpa`` or
+    under ``.localhost``, ``.local``, ``.internal``, ``.lan``, ``.home.arpa``, or (without ``dev``) a hostname with no
+    dot, or an IP literal in a loopback, private, link-local, ULA, CGNAT, documentation, multicast, reserved, 6to4 or
+    Teredo block is refused. Public IP literals are allowed (a no-domain install). Idempotent."""
     if type(x) is not str or type(dev) is not bool or not 1 <= len(x) <= MAX_ORIGIN:
         raise _bad()
     scheme, sep, rest = x.partition("://")
@@ -141,7 +144,7 @@ def canonical_origin(x: object, dev: bool) -> str:
         raise _bad()
     if ip is None:
         loopback = shown == "localhost"
-        blocked = shown in _BLOCKED_NAMES or shown.endswith(_BLOCKED_SUFFIXES)
+        blocked = shown in _BLOCKED_NAMES or shown.endswith(_BLOCKED_SUFFIXES) or (not dev and "." not in shown)
     else:
         loopback = ip == _LOOPBACK_V6 or (ip.version == 4 and ip in _LOOPBACK_V4)
         blocked = any(ip in n for n in (_NETS_V4 if ip.version == 4 else _NETS_V6))

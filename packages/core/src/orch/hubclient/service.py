@@ -176,9 +176,10 @@ class HubState:
     #: after it verified. Every read goes through :func:`orch.hubclient.publish_held.read`, which checks it again
     #: against the current pinned card; deleted by leave and unbind.
     publish_where: dict[str, Any] | None = None
-    #: #1838: ``{hub_id: the highest publish_where seq ever stored from that hub}``, the tombstone. It survives leave
-    #: and a rebind (the new state carries every entry): an older object is never stored again (``stale_seq``).
-    publish_where_floors: dict[str, int] = field(default_factory=dict)
+    #: #1838: ``{hub_id: {seq, digest}}``: the highest publish_where seq ever stored from that hub and the sha256 of the
+    #: object stored at it, the tombstone. It survives leave and a rebind (the new state carries every entry): an older
+    #: object is never stored again (``stale_seq``) and no other object at the same seq (``seq_conflict``).
+    publish_where_floors: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -251,9 +252,8 @@ class HubState:
             and _publish_where_ok(d.get("publish_where"))
             and type(d.get("publish_where_floors", {})) is dict
             and all(
-                wire.hex16(k) and type(v) is int and 0 <= v <= publish_held.SEQ_MAX
-                for k, v in d.get("publish_where_floors", {}).items()
-            )
+                wire.hex16(k) and publish_held.floor_ok(v) for k, v in d.get("publish_where_floors", {}).items()
+            )  # a bare int seq is an older file's floor: kept, with no digest
             and d["hub_id"] == wire.hub_id(unb64u(d["hk_root_pub"], 65))
         )
         if not ok:
@@ -283,7 +283,7 @@ class HubState:
             publish_owed=dict(d.get("publish_owed", {})),
             closing=None if d.get("closing") is None else dict(d["closing"]),
             publish_where=d.get("publish_where"),
-            publish_where_floors=dict(d.get("publish_where_floors", {})),
+            publish_where_floors=publish_held.floors_from_json(d.get("publish_where_floors", {})),
         )
 
 
@@ -376,13 +376,14 @@ def _join(
         _owe(state, workspace_id, sign_wsk, now_ms, dev=bool(state.binding["o"]["dev"]))
         state.status = "unbound"
         state.closing = None
-        state.publish_where = None
+        publish_held.drop(state)
         save(state)
     if state is not None and state.status == "joining" and binding_seq is not None and binding_seq > state.binding_seq:
         # the log left and joined again (#1198 C9: the owner proof of the first join ran out before the hub took it):
         # the hub never held that binding, so there is nothing to resume and nothing to unbind
         state.status = "unbound"
         state.closing = None
+        publish_held.drop(state)
         save(state)
     if mode == "full":
         assert epochs is not None
@@ -471,11 +472,14 @@ def _join(
     )
     if type(reply) is not dict or set(reply) - {"publish_where"}:
         raise HubRefused("malformed")  # the reply is {} or {publish_where}: any other member is not the protocol's
-    if "publish_where" in reply:
-        check_publish_where_shape(reply["publish_where"])
     new.status = "bound"
-    if "publish_where" in reply:  # #1838: kept only if it verifies; a bad one is dropped and the join stands
-        code, _ = publish_held.offer(new, reply["publish_where"], now_ms())
+    if (
+        "publish_where" in reply
+    ):  # #1838: kept only if it verifies; a bad one (a bad shape too) is dropped and the join stands
+        try:
+            code, _ = publish_held.offer(new, reply["publish_where"], now_ms())
+        except (HubRefused, KeyError, TypeError, ValueError) as exc:
+            code = getattr(exc, "code", "malformed")
         if code is not None:
             _LOG.info("publish_where of the join answer not used (%s)", code)
     save(new)
@@ -499,6 +503,7 @@ def _retire_full_state(
     cur = epochs.current_epoch() if epochs is not None else 0
     state.rotate_after = max(held, cur, state.rotate_after or 0)
     state.sealed = None
+    publish_held.drop(state)  # this binding is ending: what its hub said about publishing goes (the tombstone stays)
     save(state)  # durable before anything else happens
     if epochs is not None:
         epochs.rotate()
@@ -739,7 +744,7 @@ def leave(
     state.sealed = None
     state.status = "unbound"
     state.closing = None
-    state.publish_where = None  # the held object goes with the binding; the seq tombstone stays
+    publish_held.drop(state)  # the held object goes with the binding; the seq tombstone stays
     save(state)
     done = settle_rotation(state=state, epochs=epochs, save=save, request=False)  # the retire already asked
     told = flush_publish(state=state, put=publish_put, save=save)  # publish first: it ends hub-forwarded publish

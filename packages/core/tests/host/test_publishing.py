@@ -1937,3 +1937,72 @@ def test_a_revoked_op_cert_ends_the_moved_state_with_the_suggestion(w):
     got = status_of(w)
     assert got["publish_where"] is None and got["publish_moved"] is None
     assert from_hub_file(w) is not None  # the record stays; it is only the hub's word that is gone
+
+
+def test_a_setting_signed_in_another_spelling_of_the_held_origins_is_the_same_address_and_not_moved(w):
+    from orch.host import hubpublish
+
+    hold(w, server="https://pub.example.org", share="https://apps.example.org")
+    service = w.served.service
+    canonical = {
+        "hub_id": HUB_ID, "hub_name": None, "server": "https://pub.example.org", "share": "https://apps.example.org",
+    }  # fmt: skip
+    sign_settings(w, server="https://pub.example.org:443", share="https://apps.example.org")  # the schema's spelling
+    assert from_hub_file(w) == canonical  # the record keeps the canonical values, not the person's spelling
+    got = status_of(w)
+    assert got["publish_from"] == {"hub_id": HUB_ID, "hub_name": None} and got["publish_moved"] is None
+    publishing._hub_guard(service, sending=True)  # not hub_moved, not hub_left: nothing raised
+    # the event schema only lets the default port through as another spelling; the comparison is canonical anyway
+    assert hubpublish._same("https://Pub.Example.org.:443", "https://pub.example.org", True)  # noqa: SLF001
+    assert not hubpublish._same("https://pub.example.org:8443", "https://pub.example.org", True)  # noqa: SLF001
+    # a real move is still seen, and compared canonically too
+    hold(w, seq=2, server="https://pub.example.org", share="https://new.example.org")
+    assert status_of(w)["publish_moved"] == {"server": "https://pub.example.org", "share": "https://new.example.org"}
+    # a record written with the raw spelling (as before) is read the same way
+    (w.base() / "from_hub.json").write_text(json.dumps({**canonical, "server": "https://Pub.Example.org:443"}))
+    assert status_of(w)["publish_from"] is not None
+
+
+def test_the_guard_runs_once_at_plan_time_and_once_at_execution_and_status_reads_each_thing_once(w, monkeypatch):
+    from orch.host import hubpublish
+
+    hold(w)
+    sign_settings(w)
+    staged = staged_and_approved(w)
+    calls = {"left": 0, "held": 0, "from_hub": 0}
+    for name, real in (("left", hubpublish.left), ("held", hubpublish.held), ("from_hub", hubpublish.from_hub)):
+
+        def counted(*a, _name=name, _real=real, **k):
+            calls[_name] += 1
+            return _real(*a, **k)
+
+        monkeypatch.setattr(hubpublish, name, counted)
+    # `left` runs from_hub once itself; moved() (sending) runs held once more
+    res = w.send(staged)
+    assert ok(res)["data"]
+    assert calls["left"] == 2  # _plan's guard and the executor's: _hub_route does not run it a third time
+    calls.update(held=0, from_hub=0)
+    status_of(w)
+    assert calls["held"] == 1 and calls["from_hub"] == 1  # status_fields: one read of each, passed down to moved()
+
+
+def test_a_plan_made_before_a_leave_or_a_move_is_refused_by_the_guard_when_it_runs(w):
+    from types import SimpleNamespace
+
+    hold(w)
+    sign_settings(w)
+    service = w.served.service
+    call = SimpleNamespace(service=service)
+    hold(w, seq=2, share=NEW_SHARE)  # the hub moved on after the plan was made
+    service.store.refresh()
+    for op, reason in (("publish.send", "hub_moved"),):
+        with pytest.raises(HostError) as e:
+            publishing._run(call, {"op": op})
+        assert e.value.code == "publish.server_refused" and e.value.detail == {"reason": reason}
+    w.human.run("hub.leave", {})  # and then the workspace left it
+    service.store.refresh()
+    for op in ("publish.send", "publish.register"):
+        with pytest.raises(HostError) as e:
+            publishing._run(call, {"op": op})
+        assert e.value.code == "publish.server_refused" and e.value.detail == {"reason": "hub_left"}
+    assert w.server.requests == []  # the executor never reached the network

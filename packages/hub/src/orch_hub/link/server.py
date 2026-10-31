@@ -130,7 +130,7 @@ class LinkServer:
         hooks: Any = None,
         activity: Any = None,
         where: Callable[[], dict[str, Any]] | None = None,
-        publish_where: dict[str, Any] | None = None,
+        publish_where: Callable[[], dict[str, Any] | None] | None = None,
         closing: Any = None,
         deliveries: Any = None,
         streams: StreamSink | None = None,

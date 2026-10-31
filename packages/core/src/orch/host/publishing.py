@@ -908,7 +908,7 @@ def _plan(call: Call, op: str, args: dict[str, Any]) -> dict[str, Any]:
     if op == "publish.register":
         _rate(call, "register", REGISTER_PER_MINUTE)
         plan["reg"] = _delegation(call)
-        plan["hub"] = _hub_route(service)
+        plan["hub"] = _hub_route(service, guard=False)  # _hub_guard ran above
         _plan_card(call, plan)
         return plan
     if op == "publish.revoke":
@@ -918,7 +918,7 @@ def _plan(call: Call, op: str, args: dict[str, Any]) -> dict[str, Any]:
         _ticket(call, rec["ticket"])  # a ticket the person may not see is not theirs to act on
         _rate(call, "revoke")
         plan["record"] = rec
-        plan["hub"] = _hub_route(service)
+        plan["hub"] = _hub_route(service, guard=False)
         return plan
     if op in ("publish.extend", "publish.password"):
         return _plan_link(call, plan, op, args)
@@ -935,7 +935,11 @@ def _plan(call: Call, op: str, args: dict[str, Any]) -> dict[str, Any]:
             "must match this staged copy and this server exactly",
         )
     _rate(call, "send")
-    plan.update(meta=meta, text_hash=hashlib.sha256(text.encode()).hexdigest(), hub=_hub_route(service, sending=True))
+    plan.update(
+        meta=meta,
+        text_hash=hashlib.sha256(text.encode()).hexdigest(),
+        hub=_hub_route(service, sending=True, guard=False),
+    )
     registered = _registered(service, cfg) is not None
     try:  # P05: the card is at hand even when registered, so a server that lost the workspace is registered again once
         plan["reg"] = _delegation(call)
@@ -967,7 +971,7 @@ def _plan_link(call: Call, plan: dict[str, Any], op: str, args: dict[str, Any]) 
         _rate(call, "password")
         plan["password"], plan["pw"] = _new_password()  # drawn here, in the host; the plain text never leaves the call
     plan["record"] = rec
-    plan["hub"] = _hub_route(call.service)
+    plan["hub"] = _hub_route(call.service, guard=False)  # _plan ran _hub_guard before this
     return plan
 
 
@@ -1012,14 +1016,17 @@ def _hub_guard(service: WorkspaceService, *, sending: bool = False) -> None:
         raise hubpublish.hub_moved_error(new)
 
 
-def _hub_route(service: WorkspaceService, *, required: bool = True, sending: bool = False) -> dict[str, Any] | None:
+def _hub_route(
+    service: WorkspaceService, *, required: bool = True, sending: bool = False, guard: bool = True
+) -> dict[str, Any] | None:
     """The hub this workspace publishes through. A workspace without a hub is local only (D69, V3-D36): there is no
     direct path, so a standalone workspace is refused here (``required``) or gets ``None`` (``required=False``, a read
-    that degrades). Settings that came from a hub this workspace has left are refused first (:func:`_hub_guard`).
-    Worker thread."""
+    that degrades). Settings that came from a hub this workspace has left are refused first (:func:`_hub_guard`;
+    ``guard=False`` when the caller has just run it with the same ``sending``). Worker thread."""
     from . import hubops
 
-    _hub_guard(service, sending=sending)
+    if guard:
+        _hub_guard(service, sending=sending)
     route = hubops.publish_route(service)
     if route is None and required:
         raise HostError(
@@ -1288,6 +1295,10 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
     from .workspace import ok_result
 
     try:
+        if plan["op"] in ("publish.send", "publish.register"):
+            # #1838: the plan may be old by now (a leave or a moved address since): the guard runs again here, so the
+            # reason is hub_left / hub_moved and not whatever the hub says to an unbound workspace
+            _hub_guard(call.service, sending=plan["op"] == "publish.send")
         if plan["op"] == "publish.register":
             return ok_result(_register(call, plan))
         if plan["op"] == "publish.revoke":

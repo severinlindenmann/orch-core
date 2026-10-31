@@ -227,6 +227,10 @@ def held_of(served):
     return None if held is None else (held["o"]["seq"], held["o"]["share"])
 
 
+def floor_seqs(served):
+    return {k: v["seq"] for k, v in _state(served).publish_where_floors.items()}
+
+
 def test_a_signed_publish_where_is_verified_stored_and_shown_by_status(human, served, monkeypatch, probe):
     hub = bound(served, human, monkeypatch)
     hub.where_answer = with_pw("10.0.0.5:8105", seq=3)
@@ -273,7 +277,7 @@ def test_a_hub_that_stops_advertising_it_loses_the_object_but_not_the_tombstone(
     hub.where_answer = where("10.0.0.5:8105")
     refresh(served)
     assert held_of(served) is None and status(served)["publish_where"] is None
-    assert _state(served).publish_where_floors == {HUB_ID: 3}
+    assert floor_seqs(served) == {HUB_ID: 3}
     hub.where_answer = with_pw("10.0.0.5:8105", seq=2)  # older than the tombstone: refused
     refresh(served)
     assert held_of(served) is None
@@ -299,7 +303,7 @@ def test_the_tombstone_survives_leave_and_a_rejoin_never_takes_an_older_seq(huma
     refresh(served)
     human.run("hub.leave", {})
     ok(served.client().req("hub.unbind", {}, idem=True))
-    assert held_of(served) is None and _state(served).publish_where_floors == {HUB_ID: 7}
+    assert held_of(served) is None and floor_seqs(served) == {HUB_ID: 7}
     from tests.hub.fake import signed_publish_where
 
     card = copy.deepcopy(CARD)
@@ -309,10 +313,75 @@ def test_the_tombstone_survives_leave_and_a_rejoin_never_takes_an_older_seq(huma
     ok(served.client().req("hub.connect", {"invite": "invite-2", "hub_card": card, "addr": "127.0.0.1:9"}, idem=True))
     hubaddr.wait_idle()  # the connect's own address work runs in the background: let it finish before the next refresh
     assert _state(served).status == "bound" and held_of(served) is None  # the join stands, the old object is refused
-    assert _state(served).publish_where_floors == {HUB_ID: 7}
+    assert floor_seqs(served) == {HUB_ID: 7}
     hub.where_answer = with_pw("10.0.0.5:8105", seq=8)
     refresh(served)
     assert held_of(served) == (8, "https://apps.example.org")
+
+
+def test_an_unbind_of_a_binding_the_log_moved_past_clears_the_held_object_and_keeps_the_tombstone(
+    human, served, monkeypatch, probe
+):
+    hub = bound(served, human, monkeypatch)
+    hub.where_answer = with_pw("10.0.0.5:8105", seq=4)
+    refresh(served)
+    assert held_of(served) == (4, "https://apps.example.org")
+    from types import SimpleNamespace
+
+    service = _service(served)
+    monkeypatch.setattr(hubops, "_audit", lambda *a, **k: None)
+    state = _state(served)
+    assert state.status == "bound" and state.binding_seq == 1
+    plan = {"model": {"hub_id": HUB_ID, "status": "joined", "binding_seq": 2}}  # the log moved on to binding 2
+    saved = []
+    out = hubops._unbind(  # noqa: SLF001
+        SimpleNamespace(service=service), plan, state, None, b"", lambda: 0, lambda s: saved.append(s.publish_where),
+        None, lambda **kw: None,
+    )  # fmt: skip
+    assert out["binding_ended"] is True and saved == [None]  # cleared before it was saved
+    assert state.publish_where is None and state.publish_where_floors[HUB_ID]["seq"] == 4
+
+
+def test_a_background_store_that_finishes_after_a_leave_restores_neither_bound_nor_the_object(
+    human, served, monkeypatch, probe
+):
+    from tests.hub.fake import signed_publish_where
+
+    hub = bound(served, human, monkeypatch)
+    hub.where_answer = with_pw("10.0.0.5:8105", seq=3)
+    refresh(served)
+    started = _state(served)  # what a hub_where that began before the leave holds
+    human.run("hub.leave", {})
+    ok(served.client().req("hub.unbind", {}, idem=True))
+    assert _state(served).status == "unbound" and held_of(served) is None
+    on_disk = _state(served).to_json()
+    pw = signed_publish_where(seq=9)
+    assert hubaddr._store(_service(served), started, ["10.0.0.5:8105"], ["10.0.0.5:8105"], "Late", pw) is False  # noqa: SLF001
+    assert _state(served).to_json() == on_disk  # still unbound, no object, no new address, no new floor
+    assert floor_seqs(served) == {HUB_ID: 3}
+    # nor does the same finish with no object (the "hub stopped advertising it" branch) write anything
+    assert hubaddr._store(_service(served), started, [], [], None, None) is False  # noqa: SLF001
+    assert _state(served).to_json() == on_disk
+
+
+def test_saving_a_copy_loaded_before_a_background_store_never_lowers_the_tombstone_or_brings_back_the_old_object(
+    human, served, monkeypatch, probe
+):
+    hub = bound(served, human, monkeypatch)
+    hub.where_answer = with_pw("10.0.0.5:8105", seq=3)
+    refresh(served)
+    stale = _state(served)  # a join or leave that loaded this and is still busy on the network
+    hub.where_answer = with_pw("10.0.0.5:8105", seq=6, share="https://new.example.org")
+    refresh(served)
+    assert held_of(served) == (6, "https://new.example.org")
+    hubops._save_state(_service(served), stale)  # noqa: SLF001
+    assert floor_seqs(served) == {HUB_ID: 6}  # the tombstone only grows
+    assert held_of(served) == (6, "https://new.example.org")  # the object the newer store kept is not undone
+    stale2 = _state(served)
+    stale2.status = "unbound"  # a leave's copy: nothing is held after it, whatever was stored meanwhile
+    stale2.publish_where = None
+    hubops._save_state(_service(served), stale2)  # noqa: SLF001
+    assert held_of(served) is None and floor_seqs(served) == {HUB_ID: 6}
 
 
 def test_a_hub_without_hub_where_still_refreshes(human, served, monkeypatch, probe):

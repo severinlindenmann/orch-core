@@ -1797,6 +1797,33 @@ def test_command_for_adds_the_share_url_only_when_known():
 
 
 @pytest.mark.parametrize(
+    "given", ["https://pub.example.com/", "https://pub.example.com//", "https://pub.example.com/x/y"]
+)
+def test_command_for_gives_the_bare_origin_when_the_share_url_has_a_slash_or_a_path(given):
+    """#1840 S3: ``--api-host`` is compared as given with the Host a workspace signs, and the signed ``server`` is built
+    from it: a trailing ``/`` or a path must not reach either flag."""
+    from orch.install import parts as P
+
+    argv = P.command_for(
+        "hub", binary=Path("/b/orch-hub"), data=Path("/d"), address="127.0.0.1", port=8100,
+        publish_url="http://127.0.0.1:8102", relay_url=None, dev=False, publish_share_url=given,
+    )  # fmt: skip
+    assert argv[argv.index("--api-host") + 1] == "pub.example.com"
+    assert argv[argv.index("--publish-share-url") + 1] == "https://pub.example.com"
+
+
+def test_command_for_passes_a_share_url_with_a_port_as_it_is():
+    from orch.install import parts as P
+
+    argv = P.command_for(
+        "hub", binary=Path("/b/orch-hub"), data=Path("/d"), address="127.0.0.1", port=8100,
+        publish_url="http://127.0.0.1:8102", relay_url=None, dev=False, publish_share_url="https://pub.example.com:8443/",
+    )  # fmt: skip
+    assert argv[argv.index("--api-host") + 1] == "pub.example.com:8443"
+    assert argv[argv.index("--publish-share-url") + 1] == "https://pub.example.com:8443"
+
+
+@pytest.mark.parametrize(
     "bad",
     [
         "http://8.8.8.8:8102",

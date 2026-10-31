@@ -91,8 +91,10 @@ def _settings(service: WorkspaceService) -> dict[str, Any] | None:
 
 def from_hub(service: WorkspaceService) -> dict[str, Any] | None:
     """``{hub_id, hub_name, server, share}`` when the publish settings in force came from a hub (see the module text),
-    else ``None``. The record counts only while it names exactly the values in force."""
-    from . import publishing
+    else ``None``. The record counts only while it names the values in force; both sides are compared in canonical form
+    (``https://Pub.Example:443`` as signed is the same origin as ``https://pub.example``), and the record stores the
+    canonical values."""
+    from . import hubops, publishing
 
     try:
         doc = publishing._read_json(service, _path(service))  # noqa: SLF001
@@ -104,10 +106,18 @@ def from_hub(service: WorkspaceService) -> dict[str, Any] | None:
         or set(doc) != {"hub_id", "hub_name", "server", "share"}
         or type(doc["hub_id"]) is not str
         or not (doc["hub_name"] is None or type(doc["hub_name"]) is str)
+        or type(doc["server"]) is not str
+        or type(doc["share"]) is not str
         or cfg is None
-        or (doc["server"], doc["share"]) != (cfg["server"], cfg["share"])
     ):
         return None
+    dev = hubops.workspace_dev(service)
+    for key in ("server", "share"):
+        in_force = _canon(cfg[key], dev)
+        if in_force is None or not _same(
+            doc[key], in_force, dev
+        ):  # the record's side may be a raw spelling (older file)
+            return None
     return doc  # type: ignore[no-any-return]
 
 
@@ -121,14 +131,19 @@ def clear(service: WorkspaceService) -> None:
         os.unlink(_path(service))
 
 
-def _same(value: str, canonical: str, dev: bool) -> bool:
+def _canon(value: str, dev: bool) -> str | None:
     from orch.hubclient.errors import HubRefused
     from orch.hubclient.publish_where import canonical_origin
 
     try:
-        return canonical_origin(value, dev) == canonical
+        return canonical_origin(value, dev)
     except HubRefused:
-        return False
+        return None
+
+
+def _same(value: str, canonical: str, dev: bool) -> bool:
+    """Is ``value`` (any spelling) the origin ``canonical`` names?"""
+    return _canon(value, dev) == canonical
 
 
 def note_publish_set(service: WorkspaceService, value: Any) -> None:
@@ -154,8 +169,8 @@ def note_publish_set(service: WorkspaceService, value: Any) -> None:
         publishing._private(service)  # noqa: SLF001
         publishing._put_json(  # noqa: SLF001
             _path(service),
-            {"hub_id": now["hub_id"], "hub_name": now["hub_name"], "server": value["server"], "share": value["share"]},
-        )
+            {"hub_id": now["hub_id"], "hub_name": now["hub_name"], "server": now["server"], "share": now["share"]},
+        )  # the canonical values (the held object's), not the spelling the person signed
 
 
 def note_events(service: WorkspaceService, log: str, events: list[dict[str, Any]]) -> None:
@@ -185,16 +200,25 @@ def left(service: WorkspaceService) -> dict[str, Any] | None:
     return prov
 
 
-def moved(service: WorkspaceService) -> dict[str, str] | None:
+_UNSET: Any = object()
+
+
+def moved(service: WorkspaceService, *, prov: Any = _UNSET, now: Any = _UNSET) -> dict[str, str] | None:
     """``{server, share}`` (the new values) when the settings in force came from the hub this workspace is bound to and
-    its verified held object now says other values; else ``None``."""
-    prov = from_hub(service)
+    its verified held object now says other values (compared in canonical form); else ``None``. ``prov``
+    (:func:`from_hub`) and ``now`` (:func:`held`) may be passed when the caller has them already."""
+    from . import hubops
+
+    if prov is _UNSET:
+        prov = from_hub(service)
     if prov is None:
         return None
-    now = held(service)
+    if now is _UNSET:
+        now = held(service)
     if now is None or now["hub_id"] != prov["hub_id"]:
         return None
-    if (now["server"], now["share"]) == (prov["server"], prov["share"]):
+    dev = hubops.workspace_dev(service)
+    if _same(prov["server"], now["server"], dev) and _same(prov["share"], now["share"], dev):
         return None
     return {"server": now["server"], "share": now["share"]}
 
@@ -220,12 +244,12 @@ def hub_moved_error(new: dict[str, str]) -> HostError:
 def status_fields(service: WorkspaceService) -> dict[str, Any]:
     """What ``hub.status`` carries for the Publish form: ``publish_where`` (the verified held values and the hub's name,
     or ``None``) and ``publish_from`` / ``publish_moved`` (see :func:`from_hub`, :func:`moved`)."""
-    now = held(service)
+    now = held(service)  # once: each call takes the lock and may write hub.json
     prov = from_hub(service)
     return {
         "publish_where": None
         if now is None
         else {"hub_id": now["hub_id"], "hub_name": now["hub_name"], "server": now["server"], "share": now["share"]},
         "publish_from": None if prov is None else {"hub_id": prov["hub_id"], "hub_name": prov["hub_name"]},
-        "publish_moved": moved(service),
+        "publish_moved": moved(service, prov=prov, now=now),
     }

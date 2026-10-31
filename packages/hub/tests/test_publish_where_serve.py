@@ -17,10 +17,11 @@ from orch_hub import settings as SETT
 from orch_hub.contract import keystore as KS
 from orch_hub.contract import vectorgen as G
 from orch_hub.contract.canon import b64u, cj
-from orch_hub.contract.publish_where import check_publish_where
+from orch_hub.contract.hub import Refused
+from orch_hub.contract.publish_where import SEQ_MAX, check_publish_where
 from orch_hub.keys import HubKeys
 from orch_hub.link import LinkClient
-from orch_hub.pubwhere import PUBLISH_WHERE_FILE, prepare
+from orch_hub.pubwhere import PUBLISH_WHERE_FILE, prepare, publisher
 
 from publish_helpers import binding  # isort: skip
 
@@ -136,14 +137,79 @@ def test_a_real_hub_signs_https_names(tmp_path):
     got, lines = _prep(
         tmp_path / "real",
         k,
-        api_host="Pub.Example.COM",
-        share="https://pub.example.com:443",
+        api_host="pub.example.com",
+        share="https://Pub.Example.COM:443",
         private="http://127.0.0.1:1",
         dev=False,
     )
     assert lines == [] and got is not None
     o = _check(k, got, dev=False)
     assert o["server"] == o["share"] == "https://pub.example.com" and o["dev"] is False
+
+
+@pytest.mark.parametrize(
+    ("api_host", "canonical"),
+    [
+        ("Pub.Example.COM", "pub.example.com"),  # upper case: the forwarder compares the raw flag
+        ("pub.example.com:443", "pub.example.com"),  # the default port is not part of the canonical form
+        ("pub.example.com.", "pub.example.com"),  # one trailing dot
+        ("b\u00fccher.example", "xn--bcher-kva.example"),  # an IDN: the A-label is what is signed
+    ],
+)
+def test_an_api_host_that_is_not_canonical_signs_nothing_and_says_what_to_use(tmp_path, api_host, canonical):
+    k = HubKeys.init(tmp_path / "real", real=True)
+    got, lines = _prep(
+        tmp_path / "real",
+        k,
+        api_host=api_host,
+        share="https://share.example.com",
+        private="http://127.0.0.1:1",
+        dev=False,
+    )
+    assert got is None and lines == [
+        f"orch-hub WARN publish_where not served: --api-host is not in canonical form: use {canonical}"
+    ]
+    assert not (tmp_path / "real" / PUBLISH_WHERE_FILE).exists()
+
+
+def test_the_api_host_may_not_be_the_private_publish_url(tmp_path, keys):
+    got, lines = _prep(tmp_path / "hub", keys, api_host=HOST, private=f"http://{HOST}")
+    assert got is None and len(lines) == 1 and "api-host" in lines[0] and "private" in lines[0]
+
+
+def test_a_seq_at_its_ceiling_signs_nothing_new_and_says_so(tmp_path, keys):
+    first, _ = _prep(tmp_path / "hub", keys)
+    assert first is not None
+    p = tmp_path / "hub" / PUBLISH_WHERE_FILE
+    doc = json.loads(p.read_text())
+    top = keys.op_signer.sign_object({**first["o"], "seq": SEQ_MAX})
+    p.write_text(json.dumps({**doc, "signed": top}))
+    p.chmod(0o600)
+    same, lines = _prep(tmp_path / "hub", keys)
+    assert lines == [] and same is not None and same["o"]["seq"] == SEQ_MAX  # unchanged: still served
+    changed, lines = _prep(tmp_path / "hub", keys, share="http://127.0.0.1:8109")
+    assert changed is None and len(lines) == 1 and "ceiling" in lines[0]
+    assert json.loads(p.read_text())["signed"] == top  # nothing was overwritten
+
+
+def test_a_rotation_in_this_process_is_served_signed_by_the_new_key(tmp_path, keys):
+    lines: list[str] = []
+    now = [1_790_000_000_000]
+    served = publisher(
+        tmp_path / "hub", keys, api_host=HOST, share_url=SHARE, publish_url=PRIVATE, dev=True, say=lines.append,
+        now_ms=lambda: now[0],
+    )  # fmt: skip
+    first = served()
+    assert first is not None and served() is first  # remembered while the op cert is the same
+    old_pub = keys.op_signer.public
+    keys.rotate_op()  # the same HubKeys object: no restart
+    now[0] += 1000
+    after = served()
+    assert after is not None and after is not first and keys.op_signer.public != old_pub
+    assert _check(keys, after)["share"] == SHARE and after["o"]["seq"] > first["o"]["seq"]
+    with pytest.raises(Refused):
+        check_publish_where(after, op_pub=old_pub, hub_id=keys.hub_id, dev=True)  # not the old key's
+    assert served() is after and lines == []
 
 
 # --- over the real link -------------------------------------------------------------------------------------------

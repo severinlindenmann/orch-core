@@ -789,6 +789,17 @@ PW_REFUSED: list[tuple[str, str]] = [
     ("underscore", "https://pub_x.example.com"),
     ("unbracketed_v6", "https://::1"),
     ("idna_sharp_s", "https://stra\u00dfe.example"),
+    ("sixtofour_ip", "https://[2002:c000:204::1]"),  # 6to4 2002::/16 embeds an IPv4 address
+    ("sixtofour_ip_private_inside", "https://[2002:0a00:0001::1]"),
+    ("teredo_ip", "https://[2001:0:4136:e378:8000:63bf:3fff:fdd2]"),  # Teredo 2001::/32 embeds an IPv4 address
+    ("teredo_ip_port", "https://[2001::1]:8443"),
+    ("single_label", "https://publish"),  # a name with no dot, without dev
+    ("single_label_port", "https://publish:8443"),
+    ("single_label_trailing_dot", "https://publish."),
+    ("home_arpa_name", "https://hub.home.arpa"),
+    ("home_arpa_bare", "https://home.arpa"),
+    ("lan_name", "https://pub.lan"),
+    ("lan_bare", "https://lan"),
 ]
 #: (name, origin given, canonical origin) accepted without ``dev``
 PW_CANONICAL: list[tuple[str, str, str]] = [
@@ -808,6 +819,10 @@ PW_CANONICAL: list[tuple[str, str, str]] = [
     ("localhost_prefix_only", "https://localhost.example.com", "https://localhost.example.com"),
     ("172_32_is_public", "https://172.32.0.1", "https://172.32.0.1"),
     ("100_128_is_public", "https://100.128.0.1", "https://100.128.0.1"),
+    ("v6_2001_outside_teredo", "https://[2001:4860:4860::8888]", "https://[2001:4860:4860::8888]"),
+    ("v6_2003_is_public", "https://[2003::1]", "https://[2003::1]"),
+    ("lan_in_the_middle", "https://lan.example.com", "https://lan.example.com"),
+    ("home_arpa_in_the_middle", "https://home.arpa.example.com", "https://home.arpa.example.com"),
 ]
 #: accepted only with ``dev`` (name, origin given, canonical origin)
 PW_DEV_ONLY: list[tuple[str, str, str]] = [
@@ -819,6 +834,7 @@ PW_DEV_ONLY: list[tuple[str, str, str]] = [
     ("localhost_upper_trailing_dot", "http://LocalHost.:8102", "http://localhost:8102"),
     ("loopback_v6_http", "http://[::1]:8102", "http://[::1]:8102"),
     ("loopback_v6_long", "http://[0:0:0:0:0:0:0:1]:8102", "http://[::1]:8102"),
+    ("single_label_https", "https://publish", "https://publish"),  # the lab's docker names; a real hub needs a dot
 ]
 #: refused even with ``dev``: dev adds loopback only
 PW_DEV_REFUSED: list[tuple[str, str]] = [
@@ -830,6 +846,10 @@ PW_DEV_REFUSED: list[tuple[str, str]] = [
     ("localhost_with_path", "http://localhost:8102/x"),
     ("loopback_with_userinfo", "http://u@127.0.0.1:8102"),
     ("link_local_http", "http://169.254.1.1"),
+    ("sixtofour_ip", "https://[2002:c000:204::1]"),
+    ("teredo_ip", "https://[2001:0:4136:e378:8000:63bf:3fff:fdd2]"),
+    ("home_arpa_name", "https://hub.home.arpa"),
+    ("lan_name", "https://pub.lan"),
 ]
 
 

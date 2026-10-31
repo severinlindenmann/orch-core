@@ -9,11 +9,15 @@ persists the state when a function says it changed.
   cert not revoked, not expired). An object that no longer verifies is deleted. Transient failures (a fetch error,
   a lower seq, a bad signature on a NEW object) never reach the held one: :func:`offer` refuses the new object and
   leaves the old.
-* **Tombstone.** ``publish_where_floors[hub_id]`` is the highest seq ever stored. It is kept when the object is
-  deleted (leave, unbind) and carried into a later binding, so an older object is never taken again."""
+* **Tombstone.** ``publish_where_floors[hub_id]`` is ``{seq, digest}``: the highest seq ever stored and the sha256 of
+  the canonical bytes of the object stored at it. It is kept when the object is deleted (leave, unbind) and carried
+  into a later binding, so an older object is never taken again, and neither is another object at the same seq (the
+  equal-seq rule holds across a leave, a rejoin and a drop at rest). A floor written before digests existed was a bare
+  seq: it reads as a seq with no digest, so an equal seq is refused (the hub's next change has a higher one)."""
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from typing import Any
 
@@ -25,22 +29,54 @@ from . import wire
 from .errors import HubRefused
 from .publish_where import SEQ_MAX, check_publish_where
 
-__all__ = ["SEQ_MAX", "drop", "floors_of", "offer", "read"]
+__all__ = ["SEQ_MAX", "digest_of", "drop", "floor_ok", "floors_from_json", "floors_of", "offer", "read"]
 
 _LOG = logging.getLogger("orch.hubclient.publish_held")
+_HEX64 = frozenset("0123456789abcdef")
 
 
-def floors_of(state: Any) -> dict[str, int]:
-    """Every floor ``state`` holds, with the seq of the object it holds counted. ``{}`` for no state."""
+def digest_of(signed: Any) -> str:
+    """sha256 (hex) of the canonical JSON of a signed object as received: what a floor remembers of it."""
+    return hashlib.sha256(cj(signed)).hexdigest()
+
+
+def floor_ok(v: Any) -> bool:
+    """Is ``v`` a floor as stored: ``{seq, digest}`` (``digest`` ``None`` or 64 lower-case hex), or the bare int seq of
+    an older file?"""
+    if type(v) is int:
+        return 0 <= v <= SEQ_MAX
+    if type(v) is not dict or set(v) != {"seq", "digest"}:
+        return False
+    d = v["digest"]
+    return (
+        type(v["seq"]) is int
+        and 0 <= v["seq"] <= SEQ_MAX
+        and (d is None or (type(d) is str and len(d) == 64 and _HEX64.issuperset(d)))
+    )
+
+
+def floors_from_json(d: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """The floors as the state keeps them, ``{hub_id: {seq, digest}}``; a bare int (an older file) has no digest."""
+    return {
+        k: {"seq": v, "digest": None} if type(v) is int else {"seq": v["seq"], "digest": v["digest"]}
+        for k, v in d.items()
+    }
+
+
+def floors_of(state: Any) -> dict[str, dict[str, Any]]:
+    """Every floor ``state`` holds, with the object it holds counted. ``{}`` for no state."""
     if state is None:
         return {}
-    out = dict(state.publish_where_floors)
+    out = {k: dict(v) for k, v in state.publish_where_floors.items()}
     held = state.publish_where
     if held is not None:
         try:
-            out[state.hub_id] = max(out.get(state.hub_id, 0), held["o"]["seq"])
-        except (KeyError, TypeError):
-            pass
+            seq, digest = held["o"]["seq"], digest_of(held)
+        except (KeyError, TypeError, JcsError):
+            return out
+        cur = out.get(state.hub_id)
+        if cur is None or cur["seq"] < seq or (cur["seq"] == seq and cur["digest"] is None):
+            out[state.hub_id] = {"seq": seq, "digest": digest}
     return out
 
 
@@ -103,17 +139,21 @@ def offer(state: Any, signed: Any, now_ms: int) -> tuple[str | None, bool]:
         o = check_publish_where(signed, op_pub=key[0], hub_id=state.hub_id, dev=key[1], held=state.publish_where)
     except HubRefused as exc:
         return exc.code, changed
-    floor = state.publish_where_floors.get(state.hub_id, 0)
-    if o["seq"] < floor:
+    floor = state.publish_where_floors.get(state.hub_id)
+    floor_seq = 0 if floor is None else floor["seq"]
+    if o["seq"] < floor_seq:
         return "stale_seq", changed
     try:
-        same = state.publish_where is not None and cj(signed) == cj(state.publish_where)
+        digest = digest_of(signed)
+        same = state.publish_where is not None and digest == digest_of(state.publish_where)
     except JcsError:
         return "malformed", changed
+    if state.publish_where is None and floor is not None and o["seq"] == floor_seq and floor["digest"] != digest:
+        return "seq_conflict", changed  # nothing held (a leave, a rejoin, a drop at rest): the tombstone's bytes decide
     if not same:
         state.publish_where = {"o": dict(signed["o"]), "sig": signed["sig"]}
         changed = True
-    if floor < o["seq"]:
-        state.publish_where_floors[state.hub_id] = o["seq"]
+    if floor is None or floor_seq < o["seq"] or floor["digest"] is None:
+        state.publish_where_floors[state.hub_id] = {"seq": o["seq"], "digest": digest}
         changed = True
     return None, changed

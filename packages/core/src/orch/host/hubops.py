@@ -299,8 +299,37 @@ def _load_state(service: WorkspaceService) -> Any:
 
 
 def _save_state(service: WorkspaceService, state: Any) -> None:
+    """Save a state a long call (a join, a leave) loaded earlier. Under ``_MU`` the publish_where seq tombstones are
+    merged with what is on disk now, so a background ``hub_where`` store that raised one meanwhile is never undone by
+    this older copy (a tombstone only grows; everything else in the state is this call's)."""
     with _MU:
+        _keep_floors(service, state)
         _write_state(service, state)
+
+
+def _keep_floors(service: WorkspaceService, state: Any) -> None:
+    from orch.hubclient import publish_held
+
+    try:
+        cur = _load_state(service)
+    except HostError:
+        return  # an unreadable file is the writer's to replace, not ours to merge
+    for hub_id, floor in publish_held.floors_of(cur).items():
+        mine = state.publish_where_floors.get(hub_id)
+        if mine is None or mine["seq"] < floor["seq"] or (mine["seq"] == floor["seq"] and mine["digest"] is None):
+            state.publish_where_floors[hub_id] = floor
+    held = state.publish_where
+    floor = state.publish_where_floors.get(state.hub_id)
+    if held is not None and floor is not None:
+        try:
+            older = held["o"]["seq"] < floor["seq"]
+        except (KeyError, TypeError):
+            older = True
+        if older:  # this copy holds an object a newer store has replaced: take the newer one of the same binding
+            same = cur is not None and (cur.hub_id, cur.binding_seq, cur.status) == (
+                state.hub_id, state.binding_seq, "bound",
+            )  # fmt: skip
+            state.publish_where = cur.publish_where if same and state.status == "bound" else None
 
 
 def _write_state(service: WorkspaceService, state: Any) -> None:
@@ -1644,6 +1673,11 @@ def _unbind(
 
         flush_publish(state=state, put=put, save=save)  # publish first, then the hub
 
+        if state.status == "bound" and model.get("binding_seq", 0) > state.binding_seq:
+            from orch.hubclient import publish_held
+
+            if publish_held.drop(state):  # the log moved on to a newer binding: this one ended, so what it held goes
+                save(state)  # (the seq tombstone stays; also for a selective binding, which retires nothing else)
         if state.status == "bound" and state.mode == "full" and model.get("binding_seq", 0) > state.binding_seq:
             retire_full_state(state, epochs, save, "unbind")  # the log moved on to a newer binding: this one ended
         flush(state=state, workspace_id=service.workspace_id, sign_wsk=sign, now_ms=now, transport_for=tf, save=save)

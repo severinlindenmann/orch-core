@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import threading
 import time
 import urllib.parse
 from collections.abc import Callable
@@ -112,8 +113,17 @@ def prepare(
             "the --publish-share-url origin is not a public https origin (https, or http on loopback for a dev hub only)"
         )
         return None
+    canonical_host = urllib.parse.urlsplit(server).netloc
+    if (
+        canonical_host != api_host
+    ):  # the forwarder compares the Host of a send with --api-host as given: they must agree
+        refuse(f"--api-host is not in canonical form: use {canonical_host}")
+        return None
     if _same_origin(share, publish_url):
         refuse("the --publish-share-url is the private --publish-url")
+        return None
+    if _same_origin(server, publish_url):
+        refuse("the --api-host is the private --publish-url")
         return None
     try:
         signer, cert_id, hub_id = keys.op_signer, keys.op_cert()["o"]["cert_id"], keys.hub_id
@@ -132,21 +142,28 @@ def prepare(
                 return held["signed"]  # unchanged: the same bytes as before the restart
         except Refused, KeyError, TypeError, CanonError:
             pass  # damaged, or not what this hub would sign now: signed again below
+    if stored_seq >= PW.SEQ_MAX:  # a new object would carry the stored seq with other bytes: every workspace refuses it
+        refuse("the stored seq is at its ceiling, so a changed object cannot be signed")
+        return None
     now = now_ms()
-    signed = signer.sign_object(
-        {
-            "v": 2,
-            "suite": 2,
-            "kind": PW.KIND,
-            "hv": 0,
-            "hub_id": hub_id,
-            "server": server,
-            "share": share,
-            "seq": min(max(stored_seq + 1, now), PW.SEQ_MAX),
-            "issued_ms": now,
-            "dev": dev,
-        }
-    )
+    try:
+        signed = signer.sign_object(
+            {
+                "v": 2,
+                "suite": 2,
+                "kind": PW.KIND,
+                "hv": 0,
+                "hub_id": hub_id,
+                "server": server,
+                "share": share,
+                "seq": min(max(stored_seq + 1, now), PW.SEQ_MAX),
+                "issued_ms": now,
+                "dev": dev,
+            }
+        )
+    except KeysError, KeyUseError:
+        refuse("the hub's op key is not usable")
+        return None
     try:
         PW.check_publish_where(signed, op_pub=signer.public, hub_id=hub_id, dev=dev)
     except Refused as e:  # never serve what core would refuse
@@ -168,3 +185,50 @@ def prepare(
         refuse("the state file could not be written (the seq would not survive a restart)")
         return None
     return signed
+
+
+def publisher(
+    state: Path,
+    keys: HubKeys,
+    *,
+    api_host: str | None,
+    share_url: str | None,
+    publish_url: str,
+    dev: bool,
+    say: Callable[[str], None],
+    now_ms: Callable[[], int] = lambda: int(time.time() * 1000),
+) -> Callable[[], dict[str, Any] | None]:
+    """A callable that gives the ``hub.publish_where`` to serve NOW, for ``hub_where`` and ``join`` (like ``where``).
+
+    It runs :func:`prepare` and remembers the answer for ``(op cert id, api_host, share_url)``: while those stay, the same
+    object is returned without touching the disk; when the op cert changes in this process (a rotation) it is prepared
+    again, so what is served is always signed by the key the card now certifies. It runs once at once, so a refusal
+    is said at start and not on every request. Whether a rotation always restarts the process or not, a served object
+    is never signed by an op key that the card no longer names."""
+    mu = threading.Lock()
+    memo: list[tuple[Any, dict[str, Any] | None]] = []
+
+    def current() -> dict[str, Any] | None:
+        try:
+            cert_id: Any = keys.op_cert()["o"]["cert_id"]
+        except KeysError, KeyError, TypeError:
+            cert_id = None
+        key = (cert_id, api_host, share_url)
+        with mu:
+            if memo and memo[0][0] == key:
+                return memo[0][1]
+            got = prepare(
+                state,
+                keys,
+                api_host=api_host,
+                share_url=share_url,
+                publish_url=publish_url,
+                dev=dev,
+                say=say,
+                now_ms=now_ms,
+            )
+            memo[:] = [(key, got)]
+            return got
+
+    current()
+    return current

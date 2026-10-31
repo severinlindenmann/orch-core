@@ -52,7 +52,7 @@ from .link.wkseal import WkSeals
 from .oidc.service import OidcService
 from .oidc.store import OidcStore
 from .publish import HttpPublishSync, HubPublish, PublishConfig
-from .pubwhere import prepare as publish_where_for
+from .pubwhere import publisher as publish_where_for
 from .reconcile import reconcile_full_only, reconcile_relay_purge
 from .relay import PushNotifier, RelayClient, RelayError
 from .relay.client import Transport
@@ -517,7 +517,7 @@ def serve(
         switch=switch,
         hooks=hook_inbox,
         activity=activity,
-        where=lambda: where_answer(state, extra_public=link_ws_public, publish_where=published),
+        where=lambda: where_answer(state, extra_public=link_ws_public, publish_where=published()),
         publish_where=published,
         closing=closing,
         deliveries=deliveries,

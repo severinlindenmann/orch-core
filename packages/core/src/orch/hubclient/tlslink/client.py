@@ -154,8 +154,10 @@ _REPLY: dict[str, Callable[[dict[str, Any]], bool]] = {
         and type(b["name"]) is str
         and type(b.get("publish_where", {})) is dict  # signed; verified by the host (publish_where.py), not here
     ),
-    # #1838 (protocol 10.9.1): the join answer is {} or {"publish_where": <signed hub.publish_where>}; no other member
-    "join": lambda b: b == {} or (set(b) == {"publish_where"} and type(b["publish_where"]) is dict),
+    # #1838 (protocol 10.9.1): the join answer is {} or {"publish_where": <signed hub.publish_where>}; no other member.
+    # The value is not judged here: the join is already committed at the hub, so a bad one is dropped by the host
+    # (service._join) and the join stands.
+    "join": lambda b: b == {} or set(b) == {"publish_where"},
     "status_put": lambda b: (  # HUB-WS-04: `{}` or the optional update request (the version only, never text)
         b == {}
         or (

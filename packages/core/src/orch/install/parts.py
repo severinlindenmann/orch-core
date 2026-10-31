@@ -10,6 +10,7 @@ import socket
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from orch import childenv
 
@@ -196,8 +197,11 @@ def command_for(
         ]
         if relay_url:
             cmd += ["--relay-url", relay_url]
-        if publish_share_url:  # known only for a publish part with a public name: nothing is guessed from --publish-url
-            cmd += ["--api-host", publish_share_url.partition("://")[2], "--publish-share-url", publish_share_url]
+        public = urlsplit(publish_share_url) if publish_share_url else None
+        if public is not None and public.scheme and public.netloc:
+            # known only for a publish part with a public name: nothing is guessed from --publish-url. A trailing "/" or
+            # a path is never part of the host the forwarder compares nor of an origin: both flags get the bare origin.
+            cmd += ["--api-host", public.netloc, "--publish-share-url", f"{public.scheme}://{public.netloc}"]
         if behind_edge:  # Caddy on this computer is the edge: it states the client (XFF), the origin is the https name
             cmd += ["--behind-edge", "--trusted-peer", ADDRESS_LOOPBACK]
         if dev and not loop:  # one user on one dev machine: the hub allows its link on a network address

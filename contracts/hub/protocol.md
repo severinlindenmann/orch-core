@@ -2952,20 +2952,42 @@ has no time rule. A hub applies the same origin rule (`canonical_origin`) before
   (no zone). Labels are `[a-z0-9-]`, 1-63, no leading or trailing `-`; at most 253 characters. A host whose last label is
   all digits must be a dotted quad in canonical form (`127.1`, `2130706433`, `010.0.0.1` are refused). The canonical form of a
   canonical origin is itself.
-- With `dev = false` (every real hub and workspace) the scheme must be `https`, and the host must not be `localhost`,
-  `local`, `internal` or under `.localhost`, `.local`, `.internal`, nor an IP literal in a loopback (`127.0.0.0/8`, `::1`),
+- With `dev = false` (every real hub and workspace) the scheme must be `https`, a hostname (not an IP literal) must have at
+  least one dot (`https://publish` is refused), and the host must not be `localhost`, `local`, `internal`, `lan`, `home.arpa`
+  or under `.localhost`, `.local`, `.internal`, `.lan`, `.home.arpa` (the dot rule is for `dev = false` only), nor an IP
+  literal in a loopback (`127.0.0.0/8`, `::1`),
   private (`10/8`, `172.16/12`, `192.168/16`), link-local (`169.254/16`, `fe80::/10`), unique-local (`fc00::/7`), CGNAT
   (`100.64/10`) range, nor in the other blocks that are never public: `0/8`, `192.0.0/24`, `192.0.2/24`, `198.18/15`,
-  `198.51.100/24`, `203.0.113/24`, `224/4`, `240/4`, and `::`, `::ffff:0:0/96`, `64:ff9b::/96`, `100::/64`, `2001:db8::/32`,
-  `fec0::/10`, `ff00::/8`. A public IP literal is allowed (an install without a name). Anything refused is `bad_origin`.
-- With `dev = true` the same rule holds, and in addition a loopback host (`localhost`, `127.0.0.0/8`, `[::1]`) may use `http`
-  (the lab) or `https`. Dev adds loopback only: a private address, a `.local` name or plain `http` anywhere else stays refused.
+  `198.51.100/24`, `203.0.113/24`, `224/4`, `240/4`, and `::`, `::ffff:0:0/96`, `64:ff9b::/96`, `100::/64`, `2001::/32`
+  (Teredo), `2001:db8::/32`, `2002::/16` (6to4; both embed an IPv4 address), `fec0::/10`, `ff00::/8`. A public IP literal is
+  allowed (an install without a name). Anything refused is `bad_origin`.
+- With `dev = true` the same rule holds (except the dot rule), and in addition a loopback host (`localhost`, `127.0.0.0/8`,
+  `[::1]`) may use `http` (the lab) or `https`. Dev adds loopback only: a private address, a `.local` name or plain `http`
+  anywhere else stays refused.
 
 **The order rule.** `seq` rises on every change (the hub persists it as `max(stored + 1, now_ms)`, so it keeps rising across
 restores and op rotation). Against the held object: a higher `seq` replaces it; an equal `seq` is accepted only if the new
 envelope is byte-identical to the held one (the canonical JSON of the whole `{"o", "sig"}`: a re-read, a re-send); a lower `seq`
 is `stale_seq`; an equal `seq` with any other byte is `seq_conflict` (dropped; the hub doctor shows a line). Nothing else is accepted: a
-refused object never replaces a held one.
+refused object never replaces a held one. The workspace's `max_seq` tombstone per `hub_id` is `{seq, digest}`, the digest being the
+sha256 of the canonical JSON of the object stored at that `seq`; when nothing is held (after a leave, a rejoin or a drop at rest)
+an equal `seq` is accepted only with the tombstone's digest (otherwise `seq_conflict`), so the equal-`seq` rule also holds across
+a leave. A tombstone that has only a `seq` (an older record) has no digest and refuses an equal `seq`. A hub whose stored `seq`
+is `2^53 - 1` signs nothing new (a new object would carry the same `seq`); it says so and keeps serving the stored one.
+
+**The signed `server` is the forwarder's `--api-host`.** A workspace signs its publish requests with the Host of `server`, and the
+hub's forwarder compares that Host with its `--api-host` exactly as given. So a hub signs only when
+`netloc(canonical server) == --api-host` byte for byte (`--api-host Pub.Example:443` is refused with
+"--api-host is not in canonical form: use pub.example"); the hub never advertises an address its own forwarder would refuse.
+
+**A bad `publish_where` never undoes a join.** In the `join` reply the member is judged after the hub committed the join: a
+member that does not verify, or is badly shaped, is dropped with a log line and the join completes. An unknown top-level member
+of the reply stays `malformed`.
+
+**Rollout (S6, #1840).** A core from before #1838 treats `publish_where` as an unknown member of the `hub_where` answer and of the
+`join` reply, and refuses the whole answer as `malformed`: address updates (§10.9) and the join itself stop working for it. So the
+core that understands `publish_where` ships BEFORE the hub that sends it. Before the pilot cut both ship together from this
+monorepo, so the order only matters for a hub or a workspace that is updated alone.
 
 **What it does not authorise.** The origins are a suggestion the owner confirms (one review, one Sign); they change no setting by
 themselves. A workspace leaving the hub deletes the held object with the hub state and keeps a `max_seq` tombstone per `hub_id`;

@@ -1333,7 +1333,8 @@ def test_hub_name_writes_one_private_http_entry_and_the_link_keeps_the_ip(tmp_pa
     argv, _ = ctx.runner.started["hub"]
     assert argv[argv.index("--link-listen") + 1] == f"{VPN}:8105"
     assert load(ctx.layout)["hub_name"] == NAME
-    assert f"http://{NAME}:8100" in out.getvalue() and "the name only" in out.getvalue()
+    assert f"http://{NAME}:8100" in out.getvalue() and "phones pair with this name" in out.getvalue()
+    assert "the name only" not in out.getvalue()  # #1836: the hub keeps serving its own VPN address too
     assert "caddy" not in out.getvalue().lower()
 
 

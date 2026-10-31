@@ -1340,7 +1340,7 @@ def _send(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
             if _refused_outright(exc):
                 with _MU:
                     rows = [r for r in _records(service) if r.get("id") != rec["id"]]
-                    _save_records(service, [*rows, {**rec, "state": "failed"}])
+                    _save_records(service, _prune_failed([*rows, {**rec, "state": "failed"}], service.clock()))
             raise
         for entry, data in zip(meta["files"], blobs, strict=True):
             flow.put_file(client, service.workspace_id, meta["share_id"], entry["name"], data)
@@ -1376,6 +1376,23 @@ def _send(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
             _SENDING.discard(key)
 
 
+FAILED_KEEP, FAILED_DAYS = 50, 7  # a failed send is hidden; its record is kept this long / this many, then dropped
+
+
+def _prune_failed(rows: list[dict[str, Any]], now: float) -> list[dict[str, Any]]:
+    from datetime import datetime
+
+    def fresh(r: dict[str, Any]) -> bool:
+        try:
+            return now - datetime.fromisoformat(str(r.get("created_at"))).timestamp() < FAILED_DAYS * 86400
+        except ValueError:
+            return False
+
+    failed = [r for r in rows if r.get("state") == "failed" and fresh(r)][-FAILED_KEEP:]
+    keep = {id(r) for r in failed}
+    return [r for r in rows if r.get("state") != "failed" or id(r) in keep]
+
+
 def _refused_outright(exc: Exception) -> bool:
     """The server said no to the first request (the meta) in so many words, so nothing of this share exists there. A
     timeout, a 5xx or a lost answer proves nothing and keeps the "sending" record (revoke must still find it)."""
@@ -1385,7 +1402,8 @@ def _refused_outright(exc: Exception) -> bool:
     if isinstance(exc, HostError):  # the register step turns the server's refusal into this closed code
         return exc.code == "publish.server_refused"
     if isinstance(exc, PublishError):
-        return 400 <= exc.status < 500
+        # 408 (timed out), 409 (it may exist already) and 429 (try later) prove nothing about the share: never "failed"
+        return 400 <= exc.status < 500 and exc.status not in (408, 409, 429)
     return isinstance(exc, HubRefused) and getattr(exc, "code", "") in _REFUSED_CODES
 
 

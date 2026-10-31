@@ -22,26 +22,38 @@ def check_delegation(delegation, pk, ws_hex, path_ws=None):
     return o
 
 
-def hub_allowed(conn, ws_hex, person_id, live, now_ms=0):
-    """P02, the ONE check every use of a hub allowance goes through. A TRUSTED hub (`trusted_hubs`) said by a signed
-    `hub.allow` that this workspace and owner are its own, AND all of: the operator never unbound the workspace
-    (`hub_denied`), the op cert that signed it is not revoked, and (`live`, every use) the workspace's binding is
-    `bound` to that same hub at exactly the allowed `binding_seq`. Leaving, unbinding, a re-join, another hub, a revoked
-    cert, an untrusted hub or an operator unbind each end it on the very next request; a stale row is dead by
-    construction. Without `live` (registration, before the binding exists) the epoch rule waits for the binding."""
+_ALLOW_OK = (
+    " WHERE a.workspace_id=? AND a.person_id=?"
+    " AND NOT EXISTS (SELECT 1 FROM hub_op_revoked r WHERE r.hub_id=a.hub_id AND r.cert_id=a.cert_id)"
+    " AND NOT EXISTS (SELECT 1 FROM hub_denied d WHERE d.workspace_id=a.workspace_id)"
+)
+
+
+def hub_allowed_live(conn, ws_hex, person_id):
+    """P02, the gate of every REQUEST. A TRUSTED hub (`trusted_hubs`) said by a signed `hub.allow` that this workspace
+    and owner are its own, AND all of: the operator never unbound the workspace (`hub_denied`), the op cert that signed
+    it is not revoked, and the workspace's binding is `bound` to that same hub at exactly the allowed `binding_seq`.
+    Leaving, unbinding, a re-join, another hub, a revoked cert, an untrusted hub or an operator unbind each end it on the
+    very next request; a stale row is dead by construction."""
     q = (
         "SELECT 1 FROM hub_allows a JOIN trusted_hubs t ON t.hub_id=a.hub_id"
-        + (
-            " JOIN hub_bindings b ON b.workspace_id=a.workspace_id AND b.hub_id=a.hub_id"
-            " AND b.binding_seq=a.binding_seq AND b.status='bound'"
-            if live
-            else f" AND a.updated_ms >= {int(now_ms - cleanup.ALLOW_TTL_MS)}"  # pending rows expire
-        )
-        + " WHERE a.workspace_id=? AND a.person_id=?"
-        " AND NOT EXISTS (SELECT 1 FROM hub_op_revoked r WHERE r.hub_id=a.hub_id AND r.cert_id=a.cert_id)"
-        " AND NOT EXISTS (SELECT 1 FROM hub_denied d WHERE d.workspace_id=a.workspace_id)"
+        " JOIN hub_bindings b ON b.workspace_id=a.workspace_id AND b.hub_id=a.hub_id"
+        " AND b.binding_seq=a.binding_seq AND b.status='bound'" + _ALLOW_OK
     )
     return conn.execute(q, (ws_hex, person_id)).fetchone() is not None
+
+
+def hub_allowed_pending(conn, ws_hex, person_id, *, now_ms):
+    """P02, the gate of REGISTRATION (the binding cannot exist before the workspace does): the same row, pin, cert and
+    deny rules, and the row must be younger than the 24 h expiry. `now_ms` is required (keyword only): there is no
+    default that could silently switch the expiry off."""
+    q = (
+        "SELECT 1 FROM hub_allows a JOIN trusted_hubs t ON t.hub_id=a.hub_id"
+        " AND a.updated_ms >= ?" + _ALLOW_OK
+    )
+    return (
+        conn.execute(q, (now_ms - cleanup.ALLOW_TTL_MS, ws_hex, person_id)).fetchone() is not None
+    )
 
 
 def owner_listed(conn, person_id):
@@ -50,7 +62,7 @@ def owner_listed(conn, person_id):
     )
 
 
-def require_prebound(conn, ws_hex, person_id, now_ms=0):
+def require_prebound(conn, ws_hex, person_id, *, now_ms):
     """An unknown workspace may register only if the admin pre-bound it to this owner (M2) and the
     owner is on the allowlist, or a trusted hub allowed exactly this workspace and owner (P02). Every
     failure is the same 401, whatever the reason (L3)."""
@@ -61,7 +73,7 @@ def require_prebound(conn, ws_hex, person_id, now_ms=0):
             (ws_hex, person_id),
         ).fetchone()
         is not None
-    ) or hub_allowed(conn, ws_hex, person_id, live=False, now_ms=now_ms)
+    ) or hub_allowed_pending(conn, ws_hex, person_id, now_ms=now_ms)
     if not ok:
         raise Refusal(401, "unknown_workspace")
 
@@ -87,8 +99,8 @@ def check_admitted(conn, row):
     with no cache in front, so a block or an allowlist removal bites on the very next request."""
     if row["status"] != "active":
         raise Refusal(403, "workspace_blocked")
-    if not owner_listed(conn, row["owner_person_id"]) and not hub_allowed(
-        conn, row["workspace_id"], row["owner_person_id"], live=True
+    if not owner_listed(conn, row["owner_person_id"]) and not hub_allowed_live(
+        conn, row["workspace_id"], row["owner_person_id"]
     ):
         raise Refusal(403, "owner_not_allowed")
 
@@ -110,9 +122,9 @@ def register(conn, ws_hex, delegation, pk, now_ms, guard=None, after=None):
             guard(conn, row is not None)
         if row is None:
             # checked on freshly read state, inside the lock (M2)
-            require_prebound(conn, ws_hex, o["owner_person_id"], now_ms)
-            if not owner_listed(conn, o["owner_person_id"]) and not hub_allowed(
-                conn, ws_hex, o["owner_person_id"], live=False, now_ms=now_ms
+            require_prebound(conn, ws_hex, o["owner_person_id"], now_ms=now_ms)
+            if not owner_listed(conn, o["owner_person_id"]) and not hub_allowed_pending(
+                conn, ws_hex, o["owner_person_id"], now_ms=now_ms
             ):
                 raise Refusal(401, "unknown_workspace")
             conn.execute(

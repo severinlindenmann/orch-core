@@ -3512,6 +3512,10 @@ a re-join (a higher seq), a binding to another hub, a revoked op cert of the hub
 that only the operator clears) or `admin hub untrust` ends it on the very next request. A row of a hub the workspace left is dead
 by construction and is simply overwritten by the new bound hub's allowance.
 
+**What it does not do.** There is no `hub.disallow`. Demoting or disabling the owner's hub-admin role, or turning `share_files` off, only
+stops FUTURE `hub.allow` objects; an allowance already stored counts until the epoch changes (a leave, a re-join, another hub, an
+operator unbind or unpin, a revoked op cert). The expiry of 24 h applies only to a row the workspace never bound to that hub.
+
 ### 11.11 `hub_where` carries the publish address (P02)
 
 The reply of §10.9 may carry one more exact member, `publish`: the origin of this hub's publish server (`https://host[:port]`,

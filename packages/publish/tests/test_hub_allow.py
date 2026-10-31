@@ -416,3 +416,27 @@ def test_bound_to_b_a_asks_refused_and_b_asks_stores_its_own_row(env):
     assert put_allow(env, allow_obj(other, seq=2)).status_code == 200
     assert [r["hub_id"] for r in env.sql("SELECT hub_id FROM hub_allows")] == [other.id]
     assert env.status(headers=None) is not None
+
+
+def test_the_expiry_has_no_default_that_could_switch_it_off(env):
+    import inspect
+
+    from pubsrv import db, registry
+
+    for fn in (registry.hub_allowed_pending, registry.require_prebound):
+        p = inspect.signature(fn).parameters["now_ms"]
+        assert p.kind is inspect.Parameter.KEYWORD_ONLY and p.default is inspect.Parameter.empty
+    other = Hub()
+    pre_write(env, other, PERSON)
+    conn = db.connect(env.path)
+    try:
+        with pytest.raises(TypeError):
+            registry.hub_allowed_pending(conn, WS_A, PERSON)
+        from pubsrv import cleanup
+
+        assert registry.hub_allowed_pending(conn, WS_A, PERSON, now_ms=NOW)
+        assert not registry.hub_allowed_pending(
+            conn, WS_A, PERSON, now_ms=NOW + cleanup.ALLOW_TTL_MS + 1000
+        )
+    finally:
+        conn.close()

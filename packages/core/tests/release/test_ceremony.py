@@ -1014,9 +1014,9 @@ def test_a_failed_write_keeps_the_mode_too(lab, capsys, monkeypatch):
 def _prepare_test_key(lab, capsys):
     assert run_main(lab, capsys, "init")[0] == 0
     (lab.sim / "gh-test-env.json").write_text(json.dumps(GOOD_ENV))
-    (lab.sim / "gh-test-policies.json").write_text(json.dumps({
-        "branch_policies": [{"name": n, "type": "branch"} for n in ("develop", "main")]
-    }))
+    (lab.sim / "gh-test-policies.json").write_text(
+        json.dumps({"branch_policies": [{"name": n, "type": "branch"} for n in ("develop", "main")]})
+    )
 
 
 def test_issue_test_key(lab, capsys):
@@ -1041,10 +1041,19 @@ def test_issue_test_key(lab, capsys):
     root_key.public_key().verify(base64.b64decode(cert["sig"]), rootkey.CERT_DOMAIN + body)
     doc = json.loads(body)
     key = rootkey.Ed25519PrivateKey.from_private_bytes(base64.b64decode(lab.vault(ceremony.TEST_TITLE)["password"]))
-    assert cert == rootkey.certify(root_key, "root-1", rootkey.build_cert(
-        key_id="tk-1", public_key=ceremony._pub(key), serial=1042, purpose="core", channels=["test-*"],
-        not_before=ceremony._stamp(T0), not_after=ceremony._stamp(T0 + timedelta(days=ceremony.CI_DAYS)),
-    ))
+    assert cert == rootkey.certify(
+        root_key,
+        "root-1",
+        rootkey.build_cert(
+            key_id="tk-1",
+            public_key=ceremony._pub(key),
+            serial=1042,
+            purpose="core",
+            channels=["test-*"],
+            not_before=ceremony._stamp(T0),
+            not_after=ceremony._stamp(T0 + timedelta(days=ceremony.CI_DAYS)),
+        ),
+    )
     assert lab.vault(ceremony.TEST_TITLE)["username"] == "tk-1"
     assert (lab.sim / "gh-test-secret").read_text() == lab.vault(ceremony.TEST_TITLE)["password"]
     calls = lab.calls()[n:]
@@ -1114,21 +1123,16 @@ def test_issue_test_key_rolls_back_failed_write(lab, capsys, monkeypatch):
 
 @pytest.mark.parametrize(
     "cert_serial,revoked,min_serial,expected",
-    [(999, [], 1, 1001), (1001, [], 1, 1002), (42, [1007, 9], 1, 1008),
-     (42, [1007], 1010, 1011), (42, [], 999, 1001)],
+    [(999, [], 1, 1001), (1001, [], 1, 1002), (42, [1007, 9], 1, 1008), (42, [1007], 1010, 1011), (42, [], 999, 1001)],
 )
 def test_test_serial_range(lab, capsys, cert_serial, revoked, min_serial, expected):
     _prepare_test_key(lab, capsys)
-    key = ceremony.Ed25519PrivateKey.from_private_bytes(
-        base64.b64decode(lab.vault(ceremony.ROOT_TITLE)["password"])
-    )
+    key = ceremony.Ed25519PrivateKey.from_private_bytes(base64.b64decode(lab.vault(ceremony.ROOT_TITLE)["password"]))
     path = lab.repo / "release/keys/rk-1.cert.json"
     doc = json.loads(base64.b64decode(json.loads(path.read_text())["cert"]))
     doc["serial"] = cert_serial
     path.write_text(json.dumps(ceremony.rootkey.certify(key, ceremony.ROOT_ID, doc)))
-    revs = ceremony.rootkey.build_revocations(
-        min_serial=min_serial, revoked=revoked, issued_at=ceremony._stamp(T0)
-    )
+    revs = ceremony.rootkey.build_revocations(min_serial=min_serial, revoked=revoked, issued_at=ceremony._stamp(T0))
     (lab.repo / "release/keys/revocations.json").write_text(
         json.dumps(ceremony.rootkey.revoke(key, ceremony.ROOT_ID, revs))
     )
@@ -1139,9 +1143,7 @@ def test_test_serial_range(lab, capsys, cert_serial, revoked, min_serial, expect
 
 def test_test_serial_revoked_refusal(lab, capsys, monkeypatch):
     _prepare_test_key(lab, capsys)
-    key = ceremony.Ed25519PrivateKey.from_private_bytes(
-        base64.b64decode(lab.vault(ceremony.ROOT_TITLE)["password"])
-    )
+    key = ceremony.Ed25519PrivateKey.from_private_bytes(base64.b64decode(lab.vault(ceremony.ROOT_TITLE)["password"]))
     revs = ceremony.rootkey.build_revocations(min_serial=1, revoked=[1001], issued_at=ceremony._stamp(T0))
     (lab.repo / "release/keys/revocations.json").write_text(
         json.dumps(ceremony.rootkey.revoke(key, ceremony.ROOT_ID, revs))
@@ -1165,17 +1167,21 @@ def test_test_serial_requires_root_signature(lab, capsys, target):
     assert not (lab.sim / "gh-test-secret").exists()
 
 
-@pytest.mark.parametrize("branches", [
-    [("main", "branch")], [("develop", "branch")],
-    [("main", "branch"), ("develop", "tag")],
-    [("main", "branch"), ("develop", "branch"), ("extra", "branch")],
-    [("main", "branch"), ("main", "branch")],
-])
+@pytest.mark.parametrize(
+    "branches",
+    [
+        [("main", "branch")],
+        [("develop", "branch")],
+        [("main", "branch"), ("develop", "tag")],
+        [("main", "branch"), ("develop", "branch"), ("extra", "branch")],
+        [("main", "branch"), ("main", "branch")],
+    ],
+)
 def test_test_environment_exact_branches(lab, capsys, branches):
     _prepare_test_key(lab, capsys)
-    (lab.sim / "gh-test-policies.json").write_text(json.dumps({
-        "branch_policies": [{"name": name, "type": kind} for name, kind in branches]
-    }))
+    (lab.sim / "gh-test-policies.json").write_text(
+        json.dumps({"branch_policies": [{"name": name, "type": kind} for name, kind in branches]})
+    )
     rc, out, err = run_main(lab, capsys, "issue-test-key")
     assert rc == 1 and "branch policy is not exactly: develop, main" in err
 
@@ -1188,8 +1194,7 @@ def test_existing_test_secret_refuses(lab, capsys):
     rc, out, err = run_main(lab, capsys, "issue-test-key")
     assert rc == 1 and "ORCH_RELEASE_KEY already exists in release-test: refusing" in err
     assert path.read_text() == "existing"
-    assert not any("--from-template" in c["argv"] or c["argv"][:2] == ["secret", "set"]
-                   for c in lab.calls()[n:])
+    assert not any("--from-template" in c["argv"] or c["argv"][:2] == ["secret", "set"] for c in lab.calls()[n:])
 
 
 def test_test_key_gh_failure_rollback_instructions(lab, capsys, monkeypatch):
@@ -1211,10 +1216,14 @@ def test_test_key_gh_failure_rollback_instructions(lab, capsys, monkeypatch):
     lab.assert_no_leak(out, err)
 
 
-@pytest.mark.parametrize("helper,args", [
-    ("_secret_present", (REPO,)), ("_check_environment", (REPO,)),
-    ("_gh_secret_set", (None, REPO)),
-])
+@pytest.mark.parametrize(
+    "helper,args",
+    [
+        ("_secret_present", (REPO,)),
+        ("_check_environment", (REPO,)),
+        ("_gh_secret_set", (None, REPO)),
+    ],
+)
 def test_environment_keyword_is_required(helper, args):
     with pytest.raises(TypeError):
         getattr(ceremony, helper)(*args)

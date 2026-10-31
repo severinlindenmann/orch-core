@@ -42,7 +42,10 @@ sys.path.insert(0, str(HERE.parents[1] / "packages" / "core" / "src"))
 import floor  # noqa: E402
 import rootkey  # noqa: E402
 from cryptography.exceptions import InvalidSignature  # noqa: E402
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey  # noqa: E402
+from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+    Ed25519PrivateKey,
+    Ed25519PublicKey,
+)  # noqa: E402
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat  # noqa: E402
 from manifest import b64, jcs  # noqa: E402
 
@@ -114,7 +117,9 @@ def _child_env(tool: str) -> dict[str, str]:
     return env
 
 
-def run(argv: list[str], stdin: bytes | None = None, timeout: int = 120) -> tuple[int, bytes]:
+def run(
+    argv: list[str], stdin: bytes | None = None, timeout: int = 120
+) -> tuple[int, bytes]:
     """The ONLY way to start a program: argv plus stdin bytes (none: /dev/null), a per-tool allowlisted env, no shell.
 
     Returns (exit code, stdout). stderr is captured and dropped, so a child can never leak a value through ours."""
@@ -124,7 +129,9 @@ def run(argv: list[str], stdin: bytes | None = None, timeout: int = 120) -> tupl
     try:
         p = subprocess.run(  # noqa: S603
             [_BINS[tool], *argv[1:]],
-            **({"input": stdin} if stdin is not None else {"stdin": subprocess.DEVNULL}),
+            **(
+                {"input": stdin} if stdin is not None else {"stdin": subprocess.DEVNULL}
+            ),
             capture_output=True,
             env=_child_env(tool),
             shell=False,
@@ -165,19 +172,37 @@ def _pass_items() -> list[tuple[str, str, str]]:
     ``null``, ``[]``, an error object, or ANY other shape REFUSES: absence is never inferred from an odd answer."""
     out_items: list[tuple[str, str, str]] = []
     for state in ("active", "trashed"):
-        rc, out = run(["pass-cli", "item", "list", "--vault-name", VAULT, "--filter-state", state, "--output", "json"])
+        rc, out = run(
+            [
+                "pass-cli",
+                "item",
+                "list",
+                "--vault-name",
+                VAULT,
+                "--filter-state",
+                state,
+                "--output",
+                "json",
+            ]
+        )
         if rc != 0:
-            raise Ceremony("pass-cli could not list the vault: refusing (I will not guess that an item is absent)")
+            raise Ceremony(
+                "pass-cli could not list the vault: refusing (I will not guess that an item is absent)"
+            )
         try:
             doc = json.loads(out)
         except ValueError:
             doc = None
         items = doc.get("items") if isinstance(doc, dict) else None
         ok = isinstance(items, list) and all(
-            isinstance(i, dict) and all(isinstance(i.get(k), str) for k in ("id", "title", "state")) for i in items
+            isinstance(i, dict)
+            and all(isinstance(i.get(k), str) for k in ("id", "title", "state"))
+            for i in items
         )
         if not ok:
-            raise Ceremony("pass-cli item list gave an unexpected answer (not the known shape): refusing")
+            raise Ceremony(
+                "pass-cli item list gave an unexpected answer (not the known shape): refusing"
+            )
         out_items += [(i["title"], i["id"], i["state"]) for i in items]
     return out_items
 
@@ -185,11 +210,17 @@ def _pass_items() -> list[tuple[str, str, str]]:
 def _pass_find_id(title: str) -> str:
     ids = {i for t, i, _ in _pass_items() if t == title}
     if len(ids) != 1:
-        raise Ceremony(f"expected exactly one vault item titled {title!r}, found {len(ids)}: refusing")
+        raise Ceremony(
+            f"expected exactly one vault item titled {title!r}, found {len(ids)}: refusing"
+        )
     return next(iter(ids))
 
 
-_OURS = ("title", "username", "password")  # the only template fields we fill; every other key stays as pass-cli gave it
+_OURS = (
+    "title",
+    "username",
+    "password",
+)  # the only template fields we fill; every other key stays as pass-cli gave it
 
 
 def _pass_template() -> dict:
@@ -200,20 +231,40 @@ def _pass_template() -> dict:
     except ValueError:
         tpl = None
     if not isinstance(tpl, dict) or not {"title", "username", "password"} <= set(tpl):
-        raise Ceremony("cannot read pass-cli's login item template: nothing was stored (confirm the shape first)")
+        raise Ceremony(
+            "cannot read pass-cli's login item template: nothing was stored (confirm the shape first)"
+        )
     if any(v for k, v in tpl.items() if k not in _OURS):
-        raise Ceremony("pass-cli's login template has unexpected non-empty fields: nothing was stored")
+        raise Ceremony(
+            "pass-cli's login template has unexpected non-empty fields: nothing was stored"
+        )
     return tpl
 
 
 def _pass_store(tpl: dict, title: str, username: str, seed: bytearray) -> None:
     """Create the login item from a fixed key set (JSON with the base64 seed on stdin). Its stdout is not parsed."""
     item = dict(tpl)  # the extra template keys are empty (checked in _pass_template)
-    item.update({"title": title, "username": username, "password": base64.b64encode(bytes(seed)).decode()})
+    item.update(
+        {
+            "title": title,
+            "username": username,
+            "password": base64.b64encode(bytes(seed)).decode(),
+        }
+    )
     payload = bytearray(json.dumps(item).encode())
     try:
         rc, _ = run(
-            ["pass-cli", "item", "create", "login", "--vault-name", VAULT, "--from-template", "-"], bytes(payload)
+            [
+                "pass-cli",
+                "item",
+                "create",
+                "login",
+                "--vault-name",
+                VAULT,
+                "--from-template",
+                "-",
+            ],
+            bytes(payload),
         )
     finally:
         _wipe(payload)
@@ -222,7 +273,19 @@ def _pass_store(tpl: dict, title: str, username: str, seed: bytearray) -> None:
 
 
 def _pass_read_seed(item_id: str) -> bytearray:
-    rc, out = run(["pass-cli", "item", "view", "--vault-name", VAULT, "--item-id", item_id, "--field", "password"])
+    rc, out = run(
+        [
+            "pass-cli",
+            "item",
+            "view",
+            "--vault-name",
+            VAULT,
+            "--item-id",
+            item_id,
+            "--field",
+            "password",
+        ]
+    )
     if rc != 0:
         raise Ceremony("pass-cli could not read the item (by ID)")
     raw = bytearray(out.strip())
@@ -238,7 +301,9 @@ def _pass_read_seed(item_id: str) -> bytearray:
     return seed
 
 
-def _store_and_verify(tpl: dict, label: str, title: str, username: str, key: Ed25519PrivateKey) -> None:
+def _store_and_verify(
+    tpl: dict, label: str, title: str, username: str, key: Ed25519PrivateKey
+) -> None:
     seed = _seed(key)
     try:
         _pass_store(tpl, title, username, seed)
@@ -258,15 +323,22 @@ def _store_and_verify(tpl: dict, label: str, title: str, username: str, key: Ed2
     finally:
         _wipe(back)
     if not same:
-        raise Ceremony(f"read-back of the {label} item does not match the generated key")
-    print(f"proton item id ({label}): {item_id}", flush=True)  # not secret; printed only once the read-back matched
+        raise Ceremony(
+            f"read-back of the {label} item does not match the generated key"
+        )
+    print(
+        f"proton item id ({label}): {item_id}", flush=True
+    )  # not secret; printed only once the read-back matched
 
 
 def _gh_secret_set(key: Ed25519PrivateKey, repo: str, *, env: str) -> None:
     seed = _seed(key)
     data = bytearray(base64.b64encode(bytes(seed)))
     try:
-        rc, _ = run(["gh", "secret", "set", SECRET_NAME, "--env", env, "--repo", repo], bytes(data))
+        rc, _ = run(
+            ["gh", "secret", "set", SECRET_NAME, "--env", env, "--repo", repo],
+            bytes(data),
+        )
     finally:
         _wipe(seed, data)
     if rc != 0:
@@ -289,9 +361,14 @@ def _secret_present(repo: str, *, env: str, strict: bool = False) -> bool:
     rc, out = run(["gh", "secret", "list", "--env", env, "--repo", repo])
     if rc != 0:
         if strict:
-            raise Ceremony(f"cannot list the secrets of the {env!r} environment; nothing was changed")
+            raise Ceremony(
+                f"cannot list the secrets of the {env!r} environment; nothing was changed"
+            )
         return False
-    return any(line.split("\t")[0].strip() == SECRET_NAME for line in out.decode(errors="replace").splitlines())
+    return any(
+        line.split("\t")[0].strip() == SECRET_NAME
+        for line in out.decode(errors="replace").splitlines()
+    )
 
 
 # --- preflight ------------------------------------------------------------------------------------------------------
@@ -300,42 +377,69 @@ def _secret_present(repo: str, *, env: str, strict: bool = False) -> bool:
 def _check_clock(headers: str) -> None:
     """Refuse when this machine's clock is more than 5 minutes from GitHub's (it sets every issued_at / not_before)."""
     date = next(
-        (v.strip() for k, _, v in (ln.partition(":") for ln in headers.splitlines()) if k.lower() == "date"), ""
+        (
+            v.strip()
+            for k, _, v in (ln.partition(":") for ln in headers.splitlines())
+            if k.lower() == "date"
+        ),
+        "",
     )
     try:
         theirs = parsedate_to_datetime(date)
     except (TypeError, ValueError):
-        raise Ceremony("GitHub's answer has no usable Date header: cannot check the clock, refusing") from None
+        raise Ceremony(
+            "GitHub's answer has no usable Date header: cannot check the clock, refusing"
+        ) from None
     if theirs.tzinfo is None or abs((_now() - theirs).total_seconds()) > 300:
-        raise Ceremony("this machine's clock differs from GitHub's by more than 5 minutes: fix the clock first")
+        raise Ceremony(
+            "this machine's clock differs from GitHub's by more than 5 minutes: fix the clock first"
+        )
 
 
 def _check_environment(repo: str, *, env: str, expected_branches: set[str]) -> None:
     rc, raw = run(["gh", "api", "-i", f"repos/{repo}/environments/{env}"])
-    head, sep, body = raw.decode(errors="replace").replace("\r\n", "\n").partition("\n\n")
+    head, sep, body = (
+        raw.decode(errors="replace").replace("\r\n", "\n").partition("\n\n")
+    )
     try:
         doc = json.loads(body) if rc == 0 and sep else None
     except ValueError:
         doc = None
     if not isinstance(doc, dict):
-        raise Ceremony(f"the {env!r} environment does not exist (or gh cannot read it): create it first")
+        raise Ceremony(
+            f"the {env!r} environment does not exist (or gh cannot read it): create it first"
+        )
     _check_clock(head)
     if doc.get("can_admins_bypass") is not False:  # a missing key refuses too
-        raise Ceremony(f"the {env!r} environment does not say can_admins_bypass is false: refusing")
+        raise Ceremony(
+            f"the {env!r} environment does not say can_admins_bypass is false: refusing"
+        )
     pol = doc.get("deployment_branch_policy")
-    if not isinstance(pol, dict) or pol.get("custom_branch_policies") is not True or pol.get("protected_branches"):
-        raise Ceremony(f"the {env!r} environment is not restricted to a custom branch policy")
-    lst = _gh_json(["api", f"repos/{repo}/environments/{env}/deployment-branch-policies"])
+    if (
+        not isinstance(pol, dict)
+        or pol.get("custom_branch_policies") is not True
+        or pol.get("protected_branches")
+    ):
+        raise Ceremony(
+            f"the {env!r} environment is not restricted to a custom branch policy"
+        )
+    lst = _gh_json(
+        ["api", f"repos/{repo}/environments/{env}/deployment-branch-policies"]
+    )
     pols = lst.get("branch_policies") if isinstance(lst, dict) else None
     ok = (
         isinstance(pols, list)
         and len(pols) == len(expected_branches)
-        and all(isinstance(p, dict) and p.get("type", "branch") == "branch" for p in pols)
+        and all(
+            isinstance(p, dict) and p.get("type", "branch") == "branch" for p in pols
+        )
         and {p.get("name") for p in pols} == expected_branches
     )
     if not ok:
         wanted = ", ".join(sorted(expected_branches))
-        raise Ceremony(f"the {env!r} environment's branch policy is not exactly: {wanted}")
+        raise Ceremony(
+            f"the {env!r} environment's branch policy is not exactly: {wanted}"
+        )
 
 
 def _preflight_init(repo: str, root: Path) -> dict:
@@ -345,7 +449,9 @@ def _preflight_init(repo: str, root: Path) -> dict:
     titles = {t for t, _, _ in _pass_items()}
     for title in (ROOT_TITLE, CI_TITLE):
         if title in titles:
-            raise Ceremony(f"the item {title!r} already exists: refusing (rotation is not part of this script)")
+            raise Ceremony(
+                f"the item {title!r} already exists: refusing (rotation is not part of this script)"
+            )
     tpl = _pass_template()
     rc, _ = run(["gh", "auth", "status"])
     if rc != 0:
@@ -353,7 +459,14 @@ def _preflight_init(repo: str, root: Path) -> dict:
     _check_environment(repo, env=ENV_NAME, expected_branches={"main"})
     if (root / "release" / "keys" / "root-1.pub.json").exists():
         raise Ceremony("release/keys/root-1.pub.json already exists: refusing")
-    if re.search(r"^PRODUCTION_ROOTS: Mapping\[str, bytes\] = \{\}$", _read(root / KEYS_PY), re.M) is None:
+    if (
+        re.search(
+            r"^PRODUCTION_ROOTS: Mapping\[str, bytes\] = \{\}$",
+            _read(root / KEYS_PY),
+            re.M,
+        )
+        is None
+    ):
         raise Ceremony("keys.py already embeds production roots: refusing")
     return tpl
 
@@ -363,7 +476,11 @@ def _preflight_init(repo: str, root: Path) -> dict:
 KEYS_PY = "packages/core/src/orch/update/keys.py"
 INSTALL_SH = "install.sh"
 FLOOR_PY = "packages/core/src/orch/update/floor.py"  # bumped too if a later task adds it (same two lines)
-PUBLIC = ("release/keys/root-1.pub.json", "release/keys/rk-1.cert.json", "release/keys/revocations.json")
+PUBLIC = (
+    "release/keys/root-1.pub.json",
+    "release/keys/rk-1.cert.json",
+    "release/keys/revocations.json",
+)
 
 
 def _read(p: Path) -> str:
@@ -428,7 +545,9 @@ def _commit_files(root: Path, staged: dict[str, str]) -> list[str]:
             tmp = dest.with_name(dest.name + ".ceremony-tmp")
             tmps.append(tmp)
             tmp.write_text(staged[rel], encoding="utf-8")
-            if old is not None:  # keep the file's mode (install.sh must stay executable)
+            if (
+                old is not None
+            ):  # keep the file's mode (install.sh must stay executable)
                 os.chmod(tmp, stat.S_IMODE(dest.stat().st_mode))
             originals[rel] = old
             os.replace(tmp, dest)
@@ -439,7 +558,12 @@ def _commit_files(root: Path, staged: dict[str, str]) -> list[str]:
     return changed
 
 
-def _rollback(root: Path, originals: dict[str, bytes | None], tmps: list[Path], made_dirs: list[Path]) -> None:
+def _rollback(
+    root: Path,
+    originals: dict[str, bytes | None],
+    tmps: list[Path],
+    made_dirs: list[Path],
+) -> None:
     """Remove leftover temp files, restore replaced files, delete files and directories this run created."""
     failed = []
     for tmp in tmps:
@@ -473,7 +597,11 @@ def _gitignore(root: Path) -> str:
     text = _read(p) if p.exists() else ""
     if "release/keys/root.env" in text.splitlines():
         return text
-    return text + ("" if text.endswith("\n") or not text else "\n") + "release/keys/root.env\n"
+    return (
+        text
+        + ("" if text.endswith("\n") or not text else "\n")
+        + "release/keys/root.env\n"
+    )
 
 
 # --- commands -------------------------------------------------------------------------------------------------------
@@ -494,7 +622,9 @@ def _check_clock_with_github() -> None:
     rc, raw = run(["gh", "api", "-i", "user"])
     if rc != 0:
         raise Ceremony("gh could not reach GitHub to check the clock: refusing")
-    _check_clock(raw.decode(errors="replace").replace("\r\n", "\n").partition("\n\n")[0])
+    _check_clock(
+        raw.decode(errors="replace").replace("\r\n", "\n").partition("\n\n")[0]
+    )
 
 
 def cmd_init(root: Path, repo: str, tmp: Path) -> int:
@@ -528,7 +658,11 @@ def cmd_init(root: Path, repo: str, tmp: Path) -> int:
     _gh_secret_set(ci_key, repo, env=ENV_NAME)
 
     _step("revocations")
-    revs = rootkey.revoke(root_key, ROOT_ID, rootkey.build_revocations(min_serial=1, revoked=[], issued_at=_stamp(now)))
+    revs = rootkey.revoke(
+        root_key,
+        ROOT_ID,
+        rootkey.build_revocations(min_serial=1, revoked=[], issued_at=_stamp(now)),
+    )
 
     _step("stage")
     staged["release/keys/root-1.pub.json"] = _json_text(
@@ -539,11 +673,15 @@ def cmd_init(root: Path, repo: str, tmp: Path) -> int:
     staged["release/keys/root.env"] = ROOT_ENV_LINE
     staged[".gitignore"] = _gitignore(root)
     staged[KEYS_PY] = embed_root_keys_py(_read(root / KEYS_PY), ROOT_ID, root_pub)
-    staged[INSTALL_SH] = embed_root_install_sh(_read(root / INSTALL_SH), ROOT_ID, root_pub)
+    staged[INSTALL_SH] = embed_root_install_sh(
+        _read(root / INSTALL_SH), ROOT_ID, root_pub
+    )
     # the public files go through the temp dir first, so the floor is computed from the very file that gets written
     stage_dir = tmp / "stage"
     stage_dir.mkdir(mode=0o700)
-    (stage_dir / "revocations.json").write_text(staged["release/keys/revocations.json"], encoding="utf-8")
+    (stage_dir / "revocations.json").write_text(
+        staged["release/keys/revocations.json"], encoding="utf-8"
+    )
     _bump_all(root, staged, stage_dir / "revocations.json")
 
     _step("write")
@@ -557,7 +695,9 @@ def cmd_init(root: Path, repo: str, tmp: Path) -> int:
     for rel in changed:
         print(f"  {rel}")
     _step("secret-list")
-    print(f"{SECRET_NAME} in environment {ENV_NAME}: {'present' if _secret_present(repo, env=ENV_NAME) else 'MISSING'}")
+    print(
+        f"{SECRET_NAME} in environment {ENV_NAME}: {'present' if _secret_present(repo, env=ENV_NAME) else 'MISSING'}"
+    )
     return 0
 
 
@@ -567,7 +707,9 @@ def _embedded_root(root: Path) -> bytes:
         r'PRODUCTION_ROOTS: Mapping\[str, bytes\] = \{\s*"root-1": base64\.b64decode\("([^"]+)"\),\s*\}',
         _read(root / KEYS_PY),
     )
-    i = re.search(r'^ROOTS_B64 = \{"root-1": "([^"]+)"\}$', _read(root / INSTALL_SH), re.M)
+    i = re.search(
+        r'^ROOTS_B64 = \{"root-1": "([^"]+)"\}$', _read(root / INSTALL_SH), re.M
+    )
     if k is None or i is None or k[1] != i[1]:
         raise Ceremony("no single embedded root-1 in keys.py and install.sh: refusing")
     try:
@@ -583,27 +725,39 @@ def _verified_current(root: Path, revs_path: Path, embedded: bytes) -> dict:
     """The current list, accepted only as a signed envelope that verifies against ``embedded`` and is >= the floor."""
     try:
         env = json.loads(_read(revs_path))
-        if not isinstance(env, dict) or set(env) != {"doc", "root_key_id", "sig"} or env["root_key_id"] != ROOT_ID:
+        if (
+            not isinstance(env, dict)
+            or set(env) != {"doc", "root_key_id", "sig"}
+            or env["root_key_id"] != ROOT_ID
+        ):
             raise ValueError
         body = base64.b64decode(env["doc"], validate=True)
         sig = base64.b64decode(env["sig"], validate=True)
-        Ed25519PublicKey.from_public_bytes(embedded).verify(sig, rootkey.REVOCATIONS_DOMAIN + body)
+        Ed25519PublicKey.from_public_bytes(embedded).verify(
+            sig, rootkey.REVOCATIONS_DOMAIN + body
+        )
         doc = json.loads(body)
         if jcs(doc) != body:
             raise ValueError
         prev = rootkey.build_revocations(
-            min_serial=doc["min_serial"], revoked=doc["revoked"], issued_at=doc["issued_at"]
+            min_serial=doc["min_serial"],
+            revoked=doc["revoked"],
+            issued_at=doc["issued_at"],
         )
         if set(doc) != set(prev) or doc["format"] != prev["format"]:
             raise ValueError
     except (ValueError, KeyError, TypeError, InvalidSignature):
-        raise Ceremony("the current revocations.json is not a validly signed list (embedded root): refusing") from None
+        raise Ceremony(
+            "the current revocations.json is not a validly signed list (embedded root): refusing"
+        ) from None
     for rel in (INSTALL_SH, FLOOR_PY):
         p = root / rel
         if p.exists():
             f_at, f_serial = floor.read_floor(_read(p))
             if prev["issued_at"] < f_at or prev["min_serial"] < f_serial:
-                raise Ceremony(f"the current list is below the floor in {rel}: refusing")
+                raise Ceremony(
+                    f"the current list is below the floor in {rel}: refusing"
+                )
     return prev
 
 
@@ -615,11 +769,15 @@ def _next_cert_serial(root: Path, embedded: bytes, revocations: dict) -> int:
                 highest = max(highest, serial)
         for path in (root / "release/keys").glob("*.cert.json"):
             envelope = json.loads(_read(path))
-            if set(envelope) != {"cert", "root_key_id", "sig"} or envelope["root_key_id"] != ROOT_ID:
+            if (
+                set(envelope) != {"cert", "root_key_id", "sig"}
+                or envelope["root_key_id"] != ROOT_ID
+            ):
                 raise ValueError
             body = base64.b64decode(envelope["cert"], validate=True)
             Ed25519PublicKey.from_public_bytes(embedded).verify(
-                base64.b64decode(envelope["sig"], validate=True), rootkey.CERT_DOMAIN + body
+                base64.b64decode(envelope["sig"], validate=True),
+                rootkey.CERT_DOMAIN + body,
             )
             doc = json.loads(body)
             if jcs(doc) != body:
@@ -632,7 +790,9 @@ def _next_cert_serial(root: Path, embedded: bytes, revocations: dict) -> int:
         if highest == rootkey.MAX_INT:
             raise ValueError
     except (ValueError, KeyError, TypeError, OSError, InvalidSignature):
-        raise Ceremony("cannot determine the next certificate serial: refusing") from None
+        raise Ceremony(
+            "cannot determine the next certificate serial: refusing"
+        ) from None
     return highest + 1
 
 
@@ -645,7 +805,9 @@ def cmd_issue_test_key(root: Path, repo: str, tmp: Path) -> int:
     if rc != 0:
         raise Ceremony("pass-cli info failed: log in first (scripts/pass-login.sh)")
     if TEST_TITLE in {t for t, _, _ in _pass_items()}:
-        raise Ceremony("the TEST key item already exists: refusing (rotation is not part of this script)")
+        raise Ceremony(
+            "the TEST key item already exists: refusing (rotation is not part of this script)"
+        )
     tpl = _pass_template()
     rc, _ = run(["gh", "auth", "status"])
     if rc != 0:
@@ -654,7 +816,9 @@ def cmd_issue_test_key(root: Path, repo: str, tmp: Path) -> int:
     if _secret_present(repo, env=TEST_ENV, strict=True):
         raise Ceremony("ORCH_RELEASE_KEY already exists in release-test: refusing")
     embedded = _embedded_root(root)
-    revocations = _verified_current(root, root / "release/keys/revocations.json", embedded)
+    revocations = _verified_current(
+        root, root / "release/keys/revocations.json", embedded
+    )
     serial = _next_cert_serial(root, embedded, revocations)
     if serial in revocations["revoked"]:
         raise Ceremony("the chosen TEST key serial is revoked: refusing")
@@ -667,7 +831,9 @@ def cmd_issue_test_key(root: Path, repo: str, tmp: Path) -> int:
         _wipe(seed)
     if _pub(root_key) != embedded:
         del root_key
-        raise Ceremony("the root key in Proton Pass is not the embedded root: refusing to sign")
+        raise Ceremony(
+            "the root key in Proton Pass is not the embedded root: refusing to sign"
+        )
 
     _step("test-key")
     now = _now()
@@ -707,14 +873,19 @@ def cmd_issue_test_key(root: Path, repo: str, tmp: Path) -> int:
         print("changed files:")
         for rel in changed:
             print(f"  {rel}")
-        print(f"{SECRET_NAME} in environment {TEST_ENV}: {'present' if present else 'MISSING'}")
+        print(
+            f"{SECRET_NAME} in environment {TEST_ENV}: {'present' if present else 'MISSING'}"
+        )
         return 0
     except BaseException:
         print(
             "Rollback: delete the Proton Pass item titled 'orch release TEST key tk-1' in vault Agents if present.",
             file=sys.stderr,
         )
-        print("Rollback: delete ORCH_RELEASE_KEY from the release-test environment if present.", file=sys.stderr)
+        print(
+            "Rollback: delete ORCH_RELEASE_KEY from the release-test environment if present.",
+            file=sys.stderr,
+        )
         raise
 
 
@@ -742,17 +913,23 @@ def cmd_resign(root: Path, repo: str, tmp: Path) -> int:
     finally:
         _wipe(seed)
     if _pub(key) != embedded:
-        raise Ceremony("the root key in Proton Pass is not the embedded root: refusing to sign")
+        raise Ceremony(
+            "the root key in Proton Pass is not the embedded root: refusing to sign"
+        )
 
     _step("sign")
     issued_at = _stamp(_now())
     if issued_at <= prev["issued_at"]:
         raise Ceremony("the clock is not after the current list's issued_at: refusing")
-    new = rootkey.build_revocations(min_serial=prev["min_serial"], revoked=prev["revoked"], issued_at=issued_at)
+    new = rootkey.build_revocations(
+        min_serial=prev["min_serial"], revoked=prev["revoked"], issued_at=issued_at
+    )
     try:
         rootkey.check_successor(new, prev)
     except ValueError:
-        raise Ceremony("the new list is not a valid successor of the current one") from None
+        raise Ceremony(
+            "the new list is not a valid successor of the current one"
+        ) from None
     out = rootkey.revoke(key, ROOT_ID, new)
     del key
 
@@ -760,7 +937,9 @@ def cmd_resign(root: Path, repo: str, tmp: Path) -> int:
     staged = {"release/keys/revocations.json": _json_text(out)}
     stage_dir = tmp / "stage"
     stage_dir.mkdir(mode=0o700)
-    (stage_dir / "revocations.json").write_text(staged["release/keys/revocations.json"], encoding="utf-8")
+    (stage_dir / "revocations.json").write_text(
+        staged["release/keys/revocations.json"], encoding="utf-8"
+    )
     _bump_all(root, staged, stage_dir / "revocations.json")
 
     _step("write")
@@ -782,7 +961,9 @@ def _on_signal(signum, _frame):
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("command", choices=("init", "resign-revocations", "issue-test-key"))
-    ap.add_argument("--repo-root", type=Path, default=HERE.parents[1], help=argparse.SUPPRESS)
+    ap.add_argument(
+        "--repo-root", type=Path, default=HERE.parents[1], help=argparse.SUPPRESS
+    )
     ap.add_argument("--gh-repo", default=GH_REPO, help=argparse.SUPPRESS)
     a = ap.parse_args(argv)
     for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
@@ -791,14 +972,24 @@ def main(argv: list[str]) -> int:
     try:
         _resolve_tools()
         os.chmod(tmp, 0o700)
-        fn = {"init": cmd_init, "resign-revocations": cmd_resign, "issue-test-key": cmd_issue_test_key}[a.command]
+        fn = {
+            "init": cmd_init,
+            "resign-revocations": cmd_resign,
+            "issue-test-key": cmd_issue_test_key,
+        }[a.command]
         return fn(a.repo_root, a.gh_repo, tmp)
     except Ceremony as exc:
         print(f"ceremony: {exc}", file=sys.stderr)
-        print("ceremony: stopped; see docs/release-ceremony.md (recovery)", file=sys.stderr)
+        print(
+            "ceremony: stopped; see docs/release-ceremony.md (recovery)",
+            file=sys.stderr,
+        )
         return 1
     except (ValueError, KeyError, OSError):
-        print("ceremony: stopped on an unexpected error; see docs/release-ceremony.md (recovery)", file=sys.stderr)
+        print(
+            "ceremony: stopped on an unexpected error; see docs/release-ceremony.md (recovery)",
+            file=sys.stderr,
+        )
         return 1
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

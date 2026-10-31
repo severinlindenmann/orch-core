@@ -178,6 +178,7 @@ def test_operation_errors_are_declared_once_known_and_complete():
     control_only |= {"format.older", "format.newer", "format.missing", "format.exists", "update.interrupted"}
     control_only |= {"migrate.running", "migrate.signed_path", "migrate.backup_refused", "migrate.actor_refused"}
     control_only |= {"migrate.step_failed"}
+    control_only |= {c for c in ERRORS if c.startswith("update.") and c not in ("update.unverified", "update.stale")}
     control_only |= {"cosmetic.conflict"}  # run 13 D6: host op workspace.cosmetic.set
     control_only |= {"remote.refused", "passkey.invalid", "enroll.expired", "passkey.stepup_required"}
     # U2: raised by orch.update.verify; the update ops that declare them land later (then drop these two)

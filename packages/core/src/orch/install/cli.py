@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import secrets
 import shutil
 import socket
@@ -52,6 +53,13 @@ def _run(argv: Sequence[str], env: Mapping[str, str] | None = None) -> tuple[int
     r = subprocess.run(list(argv), env=childenv.sanitize(env if env else os.environ, absolute_pythonpath=True),
                        capture_output=True, text=True)  # fmt: skip
     return r.returncode, (r.stdout + r.stderr)
+
+
+def _run_stdout(argv: Sequence[str], env: Mapping[str, str] | None = None) -> tuple[int, str]:
+    """Like :func:`_run` but the output is stdout only (stderr is dropped): for reading a machine-made answer."""
+    r = subprocess.run(list(argv), env=childenv.sanitize(env if env else os.environ, absolute_pythonpath=True),
+                       capture_output=True, text=True)  # fmt: skip
+    return r.returncode, r.stdout
 
 
 def core_commit() -> str | None:
@@ -110,6 +118,7 @@ class Ctx:
     interactive: bool = False
     ask: Callable[[str, str], str] = lambda prompt, default: default
     run: Callable[..., tuple[int, str]] = _run
+    run_stdout: Callable[..., tuple[int, str]] = _run_stdout  # stdout only; used to read the hub's card
     resolve_ref: Callable[[str, str], str] = _resolve_ref
     core_commit: Callable[[], str | None] = core_commit
     health: Callable[..., bool] = _health  # (host, port[, timeout]): something listens there
@@ -387,6 +396,68 @@ def _save_hub_settings(f: Path, body: dict[str, Any]) -> None:
     os.replace(tmp, f)
 
 
+_HUB_ID = re.compile(r"[0-9a-f]{32}")
+
+
+def pin_hub_at_publish(ctx: Ctx, env: Mapping[str, str]) -> bool:
+    """When this install holds BOTH a hub and a publish (and the hub dials that publish), pin the hub's id at publish
+    (``orch-publish admin hub trust``). Without it publish refuses the hub's ``hub.allow`` and every workspace of the
+    hub is told "unknown workspace". Idempotent (a second pin changes nothing); runs after each install of either
+    part, so an existing install heals. A hub that is not part of this install is never pinned. A failure is one
+    plain line and never fails the install. Returns whether the pin ran."""
+    st = load(ctx.layout)
+    hub, pub = st["parts"].get("hub"), st["parts"].get("publish")
+    if not hub or not pub or hub.get("publish_remote"):
+        return False
+    hub_data, pub_data = ctx.layout.data("hub"), ctx.layout.data("publish")
+    try:
+        rc, out = ctx.run_stdout([hub["binary"], "keys", "--state", str(hub_data), "card"], env)
+        hub_id = _card_hub_id(out) if rc == 0 else None
+        if hub_id is None:
+            raise InstallError("the hub's id could not be read")
+        old = pub.get("pinned_hub_id")
+        if old and old != hub_id:  # the hub's keys changed: the old id must not stay trusted
+            _admin_hub(ctx, pub, pub_data, "untrust", old, env)
+        _admin_hub(ctx, pub, pub_data, "trust", hub_id, env)
+    except (InstallError, OSError, ValueError, TypeError, KeyError) as e:
+        ctx.say(f"  note: this hub could not be allowed to share at publish ({e}); shares will not work until it is")
+        return False
+    st = load(ctx.layout)
+    if "publish" in st["parts"]:
+        st["parts"]["publish"]["pinned_hub_id"] = hub_id
+        save(ctx.layout, st)
+    ctx.say(f"  pinned hub {hub_id} at publish")
+    return True
+
+
+def _card_hub_id(out: str) -> str | None:
+    """The hub id of ``orch-hub keys card`` stdout. Strict: the whole output is exactly one JSON object with exactly
+    the card's keys (``o``, ``op_cert``, ``sig``); ``o.kind`` is ``hub.card``; ``o.hub_id`` is 32 lower-case hex
+    characters AND is the id derived from ``o.hk_root_pub`` (the id is bound to the key, not just claimed)."""
+    from orch.crypto.encoding import EncodingError, unb64u
+    from orch.hubclient import wire
+
+    try:
+        card = json.loads(out.strip())
+        if not isinstance(card, dict) or set(card) != {"o", "op_cert", "sig"}:
+            return None
+        o = card["o"]
+        if not isinstance(o, dict) or o.get("kind") != "hub.card":
+            return None
+        hub_id, root = o.get("hub_id"), o.get("hk_root_pub")
+        if not isinstance(hub_id, str) or not _HUB_ID.fullmatch(hub_id) or not isinstance(root, str):
+            return None
+        return hub_id if wire.hub_id(unb64u(root, 65)) == hub_id else None
+    except (ValueError, TypeError, EncodingError):
+        return None
+
+
+def _admin_hub(ctx: Ctx, pub: Mapping[str, Any], data: Path, action: str, hub_id: str, env: Mapping[str, str]) -> None:
+    rc, out = ctx.run([pub["binary"], "admin", "--data", str(data), "hub", action, hub_id], env)
+    if rc != 0:
+        raise InstallError(out.strip()[-200:] or "orch-publish refused")
+
+
 def install_part(
     ctx: Ctx,
     part: str,
@@ -412,6 +483,7 @@ def install_part(
     trusted_proxy: str | None = None,  # behind the private network's proxy: its networks (rate key only)
 ) -> dict[str, Any]:
     spec = P.PARTS[part]
+    explicit_publish_url = publish_url
     source = source or ctx.env.get(f"ORCH_INSTALL_SOURCE_{part.upper()}")  # a local checkout (dev machines, tests)
     lay = ctx.layout
     st = load(lay)
@@ -532,7 +604,12 @@ def install_part(
         "pid": started.get("pid"),
         "started": int(time.time()),
     }
+    if part == "publish" and pubs and pubs.get("pinned_hub_id"):
+        rec["pinned_hub_id"] = pubs["pinned_hub_id"]  # a reinstall keeps what it pinned (a changed hub id is untrusted)
     if part == "hub":
+        # a hub told to dial a publish while this install has none is dialling someone else's: never pinned there.
+        # (With this install's publish present, the address is that publish's own name, e.g. its https one.)
+        rec["publish_remote"] = bool(explicit_publish_url) and pubs is None
         rec["link_port"] = ports_of(ctx, st)["link"]
         if link_address:
             rec["link_host"] = link_address
@@ -552,6 +629,8 @@ def install_part(
     _version(ctx, rec, spec.binary, tool_env)
     save(lay, {**st, "parts": {**st["parts"], part: rec}})
     _report(ctx, part, rec)
+    if part in ("hub", "publish"):
+        pin_hub_at_publish(ctx, tool_env)
     if part == "publish":
         url = public_origin or url  # server = share = the https name when there is one
         if not workspace_side and not public_origin:
@@ -715,6 +794,22 @@ def _ws_host(st: dict[str, Any]) -> str:
     return st.get("address") or P.ADDRESS_LOOPBACK
 
 
+def _untrust_pinned(ctx: Ctx, st: dict[str, Any]) -> None:
+    """The hub part goes: the id this install pinned at its publish stops being trusted there."""
+    pub = st["parts"].get("publish")
+    old = pub.get("pinned_hub_id") if pub else None
+    if not old:
+        return
+    env = {**ctx.env, "UV_TOOL_DIR": str(ctx.layout.tools), "UV_TOOL_BIN_DIR": str(ctx.layout.bin)}
+    try:
+        _admin_hub(ctx, pub, ctx.layout.data("publish"), "untrust", old, env)
+    except (InstallError, OSError, ValueError, TypeError, KeyError) as e:
+        ctx.say(f"  note: the hub {old} could not be removed from publish's trusted hubs ({e})")
+        return
+    pub.pop("pinned_hub_id", None)
+    save(ctx.layout, st)
+
+
 def remove(ctx: Ctx, part: str, purge: bool) -> int:
     st = load(ctx.layout)
     if part == "dashboard":
@@ -729,6 +824,7 @@ def remove(ctx: Ctx, part: str, purge: bool) -> int:
         ctx.say(f"{part} is not installed")
         return 0
     if part == "hub":
+        _untrust_pinned(ctx, st)
         remove_helper(ctx, st)  # first: its helper.json lists this hub; the helper only exists for a hub
     ctx.runner.stop(part)
     env = {**ctx.env, "UV_TOOL_DIR": str(ctx.layout.tools), "UV_TOOL_BIN_DIR": str(ctx.layout.bin)}

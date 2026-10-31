@@ -159,7 +159,7 @@ describe('worktrees open terminal here', () => {
     const w = (await state(s)).worktrees[0]
     const r = await refused(run(s, 'open_terminal', { id: w.id }))
     expect(r).toMatchObject({ status: 409, code: 'addon.inactive' })
-    expect(r.message).toMatch(/Terminals is not active/)
+    expect(r.message).toMatch(/Command window is not active/)
   })
 })
 

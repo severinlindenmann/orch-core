@@ -1091,10 +1091,10 @@ def _list(call: Call, args: dict[str, Any]) -> dict[str, Any]:
         if not out["configured"]:
             # No server is set up yet: there is nothing to ask. The local answer says so (`configured` false, `live`
             # false) instead of failing, so a page can tell the person what to do next.
-            return ok_result({**out, "live": False})
+            return ok_result({**out, "live": False, "why": "local"})
         hub = _hub_route(service, required=False)
         if hub is None:  # local only: there is no server to ask
-            return ok_result({**out, "live": False})
+            return ok_result({**out, "live": False, "why": "local"})
         return {"plan": {"op": "publish.list", "cfg": _config(service), "out": out, "hub": hub}}
     return ok_result(out)
 
@@ -1550,6 +1550,33 @@ def _set_password(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
     return {"share_id": rec["id"], "password": plan["password"], "shown_once": True}
 
 
+#: refusals that say "answered, and not allowed": the hub is online. Everything else (a timeout, 429, bad_signature,
+#: bad_nonce, a server error, a network error) is "unreachable": the Shares page offers Try again.
+_NOT_ALLOWED_CODES = frozenset(
+    {
+        "unknown_workspace",
+        "owner_not_allowed",
+        "workspace_blocked",
+        "unknown_hub",
+        "other_hub",
+        "hub_id_mismatch",
+        "not_bound",
+        "unbound",
+        "dev_refused",
+    }
+)
+
+
+def _why_not_live(exc: Exception) -> str:
+    """``not_allowed`` only for an explicit refusal code (``unknown_workspace``, ``owner_not_allowed``, ...): something
+    answered and the hub is online. Anything else is ``unreachable``."""
+    code = str(getattr(exc, "code", ""))
+    status = int(getattr(exc, "status", 0) or 0)
+    if status >= 500 or code == "network":
+        return "unreachable"
+    return "not_allowed" if code in _NOT_ALLOWED_CODES else "unreachable"
+
+
 def _live(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
     """``publish.list {live}``: the local rows with the server's state and view count. A server that cannot be reached
     leaves the local rows as they are, said plainly."""
@@ -1563,8 +1590,8 @@ def _live(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
             r.get("id"): r
             for r in flow.list_shares(_client(service, plan["cfg"]["server"], plan["hub"]), service.workspace_id)
         }
-    except (PublishError, HubRefused):  # a hub that is down is a server that is down: the local rows, said plainly
-        return {**out, "live": False}
+    except (PublishError, HubRefused) as exc:  # the local rows, and why the server's numbers are missing
+        return {**out, "live": False, "why": _why_not_live(exc)}
     for row in out["shares"]:
         got = remote.get(row["id"])
         if got is not None:

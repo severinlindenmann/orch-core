@@ -7,9 +7,34 @@ import json
 
 import pytest
 
+from orch import crypto
 from orch.install import cli
 from orch.install.parts import detect_addresses
 from orch.install.state import load
+
+
+def _root_pub() -> bytes:
+    from orch.crypto import suite
+
+    return suite.public_bytes(suite.generate_private_key())
+
+
+def real_card(hub_id=None, *, root_pub=None, **o_over):
+    """A card in the real shape ({"o", "op_cert", "sig"}); its id is derived from a real root key (wire.hub_id)."""
+    from orch.hubclient import wire
+
+    root_pub = root_pub or _root_pub()
+    o = {
+        "v": 2, "suite": 2, "kind": "hub.card", "hv": 0, "hub_id": hub_id or wire.hub_id(root_pub),
+        "hk_root_pub": crypto.b64u(root_pub), "hxk_pub": crypto.b64u(_root_pub()), "relay_url": None,
+        "tls_spki_sha256": None, "card_seq": 1, "reader": 1, "issued_ms": 1, "dev": False,
+    }  # fmt: skip
+    o.update(o_over)
+    return {"o": o, "op_cert": {"o": {"kind": "hub.op_cert"}, "sig": "x"}, "sig": "x"}
+
+
+_ROOT = _root_pub()
+HUB_ID = real_card(root_pub=_ROOT)["o"]["hub_id"]
 
 
 class FakeRunner:
@@ -38,6 +63,8 @@ def home(tmp_path):
 def make(home, **kw):
     out, err = io.StringIO(), io.StringIO()
     calls = []
+    ids = [_ROOT]  # the root key of the hub the fake reports (append another to change its id)
+    card_out = []  # a test may put the exact stdout of `keys card` here
 
     def run(argv, env=None):
         calls.append(list(argv))
@@ -45,12 +72,18 @@ def make(home, **kw):
             return 0, "orch-hub v0.1.0\norch-relay v0.2.0\norch-publish v0.3.0\n"
         return 0, ""
 
+    def run_stdout(argv, env=None):
+        calls.append(list(argv))
+        assert argv[1] == "keys" and argv[-1] == "card"  # the only stdout-only call
+        return 0, card_out[-1] if card_out else json.dumps(real_card(root_pub=ids[-1]))
+
     ctx = cli.Ctx(
         env={"HOME": str(home)},
         out=out,
         err=err,
         runner=FakeRunner(),
         run=run,
+        run_stdout=run_stdout,
         resolve_ref=lambda url, ref: "a" * 40,
         core_commit=lambda: None,
         health=lambda h, p: True,
@@ -60,6 +93,7 @@ def make(home, **kw):
         dashboard_entry=lambda: ["/bin/orch-dashboard"],
         **kw,
     )
+    ctx.ids, ctx.card_out = ids, card_out
     return ctx, out, err, calls
 
 
@@ -367,3 +401,204 @@ def test_hub_settings_ignores_a_linked_old_file_and_brackets_ipv6(home, tmp_path
     assert (body["name"], body["company"]) == ("Hub", "")
     assert body["addresses"][0]["web"] == "http://[fd00::5]:8100" and body["addresses"][0]["link"] == "[fd00::5]:8105"
     assert json.loads(other.read_text())["name"] == "Evil"  # the link target is untouched
+
+
+def _trusts(calls):
+    return [c for c in calls if c[-3:-1] == ["hub", "trust"]]
+
+
+def _install(ctx, out, err, *args):
+    assert cli.main(list(args), env=ctx.env, out=out, err=err, ctx=ctx) == 0, err.getvalue()
+
+
+def test_hub_then_publish_pins_the_hub_at_its_own_publish(home):
+    ctx, out, err, calls = make(home)
+    _install(ctx, out, err, "hub", "--address", "127.0.0.1")
+    assert _trusts(calls) == []  # no publish in this install yet
+    _install(ctx, out, err, "publish", "--address", "127.0.0.1")
+    (t,) = _trusts(calls)
+    assert t == [
+        str(ctx.layout.bin / "orch-publish"),
+        "admin",
+        "--data",
+        str(ctx.layout.data("publish")),
+        "hub",
+        "trust",
+        HUB_ID,
+    ]
+
+
+def test_publish_then_hub_pins_the_hub_at_its_own_publish(home):
+    ctx, out, err, calls = make(home)
+    _install(ctx, out, err, "publish", "--address", "127.0.0.1")
+    assert _trusts(calls) == []
+    _install(ctx, out, err, "hub", "--address", "127.0.0.1")
+    (t,) = _trusts(calls)
+    assert t[-1] == HUB_ID and t[3] == str(ctx.layout.data("publish"))
+
+
+def test_a_reinstall_pins_again(home):
+    ctx, out, err, calls = make(home)
+    _install(ctx, out, err, "hub", "--address", "127.0.0.1")
+    _install(ctx, out, err, "publish", "--address", "127.0.0.1")
+    _install(ctx, out, err, "publish", "--address", "127.0.0.1")
+    _install(ctx, out, err, "hub", "--address", "127.0.0.1")
+    assert len(_trusts(calls)) == 3
+
+
+def test_publish_alone_or_hub_with_a_remote_publish_pins_nothing(home):
+    ctx, out, err, calls = make(home)
+    _install(ctx, out, err, "publish", "--address", "127.0.0.1")
+    assert _trusts(calls) == []
+    ctx2, out2, err2, calls2 = make(home / "two")
+    _install(ctx2, out2, err2, "hub", "--address", "127.0.0.1", "--publish-url", "https://share.example.com")
+    _install(ctx2, out2, err2, "publish", "--address", "127.0.0.1")  # a publish beside a hub that dials another one
+    assert _trusts(calls2) == []
+
+
+def test_a_failed_pin_is_one_plain_line_and_the_install_goes_on(home):
+    ctx, out, err, calls = make(home)
+    inner = ctx.run
+
+    def run(argv, env=None):
+        if "trust" in argv:
+            return 1, "boom"
+        return inner(argv, env)
+
+    ctx.run = run
+    _install(ctx, out, err, "hub", "--address", "127.0.0.1")
+    _install(ctx, out, err, "publish", "--address", "127.0.0.1")
+    lines = [ln for ln in out.getvalue().splitlines() if "could not be allowed to share" in ln]
+    assert len(lines) == 1 and "publish" in load(ctx.layout)["parts"]
+
+
+def test_a_missing_publish_binary_is_a_note_not_a_failed_install(home):
+    ctx, out, err, calls = make(home)
+    inner = ctx.run
+
+    def run(argv, env=None):
+        if "trust" in argv:
+            raise FileNotFoundError(argv[0])
+        return inner(argv, env)
+
+    ctx.run = run
+    _install(ctx, out, err, "hub", "--address", "127.0.0.1")
+    _install(ctx, out, err, "publish", "--address", "127.0.0.1")
+    assert "could not be allowed to share" in out.getvalue() and "publish" in load(ctx.layout)["parts"]
+
+
+def test_the_pin_is_recorded_and_said_once(home):
+    ctx, out, err, calls = make(home)
+    _install(ctx, out, err, "hub", "--address", "127.0.0.1")
+    _install(ctx, out, err, "publish", "--address", "127.0.0.1")
+    assert out.getvalue().count(f"pinned hub {HUB_ID} at publish") == 1
+    assert load(ctx.layout)["parts"]["publish"]["pinned_hub_id"] == HUB_ID
+
+
+def test_a_changed_hub_id_untrusts_the_old_one(home):
+    ctx, out, err, calls = make(home)
+    _install(ctx, out, err, "hub", "--address", "127.0.0.1")
+    _install(ctx, out, err, "publish", "--address", "127.0.0.1")
+    root2 = _root_pub()
+    new = real_card(root_pub=root2)["o"]["hub_id"]
+    ctx.ids.append(root2)
+    _install(ctx, out, err, "hub", "--address", "127.0.0.1")
+    untrusts = [c for c in calls if c[-3:-1] == ["hub", "untrust"]]
+    assert [c[-1] for c in untrusts] == [HUB_ID]
+    assert calls.index(untrusts[0]) < max(i for i, c in enumerate(calls) if c[-2:] == ["trust", new])
+    assert load(ctx.layout)["parts"]["publish"]["pinned_hub_id"] == new
+
+
+def test_removing_the_hub_untrusts_the_pinned_id(home):
+    ctx, out, err, calls = make(home)
+    _install(ctx, out, err, "hub", "--address", "127.0.0.1")
+    _install(ctx, out, err, "publish", "--address", "127.0.0.1")
+    assert cli.main(["remove", "hub"], env=ctx.env, out=out, err=err, ctx=ctx) == 0
+    assert [c[-1] for c in calls if c[-3:-1] == ["hub", "untrust"]] == [HUB_ID]
+    assert "pinned_hub_id" not in load(ctx.layout)["parts"]["publish"]
+
+
+def _card(**o):
+    return real_card(root_pub=_ROOT, **o)
+
+
+def _without(key):
+    c = _card()
+    del c[key]
+    return c
+
+
+@pytest.mark.parametrize(
+    "stdout",
+    [
+        json.dumps({"hub_id": HUB_ID}),  # no envelope
+        json.dumps({"o": _card()["o"], "sig": "x"}),  # the old two-key shape: op_cert missing
+        json.dumps(_without("op_cert")),
+        json.dumps(_without("sig")),
+        json.dumps(_card(kind="hub.link")),  # wrong kind
+        json.dumps(_card(hub_id="cd" * 16)),  # a well-formed id that is not the one of hk_root_pub
+        json.dumps(_card(hk_root_pub="AAAA")),  # not a key
+        json.dumps(_card()) + "\n" + json.dumps(_card()),  # a second object
+        json.dumps(_card()) + "\ntrailing text",
+        "note: " + json.dumps(_card()),  # leading text
+        json.dumps({**_card(), "extra": 1}),  # an extra key
+        json.dumps(_card(hub_id="AB" * 16)),  # not lower-case hex
+        json.dumps(_card(hub_id="ab" * 15)),  # too short
+        json.dumps([_card()]),
+        "",
+    ],
+    ids=[
+        "no-envelope",
+        "two-keys",
+        "no-op-cert",
+        "no-sig",
+        "wrong-kind",
+        "id-not-of-root",
+        "bad-root",
+        "two-objects",
+        "trailing-text",
+        "leading-text",
+        "extra-key",
+        "upper-hex",
+        "short-id",
+        "list",
+        "empty",
+    ],  # fixed ids: the cards hold random signatures, and xdist workers must collect the same names
+)
+def test_a_card_that_is_not_exactly_the_real_card_is_not_pinned(home, stdout):
+    ctx, out, err, calls = make(home)
+    ctx.card_out.append(stdout)
+    _install(ctx, out, err, "hub", "--address", "127.0.0.1")
+    _install(ctx, out, err, "publish", "--address", "127.0.0.1")
+    assert _trusts(calls) == []
+    assert len([ln for ln in out.getvalue().splitlines() if "could not be allowed to share" in ln]) == 1
+    assert "publish" in load(ctx.layout)["parts"]
+
+
+def test_stderr_noise_next_to_a_valid_card_still_pins(home):
+    """The card is read from stdout only; the real runner drops stderr."""
+    ctx, out, err, calls = make(home)
+    ctx.card_out.append(json.dumps(_card()) + "\n")
+    _install(ctx, out, err, "hub", "--address", "127.0.0.1")
+    _install(ctx, out, err, "publish", "--address", "127.0.0.1")
+    assert [c[-1] for c in _trusts(calls)] == [HUB_ID]
+
+
+def test_the_real_orch_hub_card_is_accepted(tmp_path):
+    """Integration: the real `orch-hub keys init` and `keys card` (skipped when orch-hub is not importable here)."""
+    import subprocess
+    import sys
+
+    pytest.importorskip("orch_hub")
+    state = tmp_path / "hub"
+    base = [sys.executable, "-m", "orch_hub", "keys", "--state", str(state)]
+    for argv in (["init"], ["card"]):
+        r = subprocess.run([*base, *argv], capture_output=True, text=True)
+        assert r.returncode == 0, r.stderr
+    got = cli._card_hub_id(r.stdout)
+    assert got is not None and len(got) == 32
+
+
+def test_run_stdout_drops_stderr():
+    rc, out = cli._run_stdout(["sh", "-c", "echo noise >&2; echo '{}'"])
+    assert (rc, out) == (0, "{}\n")

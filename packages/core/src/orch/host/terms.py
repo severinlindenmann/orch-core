@@ -174,7 +174,7 @@ def _require_ready(service: WorkspaceService, hub: RunnerHub | None) -> RunnerHu
     gone = missing(service, hub)
     if gone is not None:
         raise HostError(
-            "runner.disabled", f"terminals are not available here: {gone} missing", detail={"missing": gone}
+            "runner.disabled", f"Command window is not available here: {gone} missing", detail={"missing": gone}
         )
     if not hub.connected:
         raise HostError("runner.unavailable", "no runner is connected", retry_after_ms=1000)
@@ -220,7 +220,7 @@ def _tier_b_runner_ok(hub: RunnerHub) -> None:
     if share is None:
         return
     if hub.uid != share.uid or hub.uid == hub.host.host_uid:
-        raise HostError("runner.unavailable", "terminals run only on the agent user's runner", retry_after_ms=1000)
+        raise HostError("runner.unavailable", "Command window runs only on the agent runner", retry_after_ms=1000)
 
 
 # -- the worker half -------------------------------------------------------------------------------------------------
@@ -323,7 +323,7 @@ async def _open(call: Call, hub: RunnerHub, data: dict[str, Any]) -> dict[str, A
     state = enablement.state_of(hub.host.state_dir, wid, hub.host.host_uid)  # read again at use
     if not state["enabled"] or not state["terminals"]:
         raise HostError(
-            "runner.disabled", "terminals are not available here: machine missing", detail={"missing": "machine"}
+            "runner.disabled", "Command window is not available here: machine missing", detail={"missing": "machine"}
         )
     live = [r for r in hub.store.records.values() if r.get("state") in runners.LIVE]
     if sum(1 for r in live if r.get("person") == person and r.get("kind") == "shell") >= SHELLS_PER_PERSON:
@@ -365,7 +365,7 @@ async def _attach(call: Call, hub: RunnerHub, data: dict[str, Any]) -> dict[str,
     state_now = enablement.state_of(hub.host.state_dir, call.service.workspace_id, hub.host.host_uid)
     if not state_now["enabled"] or not state_now["terminals"]:  # the switch is read again at use
         raise HostError(
-            "runner.disabled", "terminals are not available here: machine missing", detail={"missing": "machine"}
+            "runner.disabled", "Command window is not available here: machine missing", detail={"missing": "machine"}
         )
     rec = hub.store.records.get(run)
     if rec is None or rec.get("person") != person:

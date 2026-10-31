@@ -200,8 +200,8 @@ registerAddon({
       if (!w || !canSee(ctx, w)) return notFound('No such worktree.')
       // Same authorized path as a direct call: terminals' activity, grant, minRole and visibility checks all apply.
       const r = store.runAddon(ws, 'terminals', 'open_ticket', { ticket: w.ticket })
-      if (!r) return conflict('addon.inactive', 'Terminals is not available.')
-      if (!r.ok) return r.code === 'addon.inactive' ? conflict('addon.inactive', 'Terminals is not active in this workspace.', 'Turn it on in Settings > Addons.') : r
+      if (!r) return conflict('addon.inactive', 'Command window is not available.')
+      if (!r.ok) return r.code === 'addon.inactive' ? conflict('addon.inactive', 'Command window is not active in this workspace.', 'Turn it on in Settings > Addons.') : r
       return r
     },
   },

@@ -66,7 +66,8 @@ echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
 
 The setup command prints the other root steps as **one block**; `orch` never runs it. For the user it is run for it
 makes `/etc/caddy/orch.d/<user>/` (owned by that user, mode 0755; there is no shared writable folder), adds one `import
-/etc/caddy/orch.d/*/*.caddy` line to the Caddyfile, reloads Caddy, and turns on "linger" (so the user's services keep
+/etc/caddy/orch.d/<user>/*.caddy` line for that user to the Caddyfile (Caddy allows only one `*` per pattern, so each
+server user has its own line: `/etc/caddy/orch.d/orch-hub/*.caddy` and `/etc/caddy/orch.d/orch-edge/*.caddy`), reloads Caddy, and turns on "linger" (so the user's services keep
 running after logout). Run the block once per user (it is safe to repeat; the `import` line is added only once).
 
 **Residual risk, in plain words:** Caddy serves whatever the snippets of either user say. A person who controls the

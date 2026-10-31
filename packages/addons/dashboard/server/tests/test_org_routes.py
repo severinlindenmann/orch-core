@@ -294,3 +294,11 @@ def test_the_secrets_route_asks_the_host_and_an_older_host_degrades(client, toke
     monkeypatch.setattr(gateway, "enabled", lambda ws: Old())
     r = client.get(f"/api/w/{stub.ws}/org/secrets", headers=hdr(token, write=False))
     assert r.json() == {"available": False, "secrets": []}
+
+
+def test_the_secrets_view_passes_only_a_boolean_isolated():
+    assert secrets_view({"secrets": [], "isolated": False}) == {"available": True, "secrets": [], "isolated": False}
+    assert secrets_view({"secrets": [], "isolated": True})["isolated"] is True
+    # anything that is not a real boolean is left out, so no other value can ride along
+    assert "isolated" not in secrets_view({"secrets": [], "isolated": SENTINEL})
+    assert "isolated" not in secrets_view({"secrets": []})

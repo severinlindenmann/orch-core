@@ -78,7 +78,7 @@ def test_root_block_golden_has_no_shared_writable_folder():
     golden("root-block-edge.sh", b)
     assert "groupadd" not in b and "orch-caddy" not in b and "2775" not in b
     assert "install -d -m 0755 -o orch-edge -g orch-edge /etc/caddy/orch.d/orch-edge" in b
-    assert "import /etc/caddy/orch.d/*/*.caddy" in b and "systemctl reload caddy" in b
+    assert "import /etc/caddy/orch.d/orch-edge/*.caddy" in b and "/*/*" not in b and "systemctl reload caddy" in b
     assert "loginctl enable-linger orch-edge" in b
 
 
@@ -1203,3 +1203,34 @@ def test_a_bad_user_name_stops_before_any_root_block_is_printed(tmp_path):
             user="evil; id",
         )
     assert "sudo" not in out.getvalue() and not ctx.runner.started
+
+
+def test_every_printed_import_line_has_exactly_one_wildcard_and_names_its_user():
+    import re
+    import shutil
+    import subprocess
+
+    for user in ("orch-hub", "orch-edge"):
+        block = server.root_block(user)
+        lines = re.findall(r"import (\S+?)'", block)
+        assert set(lines) == {f"/etc/caddy/orch.d/{user}/*.caddy"} and all(x.count("*") == 1 for x in lines)
+        assert f"steps for {user}" in block
+    docs = (Path(__file__).resolve().parents[4] / "docs" / "pilot-server.md").read_text()
+    assert "orch.d/*/*" not in docs and "/etc/caddy/orch.d/orch-hub/*.caddy" in docs
+    if shutil.which("caddy") is None:
+        pytest.skip("caddy is not installed: the validate step is skipped")
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as d:
+        for user, part in (("orch-hub", "hub"), ("orch-edge", "relay")):
+            (Path(d) / user).mkdir()
+            (Path(d) / user / f"{part}.caddy").write_text(server.caddy_snippet(part, f"{part}.example.com", 8100))
+        cf = Path(d) / "Caddyfile"
+        cf.write_text("".join(f"import {d}/{u}/*.caddy\n" for u in ("orch-hub", "orch-edge")))
+        r = subprocess.run(
+            ["caddy", "validate", "--config", str(cf), "--adapter", "caddyfile"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert r.returncode == 0, r.stderr

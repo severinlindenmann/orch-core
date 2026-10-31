@@ -367,13 +367,15 @@ def write_snippets(directory: Path, snippets: dict[str, str]) -> list[Path]:
 
 def root_block(user: str, directory: str = CADDY_DIR, *, caddyfile: str = "/etc/caddy/Caddyfile") -> str:
     """The ONE sudo block for a person with root; printed, never executed by orch. No shared writable folder: each OS
-    user gets its own folder, and Caddy imports ``<dir>/*/*.caddy``."""
+    user gets its own folder, and the Caddyfile imports it with its own line, ``<dir>/<user>/*.caddy`` (Caddy allows
+    only one wildcard per glob, so there is no ``<dir>/*/*.caddy``)."""
     check_user_name(user)  # a bad name stops here: no block is printed
     d, mine = shell_quote(directory), shell_quote(f"{directory}/{user}")
-    imp = f"import {directory}/*/*.caddy"
+    imp = f"import {directory}/{user}/*.caddy"
     return "\n".join(
         [
-            "# Run these as an administrator (they are the only steps that need root; orch never runs them):",
+            f"# Administrator steps for {user} (the only steps that need root; orch never runs them).",
+            "# The other server user gets its own block and its own import line when it is set up.",
             f"sudo install -d -m 0755 -o root -g root {d}",
             f"sudo install -d -m 0755 -o {shell_quote(user)} -g {shell_quote(user)} {mine}",
             f"grep -qxF {shell_quote(imp)} {shell_quote(caddyfile)} || echo {shell_quote(imp)} | "

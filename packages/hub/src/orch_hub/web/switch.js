@@ -95,3 +95,12 @@ export function openingState(name) {
   const n = typeof name === "string" && name.trim() ? name.trim() : "your workspace";
   return { title: "Opening " + n + "\u2026", note: "Just a moment." };
 }
+
+/** ux-audit P02: "Back to my workspace" on the landing page: the workspace's own dashboard when the hub knows its
+ * origin (only an http(s) address, through safeUrl), else the page the person came from, else the sign-in form. */
+export function backToWorkspace(ws, nav) {
+  const url = safeUrl(ws?.origin);
+  if (url) return nav.assign(url);
+  if (nav.canBack()) return nav.back();
+  return nav.login();
+}

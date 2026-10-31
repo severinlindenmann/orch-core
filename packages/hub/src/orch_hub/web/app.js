@@ -21,7 +21,7 @@ import { checkServiceAction, resultWords, logsDialog, serviceDialog, stopLabel, 
 import { handoffsView } from "./handoffs.js";
 import { phonesView } from "./phones.js";
 import { workspacesView, workspaceDetailsView, newWorkspaces, privateRows } from "./workspaces.js";
-import { OPEN_FIRST, OPEN_ON_ITS_COMPUTER, colour, initials, landing, landingPlan, openingState, railRows, safeUrl } from "./switch.js";
+import { OPEN_FIRST, OPEN_ON_ITS_COMPUTER, colour, initials, landing, landingPlan, openingState, railRows, safeUrl, backToWorkspace } from "./switch.js";
 import { Refusal, grantTermsOk, grantSentence, grantFacts, addonFacts, addonTermsOk, settingsFacts, settingsTermsOk, checkBindings, checkPrepared, describe, renderMulti, renderText, shortHash, verifyQuestion, DECISIONS } from "./render.js";
 
 const root = document.getElementById("app");
@@ -369,7 +369,7 @@ async function landFromTicket(t) {
   const plan = landingPlan(p.body);
   if (plan === "redeem") return redeemTicket(t, false);
   if (plan === "confirm") return plain(h("h1", { text: "Continue as " + name + "?" }), h("p", { class: "muted", text: "You opened the hub from your workspace. Nothing happens until you continue." }),
-    h("div", { class: "row" }, h("button", { class: "pri", text: "Continue", onclick: () => redeemTicket(t, false) }), h("button", { text: "Cancel", onclick: () => loginView() })));
+    h("div", { class: "row" }, h("button", { class: "pri", text: "Continue", onclick: () => redeemTicket(t, false) }), h("button", { "data-back": "", text: "Back to my workspace", onclick: () => backToWorkspace(p.body.workspace, { assign: (u) => location.assign(u), back: () => history.back(), canBack: () => history.length > 1, login: () => loginView() }) })));
   const cur = renderText(p.body.signed_in_as?.name ?? "someone else");
   return plain(h("h1", { text: "Different person" }), h("p", { text: "You are signed in as " + cur + " here. This link is for " + name + "." }),
     h("div", { class: "row" }, h("button", { text: "Stay signed in as " + cur, onclick: () => home() }), h("button", { class: "pri", text: "Sign out and continue as " + name, onclick: () => redeemTicket(t, true) })));

@@ -93,3 +93,13 @@ test("run-15 J02: a workspace that is not switchable (selective) cannot be opene
   assert.equal(row.switchable, false);
   assert.equal(row.canOpen, false);
 });
+
+test("ux-audit P02: Back to my workspace goes to the workspace's http(s) origin, else back, else sign-in", async () => {
+  const { backToWorkspace } = await import("../../src/orch_hub/web/switch.js");
+  const calls = [];
+  const nav = (canBack) => ({ assign: (u) => calls.push(["assign", u]), back: () => calls.push(["back"]), canBack: () => canBack, login: () => calls.push(["login"]) });
+  backToWorkspace({ name: "Acme", origin: "https://ws.example:8150" }, nav(true));
+  backToWorkspace({ origin: "javascript:alert(1)" }, nav(true));
+  backToWorkspace(null, nav(false));
+  assert.deepEqual(calls, [["assign", "https://ws.example:8150/"], ["back"], ["login"]]);
+});

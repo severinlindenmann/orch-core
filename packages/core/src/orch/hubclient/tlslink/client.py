@@ -56,7 +56,8 @@ HV = 0
 #: stream router only and accepts on it stream frames, ``stream_open`` replies and ``hub_where``; a plain link never
 #: carries streams.
 STREAM_LINK_ALPN = b"orch-link-streams/1"
-#: Most h2w requests (``route_in``, ``event_deliver``) kept per queue while the host drains only the other one.
+#: Most h2w requests (``route_in``, ``event_deliver``, ``closing_notice``) kept per queue while the host drains
+#: only the other ones.
 MAX_QUEUED = 64
 LINK_WINDOW_MS = 120_000
 MODES = ("selective", "full")
@@ -311,6 +312,8 @@ class LinkClient:
         self._pending: dict[str, Any] | None = None  # the handed-out one, awaiting its ack
         self._events: list[dict[str, Any]] = []  # verified h2w ``event_deliver`` requests (custodial events, p4)
         self._pending_ev: dict[str, Any] | None = None
+        self._closings: list[dict[str, Any]] = []  # verified h2w ``closing_notice`` requests (#1463, protocol 9.7)
+        self._pending_cn: dict[str, Any] | None = None
         self._streams: list[dict[str, Any]] = []  # verified h2w stream_open / stream_data / stream_close (R2)
         self._overflow: list[str] = []  # streams that lost an h2w frame to a full queue (F3)
         self._open_reqs: set[int] = set()  # handed-out stream_open requests (by h2w seq) awaiting their answer
@@ -472,6 +475,10 @@ class LinkClient:
             if set(body) != {"log", "event"} or type(body["log"]) is not str or type(body["event"]) is not dict:
                 raise LinkError("malformed")
             queue = self._events
+        elif o["op"] == "closing_notice":
+            if set(body) != {"notice"} or type(body["notice"]) is not dict:
+                raise LinkError("malformed")
+            queue = self._closings
         elif o["op"] in STREAM_H2W:
             if not stream_body_ok(o["op"], body):
                 raise LinkError("malformed")
@@ -609,6 +616,63 @@ class LinkClient:
                 raise
             self._seq = n
             self._pending_ev = None
+
+    # --- closing_notice (h2w; protocol 9.7, 10.2, #1463) -----------------------------------------------------------
+
+    def next_closing_notice(self, wait: float = 0.0) -> dict[str, Any] | None:
+        """The next ``hub.closing`` notice the hub pushes (the signed object, NOT yet verified: the link checked the
+        hub's link signature and the body shape only), or ``None`` within ``wait`` seconds. At most one is outstanding:
+        call :meth:`ack_closing_notice` once the host verified or refused it."""
+        with self._lock:
+            if not self._open:
+                raise LinkClosed("closed")
+            if self._pending_cn is not None:
+                raise LinkError("malformed")  # a caller bug: the last one was never acknowledged
+            try:
+                if not self._closings:
+                    if not self._c.wait_readable(wait):
+                        return None
+                    frame = framing.read_frame(self._c, timeout=self._t, max_bytes=self._max)
+                    if frame.get("t") == "error":
+                        raise LinkError(_code(frame.get("error")))
+                    if not self._take_push(frame):
+                        raise LinkError("malformed")
+                    if not self._closings:
+                        return None  # another kind of push: its own next_* hands it out
+                self._pending_cn = self._closings.pop(0)
+                return self._pending_cn["body"]["notice"]  # type: ignore[no-any-return]
+            except FrameError:
+                self.close()
+                raise LinkError("malformed") from None
+            except (LinkError, LinkClosed, LinkTimeout):
+                self.close()
+                raise
+
+    def ack_closing_notice(self, error: str | None = None) -> None:
+        """Answer the outstanding ``closing_notice`` (a w2h reply: same op, ``re`` = its seq, body ``{}`` or
+        ``{"error": code}``)."""
+        with self._lock:
+            if not self._open or self._sign is None:
+                raise LinkClosed("closed")
+            if self._pending_cn is None:
+                raise LinkError("malformed")
+            if error is not None and not (type(error) is str and 0 < len(error) <= 40):
+                raise LinkError("malformed")
+            n = self._seq + 1  # taken only once the frame was written: a failed ack never skips a number
+            o = {
+                "v": 2, "suite": suite.SUITE_ID, "kind": "hub.link", "hv": HV, "hub_id": self.hub_id,
+                "workspace_id": self.workspace_id, "dir": "w2h", "seq": n, "ts_ms": self._now(),
+                "op": "closing_notice", "re": self._pending_cn["seq"],
+                "body": {} if error is None else {"error": error},
+            }  # fmt: skip
+            try:
+                signed = {"o": o, "sig": b64u(self._sign(link_signed_bytes(SIG_LINK, self._cb, o)))}
+                framing.write_frame(self._c, signed, timeout=self._t, max_bytes=self._max)
+            except BaseException:  # fail closed: any failure to sign or write (a signer error too) ends the link
+                self.close()
+                raise
+            self._seq = n
+            self._pending_cn = None
 
     # --- stream_open / stream_data / stream_close (h2w remote access streams; protocol 10.2c) ----------------------
 

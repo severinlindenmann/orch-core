@@ -303,9 +303,14 @@
   background: none;
   border: 0;
   padding: 0;
-  color: var(--accent, inherit);
+  color: var(--brand);
+  font-weight: 600;
   text-decoration: underline;
   cursor: pointer;
+}
+.setup .why-disabled {
+  color: var(--text);
+  font-size: 13px;
 }
 .setup .progress-note {
   margin: 8px 0 0;

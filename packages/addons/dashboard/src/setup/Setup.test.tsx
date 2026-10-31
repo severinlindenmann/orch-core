@@ -101,6 +101,7 @@ function fake(
     defaults?: boolean
     suggested?: Record<string, unknown>
     os?: string
+    host?: string
   } = {},
 ) {
   const calls: { path: string; body: unknown }[] = []
@@ -118,6 +119,7 @@ function fake(
         ...(options.noGit ? { git: { repo: false } } : {}),
         ...(options.claudeAvailable ? { claude: { available: true } } : {}),
         ...(options.os ? { os: options.os } : {}),
+        ...(options.host ? { host: options.host } : {}),
         mode: options.finish ? 'finish' : 'new',
         missing: options.finish && !options.complete ? ['addon:worktrees', 'runner_grant'] : [],
         ...(options.complete ? { complete: true } : {}),
@@ -246,6 +248,21 @@ test('shows secrets only as text, asks for no typing, drops secrets after confir
   await waitFor(() =>
     expect(f.calls.find((c) => c.path === 'create')?.body).toEqual({ review_id: 'demo-review', digest: 'demo-digest' }),
   )
+})
+
+test('P52: Back on Review returns to the approval step', async () => {
+  const f = fake()
+  render(<Setup api={f.api} />)
+  await reveal()
+  await check()
+  await screen.findByRole('heading', { name: 'Review your setup' })
+  fireEvent.click(screen.getByRole('button', { name: 'Back' }))
+  expect(screen.getByRole('heading', { name: 'How do you want to approve things?' })).toBeInTheDocument()
+})
+
+test('P43: Welcome names the computer running the workspace when state has a host', async () => {
+  render(<Setup api={fake({ host: 'build-server' }).api} />)
+  expect(await screen.findByTestId('setup-computer')).toHaveTextContent('Setting up on build-server. Your workspace and your agents run on that computer.')
 })
 
 test('one click disables relay with its named reason and never shows a passphrase', async () => {
@@ -637,7 +654,7 @@ test('finish shows the current values read-only and offers only what is missing,
   // r10-P11: whether agents can start now is the top bar's message only, so setup lists no agent-access row
   expect(page(container)).not.toMatch(/Agent access for this|Given before|Not given/)
   // the name and the short name are not inputs, the add-on that is on is not a switch
-  expect(screen.queryByLabelText('Your name')).toBeNull()
+  expect(screen.queryByLabelText('Name of the person who will use this workspace')).toBeNull()
   expect(screen.getAllByRole('switch').map((el) => el.closest('label')?.textContent ?? '')).toEqual([
     expect.stringContaining('Own copy per ticket'),
     expect.stringContaining('Let agents start on this computer now'),
@@ -688,8 +705,9 @@ test('the name is not prefilled and the preview follows the typed prefix', async
   render(<Setup api={new SetupAPI('tok', fetcher)} />)
   await screen.findByRole('heading', { name: 'Set up your workspace' })
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
-  expect(screen.getByLabelText('Your name')).toHaveValue('')
+  expect(screen.getByLabelText('Name of the person who will use this workspace')).toHaveValue('')
   expect(screen.getByRole('button', { name: 'Continue →' })).toBeDisabled()
+  expect(screen.getByTestId('name-needed')).toHaveTextContent('Type the name to continue.')
   fireEvent.click(screen.getByRole('button', { name: 'Change' }))
   fireEvent.change(screen.getByLabelText(/^Ticket prefix/), { target: { value: 'RA' } })
   expect(screen.getByLabelText('Ticket number preview')).toHaveTextContent('RA-0001')
@@ -701,7 +719,7 @@ test('the prefix is suggested from the workspace name until the person edits it'
   render(<Setup api={f.api} />)
   await screen.findByRole('heading', { name: 'Set up your workspace' })
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
-  fireEvent.change(screen.getByLabelText('Your name'), { target: { value: 'Ann' } })
+  fireEvent.change(screen.getByLabelText('Name of the person who will use this workspace'), { target: { value: 'Ann' } })
   fireEvent.click(screen.getByRole('button', { name: 'Change' }))
   const prefix = screen.getByLabelText(/^Ticket prefix/)
   fireEvent.change(screen.getByLabelText(/^Workspace name/), { target: { value: 'Other' } })
@@ -725,7 +743,7 @@ test('a hand-edited workspace name keeps driving the prefix when the person name
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   fireEvent.click(screen.getByRole('button', { name: 'Change' }))
   fireEvent.change(screen.getByLabelText(/^Workspace name/), { target: { value: 'Marketing' } })
-  fireEvent.change(screen.getByLabelText('Your name'), { target: { value: 'Zed Zebra' } })
+  fireEvent.change(screen.getByLabelText('Name of the person who will use this workspace'), { target: { value: 'Zed Zebra' } })
   expect(screen.getByLabelText(/^Ticket prefix/)).toHaveValue('MARK')
   fireEvent.change(screen.getByLabelText(/^Workspace name/), { target: { value: '!!!' } })
   expect(screen.getByLabelText(/^Ticket prefix/)).toHaveValue('MW')
@@ -1065,7 +1083,7 @@ test('P06: a complete workspace shows one sentence and Open dashboard; the table
 const LOGIN_URL = 'http://127.0.0.1:8151/#launch=' + 'a'.repeat(30) + '&to=%2F'
 const TUNNEL = 'ssh -o ExitOnForwardFailure=yes -L 127.0.0.1:8151:127.0.0.1:8151 anna@build-server'
 
-async function toUnreachable(options: { finishTunnel?: string } = {}) {
+async function toUnreachable(options: { finishTunnel?: string; host?: string } = {}) {
   const assign = vi.fn()
   vi.stubGlobal('location', { origin: 'http://127.0.0.1:47821', assign })
   vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch') }))
@@ -1101,6 +1119,11 @@ test('run18 P01: an unreachable dashboard shows the connect step, no Try again, 
   expect(document.body.textContent).not.toContain('launch=')
   expect(assign).not.toHaveBeenCalled()
   vi.unstubAllGlobals()
+})
+
+test('P43: the connect step names the computer running the workspace', async () => {
+  const { box } = await toUnreachable({ finishTunnel: TUNNEL, host: 'build-server' })
+  expect(box).toHaveTextContent('Your workspace runs on build-server. Paste this line where you started setup, and leave it open:')
 })
 
 test('run18 P01: Copy line copies the tunnel line from the finish result', async () => {
@@ -1429,8 +1452,8 @@ test('r10-P13: the workspace name is a stated suggestion, never a field that cha
   // before a name is typed: no field and no "My workspace" anywhere
   expect(screen.queryByLabelText(/^Workspace name/)).toBeNull()
   expect(screen.queryByText(/My workspace/)).toBeNull()
-  expect(screen.getByText(/named after you/)).toBeInTheDocument()
-  fireEvent.change(screen.getByLabelText('Your name'), { target: { value: 'Anna Test' } })
+  expect(screen.getByText('The workspace is named after that person.')).toBeInTheDocument()
+  fireEvent.change(screen.getByLabelText('Name of the person who will use this workspace'), { target: { value: 'Anna Test' } })
   const summary = screen.getByTestId('ws-summary')
   expect(summary).toHaveAttribute('aria-live', 'polite')
   expect(summary).toHaveTextContent("Your workspace: Anna Test's workspace")
@@ -1441,7 +1464,7 @@ test('r10-P13: the workspace name is a stated suggestion, never a field that cha
   expect(screen.getByLabelText(/^Ticket prefix/)).toHaveValue('AT')
   expect(screen.getByLabelText('Ticket number preview')).toHaveTextContent('AT-0001')
   fireEvent.change(screen.getByLabelText(/^Workspace name/), { target: { value: 'Sales' } })
-  fireEvent.change(screen.getByLabelText('Your name'), { target: { value: 'Ben Test' } })
+  fireEvent.change(screen.getByLabelText('Name of the person who will use this workspace'), { target: { value: 'Ben Test' } })
   expect(screen.getByLabelText(/^Workspace name/)).toHaveValue('Sales')
 })
 
@@ -1450,7 +1473,7 @@ test('the recovery page uses one name, recovery words, and names no terminal com
   render(<Setup api={f.api} />)
   await screen.findByRole('heading', { name: 'Set up your workspace' })
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
-  fireEvent.change(screen.getByLabelText('Your name'), { target: { value: 'Ann' } })
+  fireEvent.change(screen.getByLabelText('Name of the person who will use this workspace'), { target: { value: 'Ann' } })
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
@@ -1548,7 +1571,8 @@ test('r11-P15: the Mac notice shows while the steps run, never on the ready or t
     await check()
     await screen.findByRole('heading', { name: 'Review your setup' })
     fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }))
-    await waitFor(() => expect(container.querySelector('ol.progress li')).not.toBeNull())
+    if ('done' in opts) await waitFor(() => expect(container.querySelector('ol.progress')).toBeNull())
+    else await waitFor(() => expect(container.querySelector('ol.progress li')).not.toBeNull())
     if (!shown) await waitFor(() => expect(page(container)).toMatch(/ready|attention|Failed/))
     expect(page(container).includes('Your Mac may show a note')).toBe(shown)
     unmount()
@@ -1660,16 +1684,17 @@ test('r12-P15: the settings sent are identical whether or not the fold was opene
   expect(sent(b)).toEqual(sent(a))
 })
 
-test('r14-P07: the welcome page says one plain sentence; the folder name and path sit behind Details', async () => {
+test('P13: the welcome page names the project folder in plain words, without its full path', async () => {
   const f = fake()
   const { container } = render(<Setup api={f.api} />)
   await screen.findByRole('heading', { name: 'Set up your workspace' })
-  expect(screen.getByText('We will set this up in your project folder.')).toBeInTheDocument()
+  const sentence = screen.getByText((_, el) => el?.tagName === 'P' && el.textContent === 'We will set this up in your project folder “project”.')
+  expect(sentence).toBeInTheDocument()
+  expect(within(sentence).getByText('project')).toBeInTheDocument()
   expect(container).not.toHaveTextContent('Folder:')
   expect(container).not.toHaveTextContent('Technical details')
-  const fold = screen.getByText('Details').closest('details') as HTMLDetailsElement
-  expect(fold.open).toBe(false)
-  expect(fold.textContent).toContain('/')
+  expect(screen.queryByText('Details')).not.toBeInTheDocument()
+  expect(container).not.toHaveTextContent(state.dir)
 })
 
 test('r12-P15: the recovery words say what to do; Copy turns into a tick (display only)', async () => {
@@ -1733,7 +1758,7 @@ test('r14-P07: the approval page uses everyday words: Password, AI helpers; no C
   fireEvent.click(screen.getByText('Change these settings'))
   expect(screen.getByLabelText(/Password/)).toBeInTheDocument()
   expect(screen.getByText(/Type your password each time/)).toBeInTheDocument()
-  expect(screen.getByRole('switch', { name: /Let your AI helpers open this folder without asking/ })).toBeInTheDocument()
-  expect(screen.getByText('They will not stop to ask first. This folder only holds orch’s files.')).toBeInTheDocument()
+  expect(screen.getByRole('switch', { name: /Let your AI helpers open your project folder “project” without asking/ })).toBeInTheDocument()
+  expect(screen.getByText('They will not stop to ask first. It is the folder with your project files; orch adds its own files to it.')).toBeInTheDocument()
   expect(container.textContent).not.toMatch(/Claude Code|assphrase|Your key/)
 })

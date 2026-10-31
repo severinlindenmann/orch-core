@@ -141,16 +141,18 @@ export function summarize(review: Review): { lines: string[]; unknown: boolean; 
 type Fact = { icon: string; label: string; value: string | string[] }
 /** The short card of a review (plain words only): from the review's own items and flags, nothing else. What this
  * mapping cannot describe is added as extra lines by the caller (`summarize().odd`); everything stays in the fold. */
-export function reviewFacts(review: Review): Fact[] {
+export function reviewFacts(review: Review, host?: string): Fact[] {
   const facts: Fact[] = []
   const ws = review.workspace
+  // P43: the computer is named (over ssh "this computer" is not the one in front of the person)
+  if (host) facts.push({ icon: '▤', label: 'Computer', value: host })
   if (ws) {
-    // P06: the owner, the folder, the ticket prefix, the git copy and the history are not decisions: they stay in the
+    // P06: the owner, the ticket prefix, the git copy and the history are not decisions: they stay in the
     // Details fold (the workspace's own lines and the flag texts)
     facts.push({ icon: '▦', label: 'Workspace', value: ws.workspace_name ?? ws.name })
   }
   const has = (id: string) => review.flags.some((f) => f.id === id)
-  const approve = has('custody') ? 'One click on this computer' : has('terminal') || review.tty_confirm ? 'In a terminal, with your password' : null
+  const approve = has('custody') ? `One click on ${host ?? 'this computer'}` : has('terminal') || review.tty_confirm ? 'In a terminal, with your password' : null
   let agents: string | undefined
   for (const item of review.items) {
     const f = item.fields
@@ -197,7 +199,7 @@ export function approvalSummary(
         : `Agents can work on their own for ${duration(profile.agent_hours)}.`,
   ]
   if (opts.records) out.push(profile.records !== false ? 'Your history stays on this computer.' : 'No history is kept.')
-  if (opts.trust !== undefined) out.push(opts.trust ? 'AI helpers open this folder without asking.' : 'AI helpers ask before they open this folder.')
+  if (opts.trust !== undefined) out.push(opts.trust ? 'AI helpers open your project folder without asking.' : 'AI helpers ask before they open your project folder.')
   return out.join(' ')
 }
 const statusWord = { todo: 'Waiting', doing: 'Running', done: 'Done', failed: 'Failed', skipped: 'Skipped' }
@@ -481,6 +483,7 @@ export function Setup({ api }: { api: SetupAPI }) {
   const confirmed = useRef(false)
   const secretRef = useRef<Secrets | null>(null)
   secretRef.current = secrets
+  const hostRef = useRef<string | undefined>(undefined)
   const drop = () => {
     if (secretRef.current) {
       secretRef.current.passphrase = null
@@ -610,7 +613,8 @@ export function Setup({ api }: { api: SetupAPI }) {
         if (!next.done && !next.error) timer = setTimeout(() => void poll(), 1000)
       } catch {
         if (active) {
-          setError('Connection interrupted. Check your terminal. We will keep checking your progress.')
+          // P43: a dropped tunnel in plain words; `host` is read from the latest render through the ref
+          setError(`The connection${hostRef.current ? ` to ${hostRef.current}` : ''} dropped. If you reach it through an ssh tunnel, check that the terminal running the tunnel is still open. Also check your setup terminal. We keep trying.`)
           timer = setTimeout(() => void poll(), 2500)
         }
       }
@@ -680,6 +684,16 @@ export function Setup({ api }: { api: SetupAPI }) {
   const offersTrust = state?.mode === 'new' && state.claude?.available === true
   const parentConfig = state?.claude?.parent_config ?? ''
   const offersGit = state?.mode === 'new' && state.git?.repo === false && profile.addons.includes('worktrees')
+  // P13: the project folder is named the same way on every screen (its name, never the full path)
+  const folder = state?.dir_name ? (
+    <>
+      your project folder “<Inline>{state.dir_name}</Inline>”
+    </>
+  ) : (
+    'your project folder'
+  )
+  const host = state?.host || undefined
+  hostRef.current = host
   // Print: the tick comes from the browser's own afterprint event (display only)
   useEffect(() => {
     const done = () => setSavedHow('print')
@@ -855,7 +869,9 @@ export function Setup({ api }: { api: SetupAPI }) {
   // The dots carry their names (compact on a phone: only the current one). Finish setup has its own two steps.
   const finishing = state?.mode === 'finish'
   const names = finishing ? finishSteps : steps
-  const at = finishing ? (step === 5 ? 1 : 0) : step
+  // P75: when setup is finished every step is done (none is current, none stays grey)
+  const allDone = (!!progress?.done && !progress.error) || (!!state?.complete && !run)
+  const at = allDone ? names.length : finishing ? (step === 5 ? 1 : 0) : step
   const title = ended
     ? 'Setup paused'
     : run
@@ -889,7 +905,7 @@ export function Setup({ api }: { api: SetupAPI }) {
             {names.map((s, i) => (
               <li
                 key={s}
-                className={`${i <= at ? 'active' : ''}${i === at ? ' current' : ''}`}
+                className={`${i <= at ? 'active' : ''}${i === at ? ' current' : ''}${allDone ? ' finished' : ''}`}
                 aria-current={i === at ? 'step' : undefined}
               >
                 <span className="dot" aria-hidden />
@@ -924,12 +940,13 @@ export function Setup({ api }: { api: SetupAPI }) {
               {!state.complete && (
                 <>
                   <p>orch keeps a to-do list of tickets that you and your AI helpers work on.</p>
-                  <p>We will set this up in your project folder.</p>
-                  <details className="welcome-technical">
-                    <summary>Details</summary>
-                    <p><Inline>{state.dir_name}</Inline></p>
-                    <Raw>{state.dir}</Raw>
-                  </details>
+                  {state.host && (
+                    <p data-testid="setup-computer">
+                      Setting up on <strong><Inline>{state.host}</Inline></strong>. Your workspace and your agents run on that computer.
+                    </p>
+                  )}
+                  <p>We will set this up in {folder}.</p>
+                  <p>Your existing files stay untouched. By default, agents make their changes in their own copies of the project.</p>
                   {profile.method === 'terminal' && <p>{terminalStepCopy}</p>}
                   <p>Everything stays on this computer unless you choose to connect your phone.</p>
                 </>
@@ -952,7 +969,7 @@ export function Setup({ api }: { api: SetupAPI }) {
           {step === 1 && (
             <>
               <label>
-                Your name
+                Name of the person who will use this workspace
                 <input autoComplete="name" value={profile.name} onChange={(e) => {
                     const name = e.target.value
                     // Until the person edits them, the workspace name and prefix follow "Your name" (Anna Test: "Anna Test's workspace", AT).
@@ -964,7 +981,6 @@ export function Setup({ api }: { api: SetupAPI }) {
                   }}
                 />
               </label>
-              {!profile.name.trim() && <small>Type your name to continue.</small>}
               {!showWorkspaceFields && (
                 <div className="ws-summary">
                   <span data-testid="ws-summary" aria-live="polite">
@@ -978,7 +994,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                         ))}
                       </>
                     ) : (
-                      'Your workspace is named after you.'
+                      'The workspace is named after that person.'
                     )}
                   </span>
                   <button type="button" className="link" onClick={() => setShowWorkspaceFields(true)}>
@@ -1023,6 +1039,7 @@ export function Setup({ api }: { api: SetupAPI }) {
               )}
               <SetupFooter cancel={cancel}>
                 <button onClick={() => setStep(0)}>Back</button>
+                {!profile.name.trim() && <small className="why-disabled" data-testid="name-needed">Type the name to continue.</small>}
                 <button
                   className="primary"
                   disabled={!profile.name.trim() || !profile.workspace_name.trim() || !prefixOk(profile.prefix)}
@@ -1037,7 +1054,7 @@ export function Setup({ api }: { api: SetupAPI }) {
             <>
               <div className="agents-summary" data-testid="agents-summary">
                 <strong>Recommended for most people</strong>
-                <small>Agents can start from the dashboard, open a terminal, get their own copy of each ticket&apos;s files, and run quick tasks. Your files are not changed.</small>
+                <small>Agents can start from the dashboard, open a terminal, get their own copy of each ticket&apos;s files, and run quick tasks. Your existing files stay untouched; agents make their changes in their own copies.</small>
               </div>
               {/* the fold opens by itself when the recommendation does not apply (a switch differs from its default, or the folder question was answered Skip) */}
               <details className="approval-more" data-testid="agents-more" open={agentsDiffer || undefined}>
@@ -1199,8 +1216,8 @@ export function Setup({ api }: { api: SetupAPI }) {
               {offersTrust && !parentConfig && (
                 <label className="toggle">
                   <span>
-                    Let your AI helpers open this folder without asking
-                    <small>They will not stop to ask first. This folder only holds orch’s files.</small>
+                    Let your AI helpers open {folder} without asking
+                    <small>They will not stop to ask first. It is the folder with your project files; orch adds its own files to it.</small>
                   </span>
                   <input
                     type="checkbox"
@@ -1275,7 +1292,7 @@ export function Setup({ api }: { api: SetupAPI }) {
           {step === 5 && review && (
             <>
               <dl className="current review-facts review-summary">
-                {reviewFacts(review).map((f) => (
+                {reviewFacts(review, host).map((f) => (
                   <Fragment key={f.label}>
                     <dt>
                       <span aria-hidden="true">{f.icon}</span> {f.label}
@@ -1405,6 +1422,8 @@ export function Setup({ api }: { api: SetupAPI }) {
                 <p role="alert">Terminal confirmation is missing. Return to your terminal to restart setup.</p>
               )}
               <SetupFooter cancel={cancel}>
+                {/* P52: fix a choice without starting over (Finish setup has its choices on the first screen) */}
+                <button onClick={() => setStep(state.mode === 'finish' ? 0 : 3)}>Back</button>
                 <button
                   className="primary"
                   disabled={terminalReviewMissing}
@@ -1454,16 +1473,19 @@ export function Setup({ api }: { api: SetupAPI }) {
             // only while the steps run (the Mac asks then); never on the ready or the error screen
             <p><small>Your Mac may show a note that orch runs in the background. That is fine; leave it on.</small></p>
           )}
-          <ol className="progress">
-            {groupProgress(progress?.steps ?? []).map((s) => (
-              <li key={s.id}>
-                <span>{s.label}</span>
-                <strong className={`status ${s.status}`} aria-label={`${s.label}: ${statusWord[s.status]}`}>
-                  <span aria-hidden="true">{statusIcon[s.status]}</span> {statusWord[s.status]}
-                </strong>
-              </li>
-            ))}
-          </ol>
+          {/* P75: once it is ready the internal checklist goes; the title and the Open button say the rest */}
+          {!allDone && (
+            <ol className="progress">
+              {groupProgress(progress?.steps ?? []).map((s) => (
+                <li key={s.id}>
+                  <span>{s.label}</span>
+                  <strong className={`status ${s.status}`} aria-label={`${s.label}: ${statusWord[s.status]}`}>
+                    <span aria-hidden="true">{statusIcon[s.status]}</span> {statusWord[s.status]}
+                  </strong>
+                </li>
+              ))}
+            </ol>
+          )}
           {progress?.steps.some((s) => s.id === 'trust' && s.status === 'skipped') && (
             <div className="progress-note" role="note">
               {progress.reason_codes?.trust === 'not_installed' || progress.reason_codes?.trust === 'not_started'
@@ -1530,7 +1552,7 @@ export function Setup({ api }: { api: SetupAPI }) {
               <p>
                 <strong>One last step: connect to your workspace.</strong>
               </p>
-              <p>Your workspace runs on the other computer. Paste this line where you started setup, and leave it open:</p>
+              <p>Your workspace runs on {host ? <Inline>{host}</Inline> : 'the other computer'}. Paste this line where you started setup, and leave it open:</p>
               <div className="code-line">{tunnelLine}</div>
               <button
                 className="primary"

@@ -67,23 +67,37 @@ def _store(conn, o, now, cert):
     if row is not None and row["owner_person_id"] != person:
         raise H.Refused("other_person")
     b = H.binding_state(conn, ws)
+    bh = None
     if b is not None:
         bh = conn.execute("SELECT hub_id FROM hub_bindings WHERE workspace_id=?", (ws,)).fetchone()[
             "hub_id"
         ]
-        if bh != hub and b["status"] == "bound":
-            raise H.Refused("other_hub")
-        if bh == hub and seq < b["binding_seq"]:
-            raise H.Refused("stale_binding")
-        if bh == hub and b["status"] == "unbound" and seq <= b["binding_seq"]:
-            raise H.Refused("unbound")
     held = conn.execute(
         "SELECT hub_id, binding_seq FROM hub_allows WHERE workspace_id=?", (ws,)
     ).fetchone()
+    # Who may write the row. Precondition of the whole store, nothing is written otherwise:
+    #  - bound to the REQUESTING hub: that hub's allowance for the live epoch (it may overwrite any older row);
+    #  - bound to another hub: refused (other_hub);
+    #  - unbound from this hub: not at or below its unbound seq (unbound);
+    #  - no binding row yet (the join: publish learns the hub's allowance BEFORE the card and the binding it depends on,
+    #    because the binding needs the registered workspace): first writer only: another hub's row is never replaced (a same-hub row only by an equal or newer epoch).
+    if b is not None and bh != hub and b["status"] == "bound":
+        raise H.Refused("other_hub")
+    if b is not None and bh == hub:
+        if seq < b["binding_seq"]:
+            raise H.Refused("stale_binding")
+        if b["status"] == "unbound" and seq <= b["binding_seq"]:
+            raise H.Refused("unbound")
+    if (
+        held is not None
+        and held["hub_id"] != hub
+        and not (b is not None and bh == hub and b["status"] == "bound")
+    ):
+        raise H.Refused(
+            "other_hub"
+        )  # another hub's row is replaced only by the hub the workspace is bound to
     if held is not None and held["hub_id"] == hub and seq < held["binding_seq"]:
         raise H.Refused("stale_binding")
-    # a row of ANOTHER hub is stale by construction here (the workspace is not bound to that hub any more, checked
-    # above): the new bound hub simply overwrites it
     conn.execute(
         "INSERT INTO hub_allows(workspace_id, hub_id, person_id, binding_seq, cert_id, updated_ms)"
         " VALUES (?,?,?,?,?,?) ON CONFLICT(workspace_id) DO UPDATE SET hub_id=excluded.hub_id,"

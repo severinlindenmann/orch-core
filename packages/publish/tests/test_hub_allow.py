@@ -312,9 +312,45 @@ def test_guard_every_delete_on_the_admission_tables_goes_through_cleanup():
 
     root = pathlib.Path(__file__).resolve().parent.parent / "pubsrv"
     pat = re.compile(
-        r"DELETE\s+FROM\s+(workspaces|hub_bindings|trusted_hubs|hub_allows|hub_denied)\b", re.I
+        r"DELETE\s+FROM\s+(workspaces|hub_bindings|trusted_hubs|hub_allows|hub_denied)\b",
+        re.IGNORECASE,
     )
     offenders = [
         f.name for f in root.glob("*.py") if f.name != "cleanup.py" and pat.search(f.read_text())
     ]
     assert offenders == []
+
+
+def test_no_binding_another_hubs_row_is_never_replaced(env):
+    admitted(env)
+    other = Hub()
+    trust(env, other)
+    put_card(env, other)
+    # a second, unbound workspace id: hub A takes the first-writer row, hub B cannot replace it
+    ws2 = "9" * 32
+    assert put_allow(env, allow_obj(env.hub, ws=ws2), ws=ws2).status_code == 200
+    r = put_allow(env, allow_obj(other, ws=ws2), ws=ws2)
+    assert (r.status_code, err(r)) == (403, "other_hub")
+    assert (
+        env.sql("SELECT hub_id FROM hub_allows WHERE workspace_id=?", ws2)[0]["hub_id"]
+        == env.hub.id
+    )
+
+
+def test_bound_to_b_a_asks_refused_and_b_asks_overwrites(env):
+    from pubsrv import db
+
+    admitted(env)
+    other = Hub()
+    trust(env, other)
+    put_card(env, other)
+    conn = db.connect(env.path)
+    try:
+        H.accept_unbound(conn, WS_A, unbound(env.wsk, env.hub, seq=1), NOW, True)
+        H.accept_binding(conn, WS_A, binding(env.wsk, other, seq=2), NOW, True)
+    finally:
+        conn.close()
+    r = put_allow(env, allow_obj(env.hub, seq=3))
+    assert (r.status_code, err(r)) == (403, "other_hub")
+    assert put_allow(env, allow_obj(other, seq=2)).status_code == 200
+    assert env.sql("SELECT hub_id FROM hub_allows")[0]["hub_id"] == other.id

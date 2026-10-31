@@ -428,6 +428,7 @@ describe('a short, calm dialog (U6)', () => {
     mount()
     expect(await screen.findByTestId('agent-login-notice', {}, T)).toHaveTextContent('login shell')
     expect(within(screen.getByTestId('agent-risk-full')).queryByTestId('agent-login-notice')).toBeNull()
+    expect(within(screen.getByTestId('agent-risk-full')).getByTestId('agent-login-plain')).toHaveTextContent('Runs as you, with your usual terminal settings.') // both notices open: the plain line is in the box
     expect(within(screen.getByTestId('agent-details')).getByTestId('agent-login-notice')).toBeInTheDocument()
   })
 

@@ -485,6 +485,7 @@ function RiskNotice({ startFull, loginFull, loginNotice, onAcknowledge, single, 
       {full && (
         <div role="note" className="grid gap-2 rounded-md border border-warning/40 bg-warning-soft px-3 py-2 font-normal text-warning sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start sm:[&>p]:col-start-1" data-testid="agent-risk-full">
           {start}
+          {loginFull && <p data-testid="agent-login-plain">{LOGIN_PLAIN}</p>}
           {single
             ? <p className="font-normal" data-testid="agent-risk-single">Starting the agent confirms you have read this.</p>
             : <Button size="xs" variant="outline" className="justify-self-end font-normal sm:col-start-2 sm:row-start-1" onClick={onAcknowledge} data-testid="agent-risk-ack">I understand</Button>}

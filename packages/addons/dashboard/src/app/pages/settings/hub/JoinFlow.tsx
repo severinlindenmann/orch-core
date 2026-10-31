@@ -37,6 +37,12 @@ export function hostOf(link: string): string {
   } catch { return '' }
 }
 
+/** True when a hub "name" is just the address (compared lower-cased, scheme and a :443 port dropped). */
+function sameHost(name: string, host: string): boolean {
+  const n = (x: string) => x.toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '').replace(/:443$/, '')
+  return n(name) === n(host)
+}
+
 export function JoinFlow({ ws, onClose, initialLink }: { ws: string; onClose: () => void; initialLink?: string }) {
   const refreshHub = useHubRefresh(ws)
   // Closing after the signature (waiting, failed or confirmed) reads the hub status again: allowed while paused.
@@ -107,7 +113,9 @@ export function JoinFlow({ ws, onClose, initialLink }: { ws: string; onClose: ()
   // the hub's own name is self-declared, so it never stands alone in the question the owner signs under.
   const hubHost = found ? hostOf(found.link) : ''
   const hubAt = found ? found.link.replace(/^(https?:\/\/[^/]+).*$/, '$1') : ''
-  const hubName = info?.name?.trim() || ''
+  // The host's card has no display name: `name` is the link's address part. A name is shown only when it says more than the host.
+  const rawName = info?.name?.trim() || ''
+  const hubName = rawName && !sameHost(rawName, hubHost) ? rawName : ''
   if (signed && info) return <Flow title="Connect a hub" onClose={leave} finish="here"><ConnectStage ws={ws} info={info} mode={mode} onClose={leave} /></Flow>
 
   return <Flow title="Connect a hub" onClose={onClose} finish="here">

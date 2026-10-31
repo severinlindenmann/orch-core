@@ -10,6 +10,8 @@ export const NO_START = "None of your workspaces can start a space yet. A worksp
 export const LATER = "Can join later, once its owner accepts";
 export const RESTORE_LINE = "To get an older version back, restore it from the workspace.";
 const TYPES = [["wiki", "Wiki", "Pages people write together"], ["files", "Files", "Documents everyone starts from"], ["board", "Board", "Cards that move from planned to done"]];
+export const HINT_PICK = "Tick a workspace that joins now.";
+export const HINT_TICK = "Tick \u201cI understand\u201d to create the space.";
 const typeName = (t) => (TYPES.find((x) => x[0] === t) ?? [t, ""])[1];
 
 const info = (label, body) => h("details", { class: "info" }, h("summary", { "aria-label": label, text: "i" }), h("p", { class: "small muted", text: body }));
@@ -42,7 +44,9 @@ export function historyView(data, now = Date.now()) {
 
 /** The 3-step "New shared space" dialog. `done(form)` gets {type, name, purpose, members, understood: true}. */
 export function newSpaceDialog(workspaces, done, close) {
-  const form = { type: null, name: "", purpose: "", members: new Set(), understood: false };
+  // A kind is always chosen (Wiki, the most common), and the first workspace that joins now is already ticked.
+  const first = workspaces.find((w) => w.mode === "full");
+  const form = { type: TYPES[0][0], name: "", purpose: "", members: new Set(first ? [first.workspace_id] : []), understood: false };
   const body = h("div", { class: "card", role: "dialog", "aria-label": "New shared space" });
   let step = 1;
   const nameIn = h("input", { type: "text", maxlength: "64", "aria-label": "Name" });
@@ -55,16 +59,23 @@ export function newSpaceDialog(workspaces, done, close) {
   const joinsNow = () => workspaces.some((w) => w.mode === "full" && form.members.has(w.workspace_id));
   const cannotStart = workspaces.length > 0 && !workspaces.some((w) => w.mode === "full");
   const noStart = h("p", { class: "banner warn", id: "space-no-start", role: "note", text: NO_START });
+  const hint = h("p", { class: "small muted space-hint", id: "space-hint", role: "note" });
   const ready = () => {
     noStart.hidden = !cannotStart;
     create.disabled = !(form.understood === true && joinsNow());
-    if (cannotStart) create.setAttribute("aria-describedby", "space-no-start"); else create.removeAttribute("aria-describedby");
+    // What Create is waiting for, in one line. When no workspace can start at all, the banner above says why instead.
+    hint.textContent = cannotStart || !create.disabled ? "" : joinsNow() ? HINT_TICK : HINT_PICK;
+    hint.hidden = !hint.textContent;
+    if (cannotStart) create.setAttribute("aria-describedby", "space-no-start");
+    else if (create.disabled) create.setAttribute("aria-describedby", "space-hint");
+    else create.removeAttribute("aria-describedby");
   };
   tick.addEventListener("change", () => { form.understood = tick.checked === true; ready(); });
   nameIn.addEventListener("input", () => { form.name = nameIn.value; });
   purposeIn.addEventListener("input", () => { form.purpose = purposeIn.value; });
   const back = () => { step = Math.max(1, step - 1); draw(); };
   next.addEventListener("click", () => {
+    if (step === 1 && !form.type) return;
     if (step === 2) { form.name = nameIn.value ?? ""; form.purpose = purposeIn.value ?? ""; if (!form.name.trim()) return; }
     step += 1; draw();
   });
@@ -78,8 +89,8 @@ export function newSpaceDialog(workspaces, done, close) {
       1: [h("p", { text: "What kind of space is it?" }), ...TYPES.map(([t, label, hint]) => {
         const b = h("button", { type: "button", class: "space-type" + (form.type === t ? " on" : ""), "data-type": t, "aria-pressed": String(form.type === t) },
           h("b", { text: label }), h("span", { class: "small muted", text: " " + hint }));
-        b.addEventListener("click", () => { form.type = t; step = 2; draw(); });
-        return h("div", { class: "list-row" }, b);
+        b.addEventListener("click", () => { form.type = t; draw(); });
+        return h("div", { class: "list-row" }, b, t === TYPES[0][0] ? h("span", { class: "space-tag", text: "Most common" }) : null);
       })],
       2: [h("label", {}, "Name", nameIn), h("label", {}, "What is it for? (optional)", purposeIn)],
       3: [h("p", { text: "Which workspaces use it?" }),
@@ -99,7 +110,8 @@ export function newSpaceDialog(workspaces, done, close) {
         h("label", { class: "check" }, tick, h("span", { text: "I understand: " + STATEMENT }))],
     };
     body.replaceChildren(h("h1", { text: "New shared space (step " + step + " of 3)" }), ...steps[step],
-      h("div", { class: "row" }, cancel, step > 1 ? h("button", { type: "button", text: "Back", onclick: back }) : null, step === 2 ? next : step === 3 ? create : null));
+      h("div", { class: "row" }, cancel, step > 1 ? h("button", { type: "button", text: "Back", onclick: back }) : null, step < 3 ? next : create),
+      step === 3 ? hint : null);
     if (step === 3) ready();
   }
   draw();

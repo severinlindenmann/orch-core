@@ -460,6 +460,8 @@ export function Setup({ api }: { api: SetupAPI }) {
   const [notice, setNotice] = useState('')
   // display only: which way the words were kept on this page. Never sent, never stored, never skips the step.
   const [savedHow, setSavedHow] = useState<'copy' | 'file' | 'print' | null>(null)
+  // Continue pressed with none of Copy / Save / Print used: ask once instead of calling it saved (display only).
+  const [askUnsaved, setAskUnsaved] = useState(false)
   const [reason, setReason] = useState('')
   const [unreachable, setUnreachable] = useState<string | null>(null) // P01: the dashboard's address, when this browser cannot reach it
   const pendingTarget = useRef<{ href: string; workspace_id?: string } | null>(null)
@@ -1224,13 +1226,24 @@ export function Setup({ api }: { api: SetupAPI }) {
                     <button className={savedHow === 'file' ? 'done' : undefined} onClick={saveRecovery}>{savedHow === 'file' ? 'Saved ✓' : 'Save as file'}</button>
                     <button className={savedHow === 'print' ? 'done' : undefined} onClick={() => window.print()}>{savedHow === 'print' ? 'Printed ✓' : 'Print'}</button>
                   </div>
-                  <p role="status" className={savedHow ? 'state' : undefined}>
-                    {savedHow ? `✓ ${notice}` : 'Not saved yet. Copy, save or print your words, then continue.'}
-                  </p>
+                  {askUnsaved && !savedHow ? (
+                    <div role="status" className="warning ask-unsaved">
+                      <p><strong>You have not copied, saved or printed your words.</strong></p>
+                      <p>Did you write them down another way?</p>
+                      <div className="segments">
+                        <button onClick={() => setAskUnsaved(false)}>Go back</button>
+                        <button className="primary" onClick={() => void act(confirm)}>Yes, I wrote them down — continue</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <p role="status" className={savedHow ? 'state' : undefined}>
+                      {savedHow ? `✓ ${notice}` : 'Copy, save or print your words before you continue.'}
+                    </p>
+                  )}
                   <p className="warning">{voidCopy}</p>
                   <SetupFooter cancel={cancel}>
-                    <button className="primary" onClick={() => void act(confirm)}>
-                      I saved my words — continue →
+                    <button className="primary" onClick={() => (savedHow ? void act(confirm) : setAskUnsaved(true))}>
+                      Continue →
                     </button>
                   </SetupFooter>
                 </>

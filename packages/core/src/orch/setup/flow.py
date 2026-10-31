@@ -577,7 +577,9 @@ def default_env(environ: Mapping[str, str]) -> Env:
     )
 
 
-_LINK = re.compile(r"http://127\.0\.0\.1:\d{1,5}/#launch=[A-Za-z0-9_-]{20,100}&to=%2Fsetup")
+_LINK = re.compile(
+    r"http://127\.0\.0\.1:\d{1,5}/(?:setup#launch=[A-Za-z0-9_-]{20,100}|#launch=[A-Za-z0-9_-]{20,100}&to=%2Fsetup)"
+)
 USAGE = (
     "usage: orch setup [--no-browser] [--role workspace|full|pick] [--address ADDRESS] [--port-base N]\n"
     "       orch setup --server --role hub|edge [--domain BASE] [--hub-vpn-only]   (a server, no workspace)\n"

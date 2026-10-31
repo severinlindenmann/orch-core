@@ -98,10 +98,15 @@ export function companyCard(data, actions, opts = {}) {
   const test = h("button", { type: "button", id: "oidc-test", text: "Test the connection", disabled: !data.configured || !data.has_secret });
   test.addEventListener("click", () => busyButton(test, async () => { const r = await actions.test(); if (!r.ok) show(false, WHY[r.error] ?? "The test could not start. Save first."); }));
   const secure = data.secure_address !== false && !!data.redirect_uri;
-  const state = cur.enabled ? chip("On", "ok") : cur.tested ? chip("Tested") : chip("Off");
+  // a closed line must not hide a problem: no secure address, on without a saved secret, or a failed test => "Needs attention" and open
+  // (the hub backend does not send test_failed today; the flag is read when it does, and a failed save or test opens the fold by itself)
+  const trouble = !secure || (cur.enabled === true && data.has_secret !== true) || data.test_failed === true;
+  const state = trouble ? chip("Needs attention", "warn") : cur.enabled ? chip("On", "ok") : cur.tested ? chip("Tested") : chip("Off");
+  const alert = secure ? null : h("p", { class: "small bad", role: "alert", text: "Company login needs a secure address (https), or this server's own localhost. A plain office IP address is not accepted by Microsoft or Google." });
+  const lead = " · " + (cur.enabled && cur.mode === "company" ? "Anyone at " + (cur.domain || "your company") + " can sign in with a work account" : "sign in with a Microsoft or Google work account");
   const intro = "People sign in with their company account instead of a hub password. It opens a session only: approving still needs a key from the hub password and code.";
   const fields = [
-    secure ? null : h("p", { class: "small bad", role: "alert", text: "Company login needs a secure address (https), or this server's own localhost. A plain office IP address is not accepted by Microsoft or Google." }),
+    opts.inside ? null : alert,
     data.redirect_uri ? h("div", { class: "small" }, "Paste this return address into Microsoft or Google: ", h("code", { text: data.redirect_uri }),
       " ", h("button", { type: "button", class: "small", text: "Copy", onclick: () => actions.copy?.(data.redirect_uri) })) : null,
     field("Work account type", provider), field("Application ID", clientId), tenantRow, domainRow,
@@ -119,12 +124,14 @@ export function companyCard(data, actions, opts = {}) {
     sync();
     return card;
   }
-  // inside Hub settings: one closed line (title, one plain line, On/Off, Set up) that opens into the fields; open by default only when a test failed
-  const card = h("details", { class: "company-login", "data-card": "company-login", open: opts.open === true || data.test_failed === true },
-    h("summary", { class: "company-summary-row" }, h("b", { text: "Company login" }), h("span", { class: "small muted", text: " · sign in with a Microsoft or Google work account" }), " ", state,
+  // inside Hub settings: one closed line (title, one plain line, On/Off, Set up) that opens into the fields. The secure-address alert
+  // stays outside the fold; the fold opens by itself when something needs attention.
+  const fold = h("details", { class: "company-login-fold", open: opts.open === true || trouble },
+    h("summary", { class: "company-summary-row" }, h("b", { text: "Company login" }), h("span", { class: "small muted", text: lead }), " ", state,
       h("span", { class: "link small", text: cur.enabled ? " Change" : " Set up" })),
     h("p", { class: "small muted", text: "Copy these from your Microsoft or Google admin page. " + intro }), ...fields);
-  failOpen = () => { card.open = true; };
+  const card = h("div", { class: "company-login", "data-card": "company-login" }, alert, fold);
+  failOpen = () => { fold.open = true; };
   sync();
   return card;
 }

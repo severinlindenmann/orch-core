@@ -217,7 +217,7 @@ function DockBody({ prefs, side, size, view, area, rightFits, setPrefs, focus, m
       style={right ? { width: size } : { height: size }}>
       <ResizeHandle side={side} size={size} max={dockMax(side, view, area)} onResize={resize} />
       <header className={cn('flex h-9 min-w-0 shrink-0 items-center gap-2 overflow-hidden border-b bg-surface-2 px-2 text-xs', addonRule)}>
-        <AddonBadge name={DOCK_ADDON} title="Terminals" />
+        <AddonBadge name={DOCK_ADDON} title="Command window" />
         <SquareTerminal aria-hidden="true" className="size-3.5 shrink-0 text-text-muted" />
         {/* At the narrowest right-hand dock (320 px) the header still fits: the scope truncates, "New session" is an icon. */}
         <h2 className="shrink-0 text-xs font-semibold">Terminal</h2>
@@ -236,7 +236,7 @@ function DockBody({ prefs, side, size, view, area, rightFits, setPrefs, focus, m
             <Button variant="ghost" size="icon-xs" aria-label="Dock menu"><MoreHorizontal /></Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
-            <DropdownMenuItem onSelect={openFull}>Open in Terminals</DropdownMenuItem>
+            <DropdownMenuItem onSelect={openFull}>Open in Command window</DropdownMenuItem>
             {right ? (
               <DropdownMenuItem onSelect={() => setPrefs((p) => ({ ...p, side: 'bottom' }))}>Move to the bottom</DropdownMenuItem>
             ) : (

@@ -11,9 +11,9 @@ const modeName = (w) => w.mode === "full" ? "Shares everything" : "Shares only w
 const personName = (p) => text(typeof p === "string" ? p : p?.name ?? p?.alias ?? p?.user_id ?? "unknown");
 const button = (label, onclick, props = {}) => h("button", { type: "button", text: label, onclick, ...props });
 const small = (value) => h("div", { class: "small muted", text: value });
-// "Needs update" only when it is actionable (the workspace runs an older or unsupported orch); the exact version is in Details.
+// "Needs update" (older) or "Not supported" (too old for this hub) only when it is actionable; the exact version is in Details.
 const statusView = (w, now) => h("div", {}, chip(w.online ? "Online" : "Offline", w.online ? "ok" : ""),
-  w.version_state === "older" || w.version_state === "unsupported" ? chip("Needs update", "warn") : null,
+  w.version_state === "unsupported" ? chip("Not supported", "bad") : w.version_state === "older" ? chip("Needs update", "warn") : null,
   !w.online && Number.isFinite(w.last_seen_ms) ? small("since " + ago(w.last_seen_ms, now)) : null);
 const hostView = (w) => h("div", {}, text(w.host ?? "unknown"), small(text(w.address ?? "unknown")));
 const versionView = (w, hub) => h("div", {},

@@ -110,7 +110,7 @@ def needs(name: str, runner: dict | None) -> str | None:
         if not runner["enabled"]:
             return "Needs dashboard execution first. Turn it on here, then switch this on."
         if name == "terminals" and not runner["terminals"]:
-            return "Terminals are not turned on in dashboard execution here. Turn them on here, then switch this on."
+            return "Command window is not turned on in dashboard execution here. Turn it on here, then switch this on."
     return None
 
 

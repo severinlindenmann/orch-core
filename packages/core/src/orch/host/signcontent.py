@@ -1541,7 +1541,8 @@ _CAPABILITY_WORDS = {
 }
 _ADDON_NAME = re.compile(r"[a-z][a-z0-9_-]{0,63}")
 #: The plain name of a built-in add-on in "Turn on ...": one name everywhere (setup, Settings, the sign card).
-#: Display only: the signed ``name`` row stays the raw value.
+#: Display only, and only for the real built-in package (checked by digest).
+#: The signed ``name`` row stays the raw value.
 _ADDON_PLAIN_NAMES = {"terminals": "Command window"}
 _VERSION = re.compile(r"[0-9][0-9A-Za-z.+-]{0,31}")
 
@@ -1569,6 +1570,12 @@ EXPLORER_ROW = (
 )
 
 
+def _is_builtin_package(ev: Mapping[str, Any], name: str) -> bool:
+    from orch.addons import builtin
+
+    return builtin.is_builtin_package(ev, name)
+
+
 def _is_builtin_explorer(ev: Mapping[str, Any]) -> bool:
     from orch.addons import builtin
 
@@ -1582,7 +1589,10 @@ def _addon(typ: str, ev: Mapping[str, Any], out: dict[str, Any]) -> str:
     words never claim less than is signed (WYSIWYS)."""
     name = _s(ev.get("name"))
     named = _ADDON_NAME.fullmatch(name) is not None
-    nice = _ADDON_PLAIN_NAMES.get(name) or name.replace("-", " ").replace("_", " ").capitalize() if named else name
+    nice = name.replace("-", " ").replace("_", " ").capitalize() if named else name
+    if named and name in _ADDON_PLAIN_NAMES and _is_builtin_package(ev, name):
+        # only the real built-in package (by digest); a package that merely carries the name keeps the mechanical one
+        nice = _ADDON_PLAIN_NAMES[name]
     if typ == "addon.disabled":
         return f"Turn off {nice}" if named else f"Disable the add-on {name}"
     if typ == "addon.purged":

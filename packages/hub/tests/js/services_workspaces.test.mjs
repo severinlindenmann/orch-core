@@ -99,7 +99,8 @@ test("workspace table shows modes, status, versions, hosts, warnings without a h
   assert.match(t, /Personal: only its owner/);
   assert.match(t, /Offline.*since 2 min ago/);
   assert.doesNotMatch(t, /0.2.0 · abcdef1|newest|Office10\.0\.0\.2|unknownunknown/);   // version and computer moved into Details
-  assert.equal((t.match(/Needs update/g) ?? []).length, 2);   // older + unsupported only; the newest one says nothing
+  assert.equal((t.match(/Needs update/g) ?? []).length, 1);   // older only; the newest one says nothing
+  assert.equal((t.match(/Not supported/g) ?? []).length, 1);  // unsupported is its own, stronger word
   assert.doesNotMatch(t, /Hand-offs between workspaces/);
   const d = text(workspaceDetailsView(workspace({ workspace_id: "b", version_state: "older" }), { hub: { version: "0.3.0" } }, NOW));
   assert.match(d, /Version.*0\.2\.0 · abcdef1/); assert.match(d, /Computer.*Office10\.0\.0\.2/); assert.match(d, /update to 0\.3\.0/);

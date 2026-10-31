@@ -141,7 +141,7 @@ Access ends by itself at the time shown. A reminder appears shortly before. Choo
 
 On a ticket, choose **Start agent** in the Actions menu. You see what will run before it starts. If agents have no access yet, you approve that first, then the agent starts in a terminal at the bottom of the page.
 
-## Terminals
+## Command window
 
 The terminal area shows each running agent. Pick one to watch its work, and write to it if it needs help. **Stop** ends that one agent.
 

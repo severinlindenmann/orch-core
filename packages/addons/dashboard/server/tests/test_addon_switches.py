@@ -83,7 +83,7 @@ def test_an_addon_that_needs_dashboard_execution_says_what_to_run():
     assert needs("worktrees", off) is None and not runner_fix("worktrees", off)
     assert not runner_fix("start-agent", None)  # the host says nothing: no switch to offer
     assert needs("start-agent", {**off, "enabled": True}) is None
-    assert "Terminals are not turned on" in needs("terminals", {**off, "enabled": True})
+    assert "Command window is not turned on" in needs("terminals", {**off, "enabled": True})
     assert needs("terminals", {**off, "enabled": True, "terminals": True}) is None
     assert needs("start-agent", None)  # the host says nothing: not offered
 

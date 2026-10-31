@@ -39,7 +39,7 @@ const calls = (p: string, method?: string) => state.host.calls.filter((c) => c.p
 it('lists terminals and agents with their state and who controls them, and the menu has the entry', async () => {
   route()
   show('/w/DEMO/terminals')
-  const list = await screen.findByRole('list', { name: 'Terminals' }, T)
+  const list = await screen.findByRole('list', { name: 'Command window' }, T)
   const rows = within(list).getAllByRole('listitem')
   expect(rows).toHaveLength(4)
   expect(rows[0]).toHaveTextContent('DEMO-0001 Claude')
@@ -54,14 +54,14 @@ it('lists terminals and agents with their state and who controls them, and the m
   // M-5: an ended row says why it ended (an agent whose program is missing is not a silent "Ended").
   expect(rows[3]).toHaveTextContent('Ended')
   expect(within(rows[3]).getByTestId('run-exit')).toHaveTextContent('its program was not found on this computer (code 127)')
-  expect(screen.getAllByRole('link', { name: 'Terminals' }).length).toBeGreaterThan(0)
+  expect(screen.getAllByRole('link', { name: 'Command window' }).length).toBeGreaterThan(0)
 })
 
 it('Stop uses the dock\'s stop route; New terminal opens the host\'s previewed spec in one press, with no confirm dialog', async () => {
   route()
   const user = userEvent.setup()
   show('/w/DEMO/terminals')
-  const list = await screen.findByRole('list', { name: 'Terminals' }, T)
+  const list = await screen.findByRole('list', { name: 'Command window' }, T)
   await user.click(within(list).getByRole('button', { name: 'Stop Build the docs' }))
   await waitFor(() => expect(calls('/runs/r_B2/stop', 'POST')).toHaveLength(1))
   state.host.override = (path, method) => {

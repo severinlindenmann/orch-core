@@ -38,7 +38,7 @@ it('an agent run on a done ticket shows Finished and Close, one on an open ticke
     return undefined
   }
   show('/w/DEMO/terminals')
-  const rows = within(await screen.findByRole('list', { name: 'Terminals' }, T)).getAllByRole('listitem')
+  const rows = within(await screen.findByRole('list', { name: 'Command window' }, T)).getAllByRole('listitem')
   await waitFor(() => expect(rows[0]).toHaveTextContent('Finished'), T)
   expect(rows[0]).toHaveTextContent('Ticket is done')
   expect(rows[0]).not.toHaveTextContent('Live')

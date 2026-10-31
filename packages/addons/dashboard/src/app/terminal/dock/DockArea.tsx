@@ -200,7 +200,7 @@ function DockBar({ right, open, focus }: { right: boolean; open: () => void; foc
         ) : (
           <>
             <SquareTerminal aria-hidden="true" className="size-3.5" />
-            <span className="font-medium text-text">Terminals · {count}</span>
+            <span className="font-medium text-text">Command window · {count}</span>
             <span className="flex-1" />
             <ChevronUp aria-hidden="true" className="size-3.5" />
           </>

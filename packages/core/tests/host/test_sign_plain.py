@@ -784,7 +784,7 @@ def test_g4_an_addon_grant_with_dependencies_is_never_the_short_view_and_says_wh
 
 def test_f7_an_addon_grant_says_what_the_addon_may_do_and_keeps_digest_and_raw_fields_out_of_the_main_view():
     c = build(_addon())
-    assert c["headline"] == "Turn on Command window: it says it will open terminals on this computer, as you"
+    assert c["headline"] == "Turn on Terminals: it says it will open terminals on this computer, as you"
     rows = {r["field"]: r["after"] for r in c["fields_changed"]}
     assert rows == {
         "add-on": "terminals",
@@ -797,7 +797,7 @@ def test_f7_an_addon_grant_says_what_the_addon_may_do_and_keeps_digest_and_raw_f
         assert raw not in shown
     assert "package digest" not in {r["field"] for r in c["fields_changed"]}
     # run-9 feedback 3.5: the compact view (plain title, two facts, the trust risk); no digest note, no "— → value" need
-    assert c["title"] == "Turn on Command window"
+    assert c["title"] == "Turn on Terminals"
     assert c["summary"]["lines"] == [
         "It says it will open terminals on this computer, as you.",
         "Version 0.1.0. Runs on this computer.",
@@ -809,6 +809,44 @@ def test_f7_an_addon_grant_says_what_the_addon_may_do_and_keeps_digest_and_raw_f
     none = build(_addon(name="worktrees", capabilities=[]))
     assert none["headline"] == "Turn on Worktrees: it declares no capabilities"
     assert signcontent.ADDON_TRUST in none["notes"]
+
+
+def _terminals_digest():
+    from orch.addons import builtin
+    from orch.addons.package import MANIFEST_FILE, package_digest
+
+    return package_digest({MANIFEST_FILE: builtin.manifest_bytes("terminals")})
+
+
+def test_run18_the_plain_name_command_window_is_only_for_the_real_builtin_package():
+    real = build(_addon(package_sha256=_terminals_digest()))
+    assert real["headline"] == "Turn on Command window: it says it will open terminals on this computer, as you"
+    assert real["title"] == "Turn on Command window" and real["summary"]["title"] == "Turn on Command window"
+    assert {r["field"]: r["after"] for r in real["fields_changed"]}[
+        "add-on"
+    ] == "terminals"  # the signed name stays visible
+    # a package that only carries the name (any other digest) keeps the mechanical name and the same raw row
+    fake = build(_addon(package_sha256="sha256:" + "bb" * 32))
+    assert "Command window" not in flat(fake) and fake["title"] == "Turn on Terminals"
+    assert {r["field"]: r["after"] for r in fake["fields_changed"]}["add-on"] == "terminals"
+    # turning it off carries no digest here: the mechanical name
+    off = build(
+        {
+            "op": "addon.disable",
+            "events": [{"type": "addon.disabled", "name": "terminals"}],
+            "material": {"kind": "payload", "ticket": None},
+        }
+    )
+    assert "Command window" not in flat(off)
+
+
+def test_run18_the_two_terminals_manifests_are_byte_identical():
+    from pathlib import Path
+
+    from orch.addons import builtin
+
+    own = Path(__file__).resolve().parents[3] / "addons" / "terminals" / "orch-addon.json"
+    assert own.read_bytes() == builtin.manifest_bytes("terminals")
 
 
 def _explorer_digest():

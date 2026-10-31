@@ -84,7 +84,12 @@ def catalog(manifest: Callable[[str], bytes] | None = None, *, optional: bool = 
             True,
             False,
         ),
-        "terminals": ("Command window", "Open a window on this computer where you type commands. It runs as you.", True, True),
+        "terminals": (
+            "Command window",
+            "Open a window on this computer where you type commands. It runs as you.",
+            True,
+            True,
+        ),
         "worktrees": (
             "Own copy per ticket",
             "Each ticket gets its own copy of your project so agents do not overwrite each other.",

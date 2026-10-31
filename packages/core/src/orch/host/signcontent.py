@@ -1540,8 +1540,8 @@ _CAPABILITY_WORDS = {
     "credential": "get the key you store for this add-on with 'orch addon login' and send it over the internet",
 }
 _ADDON_NAME = re.compile(r"[a-z][a-z0-9_-]{0,63}")
-#: The plain name of a built-in add-on in "Turn on ...", one name everywhere (setup, Settings, the sign card). Display only:
-#: the signed ``name`` row stays the raw value.
+#: The plain name of a built-in add-on in "Turn on ...": one name everywhere (setup, Settings, the sign card).
+#: Display only: the signed ``name`` row stays the raw value.
 _ADDON_PLAIN_NAMES = {"terminals": "Command window"}
 _VERSION = re.compile(r"[0-9][0-9A-Za-z.+-]{0,31}")
 

@@ -262,3 +262,22 @@ def test_rule_map_every_rule_of_the_old_prompt_is_still_delivered():
 
     assert RULES_FLAG == rules.FLAG  # delivery (4): the runner writes AGENTS.orch.md + AGENTS.md into this file
     assert AGENTS_FILE == "AGENTS.orch.md" and "AGENTS.orch.md first" in rules.HEADER
+
+
+@pytest.mark.parametrize("workdir", [False, True])
+@pytest.mark.parametrize("harness", ["claude-code", "codex"])
+@pytest.mark.parametrize("mode", ["refine", "work", "fix", "continue", "followup", "context"])
+def test_rules_inline_text_is_in_the_prompt_exactly_when_the_rules_flag_is(mode, harness, workdir):
+    from orch.host.launch import RULES_INLINE_TEXT, RULES_PLACEHOLDER
+
+    task = {"followup": _FU} if mode == "followup" else None
+    argv, _, _ = launch_argv(
+        harness, mode, None, "ORC-7", LOGIN, instructions="/abs/AGENTS.orch.md", workdir=workdir, task=task
+    )
+    flagged = len(argv) > 1 and argv.index(RULES_PLACEHOLDER) > 0 if RULES_PLACEHOLDER in argv else False
+    assert flagged == (harness == "claude-code" and workdir)
+    if mode == "context":  # no rules sentence at all
+        assert RULES_INLINE_TEXT not in argv[-1]
+    else:
+        assert (RULES_INLINE_TEXT in argv[-1]) == flagged
+        assert ("/abs/AGENTS.orch.md" in argv[-1]) == (not flagged)

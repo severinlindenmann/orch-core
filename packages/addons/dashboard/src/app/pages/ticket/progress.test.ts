@@ -54,9 +54,21 @@ describe('phaseOf', () => {
     expect(phaseOf(ticket(), { needsYou: false, run, now: NOW })).toEqual({ kind: 'starting', slow: true, live: true })
   })
 
-  it('a live run without a claim after 4 minutes is never idle and offers no second start (run 16 P01)', () => {
+  it('a live run without a claim after the start window is open, never idle (run 16 P01)', () => {
+    const run = { state: 'running' as const, started_at: iso(NOW - 4 * 60_000), run: 'r_1' }
+    expect(phaseOf(ticket(), { needsYou: false, run, now: NOW })).toEqual({ kind: 'open', run: 'r_1' })
+  })
+
+  it('a live run whose claim is no longer live is idle', () => {
     const run = { state: 'running' as const, started_at: iso(NOW - 4 * 60_000) }
-    expect(phaseOf(ticket(), { needsYou: false, run, now: NOW })).toEqual({ kind: 'starting', slow: true, live: true })
+    expect(phaseOf(ticket({ claim: { ...live, live: false } }), { needsYou: false, run, now: NOW })).toEqual({ kind: 'idle' })
+  })
+
+  it('a live run beats an old failed mark; a dead run with a stale wait is failed', () => {
+    const run = { state: 'running' as const, started_at: iso(NOW - 5000) }
+    expect(phaseOf(ticket(), { needsYou: false, mark: { since: NOW - 9000, failed: { reason: 'x' } }, run, now: NOW })).toMatchObject({ kind: 'starting', live: true })
+    const dead = { state: 'exited' as const, started_at: iso(NOW - 60_000) }
+    expect(phaseOf(ticket(), { needsYou: false, run: dead, wait: 'r_1', now: NOW })).toMatchObject({ kind: 'failed' })
   })
 
   it('a wait item without a claim gives waiting, with the run to open', () => {

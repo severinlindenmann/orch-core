@@ -253,7 +253,7 @@ function Next() {
 }
 
 /** The header's Actions menu lists EVERY action the viewer has, the primary one included (tagged "next"). */
-export function ActionsMenu({ ticket, viewer, sign, jump, start, share, shareFiles, signing = false }: { ticket: TicketDocument; viewer: Viewer; sign: (a: HumanAction) => void; jump: (j: Jump) => void; start: StartAgent; /** Absent: no sharing item (the mock page tests). */ share?: ShareTicket; /** Absent: no Share files item. */ shareFiles?: ShareFiles; signing?: boolean }) {
+export function ActionsMenu({ ticket, viewer, sign, jump, start, share, shareFiles, signing = false, agentBusy = false }: { /** an agent run lives or waits: Start agent is off, like the primary button */ agentBusy?: boolean; ticket: TicketDocument; viewer: Viewer; sign: (a: HumanAction) => void; jump: (j: Jump) => void; start: StartAgent; /** Absent: no sharing item (the mock page tests). */ share?: ShareTicket; /** Absent: no Share files item. */ shareFiles?: ShareFiles; signing?: boolean }) {
   const av = availableActions(ticket, viewer)
   const primary = primaryAction(av, { start: start.startable })
   const isNext = (k: string) => (primary?.kind === 'approve' ? `approve:${primary.gate}` : primary?.kind === 'answer' ? `answer:${primary.question}` : primary?.kind) === k
@@ -300,7 +300,7 @@ export function ActionsMenu({ ticket, viewer, sign, jump, start, share, shareFil
           </DropdownMenuItem>
         ))}
         {start.shown && (
-          <DropdownMenuItem disabled={!!start.reason} onSelect={start.run} className="items-start" data-testid="real-start-agent">
+          <DropdownMenuItem disabled={!!start.reason || agentBusy} onSelect={start.run} className="items-start" data-testid="real-start-agent">
             <Bot className="mt-0.5" />
             <span className="min-w-0 flex-1">
               <span className="flex items-center gap-2">
@@ -313,7 +313,7 @@ export function ActionsMenu({ ticket, viewer, sign, jump, start, share, shareFil
           </DropdownMenuItem>
         )}
         {start.shown && start.choose && (
-          <DropdownMenuItem disabled={!!start.reason} onSelect={start.choose} data-testid="real-start-agent-choose-item">
+          <DropdownMenuItem disabled={!!start.reason || agentBusy} onSelect={start.choose} data-testid="real-start-agent-choose-item">
             <Bot />
             Change agent or model…
           </DropdownMenuItem>
@@ -340,7 +340,7 @@ function PrimaryButton({ ticket, viewer, jump, start, signing, phase, idle = fal
   const { workspace } = useWorkspace()
   const av = availableActions(ticket, viewer)
   const blocked = blockedApproval(ticket, viewer)
-  const busy = phase.kind === 'starting' || phase.kind === 'working' || phase.kind === 'waiting'
+  const busy = phase.kind === 'starting' || phase.kind === 'working' || phase.kind === 'waiting' || phase.kind === 'open'
   // A gate that waits for someone else (shown disabled below) comes before offering to start an agent.
   const p = primaryAction(av, { start: start.startable && !blocked && !busy })
   if (signing)
@@ -427,7 +427,10 @@ function useTicketAgent(ticket: TicketDocument, home: string | undefined) {
   const runs = useQuery({ ...runQueries.list(home ?? ''), enabled: isRealHost() && !!home })
   const today = useQuery({ ...queries.today(home ?? ''), enabled: isRealHost() && !!home })
   const items = today.data?.needs_you ?? []
-  return { run: newestRun(runs.data?.runs, ticket.key), wait: terminalWaitFor(items, ticket.key), inWait: agentInWait(items, ticket.key) }
+  const run = newestRun(runs.data?.runs, ticket.key)
+  // A wait of a run that ended is stale: it is no wait (review P01).
+  const dead = run?.state === 'lost' || run?.state === 'exited'
+  return { run, wait: dead ? undefined : terminalWaitFor(items, ticket.key), inWait: dead ? false : agentInWait(items, ticket.key) }
 }
 
 /** The stepper and the next-step card, told what the ticket's agent really did (never ran / waiting / ended early). */
@@ -504,6 +507,16 @@ export function ProgressPill({ phase, start, ticket, viewer, ws }: { phase: Phas
         </Pill>
       )}
       {phase.kind === 'needs' && <Pill tone="warning">Needs you</Pill>}
+      {phase.kind === 'open' && (
+        <>
+          <Pill>Agent is open</Pill>
+          {phase.run && (
+            <Button type="button" size="sm" variant="outline" onClick={() => openDockOn(phase.run!)}>
+              Open agent
+            </Button>
+          )}
+        </>
+      )}
       {phase.kind === 'waiting' && (
         <>
           <Pill tone="warning">Needs you</Pill>
@@ -608,7 +621,7 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
         <div className="flex flex-wrap items-center gap-2 sm:shrink-0">
           <FocusButton ticket={ticket.key} />
           <PrimaryButton ticket={ticket} viewer={viewer} jump={jump} start={start} signing={signing} phase={phase} idle={!!wait || !!gapOf(ticket)} />
-          <ActionsMenu ticket={ticket} viewer={viewer} sign={sign} jump={jump} start={start} share={share} shareFiles={shareFiles} signing={signing} />
+          <ActionsMenu ticket={ticket} viewer={viewer} sign={sign} jump={jump} start={start} share={share} shareFiles={shareFiles} signing={signing} agentBusy={phase.kind === 'starting' || phase.kind === 'waiting' || phase.kind === 'open'} />
           {start.node}
           {share.node}
           {shareFiles.node}
@@ -657,7 +670,7 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
       )}
 
       <BlockedByConnection ticket={ticket} />
-      {phase.kind !== 'starting' && phase.kind !== 'failed' && phase.kind !== 'waiting' && <AgentStatus ticket={ticket} viewer={viewer} wait={wait} needsYou={phase.kind === 'needs'} liveRun={run?.state === 'running' || run?.state === 'starting'} />}
+      {phase.kind !== 'starting' && phase.kind !== 'failed' && phase.kind !== 'waiting' && phase.kind !== 'open' && <AgentStatus ticket={ticket} viewer={viewer} wait={wait} needsYou={phase.kind === 'needs'} liveRun={run?.state === 'running' || run?.state === 'starting'} />}
     </header>
   )
 }

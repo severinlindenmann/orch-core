@@ -97,7 +97,7 @@ describe('the Hub tab has a different page for each mode', () => {
 
 describe('the top-bar chip', () => {
   it.each([
-    ['standalone', 'Only on this computer'],
+    ['standalone', 'Connect to hub'],
     ['selective', 'Online · connected to hub'],
     ['full', 'Online · connected to hub'],
     ['offline', 'Hub offline, working locally'],
@@ -106,6 +106,16 @@ describe('the top-bar chip', () => {
     hubPage(scenario, '/w/DEMO/board')
     const chip = await screen.findByTestId('hub-chip', {}, T)
     expect(chip.getAttribute('aria-label')).toBe(label)
+  })
+  it('standalone is a visible button that opens Settings > Hub with the connect dialog', async () => {
+    hubPage('standalone', '/w/DEMO/board')
+    const chip = await screen.findByTestId('hub-chip', {}, T)
+    expect(chip.getAttribute('href')).toBe('/w/DEMO/settings/hub#connect')
+    expect(chip.textContent).toContain('Connect to hub')
+  })
+  it('the #connect address opens the join dialog on arrival', async () => {
+    hubPage('standalone', '/w/DEMO/settings/hub#connect')
+    expect(await screen.findByTestId('hub-link-text', {}, T)).toBeTruthy()
   })
 })
 

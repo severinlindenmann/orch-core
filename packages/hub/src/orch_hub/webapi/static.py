@@ -5,11 +5,17 @@ JSON, nothing else, on any path. The set is fixed at import: names are looked up
 the bytes are read once from the package's ``web`` directory. Every response carries the same hard headers: a CSP with
 no inline script or style, no worker, no third party, Trusted Types required (enforced in Chromium; the page also builds
 its DOM with ``textContent`` only, which a lint test checks), ``nosniff``, ``no-referrer``, COOP/CORP same-origin, and,
-when the cookie is Secure, HSTS. HTML is never cached; assets are revalidated.
+when the cookie is Secure, HSTS. Nothing is cached without asking the hub: every file carries an ETag made from its bytes
+(so an update is seen at once, never a stale shell or script) and answers ``If-None-Match`` with a 304; the text files are
+also served gzipped to a client that accepts it. The page links its whole module graph with ``modulepreload`` so the browser
+fetches the chain of imports in parallel; the list is built here from the real imports and cannot drift.
 """
 
 from __future__ import annotations
 
+import gzip
+import hashlib
+import posixpath
 import re
 from pathlib import Path
 
@@ -94,21 +100,76 @@ CSP = (
 )
 
 
+_IMPORT = re.compile(r'(?:\bfrom\s*|\bimport\s*)"(\.{1,2}/[^"]+\.js)"')
+_COMPRESSIBLE = ("text/", "image/svg")
+_ENTRY = "/app.js"
+
+
+def module_graph(files: dict[str, bytes], entry: str = _ENTRY) -> list[str]:
+    """Every module ``entry`` imports, statically and transitively, as url paths (entry first, import order, once each).
+    Only imports that resolve to a served file count; a dynamic ``import(`` is not followed."""
+    seen: list[str] = []
+    todo = [entry]
+    while todo:
+        cur = todo.pop(0)
+        if cur in seen or cur not in files:
+            continue
+        seen.append(cur)
+        for spec in _IMPORT.findall(files[cur].decode("utf-8", "replace")):
+            todo.append(posixpath.normpath(posixpath.join(posixpath.dirname(cur), spec)))
+    return seen
+
+
+def _accepts_gzip(value: str) -> bool:
+    for part in value.split(","):
+        name, _, params = part.strip().partition(";")
+        if name.strip().lower() not in ("gzip", "x-gzip"):
+            continue
+        q = re.search(r"q\s*=\s*([0-9.]+)", params)
+        try:
+            return q is None or float(q.group(1)) > 0
+        except ValueError:
+            return False
+    return False
+
+
+def _etag_matches(header: str, etag: str) -> bool:
+    if header.strip() == "*":
+        return True
+    return any(t.strip().removeprefix("W/") == etag for t in header.split(","))
+
+
 class StaticSite:
     def __init__(self, *, hsts: bool, root: Path = WEB_DIR) -> None:
         self._hsts = hsts
-        self._files = {p: ((root / name).read_bytes(), ctype) for p, (name, ctype) in FILES.items()}
+        files = {p: ((root / name).read_bytes(), ctype) for p, (name, ctype) in FILES.items()}
         names = page_files(root)
-        self._files.update({"/pages/" + n: ((root / "pages" / n).read_bytes(), _JS) for n in names})
-        self._files["/pages.js"] = (pages_module(names), _JS)
+        files.update({"/pages/" + n: ((root / "pages" / n).read_bytes(), _JS) for n in names})
+        files["/pages.js"] = (pages_module(names), _JS)
         self.pages = names
+        # the modules the shell needs, from the real import graph (app.js -> pages.js -> every page ...)
+        self.preload = module_graph({p: b for p, (b, _) in files.items()})
+        links = "".join(f'<link rel="modulepreload" href="{p}">\n' for p in self.preload).encode()
+        for p in ("/", "/oidc/callback"):
+            body, ctype = files[p]
+            files[p] = (body.replace(b"</head>", links + b"</head>", 1), ctype)
+        self._files: dict[str, tuple[bytes, str]] = {p: (b, c) for p, (b, c) in files.items()}
+        # per path: (identity etag, gzip body or None, gzip etag)
+        self._meta: dict[str, tuple[str, bytes | None, str]] = {}
+        for p, (b, c) in self._files.items():
+            tag = hashlib.sha256(b).hexdigest()[:32]
+            z = gzip.compress(b, 9, mtime=0) if c.startswith(_COMPRESSIBLE) and len(b) > 256 else None
+            self._meta[p] = (f'"{tag}"', z if z is not None and len(z) < len(b) else None, f'"{tag}-gz"')
 
-    def get(self, path: str) -> tuple[int, list[tuple[str, str]], bytes] | None:
-        """The answer for an exact allow-listed path, or ``None`` (the caller answers the JSON ``unknown_op``)."""
+    def get(self, path: str, headers: dict[str, str] | None = None) -> tuple[int, list[tuple[str, str]], bytes] | None:
+        """The answer for an exact allow-listed path, or ``None`` (the caller answers the JSON ``unknown_op``).
+        ``headers`` (lower-case names) are the request's: ``if-none-match`` gives a 304, ``accept-encoding`` a gzip body."""
         hit = self._files.get(path)
         if hit is None:
             return None
         body, ctype = hit
+        req = {k.lower(): v for k, v in (headers or {}).items()}
+        etag, z, ztag = self._meta[path]
         h = [
             ("Content-Type", ctype),
             ("Content-Security-Policy", CSP),
@@ -116,8 +177,17 @@ class StaticSite:
             ("Referrer-Policy", "no-referrer"),
             ("Cross-Origin-Opener-Policy", "same-origin"),
             ("Cross-Origin-Resource-Policy", "same-origin"),
-            ("Cache-Control", "no-store" if ctype.startswith("text/html") else "no-cache"),
+            # always ask the hub (cheap with the ETag): an update is never hidden behind a cached shell or script
+            ("Cache-Control", "no-cache"),
         ]
+        if z is not None:
+            h.append(("Vary", "Accept-Encoding"))
+            if _accepts_gzip(req.get("accept-encoding", "")):
+                body, etag = z, ztag
+                h.append(("Content-Encoding", "gzip"))
+        h.append(("ETag", etag))
         if self._hsts:
             h.append(("Strict-Transport-Security", "max-age=31536000"))
+        if "if-none-match" in req and _etag_matches(req["if-none-match"], etag):
+            return 304, [x for x in h if x[0] != "Content-Encoding"], b""
         return 200, h, body

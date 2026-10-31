@@ -360,3 +360,11 @@ details.name-browser summary { font-size:13px; font-weight:400; color:var(--mute
 details.company-login-fold { border-top:0; padding:8px 0; margin:12px 0; }
 details.company-login-fold > summary { display:flex; flex-wrap:wrap; align-items:center; gap:8px; font-weight:400; }
 details.company-login-fold > summary .link { margin-left:auto; color:var(--accent, #2fc6a3); }
+
+/* the first paint and the slow-load card (run17 P05): the same centred card; the bar moves until a page replaces it */
+.opening { max-width:520px; margin:12vh auto 0; }
+.opening .bar { height:3px; margin-top:18px; border-radius:2px; background:var(--surface-3); overflow:hidden; }
+.opening .bar i { display:block; height:100%; width:35%; border-radius:2px; background:var(--brand); animation:opening-bar 1.4s ease-in-out infinite; }
+.opening .row { display:flex; flex-wrap:wrap; gap:8px; margin-top:14px; }
+@keyframes opening-bar { 0% { transform:translateX(-100%); } 100% { transform:translateX(300%); } }
+@media (prefers-reduced-motion: reduce) { .opening .bar i { animation:none; width:100%; opacity:.5; } }

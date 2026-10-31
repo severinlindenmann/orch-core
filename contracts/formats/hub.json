@@ -1,5 +1,5 @@
 {
-  "fingerprint": "c9cabad8575cf680b4a9776d23b65f685244b2e26d32680f2c3123016508d7fc",
+  "fingerprint": "c440b1ada0fc7521f257393615ba31cecb8fabd741b6a6d49486ef5ecbae7443",
   "format": 1,
   "kind": "hub",
   "sources": [
@@ -28,6 +28,7 @@
     "packages/hub/src/orch_hub/connections/store.py",
     "packages/hub/src/orch_hub/contract/backup.py",
     "packages/hub/src/orch_hub/custodial/deliver.py",
+    "packages/hub/src/orch_hub/dataformat.py",
     "packages/hub/src/orch_hub/doctor.py",
     "packages/hub/src/orch_hub/hooks/store.py",
     "packages/hub/src/orch_hub/inspect.py",

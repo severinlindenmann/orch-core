@@ -252,16 +252,16 @@ def plan(
         )
         runner_grant = {"hours": hours, "scope": RUNNER_GRANT_SCOPE, "holder": HOLDER}
     flags: list[dict[str, str]] = []
-    if facts is None:  # a new workspace: orch's folders are made private (P08), shown here before it happens
-        flags.append(
-            {
-                "id": "perms",
-                "text": "Folders made private: only you can change this folder and orch's own folders.",
-                "detail": "Removes the group and other write permission from these folders, where you own them: "
-                + ", ".join(private_paths or [])
-                + ". Nothing else is changed.",
-            }
-        )
+    # P14: new and Finish setup alike, orch's folders are made private (P08) and the review says so
+    flags.append(
+        {
+            "id": "perms",
+            "text": "Folders made private: only you can change this folder and orch's own folders.",
+            "detail": "Removes the group and other write permission from these folders, where you own them: "
+            + ", ".join(private_paths or [])
+            + ". Nothing else is changed.",
+        }
+    )
     if profile.get("git_init") and wanted("git"):
         flags.append(
             {

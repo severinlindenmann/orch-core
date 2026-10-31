@@ -585,3 +585,9 @@ body:has(> #root > .setup) {
   font-size: 13px;
   margin: -0.25rem 0 0.5rem;
 }
+.setup .ask-unsaved p {
+  margin: 0 0 8px;
+}
+.setup .ask-unsaved .segments {
+  margin-top: 8px;
+}

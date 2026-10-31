@@ -28,6 +28,21 @@ export function connectFromHash(hash: string): string | null {
   } catch { return null }
 }
 
+/** The host a connect link dials, as shown to the person: no scheme, the port only when it is not 443. '' for a link that does not parse. */
+export function hostOf(link: string): string {
+  try {
+    const u = new URL(link)
+    const port = u.port || (u.protocol === 'https:' ? '443' : '80')
+    return port === '443' ? u.hostname : `${u.hostname}:${port}`
+  } catch { return '' }
+}
+
+/** True when a hub "name" is just the address (compared lower-cased, scheme and a :443 port dropped). */
+function sameHost(name: string, host: string): boolean {
+  const n = (x: string) => x.toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '').replace(/:443$/, '')
+  return n(name) === n(host)
+}
+
 export function JoinFlow({ ws, onClose, initialLink }: { ws: string; onClose: () => void; initialLink?: string }) {
   const refreshHub = useHubRefresh(ws)
   // Closing after the signature (waiting, failed or confirmed) reads the hub status again: allowed while paused.
@@ -35,7 +50,9 @@ export function JoinFlow({ ws, onClose, initialLink }: { ws: string; onClose: ()
   const oneClick = useOneClick(ws)
   const [failed, setFailed] = useState(false)
   const [text, setText] = useState(initialLink ?? '')
-  const [info, setInfo] = useState<HubLinkInfo | null>(null)
+  // The hub card that came back, with the exact link it was looked up for: what is shown (name, address) and what is signed
+  // always belong to that link; a changed field shows nothing until the new link is looked up.
+  const [found, setFound] = useState<{ link: string; info: HubLinkInfo } | null>(null)
   const [looking, setLooking] = useState(false)
   // A link that arrived in the address is looked up only after a click (opening a page must not make the workspace call out).
   const [armed, setArmed] = useState(!initialLink)
@@ -44,6 +61,7 @@ export function JoinFlow({ ws, onClose, initialLink }: { ws: string; onClose: ()
   const [mode, setMode] = useState<'selective' | 'full'>('selective')
   const [noCopied, setNoCopied] = useState(false)
   const link = text.trim()
+  const info = found && found.link === link ? found.info : null
   const textRef = useRef(text)
   textRef.current = text
   const [detailsOpen, setDetailsOpen] = useState(false)
@@ -79,35 +97,39 @@ export function JoinFlow({ ws, onClose, initialLink }: { ws: string; onClose: ()
 
   // The hub is looked up as soon as the pasted text is a link: nothing to click before the hub is shown.
   useEffect(() => {
-    setInfo(null); setProblem('')
+    setFound(null); setProblem('')
     if (!valid || !armed) return
     let alive = true
     setLooking(true)
     api.getHubLink(ws, link).then(
-      got => { if (alive) setInfo(got) },
+      got => { if (alive) setFound({ link, info: got }) },
       e => { if (alive) setProblem(e instanceof ApiError && e.message ? e.message : 'Could not reach the hub named by this link.') },
     ).finally(() => { if (alive) setLooking(false) })
     return () => { alive = false }
   }, [ws, link, valid, armed])
 
-  // the hub is named by the address the link points to (what is really dialled); its own name and id sit under Details
-  const hubAt = (valid && link.replace(/^https?:\/\/([^/]+).*$/, '$1')) || info?.name || ''
+  // P08: the hub is named as its card names itself; the address that was really looked up and is dialled sits under Details.
+  // The consent line names the verified host (from the link that was looked up, no scheme, port only when it is not 443):
+  // the hub's own name is self-declared, so it never stands alone in the question the owner signs under.
+  const hubHost = found ? hostOf(found.link) : ''
+  const hubAt = found ? found.link.replace(/^(https?:\/\/[^/]+).*$/, '$1') : ''
+  // The host's card has no display name: `name` is the link's address part. A name is shown only when it says more than the host.
+  const rawName = info?.name?.trim() || ''
+  const hubName = rawName && !sameHost(rawName, hubHost) ? rawName : ''
   if (signed && info) return <Flow title="Connect a hub" onClose={leave} finish="here"><ConnectStage ws={ws} info={info} mode={mode} onClose={leave} /></Flow>
 
   return <Flow title="Connect a hub" onClose={onClose} finish="here">
     {!failed && <div className="space-y-2">
-      {canRead && !valid && <Action id="hub-link-use-copied" variant="default" onClick={() => { void useCopied() }}>Use copied link</Action>}
-      {noCopied && <p role="status" data-testid="hub-link-nocopied" className="text-sm text-text-muted">There is no connect link copied yet.</p>}
-      {info && valid && <p role="status" data-testid="hub-link-found" className="font-medium text-success">Link found. Hub at <Raw>{hubAt}</Raw></p>}
-      <details className="text-sm" data-testid="hub-link-paste" open={!canRead || undefined}>
-        <summary className="cursor-pointer text-text-muted">{canRead ? 'Paste a different link' : 'Paste the connect link from your hub admin'}</summary>
-        <div className="mt-1 space-y-1">
-          <label htmlFor="hub-link-text" className="sr-only">Connect link</label>
-          <p id="hub-link-hint" className="text-sm text-text-muted">Paste the connect link from your hub admin.</p>
-          <input id="hub-link-text" data-testid="hub-link-text" autoFocus={!canRead} value={text} onChange={e => { setText(e.target.value); setArmed(true) }} autoComplete="off" spellCheck={false} aria-describedby="hub-link-hint"
-            className="min-h-11 w-full rounded-md border border-border bg-bg px-3 font-mono text-xs" />
+      <div data-testid="hub-link-paste" className="space-y-1">
+        <label htmlFor="hub-link-text" className="block text-sm text-text-muted">Paste the connect link from your hub admin</label>
+        <div className="flex gap-2">
+          <input id="hub-link-text" data-testid="hub-link-text" autoFocus value={text} onChange={e => { setText(e.target.value); setArmed(true) }} autoComplete="off" spellCheck={false}
+            className="min-h-11 min-w-0 flex-1 rounded-md border border-border bg-bg px-3 font-mono text-xs" />
+          {canRead && <Action id="hub-link-use-copied" onClick={() => { void useCopied() }}>Paste from clipboard</Action>}
         </div>
-      </details>
+        {noCopied && <p role="status" data-testid="hub-link-nocopied" className="text-sm text-text-muted">Copy the link in the hub first.</p>}
+      </div>
+      {info && valid && <p role="status" data-testid="hub-link-found" className="font-medium text-success">Link found: <Raw>{hubName || hubHost}</Raw></p>}
     </div>}
     {link && !valid && <p role="alert" data-testid="hub-link-bad" className="text-danger">This does not look like a connect link. Paste all of it, from https:// to the end.</p>}
     {valid && !armed && <div className="space-y-1"><p data-testid="hub-link-from">Link found. This link points to <Raw>{link.replace(/^(https?:\/\/[^/]+).*$/, '$1')}</Raw></p><Action id="hub-link-lookup" onClick={() => setArmed(true)}>Look up this hub</Action></div>}
@@ -115,13 +137,13 @@ export function JoinFlow({ ws, onClose, initialLink }: { ws: string; onClose: ()
     {problem && <p role="alert" data-testid="hub-link-problem" className="text-danger">{problem}</p>}
     {info && <>
       {!failed && <><div className="space-y-2 rounded-md border border-border p-3" data-testid="hub-link-hub">
-        <p className="font-bold">Connect to the hub at <Raw>{hubAt}</Raw>?</p>
+        <p className="font-bold" data-testid="hub-link-question">{hubName ? <>Connect to <Raw>{hubName}</Raw> at <Raw>{hubHost}</Raw>?</> : <>Connect to <Raw>{hubHost}</Raw>?</>}</p>
         <ModeChoice mode={mode} onChange={setMode} />
         {mode === 'selective' && <p className="text-[13px] text-text-muted" data-testid="hub-link-later">Leaving later does not take back what the hub already read.</p>}
         <details className="text-sm text-text-muted" data-testid="hub-link-details" onToggle={e => setDetailsOpen(e.currentTarget.open)}>
           <summary className="cursor-pointer">Details</summary>
           {detailsOpen && <>
-            <p>Hub <Raw>{info.name}</Raw></p>
+            <p>Address: <Raw>{hubAt}</Raw></p>
             <p>Hub id: <Raw>{info.hub_id}</Raw></p>
             {initialLink && <p data-testid="hub-link-origin">at <Raw>{link.replace(/^(https?:\/\/[^/]+).*$/, '$1')}</Raw></p>}
           </>}

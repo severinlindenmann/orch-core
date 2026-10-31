@@ -15,7 +15,7 @@ from orch.posixmod import posixmod
 pwd = posixmod("pwd")
 grp = posixmod("grp")
 
-__all__ = ["make_private_dir", "others_can_write", "privatize", "setup_paths", "tighten"]
+__all__ = ["make_private_dir", "orch_paths", "others_can_write", "privatize", "setup_paths", "tighten"]
 
 _WRITE_OTHER = 0o002
 _WRITE_GROUP = 0o020
@@ -24,13 +24,13 @@ _cache: dict[tuple[int, int], tuple[float, bool]] = {}
 
 
 def _private_group_lookup(uid: int, gid: int) -> bool:
-    """Is ``gid`` a group only ``uid`` belongs to: their primary group, no other account has it as primary group, and
-    the group lists no member but them, and it is named after them (a user-private group; a shared primary group such as
-    ``users`` looks empty when enumeration is off). Group passwords/``newgrp`` via gshadow are not consulted: a
-    private group has no password. The rule applies to files too where a caller uses it (discovery ``config.json``,
-    gitsafe ``.git/config``). Any failure to read the account databases (NSS, LDAP, no pwd/grp module) is
-    "not private": the caller then refuses. The answer is cached for 30 s, so a group change (someone added to the
-    group, a new account with that primary group) can take up to 30 s to be noticed."""
+    """Is ``gid`` a group only ``uid`` belongs to: their primary group, no other account has it as primary group, the
+    group lists no member but them, and it is named after them (a user-private group; a shared primary group such
+    as ``users`` looks empty when enumeration is off). Group passwords/``newgrp``
+    via gshadow are not consulted: a private group has no password. The rule applies to files too where a caller uses
+    it (discovery ``config.json``, gitsafe ``.git/config``). Any failure to read the account databases (NSS, LDAP, no
+    pwd/grp module) is "not private": the caller then refuses. The answer is cached for 30 s, so a group change
+    (someone added to the group, a new account with that primary group) can take up to 30 s to be noticed."""
     try:
         me = pwd.getpwuid(uid)
         if me.pw_gid != gid:
@@ -140,9 +140,24 @@ def privatize(paths: Iterable[str | os.PathLike[str]], uid: int) -> list[Path]:
     return changed
 
 
+def orch_paths(state: Path, home: Path) -> list[Path]:
+    """Only orch's own folders outside any project: the XDG folders and the state dir with its ancestors inside
+    ~/.local and ~/.config. Safe to tighten at launch: no project folder is in it."""
+    out = [state, home / ".local" / "share" / "orch", home / ".config", home / ".local"]
+    # the custody walk to the state dir checks every ancestor, and a 002 umask leaves them group-writable. Never a
+    # folder of the person's own outside ~/.config and ~/.local (a custom state dir under ~/work leaves ~/work alone).
+    for parent in state.parents:
+        if not any(base in parent.parents for base in (home / ".local", home / ".config")):
+            break
+        out.append(parent)
+    out += [home / ".local" / "share", home / ".local" / "state"]
+    return list(dict.fromkeys(out))
+
+
 def setup_paths(root: Path, store: Path, state: Path, home: Path) -> list[Path]:
-    """The ONE list of directories setup makes private: shown in the signed review and changed by the run."""
-    return [root, store, state, home / ".local" / "share" / "orch", home / ".config", home / ".local"]
+    """The ONE list of directories setup makes private: shown in the signed review and changed by the run (the project
+    folder and its store only in the run, after the review; :func:`orch_paths` already at launch)."""
+    return list(dict.fromkeys([root, store, *orch_paths(state, home)]))
 
 
 def shown(path: Path, home: Path) -> str:

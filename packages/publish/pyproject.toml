@@ -22,6 +22,9 @@ dev = ["pytest>=8", "httpx>=0.27", "ruff>=0.6", "pytest-timeout>=2.3"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = [
+    "raw_data: the data dir is opened by the real format rule (no format.json is written for it)",
+]
 timeout = 120
 
 [tool.ruff]

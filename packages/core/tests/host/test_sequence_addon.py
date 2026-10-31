@@ -419,7 +419,9 @@ def test_the_terminal_signs_both_add_ons_with_the_add_on_word_and_one_review(hum
     title = needs.TITLES[name]
     plain = shown.plain[0]
     assert f"Turn on {title}" in plain
-    assert "Settings are signed first, then the add-on is turned on" in shown.texts[0] + plain
+    # P04: the order and the partial-failure note are in the technical details (the full review), not the plain text
+    assert "Settings are signed first, then the add-on is turned on" in shown.texts[0]
+    assert "Settings are signed first" not in plain
     assert "2 signatures, ONE confirmation" in shown.texts[0]
     assert on(human, name) and needs.is_set(settings_of(human), name)
 
@@ -438,13 +440,19 @@ def test_the_review_says_the_settings_and_the_grant_in_words(human, tmp_path):
         flat = json_text(content)
         assert all(x in flat for x in expect), (name, flat[:1500])
         assert "it says it will" in flat or "capabilities" in flat  # the grant is in the same review
-        assert any("the settings stay and the add-on stays off" in n for n in content["notes"])
+        assert not any("settings stay" in n or "signed first" in n for n in content["notes"])  # P04: technical details
+        assert not any(
+            "runs its own code" in n for n in content["notes"]
+        )  # P04: built-in Publish is not third-party code
         assert not any("steps" in n for n in content["notes"])  # r7-P10: the step count is in the technical review
         from orch.host import signer
 
         text = signer.render(first, lambda w: ("ws", "ORCH"))
         assert "2 signatures, ONE confirmation" in text
         assert "One confirmation signs all 2 steps" in text
+        assert (
+            "If signing stops in between, the settings stay and the add-on stays off" in text
+        )  # P04: nothing is hidden
         assert text.count("--- event ") == 2
 
 
@@ -745,3 +753,17 @@ def test_the_publish_addresses_are_read_by_a_person_not_by_an_agent_with_a_grant
     assert ok(human.c.req("workspace.settings"))["data"]["publish"] == value
     agent = ok(human.c.req("workspace.settings", grant=served.grant, session=human_helpers.SESSION))["data"]
     assert "publish" not in agent  # column G
+
+
+def test_p04_the_trust_warning_is_dropped_only_for_the_built_in_publish_package():
+    """Matched by the shipped package's digest: a same-named add-on with other code keeps the warning (fail closed)."""
+    from orch.host import sequence, signcontent
+
+    intent = {"kind": "addon_enable", "name": "publish", "settings": {"publish": PUBLISH}}
+    other = {"type": "addon.granted", "name": "publish", "package_sha256": "sha256:" + "ab" * 32}
+    for events in ([other], []):
+        content = {"notes": [signcontent.ADDON_TRUST], "fields_changed": []}
+        kept = sequence._addon_content(content, intent, 2, events)
+        assert signcontent.ADDON_TRUST in kept["notes"]
+    text = sequence.steps_line(intent, 2)
+    assert "the settings stay and the add-on stays off" in text and "Settings are signed first" in text

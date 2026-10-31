@@ -73,3 +73,48 @@ it('with Publish on, Share files... opens the share dialog straight away', async
   expect(within(dialog).getByRole('button', { name: 'Add a file' })).toBeInTheDocument()
   await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Turn on Publish' })).toBeNull(), T)
 })
+
+// P04 (J07-04): Share files... with Publish off and not set up is ONE dialog (the address), and its button goes straight to
+// the review with Sign. The list dialog and the empty second 'Turn on Publish' dialog are gone; nothing is prepared or
+// signed before that press, Cancel withdraws the open request, and Sign stays the person's own press.
+const notSetUp = (suggest: string | null) => {
+  ws().addOns = { available: true, add_ons: [{ ...row('off'), set_up: false, suggest }] } as never
+}
+const openShare = async (user: ReturnType<typeof userEvent.setup>) => {
+  withTicket()
+  clickOn(ws())
+  window.innerWidth = 1400
+  show('/w/DEMO/ticket/DEMO-0001')
+  await user.click(await screen.findByRole('button', { name: /Actions/ }, T))
+  await user.click(await screen.findByRole('menuitem', { name: 'Share files…' }, T))
+}
+
+it('P04: Share files... with Publish not set up is one dialog; Turn on and sign leads straight to Sign', async () => {
+  notSetUp('http://127.0.0.1:8102')
+  const user = userEvent.setup()
+  await openShare(user)
+  const dialog = await screen.findByRole('dialog', { name: 'Turn on Publish' }, T)
+  expect(screen.getAllByRole('dialog')).toHaveLength(1)
+  expect(within(dialog).queryByRole('list')).toBeNull() // no add-on list inside
+  expect(within(dialog).getByText(/Publish server on this computer/)).toHaveTextContent('http://127.0.0.1:8102')
+  expect(within(dialog).queryByText(/Nothing leaves this computer until you sign/)).toBeNull() // no wall of text
+  expect(state.host.clickPrepares()).toEqual([]) // nothing prepared before the press
+  await user.click(within(dialog).getByRole('button', { name: 'Turn on and sign' }))
+  const panel = await screen.findByTestId('click-panel', {}, T)
+  expect(state.host.clickPrepares().map((c) => c.body)).toEqual([{ action: 'addon_enable', name: 'publish', publish: { server: 'http://127.0.0.1:8102', share: 'http://127.0.0.1:8102' } }])
+  expect(await screen.findByRole('button', { name: /^Sign( |$)/ }, T)).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Turn on and sign' })).toBeNull() // the address dialog is gone, no second dialog
+  expect(state.host.clickSigned).toEqual([]) // never signed by itself
+})
+
+it('P04: Cancel at the review withdraws the open request and leaves Publish off', async () => {
+  notSetUp('http://127.0.0.1:8102')
+  const user = userEvent.setup()
+  await openShare(user)
+  await user.click(within(await screen.findByRole('dialog', { name: 'Turn on Publish' }, T)).getByRole('button', { name: 'Turn on and sign' }))
+  const panel = await screen.findByTestId('click-panel', {}, T)
+  await user.click(await screen.findByRole('button', { name: 'Cancel' }, T))
+  await waitFor(() => expect(new Set(state.host.clickCancelled).size).toBe(1), T) // the one prepared request, withdrawn
+  await waitFor(() => expect(screen.queryByTestId('click-panel')).toBeNull(), T)
+  expect(screen.queryByRole('dialog', { name: 'Share files' })).toBeNull()
+})

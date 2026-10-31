@@ -34,7 +34,7 @@ import hashlib
 import os
 import re
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -1311,7 +1311,7 @@ def build_content(prepared: Mapping[str, Any], *, verified: bool) -> dict[str, A
     intent = validate_intent(meta["intent"])
     n = int(meta["of"])
     if intent["kind"] == ADDON:  # no ticket: the workspace's settings and one add-on
-        content = _addon_content(content, intent, n)
+        content = _addon_content(content, intent, n, expand(prepared)["events"])
         publisher = (prepared["material"].get("market") or {}).get("publisher", {}).get("fingerprint")
         if intent.get("staged"):
             rows = content.setdefault("fields_changed", [])
@@ -1429,7 +1429,9 @@ def _gates_content(
     return content
 
 
-def _addon_content(content: dict[str, Any], intent: Mapping[str, Any], n: int) -> dict[str, Any]:
+def _addon_content(
+    content: dict[str, Any], intent: Mapping[str, Any], n: int, events: Sequence[Mapping[str, Any]] = ()
+) -> dict[str, Any]:
     """The review of turning on an add-on that needs settings: the settings in words, then the grant (both are rows of
     the events, built by :func:`signcontent.build`), and what happens if signing stops between the two."""
     from orch.addons.settings_needs import TITLES
@@ -1454,16 +1456,28 @@ def _addon_content(content: dict[str, Any], intent: Mapping[str, Any], n: int) -
             + ("" if sent == opens else f" (links open at {opens})")
             + "; anyone with the link can read them.",
         )
-    notes.append(
-        "Settings are signed first, then the add-on is turned on. If signing stops in between, "
-        "the settings stay and the add-on stays off."
-    )
+    # P04: the built-in Publish (matched by the digest of the shipped package, never by name) is not third-party code,
+    # so the "runs its own code" warning is for marketplace add-ons only; any other event keeps it (fail closed).
+    from orch.addons import builtin
+    from orch.host import signcontent
+
+    grants = [e for e in events if e.get("type") == "addon.granted"]
+    if grants and all(builtin.is_builtin_package(e, "publish") for e in grants):
+        notes[:] = [x for x in notes if x != signcontent.ADDON_TRUST]
+    # "Settings are signed first, then the add-on is turned on; if signing stops in between ..." is in the technical
+    # details (:func:`steps_line`), where the signer's full review shows it.
     return content  # "One confirmation signs all N steps ..." is in the technical details (r7-P10)
 
 
 def steps_line(intent: Mapping[str, Any], n: int) -> str:
     """What one confirmation does for a sequence (technical details, r7-P10)."""
     what = "workspace" if intent["kind"] == ADDON else "ticket"
+    if intent["kind"] == ADDON:
+        return (
+            f"One confirmation signs all {n} steps. Settings are signed first, then the add-on is turned on. "
+            "If signing stops in between, the settings stay and the add-on stays off. "
+            f"If the {what} changes meanwhile, signing stops and what is already signed stays."
+        )
     return (
         f"One confirmation signs all {n} steps. If the {what} changes meanwhile, "
         "signing stops and what is already signed stays."

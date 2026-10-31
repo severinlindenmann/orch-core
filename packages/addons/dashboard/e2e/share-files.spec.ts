@@ -13,10 +13,11 @@ let base = ''
 const uploads: Record<string, any>[] = []
 const prepares: Record<string, any>[] = []
 let publishOn = false
+let setUp = true
 
 const addOns = () => ({
   available: true,
-  add_ons: [{ id: 'publish', title: 'Publish', desc: 'Share files of a ticket with a link. Nothing leaves this computer until you sign.', state: publishOn ? 'on' : 'off', locked: null, blocked: null, needs: 'publish', set_up: true }],
+  add_ons: [{ id: 'publish', title: 'Publish', desc: 'Share files of a ticket with a link. Nothing leaves this computer until you sign.', state: publishOn ? 'on' : 'off', locked: null, blocked: null, needs: 'publish', set_up: setUp, suggest: setUp ? null : 'http://127.0.0.1:8102' }],
 })
 
 test.beforeAll(async () => {
@@ -71,6 +72,27 @@ test('Publish is in Browse with Turn on; the ticket Actions menu has Share files
   await expect(page.getByRole('dialog', { name: 'Turn on Publish' })).toBeVisible()
   await page.waitForTimeout(500) // let the dialog finish its fade
   await page.screenshot({ path: path.join(SHOTS, 'run12-p05-after-turnon.png') })
+})
+
+test('P04: Share files with Publish off shows ONE dialog; Turn on and sign leads to Sign', async ({ page }) => {
+  publishOn = false
+  setUp = false
+  fake.publishOn = false
+  try {
+    await open(page, '/w/DEMO/ticket/DEMO-0001')
+    await page.getByRole('button', { name: /Actions/ }).click()
+    await page.getByRole('menuitem', { name: 'Share files…' }).click()
+    const dialog = page.getByRole('dialog', { name: 'Turn on Publish' })
+    await expect(dialog).toBeVisible()
+    await expect(page.getByRole('dialog')).toHaveCount(1)
+    await expect(dialog.getByText('http://127.0.0.1:8102')).toBeVisible()
+    await dialog.getByRole('button', { name: 'Turn on and sign' }).click()
+    await expect(page.getByTestId('click-panel')).toBeVisible()
+    await expect(page.getByRole('button', { name: /^Sign( |$)/ })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Turn on and sign' })).toHaveCount(0) // no second dialog to press again
+  } finally {
+    setUp = true
+  }
 })
 
 test('Add a file in Share files: the file goes alone, then Review names it', async ({ page }) => {

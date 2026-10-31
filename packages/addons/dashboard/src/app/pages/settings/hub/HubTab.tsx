@@ -35,7 +35,7 @@ export function HubTab({ workspace }: { workspace: Workspace }) {
   const ws = workspace.id
   const status = useHub(ws)
   const fullAllowed = useFullAllowed(ws)
-  const [flow, setFlow] = useState<'join' | 'full' | 'leave' | 'share'>()
+  const [flow, setFlow] = useState<'join' | 'full' | 'leave' | 'leave-down' | 'share'>()
   // P13: the hub's /c page opens Settings > Hub with `#connect=<link>`. Take it once, take it out of the address, and open
   // the join dialog (standalone only) with the link prefilled.
   const router = useRouter()
@@ -58,15 +58,16 @@ export function HubTab({ workspace }: { workspace: Workspace }) {
   }, [wantsJoin, mode]) // eslint-disable-line react-hooks/exhaustive-deps
   if (!hubServed(ws)) return <Panel title="Hub settings unavailable"><p>This host does not serve hub settings yet.</p></Panel>
   if (status.isPending) return <Panel title="Hub"><p role="status">Loading hub settings…</p></Panel>
-  if (status.isError) return <Panel title="Hub"><p role="alert">Could not load hub settings.</p><Action id="hub-status-retry" onClick={() => void status.refetch()}>Try again</Action></Panel>
-  const s = status.data
+  if (status.isError && !status.data) return <Panel title="Hub"><p role="alert">Could not load hub settings.</p><Action id="hub-status-retry" onClick={() => void status.refetch()}>Try again</Action></Panel>
+  const s = status.data!
   // Older status responses have no display name; never substitute an id.
   const named = s as HubStatus & { name?: string; hub_name?: string }
   const hubName = named.hub_name ?? named.name
   if (s.mode === 'unknown') return <Panel title="Hub state not known"><p>The workspace has not reported its hub mode.</p></Panel>
   // The network settings, the hub's name and its id: in the connected pages they sit behind "More about sharing".
   const extra = <>
-    <Network workspace={workspace} />
+    <Network workspace={workspace} standalone={s.mode === 'standalone'} />
+    {(s.mode === 'selective' || s.mode === 'full') && <HubSharing workspace={workspace} />}
     {hubName && <p className="text-sm font-semibold">Hub <Raw>{hubName}</Raw></p>}
     {s.hub_id && <InfoDrawer testId="hub-status-details"><p className="break-words text-sm">Hub id (from the hub, not signed): <Raw>{s.hub_id}</Raw></p></InfoDrawer>}
   </>
@@ -74,24 +75,38 @@ export function HubTab({ workspace }: { workspace: Workspace }) {
   return <div className="space-y-4" data-testid="hub-tab">
     {flow === 'share' && s.mode === 'selective' ? <ShareRules ws={ws} workspace={workspace} onBack={() => setFlow(undefined)} /> : <>
       {s.not_told && <NotTold ws={ws} />}
-      <HubBanner ws={ws} />
+      {s.reachable !== false && <HubBanner ws={ws} />}
       {(s.reseal_needed || s.key_change_pending || s.log_sync_stuck || s.link === 'joining' || s.link === 'switching') && <Panel title="Hub needs attention" tone="border-warning/40 bg-warning-soft"><p>The hub connection has changes in progress. Wait a few minutes, then reload this page. Make no changes here until this message is gone.</p></Panel>}
-      {s.mode === 'standalone' && <StandalonePage onJoin={() => setFlow('join')} />}
-      {s.mode === 'selective' && <SelectivePage ws={ws} fullAllowed={fullAllowed} onShare={() => setFlow('share')} onFull={() => setFlow('full')} onLeave={() => setFlow('leave')} extra={extra} />}
-      {s.mode === 'full' && <FullPage ws={ws} status={s} onLeave={() => setFlow('leave')} extra={extra} />}
-      {(s.mode === 'selective' || s.mode === 'full') && <HubSharing workspace={workspace} />}
-      {s.mode !== 'selective' && s.mode !== 'full' && extra}
+      {s.mode === 'standalone' && <StandalonePage onJoin={() => setFlow('join')} extra={extra} />}
+      {s.reachable === false && (s.mode === 'selective' || s.mode === 'full') && <Panel title={hubTitle(hubName)}>
+        <p>Hub unavailable. Your work continues on this computer.</p>
+        <Action id="hub-check-again" variant="default" disabled={status.isFetching} onClick={() => void status.refetch()}>Check again</Action>
+        {status.isError && <p role="alert">Could not check the hub. Try again.</p>}
+        <Details testId="hub-more" label="More about sharing">
+          <p>Sharing and phone approvals resume when the hub is back.</p>
+          <Action id="hub-leave-down" variant="link" onClick={() => setFlow('leave-down')}>Hub gone for good? Leave without it</Action>
+          {extra}
+        </Details>
+      </Panel>}
+      {s.reachable !== false && s.mode === 'selective' && <SelectivePage ws={ws} fullAllowed={fullAllowed} onShare={() => setFlow('share')} onFull={() => setFlow('full')} onLeave={() => setFlow('leave')} extra={extra} />}
+      {s.reachable !== false && s.mode === 'full' && <FullPage ws={ws} status={s} onLeave={() => setFlow('leave')} extra={extra} />}
     </>}
     {flow === 'join' && <JoinFlow ws={ws} initialLink={initialLink} onClose={() => setFlow(undefined)} />}
     {flow === 'full' && <FullSwitch ws={ws} onClose={() => setFlow(undefined)} />}
+    {flow === 'leave-down' && <LeaveFlow ws={ws} hubDown onClose={() => setFlow(undefined)} />}
     {flow === 'leave' && <LeaveFlow ws={ws} onClose={() => setFlow(undefined)} />}
   </div>
 }
-export function StandalonePage({ onJoin }: { onJoin: () => void }) {
-  return <><Panel title="Hub"><p><strong>Not connected.</strong> This workspace works on its own. Connect a hub to use your phone, publish files and hand work to other workspaces.</p>
-    <p className="text-text-muted">You need a connect link from your hub admin.</p>
-    <Action id="hub-connect" onClick={onJoin}>Connect a hub</Action>
-  </Panel><Panel title="What stays the same"><p>Your tickets, agents and keys stay on this computer.</p><p>You can leave the hub at any time and keep working.</p></Panel></>
+export function StandalonePage({ onJoin, extra }: { onJoin: () => void; extra?: ReactNode }) {
+  return <Panel title="Optional: connect this workspace to your company hub">
+    <Action id="hub-connect" variant="default" onClick={onJoin}>Connect a hub</Action>
+    <Details testId="hub-standalone-details">
+      <p>This workspace works on its own. Your tickets, agents and keys stay on this computer.</p>
+      <p>You can leave the hub at any time and keep working.</p>
+      <p>You need a connect link from your hub admin.</p>
+      {extra}
+    </Details>
+  </Panel>
 }
 export function SelectivePage({ ws, fullAllowed: _fullAllowed, onShare, onFull, onLeave, extra }: { ws: string; fullAllowed: boolean; onShare: () => void; onFull: () => void; onLeave: () => void; extra?: ReactNode }) {
   const share = useQuery(hubQueries.share(ws))
@@ -101,7 +116,7 @@ export function SelectivePage({ ws, fullAllowed: _fullAllowed, onShare, onFull, 
       <p>{share.data.shared} shared {share.data.shared === 1 ? 'item' : 'items'}</p>
       <p>{rules} sharing {rules === 1 ? 'rule' : 'rules'}</p>
       <AlwaysShared />
-      <p>Counts are from the hub, not signed.</p>
+      <p>These numbers come from the hub; orch cannot check them.</p>
       {share.data.refused.length > 0 && <p className="text-warning">{share.data.refused.length} items could not be shared.</p>}
     </>}
     <div className="space-y-2 border-t border-border pt-3"><h3 className="font-semibold">Let the hub read everything</h3>
@@ -110,21 +125,21 @@ export function SelectivePage({ ws, fullAllowed: _fullAllowed, onShare, onFull, 
     </div>
     {extra}
   </>
-  return <ConnectedCard ws={ws} line={<p>Connected. The hub sees only what you share.</p>} more={more}>
+  return <ConnectedCard ws={ws} line={<p>Connected. The hub sees only what you share, plus this workspace’s name.</p>} more={more}>
     {share.data?.available !== false && <Action id="hub-choose-share" onClick={onShare}>Choose what to share</Action>}
-    <Action id="hub-leave" onClick={onLeave}>Leave the hub</Action>
+    <Action id="hub-leave" variant="link" onClick={onLeave}>Leave the hub</Action>
   </ConnectedCard>
 }
 export function FullPage({ ws, status, onLeave, extra }: { ws: string; status: HubStatus; onLeave: () => void; extra?: ReactNode }) {
   const more = <>
-    <div className="space-y-2"><h3 className="font-semibold">Access through the hub</h3><Details testId="hub-access-details"><p>From the hub, not signed.</p></Details>
+    <div className="space-y-2"><h3 className="font-semibold">Access through the hub</h3><Details testId="hub-access-details"><p>These numbers come from the hub; orch cannot check them.</p></Details>
       {(['read', 'edit', 'admin'] as const).map(role => <div key={role} className="flex flex-wrap justify-between gap-2 border-t border-border py-2"><span>{role === 'read' ? 'Can read' : role === 'edit' ? 'Can edit' : 'Admins'}</span><span>{status.groups ? (status.groups[role] === 1 ? '1 person' : status.groups[role] + ' people') : 'Count not available'}</span></div>)}
     </div>
     <p>Every ticket, file and note, now and later. Hub admins act as admins here. Approvals use your phone or passkey.</p>
-    <p>To share only some things instead: leave this hub, then rejoin and choose “Only what I choose”. What the hub has already read cannot be taken back.</p>
+    <p>To share less, leave the hub and join again; what the hub already read cannot be taken back.</p>
     {extra}
   </>
   return <ConnectedCard ws={ws} line={<p><strong>The hub can read everything in this workspace</strong>. Your work stays on this computer.</p>} more={more}>
-    <Action id="hub-leave" onClick={onLeave}>Leave the hub</Action>
+    <Action id="hub-leave" variant="link" onClick={onLeave}>Leave the hub</Action>
   </ConnectedCard>
 }

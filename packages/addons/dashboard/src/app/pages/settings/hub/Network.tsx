@@ -6,10 +6,10 @@ import { api } from '@/api/client'
 import { networkQueries } from '@/api/network'
 import { ApiError, type Workspace } from '@/api/types'
 import { Button } from '@/components/ui/button'
-import { Details, Field, Panel } from './shared'
+import { Details, Field } from './shared'
 import { useViewerRole } from '../host/useViewerRole'
 
-export function Network({ workspace }: { workspace: Workspace }) {
+export function Network({ workspace, standalone = false }: { workspace: Workspace; standalone?: boolean }) {
   const ws = workspace.id
   const owner = useViewerRole(workspace) === 'owner'
   const qc = useQueryClient()
@@ -24,8 +24,9 @@ export function Network({ workspace }: { workspace: Workspace }) {
   if (!owner || !got.data) return null
   const d = got.data
   return (
-    <Panel title="Network">
-      <p data-testid="network-state">{d.broken ? "The network settings can't be read. The hub is not contacted until you fix or remove them." : d.proxy ? `The hub connection goes through your company proxy ${d.proxy}.` : 'This computer reaches the hub directly.'}</p>
+    <section className="space-y-3 border-t border-border pt-3">
+      <h3 className="font-semibold">Network</h3>
+      <p data-testid="network-state">{d.broken ? "The network settings can't be read. The hub is not contacted until you fix or remove them." : d.proxy ? standalone ? `This computer would reach a hub through your company proxy ${d.proxy}.` : `The hub connection goes through your company proxy ${d.proxy}.` : standalone ? 'This computer can reach a hub directly.' : 'This computer reaches the hub directly.'}</p>
       <Details testId="network-details">
         <Field label="Company proxy" testId="network-proxy" value={proxy} hint="Like https://proxy.office:3128. Leave it empty if you do not use one." onChange={setProxy} />
         <Field label="User name (if the proxy asks)" testId="network-user" value={user} onChange={setUser} />
@@ -39,6 +40,6 @@ export function Network({ workspace }: { workspace: Workspace }) {
         </div>
         <p>It is a setting of this computer only. The hub never sets it, and the connection is still checked against the hub's key.</p>
       </Details>
-    </Panel>
+    </section>
   )
 }

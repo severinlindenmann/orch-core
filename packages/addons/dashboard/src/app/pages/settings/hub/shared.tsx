@@ -62,7 +62,7 @@ export function Panel({ title, children, tone = '' }: { title: string; children:
     <h2 className="font-semibold">{title}</h2>{children}
   </section>
 }
-export function Action({ id, children, onClick, disabled = false, variant = 'outline' }: { id: string; children: ReactNode; onClick: () => void; disabled?: boolean; variant?: 'outline' | 'default' }) {
+export function Action({ id, children, onClick, disabled = false, variant = 'outline' }: { id: string; children: ReactNode; onClick: () => void; disabled?: boolean; variant?: 'outline' | 'default' | 'link' }) {
   return <Button data-testid={id} variant={variant} className="h-auto max-w-full whitespace-normal text-left" disabled={disabled} onClick={onClick}>{children}</Button>
 }
 export function Field({ label, value, onChange, hint, testId }: { label: string; value: string; onChange: (v: string) => void; hint?: string; testId: string }) {

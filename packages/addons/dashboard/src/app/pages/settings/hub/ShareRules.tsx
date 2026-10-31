@@ -22,7 +22,7 @@ function chipsFor(kind: 'type' | 'tag' | 'ticket', tickets: { key: string; title
 }
 
 export function AlwaysShared() {
-  return <p>Notes that need you and questions are always shared.</p>
+  return <p>Notes that need you, questions and this workspace’s name are always shared.</p>
 }
 /** One plain-words line per rule: what it matches and how many tickets that is now. */
 function ruleLine(r: HubShare['rules'][number], titleOf: (key: string) => string | undefined): string {
@@ -74,7 +74,7 @@ export function ShareRules({ ws, workspace, onBack }: { ws: string; workspace: H
     {share.isPending ? <p role="status">Loading sharing rules…</p> : share.isError ? <><p role="alert">Could not load sharing rules.</p><Action id="hub-share-retry" onClick={() => void share.refetch()}>Try again</Action></> : !share.data.available ? <p data-testid="hub-share-unavailable">Sharing settings are not available on this host yet. Update orch to choose what the hub sees.</p> : <>
       <Panel title="Notes for the hub and your phone"><AlwaysShared /></Panel>
       <Panel title="Shared with the hub">
-        <p className="text-text-muted">New matching tickets are shared too.</p><Details testId="hub-rules-details"><p>Counts come from the hub, not signed.</p></Details>
+        <p className="text-text-muted">New matching tickets are shared too.</p><Details testId="hub-rules-details"><p>These numbers come from the hub; orch cannot check them.</p></Details>
         {share.data.rules.filter(r => r.kind !== 'needs_you' && r.kind !== 'questions').map((r, i) => <div key={r.kind + ':' + r.value} className="flex flex-wrap items-center justify-between gap-3 border-t border-border py-3">
           <div className="min-w-0"><p>{ruleLine(r, titleOf)}</p>
             <p className="text-xs text-text-muted">{r.readers ? `Readable by ${r.readers} ${r.readers === 1 ? 'person or team' : 'people and teams'} besides you` : 'Only you'}{r.description ? ' · description included' : ''}</p>

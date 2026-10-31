@@ -21,7 +21,7 @@ function AgentRow({ a }: { a: LiveAgent }) {
     <button type="button" aria-current={selected || undefined} onClick={() => live.select(a.id)} className="flex w-full min-w-0 items-start gap-2 rounded-md px-2 py-1.5 text-left hover:bg-surface-2 focus-visible:outline-2 focus-visible:outline-brand">
       <StateDot state={a.state} className="mt-1.5" />
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-[13px] font-medium text-text">{a.name} <span className="font-normal text-text-muted">· {a.stateText}</span></span>
+        <span className="block break-words text-[13px] font-medium text-text">{a.name} <span className="font-normal text-text-muted">· {a.stateText}</span></span>
         <span className="block text-xs text-text-muted">{a.now}{a.state === 'working' && <Timer since={a.since} />}</span>
         {live.details && <span className="mt-1 flex flex-wrap gap-1">
           <Badge className={TOOL_TONE[a.tool]}>{a.account.split(' · ')[0]}</Badge><Badge>{a.model}</Badge>{cache && <Badge>{cacheBadgeText(cache)}</Badge>}
@@ -40,7 +40,7 @@ function JobRow({ j, depth }: { j: LiveJob; depth: number }) {
     <button type="button" aria-current={selected || undefined} onClick={() => live.select(j.id)} className="flex w-full min-w-0 items-start gap-2 rounded-md px-2 py-1.5 text-left hover:bg-surface-2 focus-visible:outline-2 focus-visible:outline-brand">
       <FileSpreadsheet aria-hidden className={cn('mt-0.5 size-3.5 shrink-0', s === 'failed' ? 'text-danger' : s === 'working' ? 'text-brand' : 'text-text-faint')} />
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-[13px] font-medium text-text">{j.name} <Badge>{j.source}</Badge></span>
+        <span className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[13px] font-medium text-text"><span className="break-words">{j.name}</span><Badge>{j.source}</Badge></span>
         <span className={cn('block text-xs', s === 'failed' ? 'text-danger' : 'text-text-muted')}>{j.now}</span>
         {s === 'working' && <span role="progressbar" aria-label={`${j.name} progress`} aria-valuenow={jobProgressPct(j)} aria-valuemin={0} aria-valuemax={100} className="mt-1 block h-1 overflow-hidden rounded-full bg-surface-3"><i className="block h-full bg-brand transition-all" style={{ width: `${jobProgressPct(j)}%` }} /></span>}
         {live.details && <span className="mt-1 block"><Badge>via {j.via}</Badge></span>}

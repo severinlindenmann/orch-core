@@ -24,7 +24,6 @@ import { TicketHeader, TicketProgressLive } from './Header'
 import { FollowupBanner, FollowupLine } from '../schedules/FollowupStrip'
 import { History } from './History'
 import { Work } from './Work'
-import { PreviewTag } from '../focus/live/parts'
 import { Overview } from './Overview'
 import { Questions } from './Questions'
 import { Raw } from './Raw'
@@ -242,7 +241,7 @@ export function TicketPage({ ticketKey }: { ticketKey: string }) {
               Results
               <span className="font-mono text-[11px] text-text-faint">{ticket.artifacts.length}</span>
             </TabsTrigger>
-            {!isRealHost() && <TabsTrigger value="work">Work <PreviewTag className="px-0.5 text-[8px]" /></TabsTrigger>}
+            {!isRealHost() && <TabsTrigger value="work">Work</TabsTrigger>}
             <TabsTrigger value="history">History</TabsTrigger>
           </TabsList>
           <TabsContent value="overview">

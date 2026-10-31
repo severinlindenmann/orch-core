@@ -376,3 +376,12 @@ def test_real_core_finish_keeps_service_login_url(tmp_path):
                 assert done.get("url") == SERVICE_URL, done
         finally:
             core.stop()
+
+
+def test_w01_try_again_reaches_the_setup(setup):
+    """W01: the page's Try again (POST /api/setup/retry) is forwarded, never 404 setup.not_found."""
+    client, *_ = setup
+    headers = claim(client)
+    res = client.post("/api/setup/retry", json={}, headers=headers)
+    assert res.status_code == 200, res.text
+    assert client.get("/api/setup/retry", headers=headers).status_code == 404  # POST only

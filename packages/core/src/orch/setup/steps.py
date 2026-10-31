@@ -304,6 +304,10 @@ def contains_secret(text: str, secrets: Iterable[str]) -> bool:
     return False
 
 
+SERVICE_TEXT = "orch could not start in the background on this computer: its service manager is unavailable."
+TIMEOUT_TEXT = "orch could not start in the background on this computer: its service manager did not answer."
+
+
 #: The fixed sentences (and pieces) this flow's own code writes into reasons. A secret word that occurs only inside one
 #: of these is not a leak (a recovery word "use" must not hide "macOS did not let orch use the keychain"). Closed list,
 #: matched exactly, case-sensitively and on whole-word edges, longest first; add only verbatim sentences.
@@ -311,6 +315,11 @@ KNOWN_WORDING = tuple(
     sorted(
         (
             HIDDEN_REASON,
+            SERVICE_TEXT,
+            TIMEOUT_TEXT,
+            "The records history is not on:",
+            "Next: orch records init",
+            "it could not be set up",
             "macOS did not let orch use the keychain (it is locked); unlock it and run orch setup again",
             "macOS did not let orch use the keychain",
             "one-click could not be set up because",
@@ -415,6 +424,7 @@ class Run:
         self.error: dict[str, Any] | None = None
         self.retry: list[str] = []
         self.reasons: dict[str, str] = {}
+        self.details: dict[str, str] = {}
         self.reason_codes: dict[str, str] = {}  # fixed codes next to the words (the page decides its advice from these)
         self.workspace: dict[str, str] | None = None
         self.waiting_tty = False
@@ -487,6 +497,21 @@ BLOCKED_TEXT = (
     "macOS has turned off orch in the background. Allow orch in System Settings > General > "
     "Login Items & Extensions, then press Try again."
 )
+
+
+def _service_reason(exc: BaseException) -> str | None:
+    import subprocess
+
+    text = str(exc)
+    if text.startswith("macOS has turned off orch in the background."):
+        return None  # the service manager supplied background_off_message, not a generic failure
+    if isinstance(exc, (subprocess.TimeoutExpired, TimeoutError)) or "TimeoutExpired" in text:
+        return TIMEOUT_TEXT
+    if isinstance(exc, OSError) or any(
+        word in text for word in ("OSError", "service manager", "launchctl", "systemctl")
+    ):
+        return SERVICE_TEXT
+    return None
 
 
 def _runner_failure(exc: BaseException, safe: Callable[[str, int | None], str]) -> str:
@@ -601,10 +626,18 @@ class Creator:
         blocked: list[str] = []
         with contextlib.suppress(Exception):
             blocked = list(self.ports.background_blocked())
-        if blocked:
+        # W01: Login Items advice only when no step failed for a service-manager reason (it would blame the wrong thing)
+        service_failed = any(code.startswith("service.") for code in self.run.reason_codes.values())
+        if blocked and not service_failed:
             self._fail(SetupError("background.blocked", BLOCKED_TEXT, 409), True)
         else:
-            self._fail(SetupError("steps.failed", "Some steps did not work: " + ", ".join(bad) + ".", 409), True)
+            first_service = next((k for k, code in self.run.reason_codes.items() if code.startswith("service.")), None)
+            message = self.run.reasons.get(first_service) if first_service else None
+            self._fail(
+                SetupError("steps.failed", message or "Some steps did not work: " + ", ".join(bad) + ".", 409), True
+            )
+        if self.run.error is not None and self.run.details:
+            self.run.error["details"] = "\n".join(self.run.details.values())
 
     def retry(self) -> None:
         """ "Try again" after the person allowed orch in System Settings: the failed background steps run once more."""
@@ -760,15 +793,24 @@ class Creator:
             return
         assert self.wid is not None
         self.run.set("records", "doing")
+        self.run.details.pop("records", None)
+        self.run.reason_codes.pop("records", None)
         try:
             self.ports.records_setup(self.wid, self.root)
         except Exception as exc:  # noqa: BLE001 - reported as a retry item; the rest of the setup is done
             self.run.set("records", "failed")
             self.run.add_retry("records")
+            service = _service_reason(exc)
+            if service:  # W01: a missing or silent service manager is said in plain words, the raw text in Details
+                self.run.details["records"] = self._safe(f"{type(exc).__name__}: {exc}", 2000)
+                code = "service.timeout" if service == TIMEOUT_TEXT else "service.unavailable"
+                self.run.reason_codes["records"] = code
+                self.run.explain("records", f"The records history is not on: {service} Next: orch records init")
+                return
             why = " ".join("".join(c if c.isprintable() else " " for c in self._safe(str(exc), None)).split())[:300]
-            self.run.explain(
-                "records", f"The records history is not on: {why or type(exc).__name__}. Next: orch records init"
-            )
+            if not why or why == type(exc).__name__ or why.startswith(type(exc).__name__ + ":"):
+                why = "it could not be set up"  # never a bare exception class name for the person
+            self.run.explain("records", f"The records history is not on: {why}. Next: orch records init")
             return
         self.run.set("records", "done")
 
@@ -793,13 +835,19 @@ class Creator:
                 self._skip_grant()
             return
         self.run.set("runner", "doing")
+        self.run.details.pop("runner", None)
+        self.run.reason_codes.pop("runner", None)
         terminals = any(f["id"] == "terminals" for f in self.plan.flags)
         try:
             self.ports.runner_enable(self.wid, self.profile["prefix"], terminals)
         except Exception as exc:  # noqa: BLE001 - reported as a retry item; the rest of the setup goes on
             self.run.set("runner", "failed")
             self.run.add_retry("runner")
-            self.run.explain("runner", _runner_failure(exc, self._safe))
+            reason = _service_reason(exc)
+            if reason:
+                self.run.details["runner"] = self._safe(f"{type(exc).__name__}: {exc}", 2000)
+                self.run.reason_codes["runner"] = "service.timeout" if reason == TIMEOUT_TEXT else "service.unavailable"
+            self.run.explain("runner", reason or _runner_failure(exc, self._safe))
             if grant is not None:
                 self._skip_grant()
             return

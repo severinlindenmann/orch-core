@@ -49,6 +49,8 @@ const fetcher = async (url: RequestInfo | URL, init?: RequestInit) => {
   if (path.startsWith('progress')) {
     const ids = [['keys','Creating your key'],['genesis','Saving your approval'],['register','Starting orch in the background'],['git','Preparing work copies'],['runner','Letting the dashboard run agents'],['settings','Saving the workspace settings'],['addon:quick','Quick tasks'],['flags','Turning on one-click approval'],['runner_grant','Letting agents start on this computer'],['custody','Storing your key for one-click approval']]
     r = { done: true, error: null, retry: [], waiting: null, steps: ids.map(([id,label]) => ({ id, label, status: 'done' })) }
+    // ?fail=service: W01, the background service could not start after the workspace was created (finishable)
+    if (params.get('fail') === 'service') r = { done: false, waiting: null, retry: ['runner'], steps: ids.map(([id,label]) => ({ id, label, status: id === 'runner' ? 'failed' : 'done' })), error: { code: 'steps.failed', message: 'orch could not start in the background on this computer: its service manager is unavailable.', finishable: true, details: 'OSError: systemctl --user: no session bus' } }
   }
   void body
   return new Response(JSON.stringify(r), { status: 200 })

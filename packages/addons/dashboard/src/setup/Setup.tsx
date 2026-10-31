@@ -32,6 +32,8 @@ export function reasonOf(e: unknown): string {
 /** The cause in plain words; the code itself stays under "Technical details". */
 export function plainReason(code: string): string {
   if (code === 'session.required' || code === 'session.expired') return 'This page has lost its link to orch. This happens after a reload or when the session ran out.'
+  if (/TimeoutExpired/.test(code)) return 'orch could not start in the background on this computer: its service manager did not answer.'
+  if (/OSError/.test(code)) return 'orch could not start in the background on this computer: its service manager is unavailable.'
   if (code === 'setup.ended') return 'This setup was already finished or stopped.'
   if (code === 'setup.dashboard_unavailable') return 'The page could not start the dashboard on this computer. Nothing was lost.'
   if (code === 'setup.token' || code === 'setup.unavailable') return 'The link to your terminal could not be used.'
@@ -1516,12 +1518,18 @@ export function Setup({ api }: { api: SetupAPI }) {
             <>
               <p role="alert" className="warning">
                 {progress.error.finishable
-                  ? 'Your workspace was created, but some setup steps need attention. Run orch setup in this folder to finish them later.'
+                  ? 'Your workspace was created, but some setup steps need attention. You can open it now and finish them later.'
                   : voidCopy}
               </p>
               <p>
-                <Inline>{progress.error.message}</Inline>
+                <Inline>{/OSError|TimeoutExpired/.test(progress.error.message) ? plainReason(progress.error.message) : progress.error.message}</Inline>
               </p>
+              {(progress.error.details || /OSError|TimeoutExpired/.test(progress.error.message)) && (
+                <details>
+                  <summary>Details</summary>
+                  <p><Raw>{progress.error.details ?? progress.error.message}</Raw></p>
+                </details>
+              )}
               {progress.retry.length > 0 && (
                 <p>
                   Still to finish:{' '}
@@ -1529,9 +1537,14 @@ export function Setup({ api }: { api: SetupAPI }) {
                 </p>
               )}
               <footer>
+                {progress.error.finishable && (
+                  <button className="primary" disabled={busy} onClick={() => void act(finish)}>
+                    Open your workspace
+                  </button>
+                )}
                 {(progress.error.code === 'background.blocked' || progress.error.code === 'steps.failed') && (
                   <button
-                    className="primary"
+                    className={progress.error.finishable ? undefined : 'primary'}
                     onClick={() =>
                       void act(async () => {
                         await api.call('retry', {})
@@ -1543,18 +1556,22 @@ export function Setup({ api }: { api: SetupAPI }) {
                     Try again
                   </button>
                 )}
-                <button className="cancel"
-                  onClick={() =>
-                    void act(async () => {
-                      await api.call('cancel', {})
-                      api.forget()
-                      setEnded(true)
-                      setRun(undefined)
-                    })
-                  }
-                >
-                  Finish setup later
-                </button>
+                {/* W01: once the workspace exists, "later" means opening it now (above); cancelling here ended on
+                    "Setup paused" with no way into the workspace that was created */}
+                {!progress.error.finishable && (
+                  <button className="cancel"
+                    onClick={() =>
+                      void act(async () => {
+                        await api.call('cancel', {})
+                        api.forget()
+                        setEnded(true)
+                        setRun(undefined)
+                      })
+                    }
+                  >
+                    Finish setup later
+                  </button>
+                )}
               </footer>
             </>
           )}

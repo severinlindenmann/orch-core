@@ -171,11 +171,14 @@ def serve(args):
         access_log=False,
         log_level="warning",
         proxy_headers=False,  # forwarded.py is the only reader of forwarded headers
+        server_header=False,
     )
     return 0
 
 
-def combined_app(data_dir, api_host, dev_mode=False, allow_direct=False, share_origin=None, trusted_proxy=None):
+def combined_app(
+    data_dir, api_host, dev_mode=False, allow_direct=False, share_origin=None, trusted_proxy=None
+):
     """No-domain mode: one ASGI app on one port. `/s/...` is the share server (path-based links), every other path
     is the signed API; `/a/...` serves apps. With a domain the two stay on separate origins (`serve` + `share`)."""
     from .app import create_app
@@ -184,7 +187,9 @@ def combined_app(data_dir, api_host, dev_mode=False, allow_direct=False, share_o
     api = create_app(
         data_dir, api_host, dev_mode=dev_mode, allow_direct=allow_direct, share_origin=share_origin
     )
-    share = create_share_app(data_dir, share_origin=share_origin, api_host=api_host, trusted_proxy=trusted_proxy)
+    share = create_share_app(
+        data_dir, share_origin=share_origin, api_host=api_host, trusted_proxy=trusted_proxy
+    )
 
     async def app(scope, receive, send):
         if scope["type"] == "http" and (scope.get("path") or "").startswith(("/s/", "/a/")):

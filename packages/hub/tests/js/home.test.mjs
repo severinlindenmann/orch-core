@@ -114,7 +114,7 @@ test("run15 P03: a browser with no key gets one green button, Set up signing, an
   let called = 0;
   for (const state of ["unregistered"]) {
     const out = homeView({ user: { name: "Anna", is_admin: true }, workspaces: [{ workspace_id: "a", name: "P", online: true }], items: [], channels: [],
-      thisBrowser: { state }, actions: { register: () => { called++; }, forgetLocal() {} } });
+      thisBrowser: { state }, actions: { register: () => { called++; } } });
     const t = textOf(out);
     assert.match(t, /Approvals need a signing key in this browser/);
     assert.doesNotMatch(t, /cannot sign yet|Sign in here once|You came here from a workspace|Register this browser/);

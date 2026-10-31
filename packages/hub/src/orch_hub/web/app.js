@@ -720,7 +720,7 @@ function serviceFailed(code, detail) {
   dialog(banner("bad", "Nothing was changed", say(code) + (detail ? " (" + renderText(detail) + ")" : "")), h("div", { class: "row" }, h("button", { text: "Close", onclick: closeDialog })));
 }
 async function serviceAction(name, verb) {
-  return withKey(() => !!state.me, (resume) => registerDialog(stopLabel(name, verb) + "?", resume), () => serviceActionSigned(name, verb));
+  return withKey(() => !!state.me, (resume) => registerDialog(stopLabel(name, verb) + "?", resume, undefined, stopLabel(name, verb)), () => serviceActionSigned(name, verb));
 }
 async function serviceActionSigned(name, verb) {
   const me = state.me;
@@ -883,7 +883,7 @@ async function registerRoute() { // a hub with no workspace has no Home signing 
   registerView();
 }
 // The register form: used by the Register page and, in place, by the Services buttons (P04). `onDone` runs after the key is stored.
-function registerForm({ onDone, onCancel, rerender, intro }) {
+function registerForm({ onDone, onCancel, rerender, intro, hideName = false, confirmText = "" }) {
   const label = h("input", { id: "label", value: "This browser", maxlength: 60 });
   const pw = h("input", { id: "pw2", type: "password", autocomplete: "current-password", required: true });
   const code = h("input", { id: "code2", inputmode: "numeric", autocomplete: "one-time-code", maxlength: 6, required: true });
@@ -898,7 +898,7 @@ function registerForm({ onDone, onCancel, rerender, intro }) {
       if (out) return rerender(out);
       await onDone();
     },
-  }, intro ?? h("p", { class: "muted small", text: "Type your password and a new 6-digit code. Each code works only once, so wait for the next one if you just signed in." }), field("Browser name", label), field("Password", pw), field("6-digit code", code), h("div", { class: "row top" }, h("button", { type: "button", text: "Cancel", onclick: onCancel }), h("button", { class: "pri", type: "submit", "data-sign": "", text: intro ? "Continue" : "Set up signing" })));
+  }, intro ?? h("p", { class: "muted small", text: "Type your password and a new 6-digit code. Each code works only once, so wait for the next one if you just signed in." }), hideName ? null : field("Browser name", label), field("Password", pw), field("6-digit code", code), hideName ? h("details", { class: "name-browser" }, h("summary", { text: "Name this browser" }), field("Browser name", label)) : field("Browser name", label), h("div", { class: "row top" }, h("button", { type: "button", text: "Cancel", onclick: onCancel }), h("button", { class: "pri", type: "submit", "data-sign": "", text: confirmText || (intro ? "Continue" : "Set up signing") })));
   return form;
 }
 function registerView(err) {
@@ -906,13 +906,15 @@ function registerView(err) {
   show(h("h1", { text: "Set up signing" }), err ? banner("bad", "Browser not registered. Nothing was kept.", err) : null, form);
 }
 // The same step as a small box on top of the page the admin is on; `resume` carries on with what they pressed (P04).
-function registerDialog(title, resume, err) {
+function registerDialog(title, resume, err, confirmText = "") {
   const form = registerForm({
-    rerender: (e) => registerDialog(title, resume, e), onCancel: closeDialog,
-    intro: h("p", { class: "muted small", text: "First, let this browser sign for you. Done once; the next time it is one click. A 6-digit code works only once, so wait for the next one if you just signed in." }),
+    rerender: (e) => registerDialog(title, resume, e, confirmText), onCancel: closeDialog, hideName: true, confirmText,
+    intro: h("p", { class: "muted small", text: "Confirm once with your password and a code. After that, one click." }),
     onDone: async () => { state.me = await loadChannel(); closeDialog(); if (state.me) await resume(); },
   });
-  dialog(h("h1", { text: title }), err ? banner("bad", "Browser not registered. Nothing was kept.", err) : null, form);
+  // the "a code works only once" tip shows only when the hub refused the password or code
+  const why = err === WORDS.bad_credentials ? "That password or code was not accepted. A code works only once, so wait for the next one and try again." : err;
+  dialog(h("h1", { text: title }), err ? banner("bad", "Browser not registered. Nothing was kept.", why) : null, form);
 }
 
 /** Returns an error text, or null on success. The key is stored only after the certificate checked out. */

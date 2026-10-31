@@ -127,3 +127,32 @@ test("P10: the 'No connection' bar stays away while a restore or restart is expe
     assert.equal(c.offline, !restarting);
   }
 });
+
+// run18 P03: the first-time signing box in a dialog (Services buttons) is short; the Register page keeps the full form.
+test("P03: the signing dialog has one intro line, Password + code, the name behind a link, the action's own button", () => {
+  const el = (tag, props, ...children) => ({ tag, ...props, children: children.flat() });
+  const textOf = (n) => (n == null ? "" : typeof n === "string" ? n : (n.text ?? "") + (n.children ?? []).map(textOf).join(""));
+  const walk = (n) => (n && typeof n === "object" ? [n, ...(n.children ?? []).flatMap(walk)] : []);
+  const shown = [];
+  const c = vm.createContext({ h: el, field: (label, input) => el("div", {}, el("label", { text: label }), input), banner: (kind, title, text) => el("div", { kind, text: title + " " + (text ?? "") }),
+    closeDialog() {}, show: (...n) => shown.push(n), home() {}, dialog: (...n) => shown.push(n), busyButton: async () => undefined, registerBrowser: async () => null, loadChannel: async () => null, state: {}, offline: false,
+    WORDS: { bad_credentials: "Wrong name, password or code. A code works once; wait for the next one." } });
+  vm.runInContext(section("function registerForm(", "// The same step as a small box") + section("function registerDialog(", "/** Returns an error text") + "this.registerDialog = registerDialog; this.registerView = registerView;", c);
+  c.registerDialog("Stop Relay?", async () => {}, undefined, "Stop Relay");
+  const nodes = shown[0].flatMap(walk);
+  const text = shown[0].map(textOf).join(" ");
+  assert.match(text, /Confirm once with your password and a code\. After that, one click\./);
+  assert.doesNotMatch(text, /works only once/);
+  const details = nodes.find((n) => n.tag === "details");
+  assert.ok(details && textOf(details).includes("Name this browser"), "the browser name is behind a small link");
+  assert.ok(nodes.some((n) => n.tag === "button" && n.text === "Stop Relay"), "the button carries the action's verb");
+  assert.deepEqual(nodes.filter((n) => n.tag === "input").map((n) => n.id).sort(), ["code2", "label", "pw2"]);
+  // a refused password or code shows the once-only tip, other errors stay as they are
+  c.registerDialog("Stop Relay?", async () => {}, c.WORDS.bad_credentials, "Stop Relay");
+  assert.match(shown[1].map(textOf).join(" "), /A code works only once, so wait for the next one and try again\./);
+  c.registerDialog("Stop Relay?", async () => {}, "Something went wrong. Nothing was kept.", "Stop Relay");
+  assert.doesNotMatch(shown[2].map(textOf).join(" "), /works only once/);
+  // the Register page keeps its full form: visible name, no details
+  c.registerView(); const page = shown.at(-1).flatMap(walk);
+  assert.ok(!page.some((n) => n.tag === "details") && page.some((n) => n.tag === "input" && n.id === "label"));
+});

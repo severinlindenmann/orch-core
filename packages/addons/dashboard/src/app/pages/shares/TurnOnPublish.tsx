@@ -29,7 +29,9 @@ export function TurnOnPublish({ workspace, onOn, onClose }: { workspace: Workspa
   }, [on, onOn])
   // Needs its address first (the same rule as the Add-ons page): one dialog with the address, then the review.
   const needsAddress = !!row && row.state !== 'on' && row.locked === null && !!row.needs && row.set_up !== true
-  if (needsAddress && row)
+  // Latched once the person pressed the button: when the settings step lands the row reads set_up, but the review must stay
+  // mounted until both steps are signed (otherwise the list dialog returns and the review unmounts between the steps).
+  if ((needsAddress || asked) && row)
     return (
       <>
         {!asked && (

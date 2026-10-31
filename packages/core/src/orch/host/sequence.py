@@ -1311,7 +1311,7 @@ def build_content(prepared: Mapping[str, Any], *, verified: bool) -> dict[str, A
     intent = validate_intent(meta["intent"])
     n = int(meta["of"])
     if intent["kind"] == ADDON:  # no ticket: the workspace's settings and one add-on
-        content = _addon_content(content, intent, n, expand(prepared)["events"])
+        content = _addon_content(content, intent, n, expand(prepared)["events"], verified=verified)
         publisher = (prepared["material"].get("market") or {}).get("publisher", {}).get("fingerprint")
         if intent.get("staged"):
             rows = content.setdefault("fields_changed", [])
@@ -1430,7 +1430,12 @@ def _gates_content(
 
 
 def _addon_content(
-    content: dict[str, Any], intent: Mapping[str, Any], n: int, events: Sequence[Mapping[str, Any]] = ()
+    content: dict[str, Any],
+    intent: Mapping[str, Any],
+    n: int,
+    events: Sequence[Mapping[str, Any]] = (),
+    *,
+    verified: bool = False,
 ) -> dict[str, Any]:
     """The review of turning on an add-on that needs settings: the settings in words, then the grant (both are rows of
     the events, built by :func:`signcontent.build`), and what happens if signing stops between the two."""
@@ -1461,8 +1466,10 @@ def _addon_content(
     from orch.addons import builtin
     from orch.host import signcontent
 
+    # Fail closed: only a verified review of exactly [settings, ONE grant of the built-in Publish package] drops it.
     grants = [e for e in events if e.get("type") == "addon.granted"]
-    if grants and all(builtin.is_builtin_package(e, "publish") for e in grants):
+    others = [e for e in events if e.get("type") not in ("addon.granted", "settings.changed")]
+    if verified and len(grants) == 1 and not others and builtin.is_builtin_package(grants[0], "publish"):
         notes[:] = [x for x in notes if x != signcontent.ADDON_TRUST]
     # "Settings are signed first, then the add-on is turned on; if signing stops in between ..." is in the technical
     # details (:func:`steps_line`), where the signer's full review shows it.

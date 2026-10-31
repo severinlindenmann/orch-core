@@ -12,6 +12,7 @@ let fake: FakeServer
 let base = ''
 const uploads: Record<string, any>[] = []
 const prepares: Record<string, any>[] = []
+let signs = 0
 let publishOn = false
 let setUp = true
 
@@ -33,6 +34,7 @@ test.beforeAll(async () => {
       const method = req.method ?? 'GET'
       const json = (v: unknown) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(v)) }
       if (rest === undefined) return inner(req, res)
+      if (rest === 'click/sign' && method === 'POST') signs++
       if (rest === 'add-ons' && method === 'GET') return json(addOns())
       if (rest === 'tickets/DEMO-0001' && method === 'GET') return json({ ...fixture('ticket.json'), artifacts: [{ name: 'report.md', kind: 'report', bytes: 2048, sha256: 'ab'.repeat(32), added_by: 'p_x', at: '2026-10-18T08:00:00Z' }] })
       if (rest === 'shares' && method === 'GET') return json({ available: true, configured: true, server: 'https://share.example.org', share: 'https://link.example.org', workspace: WS, owner: 'p_owner', live: true, shares: [], staged: [] })
@@ -78,6 +80,7 @@ test('P04: Share files with Publish off shows ONE dialog; Turn on and sign leads
   publishOn = false
   setUp = false
   fake.publishOn = false
+  signs = 0
   try {
     await open(page, '/w/DEMO/ticket/DEMO-0001')
     await page.getByRole('button', { name: /Actions/ }).click()
@@ -90,6 +93,8 @@ test('P04: Share files with Publish off shows ONE dialog; Turn on and sign leads
     await expect(page.getByTestId('click-panel')).toBeVisible()
     await expect(page.getByRole('button', { name: /^Sign( |$)/ })).toBeVisible()
     await expect(page.getByRole('button', { name: 'Turn on and sign' })).toHaveCount(0) // no second dialog to press again
+    await page.waitForTimeout(1500) // nothing signs by itself, even after the dwell time
+    expect(signs).toBe(0)
   } finally {
     setUp = true
   }

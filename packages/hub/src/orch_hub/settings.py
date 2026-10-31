@@ -24,6 +24,7 @@ NAME_MAX = 60
 ADDRESSES_MAX = 4
 _WEB = re.compile(r"https?://[A-Za-z0-9.\-\[\]:]{1,100}:[0-9]{1,5}")
 _FIELDS = frozenset({"v", "name", "company", "addresses"})
+_OPTIONAL = frozenset({"share_files"})  # P02: "Let this hub's workspaces share files" (default on)
 _ADDR_FIELDS = frozenset({"kind", "web", "link"})
 
 
@@ -54,7 +55,9 @@ def _link_ok(link: object) -> bool:
 def validate(d: Any) -> dict[str, Any]:
     """The settings as a clean dict, or :class:`SettingsError` ``bad_settings``. Exact members, exact types."""
     bad = SettingsError("bad_settings")
-    if type(d) is not dict or set(d) != _FIELDS or d["v"] != VERSION or type(d["v"]) is not int:
+    if type(d) is not dict or set(d) - _OPTIONAL != _FIELDS or d["v"] != VERSION or type(d["v"]) is not int:
+        raise bad
+    if "share_files" in d and type(d["share_files"]) is not bool:
         raise bad
     if not text_ok(d["name"], NAME_MAX):
         raise bad
@@ -74,7 +77,10 @@ def validate(d: Any) -> dict[str, Any]:
             raise bad
         seen.add(a["kind"])
         out.append({"kind": a["kind"], "web": web, "link": link})
-    return {"v": VERSION, "name": d["name"], "company": d["company"], "addresses": out}
+    res: dict[str, Any] = {"v": VERSION, "name": d["name"], "company": d["company"], "addresses": out}
+    if "share_files" in d:
+        res["share_files"] = d["share_files"]
+    return res
 
 
 def load(state: Path) -> dict[str, Any] | None:
@@ -97,7 +103,7 @@ def save(state: Path, settings: dict[str, Any]) -> None:
     write_atomic(state / SETTINGS_FILE, (json.dumps(clean, indent=2, sort_keys=True) + "\n").encode())
 
 
-def where_answer(state: Path, *, extra_public: str | None = None) -> dict[str, Any]:
+def where_answer(state: Path, *, extra_public: str | None = None, publish: str | None = None) -> dict[str, Any]:
     """The ``hub_where`` reply (protocol 10.9) built from the settings file only: the entries that have a link address, in
     file order (at most 4), and the name. A missing or damaged file, or nothing with a link, is ``unavailable``: the
     host keeps what it holds. ``extra_public`` (``serve --link-ws-public``, R6) is a ``ws://``/``wss://`` address of the
@@ -119,7 +125,10 @@ def where_answer(state: Path, *, extra_public: str | None = None) -> dict[str, A
         raise Refused("unavailable")
     if extra_public is not None and all(e["link"] != extra_public for e in entries):
         entries = [*entries[: 4 - 1], {"kind": "public", "link": extra_public}]
-    return check_hub_where({"addresses": entries, "name": s["name"]})
+    answer: dict[str, Any] = {"addresses": entries, "name": s["name"]}
+    if publish is not None:  # P02: where this hub's publish server is, so a joined workspace needs no typed address
+        answer["publish"] = publish
+    return check_hub_where(answer)
 
 
 def origin_of(web: str) -> str:

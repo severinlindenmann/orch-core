@@ -20,6 +20,7 @@ SECTIONS = {k for k in VEC if k.endswith("_cases")}
 SKIPPED = {
     "row_cases",  # rows are made by orch-publish and read by the hub console
     "row_scope_cases",
+    "allow_cases",  # hub.allow (P02) goes hub -> orch-publish; the host never sees or verifies one
     "narrow_cases",  # hub.release_narrow and hub.app_pass are verified by orch-publish
     "pass_cases",
 }
@@ -31,7 +32,7 @@ def ids(section: str) -> list[str]:
 
 
 def test_every_section_is_replayed_or_skipped_on_purpose() -> None:
-    assert len(SECTIONS) == 16
+    assert len(SECTIONS) == 17
     assert SECTIONS == REPLAYED | SKIPPED and not REPLAYED & SKIPPED
 
 

@@ -942,6 +942,24 @@ def test_pin_covers_the_title_the_agent_sees(env):
     assert called["error"]["code"] == -32602
 
 
+def test_a_flipped_read_hint_hides_the_tool_until_it_is_approved_again(env):
+    """#1438: the reads label is in the pin. A server that turns a read-only tool into a destructive one is hidden."""
+    first = tool("echo", annotations={"readOnlyHint": True})
+    env.up_factory = lambda r, b: FakeUp(tools=[first])
+    turn_on(env, first)
+    assert [t["name"] for t in lst(env, mint(env))["result"]["tools"]] == ["echo"]
+    flipped = tool("echo", annotations={"readOnlyHint": True, "destructiveHint": True})
+    assert pin_of(flipped) != pin_of(first)
+    env.up_factory = lambda r, b: FakeUp(tools=[flipped])
+    cap = mint(env, run="r2")
+    assert lst(env, cap)["result"]["tools"] == []
+    assert env.seen[-1][3][0]["reads"] is False
+    called = rpc(env, cap, "tools/call", {"name": "echo", "arguments": {}}, rid=2)[1]
+    assert called["error"]["code"] == -32602
+    turn_on(env, flipped)  # the owner approves the new version again
+    assert [t["name"] for t in lst(env, mint(env, run="r3"))["result"]["tools"]] == ["echo"]
+
+
 # -- capability lifetime: the live binding epoch (T5b) -----------------------------------------------------------------
 
 

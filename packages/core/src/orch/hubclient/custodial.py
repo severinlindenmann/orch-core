@@ -157,6 +157,11 @@ def _payload_shape(typ: str, event: Mapping[str, Any]) -> None:
     Runs inside :func:`verify_custodial` before it returns (the shared vectors pin the order of the earlier codes);
     the VALUES against the host's log are the ticket-format checks of step 9."""
     check_custodial_payload(typ, event, frozenset(HUB_FIELDS) | {"sig", "item_hash"})
+    if typ == "log.added":  # reserved approval lines are written only by their own click op, never over the hub
+        from orch.publishclient.approval import reserved_note_op
+
+        if reserved_note_op(event.get("text")) is not None:
+            raise HubRefused("malformed")
     if typ in DECISION_TYPES and type(event.get("hash")) is not str:
         raise HubRefused("malformed")  # L2P4-2a: the reviewed hash is always present
 

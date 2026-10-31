@@ -328,7 +328,9 @@ def apply_where(service: WorkspaceService, state: Any, answer: dict[str, Any]) -
         except OSError:
             return False  # settings unusable: no probe, nothing stored, nothing dialled
         passed = _probe_new(f"{service.workspace_id}:{state.hub_id}", state, fresh, net)
-    return _store(service, state, passed, [e["link"] for e in answer["addresses"]], answer["name"])
+    return _store(
+        service, state, passed, [e["link"] for e in answer["addresses"]], answer["name"], answer.get("publish")
+    )
 
 
 _RUNNING: set[str] = set()
@@ -370,7 +372,9 @@ def wait_idle(timeout: float = 30.0) -> None:
     _THREADS[:] = [t for t in _THREADS if t.is_alive()]
 
 
-def _store(service: Any, started: Any, passed: list[str], advertised: list[str], name: str | None) -> bool:
+def _store(
+    service: Any, started: Any, passed: list[str], advertised: list[str], name: str | None, publish: str | None = None
+) -> bool:
     from orch.hubclient.service import MAX_ADDRS
 
     from . import hubops
@@ -389,9 +393,11 @@ def _store(service: Any, started: Any, passed: list[str], advertised: list[str],
         # the hub's preference first, then the verified ones it no longer names (kept: they cost only a dial)
         ordered = [a for a in advertised if a in pool] + [a for a in pool if a not in advertised]
         merged = list(dict.fromkeys(ordered))[:MAX_ADDRS]
-        changed = merged != cur.addrs or (name is not None and name != cur.hub_name)
+        # P02: the hub's own statement of where its publish server is; absent now = none (a hint that was withdrawn)
+        changed = merged != cur.addrs or (name is not None and name != cur.hub_name) or publish != cur.hub_publish
         if changed:
             cur.addrs, cur.hub_name = merged, name if name is not None else cur.hub_name
+            cur.hub_publish = publish
             hubops._write_state(service, cur)  # noqa: SLF001
         return changed
 

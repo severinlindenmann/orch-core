@@ -71,7 +71,7 @@ def journal(tmp_path, doc) -> dict:
 def test_opens_at_format_1_and_holds_the_shared_lock_until_closed(data):
     h = open_data(data, "hub", 1, {})
     assert (h.kind, h.format) == ("hub", 1) and lock_is_shared(data)
-    assert (data / "format.lock").stat().st_mode & 0o777 == 0o600
+    assert (data / "format.lock").stat().st_mode & 0o777 == 0o644
     h.close()
     h.close()  # twice is fine
     assert not lock_is_shared(data)
@@ -79,6 +79,57 @@ def test_opens_at_format_1_and_holds_the_shared_lock_until_closed(data):
         with open_data(data, "hub", 1, {}):
             assert lock_is_shared(data)
         assert again.format == 1
+
+
+def test_the_lock_file_is_made_0644_whatever_the_umask(data):
+    old = os.umask(0o077)
+    try:
+        open_data(data, "hub", 1, {}).close()
+    finally:
+        os.umask(old)
+    assert (data / "format.lock").stat().st_mode & 0o777 == 0o644  # the service user can open it, whoever made it
+
+
+def test_a_lock_file_is_not_made_by_somebody_who_does_not_own_the_folder(data, monkeypatch):
+    monkeypatch.setattr(os, "geteuid", lambda: data.stat().st_uid + 1)  # root running the CLI in the service's folder
+    assert code(data) == "format.missing"
+    assert not (data / "format.lock").exists()
+    monkeypatch.undo()
+    open_data(data, "hub", 1, {}).close()  # the owner makes it
+    monkeypatch.setattr(os, "geteuid", lambda: data.stat().st_uid + 1)
+    open_data(data, "hub", 1, {}).close()  # and anybody opens one that is there (flock needs no write access)
+
+
+def test_adopt_moves_the_lock_to_the_descriptor_and_gives_the_old_one_up(data, tmp_path):
+    other = tmp_path / "other"
+    write_format(other)
+    with open_data(data, "hub", 1, {}) as h:
+        h.adopt(DF.lock_shared(other))
+        assert lock_is_shared(other) and not lock_is_shared(data)
+    assert not lock_is_shared(other)  # closing the handle drops the adopted lock
+    h = open_data(data, "hub", 1, {})
+    h.close()
+    fd = DF.lock_shared(other)
+    h.adopt(fd)  # a closed handle does not keep it
+    assert not lock_is_shared(other)
+    with pytest.raises(OSError):
+        os.fstat(fd)
+
+
+def test_check_format_false_takes_the_lock_without_reading_format_json(tmp_path):
+    d = tmp_path / "d"
+    d.mkdir()  # no format.json
+    with open_data(d, "hub", 1, {}, check_format=False) as h:
+        assert h.format == 0 and lock_is_shared(d)
+    assert code(d) == "format.missing"  # the default still asks for it
+    fd = os.open(d / "format.lock", os.O_RDWR)
+    fcntl.flock(fd, EXCLUSIVE)
+    try:
+        with pytest.raises(DataFormatError) as e:
+            open_data(d, "hub", 1, {}, check_format=False)
+        assert e.value.code == "update.busy"  # an update still wins
+    finally:
+        os.close(fd)
 
 
 def test_an_update_in_progress_holds_the_lock_exclusive_and_refuses_the_open(data):
@@ -431,6 +482,38 @@ def test_keys_init_opens_a_fresh_dir_but_refuses_a_formatted_one_under_an_update
     finally:
         os.close(fd)
     assert not (locked / "meta.json").exists() and "being updated" in capsys.readouterr().err
+
+
+def test_keys_init_on_a_dir_without_format_json_takes_the_lock_but_only_while_there_are_no_keys(
+    tmp_path, capsys, monkeypatch
+):
+    bare = tmp_path / "bare"
+    bare.mkdir(mode=0o700)  # an existing dir, no format.json, no keys
+    seen = []
+    real = HubKeys.init.__func__
+
+    def init(cls, state, **kw):
+        seen.append(lock_is_shared(state))
+        return real(cls, state, **kw)
+
+    monkeypatch.setattr(HubKeys, "init", classmethod(init))
+    assert cli.main(["keys", "--state", str(bare), "init"]) == 0
+    assert seen == [True] and (bare / "meta.json").exists() and not lock_is_shared(bare)
+    # the keys are there and format.json is gone: the rule applies, init does not run
+    (bare / "format.json").unlink(missing_ok=True)
+    seen.clear()
+    assert cli.main(["keys", "--state", str(bare), "init"]) == 1
+    assert seen == [] and "no format.json" in capsys.readouterr().err
+    # an update holds a dir that has no format.json yet
+    busy = tmp_path / "busy"
+    busy.mkdir()
+    fd = os.open(busy / "format.lock", os.O_RDWR | os.O_CREAT, 0o600)
+    fcntl.flock(fd, EXCLUSIVE)
+    try:
+        assert cli.main(["keys", "--state", str(busy), "init"]) == 1
+    finally:
+        os.close(fd)
+    assert not (busy / "meta.json").exists() and "being updated" in capsys.readouterr().err
 
 
 # --- the journal is readable by the service user; a fork does not keep the lock --------------------------------------------

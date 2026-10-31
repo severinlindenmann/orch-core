@@ -11,6 +11,7 @@ import io
 import json
 import os
 import sqlite3
+import stat
 import tarfile
 from pathlib import Path
 
@@ -142,10 +143,16 @@ def test_restore_in_place_rolls_forward_the_counters_and_keeps_nobody_who_is_gon
     # a fresh sign-in works for an admin only after the restart; the notice says what happened
     n = RS.notice(w.state)
     assert n and n["made_ms"] == B.read_header(data, dev_mode=True, live=None)[1]["made_ms"] and n["suspended"] >= 1
-    # the layout is private
+    # the layout is private (format.lock is an empty marker, 0644 so the service user can open it whoever made it; it sits in
+    # the 0700 dir)
     for p in w.state.rglob("*"):
-        if not p.is_symlink():
+        if not p.is_symlink() and p.name != "format.lock":
             assert p.stat().st_mode & 0o077 == 0, p
+    assert (
+        stat.S_IMODE((w.state / "format.lock").stat().st_mode) == 0o644
+        and (w.state / "format.lock").stat().st_size == 0
+    )
+    assert w.state.stat().st_mode & 0o077 == 0
     assert not (w.tmp / "hub.new").exists()
 
 
@@ -776,7 +783,141 @@ def test_a_swap_put_right_by_recover_takes_the_lock_on_the_dir_it_puts_in_place(
     assert not _exclusive_refused(w.state)
 
 
+def test_the_serving_hubs_handle_moves_to_the_new_dir_after_an_in_place_restore(w):
+    from orch_hub.backup.hubop import hold_state, release_state
+
+    words, data = _backup(w)
+    served = hold_state(w.state)  # what `orch-hub serve` holds: it must be found by the swap
+    try:
+        assert served._fd is not None
+        before = os.fstat(served._fd)
+        _restore(w, data, words, actor=w.admin)
+        now, live = os.fstat(served._fd), os.stat(w.state / "format.lock")
+        assert (now.st_dev, now.st_ino) == (live.st_dev, live.st_ino)  # the file of the dir that is in place NOW
+        assert (now.st_dev, now.st_ino) != (before.st_dev, before.st_ino)
+        assert _exclusive_refused(w.state)
+    finally:
+        release_state()
+    assert not _exclusive_refused(w.state)
+
+
+def _spy_renames(monkeypatch, src: Path, dst: Path, seen: list) -> None:
+    """Record, at the moment ``src`` is renamed to ``dst``, whether ``src/format.lock`` is already held."""
+    real = os.rename
+
+    def spy(a, b, *args, **kw):
+        if Path(a) == src and Path(b) == dst:
+            seen.append(_exclusive_refused(src))
+        return real(a, b, *args, **kw)
+
+    monkeypatch.setattr(os, "rename", spy)
+
+
+def test_the_staged_dir_is_locked_before_it_is_renamed_into_place(w, monkeypatch):
+    from orch_hub.backup.hubop import open_state
+
+    words, data = _backup(w)
+    new, _old = RS.paths(w.state)
+    seen: list[bool] = []
+    _spy_renames(monkeypatch, new, w.state, seen)
+    held = open_state(w.state)
+    try:
+        _restore(w, data, words, actor=w.admin)
+    finally:
+        held.close()
+    assert seen == [True]  # no moment between the rename and the lock
+
+
+def test_a_restore_is_refused_before_any_swap_when_an_update_holds_the_lock(w, monkeypatch):
+    import fcntl
+
+    from orch_hub.backup.hubop import open_state
+
+    words, data = _backup(w)
+    held = open_state(w.state)
+    new, old = RS.paths(w.state)
+    kept = sorted(p.name for p in (w.state / "backups").iterdir())
+    real = RS.SwapLock
+
+    def busy(state, incoming):
+        fd = os.open(incoming / "format.lock", os.O_RDWR | os.O_CREAT, 0o600)
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)  # an update takes the staged dir first
+        try:
+            return real(state, incoming)
+        finally:
+            os.close(fd)
+
+    monkeypatch.setattr(RS, "SwapLock", busy)
+    try:
+        with pytest.raises(RS.RestoreError) as e:
+            _restore(w, data, words, actor=w.admin)
+    finally:
+        held.close()
+    # nothing was swapped: the live dir is in place with its kept backups (only the live op certificate was revoked, as for
+    # any failure before the swap), and the staged copy is gone
+    assert e.value.code == "restore_failed" and not new.exists() and not old.exists()
+    assert (w.state / "meta.json").exists() and sorted(p.name for p in (w.state / "backups").iterdir()) == kept
+
+
+def test_a_running_hub_is_not_restored_in_place_from_an_older_backup(w, monkeypatch):
+    from format_helpers import write_format
+
+    from orch_hub.backup.hubop import hold_state, release_state
+
+    words, data = _backup(w)  # format 1
+    _newer_code(monkeypatch)  # `orch update`: the code and the live data are at format 2
+    write_format(w.state, fmt=2)
+    hold_state(w.state)  # the hub is running
+    new, _old = RS.paths(w.state)
+    before = _tree(w.state)
+    try:
+        with pytest.raises(RS.RestoreError) as e:
+            _restore(w, data, words, actor=w.admin)
+    finally:
+        release_state()
+    assert e.value.code == "restore_stop_hub" and _tree(w.state) == before and not new.exists()
+    _restore(w, data, words, actor=w.admin)  # stopped: restore, then `orch update`
+    assert _format_of(w.state) == {"orch": "hub", "format": 1}
+
+
 # --- recovery of a swap that stopped between its two renames ------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("handle", [False, True])
+def test_recover_locks_the_dir_before_the_rename_with_or_without_a_handle(w, monkeypatch, handle):
+    from orch_hub.backup.hubop import open_state
+
+    new, old = RS.paths(w.state)
+    seen: list[bool] = []
+    held = open_state(w.state) if handle else None  # the serving hub, or nobody yet (serve starts on a missing dir)
+    try:
+        os.mkdir(new, 0o700)  # the staged dir is whole (notice written last)
+        (new / RS.NOTICE_FILE).write_text("{}")
+        os.rename(w.state, old)
+        _spy_renames(monkeypatch, new, w.state, seen)
+        RS.recover(w.state)
+        assert seen == [True] and (w.state / RS.NOTICE_FILE).exists()
+        assert _exclusive_refused(w.state) is handle  # only a handle keeps the lock after the repair
+    finally:
+        if held is not None:
+            held.close()
+
+
+def test_recover_is_refused_while_an_update_holds_the_dir_and_renames_nothing(w):
+    import fcntl
+
+    _new, old = RS.paths(w.state)
+    os.rename(w.state, old)
+    fd = os.open(old / "format.lock", os.O_RDWR | os.O_CREAT, 0o600)
+    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    try:
+        from orch_hub.dataformat import DataFormatError
+
+        with pytest.raises(DataFormatError) as e:
+            RS.recover(w.state)
+    finally:
+        os.close(fd)
+    assert e.value.code == "update.busy" and old.is_dir() and not w.state.exists()
 
 
 def test_recover_completes_or_undoes_an_interrupted_swap(w, tmp_path):

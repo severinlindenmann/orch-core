@@ -12,8 +12,9 @@ import threading
 import weakref
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Self
 
-from ..dataformat import Handle, open_data
+from ..dataformat import Handle, lock_shared, open_data
 
 KINDS = ("restore", "update", "remove")
 #: Set by a console restore for its whole run (and left set once it succeeded: the hub restarts). While it is set the web
@@ -87,24 +88,65 @@ _DATA: list[Handle] = []  # the handle of the serving process: the shared format
 _OPEN: weakref.WeakSet[Handle] = weakref.WeakSet()  # every handle open_state made and nobody closed or dropped yet
 
 
-def open_state(state: Path) -> Handle:
+def open_state(state: Path, *, check_format: bool = True) -> Handle:
     """Open the state dir at its format (see :mod:`orch_hub.dataformat`) and hold the shared format lock. For a command
-    that works on the state and then ends: close the handle when done."""
-    handle = open_data(state, DATA_KIND, DATA_FORMAT)
+    that works on the state and then ends: close the handle when done. Every handle that holds the lock for this process is
+    made here (so :class:`SwapLock` finds it); ``check_format=False`` is the lock without the format check, for a command
+    that makes or replaces the data."""
+    handle = open_data(state, DATA_KIND, DATA_FORMAT, check_format=check_format)
     _OPEN.add(handle)
     return handle
 
 
-def relock_state(state: Path) -> None:
-    """The state dir was swapped (an in-place restore, or :func:`orch_hub.backup.restore.recover` put a crashed swap right).
-    The format lock follows the file, not the path, so every handle of this process on this state takes the shared lock
-    again on the new dir's ``format.lock``: call it right after the rename, before anything else touches the new dir (an
-    ``orch update`` could take it exclusive). A lock only: the data may be at an older format after a restore, which the
-    next open refuses with ``format.older``. Raises :class:`DataFormatError` (``update.busy``) if an update got there first."""
+class SwapLock:
+    """The format lock across a swap of the state dir. ``flock`` follows the file, not the path, so a handle that locked the
+    old dir would hold nothing on the new one. Use as ``with SwapLock(state, incoming) as lock:``: it takes the shared lock
+    on ``incoming/format.lock`` BEFORE ``incoming`` is renamed to ``state`` (the lock moves with the file: no moment without
+    it, an ``orch update`` cannot slip in between), also once for every handle this process holds on ``state``. After the
+    rename call :meth:`commit`: the handles take their new descriptors. Until then (and after a failed swap) they keep the
+    old ones. A lock only: an older backup's data is refused by the next open (``format.older``), not here.
+
+    Raises :class:`DataFormatError` (``update.busy``) when an update holds ``incoming`` or the dir; nothing is renamed yet."""
+
+    def __init__(self, state: Path, incoming: Path) -> None:
+        self._guard: int | None = None
+        self._pending: list[tuple[Handle, int]] = []
+        try:
+            self._guard = lock_shared(incoming)  # held for the whole swap, even when no handle exists
+            here = os.path.realpath(state)
+            for handle in list(_OPEN):
+                if handle._fd is not None and os.path.realpath(handle.path) == here:
+                    self._pending.append((handle, lock_shared(incoming)))
+        except BaseException:
+            self.close()
+            raise
+
+    def commit(self) -> None:
+        """The rename is done: every handle of this process on the state holds the lock of the new dir."""
+        pending, self._pending = self._pending, []
+        for handle, fd in pending:
+            handle.adopt(fd)
+
+    def close(self) -> None:
+        """Let go of what was not handed over (the guard, and the descriptors of an uncommitted swap)."""
+        guard, self._guard = self._guard, None
+        if guard is not None:
+            os.close(guard)
+        pending, self._pending = self._pending, []
+        for _handle, fd in pending:
+            os.close(fd)
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.close()
+
+
+def serving(state: Path) -> bool:
+    """True while this process serves ``state`` (``orch-hub serve`` holds its handle: :func:`hold_state`)."""
     here = os.path.realpath(state)
-    for handle in list(_OPEN):
-        if os.path.realpath(handle.path) == here:
-            handle.relock()
+    return any(os.path.realpath(handle.path) == here for handle in _DATA)
 
 
 def hold_state(state: Path) -> Handle:

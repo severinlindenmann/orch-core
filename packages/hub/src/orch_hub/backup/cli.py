@@ -84,7 +84,8 @@ def run_restore(
         return 1
     # The serve lock keeps a second hub out; the format rule keeps `orch update` out and refuses a data dir that is not at
     # this code's format. A restore over a hub opens the state like the hub does (the shared lock is held until the end);
-    # onto a fresh server there is no state yet, only an interrupted update or restore can refuse.
+    # onto a fresh server there is no data to lock (the staged dir is renamed onto a folder that is not there or is empty: a
+    # lock file inside it would stop the rename), so only an interrupted update or restore can refuse.
     data_lock = None
     try:
         if (state / "meta.json").exists():

@@ -67,7 +67,8 @@ def journal(tmp_path, doc):
 def test_opens_at_format_1_and_holds_the_shared_lock_until_closed(data):
     h = open_data(data, "relay", 1, {})
     assert (h.kind, h.format) == ("relay", 1) and lock_is_shared(data)
-    assert (data / "format.lock").stat().st_mode & 0o777 == 0o600
+    # the service user can open it, whoever made it
+    assert (data / "format.lock").stat().st_mode & 0o777 == 0o644
     h.close()
     h.close()  # twice is fine
     assert not lock_is_shared(data)
@@ -75,6 +76,28 @@ def test_opens_at_format_1_and_holds_the_shared_lock_until_closed(data):
         with open_data(data, "relay", 1, {}):
             assert lock_is_shared(data)
         assert again.format == 1
+
+
+def test_the_lock_file_is_0644_whatever_the_umask_and_made_by_the_owner(data, monkeypatch):
+    old = os.umask(0o077)
+    try:
+        open_data(data, "relay", 1, {}).close()
+    finally:
+        os.umask(old)
+    assert (data / "format.lock").stat().st_mode & 0o777 == 0o644
+    (data / "format.lock").unlink()
+    other_uid = data.stat().st_uid + 1  # root running the CLI in the service's folder
+    monkeypatch.setattr(os, "geteuid", lambda: other_uid)
+    assert code(data) == "format.missing" and not (data / "format.lock").exists()
+
+
+def test_adopt_moves_the_lock_to_the_descriptor_and_gives_the_old_one_up(data, tmp_path):
+    other = tmp_path / "other"
+    write_format(other)
+    with open_data(data, "relay", 1, {}) as h:
+        h.adopt(DF.lock_shared(other))
+        assert lock_is_shared(other) and not lock_is_shared(data)
+    assert not lock_is_shared(other)
 
 
 def test_an_update_in_progress_holds_the_lock_exclusive_and_refuses_the_open(data):

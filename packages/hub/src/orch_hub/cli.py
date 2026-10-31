@@ -223,15 +223,18 @@ def _closing_refused(args: argparse.Namespace) -> bool:
 def _guarded(args: argparse.Namespace, run: Callable[[], int], *, init: bool = False) -> int:
     """Run a command that opens the state dir under the format rule (``orch_hub.dataformat``): it refuses while an update
     runs or is unfinished, and on data that is not at this code's format, and it holds the shared format lock until it
-    ends (so ``orch update`` cannot start under it). A state dir that is not there yet is left to the command to report;
-    ``init`` also works on a dir that has no ``format.json`` yet (nothing to protect before the keys exist)."""
+    ends (so ``orch update`` cannot start under it). A state dir that is not there yet is left to the command to report.
+    ``init`` also works on a dir that has no ``format.json`` yet, but only while there are no keys in it: it takes the lock
+    without reading the format (there is none), and a dir that holds keys but lost its ``format.json`` is refused like any
+    other (``format.missing``)."""
     from .backup.hubop import open_state
 
     handle = None
     try:
         state = Path(args.state) if getattr(args, "state", None) else default_state_dir()
-        if state.exists() and (not init or (state / "format.json").exists()):
-            handle = open_state(state)
+        if state.exists():
+            fresh = init and not (state / "format.json").exists() and not (state / "meta.json").exists()
+            handle = open_state(state, check_format=not fresh)
         else:
             check_update(state)
     except KeysError as e:

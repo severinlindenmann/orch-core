@@ -22,7 +22,8 @@ The pending-restore and journal checks run again under the lock (an update may s
 POSIX only. Keep the returned :class:`Handle` referenced while serving: closing it (or collecting
 it) drops the lock. A forked child (no exec) gives its copy of the descriptor up at once, so a
 child never keeps the lock past the service's death. The lock follows the file, not the path:
-code that swaps the folder calls :meth:`Handle.relock` right after the swap.
+code that swaps the folder takes the lock on the incoming folder BEFORE the rename (:func:`lock_shared`; the lock
+moves with the file, so there is no moment without it) and gives the result to :meth:`Handle.adopt` after it.
 """
 
 from __future__ import annotations
@@ -37,7 +38,7 @@ from collections.abc import Mapping
 from types import TracebackType
 from typing import Self
 
-__all__ = ["DataFormatError", "Handle", "check_update", "open_data"]
+__all__ = ["DataFormatError", "Handle", "check_update", "lock_shared", "open_data"]
 
 FORMAT_FILE = "format.json"
 LOCK_FILE = "format.lock"
@@ -181,24 +182,55 @@ if hasattr(os, "register_at_fork"):
     os.register_at_fork(after_in_child=_drop_in_child)
 
 
-def _lock_shared(path: str) -> int:
+def _open_lock_file(path: str) -> int:
+    """The read only descriptor of ``<path>/format.lock``, made (0644: readable by the service user, whoever made it) when
+    it is not there yet. Only the owner of the folder makes it: a lock file of root in the service's folder would not
+    be usable by the service."""
+    full = os.path.join(path, LOCK_FILE)
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    try:
+        for _ in range(2):  # the second round: somebody made the file between our two opens
+            try:
+                return os.open(full, flags)
+            except FileNotFoundError:
+                pass
+            owner = os.stat(path).st_uid
+            if os.geteuid() != owner:
+                raise _not_data(
+                    path,
+                    f"it has no format.lock and this user does not own the folder (uid {owner}): run as that user",
+                )
+            try:
+                fd = os.open(full, flags | os.O_CREAT | os.O_EXCL, 0o644)
+            except FileExistsError:
+                continue
+            try:
+                os.fchmod(fd, 0o644)  # whatever the umask said
+            except BaseException:
+                os.close(fd)
+                raise
+            return fd
+        return os.open(full, flags)
+    except OSError as exc:
+        why = f"the lock file cannot be used ({exc.strerror or exc}); it may be a link"
+        raise _not_data(path, why) from None
+
+
+def lock_shared(path: str | os.PathLike[str]) -> int:
     """Open ``<path>/format.lock`` and take the SHARED lock without waiting; the descriptor, or a
     :class:`DataFormatError` (``update.busy``, ``format.missing`` for a lock file that cannot be
     used). ``flock`` needs no write access, so the file is opened read only: a lock file that
-    ``orch install`` made for the service user stays usable (``O_CREAT`` only makes it when it is
-    not there yet, 0600, as the user of the service)."""
+    ``orch install`` made for the service user stays usable (it is only made when it is not there
+    yet, 0644, and only by the owner of the folder). The caller closes the descriptor, or hands it to
+    :meth:`Handle.adopt`."""
+    path = os.fspath(path)
     try:
         import fcntl
     except ImportError:
         raise RuntimeError(
             "orch parts run on Linux and macOS only: the data format lock needs POSIX flock",
         ) from None
-    flags = os.O_RDONLY | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
-    try:
-        fd = os.open(os.path.join(path, LOCK_FILE), flags, 0o600)
-    except OSError as exc:
-        why = f"the lock file cannot be used ({exc.strerror or exc}); it may be a link"
-        raise _not_data(path, why) from None
+    fd = _open_lock_file(path)
     try:
         fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
     except BlockingIOError:
@@ -226,18 +258,17 @@ class Handle:
         if fd is not None:
             os.close(fd)  # closing the descriptor drops the lock
 
-    def relock(self) -> None:
-        """Take the shared lock again on the ``format.lock`` that is at ``path`` NOW, and give the old
-        one up. ``flock`` follows the file, not the path: after the folder was swapped (an in-place
-        restore, or a crashed swap put right) the old descriptor holds a lock on the folder that was
-        moved aside, and an update could take the new folder exclusive. Call it right after the
-        swap, before anything else touches the new folder. Raises :class:`DataFormatError`
-        (``update.busy``) if an update got the new folder first; the old lock is kept then."""
-        if self._fd is None:
-            return
-        fd = _lock_shared(self.path)
+    def adopt(self, fd: int) -> None:
+        """Hold the shared lock through ``fd`` (from :func:`lock_shared`, taken on the ``format.lock`` of a folder that is
+        then renamed to ``path``) instead of the one held now, and give the old one up. ``flock`` follows the file, not
+        the path: after the folder was swapped (an in-place restore, or a crashed swap put right) the old descriptor
+        holds a lock on the folder that was moved aside. Cannot fail; a closed handle closes ``fd`` instead."""
         old, self._fd = self._fd, fd
-        os.close(old)
+        if old is None:
+            self._fd = None
+            os.close(fd)
+        else:
+            os.close(old)
 
     def __enter__(self) -> Self:
         return self
@@ -259,20 +290,24 @@ def open_data(
     kind: str,
     current: int,
     env: Mapping[str, str] = os.environ,
+    *,
+    check_format: bool = True,
 ) -> Handle:
     """Open the data dir ``path`` of part ``kind`` whose code is at format ``current``, or raise
     :class:`DataFormatError`. The returned handle holds the SHARED lock of
-    ``<path>/format.lock``: keep it for as long as the data is in use."""
+    ``<path>/format.lock``: keep it for as long as the data is in use. ``check_format=False`` takes
+    the lock (and checks the update and the pending restore) without reading ``format.json``, for a
+    command that makes or replaces the data (``keys init``, a restore); ``handle.format`` is 0 then."""
     path = os.fspath(path)
     check_update(path, env)
     if not os.path.isdir(path):
         raise _not_data(path, "no such folder")
-    fd = _lock_shared(path)
+    fd = lock_shared(path)
     try:
         # again under the lock: an update or a restore may have started meanwhile
         check_update(path, env)
-        fmt = _read_format(path, kind)
-        if fmt < current:
+        fmt = _read_format(path, kind) if check_format else 0
+        if fmt < current and check_format:
             raise DataFormatError(
                 "format.older",
                 "this data was made by an older orch: run `orch update`",

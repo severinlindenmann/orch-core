@@ -13,7 +13,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
         id: 'H1',
         title: 'Look at the list',
         text: 'Open Settings, then Add-ons.',
-        see: 'A list of 9 add-ons: Dashboard (Always on), Start agents, Terminals, Work copies, Quick tasks (Always on), Publish, Usage, Estimate and File Explorer, each with one plain line and On or Off.',
+        see: 'A list of 9 add-ons: Dashboard (Always on), Start agents, Command window, Work copies, Quick tasks (Always on), Publish, Usage, Estimate and File Explorer, each with one plain line and On or Off.',
       },
       {
         id: 'H2',
@@ -28,8 +28,8 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
       },
       {
         id: 'H4',
-        title: 'Terminals or Start agents with execution off',
-        text: 'Look at Terminals or Start agents while running work from the dashboard is still switched off.',
+        title: 'Command window or Start agents with execution off',
+        text: 'Look at Command window or Start agents while running work from the dashboard is still switched off.',
         see: 'The switch is greyed and the line beside it has a "Turn on dashboard execution" button. It shows what it allows first; one click turns it on.',
       },
       {
@@ -459,19 +459,19 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
   },
   {
     id: 'U',
-    title: 'Terminals page',
-    where: 'Browser; as an owner or member, with Terminals switched on and dashboard execution enabled',
+    title: 'Command window page',
+    where: 'Browser; as an owner or member, with Command window switched on and dashboard execution enabled',
     steps: [
       {
         id: 'U1',
         title: 'The menu entry',
-        text: 'Open Settings, then Add-ons. Switch Terminals off, reload, then switch it on again.',
-        see: 'A "Terminals" entry appears in the left menu only while Terminals is on. While it is off the entry is gone and the address /terminals stays on the same page and shows a "switched off" message (no redirect).',
+        text: 'Open Settings, then Add-ons. Switch Command window off, reload, then switch it on again.',
+        see: 'A "Command window" entry appears in the left menu only while Command window is on. While it is off the entry is gone and the address /terminals stays on the same page and shows a "switched off" message (no redirect).',
       },
       {
         id: 'U2',
         title: 'The list',
-        text: 'Open Terminals in the left menu. Start a terminal with "New terminal", and, if you can, an agent on a ticket.',
+        text: 'Open Command window in the left menu. Start a terminal with "New terminal", and, if you can, an agent on a ticket.',
         see: 'Each terminal or agent is one row: its name, "Terminal" or "Agent", when it started, the ticket (a link), Live, Finished (the ticket is done, button Close) or Ended, and Read only or Controlled. "New terminal" first shows the same preview as the panel at the bottom and starts nothing until you confirm.',
       },
       {
@@ -489,7 +489,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
       {
         id: 'U5',
         title: 'On a phone-sized window',
-        text: 'Make the browser window narrow (about 390 px wide) and open the Terminals page.',
+        text: 'Make the browser window narrow (about 390 px wide) and open the Command window page.',
         see: 'Rows wrap onto two lines, nothing scrolls sideways, and the buttons stay reachable.',
       },
     ],
@@ -563,8 +563,8 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
       {
         id: 'W5',
         title: 'One request only',
-        text: 'Open "Turn on Terminals" and press the switch twice quickly (or open the same dialog in two tabs). Then, with Terminals already on, open an old tab that still shows it off and press the switch.',
-        see: 'Still ONE request and ONE code; signing it once is enough. The old tab says "Already done: Terminals is already on." in plain words, with no Sign button.',
+        text: 'Open "Turn on Command window" and press the switch twice quickly (or open the same dialog in two tabs). Then, with Command window already on, open an old tab that still shows it off and press the switch.',
+        see: 'Still ONE request and ONE code; signing it once is enough. The old tab says "Already done: Command window is already on." in plain words, with no Sign button.',
       },
       {
         id: 'W6',
@@ -612,8 +612,8 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
       {
         id: 'W13',
         title: 'Plain reviews',
-        text: 'On the Add-ons page: turn on Terminals (or Work copies) and read the review. Then create a new ticket and read its review.',
-        see: 'The review starts "Turn on Terminals: it says it will open terminals on this computer, as you", then the version. No digest, no "fields: {}" (the package digest and raw capabilities are under Technical details). A new ticket says "owner: your name" and never a long raw p_ id.',
+        text: 'On the Add-ons page: turn on Command window and read the review. Then create a new ticket and read its review.',
+        see: 'The review starts "Turn on Command window: it says it will open terminals on this computer, as you", then the version. No digest, no "fields: {}" (the package digest and raw capabilities are under Technical details). Turning it off reads "Turn off Command window". A new ticket says "owner: your name" and never a long raw p_ id.',
       },
       {
         id: 'W14',

@@ -152,6 +152,18 @@ test("summarize: systemd lines become plain events, benign lines fold, other lin
   assert.match(old.time, /^09:00, /); // another day carries its date
 });
 
+test("P05: Started + Stopped + Started within a minute is one 'Restarted'; slow or failing runs stay separate", () => {
+  const sys = (t, m) => J(t, "systemd[1]", m);
+  const txt = (raw) => summarize(raw, { fmt, now: NOW_D }).map((e) => e.text);
+  const boot = [sys("10:37", "Started orch publish."), sys("10:37", "Stopped orch publish."), sys("10:37", "Started orch publish.")].join("\n");
+  assert.deepEqual(txt(boot), ["Restarted"]);
+  assert.deepEqual(txt([sys("10:37", "Stopped orch publish."), sys("10:37", "Started orch publish.")].join("\n")), ["Restarted"]);
+  assert.deepEqual(txt([sys("10:30", "Stopped orch publish."), sys("10:40", "Started orch publish.")].join("\n")), ["Stopped", "Started"]);
+  assert.deepEqual(txt([sys("10:37", "Stopped orch publish."), sys("10:37", "Failed to start orch publish.")].join("\n")), ["Stopped", "Could not start"]);
+  assert.deepEqual(txt([sys("10:37", "x.service: Failed with result 'exit-code'."), sys("10:37", "Started orch publish.")].join("\n")), ["Stopped unexpectedly", "Started"]);
+  assert.equal(summarize(boot, { fmt, now: NOW_D })[0].ok, true);
+});
+
 test("the Logs dialog: list by default, raw lines in a closed fold, recent-activity heading, empty text", () => {
   const raw = J("12:04", "systemd[1]", "Started orch publish.") + "\n" + J("12:05", "x[1]", "<b>hi</b>");
   const copied = [];

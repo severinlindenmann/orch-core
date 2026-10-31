@@ -57,6 +57,7 @@ main > form { max-width:480px; padding:24px; background:var(--card); border:1px 
 .chip.full, .chip.sel { color:var(--violet); background:var(--violetBg); border-color:transparent; }
 .chip.sel { border-color:var(--violet); background:var(--card); }
 .chip.ok { color:var(--ok); background:var(--okBg); border-color:transparent; }
+.chip.bad { color:var(--bad); background:var(--badBg); border-color:transparent; }
 .chip.warn { color:var(--warn); background:var(--warnBg); border-color:transparent; }
 .empty { padding:26px 0; color:var(--muted); }
 .topbar, .app-header { display:flex; align-items:center; flex-wrap:wrap; gap:20px; border-bottom:1px solid var(--line); padding:0 0 18px; margin-bottom:28px; }
@@ -350,3 +351,12 @@ label .optional { font-weight:400; color:var(--text-faint); }
 .ws-who input { flex:1; width:auto; min-width:0; }
 label.check.disabled { opacity:.55; cursor:not-allowed; }
 label.check.disabled input { cursor:not-allowed; }
+
+/* run18 P03: the browser name sits behind a small link in the first-time signing box */
+details.name-browser { border-top:0; padding:0; margin:10px 0; }
+details.name-browser summary { font-size:13px; font-weight:400; color:var(--muted); }
+
+/* run18 P06: Company login is one closed line in Hub settings that opens into the fields */
+details.company-login-fold { border-top:0; padding:8px 0; margin:12px 0; }
+details.company-login-fold > summary { display:flex; flex-wrap:wrap; align-items:center; gap:8px; font-weight:400; }
+details.company-login-fold > summary .link { margin-left:auto; color:var(--accent, #2fc6a3); }

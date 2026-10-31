@@ -1055,7 +1055,8 @@ test('P06: a complete workspace shows one sentence and Open dashboard; the table
   expect(page(container)).not.toMatch(/to-do list of tickets|We will set this up|Everything stays on this computer|Nothing is missing|Short name/)
   const fold = screen.getByText('What is set up').closest('details')!
   expect(fold).not.toHaveAttribute('open')
-  expect(fold).toHaveTextContent('Features')
+  expect(fold).toHaveTextContent('Add-ons')
+  expect(fold).not.toHaveTextContent('Features')
   expect(fold).toHaveTextContent('Agents can start here')
   expect(fold).not.toHaveTextContent('Short name')
   expect(fold).not.toHaveTextContent('Add-ons on')
@@ -1337,7 +1338,7 @@ test('reviewFacts builds the short card in plain words from the review', () => {
   expect(facts.map((f) => f.label)).toEqual(['Workspace', 'Agents', 'How you approve'])
   expect(facts.find((f) => f.label === 'Workspace')!.value).toBe('Marketing') // r11-P15: no ticket prefix on the card
   expect(facts.find((f) => f.label === 'Agents')!.value).toBe('may work for 3 days')
-  expect(facts.find((f) => f.label === 'Features')).toBeUndefined()
+  expect(facts.find((f) => f.label === 'Add-ons')).toBeUndefined()
   // P06: owner, folder, own copy and history are Details, not decisions
   for (const gone of ['Owner', 'Your project', 'Own copy per ticket', 'History']) expect(facts.find((f) => f.label === gone)).toBeUndefined()
 })
@@ -1358,7 +1359,7 @@ test('progress groups roll up done and failed steps without changing server step
     { id: 'key', label: 'Your way to approve', status: 'done' },
     { id: 'workspace', label: 'Your workspace', status: 'done' },
     { id: 'services', label: 'Starting orch', status: 'failed' },
-    { id: 'addons', label: 'Features', status: 'done' },
+    { id: 'addons', label: 'Add-ons', status: 'done' },
     { id: 'approval', label: 'Your choices saved', status: 'done' },
   ])
   expect(steps).toHaveLength(8)

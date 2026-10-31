@@ -112,9 +112,9 @@ test("run15 P03 N4: a switch session that holds a local key says it is ready and
 
 test("run15 P03: a browser with no key gets one green button, Set up signing, and no 'sign in here once' detour", () => {
   let called = 0;
-  for (const state of ["unregistered", "dead"]) {
+  for (const state of ["unregistered"]) {
     const out = homeView({ user: { name: "Anna", is_admin: true }, workspaces: [{ workspace_id: "a", name: "P", online: true }], items: [], channels: [],
-      thisBrowser: { state }, actions: { register: () => { called++; }, forgetLocal() {} } });
+      thisBrowser: { state }, actions: { register: () => { called++; } } });
     const t = textOf(out);
     assert.match(t, /Approvals need a signing key in this browser/);
     assert.doesNotMatch(t, /cannot sign yet|Sign in here once|You came here from a workspace|Register this browser/);
@@ -123,7 +123,7 @@ test("run15 P03: a browser with no key gets one green button, Set up signing, an
     assert.equal(btn[0].className, "pri");
     btn[0].listeners.click();
   }
-  assert.equal(called, 2);
+  assert.equal(called, 1);
   const ok = textOf(homeView({ user: { name: "Anna", is_admin: true }, workspaces: [{ workspace_id: "a", name: "P", online: true }], items: [], channels: [], thisBrowser: { state: "active", label: "Chrome" }, actions: {} }));
   assert.match(ok, /This browser holds a signing key for you/);
   assert.doesNotMatch(ok, /Set up signing/);
@@ -141,7 +141,23 @@ test("run15c P08: a member with nothing to sign sees no 'Where you can sign'; it
   assert.match(textOf(homeView({ ...base, channels: [{ channel_id: "c", kind: "phone", status: "active" }] })), /Where you can sign/);
   assert.match(textOf(homeView({ ...base, user: { name: "Anna", is_admin: true } })), /Where you can sign/);
   assert.match(textOf(homeView({ ...base, thisBrowser: { state: "active", label: "x" } })), /Where you can sign/);
-  assert.match(textOf(homeView({ ...base, thisBrowser: { state: "dead" } })), /Forget the key/);
+  assert.match(textOf(homeView({ ...base, thisBrowser: { state: "dead" } })), /Set up signing again/);
+});
+
+test("run18 P04: a key that really stopped working says so once, with one button and no Forget; a first-time person never reads 'removed'", () => {
+  let called = 0;
+  const mk = (state) => homeView({ user: { name: "Anna", is_admin: true }, workspaces: [{ workspace_id: "a", name: "P", online: true }], items: [], channels: [],
+    thisBrowser: { state }, actions: { register: () => { called++; } } });
+  const dead = mk("dead"), t = textOf(dead);
+  assert.match(t, /This browser's key no longer works/);
+  assert.match(t, /Set it up again to keep approving here\./);
+  assert.doesNotMatch(t, /Forget|removed|missing/);
+  const btns = dead.flatMap(all).filter((n) => n.tag === "button" && /signing/.test(n.textContent));
+  assert.deepEqual(btns.map((b) => b.textContent), ["Set up signing again"]);
+  btns[0].listeners.click(); assert.equal(called, 1);
+  const fresh = textOf(mk("unregistered"));
+  assert.match(fresh, /One step: confirm with your password and a code\./);
+  assert.doesNotMatch(fresh, /removed|missing|no longer works|Forget/);
 });
 
 test("P07: Shared tickets card lists tickets shared with me with workspace and who shared; hidden when none", () => {
@@ -186,4 +202,12 @@ test("P04: ended lines show in the Shared tickets card (even with nothing shared
 test("P04: the sharer's own rows (no shared_by) never become a stopped-sharing line", () => {
   const own = { workspace_id: "w1", key: "PW-9", title: "Mine" };
   assert.deepEqual(sharedEnded([own], []), []);
+});
+
+test("run18 P04: Home calls a stored key dead only when it is this person's own; another person's key is never classed or forgotten", async () => {
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("../../src/orch_hub/web/app.js", import.meta.url), "utf8");
+  const line = src.split("\n").find((l) => l.includes("const dead = "));
+  assert.match(line, /!mine && state\.me\?\.userId === user\.user_id;/);
+  assert.ok(!src.includes("forgetLocal"), "no Forget path: setting up again replaces the old key");
 });

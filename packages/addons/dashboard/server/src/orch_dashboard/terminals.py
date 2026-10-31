@@ -272,7 +272,7 @@ def register(app: FastAPI, gateway: Gateway, tickets: Tickets) -> None:
         listener = request.scope.get("orch_listener", LOOPBACK)
         policy = app.state.policies.get(listener)
         if policy is None or not policy.terminals:
-            raise fail("not_found", "Terminals are not available on this connection.", exit=3)
+            raise fail("not_found", "Command window is not available on this connection.", exit=3)
         if app.state.auth.listener_of(request.state.token) != listener:
             raise fail("session.required", exit=3)
         return listener

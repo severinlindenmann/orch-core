@@ -70,7 +70,7 @@ test("the sign-in button exists only when company login is on", () => {
 test("the admin card never shows a secret and says what is needed", () => {
   const card = O.companyCard({ configured: true, provider: "entra", client_id: "cid", tenant: "t", domain: "", mode: "invited", idp_mfa: false, enabled: false, tested: false, has_secret: true, redirect_uri: "https://hub.example/oidc/callback", secure_address: true }, { save: async () => ({ status: 200 }), test: async () => ({ ok: true }) });
   const t = card.textContent;
-  for (const words of ["Company login", "Redirect address", "https://hub.example/oidc/callback", "Client secret", "second step", "Test the connection", "guests", "test the connection first", "auth_time", "amr"]) assert.ok(t.includes(words), words);
+  for (const words of ["Company login", "return address", "https://hub.example/oidc/callback", "Secret", "second step", "Test the connection", "guests", "test the connection first", "auth_time", "amr"]) assert.ok(t.includes(words), words);
   const secret = find(card, (n) => n.attrs.id === "oidc-secret")[0];
   assert.equal(secret.attrs.type, "password");
   assert.equal(secret.attrs.value, undefined); // the saved secret is never put back into the page
@@ -109,4 +109,48 @@ test("an invitation login finishes on its own route and says plainly what failed
   assert.ok(O.INVITE_WORDS.bad_invite.includes("Ask your admin for a new one"));
   assert.ok(O.INVITE_WORDS.oidc_already_linked.includes("already used"));
   assert.ok(O.WELCOME.includes("ask your hub admin for a set-up link"));
+});
+
+test("run18 P06: inside Hub settings company login is one closed line that opens into plainly worded fields", () => {
+  const good = { configured: true, has_secret: true, redirect_uri: "https://hub.example/oidc/callback" };
+  const card = O.companyCard({ ...good, configured: false, has_secret: false }, {}, { inside: true });
+  const fold = find(card, (n) => n.tag === "details" && n.className === "company-login-fold")[0];
+  assert.equal(fold.attrs.open, undefined, "closed by default");
+  const summary = fold.children[0];
+  assert.equal(summary.tag, "summary");
+  assert.match(summary.textContent, /Company login/);
+  assert.match(summary.textContent, /sign in with a Microsoft or Google work account/);
+  assert.match(summary.textContent, /Off/);
+  assert.match(summary.textContent, /Set up/);
+  const t = card.textContent;
+  for (const words of ["Work account type", "Microsoft work account", "Application ID", "Directory ID (Microsoft only)", "Secret", "Paste this return address into Microsoft or Google"]) assert.ok(t.includes(words), words);
+  for (const old of ["Client id", "Tenant id", "Microsoft Entra", "Client secret", "Redirect address", "Provider"]) assert.ok(!t.includes(old), old);
+  assert.ok(t.includes("amr") && t.includes("auth_time"), "the Good to know notes stay");
+});
+
+test("run18 P06: the closed line never hides a problem: it opens, says Needs attention, and keeps the secure-address alert outside the fold", async () => {
+  const base = { configured: true, has_secret: true, enabled: true, tested: true, redirect_uri: "https://hub.example/oidc/callback" };
+  const foldOf = (card) => find(card, (n) => n.tag === "details" && n.className === "company-login-fold")[0];
+  const fine = O.companyCard(base, {}, { inside: true });
+  assert.equal(foldOf(fine).attrs.open, undefined); assert.match(foldOf(fine).children[0].textContent, /On/);
+  assert.doesNotMatch(fine.textContent, /Needs attention/);
+  const insecure = O.companyCard({ ...base, secure_address: false, redirect_uri: "http://10.0.0.5:8100/oidc/callback" }, {}, { inside: true });
+  const nosecret = O.companyCard({ ...base, has_secret: false }, {}, { inside: true });
+  for (const c of [insecure, nosecret]) {
+    assert.ok("open" in foldOf(c).attrs, "open"); assert.match(foldOf(c).children[0].textContent, /Needs attention/);
+    assert.doesNotMatch(foldOf(c).children[0].textContent, /\bOn\b/);
+  }
+  const alert = find(insecure, (n) => n.attrs.role === "alert")[0];
+  assert.ok(alert && !find(foldOf(insecure), (n) => n === alert).length, "the alert is outside the details");
+  assert.ok(alert.textContent.includes("needs a secure address"));
+  // a failed test (or save) opens the closed fold by itself
+  const tried = O.companyCard({ ...base, enabled: false, tested: false }, { test: async () => ({ ok: false, error: "oidc_failed" }) }, { inside: true });
+  assert.equal(foldOf(tried).attrs.open, undefined);
+  await find(tried, (n) => n.attrs.id === "oidc-test")[0].listeners.click();
+  assert.equal(foldOf(tried).open, true);
+});
+
+test("run18 P06: company mode says who may sign in on the closed line", () => {
+  const c = O.companyCard({ configured: true, has_secret: true, enabled: true, tested: true, mode: "company", domain: "acme.example", redirect_uri: "https://h/oidc/callback" }, {}, { inside: true });
+  assert.match(c.textContent, /Anyone at acme\.example/);
 });

@@ -64,7 +64,7 @@ function Row({ r, onStop, doubt, finished }: { r: Run; onStop: (r: Run) => void;
 }
 
 export function TerminalsPage() {
-  usePageHeader('Terminals')
+  usePageHeader('Command window')
   const { workspace } = useWorkspace()
   const ws = workspace?.id
   const qc = useQueryClient()
@@ -82,9 +82,9 @@ export function TerminalsPage() {
   if (!served) {
     return (
       <div className="max-w-2xl space-y-2">
-        <h1 className="text-xl font-semibold tracking-tight">Terminals</h1>
+        <h1 className="text-xl font-semibold tracking-tight">Command window</h1>
         <p data-testid="terminals-unavailable" className="text-[13px] text-text-muted">
-          Terminals are switched off in this workspace, so there is nothing to list here. Switch them on in Settings, under Add-ons.
+          Command window is switched off in this workspace, so there is nothing to list here. Switch it on in Settings, under Add-ons.
         </p>
       </div>
     )
@@ -106,7 +106,7 @@ export function TerminalsPage() {
   return (
     <div className="w-full max-w-4xl space-y-4" data-terminals-page>
       <div className="flex flex-wrap items-center gap-2">
-        <h1 className="text-xl font-semibold tracking-tight">Terminals</h1>
+        <h1 className="text-xl font-semibold tracking-tight">Command window</h1>
         {/* Run 12a owner feedback: starting an agent is the main thing people come here for; a plain terminal is second. */}
         {agents && (
           <Button size="sm" className="ml-auto" data-testid="terminals-start-agent" onClick={() => setStarting(true)}>
@@ -122,7 +122,7 @@ export function TerminalsPage() {
       </p>
       {off && (
         <div role="status" className="flex flex-wrap items-center gap-2 text-[13px] text-text-muted">
-          Terminals are switched off for this workspace on this machine.
+          Command window is switched off for this workspace on this machine.
           <RunnerSwitch ws={ws} on initialTerminals testId="terminals-runner" variant="secondary" />
         </div>
       )}
@@ -140,7 +140,7 @@ export function TerminalsPage() {
           {agents ? 'Nothing is running. Start an agent, or open a terminal with New terminal.' : 'No terminal is open. Start one with New terminal.'}
         </p>
       ) : (
-        <ul aria-label="Terminals" className="divide-y divide-border rounded-lg border border-border bg-surface px-3">
+        <ul aria-label="Command window" className="divide-y divide-border rounded-lg border border-border bg-surface px-3">
           {runs.map((r) => (
             <Row key={r.run} r={r} onStop={(x) => void stop(x)} finished={agentFinished(r, r.ticket ? statusOf.get(r.ticket) : null)} doubt={!!doubt[r.run] || (!!r.exit && cleanupDoubt(r.exit.cleanup))} />
           ))}

@@ -811,6 +811,56 @@ def test_f7_an_addon_grant_says_what_the_addon_may_do_and_keeps_digest_and_raw_f
     assert signcontent.ADDON_TRUST in none["notes"]
 
 
+def _terminals_digest():
+    from orch.addons import builtin
+    from orch.addons.package import MANIFEST_FILE, package_digest
+
+    return package_digest({MANIFEST_FILE: builtin.manifest_bytes("terminals")})
+
+
+def test_run18_the_plain_name_command_window_is_only_for_the_real_builtin_package():
+    real = build(_addon(package_sha256=_terminals_digest()))
+    assert real["headline"] == "Turn on Command window: it says it will open terminals on this computer, as you"
+    assert real["title"] == "Turn on Command window" and real["summary"]["title"] == "Turn on Command window"
+    assert {r["field"]: r["after"] for r in real["fields_changed"]}[
+        "add-on"
+    ] == "terminals"  # the signed name stays visible
+    # a package that only carries the name (any other digest) keeps the mechanical name and the same raw row
+    fake = build(_addon(package_sha256="sha256:" + "bb" * 32))
+    assert "Command window" not in flat(fake) and fake["title"] == "Turn on Terminals"
+    assert {r["field"]: r["after"] for r in fake["fields_changed"]}["add-on"] == "terminals"
+    # turning it off carries no package: the display name goes by id (safe direction); the raw name stays in the event
+    off = build(
+        {
+            "op": "addon.disable",
+            "events": [{"type": "addon.disabled", "name": "terminals"}],
+            "material": {"kind": "payload", "ticket": None},
+        }
+    )
+    assert off["headline"] == "Turn off Command window"
+    assert {r["field"]: r["after"] for r in off["fields_changed"]} == {
+        "add-on": "terminals"
+    }  # the signed value is visible
+    assert "Turn off Terminals" not in flat(off)
+    other = build(
+        {
+            "op": "addon.disable",
+            "events": [{"type": "addon.disabled", "name": "worktrees"}],
+            "material": {"kind": "payload", "ticket": None},
+        }
+    )
+    assert other["headline"] == "Turn off Worktrees"
+
+
+def test_run18_the_two_terminals_manifests_are_byte_identical():
+    from pathlib import Path
+
+    from orch.addons import builtin
+
+    own = Path(__file__).resolve().parents[3] / "addons" / "terminals" / "orch-addon.json"
+    assert own.read_bytes() == builtin.manifest_bytes("terminals")
+
+
 def _explorer_digest():
     from orch.addons import builtin
     from orch.addons.package import MANIFEST_FILE, package_digest

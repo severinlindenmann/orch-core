@@ -107,7 +107,7 @@ export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits
       style={right ? { width: size } : { height: size }}>
       <ResizeHandle side={side} size={size} max={dockMax(side, view, area)} onResize={resize} />
       <header className={cn('flex h-9 shrink-0 items-center gap-2 border-b bg-surface-2 px-2 text-xs', addonRule)}>
-        <AddonBadge name={DOCK_ADDON} title="Terminals" />
+        <AddonBadge name={DOCK_ADDON} title="Command window" />
         <SquareTerminal aria-hidden="true" className="size-3.5 shrink-0 text-text-muted" />
         <h2 className="shrink-0 text-xs font-semibold">Terminal</h2>
         {!right && <RunTabs finished={finishedOf} runs={shown} current={current?.run ?? null} onSelect={setSelected} doubt={doubt} onDismiss={(id) => dismiss([id])} />}
@@ -117,7 +117,7 @@ export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits
             <Button variant="ghost" size={right ? 'icon-xs' : 'xs'} aria-label="New terminal" disabled={!ws}><Plus />{!right && 'New terminal'}</Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
-            <DropdownMenuItem disabled={!termsOn} onSelect={() => void ask(false)}>Shell in the workspace{!termsOn && ' — Terminals are off'}</DropdownMenuItem>
+            <DropdownMenuItem disabled={!termsOn} onSelect={() => void ask(false)}>Shell in the workspace{!termsOn && ' — Command window is off'}</DropdownMenuItem>
             {ticket && <DropdownMenuItem disabled={!termsOn} onSelect={() => void ask(true)}>Shell for {ticket}</DropdownMenuItem>}
             <DropdownMenuSeparator />
             {/* agent.preview needs a ticket (contract §12.3): without one the host refuses "args is not valid" */}
@@ -153,8 +153,8 @@ export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits
         </div>
       )}
       {error && <p role="alert" className="shrink-0 border-b border-danger/40 bg-danger-soft px-3 py-1 text-xs text-danger">{error}</p>}
-      {!termsOn && ws && <p role="status" data-terminals-off className="shrink-0 border-b border-border bg-surface px-3 py-1 text-xs text-text-muted">Terminals are switched off in this workspace. Switch them on in Settings, under Add-ons.</p>}
-      {termsOn && off && ws && <div role="status" className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-surface px-3 py-1 text-xs text-text-muted">Terminals are switched off for this workspace on this machine.<RunnerSwitch ws={ws} on initialTerminals testId="dock-runner" variant="secondary" /></div>}
+      {!termsOn && ws && <p role="status" data-terminals-off className="shrink-0 border-b border-border bg-surface px-3 py-1 text-xs text-text-muted">Command window is switched off in this workspace. Switch it on in Settings, under Add-ons.</p>}
+      {termsOn && off && ws && <div role="status" className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-surface px-3 py-1 text-xs text-text-muted">Command window is switched off for this workspace on this machine.<RunnerSwitch ws={ws} on initialTerminals testId="dock-runner" variant="secondary" /></div>}
       {current && current.grant_state === 'ended' && current.state === 'running' && (
         <p role="status" className="shrink-0 border-b border-border bg-surface px-3 py-1 text-xs text-warning" data-grant-ended>This agent's runner grant ended: the host refuses its writes. Stop it when you are done reading.</p>
       )}
@@ -184,7 +184,7 @@ export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits
 function RunTabs({ finished, runs, current, onSelect, doubt, onDismiss }: { runs: Run[]; current: string | null; onSelect: (id: string) => void; doubt: Record<string, boolean>; onDismiss: (id: string) => void; finished: (r: Run) => boolean }) {
   if (runs.length === 0) return <span className="min-w-0 flex-1 truncate text-xs text-text-faint">No terminal open</span>
   return (
-    <div role="tablist" aria-label="Terminals" className="relative flex min-w-0 flex-1 items-center gap-1 overflow-x-auto" data-scroll-x>
+    <div role="tablist" aria-label="Command window" className="relative flex min-w-0 flex-1 items-center gap-1 overflow-x-auto" data-scroll-x>
       {runs.map((r, i) => (
         <span key={r.run} className="flex shrink-0 items-center">
         <button type="button" role="tab" aria-selected={r.run === current} onClick={() => onSelect(r.run)}

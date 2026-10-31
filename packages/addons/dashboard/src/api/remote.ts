@@ -51,7 +51,7 @@ export const remoteQueries = {
   }),
 }
 
-export const LEVEL_NAME: Record<RemoteLevel, string> = { view: 'View', work: 'Work', terminals: 'Terminals' }
+export const LEVEL_NAME: Record<RemoteLevel, string> = { view: 'View', work: 'Work', terminals: 'Command window' }
 export const LEVEL_HELP: Record<RemoteLevel, string> = {
   view: 'Look at tickets, files and notes.',
   work: 'Also answer questions, approve and start agents.',

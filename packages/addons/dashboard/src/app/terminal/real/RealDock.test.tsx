@@ -221,7 +221,7 @@ describe('the real dock', () => {
     setFeatures({ features: ['terminals'], workspaces: { [WS]: ['terminals'] } })
     list = { ...list, runs: [run('SH', { state: 'exited', exit: { code: 0, reason: 'exited', cleanup: 'complete' } as never })] }
     mount()
-    expect(await screen.findByText(/Terminals are switched off in this workspace/)).toBeInTheDocument()
+    expect(await screen.findByText(/Command window is switched off in this workspace/)).toBeInTheDocument()
     expect(screen.queryByRole('tab')).toBeNull()
     fireEvent.pointerDown(screen.getByRole('button', { name: 'New terminal' }), { button: 0, pointerType: 'mouse' })
     expect(await screen.findByRole('menuitem', { name: /Shell in the workspace/ })).toHaveAttribute('aria-disabled', 'true')

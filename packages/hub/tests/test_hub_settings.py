@@ -506,6 +506,19 @@ def test_a_hub_started_by_hand_saves_but_says_it_did_not_restart(w, state):
     assert (s, o) == (200, {"ok": True, "changed": True, "restarting": False})
 
 
+def test_run18_an_office_or_private_address_that_is_not_this_computers_own_is_refused(w, state):
+    restarts = _wired(w, state)  # ASSIGNED is the computer's own list
+    tok = w.login(w.admin)
+    for entry in ({"kind": "office", "host": "10.77.7.7"}, {"kind": "private", "host": "100.64.77.7"}):
+        assert _put_addrs(w, tok, P_ENTRY, entry)[:2] == (400, {"error": "malformed"})
+    assert S.load(state) == UP and restarts == [] and "hub_settings" not in _audit_types(w)
+    # a member (not an admin) cannot even try
+    assert _put_addrs(w, w.login(w.ann), P_ENTRY, {"kind": "office", "host": "10.0.0.7"})[:2] == (
+        403,
+        {"error": "forbidden_role"},
+    )
+
+
 def test_detected_addresses_are_this_computers_own_with_their_kind(w, state):
     _wired(w, state)
     w.api.d.settings_ctl.detect = lambda: SA.detect_addresses("2: eth0    inet 10.0.0.7/24 brd x scope global\n")
@@ -514,7 +527,7 @@ def test_detected_addresses_are_this_computers_own_with_their_kind(w, state):
     assert (s, o) == (
         200,
         {
-            "addresses": [{"ip": "127.0.0.1", "kind": "server"}, {"ip": "10.0.0.7", "kind": "office"}],
+            "addresses": [{"ip": "127.0.0.1", "kind": "server"}, {"ip": "10.0.0.7", "kind": "office", "iface": "eth0"}],
             "can_change": True,
         },
     )
@@ -525,6 +538,34 @@ def test_detected_addresses_are_this_computers_own_with_their_kind(w, state):
         {"ip": "192.168.1.9", "kind": "office"},
         {"ip": "8.8.4.4", "kind": "public"},
     ]
+
+
+def test_run18_detected_addresses_never_lead_with_a_virtual_interface_and_name_the_interface():
+    virt_ip = {
+        "docker0": "172.17.0.1",
+        "br-1a2b3c": "172.18.0.1",
+        "veth9": "10.99.0.1",
+        "virbr0": "192.168.122.1",
+        "wg0": "10.66.0.2",
+        "tap0": "10.67.0.2",
+        "tun0": "10.68.0.2",
+    }
+    lines = [f"{i}: {n}    inet {ip}/24 brd x scope global {n}\n" for i, (n, ip) in enumerate(virt_ip.items(), 3)]
+    text = (
+        "".join(lines) + "2: eth0    inet 192.168.1.9/24 brd x scope global eth0\n"
+    )  # the real interface comes LAST in the input
+    got = SA.detect_addresses(text)
+    assert got[0]["ip"] == "127.0.0.1"
+    assert got[1] == {"ip": "192.168.1.9", "kind": "office", "iface": "eth0"}
+    assert {g["iface"] for g in got[2:]} == set(virt_ip) and len(got) == 2 + len(virt_ip)
+    mac_virtual = ("awdl0", "llw0", "bridge100", "utun3", "vmnet8", "zt0", "tun0")
+    ifc = "".join(
+        f"{n}: flags=8863<UP>\n\tinet 10.{100 + i}.0.1 netmask 0xffffff00\n" for i, n in enumerate(mac_virtual)
+    )
+    ifc += "en0: flags=8863<UP> mtu 1500\n\tinet 10.1.1.4 netmask 0xffffff00\n"  # again last in the input
+    got = SA.detect_addresses(ifc)
+    assert got[1] == {"ip": "10.1.1.4", "kind": "office", "iface": "en0"}
+    assert {g["iface"] for g in got[2:]} == set(mac_virtual) and len(got) == 2 + len(mac_virtual)
 
 
 def test_the_audit_event_is_closed_and_has_plain_words():

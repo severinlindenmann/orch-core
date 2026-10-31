@@ -60,37 +60,62 @@ const localTime = (d) => d.toLocaleTimeString([], { hour: "2-digit", minute: "2-
  *  "Started" / "Stopped" / "Stopped unexpectedly"; the benign "Starting", "Stopping" and "Deactivated successfully" lines fold away;
  *  every other line is kept as its message (unit, host and pid stripped), so an error is never hidden.
  *  Returns [{ time, text, ok }] where ok is false for anything that is not a plain start or stop. */
+const RESTART_MS = 60_000;
+
+/** A start, a stop and a start within a minute is orch restarting the service: one "Restarted" line (a first boot
+ *  "Started" right before it is part of it). Only runs where every line is ok and each gap is at most 60 s merge, so a
+ *  real stop, "Stopped unexpectedly" or "Could not start" stays visible as its own line. */
+function restarts(list) {
+  const near = (a, b) => Number.isFinite(a.ms) && Number.isFinite(b.ms) && b.ms - a.ms >= 0 && b.ms - a.ms <= RESTART_MS;
+  const out = [];
+  for (let i = 0; i < list.length; i++) {
+    const [a, b] = [list[i], list[i + 1]];
+    if (a.ok && b?.ok && a.text === "Stopped" && b.text === "Started" && near(a, b)) {
+      const first = out.at(-1);
+      if (first?.ok && first.text === "Started" && near(first, a)) out.pop();
+      out.push({ time: b.time, text: "Restarted", ok: true, ms: b.ms });
+      i++; continue;
+    }
+    out.push(a);
+  }
+  return out;
+}
+
 export function summarize(raw, { fmt = localTime, now = new Date() } = {}) {
   const out = [];
   const day = (d) => d.toDateString();
+  let ms = NaN;
+  const push = (e) => out.push({ ...e, ms });
   for (const line of String(raw ?? "").split("\n")) {
     if (!line.trim()) continue;
     const m = LINE.exec(line);
     let when = "", msg = line.trim();
+    ms = NaN;
     if (m) {
       const d = new Date(m[1] + (m[3] === undefined ? "Z" : m[2] + ":" + (m[3] === "Z" ? "00" : m[3])));
+      ms = d.getTime();
       if (!Number.isNaN(d.getTime())) when = fmt(d) + (day(d) === day(now) ? "" : ", " + d.toLocaleDateString([], { day: "numeric", month: "short" }));
       msg = m[5].trim();
       if (m[4].startsWith("systemd")) {
         msg = msg.replace(/^[\w.@-]+\.service: /, "");
         if (/^(Deactivated successfully\.|Consumed .*)$/.test(msg)) continue;
-        if (/^Starting\b/.test(msg)) { out.push({ time: when, text: "Starting", ok: true }); continue; }
+        if (/^Starting\b/.test(msg)) { push({ time: when, text: "Starting", ok: true }); continue; }
         if (/^Started\b/.test(msg)) {
           if (out.at(-1)?.text === "Starting") out.pop();
-          out.push({ time: when, text: "Started", ok: true }); continue;
+          push({ time: when, text: "Started", ok: true }); continue;
         }
         if (/^Stopped\b/.test(msg)) {
           if (out.at(-1)?.text === "Stopping") out.pop();
-          out.push({ time: when, text: "Stopped", ok: true }); continue;
+          push({ time: when, text: "Stopped", ok: true }); continue;
         }
-        if (/^Stopping\b/.test(msg)) { out.push({ time: when, text: "Stopping", ok: true }); continue; }
-        if (/^Failed to start\b/.test(msg)) { out.push({ time: when, text: "Could not start", ok: false }); continue; }
-        if (/^Failed\b/.test(msg)) { out.push({ time: when, text: "Stopped unexpectedly", ok: false }); continue; }
+        if (/^Stopping\b/.test(msg)) { push({ time: when, text: "Stopping", ok: true }); continue; }
+        if (/^Failed to start\b/.test(msg)) { push({ time: when, text: "Could not start", ok: false }); continue; }
+        if (/^Failed\b/.test(msg)) { push({ time: when, text: "Stopped unexpectedly", ok: false }); continue; }
       }
     }
-    out.push({ time: when, text: msg, ok: false });
+    push({ time: when, text: msg, ok: false });
   }
-  return out;
+  return restarts(out).map(({ ms: _ms, ...e }) => e);
 }
 
 /** The Logs dialog's nodes: the short list first, the raw lines in a closed "Technical lines" fold. Everything from the

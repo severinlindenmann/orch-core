@@ -83,7 +83,7 @@ def test_an_addon_that_needs_dashboard_execution_says_what_to_run():
     assert needs("worktrees", off) is None and not runner_fix("worktrees", off)
     assert not runner_fix("start-agent", None)  # the host says nothing: no switch to offer
     assert needs("start-agent", {**off, "enabled": True}) is None
-    assert "Terminals are not turned on" in needs("terminals", {**off, "enabled": True})
+    assert "Command window is not turned on" in needs("terminals", {**off, "enabled": True})
     assert needs("terminals", {**off, "enabled": True, "terminals": True}) is None
     assert needs("start-agent", None)  # the host says nothing: not offered
 
@@ -164,11 +164,11 @@ def test_asking_for_what_already_is_is_said_in_words_and_never_prepared(gateway,
     link = _SwitchLink()
     with pytest.raises(HostError) as err:
         _plan(gateway, stub, link, monkeypatch, "addon_disable")
-    assert err.value.error["code"] == "addon.already" and err.value.error["message"] == "Terminals is already off."
+    assert err.value.error["code"] == "addon.already" and err.value.error["message"] == "Command window is already off."
     link.switch(True)
     with pytest.raises(HostError) as err:
         _plan(gateway, stub, link, monkeypatch, "addon_grant")
-    assert err.value.error["code"] == "addon.already" and err.value.error["message"] == "Terminals is already on."
+    assert err.value.error["code"] == "addon.already" and err.value.error["message"] == "Command window is already on."
     assert "{" not in err.value.error["message"]
     link.state = "changed"  # updated since the grant: granting again is a real change, not "already"
     assert _plan(gateway, stub, link, monkeypatch, "addon_grant").op == "addon.grant"

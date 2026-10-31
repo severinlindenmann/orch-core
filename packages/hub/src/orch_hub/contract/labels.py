@@ -24,6 +24,7 @@ HUB_LABELS: dict[str, str] = {
     "sig_hub_org_skills": "orch/v2/hub-org-skills|",  # M3 (#1430): company skills offered to one workspace
     "sig_hub_org_secrets": "orch/v2/hub-org-secrets|",  # M3 (#1431): sealed company secrets for one workspace
     "sig_hub_mcp_servers": "orch/v2/hub-mcp-servers|",  # M3 (#1435): remote MCP servers offered to one workspace
+    "sig_hub_closing": "orch/v2/hub-closing|",  # #1463: the hub is being removed; offered to one workspace's owner
     "sig_hub_release_narrow": "orch/v2/hub-release-narrow|",  # M4 (#1357): a hub admin revokes a link / stops an app
     "sig_hub_app_pass": "orch/v2/hub-app-pass|",  # M4 (#1357): single-use pass into a company or group app
     "sig_hub_space_proposal": "orch/v2/hub-space-proposal|",  # p4 (#1020): a proposed member transition, to an invitee
@@ -89,6 +90,11 @@ PURPOSE_SPACE_SK = (
 #: vector file and protocol.md list those); ``tests/test_access_changes.py`` checks it is prefix-free with every label.
 ACCESS_CHANGE_LABEL = "orch/v2/hub-access-change|"
 ACCESS_CHANGE_KIND = "orch.access_change.v1"
+
+#: #1463: the domain of the digest an admin's channel key signs to remove the hub (a console label like the one above: the
+#: hub reads it, no workspace does; protocol.md §9.7 "The removal proof"). Prefix-free with every label.
+HUB_REMOVE_LABEL = "orch/v2/hub-remove|"
+HUB_REMOVE_KIND = "orch.hub_remove.v1"
 
 #: UK signs only under this family: ``"orch/v2/hub-custodial|" + <event type> + "|"`` (spec §5).
 CUSTODIAL_PREFIX = "orch/v2/hub-custodial|"

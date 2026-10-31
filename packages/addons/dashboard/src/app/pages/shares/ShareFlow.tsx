@@ -26,8 +26,8 @@ import {
   fileBase64,
   LIMITS,
   fmtSize,
-  isLoopback,
   reachNote,
+  sameOrigin,
   isUnknownWorkspace,
   isUnreachable,
   unpickable,
@@ -68,7 +68,8 @@ function Failure({ text }: { text: string }) {
 }
 
 /** Where the files go and where the link opens, in the dialog's words. */
-function Where({ server, share }: { server: string | null; share: string | null }) {
+function Where({ server, share, from }: { server: string | null; share: string | null; from: 'computer' | 'hub' | null }) {
+  const note = reachNote(server, share, from)
   if (!server) return null
   return (
     <p className="text-[12px] text-text-muted">
@@ -80,7 +81,7 @@ function Where({ server, share }: { server: string | null; share: string | null 
         </>
       ) : null}
       .
-      {reachNote(server, share) && <span className="mt-1 block">{reachNote(server, share)}</span>}
+      {note && <span className="mt-1 block">{note}</span>}
     </p>
   )
 }
@@ -100,13 +101,17 @@ export function ShareFlow({ ws, ticket, resume, only, onClose }: { ws: string; t
   // Publish server on this computer. Its suggestion only counts for the address that is actually configured.
   const addOns = useQuery(queries.addOns(ws))
   const row = addOns.data?.available ? addOns.data.add_ons.find((r) => r.id === 'publish') : undefined
-  const sameAddress = !row?.suggest || row.suggest === server
+  // A row without a suggestion says nothing about this address: it never counts as a match.
+  const sameAddress = !!row?.suggest && !!server && sameOrigin(row.suggest, server)
   const from = sameAddress ? row?.suggest_from ?? null : null
   const hubName = sameAddress ? row?.suggest_hub ?? null : null
+  // Block only while the row is really loading the first time. A query that is switched off or failed leaves the row
+  // unknown: the host-name line shows and Sign is not held back.
+  const rowLoading = addOns.isPending && addOns.fetchStatus !== 'idle'
   // No line, and no Sign, until the server is known and the row has answered: never a guess.
-  const where = addOns.isPending ? null : destinationLine(from, hubName, server)
-  // files going to a hub: "nobody else can use it" (a local test link) would be wrong
-  const reach = from === 'hub' && isLoopback(server) && isLoopback(share) ? null : reachNote(server, share)
+  const where = rowLoading ? null : destinationLine(from, hubName, server)
+  // "this computer" only when the row says the source is this computer
+  const reach = reachNote(server, share, from)
 
   // form
   const [picked, setPicked] = useState<string[]>([])
@@ -417,7 +422,7 @@ export function ShareFlow({ ws, ticket, resume, only, onClose }: { ws: string; t
                 ))}
               </select>
             </div>
-            <Where server={server} share={share} />
+            <Where server={server} share={share} from={from} />
             {error && <Failure text={error} />}
           </div>
           <DialogFooter>
@@ -448,7 +453,7 @@ export function ShareFlow({ ws, ticket, resume, only, onClose }: { ws: string; t
         ws={ws}
         // where the files go is not known: nothing is prepared and Sign stays off
         action={where ? { action: 'publish_share', key: s.ticket ?? ticket.key, staged_id: s.staged_id } : null}
-        hint={where ? null : addOns.isPending || info.isPending ? 'Checking where the files go…' : 'Where the files go is not known, so nothing can be signed.'}
+        hint={where ? null : rowLoading || info.isPending ? 'Checking where the files go…' : 'Where the files go is not known, so nothing can be signed.'}
         anchor={null}
         prepareOnOpen
         autoStart={false}

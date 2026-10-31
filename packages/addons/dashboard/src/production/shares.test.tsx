@@ -635,6 +635,10 @@ it('Publish as link: one press prepares the copy and opens exactly ONE sign shee
   await user.keyboard('{Enter}')
   expect(calls('click/sign').filter((c) => c.method === 'POST')).toEqual([])
   expect(state.host.clickSigned).toEqual([])
+  // the sheet is still open, and focus is inside it but not on the Publish button
+  expect(screen.getByRole('dialog')).toBe(sheet)
+  expect(sheet.contains(document.activeElement)).toBe(true)
+  expect(document.activeElement).not.toBe(publishButton)
   // the address and the prepared-copy id sit behind Details
   expect(sheet).not.toHaveTextContent('http://127.0.0.1:8103')
   await user.click(within(sheet).getByRole('button', { name: 'Details' }))
@@ -670,6 +674,65 @@ it('Publish as link: a hub reached at 127.0.0.1 says "Files go to your hub, <nam
   expect(within(sheet).getByTestId('where-files-go')).toHaveTextContent('Files go to your hub, Anna’s hub.')
   expect(sheet).not.toHaveTextContent('Files go to this computer')
   expect(sheet).not.toHaveTextContent('nobody else can use it')
+})
+
+/** Publish as link up to the loaded sign sheet, with the add-ons row and the shares list as given. */
+async function publishSheet(user: ReturnType<typeof userEvent.setup>, row: Record<string, unknown> | null, addresses?: { server: string; share: string }) {
+  if (row) state.host.workspaces[0].addOns = { available: true, add_ons: [{ ...PUBLISH_ROW, ...row }] } as never
+  if (addresses) {
+    const inner = state.host.override!
+    state.host.override = (path, method, body) => (path.includes('/shares') && method === 'GET' && !path.includes('/shares/') ? Response.json({ available: true, configured: true, ...addresses, workspace: A, owner: 'p_owner', live: true, shares: [], staged }) : inner(path, method, body))
+  }
+  const list = await onResults(user)
+  await user.click(within(list).getByRole('button', { name: 'Publish report.md as a link' }))
+}
+
+/** The sheet's own lead (files, where they go, who can open the links, Details). The signer's fixed risk line below it is the host's text and not under test. */
+const leadOf = (sheet: HTMLElement) => within(sheet).getByTestId('where-files-go').parentElement!.textContent ?? ''
+
+it('Publish as link: a hub reached at 127.0.0.1 with a public links address never says "this computer" anywhere on the sheet', async () => {
+  route()
+  const user = userEvent.setup()
+  await publishSheet(user, { suggest: 'http://127.0.0.1:8103', suggest_from: 'hub', suggest_hub: 'Anna’s hub' }, { server: 'http://127.0.0.1:8103', share: 'https://apps.example.org' })
+  await readyToSign('Publish')
+  const sheet = screen.getByRole('dialog')
+  expect(sheet).toHaveTextContent('Files go to your hub, Anna’s hub.')
+  expect(sheet).toHaveTextContent('apps.example.org')
+  expect(leadOf(sheet)).not.toMatch(/this computer/i)
+  expect(leadOf(sheet)).not.toMatch(/nobody else/i)
+})
+
+it('Publish as link: a row without a suggestion is not a match, even with a source: no "this computer" for a remote server', async () => {
+  route()
+  const user = userEvent.setup()
+  await publishSheet(user, { suggest: undefined, suggest_from: 'computer' }, { server: 'https://pub.example.org', share: 'https://pub.example.org' })
+  await readyToSign('Publish')
+  const sheet = screen.getByRole('dialog')
+  expect(within(sheet).getByTestId('where-files-go')).toHaveTextContent('Files go to pub.example.org.')
+  expect(leadOf(sheet)).not.toMatch(/this computer/i)
+})
+
+it('Publish as link: a suggestion that differs only by a trailing slash is the same address', async () => {
+  route()
+  const user = userEvent.setup()
+  await publishSheet(user, { suggest: 'http://127.0.0.1:8103/', suggest_from: 'computer' })
+  await readyToSign('Publish')
+  expect(within(screen.getByRole('dialog')).getByTestId('where-files-go')).toHaveTextContent('Files go to this computer.')
+})
+
+it('Publish as link: an add-ons query that fails still lets the person sign, with the host-name line', async () => {
+  route()
+  const user = userEvent.setup()
+  const inner = state.host.override!
+  state.host.override = (path, method, body) => (path.endsWith('/add-ons') && method === 'GET' ? Response.json({ ok: false, error: { code: 'internal', message: 'x', retryable: false } }, { status: 500 }) : inner(path, method, body))
+  await publishSheet(user, null)
+  const sign = await readyToSign('Publish')
+  const sheet = screen.getByRole('dialog')
+  expect(within(sheet).getByTestId('where-files-go')).toHaveTextContent('Files go to 127.0.0.1.')
+  expect(leadOf(sheet)).not.toMatch(/this computer/i)
+  sign()
+  await screen.findByRole('dialog', { name: 'Your link' }, { timeout: 9000 })
+  expect(state.host.clickSigned).toHaveLength(1)
 })
 
 it('Publish as link: when the server is not known there is no destination line, no "this computer", and Publish stays off', async () => {

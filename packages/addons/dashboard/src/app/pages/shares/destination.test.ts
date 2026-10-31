@@ -35,5 +35,6 @@ it('an IPv6 address works', () => {
 
 it('an address that does not parse is shown whole, as given', () => {
   expect(destinationLine(null, null, 'not a url')).toBe('Files go to not a url.')
+  // this one does parse (scheme "pub.example.org:", path "8102/x") but with an empty hostname, so the whole address is shown
   expect(hostOf('pub.example.org:8102/x')).toBe('pub.example.org:8102/x')
 })

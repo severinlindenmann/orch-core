@@ -17,6 +17,7 @@ import secrets
 import sqlite3
 import stat
 from collections import defaultdict, deque
+from contextlib import contextmanager
 
 from fastapi import APIRouter, Request
 from fastapi.concurrency import run_in_threadpool
@@ -49,6 +50,23 @@ _FILE_KEYS = {"path", "size", "sha256"}
 
 def _int(v):
     return isinstance(v, int) and not isinstance(v, bool)
+
+
+def part_route(method, target):
+    """Classify the signed raw target, never a decoded framework path."""
+    if method != "PUT" or any(c in target for c in ("?", "%", "//", "#")):
+        return None
+    m = re.fullmatch(
+        rf"/v1/ws/({registry.ID32})/shares/([0-9a-f]{{32}})/parts/(0|[1-9][0-9]{{0,7}})/(.+)",
+        target,
+    )
+    if m is None or int(m[3]) > 26 * 1024 * 1024:
+        return None
+    try:
+        pathrules.check(m[4])
+    except pathrules.BadPath:
+        return None
+    return m[1], m[2], m[4], int(m[3])
 
 
 def owned_share(conn, ws, share_id):
@@ -195,6 +213,43 @@ class Store:
                 raise
         finally:
             for fd in fds:
+                os.close(fd)
+
+    @contextmanager
+    def staging_parent(self, sid, path):
+        """Walk the existing staging tree, creating only manifest parent directories."""
+        fds = []
+        try:
+            cur = self._open_dir(self.share_dir("incoming", sid))
+            fds.append(cur)
+            cur = self._open_dir("files", cur)
+            fds.append(cur)
+            for part in path.split("/")[:-1]:
+                try:
+                    os.mkdir(part, 0o700, dir_fd=cur)
+                except FileExistsError:
+                    pass
+                cur = self._open_dir(part, cur)
+                fds.append(cur)
+            yield cur, path.split("/")[-1]
+        finally:
+            for fd in reversed(fds):
+                os.close(fd)
+
+    def file_range(self, sid, path, offset, length):
+        fds = []
+        try:
+            cur = self._open_dir(self.share_dir("incoming", sid))
+            fds.append(cur)
+            for part in ["files", *path.split("/")[:-1]]:
+                cur = self._open_dir(part, cur)
+                fds.append(cur)
+            fd = os.open(path.split("/")[-1], os.O_RDONLY | os.O_NOFOLLOW, dir_fd=cur)
+            with os.fdopen(fd, "rb") as data:
+                data.seek(offset)
+                return data.read(length)
+        finally:
+            for fd in reversed(fds):
                 os.close(fd)
 
     def verify_file(self, kind, sid, path, size, sha256):
@@ -408,6 +463,77 @@ def op_put_file(settings, store, ws, wsk, sid, path, body):
             raise
         return {"path": path, "result": "stored"}
     finally:
+        conn.close()
+
+
+def op_put_part(settings, store, ws, wsk, sid, path, offset, body):
+    # BEGIN IMMEDIATE is the existing cross-process write lock. It is stronger than
+    # a per-file lock and also serializes whole PUT, commit, revoke and expiry.
+    conn = db.connect(settings.db_path)
+    try:
+        _txn(conn, ws, wsk)
+        row = owned_share(conn, ws, sid)
+        if row["state"] in ("revoked", "expired"):
+            _gone(row)
+        if row["state"] == "live":
+            raise Refusal(409, "share_committed")
+        if settings.clock() >= row["expires_ms"]:
+            raise Refusal(410, "gone", state="expired")
+        pathrules.check(path)
+        f = conn.execute(
+            "SELECT * FROM share_files WHERE share_id=? AND path=?", (sid, path)
+        ).fetchone()
+        if f is None:
+            raise Refusal(404, "not_in_manifest")
+        if offset + len(body) > f["size"]:
+            raise Refusal(413, "too_large")
+        if f["present"]:
+            if store.file_range(sid, path, offset, len(body)) != body:
+                raise Refusal(409, "part_conflict", received=f["size"])
+            conn.execute(
+                "UPDATE share_files SET present=1 WHERE share_id=? AND path=?", (sid, path)
+            )
+            conn.execute("COMMIT")
+            return {"received": f["size"], "done": True, "result": "unchanged"}
+        # Quota was reserved for ALL manifest bytes by op_put_meta, including partials.
+        with store.staging_parent(sid, path) as (directory, name):
+            fd = os.open(name, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600, dir_fd=directory)
+            with os.fdopen(fd, "r+b") as data:
+                # The staging file length is authoritative, including after interruption.
+                received = os.fstat(data.fileno()).st_size
+                if offset > received:
+                    raise Refusal(409, "part_out_of_order", received=received)
+                if offset < received:
+                    data.seek(offset)
+                    prefix = data.read(min(len(body), received - offset))
+                    if prefix != body[: len(prefix)]:
+                        raise Refusal(409, "part_conflict", received=received)
+                    if offset + len(body) > received:
+                        raise Refusal(409, "part_out_of_order", received=received)
+                    result = "unchanged"
+                else:
+                    data.seek(received)
+                    data.write(body)
+                    data.flush()
+                    os.fsync(data.fileno())
+                    received += len(body)
+                    if os.fstat(data.fileno()).st_size != received:
+                        raise OSError("partial length mismatch")
+                    result = "stored"
+                if received == f["size"]:
+                    data.seek(0)
+                    whole = data.read()
+                    if hashlib.sha256(whole).hexdigest() != f["sha256"]:
+                        os.unlink(name, dir_fd=directory)
+                        raise Refusal(422, "content_mismatch", received=0)
+                    conn.execute(
+                        "UPDATE share_files SET present=1 WHERE share_id=? AND path=?", (sid, path)
+                    )
+        conn.execute("COMMIT")
+        return {"received": received, "done": received == f["size"], "result": result}
+    finally:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
         conn.close()
 
 
@@ -692,6 +818,22 @@ def install(app, settings):
         body = await request.body()
         return await guarded(
             request, lambda ws, wsk: op_put_file(settings, store, ws, wsk, sid, fpath, body)
+        )
+
+    @router.put("/shares/{sid}/parts/{offset}/{fpath:path}")
+    async def put_part(sid: str, offset: str, fpath: str, request: Request):
+        target = request.scope["raw_path"].decode("ascii")
+        if request.scope.get("query_string"):
+            target += "?" + request.scope["query_string"].decode("ascii")
+        route = part_route(request.method, target)
+        if route is None:
+            raise Refusal(404, "not_found")
+        _, _, path, position = route
+        body = await request.body()
+        return await guarded(
+            request,
+            lambda ws, wsk: op_put_part(settings, store, ws, wsk, sid, path, position, body),
+            write=False,
         )
 
     @router.post("/shares/{sid}/commit")

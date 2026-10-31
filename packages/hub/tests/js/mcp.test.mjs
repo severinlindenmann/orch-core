@@ -28,6 +28,7 @@ test("a server shows as text, offer boxes reflect who has it, and nothing is on 
   const view = mcpView(data, { save: (n, b) => calls.push(["save", n, b]), offer: (n, sh, ws) => calls.push(["offer", n, sh, ws]), remove: (s) => calls.push(["remove", s.name]) });
   assert.match(view.textContent, /Nothing is switched on for anyone until their workspace owner accepts it\./);
   assert.match(view.textContent, /Agents never see the sign-in secret/);
+  assert.match(view.textContent, /Tools that change things start off; each workspace owner turns them on\./);
   const boxes = find(view, (n) => n.tag === "input" && n.attrs["data-ws"]);
   assert.deepEqual(boxes.map((b) => b.checked), [true, false]);
   boxes[1].checked = true;

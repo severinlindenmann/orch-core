@@ -10,7 +10,7 @@ import {
   type Review,
   type Progress,
 } from '../api/setup'
-import { Inline, Raw } from '../components/sign/visible'
+import { Inline, Name, Raw } from '../components/sign/visible'
 import './setup.css'
 
 const clickRiskCopy = 'Faster, less safe: anything using this computer as you, including your agents, could approve for you. Choose this only on your own computer.'
@@ -219,7 +219,7 @@ export function groupProgress(steps: Progress['steps']): Progress['steps'] {
     if (!members.length) return []
     const has = (status: Progress['steps'][number]['status']) => members.some((step) => step.status === status)
     const status = has('failed') ? 'failed' : has('doing') ? 'doing'
-      : has('todo') && !has('done') ? 'todo'
+      : has('todo') ? (has('done') ? 'doing' : 'todo')
       : members.every((step) => step.status === 'skipped') ? 'skipped' : 'done'
     return [{ id, label, status }]
   })
@@ -287,7 +287,7 @@ function FinishChoices({
       {!state.complete && <p>This workspace already exists. Nothing that is on will be switched off.</p>}
       {state.complete && (
         <p>
-          <Raw>{current.name}</Raw> is ready.
+          <Name>{current.name}</Name> is ready.
         </p>
       )}
       <details className="current-fold" open={!state.complete}>
@@ -295,7 +295,7 @@ function FinishChoices({
         <dl className="current">
           <dt>Name</dt>
           <dd>
-            <Raw>{current.name}</Raw>
+            <Name>{current.name}</Name>
           </dd>
           {!state.complete && (
             <>
@@ -702,12 +702,13 @@ export function Setup({ api }: { api: SetupAPI }) {
   }, [])
   // the recommendation no longer applies: a switch is not at its default
   const agentsDiffer = !!state?.addons?.some((a) => a.kind !== 'flag' && !a.required && a.default !== profile.addons.includes(a.id))
+  const reviewSeq = useRef(0)
   const update = (value: Partial<Profile>) => {
+    reviewSeq.current++
     setProfile((p) => ({ ...p, ...value }))
     setReview(undefined)
   }
-  // Back on Review bumps this, so an answer to an older review request never comes back as the current review
-  const reviewSeq = useRef(0)
+  // Choice changes and Back invalidate answers to older review requests.
   async function getReview() {
     const seq = ++reviewSeq.current
     const r = await api.call<Review>('review', {})
@@ -913,7 +914,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                 className={`${i <= at ? 'active' : ''}${i === at ? ' current' : ''}${allDone ? ' finished' : ''}`}
                 aria-current={i === at ? 'step' : undefined}
               >
-                <span className="dot" aria-hidden />
+                <span className="dot" aria-hidden>{allDone ? '✓' : null}</span>
                 <span className="name">{s}</span>
               </li>
             ))}
@@ -951,7 +952,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                     </p>
                   )}
                   <p>We will set this up in {folder}.</p>
-                  <p>Setup adds orch&apos;s own files to this folder (a hidden .orch folder, AGENTS.orch.md and skill folders) and one marked orch section to AGENTS.md, CLAUDE.md and .gitignore, creating them if needed (and a git repository if you choose one). Nothing else in your files is changed.</p>
+                  <p>Setup adds orch&apos;s own files to this folder (a hidden .orch folder, AGENTS.orch.md and skill folders) and an orch section in AGENTS.md, lines in CLAUDE.md that load the instructions, and one line in .gitignore to keep orch’s private folder out of git, creating these files if needed (and a git repository if you choose one). Existing orch instructions may be updated; other content in these three files stays as it is.</p>
                   <p>{profile.addons.includes('worktrees') ? 'With work copies on, agents change their own copies until you merge them.' : 'Agents change the files in this folder directly.'}</p>
                   {profile.method === 'terminal' && <p>{terminalStepCopy}</p>}
                   <p>Everything stays on {host ? <Inline>{host}</Inline> : 'this computer'} unless you choose to connect your phone.</p>
@@ -1060,7 +1061,7 @@ export function Setup({ api }: { api: SetupAPI }) {
             <>
               <div className="agents-summary" data-testid="agents-summary">
                 <strong>Recommended for most people</strong>
-                <small>Agents can start from the dashboard, open a terminal, get their own copy of each ticket&apos;s files, and run quick tasks. Setup adds orch&apos;s own files to this folder (a hidden .orch folder, AGENTS.orch.md and skill folders) and one marked orch section to AGENTS.md, CLAUDE.md and .gitignore, creating them if needed (and a git repository if you choose one). Nothing else in your files is changed.{profile.addons.includes('worktrees') ? ' With work copies on, agents change their own copies until you merge them.' : ' Agents change the files in this folder directly.'}</small>
+                <small>Agents can start from the dashboard, open a terminal{profile.addons.includes('worktrees') ? ', get their own copy of each ticket’s files,' : ''} and run quick tasks. Setup adds orch&apos;s own files to this folder (a hidden .orch folder, AGENTS.orch.md and skill folders) and an orch section in AGENTS.md, lines in CLAUDE.md that load the instructions, and one line in .gitignore to keep orch’s private folder out of git, creating these files if needed (and a git repository if you choose one). Existing orch instructions may be updated; other content in these three files stays as it is.{profile.addons.includes('worktrees') ? ' With work copies on, agents change their own copies until you merge them.' : ' Agents change the files in this folder directly.'}</small>
               </div>
               {/* the fold opens by itself when the recommendation does not apply (a switch differs from its default, or the folder question was answered Skip) */}
               <details className="approval-more" data-testid="agents-more" open={agentsDiffer || undefined}>
@@ -1482,7 +1483,7 @@ export function Setup({ api }: { api: SetupAPI }) {
             </p>
             )
           )}
-          {state?.os === 'darwin' && !progress?.done && !progress?.error && groupProgress(progress?.steps ?? []).some((g) => g.id === 'services' && g.status === 'doing') && (
+          {(state?.os ? state.os === 'darwin' : /Mac/i.test(navigator.platform || navigator.userAgent)) && !progress?.done && !progress?.error && progress?.steps.some((s) => s.id === 'register' && s.status === 'doing') && (
             // only while the steps run (the Mac asks then); never on the ready or the error screen
             <p><small>Your Mac may show a note that orch runs in the background. That is fine; leave it on.</small></p>
           )}

@@ -622,3 +622,10 @@ body:has(> #root > .setup) {
 .setup .ask-unsaved .segments {
   margin-top: 8px;
 }
+
+.setup nav .finished .dot {
+  width: auto;
+  height: auto;
+  background: none;
+  color: var(--brand);
+}

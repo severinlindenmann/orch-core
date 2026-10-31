@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, expect, test, vi } from 'vitest'
 import { answers, groupProgress, plainReason, Setup, reviewFacts, summarize } from './Setup'
 import { SetupAPI, SetupError, bootstrapSetup, isSetupPage, type SetupState, type Review } from '../api/setup'
@@ -1435,7 +1435,7 @@ test('P17: in finish mode the hint says the workspace keeps working', async () =
 })
 
 test.each([
-  [['todo', 'done'], 'done'],
+  [['todo', 'done'], 'doing'],
   [['todo', 'skipped'], 'todo'],
   [['skipped', 'skipped'], 'skipped'],
   [['doing', 'done'], 'doing'],
@@ -1788,7 +1788,94 @@ test('security review: Back on Review discards the review, so Create needs a new
 test('security review: setup says exactly what it adds to the folder, never that files stay untouched', async () => {
   const f = fake()
   const { container } = render(<Setup api={f.api} />)
-  await screen.findByText(/Nothing else in your files is changed/)
-  expect(container.textContent).toMatch(/one marked orch section to AGENTS.md, CLAUDE.md and .gitignore/)
+  await screen.findByText(/Existing orch instructions may be updated/)
+  expect(container.textContent).toMatch(/an orch section in AGENTS.md, lines in CLAUDE.md that load the instructions, and one line in .gitignore/)
+  expect(container.textContent).not.toContain('Nothing else in your files is changed')
   expect(container.textContent).not.toMatch(/stay untouched|does not change your existing files/)
+})
+
+test('P75: both completion paths finish every step and use normal text for names', async () => {
+  for (const complete of [false, true]) {
+    const { container, unmount } = render(<Setup api={fake({ finish: complete, complete, done: true }).api} />)
+    if (complete) await screen.findByRole('heading', { name: 'Setup is complete' })
+    else {
+      await reveal()
+      await check()
+      fireEvent.click(await screen.findByRole('button', { name: 'Create workspace' }))
+      await screen.findByRole('heading', { name: 'Your workspace is ready' })
+    }
+    for (const step of within(screen.getByRole('navigation', { name: 'Setup progress' })).getAllByRole('listitem')) {
+      expect(step).toHaveClass('finished')
+      expect(step).not.toHaveClass('current')
+      expect(step).not.toHaveAttribute('aria-current')
+      expect(step).toHaveTextContent('✓')
+    }
+    expect(container.querySelector('ol.progress')).toBeNull()
+    expect(screen.queryByText('Starting orch')).toBeNull()
+    if (complete) for (const name of screen.getAllByText('Demo')) expect(name).not.toHaveClass('font-mono')
+    expect(screen.getByRole('button', { name: /Open (your workspace|dashboard)/ })).toBeEnabled()
+    unmount()
+  }
+})
+
+test.each(['MacIntel', 'Linux x86_64', 'Win32'])('P92: polls tick completed groups and limit the Mac hint to registration (%s)', async (platform) => {
+  vi.spyOn(navigator, 'platform', 'get').mockReturnValue(platform)
+  const f = fake()
+  const original = f.fetcher.getMockImplementation()!
+  let stage = 0
+  f.fetcher.mockImplementation(async (url, init) => {
+    if (!String(url).includes('/progress?')) return original(url, init)
+    return new Response(JSON.stringify({
+      steps: [
+        { id: 'perms', label: '', status: 'done' },
+        { id: 'register', label: '', status: stage === 0 ? 'doing' : 'done' },
+        { id: 'runner', label: '', status: stage === 2 ? 'done' : 'todo' },
+        { id: 'flags', label: '', status: 'todo' },
+      ], done: false, error: null, retry: [], workspace: null,
+    }))
+  })
+  render(<Setup api={f.api} />)
+  await reveal()
+  await check()
+  await screen.findByRole('heading', { name: 'Review your setup' })
+  vi.useFakeTimers()
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Create workspace' })) })
+  expect(screen.getByLabelText('Your files are private: Done')).toBeInTheDocument()
+  expect(screen.getByLabelText('Starting orch: Running')).toBeInTheDocument()
+  expect(Boolean(screen.queryByText(/Your Mac may show a note/))).toBe(platform === 'MacIntel')
+  for (stage = 1; stage <= 2; stage++) {
+    await act(async () => { await vi.advanceTimersByTimeAsync(1100) })
+    expect(screen.getByLabelText(`Starting orch: ${stage === 1 ? 'Running' : 'Done'}`)).toBeInTheDocument()
+    expect(screen.getByLabelText('Your choices saved: Waiting')).toBeInTheDocument()
+    expect(screen.queryByText(/Your Mac may show a note/)).toBeNull()
+  }
+})
+
+test('security review (b): a choice change discards an in-flight review answer', async () => {
+  const f = fake({ finish: true })
+  const original = f.fetcher.getMockImplementation()!
+  let resolveReview!: (response: Response) => void
+  f.fetcher.mockImplementation(async (url, init) => {
+    if (String(url).endsWith('/review')) return new Promise<Response>((resolve) => { resolveReview = resolve })
+    return original(url, init)
+  })
+  render(<Setup api={f.api} />)
+  fireEvent.click(await screen.findByLabelText(/Own copy per ticket/))
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  await waitFor(() => expect(resolveReview).toBeDefined())
+  fireEvent.click(screen.getByLabelText(/Own copy per ticket/))
+  expect(screen.getByLabelText(/Own copy per ticket/)).not.toBeChecked()
+  await act(async () => { resolveReview(new Response(JSON.stringify(review))) })
+  expect(screen.queryByRole('heading', { name: 'Review your setup' })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Finish setup' })).toBeNull()
+})
+
+test('security review (c): own-copy wording follows the work copies choice', async () => {
+  await toAgents(fake({ defaults: true }))
+  const summary = screen.getByTestId('agents-summary')
+  expect(summary).toHaveTextContent('get their own copy of each ticket’s files')
+  expect(summary).toHaveTextContent('With work copies on, agents change their own copies until you merge them.')
+  fireEvent.click(screen.getByLabelText(/Own copy per ticket/))
+  expect(summary).not.toHaveTextContent('get their own copy')
+  expect(summary).toHaveTextContent('Agents change the files in this folder directly.')
 })

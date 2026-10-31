@@ -27,5 +27,5 @@ export function HubChip({ ws }: { ws?: string }) {
   return <><Tooltip><TooltipTrigger asChild><Link to="/settings/$tab" params={{ tab: 'hub' }} hash={standalone ? 'connect' : undefined} data-testid="hub-chip" aria-label={label}>
     <Badge variant="outline" className={standalone ? 'border-brand bg-transparent text-brand hover:bg-surface-2' : tone}>{Icon && <Icon aria-hidden />}{chip.icon === 'dot' && <span aria-hidden className="size-1.5 rounded-full bg-success" />}<span className="hub-chip-long">{label}</span><span className="hub-chip-short hidden">{short}</span></Badge>
   </Link></TooltipTrigger><TooltipContent className="max-w-xs">{tooltip}</TooltipContent></Tooltip>
-    {canOpen && <button type="button" data-testid="hub-open-chip" onClick={() => openHub('/')} className="hidden rounded-full border border-border px-2.5 py-0.5 text-xs text-brand outline-none hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-brand md:inline-flex">Open hub</button>}</>
+    {canOpen && <button type="button" data-testid="hub-open-chip" disabled={openHub.busy} onClick={() => openHub('/')} className="hidden rounded-full border border-border px-2.5 py-0.5 text-xs text-brand outline-none hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-60 md:inline-flex">{openHub.busy ? 'Opening hub…' : 'Open hub'}</button>}</>
 }

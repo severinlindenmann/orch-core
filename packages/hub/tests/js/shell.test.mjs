@@ -45,7 +45,7 @@ test("switching sections preserves rail, buttons, top bar and updates selected t
 test("hash changes and sign-in continuation dispatch the wanted view", async () => {
   const visits = [], handlers = {};
   const location = { hash: "#/admin" };
-  const context = vm.createContext({ location, parseRoute, PAGES: [], registerPages() {}, window: { addEventListener: (event, fn) => { handlers[event] = fn; } },
+  const context = vm.createContext({ slowWatch: { start() {}, cancel() {} }, location, parseRoute, PAGES: [], registerPages() {}, window: { addEventListener: (event, fn) => { handlers[event] = fn; } },
     phones: async () => visits.push("phones"), handoffs: async () => visits.push("handoffs"), account: async () => visits.push("account"), home: async () => visits.push("home"), approvals: async () => visits.push("approvals"), workspaces: async () => visits.push("workspaces"), services: async () => visits.push("services"), admin: async () => visits.push("admin"), registerRoute: async () => visits.push("register"), activity: async () => visits.push("activity"),
     loginView: () => visits.push("login"), addonView: async (w, k) => visits.push("addon:" + k), settingsView: async (w, k) => visits.push("settings:" + k), setupView: () => visits.push("setup"), landFromTicket: async () => visits.push("ticket") });
   vm.runInContext(source.slice(source.indexOf("// Serialize renders")), context);

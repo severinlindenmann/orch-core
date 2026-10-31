@@ -21,7 +21,7 @@ function OpenHub({ ws }: { ws: string }) {
   const open = useOpenHub(ws)
   if (rail.data && !rail.data.hub) return null // the rail says there is no hub: nothing to open
   const name = rail.data?.hub?.name
-  return <Panel title={hubTitle(name)}><p>See your company's workspaces and what needs you.</p><Action id="hub-open" variant="default" onClick={() => open('/')}>Open hub</Action></Panel>
+  return <Panel title={hubTitle(name)}><p>See your company's workspaces and what needs you.</p><Action id="hub-open" variant="default" disabled={open.busy} onClick={() => open('/')}>{open.busy ? 'Opening hub…' : 'Open hub'}</Action></Panel>
 }
 
 export function HubTab({ workspace }: { workspace: Workspace }) {

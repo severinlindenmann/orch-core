@@ -3,6 +3,16 @@ import { h } from "./ui.js";
 
 export const PROGRESS_DELAY = 120;
 export const TOAST_DURATION = 4000;
+/** After this long without an answer the opening card says it is slow and offers a way out. */
+export const SLOW_AFTER = 5000;
+/** A call to the hub that has not answered after this long counts as "the hub cannot be reached". */
+export const API_TIMEOUT = 10000;
+/** A watch that calls `onSlow` once if `stillOpening()` is true `ms` after `start()`. `cancel()` stops it. Timers are injected for tests. */
+export function createSlowWatch(stillOpening, onSlow, set = setTimeout, clear = clearTimeout, ms = SLOW_AFTER) {
+  let id = null;
+  const cancel = () => { if (id !== null) { clear(id); id = null; } };
+  return { cancel, start() { cancel(); id = set(() => { id = null; if (stillOpening()) onSlow(); }, ms); } };
+}
 export function skeletonPlan(kind) {
   if (kind === "home") return { grid: "home-grid", sections: [4, 2, 2] };
   if (kind === "workspaces") return { grid: "work-grid", sections: [3, 3] };

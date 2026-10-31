@@ -30,6 +30,26 @@ describe('Open hub', () => {
       expect(h.hubUrl).toHaveBeenCalledWith(expect.any(String), 'open', '/')
     })
   }
+  it('the button says "Opening hub…" and is disabled from the press until the browser leaves; an error brings it back', async () => {
+    setHubScenario('selective')
+    let release: (u: string) => void = () => {}
+    let fail: (e: Error) => void = () => {}
+    h.hubUrl.mockReset().mockImplementationOnce(() => new Promise<string>((res) => { release = res })).mockImplementationOnce(() => new Promise<string>((_r, rej) => { fail = rej }))
+    renderApp('/w/DEMO/settings/hub')
+    fireEvent.click(await screen.findByTestId('hub-open'))
+    await waitFor(() => expect(screen.getByTestId('hub-open').textContent).toBe('Opening hub…'))
+    expect((screen.getByTestId('hub-open') as HTMLButtonElement).disabled).toBe(true)
+    expect(assign).not.toHaveBeenCalled()
+    release('https://hub.example/t/abc')
+    await waitFor(() => expect(assign).toHaveBeenCalledWith('https://hub.example/t/abc'))
+    cleanup()
+    renderApp('/w/DEMO/settings/hub')
+    fireEvent.click(await screen.findByTestId('hub-open'))
+    await waitFor(() => expect(screen.getByTestId('hub-open').textContent).toBe('Opening hub…'))
+    fail(new Error('no'))
+    await waitFor(() => expect(screen.getByTestId('hub-open').textContent).toBe('Open hub'))
+    expect((screen.getByTestId('hub-open') as HTMLButtonElement).disabled).toBe(false)
+  })
   it('standalone: no Open hub', async () => {
     setHubScenario('standalone')
     renderApp('/w/DEMO/settings/hub')

@@ -105,14 +105,29 @@ def task_prompt(key: str, task: dict[str, Any] | None) -> str:
     )
 
 
+#: the sentence that ends a prompt of a launch whose rules arrive in the system prompt (run 16 P01)
+RULES_INLINE_TEXT = "Your rules are in your system prompt."
+
+
 def prompt(
-    mode: str | None, key: str | None, instructions: str | None = None, task: dict[str, Any] | None = None
+    mode: str | None,
+    key: str | None,
+    instructions: str | None = None,
+    task: dict[str, Any] | None = None,
+    rules_inline: bool = False,
 ) -> str | None:
-    """The prompt argument, one element; ``None`` without a mode."""
+    """The prompt argument, one element; ``None`` without a mode.
+
+    ``rules_inline``: the rules already sit in the agent's system prompt (a Claude Code agent in a ticket work folder,
+    see :mod:`orch.runner.rules`). The prompt then names NO file: a path outside the work folder makes Claude Code ask
+    a hidden "read outside the working directories?" question and the agent stalls unseen (run 16 P01)."""
+    from orch.instructions.harness import AGENTS_FILE
+
     if mode is None:
         return None
     if key is None or not KEY.fullmatch(key):
         raise HostError("launch.invalid", "a mode needs a ticket")
+    pointer = RULES_INLINE_TEXT if rules_inline else f"Follow {instructions or AGENTS_FILE}."
     if mode == "followup":
         fu = task.get("followup") if isinstance(task, dict) else None
         if isinstance(fu, str) and re.fullmatch(r"sc_[0-7][0-9A-HJKMNP-TV-Z]{25}", fu):
@@ -123,12 +138,10 @@ def prompt(
             )
         if not isinstance(fu, str) or not re.fullmatch(r"fu_[0-7][0-9A-HJKMNP-TV-Z]{25}", fu):
             raise HostError("launch.invalid", "mode followup needs a valid follow-up id")
-        from orch.instructions.harness import AGENTS_FILE
-
         return (
             f"Run orch status. You were started by follow-up {fu} on ticket {key}. "
             f"Run orch follow-up show {fu}, then orch show {key}, then claim the ticket and continue the work. "
-            f"Follow {instructions or AGENTS_FILE}."
+            f"{pointer}"
         )
     if mode == "task":
         return task_prompt(key, task)
@@ -136,14 +149,12 @@ def prompt(
         return f"Run orch show {key} --section current_state, then wait for my instructions."
     if mode not in MODE_TEXT:
         raise HostError("launch.invalid", "mode is not one of refine, work, fix, continue, context")
-    from orch.instructions.harness import AGENTS_FILE
-
     if mode == "refine":  # run-9 J04: the same session builds after the approval; it never stops "only refining"
         return (
             f"Run orch status, then refine ticket {key}. When the gates are complete, run orch wait until the person"
-            f" approves; then build the ticket in this session. Follow {instructions or AGENTS_FILE}."
+            f" approves; then build the ticket in this session. {pointer}"
         )
-    return f"Run orch status, then {MODE_TEXT[mode]} ticket {key}. Follow {instructions or AGENTS_FILE}."
+    return f"Run orch status, then {MODE_TEXT[mode]} ticket {key}. {pointer}"
 
 
 def launch_argv(
@@ -189,7 +200,8 @@ def launch_argv(
         # workspace-root launches keep Claude Code's normal behaviour (their project config is the person's own) and
         # get no pre-trust, so Claude Code's own prompts stay. After --model, which the runner expects first.
         rest += [*CLAUDE_AGENT_FLAGS, MCP_FLAG, MCP_PLACEHOLDER, RULES_FLAG, RULES_PLACEHOLDER]
-    text = prompt(mode, key, instructions, task)
+    # Claude Code in a work folder gets the rules as an appended system prompt (RULES_FLAG above): name no file.
+    text = prompt(mode, key, instructions, task, rules_inline=harness == "claude-code" and workdir)
     if text is not None:
         rest.append(text)
     if config.login_shell:

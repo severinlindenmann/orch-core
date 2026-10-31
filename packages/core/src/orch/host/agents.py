@@ -464,16 +464,21 @@ def plan(
         if helper is not None and harness == "claude-code" and not check_model("subagent_model", helper, "claude-code"):
             env_fixed["CLAUDE_CODE_SUBAGENT_MODEL"] = helper
     if agent and mode is not None and where["cwd"]["kind"] != "workspace":
-        # AGENTS.orch.md lives in the project's store, not in the worktree: the prompt names it by absolute path
+        # AGENTS.orch.md lives in the project's store, not in the worktree: the prompt names it by absolute path.
+        # A Claude Code agent in a ticket work folder gets the rules as a system prompt and its prompt names no
+        # path (launch_argv decides): a path outside its folder would raise a hidden permission question (P01).
         try:
             from orch.instructions.harness import agents_rel
 
             lay = service.store.layout
+            in_workdir = where["cwd"]["kind"] == "workdir"
             at = os.path.join(str(service.entry.root), agents_rel(lay.project, lay.store))
+            if in_workdir and harness == "claude-code":
+                at = ""  # the rules are in its system prompt: no path is computed, let alone named
             argv, login, program = launch_argv(
                 harness, mode, argv_model, key, config,
-                instructions=at if at.isascii() and at.isprintable() else None,
-                workdir=where["cwd"]["kind"] == "workdir", task=task, delegate=delegate,
+                instructions=at if at and at.isascii() and at.isprintable() else None,
+                workdir=in_workdir, task=task, delegate=delegate,
             )  # fmt: skip
         except HostError:
             pass  # the first launch_argv already blocked with the same reason

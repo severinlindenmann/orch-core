@@ -539,7 +539,12 @@ def install_part(
     _report(ctx, part, rec)
     if part == "publish":
         url = public_origin or url  # server = share = the https name when there is one
-        if not workspace_side:
+        if not workspace_side and not public_origin:
+            ctx.say(
+                "  publish needs a name and https before the Macs can use it (shares need a secure address). "
+                "This follows once DNS is in: run this command again with --domain <your domain>."
+            )
+        elif not workspace_side:
             ctx.say(f"  on each Mac, once: orch publish setup --server {url} --share {url}")
         else:
             hint = ctx.publish_setup(url)

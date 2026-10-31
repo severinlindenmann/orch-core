@@ -1162,3 +1162,11 @@ def test_a_failing_system_command_is_plain_words_not_a_traceback(tmp_path):
     text = err.getvalue()
     assert "systemctl --user daemon-reload" in text and "Failed to connect to bus" in text
     assert "machinectl shell" in text and "linger" in text
+
+
+def test_publish_without_a_name_says_plainly_that_it_needs_a_name_and_https(tmp_path):
+    ctx, out, *_ = stub_ctx(tmp_path)
+    server_setup(ctx, "edge", names=server.Names(), address="192.168.1.20", local=local)
+    text = out.getvalue()
+    assert "publish needs a name and https" in text and "once DNS is in" in text
+    assert "invalid.input" not in text and "not set yet" not in text

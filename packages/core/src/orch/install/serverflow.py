@@ -258,6 +258,8 @@ def _fallback(ctx: Ctx, plan: Plan, *, address: str | None, source: str | None, 
     for p in plan.parts:
         # never --bind-all, and no part listens wider than the address it was given
         extra = dict(exact_bind=True)
+        if p == "publish":
+            extra["workspace_side"] = False  # the edge user has no workspace; the Macs set publish up themselves
         if p == "hub" and not plan.loopback:
             extra["link_address"] = plan.vpn_ip
         recs[p] = install_part(ctx, p, address=addr, source=source, ref=ref, dev=dev, sync=False, **extra)

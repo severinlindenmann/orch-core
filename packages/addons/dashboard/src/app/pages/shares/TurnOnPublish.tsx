@@ -4,13 +4,37 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { queries } from '@/api/queries'
-import { destinationLine } from '@/api/shares'
+import { suggestedWhere, type AddOnRow, type PublishWhere } from '@/api/addOnSwitches'
+import { destinationLine, hostOf, sameOrigin } from '@/api/shares'
 import type { Workspace } from '@/api/types'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { BuiltInAddOns } from '../settings/host/AddOns'
 import { AddonSetup } from '../settings/host/AddonSetup'
 import { publishValidation } from '../settings/host/PublishServer'
-import { useSettingsHandoff } from '../settings/host/useSettingsHandoff'
+import { useSettingsHandoff, type HandoffSpec } from '../settings/host/useSettingsHandoff'
+
+/**
+ * The ONE turn-on review, pre-filled from the server's row only: both values (`server` and `share`, kept apart) go into the
+ * signed settings, and the lead names where files go (by name) and, when it is another host, where links open. Prepared
+ * on open, never armed: Sign stays the person's own press. Used by this dialog and by Settings, Hub.
+ */
+export function turnOnSpec(where: PublishWhere, row: Pick<AddOnRow, 'suggest_from' | 'suggest_hub'>, onEnd: (signed: boolean) => void): HandoffSpec {
+  const line = destinationLine(row.suggest_from, row.suggest_hub, where.server)
+  const links = !sameOrigin(where.server, where.share)
+  return {
+    title: 'Turn on Publish',
+    confirmLabel: 'Sign and turn on',
+    action: { action: 'addon_enable', name: 'publish', publish: { server: where.server, share: where.share } },
+    prepareOnOpen: true,
+    lead: line ? (
+      <>
+        <p data-testid="where-files-go" className="text-[13px] font-medium text-text">{line}</p>
+        {links && <p data-testid="links-open-at" className="text-[13px] text-text">Links open at {hostOf(where.share)}.</p>}
+      </>
+    ) : undefined,
+    onEnd,
+  }
+}
 
 export function TurnOnPublish({ workspace, onOn, onClose }: { workspace: Workspace; onOn: () => void; onClose: () => void }) {
   const rows = useQuery(queries.addOns(workspace.id))
@@ -35,21 +59,17 @@ export function TurnOnPublish({ workspace, onOn, onClose }: { workspace: Workspa
   // that opened this already said what happens; the one review follows at once, prepared only (never armed): Sign stays
   // their own press. Decided ONCE, on the first load of the row, so a suggestion that shows up later never replaces a form
   // the person is typing in. Without a usable suggestion the address form below stays.
-  const latch = useRef<string | false | null>(null)
-  if (row && latch.current === null) latch.current = needsAddress && row.suggest && publishValidation(row.suggest, row.suggest).ready ? row.suggest : false
+  const latch = useRef<PublishWhere | false | null>(null)
+  if (row && latch.current === null) {
+    // Both values come from the row: `suggest_where` first, the one-string `suggest` only when it is missing.
+    const where = suggestedWhere(row)
+    latch.current = needsAddress && where && publishValidation(where.server, where.share).ready ? where : false
+  }
   const suggested = latch.current || null
   useEffect(() => {
     if (!suggested || asked || !row) return
     setAsked(true)
-    const where = destinationLine(row.suggest_from, row.suggest_hub, suggested)
-    ask({
-      title: 'Turn on Publish',
-      confirmLabel: 'Sign and turn on',
-      action: { action: 'addon_enable', name: 'publish', publish: { server: suggested, share: suggested } },
-      prepareOnOpen: true,
-      lead: where ? <p data-testid="where-files-go" className="text-[13px] font-medium text-text">{where}</p> : undefined,
-      onEnd: (signed) => { if (!signed) onClose() },
-    })
+    ask(turnOnSpec(suggested, row, (signed) => { if (!signed) onClose() }))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [suggested, asked, !!row])
   // Latched once the person pressed the button: when the settings step lands the row reads set_up, but the review must stay
@@ -61,7 +81,7 @@ export function TurnOnPublish({ workspace, onOn, onClose }: { workspace: Workspa
           <AddonSetup
             name="publish"
             enabling
-            suggested={row.suggest}
+            suggested={suggestedWhere(row)}
             suggestedFrom={row.suggest_from}
             hubName={row.suggest_hub}
             description="To share files with a link, Publish has to be on."

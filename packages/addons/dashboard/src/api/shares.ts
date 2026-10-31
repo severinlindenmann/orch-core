@@ -67,8 +67,13 @@ export type SharesData =
       owner: string | null
       /** The server answered with its own numbers; false: these are this computer's records. */
       live: boolean
-      /** Only when `live` is false: no answer (`unreachable`), an answer that refused (`not_allowed`), or no hub (`local`). */
-      why?: 'unreachable' | 'not_allowed' | 'local'
+      /**
+       * Only when `live` is false: no answer (`unreachable`), an answer that refused (`not_allowed`), or no hub (`local`);
+       * `hub_left`: the settings came from a hub this workspace is no longer bound to; `hub_moved`: the hub's address moved off them.
+       */
+      why?: 'unreachable' | 'not_allowed' | 'local' | 'hub_left' | 'hub_moved'
+      /** With `why: 'hub_moved'`: the hub's new values (`share` is shown by its host name). */
+      hub_moved?: { server: string; share: string }
       shares: Share[]
       staged: Staged[]
     }
@@ -164,6 +169,13 @@ export function unshareable(a: { name: string; kind: string; bytes: number | nul
 
 export const fmtSize = (n: number): string => (n < 1024 ? `${n} bytes` : n < 1024 * 1024 ? `${(n / 1024).toFixed(1)} KB` : `${(n / (1024 * 1024)).toFixed(1)} MB`)
 
+/** The host's words when the settings came from a hub this workspace is no longer bound to (`hub_left`). The name is the hub's display name when the page knows it. */
+export const hubLeftText = (hubName?: string | null): string => `Sharing went through your hub${hubName ? ` ${hubName}` : ''}. Connect again, or set a sharing server.`
+const HUB_LEFT_TEXT = hubLeftText()
+
+/** The paused line when the hub has moved: the new share host only, by its A-label name. */
+export const hubMovedText = (share: string): string => `Sharing paused: your hub now shares links through ${hostOf(share)}.`
+
 /** The server's reasons in words. `unknown_workspace` names the admin step. */
 export const REASON_TEXT: Record<string, string> = {
   unknown_workspace: 'Your hub has not allowed this workspace to share yet. Ask the hub’s admin.',
@@ -174,6 +186,8 @@ export const REASON_TEXT: Record<string, string> = {
   clock: 'This computer’s clock is off. Fix the time and try again.',
   delegation: 'This workspace’s identity could not be read.',
   rejected: 'The server refused this.',
+  hub_left: HUB_LEFT_TEXT,
+  hub_moved: 'Sharing paused: your hub now shares links through a new address. Use the new address in Settings, Hub.',
 }
 
 const CODE_TEXT: Record<string, string> = {

@@ -1,4 +1,4 @@
-import { screen, within } from '@testing-library/react'
+import { fireEvent, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { expect, it, vi } from 'vitest'
 import ticket from '@/test/fixtures/server-m2/ticket.json'
@@ -102,5 +102,7 @@ it('the ticket page has a Usage box with the ticket’s time and recent runs beh
   expect(box).toHaveTextContent('Not reported')
   expect(within(box).getByText('Recent runs').closest('details')).not.toHaveAttribute('open')
   expect(calls('/usage')[0].path).toContain('ticket=DEMO-0001')
+  // P67: this entry sits in the side rail's "More" group
+  fireEvent.click(await screen.findByRole('button', { name: 'More' }))
   expect(await screen.findByRole('link', { name: 'Usage' })).toBeInTheDocument()
 })

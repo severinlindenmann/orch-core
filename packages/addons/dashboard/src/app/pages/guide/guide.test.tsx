@@ -1,5 +1,5 @@
 // The guide on a real host: fixed pages in the bundle, no host call; the sidebar lists it and `?` opens the page for the route.
-import { cleanup, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 import { setFeatures } from '@/api/features'
 import { helpPageFor } from '@/api/guide'
@@ -28,6 +28,8 @@ describe('guide on a real host', () => {
   it('the sidebar has a Guide link', async () => {
     real()
     renderApp('/board', { viewer: 'p_sev' })
+    // P67: this entry sits in the side rail's "More" group
+    fireEvent.click(await screen.findByRole('button', { name: 'More' }, T))
     expect(await screen.findByRole('link', { name: 'Guide' }, T)).toBeInTheDocument()
   })
   it('? on the board shows the guide page for it without any add-on, and the link opens the full guide', async () => {

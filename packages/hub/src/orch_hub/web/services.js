@@ -9,7 +9,7 @@ const WHAT = {
   edge: "Edge: puts the hub on a public address.",
   publish: "Shows shared pages to people outside the company.",
 };
-const NAME = { hub: "Hub", relay: "Relay", publish: "Publish", edge: "Edge" };
+export const NAME = { hub: "Hub", relay: "Relay", publish: "Publish", edge: "Edge" };
 const COMMAND = { hub: "orch install hub", relay: "orch install relay", publish: "orch install publish" };
 
 /** One row's state in plain words: label, chip kind, dot kind. */
@@ -47,12 +47,17 @@ function controls(name, data, actions) {
   const off = !!helper.hub_busy;
   const b = (verb, cls = "") => h("button", { class: cls, type: "button", disabled: off, "data-svc": name + "|" + verb, text: verb === "start" ? "Start" : verb === "stop" ? "Stop" : "Restart", onclick: () => actions.service(name, verb) });
   const down = data[name]?.state === "down";
-  return h("div", { class: "svc-ctl row" }, down ? b("start", "pri") : null, b("restart"), b("stop"), actions.logs ? h("button", { type: "button", "data-logs": name, text: "Logs", onclick: () => actions.logs(name) }) : null);
+  return h("div", { class: "svc-ctl row" }, down ? b("start", "pri") : null, b("restart"), name === "hub" ? null : b("stop"), actions.logs ? h("button", { type: "button", "data-logs": name, text: "Logs", onclick: () => actions.logs(name) }) : null);
 }
 
 function helperNote(data) {
   const st = data.helper?.state;
-  if (st === "down") return h("p", { class: "small muted", id: "helper-note", text: "The service helper is not running, so the buttons are off. Ask your IT person to start it on the server: orch-hub helper." });
+  const unit = data.helper?.helper_unit;
+  if (st === "down" || (st === "not_set_up" && unit)) {
+    const ask = "The service helper is not running, so the buttons are off. Ask your IT person to start it on the server";
+    if (!unit) return h("p", { class: "small muted", id: "helper-note", text: ask + ": orch-hub helper." });
+    return h("p", { class: "small muted", id: "helper-note" }, ask + ": ", h("code", { text: "systemctl --user start " + text(unit) }), ".");
+  }
   return null;
 }
 

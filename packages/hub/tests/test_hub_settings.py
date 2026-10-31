@@ -773,7 +773,7 @@ def test_the_real_serve_hook_refuses_an_http_origin_behind_the_edge(tmp_path):
     while "orch-hub web port=" not in out.getvalue() and time.monotonic() < end:
         time.sleep(0.05)
     port = int(out.getvalue().split("orch-hub web port=")[1].split()[0])
-    origin, host = "https://hub.example.com:443", "hub.example.com:443"
+    origin, host = "https://hub.example.com", "hub.example.com"  # what a browser sends: no :443
     (code,) = wall_codes(base64.b32decode(b32 + "=" * (-len(b32) % 8)))
     s, o, cookie = _http(
         port, "POST", "/session", {"user_id": user, "password": PW, "totp": code}, origin=origin, host=host

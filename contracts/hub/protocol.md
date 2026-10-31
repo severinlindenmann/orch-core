@@ -109,8 +109,8 @@ without the root key, and every holder recomputes it (`hub_id_mismatch`). `user_
 
 ### 2.4 The dev marker (all of V3)
 
-Every `hub.op_cert`, `hub.card`, `hub.uk_cert`, `hub.channel_cert`, `hub.snapshot`, `hub.binding`, `hub.unbound` and
-`hub.op_revoked` carries a required boolean `dev`. **In V3 every one of them is `dev: true`** (V3-D2: all hub work is
+Every `hub.op_cert`, `hub.card`, `hub.uk_cert`, `hub.channel_cert`, `hub.snapshot`, `hub.closing`, `hub.binding`,
+`hub.unbound` and `hub.op_revoked` carries a required boolean `dev`. **In V3 every one of them is `dev: true`** (V3-D2: all hub work is
 dev-only).
 
 - `dev` is a required field: an object without it is `malformed`.
@@ -151,6 +151,7 @@ literal `orch/v2/hub-…|` names.
 | `sig_hub_uk_cert` | `orch/v2/hub-uk-cert\|` | `HK_op` | `cj(o)` of `hub.uk_cert` | 6 |
 | `sig_hub_channel_cert` | `orch/v2/hub-channel-cert\|` | `HK_op` | `cj(o)` of `hub.channel_cert` | 6 |
 | `sig_hub_snapshot` | `orch/v2/hub-snapshot\|` | `HK_op` | `cj(o)` of `hub.snapshot` | 7 |
+| `sig_hub_closing` | `orch/v2/hub-closing\|` | `HK_op` | `cj(o)` of `hub.closing` (the hub is being removed; #1463) | 9.7 |
 | `sig_hub_route` | `orch/v2/hub-route\|` | `HK_op` | `exporter \|\| cj(o)` of a hub→host `hub.link` | 10 |
 | `sig_hub_publish` | `orch/v2/hub-publish\|` | `HK_op` | the transport signature of a forwarded publish request | 11 |
 | `sig_hub_audit` | `orch/v2/hub-audit\|` | `HK_op` | `cj(o)` of `hub.audit` | 10.5 |
@@ -199,6 +200,11 @@ literal `orch/v2/hub-…|` names.
 | `h_app_reach` | `orch/v2/app-reach\|` | hash | the approved reach list of one app version (`reach_hash`, M4) | 11.4 |
 | `sig_hub_release_narrow` | `orch/v2/hub-release-narrow\|` | `HK_op` | `cj(o)` of `hub.release_narrow` (revoke a link, stop an app; M4) | 11.6 |
 | `sig_hub_app_pass` | `orch/v2/hub-app-pass\|` | `HK_op` | `cj(o)` of `hub.app_pass` (single-use pass into a company/group app; M4) | 11.8 |
+
+**The removal proof label (§9.7, #1463).** `orch/v2/hub-remove|` is the domain of the digest an admin's channel key signs
+to start removing the hub (`orch_hub.contract.labels.HUB_REMOVE_LABEL`). Like the access-change label it names no object
+any workspace reads, so it stays out of the table above and of `vectors_hub.json`;
+`tests/test_hub_closing_vectors.py` checks it is new, ends in `|` and keeps the union with every label above prefix-free.
 
 **Hub-local labels of the backup (§17).** `orch/v2/hub-backup|` (`HK_root` signs a backup header) and
 `orch/v2/hub-backup-aad|` (AAD of the sealed payload) name no object any other repo reads, so, like the access-change
@@ -1403,6 +1409,56 @@ hub mode` do). If the hub still answers `proof_expired` (it was down; the log al
 took the binding), the way out is `orch hub leave`, then `orch hub join` again with a new proof; the host drops the
 unfinished binding and the new join starts clean.
 
+### 9.7 Removing a hub: `hub.closing` (#1463; vectors `vectors_hub_closing.json`)
+
+A hub that is being removed tells each bound workspace, so its owner can leave with one click. The notice is **only** an
+offer: it shows a banner and stops the host serving company content; nothing auto-leaves and nothing local is deleted.
+
+```
+hub.closing {v: 2, suite: 2, kind: "hub.closing", hv: 0, hub_id, op_cert_id, workspace_id, binding_seq: int >= 1,
+             removal_id: hex16, issued_ms, ends_ms, dev}      signed by HK_op, label sig_hub_closing (orch/v2/hub-closing|)
+```
+
+`removal_id` is 16 fresh random bytes (hex) the hub makes when it starts the removal (not the nonce of the admin's proof).
+`binding_seq` is the CURRENT binding of the workspace the notice is for (§9.4). `issued_ms < ends_ms <= issued_ms + 7 days`.
+The hub signs a fresh notice on every `closing_get` while it is closing (so a workspace that connects on day 6 still gets
+one that is valid); the object carries no secret and no reason text. Only `HK_op` signs it (the key store's op signer, kind
+`hub.closing`); the label is prefix-free with every other label (§3).
+
+**Verification by the host** (reference `orch_hub.contract.hub.verify_closing` and `orch.hubclient.closing.verify_closing`,
+both replay the `cases` of `vectors_hub_closing.json`), in this order: (1) envelope and header (§2.2 steps 1-2); (2) the
+signature under the op key of the held card, checked against the CURRENT revoked op certs (`revoked`); (3) the exact field
+set; (4) `hub_id` equals the pinned hub (`other_hub`); (5) `op_cert_id` equals the held card's current op cert
+(`stale_op_cert`); (6) the dev marker (§2.4); (7) `workspace_id` is the host's own (`other_workspace`); (8) `binding_seq`
+equals the host's CURRENT binding's (`stale_binding`: a notice of an older or a not-yet-seen binding, e.g. replayed after a
+rejoin); (9) `issued_ms <= now + 300 s`, `issued_ms < ends_ms` and `ends_ms <= issued_ms + 7 days` (`cert_invalid`);
+(10) `now < ends_ms` and `now` before the held op cert's `expires_ms` (`cert_expired`, reused: there is no separate code for an expired notice or op cert). Any other input is
+`malformed`. The verifier is a pure function: it stores nothing.
+
+**What a host does with a verified notice** (host side, a later PR): it records `closing: {removal_id, issued_ms, ends_ms,
+binding_seq}` in its own hub status (host-local, never a log event), stops serving the hub's company skills, tools and
+secrets while the record stands and `binding_seq` is still the current binding's, shows its own words ("Your company hub is
+being removed", with the owner's normal Leave), and clears the record on leave, unbind or rebind, or when a `closing_get`
+answers `null` over the pinned link (a restored hub). Nothing happens at `ends_ms`.
+
+**Delivery.** Two link ops (§10.2): the hub pushes `closing_notice` (h2w, `{"notice": <hub.closing>}`, reply `{}`) to every
+bound workspace that is connected, and a host pulls `closing_get` (w2h, `{}`, reply `{"closing": <hub.closing> | null}`) on
+every link session. `null` means this hub is not closing. **The replies of `snapshot_get` and `hub_where` do not change**: both
+are exact-key replies and vector-pinned (§7, §10.9). A hub in the closing state answers `snapshot_get`, `org_skills_get`,
+`mcp_servers_get`, `org_secrets_get`, `closing_get`, `hub_where`, `binding_put` (the leave), `audit_get` and `audit_ack`; every
+other op is refused `hub_closing` (§14), and the three `*_get` bundle ops answer a signed EMPTY bundle at `version + 1`,
+never an error.
+
+**The removal proof (console only).** An admin starts the removal with one click: the page computes
+`digest = SHA-256("orch/v2/hub-remove|" || cj(ctx))` from `ctx = {contract: 1, kind: "orch.hub_remove.v1", hub_id, nonce,
+exp_ms, user_id}` itself (never signing a digest the server sends) and the admin's channel key signs
+`"orch/v2/hub-channel-proof|" || digest` (§8.2, factor at least `password+totp`). The nonce is 16 random bytes, single use,
+bound to the user, channel and session, valid 5 minutes. Core never reads this proof. The `digest_cases` of the vectors file
+pin the bytes for the hub and for the browser's `channel.js`.
+
+**Removal state files.** `hub-removal.json`, `remove-order.json`, `remove-order.used` and `remove-result.json` never ride in a
+backup (§17.6), so a restore comes up open, never closing.
+
 ## 10. The host↔hub link
 
 **Purpose.** The only channel between a host and its hub (D68). The host dials out; both sides authenticate; every
@@ -1460,13 +1516,15 @@ unknown `op` is `unknown_op`.
 | `audit_get` | w2h | both | `{"since"}` | `{"records": [{"record": <hub.audit>, "event"?}], "head", "op_certs": [<hub.op_cert>]}` (D4, §10.5; added) |
 | `share_put` | w2h | both | `{"item_id", "sealed": b64u}` | `{}` |
 | `share_revoke` | w2h | both | `{"item_id"}` | `{}` |
-| `space_list` | w2h | both | `{}` | `{"spaces": [<hub.space>]}` (V3-D8, §10.4) |
+| `space_list` | w2h | both | `{}` | `{"spaces": [<hub.space>], "meta": {space_id: {"name", "kind"}}}` (V3-D8, §10.4; `meta` is unsigned display data, a host shows it as "from the hub"; its keys must be listed space ids and every value exactly `{"name", "kind"}`, strings of at most 64 and 32 printable characters, else the reply is refused) |
 | `space_accept` | w2h | both | `{"accept": <space.accept>}` | `{}` (L2P-2) |
 | `space_put` | w2h | both | `{"space_id", "epoch", "item_id", "sealed": b64u}` | `{"seq"}` |
 | `space_revoke` | w2h | both | `{"space_id", "item_id"}` | `{"seq"}` |
 | `space_get` | w2h | both | `{"space_id", "since"}` | `{"space", "wraps", "entries", "next"}` |
 | `space_proposals` | w2h | both | `{}` | `{"proposals": [<hub.space_proposal>]}` (p4, §10.4) |
 | `switch_ticket` | w2h | both | `{"origin", "return_to", "kind": "open"\|"signout"}` | `{"ticket", "url"}` (hub one-app, below) |
+| `closing_notice` | h2w | both | `{"notice": <hub.closing>}`: the hub is being removed (§9.7, #1463). The host verifies it (`verify_closing`) and answers | `{}` or `{"error"}` |
+| `closing_get` | w2h | both | `{}` | `{"closing": <hub.closing> \| null}`: a freshly signed notice for the link's workspace while the hub is closing, else `null` (§9.7). Exact key |
 | `hub_where` | w2h | both | `{}` | `{"addresses": [{"kind", "link"}], "name"}`: where this hub can be reached and its display name (M4, §10.9). Unsigned: a hint under the TLS pin |
 | `switch_redeem` | w2h | both | `{"ticket"}` | `{"user_id", "name", "return_to", "kind"}` (hub one-app) |
 | `rail_get` | w2h | both | `{"origin"}` | `{"hub": {name, origin, network_origin}, "user_id", "workspaces": [{workspace_id, name, role, online, badge, origin, current}]}` (hub one-app) |
@@ -3414,7 +3472,7 @@ group apps (and only those); that is said in the release review text and in §13
 
 | Verifier | Verifies | Holds |
 |---|---|---|
-| Workspace host | card (pinned root), op revocations, snapshots, custodial events, h2w link messages | pin of `HK_root`, newest card, revoked op certs, newest snapshot (and all, in the ledger), alias map |
+| Workspace host | card (pinned root), op revocations, snapshots, `hub.closing` notices (§9.7), custodial events, h2w link messages | pin of `HK_root`, newest card, revoked op certs, newest snapshot (and all, in the ledger), alias map |
 | orch-publish | bindings, unbounds, hub cards (by binding), forwarded requests, owner approvals | workspace cards (v2), binding store, hub cards, nonces |
 | orch-relay (phase 4) | hub cards, bindings, hub requests (§10.8), channel requests and their certificates (§10.8.4) | hub accounts by card, op revocations, hub and channel request nonces |
 | orch hub | the v2 card and binding at join (§9.5), link auth, w2h link messages, bindings it forwards, channel registrations (§6.3), actions (§8.5), every `log_sync` line (§10.7), channel proofs before it signs | its keys, users, channels, snapshots, audit, the `workspace_id → (owner, WSK)` pins, the sealed views |
@@ -3486,7 +3544,9 @@ v2 codes keep their meaning (v2 §14). New in H0:
 | `unknown_op`, `wrong_mode` | link | §10 |
 | `wrong_backup_key` | hub restore (local) | §17.5: the key derived from the typed words is not the backup header's `bk_pub` |
 | `backup_invalid` | hub restore (local) | §17: every other reason a backup file is refused (container, envelope, signature, MAC, fields, file list, seal, tar entries, hashes, sequence overflow); the `reason` (§17.9) is for the admin's log, never an oracle on the wire |
-| `hub_retired` | link reply (M4 S8) | the hub is being removed: an unsigned notice, shown on the host as a banner with the break-glass leave; the host never unbinds, leaves or deletes anything because of it |
+| `hub_closing` | link reply; hub web API (409) (#1463) | §9.7: the hub is being removed and this op or write is not on its closing allow list. Nothing was changed |
+| `stale_binding` (extended) | `hub.closing` | §9.7 step 8: the notice's `binding_seq` is not the host's current binding's. `cert_expired` and `cert_invalid` are reused for the notice's time rules (steps 9 and 10) |
+| `hub_retired` | (replaced, M4 S8) | no longer sent: the unsigned banner notice is replaced by the signed `hub.closing` (§9.7) and the refusal `hub_closing` |
 | `bad_wrap` | `wk_seal` reply | the wrap does not open under `HXK`, is not bound to this `hub_id`, this workspace and the stated epoch, or is another wrap for an epoch already sealed (§10.2a) |
 | `bad_epoch` | `wk_seal` reply | v2 code reused: the epoch is lower than the newest one held for the live binding (§10.2a) |
 | `auth_failed` | link open | §10.1: every failure before the link is authenticated (unknown workspace, key mismatch, bad signature) returns this one code, so an unauthenticated peer learns nothing; the reason stays in the hub's log |
@@ -3621,6 +3681,14 @@ and tar) and `cases` with `check` one of `bk_key`, `open_backup`, `tar`, `file_l
 `expect` `{"ok": …}` or `{"error": code, "reason"?}`. The hub replays every case and fails on an unknown check or a missing
 required case; orch-core replays `hub_where`. Expected values are written by hand in the generator, not computed by the code
 under test; the BK / K_auth / seal values are computed there from first principles and compared with the module.
+
+`vectors_hub_closing.json` (#1463, §9.7; `make_vectors_hub_closing.py`; the FAKE keys of `vectors_hub.json`): the held `card`, `now_ms`,
+`cases` (39 signed `hub.closing` notices with `args` = `notice`, `workspace_id`, `binding_seq`, `now_ms`, `dev_mode`,
+`revoked_op_certs` and `expect` `{"ok": true}` or `{"error": code}`: valid, wrong label, wrong key, tampered field, extra
+or missing field, other hub, other workspace, stale or unseen `binding_seq`, stale or revoked op cert, dev at a real
+verifier and the reverse, re-signed envelope headers, issued in the future, 7-day limit, expired, op cert ended) and `digest_cases` (the removal proof digest, console
+side). The hub (`verify_closing`) and orch-core (`orch.hubclient.closing.verify_closing`) replay every one of `cases`;
+the hub and the browser replay `digest_cases`.
 
 `vectors_remote.json` (R0, #1588; `make_vectors_remote.py`; FAKE keys `SHA-256("FAKE orch v2 test vector: remote/" ||
 label)`, X25519 keys as is, P-256 by the §15 map, RFC 6979 signatures): `labels`, `constants`, `keys`, `ids`, the signed
@@ -3858,7 +3926,7 @@ sorted neighbour: `keys`, `keys-x`, `keys/a` is refused) and no two paths are eq
 `size` ≤ 200 MiB and the sum ≤ 200 MiB (also the upload limit). `hk_root.key`, `hxk.key` and `meta.json` must be listed.
 The list contains every key file, `meta.json`, `op/<current>/`, `revoked/`, `tls.key`, `hub-settings.json` and a
 consistent copy (SQLite backup API) of every store, and **never**: `setup-token`; `route-queue.db` (and its `-wal`,
-`-shm`, `-journal`); `event-deliver.db` (the event delivery queue; rebuilt, never restored; also with its sidecars); anything under `backups/`, `tmp/`, `logs/`, `state.new/`, `state.old/`; `*.log`, `*.tmp`, `*.lock`,
+`-shm`, `-journal`); `event-deliver.db` (the event delivery queue; rebuilt, never restored; also with its sidecars); `hub-removal.json`, `remove-order.json`, `remove-order.used`, `remove-result.json` (the removal state of §9.7, so a restore never comes back in `closing`); anything under `backups/`, `tmp/`, `logs/`, `state.new/`, `state.old/`; `*.log`, `*.tmp`, `*.lock`,
 `*.pid`. Inside the copied stores these rows are removed first: sessions, pending TOTP enrolments, pairing codes, limiter
 and failure rows, switch tickets, push tokens. The words are never in a backup. (Row removal is the writer's duty, tested
 in M4 S5; the path rules are checked by `file_list` vectors.)

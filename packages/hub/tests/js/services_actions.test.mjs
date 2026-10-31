@@ -49,11 +49,11 @@ const data = (helper) => ({
 });
 const find = (nodes, f) => nodes.flatMap((n) => n.all()).filter(f);
 
-test("buttons appear only for parts the helper manages, and call the action", () => {
+test("buttons appear only for parts the helper manages (the hub row has no Stop), and call the action", () => {
   const calls = [];
   const view = servicesView(data({ state: "up", host_id: "vps1", parts: [{ name: "relay", label: "Relay" }, { name: "hub", label: "Hub" }], hub_busy: false }), { service: (n, v) => calls.push([n, v]), copy: () => {} }, NOW);
   const btns = find(view, (n) => n.attrs["data-svc"]);
-  assert.deepEqual(btns.map((b) => b.attrs["data-svc"]).sort(), ["hub|restart", "hub|stop", "relay|restart", "relay|start", "relay|stop"]);
+  assert.deepEqual(btns.map((b) => b.attrs["data-svc"]).sort(), ["hub|restart", "relay|restart", "relay|start", "relay|stop"]);
   btns.find((b) => b.attrs["data-svc"] === "relay|start").listeners.click?.();
   assert.equal(find(view, (n) => n.attrs["data-svc"] === "publish|restart").length, 0);
   assert.ok(find(view, (n) => n.attrs.id === "how-publish").length === 1); // publish keeps the copy-the-command help
@@ -78,7 +78,7 @@ test("a Logs button per managed part calls logs(name)", () => {
   assert.deepEqual(calls, ["relay"]);
 });
 
-const { hubStopConfirm, logsDialog, needsConfirm, LOG_NOTE } = await import("../../src/orch_hub/web/service_actions.js");
+const { logsDialog, serviceDialog, stopLabel, summarize, withKey, LOG_NOTE } = await import("../../src/orch_hub/web/service_actions.js");
 const nodes = (list) => list.flatMap((n) => n.all());
 
 test("the Logs dialog shows log text literally, with the note, and copies exactly that text", () => {
@@ -101,14 +101,86 @@ test("Logs are offered only where the page is given a logs action (the admin pag
   assert.equal(find(without, (n) => n.attrs["data-logs"]).length, 0);
 });
 
-test("stopping the Hub needs the second click; relay and publish do not ask", () => {
-  assert.equal(needsConfirm("hub", "stop"), true);
-  for (const [n, v] of [["hub", "restart"], ["hub", "start"], ["relay", "stop"], ["publish", "stop"], ["relay", "restart"]]) assert.equal(needsConfirm(n, v), false, n + v);
-  const sent = [];
-  const dlg = hubStopConfirm({ onYes: () => sent.push("yes"), onCancel: () => sent.push("no") });
-  assert.deepEqual(sent, []); // showing the question sends nothing
-  const yes = nodes(dlg).find((n) => n.attrs.id === "hub-stop-confirm");
-  assert.equal(yes.textContent, "Yes, stop the Hub");
-  yes.listeners.click();
-  assert.deepEqual(sent, ["yes"]);
+const fmt = (d) => d.toISOString().slice(11, 16); // tests read UTC, so they do not depend on the machine's zone
+const NOW_D = new Date("2026-10-30T13:00:00Z");
+const J = (t, who, msg) => "2026-10-30T" + t + ":01+0000 lab-b " + who + ": " + msg;
+
+test("the hub row has no Stop (restart and logs only); relay and publish keep Stop", () => {
+  const view = servicesView(data({ state: "up", parts: [{ name: "hub" }, { name: "relay" }, { name: "publish" }], hub_busy: false }), { service: () => {}, logs: () => {}, copy: () => {} }, NOW);
+  const ids = find(view, (n) => n.attrs["data-svc"]).map((b) => b.attrs["data-svc"]);
+  assert.ok(!ids.includes("hub|stop"));
+  assert.ok(ids.includes("hub|restart") && ids.includes("relay|stop") && ids.includes("publish|stop"));
+});
+
+test("no key: the action opens the register step and resumes after it; with a key it runs at once", () => {
+  const log = [];
+  withKey(() => false, (resume) => { log.push("register"); resume(); }, () => log.push("action"));
+  assert.deepEqual(log, ["register", "action"]);
+  const log2 = [];
+  withKey(() => true, () => log2.push("register"), () => log2.push("action"));
+  assert.deepEqual(log2, ["action"]);
+  const log3 = [];
+  withKey(() => false, () => log3.push("register"), () => log3.push("action")); // cancelled: never resumed
+  assert.deepEqual(log3, ["register"]);
+});
+
+test("the service dialog has the title, the sentence and one sign button; no second confirmation", () => {
+  const mk = (name, verb) => serviceDialog(name, verb, "The sentence.", { sign: new Node_("button", "Stop Relay"), onCancel: () => {} });
+  const all = nodes(mk("relay", "stop"));
+  assert.equal(all.find((n) => n.tag === "h1").textContent, "Stop Relay?");
+  assert.equal(all.filter((n) => n.tag === "button").length, 2); // Cancel and the one sign button
+  assert.equal(all.filter((n) => n.attrs.id === "hub-stop-confirm" || n.attrs.id === "hub-stop-note").length, 0);
+  assert.equal(stopLabel("hub", "restart"), "Restart Hub");
+});
+
+test("summarize: systemd lines become plain events, benign lines fold, other lines stay", () => {
+  const raw = [
+    J("12:04", "systemd[1]", "Starting orch publish..."),
+    J("12:04", "systemd[1]", "Started orch publish."),
+    J("12:30", "systemd[1]", "Stopping orch publish..."),
+    J("12:30", "systemd[1]", "orch-x-publish.service: Deactivated successfully."),
+    J("12:30", "systemd[1]", "Stopped orch publish."),
+    J("12:40", "systemd[1]", "orch-x-publish.service: Failed with result 'exit-code'."),
+    J("12:41", "orch-x-publish[321]", "ERROR: disk full"),
+    "-- Boot abc --",
+  ].join("\n");
+  assert.deepEqual(summarize(raw, { fmt, now: NOW_D }).map((e) => (e.time ? e.time + " " : "") + e.text), ["12:04 Started", "12:30 Stopped", "12:40 Stopped unexpectedly", "12:41 ERROR: disk full", "-- Boot abc --"]);
+  assert.deepEqual(summarize("", { fmt, now: NOW_D }), []);
+  assert.deepEqual(summarize(null), []);
+  assert.equal(summarize(J("12:04", "systemd[1]", "Failed to start orch publish."), { fmt, now: NOW_D })[0].text, "Could not start");
+  const old = summarize("2026-10-29T09:00:00+0000 h systemd[1]: Started x.", { fmt, now: NOW_D })[0];
+  assert.match(old.time, /^09:00, /); // another day carries its date
+});
+
+test("the Logs dialog: list by default, raw lines in a closed fold, recent-activity heading, empty text", () => {
+  const raw = J("12:04", "systemd[1]", "Started orch publish.") + "\n" + J("12:05", "x[1]", "<b>hi</b>");
+  const copied = [];
+  const all = nodes(logsDialog("publish", raw, { copy: (t) => copied.push(t), onClose: () => {}, fmt, now: NOW_D }));
+  assert.equal(all.find((n) => n.tag === "h1").textContent, "Publish: recent activity");
+  assert.equal(all.find((n) => n.attrs.id === "log-events").children.length, 2);
+  assert.equal(all.filter((n) => n.tag === "b").length, 0);
+  const fold = all.find((n) => n.attrs.id === "log-raw");
+  assert.equal(fold.tag, "details");
+  assert.equal(fold.attrs.open, undefined); // closed
+  assert.equal(all.find((n) => n.attrs.id === "log-text").textContent, raw);
+  assert.match(all.find((n) => n.attrs.id === "log-span").textContent, /^Last 24 hours\.$/); // an unrecognised line: no "nothing went wrong"
+  all.find((n) => n.attrs.id === "log-copy").listeners.click();
+  assert.ok(copied[0].endsWith("\n" + raw) && copied[0].includes("last 24 hours"));
+  const ok = nodes(logsDialog("relay", J("12:04", "systemd[1]", "Started orch relay."), { copy: () => {}, onClose: () => {}, fmt, now: NOW_D }));
+  assert.match(ok.find((n) => n.attrs.id === "log-span").textContent, /Nothing went wrong/);
+  const many = Array.from({ length: 300 }, () => J("12:04", "systemd[1]", "Started orch relay.")).join("\n");
+  const cut = nodes(logsDialog("relay", many, { copy: () => {}, onClose: () => {}, fmt, now: NOW_D }));
+  assert.equal(cut.find((n) => n.attrs.id === "log-span").textContent, "Last 300 lines."); // cut by the helper: no reassurance
+  const empty = nodes(logsDialog("relay", "", { copy: () => {}, onClose: () => {}, fmt, now: NOW_D }));
+  assert.equal(empty.find((n) => n.attrs.id === "log-empty").textContent, "Nothing happened in the last 24 hours.");
+  assert.equal(empty.filter((n) => n.attrs.id === "log-text").length, 0);
+});
+
+test("the helper-down note names the real user unit when it is known", () => {
+  const withUnit = servicesView(data({ state: "down", parts: [], helper_unit: "orch-1e0740-hub-helper.service" }), { service: () => {}, copy: () => {} }, NOW);
+  assert.match(find(withUnit, (n) => n.attrs.id === "helper-note")[0].textContent, /systemctl --user start orch-1e0740-hub-helper\.service/);
+  const notSet = servicesView(data({ state: "not_set_up", parts: [], helper_unit: "orch-1e0740-hub-helper.service" }), { service: () => {}, copy: () => {} }, NOW);
+  assert.equal(find(notSet, (n) => n.attrs.id === "helper-note").length, 1);
+  const noUnit = servicesView(data({ state: "down", parts: [] }), { service: () => {}, copy: () => {} }, NOW);
+  assert.match(find(noUnit, (n) => n.attrs.id === "helper-note")[0].textContent, /orch-hub helper/);
 });

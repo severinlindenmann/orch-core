@@ -87,22 +87,31 @@ it('renders markdown without running or showing raw html', async () => {
   expect(md.innerHTML).not.toContain('onerror')
 })
 
-it('warns about characters you cannot see, shows an image from its data URL and says so for a locked file', async () => {
-  route({
-    'a.py': { kind: 'text', text: 'x = 1  # ‮\n', hidden_chars: true, size: 10, history: true },
-    'p.png': { kind: 'image', mime: 'image/png', data: 'AAAA', size: 3 },
-    '.env': { kind: 'locked', reason: 'Secrets (.env)' },
-  })
-  const user = userEvent.setup()
+// Each case mounts the whole app once: three mounts stacked in one test took over 5 s on a loaded CI shard (#1776).
+const hiddenFiles = {
+  'a.py': { kind: 'text', text: 'x = 1  # ‮\n', hidden_chars: true, size: 10, history: true },
+  'p.png': { kind: 'image', mime: 'image/png', data: 'AAAA', size: 3 },
+  '.env': { kind: 'locked', reason: 'Secrets (.env)' },
+}
+
+it('warns about characters you cannot see', async () => {
+  route(hiddenFiles)
   show('/w/DEMO/explorer?path=a.py')
   expect(await screen.findByTestId('hidden-chars', {}, T)).toHaveTextContent('characters you cannot see')
   expect(screen.getByTestId('code')).toHaveTextContent('⟦u+202E⟧')
   expect(screen.getByTestId('code')).not.toHaveTextContent('‮')
+})
+
+it('shows an image from its data URL', async () => {
+  route(hiddenFiles)
   show('/w/DEMO/explorer?path=p.png')
   expect(await screen.findByRole('img', { name: 'p.png' }, T)).toHaveAttribute('src', 'data:image/png;base64,AAAA')
+})
+
+it('says so for a locked file', async () => {
+  route(hiddenFiles)
   show('/w/DEMO/explorer?path=.env')
   expect(await screen.findByTestId('locked', {}, T)).toHaveTextContent('never shown')
-  expect(user).toBeTruthy()
 })
 
 it('History lists the changes with ticket chips, shows one change and compares two versions', async () => {

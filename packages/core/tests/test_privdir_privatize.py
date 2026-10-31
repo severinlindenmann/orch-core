@@ -87,3 +87,22 @@ def test_real_ports_touch_only_the_exact_setup_paths(tmp_path):
     RealPorts({"HOME": str(home)}, home / ".config" / "orch").privatize(root)
     assert all(mode(p) == 0o755 for p in paths)
     assert all(mode(p) == 0o775 for p in [*other, home])
+
+
+def test_setup_paths_cover_every_xdg_ancestor_of_the_state_dir(tmp_path):
+    from pathlib import Path
+
+    home = Path(tmp_path)
+    state = home / ".local" / "state" / "orch"
+    paths = privdir.setup_paths(home / "proj", home / "proj" / ".orch", state, home)
+    for p in (home / ".config", home / ".local", home / ".local" / "share", home / ".local" / "state", state):
+        assert p in paths
+    assert home not in paths and len(paths) == len(set(paths))
+
+
+def test_setup_paths_never_adopt_a_custom_state_dir_parent(tmp_path):
+    from pathlib import Path
+
+    home = Path(tmp_path)
+    paths = privdir.setup_paths(home / "proj", home / "proj" / ".orch", home / "work" / "state", home)
+    assert home / "work" not in paths and home not in paths

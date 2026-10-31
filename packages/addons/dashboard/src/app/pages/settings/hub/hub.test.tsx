@@ -7,6 +7,7 @@ import * as gesture from '@/components/sign/trustedPress'
 import { setHubScenario, setMockConnectError, setMockOneClick, setMockVault, type HubScenario } from '@/mocks/hub'
 import { trustedPresses } from '@/test/hostHarness'
 import { renderApp } from '@/test/renderApp'
+import { hubTitle } from './shared'
 
 const T = { timeout: 4000 }
 // Compile lazy page modules before measuring UI waits; cold transforms can exceed the
@@ -60,6 +61,15 @@ describe('the Hub tab has a different page for each mode', () => {
     expect(screen.getByText('8 people')).toBeTruthy()
     expect(screen.queryByTestId('hub-full-switch')).toBeNull() // already full: the only way back is leave and join again
     expect(screen.getByText(/Leave this hub, then rejoin/)).toBeTruthy()
+  })
+
+  it('hubTitle never doubles the word hub', () => {
+    expect(hubTitle('Acme hub')).toBe('Acme hub')
+    expect(hubTitle('Hub')).toBe('Hub')
+    expect(hubTitle('Acme')).toBe('Acme hub')
+    expect(hubTitle(undefined)).toBe('Hub')
+    expect(hubTitle('  ')).toBe('Hub')
+    expect(hubTitle('Hubert')).toBe('Hubert hub')
   })
 
   it('uses the hub name when supplied and singular people counts', async () => {

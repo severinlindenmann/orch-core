@@ -42,6 +42,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from .. import __version__ as hub_version
+from .. import forwarded as FW
 from ..access import Access, AccessError
 from ..access.orgcleanup import org_cleanup
 from ..access.store import ADMIN_GROUP, DAY_MS, EXTEND_MS, check_name
@@ -681,16 +682,6 @@ class _Limiter:
                     del self._hits[k]
 
 
-def _norm_ip(addr: str) -> str:
-    """One source per network that a host can freely pick addresses in: an IPv6 /64 is one source."""
-    ip = ipaddress.ip_address(addr)  # ValueError for "" and anything that is not an address
-    if isinstance(ip, ipaddress.IPv6Address):
-        if ip.ipv4_mapped is not None:
-            return str(ip.ipv4_mapped)
-        return str(ipaddress.ip_network(f"{ip}/64", strict=False))
-    return str(ip)
-
-
 class ApiError(Exception):
     def __init__(self, code: str) -> None:
         super().__init__(code)
@@ -818,27 +809,13 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
         return status, h, json.dumps(obj, sort_keys=True, separators=(",", ":")).encode()
 
     def _source(self, headers: dict[str, str], peer: str) -> str:
-        """The client address: the socket peer, or, only when that peer is the configured edge, the rightmost
-        ``X-Forwarded-For`` entry that is not itself a trusted proxy (so a chain of trusted proxies works; entries
-        left of the first untrusted one are client-controlled and never read). An IPv6 source is its /64 and an
-        IPv4-mapped one its IPv4. Anything that is not an IP address is the peer."""
-        if peer in self.d.trusted_peers:
-            for entry in reversed(headers.get("x-forwarded-for", "").split(",")):
-                entry = entry.strip()
-                if entry in self.d.trusted_peers:
-                    continue
-                try:
-                    return _norm_ip(entry)
-                except ValueError:
-                    break
-        try:
-            return _norm_ip(peer)
-        except ValueError:
-            return peer or "unknown"  # a source is never empty
+        return FW.source_of(headers, peer, self.d.trusted_peers)
 
     def handle(
         self, method: str, target: str, headers: dict[str, str], body: bytes, peer: str = ""
     ) -> tuple[int, list[tuple[str, str]], bytes]:
+        if FW.refuse(headers, peer, self.d.trusted_peers):  # the web API and the console alike
+            return self._out(400, {"error": "malformed", "message": FW.NOT_PROXIED}, [])
         try:
             path = urllib.parse.urlsplit(target).path
             if not path.startswith("/api/"):

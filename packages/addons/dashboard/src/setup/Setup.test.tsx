@@ -97,6 +97,7 @@ function fake(
     noGit?: boolean
     complete?: boolean
     finishUrl?: string
+    finishTunnel?: string
     defaults?: boolean
     suggested?: Record<string, unknown>
     os?: string
@@ -163,7 +164,7 @@ function fake(
           : {}),
         ...(options.noTty ? { tty_confirm: false, fingerprint: null } : {}),
       }
-    if (path === 'finish') result = { url: options.finishUrl ?? '/', workspace_id: 'ws-new-2' }
+    if (path === 'finish') result = { url: options.finishUrl ?? '/', workspace_id: 'ws-new-2', ...(options.finishTunnel ? { tunnel: options.finishTunnel } : {}) }
     if (path === 'create') result = { run_id: 'demo-run' }
     if (path.startsWith('progress'))
       result = {
@@ -196,7 +197,10 @@ async function reveal() {
   await screen.findByRole('heading', { name: 'Your recovery words' })
 }
 async function check() {
-  fireEvent.click(screen.getByRole('button', { name: 'I saved my words — continue →' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  // nothing copied, saved or printed: the page asks once (P15)
+  const yes = await screen.findByRole('button', { name: 'Yes, I wrote them down — continue' })
+  fireEvent.click(yes)
 }
 afterEach(() => {
   cleanup()
@@ -792,7 +796,7 @@ test('P11: step 4 has no text input, no checkbox and no word check; Save as file
   expect(await created[0].text()).toContain('24. demo-word-24')
   expect(f.calls.length).toBe(before) // the words never go back to the server
   expect(JSON.stringify(f.calls)).not.toContain('demo-word-')
-  expect(screen.getByRole('button', { name: 'I saved my words — continue →' })).toBeEnabled()
+  expect(screen.getByRole('button', { name: 'Continue →' })).toBeEnabled()
 })
 
 test('the progress words are shown, and the unfinished items are named in words', async () => {
@@ -1058,11 +1062,14 @@ test('P06: a complete workspace shows one sentence and Open dashboard; the table
   expect(fold).not.toHaveTextContent('Add-ons on')
 })
 
-test('P01: an unreachable dashboard address keeps the page, shows only the address and no navigation', async () => {
+const LOGIN_URL = 'http://127.0.0.1:8151/#launch=' + 'a'.repeat(30) + '&to=%2F'
+const TUNNEL = 'ssh -o ExitOnForwardFailure=yes -L 127.0.0.1:8151:127.0.0.1:8151 anna@build-server'
+
+async function toUnreachable(options: { finishTunnel?: string } = {}) {
   const assign = vi.fn()
   vi.stubGlobal('location', { origin: 'http://127.0.0.1:47821', assign })
   vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch') }))
-  const f = fake({ finish: true, done: true, finishUrl: 'http://127.0.0.1:8151/#launch=' + 'a'.repeat(30) + '&to=%2F' })
+  const f = fake({ finish: true, done: true, finishUrl: LOGIN_URL, ...options })
   render(<Setup api={f.api} />)
   await screen.findByRole('heading', { name: 'Finish setting up your workspace' })
   fireEvent.click(screen.getByLabelText(/Own copy per ticket/))
@@ -1072,17 +1079,80 @@ test('P01: an unreachable dashboard address keeps the page, shows only the addre
   await screen.findByRole('heading', { name: 'Your workspace is ready' })
   fireEvent.click(await screen.findByRole('button', { name: 'Open your workspace →' }))
   const box = await screen.findByTestId('unreachable')
-  expect(box).toHaveTextContent('It runs on the computer where you ran setup.')
-  expect(box).toHaveTextContent('http://127.0.0.1:8151/')
-  expect(document.body.textContent).not.toContain('launch=') // the single-use login link is never shown
-  expect(box).toHaveTextContent('Copy address')
+  return { assign, box }
+}
+
+test('run18 P01: an unreachable dashboard shows the connect step, no Try again, no raw address outside Details', async () => {
+  const { assign, box } = await toUnreachable({ finishTunnel: TUNNEL })
+  expect(box).toHaveTextContent('One last step: connect to your workspace.')
+  expect(box).toHaveTextContent('Your workspace runs on the other computer. Paste this line where you started setup, and leave it open:')
+  expect(box).toHaveTextContent('Waiting for the connection… your workspace opens here by itself.')
+  expect(box).toHaveTextContent(TUNNEL)
+  expect(box).not.toHaveTextContent('the computer where you ran setup')
+  expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Copy address' })).toBeNull()
+  const fold = screen.getByText('Needs help? Details').closest('details')!
+  expect(fold).not.toHaveAttribute('open')
+  expect(fold).toHaveTextContent('http://127.0.0.1:8151/')
+  expect(fold).toHaveTextContent('USER')
+  // the raw address appears only inside the fold; the single-use login link nowhere
+  const outside = (box.textContent ?? '').replace(fold.textContent ?? '', '')
+  expect(outside).not.toContain('http://127.0.0.1:8151')
+  expect(document.body.textContent).not.toContain('launch=')
   expect(assign).not.toHaveBeenCalled()
-  // Try again asks the same address once more; when it answers the page goes there
-  vi.stubGlobal('fetch', vi.fn(async () => new Response(null)))
-  fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
-  await vi.waitFor(() => expect(assign).toHaveBeenCalledTimes(1))
-  expect(assign.mock.calls[0][0]).toMatch(/^http:\/\/127\.0\.0\.1:8151\/#launch=/)
   vi.unstubAllGlobals()
+})
+
+test('run18 P01: Copy line copies the tunnel line from the finish result', async () => {
+  const writeText = vi.fn(async () => {})
+  vi.stubGlobal('navigator', { clipboard: { writeText } })
+  await toUnreachable({ finishTunnel: TUNNEL })
+  fireEvent.click(screen.getByRole('button', { name: 'Copy line' }))
+  await vi.waitFor(() => expect(writeText).toHaveBeenCalledWith(TUNNEL))
+  vi.unstubAllGlobals()
+})
+
+test('run18 P01: without a tunnel in the result the page builds the same line with the dashboard port', async () => {
+  const writeText = vi.fn(async () => {})
+  vi.stubGlobal('navigator', { clipboard: { writeText } })
+  const { box } = await toUnreachable()
+  const line = 'ssh -o ExitOnForwardFailure=yes -L 127.0.0.1:8151:127.0.0.1:8151 USER@SERVER'
+  expect(box).toHaveTextContent(line)
+  fireEvent.click(screen.getByRole('button', { name: 'Copy line' }))
+  await vi.waitFor(() => expect(writeText).toHaveBeenCalledWith(line))
+  expect(document.body.textContent).not.toContain('launch=')
+  vi.unstubAllGlobals()
+})
+
+test('run18 P01: when copying fails a plain notice says to select the line', async () => {
+  vi.stubGlobal('navigator', { clipboard: { writeText: vi.fn(async () => { throw new Error('no') }) } })
+  await toUnreachable({ finishTunnel: TUNNEL })
+  fireEvent.click(screen.getByRole('button', { name: 'Copy line' }))
+  await screen.findByText('Copy is unavailable. Select the line and copy it.')
+  vi.unstubAllGlobals()
+})
+
+test('run18 P01: the page checks every 3 seconds and opens the workspace by itself once it answers', async () => {
+  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+  try {
+    const { assign } = await toUnreachable({ finishTunnel: TUNNEL })
+    const settle = () => new Promise((r) => setTimeout(r, 50)) // real timers still run: let a probe settle
+    await vi.advanceTimersByTimeAsync(3000)
+    await settle()
+    await vi.advanceTimersByTimeAsync(3000)
+    await settle()
+    expect(assign).not.toHaveBeenCalled()
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null)))
+    await vi.advanceTimersByTimeAsync(3000)
+    await settle()
+    expect(assign).toHaveBeenCalledTimes(1)
+    expect(assign.mock.calls[0][0]).toMatch(/^http:\/\/127\.0\.0\.1:8151\/#launch=/)
+    await vi.advanceTimersByTimeAsync(9000)
+    expect(assign).toHaveBeenCalledTimes(1)
+  } finally {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  }
 })
 
 test('P01 (Opus): answers() is true for an answering address, false when nothing listens, and true (fail open) when the page CSP blocked the probe', async () => {
@@ -1385,7 +1455,7 @@ test('the recovery page uses one name, recovery words, and names no terminal com
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Your recovery words' })
-  expect(screen.getByRole('button', { name: 'I saved my words — continue →' })).toBeEnabled()
+  expect(screen.getByRole('button', { name: 'Continue →' })).toBeEnabled()
   const text = document.body.textContent ?? ''
   expect(text).not.toMatch(/secret words|recovery code/i)
   expect(screen.getByText(/you get new words next time/)).not.toHaveTextContent('orch setup')
@@ -1602,24 +1672,58 @@ test('r14-P07: the welcome page says one plain sentence; the folder name and pat
   expect(fold.textContent).toContain('/')
 })
 
-test('r12-P15: the recovery words say Not saved yet; Continue works; Copy turns into a tick (display only)', async () => {
+test('r12-P15: the recovery words say what to do; Copy turns into a tick (display only)', async () => {
   const writeText = vi.fn().mockResolvedValue(undefined)
   Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
   const f = fake()
   render(<Setup api={f.api} />)
   await reveal()
-  expect(screen.getByRole('status')).toHaveTextContent('Not saved yet')
-  expect(screen.getByRole('button', { name: 'I saved my words — continue →' })).toBeEnabled()
+  expect(screen.getByRole('status')).toHaveTextContent('Copy, save or print your words before you continue.')
+  expect(screen.getByRole('status')).not.toHaveTextContent('Not saved yet')
   fireEvent.click(screen.getByRole('button', { name: 'Copy' }))
   const copied = await screen.findByRole('button', { name: 'Copied ✓' })
   expect(copied).toHaveClass('done')
   expect(screen.getByRole('status')).toHaveTextContent('Recovery words copied')
-  expect(screen.getByRole('status')).not.toHaveTextContent('Not saved yet')
   // display only: no call carries it, and the step still needs its own confirm
   expect(f.calls.some((c) => c.path === 'secrets/confirm')).toBe(false)
-  expect(screen.getByRole('button', { name: 'I saved my words — continue →' })).toBeEnabled()
+  expect(screen.getByRole('button', { name: 'Continue →' })).toBeEnabled()
   window.dispatchEvent(new Event('afterprint'))
   expect(await screen.findByRole('button', { name: 'Printed ✓' })).toHaveClass('done')
+})
+
+test('P15: Continue with nothing used asks once; Go back hides the question and sends nothing', async () => {
+  const f = fake()
+  render(<Setup api={f.api} />)
+  await reveal()
+  const before = f.calls.length
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  expect(screen.getByRole('status')).toHaveTextContent('You have not copied, saved or printed your words.')
+  expect(screen.getByRole('status')).toHaveTextContent('Did you write them down another way?')
+  expect(f.calls.length).toBe(before)
+  fireEvent.click(screen.getByRole('button', { name: 'Go back' }))
+  expect(screen.queryByText('Did you write them down another way?')).toBeNull()
+  expect(screen.getByRole('status')).toHaveTextContent('Copy, save or print your words before you continue.')
+  expect(f.calls.some((c) => c.path === 'secrets/confirm')).toBe(false)
+  expect(screen.getByRole('heading', { name: 'Your recovery words' })).toBeInTheDocument()
+})
+
+test('P15: "Yes, I wrote them down" confirms; after Copy, Continue confirms at once without asking', async () => {
+  const f = fake()
+  render(<Setup api={f.api} />)
+  await reveal()
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'Yes, I wrote them down — continue' }))
+  await waitFor(() => expect(f.calls.some((c) => c.path === 'secrets/confirm')).toBe(true))
+  cleanup()
+  const g = fake()
+  Object.defineProperty(navigator, 'clipboard', { value: { writeText: vi.fn().mockResolvedValue(undefined) }, configurable: true })
+  render(<Setup api={g.api} />)
+  await reveal()
+  fireEvent.click(screen.getByRole('button', { name: 'Copy' }))
+  await screen.findByRole('button', { name: 'Copied ✓' })
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  expect(screen.queryByText('Did you write them down another way?')).toBeNull()
+  await waitFor(() => expect(g.calls.some((c) => c.path === 'secrets/confirm')).toBe(true))
 })
 
 test('r14-P07: the approval page uses everyday words: Password, AI helpers; no Claude Code, Passphrase or Your key', async () => {

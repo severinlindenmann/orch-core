@@ -3,6 +3,7 @@ through a hub (`Orch-Hub`); a request without one is refused (V3-D36), with one 
 `allow_direct` the APP routes (protocol 11.4) also accept the direct v2 12.1 request, so a workspace with no hub can
 publish an app. Share routes never take the direct path."""
 
+import asyncio
 import json
 import re
 import sqlite3
@@ -62,10 +63,16 @@ class _TooLarge(Exception):
     pass
 
 
+BODY_IDLE_S = 60  # no request waits longer than this between two body messages (the proxy's idle limit is 120 s)
+
+
 async def _read_body(receive, limit):
     chunks, size = [], 0
     while True:
-        msg = await receive()
+        try:
+            msg = await asyncio.wait_for(receive(), BODY_IDLE_S)
+        except TimeoutError:
+            raise ConnectionError from None
         if msg["type"] == "http.disconnect":
             raise ConnectionError
         size += len(msg.get("body", b""))

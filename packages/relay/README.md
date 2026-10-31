@@ -48,8 +48,10 @@ configured; otherwise they answer 404 `not_found` (the channel purge excepted). 
 per environment, `ORCH_RELAY_APNS_{SANDBOX,PRODUCTION}_KEY_ID` and `..._KEY_FILE` (the `.p8`, mode 0600). All or nothing: a
 partial set makes `serve` exit 2. Tokens are stored sealed; the key and the secret are never in the database. Delivery
 is best effort over one HTTP/2 connection per environment (`httpx[http2]`). Tests use a throwaway P-256 key, a fake
-transport and a local h2 server; no test reaches Apple (`tests/conftest.py`). Set `ORCH_RELAY_TRUSTED_PROXY` to a single
-trusted proxy IP when behind Caddy; otherwise forwarded addresses are ignored (the last X-Forwarded-For hop, IPv6 by /64).
+transport and a local h2 server; no test reaches Apple (`tests/conftest.py`). The relay grants no privilege for being
+forwarded or on the private network: every request is public. `ORCH_RELAY_TRUSTED_PROXY` (comma-separated addresses or CIDR
+networks, default none) names the peers whose `X-Forwarded-For` / `X-Real-IP` is used, and only as the rate-limit key
+(IPv6 by /64); `orch_relay/forwarded.py` is the one place that reads them.
 Run one worker per database (SQLite, WAL, `synchronous=FULL`; database work runs in the thread pool).
 
 ## License

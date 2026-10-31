@@ -233,7 +233,7 @@ def test_finish_runs_without_genesis_and_with_the_persons_own_custody(tmp):
     assert p["done"] is True and "genesis" not in n and ports.unlocks == 1
     assert p["workspace"] and p["workspace"]["prefix"] == PROF["prefix"]  # the page's Done and the terminal name it
     assert ports.submits == ["addon.granted", "grant.issued"]
-    assert [s["id"] for s in p["steps"]] == ["addon:worktrees", "runner_grant"]
+    assert [s["id"] for s in p["steps"]] == ["perms", "addon:worktrees", "runner_grant"]  # P14: perms in Finish too
     assert ports.passphrase_seen is None  # no new passphrase in finish mode
 
 
@@ -450,3 +450,36 @@ def test_finish_when_the_dashboard_does_not_open_is_retryable_and_keeps_the_sess
     out = f.dispatch("POST", "finish", {}, {})[1]
     assert out["url"] == "http://127.0.0.1:8151/#launch=abc&to=%2F"
     assert f.finished and f.outcome == "done"
+
+
+def _complete_finish(tmp, url):
+    on = frozenset({"dashboard", "terminals", "worktrees", "start-agent", "quick"})
+    f = finish_flow(tmp, FakePorts(), [mkfacts(addons=on, grant_issued=True)])
+    f.e.workspace_url = lambda _wid: url
+    return f.dispatch("POST", "finish", {}, {})[1]
+
+
+LOGIN = "http://127.0.0.1:8151/#launch=SECRETTOKEN123&to=%2F"
+
+
+def test_run18_p01_headless_finish_returns_a_ready_tunnel_line_without_the_login_link(tmp, monkeypatch):
+    monkeypatch.setenv("SSH_CONNECTION", "10.0.0.2 5555 203.0.113.7 22")
+    monkeypatch.setattr("sys.platform", "linux")
+    monkeypatch.setattr("getpass.getuser", lambda: "anna")
+    out = _complete_finish(tmp, LOGIN)
+    assert out["tunnel"] == "ssh -o ExitOnForwardFailure=yes -L 127.0.0.1:8151:127.0.0.1:8151 anna@203.0.113.7"
+    assert "SECRETTOKEN123" not in out["tunnel"] and "launch" not in out["tunnel"] and "#" not in out["tunnel"]
+
+
+def test_run18_p01_not_headless_finish_has_no_tunnel(tmp, monkeypatch):
+    monkeypatch.delenv("SSH_CONNECTION", raising=False)
+    monkeypatch.setenv("DISPLAY", ":0")
+    monkeypatch.setattr("sys.platform", "linux")
+    out = _complete_finish(tmp, LOGIN)
+    assert "tunnel" not in out and out["url"] == LOGIN
+
+
+def test_run18_p01_a_non_local_url_gets_no_tunnel(tmp, monkeypatch):
+    monkeypatch.setenv("SSH_CONNECTION", "10.0.0.2 5555 203.0.113.7 22")
+    monkeypatch.setattr("sys.platform", "linux")
+    assert "tunnel" not in _complete_finish(tmp, "http://example.com:8151/#launch=x")

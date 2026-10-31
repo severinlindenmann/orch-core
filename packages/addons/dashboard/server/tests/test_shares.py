@@ -636,3 +636,19 @@ def test_app_release_is_a_click_op_in_core():
     from orch.click.protocol import op_class
 
     assert op_class("app.release") == "click"
+
+
+def test_prepare_passes_work_folder_names_and_never_a_path(client, token, stub, host):
+    host.answers["publish.prepare"] = PREPARED
+    body = {"ticket": "DEMO-1", "workfiles": ["hello.txt"], "idem": IDEM}
+    assert client.post(url(stub, "/shares/prepare"), json=body, headers=hdr(token)).status_code == 200
+    assert host.calls[-1][1] == {"ref": "DEMO-1", "workfiles": ["hello.txt"], "kind": "secret", "days": 7}
+    n = len(host.calls)
+    for bad in (["../x"], ["a/b"], [".hid"], ["a.txt", "A.TXT"], [f"f{i}.txt" for i in range(21)], []):
+        res = client.post(
+            url(stub, "/shares/prepare"), json={"ticket": "DEMO-1", "workfiles": bad, "idem": IDEM}, headers=hdr(token)
+        )
+        assert res.status_code == 400, bad
+    both = {"ticket": "DEMO-1", "artifacts": ["A.txt"], "workfiles": ["a.txt"], "idem": IDEM}
+    assert client.post(url(stub, "/shares/prepare"), json=both, headers=hdr(token)).status_code == 400
+    assert len(host.calls) == n

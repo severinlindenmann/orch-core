@@ -8,6 +8,7 @@ import { api } from '@/api/client'
 import { runQueries } from '@/api/runs'
 import { queries } from '@/api/queries'
 import { agentInWait, terminalWaitFor } from '@/app/attention'
+import { openDockOn } from '@/app/terminal/dock/request'
 import { TicketProgress } from './NextStep'
 import { addonActive } from '@/api/addons'
 import { AddonBadge, useAddons, useRunAddonAction } from '@/addon-ui'
@@ -55,7 +56,7 @@ export function CopyButton({ text, label }: { text: string; label: string }) {
 }
 
 /** Who is working on the ticket, in one line. Claiming is the agents' job, so people get no Claim/Release here. */
-export function AgentStatus({ ticket, viewer, wait, needsYou = false }: { ticket: TicketDocument; viewer: Viewer; /** the agent is idle at its prompt (run-9 J04) */ wait?: string; /** the ticket waits for the person (phase 'needs'): the line says so, like the card and the pill (run 15 P05) */ needsYou?: boolean }) {
+export function AgentStatus({ ticket, viewer, wait, needsYou = false, liveRun = false }: { ticket: TicketDocument; viewer: Viewer; /** a run of this ticket's agent still lives although it holds no claim (run 16 P01) */ liveRun?: boolean; /** the agent is idle at its prompt (run-9 J04) */ wait?: string; /** the ticket waits for the person (phase 'needs'): the line says so, like the card and the pill (run 15 P05) */ needsYou?: boolean }) {
   // A claim the host marks not live (ended by Done or Close, lapsed, grant over) is history: nobody is working (run 8, 8).
   const c = ticket.claim?.live === false ? null : ticket.claim
   const subagents = new Set(ticket.tasks_state.flatMap((t) => (t.lease && t.lease.session !== c?.session ? [t.lease.session] : []))).size
@@ -78,10 +79,23 @@ export function AgentStatus({ ticket, viewer, wait, needsYou = false }: { ticket
             {' · '}since {fmtClock(c.since)}
             {subagents > 0 && ` · ${subagents} ${subagents === 1 ? 'subagent' : 'subagents'}`}
           </>
+        ) : wait ? (
+          <>
+            <span className="text-text">Claude</span> is waiting for <span className="text-text">you</span>
+          </>
+        ) : liveRun ? (
+          <>
+            <span className="text-text">Claude</span> is starting on this ticket
+          </>
         ) : (
           'No agent is working on this ticket'
         )}
       </span>
+      {!c && wait && (
+        <Button type="button" size="sm" variant="outline" className="h-6 shrink-0 px-2 text-[12px]" onClick={() => openDockOn(wait)}>
+          Open agent
+        </Button>
+      )}
     </p>
   )
 }
@@ -239,7 +253,7 @@ function Next() {
 }
 
 /** The header's Actions menu lists EVERY action the viewer has, the primary one included (tagged "next"). */
-export function ActionsMenu({ ticket, viewer, sign, jump, start, share, shareFiles, signing = false }: { ticket: TicketDocument; viewer: Viewer; sign: (a: HumanAction) => void; jump: (j: Jump) => void; start: StartAgent; /** Absent: no sharing item (the mock page tests). */ share?: ShareTicket; /** Absent: no Share files item. */ shareFiles?: ShareFiles; signing?: boolean }) {
+export function ActionsMenu({ ticket, viewer, sign, jump, start, share, shareFiles, signing = false, agentBusy = false }: { /** an agent run lives or waits: Start agent is off, like the primary button */ agentBusy?: boolean; ticket: TicketDocument; viewer: Viewer; sign: (a: HumanAction) => void; jump: (j: Jump) => void; start: StartAgent; /** Absent: no sharing item (the mock page tests). */ share?: ShareTicket; /** Absent: no Share files item. */ shareFiles?: ShareFiles; signing?: boolean }) {
   const av = availableActions(ticket, viewer)
   const primary = primaryAction(av, { start: start.startable })
   const isNext = (k: string) => (primary?.kind === 'approve' ? `approve:${primary.gate}` : primary?.kind === 'answer' ? `answer:${primary.question}` : primary?.kind) === k
@@ -286,7 +300,7 @@ export function ActionsMenu({ ticket, viewer, sign, jump, start, share, shareFil
           </DropdownMenuItem>
         ))}
         {start.shown && (
-          <DropdownMenuItem disabled={!!start.reason} onSelect={start.run} className="items-start" data-testid="real-start-agent">
+          <DropdownMenuItem disabled={!!start.reason || agentBusy} onSelect={start.run} className="items-start" data-testid="real-start-agent">
             <Bot className="mt-0.5" />
             <span className="min-w-0 flex-1">
               <span className="flex items-center gap-2">
@@ -299,7 +313,7 @@ export function ActionsMenu({ ticket, viewer, sign, jump, start, share, shareFil
           </DropdownMenuItem>
         )}
         {start.shown && start.choose && (
-          <DropdownMenuItem disabled={!!start.reason} onSelect={start.choose} data-testid="real-start-agent-choose-item">
+          <DropdownMenuItem disabled={!!start.reason || agentBusy} onSelect={start.choose} data-testid="real-start-agent-choose-item">
             <Bot />
             Change agent or model…
           </DropdownMenuItem>
@@ -322,11 +336,11 @@ export function ActionsMenu({ ticket, viewer, sign, jump, start, share, shareFil
 }
 
 /** The header's one primary button: what the viewer should do next (a quiet status when an agent works and nothing waits). */
-function PrimaryButton({ ticket, viewer, jump, start, signing, phase, idle = false }: { ticket: TicketDocument; viewer: Viewer; jump: (j: Jump) => void; start: StartAgent; signing: boolean; phase: Phase; /** The agent waits or the plan is unfinished: the card says so, so no "Agent is working" next to it. */ idle?: boolean }) {
+function PrimaryButton({ ticket, viewer, jump, start, signing, phase, idle = false, runLive = false }: { /** the newest run of the ticket is starting or running: no second start next to it */ runLive?: boolean; ticket: TicketDocument; viewer: Viewer; jump: (j: Jump) => void; start: StartAgent; signing: boolean; phase: Phase; /** The agent waits or the plan is unfinished: the card says so, so no "Agent is working" next to it. */ idle?: boolean }) {
   const { workspace } = useWorkspace()
   const av = availableActions(ticket, viewer)
   const blocked = blockedApproval(ticket, viewer)
-  const busy = phase.kind === 'starting' || phase.kind === 'working'
+  const busy = runLive || phase.kind === 'starting' || phase.kind === 'working' || phase.kind === 'waiting' || phase.kind === 'open'
   // A gate that waits for someone else (shown disabled below) comes before offering to start an agent.
   const p = primaryAction(av, { start: start.startable && !blocked && !busy })
   if (signing)
@@ -413,7 +427,10 @@ function useTicketAgent(ticket: TicketDocument, home: string | undefined) {
   const runs = useQuery({ ...runQueries.list(home ?? ''), enabled: isRealHost() && !!home })
   const today = useQuery({ ...queries.today(home ?? ''), enabled: isRealHost() && !!home })
   const items = today.data?.needs_you ?? []
-  return { run: newestRun(runs.data?.runs, ticket.key), wait: terminalWaitFor(items, ticket.key), inWait: agentInWait(items, ticket.key) }
+  const run = newestRun(runs.data?.runs, ticket.key)
+  // A wait of a run that ended is stale: it is no wait (review P01).
+  const dead = run?.state === 'lost' || run?.state === 'exited'
+  return { run, wait: dead ? undefined : terminalWaitFor(items, ticket.key), inWait: dead ? false : agentInWait(items, ticket.key) }
 }
 
 /** The stepper and the next-step card, told what the ticket's agent really did (never ran / waiting / ended early). */
@@ -434,7 +451,7 @@ export function TicketProgressLive(p: { ticket: TicketDocument; viewer: Viewer; 
 }
 
 /** The one status pill for the agent's progress, in plain words, in a live region so changes are announced. */
-function ProgressPill({ phase, start, ticket, viewer, ws }: { phase: Phase; start: StartAgent; ticket: TicketDocument; viewer: Viewer; ws?: string }) {
+export function ProgressPill({ phase, start, ticket, viewer, ws }: { phase: Phase; start: StartAgent; ticket: TicketDocument; viewer: Viewer; ws?: string }) {
   const [pending, setPending] = useState(false)
   const stage = phase.kind === 'starting' && phase.slow ? 'slow' : phase.kind
   useEffect(() => {
@@ -476,7 +493,7 @@ function ProgressPill({ phase, start, ticket, viewer, ws }: { phase: Phase; star
             <Loader2 className="animate-spin" aria-hidden />
             {phase.slow ? 'Taking longer than usual' : 'Getting started…'}
           </Pill>
-          {phase.slow && (
+          {phase.slow && !phase.live && (
             <Button type="button" size="sm" variant="ghost" className="h-6 px-2 text-[12px]" disabled={pending} onClick={retry}>
               Try again
             </Button>
@@ -490,6 +507,25 @@ function ProgressPill({ phase, start, ticket, viewer, ws }: { phase: Phase; star
         </Pill>
       )}
       {phase.kind === 'needs' && <Pill tone="warning">Needs you</Pill>}
+      {phase.kind === 'open' && (
+        <>
+          <Pill>Agent is open</Pill>
+          {phase.run && (
+            <Button type="button" size="sm" variant="outline" onClick={() => openDockOn(phase.run!)}>
+              Open agent
+            </Button>
+          )}
+        </>
+      )}
+      {phase.kind === 'waiting' && (
+        <>
+          <Pill tone="warning">Needs you</Pill>
+          <span className="text-[13px] text-text">Agent is waiting for you</span>
+          <Button type="button" size="sm" onClick={() => openDockOn(phase.run)}>
+            Open agent
+          </Button>
+        </>
+      )}
       {phase.kind === 'failed' && (
         <>
           <Pill tone="warning">{phase.reason}</Pill>
@@ -515,6 +551,7 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
     enabled: ticket.type === 'epic' && !!home,
   })
   const { run, wait } = useTicketAgent(ticket, home)
+  const runLive = run?.state === 'starting' || run?.state === 'running'
   const start = useStartAgent(ticket, viewer)
   const share = useShareTicket(ticket, viewer)
   const shareFiles = useShareFiles(ticket, viewer)
@@ -584,8 +621,8 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
         </h1>
         <div className="flex flex-wrap items-center gap-2 sm:shrink-0">
           <FocusButton ticket={ticket.key} />
-          <PrimaryButton ticket={ticket} viewer={viewer} jump={jump} start={start} signing={signing} phase={phase} idle={!!wait || !!gapOf(ticket)} />
-          <ActionsMenu ticket={ticket} viewer={viewer} sign={sign} jump={jump} start={start} share={share} shareFiles={shareFiles} signing={signing} />
+          <PrimaryButton ticket={ticket} viewer={viewer} jump={jump} start={start} signing={signing} phase={phase} idle={!!wait || !!gapOf(ticket)} runLive={runLive} />
+          <ActionsMenu ticket={ticket} viewer={viewer} sign={sign} jump={jump} start={start} share={share} shareFiles={shareFiles} signing={signing} agentBusy={runLive || phase.kind === 'starting' || phase.kind === 'waiting' || phase.kind === 'open'} />
           {start.node}
           {share.node}
           {shareFiles.node}
@@ -634,7 +671,7 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
       )}
 
       <BlockedByConnection ticket={ticket} />
-      {phase.kind !== 'starting' && phase.kind !== 'failed' && <AgentStatus ticket={ticket} viewer={viewer} wait={wait} needsYou={phase.kind === 'needs'} />}
+      {phase.kind !== 'starting' && phase.kind !== 'failed' && phase.kind !== 'waiting' && phase.kind !== 'open' && <AgentStatus ticket={ticket} viewer={viewer} wait={wait} needsYou={phase.kind === 'needs'} liveRun={run?.state === 'running' || run?.state === 'starting'} />}
     </header>
   )
 }

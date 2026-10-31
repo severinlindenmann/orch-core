@@ -33,7 +33,7 @@ __all__ = ["Ctx", "main", "add_workspace", "choose_role", "full_server", "defaul
 USAGE = (
     "usage: orch install server --role hub|edge [--domain BASE] [--domain-hub N] [--domain-relay N]\n"
     "                    [--domain-publish N] [--hub-vpn-only] [--vpn-ip IP[/PREFIX]]\n"
-    "                    [--allow-non-cgnat] [--caddy-dir DIR]\n"
+    "                    [--allow-non-cgnat] [--caddy-dir DIR] [--behind-proxy]\n"
     "                    [--backup-drop DIR]\n"
     "                    [--port-base N] [--yes]\n"
     "usage: orch install phone [--user ID]\n"
@@ -404,13 +404,16 @@ def install_part(
     workspace_side: bool = True,
     behind_edge: bool = False,  # server role with TLS: Caddy on this computer is the edge in front of the part
     exact_bind: bool = False,  # server role: the part listens on exactly ``address`` (not on every interface)
+    trusted_proxy: str | None = None,  # behind the private network's proxy: its networks (rate key only)
 ) -> dict[str, Any]:
     spec = P.PARTS[part]
     source = source or ctx.env.get(f"ORCH_INSTALL_SOURCE_{part.upper()}")  # a local checkout (dev machines, tests)
     lay = ctx.layout
     st = load(lay)
-    if part in st["parts"]:
-        ctx.runner.stop(part)  # a re-run replaces the running one (its port is then free again)
+    if part in st["parts"] or ctx.runner.info(part)["running"]:
+        # a re-run replaces this user's own running part (its port is then free again), also when an earlier run died
+        # before it recorded the part: that port is ours, not another program's
+        ctx.runner.stop(part)
     address = choose_address(ctx, address, st)
     if _is_domain(address) and address != "localhost":
         domain, address = address, P.ADDRESS_LOOPBACK  # a domain is only noted; the part listens on this computer
@@ -489,7 +492,9 @@ def install_part(
         exact_bind=exact_bind or bool(link_address),
     )
     log = lay.logs / f"{part}.log"
-    started = ctx.runner.start(part, argv, P.env_for(part, data, behind_edge=behind_edge), log)
+    started = ctx.runner.start(
+        part, argv, P.env_for(part, data, behind_edge=behind_edge, trusted_proxy=trusted_proxy), log
+    )
     # a part on every interface is dialled on loopback (a computer cannot dial its own overlay IP). A part that binds
     # exactly one address (the server role: the VPN IP) answers ONLY there: probe that address, never 127.0.0.1.
     check_host = bind if (exact_bind or link_address) else dial_host(bind)
@@ -947,6 +952,7 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextI
     p.add_argument("--hub-vpn-only", action="store_true")
     p.add_argument("--vpn-ip")
     p.add_argument("--allow-non-cgnat", action="store_true")
+    p.add_argument("--behind-proxy", action="store_true")
     p.add_argument("--port-base", type=int)
     p.add_argument("--caddy-dir", default=CADDY_DIR)
     p.add_argument("--backup-drop")
@@ -984,6 +990,7 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextI
                 source=a.source,
                 ref=a.ref,
                 dev=a.dev,
+                behind_proxy=a.behind_proxy,
             )
             return 0
         if a.cmd == "remove":

@@ -26,6 +26,7 @@ from .server import (
     default_resolver,
     detect_vpn_ip,
     local_interfaces,
+    proxy_networks,
     root_block,
     user_dir,
     vpn_network,
@@ -61,14 +62,26 @@ def _update_record(ctx: Ctx) -> Path:
 
 
 def _ops(
-    ctx: Ctx, role: str, parts: list[str], names: Names, ports: dict[str, int], backup_drop: str | None = None
+    ctx: Ctx,
+    role: str,
+    parts: list[str],
+    names: Names,
+    ports: dict[str, int],
+    backup_drop: str | None = None,
+    hosts: dict[str, str] | None = None,
 ) -> None:
     """The health timer for every role; the nightly backup copy for the hub."""
     lay = ctx.layout
     ops_dir = lay.root / "ops"
     ops_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     cfg = {
-        "parts": [{"name": p, "url": f"http://127.0.0.1:{ports[p]}{'/' if p == 'hub' else '/healthz'}"} for p in parts],
+        "parts": [
+            {
+                "name": p,
+                "url": f"http://{(hosts or {}).get(p, '127.0.0.1')}:{ports[p]}{'/' if p == 'hub' else '/healthz'}",
+            }
+            for p in parts
+        ],
         "cert_names": [n for p in parts if (n := names.get(p))],
         "disk_path": str(lay.home),
         "status_file": str(ops_dir / "health-status.json"),
@@ -124,6 +137,7 @@ def server_setup(
     backup_drop: str | None = None,
     drop_check: Callable[[str], None] = server.check_drop_path,
     bus_check: Callable[[str], None] | None = None,
+    behind_proxy: bool = False,
 ) -> Plan:
     """Install the parts of ``role`` for this OS user. ``resolve``/``local`` are the DNS seams of the tests."""
     if role not in ROLES:
@@ -134,6 +148,12 @@ def server_setup(
         raise InstallError("--hub-vpn-only belongs to --role hub")
     if hub_vpn_only and not names.hub:
         raise InstallError("--hub-vpn-only needs a name for the hub (--domain or --domain-hub)")
+    if behind_proxy and role != "edge":
+        raise InstallError("--behind-proxy belongs to --role edge (the hub is never served through a proxy)")
+    if behind_proxy and (hub_vpn_only or address):
+        raise InstallError(
+            "--behind-proxy listens on the private-network address only: no --address, no --hub-vpn-only"
+        )
     if backup_drop:
         drop_check(backup_drop)
     user = user or real_user()
@@ -177,8 +197,12 @@ def server_setup(
             plan.vpn_net = str(vpn_network(chosen, given_prefix))
         plan.loopback = loopback
 
+    if behind_proxy:
+        _proxied(ctx, plan, names, ifaces, vpn_ip, allow_non_cgnat, source=source, ref=ref, dev=dev)
+        return plan
+
     if not wanted:
-        _fallback(ctx, plan, address=address, source=source, ref=ref, dev=dev)
+        _fallback(ctx, plan, address=address, source=source, ref=ref, dev=dev, backup_drop=backup_drop)
         return plan
 
     plan.dns = check_dns(wanted, resolve, mine)
@@ -250,7 +274,16 @@ def tls_all(names: Names, plan: Plan, role: str) -> set[str]:
     return ok | {p for p in ("relay", "publish") if role == "hub" and names.get(p)}
 
 
-def _fallback(ctx: Ctx, plan: Plan, *, address: str | None, source: str | None, ref: str | None, dev: bool) -> None:
+def _fallback(
+    ctx: Ctx,
+    plan: Plan,
+    *,
+    address: str | None,
+    source: str | None,
+    ref: str | None,
+    dev: bool,
+    backup_drop: str | None = None,
+) -> None:
     """No names: the IP:port behaviour of ``orch install`` (a private-network hub takes its VPN address)."""
     st = load(ctx.layout)
     hub = plan.role == "hub"
@@ -268,7 +301,74 @@ def _fallback(ctx: Ctx, plan: Plan, *, address: str | None, source: str | None, 
     sync_helper(ctx)
     for p, rec in recs.items():
         ctx.say(f"  {p} address: http://{rec['bind']}:{rec['port']}")
+    _ops(
+        ctx,
+        plan.role,
+        list(plan.parts),
+        plan.names,
+        {p: r["port"] for p, r in recs.items()},
+        backup_drop,
+        {p: r["bind"] for p, r in recs.items()},
+    )
     _say_binds(ctx, plan, recs)
+
+
+def _proxied(
+    ctx: Ctx,
+    plan: Plan,
+    names: Names,
+    ifaces: list[Addr],
+    vpn_ip: str | None,
+    allow_non_cgnat: bool,
+    *,
+    source: str | None,
+    ref: str | None,
+    dev: bool,
+) -> None:
+    """``--behind-proxy``: the private network's reverse proxy is the public front. Relay and publish listen on the
+    private-network address ONLY (never loopback-wider, never every interface), no Caddy snippet is written, and the
+    forwarded client address is honoured only from the VPN's own networks as a rate-limit key. Every request is public:
+    being on the VPN or forwarded grants nothing."""
+    chosen, given_prefix = (
+        check_vpn_ip(vpn_ip, ifaces, allow_non_cgnat=allow_non_cgnat) if vpn_ip else (detect_vpn_ip(ifaces), None)
+    )
+    if chosen is None:
+        raise InstallError(
+            "no private-network (VPN) address found on this computer. Connect the VPN first, or give it with --vpn-ip."
+        )
+    nets = proxy_networks(chosen, given_prefix, ifaces)
+    plan.behind_proxy, plan.vpn_ip, plan.proxy_nets = True, chosen.ip, tuple(nets)
+    if allow_non_cgnat and vpn_ip and not server.is_cgnat(chosen.ip):
+        ctx.say(server.non_cgnat_warning(chosen, given_prefix))
+    ctx.say(f"Behind the private network's proxy: relay and publish listen on {chosen.ip} only (no Caddy snippet).")
+    recs = {}
+    for p in plan.parts:
+        extra: dict[str, Any] = dict(exact_bind=True, trusted_proxy=",".join(nets))
+        if p == "publish":
+            extra |= dict(workspace_side=False, public_origin=names.url("publish"))
+        recs[p] = install_part(ctx, p, address=chosen.ip, source=source, ref=ref, dev=dev, sync=False, **extra)
+    sync_helper(ctx)
+    st = load(ctx.layout)
+    st["server"] = {
+        "role": plan.role,
+        "names": {p: n for p in plan.parts if (n := names.get(p))},
+        "behind_proxy": True,
+        "vpn_ip": chosen.ip,
+        "proxy_networks": nets,
+    }
+    save(ctx.layout, st)
+    _ops(
+        ctx,
+        plan.role,
+        list(plan.parts),
+        names,
+        {p: r["port"] for p, r in recs.items()},
+        None,
+        {p: r["bind"] for p, r in recs.items()},
+    )
+    for p, rec in recs.items():
+        ctx.say(f"  {p}: {chosen.ip}:{rec['port']} (point the private network's proxy at this address)")
+    ctx.say(f"Forwarded client addresses are used as a rate-limit key only, from: {', '.join(nets)}.")
 
 
 def _caddy(ctx: Ctx, plan: Plan, caddy_dir: str, user: str) -> None:

@@ -579,7 +579,9 @@ def install(app):
     app.state.hub_accounts = hubs
 
     def address_of(request):
-        return d.client_address(request.client.host if request.client else "", request.headers)
+        return d.client_address(
+            request.client.host if request.client else "", request.scope["headers"]
+        )
 
     def endpoint(name):
         async def handle(request: Request):

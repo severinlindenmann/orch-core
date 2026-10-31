@@ -585,3 +585,35 @@ body:has(> #root > .setup) {
   font-size: 13px;
   margin: -0.25rem 0 0.5rem;
 }
+
+.setup .code-line {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85em;
+  padding: 8px 10px;
+  margin: 8px 0;
+  border: 1px solid var(--border, currentColor);
+  border-radius: 6px;
+  background: var(--warning-soft);
+  overflow-wrap: anywhere;
+  word-break: break-all;
+  user-select: all;
+}
+.setup .waiting {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+}
+.setup .waiting .dot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--warning);
+}
+.setup .ask-unsaved p {
+  margin: 0 0 8px;
+}
+.setup .ask-unsaved .segments {
+  margin-top: 8px;
+}

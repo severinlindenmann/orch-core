@@ -3,6 +3,9 @@ import os
 import sys
 
 from . import app as app_mod
+from .dataformat import DataFormatError
+
+_HELD: list = []  # the data-dir handle (shared format lock) of the app being served, for the process lifetime
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -24,6 +27,10 @@ def main(argv: list[str] | None = None) -> int:
     except PushConfigError as exc:  # P3-D40 item 9: a partial push configuration is loud
         print(f"orch-relay: refusing to start: {exc}", file=sys.stderr)
         return 2
+    except DataFormatError as exc:  # the data dir is not at this code's format (or an update runs)
+        print(f"orch-relay: refusing to start: {exc}", file=sys.stderr)
+        return 2
+    _HELD.append(app.state.data_handle)
     uvicorn.run(
         app, host=args.host, port=args.port, workers=1, proxy_headers=False, server_header=False
     )

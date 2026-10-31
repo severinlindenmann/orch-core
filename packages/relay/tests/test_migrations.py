@@ -38,7 +38,9 @@ def test_a_database_of_another_schema_is_refused_not_upgraded(tmp_path):
     con.execute("CREATE TABLE schema_migrations (version TEXT)")  # what the old 25 migrations left
     con.commit()
     con.close()
-    with pytest.raises(RuntimeError, match="another schema"):
+    with pytest.raises(
+        RuntimeError, match="this data does not match this orch-relay version: run `orch update`"
+    ):
         db.init_schema(path)
     con = sqlite3.connect(path)
     names = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -51,7 +53,7 @@ def test_a_newer_version_is_refused(tmp_path):
     con = sqlite3.connect(path)
     con.execute(f"PRAGMA user_version={db.SCHEMA_VERSION + 1}")
     con.close()
-    with pytest.raises(RuntimeError, match="another schema"):
+    with pytest.raises(RuntimeError, match="does not match this orch-relay version"):
         db.init_schema(path)
 
 

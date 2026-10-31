@@ -184,6 +184,28 @@ def make_hub():
 
 
 @pytest.fixture(autouse=True)
+def _formatted_state(monkeypatch, request):
+    """``orch install hub`` leaves ``format.json`` in the state dir and the hub opens it only at that format: a state dir
+    that a test makes with ``HubKeys.init`` gets the same file. A test that wants a bare dir says ``raw_state``."""
+    if request.node.get_closest_marker("raw_state"):
+        return
+    from pathlib import Path
+
+    from format_helpers import write_format
+
+    from orch_hub.keys import HubKeys
+
+    init = HubKeys.init.__func__
+
+    def init_and_format(cls, state, **kw):
+        keys = init(cls, state, **kw)
+        write_format(Path(state))
+        return keys
+
+    monkeypatch.setattr(HubKeys, "init", classmethod(init_and_format))
+
+
+@pytest.fixture(autouse=True)
 def _no_real_mcp_probe(monkeypatch):
     """The page's lazy status check must never reach the real network from a test (#1439)."""
     from orch_hub.access import mcpprobe

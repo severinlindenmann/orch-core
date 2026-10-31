@@ -141,7 +141,8 @@ NOT_FOUND = ("Not found", "Nothing is shared at this address.")
 GONE = {
     "opened": ("Already opened", "This link was already opened and cannot be used again." + ASK),
     "expired": ("Expired", "This link has expired." + ASK),
-    "removed": ("Removed", "This link was removed by the person who shared it." + ASK),
+    # B10: a link is removed by the person who shared it or by their company's hub admin; the page names neither
+    "removed": ("Removed", "This link was removed." + ASK),
     "view": (
         "Ended",
         "This viewing session has ended. Use your link again if it still works." + ASK,

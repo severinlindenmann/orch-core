@@ -123,7 +123,9 @@ def test_gone_pages_in_plain_words(env):
     r = env.open()
     assert r.status_code == 410 and "already opened" in r.text
     env.set("UPDATE shares SET state='revoked'")
-    assert "removed" in env.open().text
+    removed = env.open().text
+    assert "This link was removed." in removed
+    assert "person who shared it" not in removed  # B10: a hub admin can remove it too; the page names nobody
     env.set("UPDATE shares SET state='live', views=0, expires_ms=?", NOW - 1)
     r = env.open()
     assert r.status_code == 410 and "expired" in r.text

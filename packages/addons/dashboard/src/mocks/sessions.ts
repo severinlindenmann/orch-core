@@ -7,7 +7,7 @@ import type { MockStore } from './store'
 
 export const MODE_LABEL: Record<LaunchMode, string> = { refine: 'Refine', work: 'Work on ticket', fix: 'Fix failing checks', continue: 'Continue after feedback' }
 export const HARNESS_LABEL: Record<LaunchHarness, string> = { 'claude-code': 'Claude Code', codex: 'Codex' }
-export const WHERE_LABEL: Record<LaunchWhere, string> = { terminals: 'Terminals', background: 'Background' }
+export const WHERE_LABEL: Record<LaunchWhere, string> = { terminals: 'Command window', background: 'Background' }
 export const MODES = Object.keys(MODE_LABEL) as LaunchMode[]
 export const HARNESSES = Object.keys(HARNESS_LABEL) as LaunchHarness[]
 export const WHERES = Object.keys(WHERE_LABEL) as LaunchWhere[]

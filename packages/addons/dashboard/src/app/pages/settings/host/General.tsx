@@ -227,7 +227,7 @@ export function HostGeneral({ workspace }: { workspace: Workspace }) {
                 {role === 'owner' && (
                   <div className="flex flex-wrap items-start gap-2">
                     <RunnerSwitch ws={workspace.id} on={!runner.enabled} testId="card-runner" variant="secondary" />
-                    {runner.enabled && !runner.terminals && <RunnerSwitch ws={workspace.id} on initialTerminals label="Turn on terminals" testId="card-runner-terminals" variant="secondary" />}
+                    {runner.enabled && !runner.terminals && <RunnerSwitch ws={workspace.id} on initialTerminals label="Turn on Command window" testId="card-runner-terminals" variant="secondary" />}
                   </div>
                 )}
               </div>

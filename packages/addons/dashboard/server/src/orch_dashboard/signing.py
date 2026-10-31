@@ -1024,6 +1024,17 @@ class PublishShare(Action):
     staged_id: Annotated[str, StringConstraints(pattern=r"^ps_[0-9a-f]{32}$")]
 
 
+class AppRelease(Action):
+    """`app.release {staged_id}` through `human.prepare` (#1457): a person's signature over the exact words the host
+    builds from the staged app release (name, who may open it, what it may reach, every file, what changed, the
+    hashes). An app that runs code for other people goes live only after this click; an agent can stage a release,
+    never sign it. `key` is the ticket the release belongs to (the prepared review must be about that ticket)."""
+
+    action: Literal["app_release"]
+    key: Key
+    staged_id: Annotated[str, StringConstraints(pattern=r"^pa_[0-9a-f]{32}$")]
+
+
 class GrantRevoke(Action):
     action: Literal["grant_revoke"]
     grant: RevocableGrantId
@@ -1216,6 +1227,7 @@ PrepareBody = Annotated[
     | PublishSetup
     | AddonEnable
     | PublishShare
+    | AppRelease
     | GrantRevoke
     | RunnerGrant
     | AgentAccess
@@ -1381,6 +1393,8 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
             return "settings.set", {"set": {"publish": {"server": action.server, "share": action.share}}}
         case PublishShare():
             return "publish.share", {"staged_id": action.staged_id}
+        case AppRelease():
+            return "app.release", {"staged_id": action.staged_id}
         case RepoSet():
             return "settings.set", {"set": {"repos": {action.name: action.entry()}}}
         case RepoRemove():
@@ -1452,6 +1466,7 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
 
 #: core `orch.publishclient.approval.MARK` (cross-checked by a test): the first line of every share approval
 PUBLISH_MARK = "Publish approval: share files outside this computer"
+APP_MARK = "App approval: let an app go live"
 DURATIONS = ("grant_hours", "claim_ttl_min", "lease_ttl_min")
 WORKSPACE_OPS = (
     "settings.set",
@@ -1538,6 +1553,15 @@ def expected(action: Action, person: str | None = None):
                 and isinstance(ev[0].get("text"), str)
                 and ev[0]["text"].startswith(PUBLISH_MARK + "\n")
                 and f"\nStaged copy: {action.staged_id}\n" in ev[0]["text"] + "\n"
+            )
+        case AppRelease():
+            # one `log.added` note on the ticket whose words are the host's release text for exactly this staged release
+            return lambda ev: (
+                len(ev) == 1
+                and ev[0].get("type") == "log.added"
+                and isinstance(ev[0].get("text"), str)
+                and ev[0]["text"].startswith(APP_MARK + "\n")
+                and f"\nStaged release: {action.staged_id}\n" in ev[0]["text"] + "\n"
             )
         case PolicySet():
             _, args = host_call(action)

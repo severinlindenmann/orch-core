@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "update.rolled_back",
+    "message": "the update failed and the old version and data were put back",
+    "hint": "see the log",
+    "fix": {
+      "argv": [
+        "orch",
+        "update",
+        "--check"
+      ]
+    },
+    "retryable": false
+  }
+}

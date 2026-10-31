@@ -51,6 +51,7 @@ from ..changes import ChangeError
 from ..channels import Channels
 from ..channels.cli import pair_link
 from ..channels.service import MIN_PASSWORD, ChannelError
+from ..closing import WEB_ALLOWED as CLOSING_ALLOWED
 from ..config import dev_of
 from ..connect import LinkError, build_link
 from ..contract import channelapi as CA
@@ -269,6 +270,7 @@ class WebDeps:
     settings_ctl: Any = (
         None  # webapi.settings_api.SettingsControl (restart hook, bind-all, detector); None = no address writes
     )
+    closing: Any = None  # orch_hub.closing.Closing (remove the hub); None = those routes answer ``unavailable``
     oidc: Any = None  # orch_hub.oidc.service.OidcService (company login); None = those routes answer ``unavailable``
     user_invites: Any = (
         None  # orch_hub.invites.Invites (join / reset / recovery links); None = those routes are ``unavailable``
@@ -880,6 +882,13 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
             raise ApiError("not_allowed")
         if method != "GET" and RESTORE_FENCE.is_set():
             raise ApiError("restore_busy")  # a restore is swapping the state dir: no write may land in the old one
+        if (
+            method != "GET"
+            and self.d.closing is not None
+            and self.d.closing.active()
+            and route.handler not in CLOSING_ALLOWED
+        ):
+            raise ApiError("hub_closing")  # the hub is being removed: default deny for every write (allow list)
         cookie_token = self._cookie(headers.get("cookie", ""), self._cookie_name)
         auth = headers.get("authorization", "")
         bearer = auth[7:].strip() if auth[:7].lower() == "bearer " else ""

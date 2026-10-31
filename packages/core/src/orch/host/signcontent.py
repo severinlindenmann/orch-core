@@ -1292,7 +1292,7 @@ def _event(
     if typ == "ticket.updated":
         return _updated(ev, ref, out, before, texts, ctx)
     if typ == "log.added":
-        from orch.publishclient.approval import MARK
+        from orch.publishclient.approval import APP_MARK, MARK
 
         text = _s(ev.get("text"))
         if text.startswith(MARK + "\n"):  # P5: a share approval; the words are the whole of what is signed
@@ -1301,6 +1301,12 @@ def _event(
                 "Files leave this computer only after you sign. You will see the link once; orch keeps no copy of it."
             )
             return f"Share files of {ref} outside this computer"
+        if text.startswith(APP_MARK + "\n"):  # #1457: an app release; the words are the whole of what is signed
+            out.setdefault("sections", []).append({"id": "app", "title": "What will go live", "text": text})
+            out.setdefault("notes", []).append(
+                "The app goes live for the people it names only after you sign. It runs code in their browsers."
+            )
+            return "Let an app go live"
         out.setdefault("sections", []).append({"id": "note", "title": "Note", "text": text})
         return f"Add a note to {ref}"
     if typ in ("ticket.closed", "ticket.reopened"):

@@ -11,7 +11,16 @@ from typing import Any
 
 from . import ops, server
 from . import parts as P
-from .cli import Ctx, _hub_accepts, check_block, choose_address, install_part, load, save
+from .cli import (
+    Ctx,
+    _hub_accepts,
+    check_block,
+    choose_address,
+    install_part,
+    load,
+    refuse_unfinished_update,
+    save,
+)
 from .helper import sync_helper
 from .parts import InstallError
 from .server import (
@@ -148,6 +157,7 @@ def server_setup(
     """Install the parts of ``role`` for this OS user. ``resolve``/``local`` are the DNS seams of the tests."""
     if role not in ROLES:
         raise InstallError("--role is hub or edge")
+    refuse_unfinished_update(ctx)  # before anything is stopped, written or installed
     parts = [p for p in ROLES[role]]
     wanted = {p: n for p in parts if (n := names.get(p))}
     if hub_vpn_only and role != "hub":
@@ -434,7 +444,8 @@ def _fallback(
         st["hub_name"] = hub_name
         save(ctx.layout, st)
         ctx.say(
-            f"The hub console answers at http://{hub_name}:{recs['hub']['port']} (the name only, not the IP address)."
+            f"The hub console answers at http://{hub_name}:{recs['hub']['port']}; phones pair with this name. "
+            f"The VPN address http://{plan.vpn_ip}:{recs['hub']['port']} keeps working on the private network."
         )
         ctx.say(f"Each Mac must resolve {hub_name} to {plan.vpn_ip} (private DNS); the hub link stays on the IP.")
     for p, rec in recs.items():

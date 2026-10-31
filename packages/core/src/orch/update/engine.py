@@ -35,7 +35,7 @@ from orch import oslock
 from orch.migrate import backup as backup_mod
 from orch.migrate.format import lock_root, read_format
 from orch.migrate.journal import clear_journal, read_journal, unfinished, write_journal
-from orch.migrate.steps import CURRENT, atomic_write
+from orch.migrate.steps import CURRENT, PART_KINDS, atomic_write
 from orch.ops.errors import OrchError
 from orch.ops.runtime import state_dir
 
@@ -58,7 +58,7 @@ from .layout import (
 from .quarantine import QUARANTINE_KEYS
 from .verify import UpdateRefused, Verified, verify_envelope
 
-__all__ = ["Crash", "Outcome", "Seams", "Source", "Updater"]
+__all__ = ["Crash", "Outcome", "Seams", "Source", "Updater", "take_update_lock"]
 
 
 class Crash(BaseException):
@@ -158,14 +158,7 @@ class Updater:
             self.s.after_phase(phase)
 
     def _lock(self) -> int:
-        self.layout.ensure()
-        fd = os.open(self.layout.lock, os.O_RDWR | os.O_CREAT | getattr(os, "O_CLOEXEC", 0), 0o600)
-        try:
-            oslock.flock(fd, oslock.LOCK_EX | oslock.LOCK_NB)
-        except BlockingIOError:
-            os.close(fd)
-            raise OrchError("migrate.running", "another `orch update` is running") from None
-        return fd
+        return take_update_lock(self.layout)
 
     # ------------------------------------------------------------------------------------------ verify
     def check(self, channel: str | None = None) -> tuple[Record, str, Verified]:
@@ -232,6 +225,8 @@ class Updater:
         self.say(f"orch {cur} -> {new} (channel {ch})")
         files = self._download(manifest, new)
         roots, notes = self._roots()
+        for line in notes:
+            self.say(line)
         self._space(roots, manifest)
         runs = self.s.live_runs(self.state) if self.s.live_runs else []
         if runs:
@@ -289,10 +284,12 @@ class Updater:
     def _roots(self) -> tuple[list[tuple[str, str, Path]], list[str]]:
         if self.s.roots is not None:
             return self.s.roots()
-        from orch.migrate.cli import _workspace_roots
+        from orch.migrate.cli import _part_roots, _workspace_roots
 
         wss, notes = _workspace_roots(self.env, None)
-        roots = [("this computer's orch data", "host", self.state)]
+        parts, part_notes = _part_roots(self.env)  # a part dir without format.json is no root (a note instead)
+        notes.extend(part_notes)
+        roots = [("this computer's orch data", "host", self.state), *parts]
         for label, _project, store in wss:
             if store.is_dir():
                 roots.append((label, "workspace", store))
@@ -508,7 +505,7 @@ class Updater:
         quarantine.clear(self.state)
         if frm and self.layout.current_version() != frm and self.layout.tool_dir(frm).is_dir():
             flip_current(self.layout, frm)
-        for b in doc.get("backup_list") or []:
+        for b in restore_order(doc.get("backup_list") or []):
             if Path(b["backup"]).is_dir():
                 backup_mod.restore(Path(b["backup"]), Path(b["root"]), self.env)
         quarantine.clear(self.state)
@@ -544,7 +541,9 @@ class Updater:
     def _recover_restores(self, doc: Mapping[str, Any]) -> bool:
         """Recover every interrupted restore of the roots this update touched BEFORE anything else runs (P1-A:
         ``recover_interrupted``). While one is pending nothing migrates or installs. True if there was one."""
-        roots = [self.state, *[Path(b["root"]) for b in doc.get("backup_list") or []]]
+        listed = restore_order(doc.get("backup_list") or [])
+        parts = [Path(b["root"]) for b in listed if b["kind"] in PART_KINDS]
+        roots = [*parts, self.state, *[Path(b["root"]) for b in listed if b["kind"] not in PART_KINDS]]
         found = False
         for root in dict.fromkeys(roots):
             found = backup_mod.recover_interrupted(root, self.say) or found
@@ -627,6 +626,27 @@ def read_journal_safe(env: Mapping[str, str]) -> dict[str, Any] | None:
             "Nothing was changed. Your backups are in the backups folder next to orch's data (see the log of that "
             "update); ask for help before running the installer again",
         ) from None
+
+
+def take_update_lock(layout: InstallLayout) -> int:
+    """The update engine's own lock (``<data>/update.lock``, flock, not waiting): held by ``orch update`` for the whole
+    update and by ``orch install hub|relay|publish`` for the whole install, so the two never run together. Returns the
+    open fd (the caller closes it); raises ``migrate.running`` when it is held."""
+    layout.ensure()
+    fd = os.open(layout.lock, os.O_RDWR | os.O_CREAT | getattr(os, "O_CLOEXEC", 0), 0o600)
+    try:
+        oslock.flock(fd, oslock.LOCK_EX | oslock.LOCK_NB)
+    except BlockingIOError:
+        os.close(fd)
+        raise OrchError("migrate.running", "another `orch update` is running") from None
+    return fd
+
+
+def restore_order(entries: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+    """The order a rollback puts the roots back (pinned): the part roots FIRST, then the host and the workspaces, each
+    in the order they were backed up. The host root's restore carries the part dirs nested in it over as they are, so
+    it can never undo what a part's own restore made."""
+    return sorted(entries, key=lambda b: b["kind"] not in PART_KINDS)  # False sorts first; the sort is stable
 
 
 def roots_of(info: Mapping[str, Any]) -> list[tuple[str, str, Path]]:

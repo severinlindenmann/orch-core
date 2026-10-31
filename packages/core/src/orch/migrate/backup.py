@@ -40,7 +40,7 @@ from orch.ops.errors import OrchError
 
 from .format import LOCK_FILE, lock_root
 from .journal import restore_pending as journal_restore_pending
-from .steps import atomic_write, is_derived
+from .steps import NESTED_PART_ROOTS, PART_RUNTIME, atomic_write, is_derived
 
 __all__ = ["KEEP", "backups_dir", "create_backup", "list_backups", "prune_backups", "restore"]
 
@@ -49,7 +49,11 @@ MANIFEST = "manifest.json"
 DATA = "data"
 #: top-level entries left out (derived or runtime), and one nested path
 _SKIP_TOP = frozenset({WORK_DIR, LOCK_FILE})
-_SKIP_REL = frozenset({"install/tools", "install/current", "install/update.json", "install/parts"})
+#: NESTED_PART_ROOTS: the part data dirs are roots of their own (backed up and restored by themselves). A restore of
+#: the host root carries the CURRENT ones over (``_carry_list``): it never replaces, merges or reads them. Order of a
+#: rollback (``orch.update.engine``): the part roots first, then the host, so the host's swap cannot undo a part.
+#: PART_RUNTIME (``install/parts/<part>/pid``) is runtime like them: left out of the backup, current one carried over.
+_SKIP_REL = frozenset({"install/tools", "install/current", "install/update.json", *NESTED_PART_ROOTS, *PART_RUNTIME})
 _REVOCATIONS = "revocations.jsonl"
 _SYNC_NAMES = frozenset(
     {"mobile documents", "dropbox", "google drive", "googledrive", "onedrive", "icloud drive", "clouddocs"}
@@ -262,7 +266,7 @@ def _revocation_files(top: Path) -> dict[str, list[str]]:
     found: dict[str, list[str]] = {}
     for dirpath, dirnames, filenames in os.walk(top):
         rel_dir = Path(dirpath).relative_to(top)
-        if rel_dir.parts[:1] and _excluded(rel_dir.parts[0]):
+        if rel_dir.parts and _excluded(rel_dir.as_posix()):  # also nested ones: a part root's own revocations
             dirnames.clear()
             continue
         if _REVOCATIONS in filenames:

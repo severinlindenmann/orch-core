@@ -600,7 +600,19 @@ def _ticket(call: Call, ref: str) -> Any:
     return Viewer.of(call).ticket(call.service.store, ref)
 
 
-def _artifact_bytes(call: Call, view: Any, name: str, room: int) -> tuple[bytes, str]:
+def _hub_too_big(name: str, size: int) -> HostError:
+    """The refusal of a file that does not fit one ``publish_out`` frame: said at prepare, before anything is staged or
+    signed (``publish.send`` keeps its own check). The limit comes from the one number in the hub client."""
+    from orch.hubclient.publish import HUB_FILE_MAX
+
+    return HostError(
+        "quota.host",
+        f"Files over {approval.human_size(HUB_FILE_MAX)} can't go through the hub yet. "
+        f"({name} is {approval.human_size(size)}.)",
+    )
+
+
+def _artifact_bytes(call: Call, view: Any, name: str, room: int, hub_max: int | None = None) -> tuple[bytes, str]:
     """One artifact of the ticket, by the ticket manifest and its digest (as ``artifact.get``): opened without following
     a link, one hard link, a regular file, hashed to the digest the log names."""
     from .visibility import Viewer
@@ -618,6 +630,8 @@ def _artifact_bytes(call: Call, view: Any, name: str, room: int) -> tuple[bytes,
         info = os.fstat(handle.fileno())
         if info.st_size > approval.LIMITS["file_bytes"]:
             raise HostError("quota.host", f"{art.name} is over {approval.human_size(approval.LIMITS['file_bytes'])}")
+        if hub_max is not None and info.st_size > hub_max:
+            raise _hub_too_big(art.name, info.st_size)
         if info.st_size > room:  # before a byte is read: the stage cap (workspace) and the share cap
             raise HostError("quota.host", "the staged copies would use too much room: discard some")
         data = handle.read(approval.LIMITS["file_bytes"] + 1)
@@ -628,7 +642,14 @@ def _artifact_bytes(call: Call, view: Any, name: str, room: int) -> tuple[bytes,
 
 
 def _work_files(
-    call: Call, view: Any, names: list[str], files: list[dict[str, Any]], blobs: list[bytes], used: int, total: int
+    call: Call,
+    view: Any,
+    names: list[str],
+    files: list[dict[str, Any]],
+    blobs: list[bytes],
+    used: int,
+    total: int,
+    hub_max: int | None = None,
 ) -> None:
     """P03: files of the ticket's own work folder, by plain name. The host resolves each below
     ``<project>/.orch-work/<KEY>`` through descriptors (no link followed, no path), checks the name like any share
@@ -652,6 +673,8 @@ def _work_files(
         except ValueError as exc:
             raise HostError("invalid.input", f"{name[:60]!r}: {exc}"[:300]) from None
         room = min(STAGE_BYTES - used - total, approval.LIMITS["share_bytes"] - total, approval.LIMITS["file_bytes"])
+        if hub_max is not None:
+            room = min(room, hub_max)
         try:
             data = workdir_read(service.store.layout, view.key, name, max(room, 0))
         except WorkdirTooBig as exc:
@@ -659,6 +682,8 @@ def _work_files(
                 raise HostError(
                     "quota.host", f"{name} is over {approval.human_size(approval.LIMITS['file_bytes'])}"
                 ) from None
+            if hub_max is not None and exc.size > hub_max:
+                raise _hub_too_big(name, exc.size) from None
             if (
                 approval.LIMITS["share_bytes"] - total <= STAGE_BYTES - used - total
             ):  # the share cap binds, not the stage
@@ -692,7 +717,12 @@ def _prepare(call: Call, args: dict[str, Any]) -> dict[str, Any]:
         raise HostError("op.not_allowed", "an agent prepares shares only on the ticket its session claims")
     _gate(call)
     cfg = _config(service)
-    _hub_route(service, sending=True)  # a hub that cannot carry the share is said now, before anything is copied
+    route = _hub_route(service, sending=True)  # a hub that cannot carry the share is said now, before any copy
+    hub_max = None
+    if route is not None:  # a share through the hub travels in one link frame: say the file limit before the review
+        from orch.hubclient.publish import HUB_FILE_MAX
+
+        hub_max = HUB_FILE_MAX
     kind = args.get("kind", "secret")
     days = args.get("days", 7)
     views = args.get("views", 1 if kind == "once" else 0)
@@ -730,7 +760,7 @@ def _prepare(call: Call, args: dict[str, Any]) -> dict[str, Any]:
         except ValueError as exc:
             raise HostError("invalid.input", f"{name[:60]!r}: {exc}"[:300]) from None
         room = min(STAGE_BYTES - used - total, approval.LIMITS["share_bytes"] - total)
-        data, digest = _artifact_bytes(call, view, name, room)
+        data, digest = _artifact_bytes(call, view, name, room, hub_max)
         total += len(data)
         if total > approval.LIMITS["share_bytes"]:
             raise HostError(
@@ -739,9 +769,11 @@ def _prepare(call: Call, args: dict[str, Any]) -> dict[str, Any]:
         files.append({"name": name, "size": len(data), "sha256": digest})
         blobs.append(data)
     if work_names:
-        _work_files(call, view, work_names, files, blobs, used, total)
+        _work_files(call, view, work_names, files, blobs, used, total, hub_max)
         total = sum(f["size"] for f in files)
     for meta_up in picked:  # the picked files: read and hashed again now; the stage's hash is what is signed
+        if hub_max is not None and meta_up["size"] > hub_max:
+            raise _hub_too_big(meta_up["name"], meta_up["size"])
         room = min(STAGE_BYTES - used - total, approval.LIMITS["share_bytes"] - total)
         data = _upload_read(service, meta_up, room)
         total += len(data)

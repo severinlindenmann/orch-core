@@ -1690,6 +1690,50 @@ def test_a_work_file_cannot_escape_the_folder_or_be_a_link_or_empty_or_big(w, mo
     assert not (w.base() / "stage").exists() or not list((w.base() / "stage").glob("ps_*"))
 
 
+def _no_stage(w) -> bool:
+    return not (w.base() / "stage").exists() or not list((w.base() / "stage").glob("ps_*"))
+
+
+def test_through_the_hub_a_file_over_one_link_frame_is_refused_at_prepare_and_nothing_is_staged(w):
+    from orch.hubclient.publish import HUB_FILE_MAX
+
+    uid, key = w.ticket_with()
+    (work_dir(w, key) / "big.bin").write_bytes(b"x" * (HUB_FILE_MAX + 1))
+    res = w.req("publish.prepare", {"ref": key, "workfiles": ["big.bin"]})
+    assert err(res) == "quota.host"
+    limit = approval.human_size(HUB_FILE_MAX)
+    assert res["error"]["message"].startswith(f"Files over {limit} can't go through the hub yet.")
+    assert f"big.bin is {approval.human_size(HUB_FILE_MAX + 1)}" in res["error"]["message"]
+    assert _no_stage(w) and w.server.requests == []
+
+
+def test_through_the_hub_a_file_of_exactly_hub_file_max_passes_prepare(w):
+    from orch.hubclient.publish import HUB_FILE_MAX
+
+    uid, key = w.ticket_with()
+    (work_dir(w, key) / "edge.bin").write_bytes(b"x" * HUB_FILE_MAX)
+    got = ok(w.req("publish.prepare", {"ref": key, "workfiles": ["edge.bin"]}))["data"]
+    assert got["files"][0]["size"] == HUB_FILE_MAX
+
+
+def test_through_the_hub_a_picked_file_over_the_frame_is_refused_at_prepare(w, monkeypatch):
+    uid, key = w.ticket_with()
+    monkeypatch.setattr("orch.hubclient.publish.HUB_FILE_MAX", 100)  # a pick is at most 1 MiB: shrink the frame instead
+    monkeypatch.setattr(publishing, "PER_MINUTE", 100)
+    pick = ok(w.req("publish.stage_upload", {"name": "p.bin", "b64": base64.b64encode(b"x" * 101).decode()}))["data"]
+    res = w.req("publish.prepare", {"ref": key, "uploads": [pick["upload_id"]]})
+    assert err(res) == "quota.host" and "can't go through the hub yet" in res["error"]["message"]
+    assert _no_stage(w)
+
+
+def test_without_a_hub_route_a_one_megabyte_file_passes_prepare(w, monkeypatch):
+    uid, key = w.ticket_with()
+    (work_dir(w, key) / "mb.bin").write_bytes(b"x" * 1_000_000)
+    monkeypatch.setattr(publishing, "_hub_route", lambda service, **kw: None)  # direct: no frame, no hub limit
+    got = ok(w.req("publish.prepare", {"ref": key, "workfiles": ["mb.bin"]}))["data"]
+    assert got["files"][0]["size"] == 1_000_000
+
+
 def test_a_fifo_in_the_work_folder_is_not_read_and_does_not_hang(w):
     uid, key = w.ticket_with()
     os.mkfifo(work_dir(w, key) / "pipe.txt")

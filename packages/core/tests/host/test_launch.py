@@ -268,13 +268,15 @@ def test_rule_map_every_rule_of_the_old_prompt_is_still_delivered():
 @pytest.mark.parametrize("harness", ["claude-code", "codex"])
 @pytest.mark.parametrize("mode", ["refine", "work", "fix", "continue", "followup", "context"])
 def test_rules_inline_text_is_in_the_prompt_exactly_when_the_rules_flag_is(mode, harness, workdir):
-    from orch.host.launch import RULES_INLINE_TEXT, RULES_PLACEHOLDER
+    from orch.host.launch import RULES_FLAG, RULES_INLINE_TEXT, RULES_PLACEHOLDER
 
     task = {"followup": _FU} if mode == "followup" else None
     argv, _, _ = launch_argv(
         harness, mode, None, "ORC-7", LOGIN, instructions="/abs/AGENTS.orch.md", workdir=workdir, task=task
     )
-    flagged = len(argv) > 1 and argv.index(RULES_PLACEHOLDER) > 0 if RULES_PLACEHOLDER in argv else False
+    flagged = RULES_FLAG in argv
+    if flagged:
+        assert argv[argv.index(RULES_FLAG) + 1] == RULES_PLACEHOLDER
     assert flagged == (harness == "claude-code" and workdir)
     if mode == "context":  # no rules sentence at all
         assert RULES_INLINE_TEXT not in argv[-1]

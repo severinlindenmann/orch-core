@@ -336,11 +336,11 @@ export function ActionsMenu({ ticket, viewer, sign, jump, start, share, shareFil
 }
 
 /** The header's one primary button: what the viewer should do next (a quiet status when an agent works and nothing waits). */
-function PrimaryButton({ ticket, viewer, jump, start, signing, phase, idle = false }: { ticket: TicketDocument; viewer: Viewer; jump: (j: Jump) => void; start: StartAgent; signing: boolean; phase: Phase; /** The agent waits or the plan is unfinished: the card says so, so no "Agent is working" next to it. */ idle?: boolean }) {
+function PrimaryButton({ ticket, viewer, jump, start, signing, phase, idle = false, runLive = false }: { /** the newest run of the ticket is starting or running: no second start next to it */ runLive?: boolean; ticket: TicketDocument; viewer: Viewer; jump: (j: Jump) => void; start: StartAgent; signing: boolean; phase: Phase; /** The agent waits or the plan is unfinished: the card says so, so no "Agent is working" next to it. */ idle?: boolean }) {
   const { workspace } = useWorkspace()
   const av = availableActions(ticket, viewer)
   const blocked = blockedApproval(ticket, viewer)
-  const busy = phase.kind === 'starting' || phase.kind === 'working' || phase.kind === 'waiting' || phase.kind === 'open'
+  const busy = runLive || phase.kind === 'starting' || phase.kind === 'working' || phase.kind === 'waiting' || phase.kind === 'open'
   // A gate that waits for someone else (shown disabled below) comes before offering to start an agent.
   const p = primaryAction(av, { start: start.startable && !blocked && !busy })
   if (signing)
@@ -551,6 +551,7 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
     enabled: ticket.type === 'epic' && !!home,
   })
   const { run, wait } = useTicketAgent(ticket, home)
+  const runLive = run?.state === 'starting' || run?.state === 'running'
   const start = useStartAgent(ticket, viewer)
   const share = useShareTicket(ticket, viewer)
   const shareFiles = useShareFiles(ticket, viewer)
@@ -620,8 +621,8 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
         </h1>
         <div className="flex flex-wrap items-center gap-2 sm:shrink-0">
           <FocusButton ticket={ticket.key} />
-          <PrimaryButton ticket={ticket} viewer={viewer} jump={jump} start={start} signing={signing} phase={phase} idle={!!wait || !!gapOf(ticket)} />
-          <ActionsMenu ticket={ticket} viewer={viewer} sign={sign} jump={jump} start={start} share={share} shareFiles={shareFiles} signing={signing} agentBusy={phase.kind === 'starting' || phase.kind === 'waiting' || phase.kind === 'open'} />
+          <PrimaryButton ticket={ticket} viewer={viewer} jump={jump} start={start} signing={signing} phase={phase} idle={!!wait || !!gapOf(ticket)} runLive={runLive} />
+          <ActionsMenu ticket={ticket} viewer={viewer} sign={sign} jump={jump} start={start} share={share} shareFiles={shareFiles} signing={signing} agentBusy={runLive || phase.kind === 'starting' || phase.kind === 'waiting' || phase.kind === 'open'} />
           {start.node}
           {share.node}
           {shareFiles.node}

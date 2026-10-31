@@ -15,9 +15,10 @@ vi.mock('@/app/workspace', () => ({ useWorkspace: () => ({ workspace: { id: 'w1'
 
 const ago = (ms: number) => new Date(Date.now() - ms).toISOString()
 
-async function header(o: { run?: { state: string; ms: number } | null; wait?: boolean; failed?: boolean; claim?: Record<string, unknown> | null }) {
+async function header(o: { run?: { state: string; ms: number } | null; wait?: boolean; failed?: boolean; claim?: Record<string, unknown> | null; questions?: boolean }) {
   const doc = structuredClone((await import('@/api/client')).mockStore.ticket('DEMO-0043')!)
   Object.assign(doc, { key: 'PW-0002', status: 'open', claim: o.claim ?? null, questions_state: [] })
+  if (o.questions) Object.assign(doc, { questions_state: [{ id: 'Q1', text: 'Which language?', state: 'open', asked_by: 'agent', options: [] }] })
   doc.gates.requirements = { ...doc.gates.requirements, state: 'pending', approvals: [], missing: ['context'] }
   const viewer = { person: 'nobody', role: 'owner' as const, members: [], name: (id: string | null | undefined) => String(id), ready: true }
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } })
@@ -83,5 +84,17 @@ describe('header actions per run state (P01 review)', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Open agent' }))
     expect(openDockOn).toHaveBeenCalledWith('run_1')
     expect(await startItemDisabled()).toBe(true)
+  })
+  it('a live run with a lapsed claim: idle pill, but the primary Start and the menu items are off', async () => {
+    await header({ run: { state: 'running', ms: 5 * 60_000 }, claim: { agent: 'claude-code', session: 's', for: 'u', since: ago(3_600_000), expires: '', live: false } })
+    expect(screen.queryByRole('button', { name: /Start agent/ })).toBeNull()
+    expect(await startItemDisabled()).toBe(true)
+    expect(screen.getByTestId('real-start-agent-choose-item')).toHaveAttribute('aria-disabled', 'true')
+  })
+  it('a live run in the needs phase (open question): no Start button, menu Start and Change agent are off', async () => {
+    await header({ run: { state: 'running', ms: 60_000 }, questions: true })
+    expect(screen.queryByRole('button', { name: /Start agent/ })).toBeNull()
+    expect(await startItemDisabled()).toBe(true)
+    expect(screen.getByTestId('real-start-agent-choose-item')).toHaveAttribute('aria-disabled', 'true')
   })
 })

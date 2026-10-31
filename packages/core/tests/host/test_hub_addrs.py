@@ -304,8 +304,10 @@ def test_the_tombstone_survives_leave_and_a_rejoin_never_takes_an_older_seq(huma
 
     card = copy.deepcopy(CARD)
     hub.join_answer = {"publish_where": signed_publish_where(seq=3)}
+    hub.where_answer = with_pw("10.0.0.5:8105", seq=3)  # the re-join's own hub_where offers the older one too
     human.run("hub.join", {"hub_card": card, "mode": "selective"})
     ok(served.client().req("hub.connect", {"invite": "invite-2", "hub_card": card, "addr": "127.0.0.1:9"}, idem=True))
+    hubaddr.wait_idle()  # the connect's own address work runs in the background: let it finish before the next refresh
     assert _state(served).status == "bound" and held_of(served) is None  # the join stands, the old object is refused
     assert _state(served).publish_where_floors == {HUB_ID: 7}
     hub.where_answer = with_pw("10.0.0.5:8105", seq=8)

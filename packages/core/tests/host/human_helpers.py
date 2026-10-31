@@ -87,13 +87,55 @@ class Human:
         return ok(self.get(rid))["data"]
 
     def check(self, prepared: dict[str, Any], **kw: Any) -> None:
-        signer.check(
-            prepared,
-            workspace_id=self.served.wid,
-            person=kw.pop("person", self.person.ref),
-            device=kw.pop("device", self.person.device),
-            auth=kw.pop("auth", "passphrase"),
-        )
+        try:
+            signer.check(
+                prepared,
+                workspace_id=self.served.wid,
+                person=kw.pop("person", self.person.ref),
+                device=kw.pop("device", self.person.device),
+                auth=kw.pop("auth", "passphrase"),
+            )
+        except signer.SignerRefused as exc:
+            if "review_digest does not match" in str(exc):
+                self._trace_digest(prepared)  # #1823: show which part of the material moved (test helper only)
+            raise
+
+    def _trace_digest(self, prepared: dict[str, Any]) -> None:
+        """#1823: the signer saw material whose digest is not the host's ``review_digest``. Print, for this test run
+        only, the canonical bytes of what the signer got and of the request the host stored, and the top-level and
+        per-review-block keys that differ, so one CI recurrence names the field. Never in product code: review
+        material can carry personal data."""
+        from orch import canon
+        from orch.host import review
+
+        got = prepared.get("material") or {}
+        rid = (prepared.get("request") or {}).get("id")
+        stored: Any = None
+        try:
+            if rid:
+                service = self.served.service
+                rec = service.submit(lambda: service.requests.read(rid)).result()  # on the workspace thread
+                stored = (rec or {}).get("prepared", {}).get("material")
+        except Exception as e:  # noqa: BLE001 - diagnostics only
+            stored = f"<unreadable: {type(e).__name__}>"
+        lines = [
+            "#1823 review_digest trace",
+            f"  host review_digest   = {prepared.get('review_digest')}",
+            f"  digest(received)     = {review.review_digest(got)}",
+        ]
+        if isinstance(stored, dict):
+            lines.append(f"  digest(stored record) = {review.review_digest(stored)}")
+            diff = sorted(k for k in set(got) | set(stored) if canon.dumps(got.get(k)) != canon.dumps(stored.get(k)))
+            lines.append(f"  top-level keys that differ (received vs stored): {diff}")
+            for i, (a, b) in enumerate(zip(got.get("review") or [], stored.get("review") or [], strict=False)):
+                d = sorted(k for k in set(a) | set(b) if canon.dumps(a.get(k)) != canon.dumps(b.get(k)))
+                if d:
+                    lines.append(f"  review[{i}] keys that differ: {d}")
+            lines.append("  stored canonical: " + canon.dumps(stored).decode("utf-8", "replace"))
+        else:
+            lines.append(f"  stored record: {stored!r}")
+        lines.append("  received canonical: " + canon.dumps(got).decode("utf-8", "replace"))
+        print("\n".join(lines))
 
     def owner_proof(self, prepared: dict[str, Any], **over: Any) -> dict[str, Any]:
         """#1198 C9: the owner proof the terminal would make with the owner's backup key (here: the test person's

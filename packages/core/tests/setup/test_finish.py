@@ -452,34 +452,44 @@ def test_finish_when_the_dashboard_does_not_open_is_retryable_and_keeps_the_sess
     assert f.finished and f.outcome == "done"
 
 
-def _complete_finish(tmp, url):
+def _complete_finish(tmp, url, env):
     on = frozenset({"dashboard", "terminals", "worktrees", "start-agent", "quick"})
     f = finish_flow(tmp, FakePorts(), [mkfacts(addons=on, grant_issued=True)])
+    f.e.env = env  # the setup process's own environment: the one the terminal hint reads
     f.e.workspace_url = lambda _wid: url
     return f.dispatch("POST", "finish", {}, {})[1]
 
 
 LOGIN = "http://127.0.0.1:8151/#launch=SECRETTOKEN123&to=%2F"
+SSH = {"USER": "ann", "SSH_CONNECTION": "10.0.0.2 5555 203.0.113.7 22"}
 
 
-def test_run18_p01_headless_finish_returns_a_ready_tunnel_line_without_the_login_link(tmp, monkeypatch):
-    monkeypatch.setenv("SSH_CONNECTION", "10.0.0.2 5555 203.0.113.7 22")
-    monkeypatch.setattr("sys.platform", "linux")
-    monkeypatch.setattr("getpass.getuser", lambda: "anna")
-    out = _complete_finish(tmp, LOGIN)
-    assert out["tunnel"] == "ssh -o ExitOnForwardFailure=yes -L 127.0.0.1:8151:127.0.0.1:8151 anna@203.0.113.7"
-    assert "SECRETTOKEN123" not in out["tunnel"] and "launch" not in out["tunnel"] and "#" not in out["tunnel"]
-
-
-def test_run18_p01_not_headless_finish_has_no_tunnel(tmp, monkeypatch):
+@pytest.fixture(autouse=True)
+def _linux_no_ssh_in_process_environ(monkeypatch):
+    # the process's os.environ must NOT decide: it has no SSH_CONNECTION here, the Env's does
     monkeypatch.delenv("SSH_CONNECTION", raising=False)
     monkeypatch.setenv("DISPLAY", ":0")
     monkeypatch.setattr("sys.platform", "linux")
-    out = _complete_finish(tmp, LOGIN)
+
+
+def test_run18_p01_headless_finish_returns_a_ready_tunnel_line_without_the_login_link(tmp, monkeypatch):
+    monkeypatch.setattr("getpass.getuser", lambda: "anna")
+    out = _complete_finish(tmp, LOGIN, SSH)  # os.environ is not headless; the Env's environment is
+    assert out["tunnel"] == "ssh -o ExitOnForwardFailure=yes -L 127.0.0.1:8151:127.0.0.1:8151 anna@203.0.113.7"
+    assert "USER@SERVER" not in out["tunnel"]
+    assert "SECRETTOKEN123" not in out["tunnel"] and "launch" not in out["tunnel"] and "#" not in out["tunnel"]
+
+
+def test_run18_p01_the_process_environ_does_not_decide(tmp, monkeypatch):
+    monkeypatch.setenv("SSH_CONNECTION", "10.0.0.2 5555 203.0.113.7 22")  # os.environ says SSH, the Env says desktop
+    out = _complete_finish(tmp, LOGIN, {"USER": "ann", "DISPLAY": ":0"})
+    assert "tunnel" not in out
+
+
+def test_run18_p01_not_headless_finish_has_no_tunnel(tmp):
+    out = _complete_finish(tmp, LOGIN, {"USER": "ann", "DISPLAY": ":0"})
     assert "tunnel" not in out and out["url"] == LOGIN
 
 
-def test_run18_p01_a_non_local_url_gets_no_tunnel(tmp, monkeypatch):
-    monkeypatch.setenv("SSH_CONNECTION", "10.0.0.2 5555 203.0.113.7 22")
-    monkeypatch.setattr("sys.platform", "linux")
-    assert "tunnel" not in _complete_finish(tmp, "http://example.com:8151/#launch=x")
+def test_run18_p01_a_non_local_url_gets_no_tunnel(tmp):
+    assert "tunnel" not in _complete_finish(tmp, "http://example.com:8151/#launch=x", SSH)

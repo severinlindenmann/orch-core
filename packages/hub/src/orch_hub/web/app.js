@@ -1,4 +1,4 @@
-import { skeleton, loading, enter, toast, watchDialogs, replaceContent, retryDelay, searchEntries, filterSearch, shortcut, focusIndex, busyButton, reconcileRows, shouldPoll } from "./feel.js";
+import { skeleton, loading, enter, toast, watchDialogs, replaceContent, retryDelay, searchEntries, filterSearch, shortcut, focusIndex, busyButton, reconcileRows, shouldPoll, createSlowWatch, API_TIMEOUT } from "./feel.js";
 // The hub console, minimum for the browser sign flow (design-a8): sign in, register this browser, see what needs me,
 // review one decision and sign it. The DOM is built with createElement and textContent only (lint: tests/web_lint),
 // every string from the workspace goes through renderText first, and nothing here calls a signer except the prompt.
@@ -55,22 +55,33 @@ const field = (label, input) => h("div", {}, h("label", { text: label }), input)
 const banner = (kind, title, text) => h("div", { class: "banner " + kind, role: kind === "bad" ? "alert" : "status" }, h("b", { text: title }), text ? h("div", { class: "small", text }) : null);
 
 // --- API: strict parse, CSRF header, same origin cookie ----------------------------------------------------------------
+const inflight = new Set(); // the calls waiting for the hub; "Try again" on the slow card ends them
 async function api(method, path, body) {
   const headers = { "X-Orch-Csrf": "1" };
   if (body !== undefined) headers["Content-Type"] = "application/json";
-  let res;
+  const ctl = new AbortController();
+  inflight.add(ctl);
+  // reads and ticket calls give up after 10 s ("the hub cannot be reached"); actions that may take long get longer
+  const timer = setTimeout(() => ctl.abort(), method === "GET" || path.startsWith("/switch/") ? API_TIMEOUT : 6 * API_TIMEOUT);
   try {
-    res = await fetch("/api/v1" + path, { method, headers, credentials: "same-origin", cache: "no-store", body: body === undefined ? undefined : JSON.stringify(body) });
-  } catch {
-    connectionFailed();
-    return { status: 0, body: { error: "unavailable" } };
-  }
-  try {
-    const text = new TextDecoder("utf-8", { fatal: true }).decode(await res.arrayBuffer());
-    if (res.status >= 500) connectionFailed();
-    return { status: res.status, body: parseStrict(text) };
-  } catch {
-    return { status: res.status, body: { error: "malformed" } };
+    let res;
+    try {
+      res = await fetch("/api/v1" + path, { method, headers, credentials: "same-origin", cache: "no-store", signal: ctl.signal, body: body === undefined ? undefined : JSON.stringify(body) });
+    } catch {
+      connectionFailed();
+      return { status: 0, body: { error: "unavailable" } };
+    }
+    try {
+      const text = new TextDecoder("utf-8", { fatal: true }).decode(await res.arrayBuffer());
+      if (res.status >= 500) connectionFailed();
+      return { status: res.status, body: parseStrict(text) };
+    } catch {
+      if (ctl.signal.aborted) { connectionFailed(); return { status: 0, body: { error: "unavailable" } }; }
+      return { status: res.status, body: { error: "malformed" } };
+    }
+  } finally {
+    clearTimeout(timer);
+    inflight.delete(ctl);
   }
 }
 const WORDS = {
@@ -351,6 +362,7 @@ async function redeemTicket(t, replace) {
 
 async function landFromTicket(t) {
   history.replaceState(null, "", location.pathname);
+  show(openingCard());
   const p = await api("POST", "/switch/peek", { t });
   if (p.status !== 200) return expiredView();
   const name = renderText(p.body.name ?? "you");
@@ -362,6 +374,13 @@ async function landFromTicket(t) {
   return plain(h("h1", { text: "Different person" }), h("p", { text: "You are signed in as " + cur + " here. This link is for " + name + "." }),
     h("div", { class: "row" }, h("button", { text: "Stay signed in as " + cur, onclick: () => home() }), h("button", { class: "pri", text: "Sign out and continue as " + name, onclick: () => redeemTicket(t, true) })));
 }
+
+// "Opening your hub…" is what the page says from the first paint (index.html has the same card) until a page replaces it.
+// After 5 s without an answer it becomes "Taking longer than usual" with a way out, instead of a bare "Loading…".
+const openingCard = () => h("div", { class: "opening", "data-opening": "", role: "status" }, h("h1", { text: "Opening your hub…" }), h("p", { class: "muted", text: "This usually takes a second." }), h("div", { class: "bar", "aria-hidden": "true" }, h("i")));
+const slowCard = () => h("div", { class: "opening slow", "data-slow": "", role: "status" }, h("h1", { text: "Taking longer than usual" }), h("p", { class: "muted", text: "Your hub is slow to answer. Nothing was lost." }),
+  h("div", { class: "row" }, h("button", { class: "pri", "data-retry": "slow", text: "Try again", onclick: () => { for (const c of [...inflight]) c.abort(); renderRoute(); } }), h("button", { "data-signin": "slow", text: "Sign in with your password", onclick: () => loginView() })));
+const slowWatch = createSlowWatch(() => !root.classList.contains("shelled") && !!root.querySelector("[data-opening], .skeleton"), () => show(slowCard()));
 
 // A session that came from a workspace ticket cannot use admin tools until a real password sign-in.
 async function reauthView() {
@@ -1436,6 +1455,7 @@ async function renderRoute() {
   pendingRoute = true;
   if (routing) return;
   routing = true;
+  slowWatch.start();
   try {
     while (pendingRoute) {
       pendingRoute = false;
@@ -1458,7 +1478,7 @@ async function renderRoute() {
       h("p", { role: "alert", text: "You are still signed in. Nothing was lost. If it keeps happening, tell whoever runs this hub." }),
       h("button", { type: "button", class: "primary", "data-retry": "page", text: "Try again", onclick: () => renderRoute() }));
   }
-  finally { routing = false; }
+  finally { routing = false; slowWatch.cancel(); }
 }
 window.addEventListener("hashchange", renderRoute);
 if (location.pathname === "/oidc/callback") { // the company's sign-in page sent the browser back: finish, then leave this address

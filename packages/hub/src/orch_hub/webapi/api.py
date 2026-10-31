@@ -833,7 +833,7 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
         every other method or path is the JSON ``unknown_op`` (the origin serves nothing else)."""
         if self._hosts and headers.get("host", "") not in self._hosts:
             raise ApiError("not_allowed")
-        hit = self._site.get(path) if method in ("GET", "HEAD") else None
+        hit = self._site.get(path, headers) if method in ("GET", "HEAD") else None
         if hit is None:
             raise ApiError("unknown_op")
         return hit

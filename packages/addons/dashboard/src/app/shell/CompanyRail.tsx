@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { hubTitle } from '@/app/pages/settings/hub/shared'
 import { Building2 } from 'lucide-react'
@@ -26,10 +27,14 @@ export function railInitials(r: Pick<RailRow, 'name' | 'workspace_id'>): string 
 
 /** One ticketed hop to the hub (the rail icon, the Hub page and the workspace menu all use this one way in). */
 export function useOpenHub(ws: string | undefined) {
-  return (returnTo: string = '/') => {
-    if (!ws) return
-    void hubUrl(ws, 'open', returnTo).then((u) => location.assign(u)).catch((e: unknown) => toastApiError(e, 'The hub could not be reached.'))
+  const [busy, setBusy] = useState(false)
+  // `busy` is true from the press until the browser leaves (location.assign) or the ticket fails: buttons say "Opening hub…".
+  const open = (returnTo: string = '/') => {
+    if (!ws || busy) return
+    setBusy(true)
+    void hubUrl(ws, 'open', returnTo).then((u) => location.assign(u)).catch((e: unknown) => { setBusy(false); toastApiError(e, 'The hub could not be reached.') })
   }
+  return Object.assign(open, { busy })
 }
 
 /** The company rail (V3 of the hub-one-app mockup): the hub, then your workspaces. A click is one ticketed hop. */
@@ -41,7 +46,7 @@ export function CompanyRail() {
   if (!ws || !rail.data?.hub) return null
   return (
     <nav aria-label="Company" className="flex w-14 shrink-0 flex-col items-center gap-2 border-r border-border bg-surface py-3" data-testid="company-rail">
-      <button type="button" onClick={() => go('/')} aria-label={hubTitle(rail.data.hub.name)} title={hubTitle(rail.data.hub.name)}
+      <button type="button" onClick={() => go('/')} disabled={go.busy} aria-busy={go.busy || undefined} aria-label={hubTitle(rail.data.hub.name)} title={hubTitle(rail.data.hub.name)}
         className="flex size-9 items-center justify-center rounded-lg bg-surface-2 text-text-muted outline-none hover:text-text focus-visible:ring-2 focus-visible:ring-brand">
         <Building2 className="size-4" aria-hidden />
       </button>

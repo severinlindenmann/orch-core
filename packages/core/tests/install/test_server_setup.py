@@ -14,7 +14,7 @@ import pytest
 from orch.install import cli, ops, server
 from orch.install.parts import InstallError
 from orch.install.serverflow import server_setup
-from orch.install.state import load
+from orch.install.state import load, save
 
 from .test_install_cli import FakeRunner, make
 
@@ -1306,3 +1306,580 @@ def test_a_rerun_keeps_the_port_of_the_part_this_user_already_runs(tmp_path):
     assert load(ctx.layout)["parts"]["hub"]["port"] == 8100  # not 8103
     held.add(8101)  # a port held by something else is still refused or skipped, never taken over
     assert ctx.port_free(8101, "x") is False
+
+
+# ------------------------------------------------------------------------------------------------------ --hub-name
+
+NAME = "core.hub.example.com"
+
+
+def _name_setup(ctx, name=NAME, resolve=None, role="hub", **kw):
+    return server_setup(
+        ctx,
+        role,
+        names=kw.pop("names", server.Names()),
+        local=local,
+        hub_name=name,
+        resolve=resolve or (lambda n: [VPN]),
+        **kw,
+    )
+
+
+def test_hub_name_writes_one_private_http_entry_and_the_link_keeps_the_ip(tmp_path):
+    ctx, out, err, _ = stub_ctx(tmp_path, SystemdFake())
+    _name_setup(ctx, "Core.Hub.Example.com")  # upper case is normalised
+    card = json.loads((ctx.layout.data("hub") / "hub-settings.json").read_text())
+    assert card["addresses"] == [{"kind": "private", "web": f"http://{NAME}:8100", "link": f"{VPN}:8105"}]
+    argv, _ = ctx.runner.started["hub"]
+    assert argv[argv.index("--link-listen") + 1] == f"{VPN}:8105"
+    assert load(ctx.layout)["hub_name"] == NAME
+    assert f"http://{NAME}:8100" in out.getvalue() and "the name only" in out.getvalue()
+    assert "caddy" not in out.getvalue().lower()
+
+
+def test_a_rerun_without_the_flag_keeps_the_name(tmp_path):
+    ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+    _name_setup(ctx)
+    ctx2, *_ = stub_ctx(tmp_path, SystemdFake())
+    server_setup(ctx2, "hub", names=server.Names(), local=local, resolve=lambda n: [VPN])
+    card = json.loads((ctx2.layout.data("hub") / "hub-settings.json").read_text())
+    assert card["addresses"][0]["web"] == f"http://{NAME}:8100"
+    assert load(ctx2.layout)["hub_name"] == NAME
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "core",  # one label
+        "*.hub.example.com",
+        "-a.example.com",
+        "a-.example.com",
+        "a..example.com",
+        "core.hub.example.com.",
+        "core.hub.example.com:8100",
+        "100.64.7.9",
+        "[::1]",
+        "core_x.example.com",
+        "x" * 64 + ".example.com",
+        ".".join(["abcdefghi"] * 30),
+        "",
+    ],
+)
+def test_a_bad_hub_name_is_refused_before_anything_is_installed(tmp_path, bad):
+    ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+    with pytest.raises(InstallError, match="--hub-name"):
+        _name_setup(ctx, bad)
+    assert ctx.runner.started == {} and not load(ctx.layout)["parts"]
+
+
+def test_a_name_that_resolves_elsewhere_or_not_at_all_is_refused(tmp_path):
+    for answers, words in (([VPS], VPS), ([VPN, VPS], VPS), ([], "does not resolve"), (["100.64.7.10"], "100.64.7.10")):
+        ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+        with pytest.raises(InstallError, match=words):
+            _name_setup(ctx, resolve=lambda n, a=answers: a)
+        assert ctx.runner.started == {} and not load(ctx.layout)["parts"] and "hub_name" not in load(ctx.layout)
+
+
+@pytest.mark.parametrize(
+    "kw",
+    [
+        {"names": server.derive_names("example.com")},
+        {"names": server.derive_names(None, hub="hub.example.com")},
+        {"hub_vpn_only": True},
+        {"behind_proxy": True},
+        {"address": "127.0.0.1"},
+    ],
+)
+def test_hub_name_conflicts_are_refused(tmp_path, kw):
+    ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+    with pytest.raises(InstallError):
+        _name_setup(ctx, **kw)
+    assert ctx.runner.started == {} and not load(ctx.layout)["parts"]
+
+
+def test_hub_name_is_refused_for_the_edge_role(tmp_path):
+    ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+    with pytest.raises(InstallError, match="belongs to --role hub"):
+        _name_setup(ctx, role="edge")
+    assert ctx.runner.started == {}
+
+
+def test_hub_name_reaches_the_install_flag(tmp_path):
+    ctx, out, err, _ = stub_ctx(tmp_path, SystemdFake())
+    rc = cli.main(["server", "--role", "hub", "--hub-name", "NOT A NAME"], env=ctx.env, out=out, err=err, ctx=ctx)
+    assert rc == 1 and "--hub-name" in err.getvalue()
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "0x7f.1",
+        "0x64.0x400709",
+        "core.hub.123",
+        "a.localhost",
+        "localhost",
+        "core.hub.0x",
+        "Kore.hub.example.com",  # the Kelvin sign lower-cases to an ASCII "k"
+        "core.hub.example.com\n",
+        " core.hub.example.com",
+        "käse.hub.example.com",
+    ],
+)
+def test_odd_hub_names_are_refused(tmp_path, bad):
+    ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+    with pytest.raises(InstallError, match="--hub-name"):
+        _name_setup(ctx, bad)
+    assert ctx.runner.started == {} and not load(ctx.layout)["parts"]
+
+
+def test_punycode_labels_are_fine():
+    assert server.check_hub_name("xn--kse-pla.hub.example.com") == "xn--kse-pla.hub.example.com"
+
+
+def test_an_ipv6_answer_or_a_zone_is_not_the_vpn_ip(tmp_path):
+    for answers in ([VPN, "fd00::1"], ["fd00::1"], [VPN, "fe80::1%eth0"]):
+        ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+        with pytest.raises(InstallError, match="resolves to"):
+            _name_setup(ctx, resolve=lambda n, a=answers: a)
+        assert ctx.runner.started == {}
+    server.check_hub_name_target(NAME, VPN, lambda n: [VPN, VPN])  # the same address twice is fine
+
+
+def test_domain_relay_or_publish_alone_is_a_conflict_too(tmp_path):
+    for kw in ({"relay": "relay.example.com"}, {"publish": "publish.example.com"}):
+        ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+        with pytest.raises(InstallError, match="--hub-name"):
+            _name_setup(ctx, names=server.derive_names(None, **kw))
+        assert ctx.runner.started == {}
+
+
+def _rerun_kw():
+    return dict(local=local, resolve=lambda n: [VPN])
+
+
+def test_a_rerun_with_a_conflicting_flag_and_a_saved_name_is_refused_naming_the_way_out(tmp_path):
+    ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+    _name_setup(ctx)
+    for kw in (
+        {"names": server.derive_names("example.com")},
+        {"names": server.derive_names(None, hub="hub.example.com")},
+        {"names": server.derive_names(None, relay="relay.example.com")},
+        {"address": "127.0.0.1"},  # (--hub-vpn-only and --behind-proxy are refused earlier for other reasons)
+    ):
+        ctx2, *_ = stub_ctx(tmp_path, SystemdFake())
+        kw.setdefault("names", server.Names())
+        with pytest.raises(InstallError, match="--no-hub-name"):
+            server_setup(ctx2, "hub", **kw, **_rerun_kw())
+        assert ctx2.runner.started == {}
+    assert load(ctx.layout)["hub_name"] == NAME  # nothing changed
+
+
+def test_no_hub_name_clears_it_and_writes_the_ip_entry(tmp_path):
+    ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+    _name_setup(ctx)
+    ctx2, out, err, _ = stub_ctx(tmp_path, SystemdFake())
+    server_setup(ctx2, "hub", names=server.Names(), no_hub_name=True, **_rerun_kw())
+    card = json.loads((ctx2.layout.data("hub") / "hub-settings.json").read_text())
+    assert card["addresses"] == [{"kind": "public", "web": f"http://{VPN}:8100", "link": f"{VPN}:8105"}]
+    assert "hub_name" not in load(ctx2.layout)
+    ctx3, *_ = stub_ctx(tmp_path, SystemdFake())  # and a later rerun stays on the IP
+    server_setup(ctx3, "hub", names=server.Names(), **_rerun_kw())
+    assert json.loads((ctx3.layout.data("hub") / "hub-settings.json").read_text())["addresses"][0]["web"].endswith(
+        f"{VPN}:8100"
+    )
+
+
+def test_no_hub_name_goes_back_to_the_vpn_ip_and_the_name_leaves_the_record(tmp_path):
+    ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+    _name_setup(ctx)
+    assert load(ctx.layout)["hub_name"] == NAME
+    ctx2, *_ = stub_ctx(tmp_path, SystemdFake())
+    server_setup(ctx2, "hub", names=server.Names(), no_hub_name=True, **_rerun_kw())
+    card = json.loads((ctx2.layout.data("hub") / "hub-settings.json").read_text())
+    assert card["addresses"][0]["web"] == f"http://{VPN}:8100"
+    assert "hub_name" not in load(ctx2.layout)
+
+
+def test_no_hub_name_with_hub_name_or_on_the_edge_is_refused(tmp_path):
+    ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+    with pytest.raises(InstallError, match="exclude each other"):
+        _name_setup(ctx, no_hub_name=True)
+    with pytest.raises(InstallError, match="belongs to --role hub"):
+        server_setup(ctx, "edge", names=server.Names(), no_hub_name=True, **_rerun_kw())
+
+
+def test_a_rerun_whose_dns_now_points_elsewhere_is_refused(tmp_path):
+    ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+    _name_setup(ctx)
+    ctx2, *_ = stub_ctx(tmp_path, SystemdFake())
+    with pytest.raises(InstallError, match="resolves to"):
+        server_setup(ctx2, "hub", names=server.Names(), local=local, resolve=lambda n: [VPS])
+    assert ctx2.runner.started == {}
+
+
+def test_a_damaged_saved_name_is_refused_with_the_way_out(tmp_path):
+    ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+    _name_setup(ctx)
+    from orch.install.state import save
+
+    st = load(ctx.layout)
+    st["hub_name"] = "evil host:80"
+    save(ctx.layout, st)
+    ctx2, *_ = stub_ctx(tmp_path, SystemdFake())
+    with pytest.raises(InstallError, match="--no-hub-name"):
+        server_setup(ctx2, "hub", names=server.Names(), **_rerun_kw())
+    assert ctx2.runner.started == {}
+
+
+# ------------------------------------------------------------------------- resolver errors, state written last
+
+
+def _fake_gai(monkeypatch, answers=None, exc=None):
+    """Patch socket.getaddrinfo itself, so the REAL default_resolver and the normalisation are exercised."""
+    import socket
+
+    def gai(host, port, family=0, type=0, proto=0, flags=0):
+        if exc:
+            raise exc
+        return [(socket.AF_INET6 if ":" in a else socket.AF_INET, socket.SOCK_STREAM, 6, "", (a, 0)) for a in answers]
+
+    monkeypatch.setattr(socket, "getaddrinfo", gai)
+
+
+def _real_resolver_setup(tmp_path):
+    ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+    server_setup(ctx, "hub", names=server.Names(), local=local, hub_name=NAME)  # default_resolver
+    return ctx
+
+
+@pytest.mark.parametrize(
+    "answers",
+    [[VPN, "fd00::1"], [VPN, "fe80::1%eth0"], ["fd00::1"], [VPN, "100.64.7.10"], [VPN, "::ffff:100.64.7.9"]],
+)
+def test_the_real_resolver_refuses_an_extra_or_ipv6_answer(tmp_path, monkeypatch, answers):
+    _fake_gai(monkeypatch, answers)
+    ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+    with pytest.raises(InstallError, match="resolves to"):
+        server_setup(ctx, "hub", names=server.Names(), local=local, hub_name=NAME)
+    assert ctx.runner.started == {} and not load(ctx.layout)["parts"]
+
+
+def test_the_real_resolver_refuses_a_failed_lookup_cleanly(tmp_path, monkeypatch):
+    import socket
+
+    _fake_gai(monkeypatch, exc=socket.gaierror(-2, "Name or service not known"))
+    ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+    with pytest.raises(InstallError, match="does not resolve"):
+        server_setup(ctx, "hub", names=server.Names(), local=local, hub_name=NAME)
+    assert ctx.runner.started == {}
+
+
+@pytest.mark.parametrize("exc", [OSError("boom"), UnicodeError("bad label")])
+def test_a_resolver_that_raises_is_a_refusal_not_a_traceback(exc):
+    def boom(n):
+        raise exc
+
+    with pytest.raises(InstallError, match="does not resolve"):
+        server.check_hub_name_target(NAME, VPN, boom)
+
+
+def test_only_the_vpn_ip_passes_the_real_resolver(tmp_path, monkeypatch):
+    _fake_gai(monkeypatch, [VPN, VPN])
+    ctx = _real_resolver_setup(tmp_path)
+    assert load(ctx.layout)["hub_name"] == NAME
+
+
+def test_the_set_normalisation_is_what_refuses_a_zoned_answer():
+    # "fe80::1%eth0" alone must not be taken for a bare address, and "::ffff:..." is not the plain IPv4 one
+    for a in ("fe80::1%eth0", "::ffff:100.64.7.9", "0100.64.7.9"):
+        with pytest.raises(InstallError):
+            server.check_hub_name_target(NAME, VPN, lambda n, a=a: [a])
+    server.check_hub_name_target(NAME, VPN, lambda n: [VPN])
+
+
+def test_no_hub_name_with_a_failing_later_check_changes_nothing(tmp_path):
+    ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+    _name_setup(ctx)
+    f = ctx.layout.data("hub") / "hub-settings.json"
+    before_state, before_card = load(ctx.layout), f.read_text()
+    ctx2, *_ = stub_ctx(tmp_path, SystemdFake())
+    with pytest.raises(InstallError, match="no private-network"):
+        server_setup(
+            ctx2,
+            "hub",
+            names=server.Names(),
+            no_hub_name=True,
+            local=lambda: [server.Addr(VPS)],
+            resolve=lambda n: [VPN],
+        )
+    assert load(ctx2.layout) == before_state and f.read_text() == before_card and ctx2.runner.started == {}
+
+
+@pytest.mark.parametrize(
+    "kw",
+    [
+        {"names": server.derive_names(None, publish="publish.example.com")},
+    ],
+)
+def test_more_conflicting_reruns_are_refused(tmp_path, kw):
+    ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+    _name_setup(ctx)
+    ctx2, *_ = stub_ctx(tmp_path, SystemdFake())
+    kw.setdefault("names", server.Names())
+    with pytest.raises(InstallError, match="--no-hub-name"):
+        server_setup(ctx2, "hub", **kw, **_rerun_kw())
+    assert ctx2.runner.started == {} and load(ctx2.layout)["hub_name"] == NAME
+
+
+@pytest.mark.parametrize(
+    "kw, words",
+    [
+        ({"hub_vpn_only": True}, "--hub-vpn-only needs a name"),  # refused by the older check, before the name check
+        ({"behind_proxy": True}, "--behind-proxy belongs to --role edge"),
+    ],
+)
+def test_older_checks_refuse_a_rerun_with_a_saved_name_first(tmp_path, kw, words):
+    ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+    _name_setup(ctx)
+    ctx2, *_ = stub_ctx(tmp_path, SystemdFake())
+    with pytest.raises(InstallError, match=words):
+        server_setup(ctx2, "hub", names=server.Names(), **kw, **_rerun_kw())
+    assert ctx2.runner.started == {} and load(ctx2.layout)["hub_name"] == NAME
+
+
+def test_no_hub_name_with_nothing_saved_is_a_no_op(tmp_path):
+    ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+    server_setup(ctx, "hub", names=server.Names(), no_hub_name=True, **_rerun_kw())
+    card = json.loads((ctx.layout.data("hub") / "hub-settings.json").read_text())
+    assert card["addresses"][0]["web"] == f"http://{VPN}:8100" and "hub_name" not in load(ctx.layout)
+
+
+def test_no_hub_name_with_a_domain_reaches_the_domain_path_and_drops_the_name(tmp_path):
+    root = tmp_path / "orch.d"
+    (root / "orch-hub").mkdir(parents=True)
+    ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+    _name_setup(ctx)
+    ctx2, *_ = stub_ctx(tmp_path, SystemdFake())
+    server_setup(
+        ctx2,
+        "hub",
+        names=server.derive_names("example.com"),
+        hub_vpn_only=True,
+        no_hub_name=True,
+        caddy_dir=str(root),
+        user="orch-hub",
+        local=local,
+        resolve=lambda n: [VPS],
+    )
+    card = json.loads((ctx2.layout.data("hub") / "hub-settings.json").read_text())
+    assert card["addresses"][0]["web"] == "https://hub.example.com:443" and "hub_name" not in load(ctx2.layout)
+
+
+def test_normalisation_strips_a_zone_and_compares_the_parsed_address():
+    server.check_hub_name_target(NAME, VPN, lambda n: [f"{VPN}%wt0", VPN])  # same address, spelled with a zone
+    server.check_hub_name_target(NAME, "fd00:0:0::1", lambda n: ["fd00::1%wt0"])  # same address, other spelling
+    with pytest.raises(InstallError):
+        server.check_hub_name_target(NAME, "fd00::1", lambda n: ["fd00::2"])
+
+
+# ------------------------------------------------------------------------ --publish-url / --relay-url of a split hub
+
+PUB = "http://100.71.130.135:8102"
+REL = "https://core.relay.example.com"
+
+
+def _arg(ctx, flag):
+    argv, _ = ctx.runner.started["hub"]
+    return argv[argv.index(flag) + 1] if flag in argv else None
+
+
+def test_the_hub_unit_gets_the_given_publish_and_relay_urls(tmp_path):
+    ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+    server_setup(ctx, "hub", names=server.Names(), local=local, publish_url=PUB, relay_url=REL)
+    assert _arg(ctx, "--publish-url") == PUB and _arg(ctx, "--relay-url") == REL
+    assert load(ctx.layout)["hub_urls"] == {"publish": PUB, "relay": REL}
+
+
+def test_a_rerun_keeps_the_urls_and_a_given_one_wins(tmp_path):
+    ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+    server_setup(ctx, "hub", names=server.Names(), local=local, publish_url=PUB, relay_url=REL)
+    ctx2, *_ = stub_ctx(tmp_path, SystemdFake())
+    server_setup(ctx2, "hub", names=server.Names(), local=local)
+    assert _arg(ctx2, "--publish-url") == PUB and _arg(ctx2, "--relay-url") == REL
+    ctx3, *_ = stub_ctx(tmp_path, SystemdFake())
+    server_setup(ctx3, "hub", names=server.Names(), local=local, publish_url="http://100.71.130.136:8102")
+    assert _arg(ctx3, "--publish-url") == "http://100.71.130.136:8102" and _arg(ctx3, "--relay-url") == REL
+
+
+@pytest.mark.parametrize("bad", ["http://example.com:8102", "ftp://100.64.1.1", "nonsense"])
+def test_a_refused_hub_url_installs_nothing(tmp_path, bad):
+    for kw in ({"publish_url": bad}, {"relay_url": bad}):
+        ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+        with pytest.raises(InstallError, match="--(publish|relay)-url"):
+            server_setup(ctx, "hub", names=server.Names(), local=local, **kw)
+        assert ctx.runner.started == {} and not load(ctx.layout)["parts"]
+
+
+def test_a_damaged_saved_url_is_refused(tmp_path):
+    ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+    server_setup(ctx, "hub", names=server.Names(), local=local, publish_url=PUB)
+    st = load(ctx.layout)
+    st["hub_urls"] = {"publish": "http://evil.example.com"}
+    save(ctx.layout, st)
+    ctx2, *_ = stub_ctx(tmp_path, SystemdFake())
+    with pytest.raises(InstallError, match="saved value"):
+        server_setup(ctx2, "hub", names=server.Names(), local=local)
+    assert ctx2.runner.started == {}
+
+
+def test_urls_are_for_the_hub_role_only(tmp_path):
+    ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+    for kw in ({"publish_url": PUB}, {"relay_url": REL}, {"no_publish_url": True}, {"no_relay_url": True}):
+        with pytest.raises(InstallError, match="belong to --role hub"):
+            server_setup(ctx, "edge", names=server.Names(), local=local, **kw)
+        assert ctx.runner.started == {}
+
+
+def test_a_domain_derived_url_still_works_and_an_explicit_one_wins(tmp_path):
+    root = tmp_path / "orch.d"
+    (root / "orch-hub").mkdir(parents=True)
+    ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+    server_setup(
+        ctx, "hub", names=server.derive_names("example.com"), hub_vpn_only=True, caddy_dir=str(root),
+        resolve=lambda n: [VPS], local=local, user="orch-hub",
+    )  # fmt: skip
+    assert _arg(ctx, "--publish-url") == "https://publish.example.com"
+    ctx2, *_ = stub_ctx(tmp_path, SystemdFake())
+    server_setup(
+        ctx2, "hub", names=server.derive_names("example.com"), hub_vpn_only=True, caddy_dir=str(root),
+        resolve=lambda n: [VPS], local=local, user="orch-hub", publish_url=PUB,
+    )  # fmt: skip
+    assert _arg(ctx2, "--publish-url") == PUB and _arg(ctx2, "--relay-url") == "https://relay.example.com"
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "http://8.8.8.8:8102",
+        "http://[::ffff:8.8.8.8]:8102",
+        "http://240.0.0.1:8102",
+        "http://198.18.0.1:8102",
+        "http://publish.example.com",
+    ],
+)
+def test_hub_accepts_refuses_public_reserved_and_plain_named_urls(tmp_path, bad):
+    ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+    with pytest.raises(InstallError, match="--publish-url"):
+        server_setup(ctx, "hub", names=server.Names(), local=local, publish_url=bad)
+    assert ctx.runner.started == {} and not load(ctx.layout)["parts"]
+
+
+@pytest.mark.parametrize("good", ["http://100.71.130.135:8102", "http://10.0.0.1:8102", "https://publish.example.com"])
+def test_hub_accepts_vpn_private_and_https_urls(tmp_path, good):
+    ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+    server_setup(ctx, "hub", names=server.Names(), local=local, publish_url=good)
+    assert _arg(ctx, "--publish-url") == good and load(ctx.layout)["hub_urls"] == {"publish": good}
+
+
+def _domain_rerun(tmp_path, **kw):
+    root = tmp_path / "orch.d"
+    (root / "orch-hub").mkdir(parents=True, exist_ok=True)
+    ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+    server_setup(
+        ctx, "hub", names=server.derive_names(None, hub="hub.example.com", publish="publish.example.com"),
+        hub_vpn_only=True, caddy_dir=str(root), resolve=lambda n: [VPS], local=local, user="orch-hub", **kw,
+    )  # fmt: skip
+    return ctx
+
+
+def _saved_urls(tmp_path):
+    ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+    server_setup(ctx, "hub", names=server.Names(), local=local, publish_url=PUB, relay_url=REL)
+    assert load(ctx.layout)["hub_urls"] == {"publish": PUB, "relay": REL}
+
+
+def test_a_domain_derived_url_beats_the_saved_one_and_the_saved_key_is_dropped(tmp_path):
+    _saved_urls(tmp_path)
+    ctx = _domain_rerun(tmp_path)
+    assert _arg(ctx, "--publish-url") == "https://publish.example.com"
+    assert _arg(ctx, "--relay-url") == REL  # no relay name: the saved one is reused
+    assert load(ctx.layout)["hub_urls"] == {"relay": REL}
+
+
+def test_a_flag_beats_both_the_saved_and_the_domain_derived_url(tmp_path):
+    _saved_urls(tmp_path)
+    other = "http://100.71.130.136:8102"
+    ctx = _domain_rerun(tmp_path, publish_url=other)
+    assert _arg(ctx, "--publish-url") == other
+    assert load(ctx.layout)["hub_urls"] == {"publish": other, "relay": REL}
+
+
+def test_no_publish_url_clears_the_saved_value(tmp_path):
+    _saved_urls(tmp_path)
+    ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+    server_setup(ctx, "hub", names=server.Names(), local=local, no_publish_url=True)
+    assert _arg(ctx, "--publish-url") == "http://127.0.0.1:8102"  # the hub's own default, not the saved value
+    assert _arg(ctx, "--relay-url") == REL
+    assert load(ctx.layout)["hub_urls"] == {"relay": REL}
+    ctx2, *_ = stub_ctx(tmp_path, SystemdFake())
+    server_setup(ctx2, "hub", names=server.Names(), local=local, no_relay_url=True)
+    assert _arg(ctx2, "--relay-url") is None and "hub_urls" not in load(ctx2.layout)
+
+
+@pytest.mark.parametrize(
+    "kw, flags",
+    [
+        ({"publish_url": PUB, "no_publish_url": True}, "--no-publish-url"),
+        ({"relay_url": REL, "no_relay_url": True}, "--no-relay-url"),
+    ],
+)
+def test_no_url_flag_with_its_own_url_flag_is_refused(tmp_path, kw, flags):
+    _saved_urls(tmp_path)
+    before = load(stub_ctx(tmp_path)[0].layout)
+    ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+    with pytest.raises(InstallError, match=flags):
+        server_setup(ctx, "hub", names=server.Names(), local=local, **kw)
+    assert ctx.runner.started == {} and load(ctx.layout) == before
+
+
+@pytest.mark.parametrize("damaged", ["http://100.71.130.135:8102", ["x"], 5])
+def test_a_non_dict_saved_hub_urls_is_refused(tmp_path, damaged):
+    ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+    st = load(ctx.layout)
+    st["hub_urls"] = damaged
+    save(ctx.layout, st)
+    ctx2, *_ = stub_ctx(tmp_path, SystemdFake())
+    with pytest.raises(InstallError, match="saved value"):
+        server_setup(ctx2, "hub", names=server.Names(), local=local)
+    assert ctx2.runner.started == {}
+
+
+@pytest.mark.parametrize("key", ["publish", "relay"])
+@pytest.mark.parametrize("value", [5, None, ["x"], ""])
+def test_a_non_string_saved_url_is_refused(tmp_path, key, value):
+    ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+    st = load(ctx.layout)
+    st["hub_urls"] = {key: value}
+    save(ctx.layout, st)
+    ctx2, *_ = stub_ctx(tmp_path, SystemdFake())
+    with pytest.raises(InstallError, match="saved value"):
+        server_setup(ctx2, "hub", names=server.Names(), local=local)
+    assert ctx2.runner.started == {}
+
+
+def test_install_server_parser_accepts_the_url_flags(tmp_path, monkeypatch):
+    seen = []
+    monkeypatch.setattr("orch.install.serverflow.server_setup", lambda ctx, role, **kw: seen.append((role, kw)))
+    ctx, out, err, _ = stub_ctx(tmp_path, SystemdFake())
+
+    def run(*argv):
+        return cli.main(["server", "--role", "hub", *argv], env=ctx.env, out=out, err=err, ctx=ctx)
+
+    assert run("--publish-url", PUB, "--relay-url", REL) == 0
+    assert run("--no-publish-url", "--no-relay-url") == 0
+    assert err.getvalue() == ""
+    first, second = seen[0][1], seen[1][1]
+    assert (first["publish_url"], first["relay_url"]) == (PUB, REL)
+    assert not first["no_publish_url"] and not first["no_relay_url"]
+    assert second["no_publish_url"] and second["no_relay_url"]
+    assert second["publish_url"] is None and second["relay_url"] is None

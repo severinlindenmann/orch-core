@@ -11,7 +11,7 @@ from typing import Any
 
 from . import ops, server
 from . import parts as P
-from .cli import Ctx, check_block, choose_address, install_part, load, save
+from .cli import Ctx, _hub_accepts, check_block, choose_address, install_part, load, save
 from .helper import sync_helper
 from .parts import InstallError
 from .server import (
@@ -138,6 +138,12 @@ def server_setup(
     drop_check: Callable[[str], None] = server.check_drop_path,
     bus_check: Callable[[str], None] | None = None,
     behind_proxy: bool = False,
+    hub_name: str | None = None,
+    no_hub_name: bool = False,
+    publish_url: str | None = None,
+    relay_url: str | None = None,
+    no_publish_url: bool = False,
+    no_relay_url: bool = False,
 ) -> Plan:
     """Install the parts of ``role`` for this OS user. ``resolve``/``local`` are the DNS seams of the tests."""
     if role not in ROLES:
@@ -154,6 +160,36 @@ def server_setup(
         raise InstallError(
             "--behind-proxy listens on the private-network address only: no --address, no --hub-vpn-only"
         )
+    named = any(names.get(p) for p in ("hub", "relay", "publish"))  # any domain name: the Caddy and https path
+    conflicts = named or hub_vpn_only or behind_proxy or address in (P.ADDRESS_LOOPBACK, "localhost")
+    if no_hub_name and hub_name is not None:
+        raise InstallError("--hub-name and --no-hub-name exclude each other")
+    if (hub_name is not None or no_hub_name) and role != "hub":
+        raise InstallError(f"{'--hub-name' if hub_name is not None else '--no-hub-name'} belongs to --role hub")
+    if hub_name is not None:
+        if named or hub_vpn_only or behind_proxy:
+            raise InstallError(
+                "--hub-name is for a hub without a domain (plain http on the private network): "
+                "not with --domain, --domain-hub, --domain-relay, --domain-publish, --hub-vpn-only or --behind-proxy"
+            )
+        hub_name = server.check_hub_name(hub_name)
+        if address in (P.ADDRESS_LOOPBACK, "localhost"):
+            raise InstallError("--hub-name needs the private-network address: not with --address 127.0.0.1")
+    elif role == "hub" and not no_hub_name and (saved := load(ctx.layout).get("hub_name")):
+        try:  # the state file is input too
+            hub_name = server.check_hub_name(saved)
+        except (InstallError, TypeError):
+            raise InstallError(
+                "the hub name saved by an earlier setup is not a valid host name. Run this command again with "
+                "--no-hub-name (the hub then answers on its private-network address) or give --hub-name."
+            ) from None
+        if conflicts:
+            raise InstallError(
+                f"this hub has the private name {hub_name} from an earlier setup, and the options you gave do not fit "
+                "it. To keep the name, leave out --domain, --domain-hub, --domain-relay, --domain-publish, "
+                "--hub-vpn-only, --behind-proxy and --address 127.0.0.1. To drop the name, add --no-hub-name."
+            )
+    hub_urls = _hub_urls(ctx, role, names, publish_url, relay_url, no_publish_url, no_relay_url)
     if backup_drop:
         drop_check(backup_drop)
     user = user or real_user()
@@ -196,13 +232,28 @@ def server_setup(
         if chosen and hub_vpn_only:  # the gate lets in the VPN's real network, not the whole 100.64.0.0/10
             plan.vpn_net = str(vpn_network(chosen, given_prefix))
         plan.loopback = loopback
+        if hub_name:
+            if not plan.vpn_ip:
+                raise InstallError("--hub-name needs the private-network (VPN) address of this computer")
+            server.check_hub_name_target(hub_name, plan.vpn_ip, resolve)  # before anything is stopped or written
 
     if behind_proxy:
         _proxied(ctx, plan, names, ifaces, vpn_ip, allow_non_cgnat, source=source, ref=ref, dev=dev)
         return plan
 
     if not wanted:
-        _fallback(ctx, plan, address=address, source=source, ref=ref, dev=dev, backup_drop=backup_drop)
+        _fallback(
+            ctx,
+            plan,
+            address=address,
+            source=source,
+            ref=ref,
+            dev=dev,
+            backup_drop=backup_drop,
+            hub_name=hub_name,
+            forget_hub_name=no_hub_name,
+            hub_urls=hub_urls,
+        )
         return plan
 
     plan.dns = check_dns(wanted, resolve, mine)
@@ -223,8 +274,11 @@ def server_setup(
                 link_address=plan.vpn_ip,
                 web_origin=https,
                 vpn_only=hub_vpn_only,
-                publish_url=names.url("publish") if "publish" in tls_all(names, plan, role) else None,
-                relay_url=names.url("relay") if "relay" in tls_all(names, plan, role) else None,
+                forget_hub_name=no_hub_name,
+                publish_url=hub_urls.get("publish")
+                or (names.url("publish") if "publish" in tls_all(names, plan, role) else None),
+                relay_url=hub_urls.get("relay")
+                or (names.url("relay") if "relay" in tls_all(names, plan, role) else None),
             )
         if p == "relay":
             extra = dict(behind_edge=edge, exact_bind=True)
@@ -241,6 +295,7 @@ def server_setup(
                 vpn_net=plan.vpn_net or server.VPN_NET,
             )
     sync_helper(ctx)
+    _remember_hub_urls(ctx, role, hub_urls)
 
     st = load(ctx.layout)
     st["server"] = {
@@ -267,6 +322,72 @@ def server_setup(
     return plan
 
 
+def _hub_urls(
+    ctx: Ctx,
+    role: str,
+    names: Names,
+    publish_url: str | None,
+    relay_url: str | None,
+    no_publish_url: bool = False,
+    no_relay_url: bool = False,
+) -> dict[str, str]:
+    """``--publish-url`` / ``--relay-url`` of the hub (split install: relay and publish run as another user), per key:
+    an explicit flag wins and is saved; else a name-derived (domain) URL wins and the saved value is dropped; else the
+    saved value is reused (checked again: the state file is input). ``--no-…-url`` drops the saved value. The result is
+    what the record keeps. Nothing is written here."""
+    if role != "hub":
+        if publish_url is not None or relay_url is not None or no_publish_url or no_relay_url:
+            raise InstallError("--publish-url, --relay-url, --no-publish-url and --no-relay-url belong to --role hub")
+        return {}
+    keys = (
+        ("publish", publish_url, no_publish_url, "--publish-url", "--no-publish-url"),
+        ("relay", relay_url, no_relay_url, "--relay-url", "--no-relay-url"),
+    )
+    for _, given, forget, flag, no_flag in keys:
+        if forget and given is not None:
+            raise InstallError(f"{flag} and {no_flag} exclude each other")
+    raw = load(ctx.layout).get("hub_urls")
+    damaged = raw is not None and not isinstance(raw, dict)
+    saved: dict[str, Any] = raw if isinstance(raw, dict) else {}
+    out: dict[str, str] = {}
+    for key, given, forget, flag, no_flag in keys:
+        url = given
+        if given is None and not forget and not names.get(key):  # nothing overrides it: the saved value is reused
+            if damaged:
+                raise InstallError(
+                    "the hub URLs saved by an earlier setup are damaged (the saved value is not valid): "
+                    f"give {flag} or {no_flag} again"
+                )
+            url = saved.get(key)
+            if key in saved and not isinstance(url, str):
+                raise InstallError(
+                    f"{flag} {url!r}: the saved value is not valid (not a text): give the flag again or add {no_flag}"
+                )
+        if url is None:
+            continue
+        if not _hub_accepts(url):
+            raise InstallError(
+                f"{flag} {url!r}: the hub accepts https, or http on a loopback or private-network address only"
+                + ("" if given is not None else " (the saved value is not valid: give the flag again)")
+            )
+        out[key] = url
+    return out
+
+
+def _remember_hub_urls(ctx: Ctx, role: str, urls: dict[str, str]) -> None:
+    """Written after the install: the record keeps exactly ``urls`` (a dropped key is gone). Hub role only."""
+    if role != "hub":
+        return
+    st = load(ctx.layout)
+    if st.get("hub_urls") == (urls or None):
+        return
+    if urls:
+        st["hub_urls"] = urls
+    else:
+        st.pop("hub_urls", None)
+    save(ctx.layout, st)
+
+
 def tls_all(names: Names, plan: Plan, role: str) -> set[str]:
     """Parts of the OTHER role of this server are not checked from here; their names are advertised as given
     (the edge user sets up relay and publish; the hub only needs their addresses)."""
@@ -283,6 +404,9 @@ def _fallback(
     ref: str | None,
     dev: bool,
     backup_drop: str | None = None,
+    hub_name: str | None = None,
+    forget_hub_name: bool = False,
+    hub_urls: dict[str, str] | None = None,
 ) -> None:
     """No names: the IP:port behaviour of ``orch install`` (a private-network hub takes its VPN address)."""
     st = load(ctx.layout)
@@ -297,8 +421,21 @@ def _fallback(
             extra["workspace_side"] = False  # the edge user has no workspace; the Macs set publish up themselves
         if p == "hub" and not plan.loopback:
             extra["link_address"] = plan.vpn_ip
+            if hub_name:
+                extra["hub_name"] = hub_name
+            extra["forget_hub_name"] = forget_hub_name
+            extra.update({f"{k}_url": v for k, v in (hub_urls or {}).items()})
         recs[p] = install_part(ctx, p, address=addr, source=source, ref=ref, dev=dev, sync=False, **extra)
     sync_helper(ctx)
+    _remember_hub_urls(ctx, plan.role, hub_urls or {})
+    if hub_name:
+        st = load(ctx.layout)
+        st["hub_name"] = hub_name
+        save(ctx.layout, st)
+        ctx.say(
+            f"The hub console answers at http://{hub_name}:{recs['hub']['port']} (the name only, not the IP address)."
+        )
+        ctx.say(f"Each Mac must resolve {hub_name} to {plan.vpn_ip} (private DNS); the hub link stays on the IP.")
     for p, rec in recs.items():
         ctx.say(f"  {p} address: http://{rec['bind']}:{rec['port']}")
     _ops(

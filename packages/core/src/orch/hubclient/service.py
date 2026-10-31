@@ -478,8 +478,8 @@ def _join(
     ):  # #1838: kept only if it verifies; a bad one (a bad shape too) is dropped and the join stands
         try:
             code, _ = publish_held.offer(new, reply["publish_where"], now_ms())
-        except (HubRefused, KeyError, TypeError, ValueError) as exc:
-            code = getattr(exc, "code", "malformed")
+        except Exception as exc:  # noqa: BLE001  # any failure of the check (JcsError, RecursionError ...) only drops it
+            code = exc.code if isinstance(exc, HubRefused) else "malformed"
         if code is not None:
             _LOG.info("publish_where of the join answer not used (%s)", code)
     save(new)

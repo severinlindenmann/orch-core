@@ -30,6 +30,7 @@ from .keys.fsutil import StateError, read_file, write_atomic
 
 PUBLISH_WHERE_FILE = "publish-where.json"
 _VERSION = 1
+RETRY_SAY_S = 60.0  # a transient failure is retried on every call; its line is said at most this often
 
 
 def _loopback_host(host: str) -> bool:
@@ -92,44 +93,63 @@ def prepare(
 
     ``api_host`` is ``--api-host`` as given (never the default taken from ``--publish-url``), ``share_url`` the
     ``--publish-share-url``. Both must be known; nothing is signed from one."""
+    return _prepare(
+        state, keys, api_host=api_host, share_url=share_url, publish_url=publish_url, dev=dev, say=say, now_ms=now_ms
+    )[0]
+
+
+def _prepare(
+    state: Path,
+    keys: HubKeys,
+    *,
+    api_host: str | None,
+    share_url: str | None,
+    publish_url: str,
+    dev: bool,
+    say: Callable[[str], None],
+    now_ms: Callable[[], int],
+) -> tuple[dict[str, Any] | None, bool]:
+    """:func:`prepare`, and whether a ``None`` may be transient: the op key was unusable or the state file could not be
+    written, so the next call may succeed. A refusal of the configuration itself (a bad origin, a non-canonical
+    ``--api-host``, the private URL, a seq at its ceiling) is never transient: it only changes with a restart."""
     if share_url is None:  # --api-host alone is the old forwarding setting: nothing asked, nothing said
-        return None
+        return None, False
 
     def refuse(why: str) -> None:
         say(f"orch-hub WARN publish_where not served: {why}")
 
     if api_host is None:
         refuse("--publish-share-url needs --api-host (the public API host) as well")
-        return None
+        return None, False
     try:
         server = PW.canonical_origin(server_origin(api_host, dev), dev)
     except Refused:
         refuse("the --api-host origin is not a public https origin (https, or http on loopback for a dev hub only)")
-        return None
+        return None, False
     try:
         share = PW.canonical_origin(share_url, dev)
     except Refused:
         refuse(
             "the --publish-share-url origin is not a public https origin (https, or http on loopback for a dev hub only)"
         )
-        return None
+        return None, False
     canonical_host = urllib.parse.urlsplit(server).netloc
     if (
         canonical_host != api_host
     ):  # the forwarder compares the Host of a send with --api-host as given: they must agree
         refuse(f"--api-host is not in canonical form: use {canonical_host}")
-        return None
+        return None, False
     if _same_origin(share, publish_url):
         refuse("the --publish-share-url is the private --publish-url")
-        return None
+        return None, False
     if _same_origin(server, publish_url):
         refuse("the --api-host is the private --publish-url")
-        return None
+        return None, False
     try:
         signer, cert_id, hub_id = keys.op_signer, keys.op_cert()["o"]["cert_id"], keys.hub_id
     except KeysError, KeyUseError, KeyError, TypeError:
         refuse("the hub's op key is not usable")
-        return None
+        return None, True  # transient: a rotation in progress, a key file briefly unreadable
 
     held = _read_stored(state)
     stored_seq = 0
@@ -139,12 +159,12 @@ def prepare(
             stored_seq = o["seq"] if type(o["seq"]) is int and o["seq"] >= 0 else 0
             if (held.get("server"), held.get("share"), held.get("cert_id")) == (server, share, cert_id):
                 PW.check_publish_where(held["signed"], op_pub=signer.public, hub_id=hub_id, dev=dev)
-                return held["signed"]  # unchanged: the same bytes as before the restart
+                return held["signed"], False  # unchanged: the same bytes as before the restart
         except Refused, KeyError, TypeError, CanonError:
             pass  # damaged, or not what this hub would sign now: signed again below
     if stored_seq >= PW.SEQ_MAX:  # a new object would carry the stored seq with other bytes: every workspace refuses it
         refuse("the stored seq is at its ceiling, so a changed object cannot be signed")
-        return None
+        return None, False
     now = now_ms()
     try:
         signed = signer.sign_object(
@@ -163,12 +183,12 @@ def prepare(
         )
     except KeysError, KeyUseError:
         refuse("the hub's op key is not usable")
-        return None
+        return None, True
     try:
         PW.check_publish_where(signed, op_pub=signer.public, hub_id=hub_id, dev=dev)
     except Refused as e:  # never serve what core would refuse
         refuse(f"the object does not pass its own check ({e.code})")
-        return None
+        return None, False
     try:
         write_atomic(
             state / PUBLISH_WHERE_FILE,
@@ -183,8 +203,8 @@ def prepare(
         )
     except StateError, OSError:
         refuse("the state file could not be written (the seq would not survive a restart)")
-        return None
-    return signed
+        return None, True
+    return signed, False
 
 
 def publisher(
@@ -197,6 +217,7 @@ def publisher(
     dev: bool,
     say: Callable[[str], None],
     now_ms: Callable[[], int] = lambda: int(time.time() * 1000),
+    clock: Callable[[], float] = time.monotonic,
 ) -> Callable[[], dict[str, Any] | None]:
     """A callable that gives the ``hub.publish_where`` to serve NOW, for ``hub_where`` and ``join`` (like ``where``).
 
@@ -204,30 +225,42 @@ def publisher(
     object is returned without touching the disk; when the op cert changes in this process (a rotation) it is prepared
     again, so what is served is always signed by the key the card now certifies. It runs once at once, so a refusal
     is said at start and not on every request. Whether a rotation always restarts the process or not, a served object
-    is never signed by an op key that the card no longer names."""
+    is never signed by an op key that the card no longer names.
+
+    A ``None`` that may be transient (the op key unusable, the state file not writable) is NOT remembered: the next call
+    tries again, and its line is said at most once per :data:`RETRY_SAY_S` seconds. A refusal caused by the configuration
+    itself (a bad origin, a non-canonical ``--api-host``) is remembered, as it cannot change without a restart."""
     mu = threading.Lock()
     memo: list[tuple[Any, dict[str, Any] | None]] = []
+    last_say: list[float] = []
+
+    def limited_say(line: str) -> None:
+        now = clock()
+        if not last_say or now - last_say[0] >= RETRY_SAY_S:
+            last_say[:] = [now]
+            say(line)
 
     def current() -> dict[str, Any] | None:
         try:
             cert_id: Any = keys.op_cert()["o"]["cert_id"]
-        except KeysError, KeyError, TypeError:
+        except KeysError, KeyUseError, KeyError, TypeError:
             cert_id = None
         key = (cert_id, api_host, share_url)
         with mu:
             if memo and memo[0][0] == key:
                 return memo[0][1]
-            got = prepare(
+            got, transient = _prepare(
                 state,
                 keys,
                 api_host=api_host,
                 share_url=share_url,
                 publish_url=publish_url,
                 dev=dev,
-                say=say,
+                say=limited_say,
                 now_ms=now_ms,
             )
-            memo[:] = [(key, got)]
+            if got is not None or not transient:
+                memo[:] = [(key, got)]
             return got
 
     current()

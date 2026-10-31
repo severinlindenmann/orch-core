@@ -48,6 +48,7 @@ from .hooks.store import HookStore
 from .invites import INVITES_FILE, Invites
 from .keys import HubKeys
 from .link import LinkServer, Registry
+from .link.ops import safe_publish_where
 from .link.wkseal import WkSeals
 from .oidc.service import OidcService
 from .oidc.store import OidcStore
@@ -283,15 +284,17 @@ def serve(
         allowed_origins=web_origins,
         api_origin=api_origin,
     )
-    published = publish_where_for(
-        state,
-        keys,
-        api_host=sign_host,
-        share_url=publish_share_url,
-        publish_url=publish_url,
-        dev=cfg.dev,
-        say=lambda line: print(line, file=out, flush=True),
-    )
+    published = safe_publish_where(
+        publish_where_for(
+            state,
+            keys,
+            api_host=sign_host,
+            share_url=publish_share_url,
+            publish_url=publish_url,
+            dev=cfg.dev,
+            say=lambda line: print(line, file=out, flush=True),
+        )
+    )  # never raises: a join reply and a hub_where answer fall back to no publish_where
     bind_warn: str | None = None
     ws_net = ws_bind is not None and not ipaddress.ip_address(ws_bind[0]).is_loopback
     if link_listen is not None or ws_net:  # the same machine rules as the link port for any non-loopback bind

@@ -114,9 +114,10 @@ def from_hub(service: WorkspaceService) -> dict[str, Any] | None:
     dev = hubops.workspace_dev(service)
     for key in ("server", "share"):
         in_force = _canon(cfg[key], dev)
-        if in_force is None or not _same(
-            doc[key], in_force, dev
-        ):  # the record's side may be a raw spelling (older file)
+        # the record's side may be a raw spelling (older file); a value in force that is not canonicalisable (a ``.lan``
+        # set before this rule) is compared as written, so the guards stay on rather than fail open
+        agrees = doc[key] == cfg[key] if in_force is None else _same(doc[key], in_force, dev)
+        if not agrees:
             return None
     return doc  # type: ignore[no-any-return]
 

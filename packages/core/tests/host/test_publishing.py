@@ -1963,6 +1963,22 @@ def test_a_setting_signed_in_another_spelling_of_the_held_origins_is_the_same_ad
     assert status_of(w)["publish_from"] is not None
 
 
+def test_a_value_in_force_that_cannot_be_canonicalised_is_compared_as_written_so_the_guards_stay_on(w, monkeypatch):
+    from orch.host import hubpublish
+
+    hold(w)
+    sign_settings(w)
+    service = w.served.service
+    record = from_hub_file(w)
+    assert hubpublish.from_hub(service) == record
+    monkeypatch.setattr(hubpublish, "_canon", lambda value, dev: None)  # e.g. a ``.lan`` set before the rule
+    assert hubpublish.from_hub(service) == record  # raw equality: not None, not failing open
+    w.human.run("hub.leave", {})
+    assert hubpublish.left(service) == record  # hub_left still applies
+    (w.base() / "from_hub.json").write_text(json.dumps({**record, "share": "https://other.example.org"}))
+    assert hubpublish.from_hub(service) is None  # a record that names other values is not the settings' record
+
+
 def test_the_guard_runs_once_at_plan_time_and_once_at_execution_and_status_reads_each_thing_once(w, monkeypatch):
     from orch.host import hubpublish
 

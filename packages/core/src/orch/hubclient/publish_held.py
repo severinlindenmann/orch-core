@@ -101,8 +101,11 @@ def _card_key(state: Any, now_ms: int) -> tuple[bytes, bool] | None:
 
 
 def drop(state: Any) -> bool:
-    """Delete the held object (the tombstone stays). True when there was one."""
+    """Delete the held object (the tombstone stays, and counts the object first: ``{seq, digest}``, never a bare int, so
+    the same unchanged object is taken again after a rejoin). True when there was one."""
     had = state.publish_where is not None
+    if had:
+        state.publish_where_floors = floors_of(state)
     state.publish_where = None
     return had
 
@@ -148,8 +151,11 @@ def offer(state: Any, signed: Any, now_ms: int) -> tuple[str | None, bool]:
         same = state.publish_where is not None and digest == digest_of(state.publish_where)
     except JcsError:
         return "malformed", changed
-    if state.publish_where is None and floor is not None and o["seq"] == floor_seq and floor["digest"] != digest:
-        return "seq_conflict", changed  # nothing held (a leave, a rejoin, a drop at rest): the tombstone's bytes decide
+    if floor is not None and o["seq"] == floor_seq:
+        # the tombstone's bytes decide, held object or not (a held one below the floor is an inconsistent state);
+        # a floor with no digest (a bare seq of an older file) refuses an equal seq only when nothing is held
+        if floor["digest"] not in (None, digest) or (floor["digest"] is None and state.publish_where is None):
+            return "seq_conflict", changed
     if not same:
         state.publish_where = {"o": dict(signed["o"]), "sig": signed["sig"]}
         changed = True

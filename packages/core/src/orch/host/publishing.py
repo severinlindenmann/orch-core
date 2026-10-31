@@ -1297,7 +1297,8 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
     try:
         if plan["op"] in ("publish.send", "publish.register"):
             # #1838: the plan may be old by now (a leave or a moved address since): the guard runs again here, so the
-            # reason is hub_left / hub_moved and not whatever the hub says to an unbound workspace
+            # reason is hub_left / hub_moved and not whatever the hub says to an unbound workspace. revoke, extend and
+            # password are guarded at plan time only: they act on links already out, and stopping one must stay possible
             _hub_guard(call.service, sending=plan["op"] == "publish.send")
         if plan["op"] == "publish.register":
             return ok_result(_register(call, plan))

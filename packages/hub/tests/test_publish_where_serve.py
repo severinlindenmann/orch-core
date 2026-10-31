@@ -212,6 +212,124 @@ def test_a_rotation_in_this_process_is_served_signed_by_the_new_key(tmp_path, ke
     assert served() is after and lines == []
 
 
+def _counting(monkeypatch):
+    from orch_hub import pubwhere
+
+    calls = [0]
+    real = pubwhere._prepare
+
+    def counted(*a, **k):
+        calls[0] += 1
+        return real(*a, **k)
+
+    monkeypatch.setattr(pubwhere, "_prepare", counted)
+    return calls
+
+
+def test_a_transient_failure_is_not_remembered_and_the_next_call_retries_with_a_rate_limited_line(
+    tmp_path, keys, monkeypatch
+):
+    from orch_hub import pubwhere
+
+    lines: list[str] = []
+    now = [100.0]
+    down = [True]
+    real_write = pubwhere.write_atomic
+
+    def flaky(path, data):
+        if down[0]:
+            raise OSError("disk full")
+        return real_write(path, data)
+
+    monkeypatch.setattr(pubwhere, "write_atomic", flaky)
+    served = publisher(
+        tmp_path / "hub", keys, api_host=HOST, share_url=SHARE, publish_url=PRIVATE, dev=True, say=lines.append,
+        clock=lambda: now[0],
+    )  # fmt: skip
+    assert len(lines) == 1 and "could not be written" in lines[0]
+    assert served() is None and served() is None
+    assert len(lines) == 1  # retried, but said once inside the window
+    now[0] += pubwhere.RETRY_SAY_S
+    assert served() is None and len(lines) == 2  # said again after the window
+    down[0] = False
+    got = served()
+    assert got is not None and _check(keys, got)["share"] == SHARE  # the disk is back: served with no restart
+    assert served() is got and len(lines) == 2  # and now remembered
+
+
+def test_an_unusable_op_key_is_retried_on_the_next_call(tmp_path, keys, monkeypatch):
+    lines: list[str] = []
+    real = keys.op_cert
+    broken = [True]
+
+    def op_cert():
+        if broken[0]:
+            raise KS.KeyUseError("cert_not_usable")
+        return real()
+
+    monkeypatch.setattr(keys, "op_cert", op_cert)
+    served = publisher(
+        tmp_path / "hub", keys, api_host=HOST, share_url=SHARE, publish_url=PRIVATE, dev=True, say=lines.append
+    )
+    assert len(lines) == 1 and "op key is not usable" in lines[0]
+    assert served() is None
+    broken[0] = False
+    assert served() is not None
+
+
+@pytest.mark.parametrize(
+    ("kw", "word"),
+    [
+        ({"api_host": "Pub.Example.COM", "share": "https://share.example.com"}, "canonical form"),
+        ({"api_host": "pub.example.com", "share": "https://10.0.0.5"}, "publish-share-url"),
+        (
+            {"api_host": "pub.example.com", "share": "https://share.example.com", "private": "https://pub.example.com"},
+            "api-host",
+        ),
+    ],
+)
+def test_a_refusal_caused_by_the_configuration_is_remembered_and_said_once(tmp_path, monkeypatch, kw, word):
+    k = HubKeys.init(tmp_path / "real", real=True)
+    calls = _counting(monkeypatch)
+    lines: list[str] = []
+    served = publisher(
+        tmp_path / "real", k, api_host=kw["api_host"], share_url=kw["share"],
+        publish_url=kw.get("private", "http://127.0.0.1:1"), dev=False, say=lines.append,
+    )  # fmt: skip
+    assert served() is None and served() is None and served() is None
+    assert calls[0] == 1 and len(lines) == 1 and word in lines[0]
+
+
+# --- N1: a committed join never becomes an error reply ---------------------------------------------------------------
+
+
+@pytest.mark.parametrize("exc", [KS.KeyUseError("x"), RuntimeError("boom"), OSError("disk"), RecursionError()])
+def test_a_publish_where_provider_that_raises_never_fails_a_committed_join(make_hub, exc):
+    def boom():
+        raise exc
+
+    h = make_hub(publish_where=boom)
+    c = h.open(first=True)
+    assert c.request("join", h.join_body()) == {}  # the join stands, with no publish_where
+    assert h.registry.binding_state(G.WS_A)["status"] == "bound"
+
+
+@pytest.mark.parametrize("exc", [KS.KeyUseError("x"), RuntimeError("boom")])
+def test_a_publish_where_provider_that_raises_leaves_it_out_of_hub_where(make_hub, tmp_path, exc):
+    from orch_hub.link.ops import safe_publish_where
+
+    def boom():
+        raise exc
+
+    SETT.save(tmp_path, SETTINGS)
+    safe = safe_publish_where(boom)  # what serve() hands to the where answer and to the join
+    h = make_hub(where=lambda: SETT.where_answer(tmp_path, publish_where=safe()), publish_where=safe)
+    c = h.open(first=True)
+    assert c.request("join", h.join_body()) == {}
+    got = c.request("hub_where", {})
+    assert "publish_where" not in got and set(got) == {"addresses", "name"}
+
+
 # --- over the real link -------------------------------------------------------------------------------------------
 
 

@@ -133,6 +133,23 @@ class OpContext:
     same_computer: bool = False  # the link's socket shows the peer is on this computer (never a peer-sent claim)
 
 
+def safe_publish_where(
+    fn: Callable[[], dict[str, Any] | None],
+) -> Callable[[], dict[str, Any] | None]:
+    """``fn`` (a hub's ``publish_where`` provider) that never raises: any exception is "this hub advertises none right
+    now" (``None``: ``{}`` in the join reply, no ``publish_where`` member in ``hub_where``). The join is committed
+    before its reply is built, so a failure here must never turn it into an error reply (#1840 N1)."""
+
+    def call() -> dict[str, Any] | None:
+        try:
+            return fn()
+        except Exception as e:  # noqa: BLE001
+            logging.getLogger("orch_hub.link").info("publish_where not available: %s", type(e).__name__)
+            return None
+
+    return call
+
+
 def _require_pin(c: OpContext) -> dict[str, str]:
     pin = c.registry.pin(c.workspace_id)
     if pin is None:
@@ -250,7 +267,7 @@ def join(c: OpContext) -> dict[str, Any]:
     except Refused as e:
         logging.getLogger("orch_hub.link").info("card not admitted by publish at join: %s", e.code)
     c.downstream.binding(c.workspace_id, join_msg["binding"])
-    signed = None if c.publish_where is None else c.publish_where()
+    signed = None if c.publish_where is None else safe_publish_where(c.publish_where)()
     return {} if signed is None else {"publish_where": signed}  # §10.2, §10.9.1
 
 

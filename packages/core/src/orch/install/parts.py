@@ -150,6 +150,30 @@ def _run(argv: list[str]) -> str:
         return ""
 
 
+def _publish_origin(url: str) -> tuple[str, str] | None:
+    """The canonical publish origin and API host (lower case, IDN as A-labels, no trailing dot, no default port, no
+    path, query or fragment), as the hub signs and its forwarder compares them; None when the URL has no scheme or host
+    (no flags then: nothing is guessed)."""
+    public = urlsplit(url)
+    try:
+        port = public.port
+    except ValueError:
+        return None
+    if not public.scheme or not public.hostname:
+        return None
+    scheme = public.scheme.lower()
+    host = public.hostname.lower().removesuffix(".")
+    try:
+        host = host.encode("idna").decode("ascii")
+    except UnicodeError:
+        pass
+    if ":" in host:
+        host = f"[{host}]"
+    if port is not None and (scheme, port) not in (("https", 443), ("http", 80)):
+        host += f":{port}"
+    return f"{scheme}://{host}", host
+
+
 def command_for(
     part: str,
     *,
@@ -197,11 +221,12 @@ def command_for(
         ]
         if relay_url:
             cmd += ["--relay-url", relay_url]
-        public = urlsplit(publish_share_url) if publish_share_url else None
-        if public is not None and public.scheme and public.netloc:
-            # known only for a publish part with a public name: nothing is guessed from --publish-url. A trailing "/" or
-            # a path is never part of the host the forwarder compares nor of an origin: both flags get the bare origin.
-            cmd += ["--api-host", public.netloc, "--publish-share-url", f"{public.scheme}://{public.netloc}"]
+        public = _publish_origin(publish_share_url) if publish_share_url else None
+        if public is not None:
+            # known only for a publish part with a public name: nothing is guessed from --publish-url; both flags get
+            # the canonical bare origin, the form the hub signs and its forwarder compares
+            origin, host = public
+            cmd += ["--api-host", host, "--publish-share-url", origin]
         if behind_edge:  # Caddy on this computer is the edge: it states the client (XFF), the origin is the https name
             cmd += ["--behind-edge", "--trusted-peer", ADDRESS_LOOPBACK]
         if dev and not loop:  # one user on one dev machine: the hub allows its link on a network address

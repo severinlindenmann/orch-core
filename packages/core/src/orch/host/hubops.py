@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import threading
 from collections.abc import Callable
@@ -318,6 +319,11 @@ def _keep_floors(service: WorkspaceService, state: Any) -> None:
         mine = state.publish_where_floors.get(hub_id)
         if mine is None or mine["seq"] < floor["seq"] or (mine["seq"] == floor["seq"] and mine["digest"] is None):
             state.publish_where_floors[hub_id] = floor
+        elif mine["seq"] == floor["seq"] and floor["digest"] is not None and mine["digest"] != floor["digest"]:
+            # should not happen (one seq, two signed objects): ours is kept; say so for the doctor
+            logging.getLogger("orch.host.hubops").warning(
+                "publish_where floors disagree for hub %s at seq %s: kept this one", hub_id, mine["seq"]
+            )
     held = state.publish_where
     floor = state.publish_where_floors.get(state.hub_id)
     if held is not None and floor is not None:

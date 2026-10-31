@@ -2962,8 +2962,8 @@ has no time rule. A hub applies the same origin rule (`canonical_origin`) before
   (Teredo), `2001:db8::/32`, `2002::/16` (6to4; both embed an IPv4 address), `fec0::/10`, `ff00::/8`. A public IP literal is
   allowed (an install without a name). Anything refused is `bad_origin`.
 - With `dev = true` the same rule holds (except the dot rule), and in addition a loopback host (`localhost`, `127.0.0.0/8`,
-  `[::1]`) may use `http` (the lab) or `https`. Dev adds loopback only: a private address, a `.local` name or plain `http`
-  anywhere else stays refused.
+  `[::1]`) may use `http` (the lab) or `https`. Dev lifts the dot rule and allows loopback; a private address, a `.local`
+  name or plain `http` anywhere else stays refused.
 
 **The order rule.** `seq` rises on every change (the hub persists it as `max(stored + 1, now_ms)`, so it keeps rising across
 restores and op rotation). Against the held object: a higher `seq` replaces it; an equal `seq` is accepted only if the new

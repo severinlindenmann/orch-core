@@ -1949,3 +1949,25 @@ def test_install_server_parser_accepts_the_url_flags(tmp_path, monkeypatch):
     assert not first["no_publish_url"] and not first["no_relay_url"]
     assert second["no_publish_url"] and second["no_relay_url"]
     assert second["publish_url"] is None and second["relay_url"] is None
+
+
+@pytest.mark.parametrize(
+    ("url", "host", "origin"),
+    [
+        ("https://Pub.Example:443/", "pub.example", "https://pub.example"),
+        ("https://pub.example.", "pub.example", "https://pub.example"),
+        ("http://pub.example:80", "pub.example", "http://pub.example"),
+        ("https://pub.example:8443/x?y", "pub.example:8443", "https://pub.example:8443"),
+    ],
+)
+def test_the_publish_name_reaches_the_hub_in_canonical_form(url, host, origin):
+    """#1840: the hub signs publish_where only when --api-host is the canonical netloc of its server origin."""
+    from orch.install import parts as P
+
+    assert P._publish_origin(url) == (origin, host)
+
+
+def test_a_publish_name_without_a_scheme_gives_no_flags():
+    from orch.install import parts as P
+
+    assert P._publish_origin("pub.example") is None

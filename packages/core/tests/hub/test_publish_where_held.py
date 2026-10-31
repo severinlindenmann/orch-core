@@ -9,6 +9,7 @@ import logging
 
 import pytest
 
+from orch.canon.jcs import JcsError
 from orch.hubclient import HubRefused, HubState, publish_held
 
 from .fake import FakeHub, signed_publish_where
@@ -103,6 +104,107 @@ def test_a_badly_shaped_publish_where_is_dropped_with_a_log_line_and_the_join_st
     assert [r.getMessage() for r in caplog.records if "publish_where" in r.getMessage()] == [
         "publish_where of the join answer not used (malformed)"
     ]
+
+
+def _deep(depth: int) -> dict:
+    d: dict = {}
+    for _ in range(depth):
+        d = {"o": d}
+    return d
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "x",
+        5,
+        [],
+        [signed_publish_where()],
+        None,
+        _deep(10),  # (a RecursionError of the check is the monkeypatched test below: JCS signs 16 levels at most)
+        {**signed_publish_where(), "x" * 5000: "y" * (1 << 20)},  # oversized, and an extra key
+        {**signed_publish_where(), "x": 1},
+    ],
+    ids=["str", "int", "list", "list-of-object", "null", "deep", "oversized", "extra-key"],
+)
+def test_the_join_binds_whatever_the_publish_where_value_is_and_leaves_the_floors_alone(
+    host: Host, hub: FakeHub, value: object
+) -> None:
+    hub.join_answer = {"publish_where": signed_publish_where(seq=7)}
+    host.join()
+    host.leave()
+    floors = copy.deepcopy(host.state.publish_where_floors)
+    assert floors[HUB_ID]["seq"] == 7
+    hub.join_answer = {"publish_where": value}
+    host.join(binding_seq=2)
+    assert host.state.status == "bound" and host.state.binding_seq == 2
+    assert host.state.publish_where is None and host.state.publish_where_floors == floors
+
+
+@pytest.mark.parametrize("exc", [JcsError("x"), RecursionError(), OverflowError(), RuntimeError("boom")])
+def test_any_exception_of_the_check_only_drops_the_object_and_the_join_stands(
+    host: Host, hub: FakeHub, monkeypatch: pytest.MonkeyPatch, exc: Exception
+) -> None:
+    def boom(*a: object, **k: object) -> None:
+        raise exc
+
+    monkeypatch.setattr(publish_held, "check_publish_where", boom)
+    hub.join_answer = {"publish_where": signed_publish_where(seq=3)}
+    host.join()
+    assert host.state.status == "bound" and host.state.publish_where is None and host.state.publish_where_floors == {}
+
+
+def test_a_held_object_below_the_floor_never_lets_other_bytes_in_at_the_floor_seq(host: Host, hub: FakeHub) -> None:
+    first = signed_publish_where(seq=5)
+    hub.join_answer = {"publish_where": first}
+    host.join()
+    st = host.state
+    older = signed_publish_where(seq=4)
+    st.publish_where = copy.deepcopy(older)  # an inconsistent state: the held object is older than the floor
+    assert st.publish_where_floors[HUB_ID]["seq"] == 5
+    other = signed_publish_where(seq=5, share="https://other.example.org")
+    assert publish_held.offer(st, other, NOW) == ("seq_conflict", False)
+    assert st.publish_where == older
+    assert publish_held.offer(st, copy.deepcopy(first), NOW)[0] is None  # the same bytes as the floor's are fine
+
+
+def test_dropping_folds_the_held_object_into_the_floor_so_the_same_object_is_taken_again(
+    host: Host, hub: FakeHub
+) -> None:
+    first = signed_publish_where(seq=7)
+    hub.join_answer = {"publish_where": first}
+    host.join()
+    st = host.state
+    st.publish_where_floors[HUB_ID] = {"seq": 7, "digest": None}  # a floor of an older file
+    assert publish_held.drop(st) is True
+    assert st.publish_where_floors[HUB_ID] == {"seq": 7, "digest": publish_held.digest_of(first)}  # never a bare int
+    assert publish_held.offer(st, copy.deepcopy(first), NOW)[0] is None and st.publish_where == first
+    other = signed_publish_where(seq=7, share="https://other.example.org")
+    assert publish_held.offer(st, other, NOW)[0] == "seq_conflict"
+    # the drop at rest in read() does the same
+    st.publish_where_floors[HUB_ID] = {"seq": 7, "digest": None}
+    st.revoked_op_certs.append(st.card["op_cert"]["o"]["cert_id"])
+    assert publish_held.read(st, NOW) == (None, True)
+    assert st.publish_where_floors[HUB_ID] == {"seq": 7, "digest": publish_held.digest_of(first)}
+
+
+def test_after_leave_and_rejoin_the_same_unchanged_object_is_accepted_and_a_different_one_is_not(
+    host: Host, hub: FakeHub
+) -> None:
+    first = signed_publish_where(seq=7)
+    hub.join_answer = {"publish_where": first}
+    host.join()
+    host.state.publish_where_floors[HUB_ID] = {"seq": 7, "digest": None}  # a floor of before digests
+    host.leave()
+    assert host.state.publish_where is None
+    assert host.state.publish_where_floors[HUB_ID] == {"seq": 7, "digest": publish_held.digest_of(first)}
+    hub.join_answer = {"publish_where": copy.deepcopy(first)}
+    host.join(binding_seq=2)
+    assert host.state.publish_where == first
+    host.leave()
+    hub.join_answer = {"publish_where": signed_publish_where(seq=7, share="https://other.example.org")}
+    host.join(binding_seq=3)
+    assert host.state.status == "bound" and host.state.publish_where is None
 
 
 def test_a_higher_seq_replaces_and_an_equal_one_must_be_the_same_bytes(host: Host, hub: FakeHub) -> None:

@@ -25,21 +25,24 @@ from .visibility import Viewer
 if TYPE_CHECKING:
     from .workspace import Call
 
-__all__ = ["WORKDIR_OPS", "WRITE_OPS", "serve"]
+__all__ = ["WORKDIR_OPS", "WRITE_OPS", "may_manage_workdir", "serve"]
 
 WORKDIR_OPS: dict[str, int] = {"workdir.get": 1, "workdir.delete": 1}
 WRITE_OPS = frozenset({"workdir.delete"})
 CAPS = ["workdir/1"]
 _SCHEMA = {
     "type": "object",
-    "properties": {"ticket": {"type": "string", "minLength": 1, "maxLength": 80}},
+    "properties": {
+        "ticket": {"type": "string", "minLength": 1, "maxLength": 80},
+        "list": {"type": "boolean"},  # workdir.get: also name the files directly in the folder (P03, at most 20)
+    },
     "required": ["ticket"],
     "additionalProperties": False,
 }
 _VALIDATOR = Draft202012Validator(_SCHEMA)
 
 
-def _may_delete(viewer: Viewer, view: Any) -> bool:
+def may_manage_workdir(viewer: Viewer, view: Any) -> bool:
     return viewer.manager or (
         viewer.person is not None
         and (viewer.person == view.owner or viewer.person in (view.people.get("assignees") or ()))
@@ -82,13 +85,15 @@ def serve(call: Call) -> dict[str, Any]:
         out: dict[str, Any] = {"codebase": False, "exists": found is not None, "folder": f".orch-work/{view.key}"}
         if found is not None:
             out.update(files=found["files"], bytes=found["bytes"], truncated=bool(found["truncated"]))
+            if args.get("list") is True and may_manage_workdir(viewer, view):  # the same people who may delete it
+                out["items"], out["items_truncated"] = _items(layout, view.key)
         return ok_result(out)
     from .auth import Redactor
 
     idem = request_idem(op, opts)  # required: a write with an outcome record, like the other host-side writes
     if service.state == "degraded":
         raise HostError("workspace.degraded", f"the workspace is read-only: {service.cause}")
-    if not _may_delete(viewer, view):
+    if not may_manage_workdir(viewer, view):
         raise HostError("op.not_allowed", "only an owner, a maintainer, the ticket's owner or an assignee deletes it")
     if has_codebase(store, view):
         raise HostError("invalid.input", f"{view.key} has a codebase: it has no work folder")
@@ -122,6 +127,26 @@ def serve(call: Call) -> dict[str, Any]:
         session=(call.frame.get("auth") or {}).get("session"),
         redactor=Redactor((call.frame.get("auth") or {}).get("grant")),
     )  # fmt: skip
+
+
+def _items(layout: Any, key: str) -> tuple[list[dict[str, Any]], bool]:
+    """P03: the plain files directly in the folder a share could take (names the server accepts), 20 at most, and
+    whether there were more."""
+    from orch.layout import LayoutError, workdir_files
+    from orch.publishclient import approval
+
+    def takes(name: str) -> bool:
+        try:
+            approval.check_name(name)
+        except ValueError:
+            return False
+        return True
+
+    try:
+        found, more = workdir_files(layout, key, limit=approval.LIMITS["files"], accept=takes)
+    except LayoutError:
+        return [], False
+    return [{"name": n, "bytes": b} for n, b in found], more
 
 
 def _live() -> frozenset[str]:

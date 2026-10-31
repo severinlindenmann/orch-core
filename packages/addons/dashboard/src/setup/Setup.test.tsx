@@ -197,7 +197,10 @@ async function reveal() {
   await screen.findByRole('heading', { name: 'Your recovery words' })
 }
 async function check() {
-  fireEvent.click(screen.getByRole('button', { name: 'I saved my words — continue →' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  // nothing copied, saved or printed: the page asks once (P15)
+  const yes = await screen.findByRole('button', { name: 'Yes, I wrote them down — continue' })
+  fireEvent.click(yes)
 }
 afterEach(() => {
   cleanup()
@@ -793,7 +796,7 @@ test('P11: step 4 has no text input, no checkbox and no word check; Save as file
   expect(await created[0].text()).toContain('24. demo-word-24')
   expect(f.calls.length).toBe(before) // the words never go back to the server
   expect(JSON.stringify(f.calls)).not.toContain('demo-word-')
-  expect(screen.getByRole('button', { name: 'I saved my words — continue →' })).toBeEnabled()
+  expect(screen.getByRole('button', { name: 'Continue →' })).toBeEnabled()
 })
 
 test('the progress words are shown, and the unfinished items are named in words', async () => {
@@ -1451,7 +1454,7 @@ test('the recovery page uses one name, recovery words, and names no terminal com
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Your recovery words' })
-  expect(screen.getByRole('button', { name: 'I saved my words — continue →' })).toBeEnabled()
+  expect(screen.getByRole('button', { name: 'Continue →' })).toBeEnabled()
   const text = document.body.textContent ?? ''
   expect(text).not.toMatch(/secret words|recovery code/i)
   expect(screen.getByText(/you get new words next time/)).not.toHaveTextContent('orch setup')
@@ -1668,24 +1671,58 @@ test('r14-P07: the welcome page says one plain sentence; the folder name and pat
   expect(fold.textContent).toContain('/')
 })
 
-test('r12-P15: the recovery words say Not saved yet; Continue works; Copy turns into a tick (display only)', async () => {
+test('r12-P15: the recovery words say what to do; Copy turns into a tick (display only)', async () => {
   const writeText = vi.fn().mockResolvedValue(undefined)
   Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
   const f = fake()
   render(<Setup api={f.api} />)
   await reveal()
-  expect(screen.getByRole('status')).toHaveTextContent('Not saved yet')
-  expect(screen.getByRole('button', { name: 'I saved my words — continue →' })).toBeEnabled()
+  expect(screen.getByRole('status')).toHaveTextContent('Copy, save or print your words before you continue.')
+  expect(screen.getByRole('status')).not.toHaveTextContent('Not saved yet')
   fireEvent.click(screen.getByRole('button', { name: 'Copy' }))
   const copied = await screen.findByRole('button', { name: 'Copied ✓' })
   expect(copied).toHaveClass('done')
   expect(screen.getByRole('status')).toHaveTextContent('Recovery words copied')
-  expect(screen.getByRole('status')).not.toHaveTextContent('Not saved yet')
   // display only: no call carries it, and the step still needs its own confirm
   expect(f.calls.some((c) => c.path === 'secrets/confirm')).toBe(false)
-  expect(screen.getByRole('button', { name: 'I saved my words — continue →' })).toBeEnabled()
+  expect(screen.getByRole('button', { name: 'Continue →' })).toBeEnabled()
   window.dispatchEvent(new Event('afterprint'))
   expect(await screen.findByRole('button', { name: 'Printed ✓' })).toHaveClass('done')
+})
+
+test('P15: Continue with nothing used asks once; Go back hides the question and sends nothing', async () => {
+  const f = fake()
+  render(<Setup api={f.api} />)
+  await reveal()
+  const before = f.calls.length
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  expect(screen.getByRole('status')).toHaveTextContent('You have not copied, saved or printed your words.')
+  expect(screen.getByRole('status')).toHaveTextContent('Did you write them down another way?')
+  expect(f.calls.length).toBe(before)
+  fireEvent.click(screen.getByRole('button', { name: 'Go back' }))
+  expect(screen.queryByText('Did you write them down another way?')).toBeNull()
+  expect(screen.getByRole('status')).toHaveTextContent('Copy, save or print your words before you continue.')
+  expect(f.calls.some((c) => c.path === 'secrets/confirm')).toBe(false)
+  expect(screen.getByRole('heading', { name: 'Your recovery words' })).toBeInTheDocument()
+})
+
+test('P15: "Yes, I wrote them down" confirms; after Copy, Continue confirms at once without asking', async () => {
+  const f = fake()
+  render(<Setup api={f.api} />)
+  await reveal()
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'Yes, I wrote them down — continue' }))
+  await waitFor(() => expect(f.calls.some((c) => c.path === 'secrets/confirm')).toBe(true))
+  cleanup()
+  const g = fake()
+  Object.defineProperty(navigator, 'clipboard', { value: { writeText: vi.fn().mockResolvedValue(undefined) }, configurable: true })
+  render(<Setup api={g.api} />)
+  await reveal()
+  fireEvent.click(screen.getByRole('button', { name: 'Copy' }))
+  await screen.findByRole('button', { name: 'Copied ✓' })
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  expect(screen.queryByText('Did you write them down another way?')).toBeNull()
+  await waitFor(() => expect(g.calls.some((c) => c.path === 'secrets/confirm')).toBe(true))
 })
 
 test('r14-P07: the approval page uses everyday words: Password, AI helpers; no Claude Code, Passphrase or Your key', async () => {

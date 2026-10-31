@@ -67,6 +67,7 @@ W2H_OPS: dict[str, str | None] = {
     "binding_put": None,
     "snapshot_get": None,
     "org_skills_get": None,
+    "closing_get": None,  # #1463 (hub protocol 9.7): {} -> {"closing": <hub.closing> | null}
     "mcp_servers_get": None,
     "org_secrets_get": None,
     "secret_use": None,
@@ -189,6 +190,7 @@ _REPLY: dict[str, Callable[[dict[str, Any]], bool]] = {
     "audience_get": lambda b: set(b) == {"people", "teams"} and type(b["people"]) is list and type(b["teams"]) is list,
     "directory_get": lambda b: set(b) == {"entries"} and type(b["entries"]) is list,
     "org_skills_get": lambda b: set(b) == {"bundle"} and type(b["bundle"]) is dict,
+    "closing_get": lambda b: set(b) == {"closing"} and (b["closing"] is None or type(b["closing"]) is dict),
     "mcp_servers_get": lambda b: set(b) == {"bundle"} and type(b["bundle"]) is dict,
     "org_secrets_get": lambda b: set(b) == {"bundle"} and type(b["bundle"]) is dict,
     "log_sync": lambda b: set(b) == {"seq", "head"} and type(b["seq"]) is int and type(b["head"]) is str,

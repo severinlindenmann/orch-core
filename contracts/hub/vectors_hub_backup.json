@@ -1691,6 +1691,194 @@
    "args": {
     "files": [
      {
+      "path": "hk_root.key",
+      "sha256": "937bf0b94264f0963d7191b327f8ab0eeb2fab2abb395b96fcef2182d0edeb5d",
+      "size": 22
+     },
+     {
+      "path": "hub-removal.json",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "size": 1
+     },
+     {
+      "path": "hub-settings.json",
+      "sha256": "78c9298a27e360d1d4272a2276acb9d4c067c768a12411a3c93644be1ff78683",
+      "size": 26
+     },
+     {
+      "path": "hxk.key",
+      "sha256": "7b09d8d932b1265627df1c16773fbf80092d2f34a4f9312d0e84c8ba93b1c308",
+      "size": 18
+     },
+     {
+      "path": "meta.json",
+      "sha256": "b1bf96c190ef22121f58f24a317762295a322e61eb04791328a68c66235dc606",
+      "size": 18
+     },
+     {
+      "path": "op/7/cert.json",
+      "sha256": "247907d7b0880261bc3b3ee46d2911dda8812c191c65cee56b8a3ba8519d2bac",
+      "size": 13
+     },
+     {
+      "path": "registry.db",
+      "sha256": "29919c6c30ea312dc8f42b741c3767167bb905ebfa07ceead66a2220a7769088",
+      "size": 38
+     }
+    ]
+   },
+   "check": "file_list",
+   "expect": {
+    "error": "backup_invalid",
+    "reason": "files_path"
+   },
+   "name": "files_excluded_hub_removal_json"
+  },
+  {
+   "args": {
+    "files": [
+     {
+      "path": "hk_root.key",
+      "sha256": "937bf0b94264f0963d7191b327f8ab0eeb2fab2abb395b96fcef2182d0edeb5d",
+      "size": 22
+     },
+     {
+      "path": "hub-settings.json",
+      "sha256": "78c9298a27e360d1d4272a2276acb9d4c067c768a12411a3c93644be1ff78683",
+      "size": 26
+     },
+     {
+      "path": "hxk.key",
+      "sha256": "7b09d8d932b1265627df1c16773fbf80092d2f34a4f9312d0e84c8ba93b1c308",
+      "size": 18
+     },
+     {
+      "path": "meta.json",
+      "sha256": "b1bf96c190ef22121f58f24a317762295a322e61eb04791328a68c66235dc606",
+      "size": 18
+     },
+     {
+      "path": "op/7/cert.json",
+      "sha256": "247907d7b0880261bc3b3ee46d2911dda8812c191c65cee56b8a3ba8519d2bac",
+      "size": 13
+     },
+     {
+      "path": "registry.db",
+      "sha256": "29919c6c30ea312dc8f42b741c3767167bb905ebfa07ceead66a2220a7769088",
+      "size": 38
+     },
+     {
+      "path": "remove-order.json",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "size": 1
+     }
+    ]
+   },
+   "check": "file_list",
+   "expect": {
+    "error": "backup_invalid",
+    "reason": "files_path"
+   },
+   "name": "files_excluded_remove_order_json"
+  },
+  {
+   "args": {
+    "files": [
+     {
+      "path": "hk_root.key",
+      "sha256": "937bf0b94264f0963d7191b327f8ab0eeb2fab2abb395b96fcef2182d0edeb5d",
+      "size": 22
+     },
+     {
+      "path": "hub-settings.json",
+      "sha256": "78c9298a27e360d1d4272a2276acb9d4c067c768a12411a3c93644be1ff78683",
+      "size": 26
+     },
+     {
+      "path": "hxk.key",
+      "sha256": "7b09d8d932b1265627df1c16773fbf80092d2f34a4f9312d0e84c8ba93b1c308",
+      "size": 18
+     },
+     {
+      "path": "meta.json",
+      "sha256": "b1bf96c190ef22121f58f24a317762295a322e61eb04791328a68c66235dc606",
+      "size": 18
+     },
+     {
+      "path": "op/7/cert.json",
+      "sha256": "247907d7b0880261bc3b3ee46d2911dda8812c191c65cee56b8a3ba8519d2bac",
+      "size": 13
+     },
+     {
+      "path": "registry.db",
+      "sha256": "29919c6c30ea312dc8f42b741c3767167bb905ebfa07ceead66a2220a7769088",
+      "size": 38
+     },
+     {
+      "path": "remove-order.used",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "size": 1
+     }
+    ]
+   },
+   "check": "file_list",
+   "expect": {
+    "error": "backup_invalid",
+    "reason": "files_path"
+   },
+   "name": "files_excluded_remove_order_used"
+  },
+  {
+   "args": {
+    "files": [
+     {
+      "path": "hk_root.key",
+      "sha256": "937bf0b94264f0963d7191b327f8ab0eeb2fab2abb395b96fcef2182d0edeb5d",
+      "size": 22
+     },
+     {
+      "path": "hub-settings.json",
+      "sha256": "78c9298a27e360d1d4272a2276acb9d4c067c768a12411a3c93644be1ff78683",
+      "size": 26
+     },
+     {
+      "path": "hxk.key",
+      "sha256": "7b09d8d932b1265627df1c16773fbf80092d2f34a4f9312d0e84c8ba93b1c308",
+      "size": 18
+     },
+     {
+      "path": "meta.json",
+      "sha256": "b1bf96c190ef22121f58f24a317762295a322e61eb04791328a68c66235dc606",
+      "size": 18
+     },
+     {
+      "path": "op/7/cert.json",
+      "sha256": "247907d7b0880261bc3b3ee46d2911dda8812c191c65cee56b8a3ba8519d2bac",
+      "size": 13
+     },
+     {
+      "path": "registry.db",
+      "sha256": "29919c6c30ea312dc8f42b741c3767167bb905ebfa07ceead66a2220a7769088",
+      "size": 38
+     },
+     {
+      "path": "remove-result.json",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "size": 1
+     }
+    ]
+   },
+   "check": "file_list",
+   "expect": {
+    "error": "backup_invalid",
+    "reason": "files_path"
+   },
+   "name": "files_excluded_remove_result_json"
+  },
+  {
+   "args": {
+    "files": [
+     {
       "path": "backups/hub-1.orchbak",
       "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
       "size": 1

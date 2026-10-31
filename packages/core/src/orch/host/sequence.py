@@ -1306,12 +1306,13 @@ def build_content(prepared: Mapping[str, Any], *, verified: bool) -> dict[str, A
     the caller shows the full review (:func:`orch.host.signcontent.build`)."""
     from orch.host import signcontent
 
-    content = signcontent.build(expand(prepared), verified=verified)
+    full = expand(prepared)
+    content = signcontent.build(full, verified=verified)
     meta = prepared["material"]["sequence"]
     intent = validate_intent(meta["intent"])
     n = int(meta["of"])
     if intent["kind"] == ADDON:  # no ticket: the workspace's settings and one add-on
-        content = _addon_content(content, intent, n, expand(prepared)["events"], verified=verified)
+        content = _addon_content(content, intent, n, full["events"], verified=verified)
         publisher = (prepared["material"].get("market") or {}).get("publisher", {}).get("fingerprint")
         if intent.get("staged"):
             rows = content.setdefault("fields_changed", [])

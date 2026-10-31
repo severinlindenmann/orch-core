@@ -591,6 +591,8 @@ def test_the_real_orch_hub_card_is_accepted(tmp_path, capsys):
     hub_cli = pytest.importorskip("orch_hub.cli")
     state = str(tmp_path / "hub")
     assert hub_cli.main(["keys", "--state", state, "init"]) == 0
+    # as `orch install hub` does right after a successful key init: the folder becomes a marked data root (P1-B)
+    cli._mark_root(tmp_path / "hub", "hub", born=True)
     capsys.readouterr()  # init's own output is not the card
     assert hub_cli.main(["keys", "--state", state, "card"]) == 0
     got = cli._card_hub_id(capsys.readouterr().out)

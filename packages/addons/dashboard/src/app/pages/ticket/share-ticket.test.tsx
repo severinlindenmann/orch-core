@@ -24,7 +24,8 @@ describe('the ticket Actions menu and sharing', () => {
     vi.spyOn(gesture, 'trustedPress').mockReturnValue(true)
     const add = vi.spyOn(api, 'addHubRule')
     const view = await openMenu('full')
-    await view.user.click(await screen.findByRole('menuitem', { name: 'Share with the hub' }, T))
+    await view.user.click(await screen.findByRole('menuitem', { name: 'Share…' }, T))
+    await view.user.click(await screen.findByRole('button', { name: 'Share with a colleague' }, T))
     const dialog = await screen.findByRole('dialog', { name: 'Share this ticket' }, T)
     const go = await within(dialog).findByTestId('hub-add-go', {}, T)
     await waitFor(() => expect(go).toBeEnabled(), T)
@@ -39,21 +40,21 @@ describe('the ticket Actions menu and sharing', () => {
     await waitFor(() => expect(add).toHaveBeenCalledTimes(1), T)
   })
 
-  it('offers "Share with the hub" to the owner in share-some mode', async () => {
+  it('offers "Share…" to the owner in share-some mode', async () => {
     await openMenu('selective')
-    expect(await screen.findByRole('menuitem', { name: 'Share with the hub' }, T)).toBeTruthy()
+    expect(await screen.findByRole('menuitem', { name: 'Share…' }, T)).toBeTruthy()
   })
 
   it('offers nothing in standalone mode', async () => {
     await openMenu('standalone')
     await new Promise(r => setTimeout(r, 300))
-    expect(screen.queryByRole('menuitem', { name: /Share with the hub|Stop sharing/ })).toBeNull()
+    expect(screen.queryByRole('menuitem', { name: /Share…|Stop sharing/ })).toBeNull()
   })
 
   it('offers nothing when the workspace has not joined a hub', async () => {
     await openMenu('nottold')
     await new Promise(r => setTimeout(r, 300))
-    expect(screen.queryByRole('menuitem', { name: /Share with the hub|Stop sharing/ })).toBeNull()
+    expect(screen.queryByRole('menuitem', { name: /Share…|Stop sharing/ })).toBeNull()
   })
 
   it('offers nothing on a closed ticket', async () => {
@@ -66,13 +67,13 @@ describe('the ticket Actions menu and sharing', () => {
     })
     await view.user.click(await screen.findByRole('button', { name: /Actions/ }, T))
     await new Promise(r => setTimeout(r, 300))
-    expect(screen.queryByRole('menuitem', { name: /Share with the hub|Stop sharing/ })).toBeNull()
+    expect(screen.queryByRole('menuitem', { name: /Share…|Stop sharing/ })).toBeNull()
   })
 
   it('offers nothing to a viewer who is not the owner', async () => {
     await openMenu('selective', { viewer: 'p_tom' })
     await new Promise(r => setTimeout(r, 300))
-    expect(screen.queryByRole('menuitem', { name: /Share with the hub|Stop sharing/ })).toBeNull()
+    expect(screen.queryByRole('menuitem', { name: /Share…|Stop sharing/ })).toBeNull()
   })
 
   it('shows the same review as Settings, binds its plan, and shares with one click', async () => {
@@ -81,7 +82,8 @@ describe('the ticket Actions menu and sharing', () => {
     const ok = vi.spyOn(toast, 'success')
     const preview = vi.spyOn(api, 'getHubPreview')
     const view = await openMenu('selective')
-    await view.user.click(await screen.findByRole('menuitem', { name: 'Share with the hub' }, T))
+    await view.user.click(await screen.findByRole('menuitem', { name: 'Share…' }, T))
+    await view.user.click(await screen.findByRole('button', { name: 'Share with a colleague' }, T))
     const dialog = await screen.findByRole('dialog', { name: 'Share this ticket' }, T)
     expect(within(dialog).queryByRole('textbox')).toBeNull()
     const go = await within(dialog).findByTestId('hub-add-go', {}, T)
@@ -101,7 +103,8 @@ describe('the ticket Actions menu and sharing', () => {
     vi.spyOn(gesture, 'trustedPress').mockReturnValue(false)
     const add = vi.spyOn(api, 'addHubRule')
     const view = await openMenu('selective')
-    await view.user.click(await screen.findByRole('menuitem', { name: 'Share with the hub' }, T))
+    await view.user.click(await screen.findByRole('menuitem', { name: 'Share…' }, T))
+    await view.user.click(await screen.findByRole('button', { name: 'Share with a colleague' }, T))
     const go = await screen.findByTestId('hub-add-go', {}, T)
     await waitFor(() => expect(go).toBeEnabled(), T)
     fireEvent.click(go)
@@ -110,7 +113,7 @@ describe('the ticket Actions menu and sharing', () => {
 
   it('shows a Shared chip on the ticket once the hub has it (r10-P08)', async () => {
     await openMenu('selective', { ticket: 'DEMO-0043' })
-    expect(await screen.findByTestId('shared-chip', {}, T)).toHaveTextContent('Shared with the hub')
+    expect(await screen.findByTestId('shared-chip', {}, T)).toHaveTextContent('Shared')
   })
 
   it('says "Stop sharing" when the hub already has it, and opens the stop review', async () => {
@@ -121,7 +124,8 @@ describe('the ticket Actions menu and sharing', () => {
 
   it('the review is one sentence naming exactly the ticked people, the caveat once, and the counts behind Details (P05)', async () => {
     const view = await openMenu('selective')
-    await view.user.click(await screen.findByRole('menuitem', { name: 'Share with the hub' }, T))
+    await view.user.click(await screen.findByRole('menuitem', { name: 'Share…' }, T))
+    await view.user.click(await screen.findByRole('button', { name: 'Share with a colleague' }, T))
     const dialog = await screen.findByRole('dialog', { name: 'Share this ticket' }, T)
     const go = await within(dialog).findByTestId('hub-add-go', {}, T)
     await waitFor(() => expect(go).toBeEnabled(), T)
@@ -164,9 +168,19 @@ describe('the ticket Actions menu and sharing', () => {
       return p.review ? { ...p, review: { ...p.review, new_count: 0, new_items: [], leaves: [], widened: [], readers: { ...p.review.readers, people: [], teams: [] } } } : p
     })
     const view = await openMenu('selective')
-    await view.user.click(await screen.findByRole('menuitem', { name: 'Share with the hub' }, T))
+    await view.user.click(await screen.findByRole('menuitem', { name: 'Share…' }, T))
+    await view.user.click(await screen.findByRole('button', { name: 'Share with a colleague' }, T))
     const dialog = await screen.findByRole('dialog', { name: 'Share this ticket' }, T)
     await waitFor(() => expect(within(dialog).getByTestId('hub-add-sentence')).toHaveTextContent('Nobody new will see it.'), T)
     expect(dialog.textContent).not.toContain('Only you')
   })
+})
+
+it('P17: the badge names the audience when the share data supplies it', async () => {
+  vi.spyOn(api, 'getHubShare').mockResolvedValue({ available: true, rules: [{ kind: 'ticket', value: 'DEMO-0043', count: 1, describes: null, audience: { users: ['demo-ben'], groups: [] } }], shared: 1, refused: [], tickets: ['DEMO-0043'], tickets_complete: true })
+  vi.spyOn(api, 'getHubAudience').mockResolvedValue({ people: [{ user_id: 'demo-ben', name: 'Ben' }], teams: [], note: '' })
+  await openMenu('selective', { ticket: 'DEMO-0043' })
+  await waitFor(() => expect(screen.getByTestId('shared-chip')).toHaveTextContent('Shared with Ben'), T)
+  expect(screen.getAllByRole('menuitem', { name: 'Share…' })).toHaveLength(1)
+  expect(screen.queryByRole('menuitem', { name: 'Share with the hub' })).toBeNull()
 })

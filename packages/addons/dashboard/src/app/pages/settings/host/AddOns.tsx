@@ -39,11 +39,13 @@ export interface AddOnListProps {
   label?: string
   /** The Browse tab (P05): only the built-in add-ons that are off, each with a Turn on button instead of a switch. */
   browse?: boolean
+  /** A setup step before sharing: the caller announces success after the link exists. */
+  quiet?: boolean
   /** With `browse`: only these add-ons. */
   only?: readonly string[]
 }
 
-export function BuiltInAddOns({ workspace, rows, tag, actions, empty, label = 'Add-ons', browse, only }: AddOnListProps) {
+export function BuiltInAddOns({ workspace, rows, tag, actions, empty, label = 'Add-ons', browse, only, quiet }: AddOnListProps) {
   const [setup, setSetup] = useState<{ name: 'publish'; enabling: boolean; suggest?: string | null; from?: 'computer' | 'hub' | null; hub?: string | null } | null>(null)
   const data = useQuery({ ...queries.addOns(workspace.id), enabled: !rows })
   const full = rows ? { available: true, add_ons: rows } : data.data
@@ -160,7 +162,7 @@ export function BuiltInAddOns({ workspace, rows, tag, actions, empty, label = 'A
                       />
                     )}
                   </div>
-                  {mine && <div data-testid={`addon-${row.id}-accordion`}><AddonReview workspace={workspace} row={row} marketplace={!!rows} onBusy={signing} onDone={() => void refresh()} onClose={() => setBusy(null)} /></div>}
+                  {mine && <div data-testid={`addon-${row.id}-accordion`}><AddonReview quiet={quiet} workspace={workspace} row={row} marketplace={!!rows} onBusy={signing} onDone={() => void refresh()} onClose={() => setBusy(null)} /></div>}
                   {on && open[row.id] && (
                     <div id={`addon-${row.id}-panel`}>
                       {row.id === 'publish' && <PublishServer workspace={workspace} owner={owner} embedded />}
@@ -172,7 +174,7 @@ export function BuiltInAddOns({ workspace, rows, tag, actions, empty, label = 'A
           </ul>
         )
       }
-      {setup && <AddonSetup name={setup.name} enabling={setup.enabling} suggested={setup.suggest} suggestedFrom={setup.from} hubName={setup.hub} close={() => setSetup(null)} submit={(title, action) => { setSetup(null); ask({ title, action, prepareOnOpen: true }) }} />}
+      {setup && <AddonSetup name={setup.name} enabling={setup.enabling} suggested={setup.suggest} suggestedFrom={setup.from} hubName={setup.hub} close={() => setSetup(null)} submit={(title, action) => { setSetup(null); ask({ title, action, doneToast: quiet ? '' : undefined, prepareOnOpen: true }) }} />}
       {dialog}
     </div>
   )

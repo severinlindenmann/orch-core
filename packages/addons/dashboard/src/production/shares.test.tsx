@@ -1,3 +1,4 @@
+import { toast } from 'sonner'
 import { effectiveState } from '@/api/shares'
 import { openInfo } from '@/test/info'
 import { QueryClient } from '@tanstack/react-query'
@@ -132,8 +133,9 @@ it('lists the shares: kind, end time, opens and state, with Stop sharing only on
   expect(live).toHaveTextContent('2') // opens
   expect(within(live).getByRole('button', { name: /^Stop sharing/ })).toBeInTheDocument()
   expect(revoked).toHaveTextContent('Limited-view link · up to 3 views')
-  expect(revoked).toHaveTextContent('1 of 3')
-  expect(revoked).toHaveTextContent('Stopped')
+  expect(within(revoked).getAllByRole('cell')[2]).toBeEmptyDOMElement()
+  expect(within(revoked).getAllByRole('cell')[3]).toBeEmptyDOMElement()
+  expect(revoked).toHaveTextContent('Stopped, nobody can open it now')
   expect(within(revoked).queryByRole('button', { name: /^Stop sharing/ })).toBeNull()
   expect(document.body.textContent).not.toContain(TOKEN)
 })
@@ -283,7 +285,7 @@ it('share files end to end: pick, prepare, read every file with its size, sign, 
   expect(calls('/shares/send')[0].body).toMatchObject({ staged_id: STAGED })
   expect((within(dialog).getByLabelText('Link') as HTMLInputElement).value).toBe(LINK)
   expect(within(dialog).getByRole('button', { name: /Copy/ })).toBeInTheDocument()
-  expect(dialog).toHaveTextContent('You can copy this link only now.')
+  expect(dialog).toHaveTextContent('Save this link now: it is shown only once.')
   expect(within(dialog).queryByRole('button', { name: 'Close' })).toBeNull() // no dead X: only the explicit button ends it
   // Escape does not lose it; only Done ends it
   await user.keyboard('{Escape}')
@@ -519,7 +521,7 @@ it('PL: the link dialog has no dead X, announces a copy, and the Settings note s
   route()
   show('/w/DEMO/addons')
   const box = await openPublish()
-  expect(within(box).getByTestId('publish-local-note')).toHaveTextContent('opens only on this computer')
+  expect(within(box).getByTestId('publish-local-note')).toHaveTextContent('This link needs access to the Publish server on this computer.')
 })
 
 // ---- P05: a file picked on this computer, and connecting by itself
@@ -637,6 +639,7 @@ it('Publish as link: one press prepares the copy and opens exactly ONE sign shee
   route()
   const user = userEvent.setup()
   const setItem = vi.spyOn(Storage.prototype, 'setItem')
+  const success = vi.spyOn(toast, 'success')
   const list = await onResults(user)
   // a file the server would not take has no button
   expect(within(list).queryByRole('button', { name: 'Publish bad/name.md as a link' })).toBeNull()
@@ -650,7 +653,7 @@ it('Publish as link: one press prepares the copy and opens exactly ONE sign shee
   expect(screen.getAllByRole('dialog')).toHaveLength(1)
   const sheet = screen.getByRole('dialog')
   expect(sheet).toHaveTextContent('report.md')
-  expect(sheet).toHaveTextContent('Anyone with the link can read this file. A copy cannot be taken back. You see the link once.')
+  expect(sheet).toHaveTextContent('Anyone with the link can open it.')
   expect((sheet.textContent ?? '').match(/Anyone with the link/g)).toHaveLength(1)
   expect(within(sheet).getByTestId('where-files-go')).toHaveTextContent('Files go to this computer.') // by name, before Sign
   // Enter on the loaded review does not sign: focus is not on the Publish button, and a press must begin on it
@@ -670,13 +673,15 @@ it('Publish as link: one press prepares the copy and opens exactly ONE sign shee
   // nothing is signed or leaves before the person's own Sign press
   expect(state.host.clickSigned).toEqual([])
   expect(calls('/shares/send')).toEqual([])
+  expect(success).not.toHaveBeenCalled()
   sign()
   const dialog = await screen.findByRole('dialog', { name: 'Your link' }, { timeout: 9000 })
+  expect(success).toHaveBeenCalledExactlyOnceWith('Link created')
   expect(state.host.clickSigned).toHaveLength(1)
   expect(state.host.clickPrepares()).toHaveLength(1) // one review, one signature
   expect((within(dialog).getByLabelText('Link') as HTMLInputElement).value).toBe(LINK)
   expect(within(dialog).getByRole('button', { name: /Copy/ })).toBeInTheDocument()
-  expect(dialog).toHaveTextContent('You can copy this link only now.')
+  expect(dialog).toHaveTextContent('Save this link now: it is shown only once.')
   expect(setItem.mock.calls.some((c) => JSON.stringify(c).includes(TOKEN))).toBe(false)
   await user.click(within(dialog).getByRole('button', { name: /saved the link/ }))
   await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Your link' })).toBeNull(), T)
@@ -791,7 +796,7 @@ it('Publish as link: the one-file lead needs the staged copy to be that file; ot
   await user.click(within(list).getByRole('button', { name: 'Publish report.md as a link' }))
   await readyToSign('Share files')
   const sheet = screen.getByRole('dialog')
-  expect(sheet).toHaveTextContent('Anyone with the link can read these files. A copy cannot be taken back.')
+  expect(sheet).toHaveTextContent('Anyone with the link can open it. Works for 7 days.')
   expect(sheet).not.toHaveTextContent('works for 7 days')
   expect(sheet).not.toHaveTextContent('You see the link once')
   expect(sheet).not.toHaveTextContent('Publish report.md as a link?')
@@ -968,4 +973,43 @@ it('P03: a result that arrives with the name of a ticked work file replaces it: 
   await waitFor(() => expect(form).not.toHaveTextContent('1 selected'), T)
   expect(within(form).getByRole('button', { name: 'Review selected files' })).toBeDisabled()
   expect(calls('/shares/prepare')).toEqual([])
+})
+
+it('P49: Shares offers the ticket entry to share files and no invented page publishing flow', async () => {
+  route()
+  show('/w/DEMO/shares')
+  expect(await screen.findByRole('link', { name: 'Open a ticket to share its files' }, T)).toHaveAttribute('href', expect.stringContaining('/tickets'))
+  expect(screen.getByText('Manage links to files you share.')).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Publish a page' })).toBeNull()
+})
+
+it('P63: a stopped link offers Share again for the same ticket, with its files', async () => {
+  route()
+  const user = userEvent.setup()
+  show('/w/DEMO/shares')
+  const table = await screen.findByRole('table', { name: 'Shares' }, T)
+  expect(table).toHaveTextContent('Opened 2 times')
+  await user.click(within(table).getByRole('button', { name: 'Share again' }))
+  const dialog = await screen.findByRole('dialog', { name: 'Share files' }, T)
+  expect(within(dialog).getByRole('checkbox', { name: /report.md/ })).toBeInTheDocument()
+  expect(calls('/shares/prepare')).toHaveLength(0)
+})
+
+it('P17: people sharing is named in the ticket panel even when there are no file links', async () => {
+  route()
+  shares = []
+  clickOn(state.host.workspaces[0])
+  window.innerWidth = 1400
+  state.host.workspaces[0].features.push('hub')
+  const inner = state.host.override!
+  state.host.override = (path, method, body) => {
+    if (path.endsWith('/hub')) return Response.json({ joined: true, mode: 'selective' })
+    if (path.endsWith('/hub/share')) return Response.json({ available: true, rules: [{ kind: 'ticket', value: 'DEMO-0001', count: 1, audience: { users: ['demo-ben'], groups: [] } }], tickets: ['DEMO-0001'], shared: 1, refused: [], tickets_complete: true })
+    if (path.endsWith('/hub/share/audience')) return Response.json({ people: [{ user_id: 'demo-ben', name: 'Ben' }], teams: [], note: '' })
+    return inner(path, method, body)
+  }
+  show('/w/DEMO/ticket/DEMO-0001')
+  const panel = await screen.findByTestId('ticket-shares', {}, T)
+  await waitFor(() => expect(panel).toHaveTextContent('Shared with Ben; no file links.'), T)
+  expect(panel).not.toHaveTextContent('Nothing is shared')
 })

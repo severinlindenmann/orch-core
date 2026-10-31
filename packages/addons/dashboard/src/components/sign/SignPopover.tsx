@@ -59,7 +59,7 @@ export interface SignPopoverProps {
   /** Choices that are part of what is signed (agent access length): shown above the review in every state but signing. A change of `action` needs a new key on this component, which prepares again. */
   controls?: ReactNode
   /** A plain-words summary above the review, in every state but signing. Unlike `controls` it never holds back the preparation. */
-  lead?: ReactNode
+  lead?: ReactNode | ((content: import('@/api/signing').SignContent | undefined) => ReactNode)
   /** Exact action summary, kept visible while preparing and reviewing. */
   summary?: ReactNode
   /** Said above the panel while it is open: a warning that the page changed under it. */
@@ -202,7 +202,7 @@ export function SignPopover(p: SignPopoverProps) {
     </SignShell>
   }
   return <SignShell inline={p.inline} anchor={anchor} open={!folded} onDismiss={() => void close()} title={<SignerHeadline view={click.view?.view ?? {}} fallback={<Inline>{p.title}</Inline>} />} showClose onOpenAutoFocus={e => { e.preventDefault(); (p.initialFocus?.() ?? cancelRef.current)?.focus() }}>
-    {(!sequenceStart || !click.view || click.view.view.risk_lines?.includes(DEPOSIT_RISK)) && <ReviewShown.Provider value={!!click.view}>{p.controls}</ReviewShown.Provider>}{p.lead}{!click.view && p.summary}
+    {(!sequenceStart || !click.view || click.view.view.risk_lines?.includes(DEPOSIT_RISK)) && <ReviewShown.Provider value={!!click.view}>{p.controls}</ReviewShown.Provider>}{typeof p.lead === 'function' ? p.lead(click.view?.view.content) : p.lead}{!click.view && p.summary}
     {/* The switch is read before the press; a request already open keeps its review (the signer refuses it if the switch moved). */}
     {!canClick && click.phase === 'idle' ? <><p>One click is not ready on this computer.</p>{router && <Link to="/settings/$tab" params={{ tab: 'general' }} onClick={() => void close()}>Turn on One click</Link>}<div className="flex justify-end">{dismiss('Close')}</div></> : <>
       {click.phase === 'idle' && <>{p.children}{p.hint && <p>{p.hint}</p>}<div className="flex flex-wrap justify-end gap-2">{dismiss('Cancel')}<Button disabled={!p.action || !!p.hint} onClick={e => { if (trustedPress(e.nativeEvent) && p.action) void click.start(p.action) }}>{p.confirmLabel ?? story?.signLabel ?? p.title}</Button></div></>}

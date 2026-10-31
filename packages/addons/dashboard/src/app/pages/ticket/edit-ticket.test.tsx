@@ -105,7 +105,7 @@ describe('the ticket page edit', () => {
     const field = within(dialog).getByLabelText('Title')
     await waitFor(() => expect(field).toHaveFocus(), T)
     const input = field as HTMLInputElement
-    expect([input.selectionStart, input.selectionEnd]).toEqual([input.value.length, input.value.length]) // cursor at the end, nothing selected
+    expect([input.selectionStart, input.selectionEnd]).toEqual([0, input.value.length]) // the current title is selected
     await user.type(field, ' v2{Enter}') // Enter goes through the same review as the button
     const sent = JSON.parse((await screen.findByTestId('sent-action')).textContent ?? '{}')
     expect(sent).toMatchObject({ action: 'edit_sequence', key: 'DEMO-0043' })
@@ -143,14 +143,23 @@ describe('the ticket page edit', () => {
     const inline = await within(dialog).findByRole('region', { name: 'sign Rename DEMO-0043' })
     expect(inline).toHaveAttribute('data-autostart', 'false')
   })
-  it('the rename says so when the title is unchanged, and offers the full form', async () => {
+  it('P61: Rename starts with the selected title, no early error, and only Cancel and Rename', async () => {
     const { user } = renderApp('/ticket/DEMO-0043')
     await user.click(await screen.findByRole('button', { name: /^Change the title: Load tariff tables/ }, T))
     const dialog = await screen.findByRole('dialog', { name: 'Rename DEMO-0043' }, T)
-    await user.click(within(dialog).getByRole('button', { name: 'Rename' }))
-    expect(await within(dialog).findByText('The title is the same as before.')).toBeInTheDocument()
-    await user.click(within(dialog).getByRole('button', { name: 'More fields…' }))
-    expect(await screen.findByRole('dialog', { name: 'Edit DEMO-0043' }, T)).toBeInTheDocument()
+    const input = within(dialog).getByLabelText('Title') as HTMLInputElement
+    expect(input).toHaveValue('Load tariff tables as dbt seeds')
+    expect([input.selectionStart, input.selectionEnd]).toEqual([0, input.value.length])
+    expect(within(dialog).queryByRole('alert')).toBeNull()
+    expect(within(dialog).queryByRole('button', { name: 'More fields…' })).toBeNull()
+    const rename = within(dialog).getByRole('button', { name: 'Rename' })
+    expect(rename).toBeDisabled()
+    await user.clear(input)
+    expect(rename).toBeDisabled()
+    await user.keyboard('{Enter}')
+    expect(within(dialog).queryByRole('alert')).toBeNull()
+    await user.type(input, 'A new title')
+    expect(rename).toBeEnabled()
   })
   it('edits text, a criterion and the people, then asks for ONE signature', async () => {
     const { user } = renderApp('/ticket/DEMO-0043')

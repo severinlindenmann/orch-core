@@ -168,7 +168,7 @@ export function TicketEditProvider({ ticket, viewer, children }: { ticket: Ticke
   const allowed = canEditTicket(ticket, viewer.role, !!ws && handoffMode(ws.id))
   return <EditContext.Provider value={allowed ? (focus) => setOpen({ focus }) : null}>
     {children}
-    {open && open.focus?.kind === 'title' && !open.full && <RenameDialog key={`rename-${keySeq.current}`} ticket={ticket} onBusy={setBusy} onFull={() => setOpen({ focus: { kind: 'title' }, full: true })} onClose={() => setOpen(null)} />}
+    {open && open.focus?.kind === 'title' && !open.full && <RenameDialog key={`rename-${keySeq.current}`} ticket={ticket} onBusy={setBusy} onClose={() => setOpen(null)} />}
     {open && !(open.focus?.kind === 'title' && !open.full) && <EditDialog key={keySeq.current} ticket={ticket} viewer={viewer} focus={open.focus} onBusy={setBusy} onClose={() => setOpen(null)} />}
   </EditContext.Provider>
 }
@@ -177,7 +177,7 @@ export function TicketEditProvider({ ticket, viewer, children }: { ticket: Ticke
  * Renaming is one line, not the long form (r10-P09): the new title, Save, then the one signing review (the same
  * `edit_sequence` with only the title). The review opens by itself (prepare only, never armed): Sign is the person's own press.
  */
-function RenameDialog({ ticket, onBusy, onFull, onClose }: { ticket: TicketDocument; onBusy: (busy: boolean) => void; onFull: () => void; onClose: () => void }) {
+function RenameDialog({ ticket, onBusy, onClose }: { ticket: TicketDocument; onBusy: (busy: boolean) => void; onClose: () => void }) {
   const qc = useQueryClient()
   const workspaces = useQuery(queries.workspaces())
   const ws = workspaceOfTicket(ticket.key, workspaces.data ?? [])
@@ -186,7 +186,9 @@ function RenameDialog({ ticket, onBusy, onFull, onClose }: { ticket: TicketDocum
   // P07: `trusted` = the opening press was the person's own (read in the handler); only then the review arms (1 s, then signs).
   const [signing, setSigning] = useState<{ action: Edit; trusted: boolean } | null>(null)
   useEffect(() => { onBusy(signing !== null) }, [signing, onBusy])
+  const changed = title.trim() !== (ticket.title ?? '').trim() && title.trim().length > 0
   const save = (trusted: boolean) => {
+    if (!changed) return
     const built = buildEdit(ticket, { title, sections: {}, criteria: {}, added: [], people: { owner: ticket.people.owner, assignees: [...ticket.people.assignees], reviewers: [...ticket.people.reviewers] } }, false)
     if ('problem' in built) return setProblem(built.problem)
     if ('nothing' in built) return setProblem('The title is the same as before.')
@@ -195,18 +197,17 @@ function RenameDialog({ ticket, onBusy, onFull, onClose }: { ticket: TicketDocum
   }
   return (
     <Dialog open onOpenChange={(o) => !o && !signing && onClose()}>
-      <DialogContent aria-label={`Rename ${ticket.key}`} className="sm:max-w-lg" onOpenAutoFocus={(e) => { e.preventDefault(); const f = document.getElementById('rename-title') as HTMLInputElement | null; if (f) { f.focus(); f.setSelectionRange(f.value.length, f.value.length) } }}>
+      <DialogContent aria-label={`Rename ${ticket.key}`} className="sm:max-w-lg" onOpenAutoFocus={(e) => { e.preventDefault(); const f = document.getElementById('rename-title') as HTMLInputElement | null; if (f) { f.focus(); f.select() } }}>
         <DialogHeader>
           <DialogTitle>Rename {ticket.key}</DialogTitle>
           <DialogDescription>Write the new title.</DialogDescription>
         </DialogHeader>
         <form onSubmit={(e) => { e.preventDefault(); save(trustedPress(e.nativeEvent)) }} className="space-y-2">
-          <Input id="rename-title" aria-label="Title" autoFocus readOnly={!!signing} value={title} maxLength={MAX_TITLE + 50} onChange={(e) => setTitle(e.target.value)} />
+          <Input id="rename-title" aria-label="Title" onFocus={(e) => e.currentTarget.select()} readOnly={!!signing} value={title} maxLength={MAX_TITLE + 50} onChange={(e) => setTitle(e.target.value)} />
           {problem && <p role="alert" className="text-[13px] text-danger">{problem}</p>}
           {!signing && <DialogFooter>
-            <Button type="button" variant="ghost" onClick={onFull}>More fields…</Button>
             <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
-            <Button type="submit">Rename</Button>
+            <Button type="submit" disabled={!changed}>Rename</Button>
           </DialogFooter>}
         </form>
         {signing && ws && (

@@ -8,6 +8,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { InfoDrawer } from '@/components/InfoDrawer'
 import { Link } from '@tanstack/react-router'
+import { toast } from 'sonner'
 import { Check, Copy, Loader2, Plus } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { copyText } from '@/app/copyLink'
@@ -269,6 +270,7 @@ export function ShareFlow({ ws, ticket, resume, only, onClose }: { ws: string; t
       }
       void refreshShares(qc, ws)
       setStage({ at: 'link', sent })
+      toast.success('Link created')
     } catch (e) {
       fail(e)
     } finally {
@@ -457,21 +459,23 @@ export function ShareFlow({ ws, ticket, resume, only, onClose }: { ws: string; t
         anchor={null}
         prepareOnOpen
         autoStart={false}
+        doneToast=""
         confirmLabel={one ? 'Publish' : 'Share files'}
-        lead={
-          one ? (
+        lead={(content) => {
+          const hostSummary = content?.summary?.title === 'Share these files'
+          return one ? (
             <div className="space-y-2 text-[13px]">
               <ul aria-label="Files to share" className="divide-y divide-border rounded border border-border px-2">
                 {s.files.map((f) => (
                   <li key={f.name} className="py-1.5">
                     <Inline>{f.name}</Inline> <span className="text-text-faint">· {fmtSize(f.size)}</span>
-                    <span className="block text-[12px] text-text-muted">works for {lasts} day{lasts === 1 ? '' : 's'}</span>
+                    {!hostSummary && <span className="block text-[12px] text-text-muted">works for {lasts} day{lasts === 1 ? '' : 's'}</span>}
                   </li>
                 ))}
               </ul>
-              {where && <p data-testid="where-files-go" className="font-medium">{where}</p>}
-              {reach && <p className="text-[12px] text-text-muted">{reach}</p>}
-              <p role="note" className="text-[12px] text-warning">Anyone with the link can read this file. A copy cannot be taken back. You see the link once.</p>
+              {!hostSummary && where && <p data-testid="where-files-go" className="font-medium">{where}</p>}
+              {!hostSummary && reach && <p className="text-[12px] text-text-muted">{reach}</p>}
+              {!hostSummary && <p className="text-[12px]">Anyone with the link can open it.</p>}
               <InfoDrawer text="Details">
                 {server && <p className="break-all font-mono">Files are sent to {server}</p>}
                 {share && <p className="break-all font-mono">The link opens at {share}</p>}
@@ -496,9 +500,9 @@ export function ShareFlow({ ws, ticket, resume, only, onClose }: { ws: string; t
                 </li>
               ))}
             </ul>
-            {where && <p data-testid="where-files-go" className="font-medium">{where}</p>}
-            {reach && <p className="text-[12px] text-text-muted">{reach}</p>}
-            <p role="note" className="text-[12px] text-warning">Anyone with the link can read these files. A copy cannot be taken back.</p>
+            {!hostSummary && where && <p data-testid="where-files-go" className="font-medium">{where}</p>}
+            {!hostSummary && reach && <p className="text-[12px] text-text-muted">{reach}</p>}
+            {!hostSummary && <p className="text-[12px]">Anyone with the link can open it. Works for {lasts} days.</p>}
             <InfoDrawer>
               {server && <p className="break-all font-mono">Files are sent to {server}</p>}
               {share && <p className="break-all font-mono">The link opens at {share}</p>}
@@ -511,7 +515,7 @@ export function ShareFlow({ ws, ticket, resume, only, onClose }: { ws: string; t
             </InfoDrawer>
           </div>
           )
-        }
+        }}
         onSettled={(phase) => {
           if (phase === 'done') {
             signed.current = true
@@ -575,7 +579,7 @@ export function ShareFlow({ ws, ticket, resume, only, onClose }: { ws: string; t
 /** The link, once. Only "Done" ends it. Nothing here writes the link anywhere but the screen and the clipboard. */
 export function LinkOnce({ sent, onDone }: { sent: Sent; onDone: () => void }) {
   const [copied, setCopied] = useState<'no' | 'yes' | 'failed'>('no')
-  const field = useRef<HTMLInputElement>(null)
+  const field = useRef<HTMLTextAreaElement>(null)
   useEffect(() => {
     field.current?.select()
   }, [])
@@ -602,9 +606,9 @@ export function LinkOnce({ sent, onDone }: { sent: Sent; onDone: () => void }) {
         </DialogHeader>
         <div className="space-y-2 text-[13px]">
           <Label htmlFor="share-link">Link</Label>
-          <div className="flex gap-2">
-            <input id="share-link" ref={field} readOnly value={sent.link} className="h-8 min-w-0 flex-1 rounded border border-border bg-bg px-2 font-mono text-[12px]" onFocus={(e) => e.currentTarget.select()} />
-            <Button size="sm" variant="secondary" onClick={() => void copy()}>
+          <div className="flex flex-col gap-2">
+            <textarea rows={3} id="share-link" ref={field} readOnly value={sent.link} className="min-h-20 w-full resize-none whitespace-pre-wrap break-all rounded border border-border bg-bg p-2 font-mono text-[12px] [field-sizing:content]" onFocus={(e) => e.currentTarget.select()} />
+            <Button size="sm" onClick={() => void copy()}>
               {copied === 'yes' ? <Check className="mr-1 size-3.5" aria-hidden /> : <Copy className="mr-1 size-3.5" aria-hidden />}
               {copied === 'yes' ? 'Copied' : 'Copy'}
             </Button>
@@ -614,12 +618,11 @@ export function LinkOnce({ sent, onDone }: { sent: Sent; onDone: () => void }) {
             {copied === 'failed' && 'Could not copy automatically. The link is selected: copy it by hand (Ctrl or Cmd + C).'}
           </p>
           <p role="note" className="font-medium text-warning">
-            You can copy this link only now.
+            Save this link now: it is shown only once.
           </p>
-          <p className="text-text-muted">orch keeps no copy. If you lose it, stop sharing on the Shares page and share again.</p>
         </div>
         <DialogFooter>
-          <Button onClick={onDone}>I’ve saved the link — close</Button>
+          <Button variant="ghost" onClick={onDone}>I’ve saved the link — close</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -44,10 +44,11 @@ export function TurnOnPublish({ workspace, onOn, onClose }: { workspace: Workspa
     const where = destinationLine(row.suggest_from, row.suggest_hub, suggested)
     ask({
       title: 'Turn on Publish',
+      doneToast: '',
       confirmLabel: 'Sign and turn on',
       action: { action: 'addon_enable', name: 'publish', publish: { server: suggested, share: suggested } },
       prepareOnOpen: true,
-      lead: where ? <p data-testid="where-files-go" className="text-[13px] font-medium text-text">{where}</p> : undefined,
+      lead: (content) => !content?.summary && where ? <p data-testid="where-files-go" className="text-[13px] font-medium text-text">{where}</p> : undefined,
       onEnd: (signed) => { if (!signed) onClose() },
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -65,11 +66,10 @@ export function TurnOnPublish({ workspace, onOn, onClose }: { workspace: Workspa
             suggestedFrom={row.suggest_from}
             hubName={row.suggest_hub}
             description="To share files with a link, Publish has to be on."
-            notice="Anyone with the link can read what you share."
             close={onClose}
             submit={(title, action) => {
               setAsked(true)
-              ask({ title, action, prepareOnOpen: true, onEnd: (signed) => { if (!signed) onClose() } })
+              ask({ title, action, doneToast: '', prepareOnOpen: true, onEnd: (signed) => { if (!signed) onClose() } })
             }}
           />
         )}
@@ -83,7 +83,7 @@ export function TurnOnPublish({ workspace, onOn, onClose }: { workspace: Workspa
           <DialogTitle>Turn on Publish</DialogTitle>
           <DialogDescription>To share files with a link, Publish has to be on. Nothing leaves this computer until you sign.</DialogDescription>
         </DialogHeader>
-        <BuiltInAddOns workspace={workspace} browse only={['publish']} label="Publish" />
+        <BuiltInAddOns quiet workspace={workspace} browse only={['publish']} label="Publish" />
       </DialogContent>
     </Dialog>
   )

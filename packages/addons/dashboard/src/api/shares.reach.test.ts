@@ -3,7 +3,7 @@ import { reachNote } from './shares'
 
 describe('reachNote: who can open the links', () => {
   it('both addresses on this computer: a local test link', () => {
-    expect(reachNote('http://127.0.0.1:8103', 'http://localhost:8104', 'computer')).toMatch(/^Local test link: opens only on this computer/)
+    expect(reachNote('http://127.0.0.1:8103', 'http://localhost:8104', 'computer')).toBe('This link needs access to the Publish server on this computer.')
   })
   it('a hub or an unknown source: never "this computer" and never "nobody else"', () => {
     for (const from of ['hub', null] as const) {

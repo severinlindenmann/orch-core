@@ -19,8 +19,8 @@ export function addonContent(content: SignContent, _marketplace?: boolean): Sign
   return content.summary && lines ? { ...content, summary: { ...content.summary, lines } } : content
 }
 
-export function AddonReview({ workspace, row, onBusy, onDone, onClose }: {
-  workspace: Workspace; row: AddOnRow; marketplace: boolean; onBusy: (busy: boolean) => void; onDone: () => void; onClose: () => void
+export function AddonReview({ workspace, row, onBusy, onDone, onClose, quiet }: {
+  quiet?: boolean; workspace: Workspace; row: AddOnRow; marketplace: boolean; onBusy: (busy: boolean) => void; onDone: () => void; onClose: () => void
 }) {
   const turningOn = row.state !== 'on'
   const title = `${turningOn ? 'Turn on' : 'Turn off'} ${row.title}`
@@ -31,7 +31,7 @@ export function AddonReview({ workspace, row, onBusy, onDone, onClose }: {
   const [signing, setSigning] = useState(false)
   if (viaHub) return <SignPopover workspace={workspace} ws={workspace.id} title={title} action={{ action: 'addon_grant', name: row.id }} inline forceHub onClose={onClose} onSettled={phase => { if (phase === 'done') onDone() }} />
   return <>
-    <SignPopover workspace={workspace} ws={workspace.id} title={title} action={{ action: turningOn ? 'addon_grant' : 'addon_disable', name: row.id }} inline onSigning={busy => { setSigning(busy); onBusy(busy) }} onClose={onClose} doneToast={turningOn ? undefined : ''} onSettled={phase => { if (phase === 'done') {
+    <SignPopover workspace={workspace} ws={workspace.id} title={title} action={{ action: turningOn ? 'addon_grant' : 'addon_disable', name: row.id }} inline onSigning={busy => { setSigning(busy); onBusy(busy) }} onClose={onClose} doneToast={quiet || !turningOn ? '' : undefined} onSettled={phase => { if (phase === 'done') {
       if (!turningOn) toast.success(`${row.title} is off`, { action: { label: 'Undo', onClick: () => requestReverse({ ws: workspace.id, action: { action: 'addon_grant', name: row.id } }) } })
       onDone()
     } }} />

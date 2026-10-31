@@ -129,7 +129,7 @@ export const effectiveState = (s: Pick<Share, 'state' | 'expires_at'> & Partial<
 }
 
 export const viewsText = (s: Pick<Share, 'kind' | 'views' | 'view_limit'>): string =>
-  s.views === null ? 'not known' : s.kind === 'once' && s.view_limit ? `${s.views} of ${s.view_limit}` : String(s.views)
+  s.views === null ? 'Not known' : `Opened ${s.views} time${s.views === 1 ? '' : 's'}${s.kind === 'once' && s.view_limit ? `; up to ${s.view_limit}` : ''}`
 
 /** What a ticket's file needs to be shareable: a real file whose name the server takes, within the limits. */
 export const LIMITS = { files: 20, file_bytes: 25 * 1024 * 1024, share_bytes: 50 * 1024 * 1024 }
@@ -219,7 +219,7 @@ export function reachNote(server: string | null, share: string | null, from: 'co
   const s = isLoopback(server)
   const l = isLoopback(share)
   const here = from === 'computer'
-  if (s && l) return here ? 'Local test link: opens only on this computer, so nobody else can use it.' : null
+  if (s && l) return here ? 'This link needs access to the Publish server on this computer.' : null
   if (l) return `Links open only ${here ? 'on this computer' : `at ${hostOf(share)}`}, but files are uploaded to ${hostOf(server)}, which other people can reach.`
   if (s) return `Links open from ${hostOf(share)}, which other people can reach; files are uploaded to ${here ? 'this computer only' : hostOf(server)}.`
   return null

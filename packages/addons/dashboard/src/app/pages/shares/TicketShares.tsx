@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/button'
 import { fmtDateTime } from '@/lib/time'
 import { useRole } from '@/app/useRole'
 import { useWorkspace } from '@/app/workspace'
+import { usePeopleShare } from './peopleShare'
 import { ShareFlow } from './ShareFlow'
 import { RevokeShare } from './Revoke'
 
@@ -20,6 +21,7 @@ export function TicketShares({ ticket }: { ticket: TicketDocument }) {
   const { workspace } = useWorkspace()
   const ws = workspace?.id
   const role = useRole()
+  const people = usePeopleShare(ws, ticket, role === 'owner')
   const [sharing, setSharing] = useState(false)
   const [resume, setResume] = useState<Staged | null>(null)
   const [revoking, setRevoking] = useState<Share | null>(null)
@@ -42,6 +44,7 @@ export function TicketShares({ ticket }: { ticket: TicketDocument }) {
     <>
     <section aria-label="Shares" className="space-y-2 rounded-lg border border-border bg-surface p-3" data-testid="ticket-shares">
       <h3 className="text-[11px] font-medium uppercase tracking-wide text-text-faint">Shares</h3>
+      {people.label && (live.length > 0 || data.staged.length > 0) && <p className="text-[12px] text-text-muted">{people.label}</p>}
       {data.staged.map((s) => (
         <p key={s.staged_id} className="text-[13px]" data-staged={s.staged_id}>
           <span className="block text-text-muted">
@@ -55,7 +58,7 @@ export function TicketShares({ ticket }: { ticket: TicketDocument }) {
           )}
         </p>
       ))}
-      {live.length === 0 && data.staged.length === 0 && <p className="text-[12px] text-text-muted">Nothing is shared from this ticket.</p>}
+      {live.length === 0 && data.staged.length === 0 && <p className="text-[12px] text-text-muted">{people.label ? `${people.label}; no file links.` : 'No file links from this ticket.'}</p>}
       {live.length > 0 && (
         <ul className="space-y-1.5 text-[13px]">
           {live.map((s) => (

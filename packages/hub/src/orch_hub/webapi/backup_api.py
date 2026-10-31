@@ -32,6 +32,7 @@ STATUS = {
     "wrong_backup_key": 403,
     "backup_invalid": 400,
     "restore_busy": 409,
+    "restore_stop_hub": 409,
     "no_admin": 409,
     "restore_failed": 500,
     "words": 400,

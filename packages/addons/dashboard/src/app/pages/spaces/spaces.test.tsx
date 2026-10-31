@@ -1,6 +1,6 @@
 // Shared spaces (run-15c P03): the sidebar entry only with at least one space, the read-only page, and Today's
 // "New shared space" row that clears after Open. The server's answers are faked.
-import { cleanup, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/api/client'
 import { setFeatures } from '@/api/features'
@@ -33,6 +33,8 @@ describe('Shared spaces: sidebar entry', () => {
     real()
     vi.spyOn(api, 'getSpaces').mockResolvedValue({ spaces: [space], note })
     renderApp('/', { viewer: 'p_sev' })
+    // P67: Shared spaces is not an everyday entry: it sits in the side rail's "More" group
+    fireEvent.click(await screen.findByRole('button', { name: 'More' }, COLD))
     expect(await screen.findByRole('link', { name: 'Shared spaces' }, COLD)).toBeInTheDocument()
   }, SLOW)
   it('is hidden when the hub is not served, without even asking', async () => {

@@ -8,6 +8,7 @@ import { Raw } from '@/components/sign/visible'
 import { Action, Details, Panel, hubTitle, useFullAllowed, useHub } from './shared'
 import { JoinFlow, connectFromHash } from './JoinFlow'
 import { FullSwitch } from './FullSwitch'
+import { HubSharing } from './HubSharing'
 import { LeaveFlow } from './LeaveFlow'
 import { ShareRules, AlwaysShared } from './ShareRules'
 import { NotTold } from './NotTold'
@@ -78,6 +79,7 @@ export function HubTab({ workspace }: { workspace: Workspace }) {
       {s.mode === 'standalone' && <StandalonePage onJoin={() => setFlow('join')} />}
       {s.mode === 'selective' && <SelectivePage ws={ws} fullAllowed={fullAllowed} onShare={() => setFlow('share')} onFull={() => setFlow('full')} onLeave={() => setFlow('leave')} extra={extra} />}
       {s.mode === 'full' && <FullPage ws={ws} status={s} onLeave={() => setFlow('leave')} extra={extra} />}
+      {(s.mode === 'selective' || s.mode === 'full') && <HubSharing workspace={workspace} />}
       {s.mode !== 'selective' && s.mode !== 'full' && extra}
     </>}
     {flow === 'join' && <JoinFlow ws={ws} initialLink={initialLink} onClose={() => setFlow(undefined)} />}

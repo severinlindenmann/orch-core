@@ -93,3 +93,22 @@ test("run-15 J02: a workspace that is not switchable (selective) cannot be opene
   assert.equal(row.switchable, false);
   assert.equal(row.canOpen, false);
 });
+
+test("ux-audit P02: Back to my workspace goes to the workspace's http(s) origin, else back, else sign-in", async () => {
+  const { backToWorkspace } = await import("../../src/orch_hub/web/switch.js");
+  const calls = [];
+  const nav = (canBack) => ({ assign: (u) => calls.push(["assign", u]), back: () => calls.push(["back"]), canBack: () => canBack, login: () => calls.push(["login"]) });
+  backToWorkspace({ name: "Acme", origin: "https://ws.example:8150" }, nav(true));
+  backToWorkspace({ origin: "javascript:alert(1)" }, nav(true));
+  backToWorkspace(null, nav(false));
+  assert.deepEqual(calls, [["assign", "https://ws.example:8150/"], ["back"], ["login"]]);
+});
+
+test("ux-audit P02: the way back is https (or loopback http), origin only, never a free redirect", async () => {
+  const { backOrigin } = await import("../../src/orch_hub/web/switch.js");
+  assert.equal(backOrigin("https://ws.example:8150/x?y#z"), "https://ws.example:8150/");
+  assert.equal(backOrigin("http://127.0.0.1:8150"), "http://127.0.0.1:8150/");
+  assert.equal(backOrigin("http://evil.example"), null);
+  assert.equal(backOrigin("https://user:pw@ws.example"), null);
+  assert.equal(backOrigin("javascript:alert(1)"), null);
+});

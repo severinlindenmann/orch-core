@@ -3,17 +3,22 @@
 import os
 import sqlite3
 
+from .dataformat import open_data
+
+DATA_KIND = "publish"
+DATA_FORMAT = 1  # the format of the data dir this code reads and writes (format.json "format")
 SCHEMA_VERSION = 7  # 2: workspaces.delegation_json replaces card_seq/card_json (design 2.6b)
 # 3: hub path (orch-core #898): hub_bindings, hub_cards, hub_op_revoked, hub_revoked_devices (additive only)
 # 4: apps (M4 #1357 S3): apps, app_versions, app_files, app_views, app_visits (additive only)
 # 5: shares.label / by_kind / by_name, the display columns of the company list
 # 6: hub_narrowings, shares.pw (M4 S2 #1453: hub revoke/stop, link password)
 # 7: trusted_hubs (operator pin) and hub_allows (hub.allow, P02: a trusted hub admits its own workspaces)
-# Only the current schema exists: any other user_version is refused (nothing is in production, no upgrade path).
+# Only the current schema exists: any other user_version is refused. format.json decides what may
+# open the data dir (dataformat.py) and `orch update` migrates it, so this is an internal check.
 
 
 class SchemaError(Exception):
-    """The data dir was made by a different version of orch-publish."""
+    """The database does not match this version of orch-publish (internal consistency check)."""
 
 
 SCHEMA = """
@@ -184,6 +189,20 @@ CREATE TABLE IF NOT EXISTS app_visits(
 """
 
 
+def open_dir(data_dir):
+    """The one way a publish process opens its data dir: the format rule first (dataformat.py: an
+    interrupted update, a missing or other-format format.json and a running update refuse, before
+    any database), then ``prepare_dir``. Returns ``(db_path, handle)``; the handle holds the shared
+    format lock: keep it for as long as the data is in use (``handle.close()`` releases it).
+    Raises ``DataFormatError``."""
+    handle = open_data(data_dir, DATA_KIND, DATA_FORMAT)
+    try:
+        return prepare_dir(data_dir), handle
+    except BaseException:
+        handle.close()
+        raise
+
+
 def prepare_dir(data_dir):
     """Create the data dir 0700. An existing dir that is not ours is refused; a looser mode is
     tightened, and if that fails we refuse to start (L5)."""
@@ -222,8 +241,7 @@ def init(path):
         has_tables = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table'").fetchone()
         if (has_tables or have) and have != SCHEMA_VERSION:
             raise SchemaError(
-                "this data dir was made by a different orch-publish version: "
-                "stop the server, delete the data dir, start again"
+                "this data does not match this orch-publish version: run `orch update`"
             )
         conn.executescript(SCHEMA)
         conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")

@@ -1,0 +1,1 @@
+relay-f1: made by tests/upgrade/make_corpus.py at commit b15e994c67313584367fbdbaeda321277526f6b4 (plus uncommitted changes) (format 1): one hub account. Throwaway test data only. Frozen: never edit, never regenerate in place.

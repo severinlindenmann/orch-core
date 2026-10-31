@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import argparse
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from .config import dev_of
 from .contract.canon import CanonError, unb64u
 from .contract.hub import FACTORS
+from .dataformat import DataFormatError, check_update
 from .keys import HubKeys, KeysError, default_state_dir
 from .keys.store import dumps
 
@@ -79,7 +80,16 @@ def _parser() -> argparse.ArgumentParser:
         required=True,
         help="orch-publish base URL (https, or http on loopback, private or 100.64/10 addresses)",
     )
-    sv.add_argument("--api-host", help="host the workspaces sign (default: the host:port of --publish-url)")
+    sv.add_argument(
+        "--api-host",
+        help="host the workspaces sign (default: the host:port of --publish-url); with --publish-share-url it is also "
+        "the public API origin the hub signs in its publish_where: https://<api-host> (http on loopback for a dev hub)",
+    )
+    sv.add_argument(
+        "--publish-share-url",
+        help="the public origin of the share links, https://name[:port] (http on loopback for a dev hub); with "
+        "--api-host the hub signs and serves both as its publish_where (#1838). Never the private --publish-url",
+    )
     sv.add_argument("--invite", action="append", default=[], help="invite code accepted once (repeatable)")
     sv.add_argument(
         "--web-listen",
@@ -219,6 +229,36 @@ def _closing_refused(args: argparse.Namespace) -> bool:
     return (state / "hub-removal.json").exists()
 
 
+def _guarded(args: argparse.Namespace, run: Callable[[], int], *, init: bool = False) -> int:
+    """Run a command that opens the state dir under the format rule (``orch_hub.dataformat``): it refuses while an update
+    runs or is unfinished, and on data that is not at this code's format, and it holds the shared format lock until it
+    ends (so ``orch update`` cannot start under it). A state dir that is not there yet is left to the command to report.
+    ``init`` also works on a dir that has no ``format.json`` yet, but only while there are no keys in it: it takes the lock
+    without reading the format (there is none), and a dir that holds keys but lost its ``format.json`` is refused like any
+    other (``format.missing``)."""
+    from .backup.hubop import open_state
+
+    handle = None
+    try:
+        state = Path(args.state) if getattr(args, "state", None) else default_state_dir()
+        if state.exists():
+            fresh = init and not (state / "format.json").exists() and not (state / "meta.json").exists()
+            handle = open_state(state, check_format=not fresh)
+        else:
+            check_update(state)
+    except KeysError as e:
+        print(f"orch-hub: {e}", file=sys.stderr)
+        return 1
+    except DataFormatError as e:
+        print(f"orch-hub: refused: {e}", file=sys.stderr)
+        return 1
+    try:
+        return run()
+    finally:
+        if handle is not None:
+            handle.close()
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if _closing_refused(args):
@@ -242,6 +282,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 link_ws_public=args.link_ws_public,
                 link_ws_behind_front=args.link_ws_behind_front,
                 api_host=args.api_host,
+                publish_share_url=args.publish_share_url,
                 web_listen=args.web_listen,
                 relay_url=args.relay_url,
                 trusted_peers=frozenset(args.trusted_peer),
@@ -251,17 +292,17 @@ def main(argv: Sequence[str] | None = None) -> int:
                 hooks_listen=args.hooks_listen,
                 public_hooks_url=args.public_hooks_url,
             )
-        except (ValueError, KeysError) as e:
+        except (ValueError, KeysError, DataFormatError) as e:
             print(f"orch-hub: refused: {e}", file=sys.stderr)
             return 1
     if args.group in ("users", "groups", "grants", "channels", "access"):
         from .access.cli import run as run_access
 
-        return run_access(args)
+        return _guarded(args, lambda: run_access(args))
     if args.group == "spaces":
         from .spaces.cli import run as run_spaces
 
-        return run_spaces(args)
+        return _guarded(args, lambda: run_spaces(args))
     if args.group == "backup-key":
         from .backup.cli import run as run_backup_key
 
@@ -271,9 +312,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         return run_restore(args)
     if args.group == "relay":
-        return _relay_register(args)
+        return _guarded(args, lambda: _relay_register(args))
     if args.group == "releases":
-        return _releases(args)
+        return _guarded(args, lambda: _releases(args))
     if args.group == "doctor":
         from .doctor import run
 
@@ -313,6 +354,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"orch-hub: {e}", file=sys.stderr)
             return 1
         return 0
+    return _guarded(args, lambda: _keys(args), init=args.cmd == "init")
+
+
+def _keys(args: argparse.Namespace) -> int:
     try:
         state = Path(args.state) if args.state else default_state_dir()
         if args.cmd == "init":

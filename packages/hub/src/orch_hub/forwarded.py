@@ -10,22 +10,24 @@ from __future__ import annotations
 
 import ipaddress
 
-__all__ = ["FORWARDING", "NOT_PROXIED", "carries", "norm_ip", "refuse", "source_of"]
+__all__ = ["FORWARDING", "FORWARDING_PREFIX", "NOT_PROXIED", "carries", "norm_ip", "refuse", "source_of"]
 
+#: refused whatever follows the prefix (x-forwarded-prefix, x-forwarded-server ...), and these exact names
+FORWARDING_PREFIX = "x-forwarded-"
 FORWARDING = (
     "x-forwarded-for",
-    "x-forwarded-host",
-    "x-forwarded-proto",
-    "x-forwarded-port",
     "x-real-ip",
     "forwarded",
+    "x-client-ip",
+    "true-client-ip",
+    "cf-connecting-ip",
 )
 NOT_PROXIED = "this hub is not served through a proxy"
 
 
 def carries(names) -> bool:
     """True when any of the header ``names`` (lower case) is a forwarding header."""
-    return any(n in FORWARDING for n in names)
+    return any(n.lower().startswith(FORWARDING_PREFIX) or n.lower() in FORWARDING for n in names)
 
 
 def refuse(names, peer: str, trusted: frozenset[str]) -> bool:

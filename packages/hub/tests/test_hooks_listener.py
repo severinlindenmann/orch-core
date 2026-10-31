@@ -253,3 +253,13 @@ def test_ping_over_the_wire_then_a_real_event(lst):
     assert st.pull(WS, 0, NOW)["rings"] == []
     assert status(raw(ls, post(extra=b"X-GitHub-Event: check_suite\r\n"))) == 204
     assert len(st.pull(WS, 0, NOW)["rings"]) == 1
+
+
+@pytest.mark.parametrize(
+    "header",
+    [b"X-Real-IP: 1.2.3.4", b"X-Forwarded-Prefix: /x", b"X-Forwarded-Server: s", b"True-Client-IP: 1.2.3.4"],
+)
+def test_the_listener_refuses_forwarding_headers_from_an_untrusted_peer(lst, header):
+    ls, _st, _ib, seen = lst()
+    assert raw(ls, post(extra=header + b"\r\n")).startswith(b"HTTP/1.1 400")
+    assert not seen

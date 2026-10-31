@@ -46,7 +46,7 @@ def test_missing_or_malformed_uses_the_socket():
 def test_forged_loopback_host_is_only_a_key():
     h = {"x-forwarded-for": "127.0.0.1", "host": "127.0.0.1"}
     assert rate_key("100.71.0.5", h, VPN) == "127.0.0.1"
-    for f in SRC.glob("*.py"):
+    for f in SRC.rglob("*.py"):
         assert not re.search(r"is_loopback|is_private|\.is_global", f.read_text()), f.name
 
 
@@ -57,7 +57,7 @@ def test_a_malformed_trusted_list_is_refused():
 
 def test_only_forwarded_py_reads_forwarded_headers():
     pat = re.compile(r"""["']x-(forwarded|real-ip)|proxy_headers\s*=\s*True""", re.IGNORECASE)
-    for f in SRC.glob("*.py"):
+    for f in SRC.rglob("*.py"):
         if f.name not in (
             "forwarded.py",
             "common.py",
@@ -85,3 +85,16 @@ def test_repeated_and_joined_xff_headers_give_the_same_key_and_a_mapping_is_refu
     except ImportError:  # relay-only environment
         return
     assert pub("100.71.0.5", raw2, VPN) == "198.51.100.7"
+
+
+def test_an_empty_xff_or_a_zone_id_uses_the_socket_not_x_real_ip():
+    assert (
+        rate_key("100.71.0.5", {"x-forwarded-for": "", "x-real-ip": "198.51.100.9"}, VPN)
+        == "100.71.0.5"
+    )
+    assert (
+        rate_key("100.71.0.5", {"x-forwarded-for": "  ", "x-real-ip": "198.51.100.9"}, VPN)
+        == "100.71.0.5"
+    )
+    assert rate_key("100.71.0.5", {"x-forwarded-for": "fe80::1%eth0"}, VPN) == "100.71.0.5"
+    assert rate_key("100.71.0.5", {"x-real-ip": "fe80::1%eth0"}, VPN) == "100.71.0.5"

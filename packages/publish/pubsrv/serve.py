@@ -37,6 +37,7 @@ MAX_POST = 2048
 CHUNK = 64 * 1024
 IP_BURST = 120  # L1: per-IP token bucket for landing GETs and opens, wrong tokens included
 IP_REFILL_PER_S = 5
+IP_EVICT_SCAN = 64  # entries looked at when the table is full
 IP_TABLE_MAX = 10_000  # the per-client bucket table never holds more
 MAX_FILE = 60 * 1024 * 1024
 _ROUTE_SHARE = re.compile(rf"/s/({ID32})")
@@ -296,7 +297,7 @@ class ShareServer:
 
     def _ip_ok(self, scope):
         """Cheap bucket before any DB work, keyed by the client (forwarded.py: a rate key only, honoured from the
-        trusted-proxy list, never a trust or locality input). A bounded LRU: O(1), the oldest entry goes first."""
+        trusted-proxy list, never a trust or locality input). A bounded table; when full, _victim() picks the entry to evict."""
         key = rate_key(
             (scope.get("client") or ("?", 0))[0], scope.get("headers") or [], self._trusted
         )
@@ -307,8 +308,23 @@ class ShareServer:
             ok = tokens >= 1
             self._ips[key] = (tokens - 1 if ok else tokens, now)  # most recent at the end
             while len(self._ips) > IP_TABLE_MAX:
-                self._ips.popitem(last=False)
+                del self._ips[self._victim(now)]
             return ok
+
+    def _victim(self, now):
+        """The key to evict when the table is full (the relay's policy): among the IP_EVICT_SCAN least recently used,
+        the first whose bucket has refilled completely (evicting it loses nothing), else the one closest to full. A
+        depleted bucket is never reset by a flood of fresh keys while fuller entries remain."""
+        best, best_tokens = None, -1.0
+        for n, (key, (tokens, last)) in enumerate(self._ips.items()):
+            if n == IP_EVICT_SCAN:
+                break
+            tokens = min(IP_BURST, tokens + (now - last) * IP_REFILL_PER_S)
+            if tokens >= IP_BURST:
+                return key
+            if tokens > best_tokens:
+                best, best_tokens = key, tokens
+        return best
 
     async def _route(self, scope, receive, method):
         # The raw path is matched as is. Percent-escapes survive into the view-file path, where

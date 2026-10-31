@@ -116,3 +116,23 @@ def test_publish_serves_without_a_server_header():
     assert (
         src.count("server_header=False") >= 2
     )  # `serve` (uvicorn.run) and the shared _uvicorn_server config
+
+
+def test_eviction_never_resets_a_depleted_bucket(tmp_path):
+    srv = ShareServer(tmp_path, trusted_proxy="100.71.0.0/16")
+    victim = scope("100.71.0.5", x_forwarded_for="198.51.100.1")
+    while srv._ip_ok(victim):  # drain key A
+        pass
+    for i in range(IP_TABLE_MAX + 1):
+        srv._ip_ok(
+            scope("100.71.0.5", x_forwarded_for=f"10.{i // 65536}.{(i // 256) % 256}.{i % 256}")
+        )
+    assert srv._ip_ok(victim) is False  # A is still refused: it was not the entry that went
+
+
+def test_an_empty_xff_or_a_zone_id_uses_the_socket_not_x_real_ip():
+    assert key("100.71.0.5", x_forwarded_for="", x_real_ip="198.51.100.9") == "100.71.0.5"
+    assert key("100.71.0.5", x_forwarded_for="   ", x_real_ip="198.51.100.9") == "100.71.0.5"
+    assert key("100.71.0.5", x_forwarded_for="fe80::1%eth0") == "100.71.0.5"
+    assert key("100.71.0.5", x_real_ip="fe80::1%eth0") == "100.71.0.5"
+    assert key("fd0f:80b5:c7cd:bbad::7%eth0", x_forwarded_for="") == "fd0f:80b5:c7cd:bbad::/64"

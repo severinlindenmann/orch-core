@@ -44,3 +44,25 @@ def test_only_forwarded_py_reads_forwarding_headers():
     for f in SRC.rglob("*.py"):
         if f.name not in allowed:
             assert not pat.search(f.read_text()), f
+
+
+SUFFIXED = [
+    "x-forwarded-prefix",
+    "x-forwarded-server",
+    "X-Forwarded-Anything",
+    "x-client-ip",
+    "true-client-ip",
+    "cf-connecting-ip",
+]
+
+
+@pytest.mark.parametrize("name", SUFFIXED)
+def test_any_x_forwarded_suffix_and_the_client_ip_headers_are_refused_by_the_web_api(w, name):
+    status, _hd, out = w.api.handle("GET", "/", {name.lower(): "1", "host": "h"}, b"", "100.71.0.9")
+    assert status == 400 and FW.NOT_PROXIED.encode() in out
+
+
+@pytest.mark.parametrize("name", [*SUFFIXED, "X-Real-IP"])
+def test_refuse_rule_applies_to_every_such_header(name):
+    assert FW.refuse((name.lower(),), "100.71.0.9", frozenset())
+    assert not FW.refuse((name.lower(),), "127.0.0.1", frozenset({"127.0.0.1"}))

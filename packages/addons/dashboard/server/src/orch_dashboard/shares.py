@@ -81,6 +81,8 @@ class PrepareBody(BaseModel):
     ticket: reads.Key
     artifacts: Annotated[list[FileName], Field(max_length=20)] = []
     uploads: Annotated[list[UploadId], Field(max_length=20)] = []
+    #: P03: plain names of files in the ticket's own work folder; the host finds them there, no path is ever sent
+    workfiles: Annotated[list[FileName], Field(max_length=20)] = []
     kind: Literal["secret", "once"] = "secret"
     days: Literal[1, 3, 7, 30] = 7
     views: Literal[1, 3, 10] | None = None
@@ -88,11 +90,14 @@ class PrepareBody(BaseModel):
 
     @model_validator(mode="after")
     def shape(self):
-        if not self.artifacts and not self.uploads:
+        if not self.artifacts and not self.uploads and not self.workfiles:
             raise ValueError("no files")
-        if len({a.lower() for a in self.artifacts}) != len(self.artifacts):
+        if len({a.lower() for a in (*self.artifacts, *self.workfiles)}) != len(self.artifacts) + len(self.workfiles):
             raise ValueError("different files")
-        if len(set(self.uploads)) != len(self.uploads) or len(self.artifacts) + len(self.uploads) > 20:
+        if (
+            len(set(self.uploads)) != len(self.uploads)
+            or len(self.artifacts) + len(self.uploads) + len(self.workfiles) > 20
+        ):
             raise ValueError("different files")
         if (self.kind == "once") != (self.views is not None):
             raise ValueError("views belong to a show-once link only")
@@ -104,6 +109,8 @@ class PrepareBody(BaseModel):
             args["artifacts"] = self.artifacts
         if self.uploads:
             args["uploads"] = self.uploads
+        if self.workfiles:
+            args["workfiles"] = self.workfiles
         if self.views is not None:
             args["views"] = self.views
         return args

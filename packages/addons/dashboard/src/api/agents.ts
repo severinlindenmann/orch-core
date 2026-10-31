@@ -161,3 +161,5 @@ export function cwdText(p: AgentPreview): string {
 
 /** The host's login-shell sentence (core launch.py LOGIN_NOTICE, pinned by a server test); the notice is acknowledged on its own. */
 export const LOGIN_NOTICE = 'the program is found and started through your login shell; your shell profile runs first and can change what runs'
+/** P16: the same disclosure in plain words, the muted line of the Start agent panel (the host's sentence above stays under Details). */
+export const LOGIN_PLAIN = 'Runs as you, with your usual terminal settings.'

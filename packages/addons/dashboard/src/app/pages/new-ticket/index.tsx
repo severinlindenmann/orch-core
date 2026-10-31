@@ -708,6 +708,8 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
         <SignPopover
           key={`${handoffNew.n}-${handoffNew.start?.withAccess ? plan.hours : 0}`}
           autoStart={handoffNew.trusted}
+          armOnStart={!handoffNew.start}
+          armLine="Creating in a moment"
           prepareOnOpen
           title={handoffNew.start ? 'New ticket' : 'Create this ticket?'}
           ws={workspace.id}

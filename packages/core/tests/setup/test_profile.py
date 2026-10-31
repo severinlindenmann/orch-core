@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 
 import pytest
 
@@ -27,6 +28,7 @@ def test_state_lists_the_contract_fields(flow):
               "agent_hours", "relay", "missing"):  # fmt: skip
         assert k in out
     assert out["phase"] == "profile" and out["mode"] == "new" and out["agent_hours"] == [8, 24, 72, 168]
+    assert out["host"] == socket.gethostname()[:80]  # P43: the page names the computer being set up
     ids = [a["id"] for a in out["addons"]]
     assert "focus" not in ids  # Optional: only offered later in Settings > Add-ons.
     assert ids[0] == "dashboard" and {"start-agent", "terminals", "worktrees", "quick"} <= set(ids)

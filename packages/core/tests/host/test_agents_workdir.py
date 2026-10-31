@@ -239,7 +239,16 @@ def test_workdir_read_review_fixes(ready):  # noqa: F811
     (folder / "blob.bin").write_bytes(b"\x00\x01secret-key-material\xff")
     got = ok(c.call("workdir.read", {"ticket": key, "name": "blob.bin"}))["data"]
     assert got["kind"] == "other" and "base64" not in got and "text" not in got and got["bytes"] == 22
-    for i, spoof in enumerate(("pay ‮raw‬ here", "zero​width", "c1\x85line", "del\x7f")):
+    spoofs = (
+        "pay \u202eraw\u202c here",
+        "zero\u200bwidth",
+        "c1\x85line",
+        "del\x7f",
+        "bom\ufeff",
+        "ls\u2028x",
+        "wj\u2060x",
+    )
+    for i, spoof in enumerate((*spoofs, "alm\u061cx")):
         (folder / f"s{i}.txt").write_text(spoof)
         got = ok(c.call("workdir.read", {"ticket": key, "name": f"s{i}.txt"}))["data"]
         assert got["kind"] == "other" and "text" not in got, spoof

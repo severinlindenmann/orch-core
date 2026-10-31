@@ -6,7 +6,7 @@ import { emptyState, loading } from "../feel.js";
 import { chip, h, text, when, withNames } from "../ui.js";
 
 export const STATEMENT = "The hub and its admins can read this space.";
-export const NO_START = "None of your workspaces can start a space yet. A workspace that shares only selected items can join later, once its owner accepts.";
+export const NO_START = "A space needs a workspace that shares everything with the hub.";
 export const LATER = "Can join later, once its owner accepts";
 export const RESTORE_LINE = "To get an older version back, restore it from the workspace.";
 const TYPES = [["wiki", "Wiki", "Pages people write together"], ["files", "Files", "Documents everyone starts from"], ["board", "Board", "Cards that move from planned to done"]];
@@ -54,20 +54,15 @@ export function newSpaceDialog(workspaces, done, close) {
   const tick = h("input", { type: "checkbox", id: "space-understood", "aria-label": "I understand" });
   const create = h("button", { type: "button", class: "pri", text: "Create" });
   const next = h("button", { type: "button", class: "pri", text: "Next" });
-  // The hub adds only 'full' workspaces now; a 'selective' one waits for its owner and cannot be ticked. A space needs at
-  // least one that joins now, so when none can, the reason is said up front.
+  // The hub adds only 'full' workspaces now; a 'selective' one waits for its owner and cannot be ticked.
   const joinsNow = () => workspaces.some((w) => w.mode === "full" && form.members.has(w.workspace_id));
-  const cannotStart = workspaces.length > 0 && !workspaces.some((w) => w.mode === "full");
-  const noStart = h("p", { class: "banner warn", id: "space-no-start", role: "note", text: NO_START });
   const hint = h("p", { class: "small muted space-hint", id: "space-hint", role: "note" });
   const ready = () => {
-    noStart.hidden = !cannotStart;
     create.disabled = !(form.understood === true && joinsNow());
-    // What Create is waiting for, in one line. When no workspace can start at all, the banner above says why instead.
-    hint.textContent = cannotStart || !create.disabled ? "" : joinsNow() ? HINT_TICK : HINT_PICK;
+    // What Create is waiting for, in one line.
+    hint.textContent = !create.disabled ? "" : joinsNow() ? HINT_TICK : HINT_PICK;
     hint.hidden = !hint.textContent;
-    if (cannotStart) create.setAttribute("aria-describedby", "space-no-start");
-    else if (create.disabled) create.setAttribute("aria-describedby", "space-hint");
+    if (create.disabled) create.setAttribute("aria-describedby", "space-hint");
     else create.removeAttribute("aria-describedby");
   };
   tick.addEventListener("change", () => { form.understood = tick.checked === true; ready(); });
@@ -106,7 +101,6 @@ export function newSpaceDialog(workspaces, done, close) {
           return h("label", { class: "check" + (joins ? "" : " disabled") }, box, h("span", { class: "grow", text: nameOf(w) }),
             h("span", { class: "small muted", text: joins ? "joins now" : LATER }));
         }) : [h("p", { class: "small muted", text: "No workspace is connected yet." })]),
-        noStart,
         h("label", { class: "check" }, tick, h("span", { text: "I understand: " + STATEMENT }))],
     };
     body.replaceChildren(h("h1", { text: "New shared space (step " + step + " of 3)" }), ...steps[step],
@@ -122,6 +116,7 @@ export function spacesView(data, actions = {}, now = Date.now()) {
   const all = data.spaces ?? [];
   const about = data.about ?? {};
   const candidates = (data.workspaces ?? []).filter((w) => w.mode != null && w.status !== "unbound");
+  const canStart = candidates.some((w) => w.mode === "full");
   const archived = all.filter((s) => s.archived_ms != null);
   let showArchived = false;
   const list = h("div", { id: "spaces-list" });
@@ -176,13 +171,28 @@ export function spacesView(data, actions = {}, now = Date.now()) {
       panel);
   };
   const open = () => {
+    if (!canStart) return;
     const close = () => dialogHost.replaceChildren();
     dialogHost.replaceChildren(newSpaceDialog(candidates, async (form) => { close(); await actions.create?.(form); }, close));
   };
+  const newSpace = h("button", { type: "button", id: "new-space", class: "pri", text: "New shared space", onclick: open });
+  newSpace.disabled = !canStart;
+  const noStart = !canStart && candidates.length ? h("div", { class: "banner warn", id: "space-no-start", role: "note" },
+    h("b", { text: "No space can be started yet." }),
+    h("p", { text: NO_START }),
+    candidates.map((w) => h("p", { text: nameOf(w) + " shares only what you choose." })),
+    h("details", {},
+      h("summary", { text: "Show me how" }),
+      h("ol", {},
+        h("li", { text: "Open " + candidates.map(nameOf).join(" or ") + " on its own computer." }),
+        h("li", { text: "Go to Settings > Hub." }),
+        h("li", {}, "Choose ", h("b", { text: "Share everything" }), ". Then come back here.")))) : null;
+  if (noStart) newSpace.setAttribute("aria-describedby", "space-no-start");
   const root = h("div", { class: "spaces" },
     h("div", { class: "row" }, h("h1", { class: "grow", text: "Shared spaces" }),
-      h("button", { type: "button", id: "new-space", class: "pri", text: "New shared space", onclick: open }),
+      newSpace,
       info("About shared spaces", "Workspaces put documents into a shared space and read each other's. A workspace set to Reads only can read but not add or remove. Archiving stops new additions; reading goes on.")),
+    noStart,
     all.length ? h("p", { class: "banner warn", role: "note", text: STATEMENT }) : null,
     toggle, list, dialogHost);
   if (toggle) toggle.addEventListener("click", () => { showArchived = !showArchived; draw(); });

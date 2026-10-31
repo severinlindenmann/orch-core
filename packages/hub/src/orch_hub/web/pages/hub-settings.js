@@ -34,6 +34,7 @@ const WHY = {
   dev_mismatch: "This backup is of a different kind of hub (test or real).",
   dev_refused: "This backup is of a different kind of hub (test or real).",
   restore_busy: "Another big action is running on this hub (a restore, an update or a removal). Try again when it is done.",
+  restore_stop_hub: "This backup was made by an older orch. Stop the hub, restore it on the server (orch-hub restore), then run orch update.",
   no_admin: "After this restore nobody could sign in as an admin, so it was not done.",
   rate_limited: "A backup was made a moment ago. Try again in a few minutes.",
   restore_failed: "The restore could not be done. Nothing was changed.",

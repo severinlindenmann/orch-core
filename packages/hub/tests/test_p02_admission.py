@@ -5,10 +5,11 @@ from __future__ import annotations
 
 import pytest
 
+from orch_hub import serve as serve_mod
 from orch_hub import settings as S
 from orch_hub.contract.hub import Refused
 from orch_hub.contract.where import check_hub_where, publish_ok
-from orch_hub.serve import make_admission, publish_hint
+from orch_hub.serve import make_admission
 
 HUB = "a" * 32
 WS = "b" * 32
@@ -95,23 +96,14 @@ def test_share_files_must_be_a_bool():
     assert "share_files" not in S.validate(GOOD)
 
 
-def test_where_carries_the_publish_hint_only_when_it_is_a_clean_origin(tmp_path):
+def test_where_never_carries_the_legacy_publish_string(tmp_path):
     S.save(
         tmp_path, {**GOOD, "addresses": [{"kind": "server", "web": "http://127.0.0.1:8100", "link": "127.0.0.1:8105"}]}
     )
-    a = S.where_answer(tmp_path, publish="http://127.0.0.1:8102")
-    assert a["publish"] == "http://127.0.0.1:8102" and "publish" not in S.where_answer(tmp_path)
-    assert publish_hint("http://127.0.0.1:8102") == "http://127.0.0.1:8102"
-    assert publish_hint("https://share.example.com/") == "https://share.example.com"
-    for bad in (
-        "http://100.64.1.2:8102",
-        "http://10.0.0.5:8102",
-        "ftp://x",
-        "https://u:p@x.com",
-        "https://x.com/path",
-        None,
-    ):
-        assert publish_hint(bad) is None
+    assert "publish" not in S.where_answer(tmp_path)
+    with pytest.raises(TypeError):
+        S.where_answer(tmp_path, publish="http://127.0.0.1:8102")  # type: ignore[call-arg]
+    assert not hasattr(serve_mod, "publish_hint")
 
 
 @pytest.mark.parametrize(
@@ -122,4 +114,5 @@ def test_check_hub_where_refuses_a_bad_publish(bad):
     assert not publish_ok(bad)
     with pytest.raises(Refused):
         check_hub_where({**base, "publish": bad})
-    assert check_hub_where({**base, "publish": "https://x.com"})["publish"] == "https://x.com"
+    # #1838: a clean legacy ``publish`` is still accepted in shape, but the checker never returns it (nothing suggests from it)
+    assert check_hub_where({**base, "publish": "https://x.com"}) == {**base, "name": "Hub"}

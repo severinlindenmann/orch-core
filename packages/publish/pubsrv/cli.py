@@ -6,7 +6,10 @@ import sys
 import time
 
 from . import cleanup, db
+from .dataformat import DataFormatError
 
+# the data-dir handles (shared format lock) of the servers this process runs, for its whole life
+_HELD = []
 _ID = re.compile(r"[0-9a-f]{32}")
 LOOPBACK = {"127.0.0.1", "[::1]", "localhost"}
 
@@ -26,21 +29,32 @@ def _trust_hubs(args):
     ids = getattr(args, "trust_hub", None) or []
     if not ids:
         return
-    path = db.prepare_dir(args.data)
-    db.init(path)
-    conn = db.connect(path)
+    path, handle = db.open_dir(args.data)
     try:
-        for h in ids:
-            conn.execute(
-                "INSERT OR IGNORE INTO trusted_hubs(hub_id, added_ms) VALUES (?,?)", (h, _now())
-            )
+        db.init(path)
+        conn = db.connect(path)
+        try:
+            for h in ids:
+                conn.execute(
+                    "INSERT OR IGNORE INTO trusted_hubs(hub_id, added_ms) VALUES (?,?)",
+                    (h, _now()),
+                )
+        finally:
+            conn.close()
     finally:
-        conn.close()
+        handle.close()
 
 
 def admin(args, out=None):
     out = out or sys.stdout
-    path = db.prepare_dir(args.data)
+    path, handle = db.open_dir(args.data)  # the same rule as the server; shared with a running one
+    try:
+        return _admin(args, path, out)
+    finally:
+        handle.close()
+
+
+def _admin(args, path, out):
     db.init(path)
     conn = db.connect(path)
     try:
@@ -163,6 +177,7 @@ def serve(args):
         allow_direct=args.allow_direct,
         share_origin=args.share_origin,
     )
+    _HELD.append(app.state.settings.data_handle)
     # no access log: request lines carry ids, and the no-logging policy applies (design I15)
     uvicorn.run(
         app,
@@ -172,6 +187,7 @@ def serve(args):
         log_level="warning",
         proxy_headers=False,  # forwarded.py is the only reader of forwarded headers
         server_header=False,
+        workers=1,  # one process: a pre-fork pool would share the format lock descriptor past the service's death
     )
     return 0
 
@@ -226,6 +242,7 @@ def run_cmd(args):
     except ValueError as e:
         print(e, file=sys.stderr)
         return 2
+    _HELD.append(app.state.settings.data_handle)
     print(
         f"orch-publish: listening on {args.listen}; links open at {origin}/s/<id>, apps at {origin}/a/<slug>/",
         flush=True,
@@ -271,7 +288,9 @@ def share(args):
     except ValueError as e:
         print(e, file=sys.stderr)
         return 2
-    _uvicorn_server(create_share_app(args.data, share_origin=args.share_origin), host, port).run()
+    srv = create_share_app(args.data, share_origin=args.share_origin)
+    _HELD.append(srv.data_handle)
+    _uvicorn_server(srv, host, port).run()
     return 0
 
 
@@ -298,7 +317,8 @@ def dev(args, ready=None):
             print("--workspace must be WS=PERSON (32 lower-case hex each)", file=sys.stderr)
             return 2
         pre.append((ws, person))
-    path = db.prepare_dir(args.data)
+    path, handle = db.open_dir(args.data)
+    _HELD.append(handle)  # held for the life of the process (the two apps below hold their own too)
     db.init(path)
     conn = db.connect(path)
     try:
@@ -435,7 +455,7 @@ def main(argv=None):
     run = {"serve": serve, "share": share, "dev": dev, "run": run_cmd}.get(args.cmd, admin)
     try:
         return run(args)
-    except db.SchemaError as e:
+    except (db.SchemaError, DataFormatError) as e:
         print(e, file=sys.stderr)
         return 2
 

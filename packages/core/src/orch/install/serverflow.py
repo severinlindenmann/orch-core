@@ -289,6 +289,7 @@ def server_setup(
                 or (names.url("publish") if "publish" in tls_all(names, plan, role) else None),
                 relay_url=hub_urls.get("relay")
                 or (names.url("relay") if "relay" in tls_all(names, plan, role) else None),
+                publish_share_url=names.url("publish") if "publish" in tls_all(names, plan, role) else None,
             )
         if p == "relay":
             extra = dict(behind_edge=edge, exact_bind=True)

@@ -214,10 +214,10 @@ class HubPublish:
                 # _ensure reads the held object and sends it under the workspace's lock, so a newer binding set meanwhile
                 # is sent after this one and wins
                 self._ensure(ws, card, need_bound=False, deadline=deadline)
-            except Exception as e:  # noqa: BLE001 - one workspace's failure must not stop the others (Refused included)
-                logging.getLogger("orch_hub.publish").info(
-                    "binding push skipped: %s", getattr(e, "code", type(e).__name__)
-                )
+            except Refused as e:
+                logging.getLogger("orch_hub.publish").info("binding push for %s skipped: %s", ws, e.code)
+            except Exception:  # one workspace's failure must not stop the others
+                logging.getLogger("orch_hub.publish").warning("binding push for %s failed", ws, exc_info=True)
 
     def restore(self, bindings: Mapping[str, Mapping[str, Any]]) -> None:
         """After a restart: the signed binding / unbound objects the registry persisted (nothing is synced yet)."""

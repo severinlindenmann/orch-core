@@ -18,7 +18,6 @@ from .adapters.addons import display
 from .gateway import Gateway
 from .terminals import Idem
 
-
 #: the file-name alphabet of a share (as shares.FileName); a work-folder name outside it is not offered
 FILE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._ -]{0,99}")
 

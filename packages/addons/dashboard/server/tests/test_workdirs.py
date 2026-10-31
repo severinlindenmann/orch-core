@@ -67,10 +67,12 @@ def test_get_offers_only_plain_named_files_with_their_sizes():
     got = view({
         "exists": True, "codebase": False, "folder": ".orch-work/DEMO-1", "files": 3, "bytes": 20,
         "items": [{"name": "hello.txt", "bytes": 16}, {"name": "../x", "bytes": 1}, {"name": ".hid", "bytes": 1},
-                  {"name": "a.txt", "bytes": -1}, {"name": "b.txt", "bytes": True}, "junk", {"name": "ok.md\n", "bytes": 1}],
+                  {"name": "a.txt", "bytes": -1}, {"name": "b.txt", "bytes": True}, "junk",
+                  {"name": "ok.md\n", "bytes": 1}],
     })  # fmt: skip
     assert got["items"] == [{"name": "hello.txt", "bytes": 16}]
-    assert view({"exists": True, "items": [{"name": f"f{i}.txt", "bytes": 1} for i in range(30)]})["items"].__len__() == 20
+    many = [{"name": f"f{i}.txt", "bytes": 1} for i in range(30)]
+    assert len(view({"exists": True, "items": many})["items"]) == 20
     assert view({"exists": True, "items": "x"})["items"] == []
 
 

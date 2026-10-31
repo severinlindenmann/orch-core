@@ -94,7 +94,10 @@ class PrepareBody(BaseModel):
             raise ValueError("no files")
         if len({a.lower() for a in (*self.artifacts, *self.workfiles)}) != len(self.artifacts) + len(self.workfiles):
             raise ValueError("different files")
-        if len(set(self.uploads)) != len(self.uploads) or len(self.artifacts) + len(self.uploads) + len(self.workfiles) > 20:
+        if (
+            len(set(self.uploads)) != len(self.uploads)
+            or len(self.artifacts) + len(self.uploads) + len(self.workfiles) > 20
+        ):
             raise ValueError("different files")
         if (self.kind == "once") != (self.views is not None):
             raise ValueError("views belong to a show-once link only")

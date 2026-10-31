@@ -8,7 +8,8 @@ import type { StartInitial } from '@/app/terminal/real/StartAgentDialog'
 /** The agent's progress on a ticket, in the one status pill. */
 export type Phase =
   | { kind: 'idle' }
-  | { kind: 'starting'; slow: boolean }
+  | { kind: 'starting'; slow: boolean; /** a run of this ticket still lives: never offer a second start next to it (run 16 P01) */ live?: true }
+  | { kind: 'waiting'; /** the run the agent waits in (open it with openDockOn) */ run: string }
   | { kind: 'working' }
   | { kind: 'needs' }
   | { kind: 'failed'; reason: string; initial?: StartInitial }
@@ -114,6 +115,9 @@ export function agentFinished(run: { kind: string; state: string }, ticketStatus
 
 export function phaseOf(ticket: TicketDocument, o: { needsYou: boolean; mark?: Mark; run?: ProgressRun | null; now: number; wait?: string | null }): Phase {
   if (ticket.status === 'done' || ticket.status === 'closed') return { kind: 'idle' }
+  // The agent waits for the person (a question or permission prompt the host detects) but holds no claim: say so, with the way to it.
+  const claimLive = !!ticket.claim && ticket.claim.live !== false
+  if (o.wait && !claimLive) return { kind: 'waiting', run: o.wait }
   if (o.needsYou) return { kind: 'needs' }
   if (agentWorking(ticket, o.wait)) return { kind: 'working' }
   if (o.mark?.failed) return { kind: 'failed', reason: o.mark.failed.reason, initial: o.mark.failed.initial }
@@ -123,10 +127,11 @@ export function phaseOf(ticket: TicketDocument, o: { needsYou: boolean; mark?: M
   if (runDead && (o.mark ? runStart > o.mark.since : o.now - runStart < STARTING_MAX_MS))
     return { kind: 'failed', reason: 'The agent stopped before it began. Start it again.' }
   const runStarting = o.run?.state === 'starting'
-  const runRunning = o.run?.state === 'running' && o.now - runStart < STARTING_MAX_MS
+  // While the run lives the pill never falls back to idle: "No agent is working" next to a running agent is wrong (run 16 P01).
+  const runRunning = o.run?.state === 'running'
   // A mark nobody answered for 3 minutes is dropped, so the pill cannot stick.
   const liveMark = !!o.mark && o.now - o.mark.since < STARTING_MAX_MS
   if (!liveMark && !runStarting && !runRunning) return { kind: 'idle' }
   const since = o.mark?.since ?? runStart
-  return { kind: 'starting', slow: o.now - since >= STARTING_SLOW_MS }
+  return { kind: 'starting', slow: o.now - since >= STARTING_SLOW_MS, ...(runStarting || runRunning ? { live: true as const } : {}) }
 }

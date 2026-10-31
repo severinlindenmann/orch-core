@@ -8,6 +8,7 @@ import { api } from '@/api/client'
 import { runQueries } from '@/api/runs'
 import { queries } from '@/api/queries'
 import { agentInWait, terminalWaitFor } from '@/app/attention'
+import { openDockOn } from '@/app/terminal/dock/request'
 import { TicketProgress } from './NextStep'
 import { addonActive } from '@/api/addons'
 import { AddonBadge, useAddons, useRunAddonAction } from '@/addon-ui'
@@ -55,7 +56,7 @@ export function CopyButton({ text, label }: { text: string; label: string }) {
 }
 
 /** Who is working on the ticket, in one line. Claiming is the agents' job, so people get no Claim/Release here. */
-export function AgentStatus({ ticket, viewer, wait, needsYou = false }: { ticket: TicketDocument; viewer: Viewer; /** the agent is idle at its prompt (run-9 J04) */ wait?: string; /** the ticket waits for the person (phase 'needs'): the line says so, like the card and the pill (run 15 P05) */ needsYou?: boolean }) {
+export function AgentStatus({ ticket, viewer, wait, needsYou = false, liveRun = false }: { ticket: TicketDocument; viewer: Viewer; /** a run of this ticket's agent still lives although it holds no claim (run 16 P01) */ liveRun?: boolean; /** the agent is idle at its prompt (run-9 J04) */ wait?: string; /** the ticket waits for the person (phase 'needs'): the line says so, like the card and the pill (run 15 P05) */ needsYou?: boolean }) {
   // A claim the host marks not live (ended by Done or Close, lapsed, grant over) is history: nobody is working (run 8, 8).
   const c = ticket.claim?.live === false ? null : ticket.claim
   const subagents = new Set(ticket.tasks_state.flatMap((t) => (t.lease && t.lease.session !== c?.session ? [t.lease.session] : []))).size
@@ -78,10 +79,23 @@ export function AgentStatus({ ticket, viewer, wait, needsYou = false }: { ticket
             {' · '}since {fmtClock(c.since)}
             {subagents > 0 && ` · ${subagents} ${subagents === 1 ? 'subagent' : 'subagents'}`}
           </>
+        ) : wait ? (
+          <>
+            <span className="text-text">Claude</span> is waiting for <span className="text-text">you</span>
+          </>
+        ) : liveRun ? (
+          <>
+            <span className="text-text">Claude</span> is starting on this ticket
+          </>
         ) : (
           'No agent is working on this ticket'
         )}
       </span>
+      {!c && wait && (
+        <Button type="button" size="sm" variant="outline" className="h-6 shrink-0 px-2 text-[12px]" onClick={() => openDockOn(wait)}>
+          Open agent
+        </Button>
+      )}
     </p>
   )
 }
@@ -326,7 +340,7 @@ function PrimaryButton({ ticket, viewer, jump, start, signing, phase, idle = fal
   const { workspace } = useWorkspace()
   const av = availableActions(ticket, viewer)
   const blocked = blockedApproval(ticket, viewer)
-  const busy = phase.kind === 'starting' || phase.kind === 'working'
+  const busy = phase.kind === 'starting' || phase.kind === 'working' || phase.kind === 'waiting'
   // A gate that waits for someone else (shown disabled below) comes before offering to start an agent.
   const p = primaryAction(av, { start: start.startable && !blocked && !busy })
   if (signing)
@@ -434,7 +448,7 @@ export function TicketProgressLive(p: { ticket: TicketDocument; viewer: Viewer; 
 }
 
 /** The one status pill for the agent's progress, in plain words, in a live region so changes are announced. */
-function ProgressPill({ phase, start, ticket, viewer, ws }: { phase: Phase; start: StartAgent; ticket: TicketDocument; viewer: Viewer; ws?: string }) {
+export function ProgressPill({ phase, start, ticket, viewer, ws }: { phase: Phase; start: StartAgent; ticket: TicketDocument; viewer: Viewer; ws?: string }) {
   const [pending, setPending] = useState(false)
   const stage = phase.kind === 'starting' && phase.slow ? 'slow' : phase.kind
   useEffect(() => {
@@ -476,7 +490,7 @@ function ProgressPill({ phase, start, ticket, viewer, ws }: { phase: Phase; star
             <Loader2 className="animate-spin" aria-hidden />
             {phase.slow ? 'Taking longer than usual' : 'Getting started…'}
           </Pill>
-          {phase.slow && (
+          {phase.slow && !phase.live && (
             <Button type="button" size="sm" variant="ghost" className="h-6 px-2 text-[12px]" disabled={pending} onClick={retry}>
               Try again
             </Button>
@@ -490,6 +504,15 @@ function ProgressPill({ phase, start, ticket, viewer, ws }: { phase: Phase; star
         </Pill>
       )}
       {phase.kind === 'needs' && <Pill tone="warning">Needs you</Pill>}
+      {phase.kind === 'waiting' && (
+        <>
+          <Pill tone="warning">Needs you</Pill>
+          <span className="text-[13px] text-text">Agent is waiting for you</span>
+          <Button type="button" size="sm" onClick={() => openDockOn(phase.run)}>
+            Open agent
+          </Button>
+        </>
+      )}
       {phase.kind === 'failed' && (
         <>
           <Pill tone="warning">{phase.reason}</Pill>
@@ -634,7 +657,7 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
       )}
 
       <BlockedByConnection ticket={ticket} />
-      {phase.kind !== 'starting' && phase.kind !== 'failed' && <AgentStatus ticket={ticket} viewer={viewer} wait={wait} needsYou={phase.kind === 'needs'} />}
+      {phase.kind !== 'starting' && phase.kind !== 'failed' && phase.kind !== 'waiting' && <AgentStatus ticket={ticket} viewer={viewer} wait={wait} needsYou={phase.kind === 'needs'} liveRun={run?.state === 'running' || run?.state === 'starting'} />}
     </header>
   )
 }

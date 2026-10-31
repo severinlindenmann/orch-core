@@ -2,6 +2,7 @@
 """Release key ceremony (docs/release-ceremony.md). Run as ``python3 -I scripts/release/ceremony.py <command>``.
 
     ceremony.py init                  once: root key + CI key rk-1 + first revocation list + embedded root + floor
+    ceremony.py issue-test-key        once: TEST key tk-1 for test-* channels in release-test
     ceremony.py resign-revocations    every 14 days: re-sign the revocation list (same serials, newer issued_at)
 
 Every secret stays in this process. The root key lives in Proton Pass (vault Agents) and is read back from there; the
@@ -11,6 +12,9 @@ are the public outputs under release/keys/, the embedded root in two source file
 staged in a 0700 temp dir that is removed on exit and on every signal. stdout carries only key id, fingerprint,
 Proton item IDs (not secret), the changed files and issued_at. Wiping seeds is best effort only: Python keeps
 immutable copies of some values; the process is short-lived and never writes them anywhere.
+Production key serials stay below TEST_SERIAL_BASE = 1001; test keys use serials >= 1001.
+Test keys are revoked by explicit serial in revoked, NEVER by raising min_serial (that would also kill production
+keys). A production min_serial raise never reaches 1001.
 Failure messages are fixed strings: no child output is ever echoed.
 """
 
@@ -49,9 +53,15 @@ ROOT_TITLE = "orch release root key"
 CI_TITLE = "orch release CI key rk-1"
 ROOT_ID = "root-1"
 CI_ID = "rk-1"
+TEST_SERIAL_BASE = 1001
+TEST_ID = "tk-1"
+TEST_TITLE = "orch release TEST key tk-1"
+TEST_ENV = "release-test"
+TEST_CERT = "release/keys/tk-1.cert.json"
 SECRET_NAME = "ORCH_RELEASE_KEY"
 GH_REPO = "severinlindenmann/orch-core"
 ENV_NAME = "release"
+assert TEST_ENV != ENV_NAME
 REASON = "orch release key ceremony"
 CI_DAYS = 180
 ROOT_ENV_LINE = f"ORCH_ROOT_SIGNING_KEY=pass://{VAULT}/{ROOT_TITLE}/password\n"
@@ -252,11 +262,11 @@ def _store_and_verify(tpl: dict, label: str, title: str, username: str, key: Ed2
     print(f"proton item id ({label}): {item_id}", flush=True)  # not secret; printed only once the read-back matched
 
 
-def _gh_secret_set(key: Ed25519PrivateKey, repo: str) -> None:
+def _gh_secret_set(key: Ed25519PrivateKey, repo: str, *, env: str) -> None:
     seed = _seed(key)
     data = bytearray(base64.b64encode(bytes(seed)))
     try:
-        rc, _ = run(["gh", "secret", "set", SECRET_NAME, "--env", ENV_NAME, "--repo", repo], bytes(data))
+        rc, _ = run(["gh", "secret", "set", SECRET_NAME, "--env", env, "--repo", repo], bytes(data))
     finally:
         _wipe(seed, data)
     if rc != 0:
@@ -273,9 +283,13 @@ def _gh_json(args: list[str]):
         return None
 
 
-def _secret_present(repo: str) -> bool:
-    rc, out = run(["gh", "secret", "list", "--env", ENV_NAME, "--repo", repo])
+def _secret_present(repo: str, *, env: str, strict: bool = False) -> bool:
+    """Whether ORCH_RELEASE_KEY is set in ``env``. ``strict`` (a guard before writing) refuses when gh cannot tell, so
+    a failing list never reads as "absent" and lets a set overwrite a secret (fail closed)."""
+    rc, out = run(["gh", "secret", "list", "--env", env, "--repo", repo])
     if rc != 0:
+        if strict:
+            raise Ceremony(f"cannot list the secrets of the {env!r} environment; nothing was changed")
         return False
     return any(line.split("\t")[0].strip() == SECRET_NAME for line in out.decode(errors="replace").splitlines())
 
@@ -296,32 +310,32 @@ def _check_clock(headers: str) -> None:
         raise Ceremony("this machine's clock differs from GitHub's by more than 5 minutes: fix the clock first")
 
 
-def _check_environment(repo: str) -> None:
-    rc, raw = run(["gh", "api", "-i", f"repos/{repo}/environments/{ENV_NAME}"])
+def _check_environment(repo: str, *, env: str, expected_branches: set[str]) -> None:
+    rc, raw = run(["gh", "api", "-i", f"repos/{repo}/environments/{env}"])
     head, sep, body = raw.decode(errors="replace").replace("\r\n", "\n").partition("\n\n")
     try:
-        env = json.loads(body) if rc == 0 and sep else None
+        doc = json.loads(body) if rc == 0 and sep else None
     except ValueError:
-        env = None
-    if not isinstance(env, dict):
-        raise Ceremony(f"the {ENV_NAME!r} environment does not exist (or gh cannot read it): create it first")
+        doc = None
+    if not isinstance(doc, dict):
+        raise Ceremony(f"the {env!r} environment does not exist (or gh cannot read it): create it first")
     _check_clock(head)
-    if env.get("can_admins_bypass") is not False:  # a missing key refuses too
-        raise Ceremony(f"the {ENV_NAME!r} environment does not say can_admins_bypass is false: refusing")
-    pol = env.get("deployment_branch_policy")
+    if doc.get("can_admins_bypass") is not False:  # a missing key refuses too
+        raise Ceremony(f"the {env!r} environment does not say can_admins_bypass is false: refusing")
+    pol = doc.get("deployment_branch_policy")
     if not isinstance(pol, dict) or pol.get("custom_branch_policies") is not True or pol.get("protected_branches"):
-        raise Ceremony(f"the {ENV_NAME!r} environment is not restricted to a custom branch policy")
-    lst = _gh_json(["api", f"repos/{repo}/environments/{ENV_NAME}/deployment-branch-policies"])
+        raise Ceremony(f"the {env!r} environment is not restricted to a custom branch policy")
+    lst = _gh_json(["api", f"repos/{repo}/environments/{env}/deployment-branch-policies"])
     pols = lst.get("branch_policies") if isinstance(lst, dict) else None
     ok = (
         isinstance(pols, list)
-        and len(pols) == 1
-        and isinstance(pols[0], dict)
-        and pols[0].get("name") == "main"
-        and pols[0].get("type", "branch") == "branch"
+        and len(pols) == len(expected_branches)
+        and all(isinstance(p, dict) and p.get("type", "branch") == "branch" for p in pols)
+        and {p.get("name") for p in pols} == expected_branches
     )
     if not ok:
-        raise Ceremony(f"the {ENV_NAME!r} environment's branch policy is not exactly: main")
+        wanted = ", ".join(sorted(expected_branches))
+        raise Ceremony(f"the {env!r} environment's branch policy is not exactly: {wanted}")
 
 
 def _preflight_init(repo: str, root: Path) -> dict:
@@ -336,7 +350,7 @@ def _preflight_init(repo: str, root: Path) -> dict:
     rc, _ = run(["gh", "auth", "status"])
     if rc != 0:
         raise Ceremony("gh is not authenticated")
-    _check_environment(repo)
+    _check_environment(repo, env=ENV_NAME, expected_branches={"main"})
     if (root / "release" / "keys" / "root-1.pub.json").exists():
         raise Ceremony("release/keys/root-1.pub.json already exists: refusing")
     if re.search(r"^PRODUCTION_ROOTS: Mapping\[str, bytes\] = \{\}$", _read(root / KEYS_PY), re.M) is None:
@@ -511,7 +525,7 @@ def cmd_init(root: Path, repo: str, tmp: Path) -> int:
     _step("ci-proton")
     _store_and_verify(tpl, "ci", CI_TITLE, CI_ID, ci_key)
     _step("ci-secret")
-    _gh_secret_set(ci_key, repo)
+    _gh_secret_set(ci_key, repo, env=ENV_NAME)
 
     _step("revocations")
     revs = rootkey.revoke(root_key, ROOT_ID, rootkey.build_revocations(min_serial=1, revoked=[], issued_at=_stamp(now)))
@@ -543,7 +557,7 @@ def cmd_init(root: Path, repo: str, tmp: Path) -> int:
     for rel in changed:
         print(f"  {rel}")
     _step("secret-list")
-    print(f"{SECRET_NAME} in environment {ENV_NAME}: {'present' if _secret_present(repo) else 'MISSING'}")
+    print(f"{SECRET_NAME} in environment {ENV_NAME}: {'present' if _secret_present(repo, env=ENV_NAME) else 'MISSING'}")
     return 0
 
 
@@ -591,6 +605,117 @@ def _verified_current(root: Path, revs_path: Path, embedded: bytes) -> dict:
             if prev["issued_at"] < f_at or prev["min_serial"] < f_serial:
                 raise Ceremony(f"the current list is below the floor in {rel}: refusing")
     return prev
+
+
+def _next_cert_serial(root: Path, embedded: bytes, revocations: dict) -> int:
+    highest = TEST_SERIAL_BASE - 1
+    try:
+        for serial in [*revocations["revoked"], revocations["min_serial"]]:
+            if serial >= TEST_SERIAL_BASE:
+                highest = max(highest, serial)
+        for path in (root / "release/keys").glob("*.cert.json"):
+            envelope = json.loads(_read(path))
+            if set(envelope) != {"cert", "root_key_id", "sig"} or envelope["root_key_id"] != ROOT_ID:
+                raise ValueError
+            body = base64.b64decode(envelope["cert"], validate=True)
+            Ed25519PublicKey.from_public_bytes(embedded).verify(
+                base64.b64decode(envelope["sig"], validate=True), rootkey.CERT_DOMAIN + body
+            )
+            doc = json.loads(body)
+            if jcs(doc) != body:
+                raise ValueError
+            serial = doc["serial"]
+            if type(serial) is not int or not 1 <= serial <= rootkey.MAX_INT:
+                raise ValueError
+            if serial >= TEST_SERIAL_BASE:
+                highest = max(highest, serial)
+        if highest == rootkey.MAX_INT:
+            raise ValueError
+    except (ValueError, KeyError, TypeError, OSError, InvalidSignature):
+        raise Ceremony("cannot determine the next certificate serial: refusing") from None
+    return highest + 1
+
+
+def cmd_issue_test_key(root: Path, repo: str, tmp: Path) -> int:
+    _announce()
+    _step("preflight")
+    if (root / TEST_CERT).exists():
+        raise Ceremony("release/keys/tk-1.cert.json already exists: refusing")
+    rc, _ = run(["pass-cli", "info"])
+    if rc != 0:
+        raise Ceremony("pass-cli info failed: log in first (scripts/pass-login.sh)")
+    if TEST_TITLE in {t for t, _, _ in _pass_items()}:
+        raise Ceremony("the TEST key item already exists: refusing (rotation is not part of this script)")
+    tpl = _pass_template()
+    rc, _ = run(["gh", "auth", "status"])
+    if rc != 0:
+        raise Ceremony("gh is not authenticated")
+    _check_environment(repo, env=TEST_ENV, expected_branches={"develop", "main"})
+    if _secret_present(repo, env=TEST_ENV, strict=True):
+        raise Ceremony("ORCH_RELEASE_KEY already exists in release-test: refusing")
+    embedded = _embedded_root(root)
+    revocations = _verified_current(root, root / "release/keys/revocations.json", embedded)
+    serial = _next_cert_serial(root, embedded, revocations)
+    if serial in revocations["revoked"]:
+        raise Ceremony("the chosen TEST key serial is revoked: refusing")
+
+    _step("read-root")
+    seed = _pass_read_seed(_pass_find_id(ROOT_TITLE))
+    try:
+        root_key = Ed25519PrivateKey.from_private_bytes(bytes(seed))
+    finally:
+        _wipe(seed)
+    if _pub(root_key) != embedded:
+        del root_key
+        raise Ceremony("the root key in Proton Pass is not the embedded root: refusing to sign")
+
+    _step("test-key")
+    now = _now()
+    key = Ed25519PrivateKey.generate()
+    cert_doc = rootkey.build_cert(
+        key_id=TEST_ID,
+        public_key=_pub(key),
+        serial=serial,
+        purpose="core",
+        channels=["test-*"],
+        not_before=_stamp(now),
+        not_after=_stamp(now + timedelta(days=CI_DAYS)),
+    )
+    # Test serials >= 1001 are revoked explicitly in revoked, NEVER by raising min_serial:
+    # that would also kill production keys (< 1001). Production min_serial raises never reach 1001.
+    cert = rootkey.certify(root_key, ROOT_ID, cert_doc)
+    del root_key
+    try:
+        _step("test-proton")
+        _store_and_verify(tpl, "test", TEST_TITLE, TEST_ID, key)
+        _step("test-secret")
+        _gh_secret_set(key, repo, env=TEST_ENV)
+        del key
+
+        _step("stage")
+        stage_dir = tmp / "stage"
+        stage_dir.mkdir(mode=0o700)
+        staged = {TEST_CERT: _json_text(cert)}
+        (stage_dir / "tk-1.cert.json").write_text(staged[TEST_CERT], encoding="utf-8")
+        _step("secret-list")
+        present = _secret_present(repo, env=TEST_ENV)
+        _step("write")
+        changed = _commit_files(root, staged)
+        print(f"key id: {TEST_ID}")
+        print(f"cert serial: {serial}")
+        print(f"not_after: {cert_doc['not_after']}")
+        print("changed files:")
+        for rel in changed:
+            print(f"  {rel}")
+        print(f"{SECRET_NAME} in environment {TEST_ENV}: {'present' if present else 'MISSING'}")
+        return 0
+    except BaseException:
+        print(
+            "Rollback: delete the Proton Pass item titled 'orch release TEST key tk-1' in vault Agents if present.",
+            file=sys.stderr,
+        )
+        print("Rollback: delete ORCH_RELEASE_KEY from the release-test environment if present.", file=sys.stderr)
+        raise
 
 
 def cmd_resign(root: Path, repo: str, tmp: Path) -> int:
@@ -656,7 +781,7 @@ def _on_signal(signum, _frame):
 
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("command", choices=("init", "resign-revocations"))
+    ap.add_argument("command", choices=("init", "resign-revocations", "issue-test-key"))
     ap.add_argument("--repo-root", type=Path, default=HERE.parents[1], help=argparse.SUPPRESS)
     ap.add_argument("--gh-repo", default=GH_REPO, help=argparse.SUPPRESS)
     a = ap.parse_args(argv)
@@ -666,7 +791,7 @@ def main(argv: list[str]) -> int:
     try:
         _resolve_tools()
         os.chmod(tmp, 0o700)
-        fn = cmd_init if a.command == "init" else cmd_resign
+        fn = {"init": cmd_init, "resign-revocations": cmd_resign, "issue-test-key": cmd_issue_test_key}[a.command]
         return fn(a.repo_root, a.gh_repo, tmp)
     except Ceremony as exc:
         print(f"ceremony: {exc}", file=sys.stderr)

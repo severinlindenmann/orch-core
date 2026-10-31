@@ -123,7 +123,9 @@ if argv[:1] == ["api"]:
         print("HTTP/2.0 200 OK\\r\\nDate: " + d + "\\r\\n\\r\\n")
         print(json.dumps({"login": "owner"}))
         sys.exit(0)
-    name = "env" if path.endswith("/release") else "policies"
+    name = "env" if path.endswith(("/release", "/release-test")) else "policies"
+    if "/release-test" in path:
+        name = "test-" + name
     p = SIM / f"gh-{name}.json"
     if not p.exists():
         sys.exit(1)
@@ -138,11 +140,13 @@ if argv[:1] == ["api"]:
     print(p.read_text())
     sys.exit(0)
 if argv[:2] == ["secret", "set"]:
-    assert argv[2] == "ORCH_RELEASE_KEY" and opt("--env") == "release" and opt("--repo")
-    (SIM / "gh-secret").write_bytes(stdin)
+    assert argv[2] == "ORCH_RELEASE_KEY" and opt("--env") in ("release", "release-test") and opt("--repo")
+    (SIM / ("gh-secret" if opt("--env") == "release" else "gh-test-secret")).write_bytes(stdin)
     sys.exit(0)
 if argv[:2] == ["secret", "list"]:
-    if (SIM / "gh-secret").exists():
+    if (SIM / "gh-secret-list-fails").exists():
+        sys.exit(1)
+    if (SIM / ("gh-secret" if opt("--env") == "release" else "gh-test-secret")).exists():
         print("ORCH_RELEASE_KEY\\tUpdated just now")
     sys.exit(0)
 sys.exit(2)
@@ -1002,3 +1006,227 @@ def test_a_failed_write_keeps_the_mode_too(lab, capsys, monkeypatch):
     _fail_replace_on(monkeypatch, 7)
     assert run_main(lab, capsys, "init")[0] == 1
     assert stat.S_IMODE(sh.stat().st_mode) == 0o755 and lab.snapshot() == lab.original
+
+
+# ---- TEST release key ---------------------------------------------------------------------------------------------
+
+
+def _prepare_test_key(lab, capsys):
+    assert run_main(lab, capsys, "init")[0] == 0
+    (lab.sim / "gh-test-env.json").write_text(json.dumps(GOOD_ENV))
+    (lab.sim / "gh-test-policies.json").write_text(json.dumps({
+        "branch_policies": [{"name": n, "type": "branch"} for n in ("develop", "main")]
+    }))
+
+
+def test_issue_test_key(lab, capsys):
+    _prepare_test_key(lab, capsys)
+    rootkey = ceremony.rootkey
+    root_key = rootkey.Ed25519PrivateKey.from_private_bytes(
+        base64.b64decode(lab.vault(ceremony.ROOT_TITLE)["password"])
+    )
+    # A later serial in another cert must count too, regardless of filename order.
+    old = json.loads((lab.repo / "release/keys/rk-1.cert.json").read_text())
+    doc = json.loads(base64.b64decode(old["cert"]))
+    doc["serial"] = 1041
+    (lab.repo / "release/keys/another.cert.json").write_text(json.dumps(rootkey.certify(root_key, "root-1", doc)))
+    snap = lab.snapshot()
+    n = len(lab.calls())
+    rc, out, err = run_main(lab, capsys, "issue-test-key")
+    assert rc == 0 and err == ""
+    after = lab.snapshot()
+    cert = json.loads(after.pop(ceremony.TEST_CERT))
+    assert after == snap
+    body = base64.b64decode(cert["cert"])
+    root_key.public_key().verify(base64.b64decode(cert["sig"]), rootkey.CERT_DOMAIN + body)
+    doc = json.loads(body)
+    key = rootkey.Ed25519PrivateKey.from_private_bytes(base64.b64decode(lab.vault(ceremony.TEST_TITLE)["password"]))
+    assert cert == rootkey.certify(root_key, "root-1", rootkey.build_cert(
+        key_id="tk-1", public_key=ceremony._pub(key), serial=1042, purpose="core", channels=["test-*"],
+        not_before=ceremony._stamp(T0), not_after=ceremony._stamp(T0 + timedelta(days=ceremony.CI_DAYS)),
+    ))
+    assert lab.vault(ceremony.TEST_TITLE)["username"] == "tk-1"
+    assert (lab.sim / "gh-test-secret").read_text() == lab.vault(ceremony.TEST_TITLE)["password"]
+    calls = lab.calls()[n:]
+    sets = [c["argv"] for c in calls if c["tool"] == "gh" and c["argv"][:2] == ["secret", "set"]]
+    assert sets == [["secret", "set", "ORCH_RELEASE_KEY", "--env", "release-test", "--repo", REPO]]
+    assert ["api", "-i", f"repos/{REPO}/environments/release-test"] in [c["argv"] for c in calls]
+    assert "key id: tk-1" in out and "cert serial: 1042" in out
+    assert f"not_after: {doc['not_after']}" in out and f"  {ceremony.TEST_CERT}" in out
+    assert "ORCH_RELEASE_KEY in environment release-test: present" in out
+    assert lab.tmp_left() == []
+    lab.assert_no_leak(out, err)
+
+
+@pytest.mark.parametrize(
+    "problem", ["cert-exists", "wrong-root", "missing-root", "missing-env", "item-exists", "bad-serial"]
+)
+def test_issue_test_key_refuses(lab, capsys, monkeypatch, problem):
+    _prepare_test_key(lab, capsys)
+    expected = "refusing"
+    if problem == "cert-exists":
+        (lab.repo / ceremony.TEST_CERT).write_text("already exists")
+    elif problem == "wrong-root":
+        p = lab.sim / "vault" / f"{ceremony.ROOT_TITLE}.json"
+        item = json.loads(p.read_text())
+        item["password"] = base64.b64encode(bytes(range(32))).decode()
+        p.write_text(json.dumps(item))
+        expected = "not the embedded root"
+    elif problem == "missing-root":
+        (lab.sim / "vault" / f"{ceremony.ROOT_TITLE}.json").unlink()
+    elif problem == "missing-env":
+        (lab.sim / "gh-test-env.json").unlink()
+        expected = "environment does not exist"
+    elif problem == "item-exists":
+        (lab.sim / "vault" / f"{ceremony.TEST_TITLE}.json").write_text(json.dumps(lab.vault(ceremony.CI_TITLE)))
+    else:
+        (lab.repo / "release/keys/broken.cert.json").write_text('{"cert": "bad"}')
+    snap = lab.snapshot()
+    n = len(lab.calls())
+    monkeypatch.setattr(ceremony.rootkey, "certify", lambda *a, **k: pytest.fail("must not sign"))
+    rc, out, err = run_main(lab, capsys, "issue-test-key")
+    assert rc == 1 and expected in err
+    assert lab.snapshot() == snap and lab.tmp_left() == []
+    assert not any("--from-template" in c["argv"] or c["argv"][:2] == ["secret", "set"] for c in lab.calls()[n:])
+    lab.assert_no_leak(out, err)
+
+
+@pytest.mark.parametrize(
+    "step", ["preflight", "read-root", "test-key", "test-proton", "test-secret", "stage", "secret-list", "write"]
+)
+def test_issue_test_key_cleans_up_at_each_step(lab, capsys, monkeypatch, step):
+    _prepare_test_key(lab, capsys)
+    snap = lab.snapshot()
+    monkeypatch.setattr(ceremony, "_fail_at", step)
+    rc, out, err = run_main(lab, capsys, "issue-test-key")
+    assert rc == 1 and lab.snapshot() == snap and lab.tmp_left() == []
+    lab.assert_no_leak(out, err)
+
+
+def test_issue_test_key_rolls_back_failed_write(lab, capsys, monkeypatch):
+    _prepare_test_key(lab, capsys)
+    snap = lab.snapshot()
+    _fail_replace_on(monkeypatch, 1)
+    rc, out, err = run_main(lab, capsys, "issue-test-key")
+    assert rc == 1 and lab.snapshot() == snap and lab.tmp_left() == []
+    lab.assert_no_leak(out, err)
+
+
+@pytest.mark.parametrize(
+    "cert_serial,revoked,min_serial,expected",
+    [(999, [], 1, 1001), (1001, [], 1, 1002), (42, [1007, 9], 1, 1008),
+     (42, [1007], 1010, 1011), (42, [], 999, 1001)],
+)
+def test_test_serial_range(lab, capsys, cert_serial, revoked, min_serial, expected):
+    _prepare_test_key(lab, capsys)
+    key = ceremony.Ed25519PrivateKey.from_private_bytes(
+        base64.b64decode(lab.vault(ceremony.ROOT_TITLE)["password"])
+    )
+    path = lab.repo / "release/keys/rk-1.cert.json"
+    doc = json.loads(base64.b64decode(json.loads(path.read_text())["cert"]))
+    doc["serial"] = cert_serial
+    path.write_text(json.dumps(ceremony.rootkey.certify(key, ceremony.ROOT_ID, doc)))
+    revs = ceremony.rootkey.build_revocations(
+        min_serial=min_serial, revoked=revoked, issued_at=ceremony._stamp(T0)
+    )
+    (lab.repo / "release/keys/revocations.json").write_text(
+        json.dumps(ceremony.rootkey.revoke(key, ceremony.ROOT_ID, revs))
+    )
+    rc, out, err = run_main(lab, capsys, "issue-test-key")
+    assert rc == 0 and err == ""
+    assert f"cert serial: {expected}" in out
+
+
+def test_test_serial_revoked_refusal(lab, capsys, monkeypatch):
+    _prepare_test_key(lab, capsys)
+    key = ceremony.Ed25519PrivateKey.from_private_bytes(
+        base64.b64decode(lab.vault(ceremony.ROOT_TITLE)["password"])
+    )
+    revs = ceremony.rootkey.build_revocations(min_serial=1, revoked=[1001], issued_at=ceremony._stamp(T0))
+    (lab.repo / "release/keys/revocations.json").write_text(
+        json.dumps(ceremony.rootkey.revoke(key, ceremony.ROOT_ID, revs))
+    )
+    # Exercise the defensive guard even if an allocator regression returns a revoked serial.
+    monkeypatch.setattr(ceremony, "_next_cert_serial", lambda *args: 1001)
+    rc, out, err = run_main(lab, capsys, "issue-test-key")
+    assert rc == 1 and "the chosen TEST key serial is revoked: refusing" in err
+    assert not (lab.sim / "gh-test-secret").exists()
+
+
+@pytest.mark.parametrize("target", ["cert", "revocations"])
+def test_test_serial_requires_root_signature(lab, capsys, target):
+    _prepare_test_key(lab, capsys)
+    path = lab.repo / ("release/keys/rk-1.cert.json" if target == "cert" else "release/keys/revocations.json")
+    env = json.loads(path.read_text())
+    env["sig"] = base64.b64encode(bytes(64)).decode()
+    path.write_text(json.dumps(env))
+    rc, out, err = run_main(lab, capsys, "issue-test-key")
+    assert rc == 1 and "refusing" in err
+    assert not (lab.sim / "gh-test-secret").exists()
+
+
+@pytest.mark.parametrize("branches", [
+    [("main", "branch")], [("develop", "branch")],
+    [("main", "branch"), ("develop", "tag")],
+    [("main", "branch"), ("develop", "branch"), ("extra", "branch")],
+    [("main", "branch"), ("main", "branch")],
+])
+def test_test_environment_exact_branches(lab, capsys, branches):
+    _prepare_test_key(lab, capsys)
+    (lab.sim / "gh-test-policies.json").write_text(json.dumps({
+        "branch_policies": [{"name": name, "type": kind} for name, kind in branches]
+    }))
+    rc, out, err = run_main(lab, capsys, "issue-test-key")
+    assert rc == 1 and "branch policy is not exactly: develop, main" in err
+
+
+def test_existing_test_secret_refuses(lab, capsys):
+    _prepare_test_key(lab, capsys)
+    path = lab.sim / "gh-test-secret"
+    path.write_text("existing")
+    n = len(lab.calls())
+    rc, out, err = run_main(lab, capsys, "issue-test-key")
+    assert rc == 1 and "ORCH_RELEASE_KEY already exists in release-test: refusing" in err
+    assert path.read_text() == "existing"
+    assert not any("--from-template" in c["argv"] or c["argv"][:2] == ["secret", "set"]
+                   for c in lab.calls()[n:])
+
+
+def test_test_key_gh_failure_rollback_instructions(lab, capsys, monkeypatch):
+    _prepare_test_key(lab, capsys)
+    real = ceremony.run
+
+    def fail_set(argv, *args, **kwargs):
+        if argv[:3] == ["gh", "secret", "set"]:
+            return 1, b""
+        return real(argv, *args, **kwargs)
+
+    monkeypatch.setattr(ceremony, "run", fail_set)
+    rc, out, err = run_main(lab, capsys, "issue-test-key")
+    assert rc == 1
+    assert (
+        "Rollback: delete the Proton Pass item titled 'orch release TEST key tk-1' in vault Agents if present." in err
+    )
+    assert "Rollback: delete ORCH_RELEASE_KEY from the release-test environment if present." in err
+    lab.assert_no_leak(out, err)
+
+
+@pytest.mark.parametrize("helper,args", [
+    ("_secret_present", (REPO,)), ("_check_environment", (REPO,)),
+    ("_gh_secret_set", (None, REPO)),
+])
+def test_environment_keyword_is_required(helper, args):
+    with pytest.raises(TypeError):
+        getattr(ceremony, helper)(*args)
+    with pytest.raises(TypeError):
+        getattr(ceremony, helper)(*args, ceremony.ENV_NAME)
+
+
+def test_a_failing_secret_list_refuses_instead_of_overwriting(lab, capsys):
+    _prepare_test_key(lab, capsys)
+    (lab.sim / "gh-secret-list-fails").write_text("")
+    n = len(lab.calls())
+    rc, out, err = run_main(lab, capsys, "issue-test-key")
+    assert rc == 1 and "cannot list the secrets of the 'release-test' environment" in err
+    assert not (lab.sim / "gh-test-secret").exists()
+    assert not any(c["argv"][:2] == ["secret", "set"] for c in lab.calls()[n:])

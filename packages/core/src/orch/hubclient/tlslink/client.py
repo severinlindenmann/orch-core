@@ -67,6 +67,7 @@ W2H_OPS: dict[str, str | None] = {
     "binding_put": None,
     "snapshot_get": None,
     "org_skills_get": None,
+    "closing_get": None,  # #1463 (hub protocol 9.7): {} -> {"closing": <hub.closing> | null}
     "mcp_servers_get": None,
     "org_secrets_get": None,
     "secret_use": None,
@@ -99,8 +100,33 @@ W2H_OPS: dict[str, str | None] = {
     "wk_seal": "full",
     "log_sync": "full",
 }
+NAME_MAX, KIND_MAX = 64, 32
+
+
+def space_list_reply_ok(b: dict[str, Any]) -> bool:
+    """``{"spaces": [hub.space], "meta": {space_id: {"name", "kind"}}}``: ``meta`` only names listed spaces and each
+    value is exactly name and kind, short printable strings (unsigned display data; vectors_space_list.json)."""
+    if set(b) != {"spaces", "meta"} or type(b["spaces"]) is not list or type(b["meta"]) is not dict:
+        return False
+    ids = set()
+    for r in b["spaces"]:
+        o = r.get("o") if type(r) is dict else None
+        sid = o.get("space_id") if type(o) is dict else None
+        if type(sid) is not str:
+            return False
+        ids.add(sid)
+    for sid, m in b["meta"].items():
+        if sid not in ids or type(m) is not dict or set(m) != {"name", "kind"}:
+            return False
+        for k, cap in (("name", NAME_MAX), ("kind", KIND_MAX)):
+            v = m[k]
+            if type(v) is not str or len(v) > cap or not v.isprintable():
+                return False
+    return True
+
+
 _REPLY: dict[str, Callable[[dict[str, Any]], bool]] = {
-    "space_list": lambda b: set(b) == {"spaces"} and type(b["spaces"]) is list,
+    "space_list": lambda b: space_list_reply_ok(b),
     "space_put": lambda b: set(b) == {"seq"} and type(b["seq"]) is int,
     "space_revoke": lambda b: set(b) == {"seq"} and type(b["seq"]) is int,
     "space_get": lambda b: (
@@ -164,6 +190,7 @@ _REPLY: dict[str, Callable[[dict[str, Any]], bool]] = {
     "audience_get": lambda b: set(b) == {"people", "teams"} and type(b["people"]) is list and type(b["teams"]) is list,
     "directory_get": lambda b: set(b) == {"entries"} and type(b["entries"]) is list,
     "org_skills_get": lambda b: set(b) == {"bundle"} and type(b["bundle"]) is dict,
+    "closing_get": lambda b: set(b) == {"closing"} and (b["closing"] is None or type(b["closing"]) is dict),
     "mcp_servers_get": lambda b: set(b) == {"bundle"} and type(b["bundle"]) is dict,
     "org_secrets_get": lambda b: set(b) == {"bundle"} and type(b["bundle"]) is dict,
     "log_sync": lambda b: set(b) == {"seq", "head"} and type(b["seq"]) is int and type(b["head"]) is str,

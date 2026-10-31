@@ -75,6 +75,9 @@ class TestKey:
         return self._sk.sign(msg)
 
 
+# The TEST root has its own id, distinct from the production root's `root-1`, so both can be embedded together.
+# Its seed is still derived from the name "root-1" (the public seed rule), so the key itself is unchanged.
+TEST_ROOT_ID = "test-root-1"
 ROOT = TestKey("root-1")  # the trusted TEST root
 ROGUE_ROOT = TestKey("root-9")  # a root nobody trusts
 RK3 = TestKey("rk-3")  # current core release key, serial 3
@@ -115,14 +118,14 @@ SIGNER = {"rk-3": RK3, "rk-1": RK1, "rk-4": RK4, "rk-5": RK5, "rk-6": RK6, "ck-1
 REVOCATIONS = {"format": "orch.revocations/1", "min_serial": 2, "revoked": [4], "issued_at": "2026-10-20T00:00:00Z"}
 
 
-def key_cert(key_id: str, *, root: TestKey = ROOT, root_key_id: str = "root-1", raw: bytes | None = None) -> dict:
+def key_cert(key_id: str, *, root: TestKey = ROOT, root_key_id: str = TEST_ROOT_ID, raw: bytes | None = None) -> dict:
     body = jcs(CERTS[key_id]) if raw is None else raw
     return {"cert": b64(body), "root_key_id": root_key_id, "sig": b64(root.sign(CERT_DOMAIN + body))}
 
 
 def revocations(*, doc: dict | None = None, signer: TestKey = ROOT) -> dict:
     body = jcs(REVOCATIONS if doc is None else doc)
-    return {"doc": b64(body), "root_key_id": "root-1", "sig": b64(signer.sign(REVOCATIONS_DOMAIN + body))}
+    return {"doc": b64(body), "root_key_id": TEST_ROOT_ID, "sig": b64(signer.sign(REVOCATIONS_DOMAIN + body))}
 
 
 def envelope(
@@ -247,7 +250,7 @@ def files_for(m: dict[str, Any], mutate: dict[str, bytes] | None = None) -> list
 
 # --- cases --------------------------------------------------------------------------------------------------------
 
-STATE = {"trusted_roots": ["root-1"], "seq_seen": 41, "revocations_issued_at": "2026-10-20T00:00:00Z"}
+STATE = {"trusted_roots": [TEST_ROOT_ID], "seq_seen": 41, "revocations_issued_at": "2026-10-20T00:00:00Z"}
 
 
 def case(name: str, pins: str, env: str, reason: str, *, purpose="core", channel="develop", state=None, files=None):
@@ -498,7 +501,7 @@ def core_cases() -> list[dict[str, Any]]:
     add(
         case(
             "bad_cert_sig",
-            "certificate claims root-1 but is signed by another key",
+            "certificate claims test-root-1 but is signed by another key",
             text(envelope(dev_b, cert=key_cert("rk-3", root=ROGUE_ROOT))),
             "bad_cert_sig",
         )
@@ -506,7 +509,7 @@ def core_cases() -> list[dict[str, Any]]:
     add(
         case(
             "bad_revocations_sig",
-            "revocation list claims root-1 but is signed by the release key",
+            "revocation list claims test-root-1 but is signed by the release key",
             text(envelope(dev_b, revs=revocations(signer=RK3))),
             "bad_revocations_sig",
         )
@@ -718,7 +721,7 @@ def keys_doc() -> dict[str, Any]:
         "test_only": True,
         "seed_rule": 'sha256(b"orch-release TEST key <name>; never trust outside tests")',
         "keys": {k.name: {"seed_hex_TEST_ONLY": k.seed.hex(), "public_key": b64(k.public)} for k in KEYS},
-        "trusted_roots": {"root-1": b64(ROOT.public)},
+        "trusted_roots": {TEST_ROOT_ID: b64(ROOT.public)},
         "certs": CERTS,
         "revocations": REVOCATIONS,
         "domains": {

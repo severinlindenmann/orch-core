@@ -90,6 +90,36 @@ it('P06: autoStart alone never arms the countdown; with armOnStart the review ar
   expect(sign).not.toHaveBeenCalled() // the countdown has not run out
   await waitFor(() => expect(sign).toHaveBeenCalledTimes(1), { timeout: 2500 }) // and it signs by itself after ~1 s
 })
+it('P07: armLine words the arm status ("Creating in a moment"); the default stays "Signs in a moment"', async () => {
+  const { sign } = mount()
+  cleanup()
+  vi.spyOn(api, 'viewClick').mockResolvedValue({ view_digest: 'sha256:abc', view: { headline: 'Create', risk_lines: [], risk: CLICK_RISK, op: 'new', workspace: { id: 'w', prefix: 'TEST', name: 'Test' }, fingerprint: '0123456789ab', lines: ['Create'], checks: [], confirm: { kind: 'click' }, expires_at: '2099-01-01T00:00:00Z', auth: 'convenience', device: 'd_test', artifacts: null } as never })
+  vi.spyOn(document, 'hasFocus').mockReturnValue(true)
+  sign.mockResolvedValue({ state: 'submitted', duplicate: false, key: 'k' } as never)
+  render(showWith({ autoStart: true, armOnStart: true, armLine: 'Creating in a moment' }))
+  expect(await screen.findByTestId('sign-arm-status')).toHaveTextContent('Creating in a moment. Press again or Esc to stop.')
+  expect(screen.getByTestId('sign-arm-status')).not.toHaveTextContent('Signs')
+})
+it('P07: armOnStart with risk lines never arms and never signs by itself', async () => {
+  const { sign } = mount()
+  cleanup()
+  vi.spyOn(api, 'viewClick').mockResolvedValue({ view_digest: 'sha256:abc', view: { headline: 'Create', risk_lines: ['An agent will run commands'], risk: CLICK_RISK, op: 'new', workspace: { id: 'w', prefix: 'TEST', name: 'Test' }, fingerprint: '0123456789ab', lines: ['Create'], checks: [], confirm: { kind: 'click' }, expires_at: '2099-01-01T00:00:00Z', auth: 'convenience', device: 'd_test', artifacts: null } as never })
+  vi.spyOn(document, 'hasFocus').mockReturnValue(true)
+  render(showWith({ autoStart: true, armOnStart: true, armLine: 'Creating in a moment' }))
+  await screen.findByTestId('click-panel')
+  await new Promise((r) => setTimeout(r, 1500))
+  expect(screen.queryByTestId('sign-arm-status')).toBeNull()
+  expect(sign).not.toHaveBeenCalled()
+})
+it('P07: a synthetic (untrusted) autoStart=false never arms even with armOnStart', async () => {
+  const { sign } = mount()
+  cleanup()
+  render(showWith({ autoStart: false, armOnStart: true, prepareOnOpen: true }))
+  await screen.findByTestId('click-panel')
+  await new Promise((r) => setTimeout(r, 1300))
+  expect(screen.queryByTestId('sign-arm-status')).toBeNull()
+  expect(sign).not.toHaveBeenCalled()
+})
 it('P06: a remount without autoStart (reload) never prepares', async () => {
   const { prepare, rerender } = mount()
   rerender(showWith({}))

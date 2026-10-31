@@ -98,7 +98,7 @@ function SharesBody({ onRevoke, onSign }: { onRevoke: (s: Share) => void; onSign
       )}
       {data && data.configured && !data.live && (
         <p role="status" data-testid="shares-unreachable" className="flex flex-wrap items-center gap-2 rounded-lg border border-warning/40 px-3 py-2 text-[12px]">
-          <span>Sharing is not reachable right now, so views and states are the ones this computer last knew.</span>
+          <span>Sharing is paused: your hub cannot be reached. Nothing was sent.</span>
           <Button size="sm" variant="secondary" onClick={() => void list.refetch()}>
             Try again
           </Button>
@@ -120,7 +120,7 @@ function SharesBody({ onRevoke, onSign }: { onRevoke: (s: Share) => void; onSign
               </ul>
             </section>
           )}
-          {shares.length === 0 && data && !data.configured ? null : shares.length === 0 ? (
+          {shares.length === 0 && ((data && !data.configured) || staged.length > 0) ? null : shares.length === 0 ? (
             <p data-testid="shares-empty" className="text-[13px] text-text-muted">
               Nothing is shared yet. Open a ticket from <Link to="/tickets" className="text-brand hover:underline">Tickets</Link> and choose Share files.
             </p>

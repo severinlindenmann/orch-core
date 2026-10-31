@@ -362,3 +362,16 @@ def test_an_answer_text_follows_the_answer_rule(text, ok):
     """#1123: the custodial answer text is checked like the model's (1..1000 code points, check_plain, not blank)."""
     got = refused("question.answered", event("question.answered", option=..., text=text))
     assert (got is None) is ok
+
+
+@pytest.mark.parametrize(
+    "first", ["Publish approval: share files outside this computer", "App approval: let an app go live"]
+)
+def test_a_note_over_the_hub_cannot_start_with_a_reserved_approval_line(first):
+    """#1781 Opus delta: reserved approval lines are written only by their own click op, never as a custodial note."""
+    for text in (first, first + "\nTicket: ORCH-0001"):
+        with pytest.raises(HubRefused) as caught:
+            C._payload_shape("log.added", event("log.added", text=text))
+        assert caught.value.code == "malformed"
+    C._payload_shape("log.added", event("log.added", text="I read: " + first))  # later in the note it is only text
+    C._payload_shape("log.added", event("log.added", text="App approval notes\nfor the team"))  # another line

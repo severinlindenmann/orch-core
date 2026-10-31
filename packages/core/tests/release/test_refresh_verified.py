@@ -49,7 +49,7 @@ def revocations(min_serial=1, revoked=()):
             "issued_at": "2026-01-01T00:00:00Z",
         }
     )
-    return {"doc": b64(body), "root_key_id": "root-1", "sig": b64(ROOT.sign(b"orch-revocations/1\n" + body))}
+    return {"doc": b64(body), "root_key_id": "test-root-1", "sig": b64(ROOT.sign(b"orch-revocations/1\n" + body))}
 
 
 def cert(serial=1):
@@ -65,7 +65,7 @@ def cert(serial=1):
             "not_after": "2027-01-01T00:00:00Z",
         }
     )
-    return {"cert": b64(body), "root_key_id": "root-1", "sig": b64(ROOT.sign(b"orch-release-key/1\n" + body))}
+    return {"cert": b64(body), "root_key_id": "test-root-1", "sig": b64(ROOT.sign(b"orch-release-key/1\n" + body))}
 
 
 FILES = [

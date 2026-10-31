@@ -470,3 +470,18 @@ def test_open_workspace_waits_for_the_service_and_restarts_a_dead_one(tmp, tmp_p
             icli.workspace_login_url(ictx, "/w", wait=0.05)
     finally:
         icli.start_dashboard = real_start
+
+
+def test_the_setup_launch_link_may_load_the_page_from_setup_or_the_old_root_form():
+    from orch.setup import flow
+
+    code = "A" * 24
+    assert flow._LINK.fullmatch(f"http://127.0.0.1:8123/setup#launch={code}")  # run16 P06: served with the setup CSP
+    assert flow._LINK.fullmatch(f"http://127.0.0.1:8123/#launch={code}&to=%2Fsetup")  # an older dashboard
+    for bad in (
+        f"http://127.0.0.1:8123/other#launch={code}",
+        f"http://evil.example/setup#launch={code}",
+        f"http://127.0.0.1:8123/setup#launch={code}&to=%2F",
+        "http://127.0.0.1:8123/setup#launch=short",
+    ):
+        assert not flow._LINK.fullmatch(bad)

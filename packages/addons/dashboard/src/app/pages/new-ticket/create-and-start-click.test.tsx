@@ -216,6 +216,45 @@ describe('the real click path', () => {
   })
 })
 
+it('P07: Create ticket (no agent) on a real host: ONE trusted press arms the shown review and it signs by itself', async () => {
+  const plain = view()
+  plain.view.headline = 'Create a ticket'
+  plain.view.risk_lines = [] // a contract-4 review without risk lines: the only kind that may arm
+  vi.mocked(api.viewClick).mockResolvedValue(plain)
+  vi.spyOn(document, 'hasFocus').mockReturnValue(true)
+  s.sign.mockResolvedValue({ state: 'submitted', duplicate: false, key: 'DEMO-0044' })
+  const open = async (r: ReturnType<typeof renderApp>) => {
+    await r.user.click(await screen.findByRole('button', { name: /New ticket/ }, T))
+    const sheet = await screen.findByRole('dialog', { name: 'New ticket' }, T)
+    await r.user.type(await within(sheet).findByLabelText('Title'), 'Export CSV')
+    await r.user.type(within(sheet).getByLabelText(/^What should be true/), 'A file is exported')
+    await r.user.click(await within(sheet).findByRole('button', { name: 'Create ticket' }, T))
+  }
+  const r = renderApp('/board')
+  await open(r)
+  await screen.findByTestId('click-panel', {}, T)
+  expect(await screen.findByTestId('sign-arm-status', {}, T)).toHaveTextContent('Creating in a moment. Press again or Esc to stop.')
+  expect(screen.getByTestId('click-panel')).toHaveTextContent('Create DEMO-0044: Export CSV') // the shown text is the host's review
+  expect(s.sign).not.toHaveBeenCalled() // the countdown has not run out
+  await waitFor(() => expect(s.sign).toHaveBeenCalledTimes(1), { timeout: ARM_MS + 3000 })
+  expect(api.prepareClick).toHaveBeenCalledTimes(1)
+  expect(s.start).not.toHaveBeenCalled() // no agent starts
+})
+
+it('P07: an untrusted Create ticket press opens the review but never arms it', async () => {
+  vi.spyOn(gesture, 'trustedPress').mockReturnValue(false)
+  vi.spyOn(document, 'hasFocus').mockReturnValue(true)
+  const r = renderApp('/board')
+  await r.user.click(await screen.findByRole('button', { name: /New ticket/ }, T))
+  const sheet = await screen.findByRole('dialog', { name: 'New ticket' }, T)
+  await r.user.type(await within(sheet).findByLabelText('Title'), 'Export CSV')
+  await r.user.type(within(sheet).getByLabelText(/^What should be true/), 'A file is exported')
+  await r.user.click(await within(sheet).findByRole('button', { name: 'Create ticket' }, T))
+  await new Promise((res) => setTimeout(res, ARM_MS + 400))
+  expect(screen.queryByTestId('sign-arm-status')).toBeNull()
+  expect(s.sign).not.toHaveBeenCalled()
+})
+
 it.each([null, 14, 15, 16])('one review with %s minutes access: never armed by Create and start, one press in the sign box signs', async (minutes) => {
   const { DEPOSIT_RISK } = await import('@/api/click')
   vi.spyOn(gesture, 'takeTrustedPress').mockReturnValueOnce(true)

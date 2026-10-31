@@ -569,6 +569,17 @@ def where_cases() -> list[dict[str, Any]]:
     a = lambda kind="private", link="100.64.1.2:8105": {"kind": kind, "link": link}
     ok = {"addresses": [a(), a("office", "192.168.1.20:8105")], "name": "Demo hub"}
     wc("where_ok", ok, {"ok": ok})
+    for nm, pub in (("https", "https://share.example.com"), ("https_port", "https://share.example.com:8443"), ("loopback", "http://127.0.0.1:8102")):
+        wc("where_publish_ok_" + nm, {**ok, "publish": pub}, {"ok": {**ok, "publish": pub}}, "P02: the hub's publish origin, a hint")
+    for nm, pub in (
+        ("plain_http_elsewhere", "http://100.64.1.2:8102"),
+        ("with_path", "https://share.example.com/x"),
+        ("userinfo", "https://u:p@share.example.com"),
+        ("not_a_string", 5),
+        ("upper_case", "HTTPS://SHARE.example.com"),
+        ("port_zero_over", "https://share.example.com:70000"),
+    ):
+        wc("where_publish_" + nm + "_refused", {**ok, "publish": pub}, {"error": "malformed"}, "P02: any other publish is malformed")
     wc(
         "where_ok_all_four_kinds",
         {

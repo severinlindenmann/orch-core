@@ -556,6 +556,32 @@ def _hk_op_signed(signed: Any, kind: str, held: Any, hub: str) -> None:
         raise H.Refused("bad_hub_signature")
 
 
+def check_allow(signed: Any, *, path_ws: str, trusted: bool, held: Any, nonces: Any, now_ms: int) -> dict[str, Any]:
+    """orch-publish's check of ``PUT /v2/hub/allow/{workspace_id}`` (section 11.10), in order: syntax (envelope, exact
+    fields) -> the object names the workspace of the path (``other_workspace``) -> window (``stale_timestamp``) -> the hub
+    is one the operator pinned (``trusted``, else ``unknown_hub``) -> the held, current hub card for ``hub_id`` (``held``,
+    or ``unknown_hub``) -> the HK_op signature (``bad_hub_signature``) -> the nonce is unseen for this hub, then recorded
+    (``replay``). Returns the allowance to store: ``{hub, workspace_id, owner_person_id, binding_seq}``. What the store
+    does with it (owner of a registered workspace, older epoch, another hub, the live-binding rule at use) is section 11.10."""
+    o = H._envelope(signed, "hub.allow")
+    H._fields(o, "hub.allow")
+    if o["workspace_id"] != path_ws:
+        raise H.Refused("other_workspace")
+    if abs(now_ms - o["ts_ms"]) > NARROW_WINDOW_MS:
+        raise H.Refused("stale_timestamp", server_ms=now_ms)
+    if not trusted:
+        raise H.Refused("unknown_hub")
+    _hk_op_signed(signed, "hub.allow", held, o["hub_id"])
+    if not nonces.record(o["hub_id"], o["nonce"], now_ms):
+        raise H.Refused("replay")
+    return {
+        "hub": o["hub_id"],
+        "workspace_id": o["workspace_id"],
+        "owner_person_id": o["owner_person_id"],
+        "binding_seq": o["binding_seq"],
+    }
+
+
 def check_release_narrow(
     signed: Any,
     *,

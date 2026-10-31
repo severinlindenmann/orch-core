@@ -164,7 +164,7 @@ export const fmtSize = (n: number): string => (n < 1024 ? `${n} bytes` : n < 102
 
 /** The server's reasons in words. `unknown_workspace` names the admin step. */
 export const REASON_TEXT: Record<string, string> = {
-  unknown_workspace: 'The sharing server has not allowed this workspace yet. Ask the person who runs the server to allow it.',
+  unknown_workspace: 'Your hub has not allowed this workspace to share yet. Ask the hub’s admin.',
   blocked: 'The server’s admin has blocked this workspace.',
   owner_not_allowed: 'The server’s admin has not allowed the owner of this workspace.',
   limit: 'The server refused: a size or count limit is reached.',
@@ -178,7 +178,7 @@ const CODE_TEXT: Record<string, string> = {
   'publish.not_configured': 'No publish server is set up yet. Set one up on the Add-ons page.',
   'publish.not_approved': 'A signature for exactly these files and this server is missing or too old. Sign it again.',
   'publish.changed': 'The prepared copy changed or is gone. Prepare the share again.',
-  'publish.unreachable': 'Sharing is not reachable right now. Nothing was shared.',
+  'publish.unreachable': 'Sharing is paused: your hub cannot be reached. Your files were not sent.',
   'publish.no_link': 'The files were shared but no link came back. Revoke this share and share again.',
   'runner.disabled': 'Publish is switched off for this workspace. Turn it on in Settings, Add-ons.',
   'rate.limited': 'Too many publish requests in a minute. Wait a little and try again.',

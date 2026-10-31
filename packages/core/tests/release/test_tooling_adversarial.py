@@ -102,7 +102,7 @@ def test_revocation_successor_rule(monkeypatch):
 
 def test_revoke_cli_needs_previous_or_initial(tmp_path):
     env = {"PATH": "/usr/bin:/bin", "ORCH_ROOT_SIGNING_KEY": seed_b64("root-1")}
-    base = [sys.executable, str(TOOLS / "rootkey.py"), "revoke", "--root-key-id", "root-1", "--min-serial", "2",
+    base = [sys.executable, str(TOOLS / "rootkey.py"), "revoke", "--root-key-id", "test-root-1", "--min-serial", "2",
             "--revoked", "4", "--issued-at", "2000-01-01T00:00:00Z", "--out", str(tmp_path / "o.json")]  # fmt: skip
     assert subprocess.run(base, env=env, capture_output=True).returncode == 1
     (tmp_path / "prev.json").write_text(json.dumps(json.loads(CORE["ok_develop"]["envelope"])["revocations"]))

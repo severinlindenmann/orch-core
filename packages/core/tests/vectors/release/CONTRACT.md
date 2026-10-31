@@ -28,8 +28,8 @@ reference verifier written from this file.
 envelope   {"format":"orch.release-envelope/1",
             "payload":"<b64 manifest or catalog bytes>",
             "sig":{"alg":"ed25519","key_id":"rk-3","value":"<b64 64>"},
-            "key_cert":{"cert":"<b64 cert bytes>","root_key_id":"root-1","sig":"<b64 64>"},
-            "revocations":{"doc":"<b64 revocation bytes>","root_key_id":"root-1","sig":"<b64 64>"}}
+            "key_cert":{"cert":"<b64 cert bytes>","root_key_id":"test-root-1","sig":"<b64 64>"},
+            "revocations":{"doc":"<b64 revocation bytes>","root_key_id":"test-root-1","sig":"<b64 64>"}}
 cert       {"format":"orch.release-key/1","key_id","public_key":"<b64 32>","serial":int>=1,
             "purpose":"core"|"addon-catalog","channels":[unique channel | "test-*"],"not_before","not_after"}
 revocations {"format":"orch.revocations/1","min_serial":int>=1,"revoked":[sorted unique ints],"issued_at"}

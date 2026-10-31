@@ -1,6 +1,7 @@
 import { render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { renderApp } from '@/test/renderApp'
+import * as gesture from '@/components/sign/trustedPress'
 import { buildEdit, canEditTicket, EditTicket, TicketEditProvider } from './EditTicket'
 import { AcceptanceTasks } from './AcceptanceTasks'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -11,8 +12,8 @@ import type { Viewer } from './shared'
 vi.mock('@/api/features', async (orig) => ({ ...(await orig<typeof import('@/api/features')>()), handoffMode: vi.fn(() => true) }))
 // The signing dialog is its own feature (SignPopover tests); here it only shows the typed action it was given.
 vi.mock('@/components/sign/SignPopover', () => ({
-  SignPopover: (p: { title: string; action: unknown; inline?: boolean; lead?: React.ReactNode; confirmLabel?: string; onSettled?: (phase: string) => void; onClose: () => void }) => (
-    <div role={p.inline ? 'region' : 'dialog'} aria-label={`sign ${p.title}`} data-confirm={p.confirmLabel}>
+  SignPopover: (p: { title: string; action: unknown; inline?: boolean; autoStart?: boolean; armOnStart?: boolean; armLine?: string; lead?: React.ReactNode; confirmLabel?: string; onSettled?: (phase: string) => void; onClose: () => void }) => (
+    <div role={p.inline ? 'region' : 'dialog'} aria-label={`sign ${p.title}`} data-confirm={p.confirmLabel} data-autostart={String(p.autoStart)} data-arm={String(p.armOnStart)} data-armline={p.armLine}>
       {p.lead}
       <pre data-testid="sent-action">{JSON.stringify(p.action)}</pre>
       <button onClick={() => p.onSettled?.('done')}>signed</button>
@@ -117,6 +118,30 @@ describe('the ticket page edit', () => {
     expect(within(dialog).getByLabelText('Title')).toHaveAttribute('readonly') // the title is read-only while signing (run-11 P08)
     // the signed content is exactly the title change: nothing else rides along
     for (const k of ['sections', 'criteria', 'added', 'links', 'people', 'owner', 'assignees', 'reviewers']) expect(sent).not.toHaveProperty(k)
+  })
+  it('P07: one trusted press on Rename opens the review armed ("Renaming in a moment"); the description no longer asks for a second press', async () => {
+    const { user } = renderApp('/ticket/DEMO-0043')
+    await user.click(await screen.findByRole('button', { name: /^Change the title: Load tariff tables/ }, T))
+    const dialog = await screen.findByRole('dialog', { name: 'Rename DEMO-0043' }, T)
+    expect(within(dialog).getByText('Write the new title.')).toBeInTheDocument()
+    expect(dialog).not.toHaveTextContent(/once more/)
+    vi.spyOn(gesture, 'trustedPress').mockReturnValue(true) // user-event is untrusted: stand in for the person's own press
+    await user.type(within(dialog).getByLabelText('Title'), ' v2')
+    await user.click(within(dialog).getByRole('button', { name: 'Rename' }))
+    const inline = await within(dialog).findByRole('region', { name: 'sign Rename DEMO-0043' })
+    expect(inline).toHaveAttribute('data-autostart', 'true')
+    expect(inline).toHaveAttribute('data-arm', 'true')
+    expect(inline).toHaveAttribute('data-armline', 'Renaming in a moment')
+    expect(within(inline).getByTestId('rename-diff')).toHaveTextContent('→') // the old -> new line stays what is shown
+  })
+  it('P07: an untrusted (scripted) Rename never arms: the review still opens, the signature stays the person\'s own press', async () => {
+    const { user } = renderApp('/ticket/DEMO-0043')
+    await user.click(await screen.findByRole('button', { name: /^Change the title: Load tariff tables/ }, T))
+    const dialog = await screen.findByRole('dialog', { name: 'Rename DEMO-0043' }, T)
+    vi.spyOn(gesture, 'trustedPress').mockReturnValue(false)
+    await user.type(within(dialog).getByLabelText('Title'), ' v2{Enter}')
+    const inline = await within(dialog).findByRole('region', { name: 'sign Rename DEMO-0043' })
+    expect(inline).toHaveAttribute('data-autostart', 'false')
   })
   it('the rename says so when the title is unchanged, and offers the full form', async () => {
     const { user } = renderApp('/ticket/DEMO-0043')

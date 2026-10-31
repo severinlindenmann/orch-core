@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import getpass
 import json
+import os
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -98,6 +98,13 @@ def _ops(
         ctx.say(f"  nightly backup copy: {out} (sealed files; the hub itself makes the backup)")
 
 
+def real_user() -> str:
+    """The OS user this process runs as, from the password database by euid (not LOGNAME/USER, which anyone can set)."""
+    import pwd  # POSIX only: imported where used (modules import on every OS, tests/test_oslock.py)
+
+    return pwd.getpwuid(os.geteuid()).pw_name
+
+
 def server_setup(
     ctx: Ctx,
     role: str,
@@ -116,6 +123,7 @@ def server_setup(
     allow_non_cgnat: bool = False,
     backup_drop: str | None = None,
     drop_check: Callable[[str], None] = server.check_drop_path,
+    bus_check: Callable[[str], None] | None = None,
 ) -> Plan:
     """Install the parts of ``role`` for this OS user. ``resolve``/``local`` are the DNS seams of the tests."""
     if role not in ROLES:
@@ -128,11 +136,16 @@ def server_setup(
         raise InstallError("--hub-vpn-only needs a name for the hub (--domain or --domain-hub)")
     if backup_drop:
         drop_check(backup_drop)
+    user = user or real_user()
+    server.check_user_name(user)  # before anything is installed or printed
+    if bus_check is not None:
+        bus_check(user)
+    elif sys.platform.startswith("linux") and ctx.runner.kind == "systemd":
+        server.ensure_user_bus(os.environ, os.geteuid(), user)  # before anything is installed
     check_block(ctx, parts)  # --port-base: refuse a busy port before anything is written
     ifaces = (local or (lambda: local_interfaces(lambda argv: ctx.run(argv, dict(ctx.env))[1])))()
     mine = {a.ip for a in ifaces}
     plan = Plan(role=role, parts=tuple(parts), names=names, vpn_only=hub_vpn_only)
-    user = user or getpass.getuser()
 
     if role == "hub":
         # Never wider than asked: an explicit loopback is honoured, no address means the VPN address, any other address
@@ -181,6 +194,7 @@ def server_setup(
         edge = https is not None
         if p == "hub":
             extra = dict(
+                exact_bind=True,
                 behind_edge=edge,
                 link_address=plan.vpn_ip,
                 web_origin=https,
@@ -189,9 +203,9 @@ def server_setup(
                 relay_url=names.url("relay") if "relay" in tls_all(names, plan, role) else None,
             )
         if p == "relay":
-            extra = dict(behind_edge=edge)
+            extra = dict(behind_edge=edge, exact_bind=True)
         if p == "publish":
-            extra = dict(public_origin=https, workspace_side=False)
+            extra = dict(public_origin=https, workspace_side=False, exact_bind=True)
         rec = install_part(ctx, p, address=loop, source=source, ref=ref, dev=dev, sync=False, **extra)
         ports[p] = rec["port"]
         if p in tls:
@@ -244,7 +258,12 @@ def _fallback(ctx: Ctx, plan: Plan, *, address: str | None, source: str | None, 
     ctx.say("No domain name given: the parts listen on an IP address and a port (no secure https address).")
     recs = {}
     for p in plan.parts:
-        extra = dict(link_address=plan.vpn_ip) if p == "hub" and not plan.loopback else {}  # never --bind-all
+        # never --bind-all, and no part listens wider than the address it was given
+        extra = dict(exact_bind=True)
+        if p == "publish":
+            extra["workspace_side"] = False  # the edge user has no workspace; the Macs set publish up themselves
+        if p == "hub" and not plan.loopback:
+            extra["link_address"] = plan.vpn_ip
         recs[p] = install_part(ctx, p, address=addr, source=source, ref=ref, dev=dev, sync=False, **extra)
     sync_helper(ctx)
     for p, rec in recs.items():

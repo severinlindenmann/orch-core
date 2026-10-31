@@ -23,6 +23,8 @@ __all__ = [
     "extend",
     "list_shares",
     "meta_bytes",
+    "put_app_file",
+    "put_app_meta",
     "put_file",
     "put_meta",
     "revoke",
@@ -73,6 +75,21 @@ def put_meta(client: PublishClient, workspace_id: str, share_id: str, meta: byte
 
 def put_file(client: PublishClient, workspace_id: str, share_id: str, name: str, data: bytes) -> dict[str, Any]:
     got = client.request("PUT", share_target(workspace_id, "shares", share_id, "files", name), data).json()
+    return got if isinstance(got, dict) else {}
+
+
+def put_app_meta(client: PublishClient, workspace_id: str, app_id: str, version: str, meta: bytes) -> dict[str, Any]:
+    """``PUT apps/<id>/versions/<n>`` (#1455): the stored meta of one app version. Stores nothing live: only a commit
+    carrying the owner's approval serves it."""
+    got = client.request("PUT", share_target(workspace_id, "apps", app_id, "versions", version), meta).json()
+    return got if isinstance(got, dict) else {}
+
+
+def put_app_file(
+    client: PublishClient, workspace_id: str, app_id: str, version: str, path: str, data: bytes
+) -> dict[str, Any]:
+    parts = ("apps", app_id, "versions", version, "files", *path.split("/"))
+    got = client.request("PUT", share_target(workspace_id, *parts), data).json()
     return got if isinstance(got, dict) else {}
 
 

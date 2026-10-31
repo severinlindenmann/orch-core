@@ -9,6 +9,9 @@ export interface AddOnRow {
   set_up?: boolean | null
   /** P02: the Publish server installed on this computer (`orch install publish`), or null (hosted elsewhere): the form starts with it. */
   suggest?: string | null
+  /** Where `suggest` comes from: the Publish server installed on this computer, or the hub this workspace is joined to. */
+  suggest_from?: 'computer' | 'hub' | null
+  suggest_hub?: string | null
   title: string
   /** The plain one-line description, the same words as the setup wizard. */
   desc: string

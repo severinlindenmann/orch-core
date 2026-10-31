@@ -1,10 +1,13 @@
 import { screen, within } from '@testing-library/react'
-import { expect, it } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 import { mockStore } from '@/api/client'
+import * as features from '@/api/features'
 import { renderApp } from '@/test/renderApp'
 import { installAndGrant } from '@/test/installAddon'
 
 const setup = (s: typeof mockStore) => installAndGrant(s, s.workspaces[0].id, 'focus')
+
+afterEach(() => vi.restoreAllMocks())
 
 it('Work tab: summary, sessions by day, the live one open with Open focus, filters narrow the rows', async () => {
   const { user } = renderApp('/ticket/DEMO-0043?tab=work', { setup })
@@ -37,4 +40,12 @@ it('Overview has a Last work card that opens the Work tab', async () => {
 it('a ticket without recorded work shows a plain empty state', async () => {
   renderApp('/ticket/DEMO-0042?tab=work', { setup })
   expect(await screen.findByTestId('work-empty')).toHaveTextContent('No agent work recorded on this ticket yet.')
+})
+
+it('on a real host ?tab=work falls back to Overview (no Work tab, no blank body)', async () => {
+  vi.spyOn(features, 'isRealHost').mockReturnValue(true)
+  renderApp('/ticket/DEMO-0043?tab=work', { setup })
+  expect(await screen.findByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true')
+  expect(screen.queryByRole('tab', { name: 'Work' })).not.toBeInTheDocument()
+  expect(screen.queryByTestId('work-tab')).not.toBeInTheDocument()
 })

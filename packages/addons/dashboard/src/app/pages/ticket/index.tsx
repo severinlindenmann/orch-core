@@ -212,7 +212,7 @@ export function TicketPage({ ticketKey }: { ticketKey: string }) {
       <div className={wide ? 'grid min-w-0 grid-cols-[minmax(0,1fr)_320px] items-start gap-6' : 'min-w-0'}>
         <Tabs
           // `?tab=changes` on a ticket without changes (yet): Overview.
-          value={tab === 'changes' && !showChanges ? 'overview' : tab}
+          value={(tab === 'changes' && !showChanges) || (tab === 'work' && isRealHost()) ? 'overview' : tab}
           onValueChange={(v) => {
             setTab(v as TabId)
             setFocus(undefined)

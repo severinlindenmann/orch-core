@@ -12,6 +12,7 @@ import copy
 
 import pytest
 
+from orch.canon.jcs import JcsError
 from orch.crypto import suite
 from orch.host import hubaddr, hubops
 from orch.hubclient import HubLink, HubRefused, HubState, connectlink, wire
@@ -382,6 +383,29 @@ def test_saving_a_copy_loaded_before_a_background_store_never_lowers_the_tombsto
     stale2.publish_where = None
     hubops._save_state(_service(served), stale2)  # noqa: SLF001
     assert held_of(served) is None and floor_seqs(served) == {HUB_ID: 6}
+
+
+@pytest.mark.parametrize("exc", [JcsError("x"), RecursionError(), OverflowError(), RuntimeError("boom")])
+@pytest.mark.parametrize("with_object", [True, False])
+def test_any_exception_of_the_publish_where_never_fails_the_refresh_and_the_addresses_are_kept(
+    human, served, monkeypatch, probe, exc, with_object
+):
+    from orch.hubclient import publish_held
+
+    hub = bound(served, human, monkeypatch)
+    probe.live = {"10.0.0.5:8105", "10.0.0.6:8105"}
+    hub.where_answer = with_pw("10.0.0.5:8105", seq=3)
+    refresh(served)
+    assert held_of(served) == (3, "https://apps.example.org")
+
+    def boom(*a, **k):
+        raise exc
+
+    monkeypatch.setattr(publish_held, "offer" if with_object else "read", boom)
+    hub.where_answer = (with_pw if with_object else where)("10.0.0.6:8105", **({"seq": 4} if with_object else {}))
+    assert refresh(served)["hub_id"] == HUB_ID  # the refresh answers
+    assert "10.0.0.6:8105" in _state(served).addrs  # the addresses of the same answer are stored
+    assert held_of(served) == (3, "https://apps.example.org")  # the held object is left as it was
 
 
 def test_a_hub_without_hub_where_still_refreshes(human, served, monkeypatch, probe):

@@ -30,7 +30,8 @@ from .keys.fsutil import StateError, read_file, write_atomic
 
 PUBLISH_WHERE_FILE = "publish-where.json"
 _VERSION = 1
-RETRY_SAY_S = 60.0  # a transient failure is retried on every call; its line is said at most this often
+RETRY_S = 5.0  # a transient failure is retried at most this often (every call after that)
+RETRY_SAY_S = 60.0  # the line of a transient failure is said at most this often (per line)
 
 
 def _loopback_host(host: str) -> bool:
@@ -227,17 +228,19 @@ def publisher(
     is said at start and not on every request. Whether a rotation always restarts the process or not, a served object
     is never signed by an op key that the card no longer names.
 
-    A ``None`` that may be transient (the op key unusable, the state file not writable) is NOT remembered: the next call
-    tries again, and its line is said at most once per :data:`RETRY_SAY_S` seconds. A refusal caused by the configuration
+    A ``None`` that may be transient (the op key unusable, the state file not writable) is NOT remembered: a call after
+    :data:`RETRY_S` seconds tries again (earlier ones answer ``None`` at once; another op cert tries at once), and each
+    distinct line is said at most once per :data:`RETRY_SAY_S` seconds. A refusal caused by the configuration
     itself (a bad origin, a non-canonical ``--api-host``) is remembered, as it cannot change without a restart."""
     mu = threading.Lock()
     memo: list[tuple[Any, dict[str, Any] | None]] = []
-    last_say: list[float] = []
+    last_say: dict[str, float] = {}  # per line: a different refusal inside the window is still said once
+    failed: list[tuple[Any, float]] = []  # the key of the last transient failure and when it happened
 
     def limited_say(line: str) -> None:
         now = clock()
-        if not last_say or now - last_say[0] >= RETRY_SAY_S:
-            last_say[:] = [now]
+        if line not in last_say or now - last_say[line] >= RETRY_SAY_S:
+            last_say[line] = now
             say(line)
 
     def current() -> dict[str, Any] | None:
@@ -249,6 +252,8 @@ def publisher(
         with mu:
             if memo and memo[0][0] == key:
                 return memo[0][1]
+            if failed and failed[0][0] == key and clock() - failed[0][1] < RETRY_S:
+                return None  # still unusable a moment ago: no state-file read on every call
             got, transient = _prepare(
                 state,
                 keys,
@@ -261,6 +266,9 @@ def publisher(
             )
             if got is not None or not transient:
                 memo[:] = [(key, got)]
+                failed.clear()
+            else:
+                failed[:] = [(key, clock())]
             return got
 
     current()

@@ -150,28 +150,34 @@ def _run(argv: list[str]) -> str:
         return ""
 
 
-def _publish_origin(url: str) -> tuple[str, str] | None:
-    """The canonical publish origin and API host (lower case, IDN as A-labels, no trailing dot, no default port, no
-    path, query or fragment), as the hub signs and its forwarder compares them; None when the URL has no scheme or host
-    (no flags then: nothing is guessed)."""
-    public = urlsplit(url)
+def _publish_origin(url: str, dev: bool = False) -> tuple[str, str]:
+    """The canonical publish origin and API host, as the hub signs and its forwarder compares them. The origin rule is
+    the protocol's (``orch.hubclient.publish_where.canonical_origin``, the same contract as the hub's copy); a path,
+    query or fragment of ``url`` is dropped first. ``InstallError`` when the URL has a bad port, no scheme or host, a
+    scheme other than http(s), userinfo, or an origin the rule refuses: a hub that quietly never offers is worse than a
+    refusal."""
+    from orch.hubclient.errors import HubRefused
+    from orch.hubclient.publish_where import canonical_origin
+
+    def bad() -> InstallError:
+        return InstallError(
+            f"the publish address {url!r} is not usable: give the public origin, like https://publish.example.com"
+        )
+
     try:
+        public = urlsplit(url)
         port = public.port
+        host = public.hostname
     except ValueError:
-        return None
-    if not public.scheme or not public.hostname:
-        return None
-    scheme = public.scheme.lower()
-    host = public.hostname.lower().removesuffix(".")
+        raise bad() from None
+    if public.scheme.lower() not in ("http", "https") or not host or "@" in public.netloc:
+        raise bad()
+    shown = f"[{host}]" if ":" in host else host
     try:
-        host = host.encode("idna").decode("ascii")
-    except UnicodeError:
-        pass
-    if ":" in host:
-        host = f"[{host}]"
-    if port is not None and (scheme, port) not in (("https", 443), ("http", 80)):
-        host += f":{port}"
-    return f"{scheme}://{host}", host
+        origin = canonical_origin(f"{public.scheme.lower()}://{shown}" + (f":{port}" if port is not None else ""), dev)
+    except HubRefused:
+        raise bad() from None
+    return origin, origin.partition("://")[2]
 
 
 def command_for(
@@ -221,11 +227,10 @@ def command_for(
         ]
         if relay_url:
             cmd += ["--relay-url", relay_url]
-        public = _publish_origin(publish_share_url) if publish_share_url else None
-        if public is not None:
+        if publish_share_url:
             # known only for a publish part with a public name: nothing is guessed from --publish-url; both flags get
             # the canonical bare origin, the form the hub signs and its forwarder compares
-            origin, host = public
+            origin, host = _publish_origin(publish_share_url, dev)
             cmd += ["--api-host", host, "--publish-share-url", origin]
         if behind_edge:  # Caddy on this computer is the edge: it states the client (XFF), the origin is the https name
             cmd += ["--behind-edge", "--trusted-peer", ADDRESS_LOOPBACK]

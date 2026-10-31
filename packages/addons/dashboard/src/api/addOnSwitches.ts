@@ -16,7 +16,6 @@ export interface AddOnRow {
   suggest_where?: PublishWhere | null
   /** #1838: the settings came from this hub and the hub has since moved: its new values. Sharing is paused until the person signs them. */
   hub_moved?: PublishWhere | null
-  why?: 'hub_moved'
   title: string
   /** The plain one-line description, the same words as the setup wizard. */
   desc: string

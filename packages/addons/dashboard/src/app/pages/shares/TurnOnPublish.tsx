@@ -18,22 +18,43 @@ import { useSettingsHandoff, type HandoffSpec } from '../settings/host/useSettin
  * signed settings, and the lead names where files go (by name) and, when it is another host, where links open. Prepared
  * on open, never armed: Sign stays the person's own press. Used by this dialog and by Settings, Hub.
  */
-export function turnOnSpec(where: PublishWhere, row: Pick<AddOnRow, 'suggest_from' | 'suggest_hub'>, onEnd: (signed: boolean) => void): HandoffSpec {
-  const line = destinationLine(row.suggest_from, row.suggest_hub, where.server)
+export function turnOnSpec(
+  where: PublishWhere,
+  row: Pick<AddOnRow, 'suggest_from' | 'suggest_hub'>,
+  onEnd: (signed: boolean) => void,
+  /** The person's own settings in force now, when they differ from `where`: the review says it replaces them. `{ server: null, share: null }`: set up, but not known. */
+  replaces?: { server: string | null; share: string | null } | null,
+): HandoffSpec {
+  // The signed server host is always named, also after a name that is not signed (the hub's display name).
+  const line = destinationLine(row.suggest_from, row.suggest_hub, where.server, true) ?? `Files go to ${hostOf(where.server)}.`
   const links = !sameOrigin(where.server, where.share)
+  const old = replaces ? replacedHosts(where, replaces) : null
   return {
     title: 'Turn on Publish',
     confirmLabel: 'Sign and turn on',
     action: { action: 'addon_enable', name: 'publish', publish: { server: where.server, share: where.share } },
     prepareOnOpen: true,
-    lead: line ? (
+    lead: (
       <>
         <p data-testid="where-files-go" className="text-[13px] font-medium text-text">{line}</p>
         {links && <p data-testid="links-open-at" className="text-[13px] text-text">Links open at {hostOf(where.share)}.</p>}
+        {old && <p data-testid="replaces-old" className="text-[13px] text-text">{old}</p>}
       </>
-    ) : undefined,
+    ),
     onEnd,
   }
+}
+
+/**
+ * "This replaces <old host>." for the values that differ from what is signed; null when the settings in force are the same.
+ * Not known (null values): the line says it replaces the person's own settings, claiming nothing.
+ */
+export function replacedHosts(where: PublishWhere, old: { server: string | null; share: string | null }): string | null {
+  if (!old.server && !old.share) return 'This replaces your own sharing settings.'
+  const hosts: string[] = []
+  if (old.server && !sameOrigin(old.server, where.server)) hosts.push(hostOf(old.server))
+  if (old.share && !sameOrigin(old.share, where.share) && !hosts.includes(hostOf(old.share))) hosts.push(hostOf(old.share))
+  return hosts.length ? `This replaces ${hosts.join(' and ')}.` : null
 }
 
 export function TurnOnPublish({ workspace, onOn, onClose }: { workspace: Workspace; onOn: () => void; onClose: () => void }) {

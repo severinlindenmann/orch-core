@@ -266,7 +266,10 @@ def join(c: OpContext) -> dict[str, Any]:
         c.downstream.card(c.workspace_id, join_msg["card"], join_msg["pk_pub"])
     except Refused as e:
         logging.getLogger("orch_hub.link").info("card not admitted by publish at join: %s", e.code)
-    c.downstream.binding(c.workspace_id, join_msg["binding"])
+    try:  # the same: committed is committed, a downstream that fails or refuses must not turn the join into an error
+        c.downstream.binding(c.workspace_id, join_msg["binding"])
+    except Exception:
+        logging.getLogger("orch_hub.link").exception("binding not passed to publish at join")
     signed = None if c.publish_where is None else safe_publish_where(c.publish_where)()
     return {} if signed is None else {"publish_where": signed}  # §10.2, §10.9.1
 

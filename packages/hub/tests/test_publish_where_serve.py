@@ -248,13 +248,63 @@ def test_a_transient_failure_is_not_remembered_and_the_next_call_retries_with_a_
     )  # fmt: skip
     assert len(lines) == 1 and "could not be written" in lines[0]
     assert served() is None and served() is None
-    assert len(lines) == 1  # retried, but said once inside the window
+    assert len(lines) == 1  # said once inside the window
     now[0] += pubwhere.RETRY_SAY_S
-    assert served() is None and len(lines) == 2  # said again after the window
+    assert served() is None and len(lines) == 2  # retried and said again after the window
     down[0] = False
+    assert served() is None  # inside the back-off: no retry yet
+    now[0] += pubwhere.RETRY_S
     got = served()
     assert got is not None and _check(keys, got)["share"] == SHARE  # the disk is back: served with no restart
     assert served() is got and len(lines) == 2  # and now remembered
+
+
+def test_a_transient_failure_is_retried_at_most_every_retry_interval(tmp_path, keys, monkeypatch):
+    from orch_hub import pubwhere
+
+    now = [100.0]
+    calls = _counting(monkeypatch)
+    monkeypatch.setattr(pubwhere, "write_atomic", lambda *a: (_ for _ in ()).throw(OSError("disk full")))
+    served = publisher(
+        tmp_path / "hub", keys, api_host=HOST, share_url=SHARE, publish_url=PRIVATE, dev=True, say=lambda _l: None,
+        clock=lambda: now[0],
+    )  # fmt: skip
+    assert calls[0] == 1
+    for _ in range(5):
+        assert served() is None
+    assert calls[0] == 1  # no retry inside the interval
+    now[0] += pubwhere.RETRY_S
+    assert served() is None and calls[0] == 2
+    assert served() is None and calls[0] == 2  # and the interval starts again
+
+
+def test_a_different_refusal_inside_the_window_is_still_said(tmp_path, keys, monkeypatch):
+    from orch_hub import pubwhere
+
+    lines: list[str] = []
+    real_cert, real_write = keys.op_cert, pubwhere.write_atomic
+    broken = [True]
+
+    def op_cert():
+        if broken[0]:
+            raise KS.KeyUseError("cert_not_usable")
+        return real_cert()
+
+    def no_disk(*a):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(keys, "op_cert", op_cert)
+    monkeypatch.setattr(pubwhere, "write_atomic", no_disk)
+    served = publisher(
+        tmp_path / "hub", keys, api_host=HOST, share_url=SHARE, publish_url=PRIVATE, dev=True, say=lines.append,
+        clock=lambda: 100.0,
+    )  # fmt: skip
+    assert len(lines) == 1 and "op key is not usable" in lines[0]
+    broken[0] = False  # the key is back (another op cert id: tried at once), but the disk is not
+    assert served() is None
+    assert len(lines) == 2 and "could not be written" in lines[1]  # not swallowed by the first line's window
+    assert served() is None and len(lines) == 2  # each line once
+    monkeypatch.setattr(pubwhere, "write_atomic", real_write)
 
 
 def test_an_unusable_op_key_is_retried_on_the_next_call(tmp_path, keys, monkeypatch):
@@ -311,6 +361,27 @@ def test_a_publish_where_provider_that_raises_never_fails_a_committed_join(make_
     h = make_hub(publish_where=boom)
     c = h.open(first=True)
     assert c.request("join", h.join_body()) == {}  # the join stands, with no publish_where
+    assert h.registry.binding_state(G.WS_A)["status"] == "bound"
+
+
+def test_a_downstream_that_raises_never_fails_a_committed_join(make_hub):
+    class Down:
+        def __init__(self):
+            self.card_seen = self.binding_seen = False
+
+        def card(self, *a):
+            self.card_seen = True
+            raise Refused("internal")
+
+        def binding(self, ws, obj):
+            self.binding_seen = True
+            raise RuntimeError("publish down")
+
+    down = Down()
+    h = make_hub(downstream=down)
+    c = h.open(first=True)
+    assert c.request("join", h.join_body()) == {}  # the join stands
+    assert down.card_seen and down.binding_seen
     assert h.registry.binding_state(G.WS_A)["status"] == "bound"
 
 

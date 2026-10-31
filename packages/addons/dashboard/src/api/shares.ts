@@ -69,11 +69,11 @@ export type SharesData =
       live: boolean
       /**
        * Only when `live` is false: no answer (`unreachable`), an answer that refused (`not_allowed`), or no hub (`local`);
-       * `hub_left`: the settings came from a hub this workspace is no longer bound to; `hub_moved`: the hub's address moved off them.
+       * `hub_left`: the settings came from a hub this workspace is no longer bound to; `hub_moved`: the hub's address moved off
+       * them. For a moved hub the page reads the add-ons row only (`hub_moved` there, with the new values): the one source for
+       * the banner and its review; this reason just keeps "cannot be reached" from showing beside it.
        */
       why?: 'unreachable' | 'not_allowed' | 'local' | 'hub_left' | 'hub_moved'
-      /** With `why: 'hub_moved'`: the hub's new values (`share` is shown by its host name). */
-      hub_moved?: { server: string; share: string }
       shares: Share[]
       staged: Staged[]
     }
@@ -173,8 +173,17 @@ export const fmtSize = (n: number): string => (n < 1024 ? `${n} bytes` : n < 102
 export const hubLeftText = (hubName?: string | null): string => `Sharing went through your hub${hubName ? ` ${hubName}` : ''}. Connect again, or set a sharing server.`
 const HUB_LEFT_TEXT = hubLeftText()
 
-/** The paused line when the hub has moved: the new share host only, by its A-label name. */
-export const hubMovedText = (share: string): string => `Sharing paused: your hub now shares links through ${hostOf(share)}.`
+/**
+ * The paused line when the hub has moved, by host name: it names whichever value changed (files, links, or both). `old` is the
+ * pair in force now; when it is not known nothing is claimed unchanged, so both are named.
+ */
+export function hubMovedText(moved: { server: string; share: string }, old?: { server: string | null; share: string | null } | null): string {
+  const files = !old?.server || !sameOrigin(old.server, moved.server)
+  const links = !old?.share || !sameOrigin(old.share, moved.share)
+  if (files && !links) return `Sharing paused: your hub now takes files at ${hostOf(moved.server)}.`
+  if (files && links) return `Sharing paused: your hub now takes files at ${hostOf(moved.server)} and shares links through ${hostOf(moved.share)}.`
+  return `Sharing paused: your hub now shares links through ${hostOf(moved.share)}.`
+}
 
 /** The server's reasons in words. `unknown_workspace` names the admin step. */
 export const REASON_TEXT: Record<string, string> = {
@@ -187,7 +196,7 @@ export const REASON_TEXT: Record<string, string> = {
   delegation: 'This workspace’s identity could not be read.',
   rejected: 'The server refused this.',
   hub_left: HUB_LEFT_TEXT,
-  hub_moved: 'Sharing paused: your hub now shares links through a new address. Use the new address in Settings, Hub.',
+  hub_moved: 'Sharing paused: your hub now shares through a new address. Use the new address.',
 }
 
 const CODE_TEXT: Record<string, string> = {
@@ -240,11 +249,13 @@ export function reachNote(server: string | null, share: string | null, from: 'co
 }
 
 /** Where files go, by name and never by address: the one plain line every publish review keeps in its main view (full addresses stay in Details). */
-export function destinationLine(from: 'computer' | 'hub' | null | undefined, hubName?: string | null, server?: string | null): string | null {
+export function destinationLine(from: 'computer' | 'hub' | null | undefined, hubName?: string | null, server?: string | null, withHost = false): string | null {
   if (!server) return null // unknown: no line, never a guess
-  if (from === 'hub') return hubName ? `Files go to your hub, ${hubName}.` : 'Files go to your hub.'
+  // `withHost`: a review that signs `server` also names its host after a name that is not signed (the hub's display name)
+  const at = withHost ? ` (${hostOf(server)})` : ''
+  if (from === 'hub') return hubName ? `Files go to your hub, ${hubName}${at}.` : `Files go to your hub${at}.`
   // "this computer" only when the Publish server on this computer is the known source; a loopback address alone does not say so (a hub can be reached through one)
-  if (from === 'computer') return 'Files go to this computer.'
+  if (from === 'computer') return `Files go to this computer${at}.`
   return `Files go to ${hostOf(server)}.`
 }
 

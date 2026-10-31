@@ -105,7 +105,10 @@ def drop(state: Any) -> bool:
     the same unchanged object is taken again after a rejoin). True when there was one."""
     had = state.publish_where is not None
     if had:
-        state.publish_where_floors = floors_of(state)
+        try:
+            state.publish_where_floors = floors_of(state)
+        except Exception:  # noqa: BLE001  # a damaged held object must not keep itself: the old floor stays
+            _LOG.warning("held publish_where could not be folded into the floor; the old floor is kept", exc_info=True)
     state.publish_where = None
     return had
 

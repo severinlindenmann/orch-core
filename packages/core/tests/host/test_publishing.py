@@ -2066,3 +2066,42 @@ def test_a_plan_made_before_a_leave_or_a_move_is_refused_by_the_guard_when_it_ru
             publishing._run(call, {"op": op})
         assert e.value.code == "publish.server_refused" and e.value.detail == {"reason": "hub_left"}
     assert w.server.requests == []  # the executor never reached the network
+
+
+def test_the_run_time_guard_covers_send_and_register_and_not_the_ops_that_act_on_links_already_out(w, monkeypatch):
+    """#1840 R1: ``_run`` re-guards ``publish.send`` (``sending=True``) and ``publish.register`` (``sending=False``) and
+    never revoke, extend, password or list: stopping a link that is out must stay possible after a leave or a move."""
+    from types import SimpleNamespace
+
+    hold(w)
+    sign_settings(w)
+    service = w.served.service
+    call = SimpleNamespace(service=service)
+    guarded: list[tuple[str, bool]] = []
+    real_guard = publishing._hub_guard
+
+    def spy(svc, *, sending=False):
+        guarded.append(("send" if sending else "other", sending))
+        return real_guard(svc, sending=sending)
+
+    monkeypatch.setattr(publishing, "_hub_guard", spy)
+    ran: list[str] = []
+    for name in ("_register", "_send", "_revoke", "_extend", "_set_password", "_live"):
+        monkeypatch.setattr(publishing, name, lambda c, p, _n=name: ran.append(_n) or {})
+    w.human.run("hub.leave", {})  # the hub is gone: send and register must now be refused at run time ...
+    service.store.refresh()
+    for op in ("publish.send", "publish.register"):
+        with pytest.raises(HostError) as e:
+            publishing._run(call, {"op": op})
+        assert e.value.detail == {"reason": "hub_left"}
+    assert ran == [] and guarded == [("send", True), ("other", False)]
+    guarded.clear()
+    for op, fn in (
+        ("publish.revoke", "_revoke"),
+        ("publish.extend", "_extend"),
+        ("publish.password", "_set_password"),
+        ("publish.list", "_live"),
+    ):  # ... and these run on, with no guard at all
+        publishing._run(call, {"op": op})
+        assert ran[-1] == fn
+    assert guarded == []

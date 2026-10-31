@@ -188,6 +188,24 @@ def test_dropping_folds_the_held_object_into_the_floor_so_the_same_object_is_tak
     assert st.publish_where_floors[HUB_ID] == {"seq": 7, "digest": publish_held.digest_of(first)}
 
 
+@pytest.mark.parametrize("exc", [JcsError("x"), RecursionError(), OverflowError(), RuntimeError("boom")])
+def test_dropping_a_damaged_held_object_still_clears_it_and_keeps_the_old_floor(
+    host: Host, hub: FakeHub, monkeypatch: pytest.MonkeyPatch, exc: Exception
+) -> None:
+    hub.join_answer = {"publish_where": signed_publish_where(seq=7)}
+    host.join()
+    st = host.state
+    floors = copy.deepcopy(st.publish_where_floors)
+
+    def boom(*a: object, **k: object) -> None:
+        raise exc
+
+    monkeypatch.setattr(publish_held, "floors_of", boom)  # the fold itself fails, whatever the damage is
+    assert publish_held.drop(st) is True
+    assert st.publish_where is None and st.publish_where_floors == floors  # held object gone, old floor kept
+    assert publish_held.drop(st) is False
+
+
 def test_after_leave_and_rejoin_the_same_unchanged_object_is_accepted_and_a_different_one_is_not(
     host: Host, hub: FakeHub
 ) -> None:

@@ -1957,8 +1957,10 @@ def test_install_server_parser_accepts_the_url_flags(tmp_path, monkeypatch):
     [
         ("https://Pub.Example:443/", "pub.example", "https://pub.example"),
         ("https://pub.example.", "pub.example", "https://pub.example"),
-        ("http://pub.example:80", "pub.example", "http://pub.example"),
+        ("https://pub.example:443", "pub.example", "https://pub.example"),
         ("https://pub.example:8443/x?y", "pub.example:8443", "https://pub.example:8443"),
+        ("https://Bücher.Example/", "xn--bcher-kva.example", "https://xn--bcher-kva.example"),
+        ("https://[2001:4860:4860::8888]:8443", "[2001:4860:4860::8888]:8443", "https://[2001:4860:4860::8888]:8443"),
     ],
 )
 def test_the_publish_name_reaches_the_hub_in_canonical_form(url, host, origin):
@@ -1968,7 +1970,43 @@ def test_the_publish_name_reaches_the_hub_in_canonical_form(url, host, origin):
     assert P._publish_origin(url) == (origin, host)
 
 
-def test_a_publish_name_without_a_scheme_gives_no_flags():
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "pub.example",  # no scheme
+        "https://",  # no host
+        "https://pub.example:99999",  # bad port
+        "https://pub.example:abc",
+        "ftp://pub.example",  # not http(s)
+        "http://pub.example",  # http outside dev: the origin rule refuses it
+        "https://user@pub.example",  # userinfo
+        "https://straße.example",  # IDNA 2003 and 2008 differ: the origin rule refuses it
+        "https://localhost",  # a name the origin rule blocks
+        "https://nodot",
+    ],
+)
+def test_an_unusable_publish_name_is_refused_not_silently_dropped(bad):
     from orch.install import parts as P
 
-    assert P._publish_origin("pub.example") is None
+    with pytest.raises(InstallError, match="publish address"):
+        P._publish_origin(bad)
+    kw = dict(
+        binary=Path("/b/orch-hub"), data=Path("/d"), address="127.0.0.1", port=8100,
+        publish_url="http://127.0.0.1:8102", relay_url=None, dev=False,
+    )  # fmt: skip
+    with pytest.raises(InstallError, match="publish address"):
+        P.command_for("hub", publish_share_url=bad, **kw)
+
+
+def test_a_dev_install_may_publish_on_a_loopback_http_name():
+    from orch.install import parts as P
+
+    assert P._publish_origin("http://localhost:8102", dev=True) == ("http://localhost:8102", "localhost:8102")
+    kw = dict(
+        binary=Path("/b/orch-hub"), data=Path("/d"), address="127.0.0.1", port=8100,
+        publish_url="http://127.0.0.1:8102", relay_url=None,
+    )  # fmt: skip
+    argv = P.command_for("hub", publish_share_url="http://localhost:8102", dev=True, **kw)
+    assert argv[argv.index("--publish-share-url") + 1] == "http://localhost:8102"
+    with pytest.raises(InstallError):
+        P.command_for("hub", publish_share_url="http://localhost:8102", dev=False, **kw)

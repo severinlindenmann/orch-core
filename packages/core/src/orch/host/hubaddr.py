@@ -405,12 +405,16 @@ def _store(
         # pinned and kept only if the seq rule allows; a bad or older one leaves the held object alone. An answer
         # without it means the hub no longer advertises one: the held object goes (the seq tombstone stays).
         now_ms = int(service.clock() * 1000)
-        if publish_where is not None:
-            code, moved = publish_held.offer(cur, publish_where, now_ms)
-            if code is not None:
-                _LOG.info("publish_where of hub_where not used (%s)", code)
-        else:
-            moved = publish_held.read(cur, now_ms)[1] or publish_held.drop(cur)
+        try:  # whatever a bad publish_where does (JcsError, RecursionError ...), the address refresh goes on
+            if publish_where is not None:
+                code, moved = publish_held.offer(cur, publish_where, now_ms)
+                if code is not None:
+                    _LOG.info("publish_where of hub_where not used (%s)", code)
+            else:
+                moved = publish_held.read(cur, now_ms)[1] or publish_held.drop(cur)
+        except Exception:  # noqa: BLE001
+            moved = False
+            _LOG.info("publish_where of hub_where not used (malformed)", exc_info=True)
         if changed or moved:
             hubops._write_state(service, cur)  # noqa: SLF001
         return changed or moved

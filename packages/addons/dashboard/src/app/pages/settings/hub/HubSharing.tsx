@@ -5,7 +5,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { suggestedWhere, type AddOnRow, type PublishWhere } from '@/api/addOnSwitches'
 import { queries } from '@/api/queries'
-import { hostOf, hubMovedText, shareQueries } from '@/api/shares'
+import { hostOf, hubMovedText, sameOrigin, shareQueries } from '@/api/shares'
 import { canChangeSettings } from '@/api/settings'
 import type { Workspace } from '@/api/types'
 import { Button } from '@/components/ui/button'
@@ -43,8 +43,14 @@ const usable = (w: PublishWhere | null | undefined): w is PublishWhere => !!w &&
  */
 export function HubSharing({ workspace }: { workspace: Workspace }) {
   const { row, owner, ask, dialog } = useHubSharing(workspace)
+  const current = useQuery(shareQueries.list(workspace.id))
   const where = suggestedWhere(row)
   const offer = !!row && !row.hub_moved && row.suggest_from === 'hub' && row.state !== 'on' && usable(where)
+  // The person's own settings, when the row says they are set up: signing replaces them, so the review says so. Their values
+  // come from the Shares read; until it has answered the button waits (it must not offer to replace what it cannot name).
+  const own = row?.set_up === true
+  const configured = current.data && current.data.available && current.data.configured ? { server: current.data.server, share: current.data.share } : null
+  const reading = own && current.isPending
   return (
     <>
       {row?.hub_moved ? (
@@ -55,7 +61,7 @@ export function HubSharing({ workspace }: { workspace: Workspace }) {
         <Panel title="Share links">
           <p data-testid="hub-share-line">Share links through {hostOf(where!.share)}</p>
           {owner ? (
-            <Button data-testid="hub-share-turn-on" variant="outline" className="h-auto max-w-full whitespace-normal text-left" onClick={() => ask(turnOnSpec(where!, row!, () => {}))}>
+            <Button data-testid="hub-share-turn-on" variant="outline" className="h-auto max-w-full whitespace-normal text-left" disabled={reading} onClick={() => ask(turnOnSpec(where!, row!, () => {}, own ? configured ?? { server: null, share: null } : null))}>
               Turn on sharing
             </Button>
           ) : (
@@ -83,13 +89,18 @@ export function SharingPaused({ workspace }: { workspace: Workspace }) {
   )
 }
 
-/** The hub's address moved: the paused line, and one button that opens the review with the old and the new share host. */
+/**
+ * The hub's address moved: the paused line, and one button that opens the review with both destinations: where files go and
+ * where links open, each with the old host when it differs. Both values are signed, so both are shown.
+ */
 function Paused({ workspace, row, owner, ask }: { workspace: Workspace; row: AddOnRow; owner: boolean; ask: (spec: HandoffSpec) => void }) {
   const current = useQuery(shareQueries.list(workspace.id))
   const moved = row.hub_moved
   if (!moved) return null
-  // The share host in force now (this workspace's own settings), when the host says it.
-  const old = current.data && current.data.available && current.data.configured ? current.data.share : null
+  // The pair in force now (this workspace's own settings), when the host says it.
+  const old = current.data && current.data.available && current.data.configured ? { server: current.data.server, share: current.data.share } : null
+  const oldServer = old?.server && !sameOrigin(old.server, moved.server) && hostOf(old.server) !== hostOf(moved.server) ? hostOf(old.server) : null
+  const oldShare = old?.share && !sameOrigin(old.share, moved.share) && hostOf(old.share) !== hostOf(moved.share) ? hostOf(old.share) : null
   const open = () =>
     ask({
       title: 'Use the hub’s new sharing address',
@@ -98,14 +109,16 @@ function Paused({ workspace, row, owner, ask }: { workspace: Workspace; row: Add
       prepareOnOpen: true,
       lead: (
         <>
-          <p data-testid="hub-moved-new" className="text-[13px] font-medium text-text">Links will open at {hostOf(moved.share)}.</p>
-          {old && <p data-testid="hub-moved-old" className="text-[13px] text-text">Until now they opened at {hostOf(old)}. Links already made keep their old address.</p>}
+          <p data-testid="hub-moved-files" className="text-[13px] font-medium text-text">Files go to {hostOf(moved.server)}.</p>
+          {oldServer && <p data-testid="hub-moved-files-old" className="text-[13px] text-text">Until now they went to {oldServer}.</p>}
+          <p data-testid="hub-moved-new" className="text-[13px] font-medium text-text">Links open at {hostOf(moved.share)}.</p>
+          {oldShare && <p data-testid="hub-moved-old" className="text-[13px] text-text">Until now they opened at {oldShare}. Links already made keep their old address.</p>}
         </>
       ),
     })
   return (
     <>
-      <p role="status" data-testid="hub-moved-line" className="text-[13px]">{hubMovedText(moved.share)}</p>
+      <p role="status" data-testid="hub-moved-line" className="text-[13px]">{hubMovedText(moved, old)}</p>
       {owner ? (
         <Button data-testid="hub-use-new-address" size="sm" variant="secondary" onClick={open} disabled={!usable(moved)}>
           Use the new address

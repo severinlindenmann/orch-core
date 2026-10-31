@@ -71217,6 +71217,7 @@
   "h_sk_commit": "orch/v2/hub-sk-commit|",
   "h_space_members": "orch/v2/hub-space-members|",
   "sig_hub_admin_read": "orch/v2/hub-admin-read|",
+  "sig_hub_allow": "orch/v2/hub-allow|",
   "sig_hub_api_origin": "orch/v2/hub-api-origin|",
   "sig_hub_app_pass": "orch/v2/hub-app-pass|",
   "sig_hub_audit": "orch/v2/hub-audit|",

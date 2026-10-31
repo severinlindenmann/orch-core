@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import http.client
 import ipaddress
+import logging
+import os
 import threading
 import time
 import urllib.parse
@@ -106,6 +108,7 @@ class HubPublish:
         sync: PublishSync,
         cfg: PublishConfig,
         revocations: Callable[[], list[dict[str, Any]]] | None = None,
+        admission: Callable[[str], tuple[str, int] | None] | None = None,
     ):
         self._scheme, self._host, self._port = _endpoint(cfg.base_url)
         self._cfg = cfg
@@ -127,6 +130,10 @@ class HubPublish:
         self._card_synced: bytes | None = None
         self._revocations = revocations or (list)
         self._revoked_synced: set[bytes] = set()
+        # P02: ``admission(workspace_id) -> (owner_person_id, binding_seq)`` or None. The hub's own answer, read from its
+        # registry and access store: this workspace is joined to THIS hub, bound now, and its owner is a hub admin, and
+        # the hub setting lets workspaces share files. None (the default) = never send a hub.allow.
+        self._admission = admission
 
     # --- Downstream (the link server calls these after it accepted the object) -------------------------------------
 
@@ -135,6 +142,7 @@ class HubPublish:
         itself and admits the workspace exactly as its pre-bind, allowlist and never-change rules say (V3-D36: this is
         the only way a workspace reaches publish). A refusal goes back to the workspace as the hub's refusal."""
         with self._ws_lock(workspace_id):
+            self._allow(workspace_id)
             try:
                 self._sync.put_card(workspace_id, card, pk_pub)
             except PublishSyncError as e:
@@ -165,6 +173,9 @@ class HubPublish:
                 if o["binding_seq"] == ho["binding_seq"] and o["kind"] != "hub.unbound":
                     raise Refused("binding_conflict")
             self._bindings[workspace_id] = dict(obj)
+        if o["kind"] == "hub.binding":  # a new binding epoch (join, re-join, mode switch) needs its own allowance
+            with self._ws_lock(workspace_id):
+                self._allow(workspace_id)
         try:
             self._ensure(
                 workspace_id, self._keys()[1], need_bound=False, deadline=time.monotonic() + self._cfg.deadline_s
@@ -214,6 +225,42 @@ class HubPublish:
     def _ws_lock(self, workspace_id: str) -> threading.Lock:
         with self._lock:
             return self._ws_locks.setdefault(workspace_id, threading.Lock())
+
+    def _allow(self, workspace_id: str) -> None:
+        """Tell orch-publish, signed with HK_op, that this workspace and its owner are this hub's own (``hub.allow``,
+        protocol 11.9). Best effort: a refusal (the operator never pinned this hub, no network) only means the old
+        admission rules still apply and the workspace is told at its first send. The caller holds the workspace lock."""
+        if self._admission is None:
+            return
+        try:
+            got = self._admission(workspace_id)
+            if got is None:
+                return
+            owner, seq = got
+            signer, card, hub_id = self._keys()
+            c = cj(card)
+            if self._card_synced != c:
+                self._sync.put_hub_card(card)
+                with self._lock:
+                    self._card_synced = c
+                    self._revoked_synced.clear()
+            obj = signer.sign_object(
+                {
+                    "v": 2,
+                    "suite": 2,
+                    "kind": "hub.allow",
+                    "hv": 0,
+                    "hub_id": hub_id,
+                    "workspace_id": workspace_id,
+                    "owner_person_id": owner,
+                    "binding_seq": seq,
+                    "ts_ms": int(time.time() * 1000),
+                    "nonce": b64u(os.urandom(32)),
+                }
+            )
+            self._sync.put_allow(workspace_id, obj)
+        except (PublishSyncError, KeyUseError, Refused, ValueError, KeyError, OSError) as e:
+            logging.getLogger("orch_hub.publish").info("hub.allow not sent: %s", getattr(e, "code", type(e).__name__))
 
     def _ensure(self, workspace_id: str, card: dict[str, Any], *, need_bound: bool, deadline: float) -> None:
         """Push the hub's card and the workspace's latest binding object when orch-publish does not hold them yet.

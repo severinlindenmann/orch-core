@@ -500,6 +500,15 @@ FIELDS: dict[str, dict[str, Check]] = {
         "ts_ms": _int_min(0),
         "nonce": _b64u_n(32),
     },
+    # P02 (#1290, section 11.9): the hub admits ONE of its own workspaces for ONE owner at ONE binding_seq (HK_op)
+    "hub.allow": {
+        "hub_id": _hex16,
+        "workspace_id": _hex16,
+        "owner_person_id": _hex16,
+        "binding_seq": _int_min(1),
+        "ts_ms": _int_min(0),
+        "nonce": _b64u_n(32),
+    },
     # M4 (section 11.8): the hub's single-use pass into a company or group app (HK_op); no person id, no user id
     "hub.app_pass": {
         "hub_id": _hex16,
@@ -529,6 +538,7 @@ LABEL_OF_KIND = {
     "hub.publish_approval": "sig_hub_publish_approval",
     "hub.release_narrow": "sig_hub_release_narrow",
     "hub.app_pass": "sig_hub_app_pass",
+    "hub.allow": "sig_hub_allow",
     "hub.owner_proof": "sig_hub_owner_proof",
     "hub.space": "sig_hub_space",
     "hub.space_wrap": "sig_hub_space_wrap",

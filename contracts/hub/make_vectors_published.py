@@ -40,6 +40,13 @@ REQUIRED = {
         "approval_mismatched_reach_hash",
         "approval_other_manifest",
     ],
+    "allow": [
+        "allow_unpinned_hub",
+        "allow_other_workspace_than_the_path",
+        "allow_replay",
+        "allow_stale_timestamp",
+        "allow_signed_by_another_hub_key",
+    ],
     "narrow": ["narrow_start_refused", "narrow_other_workspace", "narrow_selective_refused", "narrow_replay"],
     "pass": ["pass_wrong_app", "pass_expired", "pass_reused_nonce", "pass_other_hub", "pass_audience_mismatch"],
 }
@@ -979,6 +986,81 @@ def narrow_cases() -> list[dict[str, Any]]:
     return cases
 
 
+def allow_obj(
+    *,
+    ws: str = WS_A,
+    hub: str = HUB,
+    person: str | None = None,
+    seq: int = 1,
+    ts: int = NOW,
+    nonce: str | None = None,
+    key: str = "hk_op",
+    label: str = "sig_hub_allow",
+    **kw: Any,
+) -> dict[str, Any]:
+    o = {
+        **G.hdr("hub.allow"),
+        "hub_id": hub,
+        "workspace_id": ws,
+        "owner_person_id": person or G.P_ALICE,
+        "binding_seq": seq,
+        "ts_ms": ts,
+        "nonce": nonce or n32("allow1"),
+        **kw,
+    }
+    o = {k: v for k, v in o.items() if v is not G.DROP}
+    return G.signed(key, label, o)
+
+
+def allow_cases() -> list[dict[str, Any]]:
+    """PUT /v2/hub/allow/{ws} (11.10): the signed part. The store rules (owner of a registered workspace, older epoch,
+    another hub, the live-binding rule at use) are in protocol.md 11.10 and the publish tests."""
+    cases: list[dict[str, Any]] = []
+
+    def add(name: str, signed: Any, expect: dict[str, Any], **kw: Any) -> None:
+        args = {
+            "now_ms": NOW,
+            "dev_mode": True,
+            "hub_card": G.card(),
+            "path_ws": WS_A,
+            "trusted": True,
+            "seen_nonces": [],
+            "signed": signed,
+            **kw,
+        }
+        cases.append({"name": name, "args": args, "expect": expect})
+
+    ok = {"ok": {"hub": HUB, "workspace_id": WS_A, "owner_person_id": G.P_ALICE, "binding_seq": 1}}
+    add("allow_ok", allow_obj(), ok)
+    add("allow_window_edge", allow_obj(ts=NOW - 120_000), ok)
+    add("allow_higher_epoch", allow_obj(seq=7), {"ok": {**ok["ok"], "binding_seq": 7}})
+    add("allow_unpinned_hub", allow_obj(), {"error": "unknown_hub"}, trusted=False)
+    add("allow_unknown_hub", allow_obj(hub=G.ROGUE_HUB_ID), {"error": "unknown_hub"})
+    add("allow_other_workspace_than_the_path", allow_obj(ws=WS_B), {"error": "other_workspace"})
+    add("allow_replay", allow_obj(), {"error": "replay"}, seen_nonces=[n32("allow1")])
+    add("allow_stale_timestamp", allow_obj(ts=NOW - 121_000), {"error": "stale_timestamp"})
+    add("allow_future_timestamp", allow_obj(ts=NOW + 121_000), {"error": "stale_timestamp"})
+    add("allow_signed_by_another_hub_key", allow_obj(key="hk_op_rogue"), {"error": "bad_hub_signature"})
+    add("allow_signed_by_the_workspace", allow_obj(key="wsk_a"), {"error": "bad_hub_signature"})
+    add("allow_signed_under_the_narrow_label", allow_obj(label="sig_hub_release_narrow"), {"error": "bad_hub_signature"})
+    add("allow_signed_under_the_pass_label", allow_obj(label="sig_hub_app_pass"), {"error": "bad_hub_signature"})
+    s = allow_obj()
+    add(
+        "allow_owner_changed_after_signing",
+        {"o": {**s["o"], "owner_person_id": G.fake16("someone-else")}, "sig": s["sig"]},
+        {"error": "bad_hub_signature"},
+    )
+    add("allow_extra_member", allow_obj(dev=True), {"error": "malformed"})
+    add("allow_missing_owner", allow_obj(owner_person_id=G.DROP), {"error": "malformed"})
+    add("allow_seq_zero", allow_obj(seq=0), {"error": "malformed"})
+    add("allow_bad_owner_id", allow_obj(person="not-hex"), {"error": "malformed"})
+    add("allow_short_nonce", allow_obj(nonce=b64u(b"short")), {"error": "malformed"})
+    add("allow_wrong_suite", allow_obj(suite=3), {"error": "wrong_suite"})
+    add("allow_wrong_kind", {"o": {**s["o"], "kind": "hub.snapshot"}, "sig": s["sig"]}, {"error": "malformed"})
+    add("allow_not_an_object", [s], {"error": "malformed"})
+    return cases
+
+
 def pass_obj(
     *,
     app: str = APP,
@@ -1094,7 +1176,7 @@ def pass_cases() -> list[dict[str, Any]]:
 def labels() -> dict[str, str]:
     from orch_hub.contract.labels import HUB_LABELS
 
-    keys = ("sig_hub_release_narrow", "sig_hub_app_pass", "h_publish_request_direct", "h_app_meta", "h_app_reach")
+    keys = ("sig_hub_release_narrow", "sig_hub_app_pass", "sig_hub_allow", "h_publish_request_direct", "h_app_meta", "h_app_reach")
     return {k: HUB_LABELS[k] for k in keys}
 
 
@@ -1129,6 +1211,7 @@ def build() -> dict[str, Any]:
         "row_cases": row_cases(),
         "row_scope_cases": row_scope_cases(),
         "approval_cases": approval_cases(),
+        "allow_cases": allow_cases(),
         "narrow_cases": narrow_cases(),
         "pass_cases": pass_cases(),
     }

@@ -71240,6 +71240,7 @@
   "sig_hub_owner_proof": "orch/v2/sig/hub-owner-proof|",
   "sig_hub_publish": "orch/v2/hub-publish|",
   "sig_hub_publish_approval": "orch/v2/sig/hub-publish-approval|",
+  "sig_hub_publish_where": "orch/v2/hub-publish-where|",
   "sig_hub_relay_request": "orch/v2/hub-relay-req|",
   "sig_hub_release_narrow": "orch/v2/hub-release-narrow|",
   "sig_hub_route": "orch/v2/hub-route|",

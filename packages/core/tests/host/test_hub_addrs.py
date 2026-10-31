@@ -197,15 +197,13 @@ def test_the_name_is_carried_as_the_hubs_own_words_and_cleaned(human, served, mo
     assert status(served)["hub_says"] == {"name": "Acme hub", "from": "hub"}  # labelled; no workspace-owned field
 
 
-def test_the_hubs_publish_address_is_kept_as_a_hint_and_shown_in_the_status(human, served, monkeypatch, probe):
+def test_the_legacy_publish_string_of_the_hub_is_ignored_and_never_suggested(human, served, monkeypatch, probe):
+    """#1838 (contract 10.9.1): the unsigned ``publish`` string is accepted in shape and dropped; only a signed
+    ``publish_where`` can ever be suggested (a later step), so nothing is kept or shown from the legacy string."""
     hub = bound(served, human, monkeypatch)
     probe.live = {"10.0.0.5:8105"}
     assert status(served)["hub_publish"] is None
     hub.where_answer = {**where("10.0.0.5:8105"), "publish": "http://127.0.0.1:8102"}
-    refresh(served)
-    assert _state(served).hub_publish == "http://127.0.0.1:8102"
-    assert status(served)["hub_publish"] == "http://127.0.0.1:8102"
-    hub.where_answer = where("10.0.0.5:8105")  # the hub no longer names one: the hint goes
     refresh(served)
     assert _state(served).hub_publish is None and status(served)["hub_publish"] is None
     for bad in ("http://evil.example.com", "https://x.com/p", "ftp://x"):

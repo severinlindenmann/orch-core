@@ -509,6 +509,16 @@ FIELDS: dict[str, dict[str, Check]] = {
         "ts_ms": _int_min(0),
         "nonce": _b64u_n(32),
     },
+    # #1838 (section 10.9.1): where this hub's workspaces publish and share, signed by HK_op. The origins are checked
+    # (and canonicalised) by ``publish_where.check_publish_where``; here only that they are strings.
+    "hub.publish_where": {
+        "hub_id": _hex16,
+        "server": lambda x: type(x) is str,
+        "share": lambda x: type(x) is str,
+        "seq": _int_min(1),
+        "issued_ms": _int_min(0),
+        "dev": _bool,
+    },
     # M4 (section 11.8): the hub's single-use pass into a company or group app (HK_op); no person id, no user id
     "hub.app_pass": {
         "hub_id": _hex16,
@@ -539,6 +549,7 @@ LABEL_OF_KIND = {
     "hub.release_narrow": "sig_hub_release_narrow",
     "hub.app_pass": "sig_hub_app_pass",
     "hub.allow": "sig_hub_allow",
+    "hub.publish_where": "sig_hub_publish_where",
     "hub.owner_proof": "sig_hub_owner_proof",
     "hub.space": "sig_hub_space",
     "hub.space_wrap": "sig_hub_space_wrap",

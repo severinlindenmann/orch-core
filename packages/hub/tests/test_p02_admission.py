@@ -122,4 +122,5 @@ def test_check_hub_where_refuses_a_bad_publish(bad):
     assert not publish_ok(bad)
     with pytest.raises(Refused):
         check_hub_where({**base, "publish": bad})
-    assert check_hub_where({**base, "publish": "https://x.com"})["publish"] == "https://x.com"
+    # #1838: a clean legacy ``publish`` is still accepted in shape, but the checker never returns it (nothing suggests from it)
+    assert check_hub_where({**base, "publish": "https://x.com"}) == {**base, "name": "Hub"}

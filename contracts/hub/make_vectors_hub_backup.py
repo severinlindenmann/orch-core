@@ -1,11 +1,12 @@
-"""Builds ``contracts/hub/vectors_hub_backup.json``: the hub backup file (protocol.md §17) and the ``hub_where`` answer (§10.9).
+"""Builds ``contracts/hub/vectors_hub_backup.json``: the hub backup file (protocol.md §17), the ``hub_where`` answer (§10.9)
+and the signed ``hub.publish_where`` object with its origin rule (§10.9.1).
 
 Test code. Keys, words, salts and ephemeral keys are FAKE and fixed here (never in ``src``); signatures are RFC 6979. The
 expected results are written out by hand (never computed by the code under test); the key-derivation and seal values
 are computed here with their own primitives and then compared with ``orch_hub.contract.backup``.
 Run ``cd packages/hub && uv run python ../../contracts/hub/make_vectors_hub_backup.py`` to rewrite the file; the output is
 deterministic. Consumers: the hub replays every case (``packages/hub/tests/test_hub_backup_vectors.py``); orch-core
-replays the ``hub_where`` cases (``packages/core/tests/hub/test_hub_where_vectors.py``)."""
+replays the ``hub_where``, ``publish_where`` and ``canonical_origin`` cases (``packages/core/tests/hub/test_hub_where_vectors.py``)."""
 
 from __future__ import annotations
 
@@ -570,7 +571,7 @@ def where_cases() -> list[dict[str, Any]]:
     ok = {"addresses": [a(), a("office", "192.168.1.20:8105")], "name": "Demo hub"}
     wc("where_ok", ok, {"ok": ok})
     for nm, pub in (("https", "https://share.example.com"), ("https_port", "https://share.example.com:8443"), ("loopback", "http://127.0.0.1:8102")):
-        wc("where_publish_ok_" + nm, {**ok, "publish": pub}, {"ok": {**ok, "publish": pub}}, "P02: the hub's publish origin, a hint")
+        wc("where_publish_ok_" + nm, {**ok, "publish": pub}, {"ok": ok}, "#1838: the legacy `publish` string is accepted in shape and dropped, never returned")
     for nm, pub in (
         ("plain_http_elsewhere", "http://100.64.1.2:8102"),
         ("with_path", "https://share.example.com/x"),
@@ -665,6 +666,283 @@ def where_cases() -> list[dict[str, Any]]:
     wc("where_answer_missing_name", {"addresses": [a()]}, err("malformed"))
     wc("where_addresses_not_list", {"addresses": a(), "name": "H"}, err("malformed"))
     wc("where_not_an_object", [a()], err("malformed"))
+    # #1838: the optional signed `publish_where` is checked for its shape only (the signature needs the pinned card)
+    good = pw_signed(pw_o())
+    wc("where_publish_where_ok", {**ok, "publish_where": good}, {"ok": {**ok, "publish_where": good}}, "returned as sent")
+    wc(
+        "where_publish_where_and_legacy_publish",
+        {**ok, "publish": "https://share.example.com", "publish_where": good},
+        {"ok": {**ok, "publish_where": good}},
+        "the legacy `publish` string is ignored even next to a publish_where",
+    )
+    wc(
+        "where_publish_where_not_verified_here",
+        {**ok, "publish_where": pw_signed(pw_o(server="https://10.0.0.5"), "op_other")},
+        {"ok": {**ok, "publish_where": pw_signed(pw_o(server="https://10.0.0.5"), "op_other")}},
+        "shape only: a bad signature or a refused origin is check_publish_where's, with the pinned card",
+    )
+    bad_sig_len = {"o": good["o"], "sig": b64u(bytes(63))}
+    for nm, pwv, expect in (
+        ("not_an_object", "x", err("malformed")),
+        ("null", None, err("malformed")),
+        ("envelope_extra_key", {**good, "mac": "x"}, err("malformed")),
+        ("sig_missing", {"o": good["o"]}, err("malformed")),
+        ("sig_wrong_length", bad_sig_len, err("malformed")),
+        ("sig_not_base64url", {"o": good["o"], "sig": "!!"}, err("malformed")),
+        ("field_missing", {"o": {k: v for k, v in good["o"].items() if k != "share"}, "sig": good["sig"]}, err("malformed")),
+        ("field_extra", {"o": {**good["o"], "path": "/x"}, "sig": good["sig"]}, err("malformed")),
+        ("seq_zero", {"o": {**good["o"], "seq": 0}, "sig": good["sig"]}, err("malformed")),
+        ("seq_bool", {"o": {**good["o"], "seq": True}, "sig": good["sig"]}, err("malformed")),
+        ("seq_over_2_53", {"o": {**good["o"], "seq": 2**53}, "sig": good["sig"]}, err("malformed")),
+        ("origin_not_a_string", {"o": {**good["o"], "share": 7}, "sig": good["sig"]}, err("malformed")),
+        ("hub_id_not_hex16", {"o": {**good["o"], "hub_id": "ab"}, "sig": good["sig"]}, err("malformed")),
+        ("dev_not_bool", {"o": {**good["o"], "dev": 0}, "sig": good["sig"]}, err("malformed")),
+        ("wrong_kind", {"o": {**good["o"], "kind": "hub.allow"}, "sig": good["sig"]}, err("malformed")),
+        ("wrong_suite", {"o": {**good["o"], "suite": 1}, "sig": good["sig"]}, err("wrong_suite")),
+        ("wrong_v", {"o": {**good["o"], "v": 3}, "sig": good["sig"]}, err("malformed")),
+    ):
+        wc("where_publish_where_" + nm, {**ok, "publish_where": pwv}, expect)
+    return cs
+
+
+# --- #1838: hub.publish_where ------------------------------------------------------------------------------------------------
+
+PW_LABEL = b"orch/v2/hub-publish-where|"  # written out here, not read from the code under test
+PW_HUB = hub_id(S.public_bytes(key("root")))
+PW_OTHER_HUB = hub_id(S.public_bytes(key("attacker_root")))
+PW_SERVER = "https://pub.example.com"
+PW_SHARE = "https://share.example.com:8443"
+
+
+def pw_o(**over: Any) -> dict[str, Any]:
+    o = {
+        "v": 2,
+        "suite": 2,
+        "kind": "hub.publish_where",
+        "hv": 0,
+        "hub_id": PW_HUB,
+        "server": PW_SERVER,
+        "share": PW_SHARE,
+        "seq": 5,
+        "issued_ms": NOW_MS,
+        "dev": False,
+    }
+    o.update(over)
+    return o
+
+
+def pw_signed(o: dict[str, Any], signer: str = "op") -> dict[str, Any]:
+    return {"o": o, "sig": b64u(S.sign(key(signer), PW_LABEL + cj(o), deterministic=True))}
+
+
+#: origins refused without ``dev`` (name, origin); every one is a ``bad_origin``
+PW_REFUSED: list[tuple[str, str]] = [
+    ("loopback_http", "http://127.0.0.1:8103"),
+    ("loopback_https", "https://127.0.0.1:8443"),
+    ("loopback_name_http", "http://localhost:8103"),
+    ("loopback_v6", "https://[::1]:8443"),
+    ("private_ip_10", "https://10.0.0.5"),
+    ("private_ip_192_168", "https://192.168.1.20:8443"),
+    ("private_ip_172_16", "https://172.16.0.1"),
+    ("private_ip_172_31", "https://172.31.255.254"),
+    ("cgnat_ip", "https://100.64.1.2"),
+    ("link_local_ip", "https://169.254.10.1"),
+    ("this_network_ip", "https://0.0.0.0"),
+    ("documentation_ip", "https://203.0.113.9"),
+    ("multicast_ip", "https://224.0.0.1"),
+    ("ula_ip", "https://[fd12:3456::1]"),
+    ("link_local_v6", "https://[fe80::1]"),
+    ("mapped_v6", "https://[::ffff:8.8.8.8]"),
+    ("zone_v6", "https://[fe80::1%25eth0]"),
+    ("local_name", "https://hub.local"),
+    ("internal_name", "https://pub.corp.internal"),
+    ("localhost", "https://localhost"),
+    ("localhost_port", "https://localhost:8443"),
+    ("localhost_upper", "https://LOCALHOST"),
+    ("localhost_trailing_dot", "https://localhost."),
+    ("localhost_subdomain", "https://pub.localhost"),
+    ("userinfo", "https://u:p@pub.example.com"),
+    ("userinfo_user_only", "https://u@pub.example.com"),
+    ("plain_http_public", "http://pub.example.com"),
+    ("path", "https://pub.example.com/x"),
+    ("path_slash", "https://pub.example.com/"),
+    ("query", "https://pub.example.com?x=1"),
+    ("fragment", "https://pub.example.com#x"),
+    ("port_zero", "https://pub.example.com:0"),
+    ("port_too_big", "https://pub.example.com:65536"),
+    ("port_leading_zero", "https://pub.example.com:08443"),
+    ("port_empty", "https://pub.example.com:"),
+    ("port_not_a_number", "https://pub.example.com:80a"),
+    ("upper_case_scheme", "HTTPS://pub.example.com"),
+    ("no_scheme", "pub.example.com"),
+    ("other_scheme", "ftp://pub.example.com"),
+    ("wss_scheme", "wss://pub.example.com"),
+    ("short_ip", "https://127.1"),
+    ("decimal_ip", "https://2130706433"),
+    ("leading_zero_ip", "https://010.0.0.1"),
+    ("space", "https://pub.example.com "),
+    ("percent", "https://pub%2eexample.com"),
+    ("backslash", "https://pub.example.com\\x"),
+    ("empty_host", "https://"),
+    ("empty_label", "https://pub..example.com"),
+    ("dash_edge_label", "https://-pub.example.com"),
+    ("underscore", "https://pub_x.example.com"),
+    ("unbracketed_v6", "https://::1"),
+    ("idna_sharp_s", "https://stra\u00dfe.example"),
+]
+#: (name, origin given, canonical origin) accepted without ``dev``
+PW_CANONICAL: list[tuple[str, str, str]] = [
+    ("plain", "https://pub.example.com", "https://pub.example.com"),
+    ("port", "https://share.example.com:8443", "https://share.example.com:8443"),
+    ("idn_a_label", "https://B\u00dcCHER.example", "https://xn--bcher-kva.example"),
+    ("idn_lower_case", "https://b\u00fccher.example:8443", "https://xn--bcher-kva.example:8443"),
+    ("default_port_https", "https://pub.example.com:443", "https://pub.example.com"),
+    ("trailing_dot", "https://pub.example.com.", "https://pub.example.com"),
+    ("trailing_dot_and_default_port", "https://Pub.Example.COM.:443", "https://pub.example.com"),
+    ("upper_case_host", "https://PUB.Example.com:8443", "https://pub.example.com:8443"),
+    ("http_default_port_is_not_https", "https://pub.example.com:80", "https://pub.example.com:80"),
+    ("public_ip", "https://93.184.216.34:8443", "https://93.184.216.34:8443"),
+    ("public_v6", "https://[2606:4700:4700:0:0:0:0:1111]", "https://[2606:4700:4700::1111]"),
+    ("public_v6_port", "https://[2606:4700:4700::1111]:8443", "https://[2606:4700:4700::1111]:8443"),
+    ("local_in_the_middle", "https://local.example.com", "https://local.example.com"),
+    ("localhost_prefix_only", "https://localhost.example.com", "https://localhost.example.com"),
+    ("172_32_is_public", "https://172.32.0.1", "https://172.32.0.1"),
+    ("100_128_is_public", "https://100.128.0.1", "https://100.128.0.1"),
+]
+#: accepted only with ``dev`` (name, origin given, canonical origin)
+PW_DEV_ONLY: list[tuple[str, str, str]] = [
+    ("loopback_http", "http://127.0.0.1:8103", "http://127.0.0.1:8103"),
+    ("loopback_http_default_port", "http://127.0.0.1:80", "http://127.0.0.1"),
+    ("loopback_https", "https://127.0.0.1:8443", "https://127.0.0.1:8443"),
+    ("loopback_127_1_2_3", "http://127.1.2.3:8103", "http://127.1.2.3:8103"),
+    ("localhost_http", "http://localhost:8102", "http://localhost:8102"),
+    ("localhost_upper_trailing_dot", "http://LocalHost.:8102", "http://localhost:8102"),
+    ("loopback_v6_http", "http://[::1]:8102", "http://[::1]:8102"),
+    ("loopback_v6_long", "http://[0:0:0:0:0:0:0:1]:8102", "http://[::1]:8102"),
+]
+#: refused even with ``dev``: dev adds loopback only
+PW_DEV_REFUSED: list[tuple[str, str]] = [
+    ("private_ip", "https://10.0.0.5"),
+    ("private_ip_http", "http://192.168.1.20:8103"),
+    ("plain_http_public", "http://pub.example.com"),
+    ("local_name", "http://hub.local"),
+    ("internal_name", "https://pub.corp.internal"),
+    ("localhost_with_path", "http://localhost:8102/x"),
+    ("loopback_with_userinfo", "http://u@127.0.0.1:8102"),
+    ("link_local_http", "http://169.254.1.1"),
+]
+
+
+def publish_where_cases() -> list[dict[str, Any]]:
+    cs: list[dict[str, Any]] = []
+    op_pub = pub(key("op"))
+
+    def pc(
+        name: str,
+        signed: Any,
+        expect: dict[str, Any],
+        *,
+        dev: bool = False,
+        hub: str = PW_HUB,
+        held: Any = None,
+        note: str = "",
+    ) -> None:
+        args: dict[str, Any] = {"signed": signed, "op_pub": op_pub, "hub_id": hub, "dev": dev}
+        if held is not None:
+            args["held"] = held
+        cs.append(case("pw_" + name, "publish_where", args, expect, note))
+
+    def co(name: str, origin: Any, dev: bool, expect: dict[str, Any]) -> None:
+        cs.append(case("origin_" + name, "canonical_origin", {"origin": origin, "dev": dev}, expect))
+
+    good = pw_o()
+    pc("good", pw_signed(good), {"ok": good}, note="the canonical object is the result")
+    good_dev = pw_o(dev=True, server="http://127.0.0.1:8103", share="http://127.0.0.1:8102")
+    pc("good_dev", pw_signed(good_dev), {"ok": good_dev}, dev=True, note="a dev pin takes a dev object; loopback http is the lab")
+    pc("good_seq_max", pw_signed(pw_o(seq=2**53 - 1)), {"ok": pw_o(seq=2**53 - 1)})
+    pc("good_seq_1_issued_0", pw_signed(pw_o(seq=1, issued_ms=0)), {"ok": pw_o(seq=1, issued_ms=0)})
+    pc("good_server_is_share", pw_signed(pw_o(share=PW_SERVER)), {"ok": pw_o(share=PW_SERVER)}, note="one origin may serve both")
+    pc("wrong_hub_id", pw_signed(pw_o(hub_id=PW_OTHER_HUB)), err("other_hub"), note="signed by the right key, names another hub")
+    pc("pinned_hub_is_another", pw_signed(good), err("other_hub"), hub=PW_OTHER_HUB)
+    good_sig = pw_signed(good)["sig"]
+
+    def flip_sig(signed: dict[str, Any]) -> dict[str, Any]:
+        raw = __import__("base64").urlsafe_b64decode(signed["sig"] + "==")
+        return {"o": signed["o"], "sig": b64u(flip(raw, 10))}
+
+    pc("bad_signature", flip_sig(pw_signed(good)), err("bad_signature"))
+    pc("signed_over_other_content", {"o": pw_o(seq=6), "sig": good_sig}, err("bad_signature"), note="the signature of seq 5 on an object that says seq 6")
+    pc("signed_under_another_op_key", pw_signed(good, "op_other"), err("bad_signature"))
+    pc("signed_under_the_root_key", pw_signed(good, "root"), err("bad_signature"), note="only HK_op signs it")
+    pc("signed_under_the_wrong_label", {"o": good, "sig": b64u(S.sign(key("op"), b"orch/v2/hub-allow|" + cj(good), deterministic=True))}, err("bad_signature"))
+    pc("dev_true_at_a_real_pin", pw_signed(pw_o(dev=True)), err("dev_refused"))
+    pc("dev_false_at_a_dev_pin", pw_signed(pw_o(dev=False)), err("dev_mismatch"), dev=True)
+    pc("dev_true_at_a_real_pin_loopback", pw_signed(good_dev), err("dev_refused"), note="loopback http needs the pin to be dev too")
+    pc("loopback_http_dev_false_refused", pw_signed(pw_o(server="http://127.0.0.1:8103")), err("bad_origin"))
+    pc("loopback_http_dev_true_accepted", pw_signed(pw_o(dev=True, server="http://127.0.0.1:8103")), {"ok": pw_o(dev=True, server="http://127.0.0.1:8103")}, dev=True)
+    # the origin rule, on each field
+    for nm, origin in PW_REFUSED:
+        pc("server_" + nm + "_refused", pw_signed(pw_o(server=origin)), err("bad_origin"))
+    share_checked = ("loopback_http", "private_ip_10", "cgnat_ip", "ula_ip", "local_name", "localhost", "userinfo", "path", "plain_http_public")
+    for nm, origin in [r for r in PW_REFUSED if r[0] in share_checked]:
+        pc("share_" + nm + "_refused", pw_signed(pw_o(share=origin)), err("bad_origin"))
+    for nm, origin in PW_DEV_REFUSED:
+        pc("dev_server_" + nm + "_refused", pw_signed(pw_o(dev=True, server=origin)), err("bad_origin"), dev=True)
+    for nm, origin, canon in PW_CANONICAL:
+        pc("server_" + nm, pw_signed(pw_o(server=origin)), {"ok": pw_o(server=canon)})
+    for nm, origin, canon in PW_CANONICAL[:6]:
+        pc("share_" + nm, pw_signed(pw_o(share=origin)), {"ok": pw_o(share=canon)})
+    for nm, origin, canon in PW_DEV_ONLY:
+        pc("dev_server_" + nm, pw_signed(pw_o(dev=True, server=origin)), {"ok": pw_o(dev=True, server=canon)}, dev=True)
+        pc("dev_only_server_" + nm + "_refused_at_a_real_pin", pw_signed(pw_o(server=origin)), err("bad_origin"))
+    pc("idn_canonicalised_to_the_a_label", pw_signed(pw_o(server="https://b\u00fccher.example")), {"ok": pw_o(server="https://xn--bcher-kva.example")}, note="the signature covers the host as the hub sent it; the result carries the A-label")
+    pc("default_port_and_trailing_dot_canonicalised", pw_signed(pw_o(server="https://pub.example.com.:443", share="https://share.example.com.:8443")), {"ok": pw_o()})
+    pc("server_bad_share_good_order", pw_signed(pw_o(server="https://10.0.0.5", share="https://localhost")), err("bad_origin"))
+    # shape and header
+    pc("not_an_object", "x", err("malformed"))
+    pc("envelope_extra_key", {**pw_signed(good), "op_cert": {}}, err("malformed"))
+    pc("field_missing", pw_signed({k: v for k, v in good.items() if k != "issued_ms"}), err("malformed"))
+    pc("field_extra", pw_signed({**good, "path": "/x"}), err("malformed"))
+    pc("seq_zero", pw_signed(pw_o(seq=0)), err("malformed"))
+    pc("seq_bool", pw_signed(pw_o(seq=True)), err("malformed"))
+    pc("seq_negative", pw_signed(pw_o(seq=-1)), err("malformed"))
+    pc("seq_over_2_53", {"o": pw_o(seq=2**53), "sig": good_sig}, err("malformed"), note="not even canonical JSON (a uint above 2^53 - 1)")
+    pc("issued_ms_negative", pw_signed(pw_o(issued_ms=-1)), err("malformed"))
+    pc("hub_id_not_hex16", pw_signed(pw_o(hub_id=PW_HUB.upper())), err("malformed"))
+    pc("origin_not_a_string", pw_signed(pw_o(server=None)), err("malformed"))
+    pc("dev_not_a_bool", pw_signed(pw_o(dev=1)), err("malformed"))
+    pc("wrong_kind", pw_signed(pw_o(kind="hub.allow")), err("malformed"))
+    pc("wrong_suite", pw_signed(pw_o(suite=1)), err("wrong_suite"))
+    pc("wrong_v", pw_signed(pw_o(v=3)), err("malformed"))
+    pc("wrong_hv", pw_signed(pw_o(hv=1)), err("malformed"))
+    pc("sig_wrong_length", {"o": good, "sig": b64u(bytes(63))}, err("malformed"))
+    # ordering against the held object
+    held5 = pw_signed(pw_o(seq=5))
+    pc("lower_seq_refused", pw_signed(pw_o(seq=4)), err("stale_seq"), held=held5)
+    pc("lowest_seq_after_5_refused", pw_signed(pw_o(seq=1)), err("stale_seq"), held=held5)
+    pc("higher_seq_accepted", pw_signed(pw_o(seq=6, share="https://share2.example.com")), {"ok": pw_o(seq=6, share="https://share2.example.com")}, held=held5)
+    pc("higher_seq_same_content_accepted", pw_signed(pw_o(seq=6)), {"ok": pw_o(seq=6)}, held=held5)
+    pc("equal_seq_byte_identical_accepted", held5, {"ok": pw_o(seq=5)}, held=held5, note="the very same envelope again (a re-read, a re-send)")
+    pc("equal_seq_other_content_refused", pw_signed(pw_o(seq=5, share="https://share2.example.com")), err("seq_conflict"), held=held5)
+    pc("equal_seq_other_issued_ms_refused", pw_signed(pw_o(seq=5, issued_ms=NOW_MS + 1)), err("seq_conflict"), held=held5)
+    pc("equal_seq_corrupt_signature_refused", flip_sig(held5), err("bad_signature"), held=held5, note="a changed signature never gets as far as the order rule")
+    pc("held_none_is_first", pw_signed(pw_o(seq=1)), {"ok": pw_o(seq=1)})
+    pc("order_after_origin_rule", pw_signed(pw_o(seq=4, server="https://10.0.0.5")), err("bad_origin"), held=held5, note="the origin rule is checked before the order")
+    pc("order_after_hub_id", pw_signed(pw_o(seq=4, hub_id=PW_OTHER_HUB)), err("other_hub"), held=held5)
+    # the same origin rule without a signature (what the hub applies before it signs)
+    for nm, origin in PW_REFUSED:
+        co(nm + "_refused", origin, False, err("bad_origin"))
+    for nm, origin in PW_DEV_REFUSED:
+        co("dev_" + nm + "_refused", origin, True, err("bad_origin"))
+    for nm, origin, canon in PW_CANONICAL:
+        co(nm, origin, False, {"ok": canon})
+        co(nm + "_idempotent", canon, False, {"ok": canon})
+    for nm, origin, canon in PW_DEV_ONLY:
+        co("dev_" + nm, origin, True, {"ok": canon})
+        co("dev_" + nm + "_without_dev_refused", origin, False, err("bad_origin"))
+    for nm, origin in (("number", 5), ("null", None), ("list", ["https://pub.example.com"]), ("empty", ""), ("too_long", "https://" + "a" * 300 + ".example")):
+        co(nm, origin, False, err("bad_origin"))
+    co("dev_not_a_bool", "https://pub.example.com", 1, err("bad_origin"))
     return cs
 
 
@@ -719,10 +997,11 @@ def build() -> dict[str, Any]:
         "kdf_salt_hex": B.KDF_BK_SALT.hex(),
         "kdf_auth_info": B.KDF_AUTH_INFO.decode(),
         "seal_info": "orch/v2/seal|hub-backup|<hub_id>",
+        "sign_publish_where": PW_LABEL.decode(),
     }
     return {
         "contract": "orch.hub-backup/0",
-        "note": "FAKE keys and words, test-only. Cases are replayed by the hub (all) and orch-core (hub_where only).",
+        "note": "FAKE keys and words, test-only. Cases are replayed by the hub (all) and orch-core (hub_where, publish_where, canonical_origin).",
         "labels": labels,
         "constants": {
             "max_total": MAX_TOTAL,
@@ -730,16 +1009,22 @@ def build() -> dict[str, Any]:
             "max_addresses": 4,
             "max_name": 60,
             "magic": B.MAGIC.decode(),
+            "publish_where_seq_max": 2**53 - 1,
         },
         "words": {"a": WORDS_A, "b": WORDS_B, "attacker": WORDS_ATTACKER},
-        "keys": {"root": pub(key("root")), "attacker_root": pub(key("attacker_root"))},
+        "keys": {
+            "root": pub(key("root")),
+            "attacker_root": pub(key("attacker_root")),
+            "op": pub(key("op")),
+            "op_other": pub(key("op_other")),
+        },
         "example": {
             "header": good["o"],
             "envelope": good["env"],
             "sealed_hex": good["sealed"].hex(),
             "tar_hex": tar_files(FILES).hex(),
         },
-        "cases": kat + open_cases() + tar_cases() + list_cases() + floor_cases() + where_cases(),
+        "cases": kat + open_cases() + tar_cases() + list_cases() + floor_cases() + where_cases() + publish_where_cases(),
     }
 
 

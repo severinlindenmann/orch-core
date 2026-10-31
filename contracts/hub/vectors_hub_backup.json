@@ -3004,12 +3004,11 @@
        "link": "192.168.1.20:8105"
       }
      ],
-     "name": "Demo hub",
-     "publish": "https://share.example.com"
+     "name": "Demo hub"
     }
    },
    "name": "where_publish_ok_https",
-   "note": "P02: the hub's publish origin, a hint"
+   "note": "#1838: the legacy `publish` string is accepted in shape and dropped, never returned"
   },
   {
    "args": {
@@ -3041,12 +3040,11 @@
        "link": "192.168.1.20:8105"
       }
      ],
-     "name": "Demo hub",
-     "publish": "https://share.example.com:8443"
+     "name": "Demo hub"
     }
    },
    "name": "where_publish_ok_https_port",
-   "note": "P02: the hub's publish origin, a hint"
+   "note": "#1838: the legacy `publish` string is accepted in shape and dropped, never returned"
   },
   {
    "args": {
@@ -3078,12 +3076,11 @@
        "link": "192.168.1.20:8105"
       }
      ],
-     "name": "Demo hub",
-     "publish": "http://127.0.0.1:8102"
+     "name": "Demo hub"
     }
    },
    "name": "where_publish_ok_loopback",
-   "note": "P02: the hub's publish origin, a hint"
+   "note": "#1838: the legacy `publish` string is accepted in shape and dropped, never returned"
   },
   {
    "args": {
@@ -4020,6 +4017,6855 @@
     "error": "malformed"
    },
    "name": "where_not_an_object"
+  },
+  {
+   "args": {
+    "answer": {
+     "addresses": [
+      {
+       "kind": "private",
+       "link": "100.64.1.2:8105"
+      },
+      {
+       "kind": "office",
+       "link": "192.168.1.20:8105"
+      }
+     ],
+     "name": "Demo hub",
+     "publish_where": {
+      "o": {
+       "dev": false,
+       "hub_id": "133254fb2011fce38b33b02440eedda2",
+       "hv": 0,
+       "issued_ms": 1790000000000,
+       "kind": "hub.publish_where",
+       "seq": 5,
+       "server": "https://pub.example.com",
+       "share": "https://share.example.com:8443",
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "V3rVMQdrRUJKXgU_AnwxbZTh_oMMoeGzsJJwmPHAkp7RZ8Pd3CxdWKN_jkwcDS8qINnrj8wAXTupL-VRFUXGhw"
+     }
+    }
+   },
+   "check": "hub_where",
+   "expect": {
+    "ok": {
+     "addresses": [
+      {
+       "kind": "private",
+       "link": "100.64.1.2:8105"
+      },
+      {
+       "kind": "office",
+       "link": "192.168.1.20:8105"
+      }
+     ],
+     "name": "Demo hub",
+     "publish_where": {
+      "o": {
+       "dev": false,
+       "hub_id": "133254fb2011fce38b33b02440eedda2",
+       "hv": 0,
+       "issued_ms": 1790000000000,
+       "kind": "hub.publish_where",
+       "seq": 5,
+       "server": "https://pub.example.com",
+       "share": "https://share.example.com:8443",
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "V3rVMQdrRUJKXgU_AnwxbZTh_oMMoeGzsJJwmPHAkp7RZ8Pd3CxdWKN_jkwcDS8qINnrj8wAXTupL-VRFUXGhw"
+     }
+    }
+   },
+   "name": "where_publish_where_ok",
+   "note": "returned as sent"
+  },
+  {
+   "args": {
+    "answer": {
+     "addresses": [
+      {
+       "kind": "private",
+       "link": "100.64.1.2:8105"
+      },
+      {
+       "kind": "office",
+       "link": "192.168.1.20:8105"
+      }
+     ],
+     "name": "Demo hub",
+     "publish": "https://share.example.com",
+     "publish_where": {
+      "o": {
+       "dev": false,
+       "hub_id": "133254fb2011fce38b33b02440eedda2",
+       "hv": 0,
+       "issued_ms": 1790000000000,
+       "kind": "hub.publish_where",
+       "seq": 5,
+       "server": "https://pub.example.com",
+       "share": "https://share.example.com:8443",
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "V3rVMQdrRUJKXgU_AnwxbZTh_oMMoeGzsJJwmPHAkp7RZ8Pd3CxdWKN_jkwcDS8qINnrj8wAXTupL-VRFUXGhw"
+     }
+    }
+   },
+   "check": "hub_where",
+   "expect": {
+    "ok": {
+     "addresses": [
+      {
+       "kind": "private",
+       "link": "100.64.1.2:8105"
+      },
+      {
+       "kind": "office",
+       "link": "192.168.1.20:8105"
+      }
+     ],
+     "name": "Demo hub",
+     "publish_where": {
+      "o": {
+       "dev": false,
+       "hub_id": "133254fb2011fce38b33b02440eedda2",
+       "hv": 0,
+       "issued_ms": 1790000000000,
+       "kind": "hub.publish_where",
+       "seq": 5,
+       "server": "https://pub.example.com",
+       "share": "https://share.example.com:8443",
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "V3rVMQdrRUJKXgU_AnwxbZTh_oMMoeGzsJJwmPHAkp7RZ8Pd3CxdWKN_jkwcDS8qINnrj8wAXTupL-VRFUXGhw"
+     }
+    }
+   },
+   "name": "where_publish_where_and_legacy_publish",
+   "note": "the legacy `publish` string is ignored even next to a publish_where"
+  },
+  {
+   "args": {
+    "answer": {
+     "addresses": [
+      {
+       "kind": "private",
+       "link": "100.64.1.2:8105"
+      },
+      {
+       "kind": "office",
+       "link": "192.168.1.20:8105"
+      }
+     ],
+     "name": "Demo hub",
+     "publish_where": {
+      "o": {
+       "dev": false,
+       "hub_id": "133254fb2011fce38b33b02440eedda2",
+       "hv": 0,
+       "issued_ms": 1790000000000,
+       "kind": "hub.publish_where",
+       "seq": 5,
+       "server": "https://10.0.0.5",
+       "share": "https://share.example.com:8443",
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "vY_jUcDmJOQGIzZIpFqp5AFsS1ue1S2tmdRq_wx2StwYMvCGJdWADDGOzQjgkHvEPv6XvbjTPcZLb2CQFTFcTw"
+     }
+    }
+   },
+   "check": "hub_where",
+   "expect": {
+    "ok": {
+     "addresses": [
+      {
+       "kind": "private",
+       "link": "100.64.1.2:8105"
+      },
+      {
+       "kind": "office",
+       "link": "192.168.1.20:8105"
+      }
+     ],
+     "name": "Demo hub",
+     "publish_where": {
+      "o": {
+       "dev": false,
+       "hub_id": "133254fb2011fce38b33b02440eedda2",
+       "hv": 0,
+       "issued_ms": 1790000000000,
+       "kind": "hub.publish_where",
+       "seq": 5,
+       "server": "https://10.0.0.5",
+       "share": "https://share.example.com:8443",
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "vY_jUcDmJOQGIzZIpFqp5AFsS1ue1S2tmdRq_wx2StwYMvCGJdWADDGOzQjgkHvEPv6XvbjTPcZLb2CQFTFcTw"
+     }
+    }
+   },
+   "name": "where_publish_where_not_verified_here",
+   "note": "shape only: a bad signature or a refused origin is check_publish_where's, with the pinned card"
+  },
+  {
+   "args": {
+    "answer": {
+     "addresses": [
+      {
+       "kind": "private",
+       "link": "100.64.1.2:8105"
+      },
+      {
+       "kind": "office",
+       "link": "192.168.1.20:8105"
+      }
+     ],
+     "name": "Demo hub",
+     "publish_where": "x"
+    }
+   },
+   "check": "hub_where",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "where_publish_where_not_an_object"
+  },
+  {
+   "args": {
+    "answer": {
+     "addresses": [
+      {
+       "kind": "private",
+       "link": "100.64.1.2:8105"
+      },
+      {
+       "kind": "office",
+       "link": "192.168.1.20:8105"
+      }
+     ],
+     "name": "Demo hub",
+     "publish_where": null
+    }
+   },
+   "check": "hub_where",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "where_publish_where_null"
+  },
+  {
+   "args": {
+    "answer": {
+     "addresses": [
+      {
+       "kind": "private",
+       "link": "100.64.1.2:8105"
+      },
+      {
+       "kind": "office",
+       "link": "192.168.1.20:8105"
+      }
+     ],
+     "name": "Demo hub",
+     "publish_where": {
+      "mac": "x",
+      "o": {
+       "dev": false,
+       "hub_id": "133254fb2011fce38b33b02440eedda2",
+       "hv": 0,
+       "issued_ms": 1790000000000,
+       "kind": "hub.publish_where",
+       "seq": 5,
+       "server": "https://pub.example.com",
+       "share": "https://share.example.com:8443",
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "V3rVMQdrRUJKXgU_AnwxbZTh_oMMoeGzsJJwmPHAkp7RZ8Pd3CxdWKN_jkwcDS8qINnrj8wAXTupL-VRFUXGhw"
+     }
+    }
+   },
+   "check": "hub_where",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "where_publish_where_envelope_extra_key"
+  },
+  {
+   "args": {
+    "answer": {
+     "addresses": [
+      {
+       "kind": "private",
+       "link": "100.64.1.2:8105"
+      },
+      {
+       "kind": "office",
+       "link": "192.168.1.20:8105"
+      }
+     ],
+     "name": "Demo hub",
+     "publish_where": {
+      "o": {
+       "dev": false,
+       "hub_id": "133254fb2011fce38b33b02440eedda2",
+       "hv": 0,
+       "issued_ms": 1790000000000,
+       "kind": "hub.publish_where",
+       "seq": 5,
+       "server": "https://pub.example.com",
+       "share": "https://share.example.com:8443",
+       "suite": 2,
+       "v": 2
+      }
+     }
+    }
+   },
+   "check": "hub_where",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "where_publish_where_sig_missing"
+  },
+  {
+   "args": {
+    "answer": {
+     "addresses": [
+      {
+       "kind": "private",
+       "link": "100.64.1.2:8105"
+      },
+      {
+       "kind": "office",
+       "link": "192.168.1.20:8105"
+      }
+     ],
+     "name": "Demo hub",
+     "publish_where": {
+      "o": {
+       "dev": false,
+       "hub_id": "133254fb2011fce38b33b02440eedda2",
+       "hv": 0,
+       "issued_ms": 1790000000000,
+       "kind": "hub.publish_where",
+       "seq": 5,
+       "server": "https://pub.example.com",
+       "share": "https://share.example.com:8443",
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+     }
+    }
+   },
+   "check": "hub_where",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "where_publish_where_sig_wrong_length"
+  },
+  {
+   "args": {
+    "answer": {
+     "addresses": [
+      {
+       "kind": "private",
+       "link": "100.64.1.2:8105"
+      },
+      {
+       "kind": "office",
+       "link": "192.168.1.20:8105"
+      }
+     ],
+     "name": "Demo hub",
+     "publish_where": {
+      "o": {
+       "dev": false,
+       "hub_id": "133254fb2011fce38b33b02440eedda2",
+       "hv": 0,
+       "issued_ms": 1790000000000,
+       "kind": "hub.publish_where",
+       "seq": 5,
+       "server": "https://pub.example.com",
+       "share": "https://share.example.com:8443",
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "!!"
+     }
+    }
+   },
+   "check": "hub_where",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "where_publish_where_sig_not_base64url"
+  },
+  {
+   "args": {
+    "answer": {
+     "addresses": [
+      {
+       "kind": "private",
+       "link": "100.64.1.2:8105"
+      },
+      {
+       "kind": "office",
+       "link": "192.168.1.20:8105"
+      }
+     ],
+     "name": "Demo hub",
+     "publish_where": {
+      "o": {
+       "dev": false,
+       "hub_id": "133254fb2011fce38b33b02440eedda2",
+       "hv": 0,
+       "issued_ms": 1790000000000,
+       "kind": "hub.publish_where",
+       "seq": 5,
+       "server": "https://pub.example.com",
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "V3rVMQdrRUJKXgU_AnwxbZTh_oMMoeGzsJJwmPHAkp7RZ8Pd3CxdWKN_jkwcDS8qINnrj8wAXTupL-VRFUXGhw"
+     }
+    }
+   },
+   "check": "hub_where",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "where_publish_where_field_missing"
+  },
+  {
+   "args": {
+    "answer": {
+     "addresses": [
+      {
+       "kind": "private",
+       "link": "100.64.1.2:8105"
+      },
+      {
+       "kind": "office",
+       "link": "192.168.1.20:8105"
+      }
+     ],
+     "name": "Demo hub",
+     "publish_where": {
+      "o": {
+       "dev": false,
+       "hub_id": "133254fb2011fce38b33b02440eedda2",
+       "hv": 0,
+       "issued_ms": 1790000000000,
+       "kind": "hub.publish_where",
+       "path": "/x",
+       "seq": 5,
+       "server": "https://pub.example.com",
+       "share": "https://share.example.com:8443",
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "V3rVMQdrRUJKXgU_AnwxbZTh_oMMoeGzsJJwmPHAkp7RZ8Pd3CxdWKN_jkwcDS8qINnrj8wAXTupL-VRFUXGhw"
+     }
+    }
+   },
+   "check": "hub_where",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "where_publish_where_field_extra"
+  },
+  {
+   "args": {
+    "answer": {
+     "addresses": [
+      {
+       "kind": "private",
+       "link": "100.64.1.2:8105"
+      },
+      {
+       "kind": "office",
+       "link": "192.168.1.20:8105"
+      }
+     ],
+     "name": "Demo hub",
+     "publish_where": {
+      "o": {
+       "dev": false,
+       "hub_id": "133254fb2011fce38b33b02440eedda2",
+       "hv": 0,
+       "issued_ms": 1790000000000,
+       "kind": "hub.publish_where",
+       "seq": 0,
+       "server": "https://pub.example.com",
+       "share": "https://share.example.com:8443",
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "V3rVMQdrRUJKXgU_AnwxbZTh_oMMoeGzsJJwmPHAkp7RZ8Pd3CxdWKN_jkwcDS8qINnrj8wAXTupL-VRFUXGhw"
+     }
+    }
+   },
+   "check": "hub_where",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "where_publish_where_seq_zero"
+  },
+  {
+   "args": {
+    "answer": {
+     "addresses": [
+      {
+       "kind": "private",
+       "link": "100.64.1.2:8105"
+      },
+      {
+       "kind": "office",
+       "link": "192.168.1.20:8105"
+      }
+     ],
+     "name": "Demo hub",
+     "publish_where": {
+      "o": {
+       "dev": false,
+       "hub_id": "133254fb2011fce38b33b02440eedda2",
+       "hv": 0,
+       "issued_ms": 1790000000000,
+       "kind": "hub.publish_where",
+       "seq": true,
+       "server": "https://pub.example.com",
+       "share": "https://share.example.com:8443",
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "V3rVMQdrRUJKXgU_AnwxbZTh_oMMoeGzsJJwmPHAkp7RZ8Pd3CxdWKN_jkwcDS8qINnrj8wAXTupL-VRFUXGhw"
+     }
+    }
+   },
+   "check": "hub_where",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "where_publish_where_seq_bool"
+  },
+  {
+   "args": {
+    "answer": {
+     "addresses": [
+      {
+       "kind": "private",
+       "link": "100.64.1.2:8105"
+      },
+      {
+       "kind": "office",
+       "link": "192.168.1.20:8105"
+      }
+     ],
+     "name": "Demo hub",
+     "publish_where": {
+      "o": {
+       "dev": false,
+       "hub_id": "133254fb2011fce38b33b02440eedda2",
+       "hv": 0,
+       "issued_ms": 1790000000000,
+       "kind": "hub.publish_where",
+       "seq": 9007199254740992,
+       "server": "https://pub.example.com",
+       "share": "https://share.example.com:8443",
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "V3rVMQdrRUJKXgU_AnwxbZTh_oMMoeGzsJJwmPHAkp7RZ8Pd3CxdWKN_jkwcDS8qINnrj8wAXTupL-VRFUXGhw"
+     }
+    }
+   },
+   "check": "hub_where",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "where_publish_where_seq_over_2_53"
+  },
+  {
+   "args": {
+    "answer": {
+     "addresses": [
+      {
+       "kind": "private",
+       "link": "100.64.1.2:8105"
+      },
+      {
+       "kind": "office",
+       "link": "192.168.1.20:8105"
+      }
+     ],
+     "name": "Demo hub",
+     "publish_where": {
+      "o": {
+       "dev": false,
+       "hub_id": "133254fb2011fce38b33b02440eedda2",
+       "hv": 0,
+       "issued_ms": 1790000000000,
+       "kind": "hub.publish_where",
+       "seq": 5,
+       "server": "https://pub.example.com",
+       "share": 7,
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "V3rVMQdrRUJKXgU_AnwxbZTh_oMMoeGzsJJwmPHAkp7RZ8Pd3CxdWKN_jkwcDS8qINnrj8wAXTupL-VRFUXGhw"
+     }
+    }
+   },
+   "check": "hub_where",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "where_publish_where_origin_not_a_string"
+  },
+  {
+   "args": {
+    "answer": {
+     "addresses": [
+      {
+       "kind": "private",
+       "link": "100.64.1.2:8105"
+      },
+      {
+       "kind": "office",
+       "link": "192.168.1.20:8105"
+      }
+     ],
+     "name": "Demo hub",
+     "publish_where": {
+      "o": {
+       "dev": false,
+       "hub_id": "ab",
+       "hv": 0,
+       "issued_ms": 1790000000000,
+       "kind": "hub.publish_where",
+       "seq": 5,
+       "server": "https://pub.example.com",
+       "share": "https://share.example.com:8443",
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "V3rVMQdrRUJKXgU_AnwxbZTh_oMMoeGzsJJwmPHAkp7RZ8Pd3CxdWKN_jkwcDS8qINnrj8wAXTupL-VRFUXGhw"
+     }
+    }
+   },
+   "check": "hub_where",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "where_publish_where_hub_id_not_hex16"
+  },
+  {
+   "args": {
+    "answer": {
+     "addresses": [
+      {
+       "kind": "private",
+       "link": "100.64.1.2:8105"
+      },
+      {
+       "kind": "office",
+       "link": "192.168.1.20:8105"
+      }
+     ],
+     "name": "Demo hub",
+     "publish_where": {
+      "o": {
+       "dev": 0,
+       "hub_id": "133254fb2011fce38b33b02440eedda2",
+       "hv": 0,
+       "issued_ms": 1790000000000,
+       "kind": "hub.publish_where",
+       "seq": 5,
+       "server": "https://pub.example.com",
+       "share": "https://share.example.com:8443",
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "V3rVMQdrRUJKXgU_AnwxbZTh_oMMoeGzsJJwmPHAkp7RZ8Pd3CxdWKN_jkwcDS8qINnrj8wAXTupL-VRFUXGhw"
+     }
+    }
+   },
+   "check": "hub_where",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "where_publish_where_dev_not_bool"
+  },
+  {
+   "args": {
+    "answer": {
+     "addresses": [
+      {
+       "kind": "private",
+       "link": "100.64.1.2:8105"
+      },
+      {
+       "kind": "office",
+       "link": "192.168.1.20:8105"
+      }
+     ],
+     "name": "Demo hub",
+     "publish_where": {
+      "o": {
+       "dev": false,
+       "hub_id": "133254fb2011fce38b33b02440eedda2",
+       "hv": 0,
+       "issued_ms": 1790000000000,
+       "kind": "hub.allow",
+       "seq": 5,
+       "server": "https://pub.example.com",
+       "share": "https://share.example.com:8443",
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "V3rVMQdrRUJKXgU_AnwxbZTh_oMMoeGzsJJwmPHAkp7RZ8Pd3CxdWKN_jkwcDS8qINnrj8wAXTupL-VRFUXGhw"
+     }
+    }
+   },
+   "check": "hub_where",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "where_publish_where_wrong_kind"
+  },
+  {
+   "args": {
+    "answer": {
+     "addresses": [
+      {
+       "kind": "private",
+       "link": "100.64.1.2:8105"
+      },
+      {
+       "kind": "office",
+       "link": "192.168.1.20:8105"
+      }
+     ],
+     "name": "Demo hub",
+     "publish_where": {
+      "o": {
+       "dev": false,
+       "hub_id": "133254fb2011fce38b33b02440eedda2",
+       "hv": 0,
+       "issued_ms": 1790000000000,
+       "kind": "hub.publish_where",
+       "seq": 5,
+       "server": "https://pub.example.com",
+       "share": "https://share.example.com:8443",
+       "suite": 1,
+       "v": 2
+      },
+      "sig": "V3rVMQdrRUJKXgU_AnwxbZTh_oMMoeGzsJJwmPHAkp7RZ8Pd3CxdWKN_jkwcDS8qINnrj8wAXTupL-VRFUXGhw"
+     }
+    }
+   },
+   "check": "hub_where",
+   "expect": {
+    "error": "wrong_suite"
+   },
+   "name": "where_publish_where_wrong_suite"
+  },
+  {
+   "args": {
+    "answer": {
+     "addresses": [
+      {
+       "kind": "private",
+       "link": "100.64.1.2:8105"
+      },
+      {
+       "kind": "office",
+       "link": "192.168.1.20:8105"
+      }
+     ],
+     "name": "Demo hub",
+     "publish_where": {
+      "o": {
+       "dev": false,
+       "hub_id": "133254fb2011fce38b33b02440eedda2",
+       "hv": 0,
+       "issued_ms": 1790000000000,
+       "kind": "hub.publish_where",
+       "seq": 5,
+       "server": "https://pub.example.com",
+       "share": "https://share.example.com:8443",
+       "suite": 2,
+       "v": 3
+      },
+      "sig": "V3rVMQdrRUJKXgU_AnwxbZTh_oMMoeGzsJJwmPHAkp7RZ8Pd3CxdWKN_jkwcDS8qINnrj8wAXTupL-VRFUXGhw"
+     }
+    }
+   },
+   "check": "hub_where",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "where_publish_where_wrong_v"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "V3rVMQdrRUJKXgU_AnwxbZTh_oMMoeGzsJJwmPHAkp7RZ8Pd3CxdWKN_jkwcDS8qINnrj8wAXTupL-VRFUXGhw"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "ok": {
+     "dev": false,
+     "hub_id": "133254fb2011fce38b33b02440eedda2",
+     "hv": 0,
+     "issued_ms": 1790000000000,
+     "kind": "hub.publish_where",
+     "seq": 5,
+     "server": "https://pub.example.com",
+     "share": "https://share.example.com:8443",
+     "suite": 2,
+     "v": 2
+    }
+   },
+   "name": "pw_good",
+   "note": "the canonical object is the result"
+  },
+  {
+   "args": {
+    "dev": true,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": true,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "http://127.0.0.1:8103",
+      "share": "http://127.0.0.1:8102",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "K3XHRgUssrQTQ7bKeiV2IFiVDvwQ5y_wMeSe6nzzG4F8m8CPasLie-PP7qe2RRsx4kj0XvSkYTvFjyrskMxZGQ"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "ok": {
+     "dev": true,
+     "hub_id": "133254fb2011fce38b33b02440eedda2",
+     "hv": 0,
+     "issued_ms": 1790000000000,
+     "kind": "hub.publish_where",
+     "seq": 5,
+     "server": "http://127.0.0.1:8103",
+     "share": "http://127.0.0.1:8102",
+     "suite": 2,
+     "v": 2
+    }
+   },
+   "name": "pw_good_dev",
+   "note": "a dev pin takes a dev object; loopback http is the lab"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 9007199254740991,
+      "server": "https://pub.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "LsnAAclStGoTKQjwmC6t5X-sFanYQyCohF9Z_uua45yU3gdGOIPRT22HlrA1dt770BhJaLn2mPRAaWtGCjRTKg"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "ok": {
+     "dev": false,
+     "hub_id": "133254fb2011fce38b33b02440eedda2",
+     "hv": 0,
+     "issued_ms": 1790000000000,
+     "kind": "hub.publish_where",
+     "seq": 9007199254740991,
+     "server": "https://pub.example.com",
+     "share": "https://share.example.com:8443",
+     "suite": 2,
+     "v": 2
+    }
+   },
+   "name": "pw_good_seq_max"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 0,
+      "kind": "hub.publish_where",
+      "seq": 1,
+      "server": "https://pub.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "6tQQ2d9lSvFUWQuKqGku4pPCIWYjV58tGgOyLxyEvXpOwLjpXdBojaO3nI_HX_yUQX8INvtoxDIfjZysJXyE4A"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "ok": {
+     "dev": false,
+     "hub_id": "133254fb2011fce38b33b02440eedda2",
+     "hv": 0,
+     "issued_ms": 0,
+     "kind": "hub.publish_where",
+     "seq": 1,
+     "server": "https://pub.example.com",
+     "share": "https://share.example.com:8443",
+     "suite": 2,
+     "v": 2
+    }
+   },
+   "name": "pw_good_seq_1_issued_0"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com",
+      "share": "https://pub.example.com",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "NJRq3eF0DT8Zs7AdIBSPbWRBJwtjmKmkOklFf3YtLaxOiUFQlHr_JaFzCfvUqrIYW_FtlhMiz4LNPLKtGTaQiQ"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "ok": {
+     "dev": false,
+     "hub_id": "133254fb2011fce38b33b02440eedda2",
+     "hv": 0,
+     "issued_ms": 1790000000000,
+     "kind": "hub.publish_where",
+     "seq": 5,
+     "server": "https://pub.example.com",
+     "share": "https://pub.example.com",
+     "suite": 2,
+     "v": 2
+    }
+   },
+   "name": "pw_good_server_is_share",
+   "note": "one origin may serve both"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "654870ba9666257f74faf12cedf4b36e",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "UXaTOBG9YPkwEGaX4pgbTk9LbWnpRmkislfvoPwjWefBiQA25SS6wJ9H6pTqhyKMdqwwxGZDunIb41RlpRcMUw"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "other_hub"
+   },
+   "name": "pw_wrong_hub_id",
+   "note": "signed by the right key, names another hub"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "654870ba9666257f74faf12cedf4b36e",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "V3rVMQdrRUJKXgU_AnwxbZTh_oMMoeGzsJJwmPHAkp7RZ8Pd3CxdWKN_jkwcDS8qINnrj8wAXTupL-VRFUXGhw"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "other_hub"
+   },
+   "name": "pw_pinned_hub_is_another"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "V3rVMQdrRUJKXgQ_AnwxbZTh_oMMoeGzsJJwmPHAkp7RZ8Pd3CxdWKN_jkwcDS8qINnrj8wAXTupL-VRFUXGhw"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_signature"
+   },
+   "name": "pw_bad_signature"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 6,
+      "server": "https://pub.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "V3rVMQdrRUJKXgU_AnwxbZTh_oMMoeGzsJJwmPHAkp7RZ8Pd3CxdWKN_jkwcDS8qINnrj8wAXTupL-VRFUXGhw"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_signature"
+   },
+   "name": "pw_signed_over_other_content",
+   "note": "the signature of seq 5 on an object that says seq 6"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "CnTDjRqOUkfrBcqGvgeTTELpOS2YMgqnAYQeaM40lfAM0vT6ErTmSsKUQFGjYPkX-Jjp_CE6BlOgHiVQUeAHjw"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_signature"
+   },
+   "name": "pw_signed_under_another_op_key"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "oEfTY9YIqz7osqOJX26of84xDUWq9nMX3Ro5_YWDvjXdvDnL-zpgmMCQKMvgJcleQg61vXYuH7BGuNohLWDHHA"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_signature"
+   },
+   "name": "pw_signed_under_the_root_key",
+   "note": "only HK_op signs it"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "e32ysmxOk3GYJXGuLTBbxFQrqJUnvUjD4IKNhmyWMZ2RCILqfAsmyWM2S8U4m8ZBT-SZSt3fZQdo103m9ZnjGQ"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_signature"
+   },
+   "name": "pw_signed_under_the_wrong_label"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": true,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "hPdmprASuYhwY2Wm-_GHLLDjMJKsGDfaM7iZddfX6LiaiiFWyKYLy-MqKgesGK0kUN_-dBERl4XelGJbEoFs6w"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "dev_refused"
+   },
+   "name": "pw_dev_true_at_a_real_pin"
+  },
+  {
+   "args": {
+    "dev": true,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "V3rVMQdrRUJKXgU_AnwxbZTh_oMMoeGzsJJwmPHAkp7RZ8Pd3CxdWKN_jkwcDS8qINnrj8wAXTupL-VRFUXGhw"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "dev_mismatch"
+   },
+   "name": "pw_dev_false_at_a_dev_pin"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": true,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "http://127.0.0.1:8103",
+      "share": "http://127.0.0.1:8102",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "K3XHRgUssrQTQ7bKeiV2IFiVDvwQ5y_wMeSe6nzzG4F8m8CPasLie-PP7qe2RRsx4kj0XvSkYTvFjyrskMxZGQ"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "dev_refused"
+   },
+   "name": "pw_dev_true_at_a_real_pin_loopback",
+   "note": "loopback http needs the pin to be dev too"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "http://127.0.0.1:8103",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "7nufsC-3Eq8UvlZ2Aa1y9hwBIgyUMN8q_CzlMquy1Pu4vOR9k1yNxuTnnnRhjgKNElK8vj2fBi66rvXFLFq_zw"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_loopback_http_dev_false_refused"
+  },
+  {
+   "args": {
+    "dev": true,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": true,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "http://127.0.0.1:8103",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "1BYcqhUHV4eUxEmGdpTAdsIwsrPVPDWE02St00QZkpI4giUPEArN5v7BmmRRoo-N3-1wW4ZBNjGoUDB_5lieMg"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "ok": {
+     "dev": true,
+     "hub_id": "133254fb2011fce38b33b02440eedda2",
+     "hv": 0,
+     "issued_ms": 1790000000000,
+     "kind": "hub.publish_where",
+     "seq": 5,
+     "server": "http://127.0.0.1:8103",
+     "share": "https://share.example.com:8443",
+     "suite": 2,
+     "v": 2
+    }
+   },
+   "name": "pw_loopback_http_dev_true_accepted"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "http://127.0.0.1:8103",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "7nufsC-3Eq8UvlZ2Aa1y9hwBIgyUMN8q_CzlMquy1Pu4vOR9k1yNxuTnnnRhjgKNElK8vj2fBi66rvXFLFq_zw"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_loopback_http_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://127.0.0.1:8443",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "cINNs6YtVw_z04a1P7CwxcpFFS72z5DL1dpH2IyLNn6gSzvMvEMGbKpEIqavs-VCCbVEx9kXLywlY9rJ8YGUOw"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_loopback_https_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "http://localhost:8103",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "sixLxcwLpcO4mOyzv84LyGC9eA0NwI8cgNf1CI74T7fSRy6JWDKkqKYa7vW1OIzCAcrPYHLKoZtjIB8fj-nDaA"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_loopback_name_http_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://[::1]:8443",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "aLrmh7KCOCDHIQFiEpxLwuSgHlMFtcoRmQ59J_FTO0VIW7tEESgIzjLCwOewJw52WYu8aKpPYbMQJAJltH5ZFQ"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_loopback_v6_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://10.0.0.5",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "flqT0QgF5ThoBYV1BdvpBdY8k_NUvUuqjOf0LBg31Z5BMazm0AzTdbWjUzTMs172PJu6NARbVO_D_DCrMKbhsw"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_private_ip_10_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://192.168.1.20:8443",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "bpjkHMUJoPM8JCx8s5NXZO6107gFWWFg9dAJAlSscjANXA4NM8jbDfv4esAlMNkULGjTcvpyNDhGdT1yVZxFcw"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_private_ip_192_168_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://172.16.0.1",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "-lBfIad55leoDUU-mtRD35vff005dRCdIAC_5ObaglPgdMhuMzDuZpW1RbWx-3RcTc9_O-FPTynidp-47bRJbQ"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_private_ip_172_16_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://172.31.255.254",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "PWyj-wgXgTlReBGNWAfzvKWWZk_aNDdILwCvXPh4Upj9FB-DKsVW7egtrs-WcM11qiZ3ON2FqNWR-YjplYQ1jg"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_private_ip_172_31_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://100.64.1.2",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "L3IhdPbHz1ISktMhPjfga1S02FTswlkgk0D4T10kLQSpEXaw4I6H22JcRlopSXqDlYa-NYFNnwLa1cqDBppcmw"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_cgnat_ip_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://169.254.10.1",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "8oE3wYz7vUXA2ryWgt9tvbrxmeq31gODRTBy6RgFpurazh_hxLclg3nAQMyVeSbAAVo94o5-ahmaxejQK7xfQg"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_link_local_ip_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://0.0.0.0",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "N8n0ELac77uMxVVJz2PV7D3x87rzvoKMfzF_1gDF3GFCj4aAcMvnHz1RXtyX9aoyyt7oRiCWnEiAXbGpuPTKDw"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_this_network_ip_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://203.0.113.9",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "TJTFr5GULBLxyoXM9PCKAmRcWqTi1W3H_Xeg2LJRM1ZDeViXjJ7xZb7XQZC0fVGAbPoG093jQDw0xV8PnjVswA"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_documentation_ip_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://224.0.0.1",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "3n-yZyymRYehi3YtOg9QSoa0k-h17LlelPsGXmtAwqQjHHAoWn-M9RZJPpIVz9-vvCEq_E5pt29vXqZ-Z-z1yg"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_multicast_ip_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://[fd12:3456::1]",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "yEPsqFwl0cIy4buLFInB3xWqyMr-n3YdUgg6jG7TtHkX_vOLK3UY6zex2HoOGmRXX9d11lyZ4FBSo4SVVAAllQ"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_ula_ip_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://[fe80::1]",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "Gv6VA279LPOxSQVkaWT1Y9b10jmTF16SegglmLv2Z2Cw-iTAqojOz1D1bW-0oMMhKBISCzvA0bMpHD5wADAMug"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_link_local_v6_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://[::ffff:8.8.8.8]",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "xEoRjlaOSPmkk3GswBoIUSinovDhe-B0TwAFJvwgpSEhAdxbaLZfbaOZAk64_VyJYaqJB4GEtavJsy3zoEu8mA"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_mapped_v6_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://[fe80::1%25eth0]",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "GC445VHPvS5AxWmNeVbygc-bTxFy7tuy5SNJ_-sB46V_8j77GHiUkxcMtrJ2j9GKlzrQsc6HlhD-honXgdgtUA"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_zone_v6_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://hub.local",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "e6jUpx4XBj8WVKrzEAccRCyot7rTRDZVBk6ScKG_2w_0cpkMCD8s6yJLAGXDDqrb6ZQCZ5vyijxJYEFG3E84Pg"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_local_name_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.corp.internal",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "Orixrt-_fVvcId6lDLRR_kcCkchR9eSJgN471lzVpWd9GmCC7fn8CR0Ih41ryKbQ9gLho6lQaEsbxEOsENzBcQ"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_internal_name_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://localhost",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "zNvW_OhIyUlhbbxshHbsH06L2M86ETM8zaNm9ANSfcfzKRAOOBru8cZTU4Be8J9lR8CSJ76l2InqYms-Ex4xNQ"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_localhost_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://localhost:8443",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "bnXKqpq25fAtPxfmNHBBB1di5_m8Vied6pjHoYE5N5rqHOUjQcbbaP8flMa545A5hoca51aBTjf2fgqMH2DKBg"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_localhost_port_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://LOCALHOST",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "vuxdDhttMTAWYwszPLrieohPE6T0gf-dHsBD8pI1T6v06Q1-uAt4VlTi_D3Kc05a2LVC03BOljMIy7GTnCZY_Q"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_localhost_upper_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://localhost.",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "yDHdl_rne3WzXeAOBQUocbpZzyllR3iB0ZcTFbycDmfxZPnW4XDe3gvFIkNLxmWdyLFNB5vSC5K9BBuD36yMng"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_localhost_trailing_dot_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.localhost",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "4gXM_VHtd-KYP70xj2LBkdNe3WR75ulR_2RuSDnlQwj96gaciXXbsYer_W-y3M59Omzc_4IS4FnNn8lBCOinag"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_localhost_subdomain_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://u:p@pub.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "_AhV1U-p1meIgGQYno8_aFa-w4_BM3ylxqfpJudmEppTLr3K8yKtIog1SfmIAjHCTXXieztV10X14stxfn3xeg"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_userinfo_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://u@pub.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "nDQ4niMh2qeyM5Zta13ihst0ova0UodZVwEr6QTytub2_iSDpOlBs7ijQ-dRGIcQtPeIZbs6V6kMUwFaYZf0Ng"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_userinfo_user_only_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "http://pub.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "krV2QfwNlvC0ZV6d7MKp7TpiSwBJCO0rMdRD-LRDmIRlM0YFPZMj6C-kC8fN9oOaigt5nKmGq7qau8nNz5iWRQ"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_plain_http_public_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com/x",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "Hfx2odV5ea8ltKT0fa5R5lWZspYn4Z_po-Z5egDwCBZ5VTb240YO010NxeoGgs2YliOtyDqBdjLkOgFIYoteTw"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_path_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com/",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "bbi3NKZkEw69V3Wsqqes4_3FSAi3oBy75jEXUUR71SMAivuq87Z2-ERRKIYFgLayBtcgfIbrbqvQ1IFFh1DRFQ"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_path_slash_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com?x=1",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "fYm34rtfkoISPoAZN30HiP7ib5QGMt9GguVMh_zxMcyXe55slYAwb9vmpXTGpoztkuZIpJmBjHgxJ06IbcaY5w"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_query_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com#x",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "mpXsiaPolQZKuFOktP2oIphdljHRuyXnjmFp79x3z9iEVzlqqCqWu40hD3vWtM3vszKjilfs7XGqog0y3HaCgg"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_fragment_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com:0",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "sbMgcU1Mtl7ELuveZRnIgLSDb2-nARNILOynLTkMmFc5svBXqKB1qZTmuYCY8Kkl2P0AH-lVHelyxDmp5krZuw"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_port_zero_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com:65536",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "k9dBge3OYFWw5O8dR0m961xb94djMI-Txo9hgxg_Nqf2mq_oKJvhbqMlZWMnOn_zJ5LzBQRmCRPGdKmUwQqYKw"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_port_too_big_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com:08443",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "PnXeD7cZI5mHnlo8JV2x4mKq90qNRND3OQYky1c8gHmdkcP26n13YaVUn_2FhL7dUgbjGVh4fxMiGL0gABIClw"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_port_leading_zero_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com:",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "BTknyhxJq23BiemLmEb6oju2d-adgzilt04IWNgAlu95jAEUKryx2GlrwbwV6nV-nJOLbRCLmRPOa4-h1aCz5w"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_port_empty_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com:80a",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "ufgtE-EHgBmsrDrtIvjHd91TeWzU1ROR95bMsRtSggg_OIa6FHacEKlAkwZmlRbn7B48LUDbvXawLHJMc6Z9Cg"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_port_not_a_number_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "HTTPS://pub.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "Kt54WsbnyLOpNv97EqusBwmFMTqnA-fyl6EC4fscWizKZiy6ws5vDXS6JWn5F_nfbL1jEnzlNE9TbUP3p_Pg8Q"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_upper_case_scheme_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "pub.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "5wrUQsGJUlFkbL6St8B2YkVZquqCXRiA_uMvdS4iZVDtb0CWcJPMJqRPPCTi_yKFos3rZP4-V4A3jCT-seqqwA"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_no_scheme_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "ftp://pub.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "TG114d3JEuCPUVcoMXTU7zJWFAQ5Bq5aJemx_3Mml6u2P6tLvRDSVOfV2TkBw4Q9W1Uygwv9N3i3jDl99Ee2Ww"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_other_scheme_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "wss://pub.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "JwXcpK0yUCyEcedG3i25rK775lSPeako1qkkgTVexprU02fBPmiKt78fi6-kOzD2hn9ej_o0DNJn3Kuqp44c7w"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_wss_scheme_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://127.1",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "4h91NyxUGyWyOZA_r2uKaXEZMuNCZPNrE4c1wZYwsf88zXfCZhDGmcMIEVWxCl2HJC073cOtPH_0tJufJzh8yQ"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_short_ip_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://2130706433",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "sTGsvq_1RHICljBfPS8TLq883m3sVPuwsGGh1GQalAFz1snllX1XLwrFZrQ5BtIBtIHKOVtUUe-KxR3q_KQK3g"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_decimal_ip_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://010.0.0.1",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "JgiA0zYe6wMugTlrufdhjecUy1CPPV_TzbFF0NirTCPRJbXR8blY2-qZ2_GmTJgtJq7wWuigypJbqJVkMa32vw"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_leading_zero_ip_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com ",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "fIEn8h3faXgS-9-j0YjwB9XyoreQnmfccinXrJbjTKmhMZNhfhBPIjs7JHgLEC6oQnLTLAxGQ57rL-Q64bR13g"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_space_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub%2eexample.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "oWXYYXRjB_eOkcJ0uLFraBIeFxfHKFnmX5WGTmEJVR7XKH9U3qs5smLzUcgF4eCDVSraxatDxUKcKVc5IzVXXQ"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_percent_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com\\x",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "U2p_G-I_s8kRDRB5XbuDJjeObMaSU7YiOIu5bWER4LL1jjgqQLkgtWuSOjnEuuyp2WoEz1-2ti10559-dlxeFQ"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_backslash_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "VbbWFqbCfLrk8qWhvXb77VMxOPkcWTZ3uW9bkkpeWx3uugU0It6prSOJlBn7HfxtQwbHz56OPUG2HAFTXY33Rg"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_empty_host_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub..example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "8R492uWh4fEUbxWkr5lQifV6doEpu8T9gzTfqOAH27COcPr9hCkG0NseZcq1zJcX2QrbtEDDXFK01Zo7PrTeSA"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_empty_label_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://-pub.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "Py0UA0MK6Za06_kwv-6aoHqbZ639qfLAs691vZDh_ErsbTuBiBBGEVVKkv0mC7rt13p_JqvuBBRdnVq1Ul6ipg"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_dash_edge_label_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub_x.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "LnAjoSaXeSG-eZgT0BpDqowvE9yaUfiKr2wCg-WB1eQ8lbMqKlhU292KsnCRTH4DGhvGDKBZJIUCWp9Q0kgCog"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_underscore_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://::1",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "WT8Xna4zDdXhD7W4hT1YhNspm9wQw7RybLj3XefjS_ma18q02nBW_QOfegYDUHIrcUzaRr6nP_7b7g0xuBd5qg"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_unbracketed_v6_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://stra\u00dfe.example",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "IsYdCahGw6sHWS_VBjiFnrGH7P4v2uwdr0uwN1RbuOTrVDKaXeVU8fIjccOlGQuFp0JSyf9UGtxaCfyXAXCkVg"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_idna_sharp_s_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com",
+      "share": "http://127.0.0.1:8103",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "uoSeuY9Ne4lB0hsTIxyWUosA3hPaxtlGSQLRm7wh1dKFYvq3hWGWytl8t_nMl3JKZAZugVPsUA8ImTcdOyZheg"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_share_loopback_http_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com",
+      "share": "https://10.0.0.5",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "cBRsoOVBh4hxaEgl311OxEVblMiF45Q9aPDBF0aQWjMvgqN-i2PPNHX0ZK6NfQT1NTtu4SL2V3G0SGyz4T8HMg"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_share_private_ip_10_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com",
+      "share": "https://100.64.1.2",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "w061U2eSPFRCEWGd2W4-WNgAGPUgbJDn_YlIfcuHOVwOKdqY3R7rtcbiwTTq-nOZxCUstxXYcP0Xegn5djNLqg"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_share_cgnat_ip_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com",
+      "share": "https://[fd12:3456::1]",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "pL-f7b1l6ccjwHUlpMInJV-IKp1OSsIXGVKJc4sVyr9x-nVDPH9ywnqKoiTKoNmwWywb7cgqwQr9ouY80Dvk2g"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_share_ula_ip_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com",
+      "share": "https://hub.local",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "nGRkroqHDCd1XCtwimNUDM-mF93N-3UV70v_Vh5YNULixcASdU1I1pXd11o1n8iEi1d0llR1fszARu1AuDhnqQ"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_share_local_name_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com",
+      "share": "https://localhost",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "z9REEF8M3XjmiGrR7THaJoZC7i6WTPeaCZdtO3tLavZozgFFWouS0qkCzybdWUm8KApesfth4xBB77l_RSASgg"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_share_localhost_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com",
+      "share": "https://u:p@pub.example.com",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "1fxM8uo3ayTL3HZiZ9JJ0te7XxiCcryqnitJGzLRjDuYoy6ayTnWK-8mJ57mGYThKkyC34_f640TyZxTTydDTA"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_share_userinfo_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com",
+      "share": "http://pub.example.com",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "bB_odNVQF4IHIFH-0CCXB5zNIOJ_jT2fL_x_efZerpY7t2gY--gugn6GcNowNDmftHbo-jBc6WqsDWi10PsKjA"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_share_plain_http_public_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com",
+      "share": "https://pub.example.com/x",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "vII0RbBtCYu55kBdSB6B1ke0-drwx_dw05Tm3u25yTHPdBJGPEbemyTpbA1s4ld4MUSN58wKHl2Mlxgxwy__yg"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_share_path_refused"
+  },
+  {
+   "args": {
+    "dev": true,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": true,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://10.0.0.5",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "2y6mi5Vv2WULwgp_qEscJ5pEO5h3ZlcoeylqE20Y5KYtjPoq7T3620mgFQ17CJNM0Obj1fvKnFstCcXXEU1Lfg"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_dev_server_private_ip_refused"
+  },
+  {
+   "args": {
+    "dev": true,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": true,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "http://192.168.1.20:8103",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "sad7HWXcKmO_miZzp8SN4ixQr9hj4WLYt-CNYVfPC04rZW6jcbhC4yHBHEe6SwZTfumoJPzkfsQzze03j_XahA"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_dev_server_private_ip_http_refused"
+  },
+  {
+   "args": {
+    "dev": true,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": true,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "http://pub.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "siWum2UIvY5-AQgXNZXlYkaYJb_o8_aVE_cwLkoOdkNXyzWIKEuWaYMlMJUJ9EetWL9IsTZjM1EibkKHnYIkRw"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_dev_server_plain_http_public_refused"
+  },
+  {
+   "args": {
+    "dev": true,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": true,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "http://hub.local",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "CFd1tU9tJcspxoR_eJp3lqvQz5Imj1RpXbJLrUZxtSJxOhJZyJXLKxAVK3QMVj7S6ri_JoT3ZoFOYPrWT_H6aA"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_dev_server_local_name_refused"
+  },
+  {
+   "args": {
+    "dev": true,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": true,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.corp.internal",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "89gHuiDocpvaYHFi__b9KyVRwbXyGpixFzEoiOCdfp3eHv3D64qyZZmuzQYkCyuwvwS6X4liMfis1XjLxpLLng"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_dev_server_internal_name_refused"
+  },
+  {
+   "args": {
+    "dev": true,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": true,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "http://localhost:8102/x",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "GGmjtONyoVx8q1XcLoA7FtuDULko9CXK6Aj8MLfvNIa7BXP4MHOx5Mo7kGnJtjNQjkNrkT38Jo_cSqAH7QCqZw"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_dev_server_localhost_with_path_refused"
+  },
+  {
+   "args": {
+    "dev": true,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": true,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "http://u@127.0.0.1:8102",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "8liwMHmwgGAM3FT8CUXQbSf_JaGiN1-7S-qlcO_UUPOPTNZIXSHpQKMAtN_YbU-VBC32kxkiEvoRS8A2Z54Y4Q"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_dev_server_loopback_with_userinfo_refused"
+  },
+  {
+   "args": {
+    "dev": true,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": true,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "http://169.254.1.1",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "ySJOrRqXQwc78_pkDzm4pUcKXECvfvNPtoD0XVp5NRPXIkKoHNqVkajwKkrctU7FCPH8a5PE3jk8i3ARDgtfCA"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_dev_server_link_local_http_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "V3rVMQdrRUJKXgU_AnwxbZTh_oMMoeGzsJJwmPHAkp7RZ8Pd3CxdWKN_jkwcDS8qINnrj8wAXTupL-VRFUXGhw"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "ok": {
+     "dev": false,
+     "hub_id": "133254fb2011fce38b33b02440eedda2",
+     "hv": 0,
+     "issued_ms": 1790000000000,
+     "kind": "hub.publish_where",
+     "seq": 5,
+     "server": "https://pub.example.com",
+     "share": "https://share.example.com:8443",
+     "suite": 2,
+     "v": 2
+    }
+   },
+   "name": "pw_server_plain"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://share.example.com:8443",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "PI5d-86UONibYcBNV9X6hliBXuGN_CqbmlLuoNdx1mLIBXpbODQm0GDt0fj92oGCn-lD9GRv-KXLV5itREPjYw"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "ok": {
+     "dev": false,
+     "hub_id": "133254fb2011fce38b33b02440eedda2",
+     "hv": 0,
+     "issued_ms": 1790000000000,
+     "kind": "hub.publish_where",
+     "seq": 5,
+     "server": "https://share.example.com:8443",
+     "share": "https://share.example.com:8443",
+     "suite": 2,
+     "v": 2
+    }
+   },
+   "name": "pw_server_port"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://B\u00dcCHER.example",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "f1ZHmW9eAFjV0dLYo2WlMfrMtxYpxsYEhR128GKwTqtcIf-zQrR01wnatjMwR6N5vRvBMm10ruSI8_E0YSNudw"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "ok": {
+     "dev": false,
+     "hub_id": "133254fb2011fce38b33b02440eedda2",
+     "hv": 0,
+     "issued_ms": 1790000000000,
+     "kind": "hub.publish_where",
+     "seq": 5,
+     "server": "https://xn--bcher-kva.example",
+     "share": "https://share.example.com:8443",
+     "suite": 2,
+     "v": 2
+    }
+   },
+   "name": "pw_server_idn_a_label"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://b\u00fccher.example:8443",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "t1C2XA3I9xI9rnso1Nx97LGDL3BwxSyty3ds159S1VS49Rar_ZohBuDqFCLUS8kuU_l2zza_C_I00MJ1g-Y8ow"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "ok": {
+     "dev": false,
+     "hub_id": "133254fb2011fce38b33b02440eedda2",
+     "hv": 0,
+     "issued_ms": 1790000000000,
+     "kind": "hub.publish_where",
+     "seq": 5,
+     "server": "https://xn--bcher-kva.example:8443",
+     "share": "https://share.example.com:8443",
+     "suite": 2,
+     "v": 2
+    }
+   },
+   "name": "pw_server_idn_lower_case"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com:443",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "h6GDPkog1Zsf-dAg7IixrOoa0JpH7b-4pG3K2FARI3pALsxgqBXfFsuANF3Gax6H8UpEF9VYoeFaNoPA_g3tzg"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "ok": {
+     "dev": false,
+     "hub_id": "133254fb2011fce38b33b02440eedda2",
+     "hv": 0,
+     "issued_ms": 1790000000000,
+     "kind": "hub.publish_where",
+     "seq": 5,
+     "server": "https://pub.example.com",
+     "share": "https://share.example.com:8443",
+     "suite": 2,
+     "v": 2
+    }
+   },
+   "name": "pw_server_default_port_https"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com.",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "EKP4WgfMMTzI51HY6eXOy4rut8Do5UxcZH3O_MbFnN8Y40tNHAxjFxO67OcAMGx-c9JF8VNrKMXblno8yqKRJA"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "ok": {
+     "dev": false,
+     "hub_id": "133254fb2011fce38b33b02440eedda2",
+     "hv": 0,
+     "issued_ms": 1790000000000,
+     "kind": "hub.publish_where",
+     "seq": 5,
+     "server": "https://pub.example.com",
+     "share": "https://share.example.com:8443",
+     "suite": 2,
+     "v": 2
+    }
+   },
+   "name": "pw_server_trailing_dot"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://Pub.Example.COM.:443",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "fgLIjLr_LGbLvLN-3QagXvXiTXNW5TAb09QqkPClzEaxG8r_43GrnalLYrWkPCAuQ3pNWCMYr9RX2XW6d1YsTg"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "ok": {
+     "dev": false,
+     "hub_id": "133254fb2011fce38b33b02440eedda2",
+     "hv": 0,
+     "issued_ms": 1790000000000,
+     "kind": "hub.publish_where",
+     "seq": 5,
+     "server": "https://pub.example.com",
+     "share": "https://share.example.com:8443",
+     "suite": 2,
+     "v": 2
+    }
+   },
+   "name": "pw_server_trailing_dot_and_default_port"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://PUB.Example.com:8443",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "ELp4aj6v482lFsNWVJFXIs7OTPZowfWZ8PGJxy8k9yOsvX09_pDH0l_mW1ultfh6yOXFIOVLsflJ0qBbU4lvsg"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "ok": {
+     "dev": false,
+     "hub_id": "133254fb2011fce38b33b02440eedda2",
+     "hv": 0,
+     "issued_ms": 1790000000000,
+     "kind": "hub.publish_where",
+     "seq": 5,
+     "server": "https://pub.example.com:8443",
+     "share": "https://share.example.com:8443",
+     "suite": 2,
+     "v": 2
+    }
+   },
+   "name": "pw_server_upper_case_host"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com:80",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "in51QKv3ylnioIVlAUIQzTvILz4C0rY-h-ZTUkC9-zsg26LERIrOA22n0NmHds17LkiShH8MjnHawhI3Um55EQ"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "ok": {
+     "dev": false,
+     "hub_id": "133254fb2011fce38b33b02440eedda2",
+     "hv": 0,
+     "issued_ms": 1790000000000,
+     "kind": "hub.publish_where",
+     "seq": 5,
+     "server": "https://pub.example.com:80",
+     "share": "https://share.example.com:8443",
+     "suite": 2,
+     "v": 2
+    }
+   },
+   "name": "pw_server_http_default_port_is_not_https"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://93.184.216.34:8443",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "ZZErf9kS2M4dX7JRUCLYUC9AvbGu1cVzpmSizymNhqDR06zDbHYMhadyRlIc67S7ASJ8XbGsfcM1Mu-m301-TQ"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "ok": {
+     "dev": false,
+     "hub_id": "133254fb2011fce38b33b02440eedda2",
+     "hv": 0,
+     "issued_ms": 1790000000000,
+     "kind": "hub.publish_where",
+     "seq": 5,
+     "server": "https://93.184.216.34:8443",
+     "share": "https://share.example.com:8443",
+     "suite": 2,
+     "v": 2
+    }
+   },
+   "name": "pw_server_public_ip"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://[2606:4700:4700:0:0:0:0:1111]",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "0oCI0LeofDrt3gLijneK8--I4C-0K4BPUWC5ZpHUlxJc2--i5T6YoswB9fxpAnhDTCvUoEceNmOZAmCQ6klbww"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "ok": {
+     "dev": false,
+     "hub_id": "133254fb2011fce38b33b02440eedda2",
+     "hv": 0,
+     "issued_ms": 1790000000000,
+     "kind": "hub.publish_where",
+     "seq": 5,
+     "server": "https://[2606:4700:4700::1111]",
+     "share": "https://share.example.com:8443",
+     "suite": 2,
+     "v": 2
+    }
+   },
+   "name": "pw_server_public_v6"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://[2606:4700:4700::1111]:8443",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "bGGvn4g6X8zYeDGLAnuClL8griTsdmQ17IRlESBN8PrAKxjAEI0fscsAZUXDjsYoebg9_8wtOlV659WMgn0ebA"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "ok": {
+     "dev": false,
+     "hub_id": "133254fb2011fce38b33b02440eedda2",
+     "hv": 0,
+     "issued_ms": 1790000000000,
+     "kind": "hub.publish_where",
+     "seq": 5,
+     "server": "https://[2606:4700:4700::1111]:8443",
+     "share": "https://share.example.com:8443",
+     "suite": 2,
+     "v": 2
+    }
+   },
+   "name": "pw_server_public_v6_port"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://local.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "bOFW24Hi5Hbp9Je-C2PFvxsFRjLsThROkrr3y8lfeDbuckjJ3DEATM3epL8U1NZwIUwLhgd67-6Hq7B0j2S0zw"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "ok": {
+     "dev": false,
+     "hub_id": "133254fb2011fce38b33b02440eedda2",
+     "hv": 0,
+     "issued_ms": 1790000000000,
+     "kind": "hub.publish_where",
+     "seq": 5,
+     "server": "https://local.example.com",
+     "share": "https://share.example.com:8443",
+     "suite": 2,
+     "v": 2
+    }
+   },
+   "name": "pw_server_local_in_the_middle"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://localhost.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "gB-doDYQaaUIQwYQ6p8-LKv--J54dXC2apPusjwqx1nsfkZkPYj-Owvwk78qkBloTCKPT0Zv39w9waNuW8BFRA"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "ok": {
+     "dev": false,
+     "hub_id": "133254fb2011fce38b33b02440eedda2",
+     "hv": 0,
+     "issued_ms": 1790000000000,
+     "kind": "hub.publish_where",
+     "seq": 5,
+     "server": "https://localhost.example.com",
+     "share": "https://share.example.com:8443",
+     "suite": 2,
+     "v": 2
+    }
+   },
+   "name": "pw_server_localhost_prefix_only"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://172.32.0.1",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "nC9Q2WK1aGY1ycg_4eF8py-nfEW8y7qM_lM284RjiDcya7w1li902R8p-ZkczoQrPrLI65N9_9BNCdkRXNNymw"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "ok": {
+     "dev": false,
+     "hub_id": "133254fb2011fce38b33b02440eedda2",
+     "hv": 0,
+     "issued_ms": 1790000000000,
+     "kind": "hub.publish_where",
+     "seq": 5,
+     "server": "https://172.32.0.1",
+     "share": "https://share.example.com:8443",
+     "suite": 2,
+     "v": 2
+    }
+   },
+   "name": "pw_server_172_32_is_public"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://100.128.0.1",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "SV1jCfKXwGUCqXFe6YPt17xdh_JxC4gYzf3XcfGc8NgBCmMls7cRnifSooZm8cYxZGdAoOOWPjMTVpigl7MGcQ"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "ok": {
+     "dev": false,
+     "hub_id": "133254fb2011fce38b33b02440eedda2",
+     "hv": 0,
+     "issued_ms": 1790000000000,
+     "kind": "hub.publish_where",
+     "seq": 5,
+     "server": "https://100.128.0.1",
+     "share": "https://share.example.com:8443",
+     "suite": 2,
+     "v": 2
+    }
+   },
+   "name": "pw_server_100_128_is_public"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com",
+      "share": "https://pub.example.com",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "NJRq3eF0DT8Zs7AdIBSPbWRBJwtjmKmkOklFf3YtLaxOiUFQlHr_JaFzCfvUqrIYW_FtlhMiz4LNPLKtGTaQiQ"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "ok": {
+     "dev": false,
+     "hub_id": "133254fb2011fce38b33b02440eedda2",
+     "hv": 0,
+     "issued_ms": 1790000000000,
+     "kind": "hub.publish_where",
+     "seq": 5,
+     "server": "https://pub.example.com",
+     "share": "https://pub.example.com",
+     "suite": 2,
+     "v": 2
+    }
+   },
+   "name": "pw_share_plain"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "V3rVMQdrRUJKXgU_AnwxbZTh_oMMoeGzsJJwmPHAkp7RZ8Pd3CxdWKN_jkwcDS8qINnrj8wAXTupL-VRFUXGhw"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "ok": {
+     "dev": false,
+     "hub_id": "133254fb2011fce38b33b02440eedda2",
+     "hv": 0,
+     "issued_ms": 1790000000000,
+     "kind": "hub.publish_where",
+     "seq": 5,
+     "server": "https://pub.example.com",
+     "share": "https://share.example.com:8443",
+     "suite": 2,
+     "v": 2
+    }
+   },
+   "name": "pw_share_port"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com",
+      "share": "https://B\u00dcCHER.example",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "K5vS7-NRK3IsBwmtvNbYjOzLThp3tAhAyTEVhBPe-7zMWFJm5iCq3g_Cw24hJteMyu-3plwqrF6q_G8B_PIKKw"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "ok": {
+     "dev": false,
+     "hub_id": "133254fb2011fce38b33b02440eedda2",
+     "hv": 0,
+     "issued_ms": 1790000000000,
+     "kind": "hub.publish_where",
+     "seq": 5,
+     "server": "https://pub.example.com",
+     "share": "https://xn--bcher-kva.example",
+     "suite": 2,
+     "v": 2
+    }
+   },
+   "name": "pw_share_idn_a_label"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com",
+      "share": "https://b\u00fccher.example:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "WhJb0hYkupLyTscUtwtZ52p0Ef3JMj0PQCPUiAehkW4vJKA_tZx640v1kzLNa1LdaLLdjJhGgzf_BG5QAZD5HQ"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "ok": {
+     "dev": false,
+     "hub_id": "133254fb2011fce38b33b02440eedda2",
+     "hv": 0,
+     "issued_ms": 1790000000000,
+     "kind": "hub.publish_where",
+     "seq": 5,
+     "server": "https://pub.example.com",
+     "share": "https://xn--bcher-kva.example:8443",
+     "suite": 2,
+     "v": 2
+    }
+   },
+   "name": "pw_share_idn_lower_case"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com",
+      "share": "https://pub.example.com:443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "XU9jIRhF30UkEsh4fC7sNV2-BF-ODEm7gg6hJDAWig4WOXMzQcVwIeJy7itqJD2riq_TwA6803sTUkJxAYqFQg"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "ok": {
+     "dev": false,
+     "hub_id": "133254fb2011fce38b33b02440eedda2",
+     "hv": 0,
+     "issued_ms": 1790000000000,
+     "kind": "hub.publish_where",
+     "seq": 5,
+     "server": "https://pub.example.com",
+     "share": "https://pub.example.com",
+     "suite": 2,
+     "v": 2
+    }
+   },
+   "name": "pw_share_default_port_https"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com",
+      "share": "https://pub.example.com.",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "5Mxy8QZ4ZbVOXyS7hp-L_JtfTnA_eHjJ6dWzNCT-CpW1clEyziLOtA-3aw3ZNFXHLccrAKGsGejH3r05V4wkTw"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "ok": {
+     "dev": false,
+     "hub_id": "133254fb2011fce38b33b02440eedda2",
+     "hv": 0,
+     "issued_ms": 1790000000000,
+     "kind": "hub.publish_where",
+     "seq": 5,
+     "server": "https://pub.example.com",
+     "share": "https://pub.example.com",
+     "suite": 2,
+     "v": 2
+    }
+   },
+   "name": "pw_share_trailing_dot"
+  },
+  {
+   "args": {
+    "dev": true,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": true,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "http://127.0.0.1:8103",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "1BYcqhUHV4eUxEmGdpTAdsIwsrPVPDWE02St00QZkpI4giUPEArN5v7BmmRRoo-N3-1wW4ZBNjGoUDB_5lieMg"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "ok": {
+     "dev": true,
+     "hub_id": "133254fb2011fce38b33b02440eedda2",
+     "hv": 0,
+     "issued_ms": 1790000000000,
+     "kind": "hub.publish_where",
+     "seq": 5,
+     "server": "http://127.0.0.1:8103",
+     "share": "https://share.example.com:8443",
+     "suite": 2,
+     "v": 2
+    }
+   },
+   "name": "pw_dev_server_loopback_http"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "http://127.0.0.1:8103",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "7nufsC-3Eq8UvlZ2Aa1y9hwBIgyUMN8q_CzlMquy1Pu4vOR9k1yNxuTnnnRhjgKNElK8vj2fBi66rvXFLFq_zw"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_dev_only_server_loopback_http_refused_at_a_real_pin"
+  },
+  {
+   "args": {
+    "dev": true,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": true,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "http://127.0.0.1:80",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "QFlYC3GOzWEABGaHpXyS8g2_GN3YWXZocSWES8vKP_Twq4RrcNkaWyFzqxrFfvT1TuVtsg8ZoYcptOdwbvZcjg"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "ok": {
+     "dev": true,
+     "hub_id": "133254fb2011fce38b33b02440eedda2",
+     "hv": 0,
+     "issued_ms": 1790000000000,
+     "kind": "hub.publish_where",
+     "seq": 5,
+     "server": "http://127.0.0.1",
+     "share": "https://share.example.com:8443",
+     "suite": 2,
+     "v": 2
+    }
+   },
+   "name": "pw_dev_server_loopback_http_default_port"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "http://127.0.0.1:80",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "d8QwRkkSrEmUV73OwX2BBq_US236ZL0I98iQtwfoqaMiypXNZR6FWHaik7oHS2gqzNGpDDG34BfRzUzaPlVYVg"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_dev_only_server_loopback_http_default_port_refused_at_a_real_pin"
+  },
+  {
+   "args": {
+    "dev": true,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": true,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://127.0.0.1:8443",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "0-BoznL-o20zTCLPQwgoKNdyeVjgTNy0SsyN834XjmI0qnR0VV9yFQfSZ_dJo3HFZA0qUx1ZnPm-RwqRvXGAnQ"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "ok": {
+     "dev": true,
+     "hub_id": "133254fb2011fce38b33b02440eedda2",
+     "hv": 0,
+     "issued_ms": 1790000000000,
+     "kind": "hub.publish_where",
+     "seq": 5,
+     "server": "https://127.0.0.1:8443",
+     "share": "https://share.example.com:8443",
+     "suite": 2,
+     "v": 2
+    }
+   },
+   "name": "pw_dev_server_loopback_https"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://127.0.0.1:8443",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "cINNs6YtVw_z04a1P7CwxcpFFS72z5DL1dpH2IyLNn6gSzvMvEMGbKpEIqavs-VCCbVEx9kXLywlY9rJ8YGUOw"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_dev_only_server_loopback_https_refused_at_a_real_pin"
+  },
+  {
+   "args": {
+    "dev": true,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": true,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "http://127.1.2.3:8103",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "OdD_1aNS9qU3NwjFZ-1pLxyH8Oi7YWmdyd8cWf9SYYnVmT5Q8RkifBUxn8AKkOb4NxOQqvwQcmnRUrT_jw2j8g"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "ok": {
+     "dev": true,
+     "hub_id": "133254fb2011fce38b33b02440eedda2",
+     "hv": 0,
+     "issued_ms": 1790000000000,
+     "kind": "hub.publish_where",
+     "seq": 5,
+     "server": "http://127.1.2.3:8103",
+     "share": "https://share.example.com:8443",
+     "suite": 2,
+     "v": 2
+    }
+   },
+   "name": "pw_dev_server_loopback_127_1_2_3"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "http://127.1.2.3:8103",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "r0r9IhHs4KiG8mDPWhm_0VNiBN1wbbbFpWTIwmaJZeN5HBTbTdSlgFzIseIsLJ0UwYueKTAxriLh7O1p-JXPLw"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_dev_only_server_loopback_127_1_2_3_refused_at_a_real_pin"
+  },
+  {
+   "args": {
+    "dev": true,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": true,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "http://localhost:8102",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "PilIHskJQ63vgjBuzULXf_4Ry9n7rnWyk7wm-CrM_LBP43xh78oWXEvDkMmLO0sETuYzGSlbWpQIJ-W9tLYJcg"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "ok": {
+     "dev": true,
+     "hub_id": "133254fb2011fce38b33b02440eedda2",
+     "hv": 0,
+     "issued_ms": 1790000000000,
+     "kind": "hub.publish_where",
+     "seq": 5,
+     "server": "http://localhost:8102",
+     "share": "https://share.example.com:8443",
+     "suite": 2,
+     "v": 2
+    }
+   },
+   "name": "pw_dev_server_localhost_http"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "http://localhost:8102",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "8DsemmpgCAZjnC1PLO3GUCBnbGaZmRTtirGYiRCHP4WxKyxT7z624L3RXaeCzA1oEnzDYAbV7MGL2zgD_WmpFA"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_dev_only_server_localhost_http_refused_at_a_real_pin"
+  },
+  {
+   "args": {
+    "dev": true,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": true,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "http://LocalHost.:8102",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "DleHWNozTalHIGbWLtkb051uXba_VTE91I-9WtNYTLi_0l0blxEn6t0rBGCon8YNzg1fGS7GHaaQOEHNs48p9w"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "ok": {
+     "dev": true,
+     "hub_id": "133254fb2011fce38b33b02440eedda2",
+     "hv": 0,
+     "issued_ms": 1790000000000,
+     "kind": "hub.publish_where",
+     "seq": 5,
+     "server": "http://localhost:8102",
+     "share": "https://share.example.com:8443",
+     "suite": 2,
+     "v": 2
+    }
+   },
+   "name": "pw_dev_server_localhost_upper_trailing_dot"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "http://LocalHost.:8102",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "rkjZVfhOGyQp3gSZLKOII4EHS8FdZUhPT73PPcsmpTZoCsqr6NnUkbY5Ewa9lyBaMk3Mr4rtfX9IxnmrboUOgw"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_dev_only_server_localhost_upper_trailing_dot_refused_at_a_real_pin"
+  },
+  {
+   "args": {
+    "dev": true,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": true,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "http://[::1]:8102",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "qvYoaAgFjo7jVAppDyfDXMLViyAPUgle_cFDU3n0JYOA6fe71QIJR1A1iO3T4zOAakaPTZeUGFEGqwma1T1rig"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "ok": {
+     "dev": true,
+     "hub_id": "133254fb2011fce38b33b02440eedda2",
+     "hv": 0,
+     "issued_ms": 1790000000000,
+     "kind": "hub.publish_where",
+     "seq": 5,
+     "server": "http://[::1]:8102",
+     "share": "https://share.example.com:8443",
+     "suite": 2,
+     "v": 2
+    }
+   },
+   "name": "pw_dev_server_loopback_v6_http"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "http://[::1]:8102",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "fsphOoVq7KqsrXGe_jhJdYE0A7E3gUoNsAv2N5_RXmSIMMmXkciX0VwG5pFQiLiaZNvb65wIpTxW2JjlpsX4Iw"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_dev_only_server_loopback_v6_http_refused_at_a_real_pin"
+  },
+  {
+   "args": {
+    "dev": true,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": true,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "http://[0:0:0:0:0:0:0:1]:8102",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "qVnGwuTWM3n61hTSfnF7YsPSYhLaC97lHskrAig0Ds6IbstvPIjjxv7LyOD2FjaILphj4iWXQLmOW1La0q8eZA"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "ok": {
+     "dev": true,
+     "hub_id": "133254fb2011fce38b33b02440eedda2",
+     "hv": 0,
+     "issued_ms": 1790000000000,
+     "kind": "hub.publish_where",
+     "seq": 5,
+     "server": "http://[::1]:8102",
+     "share": "https://share.example.com:8443",
+     "suite": 2,
+     "v": 2
+    }
+   },
+   "name": "pw_dev_server_loopback_v6_long"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "http://[0:0:0:0:0:0:0:1]:8102",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "J-TUopMgS5ebiLQPaU3A_grBt2KOe3lkRvs01SPBmzEoVuvpg3KjCYSZs02tDOJhjwT5Pgl9noxmbAxTyC2HUQ"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_dev_only_server_loopback_v6_long_refused_at_a_real_pin"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://b\u00fccher.example",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "4TbT1u2Cob7_DMYB8cgshQhg4fTbMGvFxP2ZHSUIc3RS-F4DRiwW5VvanBLopxiNuej4umTueMwAMpMrJw26KA"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "ok": {
+     "dev": false,
+     "hub_id": "133254fb2011fce38b33b02440eedda2",
+     "hv": 0,
+     "issued_ms": 1790000000000,
+     "kind": "hub.publish_where",
+     "seq": 5,
+     "server": "https://xn--bcher-kva.example",
+     "share": "https://share.example.com:8443",
+     "suite": 2,
+     "v": 2
+    }
+   },
+   "name": "pw_idn_canonicalised_to_the_a_label",
+   "note": "the signature covers the host as the hub sent it; the result carries the A-label"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com.:443",
+      "share": "https://share.example.com.:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "xP_GAPrQKWh28ve1UQs_pRjJV0P9dtBryO_bsyL-JEocAii3ITXorUt3guxduvRKqmVOZSem9EExtdoD5hsVPQ"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "ok": {
+     "dev": false,
+     "hub_id": "133254fb2011fce38b33b02440eedda2",
+     "hv": 0,
+     "issued_ms": 1790000000000,
+     "kind": "hub.publish_where",
+     "seq": 5,
+     "server": "https://pub.example.com",
+     "share": "https://share.example.com:8443",
+     "suite": 2,
+     "v": 2
+    }
+   },
+   "name": "pw_default_port_and_trailing_dot_canonicalised"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://10.0.0.5",
+      "share": "https://localhost",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "P2DhveTpnrnJx_DeDug3TRkQ_cQeVl5AK1E8uEN8FiwVzPbdegqV_tm8OdPLnhL_oT5UHwljUOmbyttTVdRukg"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_server_bad_share_good_order"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": "x"
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "pw_not_an_object"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "op_cert": {},
+     "sig": "V3rVMQdrRUJKXgU_AnwxbZTh_oMMoeGzsJJwmPHAkp7RZ8Pd3CxdWKN_jkwcDS8qINnrj8wAXTupL-VRFUXGhw"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "pw_envelope_extra_key"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "kyDOtTB95OPOjQG5YbC_TqmhUcwoY8_M9mqb89YuPcGe_slvqcYMbBhizvd5zBEfdpAxtqbgZhzqAqy6A_Uyyw"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "pw_field_missing"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "path": "/x",
+      "seq": 5,
+      "server": "https://pub.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "BFXhzEdOiVbqvWOxbp4JGd5U9HdlANAhhZT2qQY0OPLVBg3HL7o3oAZ98l_vS_fhsycW5b_SvzaVcnNadMjI1w"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "pw_field_extra"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 0,
+      "server": "https://pub.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "8JVz-5HhLAQU3hLCt8Kn849g1QsMi1b8kiyN8DekBNqWV_Y4zz9BFDG8Evm67qicE3fcrVDnDQWGiKHHbz59Dg"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "pw_seq_zero"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": true,
+      "server": "https://pub.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "_VI4eBehX5rs1jGOZNkaI9gXG01zVV-n_Ph6SKIsCAXZUO0asVjv8YZ1duGIKfxacRLnD_-U85RrgLVJHOnzIw"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "pw_seq_bool"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": -1,
+      "server": "https://pub.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "V6kFWHMc6HpIitHD2vCUl46QGbl2sl_nsvKxd8H6kuX_GiJ6yAAvnCKpFVQrCXtyPl9w_Et3-N1Ict_U_PNh4Q"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "pw_seq_negative"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 9007199254740992,
+      "server": "https://pub.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "V3rVMQdrRUJKXgU_AnwxbZTh_oMMoeGzsJJwmPHAkp7RZ8Pd3CxdWKN_jkwcDS8qINnrj8wAXTupL-VRFUXGhw"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "pw_seq_over_2_53",
+   "note": "not even canonical JSON (a uint above 2^53 - 1)"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": -1,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "5SXm6rsXtheBlbyO7WoHI1aW4kbJXDBsD1JKzN0R0Vfgfc5PtKpZa7_L2xbEAgScwgcRVUyRdcvpCE-fYKR_oQ"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "pw_issued_ms_negative"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254FB2011FCE38B33B02440EEDDA2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "mP3nd3HPDvDP0V5Bfz9FHxn4JDyq46DLh_fOCmlP4vkqzm2xnHo2WRAKlnBgTsaOXmLeXG0KJfQJ7s9RSIY1sA"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "pw_hub_id_not_hex16"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": null,
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "hdVBVzu2iFQczGo6T-TIj9_0vCJlJQd8lkd3fZN2NkTADmqefQUjzGwDhB75tohuZLvnwi77XFgoDt1a1hGdOw"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "pw_origin_not_a_string"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": 1,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "392N0p7o_GKdnhkYNhkxQUHP-6FMYQVm4DzIycdu1JbU-1juhi8guv1nhpNF5QHA8tgwvMnvoM7gFxD_IJMNNA"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "pw_dev_not_a_bool"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.allow",
+      "seq": 5,
+      "server": "https://pub.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "d7iAmAOcvKQ0jiNlPs5JnmcpFjFp49qZyyevbyJppiStoLe316wAOqoe--WOHeGBYe5A2M0dLS7txQ3jVeJDyQ"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "pw_wrong_kind"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 1,
+      "v": 2
+     },
+     "sig": "Ne7itRlkYkhrD6TwBVQnZwJeexM2rSAYnEVdLsxVXRmBaFT8y2C2Ez6jWvINB4-hFajzsfj5cwBdGJXFThWvNw"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "wrong_suite"
+   },
+   "name": "pw_wrong_suite"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 3
+     },
+     "sig": "9hjzbOhLKszQixOFEYrlwWhmYer43nVVyr_Nw5cG9tFtKtlghWl66Kr-W8ZA6yALB2a0xDelZw3AY0cL0AfQvg"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "pw_wrong_v"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 1,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "ARIGWCtOksYYzcOWxs9VwzjRU2MGSuovSdA0AG5jy-PzzCC6V3sp0gmDkMzaCpEEbiu-7iXikuFtZ4jY2_1q7Q"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "pw_wrong_hv"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "pw_sig_wrong_length"
+  },
+  {
+   "args": {
+    "dev": false,
+    "held": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "V3rVMQdrRUJKXgU_AnwxbZTh_oMMoeGzsJJwmPHAkp7RZ8Pd3CxdWKN_jkwcDS8qINnrj8wAXTupL-VRFUXGhw"
+    },
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 4,
+      "server": "https://pub.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "gnDTUkxH9UssvMtY3BJoqBZwCrE3padoMm_sJii8bgCZYLqVSdgTOJi6Dy2qlVyeGVRP_mlRjDvAdf1UUrGRVw"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "stale_seq"
+   },
+   "name": "pw_lower_seq_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "held": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "V3rVMQdrRUJKXgU_AnwxbZTh_oMMoeGzsJJwmPHAkp7RZ8Pd3CxdWKN_jkwcDS8qINnrj8wAXTupL-VRFUXGhw"
+    },
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 1,
+      "server": "https://pub.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "SaOGXSe8q2AKZKaZD-ToqeoP9p3J5gnYPmlQ1vYKrWzSFZFFZW31A52kSpv6L3-l5JO7axRtFawkLbnDRdpwgg"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "stale_seq"
+   },
+   "name": "pw_lowest_seq_after_5_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "held": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "V3rVMQdrRUJKXgU_AnwxbZTh_oMMoeGzsJJwmPHAkp7RZ8Pd3CxdWKN_jkwcDS8qINnrj8wAXTupL-VRFUXGhw"
+    },
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 6,
+      "server": "https://pub.example.com",
+      "share": "https://share2.example.com",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "nh8ZoJsubYG52yTM1kyFrCCVf8kUkZZXUhpGmcWvwofOHW6CCcMacJzxqdhor6ZR-EFhqxNpc4NC29NEApOWOQ"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "ok": {
+     "dev": false,
+     "hub_id": "133254fb2011fce38b33b02440eedda2",
+     "hv": 0,
+     "issued_ms": 1790000000000,
+     "kind": "hub.publish_where",
+     "seq": 6,
+     "server": "https://pub.example.com",
+     "share": "https://share2.example.com",
+     "suite": 2,
+     "v": 2
+    }
+   },
+   "name": "pw_higher_seq_accepted"
+  },
+  {
+   "args": {
+    "dev": false,
+    "held": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "V3rVMQdrRUJKXgU_AnwxbZTh_oMMoeGzsJJwmPHAkp7RZ8Pd3CxdWKN_jkwcDS8qINnrj8wAXTupL-VRFUXGhw"
+    },
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 6,
+      "server": "https://pub.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "n8b_ktJPvtfO4vTVjhyVVZk9o_YD9aWDhyJA1P869X0DqTS9OvTMRaFbqftMox8gD8JJa6lKvylHMa53gJgvQQ"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "ok": {
+     "dev": false,
+     "hub_id": "133254fb2011fce38b33b02440eedda2",
+     "hv": 0,
+     "issued_ms": 1790000000000,
+     "kind": "hub.publish_where",
+     "seq": 6,
+     "server": "https://pub.example.com",
+     "share": "https://share.example.com:8443",
+     "suite": 2,
+     "v": 2
+    }
+   },
+   "name": "pw_higher_seq_same_content_accepted"
+  },
+  {
+   "args": {
+    "dev": false,
+    "held": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "V3rVMQdrRUJKXgU_AnwxbZTh_oMMoeGzsJJwmPHAkp7RZ8Pd3CxdWKN_jkwcDS8qINnrj8wAXTupL-VRFUXGhw"
+    },
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "V3rVMQdrRUJKXgU_AnwxbZTh_oMMoeGzsJJwmPHAkp7RZ8Pd3CxdWKN_jkwcDS8qINnrj8wAXTupL-VRFUXGhw"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "ok": {
+     "dev": false,
+     "hub_id": "133254fb2011fce38b33b02440eedda2",
+     "hv": 0,
+     "issued_ms": 1790000000000,
+     "kind": "hub.publish_where",
+     "seq": 5,
+     "server": "https://pub.example.com",
+     "share": "https://share.example.com:8443",
+     "suite": 2,
+     "v": 2
+    }
+   },
+   "name": "pw_equal_seq_byte_identical_accepted",
+   "note": "the very same envelope again (a re-read, a re-send)"
+  },
+  {
+   "args": {
+    "dev": false,
+    "held": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "V3rVMQdrRUJKXgU_AnwxbZTh_oMMoeGzsJJwmPHAkp7RZ8Pd3CxdWKN_jkwcDS8qINnrj8wAXTupL-VRFUXGhw"
+    },
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com",
+      "share": "https://share2.example.com",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "SGo36P2dN7PbrXNRBgQ1XJjzBqtmfhbuS9yDzndESv-SXEjR7j4PEDO-nGeHB9Acykq6gocsN4Lpdf8f9rPy2Q"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "seq_conflict"
+   },
+   "name": "pw_equal_seq_other_content_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "held": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "V3rVMQdrRUJKXgU_AnwxbZTh_oMMoeGzsJJwmPHAkp7RZ8Pd3CxdWKN_jkwcDS8qINnrj8wAXTupL-VRFUXGhw"
+    },
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000001,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "rW2G5KPvYLFkvpasVOizkfPdLpdO4c79yBiOWJzRAebo2Co2aNS-1QIg59wdNq-mQGmTS-2KxnAVESiBXZtKSQ"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "seq_conflict"
+   },
+   "name": "pw_equal_seq_other_issued_ms_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "held": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "V3rVMQdrRUJKXgU_AnwxbZTh_oMMoeGzsJJwmPHAkp7RZ8Pd3CxdWKN_jkwcDS8qINnrj8wAXTupL-VRFUXGhw"
+    },
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "V3rVMQdrRUJKXgQ_AnwxbZTh_oMMoeGzsJJwmPHAkp7RZ8Pd3CxdWKN_jkwcDS8qINnrj8wAXTupL-VRFUXGhw"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_signature"
+   },
+   "name": "pw_equal_seq_corrupt_signature_refused",
+   "note": "a changed signature never gets as far as the order rule"
+  },
+  {
+   "args": {
+    "dev": false,
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 1,
+      "server": "https://pub.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "SaOGXSe8q2AKZKaZD-ToqeoP9p3J5gnYPmlQ1vYKrWzSFZFFZW31A52kSpv6L3-l5JO7axRtFawkLbnDRdpwgg"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "ok": {
+     "dev": false,
+     "hub_id": "133254fb2011fce38b33b02440eedda2",
+     "hv": 0,
+     "issued_ms": 1790000000000,
+     "kind": "hub.publish_where",
+     "seq": 1,
+     "server": "https://pub.example.com",
+     "share": "https://share.example.com:8443",
+     "suite": 2,
+     "v": 2
+    }
+   },
+   "name": "pw_held_none_is_first"
+  },
+  {
+   "args": {
+    "dev": false,
+    "held": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "V3rVMQdrRUJKXgU_AnwxbZTh_oMMoeGzsJJwmPHAkp7RZ8Pd3CxdWKN_jkwcDS8qINnrj8wAXTupL-VRFUXGhw"
+    },
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 4,
+      "server": "https://10.0.0.5",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "pPvTcYTGllxvW_EIxDJvcPwhuhLg-lwLOekGzofVcqDHbEnFJLqhKDSY19SXeV1MjkcrVWRBh8hwa-p-YPg9bQ"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "pw_order_after_origin_rule",
+   "note": "the origin rule is checked before the order"
+  },
+  {
+   "args": {
+    "dev": false,
+    "held": {
+     "o": {
+      "dev": false,
+      "hub_id": "133254fb2011fce38b33b02440eedda2",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 5,
+      "server": "https://pub.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "V3rVMQdrRUJKXgU_AnwxbZTh_oMMoeGzsJJwmPHAkp7RZ8Pd3CxdWKN_jkwcDS8qINnrj8wAXTupL-VRFUXGhw"
+    },
+    "hub_id": "133254fb2011fce38b33b02440eedda2",
+    "op_pub": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+    "signed": {
+     "o": {
+      "dev": false,
+      "hub_id": "654870ba9666257f74faf12cedf4b36e",
+      "hv": 0,
+      "issued_ms": 1790000000000,
+      "kind": "hub.publish_where",
+      "seq": 4,
+      "server": "https://pub.example.com",
+      "share": "https://share.example.com:8443",
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "x7dSzWDTYfPqsHR8qs8vKS0vRssQs7A5NOXlPFJEzdGMMyDYgQ3GC3wuo1HzOb0Ytfopy_ixGO-Urqwzbqb_VQ"
+    }
+   },
+   "check": "publish_where",
+   "expect": {
+    "error": "other_hub"
+   },
+   "name": "pw_order_after_hub_id"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "http://127.0.0.1:8103"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_loopback_http_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://127.0.0.1:8443"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_loopback_https_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "http://localhost:8103"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_loopback_name_http_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://[::1]:8443"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_loopback_v6_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://10.0.0.5"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_private_ip_10_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://192.168.1.20:8443"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_private_ip_192_168_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://172.16.0.1"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_private_ip_172_16_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://172.31.255.254"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_private_ip_172_31_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://100.64.1.2"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_cgnat_ip_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://169.254.10.1"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_link_local_ip_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://0.0.0.0"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_this_network_ip_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://203.0.113.9"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_documentation_ip_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://224.0.0.1"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_multicast_ip_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://[fd12:3456::1]"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_ula_ip_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://[fe80::1]"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_link_local_v6_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://[::ffff:8.8.8.8]"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_mapped_v6_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://[fe80::1%25eth0]"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_zone_v6_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://hub.local"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_local_name_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://pub.corp.internal"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_internal_name_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://localhost"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_localhost_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://localhost:8443"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_localhost_port_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://LOCALHOST"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_localhost_upper_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://localhost."
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_localhost_trailing_dot_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://pub.localhost"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_localhost_subdomain_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://u:p@pub.example.com"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_userinfo_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://u@pub.example.com"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_userinfo_user_only_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "http://pub.example.com"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_plain_http_public_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://pub.example.com/x"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_path_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://pub.example.com/"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_path_slash_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://pub.example.com?x=1"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_query_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://pub.example.com#x"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_fragment_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://pub.example.com:0"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_port_zero_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://pub.example.com:65536"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_port_too_big_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://pub.example.com:08443"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_port_leading_zero_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://pub.example.com:"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_port_empty_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://pub.example.com:80a"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_port_not_a_number_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "HTTPS://pub.example.com"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_upper_case_scheme_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "pub.example.com"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_no_scheme_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "ftp://pub.example.com"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_other_scheme_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "wss://pub.example.com"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_wss_scheme_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://127.1"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_short_ip_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://2130706433"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_decimal_ip_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://010.0.0.1"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_leading_zero_ip_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://pub.example.com "
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_space_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://pub%2eexample.com"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_percent_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://pub.example.com\\x"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_backslash_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_empty_host_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://pub..example.com"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_empty_label_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://-pub.example.com"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_dash_edge_label_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://pub_x.example.com"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_underscore_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://::1"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_unbracketed_v6_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://stra\u00dfe.example"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_idna_sharp_s_refused"
+  },
+  {
+   "args": {
+    "dev": true,
+    "origin": "https://10.0.0.5"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_dev_private_ip_refused"
+  },
+  {
+   "args": {
+    "dev": true,
+    "origin": "http://192.168.1.20:8103"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_dev_private_ip_http_refused"
+  },
+  {
+   "args": {
+    "dev": true,
+    "origin": "http://pub.example.com"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_dev_plain_http_public_refused"
+  },
+  {
+   "args": {
+    "dev": true,
+    "origin": "http://hub.local"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_dev_local_name_refused"
+  },
+  {
+   "args": {
+    "dev": true,
+    "origin": "https://pub.corp.internal"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_dev_internal_name_refused"
+  },
+  {
+   "args": {
+    "dev": true,
+    "origin": "http://localhost:8102/x"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_dev_localhost_with_path_refused"
+  },
+  {
+   "args": {
+    "dev": true,
+    "origin": "http://u@127.0.0.1:8102"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_dev_loopback_with_userinfo_refused"
+  },
+  {
+   "args": {
+    "dev": true,
+    "origin": "http://169.254.1.1"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_dev_link_local_http_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://pub.example.com"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "ok": "https://pub.example.com"
+   },
+   "name": "origin_plain"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://pub.example.com"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "ok": "https://pub.example.com"
+   },
+   "name": "origin_plain_idempotent"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://share.example.com:8443"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "ok": "https://share.example.com:8443"
+   },
+   "name": "origin_port"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://share.example.com:8443"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "ok": "https://share.example.com:8443"
+   },
+   "name": "origin_port_idempotent"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://B\u00dcCHER.example"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "ok": "https://xn--bcher-kva.example"
+   },
+   "name": "origin_idn_a_label"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://xn--bcher-kva.example"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "ok": "https://xn--bcher-kva.example"
+   },
+   "name": "origin_idn_a_label_idempotent"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://b\u00fccher.example:8443"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "ok": "https://xn--bcher-kva.example:8443"
+   },
+   "name": "origin_idn_lower_case"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://xn--bcher-kva.example:8443"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "ok": "https://xn--bcher-kva.example:8443"
+   },
+   "name": "origin_idn_lower_case_idempotent"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://pub.example.com:443"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "ok": "https://pub.example.com"
+   },
+   "name": "origin_default_port_https"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://pub.example.com"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "ok": "https://pub.example.com"
+   },
+   "name": "origin_default_port_https_idempotent"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://pub.example.com."
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "ok": "https://pub.example.com"
+   },
+   "name": "origin_trailing_dot"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://pub.example.com"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "ok": "https://pub.example.com"
+   },
+   "name": "origin_trailing_dot_idempotent"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://Pub.Example.COM.:443"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "ok": "https://pub.example.com"
+   },
+   "name": "origin_trailing_dot_and_default_port"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://pub.example.com"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "ok": "https://pub.example.com"
+   },
+   "name": "origin_trailing_dot_and_default_port_idempotent"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://PUB.Example.com:8443"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "ok": "https://pub.example.com:8443"
+   },
+   "name": "origin_upper_case_host"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://pub.example.com:8443"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "ok": "https://pub.example.com:8443"
+   },
+   "name": "origin_upper_case_host_idempotent"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://pub.example.com:80"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "ok": "https://pub.example.com:80"
+   },
+   "name": "origin_http_default_port_is_not_https"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://pub.example.com:80"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "ok": "https://pub.example.com:80"
+   },
+   "name": "origin_http_default_port_is_not_https_idempotent"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://93.184.216.34:8443"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "ok": "https://93.184.216.34:8443"
+   },
+   "name": "origin_public_ip"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://93.184.216.34:8443"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "ok": "https://93.184.216.34:8443"
+   },
+   "name": "origin_public_ip_idempotent"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://[2606:4700:4700:0:0:0:0:1111]"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "ok": "https://[2606:4700:4700::1111]"
+   },
+   "name": "origin_public_v6"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://[2606:4700:4700::1111]"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "ok": "https://[2606:4700:4700::1111]"
+   },
+   "name": "origin_public_v6_idempotent"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://[2606:4700:4700::1111]:8443"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "ok": "https://[2606:4700:4700::1111]:8443"
+   },
+   "name": "origin_public_v6_port"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://[2606:4700:4700::1111]:8443"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "ok": "https://[2606:4700:4700::1111]:8443"
+   },
+   "name": "origin_public_v6_port_idempotent"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://local.example.com"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "ok": "https://local.example.com"
+   },
+   "name": "origin_local_in_the_middle"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://local.example.com"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "ok": "https://local.example.com"
+   },
+   "name": "origin_local_in_the_middle_idempotent"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://localhost.example.com"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "ok": "https://localhost.example.com"
+   },
+   "name": "origin_localhost_prefix_only"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://localhost.example.com"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "ok": "https://localhost.example.com"
+   },
+   "name": "origin_localhost_prefix_only_idempotent"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://172.32.0.1"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "ok": "https://172.32.0.1"
+   },
+   "name": "origin_172_32_is_public"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://172.32.0.1"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "ok": "https://172.32.0.1"
+   },
+   "name": "origin_172_32_is_public_idempotent"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://100.128.0.1"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "ok": "https://100.128.0.1"
+   },
+   "name": "origin_100_128_is_public"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://100.128.0.1"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "ok": "https://100.128.0.1"
+   },
+   "name": "origin_100_128_is_public_idempotent"
+  },
+  {
+   "args": {
+    "dev": true,
+    "origin": "http://127.0.0.1:8103"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "ok": "http://127.0.0.1:8103"
+   },
+   "name": "origin_dev_loopback_http"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "http://127.0.0.1:8103"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_dev_loopback_http_without_dev_refused"
+  },
+  {
+   "args": {
+    "dev": true,
+    "origin": "http://127.0.0.1:80"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "ok": "http://127.0.0.1"
+   },
+   "name": "origin_dev_loopback_http_default_port"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "http://127.0.0.1:80"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_dev_loopback_http_default_port_without_dev_refused"
+  },
+  {
+   "args": {
+    "dev": true,
+    "origin": "https://127.0.0.1:8443"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "ok": "https://127.0.0.1:8443"
+   },
+   "name": "origin_dev_loopback_https"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://127.0.0.1:8443"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_dev_loopback_https_without_dev_refused"
+  },
+  {
+   "args": {
+    "dev": true,
+    "origin": "http://127.1.2.3:8103"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "ok": "http://127.1.2.3:8103"
+   },
+   "name": "origin_dev_loopback_127_1_2_3"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "http://127.1.2.3:8103"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_dev_loopback_127_1_2_3_without_dev_refused"
+  },
+  {
+   "args": {
+    "dev": true,
+    "origin": "http://localhost:8102"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "ok": "http://localhost:8102"
+   },
+   "name": "origin_dev_localhost_http"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "http://localhost:8102"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_dev_localhost_http_without_dev_refused"
+  },
+  {
+   "args": {
+    "dev": true,
+    "origin": "http://LocalHost.:8102"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "ok": "http://localhost:8102"
+   },
+   "name": "origin_dev_localhost_upper_trailing_dot"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "http://LocalHost.:8102"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_dev_localhost_upper_trailing_dot_without_dev_refused"
+  },
+  {
+   "args": {
+    "dev": true,
+    "origin": "http://[::1]:8102"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "ok": "http://[::1]:8102"
+   },
+   "name": "origin_dev_loopback_v6_http"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "http://[::1]:8102"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_dev_loopback_v6_http_without_dev_refused"
+  },
+  {
+   "args": {
+    "dev": true,
+    "origin": "http://[0:0:0:0:0:0:0:1]:8102"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "ok": "http://[::1]:8102"
+   },
+   "name": "origin_dev_loopback_v6_long"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "http://[0:0:0:0:0:0:0:1]:8102"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_dev_loopback_v6_long_without_dev_refused"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": 5
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_number"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": null
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_null"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": [
+     "https://pub.example.com"
+    ]
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_list"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": ""
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_empty"
+  },
+  {
+   "args": {
+    "dev": false,
+    "origin": "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_too_long"
+  },
+  {
+   "args": {
+    "dev": 1,
+    "origin": "https://pub.example.com"
+   },
+   "check": "canonical_origin",
+   "expect": {
+    "error": "bad_origin"
+   },
+   "name": "origin_dev_not_a_bool"
   }
  ],
  "constants": {
@@ -4027,6 +10873,7 @@
   "max_addresses": 4,
   "max_name": 60,
   "max_total": 209715200,
+  "publish_where_seq_max": 9007199254740991,
   "seq_jump": 1000
  },
  "contract": "orch.hub-backup/0",
@@ -4132,6 +10979,8 @@
  },
  "keys": {
   "attacker_root": "BEgmykQ9aCxEYJ8zA9u7jnWz7ExrZ13ur5Ib-Cj0wZ_W60kxq2j99JrWcz_vz9cHN6xfWKrS2poKF251jqRZ_SU",
+  "op": "BD3QqEJQeTYK9AWvM5sDaQTGlbAJ2JxN8ik6H6WDsrm-siH030N5GbuMNFGkEY-hSLAoRIllPnXdzW2ZHOo_9zQ",
+  "op_other": "BICvnEsvxdoc3E-uc0kp_IyyZJ2S-l-8Kdey_jOwy5MUxqC2AIl9kD8U4JNHHXfuVvsWyeIZzcqvYwdJRQU4DpY",
   "root": "BKaidcdTFECkQQn9LtRr_jTgSW3x_WHa6AbZ3J0zH64wY90-VNKFk3AISfO-EQY-2FUEtjxzlVDIuZ2I5_LxVws"
  },
  "labels": {
@@ -4139,9 +10988,10 @@
   "kdf_auth_info": "orch/v2/hub-backup-auth",
   "kdf_salt_hex": "6f7263682f76322f6875622d6261636b75702d6b65797c02",
   "seal_info": "orch/v2/seal|hub-backup|<hub_id>",
-  "sign_header": "orch/v2/hub-backup|"
+  "sign_header": "orch/v2/hub-backup|",
+  "sign_publish_where": "orch/v2/hub-publish-where|"
  },
- "note": "FAKE keys and words, test-only. Cases are replayed by the hub (all) and orch-core (hub_where only).",
+ "note": "FAKE keys and words, test-only. Cases are replayed by the hub (all) and orch-core (hub_where, publish_where, canonical_origin).",
  "words": {
   "a": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art",
   "attacker": "legal legal legal legal legal legal legal legal legal legal legal legal legal legal legal legal legal legal legal legal legal legal legal title",

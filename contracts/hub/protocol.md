@@ -13,7 +13,8 @@ not right.
   checks that the reference rebuilds the file byte for byte and that every case replays from its JSON. Where the
   reference and this document disagree, this document wins.
 - **Hub backup and `hub_where` (M4, #1358):** §17 and §10.9, vectors [`vectors_hub_backup.json`](vectors_hub_backup.json)
-  (generator `make_vectors_hub_backup.py`; the hub replays all cases, orch-core the `hub_where` ones).
+  (generator `make_vectors_hub_backup.py`; the hub replays all cases, orch-core the `hub_where`, `publish_where` and
+  `canonical_origin` ones; the signed `hub.publish_where` of §10.9.1, #1838, lives in the same file).
 - **Link transports (R6, #1594):** §10.10 and the address grammar of §10.9, vectors
   [`vectors_link_ws.json`](vectors_link_ws.json) (generator `make_vectors_link_ws.py`; the hub replays all cases, orch-core
   all but the three hub-side upgrade checks).
@@ -201,6 +202,7 @@ literal `orch/v2/hub-…|` names.
 | `sig_hub_release_narrow` | `orch/v2/hub-release-narrow\|` | `HK_op` | `cj(o)` of `hub.release_narrow` (revoke a link, stop an app; M4) | 11.6 |
 | `sig_hub_app_pass` | `orch/v2/hub-app-pass\|` | `HK_op` | `cj(o)` of `hub.app_pass` (single-use pass into a company/group app; M4) | 11.8 |
 | `sig_hub_allow` | `orch/v2/hub-allow\|` | `HK_op` | `cj(o)` of `hub.allow` (the hub admits one of its own workspaces at orch-publish; P02) | 11.10 |
+| `sig_hub_publish_where` | `orch/v2/hub-publish-where\|` | `HK_op` | `cj(o)` of `hub.publish_where` (the hub's public publish and share origins; #1838) | 10.9.1 |
 
 **The removal proof label (§9.7, #1463).** `orch/v2/hub-remove|` is the domain of the digest an admin's channel key signs
 to start removing the hub (`orch_hub.contract.labels.HUB_REMOVE_LABEL`). Like the access-change label it names no object
@@ -1510,7 +1512,7 @@ unknown `op` is `unknown_op`.
 | `route_in` | h2w | both | `{"envelope": b64u}` | `{}` |
 | `wk_seal` | w2h | full | `{"epoch", "wrap": b64u}`: `WK_e` sealed to `HXK` (v2 §5.3) | `{}` |
 | `publish_out` | w2h | both | `{"request": {method, host, target, headers, body_hex}}` (§11) | `{"status", "body_hex"}` |
-| `join` | w2h | both | `{"invite", "card", "pk_pub", "binding", "owner_proof"}`: the v2 card, the owner's PK, the binding (§9.5), the owner proof (§9.6: the member is always present; `null` → `proof_missing`) | `{}` |
+| `join` | w2h | both | `{"invite", "card", "pk_pub", "binding", "owner_proof"}`: the v2 card, the owner's PK, the binding (§9.5), the owner proof (§9.6: the member is always present; `null` → `proof_missing`) | `{}`, or `{"publish_where": <hub.publish_where>}` when the hub advertises one (#1838, §10.9.1) |
 | `card_put` | w2h | both | `{"card", "pk_pub"}`: the workspace's v2 card, checked against the join pin, forwarded to orch-publish (§11.2 "Admission through the hub"); refusals: `other_person`, `other_workspace`, `wsk_mismatch`, `stale_card`, `not_bound`, and orch-publish's (`unknown_workspace`, `owner_not_allowed`, `workspace_blocked`, `delegation_changed`, `delegation_refused`, `delegation_mismatch`, `bad_signature`, `unavailable`) | `{}` |
 | `binding_put` | w2h | both | `{"object", "owner_proof"}`: a `hub.binding` or `hub.unbound`, forwarded as is; `owner_proof` is always present: the proof (§9.6) for a binding that is new or switches the mode, else `null` | `{}` |
 | `audit_ack` | w2h | both | `{"seq", "head": b64u(32)}` | `{"acked": seq}` (§10.5) |
@@ -1526,7 +1528,7 @@ unknown `op` is `unknown_op`.
 | `switch_ticket` | w2h | both | `{"origin", "return_to", "kind": "open"\|"signout"}` | `{"ticket", "url"}` (hub one-app, below) |
 | `closing_notice` | h2w | both | `{"notice": <hub.closing>}`: the hub is being removed (§9.7, #1463). The host verifies it (`verify_closing`) and answers | `{}` or `{"error"}` |
 | `closing_get` | w2h | both | `{}` | `{"closing": <hub.closing> \| null}`: a freshly signed notice for the link's workspace while the hub is closing, else `null` (§9.7). Exact key |
-| `hub_where` | w2h | both | `{}` | `{"addresses": [{"kind", "link"}], "name"}`: where this hub can be reached and its display name (M4, §10.9). Unsigned: a hint under the TLS pin |
+| `hub_where` | w2h | both | `{}` | `{"addresses": [{"kind", "link"}], "name"}` and, optionally, `"publish_where": <hub.publish_where>`: where this hub can be reached and its display name (M4, §10.9); `publish_where` is the hub's signed publish and share origins (#1838, §10.9.1). Addresses and name are unsigned: a hint under the TLS pin. A legacy `"publish"` string (§11.11) is ignored |
 | `switch_redeem` | w2h | both | `{"ticket"}` | `{"user_id", "name", "return_to", "kind"}` (hub one-app) |
 | `rail_get` | w2h | both | `{"origin"}` | `{"hub": {name, origin, network_origin}, "user_id", "workspaces": [{workspace_id, name, role, online, badge, origin, current}]}` (hub one-app) |
 | `profile_put` | w2h | both | `{listed, tags, description, handles, not_handled, accepts, contact, languages, hours}` | `{}` |
@@ -2875,7 +2877,9 @@ to the push-configuration `404`):
 admin can change which addresses the hub advertises (private network, office network, this server, public address)
 without touching a card, a binding or a certificate. Bound hosts learn the list with this op on every link session.
 
-**Request** `{}`. **Reply** `{"addresses": [{"kind", "link"}], "name"}` and, optionally, `publish` (§11.11), and nothing else (exact keys):
+**Request** `{}`. **Reply** `{"addresses": [{"kind", "link"}], "name"}` and, optionally, `publish_where` (a signed
+`hub.publish_where`, §10.9.1), and nothing else (exact keys). The legacy `publish` string of §11.11 is still accepted in
+shape, but it is **legacy and ignored**: a receiver never returns it, keeps it or suggests anything from it.
 
 - `addresses`: 1 to 4 entries, each exactly `kind` and `link`; `kind` is one of `private`, `office`, `server`, `public`
   (the UI words "Private network (VPN)", "Office network", "On this server", "Public address"); `link` is a **link
@@ -2894,6 +2898,82 @@ a link-fetched card (the card is fetched over plain HTTP and proves nothing abou
 both replay the `hub_where_*` cases of `vectors_hub_backup.json` and the `where_*` cases of `vectors_link_ws.json` (§15)
 and must agree with them. The answer never carries network settings: a `proxy`, `transport` or any other extra key is
 `malformed` like every extra key (§10.10.6).
+
+#### 10.9.1 `hub.publish_where`: where the hub's workspaces publish and share (#1838)
+
+**Purpose.** A workspace that joined a hub publishes through it (§11.2). It signs requests for the hub's public API origin
+(`server`) and shows links under the public link origin (`share`). The hub says both, signed, so the workspace can offer them
+instead of making the owner type them. The unsigned `publish` string of §11.11 could not say two origins and proved nothing; it
+is **legacy and ignored** (a `hub_where` answer that still carries a well-formed one is accepted, the member is dropped, nothing
+is ever suggested from it).
+
+**The object.** Signed by the hub's `HK_op` (the key the card's `op_cert` certifies) under `sig_hub_publish_where`, label bytes
+`orch/v2/hub-publish-where|` (§3). The envelope is `{"o", "sig"}`, exactly like `hub.allow`, and nothing else:
+
+```
+hub.publish_where {v: 2, suite: 2, kind: "hub.publish_where", hv: 0, hub_id (32 hex), server (origin), share (origin),
+                   seq (uint, 1 .. 2^53 - 1), issued_ms (uint), dev (bool)}
+sig = Sign(HK_op, "orch/v2/hub-publish-where|" || cj(o))
+```
+
+**Delivery.** One optional exact key `publish_where` in the `hub_where` answer (§10.9) and in the reply of the `join` op (§10.2),
+with the same value. Absent means the hub advertises nothing: the workspace keeps what it has configured and nothing is unset.
+A receiver checks the member's shape wherever it arrives (`check_hub_where`: the envelope, header, exact fields and types, `seq`
+range, a 64-byte signature; anything else is `malformed`) and keeps it only after the verification below, through ONE verifier
+and ONE store.
+
+**Verification** (`check_publish_where(signed, op_pub, hub_id, dev, held)`; `op_pub` is the `HK_op` of the CURRENT op cert of the
+pinned card, `hub_id` the pinned hub, `dev` the pinned card's dev marker, `held` the signed object already kept for this hub or
+none). In this order; the first failure refuses:
+
+| # | Check | Refusal |
+|---|---|---|
+| 1 | envelope, `kind`, `v`, `hv`, suite | `malformed`, `wrong_suite` |
+| 2 | the `HK_op` signature over `label \|\| cj(o)` | `bad_signature` |
+| 3 | the exact field set and types; `seq` is an int in `1 .. 2^53 - 1`, `issued_ms` an int ≥ 0 | `malformed` |
+| 4 | `hub_id` is the pinned hub | `other_hub` |
+| 5 | the dev marker (§2.4): `o.dev` must equal the pinned card's `dev`; a real workspace refuses `dev: true`, a dev one refuses `dev: false` | `dev_refused`, `dev_mismatch` |
+| 6 | the origin rule below, on `server` and on `share` | `bad_origin` |
+| 7 | the order rule below, against `held` | `stale_seq`, `seq_conflict` |
+
+The result is `o` with both origins in canonical form: the signature covers them as the hub sent them, the canonical form is
+what is compared, shown and kept. The caller also owns what needs state: the pinned card's op cert is not revoked and not
+expired (a revoked or expired op cert drops the held object, with its suggestion and change prompt, on every read), and `issued_ms`
+has no time rule. A hub applies the same origin rule (`canonical_origin`) before it signs.
+
+**The origin rule** (`canonical_origin(x, dev)`; the same function at the hub when it signs and at the workspace when it verifies):
+
+- Form: `scheme "://" host [":" port]`, nothing after. No userinfo, path (not even `/`), query or fragment, no `%`, no white
+  space or control characters; at most 300 characters. The scheme is exactly `https` or `http` (lower case). The port is
+  `1 .. 65535` without a leading zero.
+- Canonical form: the host lower-case; an IDN host as its A-labels (`xn--`; a host with `ß`, `ς`, a zero-width joiner or
+  non-joiner or an ideographic dot is refused, as those differ between IDNA versions); one trailing dot removed; the default
+  port of the scheme (`443` for `https`, `80` for `http`) removed; an IPv6 literal in brackets in compressed lower-case form
+  (no zone). Labels are `[a-z0-9-]`, 1-63, no leading or trailing `-`; at most 253 characters. A host whose last label is
+  all digits must be a dotted quad in canonical form (`127.1`, `2130706433`, `010.0.0.1` are refused). The canonical form of a
+  canonical origin is itself.
+- With `dev = false` (every real hub and workspace) the scheme must be `https`, and the host must not be `localhost`,
+  `local`, `internal` or under `.localhost`, `.local`, `.internal`, nor an IP literal in a loopback (`127.0.0.0/8`, `::1`),
+  private (`10/8`, `172.16/12`, `192.168/16`), link-local (`169.254/16`, `fe80::/10`), unique-local (`fc00::/7`), CGNAT
+  (`100.64/10`) range, nor in the other blocks that are never public: `0/8`, `192.0.0/24`, `192.0.2/24`, `198.18/15`,
+  `198.51.100/24`, `203.0.113/24`, `224/4`, `240/4`, and `::`, `::ffff:0:0/96`, `64:ff9b::/96`, `100::/64`, `2001:db8::/32`,
+  `fec0::/10`, `ff00::/8`. A public IP literal is allowed (an install without a name). Anything refused is `bad_origin`.
+- With `dev = true` the same rule holds, and in addition a loopback host (`localhost`, `127.0.0.0/8`, `[::1]`) may use `http`
+  (the lab) or `https`. Dev adds loopback only: a private address, a `.local` name or plain `http` anywhere else stays refused.
+
+**The order rule.** `seq` rises on every change (the hub persists it as `max(stored + 1, now_ms)`, so it keeps rising across
+restores and op rotation). Against the held object: a higher `seq` replaces it; an equal `seq` is accepted only if the new
+envelope is byte-identical to the held one (the canonical JSON of the whole `{"o", "sig"}`: a re-read, a re-send); a lower `seq`
+is `stale_seq`; an equal `seq` with any other byte is `seq_conflict` (dropped; the hub doctor shows a line). Nothing else is accepted: a
+refused object never replaces a held one.
+
+**What it does not authorise.** The origins are a suggestion the owner confirms (one review, one Sign); they change no setting by
+themselves. A workspace leaving the hub deletes the held object with the hub state and keeps a `max_seq` tombstone per `hub_id`;
+settings applied from it are inert once the workspace is no longer bound to that hub.
+
+Reference `orch_hub.contract.publish_where` (`check_publish_where`, `canonical_origin`, `check_publish_where_shape`) and, written
+from this text, `orch.hubclient.publish_where` (core). Both replay the `publish_where` and `canonical_origin` cases of
+`vectors_hub_backup.json`.
 
 ### 10.10 Link transports (R6 #1594; spec `orch-v2-hub-remote.md` §8, D92)
 
@@ -3516,11 +3596,12 @@ by construction and is simply overwritten by the new bound hub's allowance.
 stops FUTURE `hub.allow` objects; an allowance already stored counts until the epoch changes (a leave, a re-join, another hub, an
 operator unbind or unpin, a revoked op cert). The expiry of 24 h applies only to a row the workspace never bound to that hub.
 
-### 11.11 `hub_where` carries the publish address (P02)
+### 11.11 `hub_where` carries the publish address (P02): legacy, ignored
 
-The reply of §10.9 may carry one more exact member, `publish`: the origin of this hub's publish server (`https://host[:port]`,
-or `http://localhost|127.0.0.1[:port]`), no path, no userinfo. Absent when the hub's publish address is not such an origin.
-It is a hint: a host keeps it only to suggest it in the Publish form, and the owner still signs what is turned on.
+The reply of §10.9 used to carry one more exact member, `publish`: the origin of this hub's publish server (`https://host[:port]`,
+or `http://localhost|127.0.0.1[:port]`), no path, no userinfo. **Since #1838 it is legacy and ignored.** A receiver still accepts a
+well-formed one in shape (any other string is `malformed`, as before) but drops it: it is never returned, kept or suggested. It was
+unsigned, and for a split install it named the hub's private address. The signed `publish_where` of §10.9.1 replaces it.
 
 ## 12. Who verifies what (summary)
 
@@ -3584,6 +3665,7 @@ v2 codes keep their meaning (v2 §14). New in H0:
 | `stale_op_cert` | uk/channel cert, snapshot | signed under another op cert than the newest card's |
 | `dev_refused` | everywhere | `dev: true` at a real verifier |
 | `dev_mismatch` | everywhere | `dev: false` at a dev verifier |
+| `bad_origin`, `stale_seq`, `seq_conflict` (#1838) | `hub.publish_where` | §10.9.1: an origin outside the origin rule; a `seq` below the held one; the held `seq` with other bytes. Reused there: `malformed`, `wrong_suite`, `bad_signature`, `other_hub`, `dev_refused`, `dev_mismatch` |
 | `stale_snapshot`, `snapshot_conflict`, `unknown_snapshot` | snapshot, custodial | §7, §8.3 |
 | `forbidden_role`, `not_granted`, `channel_revoked` | custodial | §8.3 step 7 |
 | `conflict` | admin console (`PUT /admin/market-policy`) | `base_version` is not the stored version (409) |
@@ -3731,9 +3813,10 @@ naming the cases an implementation must not lose. orch-hub and orch-publish repl
 
 `vectors_hub_backup.json` (M4 S0; FAKE keys, words and ephemeral keys, fixed in the generator only): `labels`, `constants`,
 `words` (three 24-word lists; the first two are valid BIP-39), `keys`, an `example` file (header, envelope, sealed payload
-and tar) and `cases` with `check` one of `bk_key`, `open_backup`, `tar`, `file_list`, `restore_floor`, `hub_where` and
-`expect` `{"ok": …}` or `{"error": code, "reason"?}`. The hub replays every case and fails on an unknown check or a missing
-required case; orch-core replays `hub_where`. Expected values are written by hand in the generator, not computed by the code
+and tar) and `cases` with `check` one of `bk_key`, `open_backup`, `tar`, `file_list`, `restore_floor`, `hub_where`, `publish_where` and
+`canonical_origin` and `expect` `{"ok": …}` or `{"error": code, "reason"?}`. The hub replays every case and fails on an unknown check or a missing
+required case; orch-core replays `hub_where`, `publish_where` (args `signed`, `op_pub`, `hub_id`, `dev`, optional `held`; the
+`pw_*` cases of §10.9.1) and `canonical_origin` (args `origin`, `dev`; the `origin_*` cases). Expected values are written by hand in the generator, not computed by the code
 under test; the BK / K_auth / seal values are computed there from first principles and compared with the module.
 
 `vectors_hub_closing.json` (#1463, §9.7; `make_vectors_hub_closing.py`; the FAKE keys of `vectors_hub.json`): the held `card`, `now_ms`,

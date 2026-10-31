@@ -128,7 +128,10 @@ def where_answer(state: Path, *, extra_public: str | None = None, publish: str |
     answer: dict[str, Any] = {"addresses": entries, "name": s["name"]}
     if publish is not None:  # P02: where this hub's publish server is, so a joined workspace needs no typed address
         answer["publish"] = publish
-    return check_hub_where(answer)
+    res = check_hub_where(answer)  # validates it; the checker drops the legacy ``publish`` (§10.9.1: nobody uses it)
+    if publish is not None:  # legacy member, still sent until the signed ``publish_where`` is served (#1838 step B)
+        res["publish"] = publish
+    return res
 
 
 def origin_of(web: str) -> str:

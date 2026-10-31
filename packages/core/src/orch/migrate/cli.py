@@ -17,9 +17,10 @@ from orch.ops.errors import ERRORS, OrchError
 from orch.ops.runtime import state_dir
 
 from . import backup as backup_mod
-from .format import lock_root
+from .format import lock_root, read_format
 from .journal import restore_pending
 from .runner import Plan, apply, plan
+from .steps import CURRENT
 
 __all__ = ["main"]
 
@@ -45,6 +46,45 @@ def _workspace_roots(env: Mapping[str, str], only: str | None) -> tuple[list[tup
                 out.append((str(project), project, Layout.new_at(project).store))
     except Exception as exc:  # noqa: BLE001 - an unreadable list must not hide the host's own data
         notes.append(f"the list of workspaces could not be read ({exc}); use --workspace PATH")
+    return out, notes
+
+
+def _part_roots(env: Mapping[str, str]) -> tuple[list[tuple[str, str, Path]], list[str]]:
+    """(label, kind, data dir) of every installed part (hub, relay, publish) whose data dir exists AND has a
+    ``format.json``, and notes. The kind is the part's name. A data dir with no ``format.json`` (installed before parts
+    had a format) is no root while the code is at the baseline format: it is never migrated or backed up here, and a
+    note says how to mark it. Once the code's format is past the baseline, unmarked data is refused (OrchError), never
+    skipped. (A damaged ``format.json`` stays a root: it is refused, never skipped silently.)"""
+    from orch.install.cli import ADOPT_BASELINE_ONLY_AT
+    from orch.install.parts import PARTS
+    from orch.install.state import Layout as InstallLayout
+    from orch.install.state import load
+
+    layout = InstallLayout(env)
+    installed = load(layout).get("parts") or {}
+    out: list[tuple[str, str, Path]] = []
+    notes: list[str] = []
+    for part in PARTS:
+        data = layout.data(part)
+        if part not in installed or not data.is_dir():
+            continue
+        try:
+            marked = read_format(data, part) is not None
+        except OrchError:
+            marked = True
+        if marked:
+            out.append((f"the {part}'s data", part, data))
+        elif CURRENT[part] != ADOPT_BASELINE_ONLY_AT and any(data.iterdir()):
+            # the code's format is past the baseline: this data could be at any older shape, and a later
+            # `orch install` refuses it too. Never run the new code on it unmigrated: refuse (before the flip, or the
+            # update rolls back)
+            raise OrchError(
+                "format.missing",
+                f"the {part}'s data has no format.json, so it cannot be migrated: "
+                "restore it from a backup or remove it",
+            )
+        else:
+            notes.append(f"the {part}'s data has no format yet: run `orch install {part}` again")
     return out, notes
 
 
@@ -102,6 +142,17 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextI
     wss, notes = _workspace_roots(env, only)
     if only is None:
         targets.append(("this computer's orch data", "host", state_dir(env)))
+        try:
+            part_roots, part_notes = _part_roots(env)
+        except OrchError as exc:  # unmarked part data the code cannot adopt: nothing is migrated, in any root
+            spec = ERRORS[exc.code]
+            if as_json:
+                out.write(json.dumps({"ok": False, "code": exc.code, "message": exc.message}) + "\n")
+            else:
+                err.write(f"orch migrate: {exc.message}\n")
+            return spec.exit
+        targets.extend(part_roots)
+        notes.extend(part_notes)
     for label, project, store in wss:
         targets.append((label, "workspace", store))
         projects[label] = project

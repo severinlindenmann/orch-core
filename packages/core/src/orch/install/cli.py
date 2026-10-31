@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 import os
 import re
@@ -19,6 +20,12 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from orch import childenv
+from orch.migrate.format import lock_root, read_format, write_format
+from orch.migrate.journal import journal_path, unfinished
+from orch.migrate.steps import CURRENT
+from orch.ops.errors import OrchError
+from orch.update.engine import take_update_lock
+from orch.update.layout import InstallLayout as UpdateLayout
 from orch.wsproto import wire
 from orch.wsproto.localdial import dial_host
 
@@ -458,6 +465,116 @@ def _admin_hub(ctx: Ctx, pub: Mapping[str, Any], data: Path, action: str, hub_id
         raise InstallError(out.strip()[-200:] or "orch-publish refused")
 
 
+def _read_root_format(data: Path, part: str) -> int | None:
+    try:
+        return read_format(data, part)
+    except OrchError as exc:
+        raise InstallError(exc.message) from None
+
+
+def refuse_unfinished_update(ctx: Ctx) -> None:
+    """Install changes a part's code and data: never while an update is unfinished (its journal, or a restore, is
+    open). Called BEFORE anything is stopped, installed or written. Only a check: ``install_part`` makes it hold by
+    taking the update engine's lock first (:func:`serialized_with_update`)."""
+    if unfinished(ctx.env):
+        raise InstallError("an update was interrupted: run `orch update` to finish or roll back")
+
+
+def serialized_with_update(fn: Callable[..., dict[str, Any]]) -> Callable[..., dict[str, Any]]:
+    """Run an install under the update engine's own lock (``<data>/update.lock``): an install and an update never run
+    together. The lock is taken before the unfinished-update check and held until the install is done (so, until after
+    the part's ``format.json`` is written). A running update makes the install refuse before it touches anything."""
+
+    @functools.wraps(fn)
+    def wrapper(ctx: Ctx, part: str, **kw: Any) -> dict[str, Any]:
+        try:
+            fd = take_update_lock(UpdateLayout.of(ctx.env))
+        except OrchError as exc:
+            if exc.code != "migrate.running":
+                raise InstallError(exc.message) from exc  # the lock could not be made at all: say what it said
+            # held by `orch update` or by another install: the lock cannot tell which
+            raise InstallError("an update or install is running: wait until it is done, then run this again") from exc
+        try:
+            return fn(ctx, part, **kw)
+        finally:
+            os.close(fd)
+
+    return wrapper
+
+
+#: A data dir that has data but no ``format.json`` is adopted at the baseline (format 1) ONLY while the code's format
+#: is still that baseline. This is the pre-2.0.0 rule: dev installs made before parts had a format hold the baseline
+#: shape, and there is no legacy promise before the 2.0.0 cut. Once a part's CURRENT is raised, a dir without a marker
+#: could be at any older shape: it is refused, never guessed.
+ADOPT_BASELINE_ONLY_AT = 1
+
+
+def _unmarked_refusal(part: str) -> InstallError:
+    return InstallError(f"this {part} data has no format.json: restore it from a backup or remove it")
+
+
+def _check_root(data: Path, part: str) -> None:
+    """Refuse, before anything is stopped, a data dir this install cannot take: newer than the code, or unmarked
+    data that may not be adopted."""
+    if not data.is_dir():
+        return
+    fmt = _read_root_format(data, part)
+    if fmt is not None and fmt > CURRENT[part]:
+        raise InstallError(f"this data was made by a newer orch (format {fmt}): update orch")
+    if fmt is None and not _is_born(data) and CURRENT[part] != ADOPT_BASELINE_ONLY_AT:
+        raise _unmarked_refusal(part)
+
+
+def _is_born(data: Path) -> bool:
+    """A data dir that does not exist or is empty is fresh: it is born at the code's format. The one answer of
+    :func:`_check_root` and of ``install_part``'s ``born``, so a dir the check lets through is never refused later."""
+    return not data.exists() or not any(data.iterdir())
+
+
+class DataInUse(InstallError):
+    """The root's ``format.lock`` is still held after :data:`MARKER_WAIT`: a stale part process (or a migration)."""
+
+
+#: how long the marker write waits for the root's ``format.lock`` (seconds). A stopped part has let go of it, so a lock
+#: still held after this is a stale part process, and the install refuses.
+MARKER_WAIT = 5.0
+
+
+def _write_marker(data: Path, part: str, n: int) -> None:
+    """``format.json`` is written under the root's exclusive ``format.lock``. The lock is asked for without blocking,
+    but retried for :data:`MARKER_WAIT` seconds (a part that was just stopped may need a moment to let go of it)."""
+    deadline = time.monotonic() + MARKER_WAIT
+    while True:
+        try:
+            fd = lock_root(data, exclusive=True)
+            break
+        except OrchError as exc:
+            if exc.code != "migrate.running":
+                raise InstallError(f"the {part}'s data is in use: {exc.message}") from None
+            if time.monotonic() >= deadline:
+                raise DataInUse(f"the {part}'s data is in use: {exc.message}") from None
+            time.sleep(0.1)
+    try:
+        write_format(data, part, n)
+    finally:
+        os.close(fd)
+
+
+def _mark_root(data: Path, part: str, born: bool) -> None:
+    """The part's data dir is a migration root (``format.json``). A fresh dir is born at the code's format. An
+    existing format.json is left as it is. A dir without one is adopted at the baseline (format 1) while the code is at
+    the baseline (:data:`ADOPT_BASELINE_ONLY_AT`); later it is refused."""
+    if _read_root_format(data, part) is not None:
+        return
+    if born:
+        _write_marker(data, part, CURRENT[part])
+    elif CURRENT[part] == ADOPT_BASELINE_ONLY_AT:
+        _write_marker(data, part, ADOPT_BASELINE_ONLY_AT)
+    else:
+        raise _unmarked_refusal(part)
+
+
+@serialized_with_update
 def install_part(
     ctx: Ctx,
     part: str,
@@ -486,11 +603,39 @@ def install_part(
     explicit_publish_url = publish_url
     source = source or ctx.env.get(f"ORCH_INSTALL_SOURCE_{part.upper()}")  # a local checkout (dev machines, tests)
     lay = ctx.layout
+    refuse_unfinished_update(
+        ctx
+    )  # before anything is stopped or installed (the update lock is held: see the decorator)
     st = load(lay)
+    _check_root(lay.data(part), part)  # also before: a newer or unadoptable data dir changes nothing
+    stopped = False
     if part in st["parts"] or ctx.runner.info(part)["running"]:
         # a re-run replaces this user's own running part (its port is then free again), also when an earlier run died
         # before it recorded the part: that port is ours, not another program's
         ctx.runner.stop(part)
+        stopped = True
+
+    def mark(data: Path, born: bool) -> None:
+        """``_mark_root``; a refusal after the stop puts the old part back (it is not left stopped, unmarked), except
+        a lock that stays held: a stale holder is still running, and the old part is not started next to it (the
+        binary may be the new one already)."""
+        try:
+            _mark_root(data, part, born)
+        except DataInUse:
+            if stopped:
+                ctx.say(
+                    f"  note: the old {part} was stopped and is NOT started again: a process still holds its data. "
+                    f"Stop that process, then run `orch install {part}`"
+                )
+            raise
+        except InstallError:
+            if stopped:
+                try:
+                    ctx.runner.resume(part)
+                except Exception as exc:  # noqa: BLE001 - the refusal is the answer; the restart is best effort
+                    ctx.say(f"  note: the old {part} could not be started again ({exc}): run `orch install {part}`")
+            raise
+
     address = choose_address(ctx, address, st)
     if _is_domain(address) and address != "localhost":
         domain, address = address, P.ADDRESS_LOOPBACK  # a domain is only noted; the part listens on this computer
@@ -517,6 +662,7 @@ def install_part(
     binary = lay.bin / spec.binary
     data = lay.data(part)
     data.mkdir(parents=True, exist_ok=True, mode=0o700)
+    born = _is_born(data)  # a fresh (or empty) data dir: it is born at the code's format
     pubs = st["parts"].get("publish")
     rels = st["parts"].get("relay")
     if part == "hub":
@@ -536,11 +682,17 @@ def install_part(
             if rc != 0:
                 shutil.rmtree(data, ignore_errors=True)  # a half-made key store would refuse the next try
                 raise InstallError(f"orch-hub keys init failed:\n{out.strip()[-600:]}")
+            # right after a successful init (rc 0): a crash before this line leaves a dir without a marker, which the
+            # next install handles as unmarked data (adopted at the baseline, else refused), never as a marked root
+            # TODO(#1263): run the init in a staging dir, write the marker there, then rename it into place (a crash
+            # between the init and the marker is only acceptable while the hub's CURRENT is the baseline)
+            mark(data, born)
         token = (st["parts"].get("hub") or {}).get("setup_token") or ctx.token()
         if fresh:  # the hub's console reads this file once: the first-admin page consumes it
             tf = data / "setup-token"
             tf.write_text(token + "\n")
             tf.chmod(0o600)
+    mark(data, born)  # the hub is marked already (after its key init: that needs an empty folder)
     if part == "hub":
         write_hub_settings(
             data,
@@ -571,7 +723,10 @@ def install_part(
     )
     log = lay.logs / f"{part}.log"
     started = ctx.runner.start(
-        part, argv, P.env_for(part, data, behind_edge=behind_edge, trusted_proxy=trusted_proxy), log
+        part,
+        argv,
+        P.env_for(part, data, behind_edge=behind_edge, trusted_proxy=trusted_proxy, journal=journal_path(ctx.env)),
+        log,
     )
     # a part on every interface is dialled on loopback (a computer cannot dial its own overlay IP). A part that binds
     # exactly one address (the server role: the VPN IP) answers ONLY there: probe that address, never 127.0.0.1.
@@ -949,6 +1104,7 @@ def full_server(
     out: dict[str, dict[str, Any]] = {}
     if not parts:  # a workspace-only setup installs no part, so it has no address to ask for
         return out
+    refuse_unfinished_update(ctx)  # before anything is stopped, for every part
     check_block(ctx, parts)
     st = load(ctx.layout)
     address = choose_address(ctx, address, st)

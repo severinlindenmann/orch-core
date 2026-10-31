@@ -512,8 +512,31 @@ def _read(call: Call, op: str, args: dict[str, Any]) -> dict[str, Any]:
         if op == "share.rules":
             shown = [r for r in st.rules if not _is_full(call.service) or r["kind"] in S.TICKET_KINDS]
             rules = [{**r, "count": len(_select(call.service, [r], facts)), "describes": S.describe(r)} for r in shown]
+            keys = {f.uid: f.key for f in facts}
+            known = st.sent if st.confirmed is None else st.confirmed
+            states = {}
+            priority = {"refused": 0, "not_sent": 1, "waiting": 2, "sent": 3}
+            selected = _select(call.service, st.rules, facts)
+            for item in selected:
+                if item.ticket_uid not in keys or item.logical in st.withdrawn:
+                    continue
+                # sync stores this same content/f1/audience digest after a successful put.
+                if (st.sent.get(item.logical) or {}).get("digest") == item.digest:
+                    state = "sent"
+                elif item.logical in st.refused:
+                    code = st.refused[item.logical]["code"]
+                    code = code if code in S.ITEM_REFUSALS | {"unknown_user", "other_person"} else "unknown"
+                    state = "refused:" + code
+                elif item.logical not in known:
+                    state = "not_sent"
+                else:
+                    state = "waiting"
+                key = keys[item.ticket_uid]
+                if priority[state.split(":")[0]] < priority[states.get(key, "sent").split(":")[0]] or key not in states:
+                    states[key] = state
             return ok_result({"rules": rules, "shared": len(st.sent), "withdrawn": sorted(st.withdrawn),
-                              "refused_items": st.refused_items()})  # fmt: skip
+                              "refused_items": st.refused_items(), "tickets_state": states,
+                              "not_sent_count": sum(v == "not_sent" for v in states.values())})  # fmt: skip
         add = S.normalize_rule(args["add"]) if "add" in args else None
         if add is not None:
             _full_rules_only(call.service, add)

@@ -269,8 +269,8 @@ def test_a_commit_that_fails_is_tried_again_with_a_fresh_request_twice_then_the_
     def call(target, op, args, env):
         rec.calls.append((op, args))
         if op == "app.send":
-            return {"app_id": "a" * 32, "version": 1, "uploaded": True, "live": False,
-                    "commit": {"request_id": "cr_" + "1" * 32, "app_id": "a" * 32, "op": "commit", "version": 1}}  # fmt: skip
+            first = {"request_id": "cr_" + "1" * 32, "app_id": "a" * 32, "op": "commit", "version": 1}
+            return {"app_id": "a" * 32, "version": 1, "uploaded": True, "live": False, "commit": first}
         if op == "app.commit_request":
             state["requests"] += 1
             return {"request_id": "cr_" + str(state["requests"]) * 32, "app_id": "a" * 32, "op": "commit", "version": 1}

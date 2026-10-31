@@ -19,7 +19,9 @@ from publish_helpers import (
 from orch_hub.contract import hub as H
 from orch_hub.contract.canon import b64u
 from orch_hub.contract.hub import Refused
+from orch_hub.link.framing import MAX_FRAME
 from orch_hub.publish import HubPublish, PublishConfig, PublishSyncError
+from orch_hub.publish.forwarder import MAX_REQUEST_BODY
 
 WS = "11" * 16
 
@@ -153,6 +155,22 @@ def test_oversize_body_refused(tmp_path, up):
     with pytest.raises(Refused) as x:
         fw.forward(WS, host_request(new_wsk(), hub.hub_id, WS, method="PUT", body=b"12345"))
     assert x.value.code == "malformed"
+
+
+def test_max_request_body_follows_the_link_frame_cap():
+    # the body arrives hex-encoded inside one link frame: twice the body can never exceed the frame
+    assert MAX_REQUEST_BODY == MAX_FRAME // 2
+    assert MAX_REQUEST_BODY * 2 <= MAX_FRAME
+    assert PublishConfig("http://x", HOST).max_request_body == MAX_REQUEST_BODY
+
+
+def test_body_one_over_the_cap_is_refused_and_the_cap_itself_is_not(env):
+    big = host_request(env.wsk, env.hub.hub_id, WS, method="PUT", body=b"x" * (MAX_REQUEST_BODY + 1))
+    with pytest.raises(Refused) as x:
+        env.fw.forward(WS, big)
+    assert x.value.code == "malformed" and env.up.requests == []
+    ok = host_request(env.wsk, env.hub.hub_id, WS, method="PUT", body=b"x" * MAX_REQUEST_BODY)
+    assert env.fw.forward(WS, ok)["status"] == 200
 
 
 def test_redirects_are_returned_not_followed(env):

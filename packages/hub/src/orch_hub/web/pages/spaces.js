@@ -6,7 +6,8 @@ import { emptyState, loading } from "../feel.js";
 import { chip, h, text, when, withNames } from "../ui.js";
 
 export const STATEMENT = "The hub and its admins can read this space.";
-export const NO_START = "This workspace shares only selected items, so it can't start a space. Tick a workspace that joins now. You can add the others later, once their owners accept.";
+export const NO_START = "None of your workspaces can start a space yet. A workspace that shares only selected items can join later, once its owner accepts.";
+export const LATER = "Can join later, once its owner accepts";
 export const RESTORE_LINE = "To get an older version back, restore it from the workspace.";
 const TYPES = [["wiki", "Wiki", "Pages people write together"], ["files", "Files", "Documents everyone starts from"], ["board", "Board", "Cards that move from planned to done"]];
 const typeName = (t) => (TYPES.find((x) => x[0] === t) ?? [t, ""])[1];
@@ -35,7 +36,7 @@ export function historyView(data, now = Date.now()) {
     names.map((n) => h("section", {}, h("h4", { text: text(n.name) }), (n.versions ?? []).map(version))),
     removed.length ? h("section", {}, h("h4", { text: "Removed" }),
       removed.map((r) => h("div", { class: "list-row row" }, chip("removed"), h("span", { class: "small muted", text: r.author ? "put by " + text(r.author) : "" })))) : null,
-    h("p", { class: "small muted", text: "person / agent is what the workspace says about who made the change; the hub cannot check it." }),
+    names.length || removed.length ? h("p", { class: "small muted", text: "person / agent is what the workspace says about who made the change; the hub cannot check it." }) : null,
     h("p", { class: "small", text: RESTORE_LINE }));
 }
 
@@ -49,21 +50,21 @@ export function newSpaceDialog(workspaces, done, close) {
   const tick = h("input", { type: "checkbox", id: "space-understood", "aria-label": "I understand" });
   const create = h("button", { type: "button", class: "pri", text: "Create" });
   const next = h("button", { type: "button", class: "pri", text: "Next" });
-  // The hub adds only 'full' workspaces now; a 'selective' one waits for its owner. A space needs at least one that joins now.
+  // The hub adds only 'full' workspaces now; a 'selective' one waits for its owner and cannot be ticked. A space needs at
+  // least one that joins now, so when none can, the reason is said up front.
   const joinsNow = () => workspaces.some((w) => w.mode === "full" && form.members.has(w.workspace_id));
+  const cannotStart = workspaces.length > 0 && !workspaces.some((w) => w.mode === "full");
   const noStart = h("p", { class: "banner warn", id: "space-no-start", role: "note", text: NO_START });
   const ready = () => {
-    const stuck = form.members.size > 0 && !joinsNow();
-    noStart.hidden = !stuck;
+    noStart.hidden = !cannotStart;
     create.disabled = !(form.understood === true && joinsNow());
-    if (stuck) create.setAttribute("aria-describedby", "space-no-start"); else create.removeAttribute("aria-describedby");
+    if (cannotStart) create.setAttribute("aria-describedby", "space-no-start"); else create.removeAttribute("aria-describedby");
   };
   tick.addEventListener("change", () => { form.understood = tick.checked === true; ready(); });
   nameIn.addEventListener("input", () => { form.name = nameIn.value; });
   purposeIn.addEventListener("input", () => { form.purpose = purposeIn.value; });
   const back = () => { step = Math.max(1, step - 1); draw(); };
   next.addEventListener("click", () => {
-    if (step === 1 && !form.type) return;
     if (step === 2) { form.name = nameIn.value ?? ""; form.purpose = purposeIn.value ?? ""; if (!form.name.trim()) return; }
     step += 1; draw();
   });
@@ -77,23 +78,28 @@ export function newSpaceDialog(workspaces, done, close) {
       1: [h("p", { text: "What kind of space is it?" }), ...TYPES.map(([t, label, hint]) => {
         const b = h("button", { type: "button", class: "space-type" + (form.type === t ? " on" : ""), "data-type": t, "aria-pressed": String(form.type === t) },
           h("b", { text: label }), h("span", { class: "small muted", text: " " + hint }));
-        b.addEventListener("click", () => { form.type = t; draw(); });
+        b.addEventListener("click", () => { form.type = t; step = 2; draw(); });
         return h("div", { class: "list-row" }, b);
       })],
       2: [h("label", {}, "Name", nameIn), h("label", {}, "What is it for? (optional)", purposeIn)],
       3: [h("p", { text: "Which workspaces use it?" }),
         ...(workspaces.length ? workspaces.map((w) => {
+          const joins = w.mode === "full";
           const box = h("input", { type: "checkbox", "aria-label": nameOf(w) });
-          box.checked = form.members.has(w.workspace_id);
-          box.addEventListener("change", () => { box.checked ? form.members.add(w.workspace_id) : form.members.delete(w.workspace_id); ready(); });
-          return h("label", { class: "check" }, box, h("span", { class: "grow", text: nameOf(w) }),
-            h("span", { class: "small muted", text: w.mode === "full" ? "joins now" : "shares only selected items" }));
+          if (joins) {
+            box.checked = form.members.has(w.workspace_id);
+            box.addEventListener("change", () => { box.checked ? form.members.add(w.workspace_id) : form.members.delete(w.workspace_id); ready(); });
+          } else {
+            box.disabled = true;
+          }
+          return h("label", { class: "check" + (joins ? "" : " disabled") }, box, h("span", { class: "grow", text: nameOf(w) }),
+            h("span", { class: "small muted", text: joins ? "joins now" : LATER }));
         }) : [h("p", { class: "small muted", text: "No workspace is connected yet." })]),
         noStart,
         h("label", { class: "check" }, tick, h("span", { text: "I understand: " + STATEMENT }))],
     };
     body.replaceChildren(h("h1", { text: "New shared space (step " + step + " of 3)" }), ...steps[step],
-      h("div", { class: "row" }, cancel, step > 1 ? h("button", { type: "button", text: "Back", onclick: back }) : null, step < 3 ? next : create));
+      h("div", { class: "row" }, cancel, step > 1 ? h("button", { type: "button", text: "Back", onclick: back }) : null, step === 2 ? next : step === 3 ? create : null));
     if (step === 3) ready();
   }
   draw();

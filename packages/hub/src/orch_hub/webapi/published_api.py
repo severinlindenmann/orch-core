@@ -139,7 +139,13 @@ class PublishedHandlers:
             n = reg.display_name(ws)
             return render_text(n) if type(n) is str and n else fallback.get(ws, "A workspace")
 
-        hidden = [{"workspace_id": ws, "name": name(ws)} for ws in sorted(reg.pins()) if reg.mode(ws) == "selective"]
+        people = {u["user_id"]: render_text(u["name"]) for u in self.d.access.users() if type(u.get("name")) is str}
+        # owner_name: who to ask (the registry's owner alias, a known person) or None; rendered text, never an id
+        hidden = [
+            {"workspace_id": ws, "name": name(ws), "owner_name": people.get(reg.owner_alias(ws))}
+            for ws in sorted(reg.pins())
+            if reg.mode(ws) == "selective"
+        ]
 
         def seq(ws: str) -> Any:
             st = reg.binding_state(ws)

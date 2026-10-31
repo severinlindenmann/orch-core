@@ -14,6 +14,7 @@ import pytest
 
 from orch.canon.jcs import dumps, loads_strict
 from orch.crypto.encoding import b64u, unb64u
+from orch.hubclient.netconfig import NetSettings
 from orch.remoteclient import Client, ClientError, Store
 from orch.remoteclient import presence as P
 from orch.remoteclient.hubconn import dial
@@ -92,7 +93,13 @@ def make_client(world, hub, tmp_path, *, presence=None, batch_window=0.2) -> tup
             "presence_ref": "a" * 32, "transport_pub": b64u(RP.xpub(world.dev.s)), "added_ms": 1,
         },
     )  # fmt: skip
-    c = Client(st, presence=pres, connector=lambda h, p, s: dial(h, p, s), batch_window=batch_window)
+    c = Client(
+        st,
+        presence=pres,
+        connector=lambda h, p, s: dial(h, p, s, net=NetSettings()),
+        batch_window=batch_window,
+        net=NetSettings(),
+    )
     return c, pres, st
 
 
@@ -341,7 +348,7 @@ def test_enrollment_end_to_end_six_words_then_added(world, hub, human, served, t
     st = Store(tmp_path / "rc2")
     st.set_hub(origin="http://hub.test", link=hub.addr, hub_id=hub.hub_id, spki=hub.spki)
     st.set_token(hub.token("ann"), 2**50)
-    c = Client(st, presence=pres, connector=lambda h, p, s: dial(h, p, s))
+    c = Client(st, presence=pres, connector=lambda h, p, s: dial(h, p, s, net=NetSettings()), net=NetSettings())
     code = ok(call(served, "remote.code"))["data"]
     assert c.enroll is not None
     words: list[str] = []
@@ -381,7 +388,7 @@ def test_cancelling_an_enrollment_ends_the_stream_and_adds_nothing(world, hub, h
     st = Store(tmp_path / "rc3")
     st.set_hub(origin="http://hub.test", link=hub.addr, hub_id=hub.hub_id, spki=hub.spki)
     st.set_token(hub.token("ann"), 2**50)
-    c = Client(st, presence=pres, connector=lambda h, p, s: dial(h, p, s))
+    c = Client(st, presence=pres, connector=lambda h, p, s: dial(h, p, s, net=NetSettings()), net=NetSettings())
     code = ok(call(served, "remote.code"))["data"]
     words: list[str] = []
     cancel = threading.Event()

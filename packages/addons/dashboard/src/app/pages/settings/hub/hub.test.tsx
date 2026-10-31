@@ -163,6 +163,21 @@ describe('the hub admin asks for an update (HUB-WS-04)', () => {
   })
 })
 
+describe('the hub is being removed (#1463)', () => {
+  it('shows only our own words and Leave opens the normal leave review', async () => {
+    const view = hubPage('closing', '/w/DEMO')
+    const banner = await screen.findByTestId('hub-closing-banner', {}, T)
+    expect(within(banner).getByText('Your company hub is being removed.')).toBeTruthy()
+    await view.user.click(within(banner).getByTestId('hub-leave-closing'))
+    expect(await screen.findByText('Leave the hub', {}, T)).toBeTruthy()
+    expect(screen.queryByText('Leave without the hub')).toBeNull()
+    cleanup()
+    hubPage('full', '/w/DEMO')
+    await screen.findByTestId('hub-chip', {}, T)
+    expect(screen.queryByTestId('hub-closing-banner')).toBeNull()
+  })
+})
+
 describe('stopping sharing one ticket', () => {
   it('reviews what stops and offers one Stop sharing button: no terminal command, no typed word, no backup key', async () => {
     const view = hubPage('selective')
@@ -338,7 +353,7 @@ describe('by click (#1198 C11)', () => {
     expect(screen.getByTestId('hub-link-details').textContent).toContain('9f3c1ab277de40c8aa11bb22cc33dd44')
     await view.user.click(within(screen.getByTestId('hub-link-details')).getByText('Details'))
     await waitFor(() => expect(screen.getByTestId('hub-link-details').textContent).not.toContain('9f3c1ab277de40c8aa11bb22cc33dd44'), T)
-    expect(screen.getByTestId('hub-link-hub').textContent).not.toContain('Only what I choose')
+    expect(screen.getByTestId('hub-link-hub').textContent).toContain('Only what I choose') // both choices are visible at once
     expect(screen.queryByText(/Notes that need your attention and full questions are always shared/)).toBeNull() // the long mode text is behind the i of the mode choice
     expect(screen.queryByText(/Review it here/)).toBeNull()
     expect(screen.queryByTestId('hub-card-text')).toBeNull() // no card file, no separate invite, no mode step
@@ -357,7 +372,6 @@ describe('by click (#1198 C11)', () => {
     const view = hubPage('standalone')
     await view.user.click(await screen.findByTestId('hub-connect', {}, T))
     await pasteLink()
-    await view.user.click(await screen.findByTestId('hub-mode-other', {}, T))
     await view.user.click(await screen.findByTestId('hub-mode-full', {}, T))
     const btn = await screen.findByRole('button', { name: 'Connect' }, T)
     expect(screen.queryByTestId('hub-backup-input')).toBeNull()

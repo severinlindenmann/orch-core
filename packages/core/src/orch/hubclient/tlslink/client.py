@@ -29,6 +29,8 @@ from orch.canon.jcs import dumps as cj
 from orch.crypto import suite
 from orch.crypto.encoding import EncodingError, b64u, unb64u, unhex
 
+from ..linkaddr import LinkAddr
+from ..netconfig import NetSettings
 from . import framing, tls
 from .framing import FrameError
 from .tls import LinkClosed, LinkTimeout, PinMismatch
@@ -54,7 +56,8 @@ HV = 0
 #: stream router only and accepts on it stream frames, ``stream_open`` replies and ``hub_where``; a plain link never
 #: carries streams.
 STREAM_LINK_ALPN = b"orch-link-streams/1"
-#: Most h2w requests (``route_in``, ``event_deliver``) kept per queue while the host drains only the other one.
+#: Most h2w requests (``route_in``, ``event_deliver``, ``closing_notice``) kept per queue while the host drains
+#: only the other ones.
 MAX_QUEUED = 64
 LINK_WINDOW_MS = 120_000
 MODES = ("selective", "full")
@@ -65,6 +68,7 @@ W2H_OPS: dict[str, str | None] = {
     "binding_put": None,
     "snapshot_get": None,
     "org_skills_get": None,
+    "closing_get": None,  # #1463 (hub protocol 9.7): {} -> {"closing": <hub.closing> | null}
     "mcp_servers_get": None,
     "org_secrets_get": None,
     "secret_use": None,
@@ -92,13 +96,38 @@ W2H_OPS: dict[str, str | None] = {
     "directory_get": None,
     "audience_get": None,
     "shared_get": None,
-    "share_put": "selective",
-    "share_revoke": "selective",
+    "share_put": None,
+    "share_revoke": None,
     "wk_seal": "full",
     "log_sync": "full",
 }
+NAME_MAX, KIND_MAX = 64, 32
+
+
+def space_list_reply_ok(b: dict[str, Any]) -> bool:
+    """``{"spaces": [hub.space], "meta": {space_id: {"name", "kind"}}}``: ``meta`` only names listed spaces and each
+    value is exactly name and kind, short printable strings (unsigned display data; vectors_space_list.json)."""
+    if set(b) != {"spaces", "meta"} or type(b["spaces"]) is not list or type(b["meta"]) is not dict:
+        return False
+    ids = set()
+    for r in b["spaces"]:
+        o = r.get("o") if type(r) is dict else None
+        sid = o.get("space_id") if type(o) is dict else None
+        if type(sid) is not str:
+            return False
+        ids.add(sid)
+    for sid, m in b["meta"].items():
+        if sid not in ids or type(m) is not dict or set(m) != {"name", "kind"}:
+            return False
+        for k, cap in (("name", NAME_MAX), ("kind", KIND_MAX)):
+            v = m[k]
+            if type(v) is not str or len(v) > cap or not v.isprintable():
+                return False
+    return True
+
+
 _REPLY: dict[str, Callable[[dict[str, Any]], bool]] = {
-    "space_list": lambda b: set(b) == {"spaces"} and type(b["spaces"]) is list,
+    "space_list": lambda b: space_list_reply_ok(b),
     "space_put": lambda b: set(b) == {"seq"} and type(b["seq"]) is int,
     "space_revoke": lambda b: set(b) == {"seq"} and type(b["seq"]) is int,
     "space_get": lambda b: (
@@ -162,6 +191,7 @@ _REPLY: dict[str, Callable[[dict[str, Any]], bool]] = {
     "audience_get": lambda b: set(b) == {"people", "teams"} and type(b["people"]) is list and type(b["teams"]) is list,
     "directory_get": lambda b: set(b) == {"entries"} and type(b["entries"]) is list,
     "org_skills_get": lambda b: set(b) == {"bundle"} and type(b["bundle"]) is dict,
+    "closing_get": lambda b: set(b) == {"closing"} and (b["closing"] is None or type(b["closing"]) is dict),
     "mcp_servers_get": lambda b: set(b) == {"bundle"} and type(b["bundle"]) is dict,
     "org_secrets_get": lambda b: set(b) == {"bundle"} and type(b["bundle"]) is dict,
     "log_sync": lambda b: set(b) == {"seq", "head"} and type(b["seq"]) is int and type(b["head"]) is str,
@@ -282,6 +312,8 @@ class LinkClient:
         self._pending: dict[str, Any] | None = None  # the handed-out one, awaiting its ack
         self._events: list[dict[str, Any]] = []  # verified h2w ``event_deliver`` requests (custodial events, p4)
         self._pending_ev: dict[str, Any] | None = None
+        self._closings: list[dict[str, Any]] = []  # verified h2w ``closing_notice`` requests (#1463, protocol 9.7)
+        self._pending_cn: dict[str, Any] | None = None
         self._streams: list[dict[str, Any]] = []  # verified h2w stream_open / stream_data / stream_close (R2)
         self._overflow: list[str] = []  # streams that lost an h2w frame to a full queue (F3)
         self._open_reqs: set[int] = set()  # handed-out stream_open requests (by h2w seq) awaiting their answer
@@ -304,8 +336,13 @@ class LinkClient:
         max_frame: int = framing.MAX_FRAME,
         now_ms: Callable[[], int] = lambda: int(time.time() * 1000),
         alpn: bytes | None = None,
+        addr: LinkAddr | None = None,
+        net: NetSettings,
     ) -> LinkClient:
-        """Open and authenticate. ``alpn``: the link's declared role (``STREAM_LINK_ALPN``); the hub must select it,
+        """Open and authenticate. ``host``/``port`` are where to connect (a checked IP for a name); ``addr`` is the
+        parsed address (``ws(s)://`` forms included) that names the transport and the server name, ``net`` the host's
+        proxy settings (:func:`~orch.hubclient.tlslink.tls.dial_link`).
+        ``alpn``: the link's declared role (``STREAM_LINK_ALPN``); the hub must select it,
         else the link is closed (``LinkError("unsupported")``): it is never used as a plain link.
         ``wsk_pub`` is passed only for the first link of a join (the hub has not pinned the workspace yet);
         otherwise leave it ``None``. Raises ``PinMismatch`` before anything is sent when the hub's certificate is
@@ -317,7 +354,11 @@ class LinkClient:
         def left() -> float:
             return max(end - time.monotonic(), 0.001)
 
-        conn = tls.connect_pinned(host, port, tls_spki_sha256, timeout=timeout, alpn=(alpn,) if alpn else ())
+        a = addr or LinkAddr("tcp", host, port, f"{host}:{port}")
+        conn = tls.dial_link(
+            a, tls_spki_sha256, timeout=timeout, alpn=(alpn,) if alpn else (), net=net,
+            connect_host=host if host != a.host else None,
+        )  # fmt: skip
         try:
             if alpn is not None and conn.alpn() != alpn:
                 raise LinkError("unsupported")
@@ -434,6 +475,10 @@ class LinkClient:
             if set(body) != {"log", "event"} or type(body["log"]) is not str or type(body["event"]) is not dict:
                 raise LinkError("malformed")
             queue = self._events
+        elif o["op"] == "closing_notice":
+            if set(body) != {"notice"} or type(body["notice"]) is not dict:
+                raise LinkError("malformed")
+            queue = self._closings
         elif o["op"] in STREAM_H2W:
             if not stream_body_ok(o["op"], body):
                 raise LinkError("malformed")
@@ -571,6 +616,63 @@ class LinkClient:
                 raise
             self._seq = n
             self._pending_ev = None
+
+    # --- closing_notice (h2w; protocol 9.7, 10.2, #1463) -----------------------------------------------------------
+
+    def next_closing_notice(self, wait: float = 0.0) -> dict[str, Any] | None:
+        """The next ``hub.closing`` notice the hub pushes (the signed object, NOT yet verified: the link checked the
+        hub's link signature and the body shape only), or ``None`` within ``wait`` seconds. At most one is outstanding:
+        call :meth:`ack_closing_notice` once the host verified or refused it."""
+        with self._lock:
+            if not self._open:
+                raise LinkClosed("closed")
+            if self._pending_cn is not None:
+                raise LinkError("malformed")  # a caller bug: the last one was never acknowledged
+            try:
+                if not self._closings:
+                    if not self._c.wait_readable(wait):
+                        return None
+                    frame = framing.read_frame(self._c, timeout=self._t, max_bytes=self._max)
+                    if frame.get("t") == "error":
+                        raise LinkError(_code(frame.get("error")))
+                    if not self._take_push(frame):
+                        raise LinkError("malformed")
+                    if not self._closings:
+                        return None  # another kind of push: its own next_* hands it out
+                self._pending_cn = self._closings.pop(0)
+                return self._pending_cn["body"]["notice"]  # type: ignore[no-any-return]
+            except FrameError:
+                self.close()
+                raise LinkError("malformed") from None
+            except (LinkError, LinkClosed, LinkTimeout):
+                self.close()
+                raise
+
+    def ack_closing_notice(self, error: str | None = None) -> None:
+        """Answer the outstanding ``closing_notice`` (a w2h reply: same op, ``re`` = its seq, body ``{}`` or
+        ``{"error": code}``)."""
+        with self._lock:
+            if not self._open or self._sign is None:
+                raise LinkClosed("closed")
+            if self._pending_cn is None:
+                raise LinkError("malformed")
+            if error is not None and not (type(error) is str and 0 < len(error) <= 40):
+                raise LinkError("malformed")
+            n = self._seq + 1  # taken only once the frame was written: a failed ack never skips a number
+            o = {
+                "v": 2, "suite": suite.SUITE_ID, "kind": "hub.link", "hv": HV, "hub_id": self.hub_id,
+                "workspace_id": self.workspace_id, "dir": "w2h", "seq": n, "ts_ms": self._now(),
+                "op": "closing_notice", "re": self._pending_cn["seq"],
+                "body": {} if error is None else {"error": error},
+            }  # fmt: skip
+            try:
+                signed = {"o": o, "sig": b64u(self._sign(link_signed_bytes(SIG_LINK, self._cb, o)))}
+                framing.write_frame(self._c, signed, timeout=self._t, max_bytes=self._max)
+            except BaseException:  # fail closed: any failure to sign or write (a signer error too) ends the link
+                self.close()
+                raise
+            self._seq = n
+            self._pending_cn = None
 
     # --- stream_open / stream_data / stream_close (h2w remote access streams; protocol 10.2c) ----------------------
 

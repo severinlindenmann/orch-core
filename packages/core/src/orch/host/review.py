@@ -93,6 +93,7 @@ HOST_PERSON_OPS: dict[str, frozenset[str]] = {
     # H12c-e (11A.15.10 item 12): the paired phone's device.added, with its own material kind
     # P5: a person's signature over the exact words of one staged share (a log.added note on its ticket)
     "publish.share": frozenset({"log.added"}),
+    "app.release": frozenset({"log.added"}),  # #1457: a person's signature over the exact words of one app release
     # V3 C2a (hub contract 9.1): the owner's record that the workspace joined a hub selectively, or left it
     "hub.join": frozenset({"hub.joined"}),
     "hub.mode": frozenset({"hub.joined"}),  # V3 C2b: selective to full, the owner's own signature

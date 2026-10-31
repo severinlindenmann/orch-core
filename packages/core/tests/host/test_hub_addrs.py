@@ -15,6 +15,7 @@ import pytest
 from orch.crypto import suite
 from orch.host import hubaddr, hubops
 from orch.hubclient import HubLink, HubRefused, HubState, connectlink, wire
+from orch.hubclient.netconfig import NetSettings
 from orch.hubclient.tlsadapter import FailoverTransport, TlsTransport
 from tests.host import human_helpers
 from tests.host.dispatch_helpers import SESSION, ok
@@ -225,8 +226,8 @@ def test_a_workspace_connects_on_a_stored_address_when_the_current_one_is_dead()
             tls_spki_sha256=hub.spki, hub_id=hub.hub_id, workspace_id=hub.workspace_id,
             hk_op_pub=hub.hk_op_pub, wsk_pub=suite.public_bytes(wsk), sign=lambda m: suite.sign(wsk, m), timeout=3.0,
         )  # fmt: skip
-        dead = TlsTransport(addr="127.0.0.1:1", **kw)
-        live = TlsTransport(addr=f"127.0.0.1:{hub.port}", **kw)
+        dead = TlsTransport(addr="127.0.0.1:1", **kw, net=NetSettings())
+        live = TlsTransport(addr=f"127.0.0.1:{hub.port}", **kw, net=NetSettings())
         link = HubLink(
             FailoverTransport([dead, live]), hub_id=hub.hub_id, workspace_id=hub.workspace_id,
             hk_op_pub=hub.hk_op_pub, sign=lambda m: suite.sign(wsk, m), mode="selective", now_ms=lambda: _now(),
@@ -248,19 +249,19 @@ def test_the_real_handshake_probe_needs_the_held_pin():
     hub = TlsHub(wsk_pub=suite.public_bytes(wsk)).start()
     try:
         addr = f"127.0.0.1:{hub.port}"
-        assert hubaddr.handshake_ok(addr, hub.spki, allow_loopback=True) is True
+        assert hubaddr.handshake_ok(addr, hub.spki, allow_loopback=True, net=NetSettings()) is True
         other = TlsHub(wsk_pub=suite.public_bytes(wsk)).start()
         try:
             assert (
-                hubaddr.handshake_ok(addr, other.spki, allow_loopback=True) is False
+                hubaddr.handshake_ok(addr, other.spki, allow_loopback=True, net=NetSettings()) is False
             )  # another certificate than the pin
         finally:
             other.close()
         assert (
-            hubaddr.handshake_ok(addr, None) is False
-            and hubaddr.handshake_ok("127.0.0.1:1", hub.spki, allow_loopback=True) is False
+            hubaddr.handshake_ok(addr, None, net=NetSettings()) is False
+            and hubaddr.handshake_ok("127.0.0.1:1", hub.spki, allow_loopback=True, net=NetSettings()) is False
         )
-        assert hubaddr.handshake_ok("not an address", hub.spki) is False
+        assert hubaddr.handshake_ok("not an address", hub.spki, net=NetSettings()) is False
     finally:
         hub.close()
 
@@ -391,10 +392,12 @@ def test_a_name_is_resolved_once_and_the_checked_ip_is_the_one_dialled(monkeypat
     answers = iter(["10.0.0.7", "169.254.169.254"])  # a second lookup would give the metadata address
     monkeypatch.setattr(hubaddr.socket, "getaddrinfo", lambda *a, **k: [(0, 0, 0, "", (next(answers), 0))])
     probe.live = {"10.0.0.7:8105"}
-    assert hubaddr.handshake_ok("hub.example:8105", PIN) is True
+    assert hubaddr.handshake_ok("hub.example:8105", PIN, net=NetSettings()) is True
     assert probe.calls == [("10.0.0.7:8105", PIN)]  # the IP, not the name
     monkeypatch.setattr(hubaddr.socket, "getaddrinfo", lambda *a, **k: [(0, 0, 0, "", ("169.254.169.254", 0))])
-    assert hubaddr.handshake_ok("evil.example:8105", PIN) is False and len(probe.calls) == 1  # refused before dialling
+    assert (
+        hubaddr.handshake_ok("evil.example:8105", PIN, net=NetSettings()) is False and len(probe.calls) == 1
+    )  # refused before dialling
 
 
 def test_a_failed_address_is_not_tried_again_within_an_hour_and_the_hub_learns_nothing(
@@ -411,6 +414,7 @@ def test_a_failed_address_is_not_tried_again_within_an_hour_and_the_hub_learns_n
     assert set(ops) <= {
         "snapshot_get",
         "hub_where",
+        "closing_get",  # #1463: asked next to hub_where on every refresh
         "status_put",
         "profile_put",
         "error",
@@ -430,14 +434,14 @@ def test_a_name_that_turns_into_the_metadata_address_after_the_probe_is_refused_
     try:
         answers = {"ip": "10.0.0.7"}
         monkeypatch.setattr(hubaddr.socket, "getaddrinfo", lambda *a, **k: [(0, 0, 0, "", (answers["ip"], 0))])
-        check = hubaddr.dial_resolver("10.0.0.1:8105")
+        check = hubaddr.dial_resolver("10.0.0.1:8105", net=NetSettings())
         assert check("hub.example") == "10.0.0.7"  # at probe time the name is fine
         answers["ip"] = "169.254.169.254"  # ... and later it is not
         kw = dict(
             tls_spki_sha256=hub.spki, hub_id=hub.hub_id, workspace_id=hub.workspace_id, hk_op_pub=hub.hk_op_pub,
             wsk_pub=suite.public_bytes(wsk), sign=lambda m: suite.sign(wsk, m), timeout=3.0,
         )  # fmt: skip
-        t = TlsTransport(addr="hub.example:8105", resolve=check, **kw)
+        t = TlsTransport(addr="hub.example:8105", resolve=check, **kw, net=NetSettings())
         with pytest.raises(OSError):
             t.ensure_open("status_put")  # refused before any connection
         assert hub.auth_frames == []
@@ -503,7 +507,7 @@ def test_the_policy_applies_to_the_current_address_at_every_dial(monkeypatch):
     from types import SimpleNamespace
 
     _no_dial(monkeypatch)
-    service = SimpleNamespace(workspace_id="w" * 32, clock=lambda: 0.0)
+    service = SimpleNamespace(workspace_id="w" * 32, clock=lambda: 0.0, state_dir="/nonexistent-state")
     link = {"addr": "hub.example:8105", "spki": PIN, "hk_op": b"", "wsk_pub": b"", "sign": lambda m: b""}
     t = hubops._transport(service, HUB_ID, link)  # noqa: SLF001
     with pytest.raises(OSError, match="refused by policy"):
@@ -522,7 +526,7 @@ def test_the_peer_link_applies_the_policy_to_the_current_address_too(monkeypatch
     )  # fmt: skip
     monkeypatch.setattr(peerops, "_hub_state", lambda service, full: state)
     monkeypatch.setattr(hubops, "_wsk_sign", lambda service: (b"", lambda m: b""))
-    service = SimpleNamespace(workspace_id="w" * 32, clock=lambda: 0.0)
+    service = SimpleNamespace(workspace_id="w" * 32, clock=lambda: 0.0, state_dir="/nonexistent-state")
     with pytest.raises(OSError, match="refused by policy"):
         peerops._open_link(service)  # noqa: SLF001
 
@@ -530,7 +534,7 @@ def test_the_peer_link_applies_the_policy_to_the_current_address_too(monkeypatch
 def test_old_failures_are_forgotten(probe):
     st = SimpleNamespace_state()
     hubaddr._FAILED[("s", "10.9.9.9:1")] = hubaddr.time.monotonic() - hubaddr.FAIL_BACKOFF_S - 1  # noqa: SLF001
-    hubaddr._probe_new("s", st, [])  # noqa: SLF001
+    hubaddr._probe_new("s", st, [], NetSettings())  # noqa: SLF001
     assert ("s", "10.9.9.9:1") not in hubaddr._FAILED  # noqa: SLF001
 
 

@@ -197,6 +197,7 @@ def register(app: FastAPI, gateway: Gateway) -> None:
                     "state": state,
                     "needs": setting,
                     "set_up": set_up,
+                    "suggest": suggested_publish() if info.id == "publish" else None,
                     "locked": None,
                     "blocked": blocked,
                     "runner_switch": (not on) and can_sign and runner_fix(info.id, runner),
@@ -204,6 +205,27 @@ def register(app: FastAPI, gateway: Gateway) -> None:
                 }
             )
         return {"available": True, "add_ons": rows}
+
+
+def suggested_publish() -> str | None:
+    """The address of the Publish server installed on this computer (``orch install publish``), or ``None``: no
+    installer state (Publish is hosted elsewhere), no such part, or an address core would refuse. A hint for the form
+    only; whatever is turned on is still signed and shown in the review."""
+    import os
+
+    from orch.install import state
+    from orch.wsproto import wire
+
+    try:
+        url = wire.check_origin(state.load(state.Layout(os.environ))["parts"]["publish"]["url"])
+    except Exception:  # noqa: BLE001 - unreadable or odd installer state is "nothing to suggest"
+        return None
+    # the dialog says "on this computer": only a loopback address may be called that (a public or office address in a
+    # tampered or odd installer file is not suggested; the person types it and the signed review names its reach)
+    from urllib.parse import urlsplit
+
+    host = (urlsplit(url).hostname or "").lower()
+    return url if host in ("localhost", "127.0.0.1", "::1") else None
 
 
 def check_off(gateway: Gateway, ws: str, name: str) -> None:

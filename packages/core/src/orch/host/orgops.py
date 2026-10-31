@@ -7,6 +7,8 @@ Ops:
   address).
 * ``org.show {kind, name}``: the full skill text, or the exact address, sign-in, secret name and description, and the
   honest limits. P only, owner.
+* ``org.secrets``: the company secrets this workspace was given: name, status, expiry and the servers that use each.
+  Never a value, a length or a hash. P only, owner (a read).
 * ``org.accept {kind, name, digest}``: the owner turns an item on, for exactly the digest they were shown. P
   only, owner.
   Written to ``hub/org/accepted.json``: the same host op plus 0600 file as ``space.accept`` (a signed person op
@@ -38,6 +40,7 @@ __all__ = ["NETWORK_OPS", "ORG_OPS", "ORG_READS", "execute", "serve"]
 ORG_OPS: dict[str, int] = {
     "org.offers": 1,
     "org.show": 1,
+    "org.secrets": 1,
     "org.accept": 1,
     "org.decline": 1,
     "org.tool": 1,
@@ -51,6 +54,7 @@ _NAME = {"type": "string", "pattern": "^[a-z][a-z0-9-]{1,39}$"}
 _SCHEMAS: dict[str, dict[str, Any]] = {
     "org.offers": {"type": "object", "properties": {}, "additionalProperties": False},
     "org.sync": {"type": "object", "properties": {}, "additionalProperties": False},
+    "org.secrets": {"type": "object", "properties": {}, "additionalProperties": False},
     "org.show": {
         "type": "object", "properties": {"kind": _KIND, "name": _NAME}, "required": ["kind", "name"],
         "additionalProperties": False,
@@ -104,7 +108,7 @@ def _check(call: Call) -> tuple[str, dict[str, Any]]:
     if op not in ORG_READS:
         if service.state == "degraded":
             raise HostError("workspace.degraded", f"the workspace is read-only: {service.cause}")
-    if op in ("org.show", "org.accept", "org.decline", "org.tool"):
+    if op in ("org.show", "org.secrets", "org.accept", "org.decline", "org.tool"):
         _owner(call)  # the owner at the person column; never an agent
     elif op == "org.sync":
         if call.column.name == "G":
@@ -148,6 +152,8 @@ def serve(call: Call) -> dict[str, Any]:
         return ok_result(orgstate.offers_view(service))
     if op == "org.show":
         return ok_result(orgstate.show(service, args["kind"], args["name"]))
+    if op == "org.secrets":
+        return ok_result(orgstate.secrets_view(service))
     if op == "org.accept":
         return ok_result(orgstate.accept(service, args["kind"], args["name"], args["digest"], call.viewer or ""))
     if op == "org.tool":
@@ -201,6 +207,9 @@ def _sync(service: WorkspaceService) -> dict[str, Any]:
                     bodies[kind] = exc.code  # a refusal (an older hub: unknown_op) is the result of that kind
             if "secrets" in bodies:
                 _report_use(service, link)
+            from . import hubclosing
+
+            hubclosing.pull(service, peerops._hub_state(service, full=False), link)  # noqa: SLF001 - #1463
         finally:
             link.close()
     except (OSError, LinkClosed, LinkTimeout):

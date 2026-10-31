@@ -32,7 +32,7 @@ test("railRows keeps the closed shape and marks workspaces without an origin", (
     { nope: 1 },
   ] });
   assert.equal(rows.length, 2);
-  assert.deepEqual(rows[0], { id: "a".repeat(32), name: "Product", role: "owner", online: true, badge: 3, canOpen: true });
+  assert.deepEqual(rows[0], { id: "a".repeat(32), name: "Product", role: "owner", online: true, badge: 3, switchable: true, canOpen: true });
   assert.equal(rows[1].name, "A workspace");
   assert.equal(railRows({ workspaces: [{ workspace_id: "c".repeat(32), name: null, owner_name: "Ben Test" }] })[0].name, "Ben Test's workspace");
   assert.equal(rows[1].badge, 0);
@@ -86,4 +86,10 @@ test("the hub shows the Opening state before it asks for a ticket or navigates",
   assert.ok(shown < fn.indexOf("location.assign"));
   const css = readFileSync(new URL("../../src/orch_hub/web/app.css", import.meta.url), "utf8");
   assert.match(css, /prefers-reduced-motion: reduce\) \{ \.opening span \{ animation:none/);
+});
+
+test("run-15 J02: a workspace that is not switchable (selective) cannot be opened from the hub", () => {
+  const [row] = railRows({ workspaces: [{ workspace_id: "d".repeat(32), name: "Ben", online: true, origin: "http://x:1", switchable: false }] });
+  assert.equal(row.switchable, false);
+  assert.equal(row.canOpen, false);
 });

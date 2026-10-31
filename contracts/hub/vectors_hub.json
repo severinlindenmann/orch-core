@@ -22217,9 +22217,13 @@
    },
    "check": "link",
    "expect": {
-    "error": "wrong_mode"
+    "ok": {
+     "op": "share_put",
+     "seq": 7
+    }
    },
-   "name": "link_share_put_in_full",
+   "name": "link_share_put_in_full_ok",
+   "note": "r15: sharing a ticket with named people works in both modes (the hub accepts ticket items only in full)",
    "phase": 2
   },
   {
@@ -71224,6 +71228,7 @@
   "sig_hub_channel_push": "orch/v2/hub-channel-push|",
   "sig_hub_channel_register": "orch/v2/hub-channel-reg|",
   "sig_hub_channel_relay_req": "orch/v2/hub-channel-relay-req|",
+  "sig_hub_closing": "orch/v2/hub-closing|",
   "sig_hub_link": "orch/v2/sig/hub-link|",
   "sig_hub_link_auth": "orch/v2/sig/hub-link-auth|",
   "sig_hub_mcp_servers": "orch/v2/hub-mcp-servers|",

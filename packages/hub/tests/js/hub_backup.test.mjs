@@ -166,7 +166,7 @@ test("after a reload a pending key shows 'I have saved it' without the words, an
   await hubSettingsPage(d);
   const view = shown.at(-1)[1];
   await button(card(view), "I have saved it").listeners.click();
-  assert.deepEqual(notes, ["/admin/backup/key/confirm"]);
+  assert.deepEqual(notes.filter((p) => !p.endsWith("/remove/preview")), ["/admin/backup/key/confirm"]);
   assert.match(d.state.notice ?? shown.at(-1)[0] ?? "", /Only the session that made the new words/);
 });
 

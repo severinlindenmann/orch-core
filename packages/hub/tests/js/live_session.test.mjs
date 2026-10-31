@@ -11,7 +11,7 @@ function session(extra = {}) {
     api: async () => ({ status: 401, body: {} }), loadChannel: async () => null,
     h: (_tag, props, ...children) => ({ ...props, children }), show(node) { c.output = node; }, plain() {}, landing: () => ({ kind: "signout" }),
     loginView() { c.clearSession(); c.login = true; }, ...extra });
-  vm.runInContext(section("function clearSession()", "function registerView(") + section("async function refresh()", "function pageLoading(") + section("function reauthView()", "async function admin()") + section("async function redeemTicket(", "async function landFromTicket("), c);
+  vm.runInContext(section("function clearSession()", "function registerView(") + section("async function refresh()", "function pageLoading(") + section("async function reauthView()", "async function admin()") + section("async function redeemTicket(", "async function landFromTicket("), c);
   return c;
 }
 function cleared(c) {
@@ -20,7 +20,7 @@ function cleared(c) {
   assert.equal(c.state.rail.rows.length, 0);
 }
 test("all session endings discard cached home, search and rail data", async () => {
-  for (const end of [c => c.signOut(), c => c.refresh(), c => c.redeemTicket("t", true), c => { c.reauthView(); return c.output.children.at(-1).onclick(); }]) {
+  for (const end of [c => c.signOut(), c => c.refresh(), c => c.redeemTicket("t", true), c => c.reauthView()]) {
     const c = session(); await end(c); cleared(c); assert.equal(c.state.user, null);
   }
 });
@@ -103,4 +103,16 @@ test("in-flight rail and live responses cannot restore data after sign-out", asy
     resolve({ status: 200, body: { items: [1], workspaces: [1] } });
     await pending; cleared(c);
   }
+});
+
+test("P02: reauth goes straight to the sign-in form with the name filled in and returns to the asked page", async () => {
+  const calls = [];
+  const c = session({ state: { user: { user_id: "anna", needs_sign_in: true }, rail: { rows: [] } }, location: { hash: "#/admin" },
+    loginView(err, opts) { calls.push(opts); c.clearSession(); } });
+  c.api = async (m, p) => { calls.push(m + " " + p); return { status: 200, body: {} }; };
+  await c.reauthView();
+  assert.equal(calls[0], "DELETE /session");
+  assert.equal(calls[1].prefill, "anna");
+  assert.match(calls[1].title, /Sign in to open Admin/);
+  assert.equal(c.returnHash, "#/admin");
 });

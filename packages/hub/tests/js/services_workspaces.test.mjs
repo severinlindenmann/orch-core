@@ -129,9 +129,14 @@ test("details show access only when allowed and send mode changes to the workspa
   const out = workspaceDetailsView(w, { roles: { owner: "Anna", groups: [{ group: "Design", role: "edit", members: ["Lee", "Sam"] }] },
     actions: { open: (row) => { opened = row; } } }, NOW);
   assert.match(text(out), /Who has accessOwner: AnnaDesign · editLee, Sam/);
-  clickButton(out, "Open Product");
-  assert.equal(opened, w);
-  assert.equal(find(out, (n) => n.tag === "button").length, 1);
+  // run-15 J02 (D93): a selective workspace never opens from the hub, so no Open button, a plain line instead
+  assert.equal(find(out, (n) => n.tag === "button").length, 0);
+  assert.match(text(out), /shares only chosen items with the hub\. Open it on its own computer\./);
+  const full = workspace({ mode: "full" });
+  const fullOut = workspaceDetailsView(full, { actions: { open: (row) => { opened = row; } } }, NOW);
+  clickButton(fullOut, "Open Product");
+  assert.equal(opened, full);
+  assert.equal(find(fullOut, (n) => n.tag === "button").length, 1);
 });
 
 test("connect link is copied unchanged, shows expiry, and Copy says what to do next", async () => {
@@ -209,16 +214,16 @@ test("workspace and access names stay text even when they contain markup", () =>
 });
 
 test("details Open passes the plain workspace with no pending mode or deep-link value", async () => {
-  const w = workspace({ mode: "selective" });
+  const w = workspace({ mode: "full" });
   let args;
   const nodes = workspaceDetailsView(w, { actions: { open: (...value) => { args = value; } } });
   clickButton(nodes, "Open Product");
   assert.deepEqual(args, [w]);
   const { readFile } = await import("node:fs/promises");
   const app = await readFile(new URL("../../src/orch_hub/web/app.js", import.meta.url), "utf8");
-  const start = app.indexOf("async function openWorkspace(w)");
+  const start = app.indexOf("async function openWorkspace(w, returnTo");
   const open = app.slice(start, app.indexOf("\n}\n", start)); // the whole function, not a fixed length
-  assert.match(open, /workspace_id: w.id, return_to: "\/", kind: "open"/);
+  assert.match(open, /workspace_id: w.id, return_to: returnTo === HUB_SETTINGS \? HUB_SETTINGS : "\/", kind: "open"/); // "/" or the one fixed settings path
   assert.doesNotMatch(open, /pending|mode|return_to: "[^" ]*[?#]/);
 });
 
@@ -676,4 +681,15 @@ test("P08: the Workspaces page shows the Restored note at the top until Got it i
   got[0].listeners.click();
   assert.equal(n, 1);
   assert.doesNotMatch(text(workspacesView({ workspaces: [], handoffs: [] }, NOW)), /Restored from/);
+});
+
+test("run-15 J02: my own selective workspace has no Open button; it says to open it on its own computer", () => {
+  const opened = [];
+  const out = workspacesView({ workspaces: [workspace(), workspace({ workspace_id: "b".repeat(32), name: "Ben", mode: "selective" })],
+    handoffs: [], hub: { version: "0.3.0", min_supported: "0.1.0" }, actions: { open: (w) => opened.push(w.workspace_id) } }, NOW);
+  const opens = find(out, (n) => n.tag === "button" && n.textContent === "Open");
+  assert.equal(opens.length, 1);   // only the full-mode workspace
+  assert.match(text(out), /Open it on its own computer/);
+  const details = workspaceDetailsView(workspace({ workspace_id: "b".repeat(32), name: "Ben", mode: "selective" }), {}, NOW);
+  assert.match(text(details), /shares only chosen items with the hub\. Open it on its own computer\./i);
 });

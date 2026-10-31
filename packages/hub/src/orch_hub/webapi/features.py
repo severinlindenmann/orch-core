@@ -21,6 +21,8 @@ from .ask_phone_api import AskPhoneHandlers, ask_phone_routes
 from .backup_api import STATUS as BACKUP_STATUS
 from .backup_api import BackupHandlers, backup_routes
 from .changes_api import ChangeHandlers
+from .danger_api import STATUS as DANGER_STATUS
+from .danger_api import DangerHandlers, danger_routes
 from .invite_status_api import STATUS as INVITE_STATUS
 from .invite_status_api import InviteStatusHandlers, invite_status_routes
 from .oidc_api import STATUS as OIDC_STATUS
@@ -49,6 +51,7 @@ FEATURES: tuple[Feature, ...] = (
     Feature(mixin=SettingsHandlers, routes=settings_routes),
     Feature(mixin=PublishedHandlers, routes=published_routes),
     Feature(mixin=BackupHandlers, routes=backup_routes, status=BACKUP_STATUS),
+    Feature(mixin=DangerHandlers, routes=danger_routes, status=DANGER_STATUS),
     Feature(mixin=SpaceHandlers, routes=space_routes),
     Feature(mixin=AskPhoneHandlers, routes=ask_phone_routes, status=ASK_PHONE_STATUS),
     Feature(mixin=InviteStatusHandlers, routes=invite_status_routes, status=INVITE_STATUS),

@@ -762,11 +762,13 @@ main() {
   if [ -n "$SERVER" ]; then check_linger; fi
 
   # where things live (see LAYOUT above)
+  xdg_config=${XDG_CONFIG_HOME:-}
+  xdg_data=${XDG_DATA_HOME:-}
   if [ -n "${ORCH_STATE_DIR:-}" ]; then STATE=$ORCH_STATE_DIR
-  elif [ "${XDG_CONFIG_HOME#/}" != "${XDG_CONFIG_HOME:-}" ]; then STATE="$XDG_CONFIG_HOME/orch"
+  elif [ "${xdg_config#/}" != "$xdg_config" ]; then STATE="$xdg_config/orch"
   else STATE="$HOME/.config/orch"; fi
   case "$STATE" in /*) ;; *) die "ORCH_STATE_DIR must be an absolute path." ;; esac
-  if [ "${XDG_DATA_HOME#/}" != "${XDG_DATA_HOME:-}" ]; then DATA="$XDG_DATA_HOME/orch"; else DATA="$HOME/.local/share/orch"; fi
+  if [ "${xdg_data#/}" != "$xdg_data" ]; then DATA="$xdg_data/orch"; else DATA="$HOME/.local/share/orch"; fi
   BIN="$HOME/.local/bin"
   RECORD="$DATA/install.json"
 

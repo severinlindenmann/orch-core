@@ -25,6 +25,8 @@ export interface HubStatus {
   log_sync_stuck: boolean
   /** The version a hub admin asked this workspace to update to (HUB-WS-04); `null`: no request, or already there. */
   update_target?: string | null
+  /** The host's own word that the hub is being removed (#1463): it serves no company content meanwhile. `null`: not closing. */
+  closing?: { since_ms: number; ends_ms: number } | null
   /** From the hub, not signed: people per role in the pinned group snapshot. `null`: no snapshot yet. */
   groups: { read: number; edit: number; admin: number } | null
   snapshot_version: number | null
@@ -50,6 +52,12 @@ export interface HubSharedTicket {
   deadline: string | null
   description: string | null
 }
+
+/** `GET /api/w/<ws>/spaces`: the shared spaces this workspace is in. Name and kind are the hub's own display data
+ * ("from the hub, not signed"): an empty name means the hub gave none the page may show. Read-only. */
+export interface HubSpace { id: string; name: string; kind: string; members: number }
+/** `GET /api/w/<ws>/spaces/<id>`: the item names of one space, written by other workspaces: data, never markup. */
+export interface HubSpaceItems { id: string; items: { name: string; size: number }[]; refused: number; note: string }
 
 /** `GET /api/w/<ws>/hub/share/audience`: the hub's people and teams to choose from. From the hub, not signed. */
 export interface HubAudienceList {
@@ -115,6 +123,9 @@ export interface HubShareReview {
   /** Short forms for the one-ticket dialog (the host words them too). */
   leaves_short?: string | null
   later_edits_short?: string | null
+  /** The hub mode this review was made in; in full mode `scope_short` says what the hub already holds. */
+  mode?: 'selective' | 'full'
+  scope_short?: string | null
 }
 
 /** `POST /hub/share/rule-add` and `/hub/share/sync`: sharing more. `synced: false`: saved, sent when the hub is back. */
@@ -143,6 +154,8 @@ export const hubServed = (ws: string | undefined): boolean => hasFeature('hub', 
 export const hubQueries = {
   status: (ws: string) => queryOptions({ queryKey: ['hub', ws, 'status'], queryFn: () => api.getHubStatus(ws), staleTime: 15_000, retry: false }),
   shared: (ws: string) => queryOptions({ queryKey: ['hub', ws, 'shared'], queryFn: () => api.getHubShared(ws), staleTime: 3_000, refetchInterval: 5_000, retry: false, refetchOnWindowFocus: true }),
+  spaces: (ws: string) => queryOptions({ queryKey: ['hub', ws, 'spaces'], queryFn: () => api.getSpaces(ws), staleTime: 15_000, refetchInterval: 30_000, retry: false, refetchOnWindowFocus: true }),
+  spaceItems: (ws: string, id: string) => queryOptions({ queryKey: ['hub', ws, 'spaces', id], queryFn: () => api.getSpaceItems(ws, id), staleTime: 5_000, refetchInterval: 15_000, retry: false }),
   audience: (ws: string) => queryOptions({ queryKey: ['hub', ws, 'audience'], queryFn: () => api.getHubAudience(ws), staleTime: 60_000, retry: false }),
   share: (ws: string) => queryOptions({ queryKey: ['hub', ws, 'share'], queryFn: () => api.getHubShare(ws), retry: false }),
 }

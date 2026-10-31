@@ -3246,9 +3246,12 @@ Orch-Hub-Signature: b64u(Sign(HK_op, "orch/v2/hub-publish|" || suite || hub_id (
 
 The hub's signature is transport only (spec §8): it adds no authority, it only proves which hub delivered the request.
 
-**Size.** The request travels as one `publish_out` frame with the body hex-encoded, so the largest file a workspace can
-send through the hub is bounded by the link frame (§10.3: 1.5 MB), at most half of it less the headers and target. The
-hub refuses a larger body as `malformed`; the client refuses before the person signs (`quota.host`), not at send time.
+**Size.** Each request travels as one `publish_out` frame with the body hex-encoded, bounded by the link frame
+(§10.3: 1.5 MB). Hex encoding halves the body allowance: one request body is about half a frame minus the
+headers and target, about 431 KB raw. A file whose body would exceed one frame is sent as Publish part requests;
+the hub is unaware. Each part is signed separately with a fresh timestamp and nonce. The hub continues to
+refuse an oversized frame as `malformed`. Share files may be up to 25 MiB; Publish part bodies are at most 1 MiB,
+with the smaller hub frame allowance determining the actual client part size.
 
 ### 11.2 What orch-publish checks, in order
 
@@ -3422,6 +3425,9 @@ App operations are classified **only** through `app_route` over the raw request 
 | `PUT /v1/ws/{ws}/apps/{id}/versions/{n}` (meta), `PUT .../versions/{n}/files/{path}` | `app.meta`, `app.file` | no |
 | `POST .../apps/{id}/commit`, `.../rollback`, `.../start` | `app.commit`, `app.rollback`, `app.start` | **yes** |
 | `POST .../apps/{id}/stop`, `DELETE .../apps/{id}` | `app.stop`, `app.remove` | no (narrowing; `WSK` only) |
+| `PUT /v1/ws/{ws}/shares/{id}` (meta), `PUT .../shares/{id}/files/{path}` | `share.meta`, `share.file` | no (`WSK`, hub transport; the manifest is the person-signed part) |
+| `PUT /v1/ws/{ws}/shares/{id}/parts/{offset}/{path}` | `share.part` | same as whole-file PUT |
+| `POST .../shares/{id}/commit`, `DELETE .../shares/{id}` | `share.commit`, `share.revoke` | no (`WSK`, hub transport) |
 | `POST /v1/ws/{ws}/shares/{id}/extend` `{days}` | `share.extend` | no (`WSK` plus the person's signed note at the host) |
 | `POST /v1/ws/{ws}/shares/{id}/password` `{pw}` | `share.password` | no (narrowing; `WSK`) |
 
@@ -3429,6 +3435,56 @@ App operations are classified **only** through `app_route` over the raw request 
 `route_cases`). **Extend** takes `{"days": 1..30}` and sets the expiry to `now + days` (never more than 30 days from now,
 `days`); agents cannot extend (the host answers `op.not_allowed`). **Stop** keeps the files; **remove** deletes files and
 form rows, and the slug stays taken.
+
+**Share parts (offset append).** The part route is classified on the signed raw target, without decoding:
+no query, `%`, `//`, `#` or dot segments; the path must pass the existing upload path rules. `offset` is canonical decimal (`0` or a nonzero digit followed by digits), at most
+27262976 (26 MiB). Invalid spellings are not part routes (404 `not_found`). The files namespace is unchanged, including paths containing `parts/0/` or `at/12`.
+Authentication is exactly the whole-file PUT authentication (§11.2); this does not enable direct share publishing.
+
+Under the existing process-safe write transaction lock, Publish requires an owned, staged share and a manifest file:
+unknown/foreign shares return 404 `not_found`, unknown paths 404 `not_in_manifest`, committed shares 409
+`share_committed`, revoked/deleted/expired shares 410 `gone` (with `state`). No request revives incoming state.
+`offset + body length > manifest size` returns 413 `too_large` without writing bytes. Otherwise:
+
+- At `offset == received`, append, fsync and verify the length.
+- At `offset < received`, identical bytes wholly within the stored range return `unchanged`. Different stored bytes
+  return 409 `part_conflict`. An overlap extending beyond `received` with a matching prefix is refused with
+  409 `part_out_of_order`; resend only the tail at `received`.
+- At `offset > received`, return 409 `part_out_of_order`.
+- A request that waits more than 10 s behind another request for the same file returns 409 `part_busy`
+  (retryable; nothing was written).
+
+Success is JSON `{"received": N, "done": false|true, "result": "stored"|"unchanged"}`. Both part errors are JSON
+`{"error": "part_conflict"|"part_out_of_order", "received": N}`. At the manifest size, Publish rehashes the stored
+bytes. A mismatch deletes that path's partial state and returns 422 `content_mismatch` with `received: 0`; a match
+sets `share_files.present = 1` in place. A matching part after
+finalization is `unchanged`, `received == size`, `done: true` (until commit, which refuses parts).
+A client that lost a `done:true` reply rediscovers the state with a zero-length part at its last known offset.
+Finalizing a complete but unpresent file after interruption returns `stored`; an already finalized file returns
+`unchanged`. Hashing uses 1 MiB chunks outside the write transaction; a short second transaction rechecks staged
+state, manifest size and SHA-256, and file identity (`st_dev`, `st_ino`, `st_size`, `st_mtime_ns`,
+`st_ctime_ns`) before marking present or unlinking a mismatched file. Finalization is single-flight per
+`(sid, path)` in process; waiting requests re-read the DB and matching finalized parts return `unchanged`
+with `done: true`.
+Parts have a separate per-workspace budget of 64 MiB and 600 requests per minute. Each started finalization
+hash additionally charges the manifest file size to that byte budget, including zero-length rediscovery
+requests. Exhaustion returns 429 `rate_limited`. The budget is checked and charged with the actual body length after
+the request is verified (never before: an unsigned caller learns nothing about a workspace's budget). Requests for one
+file are handled one at a time; a request that waits more than 10 s behind a finalize hash gets 409 `part_busy` and
+retries.
+
+Partial bytes occupy the normal staging file, `incoming/<sid>/files/<path>`, while `share_files.present = 0`.
+The file's current size is `received` (zero if absent); there is no side file or new storage layout.
+The existing dir-fd / O_NOFOLLOW walk creates manifest parent directories. Leading-dot path components remain
+refused. A successful whole-file PUT replaces the partial file through the existing temporary-file/rename path.
+Commit still returns 409 `incomplete` with `missing` while any manifest file is missing or partial. Staged shares
+are never served. Revoke/delete removes `incoming/<sid>`, including partial bytes; the existing incoming sweep
+and expiry behavior are unchanged. Part request bodies use the normal 1 MiB limit.
+
+The full manifest size is reserved against the 50 MiB share and 500 MiB workspace quotas at metadata acceptance,
+before the first part, and remains reserved during partial upload. Quota refusal is therefore never deferred to a
+later part. Part requests are exempt from Publish's 60-writes-per-minute workspace limiter; body and manifest limits
+still apply. The hub's forwarding behavior is unchanged. Generated vectors: `contracts/publish/publish_v2_parts.json`.
 
 **S2 as built (#1453).** `share.extend` also requires the link to be live and the new end to be later than the old one
 (`not_longer`, 400). `share.password` takes only `{"pw": <C5 record>}`: `null`, a string and any record with other parameters

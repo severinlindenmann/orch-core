@@ -9,6 +9,7 @@ the id exists. Ids are 128-bit random, so this cannot be used to enumerate. Shar
 The write rate limiter is in memory: run the API as a single worker process (as the share server).
 """
 
+import errno
 import hashlib
 import json
 import os
@@ -16,7 +17,10 @@ import re
 import secrets
 import sqlite3
 import stat
+import threading
+import time
 from collections import defaultdict, deque
+from contextlib import contextmanager
 
 from fastapi import APIRouter, Request
 from fastapi.concurrency import run_in_threadpool
@@ -34,6 +38,8 @@ MAX_DAYS = 30
 MAX_VIEW_LIMIT = 10
 MAX_META_BODY = 512 * 1024
 WRITES_PER_MIN = 60
+PARTS_PER_MIN = 600
+PART_BYTES_PER_MIN = 64 * 1024 * 1024
 _HEADERS = {"cache-control": "no-store", "x-content-type-options": "nosniff"}
 _ID = re.compile(registry.ID32)
 _HEX64 = re.compile(r"[0-9a-f]{64}")
@@ -49,6 +55,23 @@ _FILE_KEYS = {"path", "size", "sha256"}
 
 def _int(v):
     return isinstance(v, int) and not isinstance(v, bool)
+
+
+def part_route(method, target):
+    """Classify the signed raw target, never a decoded framework path."""
+    if method != "PUT" or any(c in target for c in ("?", "%", "//", "#")):
+        return None
+    m = re.fullmatch(
+        rf"/v1/ws/({registry.ID32})/shares/([0-9a-f]{{32}})/parts/(0|[1-9][0-9]{{0,7}})/(.+)",
+        target,
+    )
+    if m is None or int(m[3]) > 26 * 1024 * 1024:
+        return None
+    try:
+        pathrules.check(m[4])
+    except pathrules.BadPath:
+        return None
+    return m[1], m[2], m[4], int(m[3])
 
 
 def owned_share(conn, ws, share_id):
@@ -138,6 +161,7 @@ def manifest_hash(m):
 
 class Store:
     def __init__(self, data_dir):
+        self.part_limiter = _PartLimiter(lambda: time.time_ns() // 1_000_000)
         self.root = os.path.abspath(data_dir)
         for d in ("incoming", "shares", "apps"):
             os.makedirs(os.path.join(self.root, d), mode=0o700, exist_ok=True)
@@ -195,6 +219,47 @@ class Store:
                 raise
         finally:
             for fd in fds:
+                os.close(fd)
+
+    @contextmanager
+    def staging_parent(self, sid, path):
+        """Walk the existing staging tree, creating only manifest parent directories."""
+        fds = []
+        try:
+            cur = self._open_dir(self.share_dir("incoming", sid))
+            fds.append(cur)
+            cur = self._open_dir("files", cur)
+            fds.append(cur)
+            for part in path.split("/")[:-1]:
+                try:
+                    os.mkdir(part, 0o700, dir_fd=cur)
+                except FileExistsError:
+                    pass
+                cur = self._open_dir(part, cur)
+                fds.append(cur)
+            yield cur, path.split("/")[-1]
+        finally:
+            for fd in reversed(fds):
+                os.close(fd)
+
+    def file_range(self, sid, path, offset, length):
+        fds = []
+        try:
+            cur = self._open_dir(self.share_dir("incoming", sid))
+            fds.append(cur)
+            for part in ["files", *path.split("/")[:-1]]:
+                cur = self._open_dir(part, cur)
+                fds.append(cur)
+            fd = os.open(
+                path.split("/")[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=cur
+            )
+            with os.fdopen(fd, "rb") as data:
+                if not stat.S_ISREG(os.fstat(data.fileno()).st_mode):
+                    raise Refusal(400, "malformed")
+                data.seek(offset)
+                return data.read(length)
+        finally:
+            for fd in reversed(fds):
                 os.close(fd)
 
     def verify_file(self, kind, sid, path, size, sha256):
@@ -408,6 +473,176 @@ def op_put_file(settings, store, ws, wsk, sid, path, body):
             raise
         return {"path": path, "result": "stored"}
     finally:
+        conn.close()
+
+
+def _part_digest(data):
+    """Hash outside the write transaction with bounded memory."""
+    data.seek(0)
+    digest = hashlib.sha256()
+    while chunk := data.read(1024 * 1024):
+        digest.update(chunk)
+    return digest.hexdigest()
+
+
+PART_WAIT_S = 10.0  # seconds; the contract's "10 s"
+_part_flights = {}
+_part_flights_guard = threading.Lock()
+
+
+@contextmanager
+def _part_flight(sid, path):
+    key = (sid, path)
+    with _part_flights_guard:
+        entry = _part_flights.setdefault(key, [threading.Lock(), 0])
+        entry[1] += 1
+    try:
+        # A bounded wait behind another request for the same file (typically a finalize hash); never holds a worker
+        # thread longer than this (the client retries on part_busy). Runs in the threadpool (run_in_threadpool).
+        if not entry[0].acquire(timeout=PART_WAIT_S):
+            raise Refusal(409, "part_busy")
+        try:
+            yield
+        finally:
+            entry[0].release()
+    finally:
+        with _part_flights_guard:
+            entry[1] -= 1
+            if not entry[1]:
+                del _part_flights[key]
+
+
+def op_put_part(settings, store, ws, wsk, sid, path, offset, body):
+    # Wait before opening a transaction; followers re-read the completed DB state.
+    with _part_flight(sid, path):
+        return _put_part(settings, store, ws, wsk, sid, path, offset, body)
+
+
+def _put_part(settings, store, ws, wsk, sid, path, offset, body):
+    # BEGIN IMMEDIATE is the existing cross-process write lock. It is stronger than
+    # a per-file lock and also serializes whole PUT, commit, revoke and expiry.
+    conn = db.connect(settings.db_path)
+    try:
+        _txn(conn, ws, wsk)
+        row = owned_share(conn, ws, sid)
+        if row["state"] == "live":
+            raise Refusal(409, "share_committed")
+        if row["state"] != "staged":
+            _gone(row)
+        if settings.clock() >= row["expires_ms"]:
+            raise Refusal(410, "gone", state="expired")
+        pathrules.check(path)
+        f = conn.execute(
+            "SELECT * FROM share_files WHERE share_id=? AND path=?", (sid, path)
+        ).fetchone()
+        if f is None:
+            raise Refusal(404, "not_in_manifest")
+        if offset + len(body) > f["size"]:
+            raise Refusal(413, "too_large")
+        if f["present"]:
+            if store.file_range(sid, path, offset, len(body)) != body:
+                raise Refusal(409, "part_conflict", received=f["size"])
+            conn.execute("ROLLBACK")
+            return {"received": f["size"], "done": True, "result": "unchanged"}
+        # Quota was reserved for ALL manifest bytes by op_put_meta, including partials.
+        with store.staging_parent(sid, path) as (directory, name):
+            fd = os.open(
+                name,
+                os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK,
+                0o600,
+                dir_fd=directory,
+            )
+            identity = os.fstat(fd)
+            if not stat.S_ISREG(identity.st_mode):
+                os.close(fd)
+                raise Refusal(400, "malformed")
+            with os.fdopen(fd, "r+b") as data:
+                # The staging file length is authoritative, including after interruption.
+                received = identity.st_size
+                if offset > received:
+                    raise Refusal(409, "part_out_of_order", received=received)
+                if offset < received:
+                    data.seek(offset)
+                    prefix = data.read(min(len(body), received - offset))
+                    if prefix != body[: len(prefix)]:
+                        raise Refusal(409, "part_conflict", received=received)
+                    if offset + len(body) > received:
+                        raise Refusal(409, "part_out_of_order", received=received)
+                    result = "unchanged"
+                else:
+                    data.seek(received)
+                    data.write(body)
+                    data.flush()
+                    os.fsync(data.fileno())
+                    received += len(body)
+                    if os.fstat(data.fileno()).st_size != received:
+                        raise OSError("partial length mismatch")
+                    result = "stored"
+                # Duplicate prefixes are read-only, including at the DB transaction level.
+                conn.execute("ROLLBACK" if result == "unchanged" else "COMMIT")
+                if result == "unchanged" and received < f["size"]:
+                    return {"received": received, "done": False, "result": result}
+                if received == f["size"]:
+                    # A complete but unpresent file needs finalization, even after a crash.
+                    # This changes durable state, so it is a stored operation, not a no-op.
+                    result = "stored"
+                    if not store.part_limiter.allow(ws, f["size"], count=0):
+                        raise Refusal(429, "rate_limited")
+                    identity = os.fstat(data.fileno())
+                    digest = _part_digest(data)
+                    _txn(conn, ws, wsk)
+                    row = owned_share(conn, ws, sid)
+                    if row["state"] == "live":
+                        raise Refusal(409, "share_committed")
+                    if row["state"] != "staged":
+                        _gone(row)
+                    if settings.clock() >= row["expires_ms"]:
+                        raise Refusal(410, "gone", state="expired")
+                    current = conn.execute(
+                        "SELECT present, size, sha256 FROM share_files WHERE share_id=? AND path=?",
+                        (sid, path),
+                    ).fetchone()
+                    if (
+                        current is None
+                        or current["size"] != f["size"]
+                        or current["sha256"] != f["sha256"]
+                    ):
+                        raise Refusal(409, "part_conflict", received=received)
+                    if current["present"] and current["sha256"] == digest:
+                        conn.execute("ROLLBACK")
+                        return {"received": current["size"], "done": True, "result": "unchanged"}
+                    # Re-walk from the staging root: the old directory fd may have been detached.
+                    try:
+                        with store.staging_parent(sid, path) as (parent, leaf):
+                            final = os.stat(leaf, dir_fd=parent, follow_symlinks=False)
+                            if (
+                                current["present"]
+                                or not stat.S_ISREG(final.st_mode)
+                                or final.st_ino != identity.st_ino
+                                or final.st_dev != identity.st_dev
+                                or final.st_size != identity.st_size
+                                or final.st_size != f["size"]
+                                or final.st_mtime_ns != identity.st_mtime_ns
+                                or final.st_ctime_ns != identity.st_ctime_ns
+                            ):
+                                raise Refusal(409, "part_conflict", received=final.st_size)
+                            if digest != f["sha256"]:
+                                os.unlink(leaf, dir_fd=parent)
+                                raise Refusal(422, "content_mismatch", received=0)
+                    except FileNotFoundError:
+                        raise Refusal(409, "part_conflict", received=0) from None
+                    conn.execute(
+                        "UPDATE share_files SET present=1 WHERE share_id=? AND path=?", (sid, path)
+                    )
+                    conn.execute("COMMIT")
+        return {"received": received, "done": received == f["size"], "result": result}
+    except OSError as exc:
+        if exc.errno in (errno.ENOTDIR, errno.EEXIST, errno.EISDIR, errno.ELOOP):
+            raise Refusal(400, "malformed") from None
+        raise
+    finally:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
         conn.close()
 
 
@@ -647,20 +882,54 @@ class _Limiter:
         return True
 
 
+class _PartLimiter:
+    """Sliding per-workspace request and byte budgets, shared with hash workers."""
+
+    def __init__(self, clock):
+        self.clock = clock
+        self.lock = threading.Lock()
+        # Keys are bounded by the authenticated workspaces, like _Limiter.
+        self.hits = defaultdict(deque)
+        self.bytes = defaultdict(int)
+        self.counts = defaultdict(int)
+
+    def allow(self, ws, size, *, count=1):
+        with self.lock:
+            now = self.clock()
+            q = self.hits[ws]
+            while q and q[0][0] <= now - 60_000:
+                _, expired, requests = q.popleft()
+                self.bytes[ws] -= expired
+                self.counts[ws] -= requests
+            if (
+                self.counts[ws] + count > PARTS_PER_MIN
+                or self.bytes[ws] + size > PART_BYTES_PER_MIN
+            ):
+                return False
+            q.append((now, size, count))
+            self.bytes[ws] += size
+            self.counts[ws] += count
+            return True
+
+
 def install(app, settings):
     store = Store(os.path.dirname(settings.db_path))
     limiter = _Limiter(settings.clock)
+    part_limiter = store.part_limiter = _PartLimiter(settings.clock)
     router = APIRouter(prefix="/v1/ws/{ws}")
 
     def ok(body, status=200):
         return JSONResponse(body, status, _HEADERS)
 
-    async def guarded(request, fn, *a, write=True):
+    async def guarded(request, fn, *a, write=True, part_bytes=None):
         """Resolve the signed workspace, rate-limit writes, run the sync op in a thread."""
         ws = request.scope.get("orch_ws")
         if not ws or request.path_params.get("ws") != ws:
             raise Refusal(403, "wrong_workspace")  # the middleware already enforced this
-        if write and not limiter.allow(ws):
+        if part_bytes is not None:
+            if not part_limiter.allow(ws, part_bytes):
+                raise Refusal(429, "rate_limited")
+        elif write and not limiter.allow(ws):
             raise Refusal(429, "rate_limited")
         sid = request.path_params.get("sid")
         if sid is not None and not _ID.fullmatch(sid):
@@ -692,6 +961,24 @@ def install(app, settings):
         body = await request.body()
         return await guarded(
             request, lambda ws, wsk: op_put_file(settings, store, ws, wsk, sid, fpath, body)
+        )
+
+    @router.put("/shares/{sid}/parts/{offset}/{fpath:path}")
+    async def put_part(sid: str, offset: str, fpath: str, request: Request):
+        target = request.scope["orch_target"]
+        route = part_route(request.method, target)
+        if route is None:
+            raise Refusal(404, "not_found")
+        signed_ws, sid, path, position = route
+        if signed_ws != request.scope.get("orch_ws"):
+            raise Refusal(403, "wrong_workspace")
+        if not _ID.fullmatch(sid) or sid != request.path_params.get("sid"):
+            raise Refusal(404, "not_found")
+        body = await request.body()
+        return await guarded(
+            request,
+            lambda ws, wsk: op_put_part(settings, store, ws, wsk, sid, path, position, body),
+            part_bytes=len(body),
         )
 
     @router.post("/shares/{sid}/commit")

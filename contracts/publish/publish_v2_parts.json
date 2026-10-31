@@ -1,0 +1,428 @@
+{
+  "cases": [
+    {
+      "name": "three_parts",
+      "path": "f",
+      "sha256": "bef57ec7f53a6d40beb640a780a639c83bc29ac8a9816f1fc6c5c6dcd93c4721",
+      "size": 6,
+      "steps": [
+        {
+          "body_hex": "6162",
+          "expect": {
+            "body": {
+              "done": false,
+              "received": 2,
+              "result": "stored"
+            },
+            "status": 200
+          },
+          "offset": 0,
+          "op": "part"
+        },
+        {
+          "body_hex": "6364",
+          "expect": {
+            "body": {
+              "done": false,
+              "received": 4,
+              "result": "stored"
+            },
+            "status": 200
+          },
+          "offset": 2,
+          "op": "part"
+        },
+        {
+          "body_hex": "6566",
+          "expect": {
+            "body": {
+              "done": true,
+              "received": 6,
+              "result": "stored"
+            },
+            "status": 200
+          },
+          "offset": 4,
+          "op": "part"
+        },
+        {
+          "body_hex": "6566",
+          "expect": {
+            "body": {
+              "done": true,
+              "received": 6,
+              "result": "unchanged"
+            },
+            "status": 200
+          },
+          "offset": 4,
+          "op": "part"
+        }
+      ]
+    },
+    {
+      "name": "wrong_whole_hash",
+      "path": "f",
+      "sha256": "bef57ec7f53a6d40beb640a780a639c83bc29ac8a9816f1fc6c5c6dcd93c4721",
+      "size": 6,
+      "steps": [
+        {
+          "body_hex": "6162",
+          "expect": {
+            "body": {
+              "done": false,
+              "received": 2,
+              "result": "stored"
+            },
+            "status": 200
+          },
+          "offset": 0,
+          "op": "part"
+        },
+        {
+          "body_hex": "63645858",
+          "expect": {
+            "body": {
+              "error": "content_mismatch",
+              "received": 0
+            },
+            "status": 422
+          },
+          "offset": 2,
+          "op": "part"
+        }
+      ]
+    },
+    {
+      "name": "identical_retry",
+      "path": "f",
+      "sha256": "bef57ec7f53a6d40beb640a780a639c83bc29ac8a9816f1fc6c5c6dcd93c4721",
+      "size": 6,
+      "steps": [
+        {
+          "body_hex": "6162",
+          "expect": {
+            "body": {
+              "done": false,
+              "received": 2,
+              "result": "stored"
+            },
+            "status": 200
+          },
+          "offset": 0,
+          "op": "part"
+        },
+        {
+          "body_hex": "6162",
+          "expect": {
+            "body": {
+              "done": false,
+              "received": 2,
+              "result": "unchanged"
+            },
+            "status": 200
+          },
+          "offset": 0,
+          "op": "part"
+        }
+      ]
+    },
+    {
+      "name": "conflicting_retry",
+      "path": "f",
+      "sha256": "bef57ec7f53a6d40beb640a780a639c83bc29ac8a9816f1fc6c5c6dcd93c4721",
+      "size": 6,
+      "steps": [
+        {
+          "body_hex": "6162",
+          "expect": {
+            "body": {
+              "done": false,
+              "received": 2,
+              "result": "stored"
+            },
+            "status": 200
+          },
+          "offset": 0,
+          "op": "part"
+        },
+        {
+          "body_hex": "5858",
+          "expect": {
+            "body": {
+              "error": "part_conflict",
+              "received": 2
+            },
+            "status": 409
+          },
+          "offset": 0,
+          "op": "part"
+        }
+      ]
+    },
+    {
+      "name": "gap",
+      "path": "f",
+      "sha256": "bef57ec7f53a6d40beb640a780a639c83bc29ac8a9816f1fc6c5c6dcd93c4721",
+      "size": 6,
+      "steps": [
+        {
+          "body_hex": "6162",
+          "expect": {
+            "body": {
+              "done": false,
+              "received": 2,
+              "result": "stored"
+            },
+            "status": 200
+          },
+          "offset": 0,
+          "op": "part"
+        },
+        {
+          "body_hex": "64",
+          "expect": {
+            "body": {
+              "error": "part_out_of_order",
+              "received": 2
+            },
+            "status": 409
+          },
+          "offset": 3,
+          "op": "part"
+        }
+      ]
+    },
+    {
+      "name": "overlap_refused",
+      "path": "f",
+      "sha256": "bef57ec7f53a6d40beb640a780a639c83bc29ac8a9816f1fc6c5c6dcd93c4721",
+      "size": 6,
+      "steps": [
+        {
+          "body_hex": "6162",
+          "expect": {
+            "body": {
+              "done": false,
+              "received": 2,
+              "result": "stored"
+            },
+            "status": 200
+          },
+          "offset": 0,
+          "op": "part"
+        },
+        {
+          "body_hex": "6263",
+          "expect": {
+            "body": {
+              "error": "part_out_of_order",
+              "received": 2
+            },
+            "status": 409
+          },
+          "offset": 1,
+          "op": "part"
+        }
+      ]
+    },
+    {
+      "name": "beyond_size",
+      "path": "f",
+      "sha256": "bef57ec7f53a6d40beb640a780a639c83bc29ac8a9816f1fc6c5c6dcd93c4721",
+      "size": 6,
+      "steps": [
+        {
+          "body_hex": "6162",
+          "expect": {
+            "body": {
+              "done": false,
+              "received": 2,
+              "result": "stored"
+            },
+            "status": 200
+          },
+          "offset": 0,
+          "op": "part"
+        },
+        {
+          "body_hex": "6566",
+          "expect": {
+            "body": {
+              "error": "too_large"
+            },
+            "status": 413
+          },
+          "offset": 5,
+          "op": "part"
+        }
+      ]
+    },
+    {
+      "name": "after_commit",
+      "path": "f",
+      "sha256": "bef57ec7f53a6d40beb640a780a639c83bc29ac8a9816f1fc6c5c6dcd93c4721",
+      "size": 6,
+      "steps": [
+        {
+          "body_hex": "616263646566",
+          "expect": {
+            "body": {
+              "done": true,
+              "received": 6,
+              "result": "stored"
+            },
+            "status": 200
+          },
+          "offset": 0,
+          "op": "part"
+        },
+        {
+          "op": "commit"
+        },
+        {
+          "body_hex": "6162",
+          "expect": {
+            "body": {
+              "error": "share_committed"
+            },
+            "status": 409
+          },
+          "offset": 0,
+          "op": "part"
+        }
+      ]
+    },
+    {
+      "name": "after_revoke",
+      "path": "f",
+      "sha256": "bef57ec7f53a6d40beb640a780a639c83bc29ac8a9816f1fc6c5c6dcd93c4721",
+      "size": 6,
+      "steps": [
+        {
+          "body_hex": "6162",
+          "expect": {
+            "body": {
+              "done": false,
+              "received": 2,
+              "result": "stored"
+            },
+            "status": 200
+          },
+          "offset": 0,
+          "op": "part"
+        },
+        {
+          "op": "revoke"
+        },
+        {
+          "body_hex": "6162",
+          "expect": {
+            "body": {
+              "error": "gone",
+              "state": "revoked"
+            },
+            "status": 410
+          },
+          "offset": 0,
+          "op": "part"
+        }
+      ]
+    },
+    {
+      "name": "docs/parts/0/f",
+      "path": "docs/parts/0/f",
+      "sha256": "bef57ec7f53a6d40beb640a780a639c83bc29ac8a9816f1fc6c5c6dcd93c4721",
+      "size": 6,
+      "steps": [
+        {
+          "body_hex": "616263646566",
+          "expect": {
+            "body": {
+              "path": "docs/parts/0/f",
+              "result": "stored"
+            },
+            "status": 200
+          },
+          "op": "file"
+        }
+      ]
+    },
+    {
+      "name": "docs/at/12",
+      "path": "docs/at/12",
+      "sha256": "bef57ec7f53a6d40beb640a780a639c83bc29ac8a9816f1fc6c5c6dcd93c4721",
+      "size": 6,
+      "steps": [
+        {
+          "body_hex": "616263646566",
+          "expect": {
+            "body": {
+              "path": "docs/at/12",
+              "result": "stored"
+            },
+            "status": 200
+          },
+          "op": "file"
+        }
+      ]
+    },
+    {
+      "name": "at/f",
+      "path": "at/f",
+      "sha256": "bef57ec7f53a6d40beb640a780a639c83bc29ac8a9816f1fc6c5c6dcd93c4721",
+      "size": 6,
+      "steps": [
+        {
+          "body_hex": "616263646566",
+          "expect": {
+            "body": {
+              "path": "at/f",
+              "result": "stored"
+            },
+            "status": 200
+          },
+          "op": "file"
+        }
+      ]
+    }
+  ],
+  "route_cases": [
+    {
+      "name": "0",
+      "target": "/v1/ws/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/shares/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/parts/0/f",
+      "valid": true
+    },
+    {
+      "name": "01",
+      "target": "/v1/ws/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/shares/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/parts/01/f",
+      "valid": false
+    },
+    {
+      "name": "0?x=1",
+      "target": "/v1/ws/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/shares/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/parts/0?x=1/f",
+      "valid": false
+    },
+    {
+      "name": "%30",
+      "target": "/v1/ws/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/shares/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/parts/%30/f",
+      "valid": false
+    },
+    {
+      "name": "27262976",
+      "target": "/v1/ws/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/shares/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/parts/27262976/f",
+      "valid": true
+    },
+    {
+      "name": "27262977",
+      "target": "/v1/ws/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/shares/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/parts/27262977/f",
+      "valid": false
+    },
+    {
+      "name": "-1",
+      "target": "/v1/ws/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/shares/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/parts/-1/f",
+      "valid": false
+    }
+  ],
+  "suite": 2
+}

@@ -30,7 +30,10 @@ describe('the ticket Actions menu and sharing', () => {
     await waitFor(() => expect(go).toBeEnabled(), T)
     const boxes = within(dialog).getAllByRole('checkbox').filter(b => (b as HTMLElement).dataset.testid?.startsWith('hub-rule-person-'))
     if (boxes.length && !(boxes[0] as HTMLInputElement).checked) await view.user.click(boxes[0])
-    await waitFor(() => expect(within(dialog).getByTestId('hub-add-scope')).toHaveTextContent('The hub already holds this workspace'), T)
+    expect(within(dialog).queryByTestId('hub-add-scope')).toBeNull() // P09: not in the main text
+    await view.user.click(await within(dialog).findByTestId('hub-add-details', {}, T))
+    await waitFor(() => expect(screen.getByTestId('hub-add-scope')).toHaveTextContent('The hub already holds this workspace'), T)
+    await view.user.keyboard('{Escape}')
     await waitFor(() => expect(within(dialog).getByTestId('hub-add-go')).toBeEnabled(), T)
     fireEvent.click(within(dialog).getByTestId('hub-add-go'))
     await waitFor(() => expect(add).toHaveBeenCalledTimes(1), T)
@@ -130,7 +133,7 @@ describe('the ticket Actions menu and sharing', () => {
     expect(text()).not.toMatch(/Who will see it:|Only me|not signed/)
     // tick one person: the sentence names them and what they see, in one place
     await view.user.click(boxes[0])
-    await waitFor(() => expect(within(dialog).getByTestId('hub-add-sentence')).toHaveTextContent(/will see the title, status, labels, deadline and description\. Later edits are shared too\./), T)
+    await waitFor(() => expect(within(dialog).getByTestId('hub-add-sentence')).toHaveTextContent(/will see this ticket in their own workspace: the title, status, labels, deadline and description\. Later edits are shared too\./), T)
     expect(within(dialog).getByTestId('hub-add-readers')).not.toHaveTextContent('Only you')
     // P16: one row: Details on the left, Cancel and Share on the right; the warning and the long list are under Details
     const row = within(dialog).getByTestId('hub-add-go').parentElement as HTMLElement
@@ -140,7 +143,11 @@ describe('the ticket Actions menu and sharing', () => {
     expect(within(dialog).getAllByRole('button', { name: 'Cancel' })).toHaveLength(1)
     expect(within(dialog).getByTestId('hub-add-details')).toHaveTextContent('Details')
     expect(text().split('cannot be taken back')).toHaveLength(2) // the caveat stays visible, once
-    expect(within(dialog).getByTestId('hub-add-caveat-visible')).toHaveTextContent('cannot be taken back')
+    expect(within(dialog).getByTestId('hub-add-caveat-visible')).toHaveTextContent(/^What .+ has already seen cannot be taken back\.$/)
+    // P09: the field list is said once; the hub is named only behind Details
+    expect(text().match(/deadline/g)).toHaveLength(1)
+    expect(text()).not.toMatch(/\bhub\b/i)
+    expect(within(dialog).queryByTestId('hub-add-scope')).toBeNull()
     expect(text()).not.toContain('Comments and files stay private')
     expect(within(dialog).queryByTestId('hub-add-new')).toBeNull()
     expect(within(dialog).queryByTestId('hub-add-leaves')).toBeNull()

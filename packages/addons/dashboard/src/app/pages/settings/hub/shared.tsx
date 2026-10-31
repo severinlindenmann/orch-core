@@ -9,6 +9,11 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/compone
 
 export const violet = 'border-chart-4/40 bg-chart-4/10 text-chart-4'
 export const caveat = 'What the hub has already read cannot be taken back.'
+/** The one-ticket dialog's caveat, naming the reader (P09): "What Ben Test has already seen cannot be taken back." */
+export function compactCaveat(r: { people: string[]; teams: string[] }): string {
+  const n = r.people.length + r.teams.length
+  return `What ${n === 1 ? (r.people[0] ?? 'team ' + r.teams[0]) : 'people'} has already seen cannot be taken back.`.replace('people has', 'people have')
+}
 export function useHub(ws?: string) {
   return useQuery({ ...hubQueries.status(ws ?? ''), enabled: !!ws && hubServed(ws) })
 }
@@ -72,7 +77,7 @@ export function Details({ children, testId }: { children: ReactNode; testId?: st
 /** `cancel`: the footer label before that. `action`: the confirm button, next to Cancel. */
 export function Flow({ title, onClose, children, finish = 'terminal', cancel, action }: { title: string; onClose: () => void; children: ReactNode; finish?: 'terminal' | 'here'; cancel?: string; action?: ReactNode }) {
   return <Dialog open onOpenChange={open => !open && onClose()}><DialogContent showCloseButton={false} className="data-[state=open]:animate-none data-[state=closed]:animate-none max-h-[85vh] overflow-y-auto sm:max-w-2xl">
-    <DialogTitle>{title}</DialogTitle><DialogDescription className="sr-only">Review the hub change before confirming.</DialogDescription>
+    <DialogTitle>{title}</DialogTitle><DialogDescription className="sr-only">Review this change before confirming.</DialogDescription>
     <div className="min-w-0 space-y-4 text-sm break-words">{children}</div>
     {finish === 'terminal' && <div className="flex flex-wrap items-center justify-end gap-2"><Action id="hub-flow-cancel" variant="outline" onClick={onClose}>{cancel ?? 'Cancel'}</Action>{action}</div>}
   </DialogContent></Dialog>

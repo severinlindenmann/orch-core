@@ -55,6 +55,11 @@ AGENT_STAGES = 2
 MAX_RECORDS = 200
 STAGE_BYTES = 200 * 1024 * 1024
 _STAGE_ID = re.compile(r"pa_[0-9a-f]{32}")
+#: (workspace, app, version) -> when it was reserved: a send in flight, from the plan until the record is saved. A
+#: second send of the same version is refused at once; a reservation older than :data:`INFLIGHT_MAX` (a crash
+#: between the plan and the upload) is ignored. Guarded by ``P._MU``.
+_INFLIGHT: dict[tuple[str, str, int], float] = {}
+INFLIGHT_MAX = 900.0
 _REF = {"type": "string", "minLength": 1, "maxLength": 80}
 _STAGED = {"type": "string", "pattern": r"^pa_[0-9a-f]{32}$"}
 _SCHEMAS = {
@@ -242,7 +247,8 @@ def _files_of(call: Call, view: Any, names: list[str]) -> tuple[list[dict[str, A
 def _forbidden(cfg: dict[str, str], route: dict[str, Any] | None) -> tuple[str, ...]:
     """The origins an app may not reach: the publish server, the share origin and the hub (self-reach is refused before
     anybody signs, as orch-publish refuses it at the upload)."""
-    return tuple(x for x in (cfg["server"], cfg["share"], (route or {}).get("addr")) if isinstance(x, str) and x)
+    hub = (route or {}).get("addrs") or [(route or {}).get("addr")]  # every address the host dials for this hub
+    return tuple(x for x in (cfg["server"], cfg["share"], *hub) if isinstance(x, str) and x)
 
 
 def _fresh(service: WorkspaceService, stage: dict[str, Any]) -> None:
@@ -420,7 +426,25 @@ def _plan(call: Call, args: dict[str, Any]) -> dict[str, Any]:
             raise
         plan.pop("reg", None)
     plan["registered"] = registered
+    _reserve(service, stage)
     return plan
+
+
+def _slot(service: WorkspaceService, stage: dict[str, Any]) -> tuple[str, str, int]:
+    return (service.workspace_id, stage["app_id"], stage["version"])
+
+
+def _reserve(service: WorkspaceService, stage: dict[str, Any]) -> None:
+    now = service.clock()
+    with P._MU:  # noqa: SLF001
+        if now - _INFLIGHT.get(_slot(service, stage), -INFLIGHT_MAX) < INFLIGHT_MAX:
+            raise HostError("lock.busy", "this release is already being sent", retry_after_ms=1000)
+        _INFLIGHT[_slot(service, stage)] = now
+
+
+def _release(service: WorkspaceService, stage: dict[str, Any]) -> None:
+    with P._MU:  # noqa: SLF001
+        _INFLIGHT.pop(_slot(service, stage), None)
 
 
 def _row(rec: dict[str, Any]) -> dict[str, Any]:
@@ -505,6 +529,7 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
         raise err from None
     finally:
         P._close_hub_links()  # noqa: SLF001
+        _release(call.service, plan["stage"])
 
 
 def _send(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
@@ -514,9 +539,10 @@ def _send(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
 
     service = call.service
     cfg, stage = plan["cfg"], plan["stage"]
-    # the staged files are read and hashed right before they go; the bytes returned are the bytes sent
-    blobs = _verify_stage(service, stage)
     meta = stage["app"]
+    with P._MU:  # noqa: SLF001 - right before the upload: the bytes and the record are still what was signed
+        blobs = _verify_stage(service, stage)  # the bytes returned are the bytes sent
+        _fresh(service, stage)
     client = P._client(service, cfg["server"], plan["hub"])  # noqa: SLF001
     if "reg" in plan and not plan.get("registered"):
         P._register(call, {**plan, "op": "publish.register"})  # noqa: SLF001
@@ -525,6 +551,8 @@ def _send(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
     for entry, data in zip(meta["files"], blobs, strict=True):
         flow.put_app_file(client, ws, app_id, version, entry["path"], data)
     with P._MU:  # noqa: SLF001
+        _verify_stage(service, stage)  # the staged copy is still the signed one when the version is recorded
+        _fresh(service, stage)
         rows = [r for r in _records(service) if r.get("id") != app_id]
         old = next((r for r in _records(service) if r.get("id") == app_id), None)
         rec = old or {

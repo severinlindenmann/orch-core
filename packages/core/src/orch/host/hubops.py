@@ -601,6 +601,8 @@ def publish_route(service: WorkspaceService) -> dict[str, Any] | None:
         "hub_id": state.hub_id,
         "hk_op": unb64u(state.hk_op_pub, 65),
         "addr": _addr({}, state, dev),
+        #: every address the host would dial for this hub (the dial order of :func:`_transport`): one list, one policy
+        "addrs": [a for a in [_addr({}, state, dev), *_more_addrs(state, dev)] if a],
         "spki": state.tls_spki,
         "mode": state.mode,
     }

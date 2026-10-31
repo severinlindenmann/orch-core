@@ -57,10 +57,21 @@ def test_get_shows_the_size_and_the_relative_folder_never_a_full_path(client, to
     }
     res = client.get(url(stub, "/tickets/DEMO-1/workdir"), headers=hdr(token))
     assert res.status_code == 200, res.text
-    assert host.calls[0] == ("workdir.get", {"ticket": "DEMO-1"}, False, None)
+    assert host.calls[0] == ("workdir.get", {"ticket": "DEMO-1", "list": True}, False, None)
     assert res.json() == {"available": True, "exists": True, "codebase": False, "folder": ".orch-work/DEMO-1",
-                          "files": 14, "bytes": 2_100_000, "truncated": False}  # fmt: skip
+                          "files": 14, "bytes": 2_100_000, "truncated": False, "items": []}  # fmt: skip
     assert "/Users" not in res.text
+
+
+def test_get_offers_only_plain_named_files_with_their_sizes():
+    got = view({
+        "exists": True, "codebase": False, "folder": ".orch-work/DEMO-1", "files": 3, "bytes": 20,
+        "items": [{"name": "hello.txt", "bytes": 16}, {"name": "../x", "bytes": 1}, {"name": ".hid", "bytes": 1},
+                  {"name": "a.txt", "bytes": -1}, {"name": "b.txt", "bytes": True}, "junk", {"name": "ok.md\n", "bytes": 1}],
+    })  # fmt: skip
+    assert got["items"] == [{"name": "hello.txt", "bytes": 16}]
+    assert view({"exists": True, "items": [{"name": f"f{i}.txt", "bytes": 1} for i in range(30)]})["items"].__len__() == 20
+    assert view({"exists": True, "items": "x"})["items"] == []
 
 
 def test_view_reads_an_odd_answer_as_no_folder():

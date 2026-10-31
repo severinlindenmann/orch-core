@@ -87,7 +87,8 @@ function readPins(person: string, ws: string): string[] | null {
 
 // WorkspaceSwitcher displays this same workspace prefix as its badge.
 function workspaceInitials(workspace: { prefix: string } | undefined) {
-  return workspace?.prefix ?? ''
+  // the first two letters of the same prefix the switcher badge shows: a 4-letter prefix ("DEMO") clipped the 28 px avatar
+  return (workspace?.prefix ?? '').slice(0, 2)
 }
 
 const MORE_KEY = (ws: string) => `orch.sidebar.more.${ws}`

@@ -5,7 +5,7 @@ import { cn } from '@/lib/utils'
 
 /** The mockup rule: new UI is marked Preview until the owner takes it in. */
 export function PreviewTag({ className }: { className?: string }) {
-  return <span className={cn('rounded border border-addon-border bg-addon-soft px-1 py-px text-[10px] font-semibold uppercase tracking-wide text-addon-text', className)}>Preview</span>
+  return <span className={cn('rounded border border-info/40 bg-info-soft px-1 py-px text-[10px] font-semibold uppercase tracking-wide text-info', className)}>Preview</span>
 }
 
 const DOT: Record<LiveState, string> = {
@@ -29,7 +29,7 @@ export function Badge({ children, className }: { children: ReactNode; className?
   return <span className={cn('whitespace-nowrap rounded bg-surface-3 px-1.5 py-0.5 font-mono text-[10.5px] text-text-muted', className)}>{children}</span>
 }
 
-export const TOOL_TONE = { claude: 'bg-warning-soft text-warning', codex: 'bg-info-soft text-info', local: 'bg-addon-soft text-addon-text' } as const
+export const TOOL_TONE = { claude: 'bg-warning-soft text-warning', codex: 'bg-info-soft text-info', local: 'bg-surface-3 text-text-muted' } as const
 
 export function Seg<T extends string>({ label, value, options, onChange }: { label: string; value: T; options: { id: T; label: string }[]; onChange: (id: T) => void }) {
   return <div role="group" aria-label={label} className="inline-flex shrink-0 rounded-lg border border-border bg-bg p-0.5">

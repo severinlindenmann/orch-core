@@ -27,9 +27,9 @@ function Thumbs({ n }: { n: number }) {
 
 function Row({ r }: { r: WorkRow }) {
   const you = r.tags.includes('you')
-  return <div data-testid="work-row" data-tags={r.tags.join(' ')} className={cn('grid grid-cols-[44px_18px_minmax(0,1fr)_auto] items-baseline gap-2 border-b border-border py-2 text-[13px] last:border-b-0', you && 'rounded-md border-b-0 bg-addon-soft px-1.5')}>
+  return <div data-testid="work-row" data-tags={r.tags.join(' ')} className={cn('grid grid-cols-[44px_18px_minmax(0,1fr)_auto] items-baseline gap-2 border-b border-border py-2 text-[13px] last:border-b-0', you && 'rounded-md border-b-0 bg-brand-soft px-1.5')}>
     <span className="font-mono text-[11px] text-text-faint">{r.time}</span>
-    {r.icon === 'job' ? <span aria-hidden className="text-text-faint">▤</span> : r.icon === 'you' ? <span aria-hidden className="text-addon-text">●</span> : <MilestoneGlyph icon={r.icon} className="translate-y-0.5 text-text-muted" />}
+    {r.icon === 'job' ? <span aria-hidden className="text-text-faint">▤</span> : r.icon === 'you' ? <span aria-hidden className="text-brand">●</span> : <MilestoneGlyph icon={r.icon} className="translate-y-0.5 text-text-muted" />}
     <span className="min-w-0 [overflow-wrap:anywhere]"><b className="font-semibold">{r.lead}</b> {r.text}
       {r.status && <span className={cn('ml-1.5 text-xs', r.status.tone === 'ok' ? 'text-success' : 'text-danger')}>{r.status.tone === 'ok' ? '✓' : '✗'} {r.status.text}</span>}
       {r.link && <a href="#open" onClick={(e) => { e.preventDefault(); toast('Preview: opens the tool\'s own page or the file.') }} className="ml-2 text-xs text-brand hover:underline">{r.link} ↗</a>}

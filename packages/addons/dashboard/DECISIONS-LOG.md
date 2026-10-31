@@ -2152,3 +2152,9 @@ Revert: Restore the prior gate only together with a coordinated click contract c
 - **Decision:** Share the mock API transport with hub switching; the production client exports a fetch transport. Mock rail and switch routes use `VITE_HUB_MOCKUP_URL`, defaulting to `http://127.0.0.1:8787/hub/index.html`, and map the requested page to its hash.
 - **Why:** The demo's Open hub action previously bypassed its router and failed against real HTTP. Standalone still has no hub.
 - **Revert:** Remove the mock rail/switch routes and switch transport exports together, restoring the direct fetch transport in `api/switch.ts`.
+
+### 2026-10-31 — X3 share delivery states
+
+- **Decision:** Show core's current delivery state, and reuse the existing share review for a confirming sync. Send now opens a preview; Sign explicitly confirms its plan through the existing owner-only endpoint. No new signing operation or automatic confirmation.
+- **Why:** A rule retained before joining has no confirmed selection, so an automatic retry cannot deliver it. A selected ticket is not evidence of delivery.
+- **Revert:** Remove the new entry points and delivery badges together; retain core's confirmation boundary.

@@ -72,9 +72,10 @@ function expiryBox() {
 const HUB_CAN_READ = "The hub could read this value if it were taken over.";
 // `fresh` is the new-secret form: it starts on "Only chosen workspaces" with the only workspace already ticked, says why, and warns
 // on the form only while "All workspaces" is picked.
-function shareBox(workspaces, current, chosen, fresh = false) {
+// `onChange` runs after the select or a box changes (the Manage panel uses it to show Save only when something differs).
+function shareBox(workspaces, current, chosen, fresh = false, onChange = null) {
   const sel = h("select", { "aria-label": "Who can read it" }, h("option", { value: "all", text: "All workspaces" }), h("option", { value: "chosen", text: "Only chosen workspaces" }));
-  sel.value = current;
+  sel.value = current === "all" ? "all" : "chosen"; // never a value that matches no option: the box would look empty
   const boxes = workspaces.map((w) => {
     const box = h("input", { type: "checkbox", "data-ws": w.workspace_id });
     box.checked = chosen.includes(w.workspace_id);
@@ -82,12 +83,16 @@ function shareBox(workspaces, current, chosen, fresh = false) {
   });
   const list = h("div", { class: "share-list" }, boxes.map(({ w, box }) => h("label", { class: "list-row row" }, box, h("span", { class: "grow", text: wsName(w) }))));
   const warn = h("p", { class: "small muted", role: "note", text: HUB_CAN_READ });
+  const read = () => ({ shared: sel.value === "chosen" ? "chosen" : "all", workspaces: sel.value === "chosen" ? boxes.filter((x) => x.box.checked).map((x) => x.w.workspace_id) : [] });
+  const saved = JSON.stringify(read());
   const sync = () => { warn.hidden = sel.value !== "all"; };
-  sel.addEventListener("change", sync);
+  const changed = () => { sync(); onChange?.(JSON.stringify(read()) !== saved); };
+  sel.addEventListener("change", changed);
+  for (const { box } of boxes) box.addEventListener("change", changed);
   sync();
   const node = fresh ? h("div", { class: "share-box" }, h("label", { class: "small", text: "Who can read it" }), sel,
     h("p", { class: "small muted", text: "Recommended: only the workspaces that need it." }), warn, list) : null;
-  return { sel, list, node, warn, read: () => ({ shared: sel.value === "chosen" ? "chosen" : "all", workspaces: sel.value === "chosen" ? boxes.filter((x) => x.box.checked).map((x) => x.w.workspace_id) : [] }) };
+  return { sel, list, node, warn, read };
 }
 
 // One form that takes a value: used for a new secret and for "Enter the value again". The box is emptied before anything is sent
@@ -108,7 +113,8 @@ function entryForm({ name, nameIn, share, submitLabel, actions }) {
     let out;
     try {
       const pick = share.read();
-      out = await actions.save?.({ name: nm, value, days: Number(days.value), ...pick });
+      // `clear` lets the page empty the name before it re-draws itself after a good save (the new-secret form only).
+      out = await actions.save?.({ name: nm, value, days: Number(days.value), ...pick, ...(nameIn ? { clear: () => { nameIn.value = ""; } } : {}) });
     } finally {
       input.value = "";
       go.disabled = false;
@@ -129,11 +135,16 @@ export function secretsView(data, actions = {}) {
   const card = (s) => {
     const names = s.shared === "all" ? "All workspaces" : (s.workspaces ?? []).map((id) => wsName(wsById[id])).join(", ") || "No workspace";
     const needs = Object.values(s.state ?? {}).some((x) => x.state !== "ready");
-    const rows = Object.entries(s.state ?? {}).map(([id, x]) => h("div", { class: "list-row row" },
+    // The per-workspace rows (and their Available chips) show only while a workspace still needs the value.
+    const rows = needs ? Object.entries(s.state ?? {}).map(([id, x]) => h("div", { class: "list-row row" },
       h("span", { class: "grow" }, wsName(wsById[id]),
         x.state === "ready" ? null : h("div", { class: "small muted", text: "Waiting for you to type the value again for this workspace." })),
-      h("span", { class: "chip " + (x.state === "ready" ? "ok" : "warn"), text: x.state === "ready" ? "\u2713 Available" : "Needs the value" })));
-    const share = shareBox(workspaces, s.shared, s.workspaces ?? []);
+      h("span", { class: "chip " + (x.state === "ready" ? "ok" : "warn"), text: x.state === "ready" ? "\u2713 Available" : "Needs the value" }))) : null;
+    // Save is hidden until the select or a box differs from what is saved; "No changes yet" stands in meanwhile.
+    const save = h("button", { type: "button", text: "Save who can read it", onclick: () => { const p = share.read(); actions.share?.(s.name, p.shared, p.workspaces); } });
+    save.hidden = true;
+    const noChange = h("span", { class: "small muted", "data-nochange": s.name, text: "No changes yet" });
+    const share = shareBox(workspaces, s.shared, s.workspaces ?? [], false, (dirty) => { save.hidden = !dirty; noChange.hidden = dirty; });
     const again = entryForm({ name: s.name, share: { read: () => ({ shared: s.shared, workspaces: s.workspaces ?? [] }) }, submitLabel: "Save the value", actions });
     again.node.hidden = true;
     let sure = false;
@@ -149,31 +160,45 @@ export function secretsView(data, actions = {}) {
     useNote.hidden = true;
     const useBtn = h("button", { type: "button", class: "link small", "data-use-toggle": s.name, text: "Who used it", onclick: () => { useNote.hidden = !useNote.hidden; } });
     const reenter = needs ? h("button", { type: "button", class: "primary", text: "Enter the value", onclick: () => { again.node.hidden = !again.node.hidden; } }) : null;
-    return h("article", { class: "card secret", "data-secret": s.name },
-      h("div", { class: "row" }, h("h3", { class: "grow", text: s.name }), remove),
-      h("div", { class: "row small muted" }, h("span", { class: "grow", text: (s.expired ? "Expired on " : "Valid until ") + plainDate(s.expires_ms) + " \u00b7 " + ((s.used_this_week ?? 0) ? "Used " + s.used_this_week + (s.used_this_week === 1 ? " time" : " times") + " this week" : "Not used yet") }),
-        info("About use", "Use is counted as reported by the workspaces.")),
-      h("div", { class: "row small muted" }, h("span", { class: "grow", text: "Shared with: " + names }),
-        info("About available", "Available means the workspace has received the secret.")),
-      h("div", { class: "row" }, useBtn), useNote,
+    // Manage folds the share box and "Who used it" away; a re-render (after a save) always closes it again.
+    const panel = h("div", { class: "manage-panel", "data-manage": s.name },
+      h("h4", { text: "Who can read it" }),
+      share.sel, share.list, share.warn,
+      h("p", { class: "small muted", text: "A workspace you add here needs the value entered again. A workspace that already received the value keeps it." }),
+      h("div", { class: "row" }, useBtn, h("span", { class: "grow" }), noChange, save),
+      useNote);
+    panel.hidden = true;
+    const manage = h("button", { type: "button", text: "Manage", "aria-expanded": "false", onclick: () => { panel.hidden = !panel.hidden; manage.setAttribute("aria-expanded", String(!panel.hidden)); } });
+    return h("article", { class: "card secret secret-row", "data-secret": s.name },
+      h("div", { class: "row" },
+        h("div", { class: "grow" }, h("h3", { text: s.name }),
+          h("div", { class: "small muted", text: (s.expired ? "Expired on " : "Valid until ") + plainDate(s.expires_ms) + " \u00b7 " + ((s.used_this_week ?? 0) ? "Used " + s.used_this_week + (s.used_this_week === 1 ? " time" : " times") + " this week" : "Not used yet") }),
+          h("div", { class: "small muted", text: "Shared with: " + names })),
+        manage, remove),
       rows,
       reenter ? h("div", { class: "row" }, reenter) : null,
       again.node,
-      h("div", { class: "row" }, h("h4", { class: "grow", text: "Who can read it" }),
-        info("About who can read it", "A workspace you add here needs the value entered again. A workspace that already received the value keeps it.")),
-      share.sel, share.list, share.warn,
-      h("button", { type: "button", text: "Save who can read it", onclick: () => { const p = share.read(); actions.share?.(s.name, p.shared, p.workspaces); } }));
+      panel);
   };
   const nameIn = h("input", { type: "text", autocomplete: "off", spellcheck: "false", "aria-label": "Name of the new secret", placeholder: "for example: crm-key", maxlength: "40" });
   const share = shareBox(workspaces, "chosen", workspaces.length === 1 ? [workspaces[0].workspace_id] : [], true);
   const form = entryForm({ nameIn, share, submitLabel: "Save secret", actions });
+  const has = (data.secrets ?? []).length > 0;
+  const section = h("section", { class: "card", "data-new-secret": true }, h("h3", { text: "New secret" }), nameIn, form.node);
+  const add = has ? h("div", { class: "row" }, h("button", { type: "button", class: "primary pri", text: "Add a secret", onclick: () => {
+    section.hidden = false;
+    add.hidden = true;
+    nameIn.focus?.();
+  } })) : null;
+  if (has) section.hidden = true;
   return h("div", { class: "secrets" },
     h("div", { class: "row" }, h("h1", { class: "grow", text: "Company secrets" }),
       info("About company secrets", "A secret is a key your tools need, such as the sign-in key of your CRM. You type it here once. It is locked in your browser for each workspace you choose, and only those workspaces can read it. Agents never see it. " + HUB_CAN_READ)),
     attentionList(data.attention),
-    (data.secrets ?? []).length ? (data.secrets ?? []).map(card) : none(),
-    h("section", { class: "card" }, h("h3", { text: "New secret" }),
-      nameIn, form.node));
+    has ? data.secrets.map(card) : none(),
+    // With secrets on the page the form is folded behind "Add a secret"; with none it stays open (the first-run path).
+    section,
+    add);
 }
 
 export async function secretsPage(d) {
@@ -191,7 +216,7 @@ export async function secretsPage(d) {
     const say = (ok, x) => { d.state.notice = x.status === 200 ? d.banner("ok", ok, null) : d.banner("bad", "Not changed", d.say(x.body.error ?? "unavailable")); };
     const save = async (f) => {
       const out = await saveSecret({ api: d.api, ...f });
-      if (out.ok) { d.state.notice = d.banner("ok", "Saved", out.without_key.length ? "Some workspaces have no key yet and need the value again later." : null); await secretsPage(d); }
+      if (out.ok) { f.clear?.(); d.state.notice = d.banner("ok", "Saved", out.without_key.length ? "Some workspaces have no key yet and need the value again later." : null); await secretsPage(d); }
       return out;
     };
     const remove = async (s) => { say("Removed", await d.api("DELETE", "/admin/secrets/" + s.name)); await secretsPage(d); };
@@ -202,4 +227,4 @@ export async function secretsPage(d) {
 }
 
 // The registry entry: the console's router, tabs and file list are built from this one export (no other file names a page).
-export const page = { path: "secrets", nav: { label: "Secrets", admin: true, needsWorkspace: true, after: "mcp" }, render: secretsPage };
+export const page = { path: "secrets", nav: { group: "Sharing & apps", label: "Secrets", admin: true, needsWorkspace: true, after: "mcp" }, render: secretsPage };

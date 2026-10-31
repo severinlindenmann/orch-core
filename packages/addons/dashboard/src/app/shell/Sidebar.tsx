@@ -6,6 +6,7 @@ import {
   Bot,
   CalendarClock,
   ChevronsUpDown,
+  ChevronDown,
   Ellipsis,
   Files,
   Focus,
@@ -67,6 +68,7 @@ import { PIN_ADDON_EVENT } from './pinEvent'
 import { fmtClock, fmtDateTime, sameLocalDay } from '@/lib/time'
 import { queries } from '@/api/queries'
 import { useMe } from '@/app/useMe'
+import { splitWorkspacePath } from '../urls'
 
 const RailContext = createContext(false)
 
@@ -80,6 +82,22 @@ function readPins(person: string, ws: string): string[] | null {
     return Array.isArray(v) && v.every((x) => typeof x === 'string') ? v : null
   } catch {
     return null
+  }
+}
+
+// WorkspaceSwitcher displays this same workspace prefix as its badge.
+function workspaceInitials(workspace: { prefix: string } | undefined) {
+  return workspace?.prefix ?? ''
+}
+
+const MORE_KEY = (ws: string) => `orch.sidebar.more.${ws}`
+function readMore(ws: string | undefined) {
+  try {
+    const stored = ws ? localStorage.getItem(MORE_KEY(ws)) : null
+    // Keep the development mock's review links discoverable on its first visit.
+    return stored === null ? !isRealHost() && import.meta.env.DEV : stored === 'true'
+  } catch {
+    return false
   }
 }
 
@@ -175,6 +193,8 @@ export function Sidebar() {
   const { workspace } = useWorkspace()
   const qc = useQueryClient()
   const { data: me } = useMe()
+  const hostInfo = useQuery(queries.hostInfo())
+  const devMode = !!hostInfo.data?.dev || (!isRealHost() && import.meta.env.DEV)
   const navItems = useSlot('nav')
   const { data: packages } = useAddons()
   const previews = new Set(packages?.filter((a) => a.preview).map((a) => a.name))
@@ -201,6 +221,31 @@ export function Sidebar() {
   const moreLabel = moreCount > 0 ? `More addons (${moreCount})` : 'All addons'
   const [moreOpen, setMoreOpen] = useState(false)
   const pathname = useRouterState({ select: (s) => s.location.pathname })
+  const visibleNav = CORE_NAV.filter((n) => hasFeature(n.feature, workspace?.id) && (n.feature !== 'worktrees' || addOns.data?.add_ons.some((a) => a.id === 'worktrees' && a.state === 'on')) && (!('real' in n) || isRealHost()) && (n.to !== '/spaces' || (spaces.data?.spaces.length ?? 0) > 0))
+  const everyday = new Set<string>(['/', '/board', '/tickets', '/shares'])
+  const secondaryNav = visibleNav.filter((n) => !everyday.has(n.to))
+  const path = splitWorkspacePath(pathname).path
+  const matches = (to: string) => path === to || path.startsWith(`${to}/`)
+  const secondaryRoute = secondaryNav.some((n) => matches(n.to))
+    || navItems.some((n) => matches(`/addon/${n.addon}/${n.id}`))
+    || (hasFeature('focus', ws) && matches('/focus'))
+    || (hasFeature('settings') && matches('/settings'))
+    || matches('/feedback') || (devMode && matches('/checklist'))
+  const [expanded, setExpanded] = useState(() => readMore(ws))
+  useEffect(() => setExpanded(readMore(ws)), [ws])
+  // Reopen on navigation, while still allowing an explicit collapse on the current page.
+  useEffect(() => {
+    if (secondaryRoute) setExpanded(true)
+  }, [ws, path, secondaryRoute])
+  const toggleMore = () => {
+    const next = !expanded
+    setExpanded(next)
+    try {
+      if (ws) localStorage.setItem(MORE_KEY(ws), String(next))
+    } catch {
+      // Storage unavailable: keep the choice for this mounted sidebar.
+    }
+  }
   // The nav scrolls when the window is short; a fade at the edge says there is more below.
   const navRef = useRef<HTMLElement>(null)
   const [moreBelow, setMoreBelow] = useState(false)
@@ -215,7 +260,7 @@ export function Sidebar() {
       el.removeEventListener('scroll', read)
       window.removeEventListener('resize', read)
     }
-  }, [navItems.length, shown.length, collapsed])
+  }, [navItems.length, shown.length, collapsed, expanded])
 
   const link = cn(
     // Keyboard focus is a brand ring, not the grey fill of the current page (aria-current) or of hover.
@@ -224,6 +269,23 @@ export function Sidebar() {
   )
   const activeProps = { className: 'bg-nav-selected !text-text shadow-[inset_0_0_0_1px_var(--nav-selected-border)]' }
   const label = collapsed ? 'hidden' : ''
+
+  const renderNav = ({ to, label: text, icon: Icon }: (typeof CORE_NAV)[number]) => (
+    <RailTip key={to} label={text}>
+      <Link to={to} className={link} activeProps={activeProps} activeOptions={{ exact: to === '/' || to === '/tickets', includeSearch: false }} aria-label={to === '/' && attention.badge > 0 ? `${text}, ${attention.badge} need you` : text}>
+        <span className="relative">
+          <Icon className="size-4" />
+          {collapsed && to === '/' && attention.badge > 0 && (
+            <span className="absolute -right-1.5 -top-1.5 size-2 rounded-full bg-brand" aria-hidden />
+          )}
+        </span>
+        <span className={cn('flex-1', label)}>{text}</span>
+        {!collapsed && to === '/' && attention.badge > 0 && (
+          <span className="rounded-full bg-brand px-1.5 text-[11px] font-semibold text-on-brand">{attention.badge}</span>
+        )}
+      </Link>
+    </RailTip>
+  )
 
   return (
     <RailContext.Provider value={collapsed}>
@@ -255,22 +317,15 @@ export function Sidebar() {
 
         <div className="relative flex min-h-0 flex-1 flex-col">
         <nav ref={navRef} className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-2 py-2" aria-label="Main">
-          {CORE_NAV.filter((n) => hasFeature(n.feature, workspace?.id) && (n.feature !== 'worktrees' || addOns.data?.add_ons.some((a) => a.id === 'worktrees' && a.state === 'on')) && (!('real' in n) || isRealHost()) && (n.to !== '/spaces' || (spaces.data?.spaces.length ?? 0) > 0)).map(({ to, label: text, icon: Icon }) => (
-            <RailTip key={to} label={text}>
-              <Link to={to} className={link} activeProps={activeProps} activeOptions={{ exact: to === '/' || to === '/tickets', includeSearch: false }} aria-label={to === '/' && attention.badge > 0 ? `${text}, ${attention.badge} need you` : text}>
-                <span className="relative">
-                  <Icon className="size-4" />
-                  {collapsed && to === '/' && attention.badge > 0 && (
-                    <span className="absolute -right-1.5 -top-1.5 size-2 rounded-full bg-brand" aria-hidden />
-                  )}
-                </span>
-                <span className={cn('flex-1', label)}>{text}</span>
-                {!collapsed && to === '/' && attention.badge > 0 && (
-                  <span className="rounded-full bg-brand px-1.5 text-[11px] font-semibold text-on-brand">{attention.badge}</span>
-                )}
-              </Link>
-            </RailTip>
-          ))}
+          {visibleNav.filter((n) => everyday.has(n.to)).map(renderNav)}
+          <RailTip label="More">
+            <button type="button" className={link} aria-label="More" aria-expanded={expanded} aria-controls="sidebar-more" onClick={toggleMore}>
+              <ChevronDown className={cn('size-4', !expanded && '-rotate-90')} />
+              <span className={label}>More</span>
+            </button>
+          </RailTip>
+          <div id="sidebar-more" role="group" aria-label="More" hidden={!expanded}>
+            {secondaryNav.map(renderNav)}
 
           {(navItems.length > 0 || hasFeature('focus', workspace?.id)) && (
             <div className="mt-4 space-y-0.5">
@@ -356,11 +411,6 @@ export function Sidebar() {
               )}
             </div>
           )}
-        </nav>
-        {moreBelow && <div aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0 h-8 bg-gradient-to-t from-sidebar to-transparent" />}
-        </div>
-
-        <div className="space-y-1 border-t border-border p-2">
           {hasFeature('settings') && (
             <RailTip label="Settings">
               <Link to="/settings" className={link} activeProps={activeProps} aria-label="Settings">
@@ -370,13 +420,13 @@ export function Sidebar() {
             </RailTip>
           )}
 
-          <RailTip label="Test checklist">
+          {devMode && <RailTip label="Test checklist">
             {/* A full page load: the checklist is its own page outside the shell, so an in-app move would render the old page without its shell for a moment. */}
             <a href="/checklist" className={cn(link, 'text-[12px] text-text-muted')} aria-label="Test checklist">
               <ListChecks className="size-4" />
               <span className={label}>Test checklist</span>
             </a>
-          </RailTip>
+          </RailTip>}
 
           <RailTip label="Feedback">
             {/* A full page load, like the checklist: the page is outside the shell. */}
@@ -386,6 +436,12 @@ export function Sidebar() {
             </a>
           </RailTip>
 
+          </div>
+        </nav>
+        {moreBelow && <div aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0 h-8 bg-gradient-to-t from-sidebar to-transparent" />}
+        </div>
+
+        <div className="space-y-1 border-t border-border p-2">
           {hasFeature('grants') && <RailTip label={grant ? `Agents can work until ${grantTime}` : 'Agents have no access. Give access in Settings, Agent access.'}>
             <div
               className={cn(
@@ -402,7 +458,7 @@ export function Sidebar() {
           {isRealHost() ? (
             <div className={cn('flex items-center gap-2 py-1.5', collapsed ? 'justify-center px-0' : 'px-2')}>
               <Avatar className="size-7">
-                <AvatarFallback className="bg-surface-3 text-[11px]">{me?.name.slice(0, 2).toUpperCase()}</AvatarFallback>
+                <AvatarFallback className="bg-surface-3 text-[11px]">{workspaceInitials(workspace)}</AvatarFallback>
               </Avatar>
               <span className={cn('min-w-0 flex-1', label)}>
                 <span className="block truncate text-[13px] text-text">{me?.name}</span>
@@ -430,7 +486,7 @@ export function Sidebar() {
                   className={cn('flex w-full items-center gap-2 rounded-md py-1.5 text-left hover:bg-surface-2', collapsed ? 'justify-center px-0' : 'px-2')}
                 >
                   <Avatar className="size-7">
-                    <AvatarFallback className="bg-surface-3 text-[11px]">{me?.name.slice(0, 2).toUpperCase()}</AvatarFallback>
+                    <AvatarFallback className="bg-surface-3 text-[11px]">{workspaceInitials(workspace)}</AvatarFallback>
                   </Avatar>
                   <span className={cn('min-w-0 flex-1', label)}>
                     <span className="block truncate text-[13px] text-text">{me?.name}</span>

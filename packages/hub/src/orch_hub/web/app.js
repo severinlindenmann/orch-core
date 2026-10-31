@@ -21,7 +21,7 @@ import { checkServiceAction, resultWords, logsDialog, serviceDialog, stopLabel, 
 import { handoffsView } from "./handoffs.js";
 import { phonesView } from "./phones.js";
 import { workspacesView, workspaceDetailsView, newWorkspaces, privateRows } from "./workspaces.js";
-import { OPEN_FIRST, OPEN_ON_ITS_COMPUTER, colour, initials, landing, landingPlan, openingState, railRows, safeUrl, backToWorkspace } from "./switch.js";
+import { OPEN_FIRST, OPEN_ON_ITS_COMPUTER, colour, initials, landing, landingPlan, openingState, railRows, safeUrl, backToWorkspace, namePrefill } from "./switch.js";
 import { Refusal, grantTermsOk, grantSentence, grantFacts, addonFacts, addonTermsOk, settingsFacts, settingsTermsOk, checkBindings, checkPrepared, describe, renderMulti, renderText, shortHash, verifyQuestion, DECISIONS } from "./render.js";
 
 const root = document.getElementById("app");
@@ -144,9 +144,10 @@ function loginView(err, opts = {}) {
     },
   }, field("Your name", id), field("Password", pw), field("6-digit code", code), h("p", { class: "small muted", text: "Use the code shown for orch in the code app on your phone." }), h("div", { class: "row top" }, h("button", { class: "pri", type: "submit", text: "Sign in" })));
   if (workspace) form.append(h("a", { href: "#", text: "Back to my workspace", onclick: (ev) => { ev.preventDefault(); backToWorkspace(workspace, { assign: (u) => location.assign(u), back: () => history.back(), canBack: () => history.length > 1, login: () => loginView(null, { ...opts, workspace }) }); } }));
-  if (opts.prefill) id.value = opts.prefill; // P02: arriving from the person's own workspace, the name is already known
+  const prefill = namePrefill(opts.prefill); // P02: arriving from the person's own workspace; a name only, never an id
+  if (prefill) id.value = prefill;
   show(h("h1", { text: opts.title ?? (workspace ? "Sign in to the hub." : "Sign in to your hub") }), opts.ok ? banner("ok", "Restored", opts.ok) : null, opts.why ? h("p", { class: "muted", text: opts.why }) : null, err ? banner("bad", "Not signed in", err) : null, h("div", { id: "company-slot" }), form);
-  if (opts.prefill) pw.focus?.();
+  if (prefill) pw.focus?.();
   void api("GET", "/oidc/options").then((o) => { // company login (HUB-PE-04): a button only when the admin turned it on
     const btn = o.status === 200 ? companyButton(o.body, async () => { const r = await beginCompany(api, "signin"); if (!r.ok) loginView(COMPANY_WHY[r.error] ?? say(r.error)); }) : null;
     const slot = document.getElementById("company-slot");
@@ -212,27 +213,42 @@ function shell(active, ...nodes) {
   // The section tabs: orch's own, with every page module of pages/ slotted in after the tab it names (PAGES is generated
   // from the folder by the server; nothing here lists a page).
   // P14: an empty hub shows only what is useful; the entries marked `later` appear once a workspace is connected (routes still open by URL).
-  const items = [["home", "Home"], ["approvals", "Approvals", false, true], ["workspaces", "Workspaces"], ["phones", "Phones"], ["handoffs", "Hand-offs", false, true], ["account", "Account"], ["services", "Services", true, true], ["activity", "Activity", true, true], ["admin", "Admin", true]].map(([id, label, admin, later]) => ({ id, label, admin: !!admin, later: !!later }));
+  const items = [["home", "Home"], ["approvals", "Approvals", false, true], ["workspaces", "Workspaces"], ["phones", "Phones"], ["handoffs", "Hand-offs", false, true], ["account", "Account"], ["services", "Services", true, true], ["activity", "Activity", true, true], ["admin", "People", true]].map(([id, label, admin, later]) => ({ id, label, admin: !!admin, later: !!later, group: ["handoffs", "services"].includes(id) ? "Sharing & apps" : ["phones", "admin"].includes(id) ? "People & settings" : null }));
   for (let todo = [...PAGES].sort((x, y) => (x.path < y.path ? -1 : 1)), moved = true; todo.length && moved;) {
     moved = false;
     for (const pg of [...todo]) {
       const at = items.findIndex((t) => t.id === pg.nav.after);
       if (at < 0) continue;
-      items.splice(at + 1, 0, { id: pg.path, label: pg.nav.label, admin: pg.nav.admin, later: !!pg.nav.needsWorkspace });
+      items.splice(at + 1, 0, { id: pg.path, label: pg.nav.label, admin: pg.nav.admin, later: !!pg.nav.needsWorkspace, group: pg.nav.group });
       todo.splice(todo.indexOf(pg), 1); moved = true;
     }
   }
-  for (const pg of PAGES) if (!items.some((t) => t.id === pg.path)) items.push({ id: pg.path, label: pg.nav.label, admin: pg.nav.admin, later: !!pg.nav.needsWorkspace }); // an unresolved nav.after is still reachable (pages.test.mjs fails on it)
+  for (const pg of PAGES) if (!items.some((t) => t.id === pg.path)) items.push({ id: pg.path, label: pg.nav.label, admin: pg.nav.admin, later: !!pg.nav.needsWorkspace, group: pg.nav.group }); // an unresolved nav.after is still reachable (pages.test.mjs fails on it)
   const empty = state.rail.ready === true && !state.rail.rows.length; // a rail that could not be read hides nothing
-  const tabs = (cls) => items.filter((t) => (!t.admin || state.user?.is_admin) && !(t.later && empty)).map((t) => tab(t.id, t.label, cls));
+  const visible = items.filter((t) => (!t.admin || state.user?.is_admin) && !(t.later && empty));
+  const groups = () => empty ? [] : ["Sharing & apps", "People & settings"].map((group) => {
+    const members = visible.filter((t) => t.group === group);
+    if (!members.length) return null;
+    const remembered = state.navGroups?.[group] === true;
+    const details = h("details", { class: "grp", open: members.some((t) => t.id === active) || remembered },
+      h("summary", { text: group }), ...members.map((t) => tab(t.id, t.label, "nv")));
+    details.addEventListener("toggle", () => {
+      if (!details.isConnected) return;
+      (state.navGroups ??= {})[group] = details.open;
+    });
+    return details;
+  });
   const name = renderText(state.user?.name ?? "");
   const hubName = renderText(state.rail.hubName);
-  const topNav = h("nav", { class: "navtabs top-nav", "aria-label": "Sections" }, ...tabs("nav"));
-  const side = h("aside", { class: "side", "aria-label": "Hub" },
+  const navigation = () => [
+    ...visible.filter((t) => (empty || !t.group) && t.id !== "account").map((t) => tab(t.id, t.label, "nv")),
+    ...groups(),
+    h("div", { class: "sp" }), h("div", { class: "who" }, h("span", { text: name }), tab("account", "Account", "account-link"))];
+  const topNav = h("nav", { class: "side-nav top-nav", "aria-label": "Sections" }, ...navigation());
+  const side = h("aside", { class: "side side-nav", "aria-label": "Hub" },
     h("div", { class: "logo" }, h("i"), h("span", { text: "orch" })),
     h("div", { class: "hubbox" }, h("span", { text: hubName })),
-    ...tabs("nv"),
-    h("div", { class: "sp" }), h("div", { class: "who" }, h("span", { text: name })));
+    ...navigation());
   if (!frame) {
     const top = h("header", { class: "topbar" }, h("span", { class: "t breadcrumb", text: hubName }),
       topNav,
@@ -242,11 +258,13 @@ function shell(active, ...nodes) {
     frame = root.querySelector(".app");
     railSnapshot = JSON.stringify(state.rail);
   } else {
-    if (!sameRoute || railSnapshot !== JSON.stringify(state.rail)) frame.querySelector(".side").replaceWith(side);
+    if (!sameRoute || railSnapshot !== JSON.stringify(state.rail)) {
+      frame.querySelector(".side").replaceWith(side);
+      frame.querySelector(".top-nav")?.replaceWith(topNav);
+    }
     replaceContent(frame.querySelector(".content"), nodes.flat(2).filter(Boolean), sameRoute);
     if (railSnapshot !== JSON.stringify(state.rail)) {
       frame.querySelector(".rail").replaceChildren(...railView().childNodes);
-      frame.querySelector(".top-nav")?.replaceWith(topNav);
       railSnapshot = JSON.stringify(state.rail);
     }
   }
@@ -389,7 +407,7 @@ const slowWatch = createSlowWatch(() => !root.classList.contains("shelled") && !
 
 // A session that came from a workspace ticket cannot use admin tools until a real password sign-in.
 async function reauthView() {
-  const name = state.user?.user_id ?? "", back = globalThis.location?.hash ?? null;
+  const name = namePrefill(state.user?.name), back = globalThis.location?.hash ?? null; // QA b1852: the name, never the id
   const admin = /^#\/admin/.test(back ?? "");
   await api("DELETE", "/session"); clearSession(); returnHash = back;
   loginView(null, { prefill: name, title: admin ? "Sign in to open Admin" : "Sign in to open this page", why: "You came from your workspace. Confirm it is you, then you go straight " + (admin ? "to Admin." : "back to this page.") });
@@ -864,6 +882,7 @@ async function removeChannel(id) {
 }
 
 function clearSession() {
+  state.navGroups = {};
   homeData = null;
   liveItems = { user_id: null, items: [] };
   state.user = null;

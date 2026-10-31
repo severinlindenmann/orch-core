@@ -156,10 +156,20 @@ main#app.shelled { max-width:none; padding:0; margin:0; }
 .logo { display:flex; align-items:center; gap:8px; font-weight:700; font-size:17px; padding:2px 8px 10px; letter-spacing:-.02em; }
 .logo i { width:20px; height:20px; border-radius:50%; border:3px solid var(--brand); display:inline-block; }
 .hubbox { display:flex; align-items:center; gap:8px; background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:7px 9px; margin-bottom:8px; font-weight:500; }
-.side a.nv { display:flex; align-items:center; gap:9px; padding:7px 9px; border-radius:8px; color:var(--text-muted); text-decoration:none; }
-.side a.nv:hover { color:var(--text); }
-.side a.nv.on { background:var(--surface-2); color:var(--text); }
-.side .grp { font:600 10px "Geist Mono",ui-monospace,monospace; letter-spacing:.12em; color:var(--text-faint); padding:12px 9px 4px; }
+.side-nav a.nv { display:flex; align-items:center; gap:9px; padding:7px 9px; border-radius:8px; color:var(--text-muted); text-decoration:none; }
+.side-nav a.nv:hover { color:var(--text); }
+.side-nav a.nv.on { background:var(--surface-2); color:var(--text); }
+.side-nav .grp { margin:2px 0 0; padding:2px 0 0; border-top:1px solid var(--surface-3); }
+.side-nav .grp summary { list-style:none; cursor:pointer; font-weight:400; margin:0; padding:6px 9px; border-radius:8px; color:var(--text-muted); display:flex; justify-content:space-between; gap:8px; }
+.side-nav .grp summary::-webkit-details-marker { display:none; }
+.side-nav .grp summary::after { content:"›"; }
+.side-nav .grp[open] summary::after { content:"⌄"; }
+.side-nav .grp summary:hover { color:var(--text); }
+.side-nav .grp[open] summary { margin-bottom:2px; }
+.side-nav .grp a.nv { padding-left:22px; }
+.side-nav .grp summary:focus-visible, .who a:focus-visible { outline:2px solid var(--brand); outline-offset:2px; }
+.who .account-link { margin-left:auto; color:var(--text-muted); text-decoration:none; }
+.who .account-link:hover, .who .account-link.on { color:var(--text); }
 .side .sp { flex:1; }
 .who { display:flex; align-items:center; gap:8px; padding:6px 9px; font-size:12px; color:var(--text-muted); border-top:1px solid var(--border); margin-top:8px; }
 .main { min-width:0; display:flex; flex-direction:column; }
@@ -186,7 +196,7 @@ main#app.shelled { max-width:none; padding:0; margin:0; }
   .rail .rsep { width:1px; height:24px; }
   .ra.on::before { left:8px; right:8px; top:auto; bottom:-9px; width:auto; height:3px; border-radius:3px 3px 0 0; }
   .main .topbar { padding:8px 12px; flex-wrap:wrap; }
-  .main .topbar .top-nav { display:flex; }
+  .main .topbar .top-nav { display:flex; flex-direction:column; flex-basis:100%; gap:2px; }
   .content { padding:16px 14px 40px; }
   .menu { right:0; left:auto; }
 }
@@ -360,6 +370,16 @@ details.name-browser summary { font-size:13px; font-weight:400; color:var(--mute
 details.company-login-fold { border-top:0; padding:8px 0; margin:12px 0; }
 details.company-login-fold > summary { display:flex; flex-wrap:wrap; align-items:center; gap:8px; font-weight:400; }
 details.company-login-fold > summary .link { margin-left:auto; color:var(--accent, #2fc6a3); }
+
+/* run19 P04: Company secrets: one calm row per secret; Manage folds the share box and "Who used it" */
+.secret-row > .row:first-child { align-items:flex-start; }
+.secret-row h3 + .small { margin-top:2px; }
+.secret-row .manage-panel { border-top:1px solid var(--line); margin-top:14px; padding-top:6px; }
+.secret-row .manage-panel h4 { margin:10px 0 6px; font-size:13px; color:var(--muted); font-weight:550; }
+.secret-row .manage-panel > .row { margin-top:12px; }
+.secrets button.primary { background:var(--pri); color:var(--priText); border-color:var(--pri); }
+.secrets button.primary:hover:not(:disabled) { filter:brightness(.94); background:var(--pri); }
+.secrets button.link { border:0; background:none; color:var(--pri); padding:0; min-height:0; text-decoration:underline; text-underline-offset:3px; font-weight:500; }
 
 /* the first paint and the slow-load card (run17 P05): the same centred card; the bar moves until a page replaces it */
 .opening { max-width:520px; margin:12vh auto 0; }

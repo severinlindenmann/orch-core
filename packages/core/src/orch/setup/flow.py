@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import re
 import secrets as _secrets
+import socket
 import threading
 import time
 from collections.abc import Callable, Mapping
@@ -243,6 +244,9 @@ class SetupFlow:
             "mode": self.mode,
             "dir": self.dir,
             "dir_name": Path(self.dir).name if self.dir else "",
+            "host": socket.gethostname()[
+                :80
+            ],  # P43: names the computer being set up (over ssh it is not the one in front of you)
             "suggested": sug,
             "addons": [a.view() for a in self.addons.values()],
             "methods": list(METHODS),
@@ -623,6 +627,7 @@ _LINK = re.compile(
 USAGE = (
     "usage: orch setup [--no-browser] [--role workspace|full|pick] [--address ADDRESS] [--port-base N]\n"
     "       orch setup --server --role hub|edge [--domain BASE] [--hub-vpn-only | --hub-name NAME]\n"
+    "                                                 [--trust-hub ID (edge only)]\n"
     "                                                 (a server, no workspace)\n"
     "  (run it in the folder you want to make a workspace; it asks what this computer should be, then opens the page)\n"
 )

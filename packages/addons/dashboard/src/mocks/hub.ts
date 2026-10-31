@@ -7,17 +7,19 @@ import type { ProfileFields } from '@/api/profile' // type only: a runtime impor
 import { BACKUP_KEY_LINE, CLICK_RISK, type ClickViewAnswer } from '@/api/click'
 import { fail, ok, type MockRouter } from './router'
 
-export const HUB_SCENARIOS = ['standalone', 'selective', 'full', 'offline', 'nottold', 'update', 'closing'] as const
+export const HUB_SCENARIOS = ['standalone', 'selective', 'full', 'offline', 'nottold', 'update', 'closing', 'delivery'] as const
 export type HubScenario = (typeof HUB_SCENARIOS)[number]
 const KEY = 'orch.mock.hub'
 
 let forced: HubScenario | null = null
 /** Tickets the owner stopped sharing in the mock (reset with the scenario). */
 const withdrawn = new Set<string>()
+let delivered = false
 /** Tests and the dev switch set the scenario. */
 export const setHubScenario = (s: HubScenario | null) => {
   forced = s
   withdrawn.clear()
+  delivered = false
 }
 
 function scenario(): HubScenario {
@@ -42,6 +44,7 @@ const HUB_ID = '9f3c1ab277de40c8'
 export function mockHubStatus(s: HubScenario = scenario()): HubStatus {
   const joined = { ...BASE, joined: true, hub_id: HUB_ID, link: 'bound' as const, groups: { read: 3, edit: 8, admin: 2 }, snapshot_version: 4 }
   switch (s) {
+    case 'delivery':
     case 'selective': return { ...joined, mode: 'selective', hub_card: JSON.stringify({ o: { hub_id: HUB_ID }, sig: 'x' }) }
     case 'full': return { ...joined, mode: 'full', member: true }
     case 'update': return { ...joined, mode: 'full', member: true, update_target: '0.2.0' }
@@ -57,8 +60,11 @@ const SHARED = [
   { key: 'DEMO-0045', title: 'Pricing page copy' },
 ]
 
+const DELIVERY = [...SHARED, { key: 'DEMO-0042', title: 'Fix login redirect' }, { key: 'DEMO-0044', title: 'Review the release' }]
+const selectedTickets = () => scenario() === 'delivery' ? DELIVERY : SHARED
+
 function mockShare(): HubShare {
-  const joined = scenario() === 'selective' || scenario() === 'offline' || scenario() === 'full'
+  const joined = scenario() === 'delivery' || scenario() === 'selective' || scenario() === 'offline' || scenario() === 'full'
   if (!joined) return { available: true, rules: [], shared: 0, refused: [], tickets: [], tickets_complete: true }
   return {
     available: true,
@@ -68,7 +74,9 @@ function mockShare(): HubShare {
       { kind: 'type', value: 'feature', count: 1, describes: "every ticket of type 'feature' (title, status, labels, deadline)" },
       { kind: 'ticket', value: 'DEMO-0045', count: 1, describes: "the ticket 'DEMO-0045' (title, status, labels, deadline)" },
     ],
-    shared: 6 - withdrawn.size, refused: [], tickets: SHARED.map((t) => t.key).filter((k) => !withdrawn.has(k)), tickets_complete: true,
+    tickets_state: Object.fromEntries(selectedTickets().filter(t => !withdrawn.has(t.key)).map((t, i) => [t.key, delivered || scenario() !== 'delivery' ? 'sent' : ['sent', 'waiting', 'not_sent', 'refused:too_large'][i]])),
+    not_sent_count: scenario() !== 'delivery' || delivered || withdrawn.has('DEMO-0042') ? 0 : 1,
+    shared: 6 - withdrawn.size, refused: [], tickets: selectedTickets().map((t) => t.key).filter((k) => !withdrawn.has(k)), tickets_complete: true,
   }
 }
 
@@ -83,7 +91,7 @@ export const MOCK_AUDIENCE: HubAudienceList = {
 }
 
 function mockPreview(body: { add?: HubRule; remove?: HubRule } | null): HubPreview {
-  const base = SHARED.map((t) => ({ kind: 'ticket' as const, line: `ticket ${t.key}: ${t.title}` }))
+  const base = selectedTickets().map((t) => ({ kind: 'ticket' as const, line: `ticket ${t.key}: ${t.title}` }))
   const notes = { kind: 'summary' as const, line: 'needs you: question: Which greeting?' }
   const add = body?.add
   const rm = body?.remove
@@ -102,7 +110,8 @@ function mockPreview(body: { add?: HubRule; remove?: HubRule } | null): HubPrevi
     removed = 1
   }
   items = items.filter((i) => !withdrawn.has(i.line.replace(/^ticket ([^:]+):.*$/, '$1')))
-  const fresh = items.slice(base.length + 1).map((i) => i.line)
+  const fresh = !add && !rm && !delivered ? items.filter(i => i.line.startsWith('ticket DEMO-0042:')).map(i => i.line) : items.slice(base.length + 1).map((i) => i.line)
+  if (!add && !rm) added = fresh.length
   const aud = add && (add.kind === 'type' || add.kind === 'tag' || add.kind === 'ticket') ? add.audience : undefined
   const names = (aud?.users ?? []).map((u) => MOCK_AUDIENCE.people.find((p) => p.user_id === u)?.name ?? 'a person on the hub')
   const withText = add && (add.kind === 'type' || add.kind === 'tag' || add.kind === 'ticket') && add.description === true
@@ -190,8 +199,10 @@ export function registerHubRoutes(r: MockRouter) {
     return ok({ synced: true, pending: null, put: mockPreview({ add: b.rule }).new })
   })
   r.add('POST', '/api/w/:ws/hub/share/sync', (_s, c) => {
-    if (typeof (c.body as { expect?: unknown } | null)?.expect !== 'string') return fail(400, 'invalid.input', 'Body must be {expect}')
-    return ok({ synced: true, pending: null, put: 0 })
+    if ((c.body as { expect?: unknown } | null)?.expect !== mockPreview({}).plan) return fail(400, 'invalid.input', 'What would be shared changed meanwhile. Look at it again.')
+    const put = mockPreview({}).new
+    delivered = true
+    return ok({ synced: true, pending: null, put })
   })
   registerHubProfileRoutes(r)
   registerHubNetworkRoutes(r)

@@ -56,6 +56,14 @@ button{font:inherit;color:inherit}
 .nv .ct.w{background:var(--warning-soft);color:var(--warning)}
 .nv .nw{margin-left:auto;font:600 9px "Geist Mono",monospace;color:var(--note);border:1px solid var(--note-line);padding:0 4px;border-radius:4px}
 .side .foot{margin-top:auto;padding:12px 9px 0;color:var(--text-faint);font-size:12px;border-top:1px solid var(--border)}
+.nav-group{margin:2px 0 0;padding:2px 0 0;border-top:1px solid var(--surface-3)}
+.nav-group summary{cursor:pointer;font-weight:400;color:var(--text-muted);padding:6px 9px}
+.nav-group .nv{padding-left:22px}
+a.nv{text-decoration:none}
+.who{display:flex;align-items:center;gap:8px}
+.who a{margin-left:auto}
+.foot a{color:var(--text-muted)}
+.mockup-tools{margin-top:8px;font-size:11px}
 /* main */
 .main{display:flex;flex-direction:column;min-width:0;min-height:0}
 .top{display:flex;align-items:center;gap:10px;padding:12px 22px;border-bottom:1px solid var(--border);min-height:56px}
@@ -523,11 +531,9 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape") close(); }
 
 // ---------------------------------------------------------------- shell
 const NAV = [
-  ["", [["home","hm","Home"],["approvals","inb","Approvals",() => D.approvals.length],["handoffs","swp","Hand-offs"],["activity","act","Activity"]]],
-  ["COMPANY", [["workspaces","gr","Workspaces",() => D.ws.length],["connections","sh","Connections"],["people","us","People"],["groups","grp","Groups & access"],["spaces","bk","Shared spaces"]]],
-  ["SERVICES", [["services","srv","Services"],["phones","ph","Phones & browsers"],["publish","ex","Published"]]],
-  ["EXTEND", [["addons","pz","Add-ons",() => D.addons.filter(a=>a.state==="requested").length || null,"w"],["skills","ky","Skills, MCP & secrets"]]],
-  ["", [["settings","gear","Hub settings"],["account","me","My account"],["lookfeel","act","Look & feel"],["requirements","lst","Requirements"]]],
+  ["", [["home","hm","Home"],["approvals","inb","Approvals",() => D.approvals.length],["workspaces","gr","Workspaces",() => D.ws.length],["activity","act","Activity"]]],
+  ["Sharing & apps", [["connections","sh","Connections"],["handoffs","swp","Hand-offs"],["services","srv","Services"],["publish","ex","Published pages"],["addons","pz","Add-ons",() => D.addons.filter(a=>a.state==="requested").length || null,"w"],["skills","ky","Skills"],["mcp","pz","Tool servers"],["spaces","bk","Shared spaces"],["secrets","ky","Secrets"]]],
+  ["People & settings", [["phones","ph","Phones"],["people","us","People"],["settings","gear","Hub settings & backups"]]],
 ];
 function renderRail(cur){
   const r = $("#rail");
@@ -537,11 +543,14 @@ function renderRail(cur){
 }
 function renderSide(page){
   $("#side").innerHTML = `<div class="hubname"><span class="lg"></span><div><b>${esc(D.hub.name)}</b><small>${esc(D.hub.company)} · hub</small></div></div>` +
-    NAV.map(([g, items]) => (g ? `<div class="grp">${g}</div>` : `<div style="height:6px"></div>`) + items.map(([id, i, label, cnt, cls]) => {
-      const c = cnt ? cnt() : null;
-      return `<div class="nv ${page === id ? "on" : ""}" data-nav="${id}">${ic(i)}<span>${label}</span>${c ? `<span class="ct ${cls || ""}">${c}</span>` : ""}</div>`;
-    }).join("")).join("") +
-    `<div class="foot">Signed in as <b>${esc(D.me.name)}</b> · Hub admin<br><span class="faint">${esc(D.hub.version)}</span></div>`;
+    NAV.map(([g, items]) => {
+      const links = items.map(([id, i, label, cnt, cls]) => {
+        const c = cnt ? cnt() : null;
+        return `<a href="#${id}" class="nv ${page === id ? "on" : ""}" ${page === id ? 'aria-current="page"' : ""} data-nav="${id}">${ic(i)}<span>${esc(label)}</span>${c ? `<span class="ct ${cls || ""}">${c}</span>` : ""}</a>`;
+      }).join("");
+      return g ? `<details class="nav-group" ${items.some(([id]) => id === page) || (g === "People & settings" && page === "groups") ? "open" : ""}><summary>${esc(g)}</summary>${links}</details>` : links;
+    }).join("") +
+    `<div class="foot"><div class="who"><b>${esc(D.me.name)}</b><a href="#account" data-nav="account" ${page === "account" ? 'aria-current="page"' : ""}>Account</a></div><span class="faint">${esc(D.hub.version)}</span><div class="mockup-tools">Mockup only: <a href="#requirements" data-nav="requirements">Requirements</a> · <a href="#lookfeel" data-nav="lookfeel">Look &amp; feel</a></div></div>`;
 }
 function renderTop(title){
   const down = D.services.filter((s) => s.state === "stopped").length, off = D.ws.filter((w) => !w.online).length;
@@ -683,7 +692,7 @@ P.connections = () => {
   <p class="small muted">Allowing a new connection is approved by an admin of the receiving workspace. Workspaces without a connection don't see each other in the directory.</p>`;
 };
 
-P.people = () => `<h1>People</h1><p class="lead">Everyone who can sign in to the hub. People sign in with their name, a password and a 6-digit code.</p>${note("people")}
+P.people = () => `<h1>People</h1><p><a class="btn sm" href="#groups" data-nav="groups">Groups &amp; access</a></p><p class="lead">Everyone who can sign in to the hub. People sign in with their name, a password and a 6-digit code.</p>${note("people")}
   <div style="display:flex;gap:8px;margin-bottom:12px"><input class="input" placeholder="Search people" style="max-width:260px"><span style="flex:1"></span><button class="btn pri" data-act="invite">${ic("pl")} Invite a person</button></div>
   <div class="card">${D.people.map((p) => `<div class="row"><span class="av">${esc(p.initials)}</span><div class="tx"><b>${esc(p.name)}</b> ${p.role !== "Member" ? `<span class="tag v">${esc(p.role)}</span>` : ""} ${p.status === "invited" ? `<span class="tag w">Invited</span>` : ""}<div class="s">${esc(p.groups.join(" · "))} · ${p.devices.length} device(s) · last seen ${esc(p.last)}</div></div><button class="btn sm" data-person="${p.id}">Manage</button></div>`).join("")}</div>`;
 
@@ -859,7 +868,7 @@ P.addons = () => `<h1>Add-ons</h1><p class="lead">Which add-ons workspaces may i
   ${D.addons.map((a) => `<tr><td><b>${esc(a.name)}</b> <span class="mono small faint">${esc(a.ver)}</span></td><td class="small">${esc(a.src)}</td><td class="small">${esc(a.allowed)}</td><td class="small">${esc(a.used)}</td><td style="text-align:right">${a.state === "allowed" ? `<button class="btn sm" data-toast="Mockup: pick workspaces">Change</button>` : a.state === "builtin" ? `<span class="tag">Built in</span>` : `<span class="tag w">Requested</span>`}</td></tr>`).join("")}</table></div>
   <div class="card"><div class="hd">Marketplaces</div><div class="row"><div class="tx"><b>orch-marketplace</b> <span class="tag g">official · signed</span><div class="s">github.com/severinlindenmann/orch-marketplace · 9 add-ons</div></div></div><div class="row"><div class="tx"><b>Community add-ons</b> <span class="tag">blocked</span><div class="s">Allowed only one by one, after review</div></div><span class="sw" data-toggle></span></div></div>`;
 
-P.skills = () => `<h1>Skills, MCP &amp; secrets</h1><p class="lead">What the company gives its agents: knowledge (skills), tools (MCP servers) and credentials (secrets). Each one goes to all workspaces or only the ones you pick.</p>${note("skills")}
+P.skills = () => `<h1>Skills</h1><p class="lead">What the company gives its agents: knowledge (skills), tools (MCP servers) and credentials (secrets). Each one goes to all workspaces or only the ones you pick.</p>${note("skills")}
   <h2>MCP servers <span class="small muted" style="font-weight:400">tools agents can use</span></h2><div class="card">${D.mcp.map((m, i) => `<div class="row"><span class="av">${ic("pz")}</span><div class="tx"><b>${esc(m.name)}</b> ${m.state === "connected" ? `<span class="tag g">connected</span>` : `<span class="tag w">${esc(m.state)}</span>`} <span class="tag">${esc(m.how)}</span><div class="s mono">${esc(m.where)}</div><div class="s">sign-in: ${esc(m.auth)} · ${m.tools.filter((t) => t[2]).length} of ${m.tools.length} tools on${m.tools.some((t) => t[1] === "write" && t[2]) ? " · <span style='color:var(--warning)'>can change things</span>" : " · read only"} · used ${m.uses}× this month</div><div style="margin-top:4px">${shareChips(m.share)}</div></div><button class="btn sm" data-mcptools="${i}">Tools</button><button class="btn sm" data-share="mcp|${i}">Share with…</button>${m.state !== "connected" ? `<button class="btn sm pri" data-toast="Mockup: each person signs in once; the hub keeps the token">Sign in</button>` : ""}</div>`).join("")}<div class="row"><button class="btn sm" data-mcpnew="1">${ic("pl")} Add an MCP server</button></div></div>
   <h2>Skills</h2><div class="card">${D.skills.map((s, i) => `<div class="row"><span class="av">${ic("bk")}</span><div class="tx"><b>${esc(s.name)}</b><div class="s">by ${esc(s.by)} · updated ${esc(s.upd)} · used ${s.uses}× this month</div><div style="margin-top:4px">${shareChips(s.share)}</div></div><button class="btn sm" data-share="skills|${i}">Share with…</button><button class="btn sm" data-toast="Mockup: edit the skill text">Edit</button></div>`).join("")}<div class="row"><button class="btn sm" data-new="skills">${ic("pl")} New skill</button></div></div>
   <h2>Secrets</h2><div class="card">${D.secrets.map((s, i) => `<div class="row"><span class="av">${ic("ky")}</span><div class="tx"><b>${esc(s.name)}</b> ${s.exp.startsWith("in 5") ? `<span class="tag w">expires soon</span>` : ""}<div class="s">by ${esc(s.by)} · ${esc(s.upd)} · expires ${esc(s.exp)} · used ${s.uses}× this month</div><div style="margin-top:4px">${shareChips(s.share)}</div></div><button class="btn sm" data-share="secrets|${i}">Share with…</button><button class="btn sm" data-toast="Mockup: which workspace and agent used it when">Use log</button><button class="btn sm" data-toast="Mockup: replace the value (typed once, never shown again)">Replace</button><button class="btn sm dan" data-toast="Mockup: revoked from all workspaces">Revoke</button></div>`).join("")}<div class="row"><button class="btn sm" data-new="secrets">${ic("pl")} Add a secret</button></div></div>`;
@@ -1225,7 +1234,7 @@ const SKTABS = [["att","Needs attention"],["skills","Skills"],["sys","Who can re
 P.skills = () => {
   const n = skAllIssues("all").length, ws = skTab === "setup" ? "all" : skWs;
   const tabs = `<div class="sktabs"><div class="seg">${SKTABS.map(([k, l]) => `<button class="${skTab === k ? "on" : ""}" data-sktab="${k}">${l}${k === "att" && n ? `<span class="c">${n}</span>` : ""}</button>`).join("")}</div>${skTab !== "setup" ? skWsPick() : ""}</div>`;
-  const head = `<h1>Skills, MCP &amp; secrets</h1><p class="lead">What the company’s agents know (skills), which tools they use (MCP servers) and what they can reach with which secret.</p>`;
+  const head = `<h1>Skills</h1><p class="lead">What the company’s agents know (skills), which tools they use (MCP servers) and what they can reach with which secret.</p>`;
   if (skTab === "setup") { const o = P_skillsOverview(); return head + note("skills") + tabs + o.slice(o.indexOf("<h2>")); }
   return head + note("skillmap") + tabs + skLine(ws) + (skTab === "att" ? skAtt(ws) : skTab === "skills" ? skTable(ws) : skSystems(ws));
 };
@@ -1258,7 +1267,16 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape") document.q
 window.addEventListener("hashchange", () => document.querySelectorAll(".drawer").forEach((x) => x.remove()));
 
 // ---------------------------------------------------------------- router + events
-const TITLES = Object.assign({}, NOTE_TITLES, {requirements:"Requirements"});
+// Reuse the existing setup sections for the product's separate destinations.
+P.mcp = () => {
+  const overview = P_skillsOverview();
+  return `<h1>Tool servers</h1>` + overview.slice(overview.indexOf("<h2>MCP servers"), overview.indexOf("<h2>Skills"));
+};
+P.secrets = () => {
+  const overview = P_skillsOverview();
+  return `<h1>Secrets</h1>` + overview.slice(overview.indexOf('<div class="card">', overview.indexOf("<h2>Secrets")));
+};
+const TITLES = Object.assign({}, NOTE_TITLES, Object.fromEntries(NAV.flatMap(([, items]) => items.map(([id, , label]) => [id, label]))), {account:"Account", requirements:"Requirements"});
 // UX audit states use the same hash navigation as the rest of this mockup.
 const annaWorkspace = { ...W("an"), id: "anna", name: "Anna Test's workspace", owner: "Anna Test" };
 D.prof.anna = { ...D.prof.an, contact: "Anna Test" };

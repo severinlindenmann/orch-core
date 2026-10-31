@@ -7,6 +7,7 @@ import { parseRoute } from "../../src/orch_hub/web/route.js";
 
 class Element {
   constructor(tag) { this.tag = tag; this.nodeType = 1; this.childNodes = []; this.attrs = {}; this.className = ""; this.listeners = {}; }
+  get isConnected() { return true; }
   append(...nodes) { for (const n of nodes) { n.parent = this; this.childNodes.push(n); } }
   replaceChildren(...nodes) { this.childNodes = []; this.append(...nodes); }
   replaceWith(node) { const p = this.parent; p.childNodes[p.childNodes.indexOf(this)] = node; node.parent = p; }
@@ -267,19 +268,71 @@ test("P14: an empty hub shows 6 menu entries; every area appears once a workspac
   assert.equal(paint({ hubName: "H", rows: [], ready: false }).length, 17, "a rail that could not be read hides nothing");
 });
 
+test("P08: sidebar groups preserve destinations, open the active page and remember toggles", async () => {
+  const { readdirSync } = await import("node:fs");
+  const dir = new URL("../../src/orch_hub/web/pages/", import.meta.url);
+  const PAGES = await Promise.all(readdirSync(dir).filter(f => f.endsWith(".js")).map(async f => (await import(new URL(f, dir))).page));
+  const paint = ({ admin = true, empty = false, active = "home", stored = {}, compact = false } = {}) => {
+    const root = new Element("main"), location = { hash: "#/" + active };
+    const state = { navGroups: stored, user: { name: "Ann", is_admin: admin }, rail: { hubName: "H", ready: true, rows: empty ? [] : [{ id: "ab".repeat(16), name: "Legal" }] } };
+    const context = vm.createContext({ clearInterval, root, state, PAGES, location, parseRoute, enter, replaceContent, renderText: String, initials: s => s.slice(0, 2), colour: () => "c0", navigate() {}, signOutMenu: () => new Element("button"), document: { createElement: t => new Element(t), createTextNode: text => Object.assign(new Element("#text"), { textContent: text }) } });
+    vm.runInContext(source.slice(source.indexOf("function h("), source.indexOf("const field =")) + source.slice(source.indexOf("function shell("), source.indexOf("async function loadRail(")), context);
+    context.shell(active, new Element("h1"));
+    return root.querySelector(compact ? ".top-nav" : ".side");
+  };
+  const ids = nodes => nodes.map(n => n.attrs["data-tab"]);
+  const side = paint(), groups = side.querySelectorAll(".grp");
+  assert.deepEqual(ids(side.childNodes.filter(n => n.tag === "a")), ["home", "approvals", "workspaces", "activity"]);
+  assert.deepEqual(groups.map(g => g.childNodes[0].textContent), ["Sharing & apps", "People & settings"]);
+  assert.ok(groups.every(g => g.getAttribute("open") === null));
+  assert.equal(side.querySelector(".who").querySelector("[data-tab]").attrs["data-tab"], "account");
+  assert.equal(side.querySelectorAll("[data-tab]").length, 17);
+  const compact = paint({ compact: true });
+  assert.deepEqual(ids(compact.childNodes.filter(n => n.tag === "a")), ["home", "approvals", "workspaces", "activity"]);
+  assert.deepEqual(compact.querySelectorAll(".grp").map(g => g.childNodes[0].textContent), ["Sharing & apps", "People & settings"]);
+  assert.ok(compact.querySelectorAll(".grp").every(g => g.getAttribute("open") === null));
+  assert.equal(compact.querySelector(".who").childNodes[0].textContent, "Ann");
+  assert.equal(compact.querySelector(".who").querySelector("[data-tab]").textContent, "Account");
+  assert.equal(paint({ compact: true, active: "mcp" }).querySelectorAll(".grp")[0].getAttribute("open"), "");
+  for (const nav of [side, compact]) {
+    const links = nav.querySelectorAll("[data-tab]");
+    assert.equal(links.find(n => n.attrs["data-tab"] === "spaces").textContent, "Shared spaces");
+    assert.equal(links.find(n => n.attrs["data-tab"] === "mcp").textContent, "Tool servers");
+  }
+  const css = readFileSync(new URL("../../src/orch_hub/web/app.css", import.meta.url), "utf8");
+  assert.match(css, /@media \(max-width:760px\)[\s\S]*\.side \{ display:none; \}/);
+  assert.match(css, /\.main \.topbar \.top-nav \{ display:flex; flex-direction:column;/);
+
+  assert.deepEqual(ids(paint({ empty: true }).childNodes.filter(n => n.tag === "a")), ["home", "workspaces", "phones", "admin", "hub-settings"]);
+  assert.equal(paint({ empty: true }).querySelectorAll(".grp").length, 0);
+  const activeGroup = paint({ active: "secrets" }).querySelectorAll(".grp")[0];
+  assert.equal(activeGroup.getAttribute("open"), "");
+  assert.ok(ids(activeGroup.querySelectorAll("[data-tab]")).includes("secrets"));
+  const people = groups[1].querySelectorAll("[data-tab]");
+  assert.equal(people.find(n => n.attrs["data-tab"] === "admin").textContent, "People");
+  assert.match(people.find(n => n.attrs["data-tab"] === "hub-settings").textContent, /[Bb]ackups/);
+  assert.deepEqual(ids(paint({ admin: false }).querySelectorAll("[data-tab]")).sort(), ["account", "approvals", "handoffs", "home", "phones", "workspaces"]);
+  const stored = {}, group = paint({ stored }).querySelectorAll(".grp")[0];
+  group.open = true; group.listeners.toggle();
+  assert.equal(paint({ stored }).querySelectorAll(".grp")[0].getAttribute("open"), "");
+  group.open = false; group.listeners.toggle();
+  assert.equal(paint({ stored }).querySelectorAll(".grp")[0].getAttribute("open"), null);
+  assert.equal(paint({ stored, active: "secrets" }).querySelectorAll(".grp")[0].getAttribute("open"), "");
+});
+
 test("P20: a failed sign-in says name, never user id", () => {
   assert.match(source, /bad_credentials: "Wrong name, password or code\. A code works once; wait for the next one\."/);
   assert.doesNotMatch(source, /Wrong user id/);
 });
 
 test("workspace sign-in keeps the return origin and copy after an unsuccessful sign-in", async () => {
-  const { backToWorkspace } = await import("../../src/orch_hub/web/switch.js");
+  const { backToWorkspace, namePrefill } = await import("../../src/orch_hub/web/switch.js");
   const shown = [], assigned = [];
   const h = (tag, props = {}, ...children) => ({ tag, ...props, children: children.flat(), append(n) { this.children.push(n); } });
   const workspace = { origin: "https://workspace.example.test/path?ignored=1" };
   const context = vm.createContext({ ticketWorkspace: workspace, clearSession() {}, h, field: (label, input) => h("label", {}, label, input), show: (...nodes) => shown.push(nodes), banner: () => null,
     api: async (method) => method === "POST" ? { status: 401, body: { error: "bad_credentials" } } : { status: 404 }, say: String, document: { getElementById: () => null },
-    backToWorkspace, location: { assign: (u) => assigned.push(u) }, history: { length: 1 }, afterLogin() {} });
+    backToWorkspace, namePrefill, location: { assign: (u) => assigned.push(u) }, history: { length: 1 }, afterLogin() {} });
   vm.runInContext(source.slice(source.indexOf("function loginView("), source.indexOf("function loginView(") + source.slice(source.indexOf("function loginView(")).indexOf("\n}\n") + 3), context);
   vm.runInContext('loginView(null, { prefill: "Anna Test" })', context);
   const form = shown.at(-1).find((n) => n?.tag === "form");

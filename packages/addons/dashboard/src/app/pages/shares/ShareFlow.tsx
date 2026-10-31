@@ -13,6 +13,7 @@ import { useEffect, useRef, useState } from 'react'
 import { copyText } from '@/app/copyLink'
 import { SignPopover } from '@/components/sign/SignPopover'
 import { Inline } from '@/components/sign/visible'
+import { suggestedWhere } from '@/api/addOnSwitches'
 import { queries } from '@/api/queries'
 import { workdirQueries } from '@/api/workdir'
 import { Button } from '@/components/ui/button'
@@ -102,7 +103,8 @@ export function ShareFlow({ ws, ticket, resume, only, onClose }: { ws: string; t
   const addOns = useQuery(queries.addOns(ws))
   const row = addOns.data?.available ? addOns.data.add_ons.find((r) => r.id === 'publish') : undefined
   // A row without a suggestion says nothing about this address: it never counts as a match.
-  const sameAddress = !!row?.suggest && !!server && sameOrigin(row.suggest, server)
+  const suggestedServer = suggestedWhere(row)?.server
+  const sameAddress = !!suggestedServer && !!server && sameOrigin(suggestedServer, server)
   const from = sameAddress ? row?.suggest_from ?? null : null
   const hubName = sameAddress ? row?.suggest_hub ?? null : null
   // Block only while the row is really loading the first time. A query that is switched off or failed leaves the row

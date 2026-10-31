@@ -124,6 +124,41 @@ is installed (and, for the hub, the nightly backup copy).
 After the root block has run (and Caddy reloaded), open `https://hub.example.com` from a Mac on the private network. The
 first-admin link is printed by the hub setup.
 
+### Hub without a domain: `--hub-name`
+
+For a hub on the private network only, with no domain, no Caddy and no certificate:
+
+```
+orch setup --server --role hub --hub-name core.hub.example.com
+```
+
+- The name must be a private DNS record (or an `/etc/hosts` line) that points at the hub's private-network (VPN) address,
+  and at nothing else. The command checks this first and refuses (installing nothing) if the name does not resolve, or
+  resolves to any other address.
+- The console is plain http: `http://core.hub.example.com:8100`. The hub link keeps the IP (`100.x.y.z:8105`), so the
+  workspaces never depend on DNS.
+- The console then answers to the name only: the IP address no longer opens it. The name is the one address the phone
+  pairs with.
+- The console is plain http, so use a name only in a zone you control, served by the private network's DNS. Names that
+  look like numbers (`0x7f.1`, `core.hub.123`), `localhost` names and non-ASCII names are refused.
+- Drop the name again with `--no-hub-name`: the console then answers on the private-network address. A rerun that
+  combines a saved name with `--domain`, `--domain-hub`, `--domain-relay`, `--domain-publish`, `--hub-vpn-only`,
+  `--behind-proxy` or `--address 127.0.0.1` is refused until you add `--no-hub-name`. A rerun also checks again that the
+  name still points at the VPN address only (IPv4 and IPv6).
+- Split install (the hub as one OS user, relay and publish as another, the edge behind the proxy on the VPN address):
+  give the hub the addresses of the other two, otherwise it looks for publish on its own `127.0.0.1:8102` and push is off:
+
+  ```
+  orch install server --role hub --hub-name core.hub.example.com \
+      --publish-url http://<VPN-IP>:8102 --relay-url https://core.relay.example.com
+  ```
+
+  The hub reaches publish privately, and the relay through its public name, because phones use that one too. The hub
+  accepts https, or http on a loopback or private-network address only. A rerun keeps both; a flag you give wins.
+- Not combinable with `--domain`, `--domain-hub`, `--domain-relay`, `--domain-publish`, `--hub-vpn-only` or
+  `--behind-proxy`; hub role only. A rerun without the flag keeps the name; a rerun with one of those flags is refused
+  until you add `--no-hub-name`. The name comes only from the install: Settings in the console never adds one.
+
 ## 5b. Public relay and publish through the private network's proxy
 
 The production server needs no public port except SSH when the private network's public proxy fronts the relay and

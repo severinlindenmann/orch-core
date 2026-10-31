@@ -9,6 +9,7 @@
 | POST   | /api/w/{ws}/org/decline   | org.decline    | owner, full session (it only takes authority away)      |
 | POST   | /api/w/{ws}/org/sync      | org.sync       | owner, full session (it grants nothing)                 |
 | POST   | /api/w/{ws}/org/tool      | org.tool       | owner, full session; turning ON needs a LOCAL session   |
+| POST   | /api/w/{ws}/org/tools     | org.tool       | owner, LOCAL session: the "Turn on reading tools" click  |
 
 No signature: these are plain owner clicks, like the share reductions (`hub.py`). Turning something ON (accept, a
 tool On) adds what an agent can reach, so it is decided on this computer, like sharing more. Everything the hub wrote
@@ -24,7 +25,7 @@ import re
 from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, Request
-from pydantic import BaseModel, ConfigDict, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from . import reads
 from .cosmetic_routes import full_session, refused
@@ -60,12 +61,26 @@ class AcceptBody(ItemBody):
     digest: Digest
 
 
+class _ToolPin(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    tool: ToolName
+    pin: Pin
+
+
 class ToolBody(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     server: Name
     tool: ToolName
     on: bool
     pin: Pin | None = None
+
+
+class ToolsBody(BaseModel):
+    """The owner's "Turn on reading tools" click: the listed tools, each for the pin shown."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    server: Name
+    tools: Annotated[list[_ToolPin], Field(min_length=1, max_length=200)]
 
 
 def _str(v, high=MAX_TEXT) -> str | None:
@@ -127,7 +142,10 @@ def secrets_view(raw) -> dict:
             "expires_ms": exp if isinstance(exp, int) and not isinstance(exp, bool) and 0 <= exp < 2**53 else None,
             "used_by": [n for n in used[:20] if isinstance(n, str) and NAME.fullmatch(n)],
         })  # fmt: skip
-    return {"available": True, "secrets": out}
+    got: dict = {"available": True, "secrets": out}
+    if isinstance(raw, dict) and isinstance(raw.get("isolated"), bool):
+        got["isolated"] = raw["isolated"]  # a bare boolean: does this computer fetch secrets at all (tier B)
+    return got
 
 
 MAX_DESC = 20000
@@ -158,7 +176,7 @@ def _tools(raw) -> tuple[list[dict], int]:
             continue
         if t["status"] == "too_long":
             out.append({"name": name, "title": None, "description": None, "input_schema": None, "pin": "",
-                        "status": "too_long"})  # fmt: skip
+                        "status": "too_long", "reads": False, "new": t.get("new") is True})  # fmt: skip
             continue
         pin = _str(t.get("pin"), 200)
         if not pin:
@@ -171,7 +189,7 @@ def _tools(raw) -> tuple[list[dict], int]:
         if (title is not None and shown_title is None) or (desc is not None and shown_desc is None) or schema is None:
             # approved view == pinned view: a tool whose pinned fields cannot all be shown can never be switched on
             out.append({"name": name, "title": None, "description": None, "input_schema": None, "pin": "",
-                        "status": "too_long"})  # fmt: skip
+                        "status": "too_long", "reads": False, "new": t.get("new") is True})  # fmt: skip
             continue
         out.append({
             "name": name,
@@ -180,8 +198,26 @@ def _tools(raw) -> tuple[list[dict], int]:
             "input_schema": schema,
             "pin": pin,
             "status": t["status"],
+            "reads": t.get("reads") is True,  # only a label: it never switches a tool on
+            "new": t.get("new") is True,  # a badge: the server added it after the first listing
         })  # fmt: skip
     return out, dropped
+
+
+CHANGE_WORDS = {"url": "address", "auth": "sign-in", "secret": "secret", "description": "description", "text": "text"}
+
+
+def _changes(raw) -> list[dict]:
+    """What differs from the accepted version, closed: only these fields, each with the accepted value as short text
+    (display only; a value that cannot be shown is None). The word is ours, never the host's."""
+    out = []
+    for c in (raw if isinstance(raw, list) else [])[:10]:
+        field = c.get("field") if isinstance(c, dict) else None
+        if field not in CHANGE_WORDS:
+            continue
+        was = _str(c.get("was"), 200) if field != "text" else None
+        out.append({"field": field, "word": CHANGE_WORDS[field], "was": was})
+    return out
 
 
 def item_view(raw) -> dict:
@@ -223,6 +259,7 @@ def item_view(raw) -> dict:
         "item": view,
         "notes": notes[:8],
         "untrusted": raw.get("untrusted") is True,
+        "changed": _changes(raw.get("changed")),
         "needs_isolation": _str(iso, 300) or "needs a separate agent user" if iso else None,
     }
 
@@ -305,6 +342,12 @@ def register(app: FastAPI, gateway: Gateway) -> None:
             if isinstance(k, str) and isinstance(v, str) and len(k) <= 20 and re.fullmatch(r"[a-z_ ]{1,40}", v)
         }
         return {"result": keep}
+
+    @app.post("/api/w/{ws}/org/tools")
+    def org_tools(body: ToolsBody, request: Request, ws: str = Depends(reads.workspace)):
+        args = {"server": body.server, "on": True, "tools": [{"tool": t.tool, "pin": t.pin} for t in body.tools]}
+        write(ws, request, "org.tool", args, local=True)  # turning On: decided on this computer, like the single click
+        return {"server": body.server, "tools": [t.tool for t in body.tools], "on": True}
 
     @app.post("/api/w/{ws}/org/tool")
     def org_tool(body: ToolBody, request: Request, ws: str = Depends(reads.workspace)):

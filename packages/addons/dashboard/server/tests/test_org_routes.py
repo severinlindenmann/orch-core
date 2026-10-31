@@ -113,6 +113,8 @@ def test_a_server_view_is_closed_and_tools_are_shown_in_full():
         "input_schema": None,
         "pin": "",
         "status": "too_long",
+        "reads": False,
+        "new": False,
     }
     assert tools[2]["description"] is None  # a hidden character withholds that text
     assert got["item"]["url"] == "https://crm.example.com/mcp" and got["item"]["secret"] == "crm-key"
@@ -158,6 +160,57 @@ def test_tool_on_needs_a_pin_and_sends_it(client, token, stub, host):
     assert writes(host)[0][:2] == ("org.tool", on)
 
 
+def test_the_bulk_click_sends_the_listed_tools_and_pins_as_the_owner(client, token, stub, host):
+    url = f"/api/w/{stub.ws}/org/tools"
+    body = {"server": "crm", "tools": [{"tool": "find", "pin": "p1"}, {"tool": "list", "pin": "p2"}]}
+    assert client.post(url, json=body, headers=hdr(token)).status_code == 200
+    assert writes(host)[0][:2] == ("org.tool", {"server": "crm", "on": True, "tools": body["tools"]})
+    for bad in ({"server": "crm", "tools": []}, {"server": "crm", "tools": [{"tool": "find"}]},
+                {"server": "crm", "tools": [{"tool": "find", "pin": "p"}], "on": False}):  # fmt: skip
+        assert client.post(url, json=bad, headers=hdr(token)).status_code in (400, 422)
+    assert len(writes(host)) == 1
+
+
+def test_a_reads_label_is_only_true_when_the_host_says_true():
+    from orch_dashboard.org_routes import _tools
+
+    base = {"name": "a", "description": "d", "inputSchema": {"type": "object"}, "pin": "p", "status": "off"}
+    got = [_tools([{**base, "reads": v}])[0][0]["reads"] for v in (True, False, "true", 1, None)]
+    assert got == [True, False, False, False, False]
+
+
+def test_what_changed_is_a_closed_view_with_our_own_words():
+    from orch_dashboard.org_routes import item_view
+
+    raw = {"kind": "mcp", "status": "changed", "item": {"name": "crm", "digest": D1, "url": "https://x.example.com/m"},
+           "changed": [{"field": "url", "word": "EVIL", "was": "https://old.example.com/m"},
+                       {"field": "auth", "word": "x", "was": "none"},
+                       {"field": "text", "word": "x", "was": "the whole old text"},
+                       {"field": "description", "word": "x", "was": "bad\u202etext"},
+                       {"field": "other", "word": "x", "was": "y"}, "junk", {"field": 5}],
+           "tools": []}  # fmt: skip
+    got = item_view(raw)["changed"]
+    assert got == [
+        {"field": "url", "word": "address", "was": "https://old.example.com/m"},
+        {"field": "auth", "word": "sign-in", "was": "none"},
+        {"field": "text", "word": "text", "was": None},  # a skill's text is never repeated
+        {"field": "description", "word": "description", "was": None},  # hidden characters: withheld
+    ]
+    assert item_view({"kind": "mcp", "item": {}})["changed"] == []
+
+
+def test_a_new_tool_badge_is_only_true_when_the_host_says_true():
+    from orch_dashboard.org_routes import _tools
+
+    base = {"name": "a", "description": "d", "inputSchema": {"type": "object"}, "pin": "p", "status": "off"}
+    assert [_tools([{**base, "new": v}])[0][0]["new"] for v in (True, False, "yes", None)] == [
+        True,
+        False,
+        False,
+        False,
+    ]
+
+
 def test_bad_bodies_reach_nothing(client, token, stub, host):
     for path, body in (
         ("accept", {"kind": "skill", "name": "style-guide", "digest": "sha256:short"}),
@@ -189,6 +242,9 @@ def test_a_switch_session_is_read_only(client, auth, stub, host):
     ):
         r = client.post(f"/api/w/{stub.ws}/org/{path}", json=body, headers=hdr(switch))
         assert r.status_code == 403 and r.json()["error"]["code"] == "session.readonly", path
+    r = client.post(f"/api/w/{stub.ws}/org/tools", json={"server": "crm", "tools": [{"tool": "find", "pin": "p1"}]},
+                    headers=hdr(switch))  # fmt: skip
+    assert r.status_code == 403 and r.json()["error"]["code"] in ("session.readonly", "step_up_required")  # turning On
     assert host.calls == []
 
 
@@ -294,3 +350,11 @@ def test_the_secrets_route_asks_the_host_and_an_older_host_degrades(client, toke
     monkeypatch.setattr(gateway, "enabled", lambda ws: Old())
     r = client.get(f"/api/w/{stub.ws}/org/secrets", headers=hdr(token, write=False))
     assert r.json() == {"available": False, "secrets": []}
+
+
+def test_the_secrets_view_passes_only_a_boolean_isolated():
+    assert secrets_view({"secrets": [], "isolated": False}) == {"available": True, "secrets": [], "isolated": False}
+    assert secrets_view({"secrets": [], "isolated": True})["isolated"] is True
+    # anything that is not a real boolean is left out, so no other value can ride along
+    assert "isolated" not in secrets_view({"secrets": [], "isolated": SENTINEL})
+    assert "isolated" not in secrets_view({"secrets": []})

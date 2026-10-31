@@ -591,6 +591,12 @@ def test_org_secrets_lists_names_expiry_and_status_but_never_a_value(w, iso, cap
     assert VALUE not in json.dumps(_list(w))
 
 
+def test_org_secrets_says_whether_this_host_fetches_secrets_at_all(w, iso):
+    assert _list(w)["isolated"] is True
+    iso["on"] = False
+    assert _list(w)["isolated"] is False  # tier A: an empty list is not "nothing shared"
+
+
 def test_org_secrets_is_empty_without_a_secret_server(w):
     w.org.servers.append(w.org.server("crm"))
     w.org.versions["mcp"] += 1

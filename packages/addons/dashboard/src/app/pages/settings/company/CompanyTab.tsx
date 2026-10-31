@@ -41,7 +41,10 @@ function SecretRow({ s }: { s: OrgSecret }) {
 function syncMessage(e: unknown): string {
   const code = e instanceof ApiError ? e.code : ''
   if (code === 'hub.not_joined') return 'This workspace is not connected to a hub.'
-  return 'The hub could not be reached. Showing what was saved here.'
+  if (code === 'session.readonly' || code === 'op.not_allowed') return 'You opened this workspace from the hub, so you can only look here. Open it from this computer to get the latest.'
+  if (code === 'role.denied') return 'Only the workspace owner can get the latest from the hub.'
+  if (code === 'hub_unreachable' || code === 'host.unavailable') return 'The hub could not be reached. Showing what was saved here.'
+  return 'That did not work. Try again.'
 }
 
 export function CompanyTab({ workspace, isOwner }: { workspace: Workspace; isOwner: boolean }) {
@@ -97,7 +100,9 @@ export function CompanyTab({ workspace, isOwner }: { workspace: Workspace; isOwn
     <Panel title="Company tools">{list('mcp', o.mcp, 'Your hub offers no tools.')}</Panel>
     {secrets.data?.available && <Panel title="Company secrets">
       {secrets.data.secrets.length === 0
-        ? <p className="text-text-muted" data-testid="company-secrets-empty">No company secrets are shared with this workspace.</p>
+        ? <p className="text-text-muted" data-testid="company-secrets-empty">{secrets.data.isolated === false
+          ? 'Secrets your hub shares only work when agents run as a separate user on this computer. Yours do not, so none were fetched.'
+          : 'No company secrets are shared with this workspace.'}</p>
         : <ul className="divide-y divide-border">{secrets.data.secrets.map((s) => <SecretRow key={s.name} s={s} />)}</ul>}
     </Panel>}
     {open && <ItemSheet ws={ws} kind={open.kind} name={open.name} onClose={() => setOpen(undefined)} />}

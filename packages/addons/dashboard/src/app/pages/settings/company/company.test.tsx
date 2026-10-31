@@ -147,6 +147,51 @@ describe('the Company tab', () => {
     await waitFor(() => expect(tool).toHaveBeenLastCalledWith(expect.any(String), 'crm', 'find_customer', false, undefined))
   })
 
+  it('tools carry a Reads or Changes things tag, and the bulk click lists the reading tools first', async () => {
+    page()
+    fireEvent.click(await screen.findByTestId('company-on-crm', {}, T))
+    fireEvent.click(await screen.findByTestId('company-accept', {}, T))
+    await waitFor(() => expect(screen.queryByTestId('company-sheet')).toBeNull(), T)
+    fireEvent.click(screen.getByTestId('company-open-crm'))
+    const sheet = await screen.findByTestId('company-sheet', {}, T)
+    expect((await within(sheet).findByTestId('company-tool-kind-open_deals', {}, T)).textContent).toBe('Reads')
+    expect(within(sheet).getByTestId('company-tool-kind-close_deal').textContent).toBe('Changes things')
+    expect(within(sheet).getByTestId('company-tool-kind-find_customer').textContent).toBe('Changes things') // no hint: not reads
+    const bulk = vi.spyOn(api, 'setOrgTools')
+    fireEvent.click(within(sheet).getByTestId('company-reading-open'))
+    const list = within(sheet).getByTestId('company-reading-list')
+    expect(list.textContent).toMatch(/open_deals/)
+    expect(list.textContent).not.toMatch(/close_deal|find_customer/)
+    expect(bulk).not.toHaveBeenCalled() // listing turns nothing on
+    fireEvent.click(within(sheet).getByTestId('company-reading-confirm'))
+    await waitFor(() => expect(bulk).toHaveBeenCalledWith(expect.any(String), 'crm', [{ tool: 'open_deals', pin: 'pin-deals-1' }]))
+    await waitFor(() => expect(within(sheet).getByTestId('company-tool-switch-open_deals').getAttribute('aria-checked')).toBe('true'), T)
+    expect(within(sheet).getByTestId('company-tool-switch-close_deal').getAttribute('aria-checked')).toBe('false')
+    expect(within(sheet).queryByTestId('company-reading-open')).toBeNull() // nothing left to turn on
+  })
+
+  it('a changed server says what changed and marks a new tool; one click turns it on again', async () => {
+    const shown: OrgShown = { kind: 'mcp', status: 'changed', notes: [], untrusted: true, needs_isolation: null,
+      changed: [{ field: 'url', word: 'address', was: 'https://old.example.com/mcp' }, { field: 'auth', word: 'sign-in', was: 'none' }],
+      item: { kind: 'mcp', name: 'crm', digest: 'sha256:' + 'c'.repeat(64), url: 'https://crm.example.com/mcp', auth: 'hub_secret', secret: 'crm-key', description: null,
+        tools: [{ name: 'find_customer', description: null, pin: 'p1', status: 'off', new: true }, { name: 'open_deals', description: null, pin: 'p2', status: 'off', new: false }] } }
+    vi.spyOn(api, 'getOrgItem').mockResolvedValue(shown)
+    page()
+    const sheet = await openRow('crm')
+    const changed = await within(sheet).findByTestId('company-changed', {}, T)
+    expect(within(changed).getByTestId('company-changed-url').textContent).toBe('Address (before: https://old.example.com/mcp)')
+    expect(within(changed).getByTestId('company-changed-auth').textContent).toBe('Sign-in (before: no sign-in)')
+    expect(within(sheet).getByTestId('company-tool-new-find_customer').textContent).toBe('New')
+    expect(within(sheet).queryByTestId('company-tool-new-open_deals')).toBeNull()
+  })
+
+  it('a skill whose text changed says so without showing the old text', async () => {
+    page()
+    const sheet = await openRow('support-tone')
+    const changed = await within(sheet).findByTestId('company-changed', {}, T)
+    expect(within(changed).getByTestId('company-changed-text').textContent).toBe('Text')
+  })
+
   it('a changed tool says so and stays off', async () => {
     const shown: OrgShown = { kind: 'mcp', status: 'on', notes: [], untrusted: true, needs_isolation: null,
       item: { kind: 'mcp', name: 'crm', digest: 'sha256:' + 'c'.repeat(64), url: 'https://crm.example.com/mcp', auth: 'none', secret: null, description: null,
@@ -176,6 +221,28 @@ describe('the Company tab', () => {
     await waitFor(() => expect(sync).toHaveBeenCalledWith(expect.any(String)))
     expect((await screen.findByTestId('company-note', {}, T)).textContent).toMatch(/Showing what was saved/)
     expect(screen.getByTestId('company-open-style-guide')).toBeTruthy() // the saved list stays
+  })
+
+  it.each([
+    ['session.readonly', 403, /opened this workspace from the hub.*Open it from this computer/],
+    ['op.not_allowed', 403, /opened this workspace from the hub.*Open it from this computer/],
+    ['role.denied', 403, /Only the workspace owner can get the latest/],
+    ['weird.thing', 500, /^That did not work\. Try again\.$/],
+  ])('Get the latest names the real reason for %s, not "could not be reached"', async (code, status, text) => {
+    vi.spyOn(api, 'syncOrg').mockRejectedValue(new ApiError(status, { code, message: 'x', retryable: false }))
+    page()
+    fireEvent.click(await screen.findByTestId('company-sync', {}, T))
+    const note = (await screen.findByTestId('company-note', {}, T)).textContent ?? ''
+    expect(note).toMatch(text)
+    expect(note).not.toMatch(/could not be reached/)
+  })
+
+  it('says the secrets are not fetched on this computer when agents do not run as a separate user', async () => {
+    vi.spyOn(api, 'getOrgSecrets').mockResolvedValue({ available: true, secrets: [], isolated: false })
+    page()
+    const t = (await screen.findByTestId('company-secrets-empty', {}, T)).textContent ?? ''
+    expect(t).toMatch(/only work when agents run as a separate user.*none were fetched/)
+    expect(t).not.toMatch(/No company secrets are shared/)
   })
 
   it('shows each tool in full: title, whole description, input schema as plain text; control characters are removed', async () => {

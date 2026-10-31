@@ -158,6 +158,7 @@ D90_REFUSED = [
     ("POST", "/api/w/{ws}/records/auto-on"),
     ("POST", "/api/w/{ws}/org/accept"),
     ("POST", "/api/w/{ws}/org/tool"),
+    ("POST", "/api/w/{ws}/org/tools"),
     ("POST", "/api/w/{ws}/phone/request"),
     ("GET", "/widget-frame/x"),
     ("GET", "/api/testrun/r1"),

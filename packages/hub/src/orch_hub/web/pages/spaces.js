@@ -116,7 +116,7 @@ export function spacesView(data, actions = {}, now = Date.now()) {
   const toggle = archived.length ? h("button", { type: "button", id: "toggle-archived", text: "Show archived (" + archived.length + ")" }) : null;
   const draw = () => {
     const shown = all.filter((s) => showArchived || s.archived_ms == null);
-    list.replaceChildren(...(shown.length ? shown.map(card) : [emptyState("spaces")]));
+    list.replaceChildren(...(shown.length ? shown.map(card) : [emptyState(!canStart && candidates.length ? "spaces-nostart" : "spaces")]));
     if (toggle) { toggle.textContent = (showArchived ? "Hide archived (" : "Show archived (") + archived.length + ")"; }
   };
   const card = (s) => {
@@ -167,7 +167,8 @@ export function spacesView(data, actions = {}, now = Date.now()) {
     const close = () => dialogHost.replaceChildren();
     dialogHost.replaceChildren(newSpaceDialog(candidates, async (form) => { close(); await actions.create?.(form); }, close));
   };
-  const newSpace = h("button", { type: "button", id: "new-space", class: "pri", text: "New shared space", onclick: open });
+  // QA P03: while no workspace can start a space the button is a plain, dimmed one, never the page's main action
+  const newSpace = h("button", { type: "button", id: "new-space", class: canStart ? "pri" : "", text: "New shared space", onclick: open });
   newSpace.disabled = !canStart;
   const noStart = !canStart && candidates.length ? h("div", { class: "small muted", id: "space-no-start", role: "note" },
     h("span", { text: (candidates.length > 1 ? "Your workspaces need" : nameOf(candidates[0]) + "'s workspace needs") + " to share everything before you can start a space." }),

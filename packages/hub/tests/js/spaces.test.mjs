@@ -239,3 +239,12 @@ test("say() gives plain words for the space codes and never echoes a raw code", 
     assert.doesNotMatch(t, /[(_]/, code); assert.ok(t.length > 10);
   }
 });
+
+test("QA P03: with no starter the button is not the main action and the empty text does not point at it", () => {
+  const view = spacesView({ spaces: [], workspaces: [WS[1]] }, {}, NOW);
+  const button = find(view, (n) => n.attrs.id === "new-space")[0];
+  assert.equal(button.disabled, true);
+  assert.notEqual(button.attrs.class, "pri");
+  assert.doesNotMatch(view.textContent, /Press “New shared space”/);
+  assert.match(view.textContent, /starts from a workspace that shares everything with the hub/);
+});

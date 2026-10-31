@@ -205,11 +205,16 @@ class HubPublish:
         binding whose sync failed earlier (``binding`` swallows it) would otherwise keep orch-publish on the old mode
         until the next forward. Best effort: a refusal or an unreachable publish is left to the read's own handling."""
         deadline = time.monotonic() + budget_s
-        for ws in workspace_ids:
+        card = self._keys()[1]
+        for (
+            ws
+        ) in workspace_ids:  # _ensure skips a binding orch-publish already holds, so this costs only after a failure
             if time.monotonic() > deadline:
                 return
             try:
-                self._ensure(ws, self._keys()[1], need_bound=False, deadline=deadline)
+                # _ensure reads the held object and sends it under the workspace's lock, so a newer binding set meanwhile
+                # is sent after this one and wins
+                self._ensure(ws, card, need_bound=False, deadline=deadline)
             except Refused:
                 continue
 

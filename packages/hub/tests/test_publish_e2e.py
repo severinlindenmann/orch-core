@@ -236,3 +236,40 @@ def test_b03_a_mode_switch_whose_sync_failed_is_pushed_before_the_admin_read(env
     assert reader.published() == []  # the bug: publish still holds the selective binding
     e.fw.resync([e.ws])  # what the Published page now does before it reads
     assert [r["id"] for r in reader.published()] == [sid]
+
+
+def test_b03_a_switch_to_selective_whose_sync_failed_is_hidden_after_the_push(env, monkeypatch):
+    """The privacy direction: full -> selective while orch-publish is down; the push before the read hides the link."""
+    import hashlib
+
+    from orch_hub.publish import AdminReadClient, PublishSyncError
+
+    e = env
+    e.fw.binding(e.ws, binding(e.wsk, e.hub, e.ws, seq=1, mode="full"))
+    sid = os.urandom(16).hex()
+    meta = {
+        "ticket": "TST-0001", "kind": "secret", "expires_ms": NOW + 86_400_000, "view_limit": 0,
+        "token_hash": hashlib.sha256(b"t").hexdigest(),
+        "files": [{"path": "a.txt", "size": 3, "sha256": hashlib.sha256(b"abc").hexdigest()}],
+    }  # fmt: skip
+    for method, target, body in (
+        ("PUT", f"/v1/ws/{e.ws}/shares/{sid}", json.dumps(meta).encode()),
+        ("PUT", f"/v1/ws/{e.ws}/shares/{sid}/files/a.txt", b"abc"),
+        ("POST", f"/v1/ws/{e.ws}/shares/{sid}/commit", b""),
+    ):
+        req = host_request(e.wsk, e.hub.hub_id, e.ws, host=e.host, method=method, target=target, body=body)
+        assert e.fw.forward(e.ws, req)["status"] == 200
+    reader = AdminReadClient(f"http://{e.host}", e.hub.op_signer, e.hub.hub_id, now_ms=lambda: NOW)
+    assert [r["id"] for r in reader.published()] == [sid]
+
+    real = e.fw._sync.put_binding
+
+    def down(ws, obj):
+        raise PublishSyncError("unavailable")
+
+    monkeypatch.setattr(e.fw._sync, "put_binding", down)
+    e.fw.binding(e.ws, binding(e.wsk, e.hub, e.ws, seq=2, mode="selective"))
+    monkeypatch.setattr(e.fw._sync, "put_binding", real)
+    assert [r["id"] for r in reader.published()] == [sid]  # stale: publish still holds full
+    e.fw.resync([e.ws])
+    assert reader.published() == []

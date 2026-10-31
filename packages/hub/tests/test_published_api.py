@@ -223,7 +223,7 @@ def test_a_workspace_unbound_while_the_call_succeeds_is_not_shown(w):
     assert [x["label"] for x in get(w)[1]["links"]] == ["Q3 report"]
 
 
-def test_b03_the_page_pushes_full_mode_bindings_before_it_reads(w):
+def test_b03_the_page_pushes_every_binding_before_it_reads(w):
     order = []
 
     class Reader(FakeReader):
@@ -236,4 +236,14 @@ def test_b03_the_page_pushes_full_mode_bindings_before_it_reads(w):
     assert get(w)[0] == 200
     (sync, synced), read = order
     assert sync == "sync" and read == "read"  # before the read
-    assert WS_FULL in synced and WS_SEL not in synced  # only full-mode workspaces
+    assert WS_FULL in synced and WS_SEL in synced  # both ways: a switch to selective must hide links too
+
+
+def test_b03_a_failing_push_never_blocks_the_page(w):
+    w.api.d.published = FakeReader([link()])
+
+    def boom(ws):
+        raise OSError("down")
+
+    w.api.d.publish_sync = boom
+    assert get(w)[0] == 200

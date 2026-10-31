@@ -197,6 +197,17 @@ export function ShareFlow({ ws, ticket, resume, only, onClose }: { ws: string; t
     }
   }
 
+  // Publish as link: the press that opened this flow already said what happens, so the copy is prepared as soon as the
+  // server is known to be set up. Prepare only: the sign sheet that follows is never armed, Sign stays the person's press.
+  const autoPrepared = useRef(false)
+  useEffect(() => {
+    if (!only || stage.at !== 'one' || autoPrepared.current || info.isPending) return
+    if (data && !data.configured) return
+    autoPrepared.current = true
+    void publishOne()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [only, stage.at, info.isPending, data])
+
   const send = async (staged: Staged) => {
     if (sending.current) return
     sending.current = true
@@ -235,29 +246,31 @@ export function ShareFlow({ ws, ticket, resume, only, onClose }: { ws: string; t
     }
   }
 
-  // ---- one file: Publish as link
+  // ---- one file: Publish as link. No dialog of its own: the copy is prepared at once (aside, nothing leaves the computer)
+  // and the ONE sign sheet follows. Only a failure (or "no publish server") shows a small panel, before anything is signed.
   if (stage.at === 'one' && only) {
-    const file = ticket.artifacts.find((a) => a.name === only)
+    const noServer = !!data && !data.configured
     return (
       <Dialog open onOpenChange={(o) => !o && !busy && onClose()}>
         <DialogContent className="max-w-md gap-3 border-border bg-surface">
           <DialogHeader>
             <DialogTitle>Publish {only} as a link?</DialogTitle>
-            <DialogDescription>Anyone with the link can open this file. Only this file leaves your computer. You see the link once, so copy it right away.</DialogDescription>
+            <DialogDescription>{error || noServer ? 'Nothing was sent.' : 'Getting a copy ready. Nothing leaves this computer yet.'}</DialogDescription>
           </DialogHeader>
           <div className="space-y-2 text-[13px]">
-            {file?.bytes != null && <p className="text-text-muted">{fmtSize(file.bytes)} · works for 7 days</p>}
-            {data && !data.configured && <p className="text-warning">No publish server is set up yet. Set one up on the Add-ons page, then come back.</p>}
-            <Where server={server} share={share} />
+            {noServer && <p className="text-warning">No publish server is set up yet. Set one up on the Add-ons page, then come back.</p>}
             {error && <Failure text={error} />}
+            {busy && !error && (
+              <p role="status" className="flex items-center gap-2 text-text-muted">
+                <Loader2 className="size-4 animate-spin" aria-hidden /> Preparing…
+              </p>
+            )}
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={onClose} disabled={busy}>
               Cancel
             </Button>
-            <Button onClick={() => void publishOne()} disabled={busy || (!!data && !data.configured)}>
-              {busy ? 'Preparing…' : 'Sign and publish'}
-            </Button>
+            {error && !noServer && <Button onClick={() => void publishOne()}>Try again</Button>}
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -404,14 +417,38 @@ export function ShareFlow({ ws, ticket, resume, only, onClose }: { ws: string; t
     return (
       <SignPopover
         key={s.staged_id}
-        title={`Share files of ${s.ticket ?? ticket.key}`}
+        title={only ? `Publish ${only} as a link?` : `Share files of ${s.ticket ?? ticket.key}`}
         ws={ws}
         action={{ action: 'publish_share', key: s.ticket ?? ticket.key, staged_id: s.staged_id }}
         anchor={null}
         prepareOnOpen
         autoStart={false}
-        confirmLabel="Share files"
+        confirmLabel={only ? 'Publish' : 'Share files'}
         lead={
+          only ? (
+            <div className="space-y-2 text-[13px]">
+              <ul aria-label="Files to share" className="divide-y divide-border rounded border border-border px-2">
+                {s.files.map((f) => (
+                  <li key={f.name} className="py-1.5">
+                    <Inline>{f.name}</Inline> <span className="text-text-faint">· {fmtSize(f.size)}</span>
+                    <span className="block text-[12px] text-text-muted">works for 7 days</span>
+                  </li>
+                ))}
+              </ul>
+              {note && <p className="text-[12px] text-text-muted">{note}</p>}
+              <p role="note" className="text-[12px] text-warning">Anyone with the link can read this file. A copy cannot be taken back. You see the link once.</p>
+              <InfoDrawer text="Details">
+                {server && <p className="break-all font-mono">Files are sent to {server}</p>}
+                {share && <p className="break-all font-mono">The link opens at {share}</p>}
+                <p className="mt-1 break-all font-mono">Prepared copy {s.staged_id}</p>
+                {s.files.map((f) => (
+                  <p key={f.name} className="break-all font-mono">
+                    {f.name}: sha256 {f.sha256}
+                  </p>
+                ))}
+              </InfoDrawer>
+            </div>
+          ) : (
           <div className="space-y-2 text-[13px]">
             <ul aria-label="Files to share" className="divide-y divide-border rounded border border-border px-2">
               {s.files.map((f) => (
@@ -437,6 +474,7 @@ export function ShareFlow({ ws, ticket, resume, only, onClose }: { ws: string; t
               ))}
             </InfoDrawer>
           </div>
+          )
         }
         onSettled={(phase) => {
           if (phase === 'done') {

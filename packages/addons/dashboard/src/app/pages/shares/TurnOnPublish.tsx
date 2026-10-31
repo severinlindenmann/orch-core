@@ -8,6 +8,7 @@ import type { Workspace } from '@/api/types'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { BuiltInAddOns } from '../settings/host/AddOns'
 import { AddonSetup } from '../settings/host/AddonSetup'
+import { publishValidation } from '../settings/host/PublishServer'
 import { useSettingsHandoff } from '../settings/host/useSettingsHandoff'
 
 export function TurnOnPublish({ workspace, onOn, onClose }: { workspace: Workspace; onOn: () => void; onClose: () => void }) {
@@ -29,12 +30,22 @@ export function TurnOnPublish({ workspace, onOn, onClose }: { workspace: Workspa
   }, [on, onOn])
   // Needs its address first (the same rule as the Add-ons page): one dialog with the address, then the review.
   const needsAddress = !!row && row.state !== 'on' && row.locked === null && !!row.needs && row.set_up !== true
+  // The address is already known (the Publish server on this computer, or the hub's): no address dialog. The person's press
+  // that opened this ("Publish as link", "Share files") already said what happens; the one review follows at once, prepared
+  // only (never armed): Sign stays their own press. Without a usable suggestion the address form below stays.
+  const suggested = row?.suggest && publishValidation(row.suggest, row.suggest).ready ? row.suggest : null
+  useEffect(() => {
+    if (!needsAddress || asked || !suggested) return
+    setAsked(true)
+    ask({ title: 'Turn on Publish', action: { action: 'addon_enable', name: 'publish', publish: { server: suggested, share: suggested } }, prepareOnOpen: true, onEnd: (signed) => { if (!signed) onClose() } })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [needsAddress, asked, suggested])
   // Latched once the person pressed the button: when the settings step lands the row reads set_up, but the review must stay
   // mounted until both steps are signed (otherwise the list dialog returns and the review unmounts between the steps).
   if ((needsAddress || asked) && row)
     return (
       <>
-        {!asked && (
+        {!asked && !suggested && (
           <AddonSetup
             name="publish"
             enabling

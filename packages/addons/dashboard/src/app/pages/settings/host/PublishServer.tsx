@@ -193,19 +193,26 @@ export function PublishForm({ server, share, setServer, setShare, suggested, sug
   // P02: a Publish server installed on this computer is named in one sentence; the address field only appears behind "Change"
   if (suggested && !changing && server === suggested && share === suggested)
     return (
-      <div className="space-y-1.5 text-[13px]" data-testid="publish-suggested">
-        {suggestedFrom === 'hub' ? (
-          <p>
-            Files and links go through your hub{hubName ? <>: <Inline>{hubName}</Inline></> : ''}.
-          </p>
-        ) : (
-          <p>
-            Files and links use the Publish server on this computer: <Inline>{suggested}</Inline>
-          </p>
-        )}
-        <button type="button" className="text-[12px] text-accent hover:underline" onClick={() => setChanging(true)}>
-          Change
-        </button>
+      <div className="flex items-center gap-1.5 text-[13px]" data-testid="publish-suggested">
+        <span className="text-text-muted">Where files go is already set.</span>
+        <InfoDrawer text="Details">
+          {(close) => (
+            <>
+              {suggestedFrom === 'hub' ? (
+                <p>
+                  Files and links go through your hub{hubName ? <>: <Inline>{hubName}</Inline></> : ''}.
+                </p>
+              ) : (
+                <p>
+                  Files and links use the Publish server on this computer: <Inline>{suggested}</Inline>
+                </p>
+              )}
+              <button type="button" className="text-[12px] text-text-muted hover:underline" onClick={() => { close(); setChanging(true) }}>
+                Change
+              </button>
+            </>
+          )}
+        </InfoDrawer>
       </div>
     )
   return (

@@ -7,7 +7,7 @@ import type { QuickTyped } from './alsoSigned'
 
 export interface SignStory {
   /** The button: what happens when it is pressed. */
-  signLabel: string
+  signLabel?: string
   /** A destructive step: red button. */
   danger?: boolean
   /** "What happens next", each step true for this action. Empty: nothing is promised. */
@@ -24,6 +24,8 @@ export interface SignStory {
   foldWorkspace?: boolean
   /** With foldWorkspace: also fold in the risk state and while armed (only the hub join; every other story shows the line there). */
   foldInRisk?: boolean
+  /** Ids and capability facts of the review sit under "Technical details" only: the workspace line, "signed id …", and (Publish turn-on) the add-on's capability line. Display only: the signed content and the digest are the host's, unchanged. */
+  foldIds?: boolean
 }
 
 /** What agents may do with the access, in the words of the review (the same for every grant the dashboard signs). */
@@ -74,6 +76,12 @@ export function storyOf(action: ClickAction | null | undefined, ctx: StoryContex
       const length = accessLength(action.hours)
       return { signLabel: 'Sign and show the secret', access: { length }, steps: ['You sign.', `The secret is shown once on this page. Agents that hold it may work for you for ${length} from now.`] }
     }
+    // Publish (built in): the person's press already said what happens; the sheet names the file and the warning, the ids sit behind Details.
+    // The button label is the caller's own (one file: "Publish", several: "Share files"). A third-party add-on (market_grant) keeps every line.
+    case 'publish_share':
+      return { foldWorkspace: true, foldInRisk: true, foldIds: true, steps: [] }
+    case 'addon_enable':
+      return action.name === 'publish' ? { foldWorkspace: true, foldInRisk: true, foldIds: true, steps: [] } : null
     case 'hub_join':
       return { signLabel: 'Connect', foldWorkspace: true, foldInRisk: true, steps: ['You sign.', 'This workspace is joined to the hub as shown.'] }
     case 'hub_mode_full':

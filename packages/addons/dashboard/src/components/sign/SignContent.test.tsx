@@ -303,3 +303,28 @@ it('keeps the ticket identity visible next to a host summary', () => {
   render(<SignContent content={{ headline: 'Approve', ticket: { key: 'DEMO-0001', uid_tail: 'abcd1234' }, summary: { title: 'Approve', lines: ['Approve the plan.'] } } as never} />)
   expect(screen.getByTestId('sign-ticket')).toHaveTextContent('DEMO-0001')
 })
+
+// run17 P01b: for Publish (built in) the ids and the capability line sit under the fold; the content itself is unchanged.
+const publishOn = {
+  headline: 'Turn on Publish',
+  summary: { title: 'Turn on Publish', lines: ['It says it will use the internet.', 'Version 1.0.0. Runs on this computer.'], risk: 'An add-on runs its own code on this computer as you; turn it on only if you trust it.' },
+  ticket: { key: 'AT-0002', title: '', uid_tail: 'ab12cd34', key_note: 'key per host' },
+}
+
+it('foldIds: the capability line and the signed id leave the main view, stay in the fold; the risk line stays', () => {
+  render(<SignContent foldIds content={publishOn} />)
+  const main = screen.getByTestId('sign-summary')
+  expect(main).not.toHaveTextContent('use the internet')
+  expect(main).toHaveTextContent('Version 1.0.0')
+  expect(screen.queryByTestId('sign-ticket')).toBeNull()
+  expect(screen.getByTestId('sign-risk')).toHaveTextContent('turn it on only if you trust it')
+  const fold = screen.getByTestId('sign-exact')
+  expect(within(fold).getByTestId('sign-folded-fact')).toHaveTextContent('It says it will use the internet.')
+  expect(fold).toHaveTextContent('signed id …ab12cd34')
+})
+
+it('without foldIds (any other add-on) every line stays in the main view', () => {
+  render(<SignContent content={publishOn} />)
+  expect(screen.getByTestId('sign-summary')).toHaveTextContent('It says it will use the internet.')
+  expect(screen.getByTestId('sign-ticket')).toHaveTextContent('signed id …ab12cd34')
+})

@@ -12,6 +12,7 @@ let fake: FakeServer
 let base = ''
 const prepares: Record<string, any>[] = []
 let refuse: string | null = null
+let signs = 0
 
 test.beforeAll(async () => {
   fake = new FakeServer(path.resolve(import.meta.dirname, '../dist'))
@@ -27,6 +28,7 @@ test.beforeAll(async () => {
       const method = req.method ?? 'GET'
       const json = (v: unknown, status = 200) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(v)) }
       if (rest === undefined) return inner(req, res)
+      if (rest === 'click/sign' && method === 'POST') signs++
       if (rest === 'add-ons' && method === 'GET') return json({ available: true, add_ons: [{ id: 'publish', title: 'Publish', desc: 'Share files of a ticket with a link.', state: 'on', locked: null, blocked: null, needs: 'publish', set_up: true }] })
       if (rest === 'tickets/DEMO-0001' && method === 'GET') return json({ ...fixture('ticket.json'), status: 'done', artifacts: [{ name: 'hello.txt', kind: 'report', bytes: 16, sha256: 'ab'.repeat(32), added_by: 'p_x', at: '2026-10-18T08:00:00Z' }] })
       if (rest.startsWith('shares') && method === 'GET') return json({ available: true, configured: true, server: 'https://share.example.org', share: 'https://link.example.org', workspace: WS, owner: 'p_owner', live: true, shares: [], staged: [] })
@@ -49,22 +51,25 @@ const results = async (page: import('@playwright/test').Page) => {
   await page.getByRole('tab', { name: /Results/ }).click()
 }
 
-test('Publish as link: button on the result card, one small panel, then the signature', async ({ page }) => {
+test('Publish as link: button on the result card, then ONE sign sheet (Publish), nothing signed before Sign', async ({ page }) => {
   refuse = null
+  signs = 0
   await results(page)
   const button = page.getByRole('button', { name: 'Publish hello.txt as a link' })
   await expect(button).toBeVisible()
   await page.waitForTimeout(500)
   await page.screenshot({ path: path.join(SHOTS, 'run14-p01-after-results.png') })
   await button.click()
-  const panel = page.getByRole('dialog', { name: 'Publish hello.txt as a link?' })
-  await expect(panel).toContainText('Anyone with the link can open this file')
-  await page.waitForTimeout(500)
-  await page.screenshot({ path: path.join(SHOTS, 'run14-p01-after-panel.png') })
-  await panel.getByRole('button', { name: 'Sign and publish' }).click()
-  await expect(page.getByRole('button', { name: /Share files of DEMO-0001/ })).toBeVisible()
+  // no panel of its own: the copy is prepared at once and the review follows
+  const publish = page.getByRole('button', { name: 'Publish', exact: true })
+  await expect(publish).toBeVisible()
+  await expect(page.getByRole('dialog')).toHaveCount(1)
+  await expect(page.getByRole('list', { name: 'Files to share' })).toContainText('hello.txt')
+  await expect(page.getByRole('dialog')).toContainText('Anyone with the link can read this file. A copy cannot be taken back. You see the link once.')
+  await expect(page.getByRole('dialog')).not.toContainText('https://share.example.org') // addresses sit behind Details
   expect(prepares.at(-1)).toMatchObject({ ticket: 'DEMO-0001', artifacts: ['hello.txt'], kind: 'secret', days: 7 })
-  await page.waitForTimeout(500)
+  await page.waitForTimeout(1500) // nothing signs by itself, even after the dwell time
+  expect(signs).toBe(0)
   await page.screenshot({ path: path.join(SHOTS, 'run14-p01-after-sign.png') })
 })
 
@@ -72,9 +77,7 @@ test('Publish as link: a hub that cannot carry it is said in words before anythi
   refuse = 'hub.not_joined'
   await results(page)
   await page.getByRole('button', { name: 'Publish hello.txt as a link' }).click()
-  const panel = page.getByRole('dialog', { name: 'Publish hello.txt as a link?' })
-  await panel.getByRole('button', { name: 'Sign and publish' }).click()
-  await expect(panel.getByRole('alert')).toContainText('Connect this workspace to a hub in Settings, Hub')
+  await expect(page.getByRole('alert')).toContainText('Connect this workspace to a hub in Settings, Hub')
   await page.waitForTimeout(500)
   await page.screenshot({ path: path.join(SHOTS, 'run14-p01-after-refused.png') })
 })

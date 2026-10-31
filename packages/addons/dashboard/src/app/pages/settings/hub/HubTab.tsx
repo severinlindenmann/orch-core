@@ -21,7 +21,7 @@ function OpenHub({ ws }: { ws: string }) {
   const open = useOpenHub(ws)
   if (rail.data && !rail.data.hub) return null // the rail says there is no hub: nothing to open
   const name = rail.data?.hub?.name
-  return <Panel title={hubTitle(name)}><p>See your company's workspaces and what needs you.</p><Action id="hub-open" variant="default" onClick={() => open('/')}>Open hub</Action></Panel>
+  return <Panel title={hubTitle(name)}><p>See your company's workspaces and what needs you.</p><Action id="hub-open" variant="default" disabled={open.busy} onClick={() => open('/')}>{open.busy ? 'Opening hub…' : 'Open hub'}</Action></Panel>
 }
 
 export function HubTab({ workspace }: { workspace: Workspace }) {
@@ -42,6 +42,13 @@ export function HubTab({ workspace }: { workspace: Workspace }) {
   useEffect(() => {
     if (incoming && mode === 'standalone') { setInitialLink(incoming); setFlow('join') }
   }, [incoming, mode])
+  // The top-bar "Connect to hub" button links to `#connect`: the dialog opens empty (also when this page is already open).
+  const wantsJoin = /^#?connect$/.test(hash)
+  useEffect(() => {
+    if (!wantsJoin || !mode) return
+    if (mode === 'standalone') setFlow('join')
+    router.history.replace(router.history.location.pathname + router.history.location.search)
+  }, [wantsJoin, mode]) // eslint-disable-line react-hooks/exhaustive-deps
   if (!hubServed(ws)) return <Panel title="Hub settings unavailable"><p>This host does not serve hub settings yet.</p></Panel>
   if (status.isPending) return <Panel title="Hub"><p role="status">Loading hub settings…</p></Panel>
   if (status.isError) return <Panel title="Hub"><p role="alert">Could not load hub settings.</p><Action id="hub-status-retry" onClick={() => void status.refetch()}>Try again</Action></Panel>

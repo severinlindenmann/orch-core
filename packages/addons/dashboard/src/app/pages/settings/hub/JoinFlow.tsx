@@ -8,7 +8,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { InfoDrawer } from '@/components/InfoDrawer'
 import { api } from '@/api/client'
 import { ApiError } from '@/api/types'
-import type { HubLinkInfo } from '@/api/hub'
+import { startJoinPolling, type HubLinkInfo, type HubMode, type HubStatus } from '@/api/hub'
 import { newIdem } from '@/api/runs'
 import { Raw } from '@/components/sign/visible'
 import { HubStep } from '../host/HubStep'
@@ -168,7 +168,14 @@ function ConnectStage({ ws, info, mode, onClose }: { ws: string; info: HubLinkIn
   const [state, setState] = useState<'idle' | 'working' | 'waiting' | 'failed'>('idle')
   const [why, setWhy] = useState('')
   const started = useRef(false)
-  const done = () => {
+  const done = (confirmedMode?: HubMode | null) => {
+    // The hub confirmed: write what is known now (a status read that started earlier may still land with the old answer),
+    // then let the real answer replace it. Only ever called when confirmed === true.
+    const m = confirmedMode === 'selective' || confirmedMode === 'full' ? confirmedMode : mode
+    const key = ['hub', ws, 'status']
+    void qc.cancelQueries({ queryKey: key })
+    qc.setQueryData<HubStatus>(key, old => old ? { ...old, joined: true, mode: m } : old)
+    startJoinPolling(ws)
     refresh()
     void qc.invalidateQueries() // the hub confirmed: the whole page behind the dialog is read once, now
     toast.success(mode === 'full' ? 'Connected. The hub can read everything in this workspace.' : 'Connected. The hub sees only what you choose to share, plus this workspace\'s name.')
@@ -178,7 +185,7 @@ function ConnectStage({ ws, info, mode, onClose }: { ws: string; info: HubLinkIn
   const run = () => {
     setState('working'); setWhy('')
     api.connectHub(ws, { idem: newIdem(), invite: info.code, hub_card: info.hub_card, ...(info.endpoint ? { addr: info.endpoint } : {}) }).then(
-      got => { if (got.confirmed === true) done(); else setState('waiting') },
+      got => { if (got.confirmed === true) done(got.mode); else setState('waiting') },
       failure,
     )
   }

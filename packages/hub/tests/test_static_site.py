@@ -71,14 +71,78 @@ def test_every_allow_listed_file_is_served_with_the_hard_headers(w):
     }
     for path, (name, ctype) in FILES.items():
         s, h, body = get(w, path)
-        assert s == 200 and body == (WEB_DIR / name).read_bytes(), path
+        disk = (WEB_DIR / name).read_bytes()
+        assert s == 200 and (body == disk or (path in ("/", "/oidc/callback") and b'rel="modulepreload"' in body)), path
         assert h["Content-Type"] == ctype
         assert h["Content-Security-Policy"] == CSP
         assert h["X-Content-Type-Options"] == "nosniff" and h["Referrer-Policy"] == "no-referrer"
         assert h["Cross-Origin-Resource-Policy"] == "same-origin" and h["Cross-Origin-Opener-Policy"] == "same-origin"
-        assert h["Cache-Control"] == ("no-store" if path in ("/", "/c", "/oidc/callback") else "no-cache")
+        assert h["Cache-Control"] == "no-cache" and h["ETag"].startswith('"')  # revalidated every time, never stale
         assert "Strict-Transport-Security" in h  # the test hub has secure cookies
     assert FILES["/app.js"][1] == "text/javascript; charset=utf-8"
+
+
+def test_the_etag_gives_a_304_and_changes_with_the_bytes(w):
+    for path in ("/", "/app.js", "/app.css", "/pages.js"):
+        s, h, body = get(w, path)
+        tag = h["ETag"]
+        assert s == 200 and body
+        s2, h2, body2 = get(w, path, headers={"if-none-match": tag})
+        assert (s2, body2) == (304, b"") and h2["ETag"] == tag, path
+        assert h2["Content-Security-Policy"] == CSP and h2["Cache-Control"] == "no-cache"
+        assert get(w, path, headers={"if-none-match": f'W/{tag}, "other"'})[0] == 304
+        assert get(w, path, headers={"if-none-match": "*"})[0] == 304
+        assert get(w, path, headers={"if-none-match": '"stale"'})[0] == 200
+    a = get(w, "/app.js")[1]["ETag"]
+    assert a != get(w, "/app.css")[1]["ETag"]
+
+
+def test_the_etag_comes_from_the_file_bytes_so_an_update_is_seen(tmp_path):
+    import shutil
+
+    from orch_hub.webapi.static import StaticSite
+
+    root = tmp_path / "web"
+    shutil.copytree(WEB_DIR, root)
+    before = StaticSite(hsts=False, root=root).get("/app.js")[1]
+    before = dict(before)["ETag"]
+    (root / "app.js").write_bytes((root / "app.js").read_bytes() + b"\n// changed\n")
+    site = StaticSite(hsts=False, root=root)
+    assert dict(site.get("/app.js")[1])["ETag"] != before
+    assert site.get("/app.js", {"if-none-match": before})[0] == 200  # the old ETag no longer matches
+
+
+def test_gzip_only_when_the_client_accepts_it(w):
+    import gzip
+
+    s, h, plain = get(w, "/app.js")
+    assert s == 200 and "Content-Encoding" not in h and plain == (WEB_DIR / "app.js").read_bytes()
+    assert h["Vary"] == "Accept-Encoding"
+    s, hz, z = get(w, "/app.js", headers={"accept-encoding": "br, gzip;q=0.8"})
+    assert s == 200 and hz["Content-Encoding"] == "gzip" and hz["Vary"] == "Accept-Encoding"
+    assert gzip.decompress(z) == plain and len(z) < len(plain)
+    assert hz["ETag"] != h["ETag"]  # the two bodies are two representations
+    assert get(w, "/app.js", headers={"accept-encoding": "gzip", "if-none-match": hz["ETag"]})[0] == 304
+    assert get(w, "/app.js", headers={"accept-encoding": "gzip;q=0"})[1].get("Content-Encoding") is None
+    assert get(w, "/app.js", headers={"accept-encoding": "identity"})[1].get("Content-Encoding") is None
+    # the security headers ride on the gzip answer too
+    assert hz["Content-Security-Policy"] == CSP and hz["X-Content-Type-Options"] == "nosniff"
+
+
+def test_the_shell_preloads_every_static_import_of_app_js(w):
+    s, _, html = get(w, "/")
+    links = re.findall(r'<link rel="modulepreload" href="([^"]+)">', html.decode())
+    assert s == 200 and links[0] == "/app.js" and "/pages.js" in links
+    served = set(FILES) | {"/pages.js"} | {"/pages/" + n for n in w.api._site.pages}
+    # every module app.js imports statically (and the page modules behind /pages.js) is in the list, and nothing else
+    app = (WEB_DIR / "app.js").read_text()
+    for spec in re.findall(r'from "\./([a-z_]+\.js)"', app):
+        assert "/" + spec in links, spec
+    for n in w.api._site.pages:
+        assert "/pages/" + n in links, n
+    assert set(links) <= served and len(links) == len(set(links))
+    # the other entry of the same shell and the connect page: the oidc return carries the list too
+    assert b"modulepreload" in get(w, "/oidc/callback")[2]
 
 
 def test_the_csp_has_no_unsafe_source_and_the_pieces_the_note_names():

@@ -1550,19 +1550,31 @@ def _set_password(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
     return {"share_id": rec["id"], "password": plan["password"], "shown_once": True}
 
 
-_UNREACHABLE_HUB_CODES = frozenset({"unavailable", "hub_unreachable"})
+#: refusals that say "answered, and not allowed": the hub is online. Everything else (a timeout, 429, bad_signature,
+#: bad_nonce, a server error, a network error) is "unreachable": the Shares page offers Try again.
+_NOT_ALLOWED_CODES = frozenset(
+    {
+        "unknown_workspace",
+        "owner_not_allowed",
+        "workspace_blocked",
+        "unknown_hub",
+        "other_hub",
+        "hub_id_mismatch",
+        "not_bound",
+        "unbound",
+        "dev_refused",
+    }
+)
 
 
 def _why_not_live(exc: Exception) -> str:
-    """``unreachable``: nothing answered (network error, the hub down, ``unavailable``, a server error).
-    ``not_allowed``: something answered and refused (``unknown_workspace``, ...): the hub is online."""
+    """``not_allowed`` only for an explicit refusal code (``unknown_workspace``, ``owner_not_allowed``, ...): something
+    answered and the hub is online. Anything else is ``unreachable``."""
     code = str(getattr(exc, "code", ""))
-    if hasattr(exc, "status"):  # a PublishError
-        status = int(exc.status)
-        if code == "network" or status >= 500 or (status == 0 and code != "refused"):
-            return "unreachable"
-        return "not_allowed"
-    return "unreachable" if code in _UNREACHABLE_HUB_CODES else "not_allowed"
+    status = int(getattr(exc, "status", 0) or 0)
+    if status >= 500 or code == "network":
+        return "unreachable"
+    return "not_allowed" if code in _NOT_ALLOWED_CODES else "unreachable"
 
 
 def _live(call: Call, plan: dict[str, Any]) -> dict[str, Any]:

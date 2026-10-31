@@ -180,6 +180,7 @@ it('a hub that answers and refuses says it has not switched publishing on, and n
   expect(note).toHaveTextContent('Your hub has not switched on publishing for this workspace yet. Nothing was sent.')
   expect(screen.queryByTestId('shares-unreachable')).toBeNull()
   expect(screen.queryByText(/cannot be reached/)).toBeNull()
+  expect(within(note).getByRole('button', { name: 'Try again' })).toBeInTheDocument()
 })
 
 it('no hub route (local) shows neither note', async () => {

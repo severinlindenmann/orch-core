@@ -11,6 +11,8 @@ from orch.install import cli
 from orch.install.parts import detect_addresses
 from orch.install.state import load
 
+HUB_ID = "ab" * 16
+
 
 class FakeRunner:
     kind = "fake"
@@ -38,11 +40,14 @@ def home(tmp_path):
 def make(home, **kw):
     out, err = io.StringIO(), io.StringIO()
     calls = []
+    ids = [HUB_ID]  # the hub id the fake hub reports (append to change it)
 
     def run(argv, env=None):
         calls.append(list(argv))
         if argv[:3] == ["uv", "tool", "list"]:
             return 0, "orch-hub v0.1.0\norch-relay v0.2.0\norch-publish v0.3.0\n"
+        if len(argv) > 1 and argv[1] == "keys" and argv[-1] == "card":
+            return 0, json.dumps({"o": {"kind": "hub.card", "hub_id": ids[-1]}, "sig": "x"})
         return 0, ""
 
     ctx = cli.Ctx(
@@ -60,6 +65,7 @@ def make(home, **kw):
         dashboard_entry=lambda: ["/bin/orch-dashboard"],
         **kw,
     )
+    ctx.ids = ids
     return ctx, out, err, calls
 
 
@@ -367,3 +373,132 @@ def test_hub_settings_ignores_a_linked_old_file_and_brackets_ipv6(home, tmp_path
     assert (body["name"], body["company"]) == ("Hub", "")
     assert body["addresses"][0]["web"] == "http://[fd00::5]:8100" and body["addresses"][0]["link"] == "[fd00::5]:8105"
     assert json.loads(other.read_text())["name"] == "Evil"  # the link target is untouched
+
+
+def _trusts(calls):
+    return [c for c in calls if c[-3:-1] == ["hub", "trust"]]
+
+
+def _install(ctx, out, err, *args):
+    assert cli.main(list(args), env=ctx.env, out=out, err=err, ctx=ctx) == 0, err.getvalue()
+
+
+def test_hub_then_publish_pins_the_hub_at_its_own_publish(home):
+    ctx, out, err, calls = make(home)
+    _install(ctx, out, err, "hub", "--address", "127.0.0.1")
+    assert _trusts(calls) == []  # no publish in this install yet
+    _install(ctx, out, err, "publish", "--address", "127.0.0.1")
+    (t,) = _trusts(calls)
+    assert t == [
+        str(ctx.layout.bin / "orch-publish"),
+        "admin",
+        "--data",
+        str(ctx.layout.data("publish")),
+        "hub",
+        "trust",
+        HUB_ID,
+    ]
+
+
+def test_publish_then_hub_pins_the_hub_at_its_own_publish(home):
+    ctx, out, err, calls = make(home)
+    _install(ctx, out, err, "publish", "--address", "127.0.0.1")
+    assert _trusts(calls) == []
+    _install(ctx, out, err, "hub", "--address", "127.0.0.1")
+    (t,) = _trusts(calls)
+    assert t[-1] == HUB_ID and t[3] == str(ctx.layout.data("publish"))
+
+
+def test_a_reinstall_pins_again(home):
+    ctx, out, err, calls = make(home)
+    _install(ctx, out, err, "hub", "--address", "127.0.0.1")
+    _install(ctx, out, err, "publish", "--address", "127.0.0.1")
+    _install(ctx, out, err, "publish", "--address", "127.0.0.1")
+    _install(ctx, out, err, "hub", "--address", "127.0.0.1")
+    assert len(_trusts(calls)) == 3
+
+
+def test_publish_alone_or_hub_with_a_remote_publish_pins_nothing(home):
+    ctx, out, err, calls = make(home)
+    _install(ctx, out, err, "publish", "--address", "127.0.0.1")
+    assert _trusts(calls) == []
+    ctx2, out2, err2, calls2 = make(home / "two")
+    _install(ctx2, out2, err2, "hub", "--address", "127.0.0.1", "--publish-url", "https://share.example.com")
+    _install(ctx2, out2, err2, "publish", "--address", "127.0.0.1")  # a publish beside a hub that dials another one
+    assert _trusts(calls2) == []
+
+
+def test_a_failed_pin_is_one_plain_line_and_the_install_goes_on(home):
+    ctx, out, err, calls = make(home)
+    inner = ctx.run
+
+    def run(argv, env=None):
+        if "trust" in argv:
+            return 1, "boom"
+        return inner(argv, env)
+
+    ctx.run = run
+    _install(ctx, out, err, "hub", "--address", "127.0.0.1")
+    _install(ctx, out, err, "publish", "--address", "127.0.0.1")
+    lines = [ln for ln in out.getvalue().splitlines() if "could not be allowed to share" in ln]
+    assert len(lines) == 1 and "publish" in load(ctx.layout)["parts"]
+
+
+def test_a_missing_publish_binary_is_a_note_not_a_failed_install(home):
+    ctx, out, err, calls = make(home)
+    inner = ctx.run
+
+    def run(argv, env=None):
+        if "trust" in argv:
+            raise FileNotFoundError(argv[0])
+        return inner(argv, env)
+
+    ctx.run = run
+    _install(ctx, out, err, "hub", "--address", "127.0.0.1")
+    _install(ctx, out, err, "publish", "--address", "127.0.0.1")
+    assert "could not be allowed to share" in out.getvalue() and "publish" in load(ctx.layout)["parts"]
+
+
+def test_the_pin_is_recorded_and_said_once(home):
+    ctx, out, err, calls = make(home)
+    _install(ctx, out, err, "hub", "--address", "127.0.0.1")
+    _install(ctx, out, err, "publish", "--address", "127.0.0.1")
+    assert out.getvalue().count(f"pinned hub {HUB_ID} at publish") == 1
+    assert load(ctx.layout)["parts"]["publish"]["pinned_hub_id"] == HUB_ID
+
+
+def test_a_changed_hub_id_untrusts_the_old_one(home):
+    ctx, out, err, calls = make(home)
+    _install(ctx, out, err, "hub", "--address", "127.0.0.1")
+    _install(ctx, out, err, "publish", "--address", "127.0.0.1")
+    new = "cd" * 16
+    ctx.ids.append(new)
+    _install(ctx, out, err, "hub", "--address", "127.0.0.1")
+    untrusts = [c for c in calls if c[-3:-1] == ["hub", "untrust"]]
+    assert [c[-1] for c in untrusts] == [HUB_ID]
+    assert calls.index(untrusts[0]) < max(i for i, c in enumerate(calls) if c[-2:] == ["trust", new])
+    assert load(ctx.layout)["parts"]["publish"]["pinned_hub_id"] == new
+
+
+def test_removing_the_hub_untrusts_the_pinned_id(home):
+    ctx, out, err, calls = make(home)
+    _install(ctx, out, err, "hub", "--address", "127.0.0.1")
+    _install(ctx, out, err, "publish", "--address", "127.0.0.1")
+    assert cli.main(["remove", "hub"], env=ctx.env, out=out, err=err, ctx=ctx) == 0
+    assert [c[-1] for c in calls if c[-3:-1] == ["hub", "untrust"]] == [HUB_ID]
+    assert "pinned_hub_id" not in load(ctx.layout)["parts"]["publish"]
+
+
+def test_a_card_without_o_hub_id_is_not_pinned(home):
+    ctx, out, err, calls = make(home)
+    inner = ctx.run
+
+    def run(argv, env=None):
+        if len(argv) > 1 and argv[1] == "keys" and argv[-1] == "card":
+            return 0, json.dumps({"hub_id": HUB_ID})
+        return inner(argv, env)
+
+    ctx.run = run
+    _install(ctx, out, err, "hub", "--address", "127.0.0.1")
+    _install(ctx, out, err, "publish", "--address", "127.0.0.1")
+    assert _trusts(calls) == [] and "could not be allowed to share" in out.getvalue()

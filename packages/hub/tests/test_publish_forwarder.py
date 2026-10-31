@@ -382,7 +382,6 @@ def test_unknown_workspace_sends_the_allowance_again_and_resends_once(tmp_path, 
     assert out["status"] == 201
     assert len(up.requests) == 2
     assert [c[0] for c in e.sync.calls].count("allow") == kinds_before + 1
-    assert e.fw._last_allow[WS] == "sent"
 
 
 def test_unknown_workspace_without_admission_is_not_retried(env):
@@ -414,7 +413,6 @@ def test_unknown_workspace_when_the_allowance_is_refused_is_not_retried(tmp_path
     e.sync.put_allow = orig
     assert out["status"] == 401
     assert len(up.requests) == 1
-    assert e.fw._last_allow[WS] == "unknown_hub"
 
 
 def test_the_retry_is_at_most_once(tmp_path, up):
@@ -423,3 +421,47 @@ def test_the_retry_is_at_most_once(tmp_path, up):
     out = e.fw.forward(WS, req(e))
     assert out["status"] == 401
     assert len(up.requests) == 2
+
+
+def test_a_second_unknown_workspace_within_30_seconds_is_not_retried_again(tmp_path, up):
+    e = _admitting(tmp_path, up, lambda ws: ("aa" * 16, 1))
+    up.script = [_UNKNOWN, _UNKNOWN, _UNKNOWN]
+    assert e.fw.forward(WS, req(e))["status"] == 401
+    assert len(up.requests) == 2
+    assert e.fw.forward(WS, req(e))["status"] == 401
+    assert len(up.requests) == 3  # sent once, no allowance retry, no resend
+
+
+def test_no_retry_when_the_deadline_is_close(tmp_path, up):
+    hub = make_hub(tmp_path)
+    sync = RecordingSync()
+    fw = HubPublish(
+        hub, sync, PublishConfig(up.url, HOST, timeout_s=2.0, deadline_s=1.0), admission=lambda ws: ("aa" * 16, 1)
+    )
+    fw.binding(WS, binding(new_wsk(), hub, WS))
+    wsk = new_wsk()
+    fw.binding(WS, binding(wsk, hub, WS, seq=2))
+    up.script = [_UNKNOWN, (201, b"{}")]
+    out = fw.forward(WS, host_request(wsk, hub.hub_id, WS))
+    assert out["status"] == 401 and len(up.requests) == 1
+
+
+def test_the_error_code_is_read_from_json_not_from_a_substring(tmp_path, up):
+    e = _admitting(tmp_path, up, lambda ws: ("aa" * 16, 1))
+    up.script = [(401, b'{"error":"bad_signature","detail":"unknown_workspace"}')]
+    assert e.fw.forward(WS, req(e))["status"] == 401
+    assert len(up.requests) == 1
+
+
+def test_a_refusal_during_the_retry_returns_the_original_401(tmp_path, up):
+    e = _admitting(tmp_path, up, lambda ws: ("aa" * 16, 1))
+    up.script = [_UNKNOWN]
+    orig = e.sync.put_binding
+
+    def refuse(ws, obj):
+        raise PublishSyncError("stale_binding")
+
+    e.sync.put_binding = refuse
+    out = e.fw.forward(WS, req(e))
+    e.sync.put_binding = orig
+    assert out["status"] == 401 and len(up.requests) == 1

@@ -401,18 +401,42 @@ def pin_hub_at_publish(ctx: Ctx, env: Mapping[str, str]) -> bool:
     hub_data, pub_data = ctx.layout.data("hub"), ctx.layout.data("publish")
     try:
         rc, out = ctx.run([hub["binary"], "keys", "--state", str(hub_data), "card"], env)
-        card = _json_of(out) if rc == 0 else None
-        o = card.get("o", card) if isinstance(card, dict) else None
-        hub_id = o.get("hub_id") if isinstance(o, dict) else None
-        if not isinstance(hub_id, str) or not _HUB_ID.fullmatch(hub_id):
+        hub_id = _card_hub_id(out) if rc == 0 else None
+        if hub_id is None:
             raise InstallError("the hub's id could not be read")
-        rc, out = ctx.run([pub["binary"], "admin", "--data", str(pub_data), "hub", "trust", hub_id], env)
-        if rc != 0:
-            raise InstallError(out.strip()[-200:] or "orch-publish refused")
-    except InstallError as e:
+        old = pub.get("pinned_hub_id")
+        if old and old != hub_id:  # the hub's keys changed: the old id must not stay trusted
+            _admin_hub(ctx, pub, pub_data, "untrust", old, env)
+        _admin_hub(ctx, pub, pub_data, "trust", hub_id, env)
+    except (InstallError, OSError, ValueError, TypeError, KeyError) as e:
         ctx.say(f"  note: this hub could not be allowed to share at publish ({e}); shares will not work until it is")
         return False
+    st = load(ctx.layout)
+    if "publish" in st["parts"]:
+        st["parts"]["publish"]["pinned_hub_id"] = hub_id
+        save(ctx.layout, st)
+    ctx.say(f"  pinned hub {hub_id} at publish")
     return True
+
+
+def _card_hub_id(out: str) -> str | None:
+    """The hub id of ``orch-hub keys card`` output: ``card["o"]["hub_id"]``, 32 lower-case hex characters."""
+    i = out.find("{")
+    if i < 0:
+        return None
+    try:
+        card, _ = json.JSONDecoder().raw_decode(out[i:])
+    except ValueError:
+        return None
+    o = card.get("o") if isinstance(card, dict) else None
+    hub_id = o.get("hub_id") if isinstance(o, dict) else None
+    return hub_id if isinstance(hub_id, str) and _HUB_ID.fullmatch(hub_id) else None
+
+
+def _admin_hub(ctx: Ctx, pub: Mapping[str, Any], data: Path, action: str, hub_id: str, env: Mapping[str, str]) -> None:
+    rc, out = ctx.run([pub["binary"], "admin", "--data", str(data), "hub", action, hub_id], env)
+    if rc != 0:
+        raise InstallError(out.strip()[-200:] or "orch-publish refused")
 
 
 def install_part(
@@ -558,6 +582,8 @@ def install_part(
         "pid": started.get("pid"),
         "started": int(time.time()),
     }
+    if part == "publish" and pubs and pubs.get("pinned_hub_id"):
+        rec["pinned_hub_id"] = pubs["pinned_hub_id"]  # a reinstall keeps what it pinned (a changed hub id is untrusted)
     if part == "hub":
         # a hub told to dial a publish while this install has none is dialling someone else's: never pinned there.
         # (With this install's publish present, the address is that publish's own name, e.g. its https one.)
@@ -742,6 +768,22 @@ def _ws_host(st: dict[str, Any]) -> str:
     return st.get("address") or P.ADDRESS_LOOPBACK
 
 
+def _untrust_pinned(ctx: Ctx, st: dict[str, Any]) -> None:
+    """The hub part goes: the id this install pinned at its publish stops being trusted there."""
+    pub = st["parts"].get("publish")
+    old = pub.get("pinned_hub_id") if pub else None
+    if not old:
+        return
+    env = {**ctx.env, "UV_TOOL_DIR": str(ctx.layout.tools), "UV_TOOL_BIN_DIR": str(ctx.layout.bin)}
+    try:
+        _admin_hub(ctx, pub, ctx.layout.data("publish"), "untrust", old, env)
+    except (InstallError, OSError, ValueError, TypeError, KeyError) as e:
+        ctx.say(f"  note: the hub {old} could not be removed from publish's trusted hubs ({e})")
+        return
+    pub.pop("pinned_hub_id", None)
+    save(ctx.layout, st)
+
+
 def remove(ctx: Ctx, part: str, purge: bool) -> int:
     st = load(ctx.layout)
     if part == "dashboard":
@@ -756,6 +798,7 @@ def remove(ctx: Ctx, part: str, purge: bool) -> int:
         ctx.say(f"{part} is not installed")
         return 0
     if part == "hub":
+        _untrust_pinned(ctx, st)
         remove_helper(ctx, st)  # first: its helper.json lists this hub; the helper only exists for a hub
     ctx.runner.stop(part)
     env = {**ctx.env, "UV_TOOL_DIR": str(ctx.layout.tools), "UV_TOOL_BIN_DIR": str(ctx.layout.bin)}

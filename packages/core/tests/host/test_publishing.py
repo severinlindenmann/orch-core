@@ -1779,6 +1779,11 @@ def test_the_share_cap_is_named_when_it_is_what_leaves_no_room(w, monkeypatch):
         (PublishError("network"), "unreachable"),
         (PublishError("unavailable", 503), "unreachable"),
         (PublishError("unknown_workspace", 401), "not_allowed"),
+        (PublishError("rate_limited", 429), "unreachable"),
+        (PublishError("bad_signature", 401), "unreachable"),
+        (PublishError("bad_nonce", 401), "unreachable"),
+        (HubRefused("timeout"), "unreachable"),
+        (HubRefused("workspace_blocked"), "not_allowed"),
     ],
 )
 def test_why_the_servers_numbers_are_missing(exc, why):

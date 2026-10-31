@@ -97,8 +97,11 @@ function SharesBody({ onRevoke, onSign }: { onRevoke: (s: Share) => void; onSign
         </p>
       )}
       {data && data.configured && !data.live && data.why === 'not_allowed' && (
-        <p role="status" data-testid="shares-not-allowed" className="rounded-lg border border-warning/40 px-3 py-2 text-[12px]">
-          Your hub has not switched on publishing for this workspace yet. Nothing was sent.
+        <p role="status" data-testid="shares-not-allowed" className="flex flex-wrap items-center gap-2 rounded-lg border border-warning/40 px-3 py-2 text-[12px]">
+          <span>Your hub has not switched on publishing for this workspace yet. Nothing was sent.</span>
+          <Button size="sm" variant="secondary" onClick={() => void list.refetch()}>
+            Try again
+          </Button>
         </p>
       )}
       {data && data.configured && !data.live && (data.why === undefined || data.why === 'unreachable') && (

@@ -597,3 +597,42 @@ def test_publish_addresses_are_checked_like_the_host_does(token):
     ):
         with pytest.raises(ValidationError):
             handoff.PublishSetup(action="publish_setup", server=server, share=share)
+
+
+# -- apps (#1457): the signature that lets an app go live -------------------------------------------------------------
+
+APP_STAGED = "pa_" + "e" * 32
+
+
+def test_app_release_signs_exactly_the_hosts_words_for_this_staged_release():
+    action = handoff.AppRelease(action="app_release", key="DEMO-1", staged_id=APP_STAGED)
+    assert handoff.host_call(action) == ("app.release", {"staged_id": APP_STAGED})
+    check = handoff.expected(action)
+    text = "\n".join(
+        [handoff.APP_MARK, "Ticket: DEMO-1", "Version: 2", f"Staged release: {APP_STAGED}", f"App id: {'ab' * 16}"]
+    )
+    assert check([{"type": "log.added", "text": text}]) is True
+    assert check([{"type": "log.added", "text": text.replace(APP_STAGED, "pa_" + "f" * 32)}]) is False
+    assert check([{"type": "log.added", "text": "hello\n" + text}]) is False  # does not start with the mark
+    assert check([{"type": "log.added", "text": text.replace(handoff.APP_MARK, handoff.PUBLISH_MARK)}]) is False
+    assert check([{"type": "ticket.updated", "text": text}]) is False
+    assert check([{"type": "log.added", "text": text}, {"type": "log.added", "text": text}]) is False
+    assert check([{"type": "log.added"}]) is False
+
+
+def test_the_app_mark_is_the_cores_and_a_share_note_is_no_app_release():
+    from orch.publishclient.approval import APP_MARK, MARK
+
+    assert handoff.APP_MARK == APP_MARK != MARK
+
+
+@pytest.mark.parametrize("staged", ["pa_xyz", "pa_" + "A" * 32, STAGED, SID, "../x"])
+def test_app_release_needs_a_real_staged_release_id(staged):
+    with pytest.raises(ValidationError):
+        handoff.AppRelease(action="app_release", key="DEMO-1", staged_id=staged)
+
+
+def test_app_release_is_a_click_op_in_core():
+    from orch.click.protocol import op_class
+
+    assert op_class("app.release") == "click"

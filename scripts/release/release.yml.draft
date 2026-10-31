@@ -34,6 +34,19 @@
 #   REQUIRED (the refresh anchor list is git tags, trusted.py): protect `v*` tags (no update, no delete) and turn on
 #   immutable releases, so a version tag cannot be moved, nor its release retitled, replaced or deleted.
 #
+# ---- wheels only (P2-C) ------------------------------------------------------------------------------------------------
+#   install.sh installs with `uv pip install --no-build`, so a dependency without a ready-made wheel can never be built on
+#   a user's machine. The compile step above therefore uses `--only-binary :all:`: it FAILS the release run when any
+#   dependency has no wheel. (uv lists the sdist hash next to the wheel hashes either way, so constraints.py cannot tell
+#   them apart; the gate is this flag at release time and --no-build at install time.)
+#
+# ---- revocations freshness and the install.sh floor (P2-C) ------------------------------------------------------------
+#   install.sh refuses a revocation list whose issued_at is 30 days old or more, and one below its baked-in floor. So the
+#   scheduled re-sign (P2-B) MUST re-sign release/keys/revocations.json with a fresh issued_at at least every 3 weeks
+#   (root-signed, so this needs the root: until that is automated, a root re-sign belongs on the lead's calendar), and every
+#   release run must execute `python3 scripts/release/floor.py install.sh release/keys/revocations.json` BEFORE uploading
+#   install.sh as a release asset (tests/release/test_install_floor.py fails in CI if the committed floor is older).
+#
 # ---- seq -------------------------------------------------------------------------------------------------------------
 #   seq = github.run_number + repository variable RELEASE_SEQ_OFFSET (default 0). run_number only grows, so seq grows.
 #   It fails closed: if the workflow is ever recreated and run numbers restart, the new seq is lower than the verified
@@ -265,6 +278,7 @@ jobs:
           [ "$cdate" -le "$now" ] || cdate=$now
           cutoff=$(date -u -d "@$((cdate - 7*86400))" +%Y-%m-%dT%H:%M:%SZ)
           uv pip compile wheels.in --generate-hashes --universal --python-version 3.14 --quiet --no-header \
+            --only-binary :all: \
             --exclude-newer "$cutoff" \
             --no-emit-package orch-core --no-emit-package orch-dashboard --no-emit-package orch-hub \
             --no-emit-package orch-relay --no-emit-package orch-publish -o resolved.txt

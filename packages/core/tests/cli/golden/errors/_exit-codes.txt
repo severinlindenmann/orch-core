@@ -97,6 +97,16 @@ passkey.stepup_required 3 retry:false
 retry.later 9 retry:true
 quota.unattended 9 retry:true
 members.stale 9 retry:true
+format.older 3 retry:false
+format.newer 3 retry:false
+format.missing 3 retry:false
+format.exists 3 retry:false
+update.interrupted 3 retry:false
+migrate.running 4 retry:true
+migrate.signed_path 3 retry:false
+migrate.backup_refused 3 retry:false
+migrate.actor_refused 3 retry:false
+migrate.step_failed 5 retry:false
 market.malformed 5 retry:false
 market.unpinned 5 retry:false
 market.bad_digest_format 5 retry:false

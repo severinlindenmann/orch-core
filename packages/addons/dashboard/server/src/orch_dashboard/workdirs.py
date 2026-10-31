@@ -42,6 +42,7 @@ def view(data: object) -> dict:
         "bytes": size if type(size) is int and size >= 0 else None,
         "truncated": d.get("truncated") is True,
         "items": items(d.get("items")),
+        "items_truncated": d.get("items_truncated") is True,
     }
 
 

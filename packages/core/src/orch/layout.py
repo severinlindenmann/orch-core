@@ -42,6 +42,7 @@ __all__ = [
     "workdir_summary",
     "workdir_files",
     "workdir_read",
+    "WorkdirTooBig",
     "fresh",
     "open_state_fd",
     "state_marker_present",
@@ -543,35 +544,63 @@ def workdir_summary(layout: Layout, key: str, *, limit: int = 20000) -> dict[str
     return {"files": tot["files"], "bytes": tot["bytes"], "truncated": tot["truncated"]}
 
 
-def workdir_files(layout: Layout, key: str, *, limit: int = 20) -> list[tuple[str, int]]:
-    """``[(name, bytes)]`` of the regular files directly in the ticket's work folder (sorted, at most ``limit``; links,
-    folders and anything with more than one hard link are left out, nothing is followed). A missing folder is ``[]``.
-    :class:`LayoutError`: as :func:`workdir_stat`."""
+class WorkdirTooBig(LayoutError):
+    """A work file is over the cap given to :func:`workdir_read` (``size`` is its size, or the cap + 1 if it grew)."""
+
+    def __init__(self, message: str, size: int) -> None:
+        super().__init__(message)
+        self.size = size
+
+
+def workdir_files(
+    layout: Layout,
+    key: str,
+    *,
+    limit: int = 20,
+    scan: int = 5000,
+    accept: Callable[[str], bool] | None = None,
+) -> tuple[list[tuple[str, int]], bool]:
+    """``([(name, bytes)], truncated)``: the regular files directly in the ticket's work folder that ``accept`` takes
+    (sorted, at most ``limit``). Links, folders, files with more than one hard link and files not owned by this user are
+    left out, nothing is followed. At most ``scan`` entries are looked at; ``truncated`` says more were left unseen or
+    unlisted. A missing folder is ``([], False)``. :class:`LayoutError`: as :func:`workdir_stat`."""
     got = _walk_workdir(layout, key, create=False)
     if got is None:
-        return []
+        return [], False
     out: list[tuple[str, int]] = []
+    seen = 0
+    truncated = False
+    uid = os.getuid()
     try:
         with os.scandir(got[0]) as it:
             for e in it:
+                seen += 1
+                if seen > scan:
+                    truncated = True
+                    break
+                if accept is not None and not accept(e.name):
+                    continue
                 try:
                     st = e.stat(follow_symlinks=False)
                 except OSError:
                     continue
-                if stat.S_ISREG(st.st_mode) and st.st_nlink == 1:
+                if stat.S_ISREG(st.st_mode) and st.st_nlink == 1 and st.st_uid == uid:
                     out.append((e.name, st.st_size))
     except OSError:
-        return []
+        return [], False
     finally:
         os.close(got[0])
-    return sorted(out)[:limit]
+    out.sort()
+    if len(out) > limit:
+        truncated = True
+    return out[:limit], truncated
 
 
 def workdir_read(layout: Layout, key: str, name: str, max_bytes: int) -> bytes:
     """The bytes of ONE file directly in the ticket's work folder: ``name`` is a plain name (no separator, not ``.`` or
-    ``..``), opened relative to the folder's descriptor with ``O_NOFOLLOW`` (a link is refused), a regular file with one
-    hard link, at most ``max_bytes`` (checked before a byte is read, and again on the read). :class:`LayoutError` for
-    every refusal."""
+    ``..``), opened relative to the folder's descriptor with ``O_NOFOLLOW`` and ``O_NONBLOCK`` (a link is refused, a
+    FIFO never blocks), a regular file owned by this user with one hard link, at most ``max_bytes`` (checked before a
+    byte is read, and again on the read: :class:`WorkdirTooBig`). :class:`LayoutError` for every other refusal."""
     if not name or "/" in name or "\\" in name or "\0" in name or name in (".", ".."):
         raise LayoutError("that is not a file name in the work folder")
     got = _walk_workdir(layout, key, create=False)
@@ -584,10 +613,10 @@ def workdir_read(layout: Layout, key: str, name: str, max_bytes: int) -> bytes:
             raise LayoutError(f"{name[:60]} is not a file in the work folder") from None
         try:
             st = os.fstat(fd)
-            if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1:
+            if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1 or st.st_uid != os.getuid():
                 raise LayoutError(f"{name[:60]} is not a plain file")
             if st.st_size > max_bytes:
-                raise LayoutError(f"{name[:60]} is too big")
+                raise WorkdirTooBig(f"{name[:60]} is too big", st.st_size)
             with os.fdopen(fd, "rb", closefd=False) as handle:
                 data = handle.read(max_bytes + 1)
         finally:
@@ -595,7 +624,7 @@ def workdir_read(layout: Layout, key: str, name: str, max_bytes: int) -> bytes:
     finally:
         os.close(got[0])
     if len(data) > max_bytes:
-        raise LayoutError(f"{name[:60]} is too big")
+        raise WorkdirTooBig(f"{name[:60]} is too big", max_bytes + 1)
     return data
 
 

@@ -157,4 +157,5 @@ def test_workdir_get_lists_plain_files_only_when_asked(ready, tmp_path):  # noqa
     assert got["items"] == [{"name": "hello.txt", "bytes": 2}]
     for i in range(30):
         (folder / f"f{i:02}.txt").write_text("z")
-    assert len(ok(c.call("workdir.get", {"ticket": key, "list": True}))["data"]["items"]) == 20
+    got = ok(c.call("workdir.get", {"ticket": key, "list": True}))["data"]
+    assert len(got["items"]) == 20 and got["items_truncated"] is True

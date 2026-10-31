@@ -59,7 +59,8 @@ def test_get_shows_the_size_and_the_relative_folder_never_a_full_path(client, to
     assert res.status_code == 200, res.text
     assert host.calls[0] == ("workdir.get", {"ticket": "DEMO-1", "list": True}, False, None)
     assert res.json() == {"available": True, "exists": True, "codebase": False, "folder": ".orch-work/DEMO-1",
-                          "files": 14, "bytes": 2_100_000, "truncated": False, "items": []}  # fmt: skip
+                          "files": 14, "bytes": 2_100_000, "truncated": False, "items": [],
+                          "items_truncated": False}  # fmt: skip
     assert "/Users" not in res.text
 
 
@@ -74,6 +75,8 @@ def test_get_offers_only_plain_named_files_with_their_sizes():
     many = [{"name": f"f{i}.txt", "bytes": 1} for i in range(30)]
     assert len(view({"exists": True, "items": many})["items"]) == 20
     assert view({"exists": True, "items": "x"})["items"] == []
+    assert view({"exists": True, "items_truncated": True})["items_truncated"] is True
+    assert view({"exists": True, "items_truncated": "yes"})["items_truncated"] is False
 
 
 def test_view_reads_an_odd_answer_as_no_folder():

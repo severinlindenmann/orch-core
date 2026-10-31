@@ -20,6 +20,8 @@ export interface WorkFolder {
   truncated?: boolean
   /** The plain files directly in the folder (name and size, at most 20): what a share can take. */
   items?: { name: string; bytes: number }[]
+  /** There are more files than `items` shows. */
+  items_truncated?: boolean
 }
 
 const w = (ws: string) => `/api/w/${encodeURIComponent(ws)}`

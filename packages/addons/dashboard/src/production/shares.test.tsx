@@ -39,6 +39,7 @@ let uploadN = 0
 let prepareRefusal: { code: string } | null = null
 let ticketOwner: string | null | undefined
 let workItems: { name: string; bytes: number }[] = []
+let workMore = false
 let emptyResult = false
 let onlyEmpty = false
 const state = useFakeHost(() => [workspace({ id: A, features: [...READS, 'publish'], addOns: { available: true, add_ons: [{ id: 'publish', title: 'Publish', desc: 'Share files.', state: 'on', locked: null, blocked: null }] } })])
@@ -59,13 +60,14 @@ const route = () => {
   prepareRefusal = null
   ticketOwner = undefined
   workItems = []
+  workMore = false
   emptyResult = false
   onlyEmpty = false
   state.host.override = (path, method, body) => {
     if (path.endsWith('/tickets/DEMO-0001') && method === 'GET')
       return Response.json({ ...ticket, ...(ticketOwner === undefined ? {} : { people: { ...ticket.people, owner: ticketOwner } }), artifacts: [...(onlyEmpty ? [] : [{ name: 'report.md', kind: 'report', bytes: 2048, sha256: 'ab'.repeat(32), added_by: 'p_x', at: '2026-10-18T08:00:00Z' }, { name: 'bad/name.md', kind: 'report', bytes: 1, sha256: 'cd'.repeat(32), added_by: 'p_x', at: '2026-10-18T08:00:00Z' }]), ...(emptyResult ? [{ name: 'T1-receipt.log', kind: 'log', bytes: 0, sha256: 'ee'.repeat(32), added_by: 'p_x', at: '2026-10-18T08:00:00Z' }] : [])] })
     if (path.endsWith('/tickets/DEMO-0001/workdir') && method === 'GET')
-      return Response.json({ available: true, exists: workItems.length > 0, codebase: false, folder: '.orch-work/DEMO-0001', files: workItems.length, bytes: 16, truncated: false, items: workItems })
+      return Response.json({ available: true, exists: workItems.length > 0, codebase: false, folder: '.orch-work/DEMO-0001', files: workItems.length, bytes: 16, truncated: false, items: workItems, items_truncated: workMore })
     if (!path.includes('/shares')) return undefined
     if (method === 'GET' && listRefusal) return refusal(listRefusal)
     if (method === 'GET')
@@ -728,4 +730,21 @@ it('P03: with only an empty result and no working files, the window says what to
   const form = await openForm(user)
   expect(form).toHaveTextContent('Nothing is ready to share yet. Add a file from this computer.')
   expect(form).toHaveTextContent('Pick a file first.')
+})
+
+it('P03: a work file that is gone after a reload is not kept selected, and more files than shown is said', async () => {
+  route()
+  workItems = [{ name: 'hello.txt', bytes: 16 }]
+  workMore = true
+  const user = userEvent.setup()
+  const form = await openForm(user)
+  await user.click(await within(form).findByRole('checkbox', { name: /hello\.txt/ }, T))
+  expect(form).toHaveTextContent('More files than shown.')
+  expect(form).toHaveTextContent('1 selected, 16 bytes.')
+  workItems = []
+  await act(async () => {
+    await queryClient.invalidateQueries({ queryKey: ['workdir'] })
+  })
+  await waitFor(() => expect(form).not.toHaveTextContent('1 selected'), T)
+  expect(within(form).getByRole('button', { name: 'Review selected files' })).toBeDisabled()
 })

@@ -15,6 +15,7 @@ import hashlib
 import json
 import os
 import re
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -1648,24 +1649,45 @@ def test_prepare_stages_a_work_folder_file_and_the_one_signature_covers_it(w):
 def test_a_work_file_cannot_escape_the_folder_or_be_a_link_or_empty_or_big(w, monkeypatch):
     uid, key = w.ticket_with()
     folder = work_dir(w, key)
-    outside = Path(w.served.lab.root) / "secret.txt"
-    outside.write_bytes(b"outside")
+    root = Path(w.served.lab.root)
+    outside = root / "secret.txt"
+    outside.write_bytes(b"outside")  # a separate file with ONE link: only O_NOFOLLOW can refuse the symlink to it
+    (root / "otherdir").mkdir()
     (folder / "link.txt").symlink_to(outside)
+    (folder / "dangling.txt").symlink_to(root / "nothing-here")
+    (folder / "dirlink").symlink_to(root / "otherdir")
     (folder / "sub").mkdir()
     (folder / "sub" / "deep.txt").write_bytes(b"deep")
     (folder / "empty.txt").write_bytes(b"")
-    os.link(outside, folder / "hard.txt")
+    twin = root / "twin.txt"
+    twin.write_bytes(b"twin")
+    os.link(twin, folder / "hard.txt")
     (folder / "big.bin").write_bytes(b"x" * 50)
     for bad in ("../secret.txt", "/etc/passwd", "sub/deep.txt", "..", ".hidden", "a\\b"):
         assert err(w.req("publish.prepare", {"ref": key, "workfiles": [bad]})) == "invalid.input"
-    assert err(w.req("publish.prepare", {"ref": key, "workfiles": ["link.txt"]})) == "not_found"
-    assert err(w.req("publish.prepare", {"ref": key, "workfiles": ["hard.txt"]})) == "not_found"
-    assert err(w.req("publish.prepare", {"ref": key, "workfiles": ["sub"]})) == "not_found"
-    assert err(w.req("publish.prepare", {"ref": key, "workfiles": ["nope.txt"]})) == "not_found"
+    for refused in ("link.txt", "dangling.txt", "dirlink", "hard.txt", "sub", "nope.txt"):
+        assert err(w.req("publish.prepare", {"ref": key, "workfiles": [refused]})) == "not_found", refused
     assert err(w.req("publish.prepare", {"ref": key, "workfiles": ["empty.txt"]})) == "invalid.input"
     monkeypatch.setitem(approval.LIMITS, "file_bytes", 10)
-    assert err(w.req("publish.prepare", {"ref": key, "workfiles": ["big.bin"]})) == "not_found"
+    assert err(w.req("publish.prepare", {"ref": key, "workfiles": ["big.bin"]})) == "quota.host"
+    monkeypatch.setitem(approval.LIMITS, "file_bytes", 25 * 1024 * 1024)
+    monkeypatch.setattr(publishing, "STAGE_BYTES", 10)  # no room left in the stage
+    assert err(w.req("publish.prepare", {"ref": key, "workfiles": ["big.bin"]})) == "quota.host"
     assert not (w.base() / "stage").exists() or not list((w.base() / "stage").glob("ps_*"))
+
+
+def test_a_fifo_in_the_work_folder_is_not_read_and_does_not_hang(w):
+    uid, key = w.ticket_with()
+    os.mkfifo(work_dir(w, key) / "pipe.txt")
+    done = []
+
+    def run() -> None:
+        done.append(err(w.req("publish.prepare", {"ref": key, "workfiles": ["pipe.txt"]})))
+
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    t.join(20)
+    assert done == ["not_found"]
 
 
 def test_a_linked_work_folder_is_refused(w):
@@ -1680,9 +1702,36 @@ def test_a_linked_work_folder_is_refused(w):
 
 def test_work_files_are_a_persons_act_and_another_tickets_folder_is_not_reachable(w):
     uid, key = w.ticket_with()
-    work_dir(w, key)
-    (work_dir(w, key) / "a.txt").write_bytes(b"a")
+    (work_dir(w, key) / "a.txt").write_bytes(b"mine")
     assert err(w.req("publish.prepare", {"ref": key, "workfiles": ["a.txt"]}, agent=True)) == "op.not_allowed"
     uid2, key2 = w.ticket_with()
-    assert err(w.req("publish.prepare", {"ref": key2, "workfiles": ["a.txt"]})) == "not_found"
+    (work_dir(w, key2) / "a.txt").write_bytes(b"the other ticket's file")
+    got = ok(w.req("publish.prepare", {"ref": key, "workfiles": ["a.txt"]}))["data"]
+    assert [(f["size"], f["sha256"]) for f in got["files"]] == [(4, hashlib.sha256(b"mine").hexdigest())]
+    assert (w.stage_dir(got["staged_id"]) / "files" / "a.txt").read_bytes() == b"mine"
     assert err(w.req("publish.prepare", {"ref": key, "workfiles": ["a.txt", "A.txt"]})) == "invalid.input"
+
+
+def test_only_who_may_delete_the_folder_may_share_or_list_its_files(tmp_path, monkeypatch):
+    from tests.host.live_helpers import world
+
+    monkeypatch.setattr(publishing, "_hub_route", lambda service, **kw: None)
+    wd = world(tmp_path, map_to="quinn")
+    try:
+        w = World(wd, Human(wd, wd.quinn), monkeypatch, join=False)  # quinn: a member who sees the ticket
+        w.addon()
+        w.configure()
+        uid, key = w.ticket_with()  # made by the owner's agent: quinn is neither its owner nor an assignee
+        (work_dir(w, key) / "a.txt").write_bytes(b"abc")
+        assert err(w.req("publish.prepare", {"ref": key, "workfiles": ["a.txt"]})) == "op.not_allowed"
+        assert "items" not in ok(w.req("workdir.get", {"ticket": key, "list": True}))["data"]
+        wd.person_event("role.changed", person=wd.quinn.ref, role="maintainer")
+        assert ok(w.req("workdir.get", {"ticket": key, "list": True}))["data"]["items"] == [
+            {"name": "a.txt", "bytes": 3}
+        ]
+        assert [
+            f["name"] for f in ok(w.req("publish.prepare", {"ref": key, "workfiles": ["a.txt"]}))["data"]["files"]
+        ] == ["a.txt"]
+    finally:
+        wd.close()
+        wd.lab.close()

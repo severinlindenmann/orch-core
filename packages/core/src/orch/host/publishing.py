@@ -633,10 +633,17 @@ def _work_files(
     """P03: files of the ticket's own work folder, by plain name. The host resolves each below
     ``<project>/.orch-work/<KEY>`` through descriptors (no link followed, no path), checks the name like any share
     file, and reads and hashes the bytes now; the stage's copy is what the person signs."""
-    from orch.layout import LayoutError, workdir_read
+    from orch.layout import LayoutError, WorkdirTooBig, workdir_read
     from orch.ops.workdir import has_codebase
 
+    from .visibility import Viewer
+    from .workdirs import may_manage_workdir
+
     service = call.service
+    if not may_manage_workdir(Viewer.of(call), view):  # exactly who may delete the folder may share what is in it
+        raise HostError(
+            "op.not_allowed", "only an owner, a maintainer, the ticket's owner or an assignee shares its working files"
+        )
     if has_codebase(service.store, view):
         raise HostError("invalid.input", f"{view.key} has a codebase: it has no work folder")
     for name in names:
@@ -647,6 +654,12 @@ def _work_files(
         room = min(STAGE_BYTES - used - total, approval.LIMITS["share_bytes"] - total, approval.LIMITS["file_bytes"])
         try:
             data = workdir_read(service.store.layout, view.key, name, max(room, 0))
+        except WorkdirTooBig as exc:
+            if exc.size > approval.LIMITS["file_bytes"]:
+                raise HostError(
+                    "quota.host", f"{name} is over {approval.human_size(approval.LIMITS['file_bytes'])}"
+                ) from None
+            raise HostError("quota.host", "the staged copies would use too much room: discard some") from None
         except LayoutError as exc:
             raise HostError("not_found", str(exc)[:300]) from None
         if not data:

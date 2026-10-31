@@ -118,6 +118,11 @@ export function ShareFlow({ ws, ticket, resume, only, onClose }: { ws: string; t
   // empty files are not offered; one line says so, instead of a greyed-out row with no way forward
   const emptyNames = [...ticket.artifacts.filter((a) => a.bytes === 0 && unshareable(a) !== null).map((a) => a.name), ...work.filter((f) => f.bytes === 0).map((f) => f.name)]
   const files = ticket.artifacts.filter((a) => a.bytes !== 0).map((a) => ({ a, why: unshareable(a) }))
+  // a name that is no longer offered (the list was reloaded) is not kept selected, so the count and the size agree
+  useEffect(() => {
+    const offered = new Set(workRows.map((f) => f.name))
+    setWorkPicked((p) => (p.every((n) => offered.has(n)) ? p : p.filter((n) => offered.has(n))))
+  }, [folder.data]) // eslint-disable-line react-hooks/exhaustive-deps
   const total =
     ticket.artifacts.filter((a) => picked.includes(a.name)).reduce((n, a) => n + (a.bytes ?? 0), 0) +
     work.filter((f) => workPicked.includes(f.name)).reduce((n, f) => n + f.bytes, 0) +
@@ -315,6 +320,7 @@ export function ShareFlow({ ws, ticket, resume, only, onClose }: { ws: string; t
                   {n} is empty, so it is left out.
                 </p>
               ))}
+              {folder.data?.items_truncated && <p className="text-[12px] text-text-muted">More files than shown.</p>}
               {added.map((f) => (
                 <div key={f.upload_id} className="flex items-start gap-2" data-picked={f.upload_id}>
                   <input type="checkbox" className="mt-0.5" checked readOnly aria-label={`${f.name} from this computer`} />

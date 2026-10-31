@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import secrets
 import shutil
 import socket
@@ -384,6 +385,36 @@ def _save_hub_settings(f: Path, body: dict[str, Any]) -> None:
     os.replace(tmp, f)
 
 
+_HUB_ID = re.compile(r"[0-9a-f]{32}")
+
+
+def pin_hub_at_publish(ctx: Ctx, env: Mapping[str, str]) -> bool:
+    """When this install holds BOTH a hub and a publish (and the hub dials that publish), pin the hub's id at publish
+    (``orch-publish admin hub trust``). Without it publish refuses the hub's ``hub.allow`` and every workspace of the
+    hub is told "unknown workspace". Idempotent (a second pin changes nothing); runs after each install of either
+    part, so an existing install heals. A hub that is not part of this install is never pinned. A failure is one
+    plain line and never fails the install. Returns whether the pin ran."""
+    st = load(ctx.layout)
+    hub, pub = st["parts"].get("hub"), st["parts"].get("publish")
+    if not hub or not pub or hub.get("publish_remote"):
+        return False
+    hub_data, pub_data = ctx.layout.data("hub"), ctx.layout.data("publish")
+    try:
+        rc, out = ctx.run([hub["binary"], "keys", "--state", str(hub_data), "card"], env)
+        card = _json_of(out) if rc == 0 else None
+        o = card.get("o", card) if isinstance(card, dict) else None
+        hub_id = o.get("hub_id") if isinstance(o, dict) else None
+        if not isinstance(hub_id, str) or not _HUB_ID.fullmatch(hub_id):
+            raise InstallError("the hub's id could not be read")
+        rc, out = ctx.run([pub["binary"], "admin", "--data", str(pub_data), "hub", "trust", hub_id], env)
+        if rc != 0:
+            raise InstallError(out.strip()[-200:] or "orch-publish refused")
+    except InstallError as e:
+        ctx.say(f"  note: this hub could not be allowed to share at publish ({e}); shares will not work until it is")
+        return False
+    return True
+
+
 def install_part(
     ctx: Ctx,
     part: str,
@@ -407,6 +438,7 @@ def install_part(
     trusted_proxy: str | None = None,  # behind the private network's proxy: its networks (rate key only)
 ) -> dict[str, Any]:
     spec = P.PARTS[part]
+    explicit_publish_url = publish_url
     source = source or ctx.env.get(f"ORCH_INSTALL_SOURCE_{part.upper()}")  # a local checkout (dev machines, tests)
     lay = ctx.layout
     st = load(lay)
@@ -527,6 +559,9 @@ def install_part(
         "started": int(time.time()),
     }
     if part == "hub":
+        # a hub told to dial a publish while this install has none is dialling someone else's: never pinned there.
+        # (With this install's publish present, the address is that publish's own name, e.g. its https one.)
+        rec["publish_remote"] = bool(explicit_publish_url) and pubs is None
         rec["link_port"] = ports_of(ctx, st)["link"]
         if link_address:
             rec["link_host"] = link_address
@@ -542,6 +577,8 @@ def install_part(
     _version(ctx, rec, spec.binary, tool_env)
     save(lay, {**st, "parts": {**st["parts"], part: rec}})
     _report(ctx, part, rec)
+    if part in ("hub", "publish"):
+        pin_hub_at_publish(ctx, tool_env)
     if part == "publish":
         url = public_origin or url  # server = share = the https name when there is one
         if not workspace_side and not public_origin:

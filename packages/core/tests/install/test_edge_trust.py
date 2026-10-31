@@ -307,9 +307,10 @@ def test_update_with_a_bad_hub_id_in_state_fails_without_printing_it(tmp_path, m
     st = load(ctx.layout)
     st["edge_trust"]["hub_id"] = "bad\x1b[2Jid"
     save(ctx.layout, st)
-    with pytest.raises(OrchError):
+    with pytest.raises(OrchError) as excinfo:
         services.start(Path("/fake/orch"), [], quarantine=False)
     assert out.getvalue() == ""
+    assert "\x1b" not in str(excinfo.value) and "bad" not in str(excinfo.value)
 
 
 def test_update_warning_strips_control_characters(tmp_path, monkeypatch):
@@ -335,4 +336,5 @@ def test_failed_trust_after_untrust_clears_the_old_pin(tmp_path):
     ctx.run = fail
     with pytest.raises(InstallError):
         edge(ctx, trust_hub="b" * 32)
+    assert [c[-2:] for c in admins(calls)][-2:] == [["untrust", HUB_ID], ["trust", "b" * 32]]
     assert load(ctx.layout)["parts"]["publish"]["pinned_hub_id"] is None

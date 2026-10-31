@@ -170,18 +170,21 @@ class LifecycleServices:
             try:
                 apply(ctx, self.e.env, fetch_fingerprint=False)
             except (InstallError, OSError) as exc:
-                try:
-                    st = load(ctx.layout)
-                except (InstallError, OSError, ValueError):
-                    raise OrchError("host.unavailable", str(exc)) from None
-                hub_id = (st.get("edge_trust") or {}).get("hub_id")
-                if not isinstance(hub_id, str) or not _HUB_ID.fullmatch(hub_id):
-                    raise OrchError("host.unavailable", str(exc)) from None
                 reason = "".join(c if c.isprintable() else " " for c in str(exc))
                 reason = " ".join(reason.split())[:200].rstrip(".")
+                try:
+                    st = load(ctx.layout)
+                    wanted = st.get("edge_trust")
+                    hub_id = wanted.get("hub_id") if isinstance(wanted, dict) else None
+                    pub = st.get("parts", {}).get("publish")
+                    pinned = pub.get("pinned_hub_id") if isinstance(pub, dict) else None
+                except (InstallError, OSError, ValueError, AttributeError):
+                    raise OrchError("host.unavailable", reason) from None
+                if not isinstance(hub_id, str) or not _HUB_ID.fullmatch(hub_id):
+                    raise OrchError("host.unavailable", reason) from None
                 ctx.say(f"Publish could not confirm its trust in hub {hub_id}: {reason}. Run the edge setup again.")
-                if (st["parts"].get("publish") or {}).get("pinned_hub_id") != hub_id:
-                    raise OrchError("host.unavailable", str(exc)) from None
+                if pinned != hub_id:  # a requested hub change did not land
+                    raise OrchError("host.unavailable", reason) from None
 
     def _host_health(self) -> list[str]:
         """``host.health``: the host opens every workspace root with the real rule (a read: works in quarantine)."""

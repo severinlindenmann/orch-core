@@ -160,6 +160,16 @@ class LifecycleServices:
                 except LifecycleError as exc:
                     raise OrchError("host.unavailable", str(exc)) from None
 
+        if not quarantine:  # also reapply trust for an installed Publish that was stopped before the update
+            from orch.install.cli import default_ctx
+            from orch.install.parts import InstallError
+            from orch.install.trust import apply
+
+            try:
+                apply(default_ctx(self.e.env, self.e.out, self.e.err), self.e.env)
+            except (InstallError, OSError) as exc:
+                raise OrchError("host.unavailable", str(exc)) from None
+
     def _host_health(self) -> list[str]:
         """``host.health``: the host opens every workspace root with the real rule (a read: works in quarantine)."""
         from orch.host.control_client import ControlClient

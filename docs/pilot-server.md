@@ -105,6 +105,16 @@ As **`orch-hub`**:
 orch setup --server --role hub --domain example.com --hub-vpn-only
 ```
 
+After hub setup prints its hub id, switch back to **`orch-edge`** and run the printed command:
+
+```
+orch setup --server --role edge --trust-hub <hub id>
+```
+
+This keeps the other edge settings and prints `Publish trusts hub <hub id>` (with a hub card fingerprint when
+the edge can read the hub card). Trust is saved and reapplied on reruns and updates. If the hub id changes, run
+the command with the new id; Publish untrusts the old id first. `orch install status` shows the trusted hub.
+
 What happens, in order: the names are derived (`hub.`, `relay.`, `publish.` + your domain; override one with
 `--domain-hub`, `--domain-relay`, `--domain-publish`); the DNS check runs; the parts start on the server's own address
 only (127.0.0.1); one Caddy file per name is written into `/etc/caddy/orch.d/`; the root block is printed; a health timer

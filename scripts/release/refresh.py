@@ -50,7 +50,7 @@ def main(argv: list[str]) -> int:
             get_pointer=http_pointer(a.pointer_url),
             get_release=gh_release,
             tag_commit=git_tag_commit(a.repo),
-            releases_for_channel=git_release_tags(a.repo, None),
+            releases_for_channel=git_release_tags(a.repo, None, channel=a.channel),
         )
         out = refresh_payload(t, a.issued_at, a.expires_at)
     except NothingToRefresh:

@@ -296,12 +296,21 @@ class HelperServer:
 
     def stop(self) -> None:
         self._stop.set()
-        if self._sock is not None:
-            self._sock.close()
+        self.close_listener()
         try:
             os.unlink(self._path)
         except OSError:
             pass
+
+    def close_listener(self) -> None:
+        """Stop listening NOW. A plain close() while another thread is blocked in accept() leaves the socket listening on
+        Linux until that accept returns, so a new helper would still find "a helper answers": shut it down first."""
+        if self._sock is not None:
+            try:
+                self._sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            self._sock.close()
 
     def _one(self, conn: socket.socket) -> None:
         try:

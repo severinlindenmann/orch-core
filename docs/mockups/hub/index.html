@@ -1260,14 +1260,18 @@ window.addEventListener("hashchange", () => document.querySelectorAll(".drawer")
 // ---------------------------------------------------------------- router + events
 const TITLES = Object.assign({}, NOTE_TITLES, {requirements:"Requirements"});
 // UX audit states use the same hash navigation as the rest of this mockup.
-const sharedDemo = () => `<div class="card"><div class="hd">Shared with you (1)</div><div class="row"><div class="tx"><b>Invoice CSV export</b><div class="s">Shared by Anna Test</div></div><button class="btn" data-nav="ben-ticket">Open</button></div></div>`;
-P["ben-home"] = () => `<h1>Hello, Ben Test</h1><p class="lead">1 ticket shared with you.</p>${sharedDemo()}<p class="small muted">Want a workspace of your own? Ask your hub admin.</p>`;
-P["ben-workspaces"] = () => `<h1>Workspaces</h1><div class="card cb"><h2>Connected workspaces</h2><p>No workspaces of your own yet.</p><p>1 ticket shared with you</p>${sharedDemo()}</div>`;
+const annaWorkspace = { ...W("an"), id: "anna", name: "Anna Test's workspace", owner: "Anna Test" };
+D.prof.anna = { ...D.prof.an, contact: "Anna Test" };
+TK.anna = [];
+
+const sharedDemo = () => `<div class="card"><div class="hd">Shared with you (1)</div><div class="row"><div class="tx"><b>Invoice CSV export</b><div class="s">Shared by Anna Test</div></div><button class="btn pri" data-nav="ben-ticket">Open</button></div></div>`;
+P["ben-home"] = () => `<h1>Hello, Ben Test</h1>${sharedDemo()}<p class="small muted">For your own workspace, ask your hub admin.</p>`;
+P["ben-workspaces"] = () => `<h1>Workspaces</h1><p>No workspaces of your own yet.</p>${sharedDemo()}`;
 P["ben-ticket"] = () => `<h1>Invoice CSV export</h1><p class="lead">Shared by Anna Test</p><div class="card cb">Export invoices as CSV.</div>`;
-P["continue-anna"] = () => `<div class="card" style="padding:24px"><h1>Continue as Anna Test?</h1><p>You opened the hub from your workspace. Nothing happens until you continue.</p><button class="btn pri" data-nav="home">Continue</button> <a class="btn" href="#w/an/today">Back to my workspace</a></div>`;
-P["signin-workspace"] = () => `<div class="card" style="max-width:440px;padding:24px"><h1>Sign in to your hub</h1><form id="demoSignin"><label>Your name<input class="input" autocomplete="username" value="Anna Test" required></label><label>Password<input class="input" type="password" autocomplete="current-password" required></label><label>6-digit code<input class="input" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required></label><p class="small muted">Use the code shown for orch in the code app on your phone.</p><button class="btn pri">Sign in</button></form><p><a href="#w/an/today">Back to my workspace</a></p></div>`;
+P["continue-anna"] = () => `<div class="card" style="padding:24px"><h1>Continue as Anna Test?</h1><p>You opened the company hub from Anna Test's workspace.</p><button class="btn pri" data-nav="home">Continue</button> <a class="btn" href="#w/anna/today">Back to my workspace</a></div>`;
+P["signin-workspace"] = () => `<div class="card" style="max-width:440px;padding:24px"><h1>Sign in to the hub.</h1><form id="demoSignin"><label>Your name<input class="input" autocomplete="username" value="Anna Test" required></label><label>Password<input class="input" type="password" autocomplete="current-password" required></label><label>6-digit code<input class="input" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required></label><p class="small muted">Use the code shown for orch in the code app on your phone.</p><button class="btn pri">Sign in</button></form><p><a href="#w/anna/today">Back to my workspace</a></p></div>`;
 P["signed-out"] = () => `<h1>You are signed out</h1><p>Your hub session ended.</p><button class="btn pri" data-nav="signin-workspace">Sign in again</button>`;
-P["spaces-no-starter"] = () => `<h1>Shared spaces</h1><button class="btn pri" disabled style="opacity:.45">New shared space</button><div class="ban w" style="display:block"><b>No space can be started yet.</b><p>A space needs a workspace that shares everything with the hub.</p><p>Ben Test’s workspace shares only what you choose.</p><details><summary>Show me how</summary><ol><li>Open Ben Test’s workspace on its own computer.</li><li>Go to Settings &gt; Hub.</li><li>Choose <b>Share everything</b>. Then come back here.</li></ol></details></div><div class="empty"><h2>No shared spaces yet</h2></div>`;
+P["spaces-no-starter"] = () => `<h1>Shared spaces</h1><div style="display:flex;gap:16px;align-items:start"><button class="btn pri" disabled style="opacity:.45">New shared space</button><div class="small muted">Ben Test's workspace needs to share everything before you can start a space.<details><summary>Show me how</summary><ol><li>Open Ben Test’s workspace on its own computer.</li><li>Go to Settings &gt; Hub.</li><li>Choose <b>Share everything</b>. Then come back here.</li></ol></details></div></div><div class="empty"><h2>No shared spaces yet</h2></div>`;
 document.querySelector('#auditDemo').addEventListener('change', (e) => { location.hash = e.target.value; });
 document.addEventListener('submit', (e) => { if (e.target.id === 'demoSignin') { e.preventDefault(); location.hash = 'home'; } });
 function render(){
@@ -1277,8 +1281,13 @@ function render(){
   $("#auditDemo").value = page.startsWith("ben-") ? "ben-home" : authDemo ? (page === "signed-out" ? "signin-workspace" : page) : page === "spaces-no-starter" ? page : "home";
   const wm = /^w\/(\w+)(?:\/(\w+))?$/.exec(page);
   if (wm && D.prof[wm[1]]) {
-    renderRail(wm[1]);
-    $("#view").innerHTML = renderWs(wm[1], wm[2] || "today");
+    if (wm[1] === "anna") D.ws.push(annaWorkspace);
+    try {
+      renderRail(wm[1]);
+      $("#view").innerHTML = renderWs(wm[1], wm[2] || "today");
+    } finally {
+      if (wm[1] === "anna") D.ws.pop();
+    }
     $("#app").classList.remove("open");
     return;
   }

@@ -145,7 +145,7 @@ function loginView(err, opts = {}) {
   }, field("Your name", id), field("Password", pw), field("6-digit code", code), h("p", { class: "small muted", text: "Use the code shown for orch in the code app on your phone." }), h("div", { class: "row top" }, h("button", { class: "pri", type: "submit", text: "Sign in" })));
   if (workspace) form.append(h("a", { href: "#", text: "Back to my workspace", onclick: (ev) => { ev.preventDefault(); backToWorkspace(workspace, { assign: (u) => location.assign(u), back: () => history.back(), canBack: () => history.length > 1, login: () => loginView(null, { ...opts, workspace }) }); } }));
   if (opts.prefill) id.value = opts.prefill; // P02: arriving from the person's own workspace, the name is already known
-  show(h("h1", { text: opts.title ?? "Sign in to your hub" }), opts.ok ? banner("ok", "Restored", opts.ok) : null, opts.why ? h("p", { class: "muted", text: opts.why }) : null, err ? banner("bad", "Not signed in", err) : null, h("div", { id: "company-slot" }), form);
+  show(h("h1", { text: opts.title ?? (workspace ? "Sign in to the hub." : "Sign in to your hub") }), opts.ok ? banner("ok", "Restored", opts.ok) : null, opts.why ? h("p", { class: "muted", text: opts.why }) : null, err ? banner("bad", "Not signed in", err) : null, h("div", { id: "company-slot" }), form);
   if (opts.prefill) pw.focus?.();
   void api("GET", "/oidc/options").then((o) => { // company login (HUB-PE-04): a button only when the admin turned it on
     const btn = o.status === 200 ? companyButton(o.body, async () => { const r = await beginCompany(api, "signin"); if (!r.ok) loginView(COMPANY_WHY[r.error] ?? say(r.error)); }) : null;
@@ -373,7 +373,7 @@ async function landFromTicket(t) {
   const name = renderText(p.body.name ?? "you");
   const plan = landingPlan(p.body);
   if (plan === "redeem") return redeemTicket(t, false);
-  if (plan === "confirm") return plain(h("h1", { text: "Continue as " + name + "?" }), h("p", { class: "muted", text: "You opened the hub from your workspace. Nothing happens until you continue." }),
+  if (plan === "confirm") return plain(h("h1", { text: "Continue as " + name + "?" }), h("p", { class: "muted", text: "You opened the company hub from " + (p.body.workspace?.name ? renderText(p.body.workspace.name) + "'s workspace." : "your workspace.") }),
     h("div", { class: "row" }, h("button", { class: "pri", text: "Continue", onclick: () => redeemTicket(t, false) }), h("button", { "data-back": "", text: "Back to my workspace", onclick: () => backToWorkspace(p.body.workspace, { assign: (u) => location.assign(u), back: () => history.back(), canBack: () => history.length > 1, login: () => loginView() }) })));
   const cur = renderText(p.body.signed_in_as?.name ?? "someone else");
   return plain(h("h1", { text: "Different person" }), h("p", { text: "You are signed in as " + cur + " here. This link is for " + name + "." }),

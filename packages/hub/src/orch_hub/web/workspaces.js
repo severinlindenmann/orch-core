@@ -272,7 +272,6 @@ export function workspacesView(data, now = Date.now()) {
             : w.mode === "selective" ? small("Open it on its own computer") : button("Open", () => actions.open?.(w)))));
     })))) : data.shared?.length ? h("div", {},
     h("p", { text: "No workspaces of your own yet." }),
-    h("p", { text: data.shared.length + (data.shared.length === 1 ? " ticket shared with you" : " tickets shared with you") }),
     sharedCardView({ shared: data.shared, actions })) : emptyState(data.admin != null || data.canConnect ? "workspaces" : "workspaces-member");
   const older = data.workspaces.filter((w) => ["older", "unsupported"].includes(w.version_state));
   const left = (data.admin ?? []).filter((w) => w.status === "unbound");
@@ -316,6 +315,6 @@ export function workspacesView(data, now = Date.now()) {
     older.length ? h("div", { class: "banner warn" }, h("b", { text: older.length === 1 ? "1 workspace runs an older orch" : older.length + " workspaces run an older orch" }),
       small(older.map(nameOf).join(", ")), data.hub?.min_supported ? small("The hub still works with " + text(data.hub.min_supported) + " and newer.") : null,
       data.admin != null && actions.askUpdate ? askBox : null) : null,
-    h("section", { class: "card", "aria-labelledby": "ws-h" }, h("h2", { id: "ws-h", text: "Connected workspaces" }), list, leftView),
+    !shown.length && data.shared?.length ? list : h("section", { class: "card", "aria-labelledby": "ws-h" }, h("h2", { id: "ws-h", text: "Connected workspaces" }), list, leftView),
   ].filter(Boolean);
 }

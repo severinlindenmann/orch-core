@@ -486,6 +486,7 @@ def install_part(
         link_port=ports_of(ctx, st)["link"],
         publish_port=ports_of(ctx, st)["publish"],
         behind_edge=behind_edge,
+        exact_bind=exact_bind or bool(link_address),
     )
     log = lay.logs / f"{part}.log"
     started = ctx.runner.start(part, argv, P.env_for(part, data, behind_edge=behind_edge), log)

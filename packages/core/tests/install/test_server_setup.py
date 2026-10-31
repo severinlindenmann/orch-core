@@ -358,7 +358,7 @@ def test_no_names_is_the_ip_port_fallback(tmp_path):
     assert "No domain name given" in text and "http://192.168.1.20:8101" in text
     assert "http://192.168.1.20:8102" in text and "sudo" not in text and "caddy" not in text.lower()
     argv, _ = ctx.runner.started["relay"]
-    assert argv[argv.index("--host") + 1] == "0.0.0.0"  # today's behaviour
+    assert argv[argv.index("--host") + 1] == "192.168.1.20"  # the given address, never wider
 
 
 def test_hub_fallback_takes_the_vpn_address(tmp_path):
@@ -1095,3 +1095,29 @@ def test_a_hub_that_answers_nowhere_gives_plain_words_naming_the_probed_address(
     ctx.runner.info = lambda part: {"running": False, "pid": None, "service": "x"}
     with pytest.raises(InstallError, match=f"did not answer on {VPN}:8100"):
         server_setup(ctx, "hub", names=server.Names(), local=local)
+
+
+def test_the_edge_binds_exactly_the_given_address_not_every_interface(tmp_path):
+    ctx, out, *_ = stub_ctx(tmp_path)
+    server_setup(ctx, "edge", names=server.Names(), address=VPS, local=local)
+    relay = ctx.runner.started["relay"][0]
+    pub = ctx.runner.started["publish"][0]
+    assert relay[relay.index("--host") + 1] == VPS
+    assert pub[pub.index("--listen") + 1] == f"{VPS}:8102"
+    assert "0.0.0.0" not in " ".join(relay + pub)
+    # unchanged for the plain `orch install relay --address X` (no server role)
+    (tmp_path / "y").mkdir()
+    ctx2, out2, err2, _ = stub_ctx(tmp_path / "y")
+    cli.main(["relay", "--address", VPS], env=ctx2.env, out=out2, err=err2, ctx=ctx2)
+    r2 = ctx2.runner.started["relay"][0]
+    assert r2[r2.index("--host") + 1] == "0.0.0.0"
+
+
+def test_command_for_exact_bind_keeps_loopback_loopback():
+    from pathlib import Path
+
+    from orch.install import parts as P
+
+    kw = dict(binary=Path("/b"), data=Path("/d"), port=8101, publish_url=None, relay_url=None, dev=False)
+    assert "127.0.0.1" in P.command_for("relay", address="127.0.0.1", exact_bind=True, **kw)
+    assert "0.0.0.0" not in P.command_for("relay", address=VPS, exact_bind=True, **kw)

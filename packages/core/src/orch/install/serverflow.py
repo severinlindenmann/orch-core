@@ -190,9 +190,9 @@ def server_setup(
                 relay_url=names.url("relay") if "relay" in tls_all(names, plan, role) else None,
             )
         if p == "relay":
-            extra = dict(behind_edge=edge)
+            extra = dict(behind_edge=edge, exact_bind=True)
         if p == "publish":
-            extra = dict(public_origin=https, workspace_side=False)
+            extra = dict(public_origin=https, workspace_side=False, exact_bind=True)
         rec = install_part(ctx, p, address=loop, source=source, ref=ref, dev=dev, sync=False, **extra)
         ports[p] = rec["port"]
         if p in tls:
@@ -245,9 +245,10 @@ def _fallback(ctx: Ctx, plan: Plan, *, address: str | None, source: str | None, 
     ctx.say("No domain name given: the parts listen on an IP address and a port (no secure https address).")
     recs = {}
     for p in plan.parts:
-        extra = (
-            dict(link_address=plan.vpn_ip, exact_bind=True) if p == "hub" and not plan.loopback else {}
-        )  # never --bind-all
+        # never --bind-all, and no part listens wider than the address it was given
+        extra = dict(exact_bind=True)
+        if p == "hub" and not plan.loopback:
+            extra["link_address"] = plan.vpn_ip
         recs[p] = install_part(ctx, p, address=addr, source=source, ref=ref, dev=dev, sync=False, **extra)
     sync_helper(ctx)
     for p, rec in recs.items():

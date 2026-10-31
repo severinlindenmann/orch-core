@@ -2016,3 +2016,11 @@ test('review fact keys tolerate add-on titles colliding with core labels and eac
   expect(document.querySelectorAll('.review-summary dt')).toHaveLength(5)
   expect(errors.mock.calls.flat().join(' ')).not.toMatch(/same key|unique.*key/i)
 })
+
+test('security delta: an applied runner grant never reads as "may not work", whatever its fields', () => {
+  const base = { items: [], flags: [], review_id: 'r', digest: 'd' } as unknown as Parameters<typeof reviewFacts>[0]
+  const odd = { ...base, items: [{ id: 'runner_grant', title: 'g', lines: [], details: [], volatile: [], type: 'grant.issued', fields: { hours: 'later', scope: 'workable', verbs: 'agent' } }] } as unknown as typeof base
+  const text = reviewFacts(odd, 'build-server').map((f) => f.value).join(' ')
+  expect(text).toContain('Agents may work on their own on build-server.')
+  expect(text).not.toContain('may not work')
+})

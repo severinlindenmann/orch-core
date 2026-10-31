@@ -165,10 +165,13 @@ export function reviewFacts(review: Review, host?: string, newWorkspace = false)
   const hours = settings.find((set) => typeof set?.grant_hours === 'number')?.grant_hours
   // Only an applied runner grant permits agents to start; a duration setting alone does not.
   let agents = newWorkspace ? 'Agents may not work on their own.' : "Agents' access stays as it is."
-  if (grant && typeof grant.hours === 'number') {
+  const where = host || 'this computer'
+  if (grant) {
+    // any applied runner grant says agents may work; an unexpected shape never reads as "may not"
+    const time = typeof grant.hours === 'number' ? ` for ${duration(grant.hours)}` : ''
     agents = grant.scope === 'workable' && grant.verbs === 'agent'
-      ? `Agents may work on their own on ${host || 'this computer'} for ${duration(grant.hours)}.`
-      : `agent access for ${duration(grant.hours)} (scope ${String(grant.scope)}, verbs ${String(grant.verbs)})`
+      ? `Agents may work on their own on ${where}${time}.`
+      : `Agents get access on ${where}${time}, with rights that setup does not usually give. Check them before you continue.`
   } else if (typeof hours === 'number') {
     agents = `Agent access time is set to ${duration(hours)}. This alone lets no agent start.`
   }

@@ -137,8 +137,8 @@ orch setup --server --role hub --hub-name core.hub.example.com
   resolves to any other address.
 - The console is plain http: `http://core.hub.example.com:8100`. The hub link keeps the IP (`100.x.y.z:8105`), so the
   workspaces never depend on DNS.
-- The console then answers to the name only: the IP address no longer opens it. The name is the one address the phone
-  pairs with.
+- The name is the one address the hub signs for the phone to pair with. The console also keeps answering at the VPN
+  address itself (`http://100.x.y.z:8100`), for example when a Mac's private DNS is not working.
 - The console is plain http, so use a name only in a zone you control, served by the private network's DNS. Names that
   look like numbers (`0x7f.1`, `core.hub.123`), `localhost` names and non-ASCII names are refused.
 - Drop the name again with `--no-hub-name`: the console then answers on the private-network address. A rerun that

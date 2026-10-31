@@ -433,7 +433,8 @@ def _fallback(
         st["hub_name"] = hub_name
         save(ctx.layout, st)
         ctx.say(
-            f"The hub console answers at http://{hub_name}:{recs['hub']['port']} (the name only, not the IP address)."
+            f"The hub console answers at http://{hub_name}:{recs['hub']['port']}; phones pair with this name. "
+            f"The VPN address http://{plan.vpn_ip}:{recs['hub']['port']} keeps working on the private network."
         )
         ctx.say(f"Each Mac must resolve {hub_name} to {plan.vpn_ip} (private DNS); the hub link stays on the IP.")
     for p, rec in recs.items():

@@ -243,7 +243,7 @@ def gh_release(tag: str) -> bytes | None:
 def git_release_tags(repo: Path, exclude: str | None, *, channel: str) -> Callable[[], list[str]]:
     """Exact stable tags for main, exact test-v development tags for test channels. The ANCHOR list is git tags, not
     release titles: a tag cannot be hidden by retitling or deleting a release. Tag protection and immutable releases
-    (REQUIRED, see release.yml.draft) make the tags themselves unmovable."""
+    (REQUIRED, see .github/workflows/release.yml) make the tags themselves unmovable."""
 
     pattern = TEST_RELEASE_TAG if channel.startswith("test-") else RELEASE_TAG
 

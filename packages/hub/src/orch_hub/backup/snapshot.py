@@ -24,6 +24,8 @@ from ..contract import backup as B
 #: files the backup writes from the key material it is given, never from the disk
 KEY_FILE = "backup-key.json"
 GENERATED = frozenset({KEY_FILE})
+#: files that describe THIS install's data dir (``orch install`` writes them): never in a backup, a restore writes its own
+INSTALL_FILES = frozenset({"format.json"})
 
 #: ``store -> statements`` run on the COPY. A table that does not exist is skipped (older stores).
 STRIP: dict[str, tuple[tuple[str, str], ...]] = {
@@ -115,7 +117,7 @@ def collect(state: Path) -> tuple[dict[str, bytes], dict[str, int]]:
                 continue
             if not e.is_file(follow_symlinks=False):
                 continue  # a socket or other special file: never part of a backup
-            if not B.valid_path(path) or B.is_excluded(path) or path in GENERATED:
+            if not B.valid_path(path) or B.is_excluded(path) or path in GENERATED or path in INSTALL_FILES:
                 continue
             if path.endswith(".db"):
                 data, newest = copy_db(Path(e.path), STRIP.get(path, ()) if "/" not in path else ())

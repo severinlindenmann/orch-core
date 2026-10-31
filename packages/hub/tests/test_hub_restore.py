@@ -622,6 +622,44 @@ def test_the_server_command_refuses_agents_pipes_a_wrong_answer_and_a_bad_file(w
     assert _tree(w.state) == before
 
 
+def test_the_server_command_opens_the_state_by_the_format_rule(w, tmp_path, monkeypatch, capsys):
+    from format_helpers import write_format
+
+    words, data = _backup(w)
+    f = tmp_path / "x.orchbak"
+    f.write_bytes(data)
+    before = _tree(w.state)
+    write_format(w.state, fmt=2)  # newer than this code
+    assert _cli(w, f, words=words) == 1
+    assert "newer orch" in capsys.readouterr().err
+    assert {k: v for k, v in _tree(w.state).items() if k != "format.json"} == {
+        k: v for k, v in before.items() if k != "format.json"
+    }
+    write_format(w.state)
+    journal = tmp_path / "update.json"
+    journal.write_text(json.dumps({"v": 1, "phase": "installed"}))
+    monkeypatch.setenv("ORCH_UPDATE_JOURNAL", str(journal))
+    assert _cli(w, f, words=words) == 1  # in place
+    assert "run `orch update`" in capsys.readouterr().err
+    args = CLI._parser().parse_args(["restore", str(f), "--state", str(tmp_path / "fresh" / "d")])
+    rc = BCLI.run_restore(args, out=[].append, tty=lambda: True, read_words=lambda: words, confirm=lambda _p: "yes")
+    assert rc == 1 and "run `orch update`" in capsys.readouterr().err  # and onto a fresh server
+    assert not (tmp_path / "fresh" / "d").exists()
+
+
+def test_a_restore_keeps_this_installs_format_and_never_takes_one_from_a_backup(w, tmp_path):
+    words, data = _backup(w)
+    live = (w.state / "format.json").read_bytes()
+    assert "format.json" not in [f["path"] for f in B.read_header(data, dev_mode=True, live=None)[1]["files"]]
+    _restore(w, data, words, actor=w.admin)
+    assert (w.state / "format.json").read_bytes() == live  # in place: the live file is carried over
+    fresh = tmp_path / "srv" / "data"
+    RS.restore(fresh, data, words, dev_mode=True, now_ms=lambda: 1_900_000_000_000)
+    # a fresh server gets its own format.json
+    assert json.loads((fresh / "format.json").read_text()) == {"orch": "hub", "format": 1}
+    assert (fresh / "format.json").stat().st_mode & 0o777 == 0o600
+
+
 # --- recovery of a swap that stopped between its two renames ------------------------------------------------------------------------
 
 

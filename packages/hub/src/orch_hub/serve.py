@@ -27,7 +27,7 @@ from .access.orgcleanup import org_cleanup
 from .activity import ActivityLog
 from .audit import open_log
 from .backup.hubop import FENCE as RESTORE_FENCE
-from .backup.hubop import hold_serve_lock
+from .backup.hubop import hold_serve_lock, hold_state, release_state
 from .backup.restore import finish as finish_restore
 from .backup.restore import recover as recover_swap
 from .backup.service import BackupService
@@ -271,6 +271,7 @@ def serve(
     api_host = api_host or u.netloc
     hold_serve_lock(state)  # first: an offline `orch-hub restore` (mid-swap) refuses us, and refuses while we live
     recover_swap(state)  # a restore that stopped between its two renames is completed or undone first
+    hold_state(state)  # before any database: the state is at this code's format, and `orch update` waits for us
     keys = HubKeys.open(state)
     # Opus condition 5: once `orch install` wrote hub-settings.json, the advertised addresses, the console origins and the
     # API origin come from that file ONLY. The start arguments keep the listen sockets; --web-origin / --api-origin are
@@ -618,6 +619,7 @@ def serve(
             except Exception as e:  # noqa: BLE001  # keep closing the rest, then exit non-zero (a service manager restarts us)
                 failed = True
                 print(f"orch-hub WARN close failed: {type(e).__name__}", file=out, flush=True)
+        release_state()  # last: no database is open any more, `orch update` may take the data now
     if failed:  # also when a restart was asked for: no exec on top of a half-closed process
         return 1
     if (

@@ -244,7 +244,8 @@ class ShareServer:
             if trusted_proxy is not None
             else os.environ.get("ORCH_PUBLISH_TRUSTED_PROXY")
         )
-        self.db_path = db.prepare_dir(data_dir)
+        # the format rule, then the dir checks; the handle keeps the shared format lock while this lives
+        self.db_path, self.data_handle = db.open_dir(data_dir)
         self.shares_dir = os.path.realpath(os.path.join(data_dir, "shares"))
         self.clock = clock or _now
         self._opens = {}  # share_id -> deque of recent open times (ms); per process

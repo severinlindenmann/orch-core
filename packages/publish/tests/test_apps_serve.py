@@ -618,7 +618,7 @@ def test_a_schema_3_data_dir_is_refused_not_migrated(tmp_path):
     c.execute("PRAGMA user_version=3")
     c.commit()
     c.close()
-    with pytest.raises(db.SchemaError, match="delete the data dir"):
+    with pytest.raises(db.SchemaError, match="run `orch update`"):
         db.init(path)
 
 

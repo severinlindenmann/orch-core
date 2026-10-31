@@ -8,8 +8,11 @@ from starlette.concurrency import run_in_threadpool
 
 from . import __version__, db
 from .common import install as install_core
+from .dataformat import open_data
 
 DEFAULT_DATA = "./data"
+DATA_KIND = "relay"
+DATA_FORMAT = 1  # the format of the data dir this code reads and writes (format.json "format")
 
 
 def data_dir_from_env() -> Path:
@@ -19,6 +22,9 @@ def data_dir_from_env() -> Path:
 def create_app(data_dir: Path | str | None = None, instance: str | None = None) -> FastAPI:
     data = Path(data_dir) if data_dir is not None else data_dir_from_env()
     name = instance or os.environ.get("ORCH_RELAY_INSTANCE") or "public"
+    # First, before any database: the data dir must be at this code's format, and the shared lock of
+    # format.lock is held for the life of the app (`orch update` waits for it). Raises DataFormatError.
+    handle = open_data(data, DATA_KIND, DATA_FORMAT)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -35,8 +41,10 @@ def create_app(data_dir: Path | str | None = None, instance: str | None = None) 
                 with suppress(asyncio.CancelledError):
                     await task
             app.state.core.close()
+            handle.close()  # last: no database is open any more
 
     app = FastAPI(title="orch-relay", version=__version__, lifespan=lifespan)
+    app.state.data_handle = handle  # the reference that keeps the lock while the app lives
     app.state.data_dir = data
     app.state.instance = name
     install_core(app, data)

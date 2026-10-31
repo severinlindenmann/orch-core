@@ -15,6 +15,7 @@ from typing import Any
 
 from ..config import dev_of
 from ..contract.hub import Refused
+from ..dataformat import DataFormatError, check_update
 from ..keys import HubKeys, KeysError, default_state_dir
 from .service import BackupError, BackupService
 
@@ -58,7 +59,7 @@ def run_restore(
         )
         return 1
     from . import restore as RS
-    from .hubop import HubOpBusy, hold_serve_lock
+    from .hubop import HubOpBusy, hold_serve_lock, open_state
 
     try:
         state = Path(args.state) if args.state else default_state_dir()
@@ -81,9 +82,24 @@ def run_restore(
             file=sys.stderr,
         )
         return 1
+    # The serve lock keeps a second hub out; the format rule keeps `orch update` out and refuses a data dir that is not at
+    # this code's format. A restore over a hub opens the state like the hub does (the shared lock is held until the end);
+    # onto a fresh server there is no state yet, only an interrupted update or restore can refuse.
+    data_lock = None
+    try:
+        if (state / "meta.json").exists():
+            data_lock = open_state(state)
+        else:
+            check_update(state)
+    except DataFormatError as e:
+        _release_serve_lock(state, lock_fd)
+        print(f"orch-hub: refused: {e}", file=sys.stderr)
+        return 1
     try:
         return _confirm_and_restore(args, state, data, info, RS, confirm, read_words, out, now_ms)
     finally:
+        if data_lock is not None:
+            data_lock.close()
         _release_serve_lock(state, lock_fd)
 
 
@@ -159,17 +175,31 @@ def run(
             "orch-hub: refused: run this at a terminal (the words are not written to a pipe or a file)", file=sys.stderr
         )
         return 1
+    from .hubop import open_state
+
     try:
         state = Path(args.state) if args.state else default_state_dir()
-        keys = HubKeys.open(state, **({} if now_ms is None else {"now_ms": now_ms}))
+        data_lock = open_state(state)  # a running hub holds the same lock shared: both may write
+        try:
+            keys = HubKeys.open(state, **({} if now_ms is None else {"now_ms": now_ms}))
+        except BaseException:
+            data_lock.close()
+            raise
+    except DataFormatError as e:
+        print(f"orch-hub: refused: {e}", file=sys.stderr)
+        return 1
     except KeysError as e:
         print(f"orch-hub: {e}", file=sys.stderr)
         return 1
     from ..activity import ActivityLog
     from ..audit import open_log
 
-    audit = open_log(state, keys, dev_mode=dev_of(keys), **({} if now_ms is None else {"now_ms": now_ms}))
-    activity = ActivityLog(state / "activity.db")
+    try:
+        audit = open_log(state, keys, dev_mode=dev_of(keys), **({} if now_ms is None else {"now_ms": now_ms}))
+        activity = ActivityLog(state / "activity.db")
+    except BaseException:
+        data_lock.close()
+        raise
     try:
         svc = BackupService(keys, audit=audit, activity=activity, now_ms=now_ms)
         try:
@@ -199,3 +229,4 @@ def run(
     finally:
         activity.close()
         audit.store.close()
+        data_lock.close()

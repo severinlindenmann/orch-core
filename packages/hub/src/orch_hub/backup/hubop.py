@@ -12,6 +12,8 @@ import threading
 from collections.abc import Iterator
 from pathlib import Path
 
+from ..dataformat import Handle, open_data
+
 KINDS = ("restore", "update", "remove")
 #: Set by a console restore for its whole run (and left set once it succeeded: the hub restarts). While it is set the web
 #: pipeline refuses every mutating route and the link server every op with ``restore_busy``, so no write lands in a state
@@ -74,6 +76,32 @@ def hold_serve_lock(state: Path) -> int:
         raise HubOpBusy("serve", "hub_running") from None
     _HELD[key] = fd
     return fd
+
+
+DATA_KIND = "hub"
+DATA_FORMAT = 1  # the format of the hub state dir this code reads and writes (format.json "format")
+_DATA: list[Handle] = []  # the handle of the serving process: the shared format lock lives as long as it is referenced
+
+
+def open_state(state: Path) -> Handle:
+    """Open the state dir at its format (see :mod:`orch_hub.dataformat`) and hold the shared format lock. For a command
+    that works on the state and then ends: close the handle when done."""
+    return open_data(state, DATA_KIND, DATA_FORMAT)
+
+
+def hold_state(state: Path) -> Handle:
+    """``orch-hub serve``: :func:`open_state`, kept for the whole life of the process (a serve that ran before in this
+    process, e.g. in a test, gives its old handle up first). Raises :class:`DataFormatError`."""
+    release_state()
+    handle = open_state(state)
+    _DATA.append(handle)
+    return handle
+
+
+def release_state() -> None:
+    """Drop the shared format lock of this process's serve (it has stopped serving)."""
+    while _DATA:
+        _DATA.pop().close()
 
 
 def ensure_not_running(state: Path) -> None:

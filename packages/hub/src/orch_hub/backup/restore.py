@@ -38,9 +38,10 @@ from ..keys import HubKeys, KeysError
 from ..keys.fsutil import FILE_MODE, StateError, check_dir, fsync_dir, make_dir, read_file
 from . import guard as G
 from . import snapshot as SN
-from .hubop import HubOpBusy, hub_op
+from .hubop import DATA_FORMAT, DATA_KIND, HubOpBusy, hub_op
 from .words import WordsError, check_words
 
+FORMAT_FILE = "format.json"
 ADMIN_GROUP = "hub-admin"
 #: never taken from a backup: the live file stays (cond: a restored backup-key file would bring back an old key)
 KEEP_LIVE = frozenset({SN.KEY_FILE})
@@ -199,7 +200,7 @@ def _stage(new: Path, files: dict[str, bytes], state: Path, in_place: bool) -> N
     os.mkdir(new, 0o700)
     os.chmod(new, 0o700)
     check_dir(new)
-    skip = set(KEEP_LIVE) | (LIVE_IN_PLACE if in_place else set())
+    skip = set(KEEP_LIVE) | SN.INSTALL_FILES | (LIVE_IN_PLACE if in_place else set())
     for rel in sorted(files):
         if rel not in skip:
             _put(new, rel, files[rel])
@@ -208,6 +209,14 @@ def _stage(new: Path, files: dict[str, bytes], state: Path, in_place: bool) -> N
             src = state / rel
             if src.is_file() and not src.is_symlink():
                 _put(new, rel, SN.copy_db(src)[0] if rel.endswith(".db") else read_file(src))
+    # format.json describes this install's data dir, never the backup's: the live one stays; a fresh server gets the
+    # current format (the restored state is written by this code)
+    live_format = state / FORMAT_FILE
+    if in_place:
+        if live_format.is_file() and not live_format.is_symlink():
+            _put(new, FORMAT_FILE, live_format.read_bytes())
+    else:
+        _put(new, FORMAT_FILE, (json.dumps({"orch": DATA_KIND, "format": DATA_FORMAT}, sort_keys=True) + "\n").encode())
     for sub in ("uk", "op", "revoked"):
         if not (new / sub).exists():
             make_dir(new / sub)

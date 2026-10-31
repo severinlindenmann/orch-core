@@ -10,6 +10,7 @@ from pathlib import Path
 from .config import dev_of
 from .contract.canon import CanonError, unb64u
 from .contract.hub import FACTORS
+from .dataformat import DataFormatError
 from .keys import HubKeys, KeysError, default_state_dir
 from .keys.store import dumps
 
@@ -251,7 +252,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 hooks_listen=args.hooks_listen,
                 public_hooks_url=args.public_hooks_url,
             )
-        except (ValueError, KeysError) as e:
+        except (ValueError, KeysError, DataFormatError) as e:
             print(f"orch-hub: refused: {e}", file=sys.stderr)
             return 1
     if args.group in ("users", "groups", "grants", "channels", "access"):

@@ -429,16 +429,24 @@ def pin_hub_at_publish(ctx: Ctx, env: Mapping[str, str]) -> bool:
 
 def _card_hub_id(out: str) -> str | None:
     """The hub id of ``orch-hub keys card`` stdout. Strict: the whole output is exactly one JSON object with exactly
-    the card envelope's keys (``o``, ``sig``), and ``o.hub_id`` is 32 lower-case hex characters."""
+    the card's keys (``o``, ``op_cert``, ``sig``); ``o.kind`` is ``hub.card``; ``o.hub_id`` is 32 lower-case hex
+    characters AND is the id derived from ``o.hk_root_pub`` (the id is bound to the key, not just claimed)."""
+    from orch.crypto.encoding import EncodingError, unb64u
+    from orch.hubclient import wire
+
     try:
         card = json.loads(out.strip())
-    except ValueError:
+        if not isinstance(card, dict) or set(card) != {"o", "op_cert", "sig"}:
+            return None
+        o = card["o"]
+        if not isinstance(o, dict) or o.get("kind") != "hub.card":
+            return None
+        hub_id, root = o.get("hub_id"), o.get("hk_root_pub")
+        if not isinstance(hub_id, str) or not _HUB_ID.fullmatch(hub_id) or not isinstance(root, str):
+            return None
+        return hub_id if wire.hub_id(unb64u(root, 65)) == hub_id else None
+    except (ValueError, TypeError, EncodingError):
         return None
-    if not isinstance(card, dict) or set(card) != {"o", "sig"}:
-        return None
-    o = card["o"]
-    hub_id = o.get("hub_id") if isinstance(o, dict) else None
-    return hub_id if isinstance(hub_id, str) and _HUB_ID.fullmatch(hub_id) else None
 
 
 def _admin_hub(ctx: Ctx, pub: Mapping[str, Any], data: Path, action: str, hub_id: str, env: Mapping[str, str]) -> None:

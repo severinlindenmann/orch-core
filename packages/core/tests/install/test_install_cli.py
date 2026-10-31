@@ -7,11 +7,34 @@ import json
 
 import pytest
 
+from orch import crypto
 from orch.install import cli
 from orch.install.parts import detect_addresses
 from orch.install.state import load
 
-HUB_ID = "ab" * 16
+
+def _root_pub() -> bytes:
+    from orch.crypto import suite
+
+    return suite.public_bytes(suite.generate_private_key())
+
+
+def real_card(hub_id=None, *, root_pub=None, **o_over):
+    """A card in the real shape ({"o", "op_cert", "sig"}); its id is derived from a real root key (wire.hub_id)."""
+    from orch.hubclient import wire
+
+    root_pub = root_pub or _root_pub()
+    o = {
+        "v": 2, "suite": 2, "kind": "hub.card", "hv": 0, "hub_id": hub_id or wire.hub_id(root_pub),
+        "hk_root_pub": crypto.b64u(root_pub), "hxk_pub": crypto.b64u(_root_pub()), "relay_url": None,
+        "tls_spki_sha256": None, "card_seq": 1, "reader": 1, "issued_ms": 1, "dev": False,
+    }  # fmt: skip
+    o.update(o_over)
+    return {"o": o, "op_cert": {"o": {"kind": "hub.op_cert"}, "sig": "x"}, "sig": "x"}
+
+
+_ROOT = _root_pub()
+HUB_ID = real_card(root_pub=_ROOT)["o"]["hub_id"]
 
 
 class FakeRunner:
@@ -40,7 +63,7 @@ def home(tmp_path):
 def make(home, **kw):
     out, err = io.StringIO(), io.StringIO()
     calls = []
-    ids = [HUB_ID]  # the hub id the fake hub reports (append to change it)
+    ids = [_ROOT]  # the root key of the hub the fake reports (append another to change its id)
     card_out = []  # a test may put the exact stdout of `keys card` here
 
     def run(argv, env=None):
@@ -52,7 +75,7 @@ def make(home, **kw):
     def run_stdout(argv, env=None):
         calls.append(list(argv))
         assert argv[1] == "keys" and argv[-1] == "card"  # the only stdout-only call
-        return 0, card_out[-1] if card_out else json.dumps({"o": {"kind": "hub.card", "hub_id": ids[-1]}, "sig": "x"})
+        return 0, card_out[-1] if card_out else json.dumps(real_card(root_pub=ids[-1]))
 
     ctx = cli.Ctx(
         env={"HOME": str(home)},
@@ -476,8 +499,9 @@ def test_a_changed_hub_id_untrusts_the_old_one(home):
     ctx, out, err, calls = make(home)
     _install(ctx, out, err, "hub", "--address", "127.0.0.1")
     _install(ctx, out, err, "publish", "--address", "127.0.0.1")
-    new = "cd" * 16
-    ctx.ids.append(new)
+    root2 = _root_pub()
+    new = real_card(root_pub=root2)["o"]["hub_id"]
+    ctx.ids.append(root2)
     _install(ctx, out, err, "hub", "--address", "127.0.0.1")
     untrusts = [c for c in calls if c[-3:-1] == ["hub", "untrust"]]
     assert [c[-1] for c in untrusts] == [HUB_ID]
@@ -495,25 +519,36 @@ def test_removing_the_hub_untrusts_the_pinned_id(home):
 
 
 def _card(**o):
-    return {"o": {"kind": "hub.card", "hub_id": HUB_ID, **o}, "sig": "x"}
+    return real_card(root_pub=_ROOT, **o)
+
+
+def _without(key):
+    c = _card()
+    del c[key]
+    return c
 
 
 @pytest.mark.parametrize(
     "stdout",
     [
         json.dumps({"hub_id": HUB_ID}),  # no envelope
+        json.dumps({"o": _card()["o"], "sig": "x"}),  # the old two-key shape: op_cert missing
+        json.dumps(_without("op_cert")),
+        json.dumps(_without("sig")),
+        json.dumps(_card(kind="hub.link")),  # wrong kind
+        json.dumps(_card(hub_id="cd" * 16)),  # a well-formed id that is not the one of hk_root_pub
+        json.dumps(_card(hk_root_pub="AAAA")),  # not a key
         json.dumps(_card()) + "\n" + json.dumps(_card()),  # a second object
         json.dumps(_card()) + "\ntrailing text",
         "note: " + json.dumps(_card()),  # leading text
         json.dumps({**_card(), "extra": 1}),  # an extra key
-        json.dumps({"o": _card()["o"]}),  # a missing key
-        json.dumps({"o": {"kind": "hub.card", "hub_id": "AB" * 16}, "sig": "x"}),  # not lower-case hex
-        json.dumps({"o": {"kind": "hub.card", "hub_id": "ab" * 15}, "sig": "x"}),  # too short
+        json.dumps(_card(hub_id="AB" * 16)),  # not lower-case hex
+        json.dumps(_card(hub_id="ab" * 15)),  # too short
         json.dumps([_card()]),
         "",
     ],
 )
-def test_a_card_that_is_not_exactly_the_envelope_is_not_pinned(home, stdout):
+def test_a_card_that_is_not_exactly_the_real_card_is_not_pinned(home, stdout):
     ctx, out, err, calls = make(home)
     ctx.card_out.append(stdout)
     _install(ctx, out, err, "hub", "--address", "127.0.0.1")
@@ -530,6 +565,21 @@ def test_stderr_noise_next_to_a_valid_card_still_pins(home):
     _install(ctx, out, err, "hub", "--address", "127.0.0.1")
     _install(ctx, out, err, "publish", "--address", "127.0.0.1")
     assert [c[-1] for c in _trusts(calls)] == [HUB_ID]
+
+
+def test_the_real_orch_hub_card_is_accepted(tmp_path):
+    """Integration: the real `orch-hub keys init` and `keys card` (skipped when orch-hub is not importable here)."""
+    import subprocess
+    import sys
+
+    pytest.importorskip("orch_hub")
+    state = tmp_path / "hub"
+    base = [sys.executable, "-m", "orch_hub", "keys", "--state", str(state)]
+    for argv in (["init"], ["card"]):
+        r = subprocess.run([*base, *argv], capture_output=True, text=True)
+        assert r.returncode == 0, r.stderr
+    got = cli._card_hub_id(r.stdout)
+    assert got is not None and len(got) == 32
 
 
 def test_run_stdout_drops_stderr():

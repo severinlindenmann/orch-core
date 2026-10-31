@@ -600,8 +600,10 @@ def test_rediscover_hash_charges_file_size(two, monkeypatch):
     assert part(two, 0, b"a").status_code == 429
 
 
-@pytest.mark.parametrize("length", ["7", None])
-def test_budget_checks_before_and_after_body(two, monkeypatch, length):
+@pytest.mark.parametrize(
+    "length", [None]
+)  # the budget is checked after the body and the signature, never before
+def test_budget_checks_after_body(two, monkeypatch, length):
     import asyncio
 
     from starlette.requests import Request

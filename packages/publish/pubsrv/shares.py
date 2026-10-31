@@ -485,7 +485,7 @@ def _part_digest(data):
     return digest.hexdigest()
 
 
-PART_WAIT_S = 10
+PART_WAIT_S = 10.0  # seconds; the contract's "10 s"
 _part_flights = {}
 _part_flights_guard = threading.Lock()
 
@@ -497,8 +497,8 @@ def _part_flight(sid, path):
         entry = _part_flights.setdefault(key, [threading.Lock(), 0])
         entry[1] += 1
     try:
-        # A bounded wait: requests for one file queue here only behind a finalize hash, and never hold a worker
-        # thread for longer than this (the client retries on part_busy).
+        # A bounded wait behind another request for the same file (typically a finalize hash); never holds a worker
+        # thread longer than this (the client retries on part_busy). Runs in the threadpool (run_in_threadpool).
         if not entry[0].acquire(timeout=PART_WAIT_S):
             raise Refusal(409, "part_busy")
         try:
@@ -893,7 +893,7 @@ class _PartLimiter:
         self.bytes = defaultdict(int)
         self.counts = defaultdict(int)
 
-    def allow(self, ws, size, *, count=1, check_only=False):
+    def allow(self, ws, size, *, count=1):
         with self.lock:
             now = self.clock()
             q = self.hits[ws]
@@ -906,10 +906,9 @@ class _PartLimiter:
                 or self.bytes[ws] + size > PART_BYTES_PER_MIN
             ):
                 return False
-            if not check_only:
-                q.append((now, size, count))
-                self.bytes[ws] += size
-                self.counts[ws] += count
+            q.append((now, size, count))
+            self.bytes[ws] += size
+            self.counts[ws] += count
             return True
 
 
@@ -975,16 +974,6 @@ def install(app, settings):
             raise Refusal(403, "wrong_workspace")
         if not _ID.fullmatch(sid) or sid != request.path_params.get("sid"):
             raise Refusal(404, "not_found")
-        length = request.headers.get("content-length")
-        if length is not None:
-            try:
-                size = int(length)
-            except ValueError:
-                raise Refusal(400, "malformed") from None
-            if size < 0:
-                raise Refusal(400, "malformed")
-            if not part_limiter.allow(signed_ws, size, check_only=True):
-                raise Refusal(429, "rate_limited")
         body = await request.body()
         return await guarded(
             request,

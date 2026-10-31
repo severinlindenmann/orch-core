@@ -3451,6 +3451,8 @@ unknown/foreign shares return 404 `not_found`, unknown paths 404 `not_in_manifes
   return 409 `part_conflict`. An overlap extending beyond `received` with a matching prefix is refused with
   409 `part_out_of_order`; resend only the tail at `received`.
 - At `offset > received`, return 409 `part_out_of_order`.
+- A request that waits more than 10 s behind another request for the same file returns 409 `part_busy`
+  (retryable; nothing was written).
 
 Success is JSON `{"received": N, "done": false|true, "result": "stored"|"unchanged"}`. Both part errors are JSON
 `{"error": "part_conflict"|"part_out_of_order", "received": N}`. At the manifest size, Publish rehashes the stored

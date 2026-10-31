@@ -717,3 +717,80 @@ def test_a_commit_request_needs_a_fresh_signature_and_a_rollback_goes_through_a_
     assert (
         err(g.req("app.prepare", {"ref": key, "app_id": one["app_id"], "op": "start", "version": 2})) == "invalid.input"
     )
+
+
+# -- Opus review of #1788 ----------------------------------------------------------------------------------------------
+
+
+def test_a_version_that_was_never_live_cannot_be_gone_back_to(g):
+    """F1: ``versions`` holds every UPLOADED version; only one the owner made live can come back (``was_live``)."""
+    uid, key = ticket(g)
+    one, note1 = release(g, key, "index.html", "app.js")
+    ok(g.req("app.send", {"staged_id": one["staged_id"]}))  # uploaded, never committed
+    two, note2 = release(g, key, "index.html", "app.js", app_id=one["app_id"], name="Sales board 2")
+    c2 = ok(g.req("app.send", {"staged_id": two["staged_id"]}))["data"]["commit"]
+    ok(g.req("app.commit", {"request_id": c2["request_id"], "approval": approve(g, c2, note2)}))
+    assert g.server.live[one["app_id"]] == ("commit", 2)
+    res = g.req("app.prepare", {"ref": key, "app_id": one["app_id"], "op": "rollback", "version": 1})
+    assert err(res) == "invalid.input"  # version 1 was uploaded but never made live
+    three, note3 = release(g, key, "index.html", "app.js", app_id=one["app_id"], name="Sales board 3")
+    c3 = ok(g.req("app.send", {"staged_id": three["staged_id"]}))["data"]["commit"]
+    ok(g.req("app.commit", {"request_id": c3["request_id"], "approval": approve(g, c3, note3)}))
+    ok(g.req("app.prepare", {"ref": key, "app_id": one["app_id"], "op": "rollback", "version": 2}))  # was live: fine
+
+
+def test_a_checked_object_is_the_only_thing_that_gets_signed():
+    """N1: ``build_approval`` refuses a plain dict, however it was made."""
+    from orch.hubclient.errors import HubRefused
+    from orch.publishclient import golive
+
+    with pytest.raises(HubRefused):
+        golive.build_approval({"kind": "hub.publish_approval"}, lambda payload: bytes(64), {}, "pk")
+    assert not hasattr(golive, "approval_object")  # no public way to make the object
+
+
+def test_the_approval_must_have_the_shape_of_one(g):
+    """N4: exactly o, sig, device_cert and pk_pub, bounded, before anything is planned."""
+    uid, key = ticket(g)
+    data, note = release(g, key, "index.html", "app.js")
+    commit = ok(g.req("app.send", {"staged_id": data["staged_id"]}))["data"]["commit"]
+    good = approve(g, commit, note)
+    for bad in (
+        {}, {"o": {}}, {**good, "extra": 1}, {**good, "sig": "x"}, {**good, "pk_pub": 5},
+        {**good, "device_cert": {**good["device_cert"], "pad": "x" * 9000}},
+    ):  # fmt: skip
+        assert err(g.req("app.commit", {"request_id": commit["request_id"], "approval": bad})) == "invalid.input"
+    assert g.server.live == {}
+    ok(g.req("app.commit", {"request_id": commit["request_id"], "approval": good}))  # none of it used the request
+
+
+def test_a_maintainer_uploads_but_cannot_make_it_live(g, monkeypatch):
+    """N3: a person who is not the card owner gets no commit request, and ``commit_request`` and ``commit`` are
+    ``role.denied``."""
+    from orch.host import appops
+
+    uid, key = ticket(g)
+    data, note = release(g, key, "index.html", "app.js")
+    monkeypatch.setattr(appops, "_owner_person", lambda service: "p_someone_else")  # the caller is not the card owner
+    sent = ok(g.req("app.send", {"staged_id": data["staged_id"]}))["data"]
+    assert sent["uploaded"] is True and "commit" not in sent and "owner" in sent["needs"]
+    assert err(g.req("app.commit_request", {"app_id": data["app_id"], "op": "commit", "version": 1})) == "role.denied"
+    assert err(g.req("app.commit", {"request_id": "cr_" + "0" * 32, "approval": approve_stub()})) in {
+        "role.denied",
+        "publish.changed",
+    }  # no pending request exists for them at all
+    assert g.server.live == {}
+
+
+def approve_stub():
+    return {"o": {}, "sig": "s" * 86, "device_cert": {}, "pk_pub": "p" * 87}
+
+
+def test_a_commit_request_after_the_note_is_an_hour_old_is_not_approved(g):
+    """N3: the signature is good for an hour; ``commit_request`` asks for a fresh one."""
+    uid, key = ticket(g)
+    data, note = release(g, key, "index.html", "app.js")
+    ok(g.req("app.send", {"staged_id": data["staged_id"]}))
+    g.served.service.clock = (lambda c: lambda: c() + 3601)(g.served.service.clock)
+    res = g.req("app.commit_request", {"app_id": data["app_id"], "op": "commit", "version": 1})
+    assert err(res) == "publish.not_approved"

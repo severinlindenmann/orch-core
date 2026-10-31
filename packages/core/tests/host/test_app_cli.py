@@ -256,3 +256,40 @@ def test_the_local_hub_is_read_from_the_join_state_and_unreadable_means_none(tmp
     assert app._local_hub_id(target) is None  # noqa: SLF001 - unreadable: fail closed
     (d / "hub.json").write_text(json.dumps({}))
     assert app._local_hub_id(target) is None  # noqa: SLF001 - not a bound hub state
+
+
+def test_a_commit_that_fails_is_tried_again_with_a_fresh_request_twice_then_the_right_next_step_is_said(
+    rec, monkeypatch
+):
+    """N2: the stage is gone after the upload: the retry is ``commit_request``, never "send it again"."""
+    from orch.ops.errors import OrchError
+
+    state = {"commits": 0, "requests": 0}
+
+    def call(target, op, args, env):
+        rec.calls.append((op, args))
+        if op == "app.send":
+            return {"app_id": "a" * 32, "version": 1, "uploaded": True, "live": False,
+                    "commit": {"request_id": "cr_" + "1" * 32, "app_id": "a" * 32, "op": "commit", "version": 1}}  # fmt: skip
+        if op == "app.commit_request":
+            state["requests"] += 1
+            return {"request_id": "cr_" + str(state["requests"]) * 32, "app_id": "a" * 32, "op": "commit", "version": 1}
+        if op == "app.commit":
+            state["commits"] += 1
+            if state["commits"] < state["fail"]:
+                raise OrchError("publish.changed", "that request is gone or too old: try again")
+            return {"app_id": "a" * 32, "version": 1, "op": "commit", "live": True}
+        return {}
+
+    monkeypatch.setattr(app, "_call", call)
+    monkeypatch.setattr(app, "_approve", lambda target, commit, note, now: {"for": commit["request_id"]})
+    state["fail"] = 3  # the first two commits fail, the third (the second retry) goes through
+    code, out = run(["release", STAGED], {})
+    assert code == 0 and state["requests"] == 2 and "ok app live" in out
+    ops = [c[0] for c in rec.calls]
+    assert ops.count("app.commit_request") == 2 and ops.count("app.send") == 1  # the upload is never repeated
+    state.update(commits=0, requests=0, fail=99)  # always failing: two retries, then the right advice
+    rec.calls.clear()
+    code, out = run(["release", STAGED], {})
+    assert code != 0 and state["requests"] == 2
+    assert "NOT live" in out and "orch app send" not in out and "prepare the same release again" in out

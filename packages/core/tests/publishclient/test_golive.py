@@ -63,7 +63,7 @@ def check(f, req, text=_SAME, **kw):
 def expected_object(f, req=None, device=DEVICE):
     req = req or request(f)
     rh = golive.request_hash_b64(WS, HUB, req["ts_ms"], req["nonce"], HOST, req["target"], req["body"])
-    return golive.approval_object(WS, HUB, device, rh, f["meta"]["access"])
+    return golive._approval_object(WS, HUB, device, rh, f["meta"]["access"])
 
 
 def test_a_request_that_matches_the_note_is_accepted_and_returns_the_object_to_sign():
@@ -167,7 +167,7 @@ def test_core_rebuilds_the_vectors_approval_object_and_its_request_hash(case):
     got = golive.request_hash_b64(req["ws"], hub, req["ts_ms"], bytes.fromhex(req["nonce_hex"]), req["host"],
                                   req["target"], body)  # fmt: skip
     assert got == ap["o"]["request_hash"]
-    built = golive.approval_object(req["ws"], hub, ap["o"]["device_id"], got, json.loads(body)["access"])
+    built = golive._approval_object(req["ws"], hub, ap["o"]["device_id"], got, json.loads(body)["access"])
     assert built == ap["o"]
     assert cj(built) == cj(ap["o"])
     cert = ap["device_cert"]["o"]
@@ -182,5 +182,5 @@ def test_a_built_approval_verifies_with_the_device_key_and_only_under_the_approv
     cert = {"o": {"device_id": DEVICE, "dk_sig_pub": b64u(pub_key)}, "sig": "x"}
     ap = golive.build_approval(o, lambda payload: crypto.sign(key, payload), cert, "pk")
     assert set(ap) == {"o", "sig", "device_cert", "pk_pub"} and ap["o"] == o
-    assert S.verify(pub_key, unb64u(ap["sig"], 64), L["sig_hub_publish_approval"] + cj(o))
-    assert not S.verify(pub_key, unb64u(ap["sig"], 64), L["sig_publish_hub"] + cj(o))
+    assert S.verify(pub_key, unb64u(ap["sig"], 64), L["sig_hub_publish_approval"] + cj(dict(o)))
+    assert not S.verify(pub_key, unb64u(ap["sig"], 64), L["sig_publish_hub"] + cj(dict(o)))

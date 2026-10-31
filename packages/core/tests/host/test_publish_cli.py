@@ -192,6 +192,21 @@ def test_prepare_passes_the_choices_and_says_nothing_left_the_computer(rec, monk
     assert rec.calls[-1][1]["views"] == 1 and rec.calls[-1][1]["kind"] == "once"
 
 
+@pytest.mark.parametrize("days", [1, 3, 7, 30])
+def test_prepare_accepts_every_number_of_days_the_dashboard_offers(rec, monkeypatch, days):
+    monkeypatch.setattr(publish, "_call", lambda t, op, args, env: rec.calls.append((op, args)) or {
+        "staged_id": "ps_" + "2" * 32, "files": [{}], "kind": "secret", "views": 0, "days": args["days"],
+        "ticket": "TST-0001"})  # fmt: skip
+    code, _ = run(["prepare", "TST-0001", "a.md", "--days", str(days)], {})
+    assert code == 0 and rec.calls[-1][1]["days"] == days
+
+
+@pytest.mark.parametrize("days", ["2", "0", "5", "31", "-1"])
+def test_prepare_with_other_days_names_the_allowed_values_before_the_host(offline, days):
+    code, out = run(["prepare", "TST-0001", "a.md", "--days", days], {})
+    assert code == 2 and "1, 3, 7 or 30 days" in out
+
+
 # -- the real thing: this CLI against a served workspace -------------------------------------------------------------
 
 

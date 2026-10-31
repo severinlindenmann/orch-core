@@ -1,4 +1,5 @@
 import { SharedToday } from './SharedToday'
+import { SpacesToday } from './SpacesToday'
 import { HubBanner } from '../../shell/HubBanner'
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useQueries, useQuery } from '@tanstack/react-query'
@@ -423,6 +424,7 @@ function TodayInbox({ items, decisions, readOnly, locked, canAddon, viewer, atte
           <aside className="min-w-0 space-y-4">
             {agentsKnown && <AgentsPanel {...agentProps} />}
             <Glance readOnly={!canAddon} max={GLANCE_TILES} />
+            <SpacesToday ws={ws} />
             <SharedToday ws={ws} />
             <Recently recent={today.data!.recent} now={now} />
           </aside>
@@ -432,7 +434,8 @@ function TodayInbox({ items, decisions, readOnly, locked, canAddon, viewer, atte
           {agentsKnown && <AgentsBar {...agentProps} />}
           {queue}
           <Glance readOnly={!canAddon} />
-          <SharedToday ws={ws} />
+          <SpacesToday ws={ws} />
+            <SharedToday ws={ws} />
         </div>
       )}
       {signTicket && <SignDialog ticket={signTicket} action={signing!.action} onClose={() => setSigning(null)} onPending={setPending} />}

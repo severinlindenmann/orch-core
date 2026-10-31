@@ -55,6 +55,9 @@ ALLOW: dict[str, str] = {
     "core/src/orch/runner/exec.py::run": "the runner's exec stub: spec['env'] is the agent environment the host built "
     "from nothing (the grant, never the host's own); the stub itself runs under python -I with env={}",
     "core/src/orch/host/runners.py::_system_query": "env is the fixed SYSTEMCTL_ENV",
+    "core/src/orch/update/services.py::uv_run": "env is uvenv.uv_env(): built from nothing (the KEEP_ENV names only, "
+    "plus the pinned UV_* of install.sh; parity tested in tests/update_cli/test_uvenv.py)",
+    "core/src/orch/update/uvenv.py::check_uv": "env is uv_env(): built from nothing (KEEP_ENV names plus pinned UV_*)",
     "hub/src/orch_hub/doctor.py::unit_user_of": "orch-hub has no orch-core dependency (no childenv); systemctl show, "
     "read-only, argv fixed",
     "hub/src/orch_hub/services/helper_backends.py::run_argv": "orch-hub has no orch-core dependency; env is built from "

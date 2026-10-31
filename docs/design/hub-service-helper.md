@@ -34,8 +34,28 @@ Routes (all hub-admin, `webapi/services_api.py`, registered in `features.py`):
 Only these argv are ever run (`orch-hub helper --print-sudoers --user orch-hub` prints the exact lines, no wildcards,
 `env_reset`, never `status` or `edit`):
 `/usr/bin/systemctl {start,stop,restart} <unit>` and
-`/usr/bin/journalctl -u <unit> --since -1h -n 500 -o short-iso --no-pager`.
-The owner installs the drop-in (`visudo -cf`); the helper never edits sudoers.
+`/usr/bin/journalctl -u <unit> --since -24h -n 300 -o short-iso --no-pager`.
+The owner installs the drop-in (`visudo -cf`); the helper never edits sudoers. The log window changed from the last hour (500 lines) to the last 24 hours (300 lines): a hand-built server must reprint and reinstall the drop-in, because sudo matches the journalctl arguments exactly (systemd user units need nothing).
+
+### Made by `orch install` (systemd user units)
+
+`orch install hub|relay|publish`, `orch setup` (Full server) and `orch install remove` keep the helper in step with the
+install, only when systemd (user) runs the parts: they write `<hub data>/helper.json` (0600, atomic, never through a
+symlink) listing the hub, relay and publish units of this install, and run the user unit
+`orch-<tag>-hub-helper.service` (`orch-hub helper --state <hub data>`, no secret on the command line, no `PartOf=` the
+hub, so it survives a hub restart). Re-running changes nothing unless helper.json changes (then the helper restarts,
+because it reads the file once). `orch install remove hub` stops the helper and deletes helper.json; a helper an owner
+set up by hand (no record in install.json) is never touched. `orch stop` / `orch start` list it as "the service helper".
+The helper's own unit can never be listed in helper.json (`orch-hub-helper*` and `orch-<tag>-hub-helper*` are refused).
+launchd and pidfile installs have no helper: the Services page then says the buttons are not switched on. The installer
+never uses sudo and never writes `/etc/sudoers.d`.
+
+### System units on a hand-built server (owner steps)
+
+For parts that run as system services the server owner makes one change, once:
+`sudo orch-hub helper --state <hub data folder> --print-sudoers --user <user> | sudo tee /etc/sudoers.d/orch-hub-helper`,
+then `sudo visudo -cf /etc/sudoers.d/orch-hub-helper`. orch never changes sudo rules itself. To keep a user unit
+running after logout: `loginctl enable-linger <user>`.
 
 ## Failure modes
 

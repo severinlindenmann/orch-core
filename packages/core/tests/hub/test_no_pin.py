@@ -8,6 +8,7 @@ import socket
 
 import pytest
 
+from orch.hubclient.netconfig import NetSettings
 from orch.hubclient.tlsadapter import TlsTransport
 from orch.hubclient.tlslink.client import LinkClient
 from orch.hubclient.tlslink.tls import PLACEHOLDER_PIN, NoPin, PinMismatch, connect_pinned
@@ -41,7 +42,7 @@ def test_placeholder_matches_the_hub_cards_value():
 def test_connect_pinned_refuses_before_dialling(listener, pin):
     port = listener.getsockname()[1]
     with pytest.raises(NoPin):
-        connect_pinned("127.0.0.1", port, pin, timeout=1)  # type: ignore[arg-type]
+        connect_pinned("127.0.0.1", port, pin, timeout=1, net=NetSettings())  # type: ignore[arg-type]
     assert not dialled(listener)
 
 
@@ -54,7 +55,7 @@ def test_link_client_refuses_the_placeholder_before_dialling(listener):
     with pytest.raises(NoPin):
         LinkClient.open(
             "127.0.0.1", port, tls_spki_sha256=PLACEHOLDER_PIN, hub_id="0" * 32, workspace_id="1" * 32,
-            sign=lambda m: bytes(64), hk_op_pub=bytes(65), timeout=1,
+            sign=lambda m: bytes(64), hk_op_pub=bytes(65), timeout=1, net=NetSettings(),
         )  # fmt: skip
     assert not dialled(listener)
 
@@ -64,7 +65,7 @@ def test_transport_maps_it_to_unreachable_and_never_dials(listener, pin):
     port = listener.getsockname()[1]
     t = TlsTransport(
         addr=f"127.0.0.1:{port}", tls_spki_sha256=pin, hub_id="0" * 32, workspace_id="1" * 32,
-        hk_op_pub=bytes(65), wsk_pub=bytes(65), sign=lambda m: bytes(64), timeout=1,
+        hk_op_pub=bytes(65), wsk_pub=bytes(65), sign=lambda m: bytes(64), timeout=1, net=NetSettings(),
     )  # fmt: skip
     with pytest.raises(ConnectionError):
         t.send_next("snapshot_get", lambda seq, cb: {"o": {"op": "snapshot_get"}, "sig": ""})

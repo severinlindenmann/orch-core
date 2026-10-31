@@ -1,0 +1,10 @@
+[Unit]
+Description=copy the sealed hub backups every night
+
+[Timer]
+OnCalendar=*-*-* 03:40:00
+Persistent=true
+RandomizedDelaySec=10min
+
+[Install]
+WantedBy=timers.target

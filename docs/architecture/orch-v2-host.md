@@ -529,6 +529,10 @@ drops. The host never sends it.
 | `publish.unreachable` | 9 | yes | stays | the publish server could not be reached; nothing was shared, run it again (P5) | `retry_after_ms` |
 | `hub.unreachable` | 9 | yes | stays | the hub could not be reached or did not answer; the join stays recorded and `orch hub connect` finishes it, a leave is already recorded and `orch hub unbind` tells the hub later (V3 C2a) | `retry_after_ms` |
 | `hub.no_card` | 3 | no | stays | `hub.connect` on a workspace with no v2 directory card yet (link a relay first) (V3 C2a) | — |
+| `hub.link_inspected` | 3 | no | stays | the hub's certificate was not the card's pin on a path through a proxy or WebSocket front: something on this network opens encrypted connections. The link stays down, no other transport is tried, and the next dial of that address waits at least 5 minutes (R6 #1594, D92) | `hint` |
+| `hub.proxy_auth` | 3 | no | stays | the HTTP proxy in `hub-net.json` answered 407 to the CONNECT: its sign-in is missing, wrong or not Basic (R6) | `hint` |
+| `hub.proxy_refused` | 3 | no | stays | the proxy refused the CONNECT with another status, sent a head that is not HTTP, or the network settings files cannot be used; nothing is dialled direct (R6) | `hint` |
+| `hub.proxy_unreachable` | 9 | yes | stays | the configured proxy could not be reached (R6) | `retry_after_ms` |
 | `hub.no_epoch` | 3 | no | stays | `hub.connect` in full mode on a workspace that holds no epoch key `WK_e` to give the hub (link a relay first) (V3 C2b) | — |
 | `keys.no_epoch` | 3 | no | stays | `keys.rotate` on a workspace that holds no workspace key yet (V3 C8) | — |
 | `keys.joined` | 3 | no | stays | `keys.rotate` while a hub is joined in full mode: the new epoch would never reach the hub; leave first (V3 C8) | — |

@@ -141,3 +141,59 @@ def test_revoked_op_cert_is_refused_by_orch_publish(env):
     out = fw.forward(e.ws, host_request(e.wsk, hub_id, e.ws, host=e.host))
     assert out["status"] in (401, 403)
     assert json.loads(bytes.fromhex(out["body_hex"]))["error"] in ("revoked", "unknown_hub", "bad_hub_signature")
+
+
+def test_1452_who_and_what_of_a_share_reach_the_admin_list_end_to_end(env, tmp_path):
+    """A share PUT carrying label and by_kind/by_name goes through the hub forwarder into a real orch-publish; the hub's
+    admin read returns it, and GET /admin/published shows label, by name, agent marker, workspace, until and views."""
+    import hashlib
+
+    from webapi_helpers import Web
+
+    from orch_hub.publish import AdminReadClient
+
+    e = env
+    e.fw.binding(e.ws, binding(e.wsk, e.hub, e.ws, mode="full"))
+    sid = os.urandom(16).hex()
+    exp = NOW + 3 * 86_400_000
+    meta = {
+        "ticket": "TST-0001", "kind": "secret", "expires_ms": exp, "view_limit": 0,
+        "token_hash": hashlib.sha256(b"t").hexdigest(),
+        "files": [{"path": "a.txt", "size": 3, "sha256": hashlib.sha256(b"abc").hexdigest()}],
+        "label": "Q3 report", "by_kind": "agent", "by_name": "Ana",
+    }  # fmt: skip
+    put = host_request(e.wsk, e.hub.hub_id, e.ws, host=e.host, method="PUT",
+                       target=f"/v1/ws/{e.ws}/shares/{sid}", body=json.dumps(meta).encode())  # fmt: skip
+    out = e.fw.forward(e.ws, put)
+    assert out["status"] == 200, out
+    # a staged (uncommitted) share is not a release: commit it so it is listed
+    c = host_request(e.wsk, e.hub.hub_id, e.ws, host=e.host, method="PUT",
+                     target=f"/v1/ws/{e.ws}/shares/{sid}/files/a.txt", body=b"abc")  # fmt: skip
+    assert e.fw.forward(e.ws, c)["status"] == 200
+    k = host_request(e.wsk, e.hub.hub_id, e.ws, host=e.host, method="POST", target=f"/v1/ws/{e.ws}/shares/{sid}/commit")
+    assert e.fw.forward(e.ws, k)["status"] == 200
+    rows = AdminReadClient(f"http://{e.host}", e.hub.op_signer, e.hub.hub_id, now_ms=lambda: NOW).published()
+    assert [(r["id"], r["label"], r["by_kind"], r["by_name"]) for r in rows] == [(sid, "Q3 report", "agent", "Ana")]
+
+    (tmp_path / "web").mkdir()
+    w = Web(tmp_path / "web")
+    try:
+        w.reg.add(e.ws, "full", name="Product")
+
+        class Reader:
+            def published(self, workspace=None):
+                return rows
+
+        w.api.d.published = Reader()
+        s, o, _ = w.call("GET", "/admin/published", token=w.login(w.admin))
+        assert s == 200
+        (link,) = o["links"]
+        assert (link["label"], link["by_kind"], link["by_name"], link["workspace"]) == (
+            "Q3 report",
+            "agent",
+            "Ana",
+            "Product",
+        )
+        assert link["expires_ms"] == exp and link["views"] == 0 and link["state"] == "live"
+    finally:
+        w.close()

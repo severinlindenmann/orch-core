@@ -156,6 +156,7 @@ export function unshareable(a: { name: string; kind: string; bytes: number | nul
   if (a.kind === 'link' || a.url || a.addon) return 'This is a link or an add-on item, not a file.'
   if (!NAME.test(a.name) || a.name.includes('..') || a.name !== a.name.trim()) return 'The name has characters the server does not take (letters, digits, space, dot, dash and underscore only).'
   if (a.bytes !== null && a.bytes > LIMITS.file_bytes) return 'Larger than 25 MB.'
+  if (a.bytes === 0) return 'The file is empty.'
   return null
 }
 

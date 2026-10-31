@@ -5,11 +5,15 @@ from __future__ import annotations
 import socket
 
 from orch.host import hublinkprobe as P
+from orch.hubclient.netconfig import NetSettings
 
 
 def test_no_address_or_a_malformed_one_is_unknown_not_down():
     P.clear()
-    assert P.reachable("s", None) is None and P.reachable("s", "not an address") is None
+    assert (
+        P.reachable("s", None, net=NetSettings()) is None
+        and P.reachable("s", "not an address", net=NetSettings()) is None
+    )
 
 
 def test_answer_is_cached_for_a_few_seconds_then_asked_again():
@@ -18,11 +22,13 @@ def test_answer_is_cached_for_a_few_seconds_then_asked_again():
     srv.bind(("127.0.0.1", 0))
     srv.listen(4)
     addr = f"127.0.0.1:{srv.getsockname()[1]}"
-    assert P.reachable("s", addr, now=100.0) is True
+    assert P.reachable("s", addr, now=100.0, net=NetSettings()) is True
     srv.close()
-    assert P.reachable("s", addr, now=101.0) is True  # cached
-    assert P.reachable("s", addr, now=100.0 + P.CACHE_S + 0.1) is False  # asked again: nobody listens
-    assert P.reachable("other", addr, now=100.0 + P.CACHE_S + 0.2) is False  # per workspace scope
+    assert P.reachable("s", addr, now=101.0, net=NetSettings()) is True  # cached
+    assert (
+        P.reachable("s", addr, now=100.0 + P.CACHE_S + 0.1, net=NetSettings()) is False
+    )  # asked again: nobody listens
+    assert P.reachable("other", addr, now=100.0 + P.CACHE_S + 0.2, net=NetSettings()) is False  # per workspace scope
 
 
 def test_link_view_only_changes_a_bound_link_that_does_not_answer():
@@ -39,7 +45,11 @@ def test_peer_status_fields_count_the_outbox_and_name_the_last_loop_error(monkey
     svc = SimpleNamespace(state_dir="/s", workspace_id="w")
     rt = SimpleNamespace(svc=SimpleNamespace(mb=SimpleNamespace(outbox={"a": "x", "b": "y"})), last_error="PinMismatch")
     monkeypatch.setattr(peerops, "_RUNTIMES", {peerops._key(svc): rt})
-    assert peerops.status_fields(svc) == {"peer_outbox": 2, "link_error": "PinMismatch"}
+    assert peerops.status_fields(svc) == {"peer_outbox": 2, "link_error": "PinMismatch", "link_error_code": None}
     monkeypatch.setattr(peerops, "_RUNTIMES", {})
     monkeypatch.setattr(peerops, "_load_box", lambda s: (_ for _ in ()).throw(OSError("unreadable")))
-    assert peerops.status_fields(svc) == {"peer_outbox": 0, "link_error": None}  # status always answers
+    assert peerops.status_fields(svc) == {
+        "peer_outbox": 0,
+        "link_error": None,
+        "link_error_code": None,
+    }  # status always answers

@@ -14,6 +14,9 @@ not right.
   reference and this document disagree, this document wins.
 - **Hub backup and `hub_where` (M4, #1358):** §17 and §10.9, vectors [`vectors_hub_backup.json`](vectors_hub_backup.json)
   (generator `make_vectors_hub_backup.py`; the hub replays all cases, orch-core the `hub_where` ones).
+- **Link transports (R6, #1594):** §10.10 and the address grammar of §10.9, vectors
+  [`vectors_link_ws.json`](vectors_link_ws.json) (generator `make_vectors_link_ws.py`; the hub replays all cases, orch-core
+  all but the three hub-side upgrade checks).
 - **Status:** H0 draft for the L2 gate (one Opus security pass, orch-core #847). Choices this document had to make
   are marked **DECIDED HERE** and listed in §16.
 
@@ -106,8 +109,8 @@ without the root key, and every holder recomputes it (`hub_id_mismatch`). `user_
 
 ### 2.4 The dev marker (all of V3)
 
-Every `hub.op_cert`, `hub.card`, `hub.uk_cert`, `hub.channel_cert`, `hub.snapshot`, `hub.binding`, `hub.unbound` and
-`hub.op_revoked` carries a required boolean `dev`. **In V3 every one of them is `dev: true`** (V3-D2: all hub work is
+Every `hub.op_cert`, `hub.card`, `hub.uk_cert`, `hub.channel_cert`, `hub.snapshot`, `hub.closing`, `hub.binding`,
+`hub.unbound` and `hub.op_revoked` carries a required boolean `dev`. **In V3 every one of them is `dev: true`** (V3-D2: all hub work is
 dev-only).
 
 - `dev` is a required field: an object without it is `malformed`.
@@ -148,6 +151,7 @@ literal `orch/v2/hub-…|` names.
 | `sig_hub_uk_cert` | `orch/v2/hub-uk-cert\|` | `HK_op` | `cj(o)` of `hub.uk_cert` | 6 |
 | `sig_hub_channel_cert` | `orch/v2/hub-channel-cert\|` | `HK_op` | `cj(o)` of `hub.channel_cert` | 6 |
 | `sig_hub_snapshot` | `orch/v2/hub-snapshot\|` | `HK_op` | `cj(o)` of `hub.snapshot` | 7 |
+| `sig_hub_closing` | `orch/v2/hub-closing\|` | `HK_op` | `cj(o)` of `hub.closing` (the hub is being removed; #1463) | 9.7 |
 | `sig_hub_route` | `orch/v2/hub-route\|` | `HK_op` | `exporter \|\| cj(o)` of a hub→host `hub.link` | 10 |
 | `sig_hub_publish` | `orch/v2/hub-publish\|` | `HK_op` | the transport signature of a forwarded publish request | 11 |
 | `sig_hub_audit` | `orch/v2/hub-audit\|` | `HK_op` | `cj(o)` of `hub.audit` | 10.5 |
@@ -196,6 +200,11 @@ literal `orch/v2/hub-…|` names.
 | `h_app_reach` | `orch/v2/app-reach\|` | hash | the approved reach list of one app version (`reach_hash`, M4) | 11.4 |
 | `sig_hub_release_narrow` | `orch/v2/hub-release-narrow\|` | `HK_op` | `cj(o)` of `hub.release_narrow` (revoke a link, stop an app; M4) | 11.6 |
 | `sig_hub_app_pass` | `orch/v2/hub-app-pass\|` | `HK_op` | `cj(o)` of `hub.app_pass` (single-use pass into a company/group app; M4) | 11.8 |
+
+**The removal proof label (§9.7, #1463).** `orch/v2/hub-remove|` is the domain of the digest an admin's channel key signs
+to start removing the hub (`orch_hub.contract.labels.HUB_REMOVE_LABEL`). Like the access-change label it names no object
+any workspace reads, so it stays out of the table above and of `vectors_hub.json`;
+`tests/test_hub_closing_vectors.py` checks it is new, ends in `|` and keeps the union with every label above prefix-free.
 
 **Hub-local labels of the backup (§17).** `orch/v2/hub-backup|` (`HK_root` signs a backup header) and
 `orch/v2/hub-backup-aad|` (AAD of the sealed payload) name no object any other repo reads, so, like the access-change
@@ -1400,6 +1409,56 @@ hub mode` do). If the hub still answers `proof_expired` (it was down; the log al
 took the binding), the way out is `orch hub leave`, then `orch hub join` again with a new proof; the host drops the
 unfinished binding and the new join starts clean.
 
+### 9.7 Removing a hub: `hub.closing` (#1463; vectors `vectors_hub_closing.json`)
+
+A hub that is being removed tells each bound workspace, so its owner can leave with one click. The notice is **only** an
+offer: it shows a banner and stops the host serving company content; nothing auto-leaves and nothing local is deleted.
+
+```
+hub.closing {v: 2, suite: 2, kind: "hub.closing", hv: 0, hub_id, op_cert_id, workspace_id, binding_seq: int >= 1,
+             removal_id: hex16, issued_ms, ends_ms, dev}      signed by HK_op, label sig_hub_closing (orch/v2/hub-closing|)
+```
+
+`removal_id` is 16 fresh random bytes (hex) the hub makes when it starts the removal (not the nonce of the admin's proof).
+`binding_seq` is the CURRENT binding of the workspace the notice is for (§9.4). `issued_ms < ends_ms <= issued_ms + 7 days`.
+The hub signs a fresh notice on every `closing_get` while it is closing (so a workspace that connects on day 6 still gets
+one that is valid); the object carries no secret and no reason text. Only `HK_op` signs it (the key store's op signer, kind
+`hub.closing`); the label is prefix-free with every other label (§3).
+
+**Verification by the host** (reference `orch_hub.contract.hub.verify_closing` and `orch.hubclient.closing.verify_closing`,
+both replay the `cases` of `vectors_hub_closing.json`), in this order: (1) envelope and header (§2.2 steps 1-2); (2) the
+signature under the op key of the held card, checked against the CURRENT revoked op certs (`revoked`); (3) the exact field
+set; (4) `hub_id` equals the pinned hub (`other_hub`); (5) `op_cert_id` equals the held card's current op cert
+(`stale_op_cert`); (6) the dev marker (§2.4); (7) `workspace_id` is the host's own (`other_workspace`); (8) `binding_seq`
+equals the host's CURRENT binding's (`stale_binding`: a notice of an older or a not-yet-seen binding, e.g. replayed after a
+rejoin); (9) `issued_ms <= now + 300 s`, `issued_ms < ends_ms` and `ends_ms <= issued_ms + 7 days` (`cert_invalid`);
+(10) `now < ends_ms` and `now` before the held op cert's `expires_ms` (`cert_expired`, reused: there is no separate code for an expired notice or op cert). Any other input is
+`malformed`. The verifier is a pure function: it stores nothing.
+
+**What a host does with a verified notice** (host side, a later PR): it records `closing: {removal_id, issued_ms, ends_ms,
+binding_seq}` in its own hub status (host-local, never a log event), stops serving the hub's company skills, tools and
+secrets while the record stands and `binding_seq` is still the current binding's, shows its own words ("Your company hub is
+being removed", with the owner's normal Leave), and clears the record on leave, unbind or rebind, or when a `closing_get`
+answers `null` over the pinned link (a restored hub). Nothing happens at `ends_ms`.
+
+**Delivery.** Two link ops (§10.2): the hub pushes `closing_notice` (h2w, `{"notice": <hub.closing>}`, reply `{}`) to every
+bound workspace that is connected, and a host pulls `closing_get` (w2h, `{}`, reply `{"closing": <hub.closing> | null}`) on
+every link session. `null` means this hub is not closing. **The replies of `snapshot_get` and `hub_where` do not change**: both
+are exact-key replies and vector-pinned (§7, §10.9). A hub in the closing state answers `snapshot_get`, `org_skills_get`,
+`mcp_servers_get`, `org_secrets_get`, `closing_get`, `hub_where`, `binding_put` (the leave), `audit_get` and `audit_ack`; every
+other op is refused `hub_closing` (§14), and the three `*_get` bundle ops answer a signed EMPTY bundle at `version + 1`,
+never an error.
+
+**The removal proof (console only).** An admin starts the removal with one click: the page computes
+`digest = SHA-256("orch/v2/hub-remove|" || cj(ctx))` from `ctx = {contract: 1, kind: "orch.hub_remove.v1", hub_id, nonce,
+exp_ms, user_id}` itself (never signing a digest the server sends) and the admin's channel key signs
+`"orch/v2/hub-channel-proof|" || digest` (§8.2, factor at least `password+totp`). The nonce is 16 random bytes, single use,
+bound to the user, channel and session, valid 5 minutes. Core never reads this proof. The `digest_cases` of the vectors file
+pin the bytes for the hub and for the browser's `channel.js`.
+
+**Removal state files.** `hub-removal.json`, `remove-order.json`, `remove-order.used` and `remove-result.json` never ride in a
+backup (§17.6), so a restore comes up open, never closing.
+
 ## 10. The host↔hub link
 
 **Purpose.** The only channel between a host and its hub (D68). The host dials out; both sides authenticate; every
@@ -1457,13 +1516,15 @@ unknown `op` is `unknown_op`.
 | `audit_get` | w2h | both | `{"since"}` | `{"records": [{"record": <hub.audit>, "event"?}], "head", "op_certs": [<hub.op_cert>]}` (D4, §10.5; added) |
 | `share_put` | w2h | both | `{"item_id", "sealed": b64u}` | `{}` |
 | `share_revoke` | w2h | both | `{"item_id"}` | `{}` |
-| `space_list` | w2h | both | `{}` | `{"spaces": [<hub.space>]}` (V3-D8, §10.4) |
+| `space_list` | w2h | both | `{}` | `{"spaces": [<hub.space>], "meta": {space_id: {"name", "kind"}}}` (V3-D8, §10.4; `meta` is unsigned display data, a host shows it as "from the hub"; its keys must be listed space ids and every value exactly `{"name", "kind"}`, strings of at most 64 and 32 printable characters, else the reply is refused) |
 | `space_accept` | w2h | both | `{"accept": <space.accept>}` | `{}` (L2P-2) |
 | `space_put` | w2h | both | `{"space_id", "epoch", "item_id", "sealed": b64u}` | `{"seq"}` |
 | `space_revoke` | w2h | both | `{"space_id", "item_id"}` | `{"seq"}` |
 | `space_get` | w2h | both | `{"space_id", "since"}` | `{"space", "wraps", "entries", "next"}` |
 | `space_proposals` | w2h | both | `{}` | `{"proposals": [<hub.space_proposal>]}` (p4, §10.4) |
 | `switch_ticket` | w2h | both | `{"origin", "return_to", "kind": "open"\|"signout"}` | `{"ticket", "url"}` (hub one-app, below) |
+| `closing_notice` | h2w | both | `{"notice": <hub.closing>}`: the hub is being removed (§9.7, #1463). The host verifies it (`verify_closing`) and answers | `{}` or `{"error"}` |
+| `closing_get` | w2h | both | `{}` | `{"closing": <hub.closing> \| null}`: a freshly signed notice for the link's workspace while the hub is closing, else `null` (§9.7). Exact key |
 | `hub_where` | w2h | both | `{}` | `{"addresses": [{"kind", "link"}], "name"}`: where this hub can be reached and its display name (M4, §10.9). Unsigned: a hint under the TLS pin |
 | `switch_redeem` | w2h | both | `{"ticket"}` | `{"user_id", "name", "return_to", "kind"}` (hub one-app) |
 | `rail_get` | w2h | both | `{"origin"}` | `{"hub": {name, origin, network_origin}, "user_id", "workspaces": [{workspace_id, name, role, online, badge, origin, current}]}` (hub one-app) |
@@ -1976,8 +2037,8 @@ Reference `orch_hub.contract.remote` (`client_frame_payload`, `client_msg_check`
 hub's runtime is `orch_hub.remote.endpoint.RemoteEndpoint`; vectors `vectors_remote.json` `client_*` (§15).
 
 **Transport.** One TLS 1.3 connection to the hub's **link address** (`hub_where`, §10.9; the same port the hosts dial,
-reached by SNI through the public passthrough or on the private network), pinned to the hub card's SPKI like a host
-link, with the ALPN protocol **`orch-remote/1`**. A client refuses a connection where that protocol was not selected
+reached by SNI through the public passthrough or on the private network, directly, as a WebSocket or through a
+`CONNECT` proxy, §10.10), pinned to the hub card's SPKI like a host link, with the ALPN protocol **`orch-remote/1`**. A client refuses a connection where that protocol was not selected
 (a hub without a stream router does not select it). A connection that negotiated it never becomes a host link and
 the reverse. The hub keeps remote connections in their own pools (at most 64 at once, 16 of them not yet past
 `hello`): a full pool closes the new connection without a frame. **One stream per connection**: the stream ends when
@@ -2816,9 +2877,10 @@ without touching a card, a binding or a certificate. Bound hosts learn the list 
 **Request** `{}`. **Reply** `{"addresses": [{"kind", "link"}], "name"}`, and nothing else (exact keys):
 
 - `addresses`: 1 to 4 entries, each exactly `kind` and `link`; `kind` is one of `private`, `office`, `server`, `public`
-  (the UI words "Private network (VPN)", "Office network", "On this server", "Public address"); `link` is `host:port` with
-  the grammar of the connect link's endpoint (host a name, an IPv4 address or `[v6]`; port 1..65535 without leading zero;
-  at most 300 characters; no scheme, path, space or user info). No `link` twice. Order is the hub's preference.
+  (the UI words "Private network (VPN)", "Office network", "On this server", "Public address"); `link` is a **link
+  address** of §10.10.1: `host:port` (direct), `ws://host[:port]` or `wss://host[:port]` (R6). No address twice: two
+  entries naming the same scheme, host (compared in lower case) and port are `malformed`, so `wss://h` and `wss://h:443`
+  are one address, while `h:443` and `wss://h` are two (different transports). Order is the hub's preference.
 - `name`: the display name, 1 to 60 code points **as sent**; the receiver removes every character of the Unicode
   categories `Cc`, `Cf` (so bidi marks and embeddings, zero-width characters), `Cs`, `Co`, `Cn`, `Zl` and `Zp`, trims outer white space and
   refuses the answer (`malformed`) if nothing is left. It is shown as the hub's own words, never inside workspace-owned UI.
@@ -2828,7 +2890,177 @@ conditions 1-4 of the M4 design check): a host stores an address only after a TL
 against the pin it already holds, keeps the last good address until a replacement passed, and never takes an address from
 a link-fetched card (the card is fetched over plain HTTP and proves nothing about where the hub is). Reference
 `orch_hub.contract.where.check_hub_where` (hub) and `orch.hubclient.where.check_hub_where` (core, written from this text);
-both replay the `hub_where_*` cases of `vectors_hub_backup.json` (§15) and must agree with them.
+both replay the `hub_where_*` cases of `vectors_hub_backup.json` and the `where_*` cases of `vectors_link_ws.json` (§15)
+and must agree with them. The answer never carries network settings: a `proxy`, `transport` or any other extra key is
+`malformed` like every extra key (§10.10.6).
+
+### 10.10 Link transports (R6 #1594; spec `orch-v2-hub-remote.md` §8, D92)
+
+**Purpose.** Let a host (and the R5 remote client, §10.2d) reach its hub from networks that allow only web traffic: a
+WebSocket on 443 and an HTTP `CONNECT` proxy, besides the direct TLS of §10.1. **The transport only decides where the
+bytes of the link's own TLS go.** The link's TLS 1.3, the card SPKI pin, the R1 exporter binding of `link_auth` and of
+every message, the inner ALPN (none, `orch-link-streams/1`, `orch-remote/1`) and everything above it are unchanged on
+every transport. A front that ends the WebSocket (or its outer TLS) sees inner TLS records only; it cannot reuse a link's
+authentication anywhere else (the exporter differs per TLS connection).
+
+| transport | wire, outer → inner | address form |
+|---|---|---|
+| direct | TCP → link TLS 1.3 | `host:port` |
+| WebSocket | TCP → [outer TLS, `wss` only] → HTTP/1.1 upgrade → binary frames → link TLS 1.3 | `ws://host[:port]`, `wss://host[:port]` |
+| CONNECT | TCP to the proxy → [TLS to the proxy, `https://` proxy only] → `CONNECT host:port` → either row above | any form; the proxy is host configuration, never part of an address |
+
+#### 10.10.1 Link addresses
+
+```
+address   = direct / ws
+direct    = host ":" port
+ws        = ( "ws" / "wss" ) "://" host [ ":" port ]      ; default port 80 / 443
+host      = name / ipv4 / "[" ipv6 "]"
+name      = label *( "." label )                           ; at most 253 characters
+label     = 1*63( ALPHA / DIGIT / "-" ), not starting or ending with "-"
+ipv4      = canonical dotted quad (four decimal parts 0..255, no leading zero)
+ipv6      = an IPv6 address (RFC 4291 text form, no zone id)
+port      = "1".."65535" without a leading zero
+```
+
+At most 300 characters, ASCII only. The scheme is lower case. **Refused (`malformed`), never repaired:** user info
+(`u@`, `u:p@`, a bare `@`), any path (also a lone `/`; the WebSocket path is fixed, §10.10.3), query, fragment,
+percent-escapes, white space or control characters, any other scheme (`http`, `https`, `tcp`, `tls`, `wss+unix`, upper
+case), a direct address without a port, port 0, over 65535 or with a leading zero, an unbracketed or zoned IPv6, a
+last label that starts with a digit when the host is not a whole canonical IPv4 address (`1.2.3`, `127.1`, `010.0.0.1`,
+`0x7f.0.0.1`, `169.254.169.0xfe`, `0x7f000001`, `2130706433`), an empty label, a label over 63 or a name over 253 characters, and an internationalised name in Unicode
+(only its `xn--` form is accepted). Two addresses are the same when scheme, lower-case host and port are (so `wss://h`
+equals `wss://h:443`, and `h:443` is a different address from `wss://h`).
+
+The grammar is used by `hub_where.link` (§10.9) and by the connect link's endpoint (`local` or an address; hub
+`docs/connect-link.md`). A host stores an address of either form as text (`HubState.addr` / `addrs`, the R5 client's
+`hub.json` `link`) and only after the pinned handshake **at that address, over that transport** passed (§10.9). Before
+dialling, the host resolves the name once and applies the same address checks as for direct (`ip_allowed`, metadata and
+loopback rules); with a proxy set, the proxy resolves it (§10.10.5).
+
+**Server name.** On the link's TLS the client sends SNI = the address's name in lower case, or no SNI when the host is an
+IP literal, on every transport, so a passthrough can route by name. The hub ignores SNI; the pin, never the name, is
+the trust.
+
+#### 10.10.2 No downgrade
+
+- Every link byte leaves the host inside the pinned TLS 1.3 handshake of §10.1: no plaintext, no unpinned TLS, never
+  "the outer `wss` TLS is enough". An outer `wss` certificate is checked with the system trust store and the host name;
+  a failure fails that address (a wrong front is a broken front), it is never retried as `ws://`. `ws://` is used only
+  when the address says so.
+- **A TLS-inspecting proxy or front** makes the inner handshake show a foreign SPKI: the link stays down. No fallback:
+  not to another transport for the same address, not around the proxy, not to an unpinned connection. The host shows a
+  plain message (something on this network opens encrypted connections; ask the IT team to let the hub's name through
+  without inspection) under the host code `hub.link_inspected` when the mismatch came through a proxy or a WebSocket
+  (direct keeps today's pin-mismatch wording); the next try waits at least 5 minutes.
+- Order is unchanged: the current address first, then the stored ones in order; "unreachable" and a pin mismatch move on
+  to the next address (each pinned), a hub refusal never does. There is no transport setting: the transport is part of
+  each address.
+
+#### 10.10.3 The WebSocket upgrade
+
+The client sends exactly (one header per line, CRLF, in this order, nothing else):
+
+```
+GET /orch/link/1 HTTP/1.1
+Host: <host_header>
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Key: <base64 of 16 fresh random bytes>
+Sec-WebSocket-Version: 13
+Sec-WebSocket-Protocol: orch-link.1
+```
+
+`host_header` is the host as written in the address (`[v6]` bracketed), with `:port` only when the port is not the
+scheme's default. No `Origin`, `Cookie`, `Authorization`, user-agent detail or `Sec-WebSocket-Extensions`. One
+subprotocol `orch-link.1` for every role (the role is the inner ALPN).
+
+**The hub's check of a request** (head ≤ 8 KiB including the final CRLF CRLF, read within 5 s), in this order, each
+refusal answered with `HTTP/1.1 <status> <text>`, `Content-Length: 0`, `Connection: close` (426 adds
+`Sec-WebSocket-Version: 13`) and the socket closed:
+
+| # | condition | status |
+|---|---|---|
+| 1 | head over 8 KiB; not ASCII; does not end in CRLF CRLF | 400 |
+| 2 | request line other than `GET /orch/link/1 HTTP/x` (other method or path, a query, a trailing `/`, absolute form) | 404 |
+| 3 | version other than `HTTP/1.1` | 400 |
+| 4 | an `Origin` or `Sec-WebSocket-Origin` header, any value (also empty or `null`) | 403 |
+| 5 | a line that is not `token: value` (bare LF, folded line, space before the colon); a duplicate `Host`, `Upgrade`, `Connection`, `Sec-WebSocket-*`, `Content-Length` or `Transfer-Encoding` | 400 |
+| 6 | no `Host` | 400 |
+| 7 | `Upgrade` not `websocket` (any case), or `Connection` without the token `upgrade` | 400 |
+| 8 | `Sec-WebSocket-Version` not `13` (or missing) | 426 |
+| 9 | `Sec-WebSocket-Key` not the canonical base64 of exactly 16 bytes | 400 |
+| 10 | any `Sec-WebSocket-Extensions` | 400 |
+| 11 | `Sec-WebSocket-Protocol` not exactly `orch-link.1` (missing, other, a list) | 400 |
+| 12 | `Transfer-Encoding`, or a `Content-Length` other than `0` | 400 |
+
+Every other header is ignored and never used: `X-Forwarded-For`, `X-Real-IP`, `Forwarded`, cookies. The answer is
+exactly `HTTP/1.1 101 Switching Protocols`, `Upgrade: websocket`, `Connection: Upgrade`, `Sec-WebSocket-Accept:
+<base64(SHA-1(key || "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))>`, `Sec-WebSocket-Protocol: orch-link.1`.
+
+**The client's check of the answer** (head ≤ 8 KiB within the dial deadline; bytes after the head are the first
+frames): not well formed or not `HTTP/1.1` → fails; a **3xx is never followed** (an address is not redirected by its
+answer); any status but 101 fails; `Upgrade`/`Connection` wrong, `Sec-WebSocket-Accept` missing or wrong, any
+`Sec-WebSocket-Extensions`, or `Sec-WebSocket-Protocol` not exactly `orch-link.1` fails. A failed upgrade is
+"unreachable" for that address.
+
+#### 10.10.4 WebSocket frames
+
+RFC 6455 framing, this subset:
+
+- **Data:** opcode `0x2` (binary) only. The payloads are one byte stream into the link's TLS; frame boundaries carry no
+  meaning. A sender writes FIN=1 frames of at most 64 KiB; a receiver accepts continuation frames (fronts may
+  re-fragment): a continuation with no open message, or a binary frame while one is open, is refused.
+- **Masking:** every client frame is masked with a fresh random 4-byte key; no server frame is masked. A frame the other
+  way round is refused.
+- **Length:** the shortest form (7, 16 or 64 bits) is required; the 64-bit form has its top bit clear. A payload over
+  **256 KiB** is refused from the header alone, before any payload byte is read.
+- **Never:** text frames (`0x1`), unknown opcodes, RSV bits (RSV1 is per-message compression: no extension is ever
+  negotiated, so `permessage-deflate` cannot be on; TLS records do not compress and compression adds size bombs and
+  CRIME-style leaks).
+- **Control frames:** FIN=1 and payload ≤ 125. A ping is answered with a pong carrying the same payload; a pong is only
+  liveness. A ping or pong never yields link bytes (a reader waiting for link data does not wake for it). A close
+  payload is empty or a 2-byte code (1000-1003, 1007-1014, 3000-4999) and a UTF-8 reason.
+- **Refusal:** close 1002 (protocol: RSV, unknown opcode, mask, control frame, length form, continuation, close code),
+  1003 (text), 1007 (close reason not UTF-8), 1009 (over 256 KiB); then the link is down.
+- **Liveness:** the client pings after 25 s without sending anything (fronts cut idle WebSockets at about 60 s); either
+  side closes after 75 s without receiving a byte. This is outer liveness only; the link's own keepalive is unchanged.
+- **Close:** send close 1000 and close the socket; wait at most 1 s for the peer's close. A received close is answered
+  with close 1000; bytes after it are ignored.
+
+#### 10.10.5 HTTP CONNECT
+
+A proxy is **host configuration only**: one per install (`<state>/hosts/hub-net.json`: `proxy` null, `http://h:p` or
+`https://h:p`, `proxy_user`; the password in its own 0600 file, never in JSON, logs, status, the link, an event or the
+hub), set only by the workspace owner. The host does not read `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`, PAC, WPAD or the
+OS proxy settings (the setup may offer to copy the environment's proxy once, on the owner's click). With a proxy set,
+every non-loopback link dial goes `CONNECT host:port HTTP/1.1` with the address's host as text (not resolved locally),
+then the address's own transport inside the tunnel; loopback never goes through the proxy, and the proxy path never
+falls back to a direct dial. Authentication: none or Basic (`Proxy-Authorization` on the `CONNECT` only, never inside the
+tunnel); NTLM/Negotiate are not supported (follow-up). Host codes: 407 → `hub.proxy_auth`, another status or a bad head
+(≤ 8 KiB) → `hub.proxy_refused`, proxy unreachable → `hub.proxy_unreachable`.
+
+#### 10.10.6 Hints, not trust; the hub never sends network settings
+
+Card and `hub_where` addresses are hints: a wrong or hostile one costs one failed pinned handshake, nothing more. The
+host never takes a URL path, header or proxy from the hub: the only request it sends to an address is the fixed
+upgrade of §10.10.3. No link op, `hub_where` field, card field or connect-link part may carry a proxy or a transport
+setting: strict shapes refuse them (`malformed`), and only the owner's route or CLI writes `hub-net.json`.
+
+#### 10.10.7 The hub's WebSocket accept
+
+The hub accepts WebSockets on **its own listener** (`--link-ws-listen IP:PORT`: loopback for a front on the same machine,
+or one private address of the machine, the same bind rules as the link port; no outer TLS on the hub: the front, if any,
+ends it), never by sniffing the link port. That listener serves only `GET /orch/link/1` (§10.10.3): no console, web API
+or page. An accepted socket takes the link port's pool slots **before** its head is read; after the upgrade the link's
+TLS runs as on the link port and the inner ALPN routes it exactly as there (`orch-remote/1` to the remote pools of
+§10.2d, `orch-link-streams/1` to the stream router, none to a plain link). For every WebSocket link `same_computer` is
+**false** and the peer address is **empty** (a front on loopback must not make a remote workspace look local, and no
+forwarding header is ever believed). The hub may list a public `wss://` address in `hub_where` (admin configuration).
+
+Reference `orch_hub.contract.linkws` (address grammar, frame codec, `Receiver`, upgrade request and answer) and
+`orch_hub.contract.where`; core `orch.hubclient.linkaddr` and `orch.hubclient.tlslink.wsframe`, written from this text.
+Both replay `vectors_link_ws.json` (§15).
 
 ### 10.11 The public webhook inbox: `hook_put`, `hook_revoke`, `hook_pull`, `hook_ack` (orch-core #1285, follow-ups #714)
 
@@ -3242,7 +3474,7 @@ group apps (and only those); that is said in the release review text and in §13
 
 | Verifier | Verifies | Holds |
 |---|---|---|
-| Workspace host | card (pinned root), op revocations, snapshots, custodial events, h2w link messages | pin of `HK_root`, newest card, revoked op certs, newest snapshot (and all, in the ledger), alias map |
+| Workspace host | card (pinned root), op revocations, snapshots, `hub.closing` notices (§9.7), custodial events, h2w link messages | pin of `HK_root`, newest card, revoked op certs, newest snapshot (and all, in the ledger), alias map |
 | orch-publish | bindings, unbounds, hub cards (by binding), forwarded requests, owner approvals | workspace cards (v2), binding store, hub cards, nonces |
 | orch-relay (phase 4) | hub cards, bindings, hub requests (§10.8), channel requests and their certificates (§10.8.4) | hub accounts by card, op revocations, hub and channel request nonces |
 | orch hub | the v2 card and binding at join (§9.5), link auth, w2h link messages, bindings it forwards, channel registrations (§6.3), actions (§8.5), every `log_sync` line (§10.7), channel proofs before it signs | its keys, users, channels, snapshots, audit, the `workspace_id → (owner, WSK)` pins, the sealed views |
@@ -3314,7 +3546,9 @@ v2 codes keep their meaning (v2 §14). New in H0:
 | `unknown_op`, `wrong_mode` | link | §10 |
 | `wrong_backup_key` | hub restore (local) | §17.5: the key derived from the typed words is not the backup header's `bk_pub` |
 | `backup_invalid` | hub restore (local) | §17: every other reason a backup file is refused (container, envelope, signature, MAC, fields, file list, seal, tar entries, hashes, sequence overflow); the `reason` (§17.9) is for the admin's log, never an oracle on the wire |
-| `hub_retired` | link reply (M4 S8) | the hub is being removed: an unsigned notice, shown on the host as a banner with the break-glass leave; the host never unbinds, leaves or deletes anything because of it |
+| `hub_closing` | link reply; hub web API (409) (#1463) | §9.7: the hub is being removed and this op or write is not on its closing allow list. Nothing was changed |
+| `stale_binding` (extended) | `hub.closing` | §9.7 step 8: the notice's `binding_seq` is not the host's current binding's. `cert_expired` and `cert_invalid` are reused for the notice's time rules (steps 9 and 10) |
+| `hub_retired` | (replaced, M4 S8) | no longer sent: the unsigned banner notice is replaced by the signed `hub.closing` (§9.7) and the refusal `hub_closing` |
 | `bad_wrap` | `wk_seal` reply | the wrap does not open under `HXK`, is not bound to this `hub_id`, this workspace and the stated epoch, or is another wrap for an epoch already sealed (§10.2a) |
 | `bad_epoch` | `wk_seal` reply | v2 code reused: the epoch is lower than the newest one held for the live binding (§10.2a) |
 | `auth_failed` | link open | §10.1: every failure before the link is authenticated (unknown workspace, key mismatch, bad signature) returns this one code, so an unauthenticated peer learns nothing; the reason stays in the hub's log |
@@ -3424,6 +3658,20 @@ must equal `page_ticket_with_proj` byte for byte) and the hub runs `proj_build`;
 `roster_v`). The hub also runs `hub_join`. #1198 C8 (§5, §9.6): orch-core runs `card_reader`, `hub_reader`, `owner_proof`,
 `owner_proof_recorded`, `joined_payload` and `left_payload`; the hub runs all of them and `owner_proof_join`. Each case carries its `phase`; the L2 cases name their finding in `note`. The cross-repo contract job (V3-D8) runs from phase 2.
 
+`vectors_link_ws.json` (R6 V0, #1594; `make_vectors_link_ws.py`; no keys, every expected value written by hand from
+RFC 6455 §1.3/§5.7, RFC 7692 §7.2.3.1 and the frame layout): `constants` and `cases` with `check` one of `address` (the
+grammar of §10.10.1: scheme, host, port, SNI and `Host` header, or `malformed`), `connect_endpoint`, `hub_where` (the
+`ws(s)://` entries, same-address and proxy-key cases of §10.9), `frame_encode`, `frame_decode` (per `sender`; `incomplete`,
+or `{error: "ws", close, reason}`; a long payload given as `fill` `{byte, n}` and expected as its SHA-256), `frame_stream`
+(chunks into one receiver: stream bytes, answers, close), `accept_key`, `build_request`, `check_request` (the hub's
+check: `{error: "refused", status, reason}`), `build_response`, `build_refusal` and `check_response` (the client's check:
+`{error: "failed", reason}`), and `required` naming the cases an implementation must not lose. The hub replays every case
+against `orch_hub.contract.linkws` / `where` and rebuilds the file byte for byte (`tests/test_link_ws_vectors.py`);
+orch-core replays every case but `check_request`, `build_response` and `build_refusal` (the hub's side of the upgrade)
+against `orch.hubclient.linkaddr`, `where` and `tlslink.wsframe` (`tests/hub/test_link_ws_vectors.py`). Both also feed
+every `frame_stream` case one byte at a time. The runtime transports (R6 T-A client, T-B hub accept) replay the same
+cases against their real paths.
+
 **`vectors_published.json`** (M4, #1357 S0; `make_vectors_published.py`): the sections `slug_cases`, `origin_cases`, `reach_cases`,
 `csp_cases`, `password_record_cases`, `password_verify_cases`, `meta_cases`, `meta_hash_cases`, `commit_cases`, `route_cases`,
 `extend_cases`, `row_cases`, `row_scope_cases`, `approval_cases` (both paths), `narrow_cases` and `pass_cases`, with `required`
@@ -3435,6 +3683,14 @@ and tar) and `cases` with `check` one of `bk_key`, `open_backup`, `tar`, `file_l
 `expect` `{"ok": …}` or `{"error": code, "reason"?}`. The hub replays every case and fails on an unknown check or a missing
 required case; orch-core replays `hub_where`. Expected values are written by hand in the generator, not computed by the code
 under test; the BK / K_auth / seal values are computed there from first principles and compared with the module.
+
+`vectors_hub_closing.json` (#1463, §9.7; `make_vectors_hub_closing.py`; the FAKE keys of `vectors_hub.json`): the held `card`, `now_ms`,
+`cases` (39 signed `hub.closing` notices with `args` = `notice`, `workspace_id`, `binding_seq`, `now_ms`, `dev_mode`,
+`revoked_op_certs` and `expect` `{"ok": true}` or `{"error": code}`: valid, wrong label, wrong key, tampered field, extra
+or missing field, other hub, other workspace, stale or unseen `binding_seq`, stale or revoked op cert, dev at a real
+verifier and the reverse, re-signed envelope headers, issued in the future, 7-day limit, expired, op cert ended) and `digest_cases` (the removal proof digest, console
+side). The hub (`verify_closing`) and orch-core (`orch.hubclient.closing.verify_closing`) replay every one of `cases`;
+the hub and the browser replay `digest_cases`.
 
 `vectors_remote.json` (R0, #1588; `make_vectors_remote.py`; FAKE keys `SHA-256("FAKE orch v2 test vector: remote/" ||
 label)`, X25519 keys as is, P-256 by the §15 map, RFC 6979 signatures): `labels`, `constants`, `keys`, `ids`, the signed
@@ -3585,6 +3841,15 @@ transport in the action).
 | 71 | Client codes (R5) | `error` ∈ `malformed`, `no_session`, `remote.busy`, `unavailable`; `refused` ∈ `malformed`, `not_allowed`, `unavailable`, `remote.busy` and the host's gate codes verbatim (`remote.off`, `remote.device`, `remote.no_code`, `replay`); any other host answer is `unavailable`; unknown, outside the rail, unbound, offline and no stream link are all `not_allowed` | a client learns nothing about workspaces outside its rail; a host cannot push free text to the client |
 | 72 | `rail` on the endpoint (R5) | `{"t": "rail"}` once per connection, after `ready`, before `open`; token re-checked; the answer is the user's console rail rows cut to `workspace_id`, `name` (one line, ≤ 200 UTF-8 bytes, text rule, else `null`) and `online`, sorted, ≤ 100 with `more`; a store failure is `unavailable`; it never reaches a host | lead decision 30 Oct (R5 design §9.3): a `remote` token has no web route; a second web-scope token would work only on the office network |
 | 73 | Client-side order rules (R5) | the client waits for `ready`, checks `hub_id` against its pinned card, refuses every out-of-order or extra hub frame (`close malformed` once a stream is open); hub `data` after the client's own `close` is dropped; a closed connection is `close closed`; receivers parse strictly but do not require canonical key order | vectors `client_seq_*` (reference `ClientConn`, core's own port) |
+| 74 | Link address grammar (R6) | `host:port` or `ws://host[:port]` / `wss://host[:port]` (default 80/443) in `hub_where.link` and the connect-link endpoint; ASCII, ≤ 300; user info, path (even `/`), query, fragment, percent-escapes, other or upper-case schemes refused, never stripped; host rules tightened for every form (labels 1-63, canonical dotted-quad IPv4 only, parsed IPv6 without zone, IDN only as `xn--`); "same address" = scheme, lower-case host, port | spec §8, D92; the WebSocket path is fixed, so an address never steers a request |
+| 75 | WebSocket profile (R6) | `GET /orch/link/1`, subprotocol `orch-link.1` for every role (the role is the inner ALPN); binary frames only; no extension, so never compression (RSV bits refused); client frames masked, server frames not; shortest length form; receive cap 256 KiB per frame decided from the header, send ≤ 64 KiB; continuations accepted, boundaries meaningless; ping after 25 s without sending, close after 75 s without a byte; close 1000, wait ≤ 1 s | design R6 §1; fronts cut idle WebSockets at ~60 s; TLS records do not compress |
+| 76 | Upgrade refusals (R6) | the hub refuses any `Origin` (403, browsers never reach the link; R10 has its own endpoint), any extension (400), another path or method (404), version ≠ 13 (426), a body (400); forwarding headers ignored and never the peer address; the client refuses every answer but 101 with the right accept and `orch-link.1`, and never follows a 3xx | the link is not a web endpoint; a redirect would let an answer steer the dial |
+| 77 | No downgrade (R6) | the link's TLS 1.3 (pin, R1 exporter binding, ALPN) is unchanged and end to end on every transport; outer `wss` TLS is checked (system trust, name) but never replaces the pin and is never retried as `ws://`; an inspecting proxy → link down with host code `hub.link_inspected`, no fallback to another transport, around the proxy or unpinned; next try after ≥ 5 min | spec D92 |
+| 78 | Proxy settings (R6) | host configuration only (`hub-net.json` + a 0600 password file), set by the workspace owner; `HTTPS_PROXY`/`ALL_PROXY`/`NO_PROXY`, PAC, WPAD and OS settings are **not** honoured (the setup may copy the environment's proxy once, on a click); `CONNECT host:port` with the name as text; loopback never proxied; no direct fallback; Basic only, NTLM/Negotiate deferred (follow-up issue); codes `hub.proxy_auth`, `hub.proxy_refused`, `hub.proxy_unreachable` | lead decision 30 Oct (design R6 open points 1 and 3): an env-dependent route differs per start (launchd, systemd, terminal) and cannot be shown in Mission Control |
+| 79 | The hub never sends network settings (R6) | no link op, `hub_where` field, card field or connect-link part carries a proxy or a transport setting (strict shapes refuse them); card and `hub_where` addresses are hints only, probed with the pinned handshake before they are stored | spec §8 "proxy credentials come from the host config, never from the hub" |
+| 80 | The hub's WebSocket accept (R6) | its own listener (`--link-ws-listen`, loopback or one private address), never a sniff of the link port; only `/orch/link/1`; pool slots taken before the head is read; inner ALPN routes as on the link port; `same_computer` false and peer address empty for every WebSocket link | a front on loopback must not make a remote workspace look local (`hub_origin_for`) |
+| 81 | Server name (R6) | the client sends SNI = the address's DNS name in lower case on the link's TLS (none for an IP literal), on every transport; the hub ignores it | lets the public passthrough route by name (spec §4); the pin is the trust |
+| 82 | Private-network transport (R6) | out of R6 (follow-up R6b under #1587); an address reachable over the private network (VPN) is a plain `host:port` and needs nothing new | design R6 §6 |
 
 ## 17. Hub backup (M4, #1462; design `m4-settings-design.md` 4.2-4.3 and the Opus conditions 9-17)
 
@@ -3663,7 +3928,7 @@ sorted neighbour: `keys`, `keys-x`, `keys/a` is refused) and no two paths are eq
 `size` ≤ 200 MiB and the sum ≤ 200 MiB (also the upload limit). `hk_root.key`, `hxk.key` and `meta.json` must be listed.
 The list contains every key file, `meta.json`, `op/<current>/`, `revoked/`, `tls.key`, `hub-settings.json` and a
 consistent copy (SQLite backup API) of every store, and **never**: `setup-token`; `route-queue.db` (and its `-wal`,
-`-shm`, `-journal`); `event-deliver.db` (the event delivery queue; rebuilt, never restored; also with its sidecars); anything under `backups/`, `tmp/`, `logs/`, `state.new/`, `state.old/`; `*.log`, `*.tmp`, `*.lock`,
+`-shm`, `-journal`); `event-deliver.db` (the event delivery queue; rebuilt, never restored; also with its sidecars); `hub-removal.json`, `remove-order.json`, `remove-order.used`, `remove-result.json` (the removal state of §9.7, so a restore never comes back in `closing`); anything under `backups/`, `tmp/`, `logs/`, `state.new/`, `state.old/`; `*.log`, `*.tmp`, `*.lock`,
 `*.pid`. Inside the copied stores these rows are removed first: sessions, pending TOTP enrolments, pairing codes, limiter
 and failure rows, switch tickets, push tokens. The words are never in a backup. (Row removal is the writer's duty, tested
 in M4 S5; the path rules are checked by `file_list` vectors.)

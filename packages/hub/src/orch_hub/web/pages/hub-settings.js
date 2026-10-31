@@ -265,7 +265,7 @@ export function restoredNotice(n, actions) {
     h("div", { class: "row" }, h("button", { type: "button", text: "Got it", onclick: () => actions.dismissRestored?.() })));
 }
 
-const PENDING_WORD = { secret_share: "Company secret shared with a workspace", secret_all: "Company secret shared with all workspaces", skill_offer: "Company skill offered to a workspace", mcp_offer: "Company server offered to a workspace", market_company: "Company add-on markets", addon_request: "An add-on request" };
+const PENDING_WORD = { secret_share: "Company secret shared with a workspace", secret_all: "Company secret shared with all workspaces", skill_all: "Company skill offered to all workspaces", skill_offer: "Company skill offered to a workspace", mcp_all: "Company server offered to all workspaces", mcp_offer: "Company server offered to a workspace", market_company: "Company add-on markets", addon_request: "An add-on request" };
 
 /** What a restore on a new server switched off: each one is Off until an admin turns it on again with one click. */
 function pendingList(items, actions) {
@@ -346,8 +346,9 @@ export function hubSettingsView(data, actions = {}) {
     addressCard(data, actions),
     data.backup ? backupCard(data.backup, actions) : null,
     h("div", { class: "card", "data-card": "sign-in" }, h("h2", { text: "Sign-in" }),
-      (data.sign_in ?? []).map((m) => row(m.label, m.on ? m.note : null, m.on))),
-    data.company_login ? companyCard(data.company_login, actions.company ?? {}) : null);
+      (data.sign_in ?? []).map((m) => row(m.label, m.on ? m.note : null, m.on)),
+      h("p", { class: "small muted", text: "Always on: the password and the code make the key that approves things, so they cannot be turned off." }),
+      data.company_login ? companyCard(data.company_login, actions.company ?? {}, { inside: true }) : null));
 }
 
 // Wait until the restarted hub answers again (it keeps its port), at most about 30 seconds.

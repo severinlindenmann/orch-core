@@ -3,6 +3,7 @@
     orch publish setup   --server ADDRESS --share ADDRESS     a person: where files go (signed)
     orch publish register                                      a person: tell the server this workspace exists
     orch publish prepare REF FILE... [--once [N]] [--days D]   copy artifacts of a ticket aside; nothing leaves
+    (D for prepare: 1, 3, 7 or 30 days; default 7)
     orch publish share   STAGED                                a person: sign, then send; the link shows once
     orch publish send    STAGED                                a person: send a copy that is already signed
     orch publish revoke  SHARE [--yes]                          a person: the link stops working at once (asks first)
@@ -32,6 +33,7 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from orch.ops.human import review_prompt
+from orch.publishclient import approval
 
 __all__ = ["main"]
 
@@ -436,6 +438,9 @@ def _check_shape(a: argparse.Namespace) -> None:
         raise PubError("invalid.input", _USAGE, 2)
     if a.cmd == "setup":
         _check_setup(a)
+    if a.cmd == "prepare" and a.days is not None and a.days not in approval.DAYS:
+        days = ", ".join(str(d) for d in approval.DAYS[:-1]) + f" or {approval.DAYS[-1]}"
+        raise PubError("invalid.input", f"a link works for {days} days: use --days {days}\n" + _USAGE, 2)
     if a.cmd == "extend" and (a.days is None or not 1 <= a.days <= 30):
         raise PubError("invalid.input", "extend needs --days D with D from 1 to 30\n" + _USAGE, 2)
 

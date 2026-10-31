@@ -154,6 +154,116 @@ class TlsConn:
             pass
 
 
+class BioTlsConn(TlsConn):
+    """The link's TLS 1.3 over a message pipe instead of a socket (R6, protocol 10.10): OpenSSL runs on a memory BIO
+    (``SSL.Connection(ctx, None)``) and the TLS records travel as the bytes of a WebSocket (:class:`orch_hub.link.wsaccept.
+    WsPipe`). Everything the socket-mode :class:`TlsConn` offers is here with the same meaning; the card pin, the R1
+    exporter and the ALPN are the inner TLS's, exactly as on the direct port. ``same_computer`` is ALWAYS False: behind
+    a front on this very machine every peer would look local, and the hub's loopback origin must never reach a remote
+    workspace.
+
+    The pipe needs ``read_stream(timeout) -> bytes`` (stream bytes of the frames that arrived within ``timeout``,
+    possibly empty: ping, pong and partial frames carry none; raises ``LinkClosed``), ``write_stream(data, deadline)``
+    and ``close()``. Pump rules (tested, ``tests/test_link_ws.py``):
+
+    1. Pull, never push: a frame is read only when OpenSSL raised WantRead, then ``bio_write``.
+    2. After EVERY SSL call (read, write, handshake, peek) the BIO output is drained and written out (TLS 1.3 sends
+       NewSessionTicket and KeyUpdate from inside a read). Draining and writing hold ``_wlock`` so the records leave
+       in the order OpenSSL produced them.
+    3. SSL calls hold ``_io`` only for the call itself; no socket wait ever happens under ``_io`` (the router writes
+       from other threads). Only one thread reads the pipe at a time (``_rlock``).
+    4. :meth:`wait_readable` is True only for decrypted application bytes (an SSL peek); ping, pong and handshake
+       records alone never wake a reader (else a ping every 25 s would start a ``read_frame`` that times out).
+    """
+
+    def __init__(self, conn: SSL.Connection, pipe, stop: threading.Event | None = None) -> None:
+        super().__init__(conn, None, stop)  # type: ignore[arg-type]  # no socket: the pipe owns it
+        self._pipe = pipe
+        self._wlock = threading.Lock()  # one writer at a time, held across drain + write: record order
+        self._rlock = threading.Lock()  # one reader of the pipe at a time
+
+    def same_computer(self) -> bool:
+        return False
+
+    def _drain(self) -> bytes:
+        out = []
+        while True:
+            try:
+                out.append(self._c.bio_read(65536))
+            except SSL.WantReadError:
+                return b"".join(out)
+
+    def _flush(self, out: bytes, deadline: float) -> None:
+        if out:
+            self._pipe.write_stream(out, deadline)
+
+    def _pull(self, deadline: float) -> None:
+        left = deadline - time.monotonic()
+        if left <= 0:
+            raise LinkTimeout
+        if self._stop is not None and self._stop.is_set():
+            raise LinkClosed("stopping")
+        if not self._rlock.acquire(timeout=min(left, 0.05)):
+            return  # another thread is reading: whatever it pulls lands in the same BIO
+        try:
+            data = self._pipe.read_stream(min(left, 0.2))
+        finally:
+            self._rlock.release()
+        if data:
+            with self._io:
+                self._c.bio_write(data)
+
+    def _run(self, fn, deadline: float):
+        while True:
+            err = None
+            with self._wlock:
+                with self._io:
+                    try:
+                        res = fn()
+                    except SSL.WantReadError:
+                        err = "want"
+                    except SSL.Error, OSError:
+                        err = "fail"
+                    out = self._drain()
+                self._flush(out, deadline)
+            if err is None:
+                return res
+            if err == "fail":
+                raise LinkClosed("tls")
+            self._pull(deadline)
+
+    def wait_readable(self, timeout: float) -> bool:
+        end = time.monotonic() + max(0.0, timeout)
+        while True:
+            with self._wlock:
+                with self._io:
+                    try:
+                        self._c.recv(1, socket.MSG_PEEK)
+                        ready = True
+                    except SSL.WantReadError:
+                        ready = False
+                    except SSL.Error:
+                        ready = True  # EOF or failure: the read reports it
+                    out = self._drain()
+                try:
+                    self._flush(out, time.monotonic() + 5.0)
+                except LinkClosed, LinkTimeout:
+                    return True
+            if ready:
+                return True
+            if time.monotonic() >= end:
+                return False
+            try:
+                self._pull(end)
+            except LinkTimeout:
+                return False
+            except LinkClosed:
+                return True
+
+    def close(self) -> None:
+        self._pipe.close()
+
+
 def _context(method: int) -> SSL.Context:
     ctx = SSL.Context(method)
     ctx.set_min_proto_version(SSL.TLS1_3_VERSION)

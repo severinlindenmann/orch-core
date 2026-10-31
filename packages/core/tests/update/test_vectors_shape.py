@@ -218,7 +218,7 @@ def check_manifest(m: dict) -> None:
     need(ts(m["issued_at"]) < ts(m["expires_at"]))
     text_field(m["changelog"], 4096)
     fs = m["files"]
-    need(isinstance(fs, list) and len(fs) == 3)
+    need(isinstance(fs, list) and 1 <= len(fs) <= 6)
     for f in fs:
         keys(f, {"role", "name", "sha256", "size", "url"})
         need(isinstance(f["name"], str) and bool(FILE_NAME.match(f["name"])))
@@ -226,8 +226,12 @@ def check_manifest(m: dict) -> None:
         uint(f["size"])
         need(isinstance(f["url"], str) and f["url"].startswith("https://") and len(f["url"]) <= 512)
         need(f["url"].isprintable() and " " not in f["url"])
-    need(sorted(f["role"] for f in fs) == ["constraints", "core", "dashboard"])
-    need(len({f["name"] for f in fs}) == 3)
+    roles = [f["role"] for f in fs]
+    known = ("core", "dashboard", "hub", "relay", "publish", "constraints")
+    need(all(isinstance(r, str) and r in known for r in roles))
+    need(len(set(roles)) == len(roles))
+    need("core" in roles and "constraints" in roles)
+    need(len({f["name"].lower() for f in fs}) == len(fs))
 
 
 def check_catalog(m: dict) -> None:

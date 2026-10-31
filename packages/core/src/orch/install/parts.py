@@ -17,6 +17,8 @@ __all__ = [
     "ADDRESS_ALL",
     "ADDRESS_LOOPBACK",
     "DEFAULT_PORTS",
+    "DEFAULT_PORT_BASE",
+    "port_block",
     "PARTS",
     "REPO_URL",
     "Part",
@@ -34,6 +36,9 @@ ADDRESS_ALL = "0.0.0.0"  # every interface: parts on a network address listen he
 WORKSPACE_FIRST_PORT = 8151
 DEFAULT_PORTS = {"hub": 8100, "relay": 8101, "publish": 8102}
 HUB_LINK_PORT = 8105  # the hub link (workspaces dial it); the console is the part's own port
+DEFAULT_PORT_BASE = 8100
+#: offsets inside one port block (--port-base N): hub N, relay N+1, publish N+2, hub link N+5
+PORT_OFFSETS = {"hub": 0, "relay": 1, "publish": 2, "link": 5}
 
 
 class InstallError(Exception):
@@ -66,6 +71,14 @@ PARTS = {
     "relay": Part("relay", "orch-relay", 8101, "relay (phone push and mailboxes)"),
     "publish": Part("publish", "orch-publish", 8102, "publish (shares)"),
 }
+
+
+def port_block(base: int = DEFAULT_PORT_BASE) -> dict[str, int]:
+    """``{"hub", "relay", "publish", "link"}`` for ``--port-base base``; the whole block must fit 1024-65535."""
+    top = base + max(PORT_OFFSETS.values())
+    if base < 1024 or top > 65535:
+        raise InstallError(f"--port-base {base}: the block {base}-{top} must fit in 1024 to 65535")
+    return {k: base + off for k, off in PORT_OFFSETS.items()}
 
 
 def valid_port(port: int) -> int:
@@ -136,10 +149,6 @@ def _run(argv: list[str]) -> str:
         return ""
 
 
-def hub_link_port() -> int:
-    return HUB_LINK_PORT
-
-
 def command_for(
     part: str,
     *,
@@ -150,18 +159,24 @@ def command_for(
     publish_url: str | None,
     relay_url: str | None,
     dev: bool,
+    link_address: str | None = None,
+    public_origin: str | None = None,
+    link_port: int = HUB_LINK_PORT,
+    publish_port: int = DEFAULT_PORTS["publish"],
+    behind_edge: bool = False,
 ) -> list[str]:
     """The ``serve`` command line of a part (argv; environment is :func:`env_for`)."""
     bind = address if address else ADDRESS_LOOPBACK
     if part == "hub":
         loop = bind in (ADDRESS_LOOPBACK, "localhost")
-        # a network address is the advertised one; the hub listens on every interface (--bind-all) because a computer
-        # cannot dial its own overlay address
-        link = (
-            ["--listen", f"127.0.0.1:{HUB_LINK_PORT}"]
-            if loop
-            else ["--link-listen", f"{bind}:{HUB_LINK_PORT}", "--bind-all"]
-        )
+        if link_address:  # server role: the console stays on loopback behind Caddy, the link binds the VPN address only
+            link = ["--link-listen", f"{link_address}:{link_port}"]
+        elif loop:
+            link = ["--listen", f"127.0.0.1:{link_port}"]
+        else:
+            # a network address is the advertised one; the hub listens on every interface (--bind-all) because a
+            # computer cannot dial its own overlay address
+            link = ["--link-listen", f"{bind}:{link_port}", "--bind-all"]
         cmd = [
             str(binary),
             "serve",
@@ -171,10 +186,12 @@ def command_for(
             "--web-listen",
             f"{bind}:{port}",
             "--publish-url",
-            publish_url or f"http://127.0.0.1:{DEFAULT_PORTS['publish']}",
+            publish_url or f"http://127.0.0.1:{publish_port}",
         ]
         if relay_url:
             cmd += ["--relay-url", relay_url]
+        if behind_edge:  # Caddy on this computer is the edge: it states the client (XFF), the origin is the https name
+            cmd += ["--behind-edge", "--trusted-peer", ADDRESS_LOOPBACK]
         if dev and not loop:  # one user on one dev machine: the hub allows its link on a network address
             cmd += ["--dev-shared-machine"]
         return cmd
@@ -189,7 +206,7 @@ def command_for(
         "--listen",
         f"{listen}:{port}",
         "--public-origin",
-        f"http://{bind}:{port}",
+        public_origin or f"http://{bind}:{port}",
     ]
     return cmd + (["--dev-mode"] if dev else [])
 
@@ -200,5 +217,10 @@ def dashboard_command(entry: list[str], *, address: str, port: int) -> list[str]
     return cmd if address in (ADDRESS_LOOPBACK, "localhost") else [*cmd, "--listen", address]
 
 
-def env_for(part: str, data: Path) -> dict[str, str]:
-    return {"ORCH_RELAY_DATA": str(data)} if part == "relay" else {}
+def env_for(part: str, data: Path, *, behind_edge: bool = False) -> dict[str, str]:
+    if part != "relay":
+        return {}
+    env = {"ORCH_RELAY_DATA": str(data)}
+    if behind_edge:  # the relay trusts X-Forwarded-For only from the Caddy on this computer
+        env["ORCH_RELAY_TRUSTED_PROXY"] = ADDRESS_LOOPBACK
+    return env

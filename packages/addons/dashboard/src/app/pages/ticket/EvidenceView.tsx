@@ -13,7 +13,8 @@ import { cn } from '@/lib/utils'
 import { visible } from '@/components/sign/visible'
 import { commitCover } from '@/api/gates'
 import { agentName, fmtBytes, Pill, UNKNOWN_AGENT } from './shared'
-import { Viewer } from './Artifacts'
+import { MissingDelivery, Viewer } from './Artifacts'
+import { cardTitle, isAgentCheck } from './EvidenceThumb'
 
 /** The artifacts a criterion lists as its proof (tasks are receipts, shown by the task rows). */
 export function proofArtifacts(ticket: TicketDocument, ac: AcceptanceStatus): Artifact[] {
@@ -83,12 +84,12 @@ export function EvidenceItem({ ticket, artifact, acId, compact = false, dialog =
   return (
     <li data-testid="evidence-item" data-artifact={artifact.name} className="rounded-md border border-border bg-surface p-2">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px]">
-        <span className="min-w-0 truncate font-mono text-[12px] font-medium" title={visible(artifact.name)}>
-          {visible(artifact.name)}
+        <span className="min-w-0 truncate font-mono text-[12px] font-medium" title={visible(cardTitle(artifact))}>
+          {visible(cardTitle(artifact))}
         </span>
         <Pill tone="neutral">proves {acId}</Pill>
-        {!!artifact.bytes && <span className="text-text-faint">{fmtBytes(artifact.bytes)}</span>}
-        <Button type="button" variant="ghost" size="sm" className="ml-auto h-6 px-2 text-[12px]" aria-expanded={open} aria-controls={body} aria-label={`${open ? 'Hide' : 'Show'} preview of ${visible(artifact.name)}`} onClick={() => {
+        {!isAgentCheck(artifact) && !!artifact.bytes && <span className="text-text-faint">{fmtBytes(artifact.bytes)}</span>}
+        <Button type="button" variant="ghost" size="sm" className="ml-auto h-6 px-2 text-[12px]" aria-expanded={open} aria-controls={body} aria-label={`${open ? 'Hide' : 'Show'} preview of ${visible(cardTitle(artifact))}`} onClick={() => {
             if (onPreview) return onPreview({ artifact, acId })
             setClicked(true)
             setOpen(!open)
@@ -123,12 +124,12 @@ export function CriterionEvidence({ ticket, ac }: { ticket: TicketDocument; ac: 
 export function VerdictPreview({ ticket, artifact, onBack }: { ticket: TicketDocument; artifact: Artifact; onBack: () => void }) {
   const agentHtml = useAgentHtml(ticket.key)
   return (
-    <section aria-label={`Preview of ${visible(artifact.name)}`} className="min-w-0 space-y-3">
+    <section aria-label={`Preview of ${visible(cardTitle(artifact))}`} className="min-w-0 space-y-3">
       <Button type="button" variant="ghost" size="sm" className="-ml-2 h-7 gap-1 px-2 text-[13px]" onClick={onBack}>
         <ChevronLeft aria-hidden />
         Back to verdict
       </Button>
-      <p className="break-all font-mono text-[13px] font-medium">{visible(artifact.name)}</p>
+      <p className="break-all font-mono text-[13px] font-medium">{visible(cardTitle(artifact))}</p>
       <div className="min-w-0 max-w-full overflow-x-hidden"><Viewer key={`${artifact.name}:${artifact.sha256}`} a={artifact} agentHtml={agentHtml} ticket={ticket.key} /></div>
     </section>
   )
@@ -142,10 +143,10 @@ export function VerdictPreview({ ticket, artifact, onBack }: { ticket: TicketDoc
 export function VerdictEvidence({ ticket, dialog = true, onPreview, name = () => 'a person' }: { ticket: TicketDocument; /** false: Today's row, not a dialog. */ dialog?: boolean; onPreview?: (p: { artifact: Artifact; acId: string }) => void; name?: (id: string) => string }) {
   const withProof = ticket.acceptance_state.map((ac) => ({ ac, items: proofArtifacts(ticket, ac) }))
   // A criterion proved by a finished check (a task receipt) has evidence too, just no file: it is not "missing".
-  const byCheck = withProof.filter((x) => x.items.length === 0 && x.ac.evidence.some((ev) => ev.kind === 'task'))
+  const byCheck = withProof.filter((x) => x.items.every(isAgentCheck) && (x.items.length > 0 || x.ac.evidence.some((ev) => ev.kind === 'task')))
   const without = withProof.filter((x) => x.items.length === 0 && x.ac.proof !== 'accepted' && !byCheck.includes(x))
   const checked = withProof.filter((x) => isChecked(x.ac)).length
-  const total = withProof.reduce((n, x) => n + x.items.length, 0)
+  const total = withProof.reduce((n, x) => n + x.items.filter((a) => !isAgentCheck(a)).length, 0)
   const row = (a: Artifact, acId: string, grouped: boolean) => <EvidenceItem key={a.name + acId} ticket={ticket} artifact={a} acId={acId} compact dialog={dialog} defaultOpen={false} grouped={grouped} onPreview={onPreview} />
   // One group per identity: agents by name, people by id, orch once. Criterion headings sit above their files in the group.
   const groups = new Map<string, { id: string; kind: 'agent' | 'host' | 'person'; who: string; rows: { ac: AcceptanceStatus; items: Artifact[] }[] }>()
@@ -206,7 +207,7 @@ export function VerdictEvidence({ ticket, dialog = true, onPreview, name = () =>
         <ul data-testid="checked-by-agent" className="space-y-1 text-[12px] text-text-muted">
           {byCheck.map((x) => (
             <li key={x.ac.id}>
-              <span className="text-text">{visible(x.ac.text)}</span> · Checked by the agent, no file attached
+              <span className="text-text">{visible(x.ac.text)}</span> · The agent&apos;s check · <MissingDelivery ticket={ticket} />
             </li>
           ))}
         </ul>

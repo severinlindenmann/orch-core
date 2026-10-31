@@ -1,3 +1,4 @@
+import type { WorkFolder } from './workdir'
 import { activityQuery, type ActivityPage, type ActivityParams } from './activity'
 import { uploadFor, type ArtifactImage, type PastedRef } from './pasteImage'
 import type { Transport } from './transport'
@@ -108,6 +109,7 @@ export function createApi(transport: Transport) {
 
   return {
     listTickets,
+    getWorkFolder: (ws: string, ticket: string) => call<WorkFolder>('GET', `/api/w/${encodeURIComponent(ws)}/tickets/${encodeURIComponent(ticket)}/workdir`),
     getMe: (_ws?: string) => call<Me>('GET', '/api/me'),
     listPeople: (ws: string) => call<KnownPerson[]>('GET', `/api/workspaces/${ws}/people`),
     getWorkspaces: () => call<Workspace[]>('GET', '/api/workspaces'),

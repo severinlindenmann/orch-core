@@ -9,7 +9,7 @@ import { usesScripts } from '@/addon-ui/frameSanitize'
 import { ScriptedPreview } from '@/addon-ui/ScriptedPreview'
 import { frameNode } from '@/addon-ui/nodes'
 import { Button, buttonVariants } from '@/components/ui/button'
-import type { Artifact } from '@/api/types'
+import type { Artifact, TicketDocument } from '@/api/types'
 import { AddonBadge } from '@/addon-ui'
 import { useSlot } from '@/addon-ui/slots'
 import { CodeBlock } from '@/addon-ui/CodeBlock'
@@ -21,6 +21,7 @@ import { cn } from '@/lib/utils'
 import { agentName, Ago, fmtBytes, Mono, Pill, shortHash, type Jump, type TabProps } from './shared'
 import { addonHairline, addonTile } from '@/addon-ui/addonClasses'
 import { queries } from '@/api/queries'
+import { workdirQueries, sizeText } from '@/api/workdir'
 import { artifactTextQuery, sameDigest, capText, looksBinary, TEXT_PREVIEW_BYTES } from '@/api/artifactText'
 import { prose, visible } from '@/components/sign/visible'
 import { verifiedMedia } from '@/api/evidenceMedia'
@@ -31,7 +32,7 @@ import { atLeast } from '@/api/permissions'
 import { unshareable } from '@/api/shares'
 import { ShareFlow } from '../shares/ShareFlow'
 import { TurnOnPublish } from '../shares/TurnOnPublish'
-import { cardTitle, checkOf, EvidenceThumb, TypeBadge } from './EvidenceThumb'
+import { cardTitle, checkOf, isAgentCheck } from './EvidenceThumb'
 
 export const KIND_ICON: Record<Artifact['kind'], typeof FileText> = {
   screenshot: ImageIcon,
@@ -619,28 +620,46 @@ export function ArtifactAction({ a, onPreview, current = false, addonPage }: { a
   )
 }
 
+/** Deliberately small: a standalone ASCII filename, never a path, URL or arbitrary prose. */
+function requestedFile(ticket: TicketDocument): string | undefined {
+  const texts = [...(ticket.tasks_state ?? []), ...(ticket.acceptance_state ?? [])].map((item) => item.text ?? '')
+  return texts.join(' ').match(/(?:^|[\s`"'(])([A-Za-z0-9_-]{1,80}\.[A-Za-z]{1,10})(?=$|[\s`"'),.!?])/)?.[1]
+}
+
+export function missingDelivery(ticket: TicketDocument): string {
+  const name = requestedFile(ticket)
+  return name ? `${name} was not delivered` : 'No file was delivered yet.'
+}
+
+/** Folder metadata is evidence of a working file, never a content preview. */
+export function MissingDelivery({ ticket }: { ticket: TicketDocument }) {
+  const workspaces = useQuery(queries.workspaces())
+  const home = workspaceOfTicket(ticket.key, workspaces.data ?? [])
+  const needsFolder = !ticket.links?.repos?.length && !ticket.artifacts.some((a) => !isAgentCheck(a))
+  const enabled = !!home && needsFolder
+  const folder = useQuery({ ...workdirQueries.ofTicket(home?.id ?? '', ticket.key), enabled })
+  const items = enabled && !folder.isError && folder.data?.exists && !folder.data.codebase ? folder.data.items ?? [] : []
+  const name = requestedFile(ticket)
+  const found = name ? items.find((item) => item.name === name) : items[0]
+  // While checking, do not briefly claim that a file in the folder was not delivered.
+  if (needsFolder && (workspaces.isPending || (enabled && folder.isPending))) return <span>Checking the ticket's work folder…</span>
+  if (!found) return <span>{missingDelivery(ticket)}</span>
+  const listed = [found, ...items.filter((item) => item !== found)].slice(0, 5)
+  return <>
+    <span>{visible(found.name)} is in the ticket's work folder, but the agent did not add it as a result.</span>
+    <ul aria-label="Files in the ticket's work folder" className="mt-2 space-y-1 text-[12px] text-text-muted">
+      {listed.map((item) => <li key={item.name} className="break-all">{visible(item.name)} · {sizeText(item.bytes)}</li>)}
+    </ul>
+  </>
+}
+
 function Meta({ a, jump }: { a: Artifact; jump: (j: Jump) => void }) {
-  return (
-    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-text-faint">
-      {a.ac && (
-        <button type="button" onClick={() => jump({ tab: 'acceptance', id: `ac-${a.ac}` })} className={cn(LINK, 'font-mono')}>
-          Proves {a.ac}
-        </button>
-      )}
-      {a.task && (
-        <button type="button" onClick={() => jump({ tab: 'acceptance', id: `task-${a.task}` })} className={cn(LINK, 'font-mono')}>
-          From {a.task}
-        </button>
-      )}
-      {!!a.bytes && <span>{fmtBytes(a.bytes)}</span>}
-      <details className="text-[11px]">
-        <summary className="cursor-pointer">Details</summary>
-        <p className="mt-0.5">
-          {a.name} · sha256 <Mono className="text-[11px] text-text-faint">{shortHash(a.sha256, 8)}</Mono>
-        </p>
-      </details>
-    </div>
-  )
+  return <>
+    {a.ac && <button type="button" onClick={() => jump({ tab: 'acceptance', id: `ac-${a.ac}` })} className={LINK}>Proves {a.ac}</button>}
+    {a.task && !isAgentCheck(a) && <button type="button" onClick={() => jump({ tab: 'acceptance', id: `task-${a.task}` })} className={LINK}>From {a.task}</button>}
+    {a.bytes != null && <p>{fmtBytes(a.bytes)}</p>}
+    <p>sha256 <Mono>{shortHash(a.sha256, 8)}</Mono></p>
+  </>
 }
 
 export function Artifacts({ ticket, viewer, jump, focus }: TabProps & { focus?: string }) {
@@ -670,59 +689,47 @@ export function Artifacts({ ticket, viewer, jump, focus }: TabProps & { focus?: 
     }
   }, [focus, ticket.artifacts])
 
-  if (ticket.artifacts.length === 0)
-    return <p className="rounded-lg border border-dashed border-border px-4 py-8 text-center text-[13px] text-text-faint">No artifacts yet. Agents attach evidence with orch artifact add.</p>
+  const files = ticket.artifacts.filter((a) => !isAgentCheck(a))
+  const checks = ticket.artifacts.filter(isAgentCheck)
+  const preview = (a: Artifact, el: HTMLElement) => { opener.current = el; setByJump(false); setOpen(a) }
+  const checkRows = checks.map((a) => {
+    const status = checkOf(a, ticket.tasks_state)
+    return <div key={a.name} id={`artifact-${a.name}`} className="mt-2 space-y-1">
+      <p>{cardTitle(a)}</p>
+      {status && <p>{status === 'passed' ? 'Check passed' : 'Check failed'}</p>}
+      <ArtifactAction a={{ ...a, name: cardTitle(a), addon: undefined, url: undefined }} addonPage={addonPage} onPreview={(el) => preview(a, el)} />
+    </div>
+  })
+
 
   return (
     <>
       {/* Columns follow the tab's own width (beside a wide dock there are fewer), as on the Artifacts page. */}
       <div className="@container/cards">
         <ul className="grid grid-cols-1 gap-3 @[28rem]/cards:grid-cols-2 @[44rem]/cards:grid-cols-3" aria-label="Artifacts">
-          {ticket.artifacts.map((a) => {
-            const Icon = KIND_ICON[a.kind]
-            const check = checkOf(a, ticket.tasks_state)
-            return (
-              <li
-                key={a.name}
-                id={`artifact-${a.name}`}
-                data-kind={a.kind}
-                aria-current={open?.name === a.name ? 'true' : undefined}
-                className={cn('flex scroll-mt-4 flex-col rounded-lg border bg-surface p-2.5', a.addon ? addonHairline : 'border-border')}
-              >
-                <EvidenceThumb a={a} ticket={ticket.key} check={check} />
-                <div className="mt-2 flex items-center gap-1.5">
-                  <Icon className="size-3.5 shrink-0 text-text-muted" aria-hidden />
-                  <span className="min-w-0 flex-1 truncate text-[13px] font-medium" title={a.name}>
-                    {cardTitle(a, check)}
-                  </span>
-                  <TypeBadge a={a} check={check} />
-                </div>
-                {a.label && <p className="mt-0.5 line-clamp-2 text-[12px] text-text-muted">{a.label}</p>}
-                <p className="mt-1 truncate text-[11px] text-text-faint">
-                  by {viewer.name(a.added_by)} · <Ago at={a.at} />
-                </p>
+          {files.length === 0 && <li className="rounded-lg border border-border bg-surface p-3">
+            <div className="text-[13px] font-medium"><MissingDelivery ticket={ticket} /></div>
+            <details className="mt-2 text-[12px]"><summary className="cursor-pointer">Details</summary>{checkRows}</details>
+          </li>}
+          {files.map((a, index) => (
+            <li key={a.name} id={`artifact-${a.name}`} data-kind={a.kind} aria-current={open?.name === a.name ? 'true' : undefined}
+              className={cn('flex scroll-mt-4 flex-col rounded-lg border bg-surface p-3', a.addon ? addonHairline : 'border-border')}>
+              <p className="break-words text-[13px] font-medium">{a.name}</p>
+              <div className="mt-2"><ArtifactAction a={a} addonPage={addonPage} current={open?.name === a.name} onPreview={(el) => preview(a, el)} /></div>
+              <details className="mt-2 text-[12px] text-text-muted">
+                <summary className="cursor-pointer">Details</summary>
+                {a.label && <p>{a.label}</p>}
+                <p>by {viewer.name(a.added_by)} · <Ago at={a.at} /></p>
                 <Meta a={a} jump={jump} />
-                <div className="mt-auto flex flex-wrap items-center gap-2 pt-2">
-                  <ArtifactAction
-                    a={a}
-                    addonPage={addonPage}
-                    current={open?.name === a.name}
-                    onPreview={(el) => {
-                      opener.current = el
-                      setByJump(false)
-                      setOpen(a)
-                    }}
-                  />
-                  {mayPublish && openMode(a) === 'preview' && !unshareable(a) && (
-                    <Button type="button" variant="outline" size="sm" className={ACTION} aria-label={`Publish ${a.name} as a link`} onClick={() => setPublishing({ name: a.name, step: publishOn ? 'share' : 'turnon' })}>
-                      <Link2 aria-hidden />
-                      Publish as link
-                    </Button>
-                  )}
-                </div>
-              </li>
-            )
-          })}
+                {mayPublish && openMode(a) === 'preview' && !unshareable(a) && (
+                  <Button type="button" variant="outline" size="sm" className={ACTION} aria-label={`Publish ${a.name} as a link`} onClick={() => setPublishing({ name: a.name, step: publishOn ? 'share' : 'turnon' })}>
+                    <Link2 aria-hidden />Publish as link
+                  </Button>
+                )}
+                {index === 0 && checkRows}
+              </details>
+            </li>
+          ))}
         </ul>
       </div>
 
@@ -743,7 +750,7 @@ export function ArtifactFacts({ a, by }: { a: Artifact; /** "Claude Code for Sev
     <p className="text-[11px] text-text-faint">
       Added by {by ?? (a.added_by === 'host' ? 'orch' : agentName(a.added_by))} · <Ago at={a.at} /> · sha256 {shortHash(a.sha256, 12)}
       {a.ac && ` · proves ${a.ac}`}
-      {a.task && ` · from ${a.task}`}
+      {a.task && !isAgentCheck(a) && ` · from ${a.task}`}
     </p>
   )
 }
@@ -792,9 +799,11 @@ export function ArtifactDrawer({
         {open && (
           <>
             <SheetHeader className="gap-1 border-b border-border pr-10">
-              <SheetTitle className="break-all font-mono text-[14px]">{denied ? 'Artifact not available' : open.name}</SheetTitle>
+              <SheetTitle className="break-all font-mono text-[14px]">{denied ? 'Artifact not available' : cardTitle(open)}</SheetTitle>
               {denied ? (
                 <SheetDescription>You can no longer see this artifact.</SheetDescription>
+              ) : isAgentCheck(open) ? (
+                <SheetDescription>The agent's check</SheetDescription>
               ) : (
                 <>
                   <SheetDescription className="flex flex-wrap items-center gap-x-1.5 text-[12px]">
@@ -806,7 +815,11 @@ export function ArtifactDrawer({
                 </>
               )}
             </SheetHeader>
-            <div className="min-h-0 flex-1 overflow-auto p-4">{body ?? <Viewer key={open.name + open.sha256} a={open} agentHtml={agentHtml} ticket={ticket} holdPictures={holdPictures} />}</div>
+            <div className="min-h-0 flex-1 overflow-auto p-4">{body ?? <Viewer key={open.name + open.sha256} a={open} agentHtml={agentHtml} ticket={ticket} holdPictures={holdPictures} />}
+              {!denied && isAgentCheck(open) && <details className="mt-3 text-[12px]"><summary className="cursor-pointer">Details</summary>
+                {open.bytes != null && <p>{fmtBytes(open.bytes)}</p>}<ArtifactFacts a={open} by={by} />{context}
+              </details>}
+            </div>
           </>
         )}
       </SheetContent>

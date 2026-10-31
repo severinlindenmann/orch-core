@@ -2146,3 +2146,9 @@ Revert: Restore the prior gate only together with a coordinated click contract c
 - **Decision:** Default New schedule to “A new ticket each run”, with a literal title limited to 100 characters. Keep the existing ticket picker as the other choice; preserve the row’s target when undoing cancellation.
 - **Why:** Repeated checks need a fresh ticket for each run. Keep the form short, with the longer explanation behind the information button. Preserve existing-ticket action arguments.
 - **Revert:** Remove the target choice and optional action/model fields, and restore the ticket picker as the first control.
+
+### 2026-10-31 — P11 delivered files lead ticket Results
+
+- **Decision:** Results shows plain delivered-file cards and folds receipts/task logs into the first card’s Details. When there are only checks, show the requested filename as undelivered, or a generic missing-file sentence. Check previews and evidence use “The agent's check”; only existing host-attestation rules permit passed/failed wording.
+- **Why:** An agent’s check log does not establish that the requested file was delivered. Keep technical metadata and real-file publishing in Details. Existing Normal fixtures DEMO-0045 (only task check logs) and DEMO-0043 (delivered CSV plus checks) exercise both states; no extra seeds are needed.
+- **Revert:** Restore separate artifact cards and metadata placement in the ticket Results/evidence components; keep host-attestation rules unchanged.

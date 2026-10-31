@@ -2,6 +2,7 @@
 // typed ones. Reading shows how much is in the folder (never its full path); deleting is the person's own action, a
 // dashboard-direct host write with one idem per dialog opening. Every string from the host is untrusted.
 
+import { api } from '@/api/client'
 import { queryOptions } from '@tanstack/react-query'
 import { call, newIdem } from './runs'
 import { ApiError } from './types'
@@ -27,7 +28,7 @@ export interface WorkFolder {
 const w = (ws: string) => `/api/w/${encodeURIComponent(ws)}`
 
 export const workdirApi = {
-  get: (ws: string, ticket: string) => call<WorkFolder>('GET', `${w(ws)}/tickets/${encodeURIComponent(ticket)}/workdir`),
+  get: (ws: string, ticket: string) => api.getWorkFolder(ws, ticket),
   remove: (ws: string, ticket: string, idem: string) => call<{ deleted: boolean }>('POST', `${w(ws)}/workdir/delete`, { ticket, idem }),
 }
 

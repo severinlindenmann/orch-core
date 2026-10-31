@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
+import type { WorkFolder } from '@/api/workdir'
 import type { ArtifactContent } from '@/api/artifactText'
 import type { AcceptanceStatus, Artifact, TicketDocument } from '@/api/types'
 import { renderApp } from '@/test/renderApp'
@@ -18,9 +19,10 @@ const content = (over: Partial<ArtifactContent> = {}): ArtifactContent => ({ nam
 const ac = (over: Partial<AcceptanceStatus> = {}): AcceptanceStatus => ({ id: 'AC1', text: 'Elephants are shown', state: 'proven', evidence: [{ kind: 'artifact', ref: 'elefanten.html' }], ...over }) as AcceptanceStatus
 const ticket = (artifacts: Artifact[], acs: AcceptanceStatus[]): TicketDocument => ({ key: 'DEMO-1', artifacts, acceptance_state: acs, tasks_state: [], gates: {} }) as unknown as TicketDocument
 
-function wrap(ui: React.ReactNode, { widgets = true, data = content() }: { widgets?: boolean; data?: ArtifactContent } = {}) {
+function wrap(ui: React.ReactNode, { widgets = true, data = content(), folder = { available: true, exists: false, codebase: false, items: [] } }: { widgets?: boolean; data?: ArtifactContent; folder?: WorkFolder } = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } })
   client.setQueryData(['workspaces'], [{ id: 'w1', prefix: 'DEMO', name: 'Demo', members: [], gates: {}, addons: widgets ? { widgets: { enabled: true, status: 'ok' } } : {}, counts: {}, needs_you: 0 }])
+  client.setQueryData(['workdir', 'w1', 'DEMO-1'], folder)
   client.setQueryData(['artifact-text', 'w1', 'DEMO-1', 'elefanten.html', SHA], data)
   return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>)
 }
@@ -94,7 +96,7 @@ describe('a criterion proved by a task receipt (run 8, 7.3)', () => {
     const region = screen.getByRole('region', { name: 'Evidence' })
     expect(region).toHaveTextContent('The agent checked 2 of 2 requirements')
     expect(region).not.toHaveTextContent('No check or file yet')
-    expect(region).toHaveTextContent('Second · Checked by the agent, no file attached')
+    expect(region).toHaveTextContent('Second · The agent\'s check · No file was delivered yet.')
   })
 })
 
@@ -201,7 +203,7 @@ describe('P10: plain verdict evidence', () => {
     const t = ticket([], [ac({ text: 'It prints hello', evidence: [{ kind: 'task', ref: 'T1' }] })])
     wrap(<VerdictEvidence ticket={t} />)
     expect(screen.getByRole('heading', { level: 3 })).toHaveTextContent('The agent checked 1 of 1 requirement')
-    expect(screen.getByTestId('checked-by-agent')).toHaveTextContent('It prints hello · Checked by the agent, no file attached')
+    expect(screen.getByTestId('checked-by-agent')).toHaveTextContent('It prints hello · The agent\'s check · No file was delivered yet.')
     const text = document.body.textContent ?? ''
     expect(text).not.toMatch(/criteri|AC1|receipts/)
   })
@@ -211,4 +213,24 @@ describe('P10: plain verdict evidence', () => {
     expect(screen.getByRole('heading', { level: 3 })).toHaveTextContent('The agent checked 0 of 1 requirement')
     expect(screen.getByTestId('no-evidence')).toHaveTextContent('It prints hello')
   })
+})
+
+
+it('check-only artifact evidence uses the plain title and does not count a delivered file', () => {
+  const a = art({ name: 'T1-receipt.log', kind: 'receipt', task: 'T1', bytes: 16 })
+  const t = ticket([a], [ac({ evidence: [{ kind: 'artifact', ref: a.name }] })])
+  wrap(<VerdictEvidence ticket={t} />)
+  const region = screen.getByRole('region', { name: 'Evidence' })
+  expect(within(region).getByRole('button', { name: "Show preview of The agent's check" })).toBeInTheDocument()
+  expect(region).toHaveTextContent("The agent's check · No file was delivered yet.")
+  expect(region).not.toHaveTextContent(/T1|receipt|LOG|1 file attached/)
+})
+
+
+it('verdict evidence lists the working file without claiming it was not delivered', () => {
+  const t = ticket([], [ac({ text: 'Create hello.txt', evidence: [{ kind: 'task', ref: 'T1' }] })])
+  wrap(<VerdictEvidence ticket={t} />, { folder: { available: true, exists: true, codebase: false, items: [{ name: 'hello.txt', bytes: 12 }] } })
+  expect(screen.getByTestId('checked-by-agent')).toHaveTextContent("hello.txt is in the ticket's work folder, but the agent did not add it as a result.")
+  expect(screen.getByRole('list', { name: "Files in the ticket's work folder" })).toHaveTextContent('hello.txt · 12 bytes')
+  expect(screen.queryByRole('button')).toBeNull()
 })

@@ -303,3 +303,39 @@ it('keeps the ticket identity visible next to a host summary', () => {
   render(<SignContent content={{ headline: 'Approve', ticket: { key: 'DEMO-0001', uid_tail: 'abcd1234' }, summary: { title: 'Approve', lines: ['Approve the plan.'] } } as never} />)
   expect(screen.getByTestId('sign-ticket')).toHaveTextContent('DEMO-0001')
 })
+
+// run17 P01b: the ids fold only for the HOST's share summary; the client's action never decides.
+const shareSummary = {
+  headline: 'Share files',
+  summary: { title: 'Share these files', lines: ['Anyone who has the link can open the files, for 7 days.', 'The files go to this computer; the link opens there too.'], risk: 'Anyone with the link can read the files.' },
+  ticket: { key: 'AT-0002', title: '', uid_tail: 'ab12cd34', key_note: 'key per host' },
+}
+const turnOn = {
+  headline: 'Turn on Publish',
+  summary: { title: 'Turn on Publish', lines: ['It says it will use the internet.', 'Version 1.0.0. Runs on this computer.'], risk: 'An add-on runs its own code on this computer as you; turn it on only if you trust it.' },
+  ticket: { key: 'AT-0002', title: '', uid_tail: 'ab12cd34', key_note: 'key per host' },
+}
+
+it('foldIds with the host share summary: the signed id leaves the main view and stays in the fold', () => {
+  render(<SignContent foldIds content={shareSummary} />)
+  expect(screen.queryByTestId('sign-ticket')).toBeNull()
+  expect(screen.getByTestId('sign-summary')).toHaveTextContent('The files go to this computer')
+  expect(screen.getByTestId('sign-exact')).toHaveTextContent('signed id …ab12cd34')
+})
+
+it('foldIds on an add-on turn-on (no host built-in marker) keeps every line, also the internet line and the signed id', () => {
+  render(<SignContent foldIds content={turnOn} />)
+  expect(screen.getByTestId('sign-summary')).toHaveTextContent('It says it will use the internet.')
+  expect(screen.getByTestId('sign-ticket')).toHaveTextContent('signed id …ab12cd34')
+})
+
+it('without foldIds every line stays in the main view', () => {
+  render(<SignContent content={shareSummary} />)
+  expect(screen.getByTestId('sign-ticket')).toHaveTextContent('signed id …ab12cd34')
+})
+
+it('storyOf: an addon_enable named publish gets no fold flags; only publish_share does', async () => {
+  const { storyOf } = await import('./story')
+  expect(storyOf({ action: 'addon_enable', name: 'publish', publish: { server: 'http://127.0.0.1:1', share: 'http://127.0.0.1:1' } } as never)).toBeNull()
+  expect(storyOf({ action: 'publish_share', key: 'AT-1', staged_id: 'ps_x' } as never)?.foldInRisk).toBeFalsy()
+})

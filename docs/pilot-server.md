@@ -124,6 +124,60 @@ is installed (and, for the hub, the nightly backup copy).
 After the root block has run (and Caddy reloaded), open `https://hub.example.com` from a Mac on the private network. The
 first-admin link is printed by the hub setup.
 
+## 5b. Public relay and publish through the private network's proxy
+
+The production server needs no public port except SSH when the private network's public proxy fronts the relay and
+publish. The proxy reaches the server over the VPN and sets the forwarded headers. The hub is **never** proxied: it stays
+private-network only.
+
+As **`orch-edge`**, instead of the Caddy setup in step 5:
+
+```
+orch setup --server --role edge --behind-proxy --domain-relay core.relay.example.com --domain-publish publish.example.com
+```
+
+(add `--vpn-ip 100.x.y.z/16` if the server has several private-network addresses). What happens:
+
+- Relay and publish listen on the server's private-network address **only** (never loopback-wider, never every interface):
+  relay `VPN-IP:8101`, publish `VPN-IP:8102`. The hub stays on `VPN-IP:8100` (console) and `VPN-IP:8105` (link); it has no
+  public name or route (a private DNS record `core.hub.example.com` is optional).
+- No Caddy file is written and no root block is printed. The health timer is installed.
+- The relay and publish are told the private network's own networks (read from the VPN interface, IPv4 and IPv6) as their
+  *trusted proxy* list (`ORCH_RELAY_TRUSTED_PROXY`, `ORCH_PUBLISH_TRUSTED_PROXY`). That list only decides whose forwarded
+  client address (`X-Forwarded-For`, then `X-Real-IP`) is used as the **rate-limit key**. It grants nothing: every request
+  to the relay and publish is public, whatever the address, `Host` or forwarded headers say. Anyone on the private
+  network can forge the key; that only shifts a rate limit. Public clients cannot, because every connection arrives over
+  the VPN.
+- The hub refuses every request that carries `X-Forwarded-*` or `X-Real-IP` (400, "this hub is not served through a
+  proxy"), so a proxy that is later pointed at the hub cannot make public traffic look private.
+
+In the private network's admin page, add the public names and point them at the server's private address:
+
+| Public name | Goes to |
+|---|---|
+| `core.relay.example.com` | `VPN-IP:8101` (relay) |
+| `publish.example.com` | `VPN-IP:8102` (publish; apps are served under `/a/<slug>/`) |
+| `core.hub.example.com` | no public route (private DNS only, optional) |
+
+The proxy's idle timeout is 120 seconds between messages and it reads headers for 10 seconds. The relay and publish are
+plain request/response services: no request is held open for longer than that.
+
+**Remove the old public firewall rules once the proxy works.** From a computer outside the private network check
+`https://core.relay.example.com/healthz` and a share link first. Then, as an administrator on the server:
+
+```
+sudo ufw status numbered
+sudo ufw delete allow 8101/tcp
+sudo ufw delete allow 8102/tcp
+sudo ufw status numbered      # only SSH (and, for the fallback below, 80 and 443) should be left
+```
+
+**Fallback if the proxy is down.** Keep ports 80 and 443 open in `ufw` and Caddy installed. Run the Caddy setup of step 5
+(`orch setup --server --role edge --domain example.com`) as `orch-edge`; it moves relay and publish to loopback behind
+Caddy and prints the root block. Point the public DNS records of `core.relay.example.com` and `publish.example.com`
+at the server's public address instead of the proxy. Going back: run the `--behind-proxy` command again and restore the
+DNS records.
+
 ## 6. Connect the Macs
 
 - Make sure a Mac resolves `hub.example.com` to the private address (step 2).

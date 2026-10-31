@@ -7,7 +7,7 @@ description: Use when a ticket is rough and needs requirements, acceptance crite
 Judgment rules. The steps are in `orch help refine`.
 
 - Requirements state outcomes a reviewer can check, not activities. Write what must be true afterwards.
-- An acceptance criterion is checked by one command or one artifact. "Works well" is not a criterion; "the refresh finishes in under 5 minutes on the test set" is.
+- An acceptance criterion is checked by one command or one artifact, in plain words ("the file is in the work folder", never workdir). "Works well" is not a criterion; "the refresh finishes in under 5 minutes on the test set" is.
 - A task is small enough to finish in one sitting, ordered, and proves at least one criterion with a verify. A last task "test everything" proves nothing.
 - Every criterion is proven by some task; every task proves a criterion or is needed by one that does.
 - Write out of scope what you are tempted to add: the cheapest way to keep the ticket small.

@@ -24,7 +24,9 @@ def main(argv: list[str] | None = None) -> int:
     except PushConfigError as exc:  # P3-D40 item 9: a partial push configuration is loud
         print(f"orch-relay: refusing to start: {exc}", file=sys.stderr)
         return 2
-    uvicorn.run(app, host=args.host, port=args.port, workers=1, proxy_headers=False)
+    uvicorn.run(
+        app, host=args.host, port=args.port, workers=1, proxy_headers=False, server_header=False
+    )
     return 0
 
 

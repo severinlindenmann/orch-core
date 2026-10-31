@@ -128,6 +128,13 @@ On the page you answer, and orch waits for you each time:
    runs: there is no terminal check. With Terminal approval, the Terminal shows three words that the page must show too;
    if they match, press Enter there (do not type `yes`).
 
+**Setting up another computer over SSH:** when you run `orch setup` on a server you reached with `ssh`, the Terminal
+prints a ready `ssh -L ...` line for the setup page. Run that line on your own computer, then open the link. When setup
+is done, the last page says "One last step: connect to your workspace." and shows a second `ssh -L ...` line, for the
+workspace's own port. Copy it, run it on your own computer the same way as the first one, and leave it open. The page
+waits and opens your workspace by itself as soon as the connection is there. If the line shows `USER` or `SERVER`,
+put in the name and address you use to log in to that computer.
+
 **What you should see:** the page lists every step as done and the Terminal prints `workspace DEMO set up in <folder>`. The folder now
 has a hidden `.orch` folder plus `AGENTS.md`, `CLAUDE.md` and skill folders for your agents. Check:
 

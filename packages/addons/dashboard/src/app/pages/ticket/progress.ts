@@ -8,7 +8,9 @@ import type { StartInitial } from '@/app/terminal/real/StartAgentDialog'
 /** The agent's progress on a ticket, in the one status pill. */
 export type Phase =
   | { kind: 'idle' }
-  | { kind: 'starting'; slow: boolean }
+  | { kind: 'starting'; slow: boolean; /** a run of this ticket still lives: never offer a second start next to it (run 16 P01) */ live?: true }
+  | { kind: 'open'; /** a run lives but claims nothing: the way into it */ run?: string }
+  | { kind: 'waiting'; /** the run the agent waits in (open it with openDockOn) */ run: string }
   | { kind: 'working' }
   | { kind: 'needs' }
   | { kind: 'failed'; reason: string; initial?: StartInitial }
@@ -21,6 +23,8 @@ export interface Mark {
 export interface ProgressRun {
   state: 'starting' | 'running' | 'exited' | 'lost'
   started_at: string
+  /** the run id (openDockOn) */
+  run?: string
 }
 
 export const STARTING_SLOW_MS = 90_000
@@ -114,19 +118,29 @@ export function agentFinished(run: { kind: string; state: string }, ticketStatus
 
 export function phaseOf(ticket: TicketDocument, o: { needsYou: boolean; mark?: Mark; run?: ProgressRun | null; now: number; wait?: string | null }): Phase {
   if (ticket.status === 'done' || ticket.status === 'closed') return { kind: 'idle' }
+  const runStart = o.run ? Date.parse(o.run.started_at) : NaN
+  const runDead = o.run?.state === 'lost' || o.run?.state === 'exited'
+  const runLive = o.run?.state === 'starting' || o.run?.state === 'running'
+  // The agent waits for the person (a question or permission prompt the host detects) but holds no claim: say so, with
+  // the way to it. A wait counts only while its run is live: a stale wait of a dead run is no wait (review P01).
+  const claimLive = !!ticket.claim && ticket.claim.live !== false
+  if (o.wait && !claimLive && !runDead) return { kind: 'waiting', run: o.wait }
   if (o.needsYou) return { kind: 'needs' }
   if (agentWorking(ticket, o.wait)) return { kind: 'working' }
-  if (o.mark?.failed) return { kind: 'failed', reason: o.mark.failed.reason, initial: o.mark.failed.initial }
-  const runStart = o.run ? Date.parse(o.run.started_at) : NaN
+  // A current live run beats an older failed mark: the agent runs, so nothing failed.
+  if (o.mark?.failed && !runLive) return { kind: 'failed', reason: o.mark.failed.reason, initial: o.mark.failed.initial }
   // A run of this ticket that ended before an agent claimed it, newer than our ask: the start did not work.
-  const runDead = o.run?.state === 'lost' || o.run?.state === 'exited'
   if (runDead && (o.mark ? runStart > o.mark.since : o.now - runStart < STARTING_MAX_MS))
     return { kind: 'failed', reason: 'The agent stopped before it began. Start it again.' }
-  const runStarting = o.run?.state === 'starting'
-  const runRunning = o.run?.state === 'running' && o.now - runStart < STARTING_MAX_MS
   // A mark nobody answered for 3 minutes is dropped, so the pill cannot stick.
   const liveMark = !!o.mark && o.now - o.mark.since < STARTING_MAX_MS
-  if (!liveMark && !runStarting && !runRunning) return { kind: 'idle' }
+  if (!liveMark && !runLive) return { kind: 'idle' }
   const since = o.mark?.since ?? runStart
-  return { kind: 'starting', slow: o.now - since >= STARTING_SLOW_MS }
+  if (!runLive) return { kind: 'starting', slow: o.now - since >= STARTING_SLOW_MS }
+  // A claim that is no longer live is history: nobody is working and the run is not ours to describe (review P01).
+  if (ticket.claim && ticket.claim.live === false) return { kind: 'idle' }
+  // The run lives but claims nothing and waits for nobody we can see: after the start window say it is open (never
+  // "Taking longer" for ever, never Try again next to a live agent).
+  if (o.now - (Number.isNaN(runStart) ? since : runStart) >= STARTING_MAX_MS) return { kind: 'open', ...(o.run?.run ? { run: o.run.run } : {}) }
+  return { kind: 'starting', slow: o.now - since >= STARTING_SLOW_MS, live: true }
 }

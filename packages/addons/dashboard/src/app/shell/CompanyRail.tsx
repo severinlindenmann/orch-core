@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
+import { hubTitle } from '@/app/pages/settings/hub/shared'
 import { Building2 } from 'lucide-react'
 import { fetchRail, hubUrl, type RailRow } from '@/api/switch'
 import { isRealHost } from '@/api/features'
@@ -40,7 +41,7 @@ export function CompanyRail() {
   if (!ws || !rail.data?.hub) return null
   return (
     <nav aria-label="Company" className="flex w-14 shrink-0 flex-col items-center gap-2 border-r border-border bg-surface py-3" data-testid="company-rail">
-      <button type="button" onClick={() => go('/')} aria-label={`${rail.data.hub.name} hub`} title={`${rail.data.hub.name} hub`}
+      <button type="button" onClick={() => go('/')} aria-label={hubTitle(rail.data.hub.name)} title={hubTitle(rail.data.hub.name)}
         className="flex size-9 items-center justify-center rounded-lg bg-surface-2 text-text-muted outline-none hover:text-text focus-visible:ring-2 focus-visible:ring-brand">
         <Building2 className="size-4" aria-hidden />
       </button>

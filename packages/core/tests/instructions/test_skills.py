@@ -114,12 +114,19 @@ def test_each_skill_is_small(skill: Skill):
     assert len(skill.text) <= SKILL_MAX_CHARS and len(skill.text.splitlines()) <= 30
 
 
+@pytest.mark.parametrize("name", ["orch-work-on-ticket", "orch-refine-ticket"])
+def test_text_the_person_reads_is_plain_words(name: str):
+    # r17 P01: agents copied "workdir" into criteria the person reads; the skills say "work folder" instead.
+    text = next(s.text for s in SKILLS if s.name == name)
+    assert "work folder" in text and "never workdir" in text
+
+
 # The text of each built-in skill is pinned to its skill_version: change a SKILL.md and this fails until the version in
 # its orch.skill.json is raised and the hash below is updated, so installed copies are reported as old, not "edited".
 PINNED = {
     "orch-tickets": ("1.0.2", "aba26b31bdaa0d3f"),
-    "orch-work-on-ticket": ("1.0.8", "fd57774335a8c867"),
-    "orch-refine-ticket": ("1.0.7", "4f0190f1126c1b9b"),
+    "orch-work-on-ticket": ("1.0.9", "f985e23f225ae843"),
+    "orch-refine-ticket": ("1.0.8", "82e79d9dab6f0ce8"),
 }
 
 

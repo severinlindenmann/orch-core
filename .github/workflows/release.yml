@@ -4,7 +4,7 @@
 #                              version to release again). Channel "main".
 #   workflow_dispatch       -> a release candidate on channel test-<name> (version <base>.dev<run number>), signed by
 #                              the TEST key. A production verifier refuses test-* channels, so this can never reach a
-#                              real install.
+#                              real install. Tags use test-v<version>, never the protected v* namespace.
 #   schedule (every Monday) -> re-sign the published "main" manifest with fresh issued_at/expires_at, because a
 #                              manifest expires after 21 days (weekly leaves three tries before users see "stale").
 # No "develop" channel in the pilot.
@@ -24,11 +24,11 @@
 #   and sign a release. With it only code that was merged into main (owner-merged) can reach the key.
 #   A develop channel comes later, with its OWN key whose certificate lists only `develop`.
 #   Environment `release-test`  secret ORCH_RELEASE_KEY = a separate TEST key whose certificate lists only test-*;
-#                          no branch restriction needed (a test-* envelope is refused by every production verifier).
+#                          Deployment branches: Selected branches, allow ONLY `develop` and `main`.
 #   Repository variables RELEASE_KEY_ID, RELEASE_TEST_KEY_ID (for example rk-1, tk-1): the certificate files
 #   release/keys/<id>.cert.json and release/keys/revocations.json are committed (root-signed, public).
 #   The root key is never on GitHub: the owner certifies the CI key (180 days) and signs revocations off-line.
-#   REQUIRED (the refresh anchor list is git tags, trusted.py): protect `v*` tags (no update, no delete) and turn on
+#   REQUIRED (the refresh anchor list is git tags, trusted.py): protect `v*` and `test-v*` tags (no update, no delete) and turn on
 #   immutable releases, so a version tag cannot be moved, nor its release retitled, replaced or deleted.
 #
 # ---- wheels only (P2-C) ------------------------------------------------------------------------------------------------
@@ -109,11 +109,18 @@ jobs:
       mode: ${{ steps.plan.outputs.mode }}
       channel: ${{ steps.plan.outputs.channel }}
       version: ${{ steps.plan.outputs.version }}
+      tag: ${{ steps.plan.outputs.tag }}
       seq: ${{ steps.plan.outputs.seq }}
       sha: ${{ steps.plan.outputs.sha }}
       test: ${{ steps.plan.outputs.test }}
       key_id: ${{ steps.plan.outputs.key_id }}
+    env:
+      UV_NO_CACHE: '1'
     steps:
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          enable-cache: false
+          version: '0.13.3'
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
@@ -149,6 +156,8 @@ jobs:
             echo "::notice::v${version} is already released; bump the version to release again"
             mode=skip
           fi
+          tag="v${version}"
+          if [ "$test" = true ]; then tag="test-v${version}"; fi
           key_id="$KEY_ID_PROD"
           if [ "$test" = true ]; then key_id="$KEY_ID_TEST"; fi
           [[ "$key_id" =~ ^[a-z][a-z0-9-]{0,31}$ ]] || { echo "::error::the repository variable with the release key id is missing or malformed"; exit 1; }
@@ -156,6 +165,7 @@ jobs:
             echo "mode=$mode"
             echo "channel=$channel"
             echo "version=$version"
+            echo "tag=$tag"
             echo "seq=${seq}"
             echo "sha=${SHA}"
             echo "test=$test"
@@ -170,7 +180,13 @@ jobs:
     permissions:
       contents: read
       issues: write
+    env:
+      UV_NO_CACHE: '1'
     steps:
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          enable-cache: false
+          version: '0.13.3'
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ needs.plan.outputs.sha }}
@@ -209,7 +225,11 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    outputs:
+      sums_sha256: ${{ steps.hashes.outputs.sums_sha256 }}
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
     env:
+      UV_NO_CACHE: '1'
       VERSION: ${{ needs.plan.outputs.version }}
       CHANNEL: ${{ needs.plan.outputs.channel }}
       SHA: ${{ needs.plan.outputs.sha }}
@@ -220,11 +240,12 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          enable-cache: false
+          version: '0.13.3'
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24'
-          cache: npm
-          cache-dependency-path: packages/addons/dashboard/package-lock.json
       - name: Build the dashboard page (prebuilt UI goes into the dashboard wheel)
         working-directory: packages/addons/dashboard
         run: |
@@ -238,8 +259,11 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
+          n=0
           for p in packages/core packages/addons/dashboard/server packages/hub packages/relay packages/publish; do
-            uv build --wheel --out-dir dist "$p"
+            n=$((n + 1))
+            uv build --build-constraint scripts/release/build-constraints.txt --require-hashes --require-build-hashes --wheel --out-dir "built/$n" "$p"
+            cp "built/$n/"*.whl dist/
           done
       - name: Check the wheels
         run: |
@@ -253,14 +277,6 @@ jobs:
             --version "$VERSION" --channel "$CHANNEL" --commit "$SHA"
           unzip -p dist/orch_dashboard-"${VERSION}"-*.whl '*.dist-info/METADATA' | grep -qx "Requires-Dist: orch-core==${VERSION}" \
             || { echo "::error::the dashboard wheel does not pin orch-core==${VERSION}"; exit 1; }
-      - name: Smoke test core and dashboard
-        run: |
-          set -euo pipefail
-          tmp=$(mktemp -d)
-          export HOME="$tmp/home" UV_TOOL_DIR="$tmp/tools" UV_TOOL_BIN_DIR="$tmp/bin"
-          mkdir -p "$HOME"
-          uv tool install --find-links dist dist/orch_core-"${VERSION}"-*.whl --with dist/orch_dashboard-"${VERSION}"-*.whl
-          "$tmp/bin/orch" --version --json | grep -q "$VERSION" || { echo "::error::orch --version does not name ${VERSION}"; exit 1; }
       - name: Hash-locked constraints (constraints.txt)
         run: |
           set -euo pipefail
@@ -295,16 +311,59 @@ jobs:
             git log --no-merges --pretty='- %s' -n 20 "${SHA}" > raw.txt
           fi
           python3 -I -c 'import sys; sys.stdout.write(sys.stdin.buffer.read()[:3800].decode("utf-8", "ignore"))' < raw.txt > dist/changelog.txt
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - name: Hash every artifact file and export the checksum manifest digest
+        id: hashes
+        run: |
+          set -euo pipefail
+          (cd dist && sha256sum *.whl constraints.txt changelog.txt > SHA256SUMS)
+          digest=$(sha256sum dist/SHA256SUMS)
+          echo "sums_sha256=${digest%% *}" >> "$GITHUB_OUTPUT"
+      - id: upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: release-dist
           path: dist/
           if-no-files-found: error
           retention-days: 14
 
+  # Executes the built code without access to a signing environment.
+  smoke:
+    needs: [plan, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      UV_NO_CACHE: '1'
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          enable-cache: false
+          version: '0.13.3'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ needs.build.outputs.artifact_id }}
+          merge-multiple: true
+          path: dist
+      - name: Smoke test core and dashboard with hash-locked dependencies
+        run: |
+          set -euo pipefail
+          python3 -I scripts/release/wheel_hashes.py dist "$VERSION" > smoke-requirements.txt
+          uv venv --python 3.14 smoke-venv
+          uv pip install --python smoke-venv/bin/python --no-cache --no-build --require-hashes \
+            -r dist/constraints.txt -r smoke-requirements.txt
+          tmp=$(mktemp -d)
+          export HOME="$tmp/home"
+          mkdir -p "$HOME"
+          smoke-venv/bin/orch --version --json | grep -q "$VERSION"
+
   # Holds the key. Everything it signs it writes itself, here, from the build job's wheels of this same commit.
   publish:
-    needs: [plan, build]
+    needs: [plan, build, smoke]
     runs-on: ubuntu-latest
     environment: ${{ needs.plan.outputs.test == 'true' && 'release-test' || 'release' }}
     concurrency:
@@ -313,9 +372,11 @@ jobs:
     permissions:
       contents: write
     env:
+      UV_NO_CACHE: '1'
       VERSION: ${{ needs.plan.outputs.version }}
       CHANNEL: ${{ needs.plan.outputs.channel }}
       SEQ: ${{ needs.plan.outputs.seq }}
+      TAG: ${{ needs.plan.outputs.tag }}
       SHA: ${{ needs.plan.outputs.sha }}
       KEY_ID: ${{ needs.plan.outputs.key_id }}
       GH_TOKEN: ${{ github.token }}
@@ -327,18 +388,30 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          enable-cache: false
+          version: '0.13.3'
       - name: Install the verifier environment (no secret in this step)
-        run: uv sync --frozen --project packages/core --no-dev
+        run: uv sync --no-cache --frozen --project packages/core --no-dev
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: release-dist
+          artifact-ids: ${{ needs.build.outputs.artifact_id }}
+          merge-multiple: true
           path: dist
+      - name: Authenticate SHA256SUMS and verify every artifact file before signing
+        env:
+          EXPECTED_SUMS_SHA256: ${{ needs.build.outputs.sums_sha256 }}
+        run: |
+          set -euo pipefail
+          actual=$(sha256sum dist/SHA256SUMS)
+          [ "${actual%% *}" = "$EXPECTED_SUMS_SHA256" ] || { echo "::error::SHA256SUMS digest mismatch"; exit 1; }
+          python3 -I scripts/release/wheel_hashes.py dist "$VERSION"
       - name: Re-check what is about to be signed (no secret in this step)
         run: |
           set -euo pipefail
           expected=$(printf '%s\n' "orch_core-${VERSION}-py3-none-any.whl" "orch_dashboard-${VERSION}-py3-none-any.whl" \
             "orch_hub-${VERSION}-py3-none-any.whl" "orch_relay-${VERSION}-py3-none-any.whl" \
-            "orch_publish-${VERSION}-py3-none-any.whl" constraints.txt changelog.txt | sort)
+            "orch_publish-${VERSION}-py3-none-any.whl" constraints.txt changelog.txt SHA256SUMS | sort)
           actual=$(ls dist | sort)
           [ "$expected" = "$actual" ] || { echo "::error::the build artifact is not exactly the expected file set"; ls dist; exit 1; }
           python3 -I scripts/release/check_wheels.py --core dist/orch_core-"${VERSION}"-*.whl --dashboard dist/orch_dashboard-"${VERSION}"-*.whl \
@@ -357,7 +430,7 @@ jobs:
             --file relay=dist/orch_relay-"${VERSION}"-py3-none-any.whl \
             --file publish=dist/orch_publish-"${VERSION}"-py3-none-any.whl \
             --file constraints=dist/constraints.txt \
-            --base-url "https://github.com/${GH_REPO}/releases/download/v${VERSION}" \
+            --base-url "https://github.com/${GH_REPO}/releases/download/${TAG}" \
             --changelog-file dist/changelog.txt --min-from "$MIN_FROM" --out manifest.json
       - name: Sign the manifest (the only step that sees the key)
         env:
@@ -372,7 +445,7 @@ jobs:
           set -uo pipefail
           uv run --no-sync --project packages/core --frozen python -I scripts/release/channel_seq.py \
             --channel "$CHANNEL" --revocations release/keys/revocations.json --new-seq "$SEQ" \
-            --exclude-tag "v${VERSION}" \
+            --exclude-tag "$TAG" \
             --pointer-url "https://github.com/${GH_REPO}/releases/download/channel-${CHANNEL}/channel.json"
           rc=$?
           case "$rc" in
@@ -384,7 +457,7 @@ jobs:
           set -euo pipefail
           prerelease=""
           if [ "$CHANNEL" != main ]; then prerelease="--prerelease"; fi
-          gh release create "v${VERSION}" $prerelease --target "$SHA" \
+          gh release create "$TAG" $prerelease --target "$SHA" \
             --title "orch ${VERSION} (${CHANNEL})" --notes-file dist/changelog.txt \
             dist/orch_*-"${VERSION}"-py3-none-any.whl dist/constraints.txt release.json
       - name: Move the channel pointer (asset channel.json of the fixed release channel-<channel>)
@@ -409,6 +482,7 @@ jobs:
     permissions:
       contents: write
     env:
+      UV_NO_CACHE: '1'
       CHANNEL: main
       KEY_ID: ${{ needs.plan.outputs.key_id }}
       GH_TOKEN: ${{ github.token }}
@@ -420,8 +494,11 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          enable-cache: false
+          version: '0.13.3'
       - name: Install the verifier environment (no secret in this step)
-        run: uv sync --frozen --project packages/core --no-dev
+        run: uv sync --no-cache --frozen --project packages/core --no-dev
       - name: Verify the current channel and rebuild its payload (no secret in this step)
         id: retime
         run: |

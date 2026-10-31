@@ -47,7 +47,7 @@ def main(argv: list[str]) -> int:
             get_pointer=http_pointer(a.pointer_url),
             get_release=gh_release,
             tag_commit=git_tag_commit(a.repo),
-            releases_for_channel=git_release_tags(a.repo, a.exclude_tag),
+            releases_for_channel=git_release_tags(a.repo, a.exclude_tag, channel=a.channel),
         )
         check_new_seq(t, a.new_seq)
     except NothingToRefresh:

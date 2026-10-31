@@ -29,6 +29,8 @@ from typing import Any
 
 TIME = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ")
 TAG = re.compile(r"v(\d+\.\d+\.\d+)(?:\.dev(\d+))?")  # 2.0.0 (main) or 2.0.0.dev<seq> (test channels)
+RELEASE_TAG = re.compile(r"^v[0-9]+\.[0-9]+\.[0-9]+$")
+TEST_RELEASE_TAG = re.compile(r"^test-v[0-9]+\.[0-9]+\.[0-9]+\.dev[0-9]+$")
 TIMES = ("issued_at", "expires_at")
 
 # verify(envelope_bytes, channel, now, allow_expired) -> the verified manifest; raises Refused.
@@ -147,21 +149,20 @@ def _claimed_channel(raw: bytes) -> str:
 
 
 def _anchors(channel, tags, extra, revocations, verify, now, get_release):  # type: ignore[no-untyped-def]
-    """``{tag: verified doc}`` of every release that belongs to ``channel``. Each tag is verified under the channel its
-    release CLAIMS; the signature proves where it belongs, and a verified release of another channel is skipped. A tag
-    whose release is missing, or does not verify, is a Refused (fail closed). One exception, documented: for ``main``
-    a ``.dev`` tag that claims a ``test-*`` channel is skipped unverified, because the production verifier refuses
-    test channels by design, so such a release could never verify there (and never anchors main)."""
+    """Verify immutable releases in the channel's tag namespace; only matching channels anchor it."""
     out: dict[str, dict[str, Any]] = {}
     for t in sorted({*tags, *extra}):
+        if channel == "main" and RELEASE_TAG.fullmatch(t) is None:
+            continue
+        if channel.startswith("test-") and TEST_RELEASE_TAG.fullmatch(t) is None:
+            continue
         raw = get_release(t)
         if raw is None:
             raise Refused(f"{t}: a git tag exists but its immutable release is missing or was retitled/deleted")
         claimed = _claimed_channel(raw)
-        if channel == "main" and ".dev" in t and claimed.startswith("test-"):
-            continue
         rdoc = verify_published(raw, claimed, revocations, verify, now, allow_expired=True)
-        if f"v{rdoc['version']}" != t:
+        prefix = "test-" if rdoc["channel"].startswith("test-") else ""
+        if f"{prefix}v{rdoc['version']}" != t:
             raise Refused(f"{t}: the release names another version")
         if rdoc["channel"] == channel:
             out[t] = rdoc
@@ -175,8 +176,9 @@ def _trusted_current(channel, revocations, verify, now, get_pointer, get_release
             raise Refused(f"channel-{channel} has version releases but no channel.json")
         raise NothingToRefresh(channel)
     doc = verify_published(pointer, channel, revocations, verify, now, allow_expired=True)
-    tag = f"v{doc['version']}"
-    m = TAG.fullmatch(tag)
+    prefix = "test-" if channel.startswith("test-") else ""
+    tag = f"{prefix}v{doc['version']}"
+    m = TAG.fullmatch(tag.removeprefix(prefix))
     if m is None or (m.group(2) is not None and doc["seq"] != int(m.group(2))):
         raise Refused(f"{tag}: version and seq do not agree")
     if doc["commit"] != tag_commit(tag):
@@ -238,18 +240,23 @@ def gh_release(tag: str) -> bytes | None:
     return res.stdout if res.returncode == 0 and res.stdout else None
 
 
-def git_release_tags(repo: Path, exclude: str | None) -> Callable[[], list[str]]:
-    """Every ``v*`` release tag of the checked-out repository (``fetch-depth: 0``). The ANCHOR list is git tags, not
+def git_release_tags(repo: Path, exclude: str | None, *, channel: str) -> Callable[[], list[str]]:
+    """Exact stable tags for main, exact test-v development tags for test channels. The ANCHOR list is git tags, not
     release titles: a tag cannot be hidden by retitling or deleting a release. Tag protection and immutable releases
     (REQUIRED, see release.yml.draft) make the tags themselves unmovable."""
 
+    pattern = TEST_RELEASE_TAG if channel.startswith("test-") else RELEASE_TAG
+
     def get() -> list[str]:
         res = subprocess.run(
-            ["git", "-C", str(repo), "tag", "-l", "v*"], capture_output=True, text=True, check=False
+            ["git", "-C", str(repo), "tag", "-l", "test-v*" if channel.startswith("test-") else "v*"],
+            capture_output=True,
+            text=True,
+            check=False,
         )
         if res.returncode != 0:
             raise Refused("cannot list git tags")
-        return [t for t in res.stdout.split() if TAG.fullmatch(t) and t != exclude]
+        return [t for t in res.stdout.split() if pattern.fullmatch(t) and t != exclude]
 
     return get
 

@@ -757,8 +757,11 @@ def test_an_unknown_workspace_says_what_the_admin_must_do_and_keeps_the_copy(w):
     info = ok(w.req("publish.list", {}))["data"]
     assert re.fullmatch(r"[0-9a-f]{32}", info["workspace"]) and re.fullmatch(r"[0-9a-f]{32}", info["owner"])
     assert (w.stage_dir(staged) / "meta.json").exists()
+    # P02: the refusal leaves no "Sending" row in the list and the record is marked failed
+    assert ok(w.req("publish.list", {}))["data"]["shares"] == []
     w.hub.error = None
     ok(w.send(staged))  # the admin allowed it; the same copy goes
+    assert len(ok(w.req("publish.list", {}))["data"]["shares"]) == 1
 
 
 @pytest.mark.parametrize(
@@ -1585,3 +1588,33 @@ def test_the_signer_refuses_a_reserved_line_from_any_other_op(w):
     on_workspace["events"][0]["text"] = approval.APP_MARK + "\nTicket: " + key
     with pytest.raises(signer.SignerRefused):
         w.human.check(on_workspace)  # notes on the workspace log are refused too
+
+
+def test_only_a_clear_refusal_marks_a_share_failed_and_old_failed_records_are_pruned():
+    from datetime import UTC, datetime
+
+    from orch.host import publishing as P
+    from orch.publishclient import PublishError
+
+    for status, want in (
+        (401, True),
+        (403, True),
+        (404, True),
+        (408, False),
+        (409, False),
+        (429, False),
+        (500, False),
+        (0, False),
+    ):
+        assert P._refused_outright(PublishError("x", status)) is want, status  # noqa: SLF001
+    now = 1_800_000_000.0
+    iso = lambda t: datetime.fromtimestamp(t, UTC).isoformat()  # noqa: E731
+    rows = [
+        {"id": "old", "state": "failed", "created_at": iso(now - 8 * 86400)},
+        {"id": "live", "state": "live", "created_at": iso(now - 99 * 86400)},
+    ]
+    rows += [{"id": f"f{i}", "state": "failed", "created_at": iso(now - 60)} for i in range(60)]
+    out = P._prune_failed(rows, now)  # noqa: SLF001
+    ids = [r["id"] for r in out]
+    assert "old" not in ids and "live" in ids
+    assert sum(r["state"] == "failed" for r in out) == 50 and ids[-1] == "f59"

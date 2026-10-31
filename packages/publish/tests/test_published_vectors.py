@@ -25,7 +25,7 @@ def ids(section):
 
 def test_every_section_is_replayed_here():
     assert set(SECTIONS) == REPLAYED
-    assert len(SECTIONS) == 16
+    assert len(SECTIONS) == 17
 
 
 def test_labels_are_publishs_labels():
@@ -170,6 +170,23 @@ def _state(a):
                 state = H.apply_unbound(state, H.verify_unbound(st["unbound"], ws, wsk, True))
         bindings[ws] = state
     return held, a["cards"], bindings
+
+
+@pytest.mark.parametrize("c", VEC["allow_cases"], ids=ids("allow_cases"))
+def test_allow(c):
+    a = c["args"]
+    held = H.verify_card(a["hub_card"], a["now_ms"], a["dev_mode"])
+    got = _outcome(
+        lambda: P.check_allow(
+            a["signed"],
+            path_ws=a["path_ws"],
+            trusted=a["trusted"],
+            held=held,
+            nonces=Nonces(a["seen_nonces"]),
+            now_ms=a["now_ms"],
+        )
+    )
+    assert got == c["expect"]
 
 
 @pytest.mark.parametrize("c", VEC["narrow_cases"], ids=ids("narrow_cases"))

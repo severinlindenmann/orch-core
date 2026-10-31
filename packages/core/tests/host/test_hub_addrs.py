@@ -197,6 +197,23 @@ def test_the_name_is_carried_as_the_hubs_own_words_and_cleaned(human, served, mo
     assert status(served)["hub_says"] == {"name": "Acme hub", "from": "hub"}  # labelled; no workspace-owned field
 
 
+def test_the_hubs_publish_address_is_kept_as_a_hint_and_shown_in_the_status(human, served, monkeypatch, probe):
+    hub = bound(served, human, monkeypatch)
+    probe.live = {"10.0.0.5:8105"}
+    assert status(served)["hub_publish"] is None
+    hub.where_answer = {**where("10.0.0.5:8105"), "publish": "http://127.0.0.1:8102"}
+    refresh(served)
+    assert _state(served).hub_publish == "http://127.0.0.1:8102"
+    assert status(served)["hub_publish"] == "http://127.0.0.1:8102"
+    hub.where_answer = where("10.0.0.5:8105")  # the hub no longer names one: the hint goes
+    refresh(served)
+    assert _state(served).hub_publish is None and status(served)["hub_publish"] is None
+    for bad in ("http://evil.example.com", "https://x.com/p", "ftp://x"):
+        hub.where_answer = {**where("10.0.0.5:8105"), "publish": bad}
+        refresh(served)
+        assert _state(served).hub_publish is None  # malformed answer: the host keeps what it holds
+
+
 def test_a_hub_without_hub_where_still_refreshes(human, served, monkeypatch, probe):
     bound(served, human, monkeypatch)  # the fake knows no such op: unknown_op, swallowed
     assert refresh(served)["hub_id"] == HUB_ID and _state(served).addrs == []

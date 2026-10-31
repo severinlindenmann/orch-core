@@ -1034,6 +1034,8 @@ def serve(call: Call) -> dict[str, Any]:
                 # what the hub says of itself (hub_where): its own words, a hint; never part of a workspace's own text
                 "closing": None if state is None else hubclosing.view(state),  # #1463: {since_ms, ends_ms} | None
                 "hub_says": None if state is None or not state.hub_name else {"name": state.hub_name, "from": "hub"},
+                # P02: where the hub says its publish server is (a hint; the Publish form suggests it, the owner signs)
+                "hub_publish": None if state is None or state.status != "bound" else state.hub_publish,
                 "unbound_pending": state is not None and bool(state.outbox),
                 "owed": [] if state is None else sorted(state.outbox),
             }

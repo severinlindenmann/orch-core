@@ -408,7 +408,7 @@ class LinkServer:
 
     # --- the link ---------------------------------------------------------------------------------------------
 
-    def _auth(self, conn: tls.TlsConn) -> tuple[str, bytes] | None:
+    def _auth(self, conn: tls.TlsConn, pre: _PreAuth) -> tuple[str, bytes] | None:
         """Challenge, verify the auth frame. Returns (workspace_id, wsk_pub) or None after refusing."""
         challenge = os.urandom(32)
         self._send(conn, {"t": "challenge", "hub_id": self.hub_id, "challenge": b64u(challenge)})
@@ -442,11 +442,13 @@ class LinkServer:
                 _log.info("link auth refused: %s", e.extra["why"])
             self._refuse(conn, e.code if isinstance(e, Refused) else "malformed")
             return None
+        if self._pinned_to(ws, wsk):
+            pre.release()  # before ``ready``: the peer may open its next link the moment it reads it (G8 slot order)
         self._send(conn, {"t": "ready", "hub_id": self.hub_id})
         return ws, wsk
 
     def _link(self, conn: tls.TlsConn, pre: _PreAuth, peer_addr: str = "") -> None:
-        who = self._auth(conn)
+        who = self._auth(conn, pre)
         if who is None:
             return
         ws, wsk = who
@@ -660,12 +662,12 @@ class LinkServer:
             body = self._dispatch(ws, wsk, o, now, conn.same_computer())
             if was_unjoined and self._pinned_to(ws, wsk):
                 self._reg.seen(ws, now, peer_addr)
+            if self._pinned_to(ws, wsk):
+                pre.release()  # the join pinned this link's key: authenticated, and freed BEFORE the reply is sent
             port.send_signed(
                 o["op"] if o["op"] in H.LINK_OPS else "error", o["seq"], body
             )  # never sign a peer-chosen string
-            if self._pinned_to(ws, wsk):
-                pre.release()  # the join pinned this link's key: now it is authenticated
-            elif was_unjoined and o["op"] != "join":
+            if was_unjoined and o["op"] != "join" and not self._pinned_to(ws, wsk):
                 return  # an unjoined link may send one join; anything else ends it (after the refusal above)
             self._attach(ws, port)  # a join on this link just made the workspace routable
 

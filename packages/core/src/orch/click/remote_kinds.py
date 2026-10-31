@@ -35,7 +35,7 @@ _REFUSED_OPS = (
     "member.add", "member.remove", "member.role", "policy.set", "settings.set",
     "device.mark_exposed", "device.rotate", "device.remove",
     "hub.join", "hub.mode", "hub.leave", "remote.set", "remote.device_confirm",
-    "addon.grant", "addon.disable", "addon.purge", "publish.share", "import.v1",
+    "addon.grant", "addon.disable", "addon.purge", "publish.share", "app.release", "import.v1",
     # CLICK_OPS entries that are no person op of the host: explicit rows so the walk test sees them
     "apply", "claim", "handoff", "release", "submit",
     "task.block", "task.done", "task.reopen", "task.skip", "task.start",

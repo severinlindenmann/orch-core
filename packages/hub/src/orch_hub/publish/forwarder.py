@@ -134,6 +134,7 @@ class HubPublish:
         # registry and access store: this workspace is joined to THIS hub, bound now, and its owner is a hub admin, and
         # the hub setting lets workspaces share files. None (the default) = never send a hub.allow.
         self._admission = admission
+        self._last_allow: dict[str, str] = {}  # workspace -> "sent", "not_admitted" or the refusal code of the last try
 
     # --- Downstream (the link server calls these after it accepted the object) -------------------------------------
 
@@ -213,6 +214,20 @@ class HubPublish:
         headers["Orch-Hub"] = hub_id
         headers["Orch-Hub-Signature"] = b64u(hsig)
         status, body = self._send(p, headers, deadline)
+        if status == 401 and b"unknown_workspace" in body and self._admission is not None:
+            # orch-publish does not know this workspace (the first hub.allow was refused or lost): send the allowance
+            # again ONCE. The admission callback still decides; if it says no or the allowance cannot be sent, the
+            # original answer stands. Never a loop: a second 401 goes back as is.
+            with self._ws_lock(workspace_id):
+                self._allow(workspace_id)
+                sent = self._last_allow.get(workspace_id) == "sent"
+            if sent:
+                with self._lock:
+                    self._synced.pop(workspace_id, None)
+                    self._card_synced = None
+                    self._revoked_synced.clear()
+                self._ensure(workspace_id, card, need_bound=True, deadline=deadline)
+                status, body = self._send(p, headers, deadline)
         if status in (401, 403) and any(c in body for c in _RESYNC_CODES):
             with self._lock:
                 self._synced.pop(workspace_id, None)
@@ -232,6 +247,7 @@ class HubPublish:
         admission rules still apply and the workspace is told at its first send. The caller holds the workspace lock."""
         if self._admission is None:
             return
+        self._last_allow[workspace_id] = "not_admitted"
         try:
             got = self._admission(workspace_id)
             if got is None:
@@ -259,8 +275,11 @@ class HubPublish:
                 }
             )
             self._sync.put_allow(workspace_id, obj)
+            self._last_allow[workspace_id] = "sent"
         except (PublishSyncError, KeyUseError, Refused, ValueError, KeyError, OSError) as e:
-            logging.getLogger("orch_hub.publish").info("hub.allow not sent: %s", getattr(e, "code", type(e).__name__))
+            code = str(getattr(e, "code", type(e).__name__))
+            self._last_allow[workspace_id] = code
+            logging.getLogger("orch_hub.publish").warning("hub.allow not sent: %s", code)
 
     def _ensure(self, workspace_id: str, card: dict[str, Any], *, need_bound: bool, deadline: float) -> None:
         """Push the hub's card and the workspace's latest binding object when orch-publish does not hold them yet.

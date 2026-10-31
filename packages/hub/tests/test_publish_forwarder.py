@@ -357,3 +357,69 @@ def test_a_full_mode_workspace_is_forwarded_like_a_selective_one(tmp_path, up):
     (seen,) = up.requests
     got = {k.lower() for k in seen["headers"] if k.lower().startswith("orch-")}
     assert got == {k.lower() for k in r["headers"]} | {"orch-hub", "orch-hub-signature"}
+
+
+# --- the allowance is re-sent once when orch-publish answers unknown_workspace (run17 P01) ---------------------------
+
+_UNKNOWN = (401, b'{"error":"unknown_workspace"}')
+
+
+def _admitting(tmp_path, up, admission):
+    hub = make_hub(tmp_path)
+    wsk = new_wsk()
+    sync = RecordingSync()
+    fw = HubPublish(hub, sync, PublishConfig(up.url, HOST, timeout_s=2.0), admission=admission)
+    b = binding(wsk, hub, WS)
+    fw.binding(WS, b)
+    return type("E", (), {"hub": hub, "wsk": wsk, "sync": sync, "fw": fw, "b": b, "up": up})()
+
+
+def test_unknown_workspace_sends_the_allowance_again_and_resends_once(tmp_path, up):
+    e = _admitting(tmp_path, up, lambda ws: ("aa" * 16, 1))
+    kinds_before = [c[0] for c in e.sync.calls].count("allow")
+    up.script = [_UNKNOWN, (201, b'{"ok":true}')]
+    out = e.fw.forward(WS, req(e))
+    assert out["status"] == 201
+    assert len(up.requests) == 2
+    assert [c[0] for c in e.sync.calls].count("allow") == kinds_before + 1
+    assert e.fw._last_allow[WS] == "sent"
+
+
+def test_unknown_workspace_without_admission_is_not_retried(env):
+    env.up.script = [_UNKNOWN]
+    out = env.fw.forward(WS, req(env))
+    assert out["status"] == 401
+    assert len(env.up.requests) == 1
+
+
+def test_unknown_workspace_when_the_hub_does_not_admit_is_not_retried(tmp_path, up):
+    e = _admitting(tmp_path, up, lambda ws: None)
+    up.script = [_UNKNOWN]
+    out = e.fw.forward(WS, req(e))
+    assert out["status"] == 401
+    assert len(up.requests) == 1
+    assert "allow" not in [c[0] for c in e.sync.calls]
+
+
+def test_unknown_workspace_when_the_allowance_is_refused_is_not_retried(tmp_path, up):
+    e = _admitting(tmp_path, up, lambda ws: ("aa" * 16, 1))
+    up.script = [_UNKNOWN]
+    orig = e.sync.put_allow
+
+    def refuse(ws, obj):
+        raise PublishSyncError("unknown_hub")
+
+    e.sync.put_allow = refuse
+    out = e.fw.forward(WS, req(e))
+    e.sync.put_allow = orig
+    assert out["status"] == 401
+    assert len(up.requests) == 1
+    assert e.fw._last_allow[WS] == "unknown_hub"
+
+
+def test_the_retry_is_at_most_once(tmp_path, up):
+    e = _admitting(tmp_path, up, lambda ws: ("aa" * 16, 1))
+    up.script = [_UNKNOWN, _UNKNOWN, _UNKNOWN]
+    out = e.fw.forward(WS, req(e))
+    assert out["status"] == 401
+    assert len(up.requests) == 2

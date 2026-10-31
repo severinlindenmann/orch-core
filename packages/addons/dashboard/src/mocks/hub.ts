@@ -1,3 +1,4 @@
+import type { Rail } from '@/api/switch'
 // A simulated hub for the mockup and its tests (V3 A7). Scenario by address: `?hub=standalone|selective|full|offline|nottold`
 // (kept for the tab). Reads are fixed by the scenario. Stopping sharing (a ticket, a rule) is a plain owner click; a
 // join and a leave are signed by One click with the backup key and change the scenario (see the click routes below).
@@ -145,6 +146,23 @@ function registerHubNetworkRoutes(r: MockRouter) {
 }
 
 export function registerHubRoutes(r: MockRouter) {
+  const mockup = () => new URL(import.meta.env.VITE_HUB_MOCKUP_URL || 'http://127.0.0.1:8787/hub/index.html')
+  r.add('GET', '/api/w/:ws/hub/rail', (store, c) => {
+    const rail: Rail = scenario() === 'standalone' ? { hub: null, workspaces: [] } : {
+      hub: { name: 'Company hub', origin: mockup().origin },
+      workspaces: store.workspaces.map((w) => ({ workspace_id: w.id, name: w.name, role: 'owner', online: true, badge: 0, origin: null, current: w.id === c.params.ws })),
+    }
+    return ok(rail)
+  })
+  r.add('POST', '/api/w/:ws/hub/switch', (_s, c) => {
+    if (scenario() === 'standalone') return fail(409, 'hub.not_joined', 'This workspace has not joined a hub.')
+    const body = c.body as { kind?: string; return_to?: string } | null
+    if (!body || !['open', 'signout'].includes(body.kind ?? '')) return fail(400, 'invalid.input', 'Choose open or signout.')
+    const url = mockup()
+    url.hash = body.kind === 'signout' ? 'signed-out' : (body.return_to ?? '/').replace(/^\/?#?\/?/, '') || 'home'
+    return ok({ url: url.href })
+  })
+
   r.add('GET', '/api/w/:ws/hub', () => ok(mockHubStatus()))
   r.add('GET', '/api/w/:ws/hub/share', () => ok(mockShare()))
   r.add('GET', '/api/w/:ws/hub/shared', () => ok({ items: scenario() === 'selective' || scenario() === 'full' ? MOCK_SHARED_WITH_YOU : [] }))

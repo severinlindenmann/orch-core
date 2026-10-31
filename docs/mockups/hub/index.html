@@ -26,6 +26,9 @@ button{font:inherit;color:inherit}
 .bnr b{color:var(--note)}
 .bnr .sp{flex:1}
 .bnr label{display:flex;align-items:center;gap:6px;cursor:pointer;color:var(--text-muted)}
+.app.auth-demo{grid-template-columns:minmax(0,1fr)}
+.app.auth-demo>.rail,.app.auth-demo>.side{display:none}
+.app.auth-demo #view{max-width:520px;margin:24px auto}
 .app{display:grid;grid-template-columns:60px 236px minmax(0,1fr);height:calc(100vh - 30px)}
 /* rail */
 .rail{background:var(--rail);border-right:1px solid var(--border);display:flex;flex-direction:column;align-items:center;gap:10px;padding:12px 0;overflow-y:auto}
@@ -310,7 +313,7 @@ details summary{cursor:pointer;color:var(--text-muted);font-size:13px;margin:6px
 </svg>
 
 <div class="bnr"><b>MOCKUP</b><span>orch hub · demo data · nothing here is real or saved (except your Need/Later/No picks, in this browser)</span><span class="sp"></span>
-<label title="Pages load slower so you can see the loading skeletons"><input type="checkbox" id="slowT"> Slow network</label><label title="Shows what happens when the hub connection drops"><input type="checkbox" id="offT"> Hub offline</label><label><input type="checkbox" id="notesT" checked> Show requirement notes</label></div>
+<label>Demo <select id="auditDemo"><option value="home">Company hub</option><option value="ben-home">Ben · shared ticket</option><option value="continue-anna">Continue as Anna</option><option value="signin-workspace">Sign in from workspace</option><option value="spaces-no-starter">Spaces · no starter</option></select></label><label title="Pages load slower so you can see the loading skeletons"><input type="checkbox" id="slowT"> Slow network</label><label title="Shows what happens when the hub connection drops"><input type="checkbox" id="offT"> Hub offline</label><label><input type="checkbox" id="notesT" checked> Show requirement notes</label></div>
 
 <div class="app" id="app">
   <nav class="rail" id="rail" aria-label="Hub and workspaces"></nav>
@@ -1256,8 +1259,22 @@ window.addEventListener("hashchange", () => document.querySelectorAll(".drawer")
 
 // ---------------------------------------------------------------- router + events
 const TITLES = Object.assign({}, NOTE_TITLES, {requirements:"Requirements"});
+// UX audit states use the same hash navigation as the rest of this mockup.
+const sharedDemo = () => `<div class="card"><div class="hd">Shared with you (1)</div><div class="row"><div class="tx"><b>Invoice CSV export</b><div class="s">Shared by Anna Test</div></div><button class="btn" data-nav="ben-ticket">Open</button></div></div>`;
+P["ben-home"] = () => `<h1>Hello, Ben Test</h1><p class="lead">1 ticket shared with you.</p>${sharedDemo()}<p class="small muted">Want a workspace of your own? Ask your hub admin.</p>`;
+P["ben-workspaces"] = () => `<h1>Workspaces</h1><div class="card cb"><h2>Connected workspaces</h2><p>No workspaces of your own yet.</p><p>1 ticket shared with you</p>${sharedDemo()}</div>`;
+P["ben-ticket"] = () => `<h1>Invoice CSV export</h1><p class="lead">Shared by Anna Test</p><div class="card cb">Export invoices as CSV.</div>`;
+P["continue-anna"] = () => `<div class="card" style="padding:24px"><h1>Continue as Anna Test?</h1><p>You opened the hub from your workspace. Nothing happens until you continue.</p><button class="btn pri" data-nav="home">Continue</button> <a class="btn" href="#w/an/today">Back to my workspace</a></div>`;
+P["signin-workspace"] = () => `<div class="card" style="max-width:440px;padding:24px"><h1>Sign in to your hub</h1><form id="demoSignin"><label>Your name<input class="input" autocomplete="username" value="Anna Test" required></label><label>Password<input class="input" type="password" autocomplete="current-password" required></label><label>6-digit code<input class="input" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required></label><p class="small muted">Use the code shown for orch in the code app on your phone.</p><button class="btn pri">Sign in</button></form><p><a href="#w/an/today">Back to my workspace</a></p></div>`;
+P["signed-out"] = () => `<h1>You are signed out</h1><p>Your hub session ended.</p><button class="btn pri" data-nav="signin-workspace">Sign in again</button>`;
+P["spaces-no-starter"] = () => `<h1>Shared spaces</h1><button class="btn pri" disabled style="opacity:.45">New shared space</button><div class="ban w" style="display:block"><b>No space can be started yet.</b><p>A space needs a workspace that shares everything with the hub.</p><p>Ben Test’s workspace shares only what you choose.</p><details><summary>Show me how</summary><ol><li>Open Ben Test’s workspace on its own computer.</li><li>Go to Settings &gt; Hub.</li><li>Choose <b>Share everything</b>. Then come back here.</li></ol></details></div><div class="empty"><h2>No shared spaces yet</h2></div>`;
+document.querySelector('#auditDemo').addEventListener('change', (e) => { location.hash = e.target.value; });
+document.addEventListener('submit', (e) => { if (e.target.id === 'demoSignin') { e.preventDefault(); location.hash = 'home'; } });
 function render(){
   const page = (location.hash.slice(1) || "home");
+  const authDemo = ["continue-anna", "signin-workspace", "signed-out"].includes(page);
+  $("#app").classList.toggle("auth-demo", authDemo);
+  $("#auditDemo").value = page.startsWith("ben-") ? "ben-home" : authDemo ? (page === "signed-out" ? "signin-workspace" : page) : page === "spaces-no-starter" ? page : "home";
   const wm = /^w\/(\w+)(?:\/(\w+))?$/.exec(page);
   if (wm && D.prof[wm[1]]) {
     renderRail(wm[1]);
@@ -1268,6 +1285,22 @@ function render(){
   const fn = P[page] || P.home;
   renderRail(null); renderSide(P[page] ? page : "home"); renderTop(TITLES[page] || "Home");
   $("#view").innerHTML = fn();
+  if (page.startsWith("ben-")) {
+    $("#rail").innerHTML = `<div class="ra hub on" data-nav="ben-home">${ic("bld")}</div><span class="grow"></span><div class="ra me">BT</div>`;
+    $("#side").innerHTML = `<div class="hubname">Company hub</div><div class="nv" data-nav="ben-home">Home</div><div class="nv" data-nav="ben-workspaces">Workspaces</div><div class="foot">Signed in as <b>Ben Test</b></div>`;
+    $("#top").innerHTML = `<span class="t">Hub</span><span class="sp"></span>Ben Test`;
+  }
+  if (page === "spaces-no-starter") {
+    renderSide("spaces");
+    $("#rail").innerHTML = `<div class="ra hub on" data-nav="home">${ic("bld")}</div><span class="grow"></span><div class="ra me">AT</div>`;
+    $("#side .foot").innerHTML = `Signed in as <b>Anna Test</b>`;
+    $("#top").innerHTML = `<span class="t">Shared spaces</span><span class="sp"></span>Anna Test`;
+  }
+  if (["continue-anna", "signin-workspace", "signed-out"].includes(page)) {
+    $("#rail").innerHTML = ""; $("#side").innerHTML = "";
+    $("#top").innerHTML = `<span class="t">Company hub</span>`;
+  }
+
   $("#app").classList.remove("open");
 }
 // route change: skeleton first (longer with "Slow network"), then the page fades in

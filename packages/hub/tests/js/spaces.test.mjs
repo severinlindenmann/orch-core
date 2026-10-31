@@ -108,7 +108,7 @@ test("New shared space: three steps, the statement is on the page and in the dia
   assert.equal(find(view, (n) => n.attrs.id === "space-dialog")[0].children.length, 0);   // the dialog closed
 });
 
-test("New shared space: a waiting workspace is greyed out with its reason from the start and cannot be ticked", () => {
+test("New shared space: only eligible starters can be ticked; later members retain their explanation", () => {
   const made = [];
   const view = spacesView({ ...data, workspaces: WS }, { create: (f) => made.push(f) }, NOW);
   find(view, (n) => n.attrs.id === "new-space")[0].listeners.click();
@@ -119,9 +119,9 @@ test("New shared space: a waiting workspace is greyed out with its reason from t
   const box = (label) => find(dlg, (n) => n.tag === "input" && n.attrs["aria-label"] === label)[0];
   const create = clickAll(dlg, "Create")[0];
   const tick = find(dlg, (n) => n.attrs.id === "space-understood")[0]; tick.checked = true; tick.listeners.change();
-  assert.equal(box("Legal").disabled, true); assert.equal(box("Product").disabled, undefined);
+  assert.equal(box("Legal"), undefined); assert.equal(box("Product").disabled, undefined);
   assert.ok(dlg.textContent.includes(LATER));
-  assert.equal(find(dlg, (n) => n.tag === "label" && n.className === "check disabled").length, 1, "the row is dimmed");
+  assert.equal(find(dlg, (n) => n.tag === "label" && n.className === "check disabled").length, 0, "later members are explained without offering them as starters");
   assert.equal(find(dlg, (n) => n.attrs.id === "space-no-start").length, 0, "no late warning");
   assert.equal(find(dlg, (n) => n.attrs.class === "banner warn" && !n.hidden).length, 0);
   assert.equal(box("Product").checked, true);                                     // preselected

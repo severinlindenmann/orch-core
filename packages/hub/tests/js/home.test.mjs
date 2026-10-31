@@ -235,3 +235,20 @@ test("run18 P04: Home calls a stored key dead only when it is this person's own;
   assert.match(line, /!mine && state\.me\?\.userId === user\.user_id;/);
   assert.ok(!src.includes("forgetLocal"), "no Forget path: setting up again replaces the old key");
 });
+
+const { workspacesView } = await import("../../src/orch_hub/web/workspaces.js");
+test("workspaces without own rows show each shared ticket and retain the original empty state otherwise", () => {
+  const shared = [{ workspace_id: "a", key: "A-1", title: "Invoice CSV export", shared_by: "Anna Test" }, { workspace_id: "b", key: "B-1", title: "Another ticket", shared_by: "Carla" }];
+  const opened = [];
+  const data = { workspaces: [], handoffs: [], shared, actions: { openShared: (it) => opened.push(it) } };
+  const out = workspacesView(data);
+  const text = out.map((n) => n.textContent).join(" ");
+  assert.match(text, /No workspaces of your own yet.*2 tickets shared with you/);
+  assert.match(text, /Shared by Anna Test/);
+  const buttons = out.flatMap((n) => n.all()).filter((n) => n.tag === "button" && n.textContent === "Open");
+  assert.equal(buttons.length, 2);
+  buttons.forEach((b) => b.listeners.click());
+  assert.deepEqual(opened, shared);
+  assert.match(workspacesView({ ...data, shared: shared.slice(0, 1) }).map((n) => n.textContent).join(" "), /1 ticket shared with you/);
+  assert.match(workspacesView({ ...data, shared: [] }).map((n) => n.textContent).join(" "), /No workspaces yet/);
+});

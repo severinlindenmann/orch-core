@@ -1,3 +1,4 @@
+import { sharedCardView } from "./home.js";
 import { emptyState, toast } from "./feel.js";
 // Connected workspaces and their availability.
 import { restoredNotice } from "./pages/hub-settings.js";
@@ -269,7 +270,10 @@ export function workspacesView(data, now = Date.now()) {
         h("td", {}, h("div", { class: "ws-actions" }, button("Details", () => actions.details?.(w)),
           w.private ? small("Only " + text(w.owner_name ?? "its owner") + " can open it")
             : w.mode === "selective" ? small("Open it on its own computer") : button("Open", () => actions.open?.(w)))));
-    })))) : emptyState(data.admin != null || data.canConnect ? "workspaces" : "workspaces-member");
+    })))) : data.shared?.length ? h("div", {},
+    h("p", { text: "No workspaces of your own yet." }),
+    h("p", { text: data.shared.length + (data.shared.length === 1 ? " ticket shared with you" : " tickets shared with you") }),
+    sharedCardView({ shared: data.shared, actions })) : emptyState(data.admin != null || data.canConnect ? "workspaces" : "workspaces-member");
   const older = data.workspaces.filter((w) => ["older", "unsupported"].includes(w.version_state));
   const left = (data.admin ?? []).filter((w) => w.status === "unbound");
   const leftView = data.admin != null ? h("details", {}, h("summary", { text: "Show left workspaces (" + left.length + ")" }),

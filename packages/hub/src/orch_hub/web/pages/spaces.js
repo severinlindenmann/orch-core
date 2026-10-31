@@ -89,18 +89,13 @@ export function newSpaceDialog(workspaces, done, close) {
       })],
       2: [h("label", {}, "Name", nameIn), h("label", {}, "What is it for? (optional)", purposeIn)],
       3: [h("p", { text: "Which workspaces use it?" }),
-        ...(workspaces.length ? workspaces.map((w) => {
-          const joins = w.mode === "full";
+        ...workspaces.filter((w) => w.mode === "full").map((w) => {
           const box = h("input", { type: "checkbox", "aria-label": nameOf(w) });
-          if (joins) {
-            box.checked = form.members.has(w.workspace_id);
-            box.addEventListener("change", () => { box.checked ? form.members.add(w.workspace_id) : form.members.delete(w.workspace_id); ready(); });
-          } else {
-            box.disabled = true;
-          }
-          return h("label", { class: "check" + (joins ? "" : " disabled") }, box, h("span", { class: "grow", text: nameOf(w) }),
-            h("span", { class: "small muted", text: joins ? "joins now" : LATER }));
-        }) : [h("p", { class: "small muted", text: "No workspace is connected yet." })]),
+          box.checked = form.members.has(w.workspace_id);
+          box.addEventListener("change", () => { box.checked ? form.members.add(w.workspace_id) : form.members.delete(w.workspace_id); ready(); });
+          return h("label", { class: "check" }, box, h("span", { class: "grow", text: nameOf(w) }), h("span", { class: "small muted", text: "joins now" }));
+        }),
+        ...workspaces.filter((w) => w.mode !== "full").map((w) => h("p", { class: "small muted", text: nameOf(w) + " · " + LATER })),
         h("label", { class: "check" }, tick, h("span", { text: "I understand: " + STATEMENT }))],
     };
     body.replaceChildren(h("h1", { text: "New shared space (step " + step + " of 3)" }), ...steps[step],

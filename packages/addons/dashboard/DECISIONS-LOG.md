@@ -2146,3 +2146,9 @@ Revert: Restore the prior gate only together with a coordinated click contract c
 - **Decision:** Default New schedule to “A new ticket each run”, with a literal title limited to 100 characters. Keep the existing ticket picker as the other choice; preserve the row’s target when undoing cancellation.
 - **Why:** Repeated checks need a fresh ticket for each run. Keep the form short, with the longer explanation behind the information button. Preserve existing-ticket action arguments.
 - **Revert:** Remove the target choice and optional action/model fields, and restore the ticket picker as the first control.
+
+### 2026-10-31 — Open hub in the dashboard demo
+
+- **Decision:** Share the mock API transport with hub switching; the production client exports a fetch transport. Mock rail and switch routes use `VITE_HUB_MOCKUP_URL`, defaulting to `http://127.0.0.1:8787/hub/index.html`, and map the requested page to its hash.
+- **Why:** The demo's Open hub action previously bypassed its router and failed against real HTTP. Standalone still has no hub.
+- **Revert:** Remove the mock rail/switch routes and switch transport exports together, restoring the direct fetch transport in `api/switch.ts`.

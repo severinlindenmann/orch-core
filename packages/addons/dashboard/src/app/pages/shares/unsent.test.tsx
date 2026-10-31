@@ -9,7 +9,7 @@ it.each(['/w/DEMO/settings/hub'])('offers unsent shares on %s without sending', 
   setHubScenario('delivery')
   const sync = vi.spyOn(api, 'syncHubShare')
   const view = renderApp(path)
-  expect(await screen.findByText('1 shares were made before you joined and are not sent yet.')).toBeTruthy()
+  expect(await screen.findByText('1 shares are not sent yet.')).toBeTruthy()
   await view.user.click(screen.getByRole('button', { name: 'Send now' }))
   expect(await screen.findByRole('button', { name: 'Sign' })).toBeTruthy()
   expect(sync).not.toHaveBeenCalled()

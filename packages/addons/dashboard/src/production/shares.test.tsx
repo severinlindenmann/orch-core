@@ -980,7 +980,7 @@ it('lists pre-join hub shares and opens the confirming sync review without sendi
     return previous?.(path, method, body)
   }
   show('/w/DEMO/shares')
-  expect(await screen.findByText('1 shares were made before you joined and are not sent yet.', {}, T)).toBeTruthy()
+  expect(await screen.findByText('1 shares are not sent yet.', {}, T)).toBeTruthy()
   fireEvent.click(screen.getByRole('button', { name: 'Send now' }))
   expect(await screen.findByRole('button', { name: 'Sign' }, T)).toBeTruthy()
   expect(calls('/hub/share/sync')).toHaveLength(0)

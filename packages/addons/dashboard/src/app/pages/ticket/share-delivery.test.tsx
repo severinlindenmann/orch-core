@@ -33,9 +33,20 @@ it('Send now previews, then only Sign sends the exact plan and updates the badge
   expect(sync).not.toHaveBeenCalled()
   fireEvent.click(sign)
   expect(sync).not.toHaveBeenCalled()
+  expect(preview).toHaveBeenCalledWith(expect.any(String), {})
+  expect(preview.mock.calls.every(([, change]) => !change.add && !change.remove)).toBe(true)
   const plan = (await preview.mock.results.at(-1)!.value).plan
   trusted.mockReturnValue(true)
   fireEvent.click(sign)
   await waitFor(() => expect(sync).toHaveBeenCalledWith(expect.any(String), plan))
   await waitFor(() => expect(screen.getByTestId('shared-chip')).toHaveTextContent('Shared with the hub'))
+})
+
+it('renders nothing when selection is absent or withdrawn', () => {
+  const { container, rerender } = render(<ShareDelivery onSend={vi.fn()} />)
+  expect(container).toBeEmptyDOMElement()
+  rerender(<ShareDelivery state="sent" onSend={vi.fn()} />)
+  expect(screen.getByTestId('shared-chip')).toBeTruthy()
+  rerender(<ShareDelivery state={undefined} onSend={vi.fn()} />)
+  expect(container).toBeEmptyDOMElement()
 })

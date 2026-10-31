@@ -24,7 +24,7 @@ export function UnsentShares({ workspace }: { workspace: Workspace }) {
   const n = share.data?.not_sent_count ?? 0
   return <>
     {owner && n > 0 && <div className="flex flex-wrap items-center gap-2" data-testid="unsent-shares">
-      <p>{n} shares were made before you joined and are not sent yet.</p>
+      <p>{n} shares are not sent yet.</p>
       <Action id="send-shares-open" onClick={() => setOpen(true)}>Send now</Action>
     </div>}
     {open && <SendSharesReview workspace={workspace} onClose={() => setOpen(false)} />}

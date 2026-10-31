@@ -1,8 +1,8 @@
-import { JoinShareOffer } from './SendShares'
 // Run-9 feedback 6: connect a hub from a link. The person pastes the link the hub admin gave them; the host fetches the
 // hub card and checks it against the link, and the page shows which hub it is. One click then signs the join (HubStep,
 // with the backup key: the hub always requires the owner's proof), and the host tells the hub (hub.connect, with the
 // link's code and address). Both modes use this review and one-click flow.
+import { JoinShareOffer } from './SendShares'
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { useQueryClient } from '@tanstack/react-query'

@@ -515,21 +515,25 @@ def _read(call: Call, op: str, args: dict[str, Any]) -> dict[str, Any]:
             keys = {f.uid: f.key for f in facts}
             known = st.sent if st.confirmed is None else st.confirmed
             states = {}
+            priority = {"refused": 0, "not_sent": 1, "waiting": 2, "sent": 3}
             selected = _select(call.service, st.rules, facts)
             for item in selected:
-                if item.kind != "ticket" or item.logical in st.withdrawn:
+                if item.ticket_uid not in keys or item.logical in st.withdrawn:
                     continue
-                if item.logical in st.refused:
+                # sync stores this same content/f1/audience digest after a successful put.
+                if (st.sent.get(item.logical) or {}).get("digest") == item.digest:
+                    state = "sent"
+                elif item.logical in st.refused:
                     code = st.refused[item.logical]["code"]
                     code = code if code in S.ITEM_REFUSALS | {"unknown_user", "other_person"} else "unknown"
                     state = "refused:" + code
                 elif item.logical not in known:
                     state = "not_sent"
-                elif (st.sent.get(item.logical) or {}).get("digest") == item.digest:
-                    state = "sent"
                 else:
                     state = "waiting"
-                states[keys[item.ticket_uid]] = state
+                key = keys[item.ticket_uid]
+                if priority[state.split(":")[0]] < priority[states.get(key, "sent").split(":")[0]] or key not in states:
+                    states[key] = state
             return ok_result({"rules": rules, "shared": len(st.sent), "withdrawn": sorted(st.withdrawn),
                               "refused_items": st.refused_items(), "tickets_state": states,
                               "not_sent_count": sum(v == "not_sent" for v in states.values())})  # fmt: skip

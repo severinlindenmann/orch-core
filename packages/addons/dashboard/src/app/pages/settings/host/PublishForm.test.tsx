@@ -6,10 +6,10 @@ import { PublishForm } from './PublishServer'
 const noop = () => {}
 const URL = 'http://127.0.0.1:8102'
 
-it('a hub workspace sees no address and no hub name in the main view; the sentence is behind Details', async () => {
+it('a hub workspace sees where files go by name, no address; the address is behind Details', async () => {
   render(<PublishForm server={URL} share={URL} setServer={noop} setShare={noop} suggested={URL} suggestedFrom="hub" hubName="Anna’s hub" />)
   const box = screen.getByTestId('publish-suggested')
-  expect(box).not.toHaveTextContent('Anna’s hub')
+  expect(box).toHaveTextContent('Files go to your hub, Anna’s hub.') // by name, in the main view
   expect(box).not.toHaveTextContent(URL)
   expect(screen.queryByLabelText('Publish server address')).toBeNull()
   await userEvent.setup().click(screen.getByRole('button', { name: 'Details' }))
@@ -19,6 +19,7 @@ it('a hub workspace sees no address and no hub name in the main view; the senten
 
 it('a local install keeps its own sentence, behind Details', async () => {
   render(<PublishForm server={URL} share={URL} setServer={noop} setShare={noop} suggested={URL} suggestedFrom="computer" />)
+  expect(screen.getByTestId('publish-suggested')).toHaveTextContent('Files go to this computer.')
   expect(screen.getByTestId('publish-suggested')).not.toHaveTextContent(URL)
   await userEvent.setup().click(screen.getByRole('button', { name: 'Details' }))
   expect(await screen.findByTestId('info-drawer-content')).toHaveTextContent('Publish server on this computer')

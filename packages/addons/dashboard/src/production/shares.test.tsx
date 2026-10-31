@@ -626,6 +626,11 @@ it('Publish as link: one press prepares the copy and opens exactly ONE sign shee
   expect(sheet).toHaveTextContent('report.md')
   expect(sheet).toHaveTextContent('Anyone with the link can read this file. A copy cannot be taken back. You see the link once.')
   expect((sheet.textContent ?? '').match(/Anyone with the link/g)).toHaveLength(1)
+  expect(within(sheet).getByTestId('where-files-go')).toHaveTextContent('Files go to this computer.') // by name, before Sign
+  // Enter right after the sheet opened does not sign (focus is not on Sign, and a press must begin after the review)
+  expect(document.activeElement).not.toBe(within(sheet).queryByRole('button', { name: 'Publish' }))
+  await user.keyboard('{Enter}')
+  expect(state.host.clickSigned).toEqual([])
   // the address and the prepared-copy id sit behind Details
   expect(sheet).not.toHaveTextContent('http://127.0.0.1:8103')
   await user.click(within(sheet).getByRole('button', { name: 'Details' }))
@@ -645,6 +650,24 @@ it('Publish as link: one press prepares the copy and opens exactly ONE sign shee
   await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Your link' })).toBeNull(), T)
   expect(document.body.textContent).not.toContain(TOKEN)
   expect(JSON.stringify([...queryClient.getQueryCache().getAll().map((q) => q.state.data), ...queryClient.getMutationCache().getAll().map((m) => m.state.data)])).not.toContain(TOKEN)
+})
+
+it('Publish as link: closing the flow while the copy is being prepared discards the copy that arrives later', async () => {
+  route()
+  const user = userEvent.setup()
+  const list = await onResults(user)
+  const inner = state.host.override!
+  let release: () => void = () => {}
+  const gate = new Promise<void>((r) => { release = r })
+  state.host.override = (path, method, body) => (path.endsWith('/shares/prepare') ? gate.then(() => inner(path, method, body) as Response) as never : inner(path, method, body))
+  await user.click(within(list).getByRole('button', { name: 'Publish report.md as a link' }))
+  await user.click(await screen.findByRole('button', { name: 'Cancel' }, T)) // closes while prepare is in flight
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull(), T)
+  release()
+  await waitFor(() => expect(calls('/shares/discard')).toHaveLength(1), T)
+  expect(screen.queryByRole('dialog')).toBeNull() // no sheet appears later
+  expect(state.host.clickPrepares()).toEqual([])
+  expect(calls('/shares/send')).toEqual([])
 })
 
 it('Publish as link: Cancel on the sheet sends nothing, signs nothing and discards the prepared copy', async () => {

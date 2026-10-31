@@ -5,7 +5,7 @@ import { useQuery } from '@tanstack/react-query'
 import { InfoDrawer } from '@/components/InfoDrawer'
 import { Link } from '@tanstack/react-router'
 import { useState } from 'react'
-import { adminCommand, isUnknownWorkspace, newIdem, reachNote, shareError, shareQueries, sharesApi } from '@/api/shares'
+import { adminCommand, destinationLine, isUnknownWorkspace, newIdem, reachNote, shareError, shareQueries, sharesApi } from '@/api/shares'
 import { Inline } from '@/components/sign/visible'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -194,7 +194,7 @@ export function PublishForm({ server, share, setServer, setShare, suggested, sug
   if (suggested && !changing && server === suggested && share === suggested)
     return (
       <div className="flex items-center gap-1.5 text-[13px]" data-testid="publish-suggested">
-        <span className="text-text-muted">Where files go is already set.</span>
+        <span>{destinationLine(suggestedFrom, hubName, suggested)}</span>
         <InfoDrawer text="Details">
           {(close) => (
             <>

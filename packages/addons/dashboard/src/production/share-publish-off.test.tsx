@@ -103,6 +103,30 @@ it('run17 P01b: a suggested address skips the address dialog; the review opens a
   expect(state.host.clickSigned).toEqual([]) // never armed or signed by itself
 })
 
+it('run17 P01b: a hub-suggested address shows "Files go to your hub, <name>." in the review lead before Sign', async () => {
+  ws().addOns = { available: true, add_ons: [{ ...row('off'), set_up: false, suggest: 'http://127.0.0.1:8102', suggest_from: 'hub', suggest_hub: 'Anna’s hub' }] } as never
+  const user = userEvent.setup()
+  await openShare(user)
+  await screen.findByTestId('click-panel', {}, T)
+  expect(await screen.findByTestId('where-files-go', {}, T)).toHaveTextContent('Files go to your hub, Anna’s hub.')
+  expect(screen.getByRole('button', { name: /^Sign( |$)/ })).toBeInTheDocument()
+  expect(state.host.clickSigned).toEqual([])
+})
+
+it('run17 P01b: a suggestion that appears after the form was shown does not replace the form', async () => {
+  notSetUp(null)
+  const user = userEvent.setup()
+  await openShare(user)
+  const dialog = await screen.findByRole('dialog', { name: 'Turn on Publish' }, T)
+  await user.type(within(dialog).getByLabelText('Publish server address'), 'http://127.0.0.1:9')
+  notSetUp('http://127.0.0.1:8102')
+  await queryClient.invalidateQueries({ queryKey: ['add-ons', A] })
+  await new Promise((r) => setTimeout(r, 300))
+  expect(screen.queryByTestId('click-panel')).toBeNull()
+  expect(within(screen.getByRole('dialog')).getByLabelText('Publish server address')).toHaveValue('http://127.0.0.1:9')
+  expect(state.host.clickPrepares()).toEqual([])
+})
+
 it('P04: with nothing suggested the one address dialog stays and its button goes straight to Sign', async () => {
   notSetUp(null)
   const user = userEvent.setup()

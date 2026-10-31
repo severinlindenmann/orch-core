@@ -19,8 +19,9 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Label } from '@/components/ui/label'
 import {
   DAYS,
-  VIEWS,
   adminCommand,
+  destinationLine,
+  VIEWS,
   fileBase64,
   LIMITS,
   fmtSize,
@@ -171,12 +172,13 @@ export function ShareFlow({ ws, ticket, resume, only, onClose }: { ws: string; t
     setError('')
     try {
       const got = await sharesApi.prepare(ws, { ticket: ticket.key, artifacts: picked, ...(workSel.length ? { workfiles: workSel } : {}), ...(added.length ? { uploads: added.map((f) => f.upload_id) } : {}), kind, days, ...(kind === 'once' ? { views } : {}) }, prepareIdem)
+      if (!alive.current) return discard(got.staged)
       void refreshShares(qc, ws)
       setStage({ at: 'confirm', staged: got.staged })
     } catch (e) {
-      setError(shareError(e))
+      if (alive.current) setError(shareError(e))
     } finally {
-      setBusy(false)
+      if (alive.current) setBusy(false)
     }
   }
 
@@ -188,18 +190,25 @@ export function ShareFlow({ ws, ticket, resume, only, onClose }: { ws: string; t
     setError('')
     try {
       const got = await sharesApi.prepare(ws, { ticket: ticket.key, artifacts: [only], kind: 'secret', days: 7 }, prepareIdem)
+      if (!alive.current) return discard(got.staged)
       void refreshShares(qc, ws)
       setStage({ at: 'confirm', staged: got.staged })
     } catch (e) {
-      setError(shareError(e))
+      if (alive.current) setError(shareError(e))
     } finally {
-      setBusy(false)
+      if (alive.current) setBusy(false)
     }
   }
 
   // Publish as link: the press that opened this flow already said what happens, so the copy is prepared as soon as the
   // server is known to be set up. Prepare only: the sign sheet that follows is never armed, Sign stays the person's press.
   const autoPrepared = useRef(false)
+  // The flow closed or unmounted while a copy was being prepared: that copy is discarded when it arrives, never shown or signed.
+  const alive = useRef(true)
+  useEffect(() => {
+    alive.current = true
+    return () => { alive.current = false }
+  }, [])
   useEffect(() => {
     if (!only || stage.at !== 'one' || autoPrepared.current || info.isPending) return
     if (data && !data.configured) return
@@ -251,7 +260,7 @@ export function ShareFlow({ ws, ticket, resume, only, onClose }: { ws: string; t
   if (stage.at === 'one' && only) {
     const noServer = !!data && !data.configured
     return (
-      <Dialog open onOpenChange={(o) => !o && !busy && onClose()}>
+      <Dialog open onOpenChange={(o) => !o && onClose()}>
         <DialogContent className="max-w-md gap-3 border-border bg-surface">
           <DialogHeader>
             <DialogTitle>Publish {only} as a link?</DialogTitle>
@@ -267,7 +276,7 @@ export function ShareFlow({ ws, ticket, resume, only, onClose }: { ws: string; t
             )}
           </div>
           <DialogFooter>
-            <Button variant="ghost" onClick={onClose} disabled={busy}>
+            <Button variant="ghost" onClick={onClose}>
               Cancel
             </Button>
             {error && !noServer && <Button onClick={() => void publishOne()}>Try again</Button>}
@@ -417,13 +426,13 @@ export function ShareFlow({ ws, ticket, resume, only, onClose }: { ws: string; t
     return (
       <SignPopover
         key={s.staged_id}
-        title={only ? `Publish ${only} as a link?` : `Share files of ${s.ticket ?? ticket.key}`}
+        title={only && s.files.length === 1 && s.files[0].name === only ? `Publish ${only} as a link?` : `Share files of ${s.ticket ?? ticket.key}`}
         ws={ws}
         action={{ action: 'publish_share', key: s.ticket ?? ticket.key, staged_id: s.staged_id }}
         anchor={null}
         prepareOnOpen
         autoStart={false}
-        confirmLabel={only ? 'Publish' : 'Share files'}
+        confirmLabel={only && s.files.length === 1 && s.files[0].name === only ? 'Publish' : 'Share files'}
         lead={
           only ? (
             <div className="space-y-2 text-[13px]">
@@ -435,6 +444,7 @@ export function ShareFlow({ ws, ticket, resume, only, onClose }: { ws: string; t
                   </li>
                 ))}
               </ul>
+              <p data-testid="where-files-go" className="font-medium">{destinationLine(null, null, server)}</p>
               {note && <p className="text-[12px] text-text-muted">{note}</p>}
               <p role="note" className="text-[12px] text-warning">Anyone with the link can read this file. A copy cannot be taken back. You see the link once.</p>
               <InfoDrawer text="Details">
@@ -461,6 +471,7 @@ export function ShareFlow({ ws, ticket, resume, only, onClose }: { ws: string; t
                 </li>
               ))}
             </ul>
+            <p data-testid="where-files-go" className="font-medium">{destinationLine(null, null, server)}</p>
             {note && <p className="text-[12px] text-text-muted">{note}</p>}
             <p role="note" className="text-[12px] text-warning">Anyone with the link can read these files. A copy cannot be taken back.</p>
             <InfoDrawer>

@@ -219,6 +219,13 @@ export function reachNote(server: string | null, share: string | null): string |
   return null
 }
 
+/** Where files go, by name and never by address: the one plain line every publish review keeps in its main view (full addresses stay in Details). */
+export function destinationLine(from: 'computer' | 'hub' | null | undefined, hubName?: string | null, server?: string | null): string {
+  if (from === 'hub') return hubName ? `Files go to your hub, ${hubName}.` : 'Files go to your hub.'
+  if (from === 'computer' || !server || isLoopback(server)) return 'Files go to this computer.'
+  return `Files go to ${server.replace(/^https?:\/\//, '').replace(/[:/].*$/, '')}.`
+}
+
 export const adminCommand = (workspace: string | null, owner: string | null): string => `orch-publish admin ws allow ${workspace ?? 'WORKSPACE_ID'} ${owner ?? 'OWNER_ID'}`
 
 /** The accessible name of a Stop sharing button: which files, and when the link ends. */

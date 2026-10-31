@@ -219,8 +219,8 @@ function QuickSigned({ typed, also, members, notes = [] }: { typed: QuickTyped; 
   </>
 }
 
-/** The summary line of an add-on turn-on that names what it says it will do (signcontent.py: "It says it will …"). */
-const CAPABILITY_LINE = /^It says it will /
+/** The host's own share summary (signcontent.py _share_summary): only then are the ids folded; the client's action never decides. */
+const HOST_SHARE_SUMMARY = 'Share these files'
 
 export function SignContent({ content, ws, technical, compact = false, quick, workspaceLine, foldIds = false }: { content: Content; /** Ids and the add-on's capability line under the fold only (display; the content is unchanged). */ foldIds?: boolean; ws?: string; technical?: ReactNode; /** The workspace line, kept one click away inside this review's own fold (hub join) instead of a second fold of its own. */ workspaceLine?: ReactNode; compact?: boolean; /** A quick task: the typed values, for the folded "Also signed" view. */ quick?: QuickTyped }) {
   const members = useWorkspaceMembers(ws)
@@ -272,19 +272,18 @@ export function SignContent({ content, ws, technical, compact = false, quick, wo
   </>
   const parts = compact ? compactAnswer(content) : null
   const choice = parts?.choice.after
-  // foldIds (Publish only): the add-on's capability line ("It says it will use the internet.") moves into the fold below; the risk line stays
-  const folded = foldIds ? (summary?.lines ?? []).filter(l => CAPABILITY_LINE.test(l)) : []
-  const facts = (summary?.lines ?? []).filter(l => !folded.includes(l))
+  // foldIds: only for the host's share summary; every other review keeps every line in the main view
+  const foldTheIds = foldIds && summary?.title === HOST_SHARE_SUMMARY
+  const facts = summary?.lines ?? []
   return <div data-testid={parts ? 'sign-compact' : undefined} className="min-w-0 space-y-3 font-sans text-[13px] leading-relaxed text-text [overflow-wrap:anywhere]">
     {choice && <p data-testid="sign-choice">Your answer will be <Inline>{choice}</Inline>.</p>}
     {facts.length > 0 && <section data-testid="sign-summary"><ul className="space-y-1.5">{facts.map((line, i) => <li key={i}><Inline>{line}</Inline></li>)}</ul></section>}
-    {summary && content.ticket && !foldIds && <p data-testid="sign-ticket"><Raw>{content.ticket.key}</Raw> · signed id …<Raw>{content.ticket.uid_tail}</Raw></p>}
+    {summary && content.ticket && !foldTheIds && <p data-testid="sign-ticket"><Raw>{content.ticket.key}</Raw> · signed id …<Raw>{content.ticket.uid_tail}</Raw></p>}
     {summary?.risk && <p role="note" data-testid="sign-risk" className="flex items-start gap-2 rounded-md border border-warning/50 border-l-[3px] border-l-risk-bar bg-warning-soft px-3 py-2 font-medium text-text"><ShieldAlert className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden /><span><Inline>{summary.risk}</Inline></span></p>}
     {!summary ? <div data-testid="sign-exact" className="min-w-0 space-y-5">{rest}</div> : <details data-testid="sign-exact" className="space-y-3 rounded-md border border-border p-3">
       <summary className="cursor-pointer text-[12px] font-medium text-text-muted">What you sign</summary>
       <div className="mt-2 min-w-0 space-y-5">
         {workspaceLine}
-        {folded.map((l, i) => <p key={i} data-testid="sign-folded-fact"><Inline>{l}</Inline></p>)}
         {rest}
       </div>
     </details>}

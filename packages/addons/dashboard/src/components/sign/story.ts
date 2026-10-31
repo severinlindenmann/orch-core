@@ -76,12 +76,10 @@ export function storyOf(action: ClickAction | null | undefined, ctx: StoryContex
       const length = accessLength(action.hours)
       return { signLabel: 'Sign and show the secret', access: { length }, steps: ['You sign.', `The secret is shown once on this page. Agents that hold it may work for you for ${length} from now.`] }
     }
-    // Publish (built in): the person's press already said what happens; the sheet names the file and the warning, the ids sit behind Details.
-    // The button label is the caller's own (one file: "Publish", several: "Share files"). A third-party add-on (market_grant) keeps every line.
+    // The share review is the host's own (publish.share summary); its ids sit behind Details (SignContent checks the host's summary).
+    // addon_enable has no host marker for the built-in package, so a Publish turn-on keeps every line.
     case 'publish_share':
-      return { foldWorkspace: true, foldInRisk: true, foldIds: true, steps: [] }
-    case 'addon_enable':
-      return action.name === 'publish' ? { foldWorkspace: true, foldInRisk: true, foldIds: true, steps: [] } : null
+      return { foldWorkspace: true, foldIds: true, steps: [] }
     case 'hub_join':
       return { signLabel: 'Connect', foldWorkspace: true, foldInRisk: true, steps: ['You sign.', 'This workspace is joined to the hub as shown.'] }
     case 'hub_mode_full':

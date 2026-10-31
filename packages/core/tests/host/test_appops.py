@@ -265,3 +265,114 @@ def test_a_staged_file_with_other_bytes_of_the_same_size_is_not_sent(a):
     path.write_bytes(bytes(len(APPJS)))  # same size, other bytes: the recomputed sha256 differs
     assert err(a.req("app.send", {"staged_id": staged})) == "publish.changed"
     assert [r for r in a.server.requests if "/apps/" in r["target"]] == []
+
+
+# -- Opus review of #1784 ---------------------------------------------------------------------------------------------
+
+
+def test_two_stages_of_one_app_the_second_send_is_refused(a):
+    """F1: both stages were made against the same record; once the first is sent the second is stale, at the signature
+    and at the send, and nothing of it is uploaded."""
+    uid, key = ticket(a)
+    first = ok(prepare(a, key, "index.html", "app.js"))["data"]
+    a.human.run("app.release", {"staged_id": first["staged_id"]})
+    ok(a.req("app.send", {"staged_id": first["staged_id"]}))
+    one = ok(prepare(a, key, "index.html", "app.js", app_id=first["app_id"], name="Sales board 2"))["data"]
+    two = ok(prepare(a, key, "index.html", "app.js", app_id=first["app_id"], name="Sales board 3"))["data"]
+    assert one["version"] == 2 and two["version"] == 2
+    a.human.run("app.release", {"staged_id": one["staged_id"]})
+    a.human.run("app.release", {"staged_id": two["staged_id"]})  # both signed while the record was unchanged
+    ok(a.req("app.send", {"staged_id": one["staged_id"]}))
+    before = len(a.server.requests)
+    assert err(a.req("app.send", {"staged_id": two["staged_id"]})) == "publish.changed"
+    assert len(a.server.requests) == before
+    assert err(a.human.prepare_res("app.release", {"staged_id": two["staged_id"]})) == "publish.changed"
+
+
+def test_the_reach_may_not_name_the_publish_server_the_share_origin_or_the_hub(a):
+    """F2: refused at prepare, before anybody signs."""
+    uid, key = ticket(a)
+    for origin in ("https://publish.example.org", "https://apps.example.org"):
+        a.configure(server=origin, share=origin)
+        res = prepare(a, key, "index.html", "app.js", reach=[origin])
+        assert err(res) == "invalid.input", origin
+
+
+def test_a_stale_staged_release_is_swept_at_the_next_prepare(a):
+    """F3: a release no one finished with goes after a day, like a share."""
+    import os
+
+    from orch.host import publishing
+
+    uid, key = ticket(a)
+    old = ok(prepare(a, key, "index.html", "app.js"))["data"]["staged_id"]
+    d = a.served.lab.state / "hosts" / a.served.wid / "publish" / "appstage" / old
+    gone = a.served.service.clock() - publishing.STAGE_KEEP - 60
+    os.utime(d, (gone, gone))
+    ok(prepare(a, key, "index.html", "app.js", slug="other-app"))
+    assert not d.exists()
+
+
+def test_discard_is_for_the_person_who_prepared_it_or_one_who_may_release_it(a):
+    """F4: seeing the ticket is not enough (``_may_share``)."""
+    from orch.host import appops, publishing
+
+    uid, key = ticket(a)
+    staged = ok(prepare(a, key, "index.html", "app.js"))["data"]["staged_id"]
+    stage = appops._load_stage(a.served.service, staged)  # noqa: SLF001
+    assert stage["by"].startswith("p_")
+    # another person who can see the ticket but may not release it: refused, nothing removed
+    import types
+
+    from orch.host.errors import HostError
+
+    call = types.SimpleNamespace(
+        column=types.SimpleNamespace(name="P"), viewer="p_someone_else", service=a.served.service, frame={}
+    )
+    asked = []
+
+    def may_share(c, view):
+        asked.append(c.viewer)
+        raise HostError("role.denied", "sharing is for the ticket owner, owners and maintainers")
+
+    mp = pytest.MonkeyPatch()
+    mp.setattr(publishing, "_ticket", lambda c, ref: types.SimpleNamespace(key=key, uid=uid))
+    mp.setattr(publishing, "_may_share", may_share)
+    try:
+        with pytest.raises(HostError) as caught:
+            appops._discard(call, {"staged_id": staged})  # noqa: SLF001
+    finally:
+        mp.undo()
+    assert caught.value.code == "role.denied" and asked == ["p_someone_else"]
+    assert (a.served.lab.state / "hosts" / a.served.wid / "publish" / "appstage" / staged).exists()
+    ok(a.req("app.discard", {"staged_id": staged}))  # the person who prepared it
+
+
+def test_a_note_older_than_an_hour_is_no_approval(a):
+    """F6: the signature is good for an hour (``APPROVAL_VALID``)."""
+    uid, key = ticket(a)
+    staged = ok(prepare(a, key, "index.html", "app.js"))["data"]["staged_id"]
+    a.human.run("app.release", {"staged_id": staged})
+    a.served.service.clock = (lambda c: lambda: c() + 3601)(a.served.service.clock)
+    assert err(a.req("app.send", {"staged_id": staged})) == "publish.not_approved"
+
+
+def test_a_viewer_cannot_send(a):
+    """F6: ``role.denied`` for a person who may not release (here: no ticket owner, owner or maintainer role)."""
+    from orch.host import appops
+
+    uid, key = ticket(a)
+    staged = ok(prepare(a, key, "index.html", "app.js"))["data"]["staged_id"]
+    a.human.run("app.release", {"staged_id": staged})
+    import orch.host.publishing as P
+
+    def deny(call, view):
+        raise appops.HostError("role.denied", "sharing is for the ticket owner, owners and maintainers")
+
+    mp = pytest.MonkeyPatch()
+    mp.setattr(P, "_may_share", deny)
+    try:
+        assert err(a.req("app.send", {"staged_id": staged})) == "role.denied"
+    finally:
+        mp.undo()
+    assert [r for r in a.server.requests if "/apps/" in r["target"]] == []

@@ -19,8 +19,8 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from orch import childenv
-from orch.migrate.format import init_root, read_format, write_format
-from orch.migrate.journal import journal_path
+from orch.migrate.format import lock_root, read_format, write_format
+from orch.migrate.journal import journal_path, unfinished
 from orch.migrate.steps import CURRENT
 from orch.ops.errors import OrchError
 from orch.wsproto import wire
@@ -469,22 +469,61 @@ def _read_root_format(data: Path, part: str) -> int | None:
         raise InstallError(exc.message) from None
 
 
-def _refuse_newer_root(data: Path, part: str) -> None:
-    fmt = _read_root_format(data, part) if data.is_dir() else None
+def refuse_unfinished_update(ctx: Ctx) -> None:
+    """Install changes a part's code and data: never while an update is unfinished (its journal, or a restore, is
+    open). Called BEFORE anything is stopped, installed or written."""
+    if unfinished(ctx.env):
+        raise InstallError("an update was interrupted: run `orch update` to finish or roll back")
+
+
+#: A data dir that has data but no ``format.json`` is adopted at the baseline (format 1) ONLY while the code's format
+#: is still that baseline. This is the pre-2.0.0 rule: dev installs made before parts had a format hold the baseline
+#: shape, and there is no legacy promise before the 2.0.0 cut. Once a part's CURRENT is raised, a dir without a marker
+#: could be at any older shape: it is refused, never guessed.
+ADOPT_BASELINE_ONLY_AT = 1
+
+
+def _unmarked_refusal(part: str) -> InstallError:
+    return InstallError(f"this {part} data has no format.json: restore it from a backup or remove it")
+
+
+def _check_root(data: Path, part: str) -> None:
+    """Refuse, before anything is stopped, a data dir this install cannot take: newer than the code, or unmarked
+    data that may not be adopted."""
+    if not data.is_dir():
+        return
+    fmt = _read_root_format(data, part)
     if fmt is not None and fmt > CURRENT[part]:
         raise InstallError(f"this data was made by a newer orch (format {fmt}): update orch")
+    if fmt is None and any(data.iterdir()) and CURRENT[part] != ADOPT_BASELINE_ONLY_AT:
+        raise _unmarked_refusal(part)
+
+
+def _write_marker(data: Path, part: str, n: int) -> None:
+    """``format.json`` is written under the root's exclusive ``format.lock`` (non-blocking): a part or a migration that
+    holds the root makes this refuse."""
+    try:
+        fd = lock_root(data, exclusive=True)
+    except OrchError as exc:
+        raise InstallError(f"the {part}'s data is in use: {exc.message}") from None
+    try:
+        write_format(data, part, n)
+    finally:
+        os.close(fd)
 
 
 def _mark_root(data: Path, part: str, born: bool) -> None:
     """The part's data dir is a migration root (``format.json``). A fresh dir is born at the code's format. An
-    existing format.json is left as it is. A dir without one is a pre-2.0.0 dev install: it is adopted at the
-    baseline (format 1). That is allowed only because there is no legacy promise before the 2.0.0 cut."""
+    existing format.json is left as it is. A dir without one is adopted at the baseline (format 1) while the code is at
+    the baseline (:data:`ADOPT_BASELINE_ONLY_AT`); later it is refused."""
     if _read_root_format(data, part) is not None:
         return
     if born:
-        init_root(data, part)
+        _write_marker(data, part, CURRENT[part])
+    elif CURRENT[part] == ADOPT_BASELINE_ONLY_AT:
+        _write_marker(data, part, ADOPT_BASELINE_ONLY_AT)
     else:
-        write_format(data, part, 1)  # adopt: pre-2.0.0 data has the baseline shape
+        raise _unmarked_refusal(part)
 
 
 def install_part(
@@ -515,8 +554,9 @@ def install_part(
     explicit_publish_url = publish_url
     source = source or ctx.env.get(f"ORCH_INSTALL_SOURCE_{part.upper()}")  # a local checkout (dev machines, tests)
     lay = ctx.layout
+    refuse_unfinished_update(ctx)  # before anything is stopped or installed
     st = load(lay)
-    _refuse_newer_root(lay.data(part), part)  # before anything is stopped or installed
+    _check_root(lay.data(part), part)  # also before: a newer or unadoptable data dir changes nothing
     if part in st["parts"] or ctx.runner.info(part)["running"]:
         # a re-run replaces this user's own running part (its port is then free again), also when an earlier run died
         # before it recorded the part: that port is ours, not another program's
@@ -567,12 +607,15 @@ def install_part(
             if rc != 0:
                 shutil.rmtree(data, ignore_errors=True)  # a half-made key store would refuse the next try
                 raise InstallError(f"orch-hub keys init failed:\n{out.strip()[-600:]}")
+            # right after a successful init (rc 0): a crash before this line leaves a dir without a marker, which the
+            # next install handles as unmarked data (adopted at the baseline, else refused), never as a marked root
+            _mark_root(data, part, born)
         token = (st["parts"].get("hub") or {}).get("setup_token") or ctx.token()
         if fresh:  # the hub's console reads this file once: the first-admin page consumes it
             tf = data / "setup-token"
             tf.write_text(token + "\n")
             tf.chmod(0o600)
-    _mark_root(data, part, born)  # after the hub's key init: that needs an empty folder
+    _mark_root(data, part, born)  # the hub is marked already (after its key init: that needs an empty folder)
     if part == "hub":
         write_hub_settings(
             data,
@@ -984,6 +1027,7 @@ def full_server(
     out: dict[str, dict[str, Any]] = {}
     if not parts:  # a workspace-only setup installs no part, so it has no address to ask for
         return out
+    refuse_unfinished_update(ctx)  # before anything is stopped, for every part
     check_block(ctx, parts)
     st = load(ctx.layout)
     address = choose_address(ctx, address, st)

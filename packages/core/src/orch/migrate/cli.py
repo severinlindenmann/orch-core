@@ -17,7 +17,7 @@ from orch.ops.errors import ERRORS, OrchError
 from orch.ops.runtime import state_dir
 
 from . import backup as backup_mod
-from .format import lock_root
+from .format import lock_root, read_format
 from .journal import restore_pending
 from .runner import Plan, apply, plan
 
@@ -48,9 +48,11 @@ def _workspace_roots(env: Mapping[str, str], only: str | None) -> tuple[list[tup
     return out, notes
 
 
-def _part_roots(env: Mapping[str, str]) -> list[tuple[str, str, Path]]:
-    """(label, kind, data dir) of every installed part (hub, relay, publish) whose data dir exists. The kind is the
-    part's name."""
+def _part_roots(env: Mapping[str, str]) -> tuple[list[tuple[str, str, Path]], list[str]]:
+    """(label, kind, data dir) of every installed part (hub, relay, publish) whose data dir exists AND has a
+    ``format.json``, and notes. The kind is the part's name. A data dir with no ``format.json`` (installed before parts
+    had a format) is no root: it is never migrated or backed up here, and a note says how to mark it. (A damaged
+    ``format.json`` stays a root: it is refused, never skipped silently.)"""
     from orch.install.parts import PARTS
     from orch.install.state import Layout as InstallLayout
     from orch.install.state import load
@@ -58,11 +60,20 @@ def _part_roots(env: Mapping[str, str]) -> list[tuple[str, str, Path]]:
     layout = InstallLayout(env)
     installed = load(layout).get("parts") or {}
     out: list[tuple[str, str, Path]] = []
+    notes: list[str] = []
     for part in PARTS:
         data = layout.data(part)
-        if part in installed and data.is_dir():
+        if part not in installed or not data.is_dir():
+            continue
+        try:
+            marked = read_format(data, part) is not None
+        except OrchError:
+            marked = True
+        if marked:
             out.append((f"the {part}'s data", part, data))
-    return out
+        else:
+            notes.append(f"the {part}'s data has no format yet: run `orch install {part}` again")
+    return out, notes
 
 
 def _may_be_committed(project: Path) -> bool:
@@ -119,7 +130,9 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextI
     wss, notes = _workspace_roots(env, only)
     if only is None:
         targets.append(("this computer's orch data", "host", state_dir(env)))
-        targets.extend(_part_roots(env))
+        part_roots, part_notes = _part_roots(env)
+        targets.extend(part_roots)
+        notes.extend(part_notes)
     for label, project, store in wss:
         targets.append((label, "workspace", store))
         projects[label] = project

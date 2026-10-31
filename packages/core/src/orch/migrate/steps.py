@@ -30,6 +30,8 @@ __all__ = [
     "CURRENT",
     "DEFAULT",
     "KINDS",
+    "NESTED_PART_ROOTS",
+    "PART_KINDS",
     "PROTECTED_NAMES",
     "PROTECTED_PATHS",
     "SIGNED_DENY",
@@ -47,6 +49,12 @@ __all__ = [
 #: the format number the code writes and reads, per root kind (baseline 1 at the 2.0.0 cut)
 CURRENT: dict[str, int] = {"host": 1, "workspace": 1, "hub": 1, "relay": 1, "publish": 1}
 KINDS = tuple(CURRENT)
+#: the root kinds that are the data dir of an installed part
+PART_KINDS = ("hub", "relay", "publish")
+#: Part data dirs live INSIDE the host root, at ``install/parts/<part>/data``, yet each is a root of its own. The roots
+#: are disjoint: the host root's snapshot, backup and restore leave this folder out (a restore carries the current one
+#: over untouched), and each part root is snapshotted, backed up and restored on its own.
+NESTED_PART_ROOTS = "install/parts"
 
 #: Signed, chained or key data a migration may never touch (matched on the casefolded, symlink-resolved relative path).
 #: ``PROTECTED_PATHS`` are globs on the whole relative path, ``PROTECTED_NAMES`` globs on any one component.
@@ -90,8 +98,8 @@ def protected_snapshot(root: Path) -> dict[str, str | None]:
     snap: dict[str, str | None] = {}
     for dirpath, dirnames, filenames in os.walk(root):
         rel_dir = Path(dirpath).relative_to(root)
-        if rel_dir.parts[:1] and rel_dir.parts[0] == WORK_DIR:
-            dirnames.clear()
+        if (rel_dir.parts[:1] and rel_dir.parts[0] == WORK_DIR) or rel_dir.as_posix() == NESTED_PART_ROOTS:
+            dirnames.clear()  # derived data, and the part roots nested in the host root (their own snapshots)
             continue
         for name in filenames:
             rel = (rel_dir / name).as_posix()

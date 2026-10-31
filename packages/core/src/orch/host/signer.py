@@ -276,6 +276,12 @@ def _person_op(prepared: Mapping[str, Any]) -> None:
         _refuse(f"{op} carries a manual acceptance statement")
     events = prepared["events"]
     for e in events:  # every event, before the op-specific dispatch below (which returns at its first unknown op)
+        if e["type"] == "log.added":  # reserved approval lines are written only by their own click op
+            from orch.publishclient.approval import reserved_note_op
+
+            owner = reserved_note_op(e.get("text"))
+            if owner is not None and owner != op:
+                _refuse(f"{op} cannot write a note that starts with the approval line of {owner}")
         label = e.get("label")
         if (
             e["type"] in ARTIFACT_TYPES

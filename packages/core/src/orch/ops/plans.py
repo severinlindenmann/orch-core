@@ -100,7 +100,11 @@ def unknown_task(view: Any, tid: str) -> OrchError:
 
 
 def log(c: Call, p: Projection, args: dict[str, Any]) -> Out:
+    from orch.publishclient.approval import reserved_note_op
+
     text = c.body_text(c.read_text_source(args) or "", what="note")
+    if reserved_note_op(text) is not None:  # reserved approval lines are written only by their own click op
+        raise OrchError("invalid.input", "a note cannot start with the first line of an approval")
     p.add({"type": "log.added", "text": text})
     return Out({}, ["orch wait" if not c.attended else views.next_hint(p.last_view, c.ctx.session)])
 

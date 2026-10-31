@@ -35,9 +35,11 @@ __all__ = [
     "MARK",
     "NAME",
     "VIEWS",
+    "RESERVED_LINES",
     "app_release_text",
     "approval_text",
     "check_name",
+    "reserved_note_op",
     "human_size",
     "manifest_hash",
     "password_record",
@@ -225,7 +227,10 @@ class AppReleaseFacts:
     text: str
 
 
-def _who_can_open(access: str, audience: str | None) -> str:
+def _who_can_open(access: str, audience: str | None, origin: str | None = None) -> str:
+    if access == "password":
+        by = "set by an agent" if origin == "agent" else "set by you"
+        return f"anyone with the link who knows a password ({by})"
     if access in _ACCESS_WORDS:
         return _ACCESS_WORDS[access]
     if access == "company":
@@ -240,14 +245,57 @@ def _reach_words(reach: Sequence[str]) -> str:
     return ", ".join(reach) if reach else "nothing outside the app itself"
 
 
-def _changes(prev: Mapping[str, Any], meta: Mapping[str, Any]) -> list[str]:
-    """Plain lines for what changes against the live version; ``[]`` when access, reach and files are equal."""
+#: files that run in the browser come first in the review and are always all listed (an agent cannot hide a service
+#: worker or a wasm module behind padding); images and the rest are counted, and only they can be cut
+_CODE_EXT = ("html", "js", "mjs", "cjs", "wasm", "css", "svg", "htm")
+_IMAGE_EXT = ("png", "jpg", "jpeg", "gif", "webp", "avif", "ico", "bmp")
+_QUOTES = '"\u201c\u201d'
+
+
+def _ext(path: str) -> str:
+    return path.rpartition(".")[2].lower() if "." in path else ""
+
+
+def _file_order(f: Mapping[str, Any]) -> tuple[int, str]:
+    ext = _ext(f["path"])
+    rank = {e: i for i, e in enumerate(("html", "htm", "js", "mjs", "cjs", "wasm", "css", "svg"))}
+    return (rank.get(ext, len(rank)), f["path"])
+
+
+def _file_kind(path: str) -> str:
+    ext = _ext(path)
+    return "code" if ext in _CODE_EXT else "image" if ext in _IMAGE_EXT else "other"
+
+
+def _counts(files: Sequence[Mapping[str, Any]]) -> str:
+    n = {"code": 0, "image": 0, "other": 0}
+    for f in files:
+        n[_file_kind(f["path"])] += 1
+    words = {"code": "code file", "image": "image", "other": "other file"}
+    return ", ".join(f"{n[k]} {words[k]}{'' if n[k] == 1 else 's'}" for k in ("code", "image", "other") if n[k])
+
+
+def _mixed_letters(name: str) -> bool:
+    """True when the letters of ``name`` come from more than one script (a Cyrillic ``a`` in a Latin word)."""
+    import unicodedata
+
+    scripts = set()
+    for c in name:
+        if c.isalpha():
+            scripts.add(unicodedata.name(c, "UNKNOWN").split(" ")[0])
+    return len(scripts) > 1
+
+
+def _changes(prev: Mapping[str, Any], meta: Mapping[str, Any], origin: str | None = None) -> list[str]:
+    """Plain lines for what changes against the live version; ``[]`` when nothing differs."""
     out: list[str] = []
     if (prev["access"], prev["audience"]) != (meta["access"], meta["audience"]):
         out.append(
-            f"- Who can open it: was {_who_can_open(prev['access'], prev['audience'])}; "
-            f"now {_who_can_open(meta['access'], meta['audience'])}"
+            f"- Who can open it: was {_who_can_open(prev['access'], prev['audience'], origin)}; "
+            f"now {_who_can_open(meta['access'], meta['audience'], origin)}"
         )
+    elif meta["access"] == "password" and prev["pw"] != meta["pw"]:
+        out.append("- Password: changed")
     added = [o for o in meta["reach"] if o not in prev["reach"]]
     dropped = [o for o in prev["reach"] if o not in meta["reach"]]
     if added:
@@ -279,9 +327,10 @@ def app_release_text(
 ) -> str:
     """The note a person signs to let one app version go live. Deterministic, built from the staged release only.
     ``meta`` is the stored meta of the version (the shape orch-publish checks, ``hubclient.published.meta_problem``);
-    ``previous`` is ``{"version": int, "meta": <meta of the live version>}`` or None for a first release. Every value is
-    checked first: anything outside its alphabet raises ``ValueError``, so no line break from outside can reach the
-    text and what is shown is what is stored."""
+    ``previous`` is ``{"version": int, "meta": <meta of the live version>}``: None for a first release, required for a
+    rollback (to a version below the live one) and a start (the live version itself). Every value is checked first:
+    anything outside its alphabet raises ``ValueError``, so no line break from outside can reach the text and what is
+    shown is what is stored."""
     from orch.hubclient import published as pub
 
     if _APP_STAGED.fullmatch(staged_id or "") is None or origin not in ("agent", "person"):
@@ -296,35 +345,51 @@ def app_release_text(
         raise ValueError("server")
     if (bad := pub.meta_problem(dict(meta))) is not None:
         raise ValueError(f"app meta: {bad}")
+    if any(q in meta["name"] for q in _QUOTES):
+        raise ValueError("app name")
     live_version = None
     if previous is not None:
         live_version = previous["version"]
         if pub.meta_problem(dict(previous["meta"])) is not None or type(live_version) is not int or live_version < 1:
             raise ValueError("live version")
-        if op == "commit" and live_version >= version:
-            raise ValueError("live version")
-    total = sum(f["size"] for f in meta["files"])
-    files = list(meta["files"])
-    rows = [f"- {f['path']}  ({human_size(f['size'])}, sha256 {f['sha256'][:16]})" for f in files[:APP_FILES_SHOWN]]
-    if len(files) > APP_FILES_SHOWN:
-        rows.append(f"- and {len(files) - APP_FILES_SHOWN} more files (all of them are covered by the hash below)")
+    # which version a request may name against the live one (what orch-publish also enforces)
+    if op == "commit" and live_version is not None and live_version >= version:
+        raise ValueError("live version")
+    if op == "rollback" and (live_version is None or live_version <= version):
+        raise ValueError("live version")
+    if op == "start" and (live_version is None or live_version != version):
+        raise ValueError("live version")
+    files = sorted(meta["files"], key=_file_order)
+    total = sum(f["size"] for f in files)
+    code = [f for f in files if _file_kind(f["path"]) == "code"]
+    rest = [f for f in files if _file_kind(f["path"]) != "code"]
+
+    def row(f: Mapping[str, Any]) -> str:
+        return f"- {f['path']}  ({human_size(f['size'])}, sha256 {f['sha256'][:16]})"
+
+    rows = [row(f) for f in code] + [row(f) for f in rest[:APP_FILES_SHOWN]]
+    if len(rest) > APP_FILES_SHOWN:
+        rows.append(f"- and {len(rest) - APP_FILES_SHOWN} more files that are not code (covered by the hash below)")
     who = "an agent" if origin == "agent" else "you"
+    mixed = " (mixed letters: check the name carefully)" if _mixed_letters(meta["name"]) else ""
     lines = [
         APP_MARK,
         f"Ticket: {ticket_key}",
         f"Prepared by: {who}",
         f"Action: {_ACTION_WORDS[op]}",
-        f"App: {meta['name']} ({meta['kind']}), address {share}/a/{meta['slug']}",
+        f"App name: \u201c{meta['name']}\u201d{mixed}",
+        f"Kind: {meta['kind']}",
+        f"Address: {share}/a/{meta['slug']}",
         f"Version: {version}",
-        f"Who can open it: {_who_can_open(meta['access'], meta['audience'])}",
+        f"Who can open it: {_who_can_open(meta['access'], meta['audience'], origin)}",
         "Code in the app runs in the browser of everyone who opens it",
         f"The app may contact: {_reach_words(meta['reach'])}",
         f"The files are sent to: {server}",
-        f"Files ({len(files)}, {human_size(total)}):",
+        f"Files ({len(files)}, {human_size(total)}): {_counts(files)}",
         *rows,
     ]
     if previous is not None:
-        changes = _changes(previous["meta"], meta)
+        changes = _changes(previous["meta"], meta, origin)
         lines.append(f"Compared with the live version {live_version}:")
         lines.extend(changes or ["- no change to who can open it, what it may contact or the files"])
     else:
@@ -336,3 +401,21 @@ def app_release_text(
         f"Reach hash: {pub.reach_hash(meta['reach'])}",
     ]
     return "\n".join(lines)
+
+
+#: Reserved approval lines are written only by their own click op. A note that starts with one of these first
+#: lines is an approval a sender will trust (``publish.send``, ``app.send``), so no other op may write such a note:
+#: the signer (``host.signer._person_op``) refuses it for every other person op, and the ordinary note op
+#: (``ops.plans.log``) refuses it for everyone, an agent included. One table, so a new approval kind is one row,
+#: not one more patched path.
+RESERVED_LINES: dict[str, str] = {MARK: "publish.share", APP_MARK: "app.release"}
+
+
+def reserved_note_op(text: object) -> str | None:
+    """The op that alone may write a note with this text (it starts with a reserved approval line), else None."""
+    if type(text) is not str:
+        return None
+    for line, op in RESERVED_LINES.items():
+        if text.startswith(line):
+            return op
+    return None

@@ -604,4 +604,4 @@ export async function hubSettingsPage(d, detected = [], words = null, opened = f
 }
 
 // The registry entry: the page's file name is its path (settings is a route of orch's own, so the file is hub-settings).
-export const page = { path: "hub-settings", nav: { label: "Hub settings", admin: true, after: "admin" }, render: hubSettingsPage };
+export const page = { path: "hub-settings", nav: { group: "People & settings", label: "Hub settings & backups", admin: true, after: "admin" }, render: hubSettingsPage };

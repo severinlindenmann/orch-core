@@ -1103,9 +1103,8 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
             t = self.d.channels.new_totp(uid)
             # #1837 review: the admin membership is the LAST step, so a failure above leaves no half-made admin that
             # would lock /setup (not_allowed) for good; the code stays usable for another try
-            self.d.access.add_member(ADMIN_GROUP, uid)
-            # the admin exists by now: a failure here leaves the token file, but /setup answers not_allowed from then on
             s = self.d.channels.open_setup_session(uid)
+            self.d.access.add_member(ADMIN_GROUP, uid)  # nothing after this can fail the answer (the unlink is guarded)
             try:
                 f.unlink(missing_ok=True)  # single use
             except OSError:

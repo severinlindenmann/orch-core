@@ -209,15 +209,34 @@ def server_setup(
     hub_urls = _hub_urls(ctx, role, names, publish_url, relay_url, no_publish_url, no_relay_url)
     if backup_drop:
         drop_check(backup_drop)
+    edge_trust = None
     if trust_hub is not None:
         st = load(ctx.layout)
-        st["edge_trust"] = {
+        edge_trust = {
             "hub_id": trust_hub,
             "origin": names.url("hub") or st.get("edge_hub_origin") or st.get("edge_trust", {}).get("origin"),
         }
         if st["parts"].get("publish") and not any(
-            (named, behind_proxy, address, vpn_ip, source, ref, dev, backup_drop, ctx.port_base)
+            (
+                named,
+                behind_proxy,
+                address,
+                vpn_ip,
+                source,
+                ref,
+                dev,
+                backup_drop,
+                ctx.port_base,
+                publish_url is not None,
+                relay_url is not None,
+                no_publish_url,
+                no_relay_url,
+                hub_name is not None,
+                no_hub_name,
+                allow_non_cgnat,
+            )
         ):
+            st["edge_trust"] = edge_trust
             save(ctx.layout, st)
             trust.apply(ctx, ctx.env)
             return Plan(role=role, parts=tuple(parts), names=names)
@@ -266,12 +285,9 @@ def server_setup(
                 raise InstallError("--hub-name needs the private-network (VPN) address of this computer")
             server.check_hub_name_target(hub_name, plan.vpn_ip, resolve)  # before anything is stopped or written
 
-    if trust_hub is not None:
+    if edge_trust is not None:
         st = load(ctx.layout)
-        st["edge_trust"] = {
-            "hub_id": trust_hub,
-            "origin": names.url("hub") or st.get("edge_hub_origin") or st.get("edge_trust", {}).get("origin"),
-        }
+        st["edge_trust"] = edge_trust
         save(ctx.layout, st)
 
     if role == "edge" and names.hub:

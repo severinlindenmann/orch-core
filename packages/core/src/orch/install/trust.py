@@ -27,13 +27,14 @@ def fingerprint(origin: str | None, hub_id: str) -> str | None:
         card = fetch_card(Link(origin, hub_id, "", None))
         if _card_hub_id(json.dumps(card)) != hub_id:
             return None
+        # _card_hub_id binds the id to hk_root_pub, so the right id cannot have a different fingerprint.
         # Same hub-key fingerprint as the core signing review (host.signcontent._fp).
         return hashlib.sha256(card["o"]["hk_root_pub"].encode("utf-8")).hexdigest()[:12]
     except (HubRefused, OSError, ValueError, TypeError, KeyError):
         return None
 
 
-def apply(ctx: Ctx, env: Mapping[str, str]) -> None:
+def apply(ctx: Ctx, env: Mapping[str, str], *, fetch_fingerprint: bool = True) -> None:
     st = load(ctx.layout)
     wanted = st.get("edge_trust")
     if not wanted:
@@ -48,7 +49,9 @@ def apply(ctx: Ctx, env: Mapping[str, str]) -> None:
     _admin_hub(ctx, pub, ctx.layout.data("publish"), "trust", hub_id, env)
     pub["pinned_hub_id"] = hub_id
     save(ctx.layout, st)
-    fp = fingerprint(wanted.get("origin"), hub_id)
+    if old and old != hub_id:
+        ctx.say(f"Publish no longer trusts hub {old}; it now trusts {hub_id}")
+    fp = fingerprint(wanted.get("origin"), hub_id) if fetch_fingerprint else None
     ctx.say(f"Publish trusts hub {hub_id}" + (f" (hub card fingerprint {fp})" if fp else ""))
 
 
@@ -59,6 +62,7 @@ def hub_hint(ctx: Ctx) -> None:
     rc, out = ctx.run_stdout([hub["binary"], "keys", "--state", str(ctx.layout.data("hub")), "card"], ctx.env)
     hub_id = _card_hub_id(out) if rc == 0 else None
     if hub_id:
+        hub_id = check_hub_id(hub_id)
         # Publish exposes no read endpoint listing trusted hubs; its local admin list needs the other user's data.
         ctx.say(
             "On the computer user that runs Publish, run: "

@@ -50,8 +50,8 @@ def address_kind(ip: str) -> str:
 
 
 _VIRTUAL = re.compile(
-    r"^(docker|br-|virbr|veth|cni|flannel|cali|lxc|lxd)"
-)  # bridges and container links: never a good first pick
+    r"^(docker|br-|virbr|veth|cni|flannel|cali|lxc|lxd|bridge|vmnet|vboxnet|utun|zt)"
+)  # bridges, container links and tunnels: never a good first pick
 _IP_O = re.compile(r"^\d+:\s+(\S+?)(?:@\S+)?\s+inet (\d+\.\d+\.\d+\.\d+)")
 _IFC_HEAD = re.compile(r"^([A-Za-z0-9_.@-]+?):\s+flags")
 

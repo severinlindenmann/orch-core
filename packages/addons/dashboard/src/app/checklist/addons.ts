@@ -613,7 +613,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
         id: 'W13',
         title: 'Plain reviews',
         text: 'On the Add-ons page: turn on Command window (or Work copies) and read the review. Then create a new ticket and read its review.',
-        see: 'The review starts "Turn on Command window: it says it will open terminals on this computer, as you", then the version. No digest, no "fields: {}" (the package digest and raw capabilities are under Technical details). A new ticket says "owner: your name" and never a long raw p_ id.',
+        see: 'The review starts "Turn on Command window: it says it will open terminals on this computer, as you", then the version. No digest, no "fields: {}" (the package digest and raw capabilities are under Technical details). Turning it off reads "Turn off Terminals": the off review carries no package, so it keeps the plain id. A new ticket says "owner: your name" and never a long raw p_ id.',
       },
       {
         id: 'W14',

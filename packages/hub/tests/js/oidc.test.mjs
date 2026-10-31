@@ -128,7 +128,7 @@ test("run18 P06: inside Hub settings company login is one closed line that opens
   assert.ok(t.includes("amr") && t.includes("auth_time"), "the Good to know notes stay");
 });
 
-test("run18 P06: the closed line never hides a problem: it opens, says Needs attention, and keeps the secure-address alert outside the fold", () => {
+test("run18 P06: the closed line never hides a problem: it opens, says Needs attention, and keeps the secure-address alert outside the fold", async () => {
   const base = { configured: true, has_secret: true, enabled: true, tested: true, redirect_uri: "https://hub.example/oidc/callback" };
   const foldOf = (card) => find(card, (n) => n.tag === "details" && n.className === "company-login-fold")[0];
   const fine = O.companyCard(base, {}, { inside: true });
@@ -136,14 +136,18 @@ test("run18 P06: the closed line never hides a problem: it opens, says Needs att
   assert.doesNotMatch(fine.textContent, /Needs attention/);
   const insecure = O.companyCard({ ...base, secure_address: false, redirect_uri: "http://10.0.0.5:8100/oidc/callback" }, {}, { inside: true });
   const nosecret = O.companyCard({ ...base, has_secret: false }, {}, { inside: true });
-  const failed = O.companyCard({ ...base, test_failed: true }, {}, { inside: true });
-  for (const c of [insecure, nosecret, failed]) {
+  for (const c of [insecure, nosecret]) {
     assert.ok("open" in foldOf(c).attrs, "open"); assert.match(foldOf(c).children[0].textContent, /Needs attention/);
     assert.doesNotMatch(foldOf(c).children[0].textContent, /\bOn\b/);
   }
   const alert = find(insecure, (n) => n.attrs.role === "alert")[0];
   assert.ok(alert && !find(foldOf(insecure), (n) => n === alert).length, "the alert is outside the details");
   assert.ok(alert.textContent.includes("needs a secure address"));
+  // a failed test (or save) opens the closed fold by itself
+  const tried = O.companyCard({ ...base, enabled: false, tested: false }, { test: async () => ({ ok: false, error: "oidc_failed" }) }, { inside: true });
+  assert.equal(foldOf(tried).attrs.open, undefined);
+  await find(tried, (n) => n.attrs.id === "oidc-test")[0].listeners.click();
+  assert.equal(foldOf(tried).open, true);
 });
 
 test("run18 P06: company mode says who may sign in on the closed line", () => {

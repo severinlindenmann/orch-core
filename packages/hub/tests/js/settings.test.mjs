@@ -13,7 +13,12 @@ class Node_ {
   get textContent() { return this.tag === "#text" ? this._text : this._text + this.children.map((c) => c.textContent).join(""); }
   all() { return [this, ...this.children.flatMap((c) => c.all())]; }
 }
-globalThis.document = { body: new Node_("body"), createElement: (t) => new Node_(t), createTextNode: (t) => new Node_("#text", t), getElementById: () => null };
+// like a real <select>: assigning a value that is not among its options leaves nothing selected ("")
+class Select_ extends Node_ {
+  set value(v) { const ok = this.children.some((o) => o.tag === "option" && (o.attrs.value ?? "") === String(v)); this._value = ok ? String(v) : ""; }
+  get value() { return this._value ?? ""; }
+}
+globalThis.document = { body: new Node_("body"), createElement: (t) => (t === "select" ? new Select_(t) : new Node_(t)), createTextNode: (t) => new Node_("#text", t), getElementById: () => null };
 const { hubSettingsView, hubSettingsPage, addressBody, hostOf, page } = await import("../../src/orch_hub/web/pages/hub-settings.js");
 
 // the demo seed (the mockup's Acme AG hub)
@@ -194,6 +199,25 @@ test("P02: a server-only hub that may change addresses offers 'Make phones reach
   assert.equal(button(a, "Save").attrs.autofocus, undefined);
   button(a, "Save").listeners.click();   // Save stays the admin's click
   assert.ok(sent[0].addresses.some((x) => x.kind === "office" && x.host === "192.168.60.30"));
+});
+
+test("P02: the address the admin is connected through is kept by Save even when it is not in the detected list", () => {
+  const sent = [];
+  const d = { ...DEMO, phone_kind: "private", addresses: [{ kind: "private", web: "http://100.71.188.237:8100" }, { kind: "office", web: "http://intranet.acme.example:8100" }] };
+  const a = card(hubSettingsView(d, { opened: true, detected: DETECTED, saveAddresses: (b) => sent.push(b) }), "address");
+  const office = byTag(a.all().find((n) => n.attrs["data-kind"] === "office"), "select")[0];
+  assert.equal(office.value, "intranet.acme.example", "the current host has its own option, so a real select keeps it");
+  button(a, "Save").listeners.click();
+  assert.ok(sent[0].addresses.some((x) => x.kind === "office" && x.host === "intranet.acme.example"));
+  // the one in use right now (disabled select) is sent as it is, read from the data and not from the DOM
+  const prev = globalThis.location; globalThis.location = { origin: "http://10.9.9.9:8100" };
+  try {
+    const dd = { ...DEMO, phone_kind: "private", addresses: [{ kind: "private", web: "http://100.71.188.237:8100" }, { kind: "office", web: "http://10.9.9.9:8100" }] };
+    const b = card(hubSettingsView(dd, { opened: true, detected: DETECTED, saveAddresses: (x) => sent.push(x) }), "address");
+    assert.equal(byTag(b.all().find((n) => n.attrs["data-kind"] === "office"), "select")[0].disabled, true);
+    button(b, "Save").listeners.click();
+    assert.ok(sent[1].addresses.some((x) => x.kind === "office" && x.host === "10.9.9.9"));
+  } finally { globalThis.location = prev; }
 });
 
 test("P02: the interface name shows next to the address, and without helper rights there is no button", () => {

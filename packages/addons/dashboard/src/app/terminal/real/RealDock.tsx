@@ -151,7 +151,7 @@ export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits
         </div>
       )}
       {error && <p role="alert" className="shrink-0 border-b border-danger/40 bg-danger-soft px-3 py-1 text-xs text-danger">{error}</p>}
-      {!termsOn && ws && <p role="status" data-terminals-off className="shrink-0 border-b border-border bg-surface px-3 py-1 text-xs text-text-muted">Command window is switched off in this workspace. Switch them on in Settings, under Add-ons.</p>}
+      {!termsOn && ws && <p role="status" data-terminals-off className="shrink-0 border-b border-border bg-surface px-3 py-1 text-xs text-text-muted">Command window is switched off in this workspace. Switch it on in Settings, under Add-ons.</p>}
       {termsOn && off && ws && <div role="status" className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-surface px-3 py-1 text-xs text-text-muted">Command window is switched off for this workspace on this machine.<RunnerSwitch ws={ws} on initialTerminals testId="dock-runner" variant="secondary" /></div>}
       {current && current.grant_state === 'ended' && current.state === 'running' && (
         <p role="status" className="shrink-0 border-b border-border bg-surface px-3 py-1 text-xs text-warning" data-grant-ended>This agent's runner grant ended: the host refuses its writes. Stop it when you are done reading.</p>

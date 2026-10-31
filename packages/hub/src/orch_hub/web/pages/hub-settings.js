@@ -100,20 +100,23 @@ function addressCard(data, actions) {
   }
   const detected = actions.detected ?? [];
   const here = globalThis.location?.origin ?? "";
-  const picks = {}; const fields = [];
+  const picks = {}; const fixed = {}; const fields = [];
   for (const [kind, label] of KINDS) {
     if (kind === data.phone_kind && kind !== "server") { fields.push(h("div", { class: "field", "data-kind": kind }, h("label", { text: label }), h("span", { class: "small muted", text: "Phones use this one. It stays as it is." }))); continue; }
     const cur = byKind.get(kind);
     if (kind === "public") continue; // the public address is set up with the edge, not here; an installed one stays as it is
     const choices = detected.filter((d) => d.kind === kind);
+    const curHost = cur ? hostOf(cur) : "";
+    // the current host always has its own option: a real <select> turns a value that is not among its options into "" and Save would drop the address
     const select = h("select", { id: "addr-" + kind, "aria-label": label }, h("option", { value: "", text: "Not used" }),
+      curHost && !choices.some((d) => d.ip === curHost) ? h("option", { value: curHost, text: curHost }) : null,
       choices.map((d) => h("option", { value: d.ip, text: d.iface ? d.ip + " (" + text(d.iface) + ")" : d.ip })));
-    select.value = cur ? hostOf(cur) : ""; picks[kind] = select;
+    select.value = curHost; picks[kind] = select;
     if (!cur && server && kind === "office" && choices.length > 0) select.value = choices[0].ip; // "Make phones reach this hub": the office network is preselected; Save is still the admin's click
     const using = cur && here && cur === here;
     const exposes = kind === "office" ? h("span", { class: "small muted", "data-exposes": "office", hidden: !select.value || using, text: "Anyone on this office network can open the hub's sign-in page." }) : null;
     if (exposes) select.addEventListener("change", () => { exposes.hidden = !select.value; });
-    if (using) select.disabled = true;
+    if (using) { select.disabled = true; fixed[kind] = curHost; }
     fields.push(h("div", { class: "field", "data-kind": kind }, h("label", { for: "addr-" + kind, text: label }), select, exposes,
       using ? h("span", { class: "small muted", text: "You are using this one now." }) : null));
   }
@@ -121,7 +124,7 @@ function addressCard(data, actions) {
   const form = h("div", { class: "address-form", hidden: !opened }, fields,
     h("p", { class: "small muted", text: "Workspaces pick up the new address the next time they connect. Nothing signed changes, so no connection breaks. The hub restarts for a moment." }),
     h("button", { type: "button", class: "primary", text: "Save", onclick: () => {
-      const chosen = {}; for (const [k, el] of Object.entries(picks)) if (k !== "secure") chosen[k] = el.value ?? "";
+      const chosen = {}; for (const [k, el] of Object.entries(picks)) if (k !== "secure") chosen[k] = fixed[k] ?? el.value ?? "";
       actions.saveAddresses?.(addressBody(data, chosen));
     } }));
   const open = h("button", { type: "button", class: server ? "primary" : "", text: server ? "Make phones reach this hub" : "Change address", hidden: opened, onclick: () => { form.hidden = false; open.hidden = true; note.hidden = true; actions.loadDetected?.(); } });

@@ -98,9 +98,9 @@ export function companyCard(data, actions, opts = {}) {
   const test = h("button", { type: "button", id: "oidc-test", text: "Test the connection", disabled: !data.configured || !data.has_secret });
   test.addEventListener("click", () => busyButton(test, async () => { const r = await actions.test(); if (!r.ok) show(false, WHY[r.error] ?? "The test could not start. Save first."); }));
   const secure = data.secure_address !== false && !!data.redirect_uri;
-  // a closed line must not hide a problem: no secure address, on without a saved secret, or a failed test => "Needs attention" and open
-  // (the hub backend does not send test_failed today; the flag is read when it does, and a failed save or test opens the fold by itself)
-  const trouble = !secure || (cur.enabled === true && data.has_secret !== true) || data.test_failed === true;
+  // a closed line must not hide a problem: no secure address, or on without a saved secret => "Needs attention" and open
+  // (a failed save or test also opens the fold by itself, see failOpen)
+  const trouble = !secure || (cur.enabled === true && data.has_secret !== true);
   const state = trouble ? chip("Needs attention", "warn") : cur.enabled ? chip("On", "ok") : cur.tested ? chip("Tested") : chip("Off");
   const alert = secure ? null : h("p", { class: "small bad", role: "alert", text: "Company login needs a secure address (https), or this server's own localhost. A plain office IP address is not accepted by Microsoft or Google." });
   const lead = " · " + (cur.enabled && cur.mode === "company" ? "Anyone at " + (cur.domain || "your company") + " can sign in with a work account" : "sign in with a Microsoft or Google work account");

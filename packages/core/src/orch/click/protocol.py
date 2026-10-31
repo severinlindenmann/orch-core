@@ -245,6 +245,7 @@ CLICK_OPS = frozenset(
         "device.remove",  # #1198 C15: refused for the signing device and an owner's last device (device.lockout)
         "addon.grant",  # every add-on, publish included (#1198 C2); the review lists what is signed
         "publish.share",  # #1198 C2: the staged copy's own words are the review; the person clicks
+        "app.release",  # #1457: an app goes live (new, update, back, start) only by a person's click on its own words
         # #1198 C1: these were the typed-word class; the person reads the review and clicks, nothing is typed
         "member.add",
         "member.role",
@@ -309,6 +310,7 @@ OP_TITLES: dict[str, str] = {
     "device.remove": "Remove a device",
     "addon.grant": "Turn on an add-on",
     "publish.share": "Share files outside this computer",
+    "app.release": "Let an app go live",
     "member.add": "Add a member",
     "member.role": "Change a member's role",
     "member.remove": "Remove a member",
@@ -370,6 +372,10 @@ PUBLISH_ADDON_RISK = "Turning on Publish lets files you share leave this compute
 PUBLISH_SETTINGS_RISK = "Files you share will be sent to this Publish server; whoever runs it can read them."
 PUBLISH_SHARE_RISK = (
     "These files leave this computer: anyone with the link can read them, and a copy cannot be taken back."
+)
+APP_RELEASE_RISK = (
+    "The app runs code in the browser of everyone who opens it, and can reach only what the review lists. "
+    "Other people see this version as soon as you sign."
 )
 HUB_SELECTIVE_RISK = "The hub receives what you choose to share; leaving later does not take back what it received."
 HUB_FULL_RISK = (
@@ -570,6 +576,7 @@ RISK_BUILDERS: dict[str, Callable[[Events, bool, bool], list[str]]] = {
     "people.set": _people_risk,
     "settings.set": _settings_risk,
     "publish.share": _fixed(PUBLISH_SHARE_RISK),
+    "app.release": _fixed(APP_RELEASE_RISK),
     "hub.join": _hub_risk,
     "hub.mode": _hub_risk,
     "hub.leave": _hub_risk,

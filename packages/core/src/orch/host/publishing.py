@@ -1091,10 +1091,10 @@ def _list(call: Call, args: dict[str, Any]) -> dict[str, Any]:
         if not out["configured"]:
             # No server is set up yet: there is nothing to ask. The local answer says so (`configured` false, `live`
             # false) instead of failing, so a page can tell the person what to do next.
-            return ok_result({**out, "live": False})
+            return ok_result({**out, "live": False, "why": "local"})
         hub = _hub_route(service, required=False)
         if hub is None:  # local only: there is no server to ask
-            return ok_result({**out, "live": False})
+            return ok_result({**out, "live": False, "why": "local"})
         return {"plan": {"op": "publish.list", "cfg": _config(service), "out": out, "hub": hub}}
     return ok_result(out)
 
@@ -1550,6 +1550,21 @@ def _set_password(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
     return {"share_id": rec["id"], "password": plan["password"], "shown_once": True}
 
 
+_UNREACHABLE_HUB_CODES = frozenset({"unavailable", "hub_unreachable"})
+
+
+def _why_not_live(exc: Exception) -> str:
+    """``unreachable``: nothing answered (network error, the hub down, ``unavailable``, a server error).
+    ``not_allowed``: something answered and refused (``unknown_workspace``, ...): the hub is online."""
+    code = str(getattr(exc, "code", ""))
+    if hasattr(exc, "status"):  # a PublishError
+        status = int(exc.status)
+        if code == "network" or status >= 500 or (status == 0 and code != "refused"):
+            return "unreachable"
+        return "not_allowed"
+    return "unreachable" if code in _UNREACHABLE_HUB_CODES else "not_allowed"
+
+
 def _live(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
     """``publish.list {live}``: the local rows with the server's state and view count. A server that cannot be reached
     leaves the local rows as they are, said plainly."""
@@ -1563,8 +1578,8 @@ def _live(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
             r.get("id"): r
             for r in flow.list_shares(_client(service, plan["cfg"]["server"], plan["hub"]), service.workspace_id)
         }
-    except (PublishError, HubRefused):  # a hub that is down is a server that is down: the local rows, said plainly
-        return {**out, "live": False}
+    except (PublishError, HubRefused) as exc:  # the local rows, and why the server's numbers are missing
+        return {**out, "live": False, "why": _why_not_live(exc)}
     for row in out["shares"]:
         got = remote.get(row["id"])
         if got is not None:

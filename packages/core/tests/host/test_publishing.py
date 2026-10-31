@@ -26,7 +26,8 @@ from orch.crypto import suite as S
 from orch.host import hubops, hubpolicy, publishing, signcontent
 from orch.host.errors import HostError
 from orch.host.publishing import PUBLISH_OPS
-from orch.publishclient import approval, flow
+from orch.hubclient import HubRefused
+from orch.publishclient import PublishError, approval, flow
 from tests.host import human_helpers
 from tests.host.dispatch_helpers import SESSION, err, ok
 from tests.host.human_helpers import Human
@@ -969,9 +970,20 @@ def test_list_live_adds_the_servers_numbers_and_survives_a_dead_server(w):
     w.server.fail.append(("GET", r"/shares$", 0, ""))
     dead = ok(w.req("publish.list", {"live": True}))["data"]
     assert dead["live"] is False and dead["shares"][0]["views"] == 0
+    assert dead["why"] == "unreachable" and "why" not in live
     agent = w.served.client()
     res = agent.req("publish.list", {"live": True}, grant=w.served.grant, session=SESSION)
     assert err(res) == "op.not_allowed"
+
+
+@pytest.mark.parametrize("error", ["unknown_workspace", "owner_not_allowed"])
+def test_list_live_says_not_allowed_when_the_server_refuses(w, error):
+    """run17 P01: a hub that answers and refuses is online. The page must not say it cannot be reached."""
+    shared(w, "report.md")
+    for _ in range(3):
+        w.server.fail.append(("GET", r"/shares$", 401, error))
+    got = ok(w.req("publish.list", {"live": True}))["data"]
+    assert got["live"] is False and got["why"] == "not_allowed"
 
 
 def test_list_live_without_a_server_setting_answers_not_configured_not_an_error(bare):
@@ -981,6 +993,8 @@ def test_list_live_without_a_server_setting_answers_not_configured_not_an_error(
     for args in ({"live": True}, {}):
         got = ok(bare.req("publish.list", args))["data"]
         assert got["configured"] is False and not got.get("live") and got["server"] is None
+        if args:
+            assert got["why"] == "local"
         assert got["shares"] == [] and got["staged"] == []
 
 
@@ -1753,3 +1767,21 @@ def test_the_share_cap_is_named_when_it_is_what_leaves_no_room(w, monkeypatch):
     monkeypatch.setitem(approval.LIMITS, "share_bytes", 10)
     res = w.req("publish.prepare", {"ref": key, "workfiles": ["f.bin"]})
     assert err(res) == "quota.host" and "a share holds at most" in json.dumps(res)
+
+
+@pytest.mark.parametrize(
+    "exc,why",
+    [
+        (HubRefused("unavailable"), "unreachable"),
+        (HubRefused("hub_unreachable"), "unreachable"),
+        (HubRefused("unknown_workspace"), "not_allowed"),
+        (HubRefused("owner_not_allowed"), "not_allowed"),
+        (PublishError("network"), "unreachable"),
+        (PublishError("unavailable", 503), "unreachable"),
+        (PublishError("unknown_workspace", 401), "not_allowed"),
+    ],
+)
+def test_why_the_servers_numbers_are_missing(exc, why):
+    from orch.host.publishing import _why_not_live
+
+    assert _why_not_live(exc) == why

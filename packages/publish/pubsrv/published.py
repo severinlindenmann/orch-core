@@ -631,7 +631,11 @@ def _bound(
         )  # a selective workspace shares no details and takes no hub narrowing
 
 
-_KIND_LABEL = {"hub.release_narrow": "sig_hub_release_narrow", "hub.app_pass": "sig_hub_app_pass"}
+_KIND_LABEL = {
+    "hub.release_narrow": "sig_hub_release_narrow",
+    "hub.app_pass": "sig_hub_app_pass",
+    "hub.allow": "sig_hub_allow",
+}
 
 
 def _hk_op_signed(signed: Any, kind: str, held: Any, hub: str) -> None:
@@ -646,6 +650,30 @@ def _hk_op_signed(signed: Any, kind: str, held: Any, hub: str) -> None:
         held["hk_op_pub"], sig, H.LABELS[_KIND_LABEL[kind]] + proto.cj(signed["o"])
     ):
         raise H.Refused("bad_hub_signature")
+
+
+def check_allow(signed, *, path_ws, trusted, held, nonces, now_ms):
+    """orch-publish's check of ``PUT /v2/hub/allow/{workspace_id}`` (protocol 11.10), in order: syntax (envelope, exact
+    fields) -> the object names the workspace of the path -> window -> the hub is one the operator pinned (``trusted``)
+    -> the held, current hub card for ``hub_id`` -> the HK_op signature -> the nonce is unseen, then recorded. Returns the
+    allowance to store. What the store does with it is allow.py."""
+    o = H._envelope(signed, "hub.allow")
+    H._fields(o, "hub.allow")
+    if o["workspace_id"] != path_ws:
+        raise H.Refused("other_workspace")
+    if abs(now_ms - o["ts_ms"]) > NARROW_WINDOW_MS:
+        raise H.Refused("stale_timestamp", server_ms=now_ms)
+    if not trusted:
+        raise H.Refused("unknown_hub")
+    _hk_op_signed(signed, "hub.allow", held, o["hub_id"])
+    if not nonces.record(o["hub_id"], o["nonce"], now_ms):
+        raise H.Refused("replay")
+    return {
+        "hub": o["hub_id"],
+        "workspace_id": o["workspace_id"],
+        "owner_person_id": o["owner_person_id"],
+        "binding_seq": o["binding_seq"],
+    }
 
 
 def check_release_narrow(

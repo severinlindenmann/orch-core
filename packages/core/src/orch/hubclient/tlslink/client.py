@@ -148,7 +148,9 @@ _REPLY: dict[str, Callable[[dict[str, Any]], bool]] = {
     "rail_get": lambda b: (
         set(b) == {"hub", "user_id", "workspaces"} and type(b["hub"]) is dict and type(b["workspaces"]) is list
     ),
-    "hub_where": lambda b: set(b) == {"addresses", "name"} and type(b["addresses"]) is list and type(b["name"]) is str,
+    "hub_where": lambda b: (
+        set(b) - {"publish"} == {"addresses", "name"} and type(b["addresses"]) is list and type(b["name"]) is str
+    ),
     "status_put": lambda b: (  # HUB-WS-04: `{}` or the optional update request (the version only, never text)
         b == {}
         or (

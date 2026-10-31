@@ -126,7 +126,7 @@ def ceremony(key_id: str, monkeypatch):
     )
     r = KEYS["revocations"]
     revs = rootkey.build_revocations(min_serial=r["min_serial"], revoked=r["revoked"], issued_at=r["issued_at"])
-    return rootkey.certify(root, "root-1", cert), rootkey.revoke(root, "root-1", revs)
+    return rootkey.certify(root, "test-root-1", cert), rootkey.revoke(root, "test-root-1", revs)
 
 
 @pytest.mark.parametrize(
@@ -186,7 +186,7 @@ def test_cli_round_trip_and_files_match_manifest(tmp_path, monkeypatch):
         "rootkey.py",
         "certify",
         "--root-key-id",
-        "root-1",
+        "test-root-1",
         "--key-id",
         "rk-3",
         "--public-key",
@@ -208,7 +208,7 @@ def test_cli_round_trip_and_files_match_manifest(tmp_path, monkeypatch):
         "rootkey.py",
         "revoke",
         "--root-key-id",
-        "root-1",
+        "test-root-1",
         "--min-serial",
         "2",
         "--revoked",

@@ -460,8 +460,6 @@ class StreamRouter:
                 del self._pending[k]
         if tell_host:
             self._tell_host(s, reason)
-        s.sink.end(reason)
-        s.done.set()
         _log.info(
             "stream_close stream=%s reason=%s by=%s frames_in=%d frames_out=%d bytes_in=%d bytes_out=%d ms=%d",
             s.stream_id,
@@ -473,6 +471,8 @@ class StreamRouter:
             s.bytes_out,
             int((self._now() - s.t_open) * 1000),
         )
+        s.sink.end(reason)  # after the log line: whoever the end wakes may read the log at once
+        s.done.set()
         return True
 
     # --- housekeeping ----------------------------------------------------------------------------------------------

@@ -38,13 +38,13 @@ def test_file_is_generated() -> None:
 
 def test_every_section_is_replayed_here() -> None:
     assert set(SECTIONS) == REPLAYED
-    assert len(SECTIONS) == 16
+    assert len(SECTIONS) == 17
 
 
 def test_labels_are_the_hub_labels() -> None:
     assert VEC["labels"] == {k: HUB_LABELS[k] for k in VEC["labels"]}
     assert set(VEC["labels"]) == {
-        "sig_hub_release_narrow", "sig_hub_app_pass", "h_publish_request_direct", "h_app_meta", "h_app_reach",
+        "sig_hub_release_narrow", "sig_hub_app_pass", "sig_hub_allow", "h_publish_request_direct", "h_app_meta", "h_app_reach",
     }  # fmt: skip
 
 
@@ -192,6 +192,23 @@ def _state(a):
                 )
         bindings[ws] = state
     return held, a["cards"], bindings
+
+
+@pytest.mark.parametrize("c", VEC["allow_cases"], ids=ids("allow_cases"))
+def test_allow(c) -> None:
+    a = c["args"]
+    held = H.verify_card(a["hub_card"], now_ms=a["now_ms"], dev_mode=a["dev_mode"])
+    got = _outcome(
+        lambda: P.check_allow(
+            a["signed"],
+            path_ws=a["path_ws"],
+            trusted=a["trusted"],
+            held=held,
+            nonces=Nonces(a["seen_nonces"]),
+            now_ms=a["now_ms"],
+        )
+    )
+    assert got == c["expect"]
 
 
 @pytest.mark.parametrize("c", VEC["narrow_cases"], ids=ids("narrow_cases"))

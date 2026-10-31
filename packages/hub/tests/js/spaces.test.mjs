@@ -15,7 +15,7 @@ class Node_ {
   all() { return [this, ...this.children.flatMap((c) => c.all())]; }
 }
 globalThis.document = { createElement: (t) => new Node_(t), createTextNode: (t) => new Node_("#text", t), getElementById: () => null };
-const { spacesView, historyView, newSpaceDialog, STATEMENT, NO_START, LATER, RESTORE_LINE } = await import("../../src/orch_hub/web/pages/spaces.js");
+const { spacesView, historyView, newSpaceDialog, STATEMENT, NO_START, LATER, RESTORE_LINE, HINT_PICK, HINT_TICK } = await import("../../src/orch_hub/web/pages/spaces.js");
 const NOW = 1_800_000_000_000;
 const find = (n, pred) => n.all().filter(pred);
 const data = { spaces: [
@@ -65,13 +65,20 @@ test("New shared space: three steps, the statement is on the page and in the dia
   find(view, (n) => n.attrs.id === "new-space")[0].listeners.click();
   const dlg = find(view, (n) => n.attrs.id === "space-dialog")[0];
   assert.match(dlg.textContent, /step 1 of 3/);
-  assert.equal(clickAll(dlg, "Next").length, 0, "no Next on step 1: the kind itself goes on");
-  find(dlg, (n) => n.attrs["data-type"] === "board")[0].listeners.click();   // one click
+  assert.equal(find(dlg, (n) => n.attrs["data-type"] === "wiki")[0].attrs["aria-pressed"], "true", "Wiki is chosen when the dialog opens");
+  assert.ok(dlg.textContent.includes("Most common"));
+  clickAll(dlg, "Next")[0].listeners.click();                        // Next works without any click on a kind
   assert.match(dlg.textContent, /step 2 of 3/);
   clickAll(dlg, "Back")[0].listeners.click();
-  assert.equal(find(dlg, (n) => n.attrs["data-type"] === "board")[0].attrs["aria-pressed"], "true", "Back keeps the kind");
-  find(dlg, (n) => n.attrs["data-type"] === "board")[0].listeners.click();
+  find(dlg, (n) => n.attrs["data-type"] === "board")[0].listeners.click();   // choosing a kind does not move on by itself
+  assert.match(dlg.textContent, /step 1 of 3/);
+  assert.equal(find(dlg, (n) => n.attrs["data-type"] === "board")[0].attrs["aria-pressed"], "true");
+  assert.equal(find(dlg, (n) => n.attrs["data-type"] === "wiki")[0].attrs["aria-pressed"], "false");
+  clickAll(dlg, "Next")[0].listeners.click();
   assert.match(dlg.textContent, /step 2 of 3/);
+  clickAll(dlg, "Back")[0].listeners.click();
+  clickAll(dlg, "Next")[0].listeners.click();
+  assert.equal(find(dlg, (n) => n.attrs["data-type"] === "board").length, 0);
   clickAll(dlg, "Next")[0].listeners.click();                        // no name yet: stays on step 2
   assert.match(dlg.textContent, /step 2 of 3/);
   const [name, purpose] = find(dlg, (n) => n.tag === "input");
@@ -80,14 +87,20 @@ test("New shared space: three steps, the statement is on the page and in the dia
   assert.match(dlg.textContent, /step 3 of 3/);
   assert.ok(dlg.textContent.includes(STATEMENT) && dlg.textContent.includes("shares only selected items") && dlg.textContent.includes("joins now"));
   const create = clickAll(dlg, "Create")[0];
-  assert.equal(create.disabled, true);
+  const hint = find(dlg, (n) => n.attrs.id === "space-hint")[0];
   const [box_a] = find(dlg, (n) => n.tag === "input" && n.attrs.type === "checkbox" && n.attrs["aria-label"] === "Product");
-  box_a.checked = true; box_a.listeners.change();
+  assert.equal(box_a.checked, true, "the workspace that joins now is already ticked");
+  assert.equal(create.disabled, true);
+  assert.equal(hint.textContent, HINT_TICK); assert.equal(create.attrs["aria-describedby"], "space-hint");
   create.listeners.click();                                          // not ticked: nothing is sent
   assert.equal(made.length, 0); assert.equal(create.disabled, true);
+  box_a.checked = false; box_a.listeners.change();                   // untick it: the hint changes to say what is missing
+  assert.equal(hint.textContent, HINT_PICK);
+  box_a.checked = true; box_a.listeners.change();
   const tick = find(dlg, (n) => n.attrs.id === "space-understood")[0];
   tick.checked = true; tick.listeners.change();
   assert.equal(create.disabled, false);
+  assert.equal(hint.textContent, ""); assert.equal(hint.hidden, true); assert.equal(create.attrs["aria-describedby"], undefined);
   create.listeners.click();
   assert.deepEqual(made[0], { type: "board", name: "Launches", purpose: "Dates", members: ["a"], understood: true });
   assert.equal(find(view, (n) => n.attrs.id === "space-dialog")[0].children.length, 0);   // the dialog closed
@@ -98,7 +111,7 @@ test("New shared space: a waiting workspace is greyed out with its reason from t
   const view = spacesView({ ...data, workspaces: WS }, { create: (f) => made.push(f) }, NOW);
   find(view, (n) => n.attrs.id === "new-space")[0].listeners.click();
   const dlg = find(view, (n) => n.attrs.id === "space-dialog")[0];
-  find(dlg, (n) => n.attrs["data-type"] === "board")[0].listeners.click();
+  clickAll(dlg, "Next")[0].listeners.click();
   const name = find(dlg, (n) => n.tag === "input")[0]; name.value = "X"; name.listeners.input();
   clickAll(dlg, "Next")[0].listeners.click();
   const box = (label) => find(dlg, (n) => n.tag === "input" && n.attrs["aria-label"] === label)[0];
@@ -110,7 +123,10 @@ test("New shared space: a waiting workspace is greyed out with its reason from t
   assert.equal(find(dlg, (n) => n.tag === "label" && n.className === "check disabled").length, 1, "the row is dimmed");
   assert.equal(reason.hidden, true, "no warning when one workspace can start");
   assert.equal(find(dlg, (n) => n.attrs.class === "banner warn" && !n.hidden).length, 0);
-  assert.equal(create.disabled, true);                                             // nothing ticked
+  assert.equal(box("Product").checked, true);                                     // preselected
+  assert.equal(create.disabled, false);
+  box("Product").checked = false; box("Product").listeners.change();               // nothing ticked
+  assert.equal(create.disabled, true);
   create.listeners.click(); assert.equal(made.length, 0);
   box("Product").checked = true; box("Product").listeners.change();                // one that joins now
   assert.equal(create.disabled, false);
@@ -121,7 +137,7 @@ test("New shared space: when no workspace can start, the reason is shown at once
   const view = spacesView({ ...data, workspaces: [WS[1]] }, { create: () => assert.fail("nothing may be created") }, NOW);
   find(view, (n) => n.attrs.id === "new-space")[0].listeners.click();
   const dlg = find(view, (n) => n.attrs.id === "space-dialog")[0];
-  find(dlg, (n) => n.attrs["data-type"] === "wiki")[0].listeners.click();
+  clickAll(dlg, "Next")[0].listeners.click();
   const name = find(dlg, (n) => n.tag === "input")[0]; name.value = "X"; name.listeners.input();
   clickAll(dlg, "Next")[0].listeners.click();
   const reason = find(dlg, (n) => n.attrs.id === "space-no-start")[0];

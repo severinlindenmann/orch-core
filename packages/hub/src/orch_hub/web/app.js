@@ -130,7 +130,7 @@ function loginView(err, opts = {}) {
     },
   }, field("Your name", id), field("Password", pw), field("6-digit code", code), h("div", { class: "row top" }, h("button", { class: "pri", type: "submit", text: "Sign in" })));
   if (opts.prefill) id.value = opts.prefill; // P02: arriving from the person's own workspace, the name is already known
-  show(h("h1", { text: opts.title ?? "Sign in to your hub" }), opts.why ? h("p", { class: "muted", text: opts.why }) : null, err ? banner("bad", "Not signed in", err) : null, h("div", { id: "company-slot" }), form);
+  show(h("h1", { text: opts.title ?? "Sign in to your hub" }), opts.ok ? banner("ok", "Restored", opts.ok) : null, opts.why ? h("p", { class: "muted", text: opts.why }) : null, err ? banner("bad", "Not signed in", err) : null, h("div", { id: "company-slot" }), form);
   if (opts.prefill) pw.focus?.();
   void api("GET", "/oidc/options").then((o) => { // company login (HUB-PE-04): a button only when the admin turned it on
     const btn = o.status === 200 ? companyButton(o.body, async () => { const r = await beginCompany(api, "signin"); if (!r.ok) loginView(COMPANY_WHY[r.error] ?? say(r.error)); }) : null;
@@ -1187,11 +1187,12 @@ const retry = h("button", { text: "Try now", onclick: () => pollLive() });
 const offbar = h("div", { id: "offbar", class: "offbar", role: "status", hidden: true }, offlineText, retry);
 document.body.prepend(offbar);
 function connectionFailed() {
+  if (state.restarting) return; // a restore or restart is expected: the page says so itself, no "No connection" bar
   if (!offline) { offline = true; nextPoll = Date.now() + retryDelay(0); }
   updateOffline();
 }
 function updateOffline() {
-  offbar.hidden = !offline;
+  offbar.hidden = !offline || !!state.restarting;
   document.body.classList.toggle("hub-offline", offline);
   offlineText.textContent = "No connection to the hub. What you see may be out of date; approving is paused. Trying again in " + Math.max(0, Math.ceil((nextPoll - Date.now()) / 1000)) + " s";
   retry.disabled = polling;

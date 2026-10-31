@@ -358,7 +358,7 @@ def test_no_names_is_the_ip_port_fallback(tmp_path):
     assert "No domain name given" in text and "http://192.168.1.20:8101" in text
     assert "http://192.168.1.20:8102" in text and "sudo" not in text and "caddy" not in text.lower()
     argv, _ = ctx.runner.started["relay"]
-    assert argv[argv.index("--host") + 1] == "0.0.0.0"  # today's behaviour
+    assert argv[argv.index("--host") + 1] == "192.168.1.20"  # the given address, never wider
 
 
 def test_hub_fallback_takes_the_vpn_address(tmp_path):
@@ -1060,6 +1060,149 @@ def test_expired_boundary_matches_install_sh_exactly_30_days(tmp_path):
     assert verdict(30 * 86400) == "expired"  # (now - issued).days >= 30
     assert verdict(30 * 86400 - 1) == "expires"
     assert verdict(30 * 86400 + 5) == "expired"
+
+
+# ------------------------------------------------------------------------ readiness probes the bound address
+
+
+def test_readiness_probes_the_vpn_address_the_hub_binds_not_loopback(tmp_path, monkeypatch):
+    probed = []
+    monkeypatch.setattr(cli, "dial_host", lambda h: "127.0.0.1")  # as on the VPS: own addresses redirect to loopback
+    ctx, out, *_ = stub_ctx(tmp_path)
+    ctx.ready_deadline = 3.0
+    t = {"now": 0.0}
+    ctx.clock = lambda: t["now"]
+    ctx.sleep = lambda s: t.__setitem__("now", t["now"] + s)
+
+    def health(host, port, *a):
+        probed.append((host, port))
+        return (host, port) == (VPN, 8100)  # the hub answers ONLY on the VPN address (no --bind-all)
+
+    ctx.health = health
+    ctx.runner.info = lambda part: {"running": False, "pid": None, "service": "x"}
+    server_setup(ctx, "hub", names=server.Names(), local=local)  # no domain: VPN-only bind
+    assert (VPN, 8100) in probed and ("127.0.0.1", 8100) not in probed
+    assert "The hub listens on" in out.getvalue()  # the setup went on to the end
+
+
+def test_a_hub_that_answers_nowhere_gives_plain_words_naming_the_probed_address(tmp_path):
+    ctx, *_ = stub_ctx(tmp_path)
+    ctx.ready_deadline = 1.0
+    t = {"now": 0.0}
+    ctx.clock = lambda: t["now"]
+    ctx.sleep = lambda s: t.__setitem__("now", t["now"] + s)
+    ctx.health = lambda h, p, *a: False
+    ctx.runner.info = lambda part: {"running": False, "pid": None, "service": "x"}
+    with pytest.raises(InstallError, match=f"did not answer on {VPN}:8100"):
+        server_setup(ctx, "hub", names=server.Names(), local=local)
+
+
+def test_the_edge_binds_exactly_the_given_address_not_every_interface(tmp_path):
+    ctx, out, *_ = stub_ctx(tmp_path)
+    server_setup(ctx, "edge", names=server.Names(), address=VPS, local=local)
+    relay = ctx.runner.started["relay"][0]
+    pub = ctx.runner.started["publish"][0]
+    assert relay[relay.index("--host") + 1] == VPS
+    assert pub[pub.index("--listen") + 1] == f"{VPS}:8102"
+    assert "0.0.0.0" not in " ".join(relay + pub)
+    # unchanged for the plain `orch install relay --address X` (no server role)
+    (tmp_path / "y").mkdir()
+    ctx2, out2, err2, _ = stub_ctx(tmp_path / "y")
+    cli.main(["relay", "--address", VPS], env=ctx2.env, out=out2, err=err2, ctx=ctx2)
+    r2 = ctx2.runner.started["relay"][0]
+    assert r2[r2.index("--host") + 1] == "0.0.0.0"
+
+
+def test_command_for_exact_bind_keeps_loopback_loopback():
+    from pathlib import Path
+
+    from orch.install import parts as P
+
+    kw = dict(binary=Path("/b"), data=Path("/d"), port=8101, publish_url=None, relay_url=None, dev=False)
+    assert "127.0.0.1" in P.command_for("relay", address="127.0.0.1", exact_bind=True, **kw)
+    assert "0.0.0.0" not in P.command_for("relay", address=VPS, exact_bind=True, **kw)
+
+
+# ---------------------------------------------------------------------------------------- sudo -iu: user bus
+
+
+def test_user_bus_is_found_when_linger_is_on_and_set_for_systemctl():
+    env: dict[str, str] = {}
+    server.ensure_user_bus(env, 1001, "orch-edge", exists=lambda p: p == "/run/user/1001/bus")
+    assert env == {"XDG_RUNTIME_DIR": "/run/user/1001", "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1001/bus"}
+    full = {"XDG_RUNTIME_DIR": "/run/user/5", "DBUS_SESSION_BUS_ADDRESS": "unix:path=/x"}
+    server.ensure_user_bus(full, 1, "u", exists=lambda p: False)  # both set: untouched, no check
+    assert full["XDG_RUNTIME_DIR"] == "/run/user/5"
+
+
+def test_no_user_bus_stops_before_installing_in_plain_words(tmp_path, monkeypatch):
+    with pytest.raises(InstallError, match=r"loginctl enable-linger orch-edge.*machinectl shell orch-edge@"):
+        server.ensure_user_bus({}, 1001, "orch-edge", exists=lambda p: False)
+    ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+    monkeypatch.setattr("sys.platform", "linux")
+    monkeypatch.setattr(server, "ensure_user_bus", lambda *a, **k: (_ for _ in ()).throw(InstallError("no session")))
+    with pytest.raises(InstallError, match="no session"):
+        server_setup(ctx, "edge", names=server.Names(), address="127.0.0.1", local=local, user="orch-edge")
+    assert not ctx.runner.started and not ctx.layout.root.exists()  # nothing installed
+
+
+def test_a_failing_system_command_is_plain_words_not_a_traceback(tmp_path):
+    import subprocess
+
+    ctx, out, err, _ = stub_ctx(tmp_path)
+
+    def boom(*a, **k):
+        raise subprocess.CalledProcessError(
+            1, ["systemctl", "--user", "daemon-reload"], stderr=b"Failed to connect to bus\n"
+        )
+
+    ctx.runner.start = boom
+    rc = cli.main(["relay", "--address", "127.0.0.1"], env=ctx.env, out=out, err=err, ctx=ctx)
+    assert rc == 1 and "Traceback" not in err.getvalue()
+    text = err.getvalue()
+    assert "systemctl --user daemon-reload" in text and "Failed to connect to bus" in text
+    assert "machinectl shell" in text and "linger" in text
+
+
+def test_publish_without_a_name_says_plainly_that_it_needs_a_name_and_https(tmp_path):
+    ctx, out, *_ = stub_ctx(tmp_path)
+    server_setup(ctx, "edge", names=server.Names(), address="192.168.1.20", local=local)
+    text = out.getvalue()
+    assert "publish needs a name and https" in text and "once DNS is in" in text
+    assert "invalid.input" not in text and "not set yet" not in text
+
+
+def test_the_server_user_is_the_real_os_user_not_logname(monkeypatch):
+    import os
+    import pwd
+    from types import SimpleNamespace
+
+    from orch.install import serverflow
+
+    monkeypatch.setenv("LOGNAME", "evil")
+    monkeypatch.setenv("USER", "evil")
+    monkeypatch.setattr(os, "geteuid", lambda: 4242)
+    monkeypatch.setattr(pwd, "getpwuid", lambda uid: SimpleNamespace(pw_name="orch-edge") if uid == 4242 else None)
+    assert serverflow.real_user() == "orch-edge"
+
+
+def test_a_bad_user_name_stops_before_any_root_block_is_printed(tmp_path):
+    for bad in ("evil; rm -rf /", "../x", "Evil", "", "a b"):
+        with pytest.raises(InstallError, match="not a usable user name"):
+            server.root_block(bad)
+    ctx, out, *_ = stub_ctx(tmp_path, SystemdFake())
+    (tmp_path / "orch.d").mkdir()
+    with pytest.raises(InstallError, match="not a usable user name"):
+        server_setup(
+            ctx,
+            "edge",
+            names=server.derive_names("example.com"),
+            caddy_dir=str(tmp_path / "orch.d"),
+            resolve=lambda n: [VPS],
+            local=local,
+            user="evil; id",
+        )
+    assert "sudo" not in out.getvalue() and not ctx.runner.started
 
 
 def test_every_printed_import_line_has_exactly_one_wildcard_and_names_its_user():

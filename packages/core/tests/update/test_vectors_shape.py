@@ -67,7 +67,7 @@ def test_keys_are_labelled_test_only_and_seeds_match_the_rule():
     for name, k in KEYS["keys"].items():
         seed = hashlib.sha256(f"orch-release TEST key {name}; never trust outside tests".encode()).digest()
         assert k["seed_hex_TEST_ONLY"] == seed.hex()
-    assert KEYS["trusted_roots"] == {"root-1": KEYS["keys"]["root-1"]["public_key"]}
+    assert KEYS["trusted_roots"] == {"test-root-1": KEYS["keys"]["root-1"]["public_key"]}
 
 
 def test_case_shape_and_coverage():

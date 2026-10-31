@@ -86,6 +86,11 @@ curl -fsSL <installer address> | sh -s -- --server
 
 (The installer address is the one in the release notes.) This installs `orch` for that user only.
 
+**Services need the user's own systemd session.** The root block turns on "linger" (`sudo loginctl enable-linger <user>`) so it
+exists. A plain `sudo -iu <user>` shell does not carry it, so setup looks for `/run/user/<id>/bus` and uses it. If that file is
+missing, setup stops before installing anything and says so: ask an administrator to run the linger line, then log in with
+`sudo machinectl shell <user>@` (or set `XDG_RUNTIME_DIR=/run/user/<id>`) and run the setup command again.
+
 ## 5. Set up each role
 
 As **`orch-edge`**:

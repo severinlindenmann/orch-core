@@ -209,8 +209,8 @@ def register(app: FastAPI, gateway: Gateway) -> None:
 
 def suggest_fields(gateway: Gateway, ws: str) -> dict:
     """The Publish form's one-sentence suggestion and where it comes from. The Publish server installed on this computer
-    wins; otherwise, when this workspace is joined to a hub, the publish address that hub says it has (a hint: whatever is
-    turned on is still signed and shown in the review). ``suggest_from`` is ``computer`` or ``hub``."""
+    wins; otherwise, when this workspace is joined to a hub, the publish address that hub says it has (a hint:
+    whatever is turned on is still signed and shown in the review). ``suggest_from`` is ``computer`` or ``hub``."""
     local = suggested_publish()
     if local:
         return {"suggest": local, "suggest_from": "computer", "suggest_hub": None}

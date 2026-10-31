@@ -208,8 +208,16 @@ def test_the_model_choice_is_offered_by_the_choose_model_capability_not_by_the_n
 @pytest.mark.parametrize(
     "local,hub,want",
     [
-        (None, {"hub_publish": "http://127.0.0.1:8102", "hub_says": {"name": "Anna's hub", "from": "hub"}}, ("http://127.0.0.1:8102", "hub", "Anna's hub")),
-        ({"parts": {"publish": {"url": "http://127.0.0.1:9999"}}}, {"hub_publish": "http://127.0.0.1:8102"}, ("http://127.0.0.1:9999", "computer", None)),  # local install wins
+        (
+            None,
+            {"hub_publish": "http://127.0.0.1:8102", "hub_says": {"name": "Anna's hub", "from": "hub"}},
+            ("http://127.0.0.1:8102", "hub", "Anna's hub"),
+        ),
+        (
+            {"parts": {"publish": {"url": "http://127.0.0.1:9999"}}},
+            {"hub_publish": "http://127.0.0.1:8102"},
+            ("http://127.0.0.1:9999", "computer", None),
+        ),  # local install wins
         (None, {"hub_publish": None}, (None, None, None)),  # not joined
         (None, {"hub_publish": "http://evil.example.com"}, (None, None, None)),  # not an address core accepts
         (None, "boom", (None, None, None)),  # hub.status unreadable

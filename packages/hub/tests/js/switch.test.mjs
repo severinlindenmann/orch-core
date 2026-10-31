@@ -103,3 +103,12 @@ test("ux-audit P02: Back to my workspace goes to the workspace's http(s) origin,
   backToWorkspace(null, nav(false));
   assert.deepEqual(calls, [["assign", "https://ws.example:8150/"], ["back"], ["login"]]);
 });
+
+test("ux-audit P02: the way back is https (or loopback http), origin only, never a free redirect", async () => {
+  const { backOrigin } = await import("../../src/orch_hub/web/switch.js");
+  assert.equal(backOrigin("https://ws.example:8150/x?y#z"), "https://ws.example:8150/");
+  assert.equal(backOrigin("http://127.0.0.1:8150"), "http://127.0.0.1:8150/");
+  assert.equal(backOrigin("http://evil.example"), null);
+  assert.equal(backOrigin("https://user:pw@ws.example"), null);
+  assert.equal(backOrigin("javascript:alert(1)"), null);
+});

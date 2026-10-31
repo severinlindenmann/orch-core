@@ -99,8 +99,22 @@ export function openingState(name) {
 /** ux-audit P02: "Back to my workspace" on the landing page: the workspace's own dashboard when the hub knows its
  * origin (only an http(s) address, through safeUrl), else the page the person came from, else the sign-in form. */
 export function backToWorkspace(ws, nav) {
-  const url = safeUrl(ws?.origin);
+  const url = backOrigin(ws?.origin);
   if (url) return nav.assign(url);
   if (nav.canBack()) return nav.back();
   return nav.login();
+}
+
+/** The workspace origin "Back to my workspace" may go to: https anywhere, plain http only on loopback, and only the
+ * origin (no path, no user:pass@): the page never becomes a free redirect on the hub's credibility. */
+export function backOrigin(origin) {
+  try {
+    const u = new URL(origin);
+    const loop = ["localhost", "127.0.0.1", "[::1]"].includes(u.hostname);
+    if (u.username || u.password) return null;
+    if (u.protocol === "https:" || (u.protocol === "http:" && loop)) return u.origin + "/";
+    return null;
+  } catch {
+    return null;
+  }
 }

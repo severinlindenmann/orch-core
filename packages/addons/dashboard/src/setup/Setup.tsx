@@ -145,9 +145,9 @@ const addonSentence = (id: string, fallback: string): string => ({
   worktrees: 'Agents get their own copy of each ticket’s files.',
   quick: 'You can run quick tasks.',
 }[id] ?? fallback)
-/** The short card of a review (plain words only): from the review's own items and flags, nothing else. What this
+/** The short card of a review (plain words only): from the review's items and flags, checked against the chosen profile. What this
  * mapping cannot describe is added as extra lines by the caller (`summarize().odd`); everything stays in the fold. */
-export function reviewFacts(review: Review, host?: string, newWorkspace = false): Fact[] {
+export function reviewFacts(review: Review, host?: string, newWorkspace = false, profile?: Pick<Profile, 'agent_hours' | 'agent_grant'>): Fact[] {
   const facts: Fact[] = []
   const ws = review.workspace
   // P43: the computer is named (over ssh "this computer" is not the one in front of the person)
@@ -159,21 +159,26 @@ export function reviewFacts(review: Review, host?: string, newWorkspace = false)
   }
   const has = (id: string) => review.flags.some((f) => f.id === id)
   const approve = has('custody') ? `You approve with One click on ${host || 'this computer'}.` : has('terminal') || review.tty_confirm ? 'You approve in a terminal, with your password.' : null
-  // A new workspace has no existing runner grant. Workspace duration settings alone never grant access.
-  // Finish setup can keep an existing grant, so absence of a new grant makes no access claim there.
-  let agents: string | undefined = newWorkspace ? 'Agents may not work on their own.' : undefined
-  for (const item of review.items) {
-    const f = item.fields
-    if (item.id === 'runner_grant' && f && typeof f.hours === 'number')
-      // the short words only for the ordinary grant; any other scope or verbs keeps the raw values on the card
-      agents = f.scope === 'workable' && f.verbs === 'agent'
-        ? `Agents may work on their own for ${duration(f.hours)}.`
-        : `agent access for ${duration(f.hours)} (scope ${String(f.scope)}, verbs ${String(f.verbs)})`
+  const grant = review.items.find((item) => item.id === 'runner_grant' && item.type === 'grant.issued')?.fields
+  const settings = review.items.filter((item) => item.type === 'settings.changed')
+    .map((item) => item.fields?.set as Record<string, unknown> | undefined)
+  const hours = settings.find((set) => typeof set?.grant_hours === 'number')?.grant_hours
+  // The default eight hours grants nothing; a duration setting does not issue a runner grant.
+  let agents = "Agents' access stays as it is."
+  if (grant && typeof grant.hours === 'number' && (!profile || (profile.agent_grant && profile.agent_hours === grant.hours))) {
+    agents = grant.scope === 'workable' && grant.verbs === 'agent'
+      ? `Agents may work on their own for ${duration(grant.hours)}.`
+      : `agent access for ${duration(grant.hours)} (scope ${String(grant.scope)}, verbs ${String(grant.verbs)})`
+  } else if (newWorkspace && profile?.agent_grant === false && profile.agent_hours === 8 && !grant && (hours === undefined || hours === 8)) {
+    agents = 'Agents may not work on their own.'
+  }
+  if (typeof hours === 'number' && hours !== grant?.hours) {
+    facts.push({ label: 'Access duration', value: `Agent access duration is set to ${duration(hours)}.` })
   }
   for (const item of review.items.filter((i) => i.type === 'addon.granted' && i.id !== 'addon:dashboard')) {
     facts.push({ label: item.title, value: addonSentence(item.id.replace(/^addon:/, ''), item.title) })
   }
-  if (agents !== undefined) facts.push({ label: 'Agents', value: agents })
+  facts.push({ label: 'Agents', value: agents })
   if (approve) facts.push({ label: 'How you approve', value: approve })
   return facts
 }
@@ -199,9 +204,8 @@ export function approvalSummary(
   const out = [
     access === 'none'
       ? 'No agent works here until you give access.'
-      : profile.agent_grant === false
-        ? `Agents may work for ${duration(profile.agent_hours)}; none start on this computer yet.`
-        : `Agents can work on their own for ${duration(profile.agent_hours)}.`,
+      // Duration without a runner grant can no longer be chosen.
+      : `Agents can work on their own for ${duration(profile.agent_hours)}.`,
   ]
   if (opts.records) out.push(profile.records !== false ? 'Your history stays on this computer.' : 'No history is kept.')
   if (opts.trust !== undefined) out.push(opts.trust ? 'AI helpers open your project folder without asking.' : 'AI helpers ask before they open your project folder.')
@@ -1077,7 +1081,7 @@ export function Setup({ api }: { api: SetupAPI }) {
           {step === 2 && (
             <>
               <label className="toggle">
-                <span>Allow agents to work<small>You can stop them at any time.</small></span>
+                <span>Allow agents to work<small>Turning this on lets agents start on {host || 'this computer'} for {access === 'none' ? 'the chosen time' : duration(profile.agent_hours)}. You can stop them at any time.</small></span>
                 <input type="checkbox" role="switch" checked={access !== 'none'} disabled={!state.agent_hours.length}
                   onChange={(e) => chooseAccess(e.target.checked ? (state.agent_hours.includes(72) ? 72 : state.agent_hours[0]) : 'none')} />
               </label>
@@ -1300,8 +1304,8 @@ export function Setup({ api }: { api: SetupAPI }) {
           {step === 5 && review && (
             <>
               <dl className="current review-facts review-summary">
-                {reviewFacts(review, host, state.mode !== 'finish').map((f) => (
-                  <Fragment key={f.label}>
+                {reviewFacts(review, host, state.mode !== 'finish', profile).map((f, i) => (
+                  <Fragment key={i}>
                     <dt>{f.label}</dt>
                     <dd><Inline>{f.value}</Inline></dd>
                   </Fragment>

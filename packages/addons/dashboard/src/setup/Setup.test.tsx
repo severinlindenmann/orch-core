@@ -878,8 +878,9 @@ test('the summary comes from the review core returned, not from the choices on t
   await check()
   await screen.findByRole('heading', { name: 'Review your setup' })
   const summary = document.querySelector('.review-summary')!
-  expect(summary).toHaveTextContent('Agents may not work on their own.')
+  expect(summary).toHaveTextContent("Agents' access stays as it is.")
   expect(summary).not.toHaveTextContent('3 days')
+  expect(summary).toHaveTextContent('Agent access duration is set to 1 day.')
   expect(summary).toHaveTextContent('You approve in a terminal, with your password.')
 })
 
@@ -901,7 +902,7 @@ test('P06: the git flag is no row on the short card (no Also row either); its si
   expect(fold).toHaveTextContent('git init')
 })
 
-test('P69: a new review without a grant says access is off without inventing a duration or approval method', async () => {
+test('P69: enabled access without a grant stays neutral without inventing a duration or approval method', async () => {
   const { api } = withReview({ items: [], flags: [] })
   render(<Setup api={api} />)
   await approval()
@@ -912,7 +913,7 @@ test('P69: a new review without a grant says access is off without inventing a d
   await screen.findByRole('heading', { name: 'Review your setup' })
   const summary = document.querySelector('.review-summary')!
   expect(summary).not.toHaveTextContent(/7 days|terminal|one click/)
-  expect(summary).toHaveTextContent('Agents may not work on their own.')
+  expect(summary).toHaveTextContent("Agents' access stays as it is.")
 })
 
 test('a review item of a kind this page does not know is named in the summary and the details stay closed', async () => {
@@ -998,6 +999,7 @@ test('the runner line comes from the signed grant item, not from review.runner_g
   })
   render(<Setup api={api} />)
   await approval()
+  chooseAgentDuration('1 day')
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Your recovery words' })
   await check()
@@ -1964,4 +1966,43 @@ test('P52 styling: Review places quiet Back beside primary Create workspace and 
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Review your setup' })
   expect(f.calls.filter((c) => c.path === 'review')).toHaveLength(reviews + 1)
+})
+
+
+test.each([undefined, 'build-server'])('access switch explains the runner grant on %s', async (host) => {
+  await toAgents(fake({ host }))
+  const toggle = screen.getByRole('switch', { name: /Allow agents to work/ })
+  const text = toggle.closest('label')!.querySelector('small')!
+  expect(text).toHaveTextContent(`Turning this on lets agents start on ${host || 'this computer'} for the chosen time.`)
+  fireEvent.click(toggle)
+  fireEvent.click(screen.getByRole('button', { name: '1 day' }))
+  expect(text).toHaveTextContent(`Turning this on lets agents start on ${host || 'this computer'} for 1 day.`)
+  expect(screen.getByText('Allowing agents to work does not start a task.')).toBeVisible()
+})
+
+test('review access matches the profile and applied items, including defaults and existing access', () => {
+  const grant = { ...review.items[0], id: 'runner_grant', type: 'grant.issued', fields: { hours: 72, scope: 'workable', verbs: 'agent' } }
+  const access = (items: Review['items'], agent_grant: boolean, agent_hours: number, isNew = true) =>
+    reviewFacts({ ...review, items }, undefined, isNew, { agent_grant, agent_hours }).find((f) => f.label === 'Agents')!.value
+  expect(access([grant], true, 72)).toBe('Agents may work on their own for 3 days.')
+  expect(access([{ ...grant, fields: { ...grant.fields, hours: 8 } }], true, 8)).toBe('Agents may work on their own for 8 hours.')
+  expect(access([], false, 8)).toBe('Agents may not work on their own.')
+  expect(access([], true, 72)).toBe("Agents' access stays as it is.")
+  expect(access(review.items, true, 24)).toBe("Agents' access stays as it is.")
+  expect(access([], false, 8, false)).toBe("Agents' access stays as it is.")
+  expect(access([grant], false, 8)).toBe("Agents' access stays as it is.")
+  expect(access([grant], true, 24)).toBe("Agents' access stays as it is.")
+})
+
+test('review fact keys tolerate add-on titles colliding with core labels and each other', async () => {
+  const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+  const { api } = withReview({ items: ['Agents', 'Computer', 'Agents'].map((title, i) => ({
+    ...review.items[0], id: `addon:demo-${i}`, type: 'addon.granted', title, fields: {},
+  })) })
+  render(<Setup api={api} />)
+  await reveal()
+  await check()
+  await screen.findByRole('heading', { name: 'Review your setup' })
+  expect(document.querySelectorAll('.review-summary dt')).toHaveLength(5)
+  expect(errors.mock.calls.flat().join(' ')).not.toMatch(/same key|unique.*key/i)
 })

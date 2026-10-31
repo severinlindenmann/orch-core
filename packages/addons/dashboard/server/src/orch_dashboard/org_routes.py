@@ -127,7 +127,10 @@ def secrets_view(raw) -> dict:
             "expires_ms": exp if isinstance(exp, int) and not isinstance(exp, bool) and 0 <= exp < 2**53 else None,
             "used_by": [n for n in used[:20] if isinstance(n, str) and NAME.fullmatch(n)],
         })  # fmt: skip
-    return {"available": True, "secrets": out}
+    got: dict = {"available": True, "secrets": out}
+    if isinstance(raw, dict) and isinstance(raw.get("isolated"), bool):
+        got["isolated"] = raw["isolated"]  # a bare boolean: does this computer fetch secrets at all (tier B)
+    return got
 
 
 MAX_DESC = 20000

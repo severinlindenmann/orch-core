@@ -6,7 +6,7 @@ import type { ProfileFields } from '@/api/profile' // type only: a runtime impor
 import { BACKUP_KEY_LINE, CLICK_RISK, type ClickViewAnswer } from '@/api/click'
 import { fail, ok, type MockRouter } from './router'
 
-export const HUB_SCENARIOS = ['standalone', 'selective', 'full', 'offline', 'nottold', 'update'] as const
+export const HUB_SCENARIOS = ['standalone', 'selective', 'full', 'offline', 'nottold', 'update', 'closing'] as const
 export type HubScenario = (typeof HUB_SCENARIOS)[number]
 const KEY = 'orch.mock.hub'
 
@@ -44,6 +44,7 @@ export function mockHubStatus(s: HubScenario = scenario()): HubStatus {
     case 'selective': return { ...joined, mode: 'selective', hub_card: JSON.stringify({ o: { hub_id: HUB_ID }, sig: 'x' }) }
     case 'full': return { ...joined, mode: 'full', member: true }
     case 'update': return { ...joined, mode: 'full', member: true, update_target: '0.2.0' }
+    case 'closing': return { ...joined, mode: 'selective', closing: { since_ms: 1_790_000_000_000, ends_ms: 1_790_259_200_000 } }
     case 'offline': return { ...joined, mode: 'selective', reachable: false }
     case 'nottold': return { ...BASE, hub_id: HUB_ID, link: 'unbound', not_told: true, owed: 1 }
     default: return BASE

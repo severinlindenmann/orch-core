@@ -35,6 +35,8 @@ from .changes import Changes
 from .channels import Channels
 from .channels.pushkeys import PushKeyStore
 from .channels.service import CHANNELS_FILE
+from .closing import Closing
+from .closing_launch import Launcher
 from .config import HubConfig
 from .connections import ConnectionAuthz, Connections
 from .contract.hub import Refused
@@ -405,6 +407,16 @@ def serve(
                 api_origin=api,
             )
 
+    closing = Closing(
+        keys=keys,
+        access=access,
+        registry=registry,
+        channels=channels,
+        now_ms=lambda: int(time.time() * 1000),
+        launcher=Launcher(state),
+        activity=activity,
+        audit=audit,
+    )  # #1463: removing the hub; its guard sits in the web pipeline and the link server
     web: WebServer | None = None
     if cfg.web_listen is not None:
         api = WebApi(
@@ -416,6 +428,7 @@ def serve(
                 audit=audit,
                 activity=activity,
                 changes=changes,
+                closing=closing,
                 user_invites=user_invites,
                 oidc=OidcService(oidc_store),
                 engine=engine,
@@ -505,6 +518,7 @@ def serve(
         hooks=hook_inbox,
         activity=activity,
         where=lambda: where_answer(state, extra_public=link_ws_public, publish=publish_hint(publish_url)),
+        closing=closing,
         deliveries=deliveries,
         streams=stream_router,
         remote=remote_endpoint,
@@ -514,6 +528,7 @@ def serve(
         ws_port=ws_bind[1] if ws_bind is not None else 0,
         dev_mode=cfg.dev,
     )
+    closing.push = server.push_closing
     try:
         org_cleanup(access).retry()  # a drop that a crash or a failure left undone
         shares.reconcile()  # items of a workspace that is no longer a bound selective one are deleted
@@ -527,7 +542,7 @@ def serve(
 
         def _retry() -> None:  # D9-1 share purge, D9/D15 wrap retire and view drop: retried while the hub runs
             while not stop.wait(30):
-                if RESTORE_FENCE.is_set():  # a restore runs: no background write lands in the state being replaced
+                if RESTORE_FENCE.is_set() or closing.active():  # a restore or a removal runs: no background write lands
                     continue
                 shares.retry_pending()
                 org_cleanup(access).retry()  # company content of a workspace that left, if a drop failed
@@ -542,6 +557,7 @@ def serve(
                 except Exception:  # noqa: BLE001, S110  # tried again after an hour; the page lists what exists
                     pass
 
+        closing.resume()  # a removal that a restart interrupted goes on from its last step
         threading.Thread(target=_retry, name="state-retry", daemon=True).start()
         deliveries.start()
         stream_router.start()  # the 60 s sweep: users who lost access, expired streams

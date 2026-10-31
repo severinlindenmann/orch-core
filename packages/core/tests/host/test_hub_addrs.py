@@ -431,6 +431,7 @@ def test_a_failed_address_is_not_tried_again_within_an_hour_and_the_hub_learns_n
     assert set(ops) <= {
         "snapshot_get",
         "hub_where",
+        "closing_get",  # #1463: asked next to hub_where on every refresh
         "status_put",
         "profile_put",
         "error",

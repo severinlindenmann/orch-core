@@ -13,6 +13,15 @@ export function HubBanner({ ws }: { ws?: string }) {
       <p>Only you can do it: run <code>orch update</code> in a terminal on this computer. This notice goes away once orch is up to date.</p>
     </Panel>
   </div> : null
+  // #1463: the host verified a removal notice. The words are ours; nothing from the hub is shown. Leave is the normal one.
+  const closing = s.closing ? <div data-testid="hub-closing-banner" className="mb-4">
+    <Panel title="Your company hub is being removed." tone="border-warning/40 bg-warning-soft">
+      <p>Company skills and tools are paused here. Your files stay as they are. Leave the hub when you are ready.</p>
+      <div className="flex flex-wrap gap-2"><Action id="hub-leave-closing" onClick={() => setLeave(true)}>Leave</Action></div>
+    </Panel>
+    {leave && <LeaveFlow ws={ws} onClose={() => setLeave(false)} />}
+  </div> : null
+  if (closing) return <>{ask}{closing}</>
   if (s.reachable !== false) return ask
   return <>{ask}<div data-testid="hub-offline-banner" className="mb-4">
     <Panel title={'Hub offline, working locally'} tone="border-warning/40 bg-warning-soft">

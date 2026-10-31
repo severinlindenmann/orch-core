@@ -63,7 +63,7 @@ class EpochKeys(Protocol):
 _ENTRY = {"unbound", "addr", "tls_spki", "hk_op_pub", "mode"}
 _OPTIONAL = {
     "outbox", "addr", "tls_spki", "hxk_pub", "sealed", "rotate_after", "card", "revoked_op_certs", "snapshot",
-    "revoked_op_objs", "publish_owed", "snapshot_floors", "hub_publish",
+    "revoked_op_objs", "publish_owed", "snapshot_floors", "closing", "hub_publish",
 }  # fmt: skip
 MAX_ADDRS = 4  # M4 (#1461): other addresses of the hub the host has verified (next to ``addr``)
 
@@ -79,6 +79,18 @@ def _addrs_ok(v: Any) -> bool:
     except HubRefused:
         return False
     return True
+
+
+def _closing_ok(v: Any) -> bool:
+    return v is None or (
+        type(v) is dict
+        and set(v) == {"removal_id", "issued_ms", "ends_ms", "binding_seq"}
+        and wire.hex16(v["removal_id"])
+        and all(type(v[k]) is int and v[k] >= 0 for k in ("issued_ms", "ends_ms"))
+        and type(v["binding_seq"]) is int
+        and v["binding_seq"] >= 1
+        and v["issued_ms"] < v["ends_ms"]
+    )
 
 
 def _outbox_ok(box: Any) -> bool:
@@ -154,6 +166,9 @@ class HubState:
     #: C8 (design-c8 M2.4): hub_id -> the signed ``hub.unbound`` that orch-publish has not acknowledged yet. A leave
     #: tells publish directly (never through the hub); the entry is deleted once publish took it.
     publish_owed: dict[str, dict[str, Any]] = field(default_factory=dict)
+    #: #1463 (protocol 9.7): the verified ``hub.closing`` notice of THIS binding, only its four recorded members
+    #: (``verify_closing``'s result). Host-local; cleared by leave, unbind, rebind or a ``closing_get`` answer ``null``.
+    closing: dict[str, Any] | None = None
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -180,6 +195,7 @@ class HubState:
             "snapshot_floors": {k: self.snapshot_floors[k] for k in sorted(self.snapshot_floors)},
             "revoked_op_objs": {k: self.revoked_op_objs[k] for k in sorted(self.revoked_op_objs)},
             "publish_owed": {k: self.publish_owed[k] for k in sorted(self.publish_owed)},
+            "closing": None if self.closing is None else dict(self.closing),
         }
 
     @classmethod
@@ -221,6 +237,7 @@ class HubState:
             and all(wire.hex16(k) and type(v) is dict for k, v in d.get("revoked_op_objs", {}).items())
             and type(d.get("publish_owed", {})) is dict
             and all(wire.hex16(k) and type(v) is dict for k, v in d.get("publish_owed", {}).items())
+            and _closing_ok(d.get("closing"))
             and d["hub_id"] == wire.hub_id(unb64u(d["hk_root_pub"], 65))
         )
         if not ok:
@@ -249,6 +266,7 @@ class HubState:
             snapshot_floors=dict(d.get("snapshot_floors", {})),
             revoked_op_objs=dict(d.get("revoked_op_objs", {})),
             publish_owed=dict(d.get("publish_owed", {})),
+            closing=None if d.get("closing") is None else dict(d["closing"]),
         )
 
 
@@ -329,11 +347,13 @@ def _join(
         _retire_full_state(state, epochs, save, "rejoin")
         _owe(state, workspace_id, sign_wsk, now_ms, dev=bool(state.binding["o"]["dev"]))
         state.status = "unbound"
+        state.closing = None
         save(state)
     if state is not None and state.status == "joining" and binding_seq is not None and binding_seq > state.binding_seq:
         # the log left and joined again (#1198 C9: the owner proof of the first join ran out before the hub took it):
         # the hub never held that binding, so there is nothing to resume and nothing to unbind
         state.status = "unbound"
+        state.closing = None
         save(state)
     if mode == "full":
         assert epochs is not None
@@ -680,6 +700,7 @@ def leave(
     _retire_full_state(state, epochs, save, "leave")  # fail closed: even a never-sealed full hub gets a fresh epoch
     state.sealed = None
     state.status = "unbound"
+    state.closing = None
     save(state)
     done = settle_rotation(state=state, epochs=epochs, save=save, request=False)  # the retire already asked
     told = flush_publish(state=state, put=publish_put, save=save)  # publish first: it ends hub-forwarded publish

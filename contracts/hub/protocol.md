@@ -3466,9 +3466,10 @@ state, manifest size and SHA-256, and file identity (`st_dev`, `st_ino`, `st_siz
 with `done: true`.
 Parts have a separate per-workspace budget of 64 MiB and 600 requests per minute. Each started finalization
 hash additionally charges the manifest file size to that byte budget, including zero-length rediscovery
-requests. Exhaustion returns 429 `rate_limited`. The budget is checked before reading a part body when
-Content-Length is known, and checked and charged again using the actual body length after reading.
-A non-ASCII raw path returns 404 `not_found` on every signed Publish API route, not only parts.
+requests. Exhaustion returns 429 `rate_limited`. The budget is checked and charged with the actual body length after
+the request is verified (never before: an unsigned caller learns nothing about a workspace's budget). Requests for one
+file are handled one at a time; a request that waits more than 10 s behind a finalize hash gets 409 `part_busy` and
+retries.
 
 Partial bytes occupy the normal staging file, `incoming/<sid>/files/<path>`, while `share_files.present = 0`.
 The file's current size is `received` (zero if absent); there is no side file or new storage layout.

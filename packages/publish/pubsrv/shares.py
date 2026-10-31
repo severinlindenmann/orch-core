@@ -485,6 +485,7 @@ def _part_digest(data):
     return digest.hexdigest()
 
 
+PART_WAIT_S = 10
 _part_flights = {}
 _part_flights_guard = threading.Lock()
 
@@ -496,8 +497,14 @@ def _part_flight(sid, path):
         entry = _part_flights.setdefault(key, [threading.Lock(), 0])
         entry[1] += 1
     try:
-        with entry[0]:
+        # A bounded wait: requests for one file queue here only behind a finalize hash, and never hold a worker
+        # thread for longer than this (the client retries on part_busy).
+        if not entry[0].acquire(timeout=PART_WAIT_S):
+            raise Refusal(409, "part_busy")
+        try:
             yield
+        finally:
+            entry[0].release()
     finally:
         with _part_flights_guard:
             entry[1] -= 1

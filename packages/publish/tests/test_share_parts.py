@@ -641,16 +641,35 @@ def test_budget_checks_before_and_after_body(two, monkeypatch, length):
     assert not partial(two).exists()
 
 
-def test_exhausted_budget_refuses_before_network_body(two, monkeypatch):
-    from pubsrv import app
-
+def test_exhausted_budget_is_never_shown_to_an_unsigned_caller(two):
+    """The budget is checked after the signature: a request signed by another key gets the auth refusal, not 429."""
     stage(two)
     assert two.app.state.store.part_limiter.allow(WS_A, shares.PART_BYTES_PER_MIN)
-
-    async def unread(*args):
-        pytest.fail("exhausted part budget must refuse before reading the network body")
-
-    monkeypatch.setattr(app, "_read_body", unread)
+    forged = two.send("PUT", f"/v1/ws/{WS_A}/shares/{SID}/parts/0/f", b"a", ws=WS_A, priv=two.wsk_b)
+    assert forged.status_code in (401, 403) and forged.json() != {"error": "rate_limited"}
     response = part(two, 0, b"a")
     assert response.status_code == 429
     assert response.json() == {"error": "rate_limited"}
+
+
+def test_a_request_waiting_too_long_behind_a_finalize_gets_part_busy(monkeypatch):
+    monkeypatch.setattr(shares, "PART_WAIT_S", 0.05)
+    held = threading.Event()
+    release = threading.Event()
+
+    def hold():
+        with shares._part_flight(SID, "f"):
+            held.set()
+            release.wait(5)
+
+    t = threading.Thread(target=hold)
+    t.start()
+    assert held.wait(5)
+    try:
+        with pytest.raises(shares.Refusal) as e, shares._part_flight(SID, "f"):
+            pass
+        assert (e.value.status, e.value.error) == (409, "part_busy")
+    finally:
+        release.set()
+        t.join(5)
+    assert (SID, "f") not in shares._part_flights

@@ -221,8 +221,7 @@ function shell(active, ...nodes) {
   for (const pg of PAGES) if (!items.some((t) => t.id === pg.path)) items.push({ id: pg.path, label: pg.nav.label, admin: pg.nav.admin, later: !!pg.nav.needsWorkspace, group: pg.nav.group }); // an unresolved nav.after is still reachable (pages.test.mjs fails on it)
   const empty = state.rail.ready === true && !state.rail.rows.length; // a rail that could not be read hides nothing
   const visible = items.filter((t) => (!t.admin || state.user?.is_admin) && !(t.later && empty));
-  const tabs = (cls) => visible.map((t) => tab(t.id, t.label, cls));
-  const groups = empty ? [] : ["Sharing & apps", "People & settings"].map((group) => {
+  const groups = () => empty ? [] : ["Sharing & apps", "People & settings"].map((group) => {
     const members = visible.filter((t) => t.group === group);
     if (!members.length) return null;
     const remembered = state.navGroups?.[group] === true;
@@ -236,13 +235,15 @@ function shell(active, ...nodes) {
   });
   const name = renderText(state.user?.name ?? "");
   const hubName = renderText(state.rail.hubName);
-  const topNav = h("nav", { class: "navtabs top-nav", "aria-label": "Sections" }, ...tabs("nav"));
-  const side = h("aside", { class: "side", "aria-label": "Hub" },
+  const navigation = () => [
+    ...visible.filter((t) => (empty || !t.group) && t.id !== "account").map((t) => tab(t.id, t.label, "nv")),
+    ...groups(),
+    h("div", { class: "sp" }), h("div", { class: "who" }, h("span", { text: name }), tab("account", "Account", "account-link"))];
+  const topNav = h("nav", { class: "side-nav top-nav", "aria-label": "Sections" }, ...navigation());
+  const side = h("aside", { class: "side side-nav", "aria-label": "Hub" },
     h("div", { class: "logo" }, h("i"), h("span", { text: "orch" })),
     h("div", { class: "hubbox" }, h("span", { text: hubName })),
-    ...visible.filter((t) => !t.group && t.id !== "account").map((t) => tab(t.id, t.label, "nv")),
-    ...groups,
-    h("div", { class: "sp" }), h("div", { class: "who" }, h("span", { text: name }), tab("account", "Account", "account-link")));
+    ...navigation());
   if (!frame) {
     const top = h("header", { class: "topbar" }, h("span", { class: "t breadcrumb", text: hubName }),
       topNav,
@@ -252,11 +253,13 @@ function shell(active, ...nodes) {
     frame = root.querySelector(".app");
     railSnapshot = JSON.stringify(state.rail);
   } else {
-    if (!sameRoute || railSnapshot !== JSON.stringify(state.rail)) frame.querySelector(".side").replaceWith(side);
+    if (!sameRoute || railSnapshot !== JSON.stringify(state.rail)) {
+      frame.querySelector(".side").replaceWith(side);
+      frame.querySelector(".top-nav")?.replaceWith(topNav);
+    }
     replaceContent(frame.querySelector(".content"), nodes.flat(2).filter(Boolean), sameRoute);
     if (railSnapshot !== JSON.stringify(state.rail)) {
       frame.querySelector(".rail").replaceChildren(...railView().childNodes);
-      frame.querySelector(".top-nav")?.replaceWith(topNav);
       railSnapshot = JSON.stringify(state.rail);
     }
   }

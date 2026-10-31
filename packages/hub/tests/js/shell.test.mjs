@@ -272,13 +272,13 @@ test("P08: sidebar groups preserve destinations, open the active page and rememb
   const { readdirSync } = await import("node:fs");
   const dir = new URL("../../src/orch_hub/web/pages/", import.meta.url);
   const PAGES = await Promise.all(readdirSync(dir).filter(f => f.endsWith(".js")).map(async f => (await import(new URL(f, dir))).page));
-  const paint = ({ admin = true, empty = false, active = "home", stored = {} } = {}) => {
+  const paint = ({ admin = true, empty = false, active = "home", stored = {}, compact = false } = {}) => {
     const root = new Element("main"), location = { hash: "#/" + active };
     const state = { navGroups: stored, user: { name: "Ann", is_admin: admin }, rail: { hubName: "H", ready: true, rows: empty ? [] : [{ id: "ab".repeat(16), name: "Legal" }] } };
     const context = vm.createContext({ clearInterval, root, state, PAGES, location, parseRoute, enter, replaceContent, renderText: String, initials: s => s.slice(0, 2), colour: () => "c0", navigate() {}, signOutMenu: () => new Element("button"), document: { createElement: t => new Element(t), createTextNode: text => Object.assign(new Element("#text"), { textContent: text }) } });
     vm.runInContext(source.slice(source.indexOf("function h("), source.indexOf("const field =")) + source.slice(source.indexOf("function shell("), source.indexOf("async function loadRail(")), context);
     context.shell(active, new Element("h1"));
-    return root.querySelector(".side");
+    return root.querySelector(compact ? ".top-nav" : ".side");
   };
   const ids = nodes => nodes.map(n => n.attrs["data-tab"]);
   const side = paint(), groups = side.querySelectorAll(".grp");
@@ -287,7 +287,23 @@ test("P08: sidebar groups preserve destinations, open the active page and rememb
   assert.ok(groups.every(g => g.getAttribute("open") === null));
   assert.equal(side.querySelector(".who").querySelector("[data-tab]").attrs["data-tab"], "account");
   assert.equal(side.querySelectorAll("[data-tab]").length, 17);
-  assert.deepEqual(ids(paint({ empty: true }).childNodes.filter(n => n.tag === "a")), ["home", "workspaces"]);
+  const compact = paint({ compact: true });
+  assert.deepEqual(ids(compact.childNodes.filter(n => n.tag === "a")), ["home", "approvals", "workspaces", "activity"]);
+  assert.deepEqual(compact.querySelectorAll(".grp").map(g => g.childNodes[0].textContent), ["Sharing & apps", "People & settings"]);
+  assert.ok(compact.querySelectorAll(".grp").every(g => g.getAttribute("open") === null));
+  assert.equal(compact.querySelector(".who").childNodes[0].textContent, "Ann");
+  assert.equal(compact.querySelector(".who").querySelector("[data-tab]").textContent, "Account");
+  assert.equal(paint({ compact: true, active: "mcp" }).querySelectorAll(".grp")[0].getAttribute("open"), "");
+  for (const nav of [side, compact]) {
+    const links = nav.querySelectorAll("[data-tab]");
+    assert.equal(links.find(n => n.attrs["data-tab"] === "spaces").textContent, "Shared spaces");
+    assert.equal(links.find(n => n.attrs["data-tab"] === "mcp").textContent, "Tool servers");
+  }
+  const css = readFileSync(new URL("../../src/orch_hub/web/app.css", import.meta.url), "utf8");
+  assert.match(css, /@media \(max-width:760px\)[\s\S]*\.side \{ display:none; \}/);
+  assert.match(css, /\.main \.topbar \.top-nav \{ display:flex; flex-direction:column;/);
+
+  assert.deepEqual(ids(paint({ empty: true }).childNodes.filter(n => n.tag === "a")), ["home", "workspaces", "phones", "admin", "hub-settings"]);
   assert.equal(paint({ empty: true }).querySelectorAll(".grp").length, 0);
   const activeGroup = paint({ active: "secrets" }).querySelectorAll(".grp")[0];
   assert.equal(activeGroup.getAttribute("open"), "");

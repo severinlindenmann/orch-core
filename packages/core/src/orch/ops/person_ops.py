@@ -680,7 +680,16 @@ HUB_JOIN = operation(
     emits=("hub.joined",),
     text="ok hub.joined {hub_id} seq={seq}\nnext: {next}",
     data=obj({"hub_id": STR, "mode": STR, "binding_seq": {"type": "integer"}}),
-    errors=(err("role.denied"), err("hub.refused"), err("hub.already_joined"), err("hub.proof_invalid")),
+    errors=(
+        err("role.denied"),
+        err("hub.refused"),
+        err("hub.already_joined"),
+        err("hub.proof_invalid"),
+        err("hub.link_inspected"),
+        err("hub.proxy_auth"),
+        err("hub.proxy_refused"),
+        err("hub.proxy_unreachable"),
+    ),  # fmt: skip
     handler=handle_hub_join,
 )
 HUB_MODE = operation(
@@ -703,6 +712,10 @@ HUB_MODE = operation(
         err("hub.not_joined"),
         err("hub.already_joined"),
         err("hub.proof_invalid"),
+        err("hub.link_inspected"),
+        err("hub.proxy_auth"),
+        err("hub.proxy_refused"),
+        err("hub.proxy_unreachable"),
     ),  # fmt: skip
     handler=handle_hub_mode,
 )
@@ -716,7 +729,15 @@ HUB_LEAVE = operation(
     emits=("hub.left",),
     text="ok hub.left {hub_id} seq={seq}\nnext: {next}",
     data=obj({"hub_id": STR, "binding_seq": {"type": "integer"}}),
-    errors=(err("role.denied"), err("hub.not_joined"), err("hub.proof_invalid")),
+    errors=(
+        err("role.denied"),
+        err("hub.not_joined"),
+        err("hub.proof_invalid"),
+        err("hub.link_inspected"),
+        err("hub.proxy_auth"),
+        err("hub.proxy_refused"),
+        err("hub.proxy_unreachable"),
+    ),  # fmt: skip
     handler=handle_hub_leave,
 )
 

@@ -1,0 +1,1 @@
+err update.rolled_back the update failed and the old version and data were put back · retry:false · next: see the log · fix: orch update --check

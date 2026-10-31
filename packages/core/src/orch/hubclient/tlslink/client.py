@@ -29,6 +29,8 @@ from orch.canon.jcs import dumps as cj
 from orch.crypto import suite
 from orch.crypto.encoding import EncodingError, b64u, unb64u, unhex
 
+from ..linkaddr import LinkAddr
+from ..netconfig import NetSettings
 from . import framing, tls
 from .framing import FrameError
 from .tls import LinkClosed, LinkTimeout, PinMismatch
@@ -65,6 +67,7 @@ W2H_OPS: dict[str, str | None] = {
     "binding_put": None,
     "snapshot_get": None,
     "org_skills_get": None,
+    "closing_get": None,  # #1463 (hub protocol 9.7): {} -> {"closing": <hub.closing> | null}
     "mcp_servers_get": None,
     "org_secrets_get": None,
     "secret_use": None,
@@ -97,8 +100,33 @@ W2H_OPS: dict[str, str | None] = {
     "wk_seal": "full",
     "log_sync": "full",
 }
+NAME_MAX, KIND_MAX = 64, 32
+
+
+def space_list_reply_ok(b: dict[str, Any]) -> bool:
+    """``{"spaces": [hub.space], "meta": {space_id: {"name", "kind"}}}``: ``meta`` only names listed spaces and each
+    value is exactly name and kind, short printable strings (unsigned display data; vectors_space_list.json)."""
+    if set(b) != {"spaces", "meta"} or type(b["spaces"]) is not list or type(b["meta"]) is not dict:
+        return False
+    ids = set()
+    for r in b["spaces"]:
+        o = r.get("o") if type(r) is dict else None
+        sid = o.get("space_id") if type(o) is dict else None
+        if type(sid) is not str:
+            return False
+        ids.add(sid)
+    for sid, m in b["meta"].items():
+        if sid not in ids or type(m) is not dict or set(m) != {"name", "kind"}:
+            return False
+        for k, cap in (("name", NAME_MAX), ("kind", KIND_MAX)):
+            v = m[k]
+            if type(v) is not str or len(v) > cap or not v.isprintable():
+                return False
+    return True
+
+
 _REPLY: dict[str, Callable[[dict[str, Any]], bool]] = {
-    "space_list": lambda b: set(b) == {"spaces"} and type(b["spaces"]) is list,
+    "space_list": lambda b: space_list_reply_ok(b),
     "space_put": lambda b: set(b) == {"seq"} and type(b["seq"]) is int,
     "space_revoke": lambda b: set(b) == {"seq"} and type(b["seq"]) is int,
     "space_get": lambda b: (
@@ -162,6 +190,7 @@ _REPLY: dict[str, Callable[[dict[str, Any]], bool]] = {
     "audience_get": lambda b: set(b) == {"people", "teams"} and type(b["people"]) is list and type(b["teams"]) is list,
     "directory_get": lambda b: set(b) == {"entries"} and type(b["entries"]) is list,
     "org_skills_get": lambda b: set(b) == {"bundle"} and type(b["bundle"]) is dict,
+    "closing_get": lambda b: set(b) == {"closing"} and (b["closing"] is None or type(b["closing"]) is dict),
     "mcp_servers_get": lambda b: set(b) == {"bundle"} and type(b["bundle"]) is dict,
     "org_secrets_get": lambda b: set(b) == {"bundle"} and type(b["bundle"]) is dict,
     "log_sync": lambda b: set(b) == {"seq", "head"} and type(b["seq"]) is int and type(b["head"]) is str,
@@ -304,8 +333,13 @@ class LinkClient:
         max_frame: int = framing.MAX_FRAME,
         now_ms: Callable[[], int] = lambda: int(time.time() * 1000),
         alpn: bytes | None = None,
+        addr: LinkAddr | None = None,
+        net: NetSettings,
     ) -> LinkClient:
-        """Open and authenticate. ``alpn``: the link's declared role (``STREAM_LINK_ALPN``); the hub must select it,
+        """Open and authenticate. ``host``/``port`` are where to connect (a checked IP for a name); ``addr`` is the
+        parsed address (``ws(s)://`` forms included) that names the transport and the server name, ``net`` the host's
+        proxy settings (:func:`~orch.hubclient.tlslink.tls.dial_link`).
+        ``alpn``: the link's declared role (``STREAM_LINK_ALPN``); the hub must select it,
         else the link is closed (``LinkError("unsupported")``): it is never used as a plain link.
         ``wsk_pub`` is passed only for the first link of a join (the hub has not pinned the workspace yet);
         otherwise leave it ``None``. Raises ``PinMismatch`` before anything is sent when the hub's certificate is
@@ -317,7 +351,11 @@ class LinkClient:
         def left() -> float:
             return max(end - time.monotonic(), 0.001)
 
-        conn = tls.connect_pinned(host, port, tls_spki_sha256, timeout=timeout, alpn=(alpn,) if alpn else ())
+        a = addr or LinkAddr("tcp", host, port, f"{host}:{port}")
+        conn = tls.dial_link(
+            a, tls_spki_sha256, timeout=timeout, alpn=(alpn,) if alpn else (), net=net,
+            connect_host=host if host != a.host else None,
+        )  # fmt: skip
         try:
             if alpn is not None and conn.alpn() != alpn:
                 raise LinkError("unsupported")

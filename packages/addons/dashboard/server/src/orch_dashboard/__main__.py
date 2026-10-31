@@ -404,7 +404,12 @@ def bind_listener(wanted):
 
 def serve(lock_held=False, port=None, listen=None):
     refuse_agent()
-    run_dir(state_dir())
+    run_dir(state_dir())  # refuses a bad run directory before anything is created
+    from orch.update.guard import hold_state_root
+
+    # An unfinished update refuses; the shared format lock is held while serving. A machine with no state folder yet
+    # has no data to protect (the host stamps it when it first starts), so the dashboard starts without the check.
+    _state_root = hold_state_root(state_dir()) if state_dir().is_dir() else None
     directory = state_dir() / "dashboard"
     with private_directory(directory) as fd:
         if not lock_held:

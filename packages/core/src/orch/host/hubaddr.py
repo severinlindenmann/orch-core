@@ -116,7 +116,7 @@ def is_loopback(addr: str | None) -> bool:
     if not addr:
         return False
     try:
-        host = parse_addr(addr)[0]
+        host = parse_addr(addr).host
     except HubRefused:
         return False
     if host == "localhost":
@@ -127,24 +127,121 @@ def is_loopback(addr: str | None) -> bool:
         return False
 
 
-def checked_ip(host: str, *, allow_loopback: bool) -> str:
+#: Address classes for a dial through a proxy (the proxy resolves names on its own side, so the text decides):
+#: ``lan`` (private/shared ranges, single-label, .local/.lan/.localdomain/.home.arpa names),
+#: ``loopback``
+#: (loopback, localhost, *.localhost), ``sensitive`` (link-local, metadata: 169.254/16, fe80::/10, fd00:ec2::254,
+#: *.internal, metadata.*), ``public`` (anything else). Only ``public`` goes through a proxy; ``lan`` IP literals
+#: also when the address in use is a ``lan`` IP literal. ``loopback`` and ``sensitive`` never do.
+_LAN_SUFFIXES = (".local", ".lan", ".localdomain", ".home.arpa")
+
+
+def _name_class(host: str) -> str:
+    h = host.lower().rstrip(".")
+    if h == "localhost" or h.endswith(".localhost"):
+        return "loopback"
+    if h.endswith(".internal") or h.split(".")[0] == "metadata":
+        return "sensitive"
+    if "." not in h or h.endswith(_LAN_SUFFIXES):
+        return "lan"
+    return "public"
+
+
+def _ip_class(a: ipaddress.IPv4Address | ipaddress.IPv6Address) -> str:
+    forms = _forms(a)
+    if any(f.is_link_local or f in _METADATA for f in forms):
+        return "sensitive"
+    if any(f.is_loopback or f.is_unspecified for f in forms):
+        return "loopback"
+    return "public" if all(f.is_global and not getattr(f, "is_site_local", False) for f in forms) else "lan"
+
+
+def address_class(host: str) -> str:
+    """``public`` | ``lan`` | ``loopback`` | ``sensitive`` by the text of ``host`` (an IP literal or a name)."""
+    try:
+        return _ip_class(ipaddress.ip_address(host))
+    except ValueError:
+        return _name_class(host)
+
+
+def _is_literal(host: str) -> bool:
+    try:
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        return False
+
+
+def is_internal(addr: str | None) -> bool:
+    """Whether the stored address is in the ``lan`` class by its own text (only that class lets other ``lan`` addresses
+    be tried through a proxy)."""
+    from orch.hubclient.errors import HubRefused
+    from orch.hubclient.tlsadapter import parse_addr
+
+    if not addr:
+        return False
+    try:
+        host = parse_addr(addr).host
+        return address_class(host) == "lan" and _is_literal(host)
+    except HubRefused:
+        return False
+
+
+def checked_ip(host: str, *, allow_loopback: bool, proxied: bool = False, allow_internal: bool = False) -> str:
     """THE address policy, used by the probe and by every dial of a hub-learned address: resolve ``host`` once, check
     every answer with :func:`ip_allowed` (one forbidden answer refuses the name) and return the IP to connect to. The
-    caller connects to that exact IP; the name is for display only. Raises ``OSError`` when refused."""
+    caller connects to that exact IP; the name is for display only. Raises ``OSError`` when refused.
+
+    ``proxied``: the dial goes through the host's proxy, which resolves a name on its own side, so a name is not
+    resolved here and is judged by its text instead (:func:`address_class`): only public ones pass; ``lan`` ones pass
+    when ``allow_internal`` (the address in use is ``lan`` too); loopback and sensitive ones never."""
+    try:
+        lit = ipaddress.ip_address(host)
+    except ValueError:
+        lit = None
+    if proxied:
+        cls = address_class(host)
+        # a LAN current address (an IP literal) unlocks LAN IP literals only, never a name
+        if cls != "public" and not (cls == "lan" and allow_internal and lit is not None):
+            raise OSError("address refused by policy")
+    if proxied and lit is None:
+        return host  # the proxy resolves it; nothing to check locally beyond the text
     ips = _ips(host)
     if not ips or not all(ip_allowed(i, allow_loopback=allow_loopback) for i in ips):
         raise OSError("address refused by policy")
     return ips[0]
 
 
-def dial_resolver(current_addr: str | None) -> Callable[[str], str]:
+def dial_resolver(current_addr: str | None, *, net: Any) -> Callable[[str], str]:
     """The ``resolve`` hook for dialling hub-learned addresses: policy-checked IP, loopback only next to a loopback
-    current address (decided by the stored text)."""
-    allow = is_loopback(current_addr)
-    return lambda host: checked_ip(host, allow_loopback=allow)
+    current address (decided by the stored text). With a proxy the same policy decides the text of a name."""
+    from orch.hubclient.tlslink import transport
+
+    allow, internal = is_loopback(current_addr), is_internal(current_addr)
+    return lambda host: checked_ip(
+        host,
+        allow_loopback=allow,
+        proxied=net is not None and net.proxy is not None and not transport.is_loopback_host(host),
+        allow_internal=internal,
+    )
 
 
-def handshake_ok(addr: str, spki: str | None, *, allow_loopback: bool = False) -> bool:
+def dial_host(a: Any, net: Any, *, allow_loopback: bool, allow_internal: bool = False) -> str:
+    """The host to hand to the dial of link address ``a``: the policy-checked IP, except a NAME behind the host's
+    proxy, which is the proxy's to resolve (sent as text, after the same policy judged it)."""
+    from orch.hubclient.tlslink import transport
+
+    return checked_ip(
+        a.host,
+        allow_loopback=allow_loopback,
+        proxied=transport.proxy_applies(a, net) is not None,
+        allow_internal=allow_internal,
+    )
+
+
+def handshake_ok(
+    addr: str, spki: str | None, *, allow_loopback: bool = False, net: Any, allow_internal: bool = False
+) -> bool:
     """True when a TLS handshake AT ``addr`` presents the held pin ``spki``. The name is resolved once, the IP checked
     (:func:`checked_ip`), and that exact IP is dialled. Nothing is sent over the connection and it is closed at once.
     No pin, no handshake. Nothing about the outcome is ever reported to the hub."""
@@ -155,21 +252,21 @@ def handshake_ok(addr: str, spki: str | None, *, allow_loopback: bool = False) -
     if not spki:
         return False
     try:
-        host, port = parse_addr(addr)
-        ip = checked_ip(host, allow_loopback=allow_loopback)
+        a = parse_addr(addr)
+        ip = dial_host(a, net, allow_loopback=allow_loopback, allow_internal=allow_internal)
     except (HubRefused, OSError):
         return False
     try:
         if PROBE is not None:
-            PROBE(ip, port, spki)
-        else:
-            tls.connect_pinned(ip, port, spki, timeout=PROBE_TIMEOUT_S).close()
+            PROBE(ip, a.port, spki)
+        else:  # ws(s):// and a proxy included: the same dial as the link, then the pinned handshake
+            tls.dial_link(a, spki, timeout=PROBE_TIMEOUT_S, connect_host=ip, net=net).close()
     except Exception:  # noqa: BLE001 - refused, timed out, wrong certificate: all the same answer, "not verified"
         return False
     return True
 
 
-def _probe_new(scope: str, state: Any, links: list[str]) -> list[str]:
+def _probe_new(scope: str, state: Any, links: list[str], net: Any) -> list[str]:
     """Probe ``links`` (at most :data:`MAX_PROBES` attempts) and return the ones that passed. A link the policy
     refuses still counts as an attempt (no dial happens); one that failed within the backoff is skipped."""
     allow_lo = is_loopback(state.addr)
@@ -187,12 +284,19 @@ def _probe_new(scope: str, state: Any, links: list[str]) -> list[str]:
         if at is not None and now - at < FAIL_BACKOFF_S:
             continue
         tried += 1
-        if handshake_ok(link, state.tls_spki, allow_loopback=allow_lo):
+        if handshake_ok(link, state.tls_spki, allow_loopback=allow_lo, net=net, allow_internal=is_internal(state.addr)):
             passed.append(link)
         else:
             with _MU:
                 _FAILED[(scope, link)] = time.monotonic()
     return passed
+
+
+def _net(service: Any) -> Any:
+    """The host's proxy settings. Unusable files raise ``ProxyRefused`` (an ``OSError``): nothing is dialled direct."""
+    from . import hubnet
+
+    return hubnet.load(service.state_dir)
 
 
 def known(state: Any) -> list[str]:
@@ -217,7 +321,13 @@ def apply_where(service: WorkspaceService, state: Any, answer: dict[str, Any]) -
     handshake passed the held pin. True when ``hub.json`` changed."""
     have = set(known(state))
     fresh = [e["link"] for e in answer["addresses"] if e["link"] not in have]
-    passed = _probe_new(f"{service.workspace_id}:{state.hub_id}", state, fresh)
+    passed: list[str] = []
+    if fresh:
+        try:
+            net = _net(service)
+        except OSError:
+            return False  # settings unusable: no probe, nothing stored, nothing dialled
+        passed = _probe_new(f"{service.workspace_id}:{state.hub_id}", state, fresh, net)
     return _store(service, state, passed, [e["link"] for e in answer["addresses"]], answer["name"])
 
 
@@ -316,7 +426,13 @@ def move(call: Call, link_text: str, *, now_ms: int, dev: bool) -> dict[str, Any
         raise other
     new = link.endpoint
     assert new is not None
-    if new not in known(state) and not handshake_ok(new, state.tls_spki, allow_loopback=is_loopback(state.addr)):
+    try:
+        net = _net(service)
+    except OSError as exc:
+        raise hubops._refused(getattr(exc, "code", "hub.proxy_refused").removeprefix("hub.")) from None  # noqa: SLF001
+    if new not in known(state) and not handshake_ok(
+        new, state.tls_spki, allow_loopback=is_loopback(state.addr), net=net, allow_internal=is_internal(state.addr)
+    ):
         raise HostError(
             "hub.unreachable",
             "no hub answers at that address with the certificate this workspace trusts; nothing was changed",

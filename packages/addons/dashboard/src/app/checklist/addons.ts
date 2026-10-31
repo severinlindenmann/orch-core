@@ -588,7 +588,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
         id: 'W9',
         title: 'Only create (simpler dialog)',
         text: 'New ticket, "Only create": open the review.',
-        see: 'The button says "Create ticket". What happens next ends with "Nothing starts yet". No orange line, no "Other ways".',
+        see: 'The button says "Create ticket". It says "No agent starts. You can start one later." and has no "What happens next" list. No orange line, no "Other ways".',
       },
       {
         id: 'W10',

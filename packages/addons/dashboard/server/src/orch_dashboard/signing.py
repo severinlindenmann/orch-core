@@ -987,22 +987,11 @@ class PublishSetup(Action):
     server: Origin
     share: Origin
 
-    @model_validator(mode="after")
-    def different(self):
-        if self.server == self.share:
-            raise ValueError("the files and the links use two different addresses")
-        return self
-
 
 class PublishAddresses(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     server: Origin
     share: Origin
-
-    @model_validator(mode="after")
-    def different(self):
-        PublishSetup(action="publish_setup", server=self.server, share=self.share)
-        return self
 
 
 class AddonEnable(Action):

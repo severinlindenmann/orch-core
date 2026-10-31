@@ -8,6 +8,7 @@ the UI
 
 from __future__ import annotations
 
+from ..hubclient.netconfig import NetConfigError, load_net  # this computer's own proxy settings, for the UI process
 from .client import Client
 from .codes import ClientError, plain
 from .fido2_backend import Fido2Backend, HidAuthenticator
@@ -17,6 +18,8 @@ from .session import REMOTE_API, Response, Session, WebSocket, WsRefused
 from .state import Store, default_root
 
 __all__ = [
+    "NetConfigError",
+    "load_net",
     "REMOTE_API",
     "Client",
     "ClientError",

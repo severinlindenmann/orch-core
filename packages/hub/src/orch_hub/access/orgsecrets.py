@@ -150,6 +150,8 @@ class OrgSecretStore:
         if type(wraps) is not list or len(wraps) > 256:
             raise AccessError("malformed", "wraps")
         ws_chosen = sorted({_hex(w, "workspace_id") for w in workspaces})
+        if shared == "chosen" and not ws_chosen:
+            raise AccessError("malformed", "workspaces")  # a secret shared with no workspace is a dead end
         got: dict[str, tuple[int, bytes]] = {}
         for w in wraps:
             if type(w) is not dict or set(w) != {"workspace_id", "wxk_version", "sealed"}:

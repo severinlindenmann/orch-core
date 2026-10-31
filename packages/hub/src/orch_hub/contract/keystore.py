@@ -113,6 +113,7 @@ class OpSigner(_Signer):
             "hub.space_wrap": "sig_hub_space_wrap",
             "hub.audit": "sig_hub_audit",
             "hub.space_proposal": "sig_hub_space_proposal",
+            "hub.closing": "sig_hub_closing",
             "hub.org_skills": "sig_hub_org_skills",
             "hub.mcp_servers": "sig_hub_mcp_servers",
             "hub.release_narrow": "sig_hub_release_narrow",

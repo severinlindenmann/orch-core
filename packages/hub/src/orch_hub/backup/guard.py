@@ -138,7 +138,16 @@ PENDING_SCHEMA = (
     "CREATE TABLE IF NOT EXISTS restore_pending (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, "
     "a TEXT NOT NULL, b TEXT NOT NULL DEFAULT '', label TEXT NOT NULL DEFAULT '')"
 )
-KINDS = ("secret_share", "secret_all", "skill_offer", "mcp_offer", "market_company", "addon_request")
+KINDS = (
+    "secret_share",
+    "secret_all",
+    "skill_all",
+    "mcp_all",
+    "skill_offer",
+    "mcp_offer",
+    "market_company",
+    "addon_request",
+)
 
 
 def _connect(path: Path, live: Path | None) -> sqlite3.Connection:
@@ -289,6 +298,11 @@ def _fresh_access(new: Path) -> None:
                 c.execute("INSERT INTO restore_pending(kind,a,label) VALUES ('secret_all',?,?)", (sid, names[sid]))
             c.execute("UPDATE org_secrets SET shared='chosen' WHERE shared='all'")
             c.execute("DELETE FROM org_secret_shares")
+        for table, kind in (("org_skill", "skill_all"), ("org_mcp", "mcp_all")):  # "all" is a grant too (#1432)
+            if _has(c, "main", table):
+                for (name,) in c.execute(f"SELECT name FROM {table} WHERE shared='all'").fetchall():
+                    c.execute("INSERT INTO restore_pending(kind,a,label) VALUES (?,?,?)", (kind, name, name))
+                c.execute(f"UPDATE {table} SET shared='chosen' WHERE shared='all'")
         for table, kind in (("org_skill_offer", "skill_offer"), ("org_mcp_offer", "mcp_offer")):
             if _has(c, "main", table):
                 for name, ws in c.execute(f"SELECT name, workspace_id FROM {table}").fetchall():
@@ -489,6 +503,10 @@ def confirm(a: Any, pid: int) -> dict[str, Any]:
             )
         elif kind == "secret_all":
             db.execute("UPDATE org_secrets SET shared='all' WHERE id=? AND removed_ms IS NULL", (x,))
+        elif kind == "skill_all":
+            db.execute("UPDATE org_skill SET shared='all' WHERE name=?", (x,))
+        elif kind == "mcp_all":
+            db.execute("UPDATE org_mcp SET shared='all' WHERE name=?", (x,))
         elif kind == "skill_offer":
             db.execute(
                 "INSERT OR IGNORE INTO org_skill_offer SELECT ?,? WHERE EXISTS (SELECT 1 FROM org_skill WHERE name=?)",

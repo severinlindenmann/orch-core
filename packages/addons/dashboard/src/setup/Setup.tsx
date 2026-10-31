@@ -42,6 +42,23 @@ export function plainReason(code: string): string {
 export function clickOffText(_code: string): string {
   return 'One click is not available on this computer; you approve in your terminal.'
 }
+/** P01: does this browser reach the dashboard's address? A no-cors fetch resolves for any answering server and rejects when
+ * nothing listens. When the page's own CSP blocks the request the answer is unknown, so it counts as reachable (the old
+ * behaviour): never a false "cannot open" for an address the page is not allowed to ask. */
+export async function answers(origin: string, ms = 2000): Promise<boolean> {
+  let blocked = false
+  const onBlocked = () => { blocked = true }
+  document.addEventListener('securitypolicyviolation', onBlocked)
+  try {
+    await fetch(origin + '/', { mode: 'no-cors', cache: 'no-store', credentials: 'omit', signal: AbortSignal.timeout(ms) })
+    return true
+  } catch {
+    await new Promise((r) => setTimeout(r, 0)) // the violation event is queued after the rejection
+    return blocked
+  } finally {
+    document.removeEventListener('securitypolicyviolation', onBlocked)
+  }
+}
 /** Finish could not open the dashboard (r11-P01): the workspace is ready, the page keeps working, Try again. */
 const openFailedCopy = 'The dashboard did not open yet. Your workspace is safe. Press “Try again” to open it.'
 /** "Try again" reaches this setup only for a few minutes: the way out after that, in plain words. */
@@ -128,14 +145,12 @@ export function reviewFacts(review: Review): Fact[] {
   const facts: Fact[] = []
   const ws = review.workspace
   if (ws) {
-    // the ticket prefix is a technical detail: it stays in the Details fold (the workspace's own lines)
+    // P06: the owner, the folder, the ticket prefix, the git copy and the history are not decisions: they stay in the
+    // Details fold (the workspace's own lines and the flag texts)
     facts.push({ icon: '▦', label: 'Workspace', value: ws.workspace_name ?? ws.name })
-    facts.push({ icon: '☺', label: 'Owner', value: ws.name })
-    facts.push({ icon: '▤', label: 'Your project', value: ws.dir.split(/[\\/]/).filter(Boolean).at(-1) ?? ws.dir })
   }
   const has = (id: string) => review.flags.some((f) => f.id === id)
-  if (has('custody')) facts.push({ icon: '◈', label: 'How you approve', value: 'One click on this computer' })
-  else if (has('terminal') || review.tty_confirm) facts.push({ icon: '◈', label: 'How you approve', value: 'In a terminal, with your password' })
+  const approve = has('custody') ? 'One click on this computer' : has('terminal') || review.tty_confirm ? 'In a terminal, with your password' : null
   let agents: string | undefined
   for (const item of review.items) {
     const f = item.fields
@@ -149,11 +164,10 @@ export function reviewFacts(review: Review): Fact[] {
       if (agents === undefined && typeof set.grant_hours === 'number') agents = `may work for ${duration(set.grant_hours)}`
     }
   }
-  if (agents !== undefined) facts.push({ icon: '✦', label: 'Agents', value: agents })
   const addons = review.items.filter((i) => i.type === 'addon.granted' && i.id !== 'addon:dashboard').map((i) => i.title)
   if (addons.length) facts.push({ icon: '⊞', label: 'Features', value: addons })
-  if (has('git')) facts.push({ icon: '⧉', label: 'Own copy per ticket', value: 'Each ticket gets its own copy of this folder. Your files are not changed.' })
-  if (has('records')) facts.push({ icon: '◷', label: 'History', value: 'Tickets are saved on this computer only' })
+  if (agents !== undefined) facts.push({ icon: '✦', label: 'Agents', value: agents })
+  if (approve) facts.push({ icon: '◈', label: 'How you approve', value: approve })
   return facts
 }
 const prefixOk = (p: string) => /^[A-Z][A-Z0-9]{1,7}$/.test(p)
@@ -269,25 +283,36 @@ function FinishChoices({
   return (
     <>
       {!state.complete && <p>This workspace already exists. Nothing that is on will be switched off.</p>}
-      <h2>Already set up</h2>
-      <dl className="current">
-        <dt>Name</dt>
-        <dd>
-          <Raw>{current.name}</Raw>
-        </dd>
-        <dt>Short name</dt>
-        <dd>
-          <Raw>{current.prefix}</Raw>
-        </dd>
-        <dt>Add-ons on</dt>
-        <dd>{on.map((a) => a.title).join(', ')}</dd>
-        <dt>Agents may work for</dt>
-        <dd>{hoursText(current.agent_hours)}</dd>
-        <dt>Agent execution on this computer</dt>
-        <dd>{yesNo(current.runner.enabled)}</dd>
-        <dt>You approve with</dt>
-        <dd>{current.method === 'click' ? 'One click on this computer' : 'Terminal'}</dd>
-      </dl>
+      {state.complete && (
+        <p>
+          <Raw>{current.name}</Raw> is ready.
+        </p>
+      )}
+      <details className="current-fold" open={!state.complete}>
+        <summary>{state.complete ? 'What is set up' : 'Already set up'}</summary>
+        <dl className="current">
+          <dt>Name</dt>
+          <dd>
+            <Raw>{current.name}</Raw>
+          </dd>
+          {!state.complete && (
+            <>
+              <dt>Short name</dt>
+              <dd>
+                <Raw>{current.prefix}</Raw>
+              </dd>
+            </>
+          )}
+          <dt>Features</dt>
+          <dd>{on.map((a) => a.title).join(', ')}</dd>
+          <dt>Agents may work for</dt>
+          <dd>{hoursText(current.agent_hours)}</dd>
+          <dt>Agents can start here</dt>
+          <dd>{yesNo(current.runner.enabled)}</dd>
+          <dt>You approve with</dt>
+          <dd>{current.method === 'click' ? 'One click on this computer' : 'Terminal'}</dd>
+        </dl>
+      </details>
       {!state.complete && (canAdd.length > 0 || offersGrant || offersClick) ? (
         <>
           <h2>You can still add</h2>
@@ -352,9 +377,7 @@ function FinishChoices({
             </label>
           )}
         </>
-      ) : (
-        <p>Nothing is missing.</p>
-      )}
+      ) : null}
       <SetupFooter cancel={cancel}>
         {state.complete ? (
           <button className="primary" onClick={onOpen}>
@@ -438,6 +461,8 @@ export function Setup({ api }: { api: SetupAPI }) {
   // display only: which way the words were kept on this page. Never sent, never stored, never skips the step.
   const [savedHow, setSavedHow] = useState<'copy' | 'file' | 'print' | null>(null)
   const [reason, setReason] = useState('')
+  const [unreachable, setUnreachable] = useState<string | null>(null) // P01: the dashboard's address, when this browser cannot reach it
+  const pendingTarget = useRef<{ href: string; workspace_id?: string } | null>(null)
   const [openFailed, setOpenFailed] = useState(false) // Finish answered but the dashboard did not open: "Try again"
   // "No agent access" is a choice of its own (B11 finding 21); it keeps the workspace default time and no runner grant.
   const [access, setAccess] = useState<'none' | number>('none')
@@ -714,17 +739,37 @@ export function Setup({ api }: { api: SetupAPI }) {
     // (another port, a single-use login link), so a plain http(s) URL from the setup server is accepted too.
     const elsewhere = url.origin !== location.origin
     if ((elsewhere && !/^https?:$/.test(url.protocol)) || !url.pathname.startsWith('/')) throw new Error('destination')
+    // P01: the service runs on the computer where `orch setup` ran. A browser on another computer (a tunnel to this page)
+    // cannot reach that address: say so in plain words instead of ending on the browser's own error page.
+    const target = elsewhere ? url.href : url.pathname + url.search + url.hash
+    if (elsewhere && !(await answers(url.origin))) {
+      pendingTarget.current = { href: target, workspace_id: result.workspace_id }
+      setUnreachable(url.origin + '/') // the address only: the login link is single-use and secret, never shown
+      return
+    }
+    open({ href: target, workspace_id: result.workspace_id })
+  }
+  function open(t: { href: string; workspace_id?: string }) {
     // The dashboard opens the workspace it remembers: make that the new one (same key as app/workspace.tsx).
-    if (typeof result.workspace_id === 'string' && result.workspace_id) {
+    if (typeof t.workspace_id === 'string' && t.workspace_id) {
       try {
-        localStorage.setItem('orch.workspace', result.workspace_id)
+        localStorage.setItem('orch.workspace', t.workspace_id)
       } catch {
         /* storage unavailable: the dashboard picks its own */
       }
     }
     drop()
     api.forget()
-    location.assign(elsewhere ? url.href : url.pathname + url.search + url.hash)
+    location.assign(t.href)
+  }
+  /** Try again on the "runs on the other computer" notice: ask the same address again; the page never re-finishes. */
+  async function retryOpen() {
+    const t = pendingTarget.current
+    if (!t) return
+    if (await answers(new URL(t.href).origin)) {
+      setUnreachable(null)
+      open(t)
+    }
   }
   // r11-P16: One click first (when this computer offers it); the protocol order of state.methods is unchanged
   const orderedMethods = state ? [...state.methods].sort((a, b) => (b === 'click' && state.click_available ? 1 : 0) - (a === 'click' && state.click_available ? 1 : 0)) : []
@@ -854,15 +899,19 @@ export function Setup({ api }: { api: SetupAPI }) {
         <fieldset disabled={busy}>
           {step === 0 && (
             <>
-              <p>orch keeps a to-do list of tickets that you and your AI helpers work on.</p>
-              <p>We will set this up in your project folder.</p>
-              <details className="welcome-technical">
-                <summary>Details</summary>
-                <p><Inline>{state.dir_name}</Inline></p>
-                <Raw>{state.dir}</Raw>
-              </details>
-              {profile.method === 'terminal' && <p>{terminalStepCopy}</p>}
-              <p>Everything stays on this computer unless you choose to connect your phone.</p>
+              {!state.complete && (
+                <>
+                  <p>orch keeps a to-do list of tickets that you and your AI helpers work on.</p>
+                  <p>We will set this up in your project folder.</p>
+                  <details className="welcome-technical">
+                    <summary>Details</summary>
+                    <p><Inline>{state.dir_name}</Inline></p>
+                    <Raw>{state.dir}</Raw>
+                  </details>
+                  {profile.method === 'terminal' && <p>{terminalStepCopy}</p>}
+                  <p>Everything stays on this computer unless you choose to connect your phone.</p>
+                </>
+              )}
               {state.mode === 'finish' && state.current ? (
                 <FinishChoices
                   state={state}
@@ -1230,8 +1279,8 @@ export function Setup({ api }: { api: SetupAPI }) {
                 <div className="warning">
                   <p>
                     {review.flags.some((f) => f.id === 'custody')
-                      ? 'One-click approval and dashboard agents act as you on this computer.'
-                      : 'Dashboard agents act as you on this computer.'}{' '}
+                      ? 'One click lets agents act as you here.'
+                      : 'Agents act as you here.'}{' '}
                     Only continue on a computer you trust.
                   </p>
                   <details>
@@ -1443,7 +1492,27 @@ export function Setup({ api }: { api: SetupAPI }) {
               </footer>
             </>
           )}
-          {progress?.done && !progress.error && (
+          {progress?.done && !progress.error && unreachable && (
+            <div className="warning" role="status" data-testid="unreachable">
+              <p>
+                <strong>It runs on the computer where you ran setup.</strong>
+              </p>
+              <p>This page cannot open it from here. On that computer, open:</p>
+              <p>
+                <code>{unreachable}</code>
+              </p>
+              <button
+                className="primary"
+                onClick={() => void navigator.clipboard?.writeText(unreachable).then(() => setNotice('Address copied.'), () => setNotice('Copy is unavailable. Select the address and copy it.'))}
+              >
+                Copy address
+              </button>{' '}
+              <button disabled={busy} onClick={() => void act(retryOpen)}>
+                Try again
+              </button>
+            </div>
+          )}
+          {progress?.done && !progress.error && !unreachable && (
             <button className="primary open-workspace" disabled={busy} onClick={() => void act(finish)}>
               {openFailed ? 'Try again' : 'Open your workspace →'}
             </button>

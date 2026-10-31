@@ -29,9 +29,11 @@ import {
   Gauge,
   Puzzle,
   Share2,
+  Users,
   SquareTerminal,
 } from 'lucide-react'
 import { api } from '@/api/client'
+import { hubQueries, hubServed } from '@/api/hub'
 import { hasFeature, isRealHost, showsLogout } from '@/api/features'
 import { logout } from '@/api/prodApi'
 import { activeGrantOf } from '@/api/grants'
@@ -185,6 +187,8 @@ export function Sidebar() {
   const grants = useQuery({ ...queries.grants(ws!), enabled: ready })
   const addOns = useQuery({ ...queries.addOns(ws!), enabled: isRealHost() && !!ws && hasFeature('worktrees', ws) })
   const today = useQuery({ ...queries.today(ws!), enabled: ready })
+  // Shared spaces of the hub (run-15c P03): the entry shows only once this workspace is in at least one.
+  const spaces = useQuery({ ...hubQueries.spaces(ws!), enabled: isRealHost() && !!ws && hubServed(ws) })
   const grant = grants.data && today.data ? activeGrantOf(grants.data, me?.person, Date.parse(today.data.now)) : undefined
   // A grant that ends on another day says the date (grants run up to 24 h).
   const grantTime = grant ? (today.data && !sameLocalDay(grant.until, today.data.now) ? fmtDateTime(grant.until) : fmtClock(grant.until)) : undefined
@@ -251,7 +255,7 @@ export function Sidebar() {
 
         <div className="relative flex min-h-0 flex-1 flex-col">
         <nav ref={navRef} className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-2 py-2" aria-label="Main">
-          {CORE_NAV.filter((n) => hasFeature(n.feature, workspace?.id) && (n.feature !== 'worktrees' || addOns.data?.add_ons.some((a) => a.id === 'worktrees' && a.state === 'on')) && (!('real' in n) || isRealHost())).map(({ to, label: text, icon: Icon }) => (
+          {CORE_NAV.filter((n) => hasFeature(n.feature, workspace?.id) && (n.feature !== 'worktrees' || addOns.data?.add_ons.some((a) => a.id === 'worktrees' && a.state === 'on')) && (!('real' in n) || isRealHost()) && (n.to !== '/spaces' || (spaces.data?.spaces.length ?? 0) > 0)).map(({ to, label: text, icon: Icon }) => (
             <RailTip key={to} label={text}>
               <Link to={to} className={link} activeProps={activeProps} activeOptions={{ exact: to === '/' || to === '/tickets', includeSearch: false }} aria-label={to === '/' && attention.badge > 0 ? `${text}, ${attention.badge} need you` : text}>
                 <span className="relative">
@@ -484,6 +488,8 @@ const CORE_NAV = [
   { to: '/addons', label: 'Add-ons', icon: Puzzle, feature: 'settings', real: true },
   /** Shares (Publish add-on): listed only while the add-on is ON for this workspace (the server adds `publish` then). */
   { to: '/shares', label: 'Shares', icon: Share2, feature: 'publish', real: true },
+  /** Shared spaces (hub): listed only when this workspace is in at least one (the list is read from the hub). */
+  { to: '/spaces', label: 'Shared spaces', icon: Users, feature: 'hub', real: true },
   /** Usage (add-on): agent time per ticket; listed only while the add-on is ON (the server adds `usage` then). */
   { to: '/usage', label: 'Usage', icon: Gauge, feature: 'usage', real: true },
   /** Schedules (add-on): the follow-ups agents set; listed only while the add-on is ON (the server adds `schedules` then). */

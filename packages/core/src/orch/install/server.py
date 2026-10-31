@@ -32,6 +32,7 @@ __all__ = [
     "Names",
     "caddy_snippet",
     "check_drop_path",
+    "check_user_name",
     "ensure_user_bus",
     "check_dns",
     "derive_names",
@@ -316,9 +317,14 @@ def caddy_snippet(part: str, name: str, port: int, *, vpn_only: bool = False, vp
 
 def user_dir(root: str | Path, user: str) -> Path:
     """The snippet directory of one OS user: ``<root>/<user>`` (root creates it, owned by that user, mode 0755)."""
+    check_user_name(user)
+    return Path(root) / user
+
+
+def check_user_name(user: str) -> None:
+    """The same rule for the snippet folder and for the root block: a plain Linux user name, nothing else."""
     if not re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", user):
         raise InstallError(f"{user!r} is not a usable user name for the Caddy snippet folder")
-    return Path(root) / user
 
 
 def write_snippets(directory: Path, snippets: dict[str, str]) -> list[Path]:
@@ -362,6 +368,7 @@ def write_snippets(directory: Path, snippets: dict[str, str]) -> list[Path]:
 def root_block(user: str, directory: str = CADDY_DIR, *, caddyfile: str = "/etc/caddy/Caddyfile") -> str:
     """The ONE sudo block for a person with root; printed, never executed by orch. No shared writable folder: each OS
     user gets its own folder, and Caddy imports ``<dir>/*/*.caddy``."""
+    check_user_name(user)  # a bad name stops here: no block is printed
     d, mine = shell_quote(directory), shell_quote(f"{directory}/{user}")
     imp = f"import {directory}/*/*.caddy"
     return "\n".join(

@@ -136,6 +136,7 @@ def server_setup(
     if backup_drop:
         drop_check(backup_drop)
     user = user or real_user()
+    server.check_user_name(user)  # before anything is installed or printed
     if bus_check is not None:
         bus_check(user)
     elif sys.platform.startswith("linux") and ctx.runner.kind == "systemd":

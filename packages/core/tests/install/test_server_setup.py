@@ -1170,3 +1170,36 @@ def test_publish_without_a_name_says_plainly_that_it_needs_a_name_and_https(tmp_
     text = out.getvalue()
     assert "publish needs a name and https" in text and "once DNS is in" in text
     assert "invalid.input" not in text and "not set yet" not in text
+
+
+def test_the_server_user_is_the_real_os_user_not_logname(monkeypatch):
+    import os
+    import pwd
+    from types import SimpleNamespace
+
+    from orch.install import serverflow
+
+    monkeypatch.setenv("LOGNAME", "evil")
+    monkeypatch.setenv("USER", "evil")
+    monkeypatch.setattr(os, "geteuid", lambda: 4242)
+    monkeypatch.setattr(pwd, "getpwuid", lambda uid: SimpleNamespace(pw_name="orch-edge") if uid == 4242 else None)
+    assert serverflow.real_user() == "orch-edge"
+
+
+def test_a_bad_user_name_stops_before_any_root_block_is_printed(tmp_path):
+    for bad in ("evil; rm -rf /", "../x", "Evil", "", "a b"):
+        with pytest.raises(InstallError, match="not a usable user name"):
+            server.root_block(bad)
+    ctx, out, *_ = stub_ctx(tmp_path, SystemdFake())
+    (tmp_path / "orch.d").mkdir()
+    with pytest.raises(InstallError, match="not a usable user name"):
+        server_setup(
+            ctx,
+            "edge",
+            names=server.derive_names("example.com"),
+            caddy_dir=str(tmp_path / "orch.d"),
+            resolve=lambda n: [VPS],
+            local=local,
+            user="evil; id",
+        )
+    assert "sudo" not in out.getvalue() and not ctx.runner.started

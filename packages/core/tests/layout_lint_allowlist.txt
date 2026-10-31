@@ -38,4 +38,3 @@ cli/dashboard.py 1
 # the ticket field and the addon.list row key "addons" (JSON keys, not store paths; AP D5)
 addons/manifest.py 1
 migrate/steps.py 10
-host/sequence.py 1

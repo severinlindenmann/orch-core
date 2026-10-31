@@ -3144,6 +3144,10 @@ Orch-Hub-Signature: b64u(Sign(HK_op, "orch/v2/hub-publish|" || suite || hub_id (
 
 The hub's signature is transport only (spec §8): it adds no authority, it only proves which hub delivered the request.
 
+**Size.** The request travels as one `publish_out` frame with the body hex-encoded, so the largest file a workspace can
+send through the hub is bounded by the link frame (§10.3: 1.5 MB), at most half of it less the headers and target. The
+hub refuses a larger body as `malformed`; the client refuses before the person signs (`quota.host`), not at send time.
+
 ### 11.2 What orch-publish checks, in order
 
 | # | Check | Refusal |

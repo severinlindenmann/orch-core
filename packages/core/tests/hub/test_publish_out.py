@@ -256,6 +256,23 @@ def test_a_request_over_the_link_frame_is_refused_before_anything_is_sent(joined
     assert exc.value.code == "too_large" and hub.forwarded == []
 
 
+def test_hub_file_max_is_one_frame_less_the_overhead_and_halved_for_hex():
+    # the hub's link frame cap (orch_hub.link.framing.MAX_FRAME) is 1_500_000; core never imports the hub, so it is here
+    assert hp.HUB_FILE_MAX == (hp.REQUEST_MAX - hp.REQUEST_OVERHEAD) // 2
+    assert hp.HUB_FILE_MAX * 2 + hp.REQUEST_OVERHEAD <= 1_500_000
+    assert hp.HUB_FILE_MAX * 2 + hp.REQUEST_OVERHEAD <= hp.REQUEST_MAX
+
+
+def test_a_file_of_hub_file_max_goes_through_and_one_byte_more_does_not(joined_link):
+    hub, link = joined_link
+    client = _client(hub, link)
+    with pytest.raises(HubRefused) as exc:
+        client.request("PUT", TARGET, b"x" * (hp.HUB_FILE_MAX + 1 + hp.REQUEST_OVERHEAD))
+    assert exc.value.code == "too_large" and hub.forwarded == []
+    client.request("PUT", TARGET, b"x" * hp.HUB_FILE_MAX)  # the real headers and target fit the allowance
+    assert len(hub.forwarded) == 1
+
+
 def test_a_malformed_reply_is_refused(joined_link):
     hub, link = joined_link
     t = hp.HubPublishTransport(type("L", (), {"call": lambda self, op, body: {"status": "200", "body_hex": ""}})())

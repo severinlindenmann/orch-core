@@ -102,11 +102,11 @@ import time
 from datetime import datetime, timezone
 
 # ROOTS-BEGIN  the release root public keys: key id -> base64 of the raw 32-byte Ed25519 key (none until the ceremony)
-ROOTS_B64 = {}
+ROOTS_B64 = {"root-1": "AqlVu40nbMo5blJaZ9oEfSHp3mx6jBlHwUjcUDGabLE="}
 # ROOTS-END
 ALLOW_TEST_CHANNELS = False  # a production installer refuses every test-* channel
 # FLOOR-BEGIN  the oldest revocation list a FIRST install accepts (scripts/release/floor.py rewrites both lines per release)
-REVOCATIONS_FLOOR_ISSUED_AT = "2026-10-20T00:00:00Z"
+REVOCATIONS_FLOOR_ISSUED_AT = "2026-10-30T23:25:41Z"
 REVOCATIONS_FLOOR_MIN_SERIAL = 1
 # FLOOR-END
 REVOCATIONS_MAX_AGE_DAYS = 30  # and the list must be fresh: the scheduled re-sign refreshes it with every manifest

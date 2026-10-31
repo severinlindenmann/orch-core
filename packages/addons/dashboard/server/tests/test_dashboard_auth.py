@@ -438,7 +438,7 @@ def test_setup_launcher_uses_the_login_link_path_with_a_setup_nonce(tmp_path, mo
     assert asked == [("launch", "setup")]
     assert len(opened) == 1 and opened[0].startswith("file://") and issued["code"] not in opened[0]
     page = auth.files[issued["code"]].read_text()
-    assert "launch=" + issued["code"] in page and "to=%2Fsetup" in page
+    assert f"/setup#launch={issued['code']}" in page and "to=" not in page  # loaded from /setup: setup CSP
     assert auth.exchange(issued["code"], "local")[0] is None and auth.exchange_setup(issued["code"]) is True
 
 
@@ -482,7 +482,7 @@ def test_emit_url_fd_writes_to_a_pipe_only_and_no_browser_opens_nothing(tmp_path
     try:
         launcher.open_dashboard("/setup", emit_url_fd=w, no_browser=True)
         line = os.read(r, 4096).decode()
-        assert line == f"http://127.0.0.1:{PORT}/#launch={issued['code']}&to=%2Fsetup\nno-browser\n"
+        assert line == f"http://127.0.0.1:{PORT}/setup#launch={issued['code']}\nno-browser\n"
         assert opened == [] and not list((tmp_path / "dashboard").glob("launch-*.html"))
         launcher.open_dashboard("/setup", emit_url_fd=w)  # with a browser: the argument is only the redirect file
         assert b"no-browser" not in os.read(r, 4096)  # the browser opened: no marker

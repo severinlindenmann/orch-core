@@ -2984,6 +2984,261 @@
       },
       {
        "kind": "office",
+       "link": "192.168.1.20:8105"
+      }
+     ],
+     "name": "Demo hub",
+     "publish": "https://share.example.com"
+    }
+   },
+   "check": "hub_where",
+   "expect": {
+    "ok": {
+     "addresses": [
+      {
+       "kind": "private",
+       "link": "100.64.1.2:8105"
+      },
+      {
+       "kind": "office",
+       "link": "192.168.1.20:8105"
+      }
+     ],
+     "name": "Demo hub",
+     "publish": "https://share.example.com"
+    }
+   },
+   "name": "where_publish_ok_https",
+   "note": "P02: the hub's publish origin, a hint"
+  },
+  {
+   "args": {
+    "answer": {
+     "addresses": [
+      {
+       "kind": "private",
+       "link": "100.64.1.2:8105"
+      },
+      {
+       "kind": "office",
+       "link": "192.168.1.20:8105"
+      }
+     ],
+     "name": "Demo hub",
+     "publish": "https://share.example.com:8443"
+    }
+   },
+   "check": "hub_where",
+   "expect": {
+    "ok": {
+     "addresses": [
+      {
+       "kind": "private",
+       "link": "100.64.1.2:8105"
+      },
+      {
+       "kind": "office",
+       "link": "192.168.1.20:8105"
+      }
+     ],
+     "name": "Demo hub",
+     "publish": "https://share.example.com:8443"
+    }
+   },
+   "name": "where_publish_ok_https_port",
+   "note": "P02: the hub's publish origin, a hint"
+  },
+  {
+   "args": {
+    "answer": {
+     "addresses": [
+      {
+       "kind": "private",
+       "link": "100.64.1.2:8105"
+      },
+      {
+       "kind": "office",
+       "link": "192.168.1.20:8105"
+      }
+     ],
+     "name": "Demo hub",
+     "publish": "http://127.0.0.1:8102"
+    }
+   },
+   "check": "hub_where",
+   "expect": {
+    "ok": {
+     "addresses": [
+      {
+       "kind": "private",
+       "link": "100.64.1.2:8105"
+      },
+      {
+       "kind": "office",
+       "link": "192.168.1.20:8105"
+      }
+     ],
+     "name": "Demo hub",
+     "publish": "http://127.0.0.1:8102"
+    }
+   },
+   "name": "where_publish_ok_loopback",
+   "note": "P02: the hub's publish origin, a hint"
+  },
+  {
+   "args": {
+    "answer": {
+     "addresses": [
+      {
+       "kind": "private",
+       "link": "100.64.1.2:8105"
+      },
+      {
+       "kind": "office",
+       "link": "192.168.1.20:8105"
+      }
+     ],
+     "name": "Demo hub",
+     "publish": "http://100.64.1.2:8102"
+    }
+   },
+   "check": "hub_where",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "where_publish_plain_http_elsewhere_refused",
+   "note": "P02: any other publish is malformed"
+  },
+  {
+   "args": {
+    "answer": {
+     "addresses": [
+      {
+       "kind": "private",
+       "link": "100.64.1.2:8105"
+      },
+      {
+       "kind": "office",
+       "link": "192.168.1.20:8105"
+      }
+     ],
+     "name": "Demo hub",
+     "publish": "https://share.example.com/x"
+    }
+   },
+   "check": "hub_where",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "where_publish_with_path_refused",
+   "note": "P02: any other publish is malformed"
+  },
+  {
+   "args": {
+    "answer": {
+     "addresses": [
+      {
+       "kind": "private",
+       "link": "100.64.1.2:8105"
+      },
+      {
+       "kind": "office",
+       "link": "192.168.1.20:8105"
+      }
+     ],
+     "name": "Demo hub",
+     "publish": "https://u:p@share.example.com"
+    }
+   },
+   "check": "hub_where",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "where_publish_userinfo_refused",
+   "note": "P02: any other publish is malformed"
+  },
+  {
+   "args": {
+    "answer": {
+     "addresses": [
+      {
+       "kind": "private",
+       "link": "100.64.1.2:8105"
+      },
+      {
+       "kind": "office",
+       "link": "192.168.1.20:8105"
+      }
+     ],
+     "name": "Demo hub",
+     "publish": 5
+    }
+   },
+   "check": "hub_where",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "where_publish_not_a_string_refused",
+   "note": "P02: any other publish is malformed"
+  },
+  {
+   "args": {
+    "answer": {
+     "addresses": [
+      {
+       "kind": "private",
+       "link": "100.64.1.2:8105"
+      },
+      {
+       "kind": "office",
+       "link": "192.168.1.20:8105"
+      }
+     ],
+     "name": "Demo hub",
+     "publish": "HTTPS://SHARE.example.com"
+    }
+   },
+   "check": "hub_where",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "where_publish_upper_case_refused",
+   "note": "P02: any other publish is malformed"
+  },
+  {
+   "args": {
+    "answer": {
+     "addresses": [
+      {
+       "kind": "private",
+       "link": "100.64.1.2:8105"
+      },
+      {
+       "kind": "office",
+       "link": "192.168.1.20:8105"
+      }
+     ],
+     "name": "Demo hub",
+     "publish": "https://share.example.com:70000"
+    }
+   },
+   "check": "hub_where",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "where_publish_port_zero_over_refused",
+   "note": "P02: any other publish is malformed"
+  },
+  {
+   "args": {
+    "answer": {
+     "addresses": [
+      {
+       "kind": "private",
+       "link": "100.64.1.2:8105"
+      },
+      {
+       "kind": "office",
        "link": "10.0.0.5:8105"
       },
       {

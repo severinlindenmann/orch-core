@@ -839,12 +839,17 @@ def open_dashboard(path="/", print_url=False, emit_url_fd=None, no_browser=False
             if attempt == 19:
                 raise
             time.sleep(0.05)
-    fragment = urllib.parse.urlencode({"launch": launch["code"], "to": path})
-    url = f"http://127.0.0.1:{launch['port']}/#{fragment}"
+    # The setup page is loaded from /setup itself (not from / with a client-side hop), so the document is served with
+    # the setup CSP and its probe of the dashboard port is allowed (run16 P06). Other kinds keep `/#launch=..&to=..`.
+    if kind == "setup":
+        base, fragment = "/setup", urllib.parse.urlencode({"launch": launch["code"]})
+    else:
+        base, fragment = "/", urllib.parse.urlencode({"launch": launch["code"], "to": path})
+    url = f"http://127.0.0.1:{launch['port']}{base}#{fragment}"
     if network:
         if not launch.get("network"):
             raise RuntimeError("this dashboard has no network address (it was started without --listen)")
-        url = f"http://{launch['network']}/#{fragment}"
+        url = f"http://{launch['network']}{base}#{fragment}"
     if print_url:
         left = math.ceil(float(launch["expires_at"]) - time.time())  # what the server really granted
         print(

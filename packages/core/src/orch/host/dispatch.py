@@ -87,6 +87,8 @@ from . import diff as git_diff
 from . import quick as quick_list
 from . import records as records_ops
 from .agents import AGENT_OPS
+from .appops import APP_OPS
+from .appops import NETWORK_OPS as APP_NETWORK_OPS
 from .artifacts import VALIDATOR as ARTIFACT_VALIDATOR
 from .artifacts import artifact_get
 from .auth import Redactor
@@ -256,6 +258,7 @@ def served_ops() -> dict[str, int]:
     out.update(WORKTREE_OPS)  # H11d: worktree.list, worktree.create, worktree.remove
     out.update(TRANSCRIPT_OPS)  # focus/1: run.transcript
     out.update(PUBLISH_OPS)  # P5: publish.prepare, .send, .revoke, .list, .discard, .register
+    out.update(APP_OPS)  # #1455: app.prepare, .send, .list, .discard
     out.update(HUB_OPS)  # V3 C2a: hub.connect, hub.unbind, hub.status
     out.update(REMOTE_OPS)  # R2 #1590: remote.off, .code, .device_remove, .key_rotate, .status, .pending, .sessions
     out.update(PEER_OPS)  # V3 C12: peer.* (ws->ws through the hub)
@@ -321,6 +324,10 @@ def op_kind(name: str) -> tuple[OpKind, Phase] | None:
         if name == "publish.list":
             return ("pg_read", "read")
         return ("pg_write", "write") if name in ("publish.prepare", "publish.discard") else ("person_write", "write")
+    if name in APP_OPS:  # #1455: prepare and discard P and G (G on its claimed ticket); list P and G; send P only
+        if name == "app.list":
+            return ("pg_read", "read")
+        return ("pg_write", "write") if name in ("app.prepare", "app.discard") else ("person_write", "write")
     if name in HUB_OPS:  # V3 C2a: column P only (the op checks the owner role)
         reads = ("hub.status", "hub.handoff", "hub.link", "hub.switch", "hub.directory", "hub.shared", "hub.network")
         return ("person_read", "read") if name in reads else ("person_write", "write")
@@ -721,6 +728,10 @@ class RegistryBackend:
                 from . import publishing
 
                 result = publishing.serve(call)
+            elif op in APP_OPS:
+                from . import appops
+
+                result = appops.serve(call)
             elif op in HUB_OPS:
                 from . import hubops
 
@@ -1140,6 +1151,7 @@ SECOND_PHASE: dict[str, SecondPhase] = {
     # H11d: runner git, then registration
     **dict.fromkeys(_ops(WORKTREE_OPS, but={"worktree.list", "worktree.diff"}), _in("worktrees", "execute")),
     **dict.fromkeys(_ops(PUBLISH_NETWORK_OPS, {"publish.list"}), _in("publishing", "execute")),  # P5: server calls
+    **dict.fromkeys(_ops(APP_NETWORK_OPS), _in("appops", "execute")),  # #1455: the upload, off the worker
     **dict.fromkeys(_ops(HUB_NETWORK_OPS), _in("hubops", "execute")),  # V3 C2a: the hub link, off the worker
     **dict.fromkeys(_ops(SHARE_NETWORK_OPS), _in("shareops", "execute")),  # V3 C6
     **dict.fromkeys(_ops(MARKET_NETWORK_OPS), _in("marketops", "execute")),  # V3 G2: DNS and git, no lock held

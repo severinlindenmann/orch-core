@@ -133,12 +133,25 @@ it('Publish on but no server set up: the Shares page says what is missing and wh
   expect(screen.queryByTestId('shares-empty')).toBeNull()
 })
 
+it('a share waiting for a signature hides "Nothing is shared yet", and an unreachable hub shows ONE plain banner', async () => {
+  route()
+  live = false
+  staged = [{ staged_id: STAGED, ticket: 'DEMO-0001', kind: 'secret', days: 7, views: 0, origin: 'agent', files: [FILE], created_at: '2026-10-18T08:00:00Z' }]
+  show('/w/DEMO/shares')
+  const note = await screen.findByTestId('shares-unreachable', {}, T)
+  expect(note).not.toHaveTextContent(/views and states|last knew/)
+  expect(screen.queryByTestId('shares-empty')).toBeNull()
+  expect(screen.getAllByTestId('shares-unreachable')).toHaveLength(1)
+  expect(screen.queryByText('Sending')).toBeNull()
+  staged = []
+})
+
 it('a server that is not running: the Shares page says sharing is not reachable and offers Try again, no terminal command', async () => {
   route()
   live = false
   show('/w/DEMO/shares')
   const note = await screen.findByTestId('shares-unreachable', {}, T)
-  expect(note).toHaveTextContent('Sharing is not reachable right now')
+  expect(note).toHaveTextContent('Sharing is paused: your hub cannot be reached')
   expect(note).not.toHaveTextContent('orch-publish')
   expect(within(note).getByRole('button', { name: 'Try again' })).toBeInTheDocument()
   expect(screen.getByRole('table', { name: 'Shares' })).toBeInTheDocument()
@@ -293,8 +306,8 @@ it('a server that does not know the workspace is said in words, with the admin s
   await user.click(within(box).getByRole('button', { name: 'Review and sign' }))
   ;(await readyToSign())()
   const alert = await screen.findByRole('alert', {}, { timeout: 9000 })
-  expect(alert).toHaveTextContent('has not allowed this workspace yet')
-  expect(alert).toHaveTextContent('Ask the person who runs the server to allow it')
+  expect(alert).toHaveTextContent('has not allowed this workspace to share yet')
+  expect(alert).toHaveTextContent('Ask the hub’s admin')
   expect(alert).not.toHaveTextContent('publish.server_refused')
   expect(await openInfo()).toHaveTextContent(`orch-publish admin ws allow ${A} p_owner`)
 })
@@ -311,9 +324,9 @@ it('Settings: the addresses in words, and the registration message when the serv
   expect(box).toHaveTextContent('http://127.0.0.1:8104')
   await user.click(within(box).getByRole('button', { name: 'Check now' }))
   const reg = await screen.findByTestId('publish-registration', {}, T)
-  await waitFor(() => expect(reg).toHaveTextContent('Ask the person who runs the server to allow it'), T)
+  await waitFor(() => expect(reg).toHaveTextContent('Ask the hub’s admin'), T)
   expect(reg).not.toHaveTextContent('publish.server_refused')
-  expect((reg.textContent ?? '').match(/Ask the person who runs the server/g)).toHaveLength(1)
+  expect((reg.textContent ?? '').match(/Ask the hub’s admin/g)).toHaveLength(1)
   expect(await openInfo(reg)).toHaveTextContent('orch-publish admin ws allow')
   // changing the addresses is signed with One click, with both addresses
   await user.click(within(box).getByRole('button', { name: 'Edit server' }))
@@ -551,7 +564,7 @@ it('when connecting is refused the first refusal is said in words and nothing lo
   const user = userEvent.setup()
   ;(await signedShare(user))()
   const alert = await screen.findByRole('alert', {}, { timeout: 9000 })
-  expect(alert).toHaveTextContent('has not allowed this workspace yet')
+  expect(alert).toHaveTextContent('has not allowed this workspace to share yet')
   expect(calls('/shares/register')).toHaveLength(1)
   expect(calls('/shares/send')).toHaveLength(1)
   expect(document.body.textContent).not.toMatch(/orch publish register|orch-publish dev/)
@@ -563,7 +576,7 @@ it('sharing not reachable: plain words, the signature stays good, Try again send
   const user = userEvent.setup()
   ;(await signedShare(user))()
   const alert = await screen.findByRole('alert', {}, { timeout: 9000 })
-  expect(alert).toHaveTextContent('Sharing is not reachable right now. Nothing was shared.')
+  expect(alert).toHaveTextContent('Sharing is paused: your hub cannot be reached. Your files were not sent.')
   expect(screen.getByRole('dialog')).toHaveTextContent('signature stays good for an hour')
   expect(document.body.textContent).not.toMatch(/orch-publish|terminal/i)
   await user.click(screen.getByRole('button', { name: 'Try again' }))

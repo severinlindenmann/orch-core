@@ -223,7 +223,7 @@ def test_without_the_hook_nothing_verifies():
     depth = keys_mod._test_hook_depth
     keys_mod._test_hook_depth = 0
     try:
-        assert keys_mod.PRODUCTION_ROOTS == {}
+        assert "test-root-1" not in keys_mod.PRODUCTION_ROOTS  # the TEST root is never a production root
         assert reason(env) is Reason.UNKNOWN_ROOT
     finally:
         keys_mod._test_hook_depth = depth
@@ -237,7 +237,7 @@ def test_no_source_file_enables_the_test_root():
 
 
 def test_test_root_id_must_not_shadow_a_production_root_id():
-    """TEST_ROOTS must not override PRODUCTION_ROOTS on an id clash inside the hook (both use root-1)."""
+    """TEST_ROOTS must not override PRODUCTION_ROOTS on an id clash inside the hook (the test id is test-root-1)."""
     clash = set(keys_mod.TEST_ROOTS) & set(keys_mod.PRODUCTION_ROOTS)
     assert not clash
 
@@ -245,7 +245,7 @@ def test_test_root_id_must_not_shadow_a_production_root_id():
 def test_a_rogue_root_cert_is_unknown_root():
     kc = GEN.key_cert("rk-3", root=GEN.ROGUE_ROOT, root_key_id="root-9")
     assert reason(env_bytes(core(), cert=kc)) is Reason.UNKNOWN_ROOT
-    kc = GEN.key_cert("rk-3", root=GEN.ROGUE_ROOT)  # claims root-1, signed by root-9
+    kc = GEN.key_cert("rk-3", root=GEN.ROGUE_ROOT)  # claims test-root-1, signed by root-9
     assert reason(env_bytes(core(), cert=kc)) is Reason.BAD_CERT_SIG
 
 
@@ -259,7 +259,7 @@ def test_mutating_returned_document_cannot_affect_a_second_verify():
 
 
 def test_the_hook_refuses_a_test_root_id_that_collides_with_production(monkeypatch):
-    monkeypatch.setattr(keys_mod, "PRODUCTION_ROOTS", {"root-1": b"\x00" * 32})
+    monkeypatch.setattr(keys_mod, "PRODUCTION_ROOTS", {"test-root-1": b"\x00" * 32})
     with pytest.raises(RuntimeError), keys_mod.enable_test_root_for_tests():
         pass
 

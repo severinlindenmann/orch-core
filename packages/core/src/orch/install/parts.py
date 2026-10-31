@@ -164,6 +164,7 @@ def command_for(
     link_port: int = HUB_LINK_PORT,
     publish_port: int = DEFAULT_PORTS["publish"],
     behind_edge: bool = False,
+    exact_bind: bool = False,
 ) -> list[str]:
     """The ``serve`` command line of a part (argv; environment is :func:`env_for`)."""
     bind = address if address else ADDRESS_LOOPBACK
@@ -195,7 +196,8 @@ def command_for(
         if dev and not loop:  # one user on one dev machine: the hub allows its link on a network address
             cmd += ["--dev-shared-machine"]
         return cmd
-    listen = bind if bind in (ADDRESS_LOOPBACK, "localhost") else ADDRESS_ALL
+    # exact_bind (the server role): never wider than asked, the part listens on exactly the address it was given
+    listen = bind if exact_bind or bind in (ADDRESS_LOOPBACK, "localhost") else ADDRESS_ALL
     if part == "relay":
         return [str(binary), "serve", "--host", listen, "--port", str(port)]
     cmd = [

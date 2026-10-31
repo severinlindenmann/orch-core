@@ -464,6 +464,9 @@ export function Setup({ api }: { api: SetupAPI }) {
   const [askUnsaved, setAskUnsaved] = useState(false)
   const [reason, setReason] = useState('')
   const [unreachable, setUnreachable] = useState<string | null>(null) // P01: the dashboard's address, when this browser cannot reach it
+  const [tunnelLine, setTunnelLine] = useState('') // run18 P01: the ready ssh -L line for the dashboard port
+  const checking = useRef(false)
+  const [lineNote, setLineNote] = useState('')
   const pendingTarget = useRef<{ href: string; workspace_id?: string } | null>(null)
   const [openFailed, setOpenFailed] = useState(false) // Finish answered but the dashboard did not open: "Try again"
   // "No agent access" is a choice of its own (B11 finding 21); it keeps the workspace default time and no runner grant.
@@ -735,7 +738,7 @@ export function Setup({ api }: { api: SetupAPI }) {
     }
   }
   async function finish() {
-    const result = await api.call<{ url: string; workspace_id?: string }>('finish', {})
+    const result = await api.call<{ url: string; workspace_id?: string; tunnel?: string }>('finish', {})
     const url = new URL(result.url, location.origin)
     // The setup page's own origin stops with `orch setup`: the destination is the running dashboard service
     // (another port, a single-use login link), so a plain http(s) URL from the setup server is accepted too.
@@ -746,6 +749,12 @@ export function Setup({ api }: { api: SetupAPI }) {
     const target = elsewhere ? url.href : url.pathname + url.search + url.hash
     if (elsewhere && !(await answers(url.origin))) {
       pendingTarget.current = { href: target, workspace_id: result.workspace_id }
+      const port = url.port || (url.protocol === 'https:' ? '443' : '80')
+      setTunnelLine(
+        typeof result.tunnel === 'string' && result.tunnel
+          ? result.tunnel
+          : `ssh -o ExitOnForwardFailure=yes -L 127.0.0.1:${port}:127.0.0.1:${port} USER@SERVER`,
+      )
       setUnreachable(url.origin + '/') // the address only: the login link is single-use and secret, never shown
       return
     }
@@ -764,15 +773,26 @@ export function Setup({ api }: { api: SetupAPI }) {
     api.forget()
     location.assign(t.href)
   }
-  /** Try again on the "runs on the other computer" notice: ask the same address again; the page never re-finishes. */
-  async function retryOpen() {
-    const t = pendingTarget.current
-    if (!t) return
-    if (await answers(new URL(t.href).origin)) {
-      setUnreachable(null)
-      open(t)
-    }
-  }
+  // run18 P01: while the dashboard cannot be reached, ask its address every 3 seconds and open it once it answers.
+  useEffect(() => {
+    if (!unreachable) return
+    const id = setInterval(() => {
+      const t = pendingTarget.current
+      if (!t || checking.current) return
+      checking.current = true
+      void answers(new URL(t.href).origin)
+        .then((ok) => {
+          if (!ok) return
+          clearInterval(id)
+          setUnreachable(null)
+          open(t)
+        })
+        .finally(() => {
+          checking.current = false
+        })
+    }, 3000)
+    return () => clearInterval(id)
+  }, [unreachable])
   // r11-P16: One click first (when this computer offers it); the protocol order of state.methods is unchanged
   const orderedMethods = state ? [...state.methods].sort((a, b) => (b === 'click' && state.click_available ? 1 : 0) - (a === 'click' && state.click_available ? 1 : 0)) : []
   const methodCard = (method: Profile['method']) =>
@@ -1508,21 +1528,28 @@ export function Setup({ api }: { api: SetupAPI }) {
           {progress?.done && !progress.error && unreachable && (
             <div className="warning" role="status" data-testid="unreachable">
               <p>
-                <strong>It runs on the computer where you ran setup.</strong>
+                <strong>One last step: connect to your workspace.</strong>
               </p>
-              <p>This page cannot open it from here. On that computer, open:</p>
-              <p>
-                <code>{unreachable}</code>
-              </p>
+              <p>Your workspace runs on the other computer. Paste this line where you started setup, and leave it open:</p>
+              <div className="code-line">{tunnelLine}</div>
               <button
                 className="primary"
-                onClick={() => void navigator.clipboard?.writeText(unreachable).then(() => setNotice('Address copied.'), () => setNotice('Copy is unavailable. Select the address and copy it.'))}
+                onClick={() => void navigator.clipboard?.writeText(tunnelLine).then(() => setLineNote('Line copied.'), () => setLineNote('Copy is unavailable. Select the line and copy it.'))}
               >
-                Copy address
-              </button>{' '}
-              <button disabled={busy} onClick={() => void act(retryOpen)}>
-                Try again
+                Copy line
               </button>
+              {lineNote && <small role="status"> {lineNote}</small>}
+              <p className="waiting">
+                <span className="dot" aria-hidden="true" />
+                Waiting for the connection… your workspace opens here by itself.
+              </p>
+              <details>
+                <summary>Needs help? Details</summary>
+                <p>If the line has USER or SERVER in it, replace them with the name and address you use to log in to that computer.</p>
+                <p>
+                  Dashboard address: <code>{unreachable}</code>
+                </p>
+              </details>
             </div>
           )}
           {progress?.done && !progress.error && !unreachable && (

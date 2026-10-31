@@ -97,6 +97,7 @@ function fake(
     noGit?: boolean
     complete?: boolean
     finishUrl?: string
+    finishTunnel?: string
     defaults?: boolean
     suggested?: Record<string, unknown>
     os?: string
@@ -163,7 +164,7 @@ function fake(
           : {}),
         ...(options.noTty ? { tty_confirm: false, fingerprint: null } : {}),
       }
-    if (path === 'finish') result = { url: options.finishUrl ?? '/', workspace_id: 'ws-new-2' }
+    if (path === 'finish') result = { url: options.finishUrl ?? '/', workspace_id: 'ws-new-2', ...(options.finishTunnel ? { tunnel: options.finishTunnel } : {}) }
     if (path === 'create') result = { run_id: 'demo-run' }
     if (path.startsWith('progress'))
       result = {
@@ -1060,11 +1061,14 @@ test('P06: a complete workspace shows one sentence and Open dashboard; the table
   expect(fold).not.toHaveTextContent('Add-ons on')
 })
 
-test('P01: an unreachable dashboard address keeps the page, shows only the address and no navigation', async () => {
+const LOGIN_URL = 'http://127.0.0.1:8151/#launch=' + 'a'.repeat(30) + '&to=%2F'
+const TUNNEL = 'ssh -o ExitOnForwardFailure=yes -L 127.0.0.1:8151:127.0.0.1:8151 anna@build-server'
+
+async function toUnreachable(options: { finishTunnel?: string } = {}) {
   const assign = vi.fn()
   vi.stubGlobal('location', { origin: 'http://127.0.0.1:47821', assign })
   vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch') }))
-  const f = fake({ finish: true, done: true, finishUrl: 'http://127.0.0.1:8151/#launch=' + 'a'.repeat(30) + '&to=%2F' })
+  const f = fake({ finish: true, done: true, finishUrl: LOGIN_URL, ...options })
   render(<Setup api={f.api} />)
   await screen.findByRole('heading', { name: 'Finish setting up your workspace' })
   fireEvent.click(screen.getByLabelText(/Own copy per ticket/))
@@ -1074,17 +1078,80 @@ test('P01: an unreachable dashboard address keeps the page, shows only the addre
   await screen.findByRole('heading', { name: 'Your workspace is ready' })
   fireEvent.click(await screen.findByRole('button', { name: 'Open your workspace →' }))
   const box = await screen.findByTestId('unreachable')
-  expect(box).toHaveTextContent('It runs on the computer where you ran setup.')
-  expect(box).toHaveTextContent('http://127.0.0.1:8151/')
-  expect(document.body.textContent).not.toContain('launch=') // the single-use login link is never shown
-  expect(box).toHaveTextContent('Copy address')
+  return { assign, box }
+}
+
+test('run18 P01: an unreachable dashboard shows the connect step, no Try again, no raw address outside Details', async () => {
+  const { assign, box } = await toUnreachable({ finishTunnel: TUNNEL })
+  expect(box).toHaveTextContent('One last step: connect to your workspace.')
+  expect(box).toHaveTextContent('Your workspace runs on the other computer. Paste this line where you started setup, and leave it open:')
+  expect(box).toHaveTextContent('Waiting for the connection… your workspace opens here by itself.')
+  expect(box).toHaveTextContent(TUNNEL)
+  expect(box).not.toHaveTextContent('the computer where you ran setup')
+  expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Copy address' })).toBeNull()
+  const fold = screen.getByText('Needs help? Details').closest('details')!
+  expect(fold).not.toHaveAttribute('open')
+  expect(fold).toHaveTextContent('http://127.0.0.1:8151/')
+  expect(fold).toHaveTextContent('USER')
+  // the raw address appears only inside the fold; the single-use login link nowhere
+  const outside = (box.textContent ?? '').replace(fold.textContent ?? '', '')
+  expect(outside).not.toContain('http://127.0.0.1:8151')
+  expect(document.body.textContent).not.toContain('launch=')
   expect(assign).not.toHaveBeenCalled()
-  // Try again asks the same address once more; when it answers the page goes there
-  vi.stubGlobal('fetch', vi.fn(async () => new Response(null)))
-  fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
-  await vi.waitFor(() => expect(assign).toHaveBeenCalledTimes(1))
-  expect(assign.mock.calls[0][0]).toMatch(/^http:\/\/127\.0\.0\.1:8151\/#launch=/)
   vi.unstubAllGlobals()
+})
+
+test('run18 P01: Copy line copies the tunnel line from the finish result', async () => {
+  const writeText = vi.fn(async () => {})
+  vi.stubGlobal('navigator', { clipboard: { writeText } })
+  await toUnreachable({ finishTunnel: TUNNEL })
+  fireEvent.click(screen.getByRole('button', { name: 'Copy line' }))
+  await vi.waitFor(() => expect(writeText).toHaveBeenCalledWith(TUNNEL))
+  vi.unstubAllGlobals()
+})
+
+test('run18 P01: without a tunnel in the result the page builds the same line with the dashboard port', async () => {
+  const writeText = vi.fn(async () => {})
+  vi.stubGlobal('navigator', { clipboard: { writeText } })
+  const { box } = await toUnreachable()
+  const line = 'ssh -o ExitOnForwardFailure=yes -L 127.0.0.1:8151:127.0.0.1:8151 USER@SERVER'
+  expect(box).toHaveTextContent(line)
+  fireEvent.click(screen.getByRole('button', { name: 'Copy line' }))
+  await vi.waitFor(() => expect(writeText).toHaveBeenCalledWith(line))
+  expect(document.body.textContent).not.toContain('launch=')
+  vi.unstubAllGlobals()
+})
+
+test('run18 P01: when copying fails a plain notice says to select the line', async () => {
+  vi.stubGlobal('navigator', { clipboard: { writeText: vi.fn(async () => { throw new Error('no') }) } })
+  await toUnreachable({ finishTunnel: TUNNEL })
+  fireEvent.click(screen.getByRole('button', { name: 'Copy line' }))
+  await screen.findByText('Copy is unavailable. Select the line and copy it.')
+  vi.unstubAllGlobals()
+})
+
+test('run18 P01: the page checks every 3 seconds and opens the workspace by itself once it answers', async () => {
+  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+  try {
+    const { assign } = await toUnreachable({ finishTunnel: TUNNEL })
+    const settle = () => new Promise((r) => setTimeout(r, 50)) // real timers still run: let a probe settle
+    await vi.advanceTimersByTimeAsync(3000)
+    await settle()
+    await vi.advanceTimersByTimeAsync(3000)
+    await settle()
+    expect(assign).not.toHaveBeenCalled()
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null)))
+    await vi.advanceTimersByTimeAsync(3000)
+    await settle()
+    expect(assign).toHaveBeenCalledTimes(1)
+    expect(assign.mock.calls[0][0]).toMatch(/^http:\/\/127\.0\.0\.1:8151\/#launch=/)
+    await vi.advanceTimersByTimeAsync(9000)
+    expect(assign).toHaveBeenCalledTimes(1)
+  } finally {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  }
 })
 
 test('P01 (Opus): answers() is true for an answering address, false when nothing listens, and true (fail open) when the page CSP blocked the probe', async () => {

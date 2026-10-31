@@ -60,6 +60,7 @@ SIG_OP_CERT = b"orch/v2/hub-op-cert|"
 SIG_CARD = b"orch/v2/hub-card|"
 SIG_OP_REVOKED = b"orch/v2/hub-op-revoked|"
 SIG_SNAPSHOT = b"orch/v2/hub-snapshot|"
+SIG_CLOSING = b"orch/v2/hub-closing|"  # #1463 (hub protocol 9.7): the hub is being removed
 SIG_UK_CERT = b"orch/v2/hub-uk-cert|"
 SIG_CHANNEL_CERT = b"orch/v2/hub-channel-cert|"
 SIG_BINDING = b"orch/v2/sig/hub-binding|"
@@ -195,6 +196,16 @@ _FIELDS: dict[str, dict[str, Callable[[Any], bool]]] = {
             type(x) is dict
         ),  # GA-07 (hub protocol 7): {user_id: ms}, checked in snapshot.verify_snapshot
         "market_policy": _policy_ok,  # D14: required, never null (hub protocol 7.1)
+        "dev": lambda x: type(x) is bool,
+    },
+    "hub.closing": {  # #1463 (hub protocol 9.7); verified by :mod:`orch.hubclient.closing`
+        "hub_id": hex16,
+        "op_cert_id": hex16,
+        "workspace_id": hex16,
+        "binding_seq": _int_min(1),
+        "removal_id": hex16,
+        "issued_ms": _int_min(0),
+        "ends_ms": _int_min(1),
         "dev": lambda x: type(x) is bool,
     },
     "hub.card": {

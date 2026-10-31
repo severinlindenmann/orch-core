@@ -16,3 +16,8 @@ export const REAL_HOST_PAGES = [
 
 /** Does `--only` (a RegExp or null) select at least one real-host page? */
 export const selectsRealHost = (only) => !only || REAL_HOST_PAGES.some((n) => only.test(n))
+
+// Mock Settings > Hub pages. Keep the scenario in the URL so each visit resets the hub state.
+export const SETTINGS_HUB_PAGES = ['standalone', 'selective', 'full', 'offline'].map((scenario) => [
+  `settings-hub-${scenario}`, `/settings/hub?hub=${scenario}`,
+])

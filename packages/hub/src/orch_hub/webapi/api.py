@@ -255,6 +255,9 @@ class WebDeps:
     switch: Any = None
     #: relay/publish health for the Services page (``orch_hub.services.Services``); None = ``unavailable``
     services: Any = None
+    #: B03: ``(workspace_ids) -> None`` pushes each workspace's latest binding to orch-publish before an admin read, so a
+    #: mode switch whose sync failed does not hide full-mode links (``HubPublish.resync``); None = no push
+    publish_sync: Callable[[list[str]], None] | None = None
     #: the service helper's socket client (``orch_hub.services.helper_client``); None = no helper (buttons stay hidden)
     helper: Any = None
     #: the route queue (``recent``): hand-offs between workspaces, for the Workspaces page; None = an empty list

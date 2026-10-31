@@ -165,8 +165,8 @@ def test_a_bundle_carries_only_the_servers_offered_to_that_workspace(env):
     keys, _acc, snaps, store = env
     store.put("crm", URL, "hub_secret", "crm-key", "Our CRM", actor=ADMIN)
     store.put("wiki", "https://wiki.example.com/mcp", "none", None, "", actor=ADMIN)
-    store.set_offers("crm", [WS], actor=ADMIN)
-    store.set_offers("wiki", [WS2], actor=ADMIN)
+    store.set_share("crm", "chosen", [WS], actor=ADMIN)
+    store.set_share("wiki", "chosen", [WS2], actor=ADMIN)
     o1 = verify(keys, snaps.mcp_servers(WS, "full"))
     o2 = verify(keys, snaps.mcp_servers(WS2, "full"), ws=WS2)
     assert [s["name"] for s in o1["servers"]] == ["crm"] and [s["name"] for s in o2["servers"]] == ["wiki"]
@@ -178,7 +178,7 @@ def test_a_bundle_carries_only_the_servers_offered_to_that_workspace(env):
 def test_versions_only_go_up_and_a_skills_bundle_is_not_a_servers_bundle(env):
     keys, _acc, snaps, store = env
     store.put("crm", URL, "none", None, "", actor=ADMIN)
-    store.set_offers("crm", [WS], actor=ADMIN)
+    store.set_share("crm", "chosen", [WS], actor=ADMIN)
     a = snaps.mcp_servers(WS, "full")
     assert cj(snaps.mcp_servers(WS, "full")) == cj(a)
     store.put("crm", URL + "/v2", "none", None, "", actor=ADMIN)
@@ -204,7 +204,7 @@ def test_versions_only_go_up_and_a_skills_bundle_is_not_a_servers_bundle(env):
 def test_delete_and_unbind_take_a_server_out_of_every_bundle(env):
     keys, _acc, snaps, store = env
     store.put("crm", URL, "none", None, "", actor=ADMIN)
-    store.set_offers("crm", [WS, WS2], actor=ADMIN)
+    store.set_share("crm", "chosen", [WS, WS2], actor=ADMIN)
     store.drop_workspace(WS)
     assert verify(keys, snaps.mcp_servers(WS, "full"))["servers"] == []
     assert [s["name"] for s in verify(keys, snaps.mcp_servers(WS2, "full"), ws=WS2)["servers"]] == ["crm"]
@@ -232,7 +232,7 @@ def reg():
 def test_the_op_serves_the_link_workspace_only(env, reg):
     keys, _acc, snaps, store = env
     store.put("crm", URL, "none", None, "", actor=ADMIN)
-    store.set_offers("crm", [WS], actor=ADMIN)
+    store.set_share("crm", "chosen", [WS], actor=ADMIN)
 
     def c(ws):
         return SimpleNamespace(registry=reg, workspace_id=ws, snapshots=snaps, body={})
@@ -258,17 +258,17 @@ def test_the_admin_routes_save_offer_remove_audit_and_are_admin_only(tmp_path):
         assert s == 400 and o["error"] == "malformed"
         s, o, _ = w.call("PUT", "/admin/mcp-servers/crm", body, token=admin)
         assert s == 200 and o["name"] == "crm"
-        s, o, _ = w.call("PUT", "/admin/mcp-servers/crm/offers", {"workspaces": [WS]}, token=admin)
+        s, o, _ = w.call("PUT", "/admin/mcp-servers/crm/offers", {"shared": "chosen", "workspaces": [WS]}, token=admin)
         assert s == 200 and o["offered_to"] == [WS]
         s, o, _ = w.call("GET", "/admin/mcp-servers", token=admin)
         assert s == 200 and o["servers"][0]["url"] == URL and o["servers"][0]["secret"] == "crm-key"
         assert any(x["workspace_id"] == WS for x in o["workspaces"])
-        s, o, _ = w.call("PUT", "/admin/mcp-servers/ghost/offers", {"workspaces": []}, token=admin)
+        s, o, _ = w.call("PUT", "/admin/mcp-servers/ghost/offers", {"shared": "chosen", "workspaces": []}, token=admin)
         assert s == 404 and o["error"] == "unknown_server"
         for method, path, b in (
             ("GET", "/admin/mcp-servers", None),
             ("PUT", "/admin/mcp-servers/crm", body),
-            ("PUT", "/admin/mcp-servers/crm/offers", {"workspaces": []}),
+            ("PUT", "/admin/mcp-servers/crm/offers", {"shared": "chosen", "workspaces": []}),
             ("DELETE", "/admin/mcp-servers/crm", None),
         ):
             assert w.call(method, path, b, token=ann)[0] == 403, path
@@ -280,3 +280,70 @@ def test_the_admin_routes_save_offer_remove_audit_and_are_admin_only(tmp_path):
         assert "tools.example.com" not in repr(events) and "crm-key" not in repr(events)  # the name, never the address
     finally:
         w.close()
+
+
+# --- #1432: "all workspaces" is the default and is resolved when the bundle is built ------------------------------------------------
+
+
+def test_all_is_the_default_and_covers_a_workspace_bound_later(env, reg):
+    keys, _acc, snaps, store = env
+    store.put("crm", URL, "none", None, "Our CRM", actor=ADMIN)
+    assert store.list()[0]["shared"] == "all" and store.list()[0]["offered_to"] == []
+    c = lambda ws: SimpleNamespace(registry=reg, workspace_id=ws, snapshots=snaps, body={})
+    assert [s["name"] for s in verify(keys, mcp_servers_get(c(WS))["bundle"])["servers"]] == ["crm"]
+    late = "c3" * 16
+    reg.commit_join(
+        late, late, "key", "pk", {"name": "late"}, {"status": "bound", "binding": {"mode": "full"}}, owner_alias=None
+    )
+    assert [s["name"] for s in verify(keys, mcp_servers_get(c(late))["bundle"], ws=late)["servers"]] == ["crm"]
+
+
+def test_all_stops_at_unbind_and_chosen_narrows_again(env, reg):
+    keys, _acc, snaps, store = env
+    store.put("crm", URL, "none", None, "Our CRM", actor=ADMIN)
+    c = lambda ws: SimpleNamespace(registry=reg, workspace_id=ws, snapshots=snaps, body={})
+    reg.set_binding_state(WS, {"status": "unbound", "binding": {"mode": "full"}})
+    with pytest.raises(Refused):
+        mcp_servers_get(c(WS))
+    store.set_share("crm", "chosen", [], actor=ADMIN)
+    assert verify(keys, snaps.mcp_servers(WS2, "full"), ws=WS2)["servers"] == []
+    for bad in ("some", None):
+        with pytest.raises(AccessError):
+            store.set_share("crm", bad, [], actor=ADMIN)
+
+
+def test_a_store_made_before_shared_existed_gets_the_column(tmp_path):
+    import sqlite3
+
+    db = tmp_path / "old.db"
+    c = sqlite3.connect(db)
+    c.executescript(
+        "CREATE TABLE org_mcp (name TEXT PRIMARY KEY, url TEXT NOT NULL, auth TEXT NOT NULL, secret TEXT, description TEXT NOT NULL, created_ms INTEGER NOT NULL, updated_ms INTEGER NOT NULL);"
+        "CREATE TABLE org_mcp_offer (name TEXT NOT NULL REFERENCES org_mcp(name) ON DELETE CASCADE, workspace_id TEXT NOT NULL, PRIMARY KEY (name, workspace_id));"
+        f"INSERT INTO org_mcp VALUES ('old','{URL}','none',NULL,'',1,1); INSERT INTO org_mcp_offer VALUES ('old','{WS}');"
+    )
+    c.commit()
+    c.close()
+    db.chmod(0o600)
+    acc = Access(str(db))
+    try:
+        acc.add_user(ADMIN, "root")
+        acc.add_member("hub-admin", ADMIN)
+        s = org_mcp(acc)
+        assert [(x["name"], x["shared"], x["offered_to"]) for x in s.list()] == [("old", "chosen", [WS])]
+        s.put("new", URL, "none", None, "", actor=ADMIN)
+        assert {x["name"]: x["shared"] for x in s.list()} == {"old": "chosen", "new": "all"}
+    finally:
+        acc.close()
+
+
+def test_narrowing_drops_a_pending_restore_click(env):
+    _keys, acc, _snaps, store = env
+    from orch_hub.backup import guard as GD
+
+    store.put("crm", URL, "none", None, "", actor=ADMIN)
+    with acc.tx() as db:
+        db.execute(GD.PENDING_SCHEMA)
+        db.execute("INSERT INTO restore_pending(kind,a,label) VALUES ('mcp_all','crm','crm')")
+    store.set_share("crm", "chosen", [], actor=ADMIN)
+    assert GD.pending(acc) == []

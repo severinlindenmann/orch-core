@@ -19,6 +19,7 @@ import pytest
 from orch.canon.jcs import dumps, loads_strict
 from orch.crypto.encoding import b64u
 from orch.hubclient import connectlink
+from orch.hubclient.netconfig import NetSettings
 from orch.remoteclient import Client, Store
 from orch.remoteclient import presence as P
 from orch.remoteclient.hubconn import dial
@@ -105,7 +106,7 @@ def stack(world, hub, human, served, tmp_path, monkeypatch):  # noqa: F811
     gate = GatedPresence(soft, wait_s=30)
     client = Client(
         Store(tmp_path / "rc"), presence=gate, http=fake_hub_http(hub), tls_request=fake_hub_tls(hub), dev_mode=True,
-        connector=lambda h, p, s: dial(h, p, s), batch_window=0.2,
+        connector=lambda h, p, s: dial(h, p, s, net=NetSettings()), batch_window=0.2, net=NetSettings(),
     )  # fmt: skip
     link = SimpleLink()
     monkeypatch.setattr(

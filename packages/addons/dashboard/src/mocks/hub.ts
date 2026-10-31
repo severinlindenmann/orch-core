@@ -6,7 +6,7 @@ import type { ProfileFields } from '@/api/profile' // type only: a runtime impor
 import { BACKUP_KEY_LINE, CLICK_RISK, type ClickViewAnswer } from '@/api/click'
 import { fail, ok, type MockRouter } from './router'
 
-export const HUB_SCENARIOS = ['standalone', 'selective', 'full', 'offline', 'nottold', 'update'] as const
+export const HUB_SCENARIOS = ['standalone', 'selective', 'full', 'offline', 'nottold', 'update', 'closing'] as const
 export type HubScenario = (typeof HUB_SCENARIOS)[number]
 const KEY = 'orch.mock.hub'
 
@@ -44,6 +44,7 @@ export function mockHubStatus(s: HubScenario = scenario()): HubStatus {
     case 'selective': return { ...joined, mode: 'selective', hub_card: JSON.stringify({ o: { hub_id: HUB_ID }, sig: 'x' }) }
     case 'full': return { ...joined, mode: 'full', member: true }
     case 'update': return { ...joined, mode: 'full', member: true, update_target: '0.2.0' }
+    case 'closing': return { ...joined, mode: 'selective', closing: { since_ms: 1_790_000_000_000, ends_ms: 1_790_259_200_000 } }
     case 'offline': return { ...joined, mode: 'selective', reachable: false }
     case 'nottold': return { ...BASE, hub_id: HUB_ID, link: 'unbound', not_told: true, owed: 1 }
     default: return BASE
@@ -56,7 +57,7 @@ const SHARED = [
 ]
 
 function mockShare(): HubShare {
-  const joined = scenario() === 'selective' || scenario() === 'offline'
+  const joined = scenario() === 'selective' || scenario() === 'offline' || scenario() === 'full'
   if (!joined) return { available: true, rules: [], shared: 0, refused: [], tickets: [], tickets_complete: true }
   return {
     available: true,
@@ -111,6 +112,7 @@ function mockPreview(body: { add?: HubRule; remove?: HubRule } | null): HubPrevi
     later_edits: 'Later edits are shared too, until you stop sharing.',
     leaves_short: added ? (withText ? 'the title, status, labels, deadline and description' : 'the title, status, labels and deadline') : null,
     later_edits_short: 'Later edits are shared too.',
+    ...(scenario() === 'full' ? { mode: 'full' as const, scope_short: 'The hub already holds this workspace. These people will see this ticket in their own workspace: the title, status, labels and deadline.' } : {}),
   }
   return { count: items.length, new: added, revoked: removed, more: 0, items, rules: [], plan: 'P'.repeat(42) + String(items.length % 10), review }
 }
@@ -130,10 +132,25 @@ function registerHubProfileRoutes(r: MockRouter) {
   })
 }
 
+/** The proxy for hub links (R6): kept in memory; the password is never kept in the answer. */
+let mockNet = { proxy: null as string | null, user: null as string | null, has_password: false, broken: false }
+function registerHubNetworkRoutes(r: MockRouter) {
+  r.add('GET', '/api/w/:ws/hub/network', () => ok({ ...mockNet }))
+  r.add('PUT', '/api/w/:ws/hub/network', (_s, c) => {
+    const b = c.body as { proxy?: unknown; user?: unknown; password?: unknown } | null
+    if (!b || (b.proxy !== null && (typeof b.proxy !== 'string' || !/^https?:\/\/[^/@\s]+:\d+$/.test(b.proxy)))) return fail(400, 'invalid.input', 'The proxy address must look like http://name:3128 or https://name:3128.')
+    mockNet = b.proxy === null ? { proxy: null, user: null, has_password: false, broken: false } : { proxy: b.proxy, user: typeof b.user === 'string' ? b.user : null, has_password: typeof b.password === 'string', broken: false }
+    return ok({ ...mockNet })
+  })
+}
+
 export function registerHubRoutes(r: MockRouter) {
   r.add('GET', '/api/w/:ws/hub', () => ok(mockHubStatus()))
   r.add('GET', '/api/w/:ws/hub/share', () => ok(mockShare()))
   r.add('GET', '/api/w/:ws/hub/shared', () => ok({ items: scenario() === 'selective' || scenario() === 'full' ? MOCK_SHARED_WITH_YOU : [] }))
+  // Shared spaces: none in the mock (the page and its tests spy the api); the real host lists them from the hub.
+  r.add('GET', '/api/w/:ws/spaces', () => ok({ spaces: [], note: 'from the hub, not signed' }))
+  r.add('GET', '/api/w/:ws/spaces/:id', (_s, c) => ok({ id: c.params.id, items: [], refused: 0, note: 'from the hub, not signed' }))
   r.add('GET', '/api/w/:ws/hub/share/audience', () => ok(MOCK_AUDIENCE))
   r.add('POST', '/api/w/:ws/hub/share/preview', (_s, c) => ok(mockPreview(c.body as { add?: HubRule; remove?: HubRule } | null)))
   // Stopping sharing: a plain owner click (the server's full-session and owner checks are its own tests).
@@ -159,6 +176,7 @@ export function registerHubRoutes(r: MockRouter) {
     return ok({ synced: true, pending: null, put: 0 })
   })
   registerHubProfileRoutes(r)
+  registerHubNetworkRoutes(r)
   registerHubClickRoutes(r)
 }
 

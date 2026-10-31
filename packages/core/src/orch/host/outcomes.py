@@ -95,7 +95,7 @@ _READS = frozenset(
         "human.prepare", "human.get", "human.pending", "human.cancel",
         "blob.put", "blob.drop", "sub.open", "sub.close",
         "outcome.get", "host.outcome", "job.next", "job.heartbeat",
-        "host.list", "host.status", "host.restart", "whoami",
+        "host.list", "host.health", "host.status", "host.restart", "whoami",
         "ticket.query", "ticket.get", "needs", "diff", "artifact.get",
         "workspace.show", "member.list", "session.list", "grant.list",
         "activity.list", "workspace.settings", "ticket.text",

@@ -687,6 +687,44 @@ _SPECS = [
         "dev_refused.",
     ),
     _e(
+        "hub.link_inspected",
+        3,
+        False,
+        "something on this network opens encrypted connections, so the hub cannot be trusted from here",
+        "ask your IT team to let the hub's name through without inspection",
+        ["orch", "hub", "status"],
+        "The hub's certificate was not the card's pin on a path through a proxy or WebSocket front (R6, D92). The link "
+        "stays down, no other route is tried, and the next dial of that address waits at least 5 minutes.",
+    ),
+    _e(
+        "hub.proxy_auth",
+        3,
+        False,
+        "the company proxy did not accept the sign-in",
+        "check the proxy user and password: orch hub network",
+        ["orch", "hub", "network"],
+        "The proxy in this computer's network settings answered 407 to the CONNECT (R6). Basic sign-in only.",
+    ),
+    _e(
+        "hub.proxy_refused",
+        3,
+        False,
+        "the company proxy refused the connection to the hub",
+        "ask your IT team to allow the hub's address through the proxy",
+        ["orch", "hub", "network"],
+        "The proxy refused the CONNECT, answered something that is not HTTP, or the network settings cannot be used "
+        "(R6); nothing is dialled direct.",
+    ),
+    _e(
+        "hub.proxy_unreachable",
+        9,
+        True,
+        "the company proxy could not be reached",
+        "check the proxy address: orch hub network",
+        ["orch", "hub", "network"],
+        "The configured proxy did not answer (R6).",
+    ),
+    _e(
         "remote.proof_invalid",
         3,
         False,
@@ -935,6 +973,62 @@ _MARKET = (
     ("market.ambiguous_addon", 3, False, "more than one added marketplace lists this id", "name one with --from URL"),
     ("market.still_enabled", 3, False, "the add-on is still turned on", "orch addon disable NAME, then remove it"),
 )
+# Data across updates (spec: "Data across updates"): the open-time rule, the lock, the journal, the migrate command.
+_MIGRATE = (
+    ("format.older", 3, False, "this data was made by an older orch: run `orch update`", "orch update"),
+    ("format.newer", 3, False, "this data was made by a newer orch: update orch", "update orch, then try again"),
+    ("format.missing", 3, False, "this folder is not orch data", "check the folder"),
+    ("format.exists", 3, False, "this folder already has a format", "nothing to do"),
+    (
+        "update.interrupted",
+        3,
+        False,
+        "an update was interrupted: run `orch update` to finish or roll back",
+        "orch update",
+    ),
+    ("migrate.running", 4, True, "orch is running: stop it first, then try again", "orch stop"),
+    ("migrate.signed_path", 3, False, "a migration may never change signed data", "this is a bug in the migration"),
+    (
+        "migrate.backup_refused",
+        3,
+        False,
+        "the backup cannot be made here",
+        "keep backups on this machine, outside synced folders",
+    ),
+    (
+        "migrate.actor_refused",
+        3,
+        False,
+        "a person migrates data at their own terminal; an agent cannot",
+        "ask the person",
+    ),
+    ("migrate.step_failed", 5, False, "a migration step failed; the data was backed up first", "restore the backup"),
+)
+# `orch update` (orch.update.engine, cli/update.py)
+_UPDATE = (
+    ("update.unreachable", 9, True, "could not reach the release server; nothing was changed", "try again later"),
+    ("update.no_record", 2, False, "orch was not installed with the installer", "install with the one-line installer"),
+    ("update.downgrade", 3, False, "the release is older than the installed version", "nothing to do"),
+    ("update.too_old", 5, False, "this orch is too old to update directly", "run the installer again"),
+    ("update.no_space", 4, False, "not enough free disk space for a safe update", "free some space, then update again"),
+    ("update.agents_running", 4, True, "agent runs are active", "let them finish or run orch stop all"),
+    ("update.rolled_back", 5, False, "the update failed and the old version and data were put back", "see the log"),
+    (
+        "update.after_commit",
+        5,
+        False,
+        "orch was updated but is not healthy; the data stays",
+        "orch update --use VERSION",
+    ),
+)
+_SPECS += [
+    _e(code, exit_, retry, msg, hint, ["orch", "update", "--check"], "Updating orch: " + msg + ".")
+    for code, exit_, retry, msg, hint in _UPDATE
+]
+_SPECS += [
+    _e(code, exit_, retry, msg, hint, ["orch", "migrate", "--check"], "Data across updates: " + msg + ".")
+    for code, exit_, retry, msg, hint in _MIGRATE
+]
 _SPECS += [
     _e(code, exit_, retry, msg, hint, ["orch", "market", "list"], "Marketplace refusal (spec section 13): " + msg + ".")
     for code, exit_, retry, msg, hint in _MARKET

@@ -12,6 +12,7 @@ from OpenSSL import SSL
 
 from orch.crypto import suite
 from orch.crypto.encoding import b64u
+from orch.hubclient.netconfig import NetSettings
 from orch.hubclient.tlslink import client as C
 from orch.hubclient.tlslink.client import LinkClient, LinkError
 from orch.hubclient.tlslink.tls import LinkClosed, LinkTimeout, PinMismatch
@@ -50,7 +51,7 @@ def open_link(hub: TlsHub, **kw: Any) -> LinkClient:
         "timeout": 3.0,
     }
     args.update(kw)
-    return LinkClient.open("127.0.0.1", hub.port, **args)
+    return LinkClient.open("127.0.0.1", hub.port, **args, net=NetSettings())
 
 
 def send(link: LinkClient, op: str = "snapshot_get", body: dict | None = None, **fields: Any) -> dict[str, Any]:
@@ -299,12 +300,11 @@ def test_ops_outside_the_closed_list_are_never_sent(make_hub) -> None:
         assert send(link)["o"]["op"] == "snapshot_get"  # and the link still works
 
 
-def test_selective_ops_are_refused_in_full_mode(make_hub) -> None:
+def test_share_ops_are_sent_in_full_mode_too(make_hub) -> None:
     hub = make_hub()
     with open_link(hub, mode="full") as link:
-        with pytest.raises(LinkError) as e:
-            send(link, "share_put", {"item_id": "x", "sealed": "y"})
-        assert e.value.code == "wrong_mode"
+        send(link, "share_put", {"item_id": "x", "sealed": "y"})
+        assert hub.requests[-1]["o"]["op"] == "share_put"
 
 
 def test_unhashable_op_is_malformed_not_a_crash(make_hub) -> None:

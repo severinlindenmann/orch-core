@@ -241,7 +241,12 @@ def managed_python(tmp: Path) -> Path:
 
 
 def run_install(
-    tmp: Path, script: Path, *args: str, path_dirs: list[Path] | None = None, env_extra: dict[str, str] | None = None
+    tmp: Path,
+    script: Path,
+    *args: str,
+    path_dirs: list[Path] | None = None,
+    env_extra: dict[str, str] | None = None,
+    system_dirs: list[str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     home = tmp / "home"
     home.mkdir(exist_ok=True)
@@ -249,8 +254,15 @@ def run_install(
         assert script.resolve() != INSTALL_SH.resolve(), "never rewrite the shipped installer"
         place_uv(tmp, script)
     (tmp / "tmp").mkdir(exist_ok=True)
-    py_dir = str(Path(sys.executable).resolve().parent)
-    path = ":".join([*(str(p) for p in (path_dirs or [])), py_dir, "/usr/bin", "/bin"])
+    # only the Python binary, never its whole folder: on a CI runner Python lives in /usr/bin next to every system tool
+    py_bin = tmp / "pybin"
+    py_bin.mkdir(exist_ok=True)
+    for name in ("python3", "python"):
+        if not (py_bin / name).is_symlink():
+            (py_bin / name).symlink_to(Path(sys.executable).resolve())
+    py_dir = str(py_bin)
+    system = ["/usr/bin", "/bin"] if system_dirs is None else system_dirs
+    path = ":".join([*(str(p) for p in (path_dirs or [])), py_dir, *system])
     env = {
         "HOME": str(home),
         "PATH": path,

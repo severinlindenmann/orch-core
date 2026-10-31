@@ -28,6 +28,7 @@ AGENT_ENV = ("ORCH_GRANT", "ORCH_SESSION")
 USAGE = (
     "usage: orch host prune [--dry-run] [--yes] [--workspaces ask|keep|delete] [--workspace PATH] [--keep-tool] "
     "[--i-know-dev] [--include-default-config]\n"
+    "       orch host prune --hub-order [--dry-run]\n"
 )
 
 
@@ -40,6 +41,7 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--keep-tool", action="store_true")
     p.add_argument("--i-know-dev", action="store_true")
     p.add_argument("--include-default-config", action="store_true")
+    p.add_argument("--hub-order", action="store_true")
     return p
 
 
@@ -180,7 +182,25 @@ def report(ctx: Ctx, inv: Inventory, res: Result) -> int:
     return 1 if (res.failed is not None or res.skipped) else 0
 
 
+def _hub_order(argv: Sequence[str], env: Mapping[str, str], out: TextIO, err: TextIO, ctx: Ctx | None) -> int:
+    """``--hub-order [--dry-run]`` and nothing else: the hub's removal of itself (see :mod:`orch.prune.hub_order`)."""
+    try:
+        a = _parser().parse_args(list(argv))
+    except SystemExit:
+        err.write(USAGE)
+        return 2
+    extra = [k for k in ("yes", "keep_tool", "i_know_dev", "include_default_config") if getattr(a, k)]
+    if extra or a.workspace or a.workspaces != "ask":
+        err.write("orch host prune --hub-order takes only --dry-run (no --i-know-dev, no other option)\n")
+        return 2
+    from .hub_order import main as run
+
+    return run(ctx or Ctx(env=env, out=out, err=err, interactive=False), dry_run=a.dry_run)
+
+
 def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextIO, ctx: Ctx | None = None) -> int:
+    if "--hub-order" in argv:
+        return _hub_order(argv, env, out, err, ctx)
     reason = agent_reason(env, ctx.euid if ctx else None)
     if reason:
         err.write(f"orch host prune: removing orch is a person's job; an agent never does it ({reason})\n")

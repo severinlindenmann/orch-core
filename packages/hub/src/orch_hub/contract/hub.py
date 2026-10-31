@@ -295,6 +295,16 @@ FIELDS: dict[str, dict[str, Check]] = {
         "market_policy": valid_policy,  # D14: required, never null (protocol.md §7.1)
         "dev": _bool,
     },
+    "hub.closing": {  # #1463 (protocol 9.7): the hub is being removed; shown to ONE workspace's owner, never acted on alone
+        "hub_id": _hex16,
+        "op_cert_id": _hex16,
+        "workspace_id": _hex16,
+        "binding_seq": _int_min(1),
+        "removal_id": _hex16,
+        "issued_ms": _int_min(0),
+        "ends_ms": _int_min(1),
+        "dev": _bool,
+    },
     "hub.org_skills": {  # M3 (#1430): the company skills offered to one workspace; Off until its owner accepts
         "hub_id": _hex16,
         "op_cert_id": _hex16,
@@ -510,6 +520,7 @@ LABEL_OF_KIND = {
     "hub.uk_cert": "sig_hub_uk_cert",
     "hub.channel_cert": "sig_hub_channel_cert",
     "hub.snapshot": "sig_hub_snapshot",
+    "hub.closing": "sig_hub_closing",
     "hub.org_skills": "sig_hub_org_skills",
     "hub.mcp_servers": "sig_hub_mcp_servers",
     "hub.org_secrets": "sig_hub_org_secrets",
@@ -787,6 +798,41 @@ def role_at(snapshot: Mapping[str, Any], user_id: str, now_ms: int) -> str | Non
     if now_ms >= end or snapshot["issued_ms"] > now_ms + SNAPSHOT_SKEW_MS:
         return None
     return role
+
+
+#: §9.7: a closing notice lives at most 7 days from its issue
+CLOSING_MAX_MS = 7 * 24 * 3600 * 1000
+
+
+def verify_closing(
+    signed: Any,
+    held: Mapping[str, Any],
+    *,
+    workspace_id: str,
+    binding_seq: int,
+    now_ms: int,
+    dev_mode: bool,
+    revoked_op_certs: frozenset[str] = frozenset(),
+) -> dict[str, Any]:
+    """§9.7: the ``hub.closing`` notice a host checks. ``held`` is the verified card, ``workspace_id`` and
+    ``binding_seq`` the host's own CURRENT binding. Order: envelope, signature, fields, hub, op cert, dev marker, then
+    ``other_workspace``, ``stale_binding`` (any other ``binding_seq``), ``cert_invalid`` (issued more than 300 s ahead,
+    ``ends_ms`` not after ``issued_ms`` or more than 7 days after it), ``cert_expired`` (``now >= ends_ms``). Returns
+    the verified object; a pure function, nothing is stored."""
+    o = _under_card(signed, "hub.closing", held, dev_mode, revoked_op_certs)
+    if now_ms >= held["op_cert"]["expires_ms"]:
+        raise Refused(
+            "cert_expired"
+        )  # the op cert that signed it has ended (checked at every use, like a snapshot's card)
+    if o["workspace_id"] != workspace_id:
+        raise Refused("other_workspace")
+    if type(binding_seq) is not int or o["binding_seq"] != binding_seq:
+        raise Refused("stale_binding")
+    if o["issued_ms"] > now_ms + CLOCK_SKEW_MS or not o["issued_ms"] < o["ends_ms"] <= o["issued_ms"] + CLOSING_MAX_MS:
+        raise Refused("cert_invalid")
+    if now_ms >= o["ends_ms"]:
+        raise Refused("cert_expired")
+    return o
 
 
 def _verify_bundle(
@@ -1583,6 +1629,10 @@ LINK_OPS: dict[str, tuple[str, str | None, dict[str, Check]]] = {
         },
     ),
     "snapshot_get": ("w2h", None, {}),
+    # #1463 (protocol 9.7, 10.2): the removal notice. The hub pushes ``closing_notice`` (h2w, body ``{"notice"}``, reply
+    # ``{}``); a host pulls ``closing_get`` (w2h, ``{}``, reply ``{"closing": <hub.closing> | null}``) on every link session.
+    "closing_notice": ("h2w", None, {"notice": lambda x: type(x) is dict}),
+    "closing_get": ("w2h", None, {}),
     "hub_where": (
         "w2h",
         None,
@@ -1626,8 +1676,8 @@ LINK_OPS: dict[str, tuple[str, str | None, dict[str, Check]]] = {
         },
     ),
     "audit_ack": ("w2h", None, {"seq": _int_min(1), "head": _b64u_n(32)}),
-    "share_put": ("w2h", "selective", {"item_id": _hex16, "sealed": _b64u_any}),
-    "share_revoke": ("w2h", "selective", {"item_id": _hex16}),
+    "share_put": ("w2h", None, {"item_id": _hex16, "sealed": _b64u_any}),
+    "share_revoke": ("w2h", None, {"item_id": _hex16}),
     # D4 audit (§10.5): the hub's chain is global; a workspace pulls it and acknowledges the head it verified
     "audit_get": ("w2h", None, {"since": _int_min(0)}),
     # V3-D8 shared spaces (§10.4): both modes; what a selective workspace may put is its owner's share rules (host side)

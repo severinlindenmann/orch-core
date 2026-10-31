@@ -453,8 +453,10 @@ def _sources(route, deep=True):
 READ_OPS = {
     "member.list", "addon.list", "records.status", "hub.status", "workspace.settings", "ticket.query", "ticket.get",
     "activity.list", "workspace.show", "run.sources", "run.transcript", "run.list", "run.link", "share.preview",
-    "share.rules", "share.audience", "hub.shared", "remote.pending", "remote.status", "remote.sessions", "host.list",
-    "worktree.list", "worktree.diff", "workdir.get", "whoami", "outcome.get", "org.show", "org.offers", "reader.list",
+    "share.rules", "share.audience", "hub.shared", "space.list",
+    "remote.pending", "remote.status", "remote.sessions", "host.list",
+    "worktree.list", "worktree.diff", "workdir.get", "whoami", "outcome.get", "org.show", "org.secrets", "org.offers",
+    "reader.list",
     "quick.list", "grant.list", "follow_up.list", "delegation.list", "publish.list", "phone.status", "needs", "status",
 }  # fmt: skip
 #: false positives, by (method, template) and op, each with the reason: the op is refused by `classify` only because it

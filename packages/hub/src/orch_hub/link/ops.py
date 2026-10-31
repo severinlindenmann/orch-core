@@ -3,8 +3,8 @@
 A handler gets an :class:`OpContext` (the link's workspace and its verified request body) and returns the reply body
 or raises :class:`~orch_hub.contract.hub.Refused` (sent back as ``{"error": code}``). There is no op that makes the hub
 sign anything for the host. ``route_out`` is served when a router is configured (``route_in`` is the hub's own
-h2w request, see :mod:`orch_hub.router`). ``wk_seal`` is served in full mode (:mod:`orch_hub.link.wkseal`). ``share_put`` / ``share_revoke`` are served in selective mode
-(:mod:`orch_hub.shares`).
+h2w request, see :mod:`orch_hub.router`). ``wk_seal`` is served in full mode (:mod:`orch_hub.link.wkseal`). ``share_put`` / ``share_revoke`` are served in both modes
+(:mod:`orch_hub.shares`; full mode accepts ticket items only).
 """
 
 from __future__ import annotations
@@ -126,6 +126,7 @@ class OpContext:
     switch: Any = None  # orch_hub.switch.SwitchService; None = switch/rail ops not served (unknown_op)
     where: Callable[[], dict[str, Any]] | None = None  # settings.where_answer: the advertised addresses and the name
     hooks: Any = None  # orch_hub.hooks.HookInbox; None = the webhook inbox is off (hook ops answer `unavailable`)
+    closing: Any = None  # orch_hub.closing.Closing; None = no removal service (closing_get answers null)
     same_computer: bool = False  # the link's socket shows the peer is on this computer (never a peer-sent claim)
 
 
@@ -377,6 +378,17 @@ def hub_where(c: OpContext) -> dict[str, Any]:
     return c.where()
 
 
+def closing_get(c: OpContext) -> dict[str, Any]:
+    """#1463 (protocol 9.7): ``{}`` -> ``{"closing": <hub.closing> | null}``. A fresh signed notice for the LINK's workspace
+    while the hub is being removed (withdrawn, notified, ordered), else ``null`` (also what a restored hub answers, which
+    clears the host's banner). Only a bound workspace is answered; nothing in the request is read."""
+    with c.registry.lock:
+        _require_pin(c)
+        _require_bound(c)
+    note = None if c.closing is None else c.closing.notice_for(c.workspace_id)
+    return {"closing": note}
+
+
 def _fetched(c: OpContext, bundle: dict[str, Any]) -> dict[str, Any]:
     """The gates were checked before the fetch; a leave or a drop that began meanwhile must not hand out the bundle."""
     with c.registry.lock:
@@ -489,7 +501,16 @@ def audit_ack(c: OpContext) -> dict[str, Any]:
 
 
 def space_list(c: OpContext) -> dict[str, Any]:
-    return {"spaces": _spaces(c).list_for(c.workspace_id)}
+    """The signed ``hub.space`` records plus ``meta``: the display name and kind of each listed space. ``meta`` is NOT
+    signed (the record has no name); a host shows it as "from the hub"."""
+    svc = _spaces(c)
+    recs = svc.list_for(c.workspace_id)
+    kinds = svc.store.metas()
+    meta = {}
+    for r in recs:
+        sid = r["o"]["space_id"]
+        meta[sid] = {"name": svc.store.name(sid) or "", "kind": kinds.get(sid, {}).get("type", "")}
+    return {"spaces": recs, "meta": meta}
 
 
 def space_put(c: OpContext) -> dict[str, Any]:
@@ -667,8 +688,6 @@ def audience_get(c: OpContext) -> dict[str, Any]:
     with c.registry.lock:  # pin, binding, mode and owner are judged together, on the state as it is now
         _require_pin(c)
         _require_bound(c)
-        if c.registry.mode(c.workspace_id) != "selective":
-            raise Refused("wrong_mode")  # sharing readers exist only in selective mode
         owner = _owner_user(c)
         users = c.access.users()
         groups = c.access.groups()
@@ -695,11 +714,7 @@ def shared_get(c: OpContext) -> dict[str, Any]:
         _require_bound(c)
         viewer = _owner_user(c)
         names = {u["user_id"]: u["name"] for u in c.access.users()}
-        sources = [
-            (ws, c.registry.owner_alias(ws))
-            for ws in sorted(c.registry.pins())
-            if ws != c.workspace_id and c.registry.mode(ws) == "selective"
-        ]
+        sources = [(ws, c.registry.owner_alias(ws)) for ws in sorted(c.registry.pins()) if ws != c.workspace_id]
     out: list[dict[str, Any]] = []
     for ws, owner in sources:
         if owner is None or owner == viewer:
@@ -854,6 +869,7 @@ HANDLERS: dict[str, Callable[[OpContext], dict[str, Any]]] = {
     "binding_put": binding_put,
     "snapshot_get": snapshot_get,
     "hub_where": hub_where,
+    "closing_get": closing_get,
     "publish_out": publish_out,
     "route_out": route_out,
     "audit_get": audit_get,

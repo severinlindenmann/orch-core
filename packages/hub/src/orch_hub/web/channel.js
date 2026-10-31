@@ -6,6 +6,7 @@ import { b64u, cj, hex, sha256, unb64u, utf8 } from "./cj.js";
 
 export const LABEL_REG = "orch/v2/hub-channel-reg|";
 export const LABEL_PROOF = "orch/v2/hub-channel-proof|";
+export const LABEL_HUB_REMOVE = "orch/v2/hub-remove|"; // the console digest of "Remove hub" (protocol.md, hub_remove_digest)
 const LABEL_CHANNEL_ID = "orch/v2/id/channel|"; // H(label || suite byte 2 || key_pub)[:16], protocol.md section 2.3
 const ECDSA = { name: "ECDSA", hash: "SHA-256" };
 const SKEW_MS = 120_000;
@@ -59,6 +60,13 @@ export async function signRegistration(privateKey, o, me, now) {
   checkChallenge(o, { ...me, dev: me.dev ?? (await fetchHubDev()) }, now);
   const sig = new Uint8Array(await crypto.subtle.sign(ECDSA, privateKey, utf8(LABEL_REG + cj(o))));
   return { o, sig: b64u(sig) };
+}
+
+/** The digest the admin signs to remove the hub: SHA-256("orch/v2/hub-remove|" || cj(ctx)), computed here from the context
+ * the hub returned. The page never signs a digest the hub sends; it compares it with this one and refuses on a mismatch. */
+export async function hubRemoveDigest(ctx) {
+  if (ctx === null || typeof ctx !== "object" || Array.isArray(ctx)) throw new ChannelError("malformed");
+  return sha256(utf8(LABEL_HUB_REMOVE + cj(ctx)));
 }
 
 /** The custodial proof over a digest this page computed itself: Sign(key, "orch/v2/hub-channel-proof|" || digest). */

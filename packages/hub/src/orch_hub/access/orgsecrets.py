@@ -150,6 +150,8 @@ class OrgSecretStore:
         if type(wraps) is not list or len(wraps) > 256:
             raise AccessError("malformed", "wraps")
         ws_chosen = sorted({_hex(w, "workspace_id") for w in workspaces})
+        if shared == "chosen" and not ws_chosen:
+            raise AccessError("malformed", "workspaces")  # a secret shared with no workspace is a dead end
         got: dict[str, tuple[int, bytes]] = {}
         for w in wraps:
             if type(w) is not dict or set(w) != {"workspace_id", "wxk_version", "sealed"}:
@@ -245,6 +247,17 @@ class OrgSecretStore:
             db.execute("DELETE FROM org_secret_shares WHERE workspace_id=?", (ws,))
             db.execute("DELETE FROM org_secret_wraps WHERE workspace_id=?", (ws,))
             db.execute("DELETE FROM org_secret_use WHERE workspace_id=?", (ws,))
+
+    def withdraw_all(self, now_ms: int) -> int:
+        """The hub is being removed (#1463): every secret is marked removed and every wrap, share and use count goes, in ONE
+        transaction. The next ``org_secrets_get`` of each workspace signs an EMPTY bundle at a higher version. Returns the
+        number of secrets withdrawn."""
+        with self._a.tx() as db:
+            n = db.execute("UPDATE org_secrets SET removed_ms=? WHERE removed_ms IS NULL", (now_ms,)).rowcount
+            db.execute("DELETE FROM org_secret_wraps")
+            db.execute("DELETE FROM org_secret_shares")
+            db.execute("DELETE FROM org_secret_use")
+        return n
 
     # --- what ONE workspace's bundle carries ---------------------------------------------------------------------------
 

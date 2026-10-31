@@ -529,6 +529,10 @@ drops. The host never sends it.
 | `publish.unreachable` | 9 | yes | stays | the publish server could not be reached; nothing was shared, run it again (P5) | `retry_after_ms` |
 | `hub.unreachable` | 9 | yes | stays | the hub could not be reached or did not answer; the join stays recorded and `orch hub connect` finishes it, a leave is already recorded and `orch hub unbind` tells the hub later (V3 C2a) | `retry_after_ms` |
 | `hub.no_card` | 3 | no | stays | `hub.connect` on a workspace with no v2 directory card yet (link a relay first) (V3 C2a) | — |
+| `hub.link_inspected` | 3 | no | stays | the hub's certificate was not the card's pin on a path through a proxy or WebSocket front: something on this network opens encrypted connections. The link stays down, no other transport is tried, and the next dial of that address waits at least 5 minutes (R6 #1594, D92) | `hint` |
+| `hub.proxy_auth` | 3 | no | stays | the HTTP proxy in `hub-net.json` answered 407 to the CONNECT: its sign-in is missing, wrong or not Basic (R6) | `hint` |
+| `hub.proxy_refused` | 3 | no | stays | the proxy refused the CONNECT with another status, sent a head that is not HTTP, or the network settings files cannot be used; nothing is dialled direct (R6) | `hint` |
+| `hub.proxy_unreachable` | 9 | yes | stays | the configured proxy could not be reached (R6) | `retry_after_ms` |
 | `hub.no_epoch` | 3 | no | stays | `hub.connect` in full mode on a workspace that holds no epoch key `WK_e` to give the hub (link a relay first) (V3 C2b) | — |
 | `keys.no_epoch` | 3 | no | stays | `keys.rotate` on a workspace that holds no workspace key yet (V3 C8) | — |
 | `keys.joined` | 3 | no | stays | `keys.rotate` while a hub is joined in full mode: the new epoch would never reach the hub; leave first (V3 C8) | — |
@@ -13410,6 +13414,20 @@ The add-on `publish` ships inside orch-core (capability `network`); `addon.grant
   `settings.set` that touches `publish` are plain clicks after the review (they were terminal-only); the View names both
   `click/protocol.op_class` still classes `settings.set` by key (`SETTINGS_TERMINAL_KEYS`, now empty) from the
   request's `set` before prepare and from the prepared events at sign time; the sign-time class wins.
+* **App releases** (#1457, HUB-PU-07). Making an app live (a new version, an update, a rollback, a start after a stop)
+  runs code in other people's browsers, so it needs a PERSON's one-click signature, never an agent's. `app.release
+  {staged_id}` (`pa_` + 32 hex; through `human.prepare`/`submit`) is one `log.added` note on the ticket whose text
+  `orch.publishclient.approval.app_release_text` builds from the staged release alone (the request names only the staged
+  id): the ticket, who prepared it, the action, the app's name, kind and address, the version, **who can open it**, **what
+  it may contact (reach)**, where the files go, the files (name, size, hash; the first 25 listed, the rest counted),
+  what changed against the live version (access, reach, files), and `App hash` / `Reach hash`, which are `meta_hash`
+  and `reach_hash` of the stored meta (`contracts/hub/protocol.md` 11.4), so every byte and field that goes live is
+  bound. The first line is `App approval: let an app go live`; the signer accepts only a `log.added` on a ticket with
+  that line. The View is a click op (`click.protocol.CLICK_OPS`, `OP_TITLES`, `RISK_BUILDERS`: never one-press), and
+  a remote device stream never signs it (`remote_kinds`: refused). The sender (#1455) builds the same words again from
+  what it is about to send and sends the commit only when a person's note with exactly these words exists, at most an
+  hour old; a changed file, access, reach or version makes the old signature cover nothing else. orch-publish still
+  checks the owner's approval of the request itself (`hub.publish_approval`, 11.3) on commit, rollback and start.
 
 ## 13. Tier B: agents and add-ons as their own OS user (#1198 H1, #287)
 

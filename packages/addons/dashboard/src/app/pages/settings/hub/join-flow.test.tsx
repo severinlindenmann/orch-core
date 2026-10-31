@@ -310,3 +310,16 @@ describe('P12 / P08: Paste from clipboard', () => {
     } finally { Reflect.deleteProperty(navigator, 'permissions') }
   })
 })
+
+it('offers pre-join shares once; Later closes without sending and a refetch does not offer again', async () => {
+  const getShare = api.getHubShare.bind(api)
+  vi.spyOn(api, 'getHubShare').mockImplementation(async ws => ({ ...await getShare(ws), not_sent_count: 2 }))
+  const sync = vi.spyOn(api, 'syncHubShare')
+  const view = await joinUntilSigned()
+  expect(await screen.findByText('Some shares were made before you joined. Send them now?', {}, T)).toBeTruthy()
+  expect(sync).not.toHaveBeenCalled()
+  await view.user.click(screen.getByRole('button', { name: 'Later' }))
+  await view.client.invalidateQueries({ queryKey: ['hub'] })
+  expect(screen.queryByTestId('join-share-offer')).toBeNull()
+  expect(sync).not.toHaveBeenCalled()
+})

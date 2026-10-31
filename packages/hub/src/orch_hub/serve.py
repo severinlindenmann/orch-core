@@ -552,6 +552,8 @@ def serve(
         spaces.reconcile()  # a workspace that is no longer bound leaves its spaces (also after a crash)
         reconcile_full_only(registry, wk_seals, views.store)  # wraps and synced view of a non-full workspace go
         fw.restore(registry.binding_objects())
+        if web is not None:
+            api.d.publish_sync = fw.resync  # B03: the Published page pushes bindings before it reads
         if notifier is not None:
             notifier.restart_pass_async()  # a revoked channel's relay cleanup that a crash left undone
 

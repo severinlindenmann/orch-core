@@ -1,3 +1,5 @@
+import { ShareDelivery } from './ShareDelivery'
+import { SendSharesReview } from '../settings/hub/SendShares'
 import { FocusButton } from '../focus/FocusButton'
 import { can } from '@/api/permissions'
 import { Link } from '@tanstack/react-router'
@@ -171,6 +173,8 @@ export interface ShareTicket {
   shown: boolean
   /** The hub already has this ticket: the item stops sharing instead. */
   shared: boolean
+  state?: string
+  send: () => void
   run: () => void
   node: React.ReactNode
 }
@@ -188,15 +192,15 @@ function useShareTicket(ticket: TicketDocument, viewer: Viewer): ShareTicket {
   const status = useQuery({ ...hubQueries.status(ws ?? ''), enabled: served })
   const hubbed = served && (status.data?.mode === 'selective' || status.data?.mode === 'full') && !!status.data.joined
   const share = useQuery({ ...hubQueries.share(ws ?? ''), enabled: hubbed })
-  const [open, setOpen] = useState<'share' | 'stop' | null>(null)
+  const [open, setOpen] = useState<'share' | 'stop' | 'send' | null>(null)
   const shown = hubbed && !!share.data?.available && ticket.status !== 'closed'
   const shared = !!share.data?.tickets.includes(ticket.key)
   const node = open && home ? (
-    open === 'share'
+    open === 'send' ? <SendSharesReview workspace={home} onClose={() => setOpen(null)} /> : open === 'share'
       ? <ShareTicketDialog key="share" ws={home.id} workspace={home} ticket={ticket.key} title={ticket.title} onClose={() => setOpen(null)} />
       : <StopSharing key="stop" ws={home.id} workspace={home} ticket={ticket.key} onClose={() => setOpen(null)} />
   ) : null
-  return { shown, shared, run: () => setOpen(shared ? 'stop' : 'share'), node }
+  return { shown, shared, state: share.data?.tickets_state?.[ticket.key], send: () => setOpen('send'), run: () => setOpen(shared ? 'stop' : 'share'), node }
 }
 
 export interface ShareFiles {
@@ -608,7 +612,7 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
             Restricted
           </Pill>
         )}
-        {share.shared && <span data-testid="shared-chip"><Pill>Shared with the hub</Pill></span>}
+        {share.shared && <ShareDelivery state={share.state} onSend={share.send} />}
       </div>
       <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start">
         <h1 className="min-w-0 flex-1 text-xl font-semibold leading-tight tracking-tight text-text">

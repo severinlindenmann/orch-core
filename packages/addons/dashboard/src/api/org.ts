@@ -42,7 +42,8 @@ export interface OrgShown {
 export type OrgSecretStatus = 'ready' | 'expired' | 'not_received' | 'needs_isolation'
 export interface OrgSecret { name: string; status: OrgSecretStatus; expires_ms: number | null; used_by: string[] }
 /** `GET /api/w/<ws>/org/secrets` (#1434): `available: false` is a host without the op. */
-export interface OrgSecrets { available: boolean; secrets: OrgSecret[] }
+/** `isolated: false`: agents here do not run as a separate user, so this computer never asks the hub for secrets. */
+export interface OrgSecrets { available: boolean; secrets: OrgSecret[]; isolated?: boolean }
 
 export const SECRET_STATUS_WORD: Record<OrgSecretStatus, string> = {
   ready: 'Ready',

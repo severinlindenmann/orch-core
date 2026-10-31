@@ -1735,3 +1735,21 @@ def test_only_who_may_delete_the_folder_may_share_or_list_its_files(tmp_path, mo
     finally:
         wd.close()
         wd.lab.close()
+
+
+def test_a_work_file_owned_by_someone_else_is_neither_listed_nor_read(w, monkeypatch):
+    uid, key = w.ticket_with()
+    (work_dir(w, key) / "mine.txt").write_bytes(b"abc")
+    ok(w.req("publish.prepare", {"ref": key, "workfiles": ["mine.txt"]}))
+    import orch.layout as layout_mod
+
+    monkeypatch.setattr(layout_mod, "_file_owner", lambda: os.getuid() + 1)  # the file's owner is "someone else" now
+    assert err(w.req("publish.prepare", {"ref": key, "workfiles": ["mine.txt"]})) == "not_found"
+
+
+def test_the_share_cap_is_named_when_it_is_what_leaves_no_room(w, monkeypatch):
+    uid, key = w.ticket_with()
+    (work_dir(w, key) / "f.bin").write_bytes(b"x" * 50)
+    monkeypatch.setitem(approval.LIMITS, "share_bytes", 10)
+    res = w.req("publish.prepare", {"ref": key, "workfiles": ["f.bin"]})
+    assert err(res) == "quota.host" and "a share holds at most" in json.dumps(res)

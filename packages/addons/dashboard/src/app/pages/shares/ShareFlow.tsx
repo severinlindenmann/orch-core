@@ -118,16 +118,13 @@ export function ShareFlow({ ws, ticket, resume, only, onClose }: { ws: string; t
   // empty files are not offered; one line says so, instead of a greyed-out row with no way forward
   const emptyNames = [...ticket.artifacts.filter((a) => a.bytes === 0 && unshareable(a) !== null).map((a) => a.name), ...work.filter((f) => f.bytes === 0).map((f) => f.name)]
   const files = ticket.artifacts.filter((a) => a.bytes !== 0).map((a) => ({ a, why: unshareable(a) }))
-  // a name that is no longer offered (the list was reloaded) is not kept selected, so the count and the size agree
-  useEffect(() => {
-    const offered = new Set(workRows.map((f) => f.name))
-    setWorkPicked((p) => (p.every((n) => offered.has(n)) ? p : p.filter((n) => offered.has(n))))
-  }, [folder.data]) // eslint-disable-line react-hooks/exhaustive-deps
+  // what is still offered AND ticked: a name that left the list (reload, or a result of that name arrived) is dropped here
+  const workSel = workPicked.filter((n) => workRows.some((f) => f.name === n))
   const total =
     ticket.artifacts.filter((a) => picked.includes(a.name)).reduce((n, a) => n + (a.bytes ?? 0), 0) +
-    work.filter((f) => workPicked.includes(f.name)).reduce((n, f) => n + f.bytes, 0) +
+    work.filter((f) => workSel.includes(f.name)).reduce((n, f) => n + f.bytes, 0) +
     added.reduce((n, f) => n + f.size, 0)
-  const count = picked.length + workPicked.length + added.length
+  const count = picked.length + workSel.length + added.length
 
   const addFiles = async (list: FileList | null) => {
     const chosen = Array.from(list ?? [])
@@ -173,7 +170,7 @@ export function ShareFlow({ ws, ticket, resume, only, onClose }: { ws: string; t
     setBusy(true)
     setError('')
     try {
-      const got = await sharesApi.prepare(ws, { ticket: ticket.key, artifacts: picked, ...(workPicked.length ? { workfiles: workPicked } : {}), ...(added.length ? { uploads: added.map((f) => f.upload_id) } : {}), kind, days, ...(kind === 'once' ? { views } : {}) }, prepareIdem)
+      const got = await sharesApi.prepare(ws, { ticket: ticket.key, artifacts: picked, ...(workSel.length ? { workfiles: workSel } : {}), ...(added.length ? { uploads: added.map((f) => f.upload_id) } : {}), kind, days, ...(kind === 'once' ? { views } : {}) }, prepareIdem)
       void refreshShares(qc, ws)
       setStage({ at: 'confirm', staged: got.staged })
     } catch (e) {
@@ -306,7 +303,7 @@ export function ShareFlow({ ws, ticket, resume, only, onClose }: { ws: string; t
                   <input
                     type="checkbox"
                     className="mt-0.5"
-                    checked={workPicked.includes(f.name)}
+                    checked={workSel.includes(f.name)}
                     onChange={(e) => setWorkPicked((p) => (e.target.checked ? [...p, f.name] : p.filter((n) => n !== f.name)))}
                   />
                   <span className="min-w-0 flex-1">

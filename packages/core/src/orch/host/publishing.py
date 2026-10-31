@@ -659,6 +659,12 @@ def _work_files(
                 raise HostError(
                     "quota.host", f"{name} is over {approval.human_size(approval.LIMITS['file_bytes'])}"
                 ) from None
+            if (
+                approval.LIMITS["share_bytes"] - total <= STAGE_BYTES - used - total
+            ):  # the share cap binds, not the stage
+                raise HostError(
+                    "quota.host", f"a share holds at most {approval.human_size(approval.LIMITS['share_bytes'])}"
+                ) from None
             raise HostError("quota.host", "the staged copies would use too much room: discard some") from None
         except LayoutError as exc:
             raise HostError("not_found", str(exc)[:300]) from None

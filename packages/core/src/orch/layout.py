@@ -544,6 +544,11 @@ def workdir_summary(layout: Layout, key: str, *, limit: int = 20000) -> dict[str
     return {"files": tot["files"], "bytes": tot["bytes"], "truncated": tot["truncated"]}
 
 
+def _file_owner() -> int:
+    """The user a work file must belong to (a seam: tests change it without needing root)."""
+    return os.getuid()
+
+
 class WorkdirTooBig(LayoutError):
     """A work file is over the cap given to :func:`workdir_read` (``size`` is its size, or the cap + 1 if it grew)."""
 
@@ -570,7 +575,7 @@ def workdir_files(
     out: list[tuple[str, int]] = []
     seen = 0
     truncated = False
-    uid = os.getuid()
+    uid = _file_owner()
     try:
         with os.scandir(got[0]) as it:
             for e in it:
@@ -613,7 +618,7 @@ def workdir_read(layout: Layout, key: str, name: str, max_bytes: int) -> bytes:
             raise LayoutError(f"{name[:60]} is not a file in the work folder") from None
         try:
             st = os.fstat(fd)
-            if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1 or st.st_uid != os.getuid():
+            if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1 or st.st_uid != _file_owner():
                 raise LayoutError(f"{name[:60]} is not a plain file")
             if st.st_size > max_bytes:
                 raise WorkdirTooBig(f"{name[:60]} is too big", st.st_size)

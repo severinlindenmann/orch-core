@@ -276,3 +276,15 @@ def test_a_fifo_never_blocks_the_read(lay):
     t.start()
     t.join(10)
     assert len(out) == 1
+
+
+def test_a_file_of_another_owner_is_not_listed_or_read(lay, monkeypatch):
+    ensure_workdir(lay, KEY)
+    (lay.workdir(KEY) / "f.txt").write_text("x")
+    assert workdir_files(lay, KEY)[0] == [("f.txt", 1)]
+    import orch.layout as layout_mod
+
+    monkeypatch.setattr(layout_mod, "_file_owner", lambda: os.getuid() + 1)  # not root-only: the expected owner changes
+    assert workdir_files(lay, KEY)[0] == []
+    with pytest.raises(LayoutError):
+        workdir_read(lay, KEY, "f.txt", 10)

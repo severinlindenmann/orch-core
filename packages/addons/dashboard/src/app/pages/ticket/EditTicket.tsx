@@ -15,6 +15,7 @@ import { SECTIONS_BY_TYPE, SECTION_ORDER, sectionLabel, type SectionName } from 
 import { branchProblem, MAX_LINK_REPOS, suggestedBranch } from '@/api/links'
 import type { TicketDocument, TicketLinks } from '@/api/types'
 import { SignPopover } from '@/components/sign/SignPopover'
+import { trustedPress } from '@/components/sign/trustedPress'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -182,23 +183,24 @@ function RenameDialog({ ticket, onBusy, onFull, onClose }: { ticket: TicketDocum
   const ws = workspaceOfTicket(ticket.key, workspaces.data ?? [])
   const [title, setTitle] = useState(ticket.title ?? '')
   const [problem, setProblem] = useState<string | null>(null)
-  const [signing, setSigning] = useState<Edit | null>(null)
+  // P07: `trusted` = the opening press was the person's own (read in the handler); only then the review arms (1 s, then signs).
+  const [signing, setSigning] = useState<{ action: Edit; trusted: boolean } | null>(null)
   useEffect(() => { onBusy(signing !== null) }, [signing, onBusy])
-  const save = () => {
+  const save = (trusted: boolean) => {
     const built = buildEdit(ticket, { title, sections: {}, criteria: {}, added: [], people: { owner: ticket.people.owner, assignees: [...ticket.people.assignees], reviewers: [...ticket.people.reviewers] } }, false)
     if ('problem' in built) return setProblem(built.problem)
     if ('nothing' in built) return setProblem('The title is the same as before.')
     setProblem(null)
-    setSigning(built.action)
+    setSigning({ action: built.action, trusted })
   }
   return (
     <Dialog open onOpenChange={(o) => !o && !signing && onClose()}>
       <DialogContent aria-label={`Rename ${ticket.key}`} className="sm:max-w-lg" onOpenAutoFocus={(e) => { e.preventDefault(); const f = document.getElementById('rename-title') as HTMLInputElement | null; if (f) { f.focus(); f.setSelectionRange(f.value.length, f.value.length) } }}>
         <DialogHeader>
           <DialogTitle>Rename {ticket.key}</DialogTitle>
-          <DialogDescription>Write the new title. Press Rename to see the change, and once more to confirm.</DialogDescription>
+          <DialogDescription>Write the new title.</DialogDescription>
         </DialogHeader>
-        <form onSubmit={(e) => { e.preventDefault(); save() }} className="space-y-2">
+        <form onSubmit={(e) => { e.preventDefault(); save(trustedPress(e.nativeEvent)) }} className="space-y-2">
           <Input id="rename-title" aria-label="Title" autoFocus readOnly={!!signing} value={title} maxLength={MAX_TITLE + 50} onChange={(e) => setTitle(e.target.value)} />
           {problem && <p role="alert" className="text-[13px] text-danger">{problem}</p>}
           {!signing && <DialogFooter>
@@ -211,7 +213,10 @@ function RenameDialog({ ticket, onBusy, onFull, onClose }: { ticket: TicketDocum
           <SignPopover
             title={`Rename ${ticket.key}`}
             ws={ws.id}
-            action={signing}
+            action={signing.action}
+            autoStart={signing.trusted}
+            armOnStart
+            armLine="Renaming in a moment"
             prepareOnOpen
             inline
             confirmLabel="Rename"

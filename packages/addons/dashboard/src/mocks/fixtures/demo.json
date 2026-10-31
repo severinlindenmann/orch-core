@@ -864,6 +864,7 @@
     "body": {
       "summary": "Restricted ticket: the quarterly rotation of the warehouse credentials. Only the listed people can see it.",
       "requirements": "- Rotate within the week.\n- No downtime of the nightly load.",
+      "plan": "1. Create the new credential next to the old one.\n2. Switch the nightly load to it, check one run.\n3. Remove the old credential.",
       "current_state": "Not started."
     },
     "events": [

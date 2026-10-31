@@ -65,3 +65,4 @@ cli/main.py 1
 ops/plans.py 1
 addons/manifest.py 1
 migrate/steps.py 10
+host/sequence.py 1

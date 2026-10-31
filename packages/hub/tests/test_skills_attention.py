@@ -21,12 +21,12 @@ WSS = [{"workspace_id": "a" * 32, "name": "Product"}, {"workspace_id": "b" * 32,
 
 def test_expired_and_soon_expiring_come_first_soonest_first_and_far_ones_are_silent():
     items = needs_attention(
-        [sec("far", 90), sec("soon", 3), sec("gone", -2), sec("edge", 14), sec("late", 15)], WSS, NOW
+        [sec("far", 90), sec("soon", 3), sec("gone", -2), sec("edge", 4), sec("late", 7), sec("fresh", 7)], WSS, NOW
     )
+    # a secret that was just saved for 7 days is not flagged; only 3 days or less (or expired) needs attention
     assert [(i["kind"], i["text"]) for i in items] == [
         ("secret_expired", "gone has expired."),
         ("secret_expiring", "soon expires in 3 days."),
-        ("secret_expiring", "edge expires in 14 days."),
     ]
     assert all(i["page"] == "secrets" and i["action"] for i in items)
     assert needs_attention([sec("t", 0.5)], WSS, NOW)[0]["text"] == "t expires today."
@@ -66,11 +66,11 @@ def w(tmp_path, monkeypatch):
 
 def test_the_route_reports_a_later_bound_workspace_and_an_expiring_secret_and_is_admin_only(w):
     rec = w.recipients("crm-key", "all", ())
-    w.save(rec, "all", (), name="crm-key", expires_ms=G.NOW + 5 * DAY)
+    w.save(rec, "all", (), name="crm-key", expires_ms=G.NOW + 2 * DAY)
     rec2 = w.recipients("gh", "all", ())
     w.save(rec2, "all", (), name="gh")
     s, o, _ = w.call("GET", "/admin/needs-attention", token=w.token)
-    assert s == 200 and [i["text"] for i in o["items"]] == ["crm-key expires in 5 days."]
+    assert s == 200 and [i["text"] for i in o["items"]] == ["crm-key expires in 2 days."]
     join(w.registry, WS_C)  # bound later: no wrap exists for it
     s, o, _ = w.call("GET", "/admin/needs-attention", token=w.token)
     assert [i["kind"] for i in o["items"]] == ["secret_expiring", "secret_waiting", "secret_waiting"]

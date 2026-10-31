@@ -116,3 +116,14 @@ test("P02: reauth goes straight to the sign-in form with the name filled in and 
   assert.match(calls[1].title, /Sign in to open Admin/);
   assert.equal(c.returnHash, "#/admin");
 });
+test("P10: the 'No connection' bar stays away while a restore or restart is expected (state.restarting)", () => {
+  const bar = { hidden: true }, text = {}, retry = {};
+  for (const restarting of [true, false]) {
+    const c = vm.createContext({ state: { restarting }, offline: false, nextPoll: 0, polling: false, offbar: bar, offlineText: text, retry, retryDelay: () => 2000,
+      document: { body: { classList: { toggle() {} } } }, syncSignButtons() {} });
+    vm.runInContext(section("function connectionFailed()", "function arm("), c);
+    c.connectionFailed();
+    assert.equal(bar.hidden, restarting, "restarting=" + restarting);
+    assert.equal(c.offline, !restarting);
+  }
+});

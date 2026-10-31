@@ -704,7 +704,7 @@ class Creator:
         self.run.workspace = {"id": g.wid, "prefix": self.profile["prefix"]}
 
     def _perms(self) -> None:
-        """P08: the review said "Folders made private": remove group/other write from our own folders (best effort)."""
+        """P08/P14 (new and Finish): the review said "Folders made private": remove group/other write from ours."""
         if not any(f["id"] == "perms" for f in self.plan.flags):
             return
         self.run.set("perms", "doing")
@@ -1141,6 +1141,13 @@ class RealPorts:
 
         home = Path(self.env.get("HOME") or Path.home())
         privdir.privatize(privdir.setup_paths(root, layout_mod.store_of(root), self.state, home), self.uid)
+
+    def privatize_orch(self) -> None:
+        """P14: at launch, only orch's own folders (the project folder and its store wait for the review)."""
+        from orch import privdir
+
+        home = Path(self.env.get("HOME") or Path.home())
+        privdir.privatize(privdir.orch_paths(self.state, home), self.uid)
 
     def trust_folder(self, root: Path, *, allow_parent: bool = False) -> bool:
         from .claude_folder import trust_folder

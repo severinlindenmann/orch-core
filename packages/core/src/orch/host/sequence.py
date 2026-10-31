@@ -34,7 +34,7 @@ import hashlib
 import os
 import re
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -1306,12 +1306,13 @@ def build_content(prepared: Mapping[str, Any], *, verified: bool) -> dict[str, A
     the caller shows the full review (:func:`orch.host.signcontent.build`)."""
     from orch.host import signcontent
 
-    content = signcontent.build(expand(prepared), verified=verified)
+    full = expand(prepared)
+    content = signcontent.build(full, verified=verified)
     meta = prepared["material"]["sequence"]
     intent = validate_intent(meta["intent"])
     n = int(meta["of"])
     if intent["kind"] == ADDON:  # no ticket: the workspace's settings and one add-on
-        content = _addon_content(content, intent, n)
+        content = _addon_content(content, intent, n, full["events"], verified=verified)
         publisher = (prepared["material"].get("market") or {}).get("publisher", {}).get("fingerprint")
         if intent.get("staged"):
             rows = content.setdefault("fields_changed", [])
@@ -1429,7 +1430,14 @@ def _gates_content(
     return content
 
 
-def _addon_content(content: dict[str, Any], intent: Mapping[str, Any], n: int) -> dict[str, Any]:
+def _addon_content(
+    content: dict[str, Any],
+    intent: Mapping[str, Any],
+    n: int,
+    events: Sequence[Mapping[str, Any]] = (),
+    *,
+    verified: bool = False,
+) -> dict[str, Any]:
     """The review of turning on an add-on that needs settings: the settings in words, then the grant (both are rows of
     the events, built by :func:`signcontent.build`), and what happens if signing stops between the two."""
     from orch.addons.settings_needs import TITLES
@@ -1454,16 +1462,37 @@ def _addon_content(content: dict[str, Any], intent: Mapping[str, Any], n: int) -
             + ("" if sent == opens else f" (links open at {opens})")
             + "; anyone with the link can read them.",
         )
-    notes.append(
-        "Settings are signed first, then the add-on is turned on. If signing stops in between, "
-        "the settings stay and the add-on stays off."
-    )
+    # P04: the built-in Publish (matched by the digest of the shipped package, never by name) is not third-party code,
+    # so the "runs its own code" warning is for marketplace add-ons only; any other event keeps it (fail closed).
+    from orch.addons import builtin
+    from orch.host import signcontent
+
+    # Fail closed: only a verified review of exactly [settings, ONE grant of the built-in Publish package] drops it.
+    grants = [e for e in events if e.get("type") == "addon.granted"]
+    settings = [e for e in events if e.get("type") == "settings.changed"]
+    others = [e for e in events if e.get("type") not in ("addon.granted", "settings.changed")]
+    if (
+        verified
+        and len(grants) == 1
+        and len(settings) <= 1
+        and not others
+        and builtin.is_builtin_package(grants[0], "publish")
+    ):
+        notes[:] = [x for x in notes if x != signcontent.ADDON_TRUST]
+    # "Settings are signed first, then the add-on is turned on; if signing stops in between ..." is in the technical
+    # details (:func:`steps_line`), where the signer's full review shows it.
     return content  # "One confirmation signs all N steps ..." is in the technical details (r7-P10)
 
 
 def steps_line(intent: Mapping[str, Any], n: int) -> str:
     """What one confirmation does for a sequence (technical details, r7-P10)."""
     what = "workspace" if intent["kind"] == ADDON else "ticket"
+    if intent["kind"] == ADDON:
+        return (
+            f"One confirmation signs all {n} steps. Settings are signed first, then the add-on is turned on. "
+            "If signing stops in between, the settings stay and the add-on stays off. "
+            f"If the {what} changes meanwhile, signing stops and what is already signed stays."
+        )
     return (
         f"One confirmation signs all {n} steps. If the {what} changes meanwhile, "
         "signing stops and what is already signed stays."

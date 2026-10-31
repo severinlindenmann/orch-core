@@ -172,7 +172,7 @@ export function BuiltInAddOns({ workspace, rows, tag, actions, empty, label = 'A
           </ul>
         )
       }
-      {setup && <AddonSetup name={setup.name} enabling={setup.enabling} suggested={setup.suggest} suggestedFrom={setup.from} hubName={setup.hub} close={() => setSetup(null)} submit={(title, action) => { setSetup(null); ask({ title, action,  }) }} />}
+      {setup && <AddonSetup name={setup.name} enabling={setup.enabling} suggested={setup.suggest} suggestedFrom={setup.from} hubName={setup.hub} close={() => setSetup(null)} submit={(title, action) => { setSetup(null); ask({ title, action, prepareOnOpen: true }) }} />}
       {dialog}
     </div>
   )

@@ -140,3 +140,48 @@ def test_metadata_is_hash_verified(artifact, name, damage):
         )
     with pytest.raises(ValueError):
         hashes.verify(artifact, "2.0.0")
+
+
+def _run_plan(tmp_path, event, version, channel=""):
+    """Run the plan step's own script (dry, in bash) with a stubbed gh that has no releases."""
+    import os
+    import subprocess
+
+    step = next(s for s in JOBS["plan"]["steps"] if s.get("id") == "plan")
+    (tmp_path / "packages" / "core").mkdir(parents=True)
+    pyproject = tmp_path / "packages" / "core" / "pyproject.toml"
+    pyproject.write_text(f'[project]\nname = "orch-core"\nversion = "{version}"\n')
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "gh").write_text("#!/bin/sh\nexit 1\n")  # `gh release view` finds nothing
+    (bin_dir / "gh").chmod(0o755)
+    out = tmp_path / "out"
+    env = {
+        "PATH": f"{bin_dir}:{os.environ['PATH']}", "EVENT": event, "INPUT_CHANNEL": channel, "RUN_NUMBER": "7",
+        "SEQ_OFFSET": "0", "SHA": "a" * 40, "KEY_ID_PROD": "rk-1", "KEY_ID_TEST": "tk-1", "GITHUB_OUTPUT": str(out),
+    }
+    subprocess.run(["bash", "-c", step["run"]], cwd=tmp_path, env=env, check=True, capture_output=True)
+    return dict(line.split("=", 1) for line in out.read_text().splitlines())
+
+
+def test_a_push_to_main_with_a_dev_version_releases_nothing(tmp_path):
+    plan = _run_plan(tmp_path, "push", "2.0.0.dev0")
+    assert plan["mode"] == "skip"
+
+
+def test_a_push_to_main_with_a_final_version_releases_it(tmp_path):
+    plan = _run_plan(tmp_path, "push", "2.0.0")
+    assert plan["mode"] == "release" and plan["version"] == "2.0.0" and plan["tag"] == "v2.0.0"
+    assert plan["channel"] == "main" and plan["key_id"] == "rk-1"
+
+
+def test_a_dispatch_still_works_with_a_dev_version(tmp_path):
+    plan = _run_plan(tmp_path, "workflow_dispatch", "2.0.0.dev0", channel="test-cut")
+    assert plan["mode"] == "release" and plan["tag"] == "test-v2.0.0.dev7" and plan["key_id"] == "tk-1"
+
+
+def test_every_job_after_plan_is_gated_on_the_plan_mode():
+    for name, job in JOBS.items():
+        if name == "plan":
+            continue
+        assert "needs.plan.outputs.mode" in str(job.get("if", "")), name

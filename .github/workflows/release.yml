@@ -1,7 +1,9 @@
 # Signed releases (docs/design/install-update.md, contract: packages/core/tests/vectors/release/CONTRACT.md).
-#   push to main            -> build and sign the version in packages/core/pyproject.toml without ".devN" (for example
-#                              2.0.0), unless the tag v<version> already exists (then nothing happens: bump the
-#                              version to release again). Channel "main".
+#   push to main            -> build and sign the version in packages/core/pyproject.toml, ONLY when it is a final
+#                              version (for example 2.0.0): a ".devN" version on main does nothing (so merging develop
+#                              into main never releases by accident; the cut is an explicit "release 2.0.0" commit).
+#                              Also nothing when the tag v<version> already exists (bump the version to release
+#                              again). Channel "main".
 #   workflow_dispatch       -> a release candidate on channel test-<name> (version <base>.dev<run number>), signed by
 #                              the TEST key. A production verifier refuses test-* channels, so this can never reach a
 #                              real install. Tags use test-v<version>, never the protected v* namespace.
@@ -141,8 +143,8 @@ jobs:
           seq=$((RUN_NUMBER + SEQ_OFFSET))
           test=false
           mode=release
-          base=$(python3 -I -c 'import tomllib; print(tomllib.load(open("packages/core/pyproject.toml","rb"))["project"]["version"])')
-          base=${base%%.dev*}
+          raw=$(python3 -I -c 'import tomllib; print(tomllib.load(open("packages/core/pyproject.toml","rb"))["project"]["version"])')
+          base=${raw%%.dev*}
           [[ "$base" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::bad version in packages/core/pyproject.toml"; exit 1; }
           case "$EVENT" in
             push) channel=main; version="$base" ;;
@@ -152,6 +154,13 @@ jobs:
             schedule) channel=main; mode=refresh; version="" ;;
             *) echo "::error::unexpected event"; exit 1 ;;
           esac
+          # A push to main releases ONLY a final version: with a .devN version in pyproject (develop merged into main
+          # to bring this workflow there, before the cut) it does nothing. The cut is one explicit "release X.Y.Z"
+          # commit that drops .devN, then develop -> main. Dispatch (test-*) works with a .dev version either way.
+          if [ "$EVENT" = push ] && [ "$raw" != "$base" ]; then
+            echo "::notice::packages/core/pyproject.toml holds ${raw}: a .dev version on main releases nothing"
+            mode=skip
+          fi
           if [ "$mode" = release ] && [ "$test" = false ] && gh release view "v${version}" >/dev/null 2>&1; then
             echo "::notice::v${version} is already released; bump the version to release again"
             mode=skip
@@ -329,6 +338,7 @@ jobs:
   # Executes the built code without access to a signing environment.
   smoke:
     needs: [plan, build]
+    if: needs.plan.outputs.mode == 'release'  # explicit, not only skip propagation
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -364,6 +374,7 @@ jobs:
   # Holds the key. Everything it signs it writes itself, here, from the build job's wheels of this same commit.
   publish:
     needs: [plan, build, smoke]
+    if: needs.plan.outputs.mode == 'release'  # explicit, not only skip propagation
     runs-on: ubuntu-latest
     environment: ${{ needs.plan.outputs.test == 'true' && 'release-test' || 'release' }}
     concurrency:

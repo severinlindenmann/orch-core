@@ -75,3 +75,18 @@ def test_only_forwarded_py_reads_forwarded_headers():
     for f in SRC.glob("*.py"):
         if f.name != "forwarded.py":
             assert not pat.search(f.read_text()), f.name
+
+
+def test_a_stalled_body_is_cut_below_the_proxy_idle_limit(monkeypatch):
+    import asyncio
+
+    from pubsrv import app as A
+
+    assert A.BODY_IDLE_S <= 90
+    monkeypatch.setattr(A, "BODY_IDLE_S", 0.05)
+
+    async def never():
+        await asyncio.sleep(10)
+
+    with pytest.raises(ConnectionError):
+        asyncio.run(A._read_body(never, 1000))

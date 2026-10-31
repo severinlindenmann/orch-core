@@ -21,7 +21,7 @@ import { checkServiceAction, resultWords, logsDialog, serviceDialog, stopLabel, 
 import { handoffsView } from "./handoffs.js";
 import { phonesView } from "./phones.js";
 import { workspacesView, workspaceDetailsView, newWorkspaces, privateRows } from "./workspaces.js";
-import { OPEN_FIRST, OPEN_ON_ITS_COMPUTER, colour, initials, landing, landingPlan, openingState, railRows, safeUrl, backToWorkspace } from "./switch.js";
+import { OPEN_FIRST, OPEN_ON_ITS_COMPUTER, colour, initials, landing, landingPlan, openingState, railRows, safeUrl, backToWorkspace, namePrefill } from "./switch.js";
 import { Refusal, grantTermsOk, grantSentence, grantFacts, addonFacts, addonTermsOk, settingsFacts, settingsTermsOk, checkBindings, checkPrepared, describe, renderMulti, renderText, shortHash, verifyQuestion, DECISIONS } from "./render.js";
 
 const root = document.getElementById("app");
@@ -140,9 +140,10 @@ function loginView(err, opts = {}) {
       await afterLogin();
     },
   }, field("Your name", id), field("Password", pw), field("6-digit code", code), h("div", { class: "row top" }, h("button", { class: "pri", type: "submit", text: "Sign in" })));
-  if (opts.prefill) id.value = opts.prefill; // P02: arriving from the person's own workspace, the name is already known
+  const prefill = namePrefill(opts.prefill); // P02: arriving from the person's own workspace; a name only, never an id
+  if (prefill) id.value = prefill;
   show(h("h1", { text: opts.title ?? "Sign in to your hub" }), opts.ok ? banner("ok", "Restored", opts.ok) : null, opts.why ? h("p", { class: "muted", text: opts.why }) : null, err ? banner("bad", "Not signed in", err) : null, h("div", { id: "company-slot" }), form);
-  if (opts.prefill) pw.focus?.();
+  if (prefill) pw.focus?.();
   void api("GET", "/oidc/options").then((o) => { // company login (HUB-PE-04): a button only when the admin turned it on
     const btn = o.status === 200 ? companyButton(o.body, async () => { const r = await beginCompany(api, "signin"); if (!r.ok) loginView(COMPANY_WHY[r.error] ?? say(r.error)); }) : null;
     const slot = document.getElementById("company-slot");
@@ -384,7 +385,7 @@ const slowWatch = createSlowWatch(() => !root.classList.contains("shelled") && !
 
 // A session that came from a workspace ticket cannot use admin tools until a real password sign-in.
 async function reauthView() {
-  const name = state.user?.user_id ?? "", back = globalThis.location?.hash ?? null;
+  const name = namePrefill(state.user?.name), back = globalThis.location?.hash ?? null; // QA b1852: the name, never the id
   const admin = /^#\/admin/.test(back ?? "");
   await api("DELETE", "/session"); clearSession(); returnHash = back;
   loginView(null, { prefill: name, title: admin ? "Sign in to open Admin" : "Sign in to open this page", why: "You came from your workspace. Confirm it is you, then you go straight " + (admin ? "to Admin." : "back to this page.") });

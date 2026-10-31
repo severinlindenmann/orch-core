@@ -34,6 +34,7 @@ test.beforeAll(async () => {
       if (rest === undefined) return inner(req, res)
       if (rest === 'add-ons' && method === 'GET') return json(addOns())
       if (rest === 'tickets/DEMO-0001' && method === 'GET') return json({ ...fixture('ticket.json'), artifacts: [{ name: 'report.md', kind: 'report', bytes: 2048, sha256: 'ab'.repeat(32), added_by: 'p_x', at: '2026-10-18T08:00:00Z' }] })
+      if (rest === 'tickets/DEMO-0001/workdir' && method === 'GET') return json({ available: true, exists: true, codebase: false, folder: '.orch-work/DEMO-0001', files: 1, bytes: 16, truncated: false, items: [{ name: 'hello.txt', bytes: 16 }] })
       if (rest === 'shares' && method === 'GET') return json({ available: true, configured: true, server: 'https://share.example.org', share: 'https://link.example.org', workspace: WS, owner: 'p_owner', live: true, shares: [], staged: [] })
       if (rest.startsWith('shares/') && method === 'POST') {
         const raw = await new Promise<string>((r) => { let s = ''; req.on('data', (c) => (s += c)); req.on('end', () => r(s)) })
@@ -90,4 +91,22 @@ test('Add a file in Share files: the file goes alone, then Review names it', asy
   expect(prepares[0]).toMatchObject({ ticket: 'DEMO-0001', uploads: ['pu_' + '1'.repeat(32)] })
   await page.waitForTimeout(500) // let the dialog finish its fade
   await page.screenshot({ path: path.join(SHOTS, 'run12-p05-after-review.png') })
+})
+
+test('P03: the ticket\'s working file is listed, one tick, and Review names it by name (no path)', async ({ page }) => {
+  publishOn = true
+  fake.publishOn = true
+  prepares.length = 0
+  await open(page, `/w/DEMO/ticket/DEMO-0001`)
+  await page.getByRole('button', { name: 'Share files' }).first().click()
+  const dialog = page.getByRole('dialog', { name: 'Share files' })
+  await expect(dialog.getByRole('button', { name: 'Review selected files' })).toBeDisabled()
+  await expect(dialog.getByText('Pick a file first.')).toBeVisible()
+  await dialog.getByRole('checkbox', { name: /hello\.txt/ }).check()
+  await expect(dialog.getByText('1 selected, 16 bytes.')).toBeVisible()
+  await page.waitForTimeout(500) // let the dialog finish its fade
+  await page.screenshot({ path: path.join(SHOTS, 'run16-p03-after-share-dialog.png') })
+  await dialog.getByRole('button', { name: 'Review selected files' }).click()
+  await expect.poll(() => prepares.length).toBe(1) // the review sheet itself needs the signing host, not in this fake
+  expect(prepares[0]).toMatchObject({ ticket: 'DEMO-0001', artifacts: [], workfiles: ['hello.txt'] })
 })

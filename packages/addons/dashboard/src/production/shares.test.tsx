@@ -38,6 +38,9 @@ let sendRefusalOnce: { code: string; reason?: string } | null = null
 let uploadN = 0
 let prepareRefusal: { code: string } | null = null
 let ticketOwner: string | null | undefined
+let workItems: { name: string; bytes: number }[] = []
+let emptyResult = false
+let onlyEmpty = false
 const state = useFakeHost(() => [workspace({ id: A, features: [...READS, 'publish'], addOns: { available: true, add_ons: [{ id: 'publish', title: 'Publish', desc: 'Share files.', state: 'on', locked: null, blocked: null }] } })])
 const refusal = (r: { code: string; reason?: string }) =>
   Response.json({ ok: false, error: { code: r.code, message: r.code, retryable: false, ...(r.reason ? { detail: { reason: r.reason } } : {}) } }, { status: 409 })
@@ -55,9 +58,14 @@ const route = () => {
   uploadN = 0
   prepareRefusal = null
   ticketOwner = undefined
+  workItems = []
+  emptyResult = false
+  onlyEmpty = false
   state.host.override = (path, method, body) => {
     if (path.endsWith('/tickets/DEMO-0001') && method === 'GET')
-      return Response.json({ ...ticket, ...(ticketOwner === undefined ? {} : { people: { ...ticket.people, owner: ticketOwner } }), artifacts: [{ name: 'report.md', kind: 'report', bytes: 2048, sha256: 'ab'.repeat(32), added_by: 'p_x', at: '2026-10-18T08:00:00Z' }, { name: 'bad/name.md', kind: 'report', bytes: 1, sha256: 'cd'.repeat(32), added_by: 'p_x', at: '2026-10-18T08:00:00Z' }] })
+      return Response.json({ ...ticket, ...(ticketOwner === undefined ? {} : { people: { ...ticket.people, owner: ticketOwner } }), artifacts: [...(onlyEmpty ? [] : [{ name: 'report.md', kind: 'report', bytes: 2048, sha256: 'ab'.repeat(32), added_by: 'p_x', at: '2026-10-18T08:00:00Z' }, { name: 'bad/name.md', kind: 'report', bytes: 1, sha256: 'cd'.repeat(32), added_by: 'p_x', at: '2026-10-18T08:00:00Z' }]), ...(emptyResult ? [{ name: 'T1-receipt.log', kind: 'log', bytes: 0, sha256: 'ee'.repeat(32), added_by: 'p_x', at: '2026-10-18T08:00:00Z' }] : [])] })
+    if (path.endsWith('/tickets/DEMO-0001/workdir') && method === 'GET')
+      return Response.json({ available: true, exists: workItems.length > 0, codebase: false, folder: '.orch-work/DEMO-0001', files: workItems.length, bytes: 16, truncated: false, items: workItems })
     if (!path.includes('/shares')) return undefined
     if (method === 'GET' && listRefusal) return refusal(listRefusal)
     if (method === 'GET')
@@ -684,4 +692,40 @@ it.each([
   const btn = within(list).queryByRole('button', { name: 'Publish report.md as a link' })
   if (sees) expect(btn).toBeInTheDocument()
   else expect(btn).toBeNull()
+})
+
+
+it('P03: the ticket\'s working files are offered next to the results; ticking one enables Review and prepare names it', async () => {
+  route()
+  workItems = [{ name: 'hello.txt', bytes: 16 }, { name: 'report.md', bytes: 5 }, { name: 'empty.txt', bytes: 0 }]
+  emptyResult = true
+  const user = userEvent.setup()
+  const form = await openForm(user)
+  const row = await within(form).findByRole('checkbox', { name: /hello\.txt/ }, T)
+  expect(form).toHaveTextContent('16 bytes · working file')
+  expect(within(form).getAllByRole('checkbox', { name: /report\.md/ })).toHaveLength(1) // a result of the same name is not offered twice
+  expect(within(form).queryByRole('checkbox', { name: /empty\.txt|T1-receipt/ })).toBeNull()
+  expect(form).toHaveTextContent('T1-receipt.log is empty, so it is left out.')
+  expect(form).toHaveTextContent('empty.txt is empty, so it is left out.')
+  const review = within(form).getByRole('button', { name: 'Review selected files' })
+  expect(review).toBeDisabled()
+  expect(form).toHaveTextContent('Pick a file first.')
+  await user.click(row)
+  expect(review).toBeEnabled()
+  expect(form).toHaveTextContent('1 selected, 16 bytes.')
+  await user.click(review)
+  await waitFor(() => expect(calls('/shares/prepare')).toHaveLength(1), T)
+  expect(calls('/shares/prepare')[0].body).toMatchObject({ ticket: 'DEMO-0001', artifacts: [], workfiles: ['hello.txt'] })
+  expect(JSON.stringify(calls('/shares/prepare')[0].body)).not.toContain('orch-work') // a name, never a path
+  expect(calls('/shares/send')).toEqual([])
+})
+
+it('P03: with only an empty result and no working files, the window says what to do', async () => {
+  route()
+  emptyResult = true
+  onlyEmpty = true
+  const user = userEvent.setup()
+  const form = await openForm(user)
+  expect(form).toHaveTextContent('Nothing is ready to share yet. Add a file from this computer.')
+  expect(form).toHaveTextContent('Pick a file first.')
 })

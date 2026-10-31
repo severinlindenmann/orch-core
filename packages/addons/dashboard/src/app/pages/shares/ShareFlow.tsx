@@ -13,6 +13,7 @@ import { useEffect, useRef, useState } from 'react'
 import { copyText } from '@/app/copyLink'
 import { SignPopover } from '@/components/sign/SignPopover'
 import { Inline } from '@/components/sign/visible'
+import { workdirQueries } from '@/api/workdir'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
@@ -108,9 +109,20 @@ export function ShareFlow({ ws, ticket, resume, only, onClose }: { ws: string; t
   // the signature settled: closing the review after that must not discard the copy that is being sent
   const signed = useRef(false)
 
-  const files = ticket.artifacts.map((a) => ({ a, why: unshareable(a) }))
-  const total = ticket.artifacts.filter((a) => picked.includes(a.name)).reduce((n, a) => n + (a.bytes ?? 0), 0) + added.reduce((n, f) => n + f.size, 0)
-  const count = picked.length + added.length
+  // P03: the ticket's working files (the folder the Working files card sums up), offered next to the results
+  const folder = useQuery({ ...workdirQueries.ofTicket(ws, ticket.key), enabled: stage.at === 'form' })
+  const [workPicked, setWorkPicked] = useState<string[]>([])
+  const resultNames = ticket.artifacts.map((a) => a.name.toLowerCase())
+  const work = (folder.data?.available && folder.data.exists ? (folder.data.items ?? []) : []).filter((f) => !resultNames.includes(f.name.toLowerCase()))
+  const workRows = work.filter((f) => unshareable({ name: f.name, kind: 'file', bytes: f.bytes }) === null)
+  // empty files are not offered; one line says so, instead of a greyed-out row with no way forward
+  const emptyNames = [...ticket.artifacts.filter((a) => a.bytes === 0 && unshareable(a) !== null).map((a) => a.name), ...work.filter((f) => f.bytes === 0).map((f) => f.name)]
+  const files = ticket.artifacts.filter((a) => a.bytes !== 0).map((a) => ({ a, why: unshareable(a) }))
+  const total =
+    ticket.artifacts.filter((a) => picked.includes(a.name)).reduce((n, a) => n + (a.bytes ?? 0), 0) +
+    work.filter((f) => workPicked.includes(f.name)).reduce((n, f) => n + f.bytes, 0) +
+    added.reduce((n, f) => n + f.size, 0)
+  const count = picked.length + workPicked.length + added.length
 
   const addFiles = async (list: FileList | null) => {
     const chosen = Array.from(list ?? [])
@@ -118,10 +130,11 @@ export function ShareFlow({ ws, ticket, resume, only, onClose }: { ws: string; t
     if (chosen.length === 0 || adding) return
     setAdding(true)
     setError('')
-    const taken = [...ticket.artifacts.map((a) => a.name), ...added.map((f) => f.name)]
+    const taken = [...ticket.artifacts.map((a) => a.name), ...work.map((f) => f.name), ...added.map((f) => f.name)]
+    let n = count
     try {
       for (const file of chosen) {
-        if (picked.length + taken.length - ticket.artifacts.length >= LIMITS.files) {
+        if (n >= LIMITS.files) {
           setError(`A share holds at most ${LIMITS.files} files.`)
           break
         }
@@ -132,6 +145,7 @@ export function ShareFlow({ ws, ticket, resume, only, onClose }: { ws: string; t
         }
         const got = await sharesApi.upload(ws, { name: file.name, data: await fileBase64(file) }, newIdem())
         taken.push(got.name)
+        n += 1
         setAdded((a) => [...a, got])
       }
     } catch (e) {
@@ -154,7 +168,7 @@ export function ShareFlow({ ws, ticket, resume, only, onClose }: { ws: string; t
     setBusy(true)
     setError('')
     try {
-      const got = await sharesApi.prepare(ws, { ticket: ticket.key, artifacts: picked, ...(added.length ? { uploads: added.map((f) => f.upload_id) } : {}), kind, days, ...(kind === 'once' ? { views } : {}) }, prepareIdem)
+      const got = await sharesApi.prepare(ws, { ticket: ticket.key, artifacts: picked, ...(workPicked.length ? { workfiles: workPicked } : {}), ...(added.length ? { uploads: added.map((f) => f.upload_id) } : {}), kind, days, ...(kind === 'once' ? { views } : {}) }, prepareIdem)
       void refreshShares(qc, ws)
       setStage({ at: 'confirm', staged: got.staged })
     } catch (e) {
@@ -263,7 +277,9 @@ export function ShareFlow({ ws, ticket, resume, only, onClose }: { ws: string; t
             {data && !data.configured && <p className="text-warning">No publish server is set up yet. Set one up on the Add-ons page, then come back.</p>}
             <fieldset className="space-y-1.5">
               <legend className="mb-1 font-medium">Files</legend>
-              {files.length === 0 && added.length === 0 && <p className="text-text-muted">This ticket has no files yet. Add one from this computer.</p>}
+              {files.length === 0 && workRows.length === 0 && added.length === 0 && (
+                <p className="text-text-muted">{emptyNames.length > 0 ? 'Nothing is ready to share yet. Add a file from this computer.' : 'This ticket has no files yet. Add one from this computer.'}</p>
+              )}
               {files.map(({ a, why }) => (
                 <label key={a.name} className="flex items-start gap-2">
                   <input
@@ -279,6 +295,25 @@ export function ShareFlow({ ws, ticket, resume, only, onClose }: { ws: string; t
                     {why && <span className="block text-[12px] text-text-muted">{why}</span>}
                   </span>
                 </label>
+              ))}
+              {workRows.map((f) => (
+                <label key={`work:${f.name}`} className="flex items-start gap-2" data-workfile={f.name}>
+                  <input
+                    type="checkbox"
+                    className="mt-0.5"
+                    checked={workPicked.includes(f.name)}
+                    onChange={(e) => setWorkPicked((p) => (e.target.checked ? [...p, f.name] : p.filter((n) => n !== f.name)))}
+                  />
+                  <span className="min-w-0 flex-1">
+                    <Inline>{f.name}</Inline>
+                    <span className="text-text-faint"> · {fmtSize(f.bytes)} · working file</span>
+                  </span>
+                </label>
+              ))}
+              {emptyNames.map((n) => (
+                <p key={`empty:${n}`} className="text-[12px] text-text-muted">
+                  {n} is empty, so it is left out.
+                </p>
               ))}
               {added.map((f) => (
                 <div key={f.upload_id} className="flex items-start gap-2" data-picked={f.upload_id}>
@@ -348,6 +383,7 @@ export function ShareFlow({ ws, ticket, resume, only, onClose }: { ws: string; t
             <Button variant="ghost" onClick={onClose} disabled={busy}>
               Cancel
             </Button>
+            {count === 0 && !busy && <span className="mr-auto self-center text-[12px] text-text-muted">Pick a file first.</span>}
             <Button onClick={() => void prepare()} disabled={busy || adding || count === 0 || (!!data && !data.configured)}>
               {busy ? 'Preparing…' : 'Review selected files'}
             </Button>

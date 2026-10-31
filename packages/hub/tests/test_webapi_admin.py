@@ -165,7 +165,7 @@ def test_malformed_query_and_non_loopback_listen(w):
 
 def test_setup_token_creates_one_admin_once(w):
     f = w.env.keys.state / "setup-token"
-    f.write_text("tok-abc\n")
+    f.write_text(json.dumps({"token": "tok-abc", "issued_ms": w.api.d.now_ms()}))
     w.api.d.setup_token_file = f
     body = {"token": "wrong", "name": "boss", "password": "a long password 1"}
     assert w.call("POST", "/setup", body)[:2] == (
@@ -189,7 +189,7 @@ def test_setup_token_creates_one_admin_once(w):
 
 def test_setup_signs_the_new_admin_in_once_with_a_browser_cookie(w):
     f = w.env.keys.state / "setup-token"
-    f.write_text("tok-abc\n")
+    f.write_text(json.dumps({"token": "tok-abc", "issued_ms": w.api.d.now_ms()}))
     w.api.d.setup_token_file = f
     for admin in list(w.env.acc.members("hub-admin")):
         w.env.acc.remove_member("hub-admin", admin)
@@ -360,3 +360,28 @@ def test_ga07_only_a_hub_admin_may_use_the_new_routes(w):
         ("PUT", "/admin/default-group", {"group": None}),
     ):
         assert w.call(method, path, body, token=tok)[0] in (401, 403), path
+
+
+def test_setup_expiry_and_replacement(w):
+    f = w.env.keys.state / "setup-token"
+    w.api.d.setup_token_file = f
+    for admin in list(w.env.acc.members("hub-admin")):
+        w.env.acc.remove_member("hub-admin", admin)
+    body = {"token": "old", "name": "boss", "password": "a long password 1"}
+    f.write_text(json.dumps({"token": "old", "issued_ms": w.api.d.now_ms() - 86400001}))
+    status, result, _ = w.call("POST", "/setup", body)
+    assert status == 403 and result["error"] == "setup_code_expired"
+    assert (
+        result["message"]
+        == "This first-admin link has expired. Run orch install hub --new-admin-code on the server for a new one."
+    )
+    assert f.exists() and not w.env.acc.members("hub-admin")
+    # no oracle: a wrong token learns nothing about an expired (or any) code
+    status, result, _ = w.call("POST", "/setup", {**body, "token": "guess"})
+    assert status == 401 and result["error"] == "bad_credentials"
+    f.write_text("old")  # not a valid code file at all: the same answer as a wrong token
+    assert w.call("POST", "/setup", body)[1]["error"] == "bad_credentials"
+    f.write_text(json.dumps({"token": "new", "issued_ms": w.api.d.now_ms()}))
+    assert w.call("POST", "/setup", body)[0] == 401
+    assert w.call("POST", "/setup", {**body, "token": "new"})[0] == 200
+    assert not f.exists()

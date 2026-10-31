@@ -86,6 +86,7 @@ async function api(method, path, body) {
 }
 const WORDS = {
   no_session: "Your sign-in ended. Sign in again.",
+  setup_code_expired: "This first-admin link has expired. Run orch install hub --new-admin-code on the server for a new one.",
   bad_credentials: "Wrong name, password or code. A code works once; wait for the next one.",
   rate_limited: "Too many tries. Wait a moment.",
   event_changed: "The request changed while you were deciding.",

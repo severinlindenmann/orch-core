@@ -19,13 +19,13 @@ const view = (ticket: TicketDocument, action: HumanAction | null) => <QueryClien
 
 it('a pick on ticket A does not carry to ticket B, nor past a close', () => {
   const r = render(view(t('A-1'), { kind: 'verdict' }))
-  expect(screen.getByTestId('confirm')).toHaveTextContent('Pass')
+  expect(screen.getAllByRole('radio').every((r) => !(r as HTMLInputElement).checked)).toBe(true)
   fireEvent.click(screen.getByRole('radio', { name: /Send back/ }))
   expect(screen.getByTestId('confirm')).toHaveTextContent('Send back')
   r.rerender(view(t('B-1'), { kind: 'verdict' }))
-  expect(screen.getByTestId('confirm')).toHaveTextContent('Pass')
+  expect(screen.getAllByRole('radio').every((r) => !(r as HTMLInputElement).checked)).toBe(true)
   fireEvent.click(screen.getByRole('radio', { name: /Send back/ }))
   r.rerender(view(t('B-1'), null))
   r.rerender(view(t('B-1'), { kind: 'verdict' }))
-  expect(screen.getByTestId('confirm')).toHaveTextContent('Pass')
+  expect(screen.getAllByRole('radio').every((r) => !(r as HTMLInputElement).checked)).toBe(true)
 })

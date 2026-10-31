@@ -42,10 +42,10 @@ describe('G4 signing dialogs say what you sign', () => {
     const dialog = await openMenuItem(user, /Give verdict/)
     const radios = within(dialog).getAllByRole('radio')
     expect(radios).toHaveLength(2)
-    // every requirement is checked on this ticket: Pass is preselected and recommended, the person still presses
-    expect(radios[0]).toBeChecked()
+    // Even with every requirement checked, the person must choose an outcome.
+    expect(radios[0]).not.toBeChecked()
     expect(radios[1]).not.toBeChecked()
-    expect(dialog).toHaveTextContent(/Recommended: the agent's check passed/)
+    expect(dialog).not.toHaveTextContent(/Recommended: the agent's check passed/)
     expect(dialog).not.toHaveTextContent(/evidenced|receipts?/)
     expect(within(dialog).getByRole('button', { name: /Open evidence/ })).toBeInTheDocument()
     // The verdict signs the commit: the head of the branch, with its diffstat, in the choice and in the covers.

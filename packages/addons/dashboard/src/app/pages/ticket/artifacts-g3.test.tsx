@@ -219,8 +219,8 @@ describe('P11 working files', () => {
   })
   it('shows the mock workdir fixture on DEMO-0045 Results', async () => {
     await artifactsTab('DEMO-0045')
-    expect(await screen.findByText("hello.txt is in the ticket's work folder, but the agent did not add it as a result.", {}, T)).toBeInTheDocument()
-    expect(screen.getByRole('list', { name: "Files in the ticket's work folder" })).toHaveTextContent('hello.txt · 12 bytes')
+    expect(await screen.findByRole('button', { name: 'Preview hello.txt' }, T)).toBeInTheDocument()
+    expect(screen.getByRole('list', { name: 'Artifacts' })).toHaveTextContent('In the work folder · not added as a result by the agent')
   })
 })
 
@@ -228,7 +228,19 @@ describe('Ticket Results tab count (P11)', () => {
   it('counts delivered results only, not the agent\'s check logs', async () => {
     renderApp('/ticket/DEMO-0045')
     await screen.findByRole('heading', { level: 1 }, T)
-    // DEMO-0045 has only task check logs: nothing delivered, so the tab says 0
-    expect(screen.getByRole('tab', { name: /Results/ })).toHaveTextContent(/Results\s*0$/)
+    // DEMO-0045 also has a working file: it counts as a result.
+    await waitFor(() => expect(screen.getByRole('tab', { name: /Results/ })).toHaveTextContent(/Results\s*1$/))
   })
+})
+
+
+it('shows the requested working file as the first result and previews its text', async () => {
+  const { user } = await artifactsTab('DEMO-0045')
+  const list = screen.getByRole('list', { name: 'Artifacts' })
+  const button = await within(list).findByRole('button', { name: 'Preview hello.txt' })
+  expect(within(list).getAllByRole('listitem')[0]).toHaveTextContent('hello.txt')
+  expect(list).toHaveTextContent('In the work folder · not added as a result by the agent')
+  expect(screen.getByRole('tab', { name: /Results/ })).toHaveTextContent('1')
+  await user.click(button)
+  expect(await screen.findByText('hello from orch')).toBeInTheDocument()
 })

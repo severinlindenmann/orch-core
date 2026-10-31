@@ -1,4 +1,4 @@
-import { allChecked, VerdictEvidence, VerdictPreview } from './EvidenceView'
+import { VerdictEvidence, VerdictPreview } from './EvidenceView'
 import { ManualAcceptanceReview } from './ManualAcceptance'
 // A ticket's human action in hand-off mode (real host): approve, request changes, verdict, answer. The form holds only
 // what the person types or picks; once they press the verb, the host prepares the request and the dialog shows the
@@ -76,13 +76,12 @@ export function HandoffSignDialog({
   const navigate = useNavigate()
   const qc = useQueryClient()
   const [text, setText] = useState('')
-  // Only a pick is stored; Pass is the default while every requirement is proven (what the list calls "Recommended"). Nothing is
-  // sent by this: the person still presses Sign, and the verdict signed is the one shown. A new action starts without a pick.
+  // Both outcomes start unselected. Only an explicit choice is stored.
   // The key names the ticket and the content round (hash) too: the dialog stays mounted across tickets and verify rounds.
   const actionKey = action ? `${ticket.key}|${action.kind}-${action.kind === 'answer' ? action.question : 'gate' in action ? action.gate : ''}|${liveHash(ticket, action) ?? ''}` : ''
   const [pick, setPick] = useState<{ k: string; v: 'pass' | 'fail' } | null>(null)
   if (!action && pick) setPick(null) // closed: the next opening starts without a pick
-  const outcome: 'pass' | 'fail' | null = pick && pick.k === actionKey ? pick.v : action?.kind === 'verdict' && allChecked(ticket) ? 'pass' : null
+  const outcome: 'pass' | 'fail' | null = pick && pick.k === actionKey ? pick.v : null
   const setOutcome = (v: 'pass' | 'fail') => setPick({ k: actionKey, v })
   const radio = useRef<HTMLInputElement>(null)
   // The opening press of an approve is used once: it is kept per action object and spent when the review starts,
@@ -196,7 +195,7 @@ export function HandoffSignDialog({
             <legend className="sr-only">Verdict</legend>
             {(
               [
-                ['pass', 'Pass', allChecked(ticket) ? "Recommended: the agent's check passed" : 'The evidence is enough'],
+                ['pass', 'Pass', 'The evidence is enough'],
                 ['fail', 'Send back', 'Something must change'],
               ] as const
             ).map(([r, label, reason], i) => (

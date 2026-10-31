@@ -111,6 +111,7 @@ OPS = {
         # Ticket work folders (design r3 part C): what a ticket without a codebase left in its folder, and the
         # person's own delete of it (a host-side write with an idem, no log event).
         "workdir.get",
+        "workdir.read",
         "workdir.delete",
         # Focus mode (focus/1): a run's transcript as chat items (a read; the runner reads the harness files)
         "run.transcript",
@@ -188,7 +189,7 @@ COALESCED_READS = frozenset(
     {"addon.list", "whoami", "workspace.show", "workspace.settings", "member.list", "hub.status"}
 )
 WORKTREE_OPS = {"worktree.list", "worktree.create", "worktree.remove", "worktree.diff"}
-WORKDIR_OPS = {"workdir.get", "workdir.delete"}
+WORKDIR_OPS = {"workdir.get", "workdir.read", "workdir.delete"}
 FOCUS_OPS = {"run.transcript", "run.sources", "delegation.list", "run.link", "run.detach"}
 PUBLISH_OPS = {
     "publish.list",

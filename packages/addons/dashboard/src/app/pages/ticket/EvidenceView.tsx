@@ -13,7 +13,7 @@ import { cn } from '@/lib/utils'
 import { visible } from '@/components/sign/visible'
 import { commitCover } from '@/api/gates'
 import { agentName, fmtBytes, Pill, UNKNOWN_AGENT } from './shared'
-import { MissingDelivery, Viewer } from './Artifacts'
+import { MissingDelivery, Viewer, useResultFiles } from './Artifacts'
 import { cardTitle, isAgentCheck } from './EvidenceThumb'
 
 /** The artifacts a criterion lists as its proof (tasks are receipts, shown by the task rows). */
@@ -141,6 +141,8 @@ export function VerdictPreview({ ticket, artifact, onBack }: { ticket: TicketDoc
  * and one for orch. An unknown kind counts as an agent. Outside a dialog (Today) the rows keep a quiet provenance line.
  */
 export function VerdictEvidence({ ticket, dialog = true, onPreview, name = () => 'a person' }: { ticket: TicketDocument; /** false: Today's row, not a dialog. */ dialog?: boolean; onPreview?: (p: { artifact: Artifact; acId: string }) => void; name?: (id: string) => string }) {
+  const files = useResultFiles(ticket)
+  const [inline, setInline] = useState<Artifact | null>(null)
   const withProof = ticket.acceptance_state.map((ac) => ({ ac, items: proofArtifacts(ticket, ac) }))
   // A criterion proved by a finished check (a task receipt) has evidence too, just no file: it is not "missing".
   const byCheck = withProof.filter((x) => x.items.every(isAgentCheck) && (x.items.length > 0 || x.ac.evidence.some((ev) => ev.kind === 'task')))
@@ -169,6 +171,12 @@ export function VerdictEvidence({ ticket, dialog = true, onPreview, name = () =>
   )
   return (
     <section aria-label="Evidence" className="space-y-2 rounded-md border border-border bg-bg px-3 py-2">
+      {files.length > 0 && <ul aria-label="Delivered files" className="space-y-2">{files.map((a) => <li key={a.name}>
+        <p className="break-all">{visible(a.name)}</p>
+        {a.workFolder && <p className="text-[12px] text-text-muted">In the work folder · not added as a result by the agent</p>}
+        <Button type="button" variant="outline" size="sm" onClick={() => onPreview ? onPreview({ artifact: a, acId: '' }) : setInline(inline?.name === a.name ? null : a)}>Preview {visible(a.name)}</Button>
+      </li>)}</ul>}
+      {inline && <Viewer a={inline} ticket={ticket.key} agentHtml={false} />}
       <h3 className="text-[12px] font-medium text-text-muted">
         The agent checked {checked} of {withProof.length} {withProof.length === 1 ? 'requirement' : 'requirements'}
         {total > 0 && ` · ${total} ${total === 1 ? 'file' : 'files'} attached`}
@@ -207,7 +215,7 @@ export function VerdictEvidence({ ticket, dialog = true, onPreview, name = () =>
         <ul data-testid="checked-by-agent" className="space-y-1 text-[12px] text-text-muted">
           {byCheck.map((x) => (
             <li key={x.ac.id}>
-              <span className="text-text">{visible(x.ac.text)}</span> · The agent&apos;s check · <MissingDelivery ticket={ticket} />
+              <span className="text-text">{visible(x.ac.text)}</span> · The agent&apos;s check{files.length === 0 && <> · <MissingDelivery ticket={ticket} /></>}
             </li>
           ))}
         </ul>

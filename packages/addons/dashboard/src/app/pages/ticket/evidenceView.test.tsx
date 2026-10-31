@@ -96,7 +96,8 @@ describe('a criterion proved by a task receipt (run 8, 7.3)', () => {
     const region = screen.getByRole('region', { name: 'Evidence' })
     expect(region).toHaveTextContent('The agent checked 2 of 2 requirements')
     expect(region).not.toHaveTextContent('No check or file yet')
-    expect(region).toHaveTextContent('Second · The agent\'s check · No file was delivered yet.')
+    expect(region).toHaveTextContent('Second · The agent\'s check')
+    expect(region).not.toHaveTextContent('No file was delivered yet.')
   })
 })
 
@@ -230,7 +231,19 @@ it('check-only artifact evidence uses the plain title and does not count a deliv
 it('verdict evidence lists the working file without claiming it was not delivered', () => {
   const t = ticket([], [ac({ text: 'Create hello.txt', evidence: [{ kind: 'task', ref: 'T1' }] })])
   wrap(<VerdictEvidence ticket={t} />, { folder: { available: true, exists: true, codebase: false, items: [{ name: 'hello.txt', bytes: 12 }] } })
-  expect(screen.getByTestId('checked-by-agent')).toHaveTextContent("hello.txt is in the ticket's work folder, but the agent did not add it as a result.")
-  expect(screen.getByRole('list', { name: "Files in the ticket's work folder" })).toHaveTextContent('hello.txt · 12 bytes')
-  expect(screen.queryByRole('button')).toBeNull()
+  const files = screen.getByRole('list', { name: 'Delivered files' })
+  expect(files).toHaveTextContent('hello.txt')
+  expect(files).toHaveTextContent('In the work folder · not added as a result by the agent')
+  expect(screen.getByRole('button', { name: 'Preview hello.txt' })).toBeInTheDocument()
+  expect(files.compareDocumentPosition(screen.getByRole('heading', { level: 3 })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  expect(document.body).not.toHaveTextContent(/not delivered|no file attached/)
+})
+
+it('an attached file leads even when the requirement is checked by a task', () => {
+  const t = ticket([art()], [ac({ evidence: [{ kind: 'task', ref: 'T1' }] })])
+  wrap(<VerdictEvidence ticket={t} />)
+  const files = screen.getByRole('list', { name: 'Delivered files' })
+  expect(files).toHaveTextContent('elefanten.html')
+  expect(files.compareDocumentPosition(screen.getByRole('heading', { level: 3 })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  expect(document.body).not.toHaveTextContent(/not delivered|No file was delivered|no file attached/)
 })

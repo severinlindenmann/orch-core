@@ -683,3 +683,6 @@ Create a ticket with “Create and start”. With missing/short access, verify t
 ### D5 check (2026-10-28)
 
 On a real host, post a comment and let the C3 arm finish: the toast says “Sending in N s; closing this page still sends.” Undo within ten seconds cancels without a signature. Navigate away or close/reopen the page to see delivery checked against the signer. Restart the signer during the wait to see “Not sent”; sleep past the deadline by more than 30 seconds has the same outcome. Add-on off and runner off offer Undo that opens a fresh turn-on review. Follow-up cancel keeps its existing signed, authority-checked Undo within 120 seconds.
+
+
+P11/P26/W16: open DEMO-0045 → Results → Preview hello.txt ("hello from orch"). Give verdict: the working file precedes the agent check and both outcomes start unselected. On a real host, write a listed file in a ticket without a codebase and advance its head or refocus the window; Working files and Results refresh.

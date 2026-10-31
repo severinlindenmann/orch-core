@@ -2152,3 +2152,12 @@ Revert: Restore the prior gate only together with a coordinated click contract c
 - **Decision:** Results shows plain delivered-file cards and folds receipts/task logs into the first card’s Details. When there are only checks, show the requested filename as undelivered, or a generic missing-file sentence. Check previews and evidence use “The agent's check”; only existing host-attestation rules permit passed/failed wording.
 - **Why:** An agent’s check log does not establish that the requested file was delivered. Keep technical metadata and real-file publishing in Details. Existing Normal fixtures DEMO-0045 (only task check logs) and DEMO-0043 (delivered CSV plus checks) exercise both states; no extra seeds are needed.
 - **Revert:** Restore separate artifact cards and metadata placement in the ticket Results/evidence components; keep host-attestation rules unchanged.
+
+
+### 2026-11-01 — P11/P26/W16: see the requested file before deciding
+
+**Decision:** Results includes unfiled regular work-folder files for tickets without a codebase, with read-only text/image previews capped at 256 KB. Requested filenames lead. Verdicts show files before agent checks, and neither outcome is preselected. Folder queries follow ticket head sequence and window focus.
+
+**Why:** QA J12 found hello.txt on disk while Results showed only a receipt and Pass was selected. Existing files must be visible before a person chooses a verdict.
+
+**Revert:** Remove work-folder result cards/read previews and the new read route/op; restore the previous query key. Keep explicit verdict choice unless the owner changes P26.

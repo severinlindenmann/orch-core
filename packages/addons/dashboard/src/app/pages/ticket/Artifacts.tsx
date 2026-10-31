@@ -21,7 +21,7 @@ import { cn } from '@/lib/utils'
 import { agentName, Ago, fmtBytes, Mono, Pill, shortHash, type Jump, type TabProps } from './shared'
 import { addonHairline, addonTile } from '@/addon-ui/addonClasses'
 import { queries } from '@/api/queries'
-import { workdirQueries, sizeText } from '@/api/workdir'
+import { workdirQueries, workdirApi, sizeText } from '@/api/workdir'
 import { artifactTextQuery, sameDigest, capText, looksBinary, TEXT_PREVIEW_BYTES } from '@/api/artifactText'
 import { prose, visible } from '@/components/sign/visible'
 import { verifiedMedia } from '@/api/evidenceMedia'
@@ -510,6 +510,7 @@ function RemotePreview({ a, ticket, unavailable, holdPictures = false }: { a: Ar
 
 /** The content of one artifact (also the Artifacts page's preview pane): same sandbox and agent-HTML rule everywhere. */
 export function Viewer({ a, agentHtml, ticket, holdPictures = false }: { a: Artifact; agentHtml: boolean; /** The ticket it is on: lets a file with no inline content be read as text. */ ticket?: string; /** Opened without a click (an evidence list): SVG and GIF wait for one. */ holdPictures?: boolean }) {
+  if (a.workFolder && ticket) return <WorkFilePreview ws={a.workFolder} ticket={ticket} name={a.name} />
   const hasFile = a.bytes != null && !a.addon && !a.url
   if (a.kind === 'screenshot' && ticket && hasFile && !a.preview)
     return (
@@ -637,7 +638,7 @@ export function MissingDelivery({ ticket }: { ticket: TicketDocument }) {
   const home = workspaceOfTicket(ticket.key, workspaces.data ?? [])
   const needsFolder = !ticket.links?.repos?.length && !ticket.artifacts.some((a) => !isAgentCheck(a))
   const enabled = !!home && needsFolder
-  const folder = useQuery({ ...workdirQueries.ofTicket(home?.id ?? '', ticket.key), enabled })
+  const folder = useQuery({ ...workdirQueries.ofTicket(home?.id ?? '', ticket.key, ticket.head?.seq), enabled })
   const items = enabled && !folder.isError && folder.data?.exists && !folder.data.codebase ? folder.data.items ?? [] : []
   const name = requestedFile(ticket)
   const found = name ? items.find((item) => item.name === name) : items[0]
@@ -651,6 +652,35 @@ export function MissingDelivery({ ticket }: { ticket: TicketDocument }) {
       {listed.map((item) => <li key={item.name} className="break-all">{visible(item.name)} · {sizeText(item.bytes)}</li>)}
     </ul>
   </>
+}
+
+export function useResultFiles(ticket: TicketDocument) {
+  const workspaces = useQuery(queries.workspaces())
+  const home = workspaceOfTicket(ticket.key, workspaces.data ?? [])
+  const folder = useQuery({ ...workdirQueries.ofTicket(home?.id ?? '', ticket.key, ticket.head?.seq), enabled: !!home && !ticket.links?.repos?.length })
+  const files = ticket.artifacts.filter((a) => !isAgentCheck(a))
+  if (!ticket.links?.repos?.length && folder.data?.exists && !folder.data.codebase) {
+    for (const item of folder.data.items ?? []) {
+      if (!ticket.artifacts.some((a) => a.name === item.name)) files.push({ ...item, kind: 'other', sha256: '', at: '', added_by: '', workFolder: home!.id })
+    }
+  }
+  const requested = requestedFile(ticket)
+  return files.sort((a, b) => Number(b.name === requested) - Number(a.name === requested))
+}
+
+export function ResultCount({ ticket }: { ticket: TicketDocument }) {
+  return <>{useResultFiles(ticket).length}</>
+}
+
+export function WorkFilePreview({ ws, ticket, name }: { ws: string; ticket: string; name: string }) {
+  const q = useQuery({ queryKey: ['workdir.read', ws, ticket, name], queryFn: () => workdirApi.read(ws, ticket, name), staleTime: 0, retry: false })
+  if (q.isPending) return <p>Loading file…</p>
+  if (q.isError) return <p>The file could not be read.</p>
+  const f = q.data
+  if (f.too_big) return <p>This file is too big to preview ({sizeText(f.bytes)}; limit 256 KB).</p>
+  if (f.kind === 'text') return <pre className="whitespace-pre-wrap break-words">{visible(f.text ?? '')}</pre>
+  if (f.base64 && (f.kind === 'png' || f.kind === 'jpeg' || f.kind === 'webp')) return <img className="max-w-full" alt={name} src={`data:image/${f.kind};base64,${f.base64}`} />
+  return <p>No preview for this file type.</p>
 }
 
 function Meta({ a, jump }: { a: Artifact; jump: (j: Jump) => void }) {
@@ -689,7 +719,7 @@ export function Artifacts({ ticket, viewer, jump, focus }: TabProps & { focus?: 
     }
   }, [focus, ticket.artifacts])
 
-  const files = ticket.artifacts.filter((a) => !isAgentCheck(a))
+  const files = useResultFiles(ticket)
   const checks = ticket.artifacts.filter(isAgentCheck)
   const preview = (a: Artifact, el: HTMLElement) => { opener.current = el; setByJump(false); setOpen(a) }
   const checkRows = checks.map((a) => {
@@ -715,13 +745,14 @@ export function Artifacts({ ticket, viewer, jump, focus }: TabProps & { focus?: 
             <li key={a.name} id={`artifact-${a.name}`} data-kind={a.kind} aria-current={open?.name === a.name ? 'true' : undefined}
               className={cn('flex scroll-mt-4 flex-col rounded-lg border bg-surface p-3', a.addon ? addonHairline : 'border-border')}>
               <p className="break-words text-[13px] font-medium">{a.name}</p>
+              {a.workFolder && <p className="text-[12px] text-text-muted">In the work folder · not added as a result by the agent</p>}
               <div className="mt-2"><ArtifactAction a={a} addonPage={addonPage} current={open?.name === a.name} onPreview={(el) => preview(a, el)} /></div>
               <details className="mt-2 text-[12px] text-text-muted">
                 <summary className="cursor-pointer">Details</summary>
                 {a.label && <p>{a.label}</p>}
-                <p>by {viewer.name(a.added_by)} · <Ago at={a.at} /></p>
-                <Meta a={a} jump={jump} />
-                {mayPublish && openMode(a) === 'preview' && !unshareable(a) && (
+                {!a.workFolder && <p>by {viewer.name(a.added_by)} · <Ago at={a.at} /></p>}
+                {!a.workFolder && <Meta a={a} jump={jump} />}
+                {!a.workFolder && mayPublish && openMode(a) === 'preview' && !unshareable(a) && (
                   <Button type="button" variant="outline" size="sm" className={ACTION} aria-label={`Publish ${a.name} as a link`} onClick={() => setPublishing({ name: a.name, step: publishOn ? 'share' : 'turnon' })}>
                     <Link2 aria-hidden />Publish as link
                   </Button>
@@ -812,7 +843,7 @@ export function ArtifactDrawer({
                     {!!open.bytes && <span>{fmtBytes(open.bytes)}</span>}
                     {context}
                   </SheetDescription>
-                  <ArtifactFacts a={open} by={by} />
+                  {open.workFolder ? <p className="text-[12px] text-text-muted">In the work folder · not added as a result by the agent</p> : <ArtifactFacts a={open} by={by} />}
                 </>
               )}
             </SheetHeader>

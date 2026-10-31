@@ -613,11 +613,17 @@ def workdir_read(layout: Layout, key: str, name: str, max_bytes: int) -> bytes:
         raise LayoutError("the work folder is not there")
     try:
         try:
+            before = os.stat(name, dir_fd=got[0], follow_symlinks=False)
+            # refuse a FIFO, socket, device, link or foreign file BEFORE opening it (an open alone can block or act)
+            if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1 or before.st_uid != _file_owner():
+                raise OSError("not a plain file")
             fd = os.open(name, _FILE, dir_fd=got[0])
         except OSError:
             raise LayoutError(f"{name[:60]} is not a file in the work folder") from None
         try:
             st = os.fstat(fd)
+            if (before.st_dev, before.st_ino, before.st_mode) != (st.st_dev, st.st_ino, st.st_mode):
+                raise LayoutError("the work file changed while opening")
             if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1 or st.st_uid != _file_owner():
                 raise LayoutError(f"{name[:60]} is not a plain file")
             if st.st_size > max_bytes:

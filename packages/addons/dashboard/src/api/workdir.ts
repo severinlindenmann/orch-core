@@ -10,6 +10,8 @@ import { ApiError } from './types'
 
 export { newIdem }
 
+export interface WorkFile { name: string; bytes: number; sha256?: string; kind?: "text" | "png" | "jpeg" | "webp" | "other"; text?: string; base64?: string; too_big?: boolean }
+
 export interface WorkFolder {
   available: boolean
   exists: boolean
@@ -32,11 +34,14 @@ export const workdirApi = {
   // the real host is asked directly, as before; only the mockup (no real host) answers through the mock router (P11)
   get: (ws: string, ticket: string) =>
     isRealHost() ? call<WorkFolder>('GET', `${w(ws)}/tickets/${encodeURIComponent(ticket)}/workdir`) : api.getWorkFolder(ws, ticket),
+  read: (ws: string, ticket: string, name: string) => isRealHost()
+    ? call<WorkFile>('GET', `${w(ws)}/tickets/${encodeURIComponent(ticket)}/workdir/read?name=${encodeURIComponent(name)}`)
+    : api.readWorkFile(ws, ticket, name),
   remove: (ws: string, ticket: string, idem: string) => call<{ deleted: boolean }>('POST', `${w(ws)}/workdir/delete`, { ticket, idem }),
 }
 
 export const workdirQueries = {
-  ofTicket: (ws: string, ticket: string) => queryOptions({ queryKey: ['workdir', ws, ticket], queryFn: () => workdirApi.get(ws, ticket), retry: false }),
+  ofTicket: (ws: string, ticket: string, seq?: number) => queryOptions({ queryKey: seq === undefined ? ['workdir', ws, ticket] : ['workdir', ws, ticket, seq], refetchOnWindowFocus: 'always', queryFn: () => workdirApi.get(ws, ticket), retry: false }),
 }
 
 export function sizeText(bytes: number): string {

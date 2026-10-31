@@ -18,7 +18,7 @@ import { gateActionName, policyText } from './actions'
 import type { HumanAction } from './shared'
 import { queries } from '@/api/queries'
 import { handoffMode } from '@/api/features'
-import { allChecked, CommitLine, VerdictEvidence, VerdictPreview } from './EvidenceView'
+import { CommitLine, VerdictEvidence, VerdictPreview } from './EvidenceView'
 import { HandoffSignDialog } from './HandoffSignDialog'
 
 type Described = { title: string; gate?: GateName; hash: string; covers: string[]; policy?: string }
@@ -150,7 +150,7 @@ function SimulatedSignDialog({ ticket, action, onClose, onOpenEvidence, onOpenCh
   const navigate = useNavigate()
   const [phase, setPhase] = useState<'confirm' | 'touch' | 'sending'>('confirm')
   const [text, setText] = useState('')
-  const [result, setResult] = useState<'pass' | 'fail' | null>(() => (action?.kind === 'verdict' && allChecked(ticket) ? 'pass' : null))
+  const [result, setResult] = useState<'pass' | 'fail' | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [preview, setPreview] = useState<{ artifact: Artifact; acId: string } | null>(null)
   const workspaces = useQuery(queries.workspaces())
@@ -168,7 +168,7 @@ function SimulatedSignDialog({ ticket, action, onClose, onOpenEvidence, onOpenCh
   useEffect(() => {
     setPhase('confirm')
     setText('')
-    setResult(action?.kind === 'verdict' && allChecked(opened) ? 'pass' : null)
+    setResult(null)
     setError(null)
     setPreview(null)
   }, [action])
@@ -304,7 +304,7 @@ function SimulatedSignDialog({ ticket, action, onClose, onOpenEvidence, onOpenCh
               <legend className="sr-only">Verdict</legend>
               {(
                 [
-                  ['pass', passLabel, allChecked(opened) ? "Recommended: the agent's check passed" : 'The evidence is enough'],
+                  ['pass', passLabel, 'The evidence is enough'],
                   ['fail', 'Send back', 'Something must change'],
                 ] as const
               ).map(([r, label, reason], i) => (

@@ -158,6 +158,7 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/tickets/{key}/delegations",
         "/api/w/{ws}/tickets/{key}/worktree-diff",
         "/api/w/{ws}/tickets/{key}/workdir",
+        "/api/w/{ws}/tickets/{key}/workdir/read",
         "/api/w/{ws}/workdir/delete",
         "/api/w/{ws}/runs/{run}/attach",
         "/term",

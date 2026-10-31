@@ -100,7 +100,7 @@ _READS = frozenset(
         "workspace.show", "member.list", "session.list", "grant.list",
         "activity.list", "workspace.settings", "ticket.text",
         "records.snapshot", "records.export_check", "records.status", "reader.list",
-        "phone.requests", "phone.status", "gate.input", "workdir.get",
+        "phone.requests", "phone.status", "gate.input", "workdir.get", "workdir.read",
         "run.list", "run.sub", "run.transcript", "run.sources", "worktree.diff", "delegation.list",
     }
 )  # fmt: skip

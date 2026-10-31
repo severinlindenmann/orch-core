@@ -16,7 +16,7 @@ import { toPublicPath } from '@/app/urls'
 import { TicketEditProvider } from './EditTicket'
 import { AcceptanceTasks } from './AcceptanceTasks'
 import { Artifacts } from './Artifacts'
-import { isAgentCheck } from './EvidenceThumb'
+import { ResultCount } from './Artifacts'
 import { Changes, HAS_CHANGES } from './Changes'
 import { hasFeature, isRealHost } from '@/api/features'
 import { diffstat } from '@/api/gates'
@@ -240,7 +240,7 @@ export function TicketPage({ ticketKey }: { ticketKey: string }) {
             <TabsTrigger value="artifacts">
               Results
               {/* P11: the count is delivered results only; the agent's own check logs are not results */}
-              <span className="font-mono text-[11px] text-text-faint">{ticket.artifacts.filter((a) => !isAgentCheck(a)).length}</span>
+              <span className="font-mono text-[11px] text-text-faint"><ResultCount ticket={ticket} /></span>
             </TabsTrigger>
             <TabsTrigger value="history">History</TabsTrigger>
           </TabsList>

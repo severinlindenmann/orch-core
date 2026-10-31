@@ -528,12 +528,18 @@ export function buildRouter(): MockRouter {
     const res = s.conn.grant(c.params.ws, c.params.name, c.body, person(s))
     return res.ok ? ok(res.skill) : fail(res.status, res.code, res.message, res.hint)
   })
+  r.add('GET', '/api/w/:ws/tickets/:key/workdir/read', (s, c) => {
+    const t = visibleTicket(s, c.params.key)
+    if (isResponse(t)) return t
+    if (s.workspaceOf(t.key)?.id !== c.params.ws || t.links.repos.length || t.key !== 'DEMO-0045' || c.query.get('name') !== 'hello.txt') return fail(404, 'not_found', 'No such work file')
+    return ok({ name: 'hello.txt', bytes: 15, sha256: 'a5262ccc3fcd2573828b0bf205c33bb193d00377de152cb0af751da3f5d75232', kind: 'text', text: 'hello from orch' })
+  })
   r.add('GET', '/api/w/:ws/tickets/:key/workdir', (s, c) => {
     const t = visibleTicket(s, c.params.key)
     if (isResponse(t)) return t
     if (s.workspaceOf(t.key)?.id !== c.params.ws) return fail(404, 'not_found', 'No such ticket')
     const codebase = t.links.repos.length > 0
-    const items = !codebase && t.key === 'DEMO-0045' ? [{ name: 'hello.txt', bytes: 12 }] : []
+    const items = !codebase && t.key === 'DEMO-0045' ? [{ name: 'hello.txt', bytes: 15 }] : []
     return ok({ available: true, exists: items.length > 0, codebase, items })
   })
   r.add('GET', '/api/tickets/:key', (s, c) => {

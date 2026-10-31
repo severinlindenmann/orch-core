@@ -686,3 +686,10 @@ On a real host, post a comment and let the C3 arm finish: the toast says “Send
 
 
 P11/P26/W16: open DEMO-0045 → Results → Preview hello.txt ("hello from orch"). Give verdict: the working file precedes the agent check and both outcomes start unselected. On a real host, write a listed file in a ticket without a codebase and advance its head or refocus the window; Working files and Results refresh.
+
+### X3 check (2026-10-31)
+
+1. In the mock, use `?hub=delivery` and open DEMO-0043, DEMO-0045, DEMO-0042 and DEMO-0044. See: sent, waiting, not sent and refused respectively.
+2. On the not-sent ticket, choose Send now. See: the existing sharing review; nothing sent until Sign. Cancel sends nothing.
+3. Open Settings > Hub or the real host's Shares page with unsent shares. See: the count and Send now opening the same review.
+4. Join with pre-existing, unconfirmed share rules. See: “Some shares were made before you joined. Send them now?” Later dismisses it for that join; reopening Settings does not offer again.

@@ -2161,3 +2161,9 @@ Revert: Restore the prior gate only together with a coordinated click contract c
 **Why:** QA J12 found hello.txt on disk while Results showed only a receipt and Pass was selected. Existing files must be visible before a person chooses a verdict.
 
 **Revert:** Remove work-folder result cards/read previews and the new read route/op; restore the previous query key. Keep explicit verdict choice unless the owner changes P26.
+
+### 2026-10-31 — X3 share delivery states
+
+- **Decision:** Show core's current delivery state, and reuse the existing share review for a confirming sync. Send now opens a preview; Sign explicitly confirms its plan through the existing owner-only endpoint. No new signing operation or automatic confirmation.
+- **Why:** A rule retained before joining has no confirmed selection, so an automatic retry cannot deliver it. A selected ticket is not evidence of delivery.
+- **Revert:** Remove the new entry points and delivery badges together; retain core's confirmation boundary.

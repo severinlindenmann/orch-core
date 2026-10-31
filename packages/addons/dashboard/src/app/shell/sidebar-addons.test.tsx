@@ -85,3 +85,15 @@ it('does not restore another workspace’s More preference', async () => {
   const nav = within(await screen.findByRole('navigation', { name: 'Main' }))
   expect(nav.getByRole('button', { name: 'More' })).toHaveAttribute('aria-expanded', 'false')
 })
+
+it('a long workspace prefix shows its first two letters in the avatar, so the 28 px circle never clips', async () => {
+  state.host.workspaces[0].prefix = 'DEMO'
+  await show('/')
+  const nav = await screen.findByRole('navigation', { name: 'Main' })
+  const sidebar = nav.closest('aside')!
+  const expand = within(sidebar).queryByRole('button', { name: 'Expand sidebar' })
+  if (expand) fireEvent.click(expand)
+  const avatar = sidebar.querySelector('[data-slot="avatar-fallback"]')!
+  expect(avatar.textContent).toBe('DE')
+  expect(sidebar.querySelector('[data-ws-prefix]')).toHaveTextContent('DEMO')
+})

@@ -1,7 +1,7 @@
 -- The relay's one schema (V3-D36; D76, D77). Hub accounts, the hub's push targets and channel mailboxes, and the replay
 -- stores of signed hub requests and channel reads. Public data and ciphertext only: no secret is ever stored here
 -- (push tokens are sealed under the instance secret, which lives outside the database).
--- A database from any other schema is refused at start (db.init_schema): delete it.
+-- A database from any other schema is refused at start (db.init_schema): `orch update` migrates it.
 
 -- Relay accounts of kind `hub` (orch-relay E1, orch-hub contract H0 §4-§5). One row per hub, keyed by
 -- hub_id = H(label || suite || hk_root_pub)[0:16]; the card is stored as its canonical JSON (cj), the

@@ -170,10 +170,21 @@ def test_after_leave_the_workspace_publishes_nothing_and_the_old_binding_is_not_
     assert len(w.hub_server.requests) == via_hub
 
 
-def test_a_file_over_the_link_frame_says_so_and_sends_nothing(world, human, served):
+def test_a_file_over_the_link_frame_is_said_at_prepare_before_anything_is_signed(world, human, served):
     w = world
     joined(w, human, served)
-    res, _ = share(w, name="big.bin", data=b"\x07" * 600_000)
+    res = prepare_attempt(w, name="big.bin", data=b"\x07" * 600_000)
+    assert err(res) == "quota.host" and "can't go through the hub yet" in res["error"]["message"]
+    assert w.hub_server.requests == []
+
+
+def test_a_file_over_the_link_frame_still_sends_nothing_when_it_reaches_send(world, human, served, monkeypatch):
+    w = world
+    joined(w, human, served)
+    with monkeypatch.context() as m:  # past prepare's early refusal: send keeps its own check
+        m.setattr("orch.hubclient.publish.HUB_FILE_MAX", 10_000_000)
+        staged, _ = staged_share(w, name="big.bin", data=b"\x07" * 600_000)
+    res = w.send(staged)
     assert err(res) == "publish.server_refused"
     assert [r for r in w.hub_server.requests if r["method"] == "PUT" and "/files/" in r["target"]] == []
 

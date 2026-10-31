@@ -5,6 +5,7 @@ It registers a workspace through orch-publish's test helpers (vector keys), prin
 ``PORT <n>``, then serves HTTP (including orch-publish's /v2/hub/ admin endpoints) until stdin closes.
 """
 
+import os
 import socket
 import sys
 import tempfile
@@ -25,6 +26,10 @@ def main() -> None:
     tmp = tempfile.mkdtemp(prefix="d11-pub-")
     e = Env.__new__(Env)
     e.data, e.now = tmp + "/data", NOW
+    # what `orch install publish` leaves in a new data dir (P1-B): orch-publish refuses a dir without format.json
+    os.makedirs(e.data, mode=0o700)
+    with open(os.path.join(e.data, "format.json"), "w") as f:
+        f.write('{"format": 1, "orch": "publish"}\n')
     e.app = create_app(e.data, host, clock=lambda: NOW, dev_mode=True)
     from cryptography.hazmat.primitives.asymmetric import ec  # noqa: F401
     from fastapi.testclient import TestClient

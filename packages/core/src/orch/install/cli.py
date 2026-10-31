@@ -481,6 +481,7 @@ def install_part(
     behind_edge: bool = False,  # server role with TLS: Caddy on this computer is the edge in front of the part
     exact_bind: bool = False,  # server role: the part listens on exactly ``address`` (not on every interface)
     trusted_proxy: str | None = None,  # behind the private network's proxy: its networks (rate key only)
+    publish_share_url: str | None = None,  # server role, hub: https://<publish name>, the public origin (#1838)
 ) -> dict[str, Any]:
     spec = P.PARTS[part]
     explicit_publish_url = publish_url
@@ -568,6 +569,7 @@ def install_part(
         publish_port=ports_of(ctx, st)["publish"],
         behind_edge=behind_edge,
         exact_bind=exact_bind or bool(link_address),
+        publish_share_url=publish_share_url if part == "hub" else None,
     )
     log = lay.logs / f"{part}.log"
     started = ctx.runner.start(

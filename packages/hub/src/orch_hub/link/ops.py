@@ -125,6 +125,7 @@ class OpContext:
     activity: Any = None  # orch_hub.activity.ActivityLog; None: agent_events is `unavailable`
     switch: Any = None  # orch_hub.switch.SwitchService; None = switch/rail ops not served (unknown_op)
     where: Callable[[], dict[str, Any]] | None = None  # settings.where_answer: the advertised addresses and the name
+    publish_where: dict[str, Any] | None = None  # #1838: the signed hub.publish_where, None = the hub advertises none
     hooks: Any = None  # orch_hub.hooks.HookInbox; None = the webhook inbox is off (hook ops answer `unavailable`)
     closing: Any = None  # orch_hub.closing.Closing; None = no removal service (closing_get answers null)
     same_computer: bool = False  # the link's socket shows the peer is on this computer (never a peer-sent claim)
@@ -247,7 +248,7 @@ def join(c: OpContext) -> dict[str, Any]:
     except Refused as e:
         logging.getLogger("orch_hub.link").info("card not admitted by publish at join: %s", e.code)
     c.downstream.binding(c.workspace_id, join_msg["binding"])
-    return {}
+    return {} if c.publish_where is None else {"publish_where": c.publish_where}  # §10.2, §10.9.1
 
 
 def card_put(c: OpContext) -> dict[str, Any]:

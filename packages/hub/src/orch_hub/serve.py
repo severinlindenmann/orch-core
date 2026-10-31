@@ -52,6 +52,7 @@ from .link.wkseal import WkSeals
 from .oidc.service import OidcService
 from .oidc.store import OidcStore
 from .publish import HttpPublishSync, HubPublish, PublishConfig
+from .pubwhere import prepare as publish_where_for
 from .reconcile import reconcile_full_only, reconcile_relay_purge
 from .relay import PushNotifier, RelayClient, RelayError
 from .relay.client import Transport
@@ -170,18 +171,6 @@ def parse_web_listen(value: str, *, assigned: Callable[[str], bool] = CO.locally
     return CO.parse_link_listen(value, assigned=assigned)
 
 
-def publish_hint(publish_url: str | None) -> str | None:
-    """The publish address a joined workspace may keep as a hint (P02): an origin core accepts (https anywhere, plain http on
-    loopback only), else None: a workspace is then asked as before. It carries no authority."""
-    from .contract.where import publish_ok
-
-    if publish_url is None:
-        return None
-    u = urllib.parse.urlsplit(publish_url)
-    origin = f"{u.scheme}://{u.netloc}".lower()
-    return origin if publish_ok(origin) and u.path in ("", "/") else None
-
-
 def make_admission(
     state: Path, registry: Registry, access: Access, hub_id: str
 ) -> Callable[[str], tuple[str, int] | None]:
@@ -225,6 +214,7 @@ def serve(
     accounts: CO.Accounts | None = None,
     assigned: Callable[[str], bool] = CO.locally_assigned,
     api_host: str | None = None,
+    publish_share_url: str | None = None,
     web_listen: str | None = None,
     relay_url: str | None = None,
     trusted_peers: frozenset[str] = frozenset(),
@@ -268,6 +258,7 @@ def serve(
             raise ValueError("--link-ws-public must be ws://host[:port] or wss://host[:port]") from None
     gate = FixedInvites(invites)  # a bad invite refuses before any state is opened
     u = urllib.parse.urlsplit(publish_url)
+    sign_host = api_host  # #1838: only an explicit --api-host names the public server origin (never the private URL's)
     api_host = api_host or u.netloc
     hold_serve_lock(state)  # first: an offline `orch-hub restore` (mid-swap) refuses us, and refuses while we live
     recover_swap(state)  # a restore that stopped between its two renames is completed or undone first
@@ -291,6 +282,15 @@ def serve(
         behind_edge=behind_edge,
         allowed_origins=web_origins,
         api_origin=api_origin,
+    )
+    published = publish_where_for(
+        state,
+        keys,
+        api_host=sign_host,
+        share_url=publish_share_url,
+        publish_url=publish_url,
+        dev=cfg.dev,
+        say=lambda line: print(line, file=out, flush=True),
     )
     bind_warn: str | None = None
     ws_net = ws_bind is not None and not ipaddress.ip_address(ws_bind[0]).is_loopback
@@ -517,7 +517,8 @@ def serve(
         switch=switch,
         hooks=hook_inbox,
         activity=activity,
-        where=lambda: where_answer(state, extra_public=link_ws_public, publish=publish_hint(publish_url)),
+        where=lambda: where_answer(state, extra_public=link_ws_public, publish_where=published),
+        publish_where=published,
         closing=closing,
         deliveries=deliveries,
         streams=stream_router,

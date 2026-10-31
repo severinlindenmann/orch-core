@@ -165,8 +165,13 @@ def command_for(
     publish_port: int = DEFAULT_PORTS["publish"],
     behind_edge: bool = False,
     exact_bind: bool = False,
+    publish_share_url: str | None = None,
 ) -> list[str]:
-    """The ``serve`` command line of a part (argv; environment is :func:`env_for`)."""
+    """The ``serve`` command line of a part (argv; environment is :func:`env_for`).
+
+    ``publish_share_url`` (hub only) is the public origin of this server's publish part, https://<name>: in the server
+    role it is the API host the workspaces sign and the origin of the share links (#1838), so the hub signs both in its
+    ``publish_where``."""
     bind = address if address else ADDRESS_LOOPBACK
     if part == "hub":
         loop = bind in (ADDRESS_LOOPBACK, "localhost")
@@ -191,6 +196,8 @@ def command_for(
         ]
         if relay_url:
             cmd += ["--relay-url", relay_url]
+        if publish_share_url:  # known only for a publish part with a public name: nothing is guessed from --publish-url
+            cmd += ["--api-host", publish_share_url.partition("://")[2], "--publish-share-url", publish_share_url]
         if behind_edge:  # Caddy on this computer is the edge: it states the client (XFF), the origin is the https name
             cmd += ["--behind-edge", "--trusted-peer", ADDRESS_LOOPBACK]
         if dev and not loop:  # one user on one dev machine: the hub allows its link on a network address

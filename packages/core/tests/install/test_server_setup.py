@@ -302,6 +302,8 @@ def test_hub_role_binds_the_vpn_ip_and_the_card_advertises_it(tmp_path):
     assert "--bind-all" not in argv
     assert argv[argv.index("--publish-url") + 1] == "https://publish.example.com"
     assert argv[argv.index("--relay-url") + 1] == "https://relay.example.com"
+    assert argv[argv.index("--publish-share-url") + 1] == "https://publish.example.com"  # #1838: the public origin
+    assert argv[argv.index("--api-host") + 1] == "publish.example.com"
     card = json.loads((ctx.layout.data("hub") / "hub-settings.json").read_text())
     assert card["addresses"][0] == {"kind": "private", "web": "https://hub.example.com:443", "link": f"{VPN}:8105"}
     assert "not remote_ip 100.64.0.0/16" in (caddy / "hub.caddy").read_text()
@@ -1755,6 +1757,43 @@ def test_a_domain_derived_url_still_works_and_an_explicit_one_wins(tmp_path):
         resolve=lambda n: [VPS], local=local, user="orch-hub", publish_url=PUB,
     )  # fmt: skip
     assert _arg(ctx2, "--publish-url") == PUB and _arg(ctx2, "--relay-url") == "https://relay.example.com"
+
+
+def test_the_share_url_is_the_public_publish_name_even_with_a_private_publish_url(tmp_path):
+    """#1838: ``--publish-share-url`` (and the ``--api-host`` it goes with) name the publish part's PUBLIC origin; the
+    private ``--publish-url`` is only where the hub reaches orch-publish."""
+    ctx = _domain_rerun(tmp_path, publish_url=PUB)
+    assert _arg(ctx, "--publish-url") == PUB
+    assert _arg(ctx, "--publish-share-url") == "https://publish.example.com"
+    assert _arg(ctx, "--api-host") == "publish.example.com"
+
+
+def test_nothing_about_a_share_url_is_passed_without_a_public_publish_name(tmp_path):
+    ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+    server_setup(ctx, "hub", names=server.Names(), local=local, publish_url=PUB)  # publish elsewhere, no name
+    assert _arg(ctx, "--publish-share-url") is None and _arg(ctx, "--api-host") is None
+    root = tmp_path / "orch.d"
+    (root / "orch-hub").mkdir(parents=True)
+    ctx2, *_ = stub_ctx(tmp_path, SystemdFake())
+    server_setup(  # only a hub name: publish has none
+        ctx2, "hub", names=server.derive_names(None, hub="hub.example.com"), hub_vpn_only=True, caddy_dir=str(root),
+        resolve=lambda n: [VPS], local=local, user="orch-hub",
+    )  # fmt: skip
+    assert _arg(ctx2, "--publish-share-url") is None and _arg(ctx2, "--api-host") is None
+
+
+def test_command_for_adds_the_share_url_only_when_known():
+    from orch.install import parts as P
+
+    kw = dict(
+        binary=Path("/b/orch-hub"), data=Path("/d"), address="127.0.0.1", port=8100,
+        publish_url="http://127.0.0.1:8102", relay_url=None, dev=False,
+    )  # fmt: skip
+    assert "--publish-share-url" not in P.command_for("hub", **kw) and "--api-host" not in P.command_for("hub", **kw)
+    argv = P.command_for("hub", publish_share_url="https://pub.example.com", **kw)
+    assert argv[argv.index("--publish-share-url") + 1] == "https://pub.example.com"
+    assert argv[argv.index("--api-host") + 1] == "pub.example.com"
+    assert "--publish-share-url" not in P.command_for("relay", publish_share_url="https://pub.example.com", **kw)
 
 
 @pytest.mark.parametrize(

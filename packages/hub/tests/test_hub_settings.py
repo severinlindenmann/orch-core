@@ -513,7 +513,10 @@ def test_run18_an_office_or_private_address_that_is_not_this_computers_own_is_re
         assert _put_addrs(w, tok, P_ENTRY, entry)[:2] == (400, {"error": "malformed"})
     assert S.load(state) == UP and restarts == [] and "hub_settings" not in _audit_types(w)
     # a member (not an admin) cannot even try
-    assert _put_addrs(w, w.login(w.ann), P_ENTRY, {"kind": "office", "host": "10.0.0.7"})[:2] == (403, {"error": "forbidden_role"})
+    assert _put_addrs(w, w.login(w.ann), P_ENTRY, {"kind": "office", "host": "10.0.0.7"})[:2] == (
+        403,
+        {"error": "forbidden_role"},
+    )
 
 
 def test_detected_addresses_are_this_computers_own_with_their_kind(w, state):
@@ -546,10 +549,20 @@ def test_run18_detected_addresses_never_lead_with_a_virtual_bridge_and_name_the_
         "6: virbr0    inet 192.168.122.1/24 brd x scope global virbr0\n"
     )
     got = SA.detect_addresses(text)
-    assert [g["ip"] for g in got] == ["127.0.0.1", "192.168.1.9", "172.17.0.1", "172.18.0.1", "10.99.0.1", "192.168.122.1"]
+    assert [g["ip"] for g in got] == [
+        "127.0.0.1",
+        "192.168.1.9",
+        "172.17.0.1",
+        "172.18.0.1",
+        "10.99.0.1",
+        "192.168.122.1",
+    ]
     assert got[1] == {"ip": "192.168.1.9", "kind": "office", "iface": "eth0"}
     ifc = "en0: flags=8863<UP> mtu 1500\n\tinet 10.1.1.4 netmask 0xffffff00\nbridge100: flags=8863<UP>\n\tinet 192.168.64.1 netmask 0xffffff00\n"
-    assert [(g["ip"], g.get("iface")) for g in SA.detect_addresses(ifc)[1:]] == [("10.1.1.4", "en0"), ("192.168.64.1", "bridge100")]
+    assert [(g["ip"], g.get("iface")) for g in SA.detect_addresses(ifc)[1:]] == [
+        ("10.1.1.4", "en0"),
+        ("192.168.64.1", "bridge100"),
+    ]
 
 
 def test_the_audit_event_is_closed_and_has_plain_words():

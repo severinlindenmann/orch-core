@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import json
 import os
 import re
 import secrets
@@ -67,6 +68,20 @@ _INFLIGHT: dict[tuple[str, str, int, str], float] = {}
 INFLIGHT_MAX = 900.0
 _REF = {"type": "string", "minLength": 1, "maxLength": 80}
 _STAGED = {"type": "string", "pattern": r"^pa_[0-9a-f]{32}$"}
+#: the owner's approval as the client sends it (hub contract 11.3): exactly these four members, bounded; orch-publish
+#: verifies the content, the host only refuses what cannot be one before it plans a send
+_APPROVAL = {
+    "type": "object",
+    "properties": {
+        "o": {"type": "object", "maxProperties": 12},
+        "sig": {"type": "string", "minLength": 80, "maxLength": 100},
+        "device_cert": {"type": "object", "maxProperties": 4},
+        "pk_pub": {"type": "string", "minLength": 80, "maxLength": 100},
+    },
+    "required": ["o", "sig", "device_cert", "pk_pub"],
+    "additionalProperties": False,
+}
+_APPROVAL_BYTES = 8192
 _SCHEMAS = {
     "app.prepare": {
         "type": "object",
@@ -120,7 +135,7 @@ _SCHEMAS = {
         "type": "object",
         "properties": {
             "request_id": {"type": "string", "pattern": r"^cr_[0-9a-f]{32}$"},
-            "approval": {"type": "object"},
+            "approval": _APPROVAL,
         },
         "required": ["request_id", "approval"],
         "additionalProperties": False,
@@ -289,6 +304,7 @@ def _fresh(service: WorkspaceService, stage: dict[str, Any]) -> None:
     if stage.get("op", "commit") != "commit":  # the recorded version is the staged one and the live one has not moved
         ok = (
             rec is not None
+            and stage["version"] in (rec.get("was_live") or [])  # never a version the owner did not make live
             and rec["versions"].get(str(stage["version"])) == stage["app"]
             and prev is not None
             and rec.get("live") == prev
@@ -400,8 +416,11 @@ def _prepare_again(call: Call, args: dict[str, Any], view: Any, cfg: dict[str, s
     if rec.get("ticket") != view.uid:
         raise HostError("invalid.input", "an app is changed from the ticket it was made on")
     version, live = args["version"], rec.get("live")
-    if live is None or str(live) not in rec["versions"] or str(version) not in rec["versions"]:
-        raise HostError("invalid.input", "app.prepare: that version, or a live version, is not known here")
+    was = rec.get("was_live") or []
+    if live is None or str(live) not in rec["versions"] or str(version) not in rec["versions"] or version not in was:
+        raise HostError(
+            "invalid.input", "app.prepare: only a version that has been live can be gone back to or started"
+        )
     if (op == "rollback" and version >= live) or (op == "start" and version != live):
         raise HostError("invalid.input", f"app.prepare: {op} does not fit version {version} (live is {live})")
     _sweep(service)
@@ -755,6 +774,8 @@ def _commit_plan(call: Call, args: dict[str, Any]) -> dict[str, Any]:
     P._gate(call)  # noqa: SLF001
     cfg = P._config(service)  # noqa: SLF001
     ws, now = service.workspace_id, service.clock()
+    if len(json.dumps(args["approval"], separators=(",", ":"))) > _APPROVAL_BYTES:
+        raise HostError("invalid.input", "app.commit: the approval is too large")
     with P._MU:  # noqa: SLF001
         pending = _PENDING.pop((ws, args["request_id"]), None)  # one use, whatever follows
     if pending is None or now - pending["at"] > PENDING_TTL or pending["person"] != person:
@@ -798,6 +819,8 @@ def _commit(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
         rows = [r for r in _records(service) if r.get("id") != req["app_id"]]
         rec = next(r for r in _records(service) if r.get("id") == req["app_id"])
         rec["live"] = req["version"]
+        if req["version"] not in rec.setdefault("was_live", []):  # only a version the owner approved can come back
+            rec["was_live"].append(req["version"])
         _save_records(service, [*rows, rec])
     P._audit(call, "app.live", app=req["app_id"], version=req["version"], op=req["op"])  # noqa: SLF001
     return {"app_id": req["app_id"], "version": req["version"], "op": req["op"], "live": True}

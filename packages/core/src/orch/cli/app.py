@@ -119,6 +119,31 @@ def _approve(target: Any, commit: Mapping[str, Any], note_text: str, now_ms: int
     )
 
 
+#: a failed commit is tried again with a FRESH request (the first one expired, or its answer was lost), twice at most;
+#: the same signed note still binds it, so nothing new is signed beyond the approval of the new request
+_RETRY = frozenset({"publish.changed", "publish.unreachable", "publish.server_refused"})
+RETRIES = 2
+
+
+def _go_live(target: Any, env: Mapping[str, str], commit: Mapping[str, Any], note_text: str) -> dict[str, Any]:
+    from orch.ops.errors import OrchError
+
+    for attempt in range(RETRIES + 1):
+        try:
+            approval = _approve(target, commit, note_text, int(time.time() * 1000))
+            return _call(target, "app.commit", {"request_id": commit["request_id"], "approval": approval}, env)
+        except (PubError, OrchError) as exc:
+            if attempt == RETRIES or getattr(exc, "code", "") not in _RETRY:
+                raise
+            commit = _call(
+                target,
+                "app.commit_request",
+                {"app_id": commit["app_id"], "op": commit["op"], "version": commit["version"]},
+                env,
+            )
+    raise AssertionError("unreachable")  # pragma: no cover
+
+
 def _send(
     target: Any, staged: str, env: Mapping[str, str], out: TextIO, as_json: bool, note_text: str | None = None
 ) -> int:
@@ -126,15 +151,23 @@ def _send(
     commit = got.pop("commit", None)
     live = None
     if commit is not None and note_text is not None:
-        approval = _approve(target, commit, note_text, int(time.time() * 1000))
-        live = _call(target, "app.commit", {"request_id": commit["request_id"], "approval": approval}, env)
+        try:
+            live = _go_live(target, env, commit, note_text)
+        except (PubError, Exception) as exc:  # noqa: BLE001 - uploaded, not live: say the real next step
+            out.write(
+                f"the app is uploaded (version {got.get('version')}) but NOT live: {getattr(exc, 'message', exc)}\n"
+                "your signature stays good for an hour. To try again, prepare the same release again and run: "
+                "orch app release STAGED\n"
+            )
+            exc._uploaded = True  # type: ignore[attr-defined] - the stage is gone: no "send it again" advice
+            raise
     if as_json:
         out.write(json.dumps({"ok": True, "data": {**got, **(live or {})}}) + "\n")
     elif live is not None:
         out.write(f"ok app live {live.get('app_id')} version {live.get('version')} ({live.get('op')})\n")
     elif commit is not None:
         out.write(f"ok app uploaded {got.get('app_id')} version {got.get('version')}: not live yet\n")
-        out.write(f"to make it live: orch app release {staged}\n")
+        out.write("to make it live, prepare the release again and run: orch app release STAGED\n")
     else:
         out.write(f"ok app uploaded {got.get('app_id')} version {got.get('version')}: not live yet\n")
         out.write(f"{got.get('needs')}\n")
@@ -216,8 +249,9 @@ def main(
             note = shown[0]["events"][0]["text"] if shown else None
             try:
                 return _send(target, a.rest[0], env, out, as_json, note)
-            except (PubError, OrchError):
-                out.write(f"your signature stays good for an hour: orch app send {a.rest[0]}\n")
+            except (PubError, OrchError) as exc:
+                if not getattr(exc, "_uploaded", False):  # nothing was uploaded: the same stage can be sent again
+                    out.write(f"your signature stays good for an hour: orch app send {a.rest[0]}\n")
                 raise
         if a.cmd == "send":
             return _send(target, a.rest[0], env, out, as_json)

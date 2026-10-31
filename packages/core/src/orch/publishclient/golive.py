@@ -37,7 +37,7 @@ from . import approval
 __all__ = [
     "KIND",
     "SKEW_MS",
-    "approval_object",
+    "CheckedApproval",
     "build_approval",
     "check_commit_request",
     "commit_body",
@@ -49,6 +49,13 @@ KIND = "hub.publish_approval"
 #: how far this computer's clock may differ from the ``ts`` of the pending request the host drew
 SKEW_MS = 60_000
 _OPS = approval.APP_OPS
+
+
+class CheckedApproval(dict[str, Any]):
+    """The approval object that :func:`check_commit_request` returned: the only thing :func:`build_approval` signs, so
+    no caller (the CLI, the dashboard) can sign an object that did not pass the check."""
+
+    __slots__ = ()
 
 
 def commit_body(meta: Mapping[str, Any], op: str, app_id: str, version: int) -> bytes:
@@ -70,7 +77,7 @@ def request_hash_b64(
     return b64u(pub.app_request_hash(bytes.fromhex(workspace_id), ts_ms, nonce, "POST", host, target, body, hub_id))
 
 
-def approval_object(
+def _approval_object(
     workspace_id: str, hub_id: str | None, device_id: str, request_hash: str, access: str
 ) -> dict[str, Any]:
     """The unsigned ``o`` of a ``hub.publish_approval`` (contract 11.3)."""
@@ -129,20 +136,24 @@ def check_commit_request(
             raise ValueError("nonce or ts")
         if abs(req["ts_ms"] - now_ms) > SKEW_MS:
             raise ValueError("clock")
-        return approval_object(
-            workspace_id, hub_id, device_id,
-            request_hash_b64(workspace_id, hub_id, req["ts_ms"], req["nonce"], host, req["target"], body),
-            meta["access"],
+        return CheckedApproval(
+            _approval_object(
+                workspace_id, hub_id, device_id,
+                request_hash_b64(workspace_id, hub_id, req["ts_ms"], req["nonce"], host, req["target"], body),
+                meta["access"],
+            )
         )  # fmt: skip
     except (ValueError, KeyError, TypeError, AttributeError):
         raise HubRefused("malformed") from None
 
 
 def build_approval(
-    o: Mapping[str, Any], sign: Callable[[bytes], bytes], device_cert: Mapping[str, Any], pk_pub: str
+    o: CheckedApproval, sign: Callable[[bytes], bytes], device_cert: Mapping[str, Any], pk_pub: str
 ) -> dict[str, Any]:
     """The signed approval ``{o, sig, device_cert, pk_pub}``: ``sign`` is the device key's (dk_sig) signature of
     ``label || cj(o)`` under ``sig_hub_publish_approval``. Call it only with an object :func:`check_commit_request`
-    returned."""
+    returned (a plain dict is refused)."""
+    if type(o) is not CheckedApproval:
+        raise HubRefused("malformed")
     sig = sign(L["sig_hub_publish_approval"] + cj(dict(o)))
     return {"o": dict(o), "sig": b64u(sig), "device_cert": dict(device_cert), "pk_pub": pk_pub}

@@ -234,7 +234,7 @@ function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil
   return (
     <section ref={setBox} data-testid="click-panel" aria-label="Review before signing" className="space-y-3">
       {!inFold && wsLine}
-      {view.content && <SignContent content={view.content} ws={view.workspace?.id} technical={technical} compact={story?.compact} quick={story?.quick} workspaceLine={inFold ? wsLine : undefined} />}
+      {view.content && <SignContent content={view.content} ws={view.workspace?.id} technical={technical} compact={story?.compact} quick={story?.quick} foldIds={story?.foldIds} workspaceLine={inFold ? wsLine : undefined} />}
       {/* authority stays in the default view, never folded: the scope, the agent access length, what happens next */}
       {story?.scope && <p data-testid="sign-scope" className="text-[13px] text-text">{story.scope}</p>}
       <AgentAccess story={story ?? null} />

@@ -77,7 +77,7 @@ test('Publish is in Browse with Turn on; the ticket Actions menu has Share files
   await page.screenshot({ path: path.join(SHOTS, 'run12-p05-after-turnon.png') })
 })
 
-test('P04: Share files with Publish off shows ONE dialog; Turn on and sign leads to Sign', async ({ page }) => {
+test('run17 P01b: Share files with Publish off and an address suggested goes straight to the sign sheet (no address dialog)', async ({ page }) => {
   publishOn = false
   setUp = false
   fake.publishOn = false
@@ -86,14 +86,10 @@ test('P04: Share files with Publish off shows ONE dialog; Turn on and sign leads
     await open(page, '/w/DEMO/ticket/DEMO-0001')
     await page.getByRole('button', { name: /Actions/ }).click()
     await page.getByRole('menuitem', { name: 'Share files…' }).click()
-    const dialog = page.getByRole('dialog', { name: 'Turn on Publish' })
-    await expect(dialog).toBeVisible()
-    await expect(page.getByRole('dialog')).toHaveCount(1)
-    await expect(dialog.getByText('http://127.0.0.1:8102')).toBeVisible()
-    await dialog.getByRole('button', { name: 'Turn on and sign' }).click()
     await expect(page.getByTestId('click-panel')).toBeVisible()
     await expect(page.getByRole('button', { name: /^Sign( |$)/ })).toBeVisible()
-    await expect(page.getByRole('button', { name: 'Turn on and sign' })).toHaveCount(0) // no second dialog to press again
+    await expect(page.getByRole('dialog')).toHaveCount(1)
+    await expect(page.getByRole('button', { name: 'Turn on and sign' })).toHaveCount(0) // no address dialog to press first
     await page.waitForTimeout(1500) // nothing signs by itself, even after the dwell time
     expect(signs).toBe(0)
   } finally {
@@ -101,7 +97,8 @@ test('P04: Share files with Publish off shows ONE dialog; Turn on and sign leads
   }
 })
 
-test('Add a file in Share files: the file goes alone, then Review names it', async ({ page }) => {
+// STALE on develop before this change: the review is the host's sign sheet now (r12-P11), not a dialog 'Review your share'.
+test('Add a file in Share files: the file goes alone, then the sign sheet names it', async ({ page }) => {
   publishOn = true
   fake.publishOn = true
   await open(page, `/w/DEMO/ticket/DEMO-0001`)
@@ -114,7 +111,7 @@ test('Add a file in Share files: the file goes alone, then Review names it', asy
   await page.waitForTimeout(500) // let the dialog finish its fade
   await page.screenshot({ path: path.join(SHOTS, 'run12-p05-after-share-dialog.png') })
   await dialog.getByRole('button', { name: 'Review selected files' }).click()
-  await expect(page.getByRole('dialog', { name: 'Review your share' })).toBeVisible()
+  await expect(page.getByRole('list', { name: 'Files to share' })).toContainText('readme.md')
   expect(prepares[0]).toMatchObject({ ticket: 'DEMO-0001', uploads: ['pu_' + '1'.repeat(32)] })
   await page.waitForTimeout(500) // let the dialog finish its fade
   await page.screenshot({ path: path.join(SHOTS, 'run12-p05-after-review.png') })

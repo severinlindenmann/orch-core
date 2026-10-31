@@ -89,7 +89,10 @@ it('a suggested address makes Turn on one click, and Change shows the field', as
   show('/w/DEMO/addons')
   await user.click(await screen.findByRole('switch', { name: 'Publish' }, T))
   const form = within(await screen.findByRole('dialog', { name: 'Turn on Publish' }, T))
-  expect(form.getByText(/Files and links use the Publish server on this computer/)).toHaveTextContent('http://127.0.0.1:8102')
+  expect(form.queryByText(/http:\/\/127\.0\.0\.1:8102/)).toBeNull() // the address is behind Details
+  await user.click(form.getByRole('button', { name: 'Details' }))
+  expect(await screen.findByTestId('info-drawer-content')).toHaveTextContent('Files and links use the Publish server on this computer: http://127.0.0.1:8102')
+  await user.keyboard('{Escape}')
   expect(form.queryByLabelText('Publish server address')).toBeNull()
   expect(form.getByRole('button', { name: 'Turn on and sign' })).toBeEnabled()
   trusted()
@@ -104,7 +107,8 @@ it('Change on a suggested address reveals the field, filled with the suggestion'
   show('/w/DEMO/addons')
   await user.click(await screen.findByRole('switch', { name: 'Publish' }, T))
   const form = within(await screen.findByRole('dialog', { name: 'Turn on Publish' }, T))
-  await user.click(form.getByRole('button', { name: 'Change' }))
+  await user.click(form.getByRole('button', { name: 'Details' }))
+  await user.click(await screen.findByRole('button', { name: 'Change' }))
   expect(form.getByLabelText('Publish server address')).toHaveValue('http://127.0.0.1:8102')
 })
 

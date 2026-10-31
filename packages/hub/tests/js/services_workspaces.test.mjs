@@ -98,14 +98,15 @@ test("workspace table shows modes, status, versions, hosts, warnings without a h
   assert.match(t, /Shares only what you choose/);
   assert.match(t, /Personal: only its owner/);
   assert.match(t, /Offline.*since 2 min ago/);
-  assert.match(t, /0.2.0 · abcdef1/);
-  assert.match(t, /newest/);
-  assert.match(t, /update to 0.3.0/);
-  assert.match(t, /not supported any more/);
-  assert.match(t, /Office10.0.0.2/);
-  assert.match(t, /unknownunknown/);
+  assert.doesNotMatch(t, /0.2.0 · abcdef1|newest|Office10\.0\.0\.2|unknownunknown/);   // version and computer moved into Details
+  assert.equal((t.match(/Needs update/g) ?? []).length, 2);   // older + unsupported only; the newest one says nothing
   assert.doesNotMatch(t, /Hand-offs between workspaces/);
-  assert.equal(find(out, (n) => n.tag === "th" && n.textContent === "Runs on").length, 1);
+  const d = text(workspaceDetailsView(workspace({ workspace_id: "b", version_state: "older" }), { hub: { version: "0.3.0" } }, NOW));
+  assert.match(d, /Version.*0\.2\.0 · abcdef1/); assert.match(d, /Computer.*Office10\.0\.0\.2/); assert.match(d, /update to 0\.3\.0/);
+  assert.doesNotMatch(d, /orch version|Runs on/);
+  const heads = find(out, (n) => n.tag === "th").map((n) => n.textContent);
+  assert.deepEqual(heads, ["Workspace", "Status", "Actions"]);   // run18 P06: version and computer are in Details, not columns
+  assert.doesNotMatch(t, /orch version|Runs on/);
 });
 
 test("old responses render without hub metadata or admin controls; actions use the selected workspace", () => {
@@ -587,7 +588,7 @@ test("P05: a hub admin also sees a connected workspace private to someone else, 
   const none = workspacesView({ workspaces: mine, handoffs: [], admin: null }, NOW);
   assert.doesNotMatch(text(none), /Ben Test/);
   const details = text(workspaceDetailsView(privateRows(mine, [ben])[0], {}, NOW));
-  assert.doesNotMatch(details, /Open Ben|Change mode|Runs on/);
+  assert.doesNotMatch(details, /Open Ben|Change mode|Computer/);
   assert.match(details, /Only Ben Test can open it/);
 });
 

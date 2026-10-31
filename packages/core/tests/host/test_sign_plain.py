@@ -784,7 +784,7 @@ def test_g4_an_addon_grant_with_dependencies_is_never_the_short_view_and_says_wh
 
 def test_f7_an_addon_grant_says_what_the_addon_may_do_and_keeps_digest_and_raw_fields_out_of_the_main_view():
     c = build(_addon())
-    assert c["headline"] == "Turn on Terminals: it says it will open terminals on this computer, as you"
+    assert c["headline"] == "Turn on Command window: it says it will open terminals on this computer, as you"
     rows = {r["field"]: r["after"] for r in c["fields_changed"]}
     assert rows == {
         "add-on": "terminals",
@@ -797,7 +797,7 @@ def test_f7_an_addon_grant_says_what_the_addon_may_do_and_keeps_digest_and_raw_f
         assert raw not in shown
     assert "package digest" not in {r["field"] for r in c["fields_changed"]}
     # run-9 feedback 3.5: the compact view (plain title, two facts, the trust risk); no digest note, no "— → value" need
-    assert c["title"] == "Turn on Terminals"
+    assert c["title"] == "Turn on Command window"
     assert c["summary"]["lines"] == [
         "It says it will open terminals on this computer, as you.",
         "Version 0.1.0. Runs on this computer.",

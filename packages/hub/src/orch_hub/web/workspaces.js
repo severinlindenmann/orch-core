@@ -11,7 +11,9 @@ const modeName = (w) => w.mode === "full" ? "Shares everything" : "Shares only w
 const personName = (p) => text(typeof p === "string" ? p : p?.name ?? p?.alias ?? p?.user_id ?? "unknown");
 const button = (label, onclick, props = {}) => h("button", { type: "button", text: label, onclick, ...props });
 const small = (value) => h("div", { class: "small muted", text: value });
+// "Needs update" only when it is actionable (the workspace runs an older or unsupported orch); the exact version is in Details.
 const statusView = (w, now) => h("div", {}, chip(w.online ? "Online" : "Offline", w.online ? "ok" : ""),
+  w.version_state === "older" || w.version_state === "unsupported" ? chip("Needs update", "warn") : null,
   !w.online && Number.isFinite(w.last_seen_ms) ? small("since " + ago(w.last_seen_ms, now)) : null);
 const hostView = (w) => h("div", {}, text(w.host ?? "unknown"), small(text(w.address ?? "unknown")));
 const versionView = (w, hub) => h("div", {},
@@ -37,8 +39,8 @@ export function workspaceDetailsView(w, { roles = null, owner = null, hub, actio
     h("dl", { class: "facts" },
       h("dt", { text: "Status" }), h("dd", {}, statusView(w, now)),
       h("dt", { text: "Owner" }), h("dd", { text: personName(roles?.owner ?? owner ?? w.owner_name) }),
-      w.private ? null : h("dt", { text: "Runs on" }), w.private ? null : h("dd", {}, hostView(w)),
-      h("dt", { text: "orch version" }), h("dd", {}, versionView(w, hub)),
+      w.private ? null : h("dt", { text: "Computer" }), w.private ? null : h("dd", {}, hostView(w)),
+      h("dt", { text: "Version" }), h("dd", {}, versionView(w, hub)),
       h("dt", { text: "Mode" }), h("dd", {}, chip(modeName(w)), small(w.private ? "Private to " + personName(w.owner_name) + ": the hub sees only what they choose to share." : w.mode === "full"
         ? "The hub can read everything and help across workspaces."
         : "The hub sees only what this workspace chooses to share, plus its name."))),
@@ -255,7 +257,7 @@ export function workspacesView(data, now = Date.now()) {
   for (const r of data.handoffs) if (r.status === "waiting" && r.to.workspace_id) waitingFor.set(r.to.workspace_id, (waitingFor.get(r.to.workspace_id) ?? 0) + 1);
   const shown = [...data.workspaces, ...privateRows(data.workspaces, data.admin)];
   const list = shown.length ? h("div", { class: "scroll" }, h("table", { class: "tbl ws-table" },
-    h("thead", {}, h("tr", {}, ["Workspace", "Status", "orch version", "Runs on", "Actions"].map((label) => h("th", { scope: "col", text: label })))),
+    h("thead", {}, h("tr", {}, ["Workspace", "Status", "Actions"].map((label) => h("th", { scope: "col", text: label })))),
     h("tbody", {}, shown.map((w) => {
       const n = waitingFor.get(w.workspace_id) ?? 0;
       return h("tr", { "data-workspace": w.workspace_id, class: joined.some((j) => j.workspace_id === w.workspace_id) ? "row-new" : "" },
@@ -263,7 +265,7 @@ export function workspacesView(data, now = Date.now()) {
           w.owner_name ? small("Owner: " + text(w.owner_name)) : null,
           w.private ? small("Private to " + text(w.owner_name ?? "its owner")) : w.mode === "selective" ? small("Personal: only its owner") : null,
           n ? small(n + (n === 1 ? " hand-off is" : " hand-offs are") + " waiting for this workspace") : null),
-        h("td", {}, statusView(w, now)), h("td", {}, versionView(w, data.hub)), h("td", {}, w.private ? small("Not shown") : hostView(w)),
+        h("td", {}, statusView(w, now)),
         h("td", {}, h("div", { class: "ws-actions" }, button("Details", () => actions.details?.(w)),
           w.private ? small("Only " + text(w.owner_name ?? "its owner") + " can open it")
             : w.mode === "selective" ? small("Open it on its own computer") : button("Open", () => actions.open?.(w)))));

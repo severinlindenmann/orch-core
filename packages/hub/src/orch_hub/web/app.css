@@ -354,3 +354,8 @@ label.check.disabled input { cursor:not-allowed; }
 /* run18 P03: the browser name sits behind a small link in the first-time signing box */
 details.name-browser { border-top:0; padding:0; margin:10px 0; }
 details.name-browser summary { font-size:13px; font-weight:400; color:var(--muted); }
+
+/* run18 P06: Company login is one closed line in Hub settings that opens into the fields */
+details.company-login { border-top:0; padding:8px 0; margin:12px 0; }
+details.company-login > summary { display:flex; flex-wrap:wrap; align-items:center; gap:8px; font-weight:400; }
+details.company-login > summary .link { margin-left:auto; color:var(--accent, #2fc6a3); }

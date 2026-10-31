@@ -1540,6 +1540,9 @@ _CAPABILITY_WORDS = {
     "credential": "get the key you store for this add-on with 'orch addon login' and send it over the internet",
 }
 _ADDON_NAME = re.compile(r"[a-z][a-z0-9_-]{0,63}")
+#: The plain name of a built-in add-on in "Turn on ...", one name everywhere (setup, Settings, the sign card). Display only:
+#: the signed ``name`` row stays the raw value.
+_ADDON_PLAIN_NAMES = {"terminals": "Command window"}
 _VERSION = re.compile(r"[0-9][0-9A-Za-z.+-]{0,31}")
 
 
@@ -1579,7 +1582,7 @@ def _addon(typ: str, ev: Mapping[str, Any], out: dict[str, Any]) -> str:
     words never claim less than is signed (WYSIWYS)."""
     name = _s(ev.get("name"))
     named = _ADDON_NAME.fullmatch(name) is not None
-    nice = name.replace("-", " ").replace("_", " ").capitalize() if named else name
+    nice = _ADDON_PLAIN_NAMES.get(name) or name.replace("-", " ").replace("_", " ").capitalize() if named else name
     if typ == "addon.disabled":
         return f"Turn off {nice}" if named else f"Disable the add-on {name}"
     if typ == "addon.purged":

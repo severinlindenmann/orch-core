@@ -2,7 +2,7 @@
   "schema": "orch.addon/2",
   "name": "terminals",
   "version": "0.1.0",
-  "title": "Terminals",
+  "title": "Command window",
   "entry": {"cmd": ["orch-terminals", "serve"]},
   "capabilities": ["pty"]
 }

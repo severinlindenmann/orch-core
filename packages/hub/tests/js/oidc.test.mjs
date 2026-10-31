@@ -70,7 +70,7 @@ test("the sign-in button exists only when company login is on", () => {
 test("the admin card never shows a secret and says what is needed", () => {
   const card = O.companyCard({ configured: true, provider: "entra", client_id: "cid", tenant: "t", domain: "", mode: "invited", idp_mfa: false, enabled: false, tested: false, has_secret: true, redirect_uri: "https://hub.example/oidc/callback", secure_address: true }, { save: async () => ({ status: 200 }), test: async () => ({ ok: true }) });
   const t = card.textContent;
-  for (const words of ["Company login", "Redirect address", "https://hub.example/oidc/callback", "Client secret", "second step", "Test the connection", "guests", "test the connection first", "auth_time", "amr"]) assert.ok(t.includes(words), words);
+  for (const words of ["Company login", "return address", "https://hub.example/oidc/callback", "Secret", "second step", "Test the connection", "guests", "test the connection first", "auth_time", "amr"]) assert.ok(t.includes(words), words);
   const secret = find(card, (n) => n.attrs.id === "oidc-secret")[0];
   assert.equal(secret.attrs.type, "password");
   assert.equal(secret.attrs.value, undefined); // the saved secret is never put back into the page
@@ -109,4 +109,25 @@ test("an invitation login finishes on its own route and says plainly what failed
   assert.ok(O.INVITE_WORDS.bad_invite.includes("Ask your admin for a new one"));
   assert.ok(O.INVITE_WORDS.oidc_already_linked.includes("already used"));
   assert.ok(O.WELCOME.includes("ask your hub admin for a set-up link"));
+});
+
+test("run18 P06: inside Hub settings company login is one closed line that opens into plainly worded fields", async () => {
+  const card = O.companyCard({ configured: false, has_secret: false, redirect_uri: "https://hub.example/oidc/callback" }, { test: async () => ({ ok: false, error: "oidc_failed" }) }, { inside: true });
+  assert.equal(card.tag, "details");
+  assert.equal(card.attrs.open, undefined, "closed by default");
+  const summary = card.children[0];
+  assert.equal(summary.tag, "summary");
+  assert.match(summary.textContent, /Company login/);
+  assert.match(summary.textContent, /sign in with a Microsoft or Google work account/);
+  assert.match(summary.textContent, /Off/);
+  assert.match(summary.textContent, /Set up/);
+  const t = card.textContent;
+  for (const words of ["Work account type", "Microsoft work account", "Application ID", "Directory ID (Microsoft only)", "Secret", "Paste this return address into Microsoft or Google"]) assert.ok(t.includes(words), words);
+  for (const old of ["Client id", "Tenant id", "Microsoft Entra", "Client secret", "Redirect address", "Provider"]) assert.ok(!t.includes(old), old);
+  assert.ok(t.includes("amr") && t.includes("auth_time"), "the Good to know notes stay");
+  // a failed test opens it so the reason is seen
+  const testBtn = find(card, (n) => n.attrs.id === "oidc-test")[0];
+  assert.ok("disabled" in testBtn.attrs);
+  const open = O.companyCard({ configured: true, has_secret: true, test_failed: true }, {}, { inside: true });
+  assert.ok("open" in open.attrs, "open by default only when a test failed");
 });

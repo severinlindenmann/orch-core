@@ -164,11 +164,11 @@ def test_asking_for_what_already_is_is_said_in_words_and_never_prepared(gateway,
     link = _SwitchLink()
     with pytest.raises(HostError) as err:
         _plan(gateway, stub, link, monkeypatch, "addon_disable")
-    assert err.value.error["code"] == "addon.already" and err.value.error["message"] == "Terminals is already off."
+    assert err.value.error["code"] == "addon.already" and err.value.error["message"] == "Command window is already off."
     link.switch(True)
     with pytest.raises(HostError) as err:
         _plan(gateway, stub, link, monkeypatch, "addon_grant")
-    assert err.value.error["code"] == "addon.already" and err.value.error["message"] == "Terminals is already on."
+    assert err.value.error["code"] == "addon.already" and err.value.error["message"] == "Command window is already on."
     assert "{" not in err.value.error["message"]
     link.state = "changed"  # updated since the grant: granting again is a real change, not "already"
     assert _plan(gateway, stub, link, monkeypatch, "addon_grant").op == "addon.grant"

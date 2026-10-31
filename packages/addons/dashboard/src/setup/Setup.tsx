@@ -165,7 +165,7 @@ export function reviewFacts(review: Review): Fact[] {
     }
   }
   const addons = review.items.filter((i) => i.type === 'addon.granted' && i.id !== 'addon:dashboard').map((i) => i.title)
-  if (addons.length) facts.push({ icon: '⊞', label: 'Features', value: addons })
+  if (addons.length) facts.push({ icon: '⊞', label: 'Add-ons', value: addons })
   if (agents !== undefined) facts.push({ icon: '✦', label: 'Agents', value: agents })
   if (approve) facts.push({ icon: '◈', label: 'How you approve', value: approve })
   return facts
@@ -209,7 +209,7 @@ export function groupProgress(steps: Progress['steps']): Progress['steps'] {
     { id: 'key', label: 'Your way to approve', ids: ['keys', 'genesis', 'custody'] },
     { id: 'workspace', label: 'Your workspace', ids: ['git', 'settings', 'records', 'trust'] },
     { id: 'services', label: 'Starting orch', ids: ['register', 'runner', 'runner_grant'] },
-    { id: 'addons', label: 'Features', ids: [] },
+    { id: 'addons', label: 'Add-ons', ids: [] },
     { id: 'approval', label: 'Your choices saved', ids: ['flags'] },
   ]
   return groups.flatMap(({ id, label, ids }) => {
@@ -303,7 +303,7 @@ function FinishChoices({
               </dd>
             </>
           )}
-          <dt>Features</dt>
+          <dt>Add-ons</dt>
           <dd>{on.map((a) => a.title).join(', ')}</dd>
           <dt>Agents may work for</dt>
           <dd>{hoursText(current.agent_hours)}</dd>

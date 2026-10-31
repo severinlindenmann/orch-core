@@ -77,7 +77,7 @@ const opt = (v, label, sel) => h("option", { value: v, text: label, selected: se
 /** Admin: Hub settings > Company login. `actions.save(body)`, `actions.test()`, `actions.copy(text)`. */
 export function companyCard(data, actions, opts = {}) {
   const cur = data.configured ? data : { provider: "entra", client_id: "", tenant: "", domain: "", mode: "invited", idp_mfa: false, enabled: false, tested: false };
-  const provider = h("select", { id: "oidc-provider" }, opt("entra", "Microsoft Entra", cur.provider), opt("google", "Google Workspace", cur.provider));
+  const provider = h("select", { id: "oidc-provider" }, opt("entra", "Microsoft work account", cur.provider), opt("google", "Google Workspace", cur.provider));
   const clientId = h("input", { id: "oidc-client", value: cur.client_id ?? "", autocomplete: "off", maxlength: 200 });
   const tenant = h("input", { id: "oidc-tenant", value: cur.tenant ?? "", autocomplete: "off", placeholder: "00000000-0000-0000-0000-000000000000" });
   const domain = h("input", { id: "oidc-domain", value: cur.domain ?? "", autocomplete: "off", placeholder: "acme.example" });
@@ -86,10 +86,11 @@ export function companyCard(data, actions, opts = {}) {
   const mfa = h("input", { id: "oidc-mfa", type: "checkbox", checked: cur.idp_mfa === true });
   const on = h("input", { id: "oidc-on", type: "checkbox", checked: cur.enabled === true, disabled: !cur.tested });
   const out = h("div", { class: "small", role: "status", "aria-live": "polite" });
-  const show = (ok, words) => { out.textContent = words; out.className = "small " + (ok ? "ok" : "bad"); };
+  let failOpen = () => {};
+  const show = (ok, words) => { out.textContent = words; out.className = "small " + (ok ? "ok" : "bad"); if (!ok) failOpen(); };
   const body = () => ({ provider: provider.value, client_id: clientId.value.trim(), tenant: tenant.value.trim(), domain: domain.value.trim(),
     mode: mode.value, idp_mfa: mfa.checked, enabled: on.checked, ...(secret.value ? { client_secret: secret.value } : {}) });
-  const tenantRow = field("Tenant id (Microsoft)", tenant), domainRow = field("Company domain (Google)", domain);
+  const tenantRow = field("Directory ID (Microsoft only)", tenant), domainRow = field("Company domain (Google)", domain);
   const sync = () => { const e = provider.value === "entra"; tenantRow.hidden = !e; domainRow.hidden = e; };
   provider.addEventListener("change", sync);
   const save = h("button", { type: "button", class: "pri", id: "oidc-save", text: "Save" });
@@ -97,22 +98,33 @@ export function companyCard(data, actions, opts = {}) {
   const test = h("button", { type: "button", id: "oidc-test", text: "Test the connection", disabled: !data.configured || !data.has_secret });
   test.addEventListener("click", () => busyButton(test, async () => { const r = await actions.test(); if (!r.ok) show(false, WHY[r.error] ?? "The test could not start. Save first."); }));
   const secure = data.secure_address !== false && !!data.redirect_uri;
-  const card = h("div", { class: opts.inside ? "company-login" : "card", "data-card": "company-login" }, opts.inside ? null : h("h2", { text: "Company login" }),
-    h("div", { class: "row" }, h("div", { class: "grow" }, h("b", { text: opts.inside ? "Company login (Microsoft Entra / Google)" : "Microsoft Entra / Google" }),
-      h("div", { class: "small muted", text: "People sign in with their company account instead of a hub password. It opens a session only: approving still needs a key from the hub password and code." })),
-      cur.enabled ? chip("On", "ok") : cur.tested ? chip("Tested") : chip("Off")),
+  const state = cur.enabled ? chip("On", "ok") : cur.tested ? chip("Tested") : chip("Off");
+  const intro = "People sign in with their company account instead of a hub password. It opens a session only: approving still needs a key from the hub password and code.";
+  const fields = [
     secure ? null : h("p", { class: "small bad", role: "alert", text: "Company login needs a secure address (https), or this server's own localhost. A plain office IP address is not accepted by Microsoft or Google." }),
-    data.redirect_uri ? h("div", { class: "small" }, "Redirect address to give your provider: ", h("code", { text: data.redirect_uri }),
+    data.redirect_uri ? h("div", { class: "small" }, "Paste this return address into Microsoft or Google: ", h("code", { text: data.redirect_uri }),
       " ", h("button", { type: "button", class: "small", text: "Copy", onclick: () => actions.copy?.(data.redirect_uri) })) : null,
-    field("Provider", provider), field("Client id", clientId), tenantRow, domainRow,
-    field("Client secret", secret), field("Who may use it", mode),
+    field("Work account type", provider), field("Application ID", clientId), tenantRow, domainRow,
+    field("Secret", secret), field("Who may use it", mode),
     h("label", { class: "small" }, mfa, " My company login already asks for a second step (like a code or an app)"),
     h("label", { class: "small" }, on, " Turn company login on", cur.tested ? null : h("span", { class: "muted", text: " (test the connection first)" })),
     h("details", { class: "info" }, h("summary", { text: "Good to know" }),
       h("p", { class: "small muted", text: "Microsoft may leave out the sign-in method (amr) unless optional claims are set up; then the second-step tick is your statement, not something the hub can check." }),
       h("p", { class: "small muted", text: "For Microsoft, add the optional claim auth_time to the app registration (Token configuration, ID token). Without it the test login and linking fail, on purpose." }),
       h("p", { class: "small muted", text: "With \"Anyone at\" your company, guests of your Microsoft tenant also join as members. They can see nothing until you give them a group." })),
-    h("div", { class: "row top" }, save, test), out);
+    h("div", { class: "row top" }, save, test), out];
+  if (!opts.inside) {
+    const card = h("div", { class: "card", "data-card": "company-login" }, h("h2", { text: "Company login" }),
+      h("div", { class: "row" }, h("div", { class: "grow" }, h("b", { text: "Microsoft or Google work account" }), h("div", { class: "small muted", text: intro })), state), ...fields);
+    sync();
+    return card;
+  }
+  // inside Hub settings: one closed line (title, one plain line, On/Off, Set up) that opens into the fields; open by default only when a test failed
+  const card = h("details", { class: "company-login", "data-card": "company-login", open: opts.open === true || data.test_failed === true },
+    h("summary", { class: "company-summary-row" }, h("b", { text: "Company login" }), h("span", { class: "small muted", text: " · sign in with a Microsoft or Google work account" }), " ", state,
+      h("span", { class: "link small", text: cur.enabled ? " Change" : " Set up" })),
+    h("p", { class: "small muted", text: "Copy these from your Microsoft or Google admin page. " + intro }), ...fields);
+  failOpen = () => { card.open = true; };
   sync();
   return card;
 }

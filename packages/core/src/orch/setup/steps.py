@@ -317,6 +317,9 @@ KNOWN_WORDING = tuple(
             HIDDEN_REASON,
             SERVICE_TEXT,
             TIMEOUT_TEXT,
+            "The records history is not on:",
+            "Next: orch records init",
+            "it could not be set up",
             "macOS did not let orch use the keychain (it is locked); unlock it and run orch setup again",
             "macOS did not let orch use the keychain",
             "one-click could not be set up because",
@@ -623,14 +626,15 @@ class Creator:
         blocked: list[str] = []
         with contextlib.suppress(Exception):
             blocked = list(self.ports.background_blocked())
-        if blocked and self.run.reason_codes.get("runner") != "service.timeout":
+        # W01: Login Items advice only when no step failed for a service-manager reason (it would blame the wrong thing)
+        service_failed = any(code.startswith("service.") for code in self.run.reason_codes.values())
+        if blocked and not service_failed:
             self._fail(SetupError("background.blocked", BLOCKED_TEXT, 409), True)
         else:
-            message = (
-                self.run.reasons.get("runner")
-                if self.run.reason_codes.get("runner", "").startswith("service.")
-                else None
+            first_service = next(
+                (k for k, code in self.run.reason_codes.items() if code.startswith("service.")), None
             )
+            message = self.run.reasons.get(first_service) if first_service else None
             self._fail(
                 SetupError("steps.failed", message or "Some steps did not work: " + ", ".join(bad) + ".", 409), True
             )
@@ -791,15 +795,24 @@ class Creator:
             return
         assert self.wid is not None
         self.run.set("records", "doing")
+        self.run.details.pop("records", None)
+        self.run.reason_codes.pop("records", None)
         try:
             self.ports.records_setup(self.wid, self.root)
         except Exception as exc:  # noqa: BLE001 - reported as a retry item; the rest of the setup is done
             self.run.set("records", "failed")
             self.run.add_retry("records")
+            service = _service_reason(exc)
+            if service:  # W01: a missing or silent service manager is said in plain words, the raw text in Details
+                self.run.details["records"] = self._safe(f"{type(exc).__name__}: {exc}", 2000)
+                code = "service.timeout" if service == TIMEOUT_TEXT else "service.unavailable"
+                self.run.reason_codes["records"] = code
+                self.run.explain("records", f"The records history is not on: {service} Next: orch records init")
+                return
             why = " ".join("".join(c if c.isprintable() else " " for c in self._safe(str(exc), None)).split())[:300]
-            self.run.explain(
-                "records", f"The records history is not on: {why or type(exc).__name__}. Next: orch records init"
-            )
+            if not why or why == type(exc).__name__ or why.startswith(type(exc).__name__ + ":"):
+                why = "it could not be set up"  # never a bare exception class name for the person
+            self.run.explain("records", f"The records history is not on: {why}. Next: orch records init")
             return
         self.run.set("records", "done")
 

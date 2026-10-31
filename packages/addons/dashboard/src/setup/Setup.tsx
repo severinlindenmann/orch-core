@@ -1556,18 +1556,22 @@ export function Setup({ api }: { api: SetupAPI }) {
                     Try again
                   </button>
                 )}
-                <button className="cancel"
-                  onClick={() =>
-                    void act(async () => {
-                      await api.call('cancel', {})
-                      api.forget()
-                      setEnded(true)
-                      setRun(undefined)
-                    })
-                  }
-                >
-                  Finish setup later
-                </button>
+                {/* W01: once the workspace exists, "later" means opening it now (above); cancelling here ended on
+                    "Setup paused" with no way into the workspace that was created */}
+                {!progress.error.finishable && (
+                  <button className="cancel"
+                    onClick={() =>
+                      void act(async () => {
+                        await api.call('cancel', {})
+                        api.forget()
+                        setEnded(true)
+                        setRun(undefined)
+                      })
+                    }
+                  >
+                    Finish setup later
+                  </button>
+                )}
               </footer>
             </>
           )}

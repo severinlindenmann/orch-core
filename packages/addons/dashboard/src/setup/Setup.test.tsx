@@ -384,7 +384,7 @@ test('long runner access is one plain click after the review; digest and fingerp
   })
 })
 
-test('finish skips secrets; progress exposes failure and Finish setup later', async () => {
+test('finish skips secrets; progress exposes failure and offers the workspace', async () => {
   const f = fake({ finish: true, failure: true })
   render(<Setup api={f.api} />)
   await screen.findByRole('heading', { name: 'Finish setting up your workspace' })
@@ -395,8 +395,9 @@ test('finish skips secrets; progress exposes failure and Finish setup later', as
   fireEvent.click(screen.getByRole('button', { name: 'Finish setup' }))
   await screen.findByRole('heading', { name: 'Setup needs your attention' })
   expect(screen.getByText('Failed')).toBeInTheDocument()
-  fireEvent.click(screen.getByRole('button', { name: 'Finish setup later' }))
-  await screen.findByRole('heading', { name: 'Setup paused' })
+  // W01: the workspace exists (finish mode): the way out is opening it, not a pause with no way in
+  expect(screen.queryByRole('button', { name: 'Finish setup later' })).toBeNull()
+  expect(screen.getByRole('button', { name: 'Open your workspace' })).toBeVisible()
 })
 
 test('copy is recovery-only, best effort clears after 60 seconds; print uses browser print', async () => {
@@ -2077,8 +2078,9 @@ test.each(['OSError', 'TimeoutExpired after 120 s'])('W01 attention hides raw se
   expect(screen.getByText(/service manager/)).toBeVisible()
   expect(screen.getByText(raw).closest('details')).not.toHaveAttribute('open')
   expect(screen.queryByText(/Login Items/)).toBeNull()
-  fireEvent.click(screen.getByRole('button', { name: 'Finish setup later' }))
-  await screen.findByRole('heading', { name: 'Setup paused' })
+  // W01: no "Finish setup later" into "Setup paused" with no way in: the workspace is offered instead
+  expect(screen.queryByRole('button', { name: 'Finish setup later' })).toBeNull()
+  expect(screen.getByRole('button', { name: 'Open your workspace' })).toBeVisible()
   expect(screen.queryByText('orch dashboard open')).toBeNull()
 })
 
@@ -2118,6 +2120,7 @@ test.each([true, false])('W01 finishable=%s offers workspace access only after g
   await screen.findByRole('heading', { name: 'Setup needs your attention' })
   if (!finishable) {
     expect(screen.queryByRole('button', { name: 'Open your workspace' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Finish setup later' })).toBeVisible()  // nothing was created: pausing is right
     return
   }
   expect(screen.getByText('Your workspace was created, but some setup steps need attention. You can open it now and finish them later.')).toBeVisible()
@@ -2125,7 +2128,7 @@ test.each([true, false])('W01 finishable=%s offers workspace access only after g
   expect(button).toHaveClass('primary')
   expect(button.parentElement?.firstElementChild).toBe(button)
   expect(screen.getByRole('button', { name: 'Try again' })).not.toHaveClass('primary')
-  expect(screen.getByRole('button', { name: 'Finish setup later' })).toBeVisible()
+  expect(screen.queryByRole('button', { name: 'Finish setup later' })).toBeNull()
   const assign = vi.fn()
   vi.stubGlobal('location', { origin: location.origin, assign })
   fireEvent.click(button)

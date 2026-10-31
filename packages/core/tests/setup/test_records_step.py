@@ -126,3 +126,34 @@ def test_the_real_port_in_a_records_root_nested_in_the_project_repo_is_a_retry_i
     assert (r.store / ".git").read_text() == "gitdir: ../.git\n"  # untouched
     for unit in (".config/systemd/user", "Library/LaunchAgents"):
         assert not (r.home / unit).exists()
+
+
+def test_w01_a_records_failure_from_a_missing_service_manager_is_plain_words_not_an_oserror(tmp):
+    ports = FakePorts()
+    ports.blocked = ["io.orch.host"]  # what a Mac without a working launchctl may report
+
+    def fail(*_a):
+        ports.log.append(("records_setup",))
+        raise OSError("launchctl bootstrap gui/501: Input/output error")
+
+    ports.records_setup = fail
+    f, ports, p, _ = run_ok(tmp, WITH_RECORDS, ports=ports)
+    why = p["reasons"]["records"]
+    assert "OSError" not in why and "service manager" in why and "orch records init" in why
+    shown = "".join(ports.terminal.shown)
+    assert "OSError" not in shown
+    # W01: not the macOS Login Items advice: the failure is the service manager, not a switch in System Settings
+    assert p["error"]["code"] == "steps.failed" and "Login Items" not in p["error"]["message"]
+    assert "service manager" in p["error"]["message"] and p["error"]["finishable"] is True
+    assert "launchctl" in p["error"]["details"]
+
+
+def test_w01_a_records_failure_without_a_message_never_shows_a_bare_class_name(tmp):
+    ports = FakePorts()
+
+    def fail(*_a):
+        raise RuntimeError()
+
+    ports.records_setup = fail
+    _, _, p, _ = run_ok(tmp, WITH_RECORDS, ports=ports)
+    assert "RuntimeError" not in p["reasons"]["records"] and "could not be set up" in p["reasons"]["records"]

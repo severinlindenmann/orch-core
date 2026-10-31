@@ -34,6 +34,7 @@ ROUTES = {
     "finish": "POST",
     "left": "POST",
     "cancel": "POST",
+    "retry": "POST",  # W01: the page's Try again (it answered 404 setup.not_found without this)
 }
 
 

@@ -706,8 +706,13 @@ export function Setup({ api }: { api: SetupAPI }) {
     setProfile((p) => ({ ...p, ...value }))
     setReview(undefined)
   }
+  // Back on Review bumps this, so an answer to an older review request never comes back as the current review
+  const reviewSeq = useRef(0)
   async function getReview() {
-    setReview(await api.call<Review>('review', {}))
+    const seq = ++reviewSeq.current
+    const r = await api.call<Review>('review', {})
+    if (seq !== reviewSeq.current) return
+    setReview(r)
     setStep(5)
   }
   async function approveProfile() {
@@ -946,8 +951,8 @@ export function Setup({ api }: { api: SetupAPI }) {
                     </p>
                   )}
                   <p>We will set this up in {folder}.</p>
-                  <p>Setup does not change your existing files. It adds orch's files (and a git repository if you choose one).</p>
-                  {profile.addons.includes('worktrees') && <p>With work copies on, agents change their own copies until you merge them.</p>}
+                  <p>Setup adds orch&apos;s own files to this folder (a hidden .orch folder, AGENTS.orch.md and skill folders) and one marked orch section to AGENTS.md, CLAUDE.md and .gitignore, creating them if needed (and a git repository if you choose one). Nothing else in your files is changed.</p>
+                  <p>{profile.addons.includes('worktrees') ? 'With work copies on, agents change their own copies until you merge them.' : 'Agents change the files in this folder directly.'}</p>
                   {profile.method === 'terminal' && <p>{terminalStepCopy}</p>}
                   <p>Everything stays on {host ? <Inline>{host}</Inline> : 'this computer'} unless you choose to connect your phone.</p>
                 </>
@@ -1055,7 +1060,7 @@ export function Setup({ api }: { api: SetupAPI }) {
             <>
               <div className="agents-summary" data-testid="agents-summary">
                 <strong>Recommended for most people</strong>
-                <small>Agents can start from the dashboard, open a terminal, get their own copy of each ticket&apos;s files, and run quick tasks. Setup does not change your existing files; it adds orch&apos;s files (and a git repository if you choose one).{profile.addons.includes('worktrees') ? ' With work copies on, agents change their own copies until you merge them.' : ''}</small>
+                <small>Agents can start from the dashboard, open a terminal, get their own copy of each ticket&apos;s files, and run quick tasks. Setup adds orch&apos;s own files to this folder (a hidden .orch folder, AGENTS.orch.md and skill folders) and one marked orch section to AGENTS.md, CLAUDE.md and .gitignore, creating them if needed (and a git repository if you choose one). Nothing else in your files is changed.{profile.addons.includes('worktrees') ? ' With work copies on, agents change their own copies until you merge them.' : ' Agents change the files in this folder directly.'}</small>
               </div>
               {/* the fold opens by itself when the recommendation does not apply (a switch differs from its default, or the folder question was answered Skip) */}
               <details className="approval-more" data-testid="agents-more" open={agentsDiffer || undefined}>
@@ -1219,6 +1224,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                   <span>
                     Let your AI helpers open {folder} without asking
                     <small>They will not stop to ask first. It is the folder with your project files; orch adds its own files to it.</small>
+                    {state.dir && <small data-testid="trust-folder-path">Folder: <Raw>{state.dir}</Raw></small>}
                   </span>
                   <input
                     type="checkbox"
@@ -1227,12 +1233,6 @@ export function Setup({ api }: { api: SetupAPI }) {
                     onChange={(e) => update({ trust_folder: e.target.checked })}
                   />
                 </label>
-              )}
-              {offersTrust && state.dir && (
-                <details className="info" data-testid="trust-folder-path">
-                  <summary>Which folder?</summary>
-                  <small><Raw>{state.dir}</Raw></small>
-                </details>
               )}
               </details>
               <SetupFooter cancel={cancel}>
@@ -1431,7 +1431,9 @@ export function Setup({ api }: { api: SetupAPI }) {
               <SetupFooter cancel={cancel}>
                 {/* P52: fix a choice without starting over (Finish setup has its choices on the first screen) */}
                 <button onClick={() => {
-                  // Back discards the review and its terminal check: Continue fetches a new one for the changed choices
+                  // Back discards the review and its terminal check (both live in `review`), and makes any review answer
+                  // still on its way stale: Continue fetches a new one for the changed choices
+                  reviewSeq.current++
                   setReview(undefined)
                   setStep(state.mode === 'finish' ? 0 : 3)
                 }}>Back</button>

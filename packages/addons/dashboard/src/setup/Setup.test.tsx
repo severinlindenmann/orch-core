@@ -1763,14 +1763,12 @@ test('r14-P07: the approval page uses everyday words: Password, AI helpers; no C
   expect(container.textContent).not.toMatch(/Claude Code|assphrase|Your key/)
 })
 
-test('security review: the folder-access switch shows the full folder path behind "Which folder?"', async () => {
+test('security review: the folder-access switch shows the full folder path inline', async () => {
   const f = fake({ suggested: { method: 'click' }, claudeAvailable: true })
   render(<Setup api={f.api} />)
   await approval()
   fireEvent.click(screen.getByText('Change these settings'))
-  const fold = screen.getByTestId('trust-folder-path')
-  expect(fold).toHaveTextContent('Which folder?')
-  expect(fold).toHaveTextContent('/demo/project')
+  expect(screen.getByTestId('trust-folder-path')).toHaveTextContent('Folder: /demo/project')
 })
 
 test('security review: Back on Review discards the review, so Create needs a new one', async () => {
@@ -1787,9 +1785,10 @@ test('security review: Back on Review discards the review, so Create needs a new
   await waitFor(() => expect(f.calls.filter((c) => c.path === 'review').length).toBe(before + 1))
 })
 
-test('security review: setup says what it does to existing files, never that they stay untouched', async () => {
+test('security review: setup says exactly what it adds to the folder, never that files stay untouched', async () => {
   const f = fake()
   const { container } = render(<Setup api={f.api} />)
-  await screen.findByText(/Setup does not change your existing files/)
-  expect(container.textContent).not.toMatch(/stay untouched/)
+  await screen.findByText(/Nothing else in your files is changed/)
+  expect(container.textContent).toMatch(/one marked orch section to AGENTS.md, CLAUDE.md and .gitignore/)
+  expect(container.textContent).not.toMatch(/stay untouched|does not change your existing files/)
 })

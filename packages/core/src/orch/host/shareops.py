@@ -512,8 +512,27 @@ def _read(call: Call, op: str, args: dict[str, Any]) -> dict[str, Any]:
         if op == "share.rules":
             shown = [r for r in st.rules if not _is_full(call.service) or r["kind"] in S.TICKET_KINDS]
             rules = [{**r, "count": len(_select(call.service, [r], facts)), "describes": S.describe(r)} for r in shown]
+            keys = {f.uid: f.key for f in facts}
+            known = st.sent if st.confirmed is None else st.confirmed
+            states = {}
+            selected = _select(call.service, st.rules, facts)
+            for item in selected:
+                if item.kind != "ticket" or item.logical in st.withdrawn:
+                    continue
+                if item.logical in st.refused:
+                    code = st.refused[item.logical]["code"]
+                    code = code if code in S.ITEM_REFUSALS | {"unknown_user", "other_person"} else "unknown"
+                    state = "refused:" + code
+                elif item.logical not in known:
+                    state = "not_sent"
+                elif (st.sent.get(item.logical) or {}).get("digest") == item.digest:
+                    state = "sent"
+                else:
+                    state = "waiting"
+                states[keys[item.ticket_uid]] = state
             return ok_result({"rules": rules, "shared": len(st.sent), "withdrawn": sorted(st.withdrawn),
-                              "refused_items": st.refused_items()})  # fmt: skip
+                              "refused_items": st.refused_items(), "tickets_state": states,
+                              "not_sent_count": sum(v == "not_sent" for v in states.values())})  # fmt: skip
         add = S.normalize_rule(args["add"]) if "add" in args else None
         if add is not None:
             _full_rules_only(call.service, add)

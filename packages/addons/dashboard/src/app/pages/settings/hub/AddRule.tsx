@@ -67,7 +67,7 @@ function ruleWords(rule: HubRule, n: number, title?: string): React.ReactNode {
   return <Raw>{rule.kind}</Raw>
 }
 
-export function AddRuleReview({ ws, workspace, rule, after, onDone, onCancel, title, compact }: { ws: string; workspace: HubWorkspace; rule: HubRule; after: HubPreview | undefined; /** The share went through (the message was shown): the caller closes the dialog. */ onDone?: () => void; /** Compact only: Cancel sits in the same row as Details and Share. */ onCancel?: () => void; /** The ticket's title when the rule names one ticket. */ title?: string; /** One ticket from the ticket page: one sentence, one caveat, one button; the counts and lists are behind Details. */ compact?: boolean }) {
+export function AddRuleReview({ ws, workspace, rule, after, onDone, onCancel, title, compact }: { ws: string; workspace: HubWorkspace; rule?: HubRule; after: HubPreview | undefined; /** The share went through (the message was shown): the caller closes the dialog. */ onDone?: () => void; /** Compact only: Cancel sits in the same row as Details and Share. */ onCancel?: () => void; /** The ticket's title when the rule names one ticket. */ title?: string; /** One ticket from the ticket page: one sentence, one caveat, one button; the counts and lists are behind Details. */ compact?: boolean }) {
   const qc = useQueryClient()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -80,9 +80,9 @@ export function AddRuleReview({ ws, workspace, rule, after, onDone, onCancel, ti
     if (!trustedPress(e.nativeEvent) || busy || !after.plan) return
     setBusy(true)
     setError('')
-    api.addHubRule(ws, rule, after.plan).then(
+    void (rule ? api.addHubRule(ws, rule, after.plan) : api.syncHubShare(ws, after.plan)).then(
       got => {
-        const what = rule.kind === 'ticket' && title ? `“${title}”` : `${review.new_count} ${review.new_count === 1 ? 'item' : 'items'}`
+        const what = rule?.kind === 'ticket' && title ? `“${title}”` : `${review.new_count} ${review.new_count === 1 ? 'item' : 'items'}`
         toast.success(`Shared ${what} with the hub.`, { description: got.synced ? undefined : 'Saved here. It is sent when the hub is back.' })
         onDone?.(); void qc.invalidateQueries({ queryKey: ['hub', ws] })
       },
@@ -90,7 +90,7 @@ export function AddRuleReview({ ws, workspace, rule, after, onDone, onCancel, ti
     ).finally(() => setBusy(false))
   }
   const names = whoWill(review.readers)
-  const details = <InfoDrawer testId="hub-add-details" text={compact ? 'Details' : undefined}>{compact && <p>{review.readers.note ?? 'Names from the hub, not signed.'}</p>}{compact && review.readers.info && <p>{review.readers.info}</p>}{compact && review.scope_short && <p data-testid="hub-add-scope">{review.scope_short}</p>}{compact && readerNames(review.readers).length > SHOWN_NAMES && <p data-testid="hub-add-readers-all">Everyone who will see it: <Raw>{readerNames(review.readers).join(', ')}</Raw></p>}<p data-testid="hub-add-rule">Tickets: <Raw>{rule.kind}</Raw>{rule.value !== null && <> · <Raw>{rule.value}</Raw></>}{rule.value !== null && rule.description ? ' · with description' : ''}</p><WorkspaceLine workspace={{ id: workspace.id, name: workspace.name, prefix: workspace.prefix }} many testId="hub-review-workspace" /><p data-testid="hub-add-hub">Hub: <Raw>{review.hub_id ?? 'unknown'}</Raw></p>{cut && <div data-testid="hub-add-widened-all">{review.widened.map((w, i) => <p key={i}>Reaches more now: <Raw>{widenedText(w, true)}</Raw></p>)}</div>}{after.plan && <p>Plan: <Raw>{after.plan}</Raw></p>}<p data-testid="hub-add-new">{review.new_count} new {review.new_count === 1 ? 'item leaves' : 'items leave'} this computer.</p>{review.leaves.map((t, i) => <p key={i} data-testid="hub-add-leaves">What leaves: <Raw>{t}</Raw></p>)}{review.new_items.length > 0 && <>
+  const details = <InfoDrawer testId="hub-add-details" text={compact ? 'Details' : undefined}>{compact && <p>{review.readers.note ?? 'Names from the hub, not signed.'}</p>}{compact && review.readers.info && <p>{review.readers.info}</p>}{compact && review.scope_short && <p data-testid="hub-add-scope">{review.scope_short}</p>}{compact && readerNames(review.readers).length > SHOWN_NAMES && <p data-testid="hub-add-readers-all">Everyone who will see it: <Raw>{readerNames(review.readers).join(', ')}</Raw></p>}{rule && <p data-testid="hub-add-rule">Tickets: <Raw>{rule.kind}</Raw>{rule.value !== null && <> · <Raw>{rule.value}</Raw></>}{rule.value !== null && rule.description ? ' · with description' : ''}</p>}<WorkspaceLine workspace={{ id: workspace.id, name: workspace.name, prefix: workspace.prefix }} many testId="hub-review-workspace" /><p data-testid="hub-add-hub">Hub: <Raw>{review.hub_id ?? 'unknown'}</Raw></p>{cut && <div data-testid="hub-add-widened-all">{review.widened.map((w, i) => <p key={i}>Reaches more now: <Raw>{widenedText(w, true)}</Raw></p>)}</div>}{after.plan && <p>Plan: <Raw>{after.plan}</Raw></p>}<p data-testid="hub-add-new">{review.new_count} new {review.new_count === 1 ? 'item leaves' : 'items leave'} this computer.</p>{review.leaves.map((t, i) => <p key={i} data-testid="hub-add-leaves">What leaves: <Raw>{t}</Raw></p>)}{review.new_items.length > 0 && <>
       <button type="button" className="text-[13px] text-text-muted underline" onClick={() => setList(v => !v)}>{list ? 'Hide list' : 'Show list'}</button>
       {list && <ul className="space-y-1" data-testid="hub-add-list">{review.new_items.slice(0, 20).map((l, i) => <li key={i}><Raw>{l}</Raw></li>)}
         {review.new_count > 20 && <li>and {review.new_count - 20} more</li>}</ul>}
@@ -99,7 +99,7 @@ export function AddRuleReview({ ws, workspace, rule, after, onDone, onCancel, ti
     {review.widened.slice(0, SHOWN_WIDENED).map((w, i) => <p key={i} data-testid="hub-add-widened" className="text-warning">Reaches more now: <Raw>{widenedText(w)}</Raw></p>)}
     {review.widened.length > SHOWN_WIDENED && <p data-testid="hub-add-widened-more" className="text-warning">and {review.widened.length - SHOWN_WIDENED} more {review.widened.length - SHOWN_WIDENED === 1 ? 'ticket reaches' : 'tickets reach'} more people</p>}
   </>
-  if (compact) return <div className="space-y-2" data-testid="hub-add-review">
+  if (compact && rule) return <div className="space-y-2" data-testid="hub-add-review">
     <p data-testid="hub-add-sentence">{names
       ? <><span data-testid="hub-add-readers"><bdi>{names}</bdi></span> will see {review.leaves_short ? <>this ticket in their own workspace: {review.leaves_short}</> : (review.leaves.join('; ') || 'this ticket')}.</>
       : <span data-testid="hub-add-readers">{nothingNew(review) ? 'Nobody new will see it.' : 'Only you will see it.'}</span>}{(review.later_edits_short ?? review.later_edits) && names ? <> <span data-testid="hub-add-later">{review.later_edits_short ?? review.later_edits}</span></> : null}</p>
@@ -109,13 +109,13 @@ export function AddRuleReview({ ws, workspace, rule, after, onDone, onCancel, ti
       {details}
       <div className="flex items-center gap-2">
         {onCancel && <Button data-testid="hub-add-cancel" variant="outline" size="sm" onClick={onCancel}>Cancel</Button>}
-        <Button data-testid="hub-add-go" size="sm" disabled={busy || !after.plan} onClick={go}>{busy ? 'Sharing…' : 'Share'}</Button>
+        <Button data-testid="hub-add-go" size="sm" disabled={busy || !after.plan} onClick={go}>{busy ? 'Sharing…' : rule ? 'Share' : 'Sign'}</Button>
       </div>
     </div>
     {error && <p role="alert" className="text-danger">{error}</p>}
   </div>
   return <div className="space-y-2" data-testid="hub-add-review">
-    <p data-testid="hub-add-sentence">Share {rule.kind === 'ticket' ? null : <>{review.new_count} </>}{ruleWords(rule, review.new_count, title)} from <Raw>{workspace.name}</Raw> with the hub{rule.value !== null && rule.description ? ', with their descriptions' : ''}.</p>
+    <p data-testid="hub-add-sentence">{rule ? <>Share {rule.kind === 'ticket' ? null : <>{review.new_count} </>}{ruleWords(rule, review.new_count, title)} from <Raw>{workspace.name}</Raw> with the hub{rule.value !== null && rule.description ? ', with their descriptions' : ''}.</> : <>Send the selected shares from <Raw>{workspace.name}</Raw> to the hub.</>}</p>
     <div className="flex items-center gap-1" data-testid="hub-add-readers">
       <p><Raw>{who(review.readers, nothingNew(review))}</Raw></p>
       {(readerNames(review.readers).length > 0 || !!review.readers.info) && <InfoDrawer testId="hub-add-readers-info"><p>{review.readers.note ?? 'From the hub, not signed.'}</p>{review.readers.info && <p>{review.readers.info}</p>}{readerNames(review.readers).length > SHOWN_NAMES && <p data-testid="hub-add-readers-all">Everyone who will see it: <Raw>{readerNames(review.readers).join(', ')}</Raw></p>}</InfoDrawer>}
@@ -124,7 +124,7 @@ export function AddRuleReview({ ws, workspace, rule, after, onDone, onCancel, ti
     {details}
     {review.later_edits && <p data-testid="hub-add-later">{review.later_edits}</p>}
     <p className="text-warning">{caveat}</p>
-    <Button data-testid="hub-add-go" size="sm" disabled={busy || !after.plan} onClick={go}>{busy ? 'Sharing…' : 'Share'}</Button>
+    <Button data-testid="hub-add-go" size="sm" disabled={busy || !after.plan} onClick={go}>{busy ? 'Sharing…' : rule ? 'Share' : 'Sign'}</Button>
     {error && <p role="alert" className="text-danger">{error}</p>}
   </div>
 }

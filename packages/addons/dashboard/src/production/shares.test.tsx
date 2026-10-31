@@ -969,3 +969,19 @@ it('P03: a result that arrives with the name of a ticked work file replaces it: 
   expect(within(form).getByRole('button', { name: 'Review selected files' })).toBeDisabled()
   expect(calls('/shares/prepare')).toEqual([])
 })
+
+it('lists pre-join hub shares and opens the confirming sync review without sending', async () => {
+  route()
+  state.host.workspaces[0].features = [...READS, 'publish', 'hub']
+  const previous = state.host.override
+  state.host.override = (path, method, body) => {
+    if (path.endsWith('/hub/share')) return Response.json({ available: true, rules: [], shared: 0, refused: [], tickets: ['DEMO-0001'], tickets_complete: true, tickets_state: { 'DEMO-0001': 'not_sent' }, not_sent_count: 1 })
+    if (path.endsWith('/hub/share/preview')) return Response.json({ count: 1, new: 1, revoked: 0, more: 0, items: [], rules: [], plan: 'P'.repeat(43), review: { hub_id: 'demo', readers: { people: [], teams: [], note: null, info: null }, widened: [], new_count: 1, new_more: 0, new_items: ['ticket DEMO-0001: A ticket'], leaves: ['the title, status, labels and deadline'], later_edits: 'Later edits are shared too.' } })
+    return previous?.(path, method, body)
+  }
+  show('/w/DEMO/shares')
+  expect(await screen.findByText('1 shares were made before you joined and are not sent yet.', {}, T)).toBeTruthy()
+  fireEvent.click(screen.getByRole('button', { name: 'Send now' }))
+  expect(await screen.findByRole('button', { name: 'Sign' }, T)).toBeTruthy()
+  expect(calls('/hub/share/sync')).toHaveLength(0)
+})

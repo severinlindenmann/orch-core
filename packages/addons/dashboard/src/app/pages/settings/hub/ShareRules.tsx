@@ -1,3 +1,4 @@
+import { SendSharesReview } from './SendShares'
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { InfoDrawer } from '@/components/InfoDrawer'
@@ -56,6 +57,7 @@ function unruled(share: HubShare, facts: Fact[] | undefined): string[] {
 
 export function ShareRules({ ws, workspace, onBack }: { ws: string; workspace: HubWorkspace; onBack: () => void }) {
   const share = useQuery(hubQueries.share(ws))
+  const [sending, setSending] = useState(false)
   const [adding, setAdding] = useState(false)
   const [kind, setKind] = useState<'type' | 'tag' | 'ticket'>('type')
   const [value, setValue] = useState('')
@@ -78,6 +80,7 @@ export function ShareRules({ ws, workspace, onBack }: { ws: string; workspace: H
     <Action id="hub-share-back" onClick={onBack}>Back to Hub</Action><h2 className="text-lg font-semibold">Choose what to share</h2>
     {share.isPending ? <p role="status">Loading sharing rules…</p> : share.isError ? <><p role="alert">Could not load sharing rules.</p><Action id="hub-share-retry" onClick={() => void share.refetch()}>Try again</Action></> : !share.data.available ? <p data-testid="hub-share-unavailable">Sharing settings are not available on this host yet. Update orch to choose what the hub sees.</p> : <>
       <Panel title="Notes for the hub and your phone"><AlwaysShared share={share.data} /></Panel>
+      {(share.data.not_sent_count ?? 0) > 0 && <p>{share.data.not_sent_count} shares were made before you joined and are not sent yet. <Action id="rules-send-shares" onClick={() => setSending(true)}>Send now</Action></p>}
       <Panel title="Shared with the hub">
         <p className="text-text-muted">New matching tickets are shared too.</p><Details testId="hub-rules-details"><p>Counts come from the hub, not signed.</p></Details>
         {share.data.rules.filter(r => r.kind !== 'needs_you' && r.kind !== 'questions').map((r, i) => <div key={r.kind + ':' + r.value} className="flex flex-wrap items-center justify-between gap-3 border-t border-border py-3">
@@ -117,6 +120,7 @@ export function ShareRules({ ws, workspace, onBack }: { ws: string; workspace: H
         <Action id="hub-share-review" disabled={!change || !current || !!error} onClick={() => { setReview(change) }}>Review change</Action>
       </Panel>}
     </>}
+    {sending && <SendSharesReview workspace={workspace} onClose={() => setSending(false)} />}
     {review?.add && <Flow title="Review sharing change" cancel="Cancel" onClose={() => setReview(undefined)}>
       <AddRuleReview ws={ws} workspace={workspace} rule={review.add} title={review.add.kind === 'ticket' ? titleOf(review.add.value) : undefined} after={current}
         onDone={() => { setReview(undefined); setAdding(false); setValue(''); setUsers([]); setGroups([]); setWithText(true) }} /></Flow>}

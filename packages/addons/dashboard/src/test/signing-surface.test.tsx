@@ -964,3 +964,22 @@ it('new-ticket schedule signing preserves its target and literal title', async (
   for (const line of lines) expect(within(panel).getByText(line, { exact: false })).toBeVisible()
   expect(sign).not.toHaveBeenCalled()
 })
+
+it('hub Send now uses the shown plan only after the person confirms Sign', async () => {
+  const { SendSharesReview } = await import('@/app/pages/settings/hub/SendShares')
+  const gesture = await import('@/components/sign/trustedPress')
+  const preview = {
+    count: 1, new: 1, revoked: 0, more: 0, items: [], rules: [], plan: 'P'.repeat(43),
+    review: { hub_id: 'demo', readers: { people: ['Ben'], teams: [], note: null, info: null }, widened: [], new_count: 1, new_more: 0, new_items: ['ticket DEMO-0001: A ticket'], leaves: ['the title, status, labels and deadline'], later_edits: 'Later edits are shared too.' },
+  }
+  vi.spyOn(api, 'getHubPreview').mockResolvedValue(preview)
+  const sync = vi.spyOn(api, 'syncHubShare').mockResolvedValue({ synced: true, pending: null, put: 1 })
+  vi.spyOn(gesture, 'trustedPress').mockReturnValue(true)
+  const user = userEvent.setup()
+  render(<QueryClientProvider client={new QueryClient()}><SendSharesReview workspace={{ id: 'demo', name: 'My workspace', prefix: 'DEMO' }} onClose={() => {}} /></QueryClientProvider>)
+  const sign = await screen.findByRole('button', { name: 'Sign' })
+  expect(screen.getByTestId('hub-add-readers')).toHaveTextContent('Ben')
+  expect(sync).not.toHaveBeenCalled()
+  await user.click(sign)
+  expect(sync).toHaveBeenCalledExactlyOnceWith('demo', preview.plan)
+})

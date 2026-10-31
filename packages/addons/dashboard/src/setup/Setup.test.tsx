@@ -193,6 +193,13 @@ async function approval() {
   await screen.findByRole('button', { name: 'Continue →' })
   for (let i = 0; i < 3; i++) fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
 }
+function chooseAgentDuration(label: string) {
+  fireEvent.click(screen.getByRole('button', { name: 'Back' }))
+  const access = screen.getByRole('switch', { name: /Allow agents to work/ })
+  if (!(access as HTMLInputElement).checked) fireEvent.click(access)
+  fireEvent.click(screen.getByRole('button', { name: label }))
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+}
 async function reveal() {
   await approval()
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
@@ -293,8 +300,7 @@ test('P01: One click with a runner grant has no terminal box and no terminal wai
   const f = fake({ typed: true, noTty: true, suggested: { method: 'click' } })
   render(<Setup api={f.api} />)
   await approval()
-  fireEvent.click(screen.getByRole('button', { name: '3 days' }))
-  fireEvent.click(screen.getByLabelText(/Let agents start on this computer now/))
+  chooseAgentDuration('3 days')
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Your recovery words' })
   await check()
@@ -315,9 +321,7 @@ test('run 8: One click is the default where core suggests it, with the risk sent
   expect(screen.getByLabelText(/One click on this computer/)).toBeChecked()
   expect(screen.getByText('Recommended')).toBeVisible()
   expect(screen.getByText('No typing. Best on your own computer.')).toBeVisible()
-  // r11-P16: Passphrase is behind "Change these settings"
-  expect(screen.getByText(/Safest if others use this computer/)).not.toBeVisible()
-  fireEvent.click(screen.getByText('Change these settings'))
+  // P24: Password is visible beside One click.
   expect(screen.getByText(/Safest if others use this computer/)).toBeVisible()
   const risk = screen.getByTestId('click-risk') as HTMLDetailsElement
   expect(risk.open).toBe(false) // the longer meaning is one click away, not in the main view
@@ -346,13 +350,12 @@ test('long runner access is one plain click after the review; digest and fingerp
   const f = fake({ typed: true })
   render(<Setup api={f.api} />)
   await approval()
-  fireEvent.click(screen.getByRole('button', { name: '3 days' }))
-  fireEvent.click(screen.getByLabelText(/Let agents start on this computer now/))
+  chooseAgentDuration('3 days')
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Your recovery words' })
   await check()
   await screen.findByRole('heading', { name: 'Review your setup' })
-  expect(document.querySelector('.review-summary')).toHaveTextContent('may work for 3 days')
+  expect(document.querySelector('.review-summary')).toHaveTextContent('Agents may work on their own for 3 days.')
   expect(screen.queryByText(/scope workable/)).toBeNull() // the raw values are only in the technical details
   expect(screen.getByText(/Return to the terminal window where you started orch setup/)).toBeInTheDocument()
   expect(screen.getByText(/Check the terminal shows/)).toHaveTextContent('demo not real. If it does, press Enter there.')
@@ -522,11 +525,11 @@ test('state failure shows core message and a next step', async () => {
   expect(screen.getByText(/in this folder to resume/)).toBeInTheDocument()
 })
 
-test('extended access without a runner grant is one plain click, with no word to type', async () => {
+test('extended access through the single agents choice is one plain click, with no word to type', async () => {
   const f = fake()
   render(<Setup api={f.api} />)
   await approval()
-  fireEvent.click(screen.getByRole('button', { name: '1 day' }))
+  chooseAgentDuration('1 day')
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Your recovery words' })
   await check()
@@ -534,7 +537,7 @@ test('extended access without a runner grant is one plain click, with no word to
   expect(screen.queryByLabelText(/Type/)).toBeNull()
   fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }))
   await waitFor(() => expect(f.calls.find(c => c.path === 'create')?.body).toEqual({ review_id: 'demo-review', digest: 'demo-digest' }))
-  expect(f.calls.find(c => c.path === 'profile')?.body).toMatchObject({ agent_grant: false, agent_hours: 24 })
+  expect(f.calls.find(c => c.path === 'profile')?.body).toMatchObject({ agent_grant: true, agent_hours: 24 })
 })
 
 test.each(['waiting for terminal', 'waiting for runner'])('shows progress waiting: %s', async (waiting) => {
@@ -631,8 +634,7 @@ test('review is a compact plain summary; blanks and "set at signing" lines stay 
   const f = fake({ typed: true })
   render(<Setup api={f.api} />)
   await approval()
-  fireEvent.click(screen.getByRole('button', { name: '3 days' }))
-  fireEvent.click(screen.getByLabelText(/Let agents start on this computer now/))
+  chooseAgentDuration('3 days')
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Your recovery words' })
   await check()
@@ -771,13 +773,12 @@ test('agent step: no raw capability codes, plain worktrees text, quick tasks has
   expect(page(container)).not.toMatch(/spawn_agent|pty/)
   expect(screen.getByText('Quick tasks').closest('.toggle')?.querySelector('input')).toBeNull()
   expect(screen.getByText('Always on')).toBeInTheDocument()
-  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
-  expect(screen.getByRole('button', { name: 'No agent access' })).toHaveAttribute('aria-pressed', 'true')
-  expect(screen.queryByLabelText(/Let agents start on this computer now/)).toBeNull()
+  expect(screen.getByRole('switch', { name: /Allow agents to work/ })).not.toBeChecked()
+  expect(screen.queryByRole('button', { name: '1 day' })).toBeNull()
+  fireEvent.click(screen.getByRole('switch', { name: /Allow agents to work/ }))
   fireEvent.click(screen.getByRole('button', { name: '1 day' }))
-  expect(screen.getByRole('button', { name: 'No agent access' })).toHaveAttribute('aria-pressed', 'false')
-  expect(screen.getByLabelText(/Let agents start on this computer now/)).not.toBeChecked()
-  fireEvent.click(screen.getByRole('button', { name: 'No agent access' }))
+  fireEvent.click(screen.getByRole('switch', { name: /Allow agents to work/ }))
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Your recovery words' })
   expect(f.calls.find((c) => c.path === 'profile')?.body).toMatchObject({ agent_hours: 8, agent_grant: false })
@@ -867,19 +868,19 @@ function withReview(patch: Partial<Review>) {
 }
 
 test('the summary comes from the review core returned, not from the choices on the page', async () => {
-  // The page chose 3 days and one click; core's review says 1 day and a terminal flag: the summary says what core says.
+  // The page chose 3 days; core returns only a workspace duration and terminal approval, with no runner grant.
   const { api } = withReview({ flags: [{ id: 'terminal', text: 'Every approval asks for your passphrase in a terminal.' }] })
   render(<Setup api={api} />)
   await approval()
-  fireEvent.click(screen.getByRole('button', { name: '3 days' }))
+  chooseAgentDuration('3 days')
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Your recovery words' })
   await check()
   await screen.findByRole('heading', { name: 'Review your setup' })
   const summary = document.querySelector('.review-summary')!
-  expect(summary).toHaveTextContent('may work for 1 day')
+  expect(summary).toHaveTextContent('Agents may not work on their own.')
   expect(summary).not.toHaveTextContent('3 days')
-  expect(summary).toHaveTextContent('In a terminal, with your password')
+  expect(summary).toHaveTextContent('You approve in a terminal, with your password.')
 })
 
 test('P06: the git flag is no row on the short card (no Also row either); its signed text and the git words are in Details', async () => {
@@ -900,17 +901,18 @@ test('P06: the git flag is no row on the short card (no Also row either); its si
   expect(fold).toHaveTextContent('git init')
 })
 
-test('nothing about agents or approval is claimed when the review has none of it', async () => {
+test('P69: a new review without a grant says access is off without inventing a duration or approval method', async () => {
   const { api } = withReview({ items: [], flags: [] })
   render(<Setup api={api} />)
   await approval()
-  fireEvent.click(screen.getByRole('button', { name: '7 days' }))
+  chooseAgentDuration('7 days')
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Your recovery words' })
   await check()
   await screen.findByRole('heading', { name: 'Review your setup' })
   const summary = document.querySelector('.review-summary')!
-  expect(summary).not.toHaveTextContent(/7 days|terminal|one click|Agents may/)
+  expect(summary).not.toHaveTextContent(/7 days|terminal|one click/)
+  expect(summary).toHaveTextContent('Agents may not work on their own.')
 })
 
 test('a review item of a kind this page does not know is named in the summary and the details stay closed', async () => {
@@ -1001,7 +1003,7 @@ test('the runner line comes from the signed grant item, not from review.runner_g
   await check()
   await screen.findByRole('heading', { name: 'Review your setup' })
   const summary = document.querySelector('.review-summary')!
-  expect(summary).toHaveTextContent('may work for 1 day')
+  expect(summary).toHaveTextContent('Agents may work on their own for 1 day.')
   expect(summary).not.toHaveTextContent(/7 days|everything/)
 })
 
@@ -1260,9 +1262,9 @@ test('U1: a new setup starts with the main add-ons and agent access ticked, all 
   const sw = screen.getByRole('switch', { name: /Own copy per ticket/ })
   expect(sw).toBeChecked()
   expect(sw).toBeEnabled()
-  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   expect(screen.getByRole('button', { name: '3 days' })).toHaveAttribute('aria-pressed', 'true')
-  expect(screen.getByLabelText(/Let agents start on this computer now/)).toBeChecked()
+  expect(screen.getByLabelText(/Allow agents to work/)).toBeChecked()
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Your recovery words' })
   await check()
@@ -1281,9 +1283,10 @@ test.each([
   const f = fake({ suggested })
   render(<Setup api={f.api} />)
   await screen.findByRole('heading', { name: 'Set up your workspace' })
-  for (let i = 0; i < 3; i++) fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
-  expect(screen.getByRole('button', { name: 'No agent access' })).toHaveAttribute('aria-pressed', 'true')
-  expect(screen.getByRole('button', { name: '3 days' })).toHaveAttribute('aria-pressed', 'false')
+  for (let i = 0; i < 2; i++) fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  expect(screen.getByRole('switch', { name: /Allow agents to work/ })).not.toBeChecked()
+  expect(screen.queryByRole('button', { name: '3 days' })).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Your recovery words' })
   await check()
@@ -1336,8 +1339,7 @@ test('after the terminal confirms, the words are replaced by a matched notice', 
   const f = fake({ typed: true, running: true })
   render(<Setup api={f.api} />)
   await approval()
-  fireEvent.click(screen.getByRole('button', { name: '3 days' }))
-  fireEvent.click(screen.getByLabelText(/Let agents start on this computer now/))
+  chooseAgentDuration('3 days')
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Your recovery words' })
   await check()
@@ -1360,7 +1362,7 @@ test('reviewFacts builds the short card in plain words from the review', () => {
   const facts = reviewFacts(review)
   expect(facts.map((f) => f.label)).toEqual(['Workspace', 'Agents', 'How you approve'])
   expect(facts.find((f) => f.label === 'Workspace')!.value).toBe('Marketing') // r11-P15: no ticket prefix on the card
-  expect(facts.find((f) => f.label === 'Agents')!.value).toBe('may work for 3 days')
+  expect(facts.find((f) => f.label === 'Agents')!.value).toBe('Agents may work on their own for 3 days.')
   expect(facts.find((f) => f.label === 'Add-ons')).toBeUndefined()
   // P06: owner, folder, own copy and history are Details, not decisions
   for (const gone of ['Owner', 'Your project', 'Own copy per ticket', 'History']) expect(facts.find((f) => f.label === gone)).toBeUndefined()
@@ -1382,7 +1384,7 @@ test('progress groups roll up done and failed steps without changing server step
     { id: 'key', label: 'Your way to approve', status: 'done' },
     { id: 'workspace', label: 'Your workspace', status: 'done' },
     { id: 'services', label: 'Starting orch', status: 'failed' },
-    { id: 'addons', label: 'Add-ons', status: 'done' },
+    { id: 'addons', label: 'What agents can do', status: 'done' },
     { id: 'approval', label: 'Your choices saved', status: 'done' },
   ])
   expect(steps).toHaveLength(8)
@@ -1580,29 +1582,19 @@ test('r11-P15: the Mac notice shows while the steps run, never on the ready or t
 })
 
 
-test('r11-P16: the approval step shows the recommendation, a one-line summary and Continue; the rest is one click away', async () => {
-  const f = fake({ suggested: { method: 'click' } })
-  const { container } = render(<Setup api={f.api} />)
+test('r11-P16: approval keeps the summary and optional settings while methods are visible', async () => {
+  render(<Setup api={fake({ suggested: { method: 'click' } }).api} />)
   await approval()
-  const more = screen.getByTestId('approval-more') as HTMLDetailsElement
-  expect(more.open).toBe(false)
-  const radios = [...container.querySelectorAll('input[type=radio]')] as HTMLElement[]
-  expect(radios.filter((r) => !r.closest('details:not([open])'))).toHaveLength(1)
-  expect(screen.getByLabelText(/One click on this computer/)).toBeVisible()
-  expect(screen.getByRole('button', { name: '1 day' })).not.toBeVisible()
+  expect(screen.getByTestId('approval-more')).not.toHaveAttribute('open')
+  expect(screen.getAllByRole('radio')).toHaveLength(2)
+  expect(screen.getByLabelText(/Password/)).toBeVisible()
+  expect(screen.queryByRole('button', { name: '1 day' })).toBeNull()
   expect(screen.getByRole('switch', { name: /Keep a history/ })).not.toBeVisible()
   expect(screen.getByTestId('approval-summary')).toHaveTextContent('No agent works here until you give access. Your history stays on this computer.')
-  // the summary follows the hidden choices
+  chooseAgentDuration('1 day')
   fireEvent.click(screen.getByText('Change these settings'))
-  fireEvent.click(screen.getByRole('button', { name: '3 days' }))
-  expect(screen.getByTestId('approval-summary')).toHaveTextContent('Agents may work for 3 days; none start on this computer yet.')
-  fireEvent.click(screen.getByRole('switch', { name: /Let agents start on this computer now/ }))
-  expect(screen.getByTestId('approval-summary')).toHaveTextContent('Agents can work on their own for 3 days. Your history stays on this computer.')
-  fireEvent.click(screen.getByRole('button', { name: '1 day' }))
   fireEvent.click(screen.getByRole('switch', { name: /Keep a history/ }))
   expect(screen.getByTestId('approval-summary')).toHaveTextContent('Agents can work on their own for 1 day. No history is kept.')
-  fireEvent.click(screen.getByRole('button', { name: 'No agent access' }))
-  expect(screen.getByTestId('approval-summary')).toHaveTextContent('No agent works here until you give access.')
 })
 
 test('r11-P16: the posted profile is the same whether or not the settings were opened', async () => {
@@ -1885,4 +1877,91 @@ test('security review: the agents summary names only the add-ons that are on', (
   expect(agentsCan(['terminals'])).toBe('Agents can open a terminal.')
   expect(agentsCan(['start-agent', 'quick'])).toBe('Agents can start from the dashboard and run quick tasks.')
   expect(agentsCan([])).toBe('Agents start only when you start them in a terminal.')
+})
+
+test('P24: approval cards keep each radio with its label, show both methods and name the host', async () => {
+  render(<Setup api={fake({ host: 'build-server', suggested: { method: 'terminal' } }).api} />)
+  await approval()
+  const click = screen.getByRole('radio', { name: /One click on build-server/ })
+  const password = screen.getByRole('radio', { name: /Password/ })
+  for (const radio of [click, password]) {
+    expect(radio).toBeVisible()
+    expect(radio.closest('label')).toHaveClass('method-card')
+    expect(radio.closest('details')).toBeNull()
+  }
+  expect(password).toBeChecked()
+  expect(click.closest('label')).toHaveTextContent('Recommended')
+  expect(click.closest('label')).toHaveTextContent('No typing. Best on your own computer.')
+  expect(password.closest('label')).toHaveTextContent('Safest if others use build-server.')
+  expect(screen.getByTestId('approval-summary')).toHaveTextContent('Your history stays on build-server.')
+})
+
+test('P44: one access switch hides durations when off and sends the original profile fields for every choice', async () => {
+  for (const hours of [null, 8, 24, 72, 168]) {
+    const f = fake()
+    await toAgents(f)
+    const access = screen.getByRole('switch', { name: /Allow agents to work/ })
+    expect(screen.getAllByRole('switch', { name: /Allow agents to work/ })).toHaveLength(1)
+    expect(screen.queryByRole('button', { name: '8 hours' })).toBeNull()
+    expect(screen.getByText('Allowing agents to work does not start a task.')).toBeVisible()
+    fireEvent.click(access)
+    expect(screen.getByRole('button', { name: '8 hours' })).toBeVisible()
+    if (hours === null) fireEvent.click(access)
+    else fireEvent.click(screen.getByRole('button', { name: hours === 8 ? '8 hours' : `${hours / 24} ${hours === 24 ? 'day' : 'days'}` }))
+    fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+    expect(screen.queryByRole('switch', { name: /Allow agents to work|Let agents start/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'No agent access' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '8 hours' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+    await screen.findByRole('heading', { name: 'Your recovery words' })
+    const body = f.calls.find((c) => c.path === 'profile')!.body
+    expect(body).toMatchObject({ agent_hours: hours ?? 8, agent_grant: hours !== null })
+    expect(Object.keys(body as object).sort()).toEqual(['addons', 'agent_grant', 'agent_hours', 'git_init', 'method', 'name', 'prefix', 'records', 'relay', 'trust_folder', 'trust_parent', 'workspace_name'].sort())
+    cleanup()
+  }
+})
+
+test('P69: Review repeats capability sentences without symbols or chips and distinguishes access from workspace duration', async () => {
+  const addon = { id: 'addon:worktrees', type: 'addon.granted', title: 'Own copy per ticket', lines: [], details: [], volatile: [], placeholders: [], placeholder_details: [] }
+  const { api } = withReview({ items: [addon] })
+  render(<Setup api={api} />)
+  await screen.findByRole('button', { name: 'Continue →' })
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  const sentence = screen.getByRole('switch', { name: /Own copy per ticket/ }).closest('label')!.querySelector('small')!.textContent!
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  await screen.findByRole('heading', { name: 'Your recovery words' })
+  await check()
+  await screen.findByRole('heading', { name: 'Review your setup' })
+  const summary = document.querySelector('.review-summary')!
+  expect(summary).toHaveTextContent(sentence)
+  expect(summary).toHaveTextContent('Agents may not work on their own.')
+  expect(summary).not.toHaveTextContent(/[▦⊞✦◈]/)
+  expect(summary.querySelector('.chip')).toBeNull()
+  for (const hours of [8, 24, 72, 168]) {
+    const facts = reviewFacts({ ...review, items: [{ ...addon, id: 'runner_grant', type: 'grant.issued', fields: { hours, scope: 'workable', verbs: 'agent' } }] })
+    expect(facts.find((f) => f.label === 'Agents')!.value).toBe(`Agents may work on their own for ${hours === 8 ? '8 hours' : `${hours / 24} ${hours === 24 ? 'day' : 'days'}`}.`)
+  }
+  expect(reviewFacts({ ...review, items: [{ ...addon, id: 'addon:terminals', title: 'Command window' }] }).find((f) => f.label === 'Command window')!.value).toBe('You can use the Command window, an optional advanced tool.')
+})
+
+test('P52 styling: Review places quiet Back beside primary Create workspace and fetches a new review after Back', async () => {
+  const f = fake()
+  render(<Setup api={f.api} />)
+  await reveal()
+  await check()
+  await screen.findByRole('heading', { name: 'Review your setup' })
+  const back = screen.getByRole('button', { name: 'Back' })
+  const create = screen.getByRole('button', { name: 'Create workspace' })
+  expect(back).toHaveClass('secondary')
+  expect(back).not.toHaveClass('primary')
+  expect(create).toHaveClass('primary')
+  expect(back.nextElementSibling).toBe(create)
+  const reviews = f.calls.filter((c) => c.path === 'review').length
+  fireEvent.click(back)
+  expect(screen.queryByRole('button', { name: 'Create workspace' })).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  await screen.findByRole('heading', { name: 'Review your setup' })
+  expect(f.calls.filter((c) => c.path === 'review')).toHaveLength(reviews + 1)
 })

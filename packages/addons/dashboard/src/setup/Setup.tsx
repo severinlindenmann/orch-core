@@ -138,38 +138,43 @@ export function summarize(review: Review): { lines: string[]; unknown: boolean; 
   if (addons.length) lines.push(`Add-ons: ${addons.join(', ')}`)
   return { lines, unknown, odd: oddLines }
 }
-type Fact = { icon: string; label: string; value: string | string[] }
+type Fact = { label: string; value: string }
+const addonSentence = (id: string, fallback: string): string => ({
+  'start-agent': 'You can start agents from the dashboard.',
+  terminals: 'You can use the Command window, an optional advanced tool.',
+  worktrees: 'Agents get their own copy of each ticket’s files.',
+  quick: 'You can run quick tasks.',
+}[id] ?? fallback)
 /** The short card of a review (plain words only): from the review's own items and flags, nothing else. What this
  * mapping cannot describe is added as extra lines by the caller (`summarize().odd`); everything stays in the fold. */
-export function reviewFacts(review: Review, host?: string): Fact[] {
+export function reviewFacts(review: Review, host?: string, newWorkspace = false): Fact[] {
   const facts: Fact[] = []
   const ws = review.workspace
   // P43: the computer is named (over ssh "this computer" is not the one in front of the person)
-  if (host) facts.push({ icon: '▤', label: 'Computer', value: host })
+  if (host) facts.push({ label: 'Computer', value: host })
   if (ws) {
     // P06: the owner, the ticket prefix, the git copy and the history are not decisions: they stay in the
     // Details fold (the workspace's own lines and the flag texts)
-    facts.push({ icon: '▦', label: 'Workspace', value: ws.workspace_name ?? ws.name })
+    facts.push({ label: 'Workspace', value: ws.workspace_name ?? ws.name })
   }
   const has = (id: string) => review.flags.some((f) => f.id === id)
-  const approve = has('custody') ? (host ? `One click (approval kept on ${host})` : 'One click on this computer') : has('terminal') || review.tty_confirm ? 'In a terminal, with your password' : null
-  let agents: string | undefined
+  const approve = has('custody') ? `You approve with One click on ${host || 'this computer'}.` : has('terminal') || review.tty_confirm ? 'You approve in a terminal, with your password.' : null
+  // A new workspace has no existing runner grant. Workspace duration settings alone never grant access.
+  // Finish setup can keep an existing grant, so absence of a new grant makes no access claim there.
+  let agents: string | undefined = newWorkspace ? 'Agents may not work on their own.' : undefined
   for (const item of review.items) {
     const f = item.fields
     if (item.id === 'runner_grant' && f && typeof f.hours === 'number')
       // the short words only for the ordinary grant; any other scope or verbs keeps the raw values on the card
       agents = f.scope === 'workable' && f.verbs === 'agent'
-        ? `may work for ${duration(f.hours)}`
+        ? `Agents may work on their own for ${duration(f.hours)}.`
         : `agent access for ${duration(f.hours)} (scope ${String(f.scope)}, verbs ${String(f.verbs)})`
-    else if (item.type === 'settings.changed' && f?.set && typeof f.set === 'object') {
-      const set = f.set as Record<string, unknown>
-      if (agents === undefined && typeof set.grant_hours === 'number') agents = `may work for ${duration(set.grant_hours)}`
-    }
   }
-  const addons = review.items.filter((i) => i.type === 'addon.granted' && i.id !== 'addon:dashboard').map((i) => i.title)
-  if (addons.length) facts.push({ icon: '⊞', label: 'Add-ons', value: addons })
-  if (agents !== undefined) facts.push({ icon: '✦', label: 'Agents', value: agents })
-  if (approve) facts.push({ icon: '◈', label: 'How you approve', value: approve })
+  for (const item of review.items.filter((i) => i.type === 'addon.granted' && i.id !== 'addon:dashboard')) {
+    facts.push({ label: item.title, value: addonSentence(item.id.replace(/^addon:/, ''), item.title) })
+  }
+  if (agents !== undefined) facts.push({ label: 'Agents', value: agents })
+  if (approve) facts.push({ label: 'How you approve', value: approve })
   return facts
 }
 const prefixOk = (p: string) => /^[A-Z][A-Z0-9]{1,7}$/.test(p)
@@ -189,7 +194,7 @@ export function defaultWorkspaceName(name: string): string {
 export function approvalSummary(
   profile: { agent_hours: number; agent_grant?: boolean; records?: boolean },
   access: 'none' | number,
-  opts: { records: boolean; trust?: boolean },
+  opts: { records: boolean; trust?: boolean; host?: string },
 ): string {
   const out = [
     access === 'none'
@@ -200,7 +205,7 @@ export function approvalSummary(
   ]
   if (opts.records) out.push(profile.records !== false ? 'Your history stays on this computer.' : 'No history is kept.')
   if (opts.trust !== undefined) out.push(opts.trust ? 'AI helpers open your project folder without asking.' : 'AI helpers ask before they open your project folder.')
-  return out.join(' ')
+  return out.join(' ').replaceAll('this computer', opts.host || 'this computer')
 }
 const statusWord = { todo: 'Waiting', doing: 'Running', done: 'Done', failed: 'Failed', skipped: 'Skipped' }
 const statusIcon = { todo: '•', doing: '◔', done: '✓', failed: '✕', skipped: '–' }
@@ -211,7 +216,7 @@ export function groupProgress(steps: Progress['steps']): Progress['steps'] {
     { id: 'key', label: 'Your way to approve', ids: ['keys', 'genesis', 'custody'] },
     { id: 'workspace', label: 'Your workspace', ids: ['git', 'settings', 'records', 'trust'] },
     { id: 'services', label: 'Starting orch', ids: ['register', 'runner', 'runner_grant'] },
-    { id: 'addons', label: 'Add-ons', ids: [] },
+    { id: 'addons', label: 'What agents can do', ids: [] },
     { id: 'approval', label: 'Your choices saved', ids: ['flags'] },
   ]
   return groups.flatMap(({ id, label, ids }) => {
@@ -322,7 +327,7 @@ function FinishChoices({
             <label className="toggle" key={a.id}>
               <span>
                 <strong>{a.title}</strong>
-                <small>{a.desc}</small>
+                <small>{addonSentence(a.id, a.desc)}</small>
               </span>
               <input
                 type="checkbox"
@@ -483,11 +488,11 @@ export function Setup({ api }: { api: SetupAPI }) {
   const [lineNote, setLineNote] = useState('')
   const pendingTarget = useRef<{ href: string; workspace_id?: string } | null>(null)
   const [openFailed, setOpenFailed] = useState(false) // Finish answered but the dashboard did not open: "Try again"
-  // "No agent access" is a choice of its own (B11 finding 21); it keeps the workspace default time and no runner grant.
+  // Access off preserves the former "No agent access" values: the workspace default time and no runner grant.
   const [access, setAccess] = useState<'none' | number>('none')
   const chooseAccess = (a: 'none' | number) => {
     setAccess(a)
-    setProfile((p) => ({ ...p, agent_hours: a === 'none' ? 8 : a, ...(a === 'none' ? { agent_grant: false } : {}) }))
+    setProfile((p) => ({ ...p, agent_hours: a === 'none' ? 8 : a, agent_grant: a !== 'none' }))
     setReview(undefined)
   }
   const heading = useRef<HTMLHeadingElement>(null)
@@ -589,7 +594,7 @@ export function Setup({ api }: { api: SetupAPI }) {
             // agent_hours/agent_grant are seeded only together with the access picker, so the two never disagree
             const { agent_hours: sugHours, agent_grant: sugGrant, ...rest } = s.suggested
             setProfile((p) => ({ ...p, ...rest, addons }))
-            // U1: "let agents work for you" starts ticked (3 days); the person can still pick "No agent access"
+            // U1: retain the suggested access and duration; the person can turn access off.
             if (sugGrant && typeof sugHours === 'number' && s.agent_hours.includes(sugHours)) {
               chooseAccess(sugHours)
               setProfile((p) => ({ ...p, agent_grant: true }))
@@ -829,7 +834,7 @@ export function Setup({ api }: { api: SetupAPI }) {
   const orderedMethods = state ? [...state.methods].sort((a, b) => (b === 'click' && state.click_available ? 1 : 0) - (a === 'click' && state.click_available ? 1 : 0)) : []
   const methodCard = (method: Profile['method']) =>
     state && (
-      <label className="toggle" key={method}>
+      <label className="method-card" key={method}>
       <input
         type="radio"
         name="method"
@@ -839,15 +844,15 @@ export function Setup({ api }: { api: SetupAPI }) {
       />
       <span>
         <strong>
-          {method === 'click' ? 'One click on this computer' : 'Password'}
+          {method === 'click' ? `One click on ${host || 'this computer'}` : 'Password'}
           {method === 'click' && state.click_available && <span className="badge">Recommended</span>}
         </strong>
         <small>
           {method === 'terminal'
-            ? 'Type your password each time. Safest if others use this computer.'
+            ? `Type your password each time. Safest if others use ${host || 'this computer'}.`
             : state.click_available
               ? 'No typing. Best on your own computer.'
-              : clickOffText(state.click_reason)}
+              : clickOffText(state.click_reason).replace('this computer', host || 'this computer')}
         </small>
         {method === 'terminal' && profile.method === 'terminal' && <small>{terminalStepCopy}</small>}
       </span>
@@ -1071,6 +1076,20 @@ export function Setup({ api }: { api: SetupAPI }) {
           )}
           {step === 2 && (
             <>
+              <label className="toggle">
+                <span>Allow agents to work<small>You can stop them at any time.</small></span>
+                <input type="checkbox" role="switch" checked={access !== 'none'} disabled={!state.agent_hours.length}
+                  onChange={(e) => chooseAccess(e.target.checked ? (state.agent_hours.includes(72) ? 72 : state.agent_hours[0]) : 'none')} />
+              </label>
+              <p>Allowing agents to work does not start a task.</p>
+              {access !== 'none' && <>
+                <h2>How long can agents work on their own?</h2>
+                <div className="segments">
+                  {state.agent_hours.map((h) => (
+                    <button key={h} aria-pressed={access === h} onClick={() => chooseAccess(h)}>{hoursText(h)}</button>
+                  ))}
+                </div>
+              </>}
               <div className="agents-summary" data-testid="agents-summary">
                 <strong>Recommended for most people</strong>
                 <small>{agentsCan(profile.addons)} Setup adds orch&apos;s own files to this folder (a hidden .orch folder, AGENTS.orch.md and skill folders) and an orch section in AGENTS.md, lines in CLAUDE.md that load the instructions, and one line in .gitignore to keep orch’s private folder out of git, creating these files if needed (and a git repository if you choose one). Existing orch instructions may be updated; other content in these three files stays as it is.{profile.addons.includes('worktrees') ? ' With work copies on, agents change their own copies until you merge them.' : ' Agents change the files in this folder directly.'}</small>
@@ -1086,7 +1105,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                     <div className="toggle" key={a.id}>
                       <span>
                         <strong>{a.title}</strong>
-                        <small>{a.desc}</small>
+                        <small>{addonSentence(a.id, a.desc)}</small>
                       </span>
                       <span className="always">Always on</span>
                     </div>
@@ -1095,7 +1114,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                   <label className="toggle">
                     <span>
                       <strong>{a.title}</strong>
-                      <small>{a.desc}</small>
+                      <small>{addonSentence(a.id, a.desc)}</small>
                     </span>
                     <input
                       type="checkbox"
@@ -1136,52 +1155,21 @@ export function Setup({ api }: { api: SetupAPI }) {
           {step === 3 && (
             <>
               <p>{state.click_available ? 'We picked what works best on your own computer.' : 'Choose what works for you on this device.'}</p>
-              {methodCard(profile.method)}
+              <div className="approval-methods">{orderedMethods.map(methodCard)}</div>
               {profile.method === 'click' && state.click_available && (
                 <details className="click-risk" data-testid="click-risk">
                   <summary>What does this mean?</summary>
                   <p>
-                    <Inline>{clickMeaningCopy}</Inline>
+                    <Inline>{clickMeaningCopy.replace('this computer', host || 'this computer')}</Inline>
                   </p>
                 </details>
               )}
-              {/* r11-P16: the safe defaults in one line; every other choice behind one click (forced open when a choice
-                  must be seen: no One click here, or a parent AI helper setting asks for "Trust anyway") */}
+              {/* Keep optional settings together; a parent AI helper setting may need "Trust anyway". */}
               <p className="approval-summary" data-testid="approval-summary">
-                {approvalSummary(profile, access, { records: state.mode !== 'finish', trust: offersTrust ? (parentConfig ? profile.trust_parent === true : profile.trust_folder !== false) : undefined })}
+                {approvalSummary(profile, access, { host, records: state.mode !== 'finish', trust: offersTrust ? (parentConfig ? profile.trust_parent === true : profile.trust_folder !== false) : undefined })}
               </p>
               <details className="approval-more" data-testid="approval-more" open={!state.click_available || !!parentConfig || undefined}>
                 <summary>Change these settings</summary>
-                {orderedMethods.filter((m) => m !== profile.method).map(methodCard)}
-              <h2>How long can agents work on their own?</h2>
-              <div className="segments">
-                <button aria-pressed={access === 'none'} onClick={() => chooseAccess('none')}>
-                  No agent access
-                </button>
-                {state.agent_hours.map((h) => (
-                  <button key={h} aria-pressed={access === h} onClick={() => chooseAccess(h)}>
-                    {hoursText(h)}
-                  </button>
-                ))}
-              </div>
-              {access === 'none' ? (
-                <p>No agent can work in this workspace until you give access. You can do that later.</p>
-              ) : (
-                <label className="toggle">
-                  <span>
-                    Let agents start on this computer now
-                    <small>
-                      You can stop them at any time.
-                    </small>
-                  </span>
-                  <input
-                    type="checkbox"
-                    role="switch"
-                    checked={profile.agent_grant}
-                    onChange={(e) => update({ agent_grant: e.target.checked })}
-                  />
-                </label>
-              )}
               {state.relay.available && state.relay.enabled && (
                 <>
                   <label className="toggle">
@@ -1205,7 +1193,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                 <label className="toggle">
                   <span>
                     Keep a history of this workspace
-                    <small>Saved on this computer automatically. Nothing is uploaded.</small>
+                    <small>Saved on {host || 'this computer'} automatically. Nothing is uploaded.</small>
                   </span>
                   <input
                     type="checkbox"
@@ -1312,24 +1300,10 @@ export function Setup({ api }: { api: SetupAPI }) {
           {step === 5 && review && (
             <>
               <dl className="current review-facts review-summary">
-                {reviewFacts(review, host).map((f) => (
+                {reviewFacts(review, host, state.mode !== 'finish').map((f) => (
                   <Fragment key={f.label}>
-                    <dt>
-                      <span aria-hidden="true">{f.icon}</span> {f.label}
-                    </dt>
-                    <dd>
-                      {Array.isArray(f.value) ? (
-                        <span className="addon-chips">
-                          {f.value.map((v) => (
-                            <span className="chip" key={v}>
-                              <Inline>{v}</Inline>
-                            </span>
-                          ))}
-                        </span>
-                      ) : (
-                        <Inline>{f.value}</Inline>
-                      )}
-                    </dd>
+                    <dt>{f.label}</dt>
+                    <dd><Inline>{f.value}</Inline></dd>
                   </Fragment>
                 ))}
                 {summary.odd.length > 0 && (
@@ -1443,7 +1417,7 @@ export function Setup({ api }: { api: SetupAPI }) {
               )}
               <SetupFooter cancel={cancel}>
                 {/* P52: fix a choice without starting over (Finish setup has its choices on the first screen) */}
-                <button onClick={() => {
+                <button className="secondary" onClick={() => {
                   // Back discards the review and its terminal check (both live in `review`), and makes any review answer
                   // still on its way stale: Continue fetches a new one for the changed choices
                   reviewSeq.current++

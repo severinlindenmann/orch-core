@@ -556,9 +556,7 @@ def _hk_op_signed(signed: Any, kind: str, held: Any, hub: str) -> None:
         raise H.Refused("bad_hub_signature")
 
 
-def check_allow(
-    signed: Any, *, path_ws: str, trusted: bool, held: Any, nonces: Any, now_ms: int
-) -> dict[str, Any]:
+def check_allow(signed: Any, *, path_ws: str, trusted: bool, held: Any, nonces: Any, now_ms: int) -> dict[str, Any]:
     """orch-publish's check of ``PUT /v2/hub/allow/{workspace_id}`` (section 11.10), in order: syntax (envelope, exact
     fields) -> the object names the workspace of the path (``other_workspace``) -> window (``stale_timestamp``) -> the hub
     is one the operator pinned (``trusted``, else ``unknown_hub``) -> the held, current hub card for ``hub_id`` (``held``,

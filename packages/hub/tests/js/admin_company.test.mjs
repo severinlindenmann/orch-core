@@ -31,7 +31,9 @@ async function people(users) {
   const calls = [];
   const b = bodies(users);
   const d = { say: (c) => c, api: async (method, path, body) => { calls.push([method, path]); return { status: 200, body: b[path.replace("/admin/", "").split("?")[0]] ?? {} }; } };
-  const [, , , panels] = adminView(d);
+  const [heading, , , panels] = adminView(d);
+  assert.equal(heading.tag, "h1");
+  assert.equal(heading.textContent, "People");
   for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
   return { panel: panels.children[0], calls };
 }

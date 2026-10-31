@@ -479,7 +479,13 @@ class SetupFlow:
         return out
 
     def _finish(self, _body: Any) -> dict[str, Any]:
-        if not (self.ready or self.complete) or self.phase == "cancelled":
+        finishable = (
+            self.run is not None
+            and self.run.error is not None
+            and self.run.error.get("finishable")
+            and self.run.workspace is not None
+        )
+        if not (self.ready or self.complete or finishable) or self.phase == "cancelled":
             raise SetupError("setup.phase", "setup is not finished", 409)
         if self.mode == "new" and (self.run is None or self.run.workspace is None):
             raise SetupError("setup.phase", "setup is not finished", 409)
@@ -493,6 +499,9 @@ class SetupFlow:
         except Exception as e:  # noqa: BLE001 - any failure here is the same retryable answer
             why = e.message if isinstance(e, SetupError) else (str(e) or type(e).__name__)
             self.on_note(f"the dashboard did not open yet: {why[:200]}; the page offers Try again")
+            if self.run is not None and any(code.startswith("service.") for code in self.run.reason_codes.values()):
+                # The flow does not own the installed release/interpreter needed for a foreground command.
+                self.on_note("start orch in the background later with: orch setup")
             raise SetupError(
                 "setup.dashboard_unavailable", "the dashboard did not open yet; try again", 503, retry=True
             ) from None

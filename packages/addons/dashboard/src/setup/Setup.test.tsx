@@ -87,6 +87,9 @@ function fake(
     running?: boolean
     stateError?: boolean
     failure?: boolean
+    serviceError?: string
+    serviceCode?: string
+    serviceDetails?: string
     done?: boolean
     trust?: 'skipped' | 'done'
     trustCode?: string
@@ -179,7 +182,7 @@ function fake(
         reason_codes: options.trust === 'skipped' ? { trust: options.trustCode ?? 'not_started' } : {},
         done: !!options.done,
         waiting: options.waiting,
-        error: options.failure
+        error: options.serviceError ? { code: options.serviceCode ?? 'steps.failed', message: options.serviceError, details: options.serviceDetails, finishable: true } : options.failure
           ? { code: 'demo.failure', message: 'Could not create workspace', finishable: !!options.finish }
           : null,
         retry: [],
@@ -2059,4 +2062,74 @@ test('step position and current name remain outside the compact dot labels throu
   fireEvent.click(screen.getByLabelText(/Own copy per ticket/))
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   expect(await screen.findByText('Step 2 of 2: Review')).toBeVisible()
+})
+
+
+test.each(['OSError', 'TimeoutExpired after 120 s'])('W01 attention hides raw service failure %s', async (raw) => {
+  const f = fake({ finish: true, serviceError: raw, os: 'linux' })
+  render(<Setup api={f.api} />)
+  await screen.findByRole('heading', { name: 'Finish setting up your workspace' })
+  fireEvent.click(screen.getByLabelText(/Own copy per ticket/))
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  await screen.findByRole('heading', { name: 'Review your setup' })
+  fireEvent.click(screen.getByRole('button', { name: 'Finish setup' }))
+  await screen.findByRole('heading', { name: 'Setup needs your attention' })
+  expect(screen.getByText(/service manager/)).toBeVisible()
+  expect(screen.getByText(raw).closest('details')).not.toHaveAttribute('open')
+  expect(screen.queryByText(/Login Items/)).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: 'Finish setup later' }))
+  await screen.findByRole('heading', { name: 'Setup paused' })
+  expect(screen.queryByText('orch dashboard open')).toBeNull()
+})
+
+
+test('W01 a confirmed macOS background item keeps its Login Items advice', async () => {
+  const message = 'macOS has turned off orch in the background. Allow orch in Login Items & Extensions.'
+  const f = fake({ finish: true, os: 'darwin', serviceCode: 'background.blocked', serviceError: message })
+  render(<Setup api={f.api} />)
+  await screen.findByRole('heading', { name: 'Finish setting up your workspace' })
+  fireEvent.click(screen.getByLabelText(/Own copy per ticket/))
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  await screen.findByRole('heading', { name: 'Review your setup' })
+  fireEvent.click(screen.getByRole('button', { name: 'Finish setup' }))
+  expect(await screen.findByText(message)).toBeVisible()
+})
+
+test('W01 the plain core reason stays visible and diagnostics stay in Details', async () => {
+  const message = 'orch could not start in the background on this computer: its service manager is unavailable.'
+  const f = fake({ finish: true, os: 'linux', serviceError: message, serviceDetails: 'OSError: systemctl failed' })
+  render(<Setup api={f.api} />)
+  await screen.findByRole('heading', { name: 'Finish setting up your workspace' })
+  fireEvent.click(screen.getByLabelText(/Own copy per ticket/))
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  await screen.findByRole('heading', { name: 'Review your setup' })
+  fireEvent.click(screen.getByRole('button', { name: 'Finish setup' }))
+  expect(await screen.findByText(message)).toBeVisible()
+  expect(screen.getByText('OSError: systemctl failed')).not.toBeVisible()
+})
+
+
+test.each([true, false])('W01 finishable=%s offers workspace access only after genesis', async (finishable) => {
+  const f = fake(finishable ? { serviceError: 'Service manager unavailable', finishUrl: '/w/demo' } : { failure: true })
+  render(<Setup api={f.api} />)
+  await reveal()
+  await check()
+  fireEvent.click(await screen.findByRole('button', { name: 'Create workspace' }))
+  await screen.findByRole('heading', { name: 'Setup needs your attention' })
+  if (!finishable) {
+    expect(screen.queryByRole('button', { name: 'Open your workspace' })).toBeNull()
+    return
+  }
+  expect(screen.getByText('Your workspace was created, but some setup steps need attention. You can open it now and finish them later.')).toBeVisible()
+  const button = screen.getByRole('button', { name: 'Open your workspace' })
+  expect(button).toHaveClass('primary')
+  expect(button.parentElement?.firstElementChild).toBe(button)
+  expect(screen.getByRole('button', { name: 'Try again' })).not.toHaveClass('primary')
+  expect(screen.getByRole('button', { name: 'Finish setup later' })).toBeVisible()
+  const assign = vi.fn()
+  vi.stubGlobal('location', { origin: location.origin, assign })
+  fireEvent.click(button)
+  await waitFor(() => expect(assign).toHaveBeenCalledWith('/w/demo'))
+  expect(f.calls.filter((c) => c.path === 'finish')).toHaveLength(1)
+  expect(localStorage.getItem('orch.workspace')).toBe('ws-new-2')
 })

@@ -118,6 +118,19 @@ class FakeServer:
         if method == "PUT" and len(parts) >= 4 and parts[2] == "files":
             self.shares[parts[1]]["files"]["/".join(parts[3:])] = body
             return 200, b'{"result":"stored"}'
+        if method == "PUT" and len(parts) >= 5 and parts[2] == "parts":
+            share = self.shares[parts[1]]
+            name, offset = "/".join(parts[4:]), int(parts[3])
+            previous = share["files"].get(name, b"")
+            if offset != len(previous):
+                return 409, json.dumps({"error": "part_out_of_order", "received": len(previous)}).encode()
+            content = previous + body
+            entry = next(f for f in share["meta"]["files"] if f["path"] == name)
+            done = len(content) == entry["size"]
+            if done:
+                assert hashlib.sha256(content).hexdigest() == entry["sha256"]
+            share["files"][name] = content
+            return 200, json.dumps({"result": "stored", "received": len(content), "done": done}).encode()
         if method == "POST" and parts[2:] == ["commit"]:
             self.shares[parts[1]]["state"] = "live"
             return 200, b'{"result":"committed"}'
@@ -1694,17 +1707,12 @@ def _no_stage(w) -> bool:
     return not (w.base() / "stage").exists() or not list((w.base() / "stage").glob("ps_*"))
 
 
-def test_through_the_hub_a_file_over_one_link_frame_is_refused_at_prepare_and_nothing_is_staged(w):
-    from orch.hubclient.publish import HUB_FILE_MAX
-
+def test_through_the_hub_a_file_over_one_link_frame_passes_prepare(w):
     uid, key = w.ticket_with()
-    (work_dir(w, key) / "big.bin").write_bytes(b"x" * (HUB_FILE_MAX + 1))
-    res = w.req("publish.prepare", {"ref": key, "workfiles": ["big.bin"]})
-    assert err(res) == "quota.host"
-    limit = approval.human_size(HUB_FILE_MAX)
-    assert res["error"]["message"].startswith(f"Files over {limit} can't go through the hub yet.")
-    assert f"big.bin is {approval.human_size(HUB_FILE_MAX + 1)}" in res["error"]["message"]
-    assert _no_stage(w) and w.server.requests == []
+    (work_dir(w, key) / "big.bin").write_bytes(b"x" * 1_000_000)
+    got = ok(w.req("publish.prepare", {"ref": key, "workfiles": ["big.bin"]}))["data"]
+    assert got["files"][0]["size"] == 1_000_000
+    assert w.server.requests == []
 
 
 def test_through_the_hub_a_file_of_exactly_hub_file_max_passes_prepare(w):
@@ -1716,14 +1724,12 @@ def test_through_the_hub_a_file_of_exactly_hub_file_max_passes_prepare(w):
     assert got["files"][0]["size"] == HUB_FILE_MAX
 
 
-def test_through_the_hub_a_picked_file_over_the_frame_is_refused_at_prepare(w, monkeypatch):
+def test_through_the_hub_a_picked_file_over_the_frame_passes_prepare(w):
     uid, key = w.ticket_with()
-    monkeypatch.setattr("orch.hubclient.publish.HUB_FILE_MAX", 100)  # a pick is at most 1 MiB: shrink the frame instead
-    monkeypatch.setattr(publishing, "PER_MINUTE", 100)
-    pick = ok(w.req("publish.stage_upload", {"name": "p.bin", "b64": base64.b64encode(b"x" * 101).decode()}))["data"]
-    res = w.req("publish.prepare", {"ref": key, "uploads": [pick["upload_id"]]})
-    assert err(res) == "quota.host" and "can't go through the hub yet" in res["error"]["message"]
-    assert _no_stage(w)
+    data = b"x" * 600_000
+    pick = ok(w.req("publish.stage_upload", {"name": "p.bin", "b64": base64.b64encode(data).decode()}))["data"]
+    got = ok(w.req("publish.prepare", {"ref": key, "uploads": [pick["upload_id"]]}))["data"]
+    assert got["files"][0]["size"] == len(data)
 
 
 def test_without_a_hub_route_a_one_megabyte_file_passes_prepare(w, monkeypatch):
@@ -2105,3 +2111,61 @@ def test_the_run_time_guard_covers_send_and_register_and_not_the_ops_that_act_on
         publishing._run(call, {"op": op})
         assert ran[-1] == fn
     assert guarded == []
+
+
+@pytest.mark.parametrize("size", [384 * 1024, 384 * 1024 + 1, 1_000_000])
+def test_hub_part_threshold_preserves_small_file_put(w, size):
+    data = b"x" * size
+    uid, key = w.ticket_with(**{"big.bin": data})
+    staged = w.prepare(key, "big.bin")["staged_id"]
+    w.approve(staged)
+    sid = ok(w.send(staged))["data"]["share_id"]
+    assert w.server.shares[sid]["files"]["big.bin"] == data
+    files = [r for r in w.server.requests if "/files/" in r["target"]]
+    parts = [r for r in w.server.requests if "/parts/" in r["target"]]
+    assert bool(files) == (size <= 384 * 1024)
+    assert bool(parts) == (size > 384 * 1024)
+
+
+@pytest.mark.parametrize("expired", ["approval", "share"])
+def test_hub_parts_recheck_freshness_after_backoff(w, monkeypatch, expired):
+    uid, key = w.ticket_with(**{"big.bin": b"x" * 1_000_000})
+    staged = w.prepare(key, "big.bin")["staged_id"]
+    w.approve(staged)
+    original = flow.put_file_parts
+
+    def sleep(seconds):
+        if expired == "approval":
+            w.served.lab.ws.clock[0] += publishing.APPROVAL_VALID + 1
+        else:
+            monkeypatch.setattr(publishing, "_now_ms", lambda service: 2**52)
+
+    def parts(*args, **kwargs):
+        return original(*args, **kwargs, sleep=sleep)
+
+    monkeypatch.setattr(flow, "put_file_parts", parts)
+    w.server.fail.append(("PUT", r"/parts/", 409, "part_busy"))
+    result = w.send(staged)
+    assert err(result) == ("publish.not_approved" if expired == "approval" else "publish.changed")
+    assert len([r for r in w.server.requests if "/parts/" in r["target"]]) == 1
+    assert not any(r["target"].endswith("/commit") for r in w.server.requests)
+
+
+def test_hub_parts_resume_after_publish_reply_is_lost(w, monkeypatch):
+    data = b"x" * 1_000_000
+    uid, key = w.ticket_with(**{"big.bin": data})
+    staged = w.prepare(key, "big.bin")["staged_id"]
+    w.approve(staged)
+    original = flow.put_file_parts
+    sleeps = []
+
+    def parts(*args, **kwargs):
+        return original(*args, **kwargs, sleep=sleeps.append)
+
+    monkeypatch.setattr(flow, "put_file_parts", parts)
+    w.server.lose.append(("PUT", r"/parts/0/"))
+    sid = ok(w.send(staged))["data"]["share_id"]
+    assert w.server.shares[sid]["files"]["big.bin"] == data
+    assert sleeps == [1]
+    requests = [r for r in w.server.requests if "/parts/" in r["target"]]
+    assert [int(r["target"].split("/")[-2]) for r in requests] == [0, 0, 393216, 786432]

@@ -170,23 +170,22 @@ def test_after_leave_the_workspace_publishes_nothing_and_the_old_binding_is_not_
     assert len(w.hub_server.requests) == via_hub
 
 
-def test_a_file_over_the_link_frame_is_said_at_prepare_before_anything_is_signed(world, human, served):
+@pytest.mark.parametrize("size", [1_000_000, 2_000_000])
+def test_a_large_artifact_goes_through_the_hub_in_parts(world, human, served, size):
+    from orch.hubclient.publish import HUB_PART
+
     w = world
     joined(w, human, served)
-    res = prepare_attempt(w, name="big.bin", data=b"\x07" * 600_000)
-    assert err(res) == "quota.host" and "can't go through the hub yet" in res["error"]["message"]
-    assert w.hub_server.requests == []
-
-
-def test_a_file_over_the_link_frame_still_sends_nothing_when_it_reaches_send(world, human, served, monkeypatch):
-    w = world
-    joined(w, human, served)
-    with monkeypatch.context() as m:  # past prepare's early refusal: send keeps its own check
-        m.setattr("orch.hubclient.publish.HUB_FILE_MAX", 10_000_000)
-        staged, _ = staged_share(w, name="big.bin", data=b"\x07" * 600_000)
-    res = w.send(staged)
-    assert err(res) == "publish.server_refused"
-    assert [r for r in w.hub_server.requests if r["method"] == "PUT" and "/files/" in r["target"]] == []
+    content = b"\x07" * size
+    res, _ = share(w, name="big.bin", data=content)
+    sid = ok(res)["data"]["share_id"]
+    assert w.server.shares[sid]["files"]["big.bin"] == content
+    parts = [r for r in w.server.requests if "/parts/" in r["target"]]
+    assert [int(r["target"].split("/")[-2]) for r in parts] == list(range(0, size, HUB_PART))
+    assert all(len(r["body"]) <= HUB_PART for r in parts)
+    assert len({r["headers"]["Orch-Nonce"] for r in parts}) == len(parts)
+    assert w.server.bad_signatures == []
+    assert not any("/files/" in r["target"] for r in w.server.requests)
 
 
 def test_a_standalone_workspace_refuses_publish_with_join_a_hub(world):

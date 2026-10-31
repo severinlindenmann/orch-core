@@ -44,6 +44,7 @@ from .errors import HubRefused
 
 __all__ = [
     "HUB_FILE_MAX",
+    "HUB_PART",
     "REQUEST_OVERHEAD",
     "HubPublishSigner",
     "HubPublishTransport",
@@ -67,6 +68,8 @@ REQUEST_OVERHEAD = 16 * 1024
 #: the largest file body that fits one ``publish_out`` frame: the body travels hex-encoded (2 characters per byte), so
 #: it is what is left of ``REQUEST_MAX`` after the overhead allowance, halved
 HUB_FILE_MAX = (REQUEST_MAX - REQUEST_OVERHEAD) // 2
+#: share upload part size, comfortably within one signed link frame
+HUB_PART = 384 * 1024
 
 Approver = Callable[[str], "Mapping[str, Any] | None"]
 
@@ -246,7 +249,7 @@ class HubPublishTransport:
             "body_hex": body.hex(),
         }
         if len(body) * 2 + sum(len(k) + len(v) for k, v in headers.items()) + len(target) > REQUEST_MAX:
-            raise HubRefused("too_large")  # over one link frame (HUB_FILE_MAX says it earlier); nothing was sent
+            raise HubRefused("too_large")  # over one link frame; nothing was sent
         reply = self._link.call("publish_out", {"request": request})
         status, body_hex = reply.get("status"), reply.get("body_hex")
         if type(status) is not int or not 100 <= status <= 599 or type(body_hex) is not str:

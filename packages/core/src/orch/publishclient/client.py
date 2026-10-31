@@ -12,8 +12,8 @@ Rules (the design's, in one place):
   only when the caller says so (``idempotent=True``: ``commit`` and ``register`` are). At most ``MAX_ATTEMPTS``.
 * Any other non-2xx is final: the share is **not** shared, and the caller shows it (invariant I7). Redirects are not
   followed. HTTPS verifies certificates; plain ``http`` exists only for loopback (the signer's origin check).
-* Errors carry the method, status and the server's short error *code* (``[a-z_]{1,40}``) and nothing else: no target,
-  no query, no header, no body, no key (invariants I8, I15). This module never logs.
+* Errors carry the method, status and the server's short error *code* (``[a-z_]{1,40}``) plus a validated part resume
+  offset when present: no target, query, header, body or key (invariants I8, I15). This module never logs.
 """
 
 from __future__ import annotations
@@ -45,11 +45,22 @@ _BACKOFF_S = (0.5, 1.5)
 class PublishError(Exception):
     """A request that did not succeed. ``code`` is a short stable word: the server's own (``replay``,
     ``unknown_workspace``, ...) or ``network``, ``refused`` (the signer refused), ``bad_reply``. ``status`` is the HTTP
-    status or 0. ``sent`` is False only if provably nothing left the machine."""
+    status or 0. ``sent`` is False only if provably nothing left the machine. ``received`` is the part resume offset,
+    or None when absent or invalid."""
 
-    def __init__(self, code: str, status: int = 0, *, method: str = "", sent: bool = True, clock_off: bool = False):
+    def __init__(
+        self,
+        code: str,
+        status: int = 0,
+        *,
+        method: str = "",
+        sent: bool = True,
+        clock_off: bool = False,
+        received: int | None = None,
+    ):
         super().__init__(f"publish {method or 'request'} failed: {code}" + (f" (http {status})" if status else ""))
         self.code, self.status, self.method, self.sent, self.clock_off = code, status, method, sent, clock_off
+        self.received = received
 
 
 @dataclass(frozen=True)
@@ -182,4 +193,13 @@ class PublishClient:
             if status in _RETRY_STATUS and resend and attempt < MAX_ATTEMPTS:
                 self._sleep(_BACKOFF_S[attempt - 1])
                 continue
-            raise PublishError(code, status, method=method)
+            # Retain only the validated resume offset, never the response body.
+            received = None
+            if code in {"part_conflict", "part_out_of_order", "content_mismatch"}:
+                try:
+                    value = json.loads(data).get("received")
+                    if type(value) is int and value >= 0:
+                        received = value
+                except (ValueError, AttributeError):
+                    pass
+            raise PublishError(code, status, method=method, received=received)

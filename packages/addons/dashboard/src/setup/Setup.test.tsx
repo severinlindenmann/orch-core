@@ -1762,3 +1762,34 @@ test('r14-P07: the approval page uses everyday words: Password, AI helpers; no C
   expect(screen.getByText('They will not stop to ask first. It is the folder with your project files; orch adds its own files to it.')).toBeInTheDocument()
   expect(container.textContent).not.toMatch(/Claude Code|assphrase|Your key/)
 })
+
+test('security review: the folder-access switch shows the full folder path behind "Which folder?"', async () => {
+  const f = fake({ suggested: { method: 'click' }, claudeAvailable: true })
+  render(<Setup api={f.api} />)
+  await approval()
+  fireEvent.click(screen.getByText('Change these settings'))
+  const fold = screen.getByTestId('trust-folder-path')
+  expect(fold).toHaveTextContent('Which folder?')
+  expect(fold).toHaveTextContent('/demo/project')
+})
+
+test('security review: Back on Review discards the review, so Create needs a new one', async () => {
+  const f = fake()
+  render(<Setup api={f.api} />)
+  await reveal()
+  await check()
+  await screen.findByRole('heading', { name: 'Review your setup' })
+  const before = f.calls.filter((c) => c.path === 'review').length
+  fireEvent.click(screen.getByRole('button', { name: 'Back' }))
+  expect(screen.queryByRole('button', { name: 'Create workspace' })).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  await screen.findByRole('heading', { name: 'Review your setup' })
+  await waitFor(() => expect(f.calls.filter((c) => c.path === 'review').length).toBe(before + 1))
+})
+
+test('security review: setup says what it does to existing files, never that they stay untouched', async () => {
+  const f = fake()
+  const { container } = render(<Setup api={f.api} />)
+  await screen.findByText(/Setup does not change your existing files/)
+  expect(container.textContent).not.toMatch(/stay untouched/)
+})

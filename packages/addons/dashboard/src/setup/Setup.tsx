@@ -152,7 +152,7 @@ export function reviewFacts(review: Review, host?: string): Fact[] {
     facts.push({ icon: '▦', label: 'Workspace', value: ws.workspace_name ?? ws.name })
   }
   const has = (id: string) => review.flags.some((f) => f.id === id)
-  const approve = has('custody') ? `One click on ${host ?? 'this computer'}` : has('terminal') || review.tty_confirm ? 'In a terminal, with your password' : null
+  const approve = has('custody') ? (host ? `One click (approval kept on ${host})` : 'One click on this computer') : has('terminal') || review.tty_confirm ? 'In a terminal, with your password' : null
   let agents: string | undefined
   for (const item of review.items) {
     const f = item.fields
@@ -946,9 +946,10 @@ export function Setup({ api }: { api: SetupAPI }) {
                     </p>
                   )}
                   <p>We will set this up in {folder}.</p>
-                  <p>Your existing files stay untouched. By default, agents make their changes in their own copies of the project.</p>
+                  <p>Setup does not change your existing files. It adds orch's files (and a git repository if you choose one).</p>
+                  {profile.addons.includes('worktrees') && <p>With work copies on, agents change their own copies until you merge them.</p>}
                   {profile.method === 'terminal' && <p>{terminalStepCopy}</p>}
-                  <p>Everything stays on this computer unless you choose to connect your phone.</p>
+                  <p>Everything stays on {host ? <Inline>{host}</Inline> : 'this computer'} unless you choose to connect your phone.</p>
                 </>
               )}
               {state.mode === 'finish' && state.current ? (
@@ -1054,7 +1055,7 @@ export function Setup({ api }: { api: SetupAPI }) {
             <>
               <div className="agents-summary" data-testid="agents-summary">
                 <strong>Recommended for most people</strong>
-                <small>Agents can start from the dashboard, open a terminal, get their own copy of each ticket&apos;s files, and run quick tasks. Your existing files stay untouched; agents make their changes in their own copies.</small>
+                <small>Agents can start from the dashboard, open a terminal, get their own copy of each ticket&apos;s files, and run quick tasks. Setup does not change your existing files; it adds orch&apos;s files (and a git repository if you choose one).{profile.addons.includes('worktrees') ? ' With work copies on, agents change their own copies until you merge them.' : ''}</small>
               </div>
               {/* the fold opens by itself when the recommendation does not apply (a switch differs from its default, or the folder question was answered Skip) */}
               <details className="approval-more" data-testid="agents-more" open={agentsDiffer || undefined}>
@@ -1226,6 +1227,12 @@ export function Setup({ api }: { api: SetupAPI }) {
                     onChange={(e) => update({ trust_folder: e.target.checked })}
                   />
                 </label>
+              )}
+              {offersTrust && state.dir && (
+                <details className="info" data-testid="trust-folder-path">
+                  <summary>Which folder?</summary>
+                  <small><Raw>{state.dir}</Raw></small>
+                </details>
               )}
               </details>
               <SetupFooter cancel={cancel}>
@@ -1423,7 +1430,11 @@ export function Setup({ api }: { api: SetupAPI }) {
               )}
               <SetupFooter cancel={cancel}>
                 {/* P52: fix a choice without starting over (Finish setup has its choices on the first screen) */}
-                <button onClick={() => setStep(state.mode === 'finish' ? 0 : 3)}>Back</button>
+                <button onClick={() => {
+                  // Back discards the review and its terminal check: Continue fetches a new one for the changed choices
+                  setReview(undefined)
+                  setStep(state.mode === 'finish' ? 0 : 3)
+                }}>Back</button>
                 <button
                   className="primary"
                   disabled={terminalReviewMissing}

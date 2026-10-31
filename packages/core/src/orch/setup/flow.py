@@ -244,7 +244,9 @@ class SetupFlow:
             "mode": self.mode,
             "dir": self.dir,
             "dir_name": Path(self.dir).name if self.dir else "",
-            "host": socket.gethostname()[:80],  # P43: names the computer being set up (over ssh it is not the one in front of you)
+            "host": socket.gethostname()[
+                :80
+            ],  # P43: names the computer being set up (over ssh it is not the one in front of you)
             "suggested": sug,
             "addons": [a.view() for a in self.addons.values()],
             "methods": list(METHODS),

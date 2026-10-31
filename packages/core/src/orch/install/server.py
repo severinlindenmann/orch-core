@@ -112,7 +112,11 @@ def check_hub_name(given: str) -> str:
 def check_hub_name_target(name: str, vpn_ip: str, resolve: Callable[[str], list[str]]) -> None:
     """The name must resolve, and EVERY answer (IPv4 and IPv6) must be the hub's private-network address."""
     got: set[str] = set()
-    for raw in resolve(name):
+    try:
+        answers = resolve(name)
+    except (OSError, UnicodeError):  # includes socket.gaierror: a failed lookup is a refusal, never a pass
+        answers = []
+    for raw in answers:
         try:
             got.add(str(ipaddress.ip_address(str(raw).split("%", 1)[0])))
         except ValueError:
@@ -122,7 +126,7 @@ def check_hub_name_target(name: str, vpn_ip: str, resolve: Callable[[str], list[
             f"--hub-name {name}: it does not resolve. Make a private DNS record that points it at {vpn_ip}, then run "
             "this command again."
         )
-    if got != {vpn_ip}:
+    if got != {str(ipaddress.ip_address(vpn_ip))}:
         raise InstallError(
             f"--hub-name {name} resolves to {', '.join(sorted(got))}, not only to this hub's private-network address "
             f"{vpn_ip}. Fix the DNS record so it points at {vpn_ip} only."
@@ -322,7 +326,7 @@ class DnsResult:
 
 def default_resolver(name: str) -> list[str]:
     try:
-        return sorted({i[4][0] for i in socket.getaddrinfo(name, None, proto=socket.IPPROTO_TCP)})
+        return sorted({i[4][0] for i in socket.getaddrinfo(name, None, socket.AF_UNSPEC, proto=socket.IPPROTO_TCP)})
     except OSError:
         return []
 

@@ -1518,3 +1518,140 @@ def test_a_damaged_saved_name_is_refused_with_the_way_out(tmp_path):
     with pytest.raises(InstallError, match="--no-hub-name"):
         server_setup(ctx2, "hub", names=server.Names(), **_rerun_kw())
     assert ctx2.runner.started == {}
+
+
+# ------------------------------------------------------------------------- resolver errors, state written last
+
+
+def _fake_gai(monkeypatch, answers=None, exc=None):
+    """Patch socket.getaddrinfo itself, so the REAL default_resolver and the normalisation are exercised."""
+    import socket
+
+    def gai(host, port, family=0, type=0, proto=0, flags=0):
+        if exc:
+            raise exc
+        return [(socket.AF_INET6 if ":" in a else socket.AF_INET, socket.SOCK_STREAM, 6, "", (a, 0)) for a in answers]
+
+    monkeypatch.setattr(socket, "getaddrinfo", gai)
+
+
+def _real_resolver_setup(tmp_path):
+    ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+    server_setup(ctx, "hub", names=server.Names(), local=local, hub_name=NAME)  # default_resolver
+    return ctx
+
+
+@pytest.mark.parametrize(
+    "answers",
+    [[VPN, "fd00::1"], [VPN, "fe80::1%eth0"], ["fd00::1"], [VPN, "100.64.7.10"], [VPN, "::ffff:100.64.7.9"]],
+)
+def test_the_real_resolver_refuses_an_extra_or_ipv6_answer(tmp_path, monkeypatch, answers):
+    _fake_gai(monkeypatch, answers)
+    ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+    with pytest.raises(InstallError, match="resolves to"):
+        server_setup(ctx, "hub", names=server.Names(), local=local, hub_name=NAME)
+    assert ctx.runner.started == {} and not load(ctx.layout)["parts"]
+
+
+def test_the_real_resolver_refuses_a_failed_lookup_cleanly(tmp_path, monkeypatch):
+    import socket
+
+    _fake_gai(monkeypatch, exc=socket.gaierror(-2, "Name or service not known"))
+    ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+    with pytest.raises(InstallError, match="does not resolve"):
+        server_setup(ctx, "hub", names=server.Names(), local=local, hub_name=NAME)
+    assert ctx.runner.started == {}
+
+
+@pytest.mark.parametrize("exc", [OSError("boom"), UnicodeError("bad label")])
+def test_a_resolver_that_raises_is_a_refusal_not_a_traceback(exc):
+    def boom(n):
+        raise exc
+
+    with pytest.raises(InstallError, match="does not resolve"):
+        server.check_hub_name_target(NAME, VPN, boom)
+
+
+def test_only_the_vpn_ip_passes_the_real_resolver(tmp_path, monkeypatch):
+    _fake_gai(monkeypatch, [VPN, VPN])
+    ctx = _real_resolver_setup(tmp_path)
+    assert load(ctx.layout)["hub_name"] == NAME
+
+
+def test_the_set_normalisation_is_what_refuses_a_zoned_answer():
+    # "fe80::1%eth0" alone must not be taken for a bare address, and "::ffff:..." is not the plain IPv4 one
+    for a in ("fe80::1%eth0", "::ffff:100.64.7.9", "0100.64.7.9"):
+        with pytest.raises(InstallError):
+            server.check_hub_name_target(NAME, VPN, lambda n, a=a: [a])
+    server.check_hub_name_target(NAME, VPN, lambda n: [VPN])
+
+
+def test_no_hub_name_with_a_failing_later_check_changes_nothing(tmp_path):
+    ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+    _name_setup(ctx)
+    f = ctx.layout.data("hub") / "hub-settings.json"
+    before_state, before_card = load(ctx.layout), f.read_text()
+    ctx2, *_ = stub_ctx(tmp_path, SystemdFake())
+    with pytest.raises(InstallError, match="no private-network"):
+        server_setup(
+            ctx2,
+            "hub",
+            names=server.Names(),
+            no_hub_name=True,
+            local=lambda: [server.Addr(VPS)],
+            resolve=lambda n: [VPN],
+        )
+    assert load(ctx2.layout) == before_state and f.read_text() == before_card and ctx2.runner.started == {}
+
+
+@pytest.mark.parametrize(
+    "kw",
+    [
+        {"hub_vpn_only": True},
+        {"behind_proxy": True},
+        {"names": server.derive_names(None, publish="publish.example.com")},
+    ],
+)
+def test_more_conflicting_reruns_are_refused(tmp_path, kw):
+    ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+    _name_setup(ctx)
+    ctx2, *_ = stub_ctx(tmp_path, SystemdFake())
+    kw.setdefault("names", server.Names())
+    with pytest.raises(InstallError):
+        server_setup(ctx2, "hub", **kw, **_rerun_kw())
+    assert ctx2.runner.started == {} and load(ctx2.layout)["hub_name"] == NAME
+
+
+def test_no_hub_name_with_nothing_saved_is_a_no_op(tmp_path):
+    ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+    server_setup(ctx, "hub", names=server.Names(), no_hub_name=True, **_rerun_kw())
+    card = json.loads((ctx.layout.data("hub") / "hub-settings.json").read_text())
+    assert card["addresses"][0]["web"] == f"http://{VPN}:8100" and "hub_name" not in load(ctx.layout)
+
+
+def test_no_hub_name_with_a_domain_reaches_the_domain_path_and_drops_the_name(tmp_path):
+    root = tmp_path / "orch.d"
+    (root / "orch-hub").mkdir(parents=True)
+    ctx, *_ = stub_ctx(tmp_path, SystemdFake())
+    _name_setup(ctx)
+    ctx2, *_ = stub_ctx(tmp_path, SystemdFake())
+    server_setup(
+        ctx2,
+        "hub",
+        names=server.derive_names("example.com"),
+        hub_vpn_only=True,
+        no_hub_name=True,
+        caddy_dir=str(root),
+        user="orch-hub",
+        local=local,
+        resolve=lambda n: [VPS],
+    )
+    card = json.loads((ctx2.layout.data("hub") / "hub-settings.json").read_text())
+    assert card["addresses"][0]["web"] == "https://hub.example.com:443" and "hub_name" not in load(ctx2.layout)
+
+
+def test_normalisation_strips_a_zone_and_compares_the_parsed_address():
+    server.check_hub_name_target(NAME, VPN, lambda n: [f"{VPN}%wt0", VPN])  # same address, spelled with a zone
+    server.check_hub_name_target(NAME, "fd00:0:0::1", lambda n: ["fd00::1%wt0"])  # same address, other spelling
+    with pytest.raises(InstallError):
+        server.check_hub_name_target(NAME, "fd00::1", lambda n: ["fd00::2"])

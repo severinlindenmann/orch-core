@@ -194,10 +194,6 @@ def server_setup(
     elif sys.platform.startswith("linux") and ctx.runner.kind == "systemd":
         server.ensure_user_bus(os.environ, os.geteuid(), user)  # before anything is installed
     check_block(ctx, parts)  # --port-base: refuse a busy port before anything is written
-    if no_hub_name:  # forget the saved name now; the address goes back to the VPN IP below
-        st0 = load(ctx.layout)
-        if st0.pop("hub_name", None) is not None:
-            save(ctx.layout, st0)
     ifaces = (local or (lambda: local_interfaces(lambda argv: ctx.run(argv, dict(ctx.env))[1])))()
     mine = {a.ip for a in ifaces}
     plan = Plan(role=role, parts=tuple(parts), names=names, vpn_only=hub_vpn_only)
@@ -242,7 +238,15 @@ def server_setup(
 
     if not wanted:
         _fallback(
-            ctx, plan, address=address, source=source, ref=ref, dev=dev, backup_drop=backup_drop, hub_name=hub_name
+            ctx,
+            plan,
+            address=address,
+            source=source,
+            ref=ref,
+            dev=dev,
+            backup_drop=backup_drop,
+            hub_name=hub_name,
+            forget_hub_name=no_hub_name,
         )
         return plan
 
@@ -264,6 +268,7 @@ def server_setup(
                 link_address=plan.vpn_ip,
                 web_origin=https,
                 vpn_only=hub_vpn_only,
+                forget_hub_name=no_hub_name,
                 publish_url=names.url("publish") if "publish" in tls_all(names, plan, role) else None,
                 relay_url=names.url("relay") if "relay" in tls_all(names, plan, role) else None,
             )
@@ -325,6 +330,7 @@ def _fallback(
     dev: bool,
     backup_drop: str | None = None,
     hub_name: str | None = None,
+    forget_hub_name: bool = False,
 ) -> None:
     """No names: the IP:port behaviour of ``orch install`` (a private-network hub takes its VPN address)."""
     st = load(ctx.layout)
@@ -341,6 +347,7 @@ def _fallback(
             extra["link_address"] = plan.vpn_ip
             if hub_name:
                 extra["hub_name"] = hub_name
+            extra["forget_hub_name"] = forget_hub_name
         recs[p] = install_part(ctx, p, address=addr, source=source, ref=ref, dev=dev, sync=False, **extra)
     sync_helper(ctx)
     if hub_name:

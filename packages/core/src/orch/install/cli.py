@@ -402,8 +402,8 @@ def install_part(
     link_address: str | None = None,  # server role, hub: the VPN address the link binds (the console stays on loopback)
     web_origin: str | None = None,  # server role, hub: https://<hub name>, advertised in the card
     vpn_only: bool = False,
-    hub_name: str
-    | None = None,  # server role, hub: a private DNS name for the console (http, the VPN address behind it)
+    hub_name: str | None = None,  # server role, hub: a private DNS name for the console (http)
+    forget_hub_name: bool = False,  # server role, hub: --no-hub-name, dropped from the install record with the rewrite
     public_origin: str | None = None,  # server role, publish: https://<publish name> (server = share)
     workspace_side: bool = True,
     behind_edge: bool = False,  # server role with TLS: Caddy on this computer is the edge in front of the part
@@ -542,6 +542,8 @@ def install_part(
         rec["setup_token"] = token
     st = load(lay)
     st["address"], st["domain"] = address, domain or st.get("domain")
+    if forget_hub_name and part == "hub":
+        st.pop("hub_name", None)
     if ctx.port_base is not None:
         st["port_base"] = ctx.port_base
     st["parts"][part] = rec

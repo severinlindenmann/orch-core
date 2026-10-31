@@ -145,8 +145,9 @@ orch setup --server --role hub --hub-name core.hub.example.com
   combines a saved name with `--domain`, `--domain-hub`, `--domain-relay`, `--domain-publish`, `--hub-vpn-only`,
   `--behind-proxy` or `--address 127.0.0.1` is refused until you add `--no-hub-name`. A rerun also checks again that the
   name still points at the VPN address only (IPv4 and IPv6).
-- Not combinable with `--domain`, `--domain-hub`, `--hub-vpn-only` or `--behind-proxy`; hub role only. A rerun without the
-  flag keeps the name. The name comes only from the install: Settings in the console never adds one.
+- Not combinable with `--domain`, `--domain-hub`, `--domain-relay`, `--domain-publish`, `--hub-vpn-only` or
+  `--behind-proxy`; hub role only. A rerun without the flag keeps the name; a rerun with one of those flags is refused
+  until you add `--no-hub-name`. The name comes only from the install: Settings in the console never adds one.
 
 ## 5b. Public relay and publish through the private network's proxy
 

@@ -78,7 +78,7 @@ test("P08: an own workspace that cannot be opened from here (selective, #1752) g
   for (const row of [rail({ switchable: false, canOpen: false }), rail({ online: false })]) {
     const r = hiddenOf([w], { rows: [row], openSettings() { throw new Error("must not open"); } })[0];
     assert.equal(find(r, (n) => n.tag === "button").length, 0);
-    assert.match(r.textContent, /Open it on its own computer, then choose Share everything in Settings > Hub\./);
+    assert.match(r.textContent, /Open it on its own computer, then choose Let the hub read everything in Settings > Hub\./);
   }
   const noName = hiddenOf([{ workspace_id: "9".repeat(32), name: "X", owner_name: null }], { rows: [] })[0];
   assert.match(noName.textContent, /Ask its owner to share them\./);

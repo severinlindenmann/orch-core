@@ -206,17 +206,18 @@ class HubPublish:
         until the next forward. Best effort: a refusal or an unreachable publish is left to the read's own handling."""
         deadline = time.monotonic() + budget_s
         card = self._keys()[1]
-        for (
-            ws
-        ) in workspace_ids:  # _ensure skips a binding orch-publish already holds, so this costs only after a failure
+        # _ensure skips a binding orch-publish already holds, so this costs only after a failure
+        for ws in workspace_ids:
             if time.monotonic() > deadline:
                 return
             try:
                 # _ensure reads the held object and sends it under the workspace's lock, so a newer binding set meanwhile
                 # is sent after this one and wins
                 self._ensure(ws, card, need_bound=False, deadline=deadline)
-            except Refused:
-                continue
+            except Exception as e:  # noqa: BLE001 - one workspace's failure must not stop the others (Refused included)
+                logging.getLogger("orch_hub.publish").info(
+                    "binding push skipped: %s", getattr(e, "code", type(e).__name__)
+                )
 
     def restore(self, bindings: Mapping[str, Mapping[str, Any]]) -> None:
         """After a restart: the signed binding / unbound objects the registry persisted (nothing is synced yet)."""

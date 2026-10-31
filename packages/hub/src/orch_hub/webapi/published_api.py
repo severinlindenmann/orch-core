@@ -62,11 +62,10 @@ class PublishedHandlers:
     def _sync_bindings(self) -> None:
         """B03: push the latest binding of every pinned workspace first, both ways: a switch to full shows its links, a
         switch to selective hides them, even when the switch's own sync failed. Best effort: it never raises."""
-        sync = self.d.publish_sync
-        if sync is None:
-            return
         try:
-            sync(sorted(self.d.registry.pins()))
+            sync = getattr(self.d, "publish_sync", None)
+            if sync is not None:
+                sync(sorted(self.d.registry.pins()))
         except Exception as e:  # noqa: BLE001 - a failed push must never block the page or a revoke
             logging.getLogger("orch_hub.publish").warning(
                 "binding push before the admin read failed: %s", type(e).__name__

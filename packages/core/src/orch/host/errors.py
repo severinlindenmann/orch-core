@@ -185,6 +185,8 @@ DETAIL_KEYS: dict[str, dict[str, tuple[str, ...] | str | None]] = {
             "clock",
             "delegation",
             "rejected",
+            "hub_left",
+            "hub_moved",
         )  # fmt: skip
     },
     "ticket.key_not_next": {"next_key": None},

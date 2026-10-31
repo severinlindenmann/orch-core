@@ -1,0 +1,509 @@
+"""#1838 step B: the hub signs ``publish_where`` once at start (``pubwhere.prepare``) and serves it in ``hub_where`` and the
+``join`` reply; the same bytes after a restart, a higher ``seq`` when an origin changes, nothing (and one line) when the
+origins are refused."""
+
+from __future__ import annotations
+
+import json
+import re
+import signal
+import subprocess
+import sys
+
+import pytest
+from publish_helpers import HOST, FakeUpstream
+
+from orch_hub import settings as SETT
+from orch_hub.contract import keystore as KS
+from orch_hub.contract import vectorgen as G
+from orch_hub.contract.canon import b64u, cj
+from orch_hub.contract.hub import Refused
+from orch_hub.contract.publish_where import SEQ_MAX, check_publish_where
+from orch_hub.keys import HubKeys
+from orch_hub.link import LinkClient
+from orch_hub.pubwhere import PUBLISH_WHERE_FILE, prepare, publisher
+
+from publish_helpers import binding  # isort: skip
+
+READY = re.compile(r"orch-hub ready port=(\d+) tls_spki_sha256=([A-Za-z0-9_-]{43}) hub_id=([0-9a-f]{32})\n")
+SHARE = "http://127.0.0.1:8104"
+PRIVATE = "http://127.0.0.1:8102"
+SETTINGS = {
+    "v": 1,
+    "name": "Hub",
+    "company": "",
+    "addresses": [{"kind": "server", "web": "http://127.0.0.1:8100", "link": "127.0.0.1:8105"}],
+}
+
+
+def _prep(state, keys, *, api_host=HOST, share=SHARE, private=PRIVATE, dev=True, now=1_790_000_000_000):
+    lines: list[str] = []
+    got = prepare(
+        state,
+        keys,
+        api_host=api_host,
+        share_url=share,
+        publish_url=private,
+        dev=dev,
+        say=lines.append,
+        now_ms=lambda: now,
+    )
+    return got, lines
+
+
+@pytest.fixture
+def keys(tmp_path):
+    return HubKeys.init(tmp_path / "hub")
+
+
+def _check(keys, signed, dev=True):
+    return check_publish_where(signed, op_pub=keys.op_signer.public, hub_id=keys.hub_id, dev=dev)
+
+
+def test_the_object_passes_the_checker_with_the_right_origins(tmp_path, keys):
+    got, lines = _prep(tmp_path / "hub", keys)
+    assert lines == [] and got is not None
+    o = _check(keys, got)
+    assert o["server"] == f"http://{HOST}" and o["share"] == SHARE and o["dev"] is True and o["seq"] >= 1
+    stored = json.loads((tmp_path / "hub" / PUBLISH_WHERE_FILE).read_text())
+    assert stored["signed"] == got and (tmp_path / "hub" / PUBLISH_WHERE_FILE).stat().st_mode & 0o077 == 0
+
+
+def test_a_restart_serves_identical_bytes_even_later(tmp_path, keys):
+    first, _ = _prep(tmp_path / "hub", keys, now=1_790_000_000_000)
+    again, _ = _prep(tmp_path / "hub", keys, now=1_790_000_999_000)
+    assert first is not None and cj(again) == cj(first)
+
+
+def test_a_changed_origin_gives_a_higher_seq(tmp_path, keys):
+    first, _ = _prep(tmp_path / "hub", keys, now=1_790_000_000_000)
+    changed, _ = _prep(
+        tmp_path / "hub", keys, share="http://127.0.0.1:8109", now=1_790_000_000_000
+    )  # clock stood still
+    assert first is not None and changed is not None
+    assert changed["o"]["seq"] == first["o"]["seq"] + 1 and changed["o"]["share"] == "http://127.0.0.1:8109"
+    server_changed, _ = _prep(tmp_path / "hub", keys, api_host="127.0.0.1:8110", share="http://127.0.0.1:8109")
+    assert server_changed is not None and server_changed["o"]["seq"] > changed["o"]["seq"]
+    # a later clock wins over stored + 1
+    later, _ = _prep(tmp_path / "hub", keys, share=SHARE, now=1_800_000_000_000)
+    assert later is not None and later["o"]["seq"] == 1_800_000_000_000
+
+
+def test_a_rotated_op_cert_signs_again_with_a_higher_seq(tmp_path, keys):
+    first, _ = _prep(tmp_path / "hub", keys)
+    keys.rotate_op()
+    keys = HubKeys.open(tmp_path / "hub")
+    after, _ = _prep(tmp_path / "hub", keys)
+    assert first is not None and after is not None and after["o"]["seq"] > first["o"]["seq"]
+    assert _check(keys, after)["share"] == SHARE
+
+
+def test_a_damaged_state_file_is_signed_again(tmp_path, keys):
+    first, _ = _prep(tmp_path / "hub", keys)
+    p = tmp_path / "hub" / PUBLISH_WHERE_FILE
+    p.write_text("{nope")
+    p.chmod(0o600)
+    again, _ = _prep(tmp_path / "hub", keys)
+    assert first is not None and again is not None and _check(keys, again)
+
+
+@pytest.mark.parametrize(
+    ("kw", "dev", "word"),
+    [
+        ({"share": "http://127.0.0.1:8104"}, False, "publish-share-url"),  # loopback, not a dev hub
+        ({"share": "https://10.0.0.5"}, False, "publish-share-url"),  # private
+        ({"share": "https://10.0.0.5"}, True, "publish-share-url"),  # dev adds loopback only
+        ({"share": "https://hub.example.com/x"}, False, "publish-share-url"),
+        ({"share": "https://share.example.com", "private": "https://SHARE.example.com:443"}, False, "private"),
+        ({"share": PRIVATE}, True, "private"),  # equal to the private --publish-url
+        ({"share": "https://share.example.com", "api_host": "127.0.0.1:8103"}, False, "api-host"),
+        ({"api_host": None}, True, "needs --api-host"),
+    ],
+)
+def test_refused_origins_serve_nothing_and_say_one_line(tmp_path, keys, kw, dev, word):
+    got, lines = _prep(tmp_path / "hub", keys, dev=dev, **{"api_host": HOST if dev else "pub.example.com", **kw})
+    assert got is None and len(lines) == 1 and word in lines[0]
+    assert not (tmp_path / "hub" / PUBLISH_WHERE_FILE).exists()
+
+
+@pytest.mark.parametrize("api_host", [None, HOST])
+def test_nothing_asked_nothing_said(tmp_path, keys, api_host):
+    got, lines = _prep(tmp_path / "hub", keys, api_host=api_host, share=None)
+    assert got is None and lines == []
+
+
+def test_a_real_hub_signs_https_names(tmp_path):
+    k = HubKeys.init(tmp_path / "real", real=True)
+    got, lines = _prep(
+        tmp_path / "real",
+        k,
+        api_host="pub.example.com",
+        share="https://Pub.Example.COM:443",
+        private="http://127.0.0.1:1",
+        dev=False,
+    )
+    assert lines == [] and got is not None
+    o = _check(k, got, dev=False)
+    assert o["server"] == o["share"] == "https://pub.example.com" and o["dev"] is False
+
+
+@pytest.mark.parametrize(
+    ("api_host", "canonical"),
+    [
+        ("Pub.Example.COM", "pub.example.com"),  # upper case: the forwarder compares the raw flag
+        ("pub.example.com:443", "pub.example.com"),  # the default port is not part of the canonical form
+        ("pub.example.com.", "pub.example.com"),  # one trailing dot
+        ("b\u00fccher.example", "xn--bcher-kva.example"),  # an IDN: the A-label is what is signed
+    ],
+)
+def test_an_api_host_that_is_not_canonical_signs_nothing_and_says_what_to_use(tmp_path, api_host, canonical):
+    k = HubKeys.init(tmp_path / "real", real=True)
+    got, lines = _prep(
+        tmp_path / "real",
+        k,
+        api_host=api_host,
+        share="https://share.example.com",
+        private="http://127.0.0.1:1",
+        dev=False,
+    )
+    assert got is None and lines == [
+        f"orch-hub WARN publish_where not served: --api-host is not in canonical form: use {canonical}"
+    ]
+    assert not (tmp_path / "real" / PUBLISH_WHERE_FILE).exists()
+
+
+def test_the_api_host_may_not_be_the_private_publish_url(tmp_path, keys):
+    got, lines = _prep(tmp_path / "hub", keys, api_host=HOST, private=f"http://{HOST}")
+    assert got is None and len(lines) == 1 and "api-host" in lines[0] and "private" in lines[0]
+
+
+def test_a_seq_at_its_ceiling_signs_nothing_new_and_says_so(tmp_path, keys):
+    first, _ = _prep(tmp_path / "hub", keys)
+    assert first is not None
+    p = tmp_path / "hub" / PUBLISH_WHERE_FILE
+    doc = json.loads(p.read_text())
+    top = keys.op_signer.sign_object({**first["o"], "seq": SEQ_MAX})
+    p.write_text(json.dumps({**doc, "signed": top}))
+    p.chmod(0o600)
+    same, lines = _prep(tmp_path / "hub", keys)
+    assert lines == [] and same is not None and same["o"]["seq"] == SEQ_MAX  # unchanged: still served
+    changed, lines = _prep(tmp_path / "hub", keys, share="http://127.0.0.1:8109")
+    assert changed is None and len(lines) == 1 and "ceiling" in lines[0]
+    assert json.loads(p.read_text())["signed"] == top  # nothing was overwritten
+
+
+def test_a_rotation_in_this_process_is_served_signed_by_the_new_key(tmp_path, keys):
+    lines: list[str] = []
+    now = [1_790_000_000_000]
+    served = publisher(
+        tmp_path / "hub", keys, api_host=HOST, share_url=SHARE, publish_url=PRIVATE, dev=True, say=lines.append,
+        now_ms=lambda: now[0],
+    )  # fmt: skip
+    first = served()
+    assert first is not None and served() is first  # remembered while the op cert is the same
+    old_pub = keys.op_signer.public
+    keys.rotate_op()  # the same HubKeys object: no restart
+    now[0] += 1000
+    after = served()
+    assert after is not None and after is not first and keys.op_signer.public != old_pub
+    assert _check(keys, after)["share"] == SHARE and after["o"]["seq"] > first["o"]["seq"]
+    with pytest.raises(Refused):
+        check_publish_where(after, op_pub=old_pub, hub_id=keys.hub_id, dev=True)  # not the old key's
+    assert served() is after and lines == []
+
+
+def _counting(monkeypatch):
+    from orch_hub import pubwhere
+
+    calls = [0]
+    real = pubwhere._prepare
+
+    def counted(*a, **k):
+        calls[0] += 1
+        return real(*a, **k)
+
+    monkeypatch.setattr(pubwhere, "_prepare", counted)
+    return calls
+
+
+def test_a_transient_failure_is_not_remembered_and_the_next_call_retries_with_a_rate_limited_line(
+    tmp_path, keys, monkeypatch
+):
+    from orch_hub import pubwhere
+
+    lines: list[str] = []
+    now = [100.0]
+    down = [True]
+    real_write = pubwhere.write_atomic
+
+    def flaky(path, data):
+        if down[0]:
+            raise OSError("disk full")
+        return real_write(path, data)
+
+    monkeypatch.setattr(pubwhere, "write_atomic", flaky)
+    served = publisher(
+        tmp_path / "hub", keys, api_host=HOST, share_url=SHARE, publish_url=PRIVATE, dev=True, say=lines.append,
+        clock=lambda: now[0],
+    )  # fmt: skip
+    assert len(lines) == 1 and "could not be written" in lines[0]
+    assert served() is None and served() is None
+    assert len(lines) == 1  # said once inside the window
+    now[0] += pubwhere.RETRY_SAY_S
+    assert served() is None and len(lines) == 2  # retried and said again after the window
+    down[0] = False
+    assert served() is None  # inside the back-off: no retry yet
+    now[0] += pubwhere.RETRY_S
+    got = served()
+    assert got is not None and _check(keys, got)["share"] == SHARE  # the disk is back: served with no restart
+    assert served() is got and len(lines) == 2  # and now remembered
+
+
+def test_a_transient_failure_is_retried_at_most_every_retry_interval(tmp_path, keys, monkeypatch):
+    from orch_hub import pubwhere
+
+    now = [100.0]
+    calls = _counting(monkeypatch)
+    monkeypatch.setattr(pubwhere, "write_atomic", lambda *a: (_ for _ in ()).throw(OSError("disk full")))
+    served = publisher(
+        tmp_path / "hub", keys, api_host=HOST, share_url=SHARE, publish_url=PRIVATE, dev=True, say=lambda _l: None,
+        clock=lambda: now[0],
+    )  # fmt: skip
+    assert calls[0] == 1
+    for _ in range(5):
+        assert served() is None
+    assert calls[0] == 1  # no retry inside the interval
+    now[0] += pubwhere.RETRY_S
+    assert served() is None and calls[0] == 2
+    assert served() is None and calls[0] == 2  # and the interval starts again
+
+
+def test_a_different_refusal_inside_the_window_is_still_said(tmp_path, keys, monkeypatch):
+    from orch_hub import pubwhere
+
+    lines: list[str] = []
+    real_cert, real_write = keys.op_cert, pubwhere.write_atomic
+    broken = [True]
+
+    def op_cert():
+        if broken[0]:
+            raise KS.KeyUseError("cert_not_usable")
+        return real_cert()
+
+    def no_disk(*a):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(keys, "op_cert", op_cert)
+    monkeypatch.setattr(pubwhere, "write_atomic", no_disk)
+    served = publisher(
+        tmp_path / "hub", keys, api_host=HOST, share_url=SHARE, publish_url=PRIVATE, dev=True, say=lines.append,
+        clock=lambda: 100.0,
+    )  # fmt: skip
+    assert len(lines) == 1 and "op key is not usable" in lines[0]
+    broken[0] = False  # the key is back (another op cert id: tried at once), but the disk is not
+    assert served() is None
+    assert len(lines) == 2 and "could not be written" in lines[1]  # not swallowed by the first line's window
+    assert served() is None and len(lines) == 2  # each line once
+    monkeypatch.setattr(pubwhere, "write_atomic", real_write)
+
+
+def test_an_unusable_op_key_is_retried_on_the_next_call(tmp_path, keys, monkeypatch):
+    lines: list[str] = []
+    real = keys.op_cert
+    broken = [True]
+
+    def op_cert():
+        if broken[0]:
+            raise KS.KeyUseError("cert_not_usable")
+        return real()
+
+    monkeypatch.setattr(keys, "op_cert", op_cert)
+    served = publisher(
+        tmp_path / "hub", keys, api_host=HOST, share_url=SHARE, publish_url=PRIVATE, dev=True, say=lines.append
+    )
+    assert len(lines) == 1 and "op key is not usable" in lines[0]
+    assert served() is None
+    broken[0] = False
+    assert served() is not None
+
+
+@pytest.mark.parametrize(
+    ("kw", "word"),
+    [
+        ({"api_host": "Pub.Example.COM", "share": "https://share.example.com"}, "canonical form"),
+        ({"api_host": "pub.example.com", "share": "https://10.0.0.5"}, "publish-share-url"),
+        (
+            {"api_host": "pub.example.com", "share": "https://share.example.com", "private": "https://pub.example.com"},
+            "api-host",
+        ),
+    ],
+)
+def test_a_refusal_caused_by_the_configuration_is_remembered_and_said_once(tmp_path, monkeypatch, kw, word):
+    k = HubKeys.init(tmp_path / "real", real=True)
+    calls = _counting(monkeypatch)
+    lines: list[str] = []
+    served = publisher(
+        tmp_path / "real", k, api_host=kw["api_host"], share_url=kw["share"],
+        publish_url=kw.get("private", "http://127.0.0.1:1"), dev=False, say=lines.append,
+    )  # fmt: skip
+    assert served() is None and served() is None and served() is None
+    assert calls[0] == 1 and len(lines) == 1 and word in lines[0]
+
+
+# --- N1: a committed join never becomes an error reply ---------------------------------------------------------------
+
+
+@pytest.mark.parametrize("exc", [KS.KeyUseError("x"), RuntimeError("boom"), OSError("disk"), RecursionError()])
+def test_a_publish_where_provider_that_raises_never_fails_a_committed_join(make_hub, exc):
+    def boom():
+        raise exc
+
+    h = make_hub(publish_where=boom)
+    c = h.open(first=True)
+    assert c.request("join", h.join_body()) == {}  # the join stands, with no publish_where
+    assert h.registry.binding_state(G.WS_A)["status"] == "bound"
+
+
+def test_a_downstream_that_raises_never_fails_a_committed_join(make_hub):
+    class Down:
+        def __init__(self):
+            self.card_seen = self.binding_seen = False
+
+        def card(self, *a):
+            self.card_seen = True
+            raise Refused("internal")
+
+        def binding(self, ws, obj):
+            self.binding_seen = True
+            raise RuntimeError("publish down")
+
+    down = Down()
+    h = make_hub(downstream=down)
+    c = h.open(first=True)
+    assert c.request("join", h.join_body()) == {}  # the join stands
+    assert down.card_seen and down.binding_seen
+    assert h.registry.binding_state(G.WS_A)["status"] == "bound"
+
+
+@pytest.mark.parametrize("exc", [KS.KeyUseError("x"), RuntimeError("boom")])
+def test_a_publish_where_provider_that_raises_leaves_it_out_of_hub_where(make_hub, tmp_path, exc):
+    from orch_hub.link.ops import safe_publish_where
+
+    def boom():
+        raise exc
+
+    SETT.save(tmp_path, SETTINGS)
+    safe = safe_publish_where(boom)  # what serve() hands to the where answer and to the join
+    h = make_hub(where=lambda: SETT.where_answer(tmp_path, publish_where=safe()), publish_where=safe)
+    c = h.open(first=True)
+    assert c.request("join", h.join_body()) == {}
+    got = c.request("hub_where", {})
+    assert "publish_where" not in got and set(got) == {"addresses", "name"}
+
+
+# --- over the real link -------------------------------------------------------------------------------------------
+
+
+def _start(state, up, *extra, invite=None):
+    args = [sys.executable, "-m", "orch_hub.cli", "serve", "--state", str(state), "--listen", "127.0.0.1:0"]
+    args += ["--publish-url", up.url, "--api-host", HOST, *extra]
+    if invite:
+        args += ["--invite", invite]
+    p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    assert p.stdout
+    said: list[str] = []  # the lines before the ready line (a WARN comes first)
+    while True:
+        line = p.stdout.readline()
+        m = READY.fullmatch(line)
+        if m:
+            break
+        assert line, "".join(said) + (p.stderr.read() if p.poll() is not None and p.stderr else "")
+        said.append(line)
+    p.said = said  # type: ignore[attr-defined]
+    return p, int(m[1]), m[2], m[3]
+
+
+def _stop(p):
+    p.send_signal(signal.SIGTERM)  # our own child
+    assert p.wait(10) == 0
+
+
+def _link(port, pin, hub_id, hub_pub, first):
+    return LinkClient.open(
+        "127.0.0.1",
+        port,
+        tls_spki_sha256=pin,
+        hub_id=hub_id,
+        workspace_id=G.WS_A,
+        wsk=KS.WskSigner(G.K.priv["wsk_a"]),
+        hk_op_pub=hub_pub,
+        send_wsk_pub=first,
+        timeout=5,
+    )
+
+
+def test_join_and_hub_where_carry_publish_where_and_a_restart_keeps_the_bytes(tmp_path):
+    state = tmp_path / "hub"
+    keys = HubKeys.init(state)
+    SETT.save(state, SETTINGS)
+    up = FakeUpstream()
+    try:
+        p, port, pin, hub_id = _start(state, up, "--publish-share-url", SHARE, invite="inv1")
+        try:
+            keys = HubKeys.open(state)
+            c = _link(port, pin, hub_id, keys.op_signer.public, True)
+            body = {
+                "invite": "inv1",
+                "card": G.v2_card(),
+                "pk_pub": b64u(G.K.pub["pk_alice"]),
+                "binding": binding(G.K.priv["wsk_a"], keys, G.WS_A),
+            }
+            joined = c.request("join", body)
+            assert set(joined) == {"publish_where"}
+            where = c.request("hub_where", {})
+            c.close()
+        finally:
+            _stop(p)
+        assert "publish" not in where and where["publish_where"] == joined["publish_where"]
+        o = _check(keys, where["publish_where"])
+        assert o["server"] == f"http://{HOST}" and o["share"] == SHARE
+
+        p, port, pin, hub_id = _start(state, up, "--publish-share-url", SHARE)
+        try:
+            c = _link(port, pin, hub_id, keys.op_signer.public, False)
+            again = c.request("hub_where", {})
+            c.close()
+        finally:
+            _stop(p)
+        assert cj(again["publish_where"]) == cj(where["publish_where"])
+    finally:
+        up.close()
+
+
+def test_a_refused_share_url_serves_no_publish_where_and_prints_a_line(tmp_path):
+    state = tmp_path / "hub"
+    keys = HubKeys.init(state)
+    SETT.save(state, SETTINGS)
+    up = FakeUpstream()
+    try:
+        # the share URL is the private --publish-url itself
+        p, port, pin, hub_id = _start(state, up, "--publish-share-url", up.url, invite="inv1")
+        try:
+            assert len(p.said) == 1 and "publish_where not served" in p.said[0]  # type: ignore[attr-defined]
+            keys = HubKeys.open(state)
+            c = _link(port, pin, hub_id, keys.op_signer.public, True)
+            body = {
+                "invite": "inv1",
+                "card": G.v2_card(),
+                "pk_pub": b64u(G.K.pub["pk_alice"]),
+                "binding": binding(G.K.priv["wsk_a"], keys, G.WS_A),
+            }
+            assert c.request("join", body) == {}
+            where = c.request("hub_where", {})
+            c.close()
+        finally:
+            _stop(p)
+        assert "publish_where" not in where and "publish" not in where
+        assert not (state / PUBLISH_WHERE_FILE).exists()
+    finally:
+        up.close()

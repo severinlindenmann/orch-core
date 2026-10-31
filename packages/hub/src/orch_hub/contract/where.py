@@ -14,6 +14,7 @@ from typing import Any
 
 from .hub import Refused
 from .linkws import parse_link_address
+from .publish_where import check_publish_where_shape
 
 WHERE_KINDS = ("private", "office", "server", "public")
 MAX_ADDRESSES = 4
@@ -51,11 +52,17 @@ def check_hub_where(answer: Any) -> dict[str, Any]:
     1 to 4 entries, each with exactly ``kind`` (one of :data:`WHERE_KINDS`) and ``link`` (a link address of
     protocol.md §10.10: ``host:port``, ``ws://host[:port]`` or ``wss://host[:port]``), no address twice (same scheme,
     lower-case host and port).
+    One more optional member, ``publish_where`` (§10.9.1, #1838): a signed ``hub.publish_where``, checked here for its
+    shape only (:func:`check_publish_where_shape`; the signature needs the pinned card, so it is the caller's) and
+    returned as sent. The legacy unsigned ``publish`` string (§11.11) is accepted in shape and dropped: it is never in
+    the result, so nothing can be suggested from it.
     Anything else is ``malformed`` (fail closed)."""
-    if type(answer) is not dict or set(answer) - {"publish"} != {"addresses", "name"}:
+    if type(answer) is not dict or set(answer) - {"publish", "publish_where"} != {"addresses", "name"}:
         raise Refused("malformed")
     if "publish" in answer and not publish_ok(answer["publish"]):
         raise Refused("malformed")
+    if "publish_where" in answer:
+        check_publish_where_shape(answer["publish_where"])
     entries = answer["addresses"]
     if type(entries) is not list or not 1 <= len(entries) <= MAX_ADDRESSES:
         raise Refused("malformed")
@@ -70,7 +77,7 @@ def check_hub_where(answer: Any) -> dict[str, Any]:
         out.append({"kind": e["kind"], "link": e["link"]})
     if len(keys) != len(out):
         raise Refused("malformed")
-    res = {"addresses": out, "name": clean_name(answer["name"])}
-    if "publish" in answer:
-        res["publish"] = answer["publish"]
+    res: dict[str, Any] = {"addresses": out, "name": clean_name(answer["name"])}
+    if "publish_where" in answer:
+        res["publish_where"] = answer["publish_where"]
     return res

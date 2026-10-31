@@ -118,3 +118,13 @@ export function backOrigin(origin) {
     return null;
   }
 }
+
+/** QA b1852 (P02): what the sign-in form may show in "Your name" when the person came from their workspace: their
+ * display name, never an id. An id-shaped value (32 hex, or any value without a letter-and-space-like name shape it is
+ * safe to show) is never prefilled: the field stays empty and the person types their name. */
+export function namePrefill(name) {
+  if (typeof name !== "string") return "";
+  const n = name.trim();
+  if (!n || /^[0-9a-f]{16,}$/i.test(n) || /^[0-9a-f-]{32,}$/i.test(n)) return "";
+  return n;
+}

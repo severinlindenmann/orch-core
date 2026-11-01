@@ -324,3 +324,22 @@ test("P20: a failed sign-in says name, never user id", () => {
   assert.match(source, /bad_credentials: "Wrong name, password or code\. A code works once; wait for the next one\."/);
   assert.doesNotMatch(source, /Wrong user id/);
 });
+
+test("workspace sign-in keeps the return origin and copy after an unsuccessful sign-in", async () => {
+  const { backToWorkspace, namePrefill } = await import("../../src/orch_hub/web/switch.js");
+  const shown = [], assigned = [];
+  const h = (tag, props = {}, ...children) => ({ tag, ...props, children: children.flat(), append(n) { this.children.push(n); } });
+  const workspace = { origin: "https://workspace.example.test/path?ignored=1" };
+  const context = vm.createContext({ ticketWorkspace: workspace, clearSession() {}, h, field: (label, input) => h("label", {}, label, input), show: (...nodes) => shown.push(nodes), banner: () => null,
+    api: async (method) => method === "POST" ? { status: 401, body: { error: "bad_credentials" } } : { status: 404 }, say: String, document: { getElementById: () => null },
+    backToWorkspace, namePrefill, location: { assign: (u) => assigned.push(u) }, history: { length: 1 }, afterLogin() {} });
+  vm.runInContext(source.slice(source.indexOf("function loginView("), source.indexOf("function loginView(") + source.slice(source.indexOf("function loginView(")).indexOf("\n}\n") + 3), context);
+  vm.runInContext('loginView(null, { prefill: "Anna Test" })', context);
+  const form = shown.at(-1).find((n) => n?.tag === "form");
+  assert.ok(form.children.some((n) => n.text === "Use the code shown for orch in the code app on your phone."));
+  form.children.find((n) => n.tag === "a").onclick({ preventDefault() {} });
+  assert.deepEqual(assigned, ["https://workspace.example.test/"]);
+  for (const node of form.children.filter((n) => n.tag === "label")) node.children[1].value = "bad";
+  await form.onsubmit({ preventDefault() {} });
+  assert.ok(shown.at(-1).find((n) => n?.tag === "form").children.some((n) => n.text === "Back to my workspace"));
+});

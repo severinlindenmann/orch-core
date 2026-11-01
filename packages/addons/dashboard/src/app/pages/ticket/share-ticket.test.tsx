@@ -39,6 +39,15 @@ describe('the ticket Actions menu and sharing', () => {
     await waitFor(() => expect(add).toHaveBeenCalledTimes(1), T)
   })
 
+  it('B13: with nobody else on the hub, Share is off and the dialog says to invite someone first', async () => {
+    vi.spyOn(api, 'getHubAudience').mockResolvedValue({ people: [], teams: [], note: '' })
+    const view = await openMenu('selective')
+    await view.user.click(await screen.findByRole('menuitem', { name: 'Share with the hub' }, T))
+    const dialog = await screen.findByRole('dialog', { name: 'Share this ticket' }, T)
+    expect(await within(dialog).findByTestId('hub-add-blocked', {}, T)).toHaveTextContent('Nobody else is on your hub yet. Invite someone first.')
+    expect(within(dialog).getByTestId('hub-add-go')).toBeDisabled()
+  })
+
   it('offers "Share with the hub" to the owner in share-some mode', async () => {
     await openMenu('selective')
     expect(await screen.findByRole('menuitem', { name: 'Share with the hub' }, T)).toBeTruthy()

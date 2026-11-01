@@ -9,3 +9,4 @@ export const demoDelegations = () => ({ ticket: DEMO_FOCUS_TICKET, supported: tr
 export const demoTranscript = () => ({ run: DEMO_MAIN_RUN, harness: 'claude-code', available: false, reason: null, items: [], next: null, eof: true })
 export const demoDiff = () => ({ ticket: DEMO_FOCUS_TICKET, repo: null, available: false, reason: 'No demo', path_label: null, branch: null, head: null, checked_at: null, truncated: false, files: [], unified: '' })
 export const demoSources = () => ({ run: DEMO_MAIN_RUN, available: false, reason: null, sources: [] })
+export const demoLiveOn = () => false

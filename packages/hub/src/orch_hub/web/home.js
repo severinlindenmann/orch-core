@@ -19,15 +19,8 @@ const text = (v) => renderText(String(v ?? ""));
 const chip = (label, kind = "") => h("span", { class: "chip " + kind, text: label });
 const note = (label) => h("p", { class: "small muted", text: label });
 
-const sharedId = (it) => String(it.workspace_id) + ":" + String(it.key);
-/** P04: tickets that were in the last successful /me/shared read and are gone from this one are "ended". `prev` is null
- * when there is no earlier read (nothing to compare). A shared-again ticket drops out of the ended list. Only call this
- * after a successful read, so an unreachable hub never produces a false "stopped sharing". */
-export function sharedEnded(prev, next, ended = []) {
-  const now = new Set(next.map(sharedId));
-  const have = new Set(ended.map((e) => e.id));
-  const gone = Array.isArray(prev) ? prev.filter((it) => it.shared_by && !now.has(sharedId(it)) && !have.has(sharedId(it))) : [];
-  return [...ended, ...gone.map((it) => ({ id: sharedId(it), by: it.shared_by, title: it.title ?? it.key ?? "a ticket" }))].filter((e) => !now.has(e.id));
+export function dismissEnded(api, row) {
+  return api("POST", "/me/shared/ended/dismiss", { workspace_id: row.workspace_id, item_id: row.item_id });
 }
 
 /** Health and totals use only this person's workspace list. */
@@ -62,7 +55,7 @@ export function sharedCardView(d, nameOf = () => null) {
     h("h2", { id: "shared-heading", text: "Shared with you (" + sharedItems.length + ")" }),
     endedItems.map((e) => h("div", { class: "list-row row ended", role: "status" },
       h("div", { class: "grow" }, note(text(e.by) + " stopped sharing " + text(e.title))),
-      d.actions?.dismissEnded ? h("button", { text: "Dismiss", onclick: () => d.actions.dismissEnded(e.id) }) : null)),
+      d.actions?.dismissEnded ? h("button", { text: "Dismiss", onclick: () => d.actions.dismissEnded(e) }) : null)),
     sharedItems.map((it) => h("article", { class: "list-row row" },
       h("div", { class: "grow" }, h("b", { text: text(it.title ?? it.key ?? "Ticket") }),
         note([nameOf(it.workspace_id), it.shared_by ? "Shared by " + text(it.shared_by) : "Shared with you"].filter(Boolean).join(" · "))),

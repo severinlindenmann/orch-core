@@ -453,6 +453,7 @@ ROUTES: tuple[Route, ...] = (
     _r("POST", "/admin/users/{user_id}/enable", "admin", "a_user_enable", "Enable a person; returns a recovery link"),
     _r("POST", "/invite/peek", "none", "invite_peek", "Look at an invitation link without using it"),
     _r("POST", "/invite/redeem", "none", "invite_redeem", "Use an invitation link: password, authenticator, account"),
+    _r("POST", "/me/shared/ended/dismiss", "session", "shared_ended_dismiss", "Dismiss an ended share"),
     _r("POST", "/me/recovery/dismiss", "session", "recovery_dismiss", "Dismiss the 'your account was reset' notice"),
     _r("GET", "/admin/groups", "admin", "a_groups", "List groups with members and grants"),
     _r("POST", "/admin/groups", "admin", "a_group_add", "Create a group"),
@@ -1482,7 +1483,21 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
                 else:
                     row["shared_by"] = people.get(owner)
                 rows.append(row)
-        return 200, {"items": rows}
+        ended = self.d.shares.store.ended_for(c.user_id)
+        ended = [r for r in ended if only is None or r["workspace_id"] == only][:20]
+        return 200, {
+            "items": rows,
+            "ended": [{**r, "title": P4.render_text(r["title"]), "by": P4.render_text(r["by"])} for r in ended],
+        }
+
+    def _h_shared_ended_dismiss(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        if self.d.shares is None:
+            raise ApiError("unavailable")
+        ws, item_id = (b or {}).get("workspace_id"), (b or {}).get("item_id")
+        _hex32(ws)
+        _hex32(item_id)
+        self.d.shares.store.dismiss(c.user_id, ws, item_id)
+        return 200, {"ok": True}
 
     def _h_needs_you(self, c: Ctx, p: dict, q: dict, b: dict | None):
         items: list[dict[str, Any]] = []

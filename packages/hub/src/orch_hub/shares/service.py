@@ -20,6 +20,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable
+from collections.abc import Set as AbstractSet
 from typing import Any
 
 from ..contract.canon import unb64u
@@ -137,7 +138,10 @@ class ShareService:
                     "item_hash": r["hash"],
                 }
             )
-            self.store.put(ws, item_id, unb64u(body["sealed"]), version, r["hash"], self._now())
+            now = self._now()
+            readers = self._readers(ws, r["item"])
+            ended = self._ended_rows(ws, now, item_id, readers)
+            self.store.put(ws, item_id, unb64u(body["sealed"]), version, r["hash"], now, ended=ended, readers=readers)
         return {}
 
     def revoke(self, ws: str, body: dict[str, Any]) -> dict[str, Any]:
@@ -156,7 +160,8 @@ class ShareService:
                     "item_hash": None,
                 }
             )
-            self.store.revoke(ws, item_id, self._now())
+            now = self._now()
+            self.store.revoke(ws, item_id, now, ended=self._ended_rows(ws, now, item_id))
         return {}
 
     def purge(self, ws: str) -> None:
@@ -177,7 +182,8 @@ class ShareService:
                     "count": n,
                 }
             )
-            self.store.purge(ws, self._now())
+            now = self._now()
+            self.store.purge(ws, now, ended=self._ended_rows(ws, now))
 
     def sync(self, ws: str) -> None:
         """Items belong to a live bound workspace (selective or full) only: any other state deletes them. The caller holds
@@ -204,9 +210,39 @@ class ShareService:
 
     def retry_pending(self) -> None:
         """Timer tick (D9-1): retry the purge of every workspace still pending, so stale items do not outlive the sink."""
+        self.store.prune(self._now() - 30 * 24 * 60 * 60 * 1000)
         with self._reg.lock:
             for ws in sorted(self._pending | self.store.pending()):
                 self.sync(ws)
+
+    def _readers(self, ws: str, item: dict[str, Any]) -> set[str]:
+        aud = item.get("audience")
+        if self._access is None or not aud or item.get("item_kind") != "ticket":
+            return set()
+        readers = set(aud["users"])
+        for group in aud["groups"]:
+            readers.update(self._access.members(group))
+        readers.discard(self._reg.owner_alias(ws))
+        return readers
+
+    def _ended_rows(
+        self, ws: str, now: int, item_id: str | None = None, readers: AbstractSet[str] = frozenset()
+    ) -> list[tuple]:
+        rows = self.store.items(ws)
+        if item_id is not None:
+            rows = [r for r in rows if r["item_id"] == item_id]
+        if not rows:
+            return []
+        owner = self._reg.owner_alias(ws)
+        people = {u["user_id"]: u["name"] for u in self._access.users()} if self._access else {}
+        by = people.get(owner, "The owner")
+        ended = []
+        for row in self._open_all(ws, rows):
+            item = row["item"]
+            for reader in sorted(self._readers(ws, item) - readers):
+                content = item["content"]
+                ended.append((reader, ws, row["item_id"], content.get("key", ""), content["title"], by, now))
+        return ended
 
     # --- read API (D13: the hub web view and the phone) -----------------------------------------------------------
 

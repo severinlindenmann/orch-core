@@ -559,6 +559,9 @@ function renderTop(title){
 
 // ---------------------------------------------------------------- pages
 const P = {};
+P["ben-home"] = () => `<h1>Hello, Ben</h1>
+  <section class="card"><h2>Shared with you</h2><div class="row"><div class="tx">Anna stopped sharing Invoice export</div><button class="btn sm" data-toast="Dismissed for Ben (mockup)">Dismiss</button></div></section>`;
+
 P.home = () => {
   const off = D.ws.filter((w) => !w.online);
   return `<h1>Good morning, ${esc(D.me.name)}</h1><p class="lead">Everything across Acme's workspaces that needs you, and how the company setup is doing.</p>${note("home")}

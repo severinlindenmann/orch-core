@@ -1800,3 +1800,28 @@ def test_a_fresh_server_gets_company_login_from_the_backup_but_switched_off(w, t
         st.close()
     for f in ("oidc.json", "oidc.secret", "oidc.key", "oidc.db"):
         assert (fresh / f).stat().st_mode & 0o177 == 0, f
+
+
+def test_b08_restore_keeps_live_notices_and_fresh_restore_never_revives_them(w, tmp_path):
+    from orch_hub.shares import ShareStore
+
+    path = str(w.state / "shares.db")
+    store = ShareStore(path)
+    with store._db:
+        store._write_ended([(w.ann, WS, "old", "PW-1", "Old title", "Ben", 1)])
+    store.close()
+    words, data = _backup(w)
+    store = ShareStore(path)
+    store.dismiss(w.ann, WS, "old")
+    with store._db:
+        store._write_ended([(w.ann, WS, "live", "PW-2", "Live title", "Ben", 2)])
+    store.close()
+    _restore(w, data, words)
+    store = ShareStore(path)
+    assert [r["item_id"] for r in store.ended_for(w.ann)] == ["live"]
+    store.close()
+    fresh = tmp_path / "fresh-b08"
+    RS.restore(fresh, data, words, dev_mode=True, now_ms=w.clock)
+    store = ShareStore(str(fresh / "shares.db"))
+    assert store.ended_for(w.ann) == []
+    store.close()

@@ -7,7 +7,7 @@ import { ChannelError, deleteChannel, generateKey, loadChannel, saveChannel, sig
 import { inboxView, reviewMeaning, signedMeaning } from "./inbox.js";
 import { parseRoute, registerPages } from "./route.js";
 import { PAGES } from "./pages.js";
-import { firstRunOutgrown, homeView, sharedEnded, workspaceStatus } from "./home.js";
+import { firstRunOutgrown, homeView, dismissEnded, workspaceStatus } from "./home.js";
 import { activityView } from "./activity.js";
 import { accountFromWorkspaceView, accountView } from "./account.js";
 import { adminView } from "./admin.js";
@@ -843,8 +843,8 @@ async function home() {
     // dead = this browser holds THIS person'"'"'s own key that the hub no longer lists as active. Another person'"'"'s stored key, or none, is just "not set up here" (and is never touched from here).
     const dead = !mine && state.me?.userId === user.user_id;
     const shared = sharedRes.status === 200 ? sharedRes.body.items ?? [] : [];
-    // P04: per person, in this browser; diffed only after a successful read, dropped on sign out (clearSession)
-    const ended = sharedRes.status === 200 ? trackShared(user.user_id, shared) : loadEnded(user.user_id);
+    // B08: durable notices scoped to the signed-in reader.
+    const ended = sharedRes.status === 200 ? (sharedRes.body.ended ?? []) : [];
     homeData = {
       user_id: user.user_id,
       user: state.user,
@@ -858,7 +858,7 @@ async function home() {
       newChannels: state.newChannels,
       thisBrowser: state.user.needs_sign_in ? (state.me?.userId === user.user_id ? { state: "active", label: state.me.label, needsSignIn: true } : { state: "unregistered" }) : mine ? { state: "active", label: state.me.label } : dead ? { state: "dead", label: state.me?.label } : { state: "unregistered" },
       notice: state.notice,
-      actions: { review: (it) => navigate("#/w/" + it.workspace_id + "/item/" + encodeURIComponent(it.key || it.item_id)), open: (id) => openOrPage(id), dismissEnded: (id) => { dismissEnded(user.user_id, id); void home(); }, openShared: (it) => navigate("#/shared/" + it.workspace_id + "/" + encodeURIComponent(it.key)), connect: () => navigate("#/workspaces"), register: () => registerView(), removeChannel, dismissNew },
+      actions: { review: (it) => navigate("#/w/" + it.workspace_id + "/item/" + encodeURIComponent(it.key || it.item_id)), open: (id) => openOrPage(id), dismissEnded: async (row) => { const res = await dismissEnded(api, row); if (res.status !== 200) state.notice = banner("bad", "Not dismissed", say(res.body.error)); await home(); }, openShared: (it) => navigate("#/shared/" + it.workspace_id + "/" + encodeURIComponent(it.key)), connect: () => navigate("#/workspaces"), register: () => registerView(), removeChannel, dismissNew },
     };
     liveItems = { user_id: user.user_id, items: homeData.items };
     shell("home", homeView(homeData), workspaces.some((w) => w.can_start) ? advancedForm(workspaces) : null);
@@ -887,21 +887,7 @@ function clearSession() {
   state.adminPage = null;
   state.notice = null;
   state.menu = false;
-  forgetSharedMemory();
 }
-
-// P04: what the last good /me/shared read held, and the "stopped sharing" lines not yet dismissed, per person. In memory only
-// (the console keeps nothing in web storage): gone on reload and on sign out. Diffed only after a successful read, so an
-// unreachable hub never produces a false "stopped sharing".
-const sharedMemory = new Map();
-function loadEnded(uid) { return sharedMemory.get(uid)?.ended ?? []; }
-function trackShared(uid, items) {
-  const ended = sharedEnded(sharedMemory.get(uid)?.last ?? null, items, loadEnded(uid));
-  sharedMemory.set(uid, { last: items.map((it) => ({ workspace_id: it.workspace_id, key: it.key, title: it.title, shared_by: it.shared_by })), ended });
-  return ended;
-}
-function dismissEnded(uid, id) { const m = sharedMemory.get(uid); if (m) m.ended = m.ended.filter((e) => e.id !== id); }
-function forgetSharedMemory() { sharedMemory.clear(); }
 
 async function signOut() {
   await api("DELETE", "/session");
@@ -1291,7 +1277,7 @@ async function pollLive() {
       }
       if (sharedNow.status === 200 && Array.isArray(sharedNow.body.items)) {
         const before = JSON.stringify(homeData.shared) + JSON.stringify(homeData.ended);
-        const ended = trackShared(user.user_id, sharedNow.body.items);
+        const ended = sharedNow.body.ended ?? [];
         if (before !== JSON.stringify(sharedNow.body.items) + JSON.stringify(ended)) { void home(); return; }
       }
     }
@@ -1409,7 +1395,8 @@ async function sharedTicketPage(route) {
     const it = res.status === 200 ? (res.body.items ?? []).find((x) => x.workspace_id === route.workspace && x.key === route.key) : null;
     const back = h("button", { text: it ? "Back" : "Back to Home", onclick: () => navigate("#/home") });
     if (res.status !== 200) return shell("home", h("h1", { text: "Shared ticket" }), h("p", { text: "This ticket could not be loaded right now. Try again in a moment." }), back);
-    if (!it) return shell("home", h("h1", { text: "Sharing ended" }), h("p", { text: "The owner stopped sharing this ticket." }), back);
+    const ended = (res.body.ended ?? []).find((x) => x.workspace_id === route.workspace && x.key === route.key);
+    if (!it) return shell("home", h("h1", { text: "Sharing ended" }), h("p", { text: ended ? renderText(ended.by) + " stopped sharing " + renderText(ended.title) + "." : "The owner stopped sharing this ticket." }), back);
     shell("home", h("h1", { text: renderText(it.title ?? it.key) }),
       h("p", { class: "small muted", text: [it.shared_by ? "Shared by " + renderText(it.shared_by) : "Shared with you", it.status ? renderText(it.status) : null, "read only"].filter(Boolean).join(" · ") }),
       it.deadline ? h("p", { class: "small muted", text: "Due " + renderText(it.deadline) }) : null,

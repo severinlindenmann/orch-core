@@ -117,6 +117,7 @@ def class_of(db: str, table: str) -> str:
 
 #: table -> what a restore does with it (the sweep the review asked for)
 POLICY = {
+    "shares.share_ended": "live rows only; fresh: empty; never restored from backup",
     "access.users": "live removals deleted, live disabled kept, all other non-admins suspended (restore.py)",
     "access.groups/members/grants": "in place: only rows the live hub still has, role = the live role; fresh: non-admins "
     "lose every group when an admin enables them (api enable)",
@@ -531,3 +532,20 @@ def confirm(a: Any, pid: int) -> dict[str, Any]:
             db.execute("INSERT OR IGNORE INTO addon_request VALUES (?,?,?,?,?,?,?)", json.loads(x))
         db.execute("DELETE FROM restore_pending WHERE id=?", (pid,))
     return {"id": pid, "kind": kind, "label": label}
+
+
+def share_ended(new: Path, live: Path | None) -> None:
+    """B08 notices are live-only, including when restoring onto a fresh server."""
+    path = new / "shares.db"
+    if not path.exists():
+        return
+    live_path = live / "shares.db" if live is not None else None
+    c = _connect(path, live_path if live_path is not None and live_path.exists() else None)
+    try:
+        with c:
+            if live_path is not None and live_path.exists():
+                _take(c, "share_ended")
+            elif _has(c, "main", "share_ended"):
+                c.execute("DELETE FROM share_ended")
+    finally:
+        c.close()

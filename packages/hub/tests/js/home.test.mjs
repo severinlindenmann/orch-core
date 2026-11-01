@@ -11,7 +11,7 @@ class Node_ {
   all() { return [this, ...this.children.flatMap((c) => c.all())]; }
 }
 globalThis.document = { createElement: (t) => new Node_(t), createTextNode: (t) => new Node_("#text", t), getElementById: () => null };
-const { homeView, sharedEnded, homeSummary, workspaceStatus } = await import("../../src/orch_hub/web/home.js");
+const { homeView, dismissEnded, homeSummary, workspaceStatus } = await import("../../src/orch_hub/web/home.js");
 const spaces = [{ workspace_id: "a", name: "Product", online: true }, { workspace_id: "b", name: "Legal", online: false }];
 test("summary excludes another person's workspace", () => {
   const out = homeSummary(spaces, [{ workspace_id: "a", signable: true }, { workspace_id: "secret" }]);
@@ -202,30 +202,26 @@ test("P07: Shared tickets card lists tickets shared with me with workspace and w
   assert.equal(opened, "w1/PW-1");
 });
 
-test("P04: sharedEnded names what vanished from the last good read, never on first read, and a re-shared ticket drops out", () => {
-  const a = { workspace_id: "w1", key: "PW-1", title: "Invoice export", shared_by: "Anna" }, b = { workspace_id: "w1", key: "PW-2", title: "Other", shared_by: "Anna" };
-  assert.deepEqual(sharedEnded(null, [a]), []);
-  assert.deepEqual(sharedEnded([a, b], [b]), [{ id: "w1:PW-1", by: "Anna", title: "Invoice export" }]);
-  const ended = sharedEnded([a, b], [b]);
-  assert.equal(sharedEnded([b], [b], ended).length, 1); // kept until dismissed
-  assert.deepEqual(sharedEnded([b], [a, b], ended), []); // shared again
+test("B08: dismiss uses the server and no previous-read memory survives reload", async () => {
+  let called;
+  await dismissEnded(async (...args) => { called = args; }, { workspace_id: "w1", item_id: "i1" });
+  assert.deepEqual(called, ["POST", "/me/shared/ended/dismiss", { workspace_id: "w1", item_id: "i1" }]);
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("../../src/orch_hub/web/app.js", import.meta.url), "utf8");
+  assert.doesNotMatch(src, /sharedMemory|trackShared|loadEnded/);
+  assert.match(src, /sharedRes.body.ended/);
 });
 
 test("P04: ended lines show in the Shared tickets card (even with nothing shared) and Dismiss clears them", () => {
   const textOf = (out) => out.flat().map((n) => n.textContent).join("\n");
   const ws = [{ workspace_id: "w1", name: "Product", online: true, mode: "selective" }];
   let dismissed;
-  const out = homeView({ workspaces: ws, items: [], shared: [], ended: [{ id: "w1:PW-1", by: "Anna", title: "Invoice export" }], actions: { dismissEnded: (id) => { dismissed = id; } } });
+  const out = homeView({ workspaces: ws, items: [], shared: [], ended: [{ workspace_id: "w1", item_id: "i1", by: "Anna", title: "Invoice export" }], actions: { dismissEnded: (id) => { dismissed = id; } } });
   assert.match(textOf(out), /Anna stopped sharing Invoice export/);
   const all = (n) => [n, ...n.children.flatMap(all)];
   out.flatMap(all).find((n) => n.tag === "button" && n.textContent === "Dismiss").listeners.click();
-  assert.equal(dismissed, "w1:PW-1");
+  assert.equal(dismissed.item_id, "i1");
   assert.doesNotMatch(textOf(homeView({ workspaces: ws, items: [], shared: [], ended: [], actions: {} })), /Shared with you/);
-});
-
-test("P04: the sharer's own rows (no shared_by) never become a stopped-sharing line", () => {
-  const own = { workspace_id: "w1", key: "PW-9", title: "Mine" };
-  assert.deepEqual(sharedEnded([own], []), []);
 });
 
 test("run18 P04: Home calls a stored key dead only when it is this person's own; another person's key is never classed or forgotten", async () => {

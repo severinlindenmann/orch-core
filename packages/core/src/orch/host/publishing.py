@@ -1635,13 +1635,17 @@ _NOT_ALLOWED_CODES = frozenset(
 
 
 def _why_not_live(exc: Exception) -> str:
-    """``not_allowed`` only for an explicit refusal code (``unknown_workspace``, ``owner_not_allowed``, ...): something
-    answered and the hub is online. Anything else is ``unreachable``."""
+    """``not_allowed`` for an explicit refusal code (``unknown_workspace``, ``owner_not_allowed``, ...), ``refused`` for
+    any other answer of the publish server (4xx but 429): the hub is online either way. Else ``unreachable``."""
     code = str(getattr(exc, "code", ""))
     status = int(getattr(exc, "status", 0) or 0)
     if status >= 500 or code == "network":
         return "unreachable"
-    return "not_allowed" if code in _NOT_ALLOWED_CODES else "unreachable"
+    if code in _NOT_ALLOWED_CODES:
+        return "not_allowed"
+    # B09: the publish server answered (a 4xx other than "slow down"): the hub is online, so the page must not say it
+    # cannot be reached. Try again still applies (a nonce or clock hiccup clears on the next read).
+    return "refused" if 400 <= status < 500 and status != 429 else "unreachable"
 
 
 def _live(call: Call, plan: dict[str, Any]) -> dict[str, Any]:

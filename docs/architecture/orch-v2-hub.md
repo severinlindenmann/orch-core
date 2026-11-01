@@ -291,7 +291,8 @@ charter. Public access still needs a custodial human signature, carried in the r
 - **Switching mode.** Selective → full is a human-only verb at the host terminal, signed by the owner's local key;
   it then seals `WK_e` to the hub (the normal join, §8 step 3). No hub admin can start it. Full → selective is a
   leave plus rotation plus a selective join, so the hub loses `WK_e` from the new epoch on.
-Deliberate exception (B08): the hub keeps, per reader, the key and title of an item that stopped being shared with them, for 30 days or until dismissed, so the reader is told. Nothing else of the withdrawn item is kept; it is never shown to anyone else, is not in the admin feed or audit, and is not restored from a backup.
+
+Deliberate exception (B08): the hub keeps, per reader, the key and title of an item that stopped being shared with them (plus the workspace, the item id, the owner's display name and the time), for 30 days or until dismissed, so the reader is told. Nothing else of the withdrawn item is kept. Only that reader sees it (never the admin feed or the audit); a disabled or removed person keeps none; the rows are plaintext in `shares.db` like the rest of the hub's local state and may sit in a backup file until it is deleted, but a restore never brings them back. Writing a notice never holds up the withdrawal or purge it follows.
 
 - **The card shows the mode:** "hub can read everything" (full) or "hub sees only what you share" (selective).
 

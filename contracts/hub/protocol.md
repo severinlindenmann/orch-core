@@ -1709,7 +1709,7 @@ item_hash = "sha256:" + hex(H("orch/v2/hub-share-item|" || cj(signed share.item)
   hub keeps a tombstone `{item_id, item_version}`, so the id may be **shared again** only with a higher
   `item_version`, and a revoked version never comes back.
 
-Deliberate exception (B08): the hub keeps, per reader, the key and title of an item that stopped being shared with them, for 30 days or until dismissed, so the reader is told. Nothing else of the withdrawn item is kept; it is never shown to anyone else, is not in the admin feed or audit, and is not restored from a backup.
+Deliberate exception (B08): the hub keeps, per reader, the key and title of an item that stopped being shared with them (plus the workspace, the item id, the owner's display name and the time), for 30 days or until dismissed, so the reader is told. Nothing else of the withdrawn item is kept. Only that reader sees it (never the admin feed or the audit); a disabled or removed person keeps none; the rows are plaintext in `shares.db` like the rest of the hub's local state and may sit in a backup file until it is deleted, but a restore never brings them back. Writing a notice never holds up the withdrawal or purge it follows.
 
 - **Limits (C6 6, D9).** 16 KiB sealed per item (`too_large`; summaries are small, D9's 256 KiB is not needed), at most
   **1000** live items per workspace (`too_many_items`; C6's 500 and D9's 1000: one number), so at most 16 MiB sealed per

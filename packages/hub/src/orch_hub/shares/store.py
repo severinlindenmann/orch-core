@@ -12,12 +12,16 @@ reader, item, owner-name and time metadata; they commit with the item change and
 from __future__ import annotations
 
 import hashlib
+import logging
+import sqlite3
 import threading
 from collections.abc import Iterable
 from collections.abc import Set as AbstractSet
 from typing import Any
 
 from ..fsutil import open_private_db
+
+_log = logging.getLogger("orch_hub.shares")
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS share_item (
@@ -101,14 +105,14 @@ class ShareStore:
                 "item_version=excluded.item_version, item_hash=excluded.item_hash, revoked=0",
                 (ws, item_id, sealed, digest, len(sealed), now_ms, item_version, item_hash),
             )
-            self._write_ended(ended)
-            for reader in readers:
+            for reader in readers:  # a re-share clears the reader's notice with the item change
                 self._clear_ended(ws, item_id, reader)
             change = "replace" if held else "put"
             self._db.execute(
                 "INSERT INTO share_log(ws, item_id, change, digest, ts_ms) VALUES (?,?,?,?,?)",
                 (ws, item_id, change, digest, now_ms),
             )
+        self._notices(ended)  # readers the new version drops; best effort, after the change committed
         return change
 
     def revoke(
@@ -121,12 +125,12 @@ class ShareStore:
             ).fetchone()
             if row is None:
                 return False
-            self._write_ended(ended)
             self._tombstone(ws, item_id)
             self._db.execute(
                 "INSERT INTO share_log(ws, item_id, change, digest, ts_ms) VALUES (?,?,?,?,?)",
                 (ws, item_id, "revoke", row[0], now_ms),
             )
+        self._notices(ended)  # after the delete has committed: a notice never holds up a withdrawal
         return True
 
     def _tombstone(self, ws: str, item_id: str | None) -> None:
@@ -142,12 +146,13 @@ class ShareStore:
         with self.lock, self._db:
             n = self._db.execute("SELECT COUNT(*) FROM share_item WHERE ws=? AND revoked=0", (ws,)).fetchone()[0]
             if n:
-                self._write_ended(ended)
                 self._tombstone(ws, None)
                 self._db.execute(
                     "INSERT INTO share_log(ws, item_id, change, count, ts_ms) VALUES (?,?,?,?,?)",
                     (ws, None, "unbind", n, now_ms),
                 )
+        if n:
+            self._notices(ended)  # after the purge has committed: a notice never holds up a purge
         return n
 
     def mark_pending(self, ws: str) -> None:
@@ -194,12 +199,24 @@ class ShareStore:
     def _write_ended(self, rows: Iterable[tuple[str, str, str, str, str, str, int]]) -> None:
         self._db.executemany("INSERT OR REPLACE INTO share_ended VALUES (?,?,?,?,?,?,?)", rows)
 
-    def ended_for(self, reader: str) -> list[dict[str, Any]]:
+    def _notices(self, rows: Iterable[tuple[str, str, str, str, str, str, int]]) -> None:
+        """B08 notices in their own transaction, after the item change: a failure loses notices, never the change."""
+        rows = list(rows)
+        if not rows:
+            return
+        try:
+            with self.lock, self._db:
+                self._write_ended(rows)
+        except sqlite3.Error:
+            _log.warning("withdrawal notices not written (%d)", len(rows))
+
+    def ended_for(self, reader: str, since_ms: int = 0) -> list[dict[str, Any]]:
+        """The reader's notices newer than ``since_ms`` (the 30-day rule is also enforced here, not only by the timer)."""
         with self.lock:
             rows = self._db.execute(
-                "SELECT ws, item_id, key, title, by_user, at_ms FROM share_ended WHERE reader=? "
+                "SELECT ws, item_id, key, title, by_user, at_ms FROM share_ended WHERE reader=? AND at_ms>=? "
                 "ORDER BY at_ms DESC, ws, item_id",
-                (reader,),
+                (reader, since_ms),
             ).fetchall()
         return [dict(zip(("workspace_id", "item_id", "key", "title", "by", "at_ms"), r, strict=True)) for r in rows]
 
@@ -217,6 +234,11 @@ class ShareStore:
 
     def dismiss(self, reader: str, ws: str, item_id: str) -> None:
         self.clear(ws, item_id, reader)
+
+    def forget_reader(self, reader: str) -> None:
+        """A person who is disabled or removed keeps no notices."""
+        with self.lock, self._db:
+            self._db.execute("DELETE FROM share_ended WHERE reader=?", (reader,))
 
     def prune(self, before_ms: int) -> None:
         with self.lock, self._db:

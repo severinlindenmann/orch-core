@@ -216,32 +216,49 @@ class ShareService:
                 self.sync(ws)
 
     def _readers(self, ws: str, item: dict[str, Any]) -> set[str]:
+        """B08: exactly the people who could read this item now (``audience_reads``: active users only), minus the owner.
+        Never raises: a lookup error yields nobody."""
         aud = item.get("audience")
-        if self._access is None or not aud or item.get("item_kind") != "ticket":
+        if self._access is None or type(aud) is not dict or item.get("item_kind") != "ticket":
             return set()
-        readers = set(aud["users"])
-        for group in aud["groups"]:
-            readers.update(self._access.members(group))
-        readers.discard(self._reg.owner_alias(ws))
-        return readers
+        try:
+            candidates = set(aud["users"])
+            for group in aud["groups"]:
+                candidates.update(self._access.members(group))
+            owner = self._reg.owner_alias(ws)
+        except Exception:  # noqa: BLE001 - a notice is a nicety: never block the change it follows
+            return set()
+        return {u for u in candidates if u != owner and self.audience_reads(u, item)}
 
     def _ended_rows(
         self, ws: str, now: int, item_id: str | None = None, readers: AbstractSet[str] = frozenset()
     ) -> list[tuple]:
-        rows = self.store.items(ws)
-        if item_id is not None:
-            rows = [r for r in rows if r["item_id"] == item_id]
-        if not rows:
+        """B08 notices for a withdrawal. Best effort: a workspace whose pin is gone, an item that no longer opens or any
+        other failure yields no notices (logged as a count only) and never stops the revoke or purge it goes with."""
+        try:
+            rows = self.store.items(ws)
+            if item_id is not None:
+                rows = [r for r in rows if r["item_id"] == item_id]
+            if not rows:
+                return []
+            owner = self._reg.owner_alias(ws)
+            people = {u["user_id"]: u["name"] for u in self._access.users()} if self._access else {}
+            by = people.get(owner) or "The owner"
+            opened = self._open_all(ws, rows)
+        except Exception:  # noqa: BLE001
+            _log.warning("withdrawal notices skipped for %d item(s)", len(rows) if "rows" in locals() else 0)
             return []
-        owner = self._reg.owner_alias(ws)
-        people = {u["user_id"]: u["name"] for u in self._access.users()} if self._access else {}
-        by = people.get(owner, "The owner")
         ended = []
-        for row in self._open_all(ws, rows):
-            item = row["item"]
-            for reader in sorted(self._readers(ws, item) - readers):
-                content = item["content"]
-                ended.append((reader, ws, row["item_id"], content.get("key", ""), content["title"], by, now))
+        for row in opened:
+            try:
+                item = row["item"]
+                content = item.get("content") or {}
+                key = content.get("key") if type(content.get("key")) is str else ""
+                title = content.get("title") if type(content.get("title")) is str else ""
+                for reader in sorted(self._readers(ws, item) - readers):
+                    ended.append((reader, ws, row["item_id"], key, title or key or "a ticket", by, now))
+            except Exception:  # noqa: BLE001
+                _log.warning("a withdrawal notice was skipped")
         return ended
 
     # --- read API (D13: the hub web view and the phone) -----------------------------------------------------------

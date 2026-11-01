@@ -3,7 +3,6 @@
 
 import sqlite3
 
-import pytest
 from conftest import NOW
 from shares_helpers import IT1, OWNER, audit_records, shub  # noqa: F401
 from test_shares_audience import BEN, CARL, access, ticket_body
@@ -90,15 +89,43 @@ def test_unbind_notices(shub):
     acc.close()
 
 
-def test_notice_failure_rolls_back_item_change():
+def test_a_notice_that_cannot_be_written_never_holds_up_the_withdrawal():
     store = ShareStore()
     store.put("w", "i", b"sealed", 1, "hash", 0)
     store._db.execute("CREATE TRIGGER fail_notice BEFORE INSERT ON share_ended BEGIN SELECT RAISE(ABORT, 'fail'); END")
-    with pytest.raises(sqlite3.IntegrityError):
-        store.revoke("w", "i", 1, ended=[("b", "w", "i", "key", "title", "Ann", 1)])
-    assert store.get("w", "i")[0] == b"sealed"
+    assert store.revoke("w", "i", 1, ended=[("b", "w", "i", "key", "title", "Ann", 1)])
+    assert store.get("w", "i") is None  # the item is gone even though the notice failed
     assert not store.ended_for("b")
-    store.close()
+
+
+def test_purge_with_no_pin_deletes_and_writes_no_notice(shub):
+    acc = access()
+    h = shub(access=acc)
+    c = h.join()
+    c.request("share_put", ticket_body(audience=AUD))
+
+    def gone(ws):
+        from orch_hub.contract.hub import Refused
+
+        raise Refused("unknown_workspace")
+
+    h.svc._wsk = gone  # the workspace pin is gone
+    h.svc.purge(G.WS_A)
+    assert h.share_store.items(G.WS_A) == []
+    assert not h.share_store.ended_for(BEN)
+    acc.close()
+
+
+def test_a_disabled_reader_gets_no_notice(shub):
+    acc = access()
+    acc.set_disabled(BEN, True, actor=OWNER)
+    h = shub(access=acc)
+    c = h.join()
+    c.request("share_put", ticket_body(audience=AUD))
+    c.request("share_revoke", {"item_id": IT1})
+    assert not h.share_store.ended_for(BEN)
+    assert h.share_store.ended_for(CARL)
+    acc.close()
 
 
 def test_api_is_private_dismiss_is_scoped_and_csrf_protected(tmp_path):
@@ -108,7 +135,8 @@ def test_api_is_private_dismiss_is_scoped_and_csrf_protected(tmp_path):
         ben = w.env.user("ben")
         store = w.shares.store
         with store._db:
-            store._write_ended([(u, WS_SEL, IT1, "PW-1", "<b>Invoice</b>", "ann", NOW) for u in (ben, w.ann)])
+            now = int(w.api.d.now_ms())
+            store._write_ended([(u, WS_SEL, IT1, "PW-1", "<b>Invoice</b>", "ann", now) for u in (ben, w.ann)])
         bt, at = w.login(ben), w.login(w.ann)
         route = "/me/shared/ended/dismiss"
         payload = {"workspace_id": WS_SEL, "item_id": IT1}
@@ -133,9 +161,14 @@ def test_api_newest_first_max_twenty(tmp_path):
     w = Web(tmp_path)
     try:
         with w.shares.store._db:
-            w.shares.store._write_ended([(w.ann, WS_SEL, f"{i:032x}", "PW-1", "Invoice", "ben", i) for i in range(25)])
+            now = int(w.api.d.now_ms())
+            rows = [(w.ann, WS_SEL, f"{i:032x}", "PW-1", "Invoice", "ben", now - 100 + i) for i in range(25)]
+            rows.append(
+                (w.ann, WS_SEL, "f" * 32, "PW-9", "Old", "ben", now - 31 * 86_400_000)
+            )  # past 30 days: not served
+            w.shares.store._write_ended(rows)
         ended = w.call("GET", "/me/shared", token=w.login(w.ann))[1]["ended"]
-        assert [r["at_ms"] for r in ended] == list(range(24, 4, -1))
+        assert [r["at_ms"] for r in ended] == [now - 100 + i for i in range(24, 4, -1)]
     finally:
         w.close()
 

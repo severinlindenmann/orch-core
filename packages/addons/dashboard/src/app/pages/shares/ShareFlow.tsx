@@ -43,6 +43,7 @@ import {
   type ShareKind,
   type Staged,
   type Views,
+  localOnly,
 } from '@/api/shares'
 import type { Artifact } from '@/api/types'
 import { fmtDateTime } from '@/lib/time'
@@ -114,6 +115,7 @@ export function ShareFlow({ ws, ticket, resume, only, onClose }: { ws: string; t
   const where = rowLoading ? null : destinationLine(from, hubName, server)
   // "this computer" only when the row says the source is this computer
   const reach = reachNote(server, share, from)
+  const here = localOnly(server, share, from) // B07: a local test link: the warning says this computer, not 'anyone'
 
   // form
   const [picked, setPicked] = useState<string[]>([])
@@ -473,7 +475,7 @@ export function ShareFlow({ ws, ticket, resume, only, onClose }: { ws: string; t
               </ul>
               {where && <p data-testid="where-files-go" className="font-medium">{where}</p>}
               {reach && <p className="text-[12px] text-text-muted">{reach}</p>}
-              <p role="note" className="text-[12px] text-warning">Anyone with the link can read this file. A copy cannot be taken back. You see the link once.</p>
+              <p role="note" className="text-[12px] text-warning">{here ? 'Anyone on this computer with the link can read this file.' : 'Anyone with the link can read this file. A copy cannot be taken back.'} You see the link once.</p>
               <InfoDrawer text="Details">
                 {server && <p className="break-all font-mono">Files are sent to {server}</p>}
                 {share && <p className="break-all font-mono">The link opens at {share}</p>}
@@ -500,7 +502,7 @@ export function ShareFlow({ ws, ticket, resume, only, onClose }: { ws: string; t
             </ul>
             {where && <p data-testid="where-files-go" className="font-medium">{where}</p>}
             {reach && <p className="text-[12px] text-text-muted">{reach}</p>}
-            <p role="note" className="text-[12px] text-warning">Anyone with the link can read these files. A copy cannot be taken back.</p>
+            <p role="note" className="text-[12px] text-warning">{here ? 'Anyone on this computer with the link can read these files.' : 'Anyone with the link can read these files. A copy cannot be taken back.'}</p>
             <InfoDrawer>
               {server && <p className="break-all font-mono">Files are sent to {server}</p>}
               {share && <p className="break-all font-mono">The link opens at {share}</p>}

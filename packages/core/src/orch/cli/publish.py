@@ -47,6 +47,7 @@ _NOT_CHECKED = "(not checked with the server: showing this computer's record)"
 _WHY = {
     "unreachable": "(the server could not be reached: this is this computer's last record)",
     "not_allowed": "(the hub has not switched on publishing for this workspace: this is this computer's last record)",
+    "refused": "(the publish server did not take the request: this is this computer's last record)",
 }  # `local` says nothing
 _AGENT_OK = frozenset({"prepare", "list", "discard"})
 _PERSON_ONLY_MESSAGE = "a person does this; an agent only prepares (orch publish prepare)"

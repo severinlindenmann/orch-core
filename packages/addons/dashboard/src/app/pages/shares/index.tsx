@@ -118,6 +118,15 @@ function SharesBody({ onRevoke, onSign }: { onRevoke: (s: Share) => void; onSign
       )}
       <UnsentShares workspace={workspace} />
       <SharingPaused workspace={workspace} />
+      {data && data.configured && !data.live && data.why === 'refused' && (
+        // B09: the publish server answered, so the hub is online: never "cannot be reached" here
+        <p role="status" data-testid="shares-refused" className="flex flex-wrap items-center gap-2 rounded-lg border border-warning/40 px-3 py-2 text-[12px]">
+          <span>Sharing is paused: the publish server did not take the request. Nothing was sent.</span>
+          <Button size="sm" variant="secondary" onClick={() => void list.refetch()}>
+            Try again
+          </Button>
+        </p>
+      )}
       {data && data.configured && !data.live && (data.why === undefined || data.why === 'unreachable') && (
         <p role="status" data-testid="shares-unreachable" className="flex flex-wrap items-center gap-2 rounded-lg border border-warning/40 px-3 py-2 text-[12px]">
           <span>Sharing is paused: your hub cannot be reached. Nothing was sent.</span>

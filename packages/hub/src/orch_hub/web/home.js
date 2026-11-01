@@ -59,7 +59,7 @@ export function sharedCardView(d, nameOf = () => null) {
     sharedItems.map((it) => h("article", { class: "list-row row" },
       h("div", { class: "grow" }, h("b", { text: text(it.title ?? it.key ?? "Ticket") }),
         note([nameOf(it.workspace_id), it.shared_by ? "Shared by " + text(it.shared_by) : "Shared with you"].filter(Boolean).join(" · "))),
-      d.actions?.openShared && it.workspace_id ? h("button", { text: "Open", onclick: () => d.actions.openShared(it) }) : null))) : null;
+      d.actions?.openShared && it.workspace_id ? h("button", { class: "pri", text: "Open", onclick: () => d.actions.openShared(it) }) : null))) : null;
 }
 
 /** Without a workspace, keep shared tickets in reach without signing or developer widgets. */
@@ -69,9 +69,9 @@ function firstRunHome(d) {
   const sharedCount = (d.shared ?? []).length;
   const sharedCard = sharedCardView(d);
   return [h("h1", { text: "Hello, " + text(d.user?.name ?? "you") }), notice, ...added,
-    h("p", { class: "company-summary muted", text: sharedCount ? sharedCount + (sharedCount === 1 ? " ticket shared with you." : " tickets shared with you.") : "Nothing connected yet." }),
+    !sharedCount ? h("p", { class: "company-summary muted", text: "Nothing connected yet." }) : null,
     sharedCard,
-    sharedCard && !d.user?.is_admin ? note("Want a workspace of your own? Ask your hub admin.") : h("section", { class: "card first-run first-run-root", "aria-labelledby": "first-run-heading" },
+    sharedCard && !d.user?.is_admin ? note("For your own workspace, ask your hub admin.") : h("section", { class: "card first-run first-run-root", "aria-labelledby": "first-run-heading" },
       h("h2", { id: "first-run-heading", text: "Connect your first workspace" }),
       d.user?.is_admin && d.actions?.connect
         ? [h("p", { text: "We make a link for your workspace. You use it once." }), h("button", { class: "pri", text: "Connect a workspace", onclick: () => d.actions.connect() })]

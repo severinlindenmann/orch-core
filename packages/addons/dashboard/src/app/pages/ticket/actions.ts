@@ -100,7 +100,8 @@ export function availableActions(t: TicketDocument, viewer: Viewer): Available {
       requestChanges.push('requirements')
     }
     const plan = t.gates.plan
-    if (plan.state !== 'approved' && req.state === 'approved' && t.tasks.length > 0 && !lacks(plan) && canApproveGate(t, 'plan', viewer)) {
+    // W06: like the combined card, never offer a plan approval while the plan itself is not written (the host's rule too)
+    if (plan.state !== 'approved' && req.state === 'approved' && !!t.body.plan?.trim() && t.tasks.length > 0 && !lacks(plan) && canApproveGate(t, 'plan', viewer)) {
       approve.push('plan')
       requestChanges.push('plan')
     }

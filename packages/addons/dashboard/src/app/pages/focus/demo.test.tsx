@@ -7,28 +7,25 @@ import { installAndGrant } from '@/test/installAddon'
 const setup = (s: typeof mockStore) => installAndGrant(s, s.workspaces[0].id, 'focus')
 
 // The mock host has a RUNNING agent on DEMO-0043 (mocks/addons/focus/demo.ts): every focus screen is reachable without a host.
+// The live preview (agent tree, jobs) draws the page for that ticket; Chat and Terminal of the main agent are the existing panes.
 it('mock mode: chat opens with a question and a tool row, and the tray is a one-row reminder', async () => {
   const { user } = renderApp('/focus/DEMO-0043', { setup })
+  const agent = await screen.findByTestId('live-agent')
+  await user.click(within(agent).getByRole('button', { name: 'Terminal' }))
   const pane = await screen.findByTestId('focus-conversation')
   await within(pane).findByTestId('focus-demo-terminal')
-  const chat = within(pane).getByRole('button', { name: 'Chat' })
-  expect(chat).not.toHaveAttribute('aria-disabled')
-  await user.click(chat)
+  await user.click(within(agent).getByRole('button', { name: 'Chat' }))
   const log = await screen.findByRole('log')
   expect(await within(log).findByText(/Edit seeds\/t1_load.csv/)).toHaveAttribute('data-kind', 'tool')
   expect(within(log).getByText(/DATE or a TIMESTAMP/).closest('[data-kind=question]')).not.toBeNull()
   expect(screen.getByRole('region', { name: 'Needs you' })).toHaveTextContent('Needs you · 1')
 })
 
-it('mock mode: tasks (agent-spawned and human-requested, one needing you), Delegate a task, live changes with overlap, research', async () => {
+it('mock mode: the agent tree lists helpers and tasks, Delegate a task, live changes with overlap, research', async () => {
   const { user } = renderApp('/focus/DEMO-0043', { setup })
-  const chip = await screen.findByRole('button', { name: '2 tasks, 1 needs you' })
-  await user.click(chip)
-  const list = await screen.findByTestId('focus-tasks-list')
-  expect(await within(list).findByText('Spawned by main agent')).toBeInTheDocument()
-  expect(within(list).getByText('Requested by you')).toBeInTheDocument()
-  expect(within(list).getByText('needs you')).toBeInTheDocument()
-  await user.click(within(list).getByRole('button', { name: 'Delegate a task' }))
+  const tree = await screen.findByTestId('live-tree')
+  expect(within(tree).getByText('Clean up SQL formatting')).toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: 'Delegate a task' }))
   expect(await screen.findByTestId('focus-delegate-sheet')).toBeInTheDocument()
   await user.click(screen.getByRole('button', { name: 'Cancel' }))
   const live = await screen.findByTestId('focus-live-changes')

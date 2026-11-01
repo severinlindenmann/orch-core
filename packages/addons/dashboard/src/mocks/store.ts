@@ -228,6 +228,7 @@ export class MockStore {
     this.wsEvents.clear()
     for (const w of this.seedWorkspaces) this.wsEvents.set(w.id, [])
     if (this.busy) this.installBusyAddons()
+    this.installFocusDemo()
     if (this.busy) for (const w of this.seedWorkspaces) w.repos = { ...busyRepos(w.prefix), ...w.repos }
     this.created = {}
     this.addonStates = {}
@@ -280,6 +281,22 @@ export class MockStore {
           this.seeded.set(key, evs.length)
         }
       }
+    }
+  }
+
+  /**
+   * The live focus preview (DEMO-0043) works without setup: Focus mode is on in DEMO. Tests start from "off" (they install
+   * and grant it themselves), so this is skipped under vitest.
+   */
+  private installFocusDemo() {
+    if (import.meta.env.MODE === 'test') return
+    const demo = this.seedWorkspaces.find((w) => w.prefix === 'DEMO')
+    const pkg = this.addons.find((a) => a.name === 'focus')
+    if (!demo || !pkg || demo.addons.focus) return
+    demo.addons.focus = {
+      enabled: true, status: 'active', installed: true,
+      granted: { version: pkg.version, capabilities: pkg.capabilities, package_sha256: pkg.package_sha256, at: '2026-10-08T09:00:00Z', by: 'p_sev' },
+      version: pkg.version, package_sha256: pkg.package_sha256, capabilities: pkg.capabilities,
     }
   }
 

@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import sqlite3
 import threading
 from collections.abc import Iterable
 from collections.abc import Set as AbstractSet
@@ -22,6 +21,8 @@ from typing import Any
 from ..fsutil import open_private_db
 
 _log = logging.getLogger("orch_hub.shares")
+#: B08: how long a withdrawal notice is kept and shown
+ENDED_KEEP_MS = 30 * 24 * 60 * 60 * 1000
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS share_item (
@@ -207,8 +208,8 @@ class ShareStore:
         try:
             with self.lock, self._db:
                 self._write_ended(rows)
-        except sqlite3.Error:
-            _log.warning("withdrawal notices not written (%d)", len(rows))
+        except Exception as e:  # noqa: BLE001 - the change already committed; a notice must never fail it afterwards
+            _log.warning("withdrawal notices not written (%d, %s)", len(rows), type(e).__name__)
 
     def ended_for(self, reader: str, since_ms: int = 0) -> list[dict[str, Any]]:
         """The reader's notices newer than ``since_ms`` (the 30-day rule is also enforced here, not only by the timer)."""

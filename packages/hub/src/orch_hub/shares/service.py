@@ -26,7 +26,7 @@ from typing import Any
 from ..contract.canon import unb64u
 from ..contract.hub import Refused
 from .open import check_put, open_shared_item
-from .store import ShareStore
+from .store import ENDED_KEEP_MS, ShareStore
 
 _log = logging.getLogger("orch_hub.shares")
 
@@ -210,7 +210,7 @@ class ShareService:
 
     def retry_pending(self) -> None:
         """Timer tick (D9-1): retry the purge of every workspace still pending, so stale items do not outlive the sink."""
-        self.store.prune(self._now() - 30 * 24 * 60 * 60 * 1000)
+        self.store.prune(self._now() - ENDED_KEEP_MS)
         with self._reg.lock:
             for ws in sorted(self._pending | self.store.pending()):
                 self.sync(ws)
@@ -235,6 +235,7 @@ class ShareService:
     ) -> list[tuple]:
         """B08 notices for a withdrawal. Best effort: a workspace whose pin is gone, an item that no longer opens or any
         other failure yields no notices (logged as a count only) and never stops the revoke or purge it goes with."""
+        rows: list[dict[str, Any]] = []
         try:
             rows = self.store.items(ws)
             if item_id is not None:
@@ -245,8 +246,8 @@ class ShareService:
             people = {u["user_id"]: u["name"] for u in self._access.users()} if self._access else {}
             by = people.get(owner) or "The owner"
             opened = self._open_all(ws, rows)
-        except Exception:  # noqa: BLE001
-            _log.warning("withdrawal notices skipped for %d item(s)", len(rows) if "rows" in locals() else 0)
+        except Exception as e:  # noqa: BLE001
+            _log.warning("withdrawal notices skipped for %d item(s) (%s)", len(rows), type(e).__name__)
             return []
         ended = []
         for row in opened:

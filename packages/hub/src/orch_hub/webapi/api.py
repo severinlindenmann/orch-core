@@ -64,6 +64,7 @@ from ..contract.hub import HV, Refused, channel_proof_bytes
 from ..invites import Invite, InviteError, proof_digest
 from ..oidc import OidcError
 from ..relay.client import RelayError
+from ..shares.store import ENDED_KEEP_MS
 from ..spaces.service import SpaceError
 from ..switch import SwitchError, clean_return_to, owner_fallback_names, workspace_rows
 from ..versions import MIN_PHONE_VERSION, MIN_SUPPORTED_VERSION, version_state, workspace_status
@@ -1483,7 +1484,7 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
                 else:
                     row["shared_by"] = people.get(owner)
                 rows.append(row)
-        ended = self.d.shares.store.ended_for(c.user_id, int(self.d.now_ms()) - 30 * 24 * 60 * 60 * 1000)
+        ended = self.d.shares.store.ended_for(c.user_id, int(self.d.now_ms()) - ENDED_KEEP_MS)
         ended = [r for r in ended if only is None or r["workspace_id"] == only][:20]
         return 200, {
             "items": rows,

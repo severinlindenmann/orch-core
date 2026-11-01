@@ -143,7 +143,7 @@ test("New shared space: selective workspaces get the fix on the page instead of 
   assert.deepEqual(find(reason, (n) => n.tag === "li").map((n) => n.textContent), [
     "Open Legal on its own computer.",
     "Go to Settings > Hub.",
-    "Choose Share everything. Then come back here.",
+    "Choose Let the hub read everything. Then come back here.",
   ]);
   const button = find(view, (n) => n.attrs.id === "new-space")[0];
   assert.equal(button.disabled, true);

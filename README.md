@@ -1,6 +1,9 @@
+
 # orch
 
 **Let coding agents do the work. Keep every decision yours.**
+
+<img width="640" height="360" alt="orch-core-loop" src="https://github.com/user-attachments/assets/20199a1e-727a-4b1d-be81-baf7c10a2381" />
 
 https://github.com/user-attachments/assets/10eddd3d-2935-4bbd-a8f8-c4ce7830a70f
 

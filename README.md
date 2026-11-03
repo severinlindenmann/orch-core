@@ -2,6 +2,8 @@
 
 **Let coding agents do the work. Keep every decision yours.**
 
+https://github.com/user-attachments/assets/10eddd3d-2935-4bbd-a8f8-c4ce7830a70f
+
 orch core is a way of working with coding agents: every piece of work is a ticket, every ticket follows a fixed path, and a person signs each step that matters. Agents file tickets, write the requirements and the plan, do the work and attach the evidence. You approve the requirements and the plan and give the final verdict, and you sign in a physical way: with your fingerprint or your phone. An agent can type any command, but it can't put a finger on the sensor.
 
 It works with Claude Code, Codex and any other agent that can run a shell command. Tickets are plain files in your workspace. Mission Control (desktop) and orch mobile (iPhone) show you what's waiting for you.

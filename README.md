@@ -1,6 +1,11 @@
+
 # orch
 
 **Let coding agents do the work. Keep every decision yours.**
+
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/20199a1e-727a-4b1d-be81-baf7c10a2381" alt="One workspace with its agents, tools and skills folds into a card, more team workspaces join through the orch hub, and a governance ring closes around them" width="900">
+</p>
 
 orch core is a way of working with coding agents: every piece of work is a ticket, every ticket follows a fixed path, and a person signs each step that matters. Agents file tickets, write the requirements and the plan, do the work and attach the evidence. You approve the requirements and the plan and give the final verdict, and you sign in a physical way: with your fingerprint or your phone. An agent can type any command, but it can't put a finger on the sensor.
 
@@ -94,6 +99,12 @@ For bigger requests, sign a charter instead of every single gate. You set the li
 
 - **AI Factory:** lights on. The factory runs the tickets while you watch the board, and you can step in at any gate.
 - **Dark AI Factory:** lights off. One signed request runs end to end, from requirements to delivery, with restricted permissions. You sign it in, and you can stop it from your desk or your phone before it ships.
+
+## From one workspace to the whole company
+
+orch starts with one workspace: your agents, your MCP servers, your skills and your projects. When your team joins, every team, project or client gets its own workspace, and workspaces hand each other tickets, encrypted, through the company hub. Each person still accepts or refines what lands in their inbox and signs their own gates. Admins set MCP servers, tools, security, permissions and skills in one place.
+
+https://github.com/user-attachments/assets/10eddd3d-2935-4bbd-a8f8-c4ce7830a70f
 
 ## What is in this repository
 

@@ -214,7 +214,7 @@ export function shortHash(h: string, n = 8): string {
   return h.replace(/^sha256:/, '').replace(/…$/, '').slice(0, n)
 }
 
-export type TabId = 'overview' | 'acceptance' | 'changes' | 'questions' | 'artifacts' | 'history' | 'raw'
+export type TabId = 'overview' | 'acceptance' | 'changes' | 'questions' | 'artifacts' | 'work' | 'history' | 'raw'
 
 export interface Jump {
   tab: TabId

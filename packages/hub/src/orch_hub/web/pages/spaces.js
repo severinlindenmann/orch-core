@@ -6,11 +6,9 @@ import { emptyState, loading } from "../feel.js";
 import { chip, h, text, when, withNames } from "../ui.js";
 
 export const STATEMENT = "The hub and its admins can read this space.";
-export const NO_START = "A space needs a workspace that shares everything with the hub.";
-export const LATER = "Can join later, once its owner accepts";
 export const RESTORE_LINE = "To get an older version back, restore it from the workspace.";
 const TYPES = [["wiki", "Wiki", "Pages people write together"], ["files", "Files", "Documents everyone starts from"], ["board", "Board", "Cards that move from planned to done"]];
-export const HINT_PICK = "Tick a workspace that joins now.";
+export const HINT_PICK = "Tick a workspace that shares everything.";
 export const HINT_TICK = "Tick \u201cI understand\u201d to create the space.";
 const typeName = (t) => (TYPES.find((x) => x[0] === t) ?? [t, ""])[1];
 
@@ -89,18 +87,12 @@ export function newSpaceDialog(workspaces, done, close) {
       })],
       2: [h("label", {}, "Name", nameIn), h("label", {}, "What is it for? (optional)", purposeIn)],
       3: [h("p", { text: "Which workspaces use it?" }),
-        ...(workspaces.length ? workspaces.map((w) => {
-          const joins = w.mode === "full";
+        ...workspaces.filter((w) => w.mode === "full").map((w) => {
           const box = h("input", { type: "checkbox", "aria-label": nameOf(w) });
-          if (joins) {
-            box.checked = form.members.has(w.workspace_id);
-            box.addEventListener("change", () => { box.checked ? form.members.add(w.workspace_id) : form.members.delete(w.workspace_id); ready(); });
-          } else {
-            box.disabled = true;
-          }
-          return h("label", { class: "check" + (joins ? "" : " disabled") }, box, h("span", { class: "grow", text: nameOf(w) }),
-            h("span", { class: "small muted", text: joins ? "joins now" : LATER }));
-        }) : [h("p", { class: "small muted", text: "No workspace is connected yet." })]),
+          box.checked = form.members.has(w.workspace_id);
+          box.addEventListener("change", () => { box.checked ? form.members.add(w.workspace_id) : form.members.delete(w.workspace_id); ready(); });
+          return h("label", { class: "check" }, box, h("span", { class: "grow", text: nameOf(w) }), h("span", { class: "small muted", text: "Shares everything" }));
+        }),
         h("label", { class: "check" }, tick, h("span", { text: "I understand: " + STATEMENT }))],
     };
     body.replaceChildren(h("h1", { text: "New shared space (step " + step + " of 3)" }), ...steps[step],
@@ -124,7 +116,7 @@ export function spacesView(data, actions = {}, now = Date.now()) {
   const toggle = archived.length ? h("button", { type: "button", id: "toggle-archived", text: "Show archived (" + archived.length + ")" }) : null;
   const draw = () => {
     const shown = all.filter((s) => showArchived || s.archived_ms == null);
-    list.replaceChildren(...(shown.length ? shown.map(card) : [emptyState("spaces")]));
+    list.replaceChildren(...(shown.length ? shown.map(card) : [emptyState(!canStart && candidates.length ? "spaces-nostart" : "spaces")]));
     if (toggle) { toggle.textContent = (showArchived ? "Hide archived (" : "Show archived (") + archived.length + ")"; }
   };
   const card = (s) => {
@@ -175,12 +167,11 @@ export function spacesView(data, actions = {}, now = Date.now()) {
     const close = () => dialogHost.replaceChildren();
     dialogHost.replaceChildren(newSpaceDialog(candidates, async (form) => { close(); await actions.create?.(form); }, close));
   };
-  const newSpace = h("button", { type: "button", id: "new-space", class: "pri", text: "New shared space", onclick: open });
+  // QA P03: while no workspace can start a space the button is a plain, dimmed one, never the page's main action
+  const newSpace = h("button", { type: "button", id: "new-space", class: canStart ? "pri" : "", text: "New shared space", onclick: open });
   newSpace.disabled = !canStart;
-  const noStart = !canStart && candidates.length ? h("div", { class: "banner warn", id: "space-no-start", role: "note" },
-    h("b", { text: "No space can be started yet." }),
-    h("p", { text: NO_START }),
-    candidates.map((w) => h("p", { text: nameOf(w) + " shares only what you choose." })),
+  const noStart = !canStart && candidates.length ? h("div", { class: "small muted", id: "space-no-start", role: "note" },
+    h("span", { text: (candidates.length > 1 ? "Your workspaces need" : nameOf(candidates[0]) + "'s workspace needs") + " to share everything before you can start a space." }),
     h("details", {},
       h("summary", { text: "Show me how" }),
       h("ol", {},
@@ -190,9 +181,8 @@ export function spacesView(data, actions = {}, now = Date.now()) {
   if (noStart) newSpace.setAttribute("aria-describedby", "space-no-start");
   const root = h("div", { class: "spaces" },
     h("div", { class: "row" }, h("h1", { class: "grow", text: "Shared spaces" }),
-      newSpace,
+      newSpace, noStart,
       info("About shared spaces", "Workspaces put documents into a shared space and read each other's. A workspace set to Reads only can read but not add or remove. Archiving stops new additions; reading goes on.")),
-    noStart,
     all.length ? h("p", { class: "banner warn", role: "note", text: STATEMENT }) : null,
     toggle, list, dialogHost);
   if (toggle) toggle.addEventListener("click", () => { showArchived = !showArchived; draw(); });

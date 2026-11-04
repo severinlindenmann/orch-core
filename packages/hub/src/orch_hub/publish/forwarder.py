@@ -200,6 +200,25 @@ class HubPublish:
         except Refused:
             pass  # not reachable now: the next forward syncs again, and refuses if it cannot
 
+    def resync(self, workspace_ids: list[str], *, budget_s: float = 3.0) -> None:
+        """B03: push each workspace's latest binding (and the card) to orch-publish now, before an admin read. A
+        binding whose sync failed earlier (``binding`` swallows it) would otherwise keep orch-publish on the old mode
+        until the next forward. Best effort: a refusal or an unreachable publish is left to the read's own handling."""
+        deadline = time.monotonic() + budget_s
+        card = self._keys()[1]
+        # _ensure skips a binding orch-publish already holds, so this costs only after a failure
+        for ws in workspace_ids:
+            if time.monotonic() > deadline:
+                return
+            try:
+                # _ensure reads the held object and sends it under the workspace's lock, so a newer binding set meanwhile
+                # is sent after this one and wins
+                self._ensure(ws, card, need_bound=False, deadline=deadline)
+            except Refused as e:
+                logging.getLogger("orch_hub.publish").info("binding push for %s skipped: %s", ws, e.code)
+            except Exception:  # one workspace's failure must not stop the others
+                logging.getLogger("orch_hub.publish").warning("binding push for %s failed", ws, exc_info=True)
+
     def restore(self, bindings: Mapping[str, Mapping[str, Any]]) -> None:
         """After a restart: the signed binding / unbound objects the registry persisted (nothing is synced yet)."""
         for ws, obj in bindings.items():

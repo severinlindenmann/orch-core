@@ -90,6 +90,7 @@ export default defineConfig(({ command }) => ({
       // Focus mode's demo data (mock host only) is swapped for empty stubs in the production build, like the api module.
       ...(command === 'build' ? [
         { find: /^@\/mocks\/addons\/focus\/demo$/, replacement: path.resolve(import.meta.dirname, './src/api/focusDemo.prod.ts') },
+        { find: /^@\/mocks\/addons\/focus\/live$/, replacement: path.resolve(import.meta.dirname, './src/api/focusLive.prod.ts') },
         { find: /^@\/mocks\/addons\/focus\/(?:sources|source-extract)\.json$/, replacement: path.resolve(import.meta.dirname, './src/api/focusJson.prod.ts') },
       ] : []),
       { find: '@', replacement: path.resolve(import.meta.dirname, './src') },

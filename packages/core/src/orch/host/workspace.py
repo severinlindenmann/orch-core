@@ -296,7 +296,7 @@ class WorkspaceService:
     def _committed_hook(self, journal: Any) -> Callable[[str, dict[str, Any]], None]:
         """``Store.on_commit``: the journal's, then the share pass and the hub log sync wake (they only set flags and
         never raise). Called inside the store's critical section."""
-        from . import logsyncops, remote
+        from . import logsyncops, remote, runners
 
         committed = journal.committed
         remote.attach(self)  # R2 #1590: the signed device list from the model, the expiry sweeper
@@ -305,6 +305,7 @@ class WorkspaceService:
             try:
                 committed(log, event)
             finally:
+                runners.on_ticket_commit(self, log, event)  # a closed ticket ends its agents (never raises)
                 remote.on_commit(self, log, event)  # R2 #1590: close streams, export devices (under the store lock)
                 shareauto.touch(self)  # V3 C6: a debounced share pass (selective mode only; flag + wake, never raises)
                 logsyncops.wake(

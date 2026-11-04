@@ -109,6 +109,10 @@ RUNNER_RETRY_MS = {"attach.limit": 2000}
 #: how long an exited run's ring is kept by the runner (:data:`orch.runner.supervise.KEEP_RING_SECONDS`)
 REPLAY_SECONDS = 3600
 WATCH_SECONDS = 0.5
+#: grace between the polite stop (SIGHUP + SIGTERM) and the hard stop (SIGKILL) of an agent whose ticket closed
+CLOSE_GRACE_MS = 10_000
+#: ticket-log lines after which a ticket may have become done or closed
+CLOSING_TYPES = frozenset({"ticket.closed", "verdict.given", "gate.approved", "status.changed"})
 #: an attachment whose person, grant or ticket cannot be decided for this long is ended (fail closed)
 UNDECIDED_SECONDS = 2.0
 #: how long the host waits for the runner to confirm an ``attach.end``; unanswered, the runner session is dropped
@@ -543,6 +547,7 @@ class RunnerHub:
         self.host = host
         self.store = RunStore(host.state_dir, host.host_uid)
         self.command_timeout = command_timeout
+        self._close_tasks: set[asyncio.Task[Any]] = set()
         self.session: Session | None = None
         self.uid: int | None = None
         self.generation: str | None = None  # the runner's gen (§12.3.2 Gen)
@@ -1083,14 +1088,41 @@ class RunnerHub:
                 pass  # the parent's answer is the caller's; a child that would not stop shows as running
         return out
 
-    async def _stop_one(self, run: str, grace_ms: int = 10_000) -> dict[str, Any]:
+    def start_close_stop(self, workspace_id: str, key: str) -> None:
+        """On the host loop: :meth:`stop_for_closed_ticket` as a task that is kept until it ends."""
+        task = asyncio.get_running_loop().create_task(self.stop_for_closed_ticket(workspace_id, key))
+        self._close_tasks.add(task)
+        task.add_done_callback(self._close_tasks.discard)
+
+    async def stop_for_closed_ticket(self, workspace_id: str, key: str) -> list[str]:
+        """The ticket ``key`` of this workspace closed (done or closed): end its live agent runs. The runner's normal
+        stop (SIGHUP + SIGTERM, a grace of :data:`CLOSE_GRACE_MS`, then SIGKILL); the run record keeps
+        ``stop_cause`` and one security-audit line says why. Runs of another ticket, and terminals of people, stay.
+        Returns the runs asked to stop; a failure is audited and left to the next close (never raises)."""
+        runs = [
+            r["run"] for r in list(self.store.records.values())
+            if r.get("workspace_id") == workspace_id and r.get("ticket") == key and r.get("kind") == "agent"
+            and r.get("state") in LIVE and not r.get("stopping")
+        ]  # fmt: skip
+        done: list[str] = []
+        for run in runs:
+            self._audit("run.stopped_ticket_closed", run=run, workspace_id=workspace_id, ticket=key)
+            try:
+                await self._stop_one(run, CLOSE_GRACE_MS, cause="ticket_closed")
+                done.append(run)
+            except HostError as exc:
+                self._audit("run.stop_failed", run=run, workspace_id=workspace_id, ticket=key, code=exc.code)
+        return done
+
+    async def _stop_one(self, run: str, grace_ms: int = 10_000, cause: str | None = None) -> dict[str, Any]:
         rec = self.store.records.get(run)
         if rec is None:
             raise HostError("not_found", "no such run")
         if rec.get("state") not in LIVE:
             return {"state": rec.get("state"), "cleanup": rec.get("cleanup") or "unknown"}
         if not rec.get("stopping"):
-            rec = await self._save({**rec, "stopping": True}, publish=False)  # the exit report then says "stopped"
+            more = {"stop_cause": cause} if cause else {}
+            rec = await self._save({**rec, "stopping": True, **more}, publish=False)  # exit report then says "stopped"
         try:
             res = await self.command("stop", {"run": run, "grace_ms": grace_ms}, timeout=grace_ms / 1000 + 10)
         except HostError:
@@ -1608,3 +1640,25 @@ def serve(call: Call) -> dict[str, Any]:
     runner = runner_info(service, person)
     runs = [view(r) | {"out_bytes": int(r.get("out") or 0), "waiting": waiting_of(service, hub, r)} for r in window]
     return ok_result({"runs": runs, "next_page": f"o{offset + 256}" if more else None, "runner": runner})
+
+
+def on_ticket_commit(service: Any, log: str, event: dict[str, Any]) -> None:
+    """``Store.on_commit`` (worker thread, under the store lock): a ticket line that closed its ticket ends the
+    ticket's live agent runs, on the host loop. Never raises: the commit stands."""
+    if event.get("type") not in CLOSING_TYPES or log == "workspace":
+        return
+    try:
+        view = service.store.ticket(log, heal=False)
+        hub = getattr(service, "runners", None)
+        loop = getattr(getattr(hub, "host", None), "loop", None)
+        if view is None or view.status not in ("done", "closed") or loop is None:
+            return
+        wid, key = service.entry.workspace_id, view.key
+        if not any(
+            r.get("workspace_id") == wid and r.get("ticket") == key and r.get("state") in LIVE
+            for r in list(hub.store.records.values())
+        ):
+            return  # the common case: no live run on it
+        loop.call_soon_threadsafe(hub.start_close_stop, wid, key)
+    except Exception:  # noqa: BLE001
+        LOG.exception("stopping the agents of a closed ticket failed")

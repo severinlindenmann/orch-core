@@ -33,7 +33,7 @@ function titleOf(a: HumanAction, ticketTitle: string): string {
 }
 
 /** The ONE toast after the signature says the outcome, not the mechanism. */
-function doneToastOf(a: HumanAction): string {
+function doneToastOf(a: HumanAction, key: string, outcome: 'pass' | 'fail' | null): string {
   switch (a.kind) {
     case 'approve_both':
       return 'Requirements and plan approved'
@@ -42,7 +42,8 @@ function doneToastOf(a: HumanAction): string {
     case 'approve':
       return `${gateActionName(a.gate)} approved`
     case 'verdict':
-      return 'Verdict recorded'
+      // W11: after Pass the ticket leaves the lists the person was looking at: say it is done and where it is now
+      return outcome === 'pass' ? `${key} is done. You find it on Today under Recently.` : outcome === 'fail' ? `${key} was sent back for changes.` : 'Verdict recorded'
     case 'request_changes':
       return 'Changes requested'
   }
@@ -149,7 +150,7 @@ export function HandoffSignDialog({
       title={title}
       ws={ws}
       action={request}
-      doneToast={doneToastOf(action)}
+      doneToast={doneToastOf(action, ticket.key, outcome)}
       confirmLabel={confirmLabel}
       autoStart={action.kind === 'approve' || action.kind === 'approve_both' ? press.current.left : undefined}
       armOnStart

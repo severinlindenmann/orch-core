@@ -115,6 +115,17 @@ describe('new ticket page', () => {
     expect(within(group).getByRole('button', { name: 'Severin' })).toHaveAttribute('aria-pressed', 'true')
     expect(within(group).getByRole('button', { name: 'Tom' })).toHaveAttribute('aria-pressed', 'false')
   })
+  it('W24: a picked chip looks picked (a check mark), an unpicked one has none', async () => {
+    const { user } = renderApp('/tickets/new', { viewer: 'p_mara' })
+    await user.click(await screen.findByRole('button', { name: /More options/ }))
+    await user.selectOptions(await screen.findByRole('combobox', { name: 'Visibility' }), 'restricted')
+    const group = screen.getByRole('group', { name: 'Can see this ticket' })
+    expect(within(within(group).getByRole('button', { name: 'Mara' })).getByTestId('chip-check')).toBeInTheDocument()
+    const tom = within(group).getByRole('button', { name: 'Tom' })
+    expect(within(tom).queryByTestId('chip-check')).toBeNull()
+    await user.click(tom)
+    expect(within(tom).getByTestId('chip-check')).toBeInTheDocument()
+  })
   it.each([
     ['an unknown type', { type: 'saga', title: 'Old draft' }],
     ['an inherited property as type', { type: 'toString', title: 'Old draft' }],

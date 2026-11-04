@@ -28,7 +28,12 @@ export const diffstat = (b: Pick<TicketBranch, 'additions' | 'deletions'>) => `+
  * The commit line a verdict or code review signs, in core's words, with the full head sha:
  * "Commit 5be3d10 on feat/DEMO-0041-reconciliation: +40 −12 in 3 files against develop".
  */
-export const commitCover = (b: TicketBranch) => `Commit ${b.head} on ${b.name}: ${diffstat(b)} in ${b.files} file${b.files === 1 ? '' : 's'} against ${b.base}`
+export const commitCover = (b: TicketBranch) =>
+  b.base ? `Commit ${b.head} on ${b.name}: ${diffstat(b)} in ${b.files} file${b.files === 1 ? '' : 's'} against ${b.base}` : `Commit ${b.head}${b.name ? ` on ${b.name}` : ''}`
+
+/** W23 (#1117): "+40 −12 against develop", or '' when the host did not say what the commit is compared with (never an
+ *  empty "against", never counts that were not measured). */
+export const changesNote = (b: Pick<TicketBranch, 'additions' | 'deletions' | 'base'>) => (b.base ? `${diffstat(b)} against ${b.base}` : '')
 
 /** The approver groups a gate policy may name, in words. */
 export const APPROVER_GROUPS = [

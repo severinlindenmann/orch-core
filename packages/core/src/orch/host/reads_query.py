@@ -372,13 +372,17 @@ def _sort(rows: list[dict[str, Any]], args: Mapping[str, Any]) -> list[dict[str,
 
 
 def _first_page(ctx: ReadCtx) -> dict[str, Any]:
-    """Read the state once: the snapshot data (filtered, sorted rows and each ticket's visibility), not yet stored."""
+    """Read the state once: the snapshot data (filtered, sorted records, each ticket's visibility), not yet stored.
+
+    Two passes: A runs every filter on every visible ticket and keeps a light record (the sort reads only ``key``,
+    ``updated_at`` and ``priority``); B builds the full row (:func:`_row`, which reads event logs) for the rows of
+    this page only. ``recs`` is every match in order, ``rows`` the built page."""
     args, viewer = ctx.args, ctx.viewer
     cursor = ctx.sub_cursor()  # before the state is read (H6a)
     parent = ctx.ticket(args["parent"]).key if "parent" in args else None
     epic_arg = ctx.ticket(args["epic"]).key if "epic" in args else None
     needle = _fold(args["q"]) if "q" in args else None
-    rows: list[dict[str, Any]] = []
+    recs: list[dict[str, Any]] = []
     for view in ctx.visible_tickets():
         updated = _last_event(ctx, view.uid)
         if not _matches(view, args, updated["at"], parent):
@@ -391,8 +395,21 @@ def _first_page(ctx: ReadCtx) -> dict[str, Any]:
             continue
         if needle is not None and not _text_match(ctx, view, needle):
             continue
-        rows.append(_row(ctx, view, updated, _kinds(items), epic))
-    return {"rows": _sort(rows, args), "sub_cursor": cursor, "as_of": ctx.as_of()}
+        recs.append(
+            {
+                "key": view.key,
+                "uid": view.uid,
+                "updated_at": updated["at"],
+                "priority": view.fields.get("priority"),
+                "_view": view,
+                "_updated": updated,
+                "_kinds": _kinds(items),
+                "_epic": epic,
+            }
+        )
+    recs = _sort(recs, args)
+    rows = [_row(ctx, r["_view"], r["_updated"], r["_kinds"], r["_epic"]) for r in recs[: args.get("limit", 50)]]
+    return {"recs": recs, "rows": rows, "sub_cursor": cursor, "as_of": ctx.as_of()}
 
 
 def _current_row(ctx: ReadCtx, view: Any) -> dict[str, Any]:
@@ -409,16 +426,22 @@ def ticket_query(ctx: ReadCtx) -> dict[str, Any]:
         snap, start = ctx.pages.resume("ticket.query", args["page"], ctx.principal, ctx.epoch, ctx.viewer.person, args)
         if type(start) is not int or start < 0:
             raise HostError("page.expired", "the page token is not valid any more: restart from the first page")
-        ctx.sub_cursor()  # a foreign append check, so "now" below is current
     else:
         snap, start = None, 0
+    ctx.sub_cursor()  # before the state is read (H6a); a later page: also a foreign append check, so "now" is current
+    with ctx.store.locked():  # one request, one freshness check: the store calls below nest in this lock
+        return _query_body(ctx, snap, start, limit)
+
+
+def _query_body(ctx: ReadCtx, snap: Any, start: int, limit: int) -> dict[str, Any]:
+    args = ctx.args
     out: list[dict[str, Any]] = []
     total, nxt = 0, None
     if snap is None:  # first page: every row is visible to this viewer by construction
         data = _first_page(ctx)
-        rows = data["rows"]
+        rows = data["recs"]
         total = len(rows)
-        out = rows[:limit]
+        out = data["rows"]
         nxt = limit if len(rows) > limit else None
         if nxt is not None:  # a snapshot only when a later page can follow: the uids, nothing else
             snap = ctx.pages.open(

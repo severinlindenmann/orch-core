@@ -151,6 +151,14 @@ GONE = {
 TOO_MANY = ("Slow down", "Too many attempts. Wait a minute and try again.")
 
 
+NOT_ALLOWED = ("Not allowed", "This request is not allowed.")
+TOO_LARGE = ("Too large", "That request is too large.")
+BUSY = ("Busy", "Try again in a moment.")
+UNAVAILABLE = ("Unavailable", "This service is not available right now.")
+ERROR = ("Error", "Something went wrong.")
+USE_OPEN = ("Not allowed", "Use the Open shared files button on the link page.")
+
+
 def _now():
     return int(time.time() * 1000)
 
@@ -229,6 +237,15 @@ def page(status, title_text, body=None, csp=PAGE_CSP, extra=None):
     return _Resp(status, out.encode(), csp=csp, extra=extra)
 
 
+def landing_page(share_id, password=False):
+    body = _LANDING_BODY.replace("@ACTION@", f"/s/{share_id}/open")
+    if password:  # a second factor on top of the token (M4 C5)
+        body = body.replace("@PW@", _PW_FIELD)
+    else:
+        body = body.replace("@PW@", "")
+    return page(200, ("Open shared files", ""), body=body, csp=LANDING_CSP)
+
+
 def gone(kind):
     return page(410, GONE[kind])
 
@@ -287,11 +304,9 @@ class ShareServer:
         try:
             resp = await self._route(scope, receive, method)
         except (sqlite3.Error, OSError):
-            resp = self._fallback(
-                scope, 503, ("Unavailable", "This service is not available right now.")
-            )
+            resp = self._fallback(scope, 503, UNAVAILABLE)
         except Exception:  # noqa: BLE001 - fail closed, never echo details
-            resp = self._fallback(scope, 500, ("Error", "Something went wrong."))
+            resp = self._fallback(scope, 500, ERROR)
         await resp.send(send, head=method == "HEAD")
 
     def _fallback(self, scope, status, text):
@@ -343,14 +358,14 @@ class ShareServer:
         # a service worker script must never be registered from /a/ or /s/ (Opus condition 6)
         if any(k == b"service-worker" for k, _ in scope.get("headers", ())):
             if is_app:
-                return self.apps.page(403, ("Not allowed", "This request is not allowed."))
-            return page(403, ("Not allowed", "This request is not allowed."))
+                return self.apps.page(403, NOT_ALLOWED)
+            return page(403, NOT_ALLOWED)
         if is_app:
             return await self.apps.route(scope, receive, method, path)
         if method not in ("GET", "HEAD", "POST"):
             return page(
                 405,
-                ("Not allowed", "This request is not allowed."),
+                NOT_ALLOWED,
                 extra={"allow": "GET, HEAD, POST"},
             )
         m = _ROUTE_OPEN.fullmatch(path)
@@ -360,17 +375,15 @@ class ShareServer:
             if method != "POST":
                 return page(
                     405,
-                    ("Not allowed", "Use the Open shared files button on the link page."),
+                    USE_OPEN,
                     extra={"allow": "POST"},
                 )
             raw = await self._body(receive)
             if raw is None:
-                return page(413, ("Too large", "That request is too large."))
+                return page(413, TOO_LARGE)
             return await asyncio.to_thread(self._open, m.group(1), raw)
         if method == "POST":
-            return page(
-                405, ("Not allowed", "This request is not allowed."), extra={"allow": "GET, HEAD"}
-            )
+            return page(405, NOT_ALLOWED, extra={"allow": "GET, HEAD"})
         m = _ROUTE_VIEW.fullmatch(path)
         if m:
             return await asyncio.to_thread(self._view, m.group(1), m.group(2), m.group(3))
@@ -419,12 +432,7 @@ class ShareServer:
         why = self._why_gone(row, self.clock())
         if why:
             return gone(why)
-        body = _LANDING_BODY.replace("@ACTION@", f"/s/{share_id}/open")
-        if row["pw"] is not None:  # a second factor on top of the token (M4 C5)
-            body = body.replace("@PW@", _PW_FIELD)
-        else:
-            body = body.replace("@PW@", "")
-        return page(200, ("Open shared files", ""), body=body, csp=LANDING_CSP)
+        return landing_page(share_id, row["pw"] is not None)
 
     def _rate_ok(self, share_id, now):
         with self._lock:
@@ -501,7 +509,7 @@ class ShareServer:
         if not given or len(given.encode("utf-8", "replace")) > P.PW_INPUT_MAX:
             return page(401, WRONG_PW)
         if not self.apps._kdf.acquire(blocking=False):
-            return page(503, ("Busy", "Try again in a moment."), extra={"retry-after": "5"})
+            return page(503, BUSY, extra={"retry-after": "5"})
         try:
             ok = P.password_ok(json.loads(share_id_row["pw"]), given)
         finally:

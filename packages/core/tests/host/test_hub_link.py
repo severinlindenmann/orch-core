@@ -93,7 +93,7 @@ def test_the_op_returns_the_verified_card(human, served, hub_card_server):
 
 def test_a_card_of_another_hub_is_refused(human, served, hub_card_server):
     link = f"{hub_card_server['origin']}/c#h1.{'0' * 32}.Code_1"
-    assert err(served.client().req("hub.link", {"link": link})) != ""
+    assert err(served.client().req("hub.link", {"link": link})) == "hub.refused"
     assert hub_card_server["card"] == CARD
 
 
@@ -118,3 +118,59 @@ def test_a_hub_that_answers_503_unavailable_says_its_address_changed():
         srv.shutdown()
     he = hubops._refused("hub_address_changed")
     assert "address changed" in str(he) and "new link" in str(he)
+
+
+def _answering(status: int, body: bytes):
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            self.send_response(status)
+            self.send_header("content-length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *a):
+            pass
+
+    srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv
+
+
+@pytest.mark.parametrize(
+    ("status", "body"),
+    [(409, b'{"error":"conflict"}'), (404, b"not found"), (200, b"<html>hello</html>"), (200, b'{"ok":true}')],
+)
+def test_w08_something_else_answering_at_the_link_address_is_not_called_unreachable(status, body):
+    """W08: another program (or another hub's console) on the link's port answered; the hub was reached-or-not is
+    not the cause, so the person is told that something else answers there and what to ask for."""
+    srv = _answering(status, body)
+    try:
+        link = connectlink.parse_link(f"http://127.0.0.1:{srv.server_port}/c#h1.{HUB_ID}.Code_1")
+        with pytest.raises(HubRefused) as e:
+            connectlink.fetch_card(link)
+        assert e.value.code == "not_a_hub"
+    finally:
+        srv.shutdown()
+    he = hubops._link_refused("not_a_hub")
+    assert he.code == "hub.refused"
+    assert "could not be reached" not in str(he)
+    assert he.message.startswith("another program answers at this link's address") and "hub admin" in he.message
+
+
+def test_w08_a_card_of_another_hub_says_so_in_plain_words():
+    he = hubops._link_refused("other_hub")
+    assert he.code == "hub.refused"
+    assert "other_hub" not in str(he)
+    assert he.message.startswith("a different hub answers") and "hub admin" in he.message
+    assert hubops._refused("other_hub").message == "the hub is refused: other_hub"  # other ops keep their wording
+
+
+def test_w08_nothing_listening_still_says_unreachable():
+    srv = _answering(200, b"")
+    port = srv.server_port
+    srv.shutdown()
+    srv.server_close()
+    link = connectlink.parse_link(f"http://127.0.0.1:{port}/c#h1.{HUB_ID}.Code_1")
+    with pytest.raises(HubRefused) as e:
+        connectlink.fetch_card(link)
+    assert e.value.code == "hub_unreachable"

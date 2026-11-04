@@ -1598,6 +1598,17 @@ def _addon(typ: str, ev: Mapping[str, Any], out: dict[str, Any]) -> str:
         nice = _ADDON_PLAIN_NAMES.get(name, nice) if named else nice
         if named:
             _row(out, "add-on", name)  # the real signed value stays visible next to the display name
+            # W07: the same compact review as turning on: what changes, in plain lines (the signed value is the row)
+            out["title"] = f"Turn off {nice}"
+            out["summary"] = {
+                "title": f"Turn off {nice}",
+                "lines": [
+                    f"{nice} stops working in this workspace until you turn it on again.",
+                    "Its settings and saved data stay in this workspace.",
+                    # Opus W07 N1: these do not come back when it is turned on again
+                    "Waiting follow-ups and scheduled runs that depend on it are cancelled and do not come back.",
+                ],
+            }
         return f"Turn off {nice}" if named else f"Disable the add-on {name}"
     if typ == "addon.purged":
         return f"Purge the add-on {name}"

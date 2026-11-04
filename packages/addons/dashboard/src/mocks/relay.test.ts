@@ -25,7 +25,7 @@ describe('relay state (simulated)', () => {
     const r = await api.getRelay(ws)
     expect(r.simulated).toBe(true)
     expect(r.link).toBe('off')
-    expect(r.devices.map((d) => d.label)).toEqual(["Anna Test's MacBook Pro", "Anna Test's iPhone", "Mara's MacBook Air", "Tom's iPad"])
+    expect(r.devices.map((d) => d.label)).toEqual(["Anna's MacBook Pro", "Anna's iPhone", "Mara's MacBook Air", "Tom's iPad"])
     expect(r.devices.find((d) => d.this_device)).toMatchObject({ id: 'd_mac', primary: true, last_seen: r.now })
     expect(r.epoch).toBe(1)
     expect(r.next_rotation).toBe('2026-11-12T07:42:10Z')

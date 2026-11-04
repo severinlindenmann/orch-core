@@ -123,7 +123,7 @@ const DAY = 86_400_000
 const PAIRING_MS = 10 * 60_000
 const NOW = '2026-10-09T11:30:00Z'
 /** Which of the person's workspaces run on this machine (the rest are elsewhere: the relay is their carrier). */
-const MACHINE: Record<string, string> = { DEMO: "Anna Test's MacBook Pro", INT: "Anna Test's MacBook Pro", CLI: 'the client VM' }
+const MACHINE: Record<string, string> = { DEMO: "Anna's MacBook Pro", INT: "Anna's MacBook Pro", CLI: 'the client VM' }
 const WS_NAME: Record<string, string> = { DEMO: 'DEMO · Acme energy data', INT: 'INT · Internal', CLI: 'CLI · Client VM' }
 const OWNER_KINDS: Request['kind'][] = ['pairing', 'scope']
 

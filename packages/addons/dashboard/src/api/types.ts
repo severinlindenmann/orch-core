@@ -667,7 +667,7 @@ export type DeviceScope = 'look' | 'decide' | 'operate' | 'type'
 export interface RelayDevice {
   id: string // d_mac
   person: string
-  label: string // "Anna Test's MacBook Pro"
+  label: string // "Anna's MacBook Pro"
   platform: 'mac' | 'iphone' | 'ipad' | 'linux'
   /** The device that holds the person key and signs device certificates. */
   primary: boolean

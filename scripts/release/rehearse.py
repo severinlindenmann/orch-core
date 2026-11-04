@@ -30,12 +30,7 @@ def rehearsal_source() -> str:
     source = (REPO / "install.sh").read_text(encoding="utf-8")
     if (
         source.count(ALLOW) != 1
-        or len(
-            re.findall(
-                r"^ALLOW_TEST_CHANNELS = False(?:\s*#.*)?$", source, re.MULTILINE
-            )
-        )
-        != 1
+        or len(re.findall(r"^ALLOW_TEST_CHANNELS = False(?:\s*#.*)?$", source, re.MULTILINE)) != 1
     ):
         raise ValueError("expected exactly one ALLOW_TEST_CHANNELS = False line")
     return source.replace(ALLOW, "ALLOW_TEST_CHANNELS = True", 1)
@@ -68,12 +63,8 @@ def fetch(tag: str, outdir: Path) -> None:
             or doc["version"] != version
             or doc["seq"] != int(version.rsplit("dev", 1)[1])
         ):
-            raise ValueError(
-                "release channel, version or seq does not match a test channel and requested tag"
-            )
-        sources = re.findall(
-            r"<<'PYEOF'\n(.*?)\nPYEOF\n", rehearsal_source(), re.DOTALL
-        )
+            raise ValueError("release channel, version or seq does not match a test channel and requested tag")
+        sources = re.findall(r"<<'PYEOF'\n(.*?)\nPYEOF\n", rehearsal_source(), re.DOTALL)
         if len(sources) != 1:
             raise ValueError("expected exactly one embedded installer verifier")
         verifier = Path(temp) / "verify.py"

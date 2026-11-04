@@ -106,6 +106,14 @@ def locate(
     """The :class:`Target` when the host serves the workspace ``workspace`` (an ``orch.ops.runtime.Workspace``) found,
     else ``None`` (direct mode). An unreadable registry or pin fails closed: the workspace counts as registered and the
     call is ``host.unavailable``, as the direct-mode guard would refuse it."""
+    result = _locate(env, workspace, uid=uid, pins=pins, state=state)
+    return result if isinstance(result, Target) else None
+
+
+def _locate(
+    env: Mapping[str, str], workspace: Any, *, uid: int | None = None, pins: Any = None, state: Path | None = None
+) -> Target | str:
+    """Resolve a host or the reason for direct mode; trust failures still raise."""
     from orch.host.custody import read_json
     from orch.host.errors import HostError
     from orch.host.pins import AgentPins
@@ -114,11 +122,11 @@ def locate(
 
     root = workspace.root
     if root is None:
-        return None
+        return "no orch workspace was found from this folder"
     cfg = workspace.config  # as discovery read it, never again by path
     wid = ((cfg or {}).get("workspace") or {}).get("id")
     if not isinstance(wid, str) or not WS_ID.fullmatch(wid):
-        return None
+        return "this workspace has no id in its config"
     uid = os.getuid() if uid is None else uid
     sd = Path(state) if state is not None else state_dir(env, workspace.files)
     pins = pins or AgentPins()
@@ -133,13 +141,21 @@ def locate(
     except HostError as exc:
         raise _unavailable(f"the host registry is unreadable ({exc.message}); refusing direct mode") from None
     if doc is None:
-        return None
+        return (
+            "an agent pin exists but names another workspace"
+            if pin is not None
+            else f"the host registry is missing in {sd}"
+        )
     try:
         entry = next((i for i in doc["workspaces"] if i.get("workspace_id") == wid), None)
     except (KeyError, TypeError, AttributeError):
         raise _unavailable("the host registry has an unexpected shape; refusing direct mode") from None
     if entry is None:
-        return None
+        return (
+            "an agent pin exists but names another workspace"
+            if pin is not None
+            else f"this workspace ({wid}) is not registered with the host in {sd}"
+        )
     if not _same_root(str(entry.get("root")), root):
         raise _unavailable(
             "this directory's config.json names a registered workspace that lives elsewhere "
@@ -151,32 +167,23 @@ def locate(
     return Target(wid, host_uid, workspace_socket(env, sd, host_uid, wid), "person", sd, entry)
 
 
-def direct_reason(env: Mapping[str, str], workspace: Any, *, uid: int | None = None, state: Path | None = None) -> str:
-    """W00: one plain reason why :func:`locate` found no host for ``workspace``, from the same lookups (the message a
-    host-launched agent stops with instead of a silent direct mode). Never raises: it only words a refusal."""
-    sd: Path | None = None
+def direct_reason(
+    env: Mapping[str, str], workspace: Any, *, uid: int | None = None, pins: Any = None, state: Path | None = None
+) -> str:
+    """Word the same resolution as :func:`locate`, including trust failures, without raising."""
     try:
-        from orch.host.custody import read_json
-        from orch.host.registry import registry_path
-        from orch.ops.runtime import state_dir
-
-        if workspace.root is None:
-            return "no orch workspace was found from this folder"
-        wid = ((workspace.config or {}).get("workspace") or {}).get("id")
-        if not isinstance(wid, str) or not WS_ID.fullmatch(wid):
-            return "this workspace has no id in its config"
-        uid = os.getuid() if uid is None else uid
-        sd = Path(state) if state is not None else state_dir(env, workspace.files)
-        doc = read_json(registry_path(sd), uid)
-        if doc is None:
-            return f"the host registry is missing in {sd}"
-        if not any(i.get("workspace_id") == wid for i in doc["workspaces"]):
-            return f"this workspace ({wid}) is not registered with the host in {sd}"
-        return f"the host does not serve this workspace from {sd}"
+        result = _locate(env, workspace, uid=uid, pins=pins, state=state)
+        return f"the host does not serve this workspace from {result.state}" if isinstance(result, Target) else result
+    except HostFailure as exc:
+        return exc.message
     except Exception:  # noqa: BLE001 - a reason is only words: it never fails the call
-        return (
-            f"the host registry could not be read in {sd}" if sd is not None else "the host registry could not be read"
-        )
+        try:
+            from orch.ops.runtime import state_dir
+
+            where = Path(state) if state is not None else state_dir(env, workspace.files)
+            return f"the host registry could not be read in {where}"
+        except Exception:  # noqa: BLE001
+            return "the host registry could not be read"
 
 
 def _same_root(registered: str, found: Path) -> bool:

@@ -783,3 +783,46 @@ def test_a_key_in_convenience_custody_is_refused_outside_the_hosted_path(tmp_pat
         ops_human.device_backend(tmp_path, wid)  # what direct-mode Human.backend calls
     assert e.value.code == "custody.no_key" and "one-click custody" in e.value.message and e.value.hint
     assert ops_human.device_backend(tmp_path, wid, convenience=True) is conv  # hosted CLI path
+
+
+@pytest.mark.parametrize("case", ["no_workspace", "no_id", "no_registry", "not_registered", "other_pin"])
+def test_direct_reason_matches_locate_resolution(tmp_path, monkeypatch, case):
+    from types import SimpleNamespace
+
+    from orch.host import custody, pins
+
+    wid = "a" * 32
+    ws = SimpleNamespace(root=tmp_path, config={"workspace": {"id": wid}})
+    pin = {"class": "agent", "host_uid": UID, "workspaces": ["b" * 32]} if case == "other_pin" else None
+    monkeypatch.setattr(pins.AgentPins, "get", lambda self, uid: pin)
+    monkeypatch.setattr(custody, "read_json", lambda *args: {"workspaces": []} if case == "not_registered" else None)
+    if case == "no_workspace":
+        ws.root = None
+    if case == "no_id":
+        ws.config = {}
+    expected = {
+        "no_workspace": "no orch workspace was found from this folder",
+        "no_id": "this workspace has no id in its config",
+        "no_registry": f"the host registry is missing in {tmp_path}",
+        "not_registered": f"this workspace ({wid}) is not registered with the host in {tmp_path}",
+        "other_pin": "an agent pin exists but names another workspace",
+    }[case]
+    assert hostclient.locate({}, ws, state=tmp_path) is None
+    assert hostclient._locate({}, ws, state=tmp_path) == expected
+    assert hostclient.direct_reason({}, ws, state=tmp_path) == expected
+
+
+def test_direct_reason_reports_locate_root_mismatch(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from orch.host import custody, pins
+
+    wid = "a" * 32
+    ws = SimpleNamespace(root=tmp_path, config={"workspace": {"id": wid}})
+    monkeypatch.setattr(pins.AgentPins, "get", lambda self, uid: None)
+    monkeypatch.setattr(
+        custody, "read_json", lambda *args: {"workspaces": [{"workspace_id": wid, "root": str(tmp_path / "other")}]}
+    )
+    with pytest.raises(hostclient.HostFailure) as caught:
+        hostclient.locate({}, ws, state=tmp_path)
+    assert hostclient.direct_reason({}, ws, state=tmp_path) == caught.value.message

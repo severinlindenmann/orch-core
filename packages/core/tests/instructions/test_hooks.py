@@ -183,7 +183,8 @@ def test_a_hook_never_pins_a_genesis(ws):
         code, out, _ = hook(ws, event)
         assert code == 0 and "not initialised on this machine" in out and out.splitlines()[-1] == "next: orch status"
         assert not pin.exists()  # no trust on first use from a hook
-    assert Cli(ws)("status").code == 0 and pin.exists()  # a deliberate command may pin
+    # a person's deliberate command may pin (W00: an agent's, with its grant, never does)
+    assert Cli(ws)("status", grant=False).code == 0 and pin.exists()
 
 
 def test_a_damaged_log_is_reported_instead_of_ok(ws):

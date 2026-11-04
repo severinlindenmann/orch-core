@@ -135,3 +135,33 @@ def test_total_pixels_are_capped():
     vp8x = bytes([0]) + b"\x00\x00\x00" + (15999).to_bytes(3, "little") + (15999).to_bytes(3, "little")
     with pytest.raises(ImageRefused, match="40 million"):
         imagecheck.check(webp((b"VP8X", vp8x), (b"VP8 ", b"\x00" * 10)))
+
+
+# W18 (#1090): an evidence picture is only shown (an <img> from a data: URL, digest-checked), never stored as a paste,
+# so its check lets the metadata chunks of a real macOS screenshot through; pastes keep the strict allowlist above.
+@pytest.mark.parametrize("kind", [b"iCCP", b"eXIf", b"tEXt", b"iTXt", b"zTXt", b"tIME", b"iDOT"])
+def test_w18_an_evidence_png_with_metadata_chunks_is_shown(kind):
+    assert imagecheck.check(png(chunk(kind, b"Screenshot")), display=True) == "image/png"
+    if kind != b"iDOT":
+        with pytest.raises(ImageRefused, match="metadata"):
+            imagecheck.check(png(chunk(kind, b"Screenshot")))  # a paste still refuses it
+
+
+@pytest.mark.parametrize("kind", [b"acTL", b"fcTL", b"fdAT"])
+def test_w18_an_animated_png_is_still_refused_for_evidence(kind):
+    with pytest.raises(ImageRefused):
+        imagecheck.check(png(chunk(kind, b"\x00" * 8)), display=True)
+
+
+@pytest.mark.parametrize("kind", [b"ABCD", b"XYZW"])
+def test_w18_an_unknown_critical_chunk_is_still_refused_for_evidence(kind):
+    with pytest.raises(ImageRefused):
+        imagecheck.check(png(chunk(kind, b"x")), display=True)
+
+
+def test_w18_evidence_keeps_the_structure_and_size_rules():
+    with pytest.raises(ImageRefused, match="after its end"):
+        imagecheck.check(png(chunk(b"iCCP", b"p"), tail=b"<script>"), display=True)
+    big = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 20000, 1, 8, 2, 0, 0, 0)) + chunk(b"IEND")
+    with pytest.raises(ImageRefused):
+        imagecheck.check(big, display=True)

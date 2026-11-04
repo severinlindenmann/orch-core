@@ -50,17 +50,27 @@ def media_type(data: bytes) -> str | None:
     return None
 
 
-def check(data: bytes) -> str:
-    """The media type of an acceptable picture, or :class:`ImageRefused` (any parse error is a refusal)."""
+#: W18 (#1090): animation chunks stay refused even for a picture that is only shown (a still is what evidence shows)
+_PNG_ANIMATION = frozenset({b"acTL", b"fcTL", b"fdAT"})
+
+
+def check(data: bytes, *, display: bool = False) -> str:
+    """The media type of an acceptable picture, or :class:`ImageRefused` (any parse error is a refusal).
+
+    ``display=True`` (W18, #1090) is for a picture that is only SHOWN (an evidence file, digest-checked, drawn as an
+    ``<img>`` from a ``data:`` URL), never stored as a paste: a PNG may then carry ancillary chunks (lower-case first
+    letter: the colour profile, EXIF, text and time a real macOS screenshot has), still within every structure, size and
+    pixel rule; critical chunks stay on the allowlist and animation stays refused. A pasted screenshot keeps the strict
+    allowlist (the default)."""
     try:
-        return _check(data)
+        return _check(data, display)
     except ImageRefused:
         raise
     except (IndexError, struct.error, ValueError, OverflowError):
         raise ImageRefused("the picture is damaged") from None
 
 
-def _check(data: bytes) -> str:
+def _check(data: bytes, display: bool = False) -> str:
     if not isinstance(data, bytes | bytearray):
         raise ImageRefused("the picture is not bytes")
     data = bytes(data)
@@ -70,7 +80,7 @@ def _check(data: bytes) -> str:
         raise ImageRefused("the picture is larger than 5 MiB")
     kind = media_type(data)
     if kind == "image/png":
-        _png(data)
+        _png(data, display)
     elif kind == "image/webp":
         _webp(data)
     else:
@@ -83,7 +93,7 @@ def _check(data: bytes) -> str:
     return kind
 
 
-def _png(data: bytes) -> None:
+def _png(data: bytes, display: bool = False) -> None:
     pos, n, count = len(_PNG), len(data), 0
     first = True
     while True:
@@ -99,7 +109,9 @@ def _png(data: bytes) -> None:
         if first and ctype != b"IHDR":
             raise ImageRefused("the PNG does not start with its header chunk")
         first = False
-        if ctype not in _PNG_ALLOWED:
+        ancillary = ctype[0] & 0x20 != 0  # PNG: a lower-case first letter marks a chunk a decoder may skip
+        shown_ok = display and ancillary and ctype not in _PNG_ANIMATION
+        if ctype not in _PNG_ALLOWED and not shown_ok:
             raise ImageRefused(
                 "the PNG carries metadata or is animated (text, a profile or a location); take a plain screenshot"
             )

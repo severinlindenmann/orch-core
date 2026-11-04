@@ -203,7 +203,7 @@ function NextStepCard({ ticket, viewer, sign, jump, signing = false, run, wait, 
   const oneByOne = bothIsBlocked(ticket.key)
   if (av.approveBoth) {
     return (
-      <Card title="Ready for your approval" text="Read the requirements and the plan, then approve both with one signature.">
+      <Card title="Ready for your approval" text="Read the requirements and the plan, then approve both.">
         <Button size="sm" variant="ghost" onClick={() => jump({ tab: 'overview', id: 'sec-requirements' })}>
           Read them
         </Button>

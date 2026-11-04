@@ -78,6 +78,8 @@ export interface SignPopoverProps {
   onPrepareFailed?: () => void
   /** The ONE toast after a signature (default: "<title>: signed"). An empty string: the caller says the outcome itself once its follow-up step is done. */
   doneToast?: string
+  /** A button on that toast ("View plan"): what the person can do next with the outcome. */
+  doneAction?: { label: string; onClick: () => void }
   /** The button this review belongs to. Default: the button that was pressed last. */
   anchor?: HTMLElement | null
   onClose: () => void
@@ -124,7 +126,7 @@ export function SignPopover(p: SignPopoverProps) {
   const consentRef = useRef<ReturnType<typeof useClaudeConsent> | null>(null)
   const click = useClickSign(p.ws, (_phase, state, request) => {
     const settle = () => {
-      if (p.doneToast !== '') toast.success(p.doneToast ?? `${p.title}: signed`)
+      if (p.doneToast !== '') toast.success(p.doneToast ?? `${p.title}: signed`, callbacks.current.doneAction ? { action: callbacks.current.doneAction } : undefined)
       p.onSettled?.('done', state, request, { via: 'click', unsignedShown: unsignedShown.current })
     }
     // P03: the consent is recorded after the signature settled and before the caller starts the agent (a failure never stops the start)

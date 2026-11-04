@@ -19,7 +19,7 @@ import type { HumanAction } from './shared'
 import { queries } from '@/api/queries'
 import { handoffMode } from '@/api/features'
 import { allChecked, CommitLine, VerdictEvidence, VerdictPreview } from './EvidenceView'
-import { HandoffSignDialog } from './HandoffSignDialog'
+import { doneToastOf, HandoffSignDialog } from './HandoffSignDialog'
 
 type Described = { title: string; gate?: GateName; hash: string; covers: string[]; policy?: string }
 
@@ -227,7 +227,7 @@ function SimulatedSignDialog({ ticket, action, onClose, onOpenEvidence, onOpenCh
     try {
       await api.postAction(ticket.key, request())
       await qc.invalidateQueries()
-      toast.success(`${d.title}: signed with Touch ID`)
+      toast.success(doneToastOf(action), action.kind === 'approve' && action.gate === 'plan' ? { action: { label: 'View plan', onClick: () => { void navigate({ to: '/ticket/$key', params: { key: ticket.key }, search: {} }); setTimeout(() => document.getElementById('sec-plan')?.scrollIntoView?.({ block: 'center', behavior: 'smooth' }), 150) } } } : undefined)
       onPending?.(false)
       onClose()
     } catch (e) {

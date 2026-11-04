@@ -224,3 +224,54 @@ def test_pass(c):
         )
     )
     assert got == c["expect"]
+
+
+# RG is a spec-only signed-shape/hash amendment. Keep it visible as pending rather
+# than weakening expectations or teaching the legacy verifier the new contract here.
+RG_VEC = json.loads(
+    (pathlib.Path(__file__).resolve().parents[3] / "contracts" / "publish" / "release_grant_v1.json").read_text()
+)
+
+
+@pytest.mark.parametrize("c", RG_VEC["commit_cases"], ids=lambda c: c["name"])
+@pytest.mark.skip(reason=RG_VEC["pending_reason"])
+def test_release_grant_commit(c):
+    files = {p: tuple(v) for p, v in c["stored_files"].items()}
+    assert P.check_release(c["body"], c["meta"], files, c["forbidden"]) == c["expect"]
+
+
+@pytest.mark.parametrize("c", RG_VEC["release_note_cases"], ids=lambda c: c["name"])
+@pytest.mark.skip(reason="Pending core signer replay of RG-1 signed release fields and real-press custody")
+def test_release_grant_note(c):
+    pass
+
+
+@pytest.mark.parametrize("c", RG_VEC["state_cases"], ids=lambda c: c["name"])
+@pytest.mark.skip(reason="Pending orch-publish replay of RG-8/RG-9 commit and start state transitions")
+def test_release_grant_state(c):
+    # Requires the commit handler/state transition, not only P.check_release.
+    pass
+
+
+@pytest.mark.parametrize("c", RG_VEC["create_cases"], ids=lambda c: c["name"])
+@pytest.mark.skip(reason="Pending atomic new-app meta PUT creation and conflict checks")
+def test_release_grant_create(c):
+    pass
+
+
+@pytest.mark.parametrize("c", RG_VEC["start_cases"], ids=lambda c: c["name"])
+@pytest.mark.skip(reason="Pending start current-version and RG-3 stored-meta checks")
+def test_release_grant_start(c):
+    pass
+
+
+@pytest.mark.parametrize("c", RG_VEC["meta_hash_cases"], ids=lambda c: c["name"])
+def test_release_grant_meta_hash(c):
+    # Hash-only vectors are runnable now; legacy bytes must not gain defaults.
+    assert P.meta_hash(c["meta"]) == c["hash"]
+    assert P.reach_hash(c["meta"]["reach"]) == c["reach_hash"]
+
+
+def test_release_grant_required_cases_exist():
+    for section, required in RG_VEC["required"].items():
+        assert set(required) <= {c["name"] for c in RG_VEC[section + "_cases"]}

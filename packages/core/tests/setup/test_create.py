@@ -4,11 +4,13 @@ conversion last, R9 clean restart, no secret in any output."""
 from __future__ import annotations
 
 import json
+import subprocess
 
 import pytest
 
 from orch.host import signer as host_signer
 from orch.setup.flow import SetupFlow
+from orch.setup.osapply import RunResult
 from orch.setup.protocol import SetupError
 
 from .conftest import PROFILE, make_env
@@ -435,3 +437,126 @@ def test_item5_a_custody_refusal_shows_the_reason_and_the_fix(tmp, monkeypatch):
     f, ports, p, _ = run_ok(tmp, CLICK, ports=ports)
     msg = p["error"]["message"]
     assert p["error"]["code"] == "custody.error" and "chmod 700" in msg and "CustodyError" not in msg
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        OSError(),
+        OSError("systemctl --user: no session bus"),
+        subprocess.TimeoutExpired(["launchctl", "bootstrap"], 120),
+        SetupError(
+            "runner.unavailable", RunResult(127, "TimeoutExpired after 120 s: systemctl --user start orch").out, 500
+        ),
+    ],
+)
+def test_w01_service_failure_then_finish_later(tmp, failure):
+    ports = FakePorts()
+
+    def fail(*args):
+        raise failure
+
+    ports.runner_enable = fail
+    f, ports, p, _ = run_ok(tmp, AGENT, ports=ports)
+    notes = []
+    f.on_note = notes.append
+    assert p["workspace"] is not None
+    f.dispatch("POST", "cancel", {}, {})
+    assert f.phase == "cancelled"
+    # The dashboard launcher cannot replace a missing host. Do not promise access.
+    assert "orch dashboard open" not in "\n".join(notes)
+    assert "service manager" in p["error"]["message"]
+    assert "Login Items" not in p["error"]["message"]
+    shown = "".join(ports.terminal.shown)
+    assert "OSError" not in shown and "TimeoutExpired" not in shown
+    assert "service manager" in shown
+    assert p["error"]["details"]
+
+
+def test_w01_timeout_does_not_blame_an_unrelated_disabled_macos_item(tmp):
+    ports = FakePorts()
+    ports.blocked = ["io.orch.host"]
+
+    def fail(*args):
+        raise subprocess.TimeoutExpired(["launchctl", "bootstrap"], 120)
+
+    ports.runner_enable = fail
+    _, _, p, _ = run_ok(tmp, AGENT, ports=ports)
+    assert "did not answer" in p["error"]["message"]
+    assert "Login Items" not in p["error"]["message"]
+
+
+def test_w01_confirmed_macos_background_item_keeps_plain_terminal_advice(tmp, monkeypatch):
+    import orch.identity as identity
+    from orch.custody import strength
+    from orch.host.enable import background_off_message
+
+    monkeypatch.setattr(identity, "generate_recovery_code", lambda: " ".join(["zebra", "yonder"] * 12))
+    monkeypatch.setattr(strength, "generate_passphrase", lambda: "quiet-meadow-lantern")
+    ports = FakePorts()
+    ports.blocked = ["io.orch.runner"]
+
+    def fail(*args):
+        raise OSError(background_off_message("orch-runner"))
+
+    ports.runner_enable = fail
+    _, ports, p, _ = run_ok(tmp, AGENT, ports=ports)
+    assert "Login Items" in p["error"]["message"]
+    assert "Login Items" in "".join(ports.terminal.shown)
+    assert "OSError" not in "".join(ports.terminal.shown)
+
+
+def test_w01_fixed_service_wording_does_not_hide_but_appended_secrets_do():
+    from orch.setup.steps import HIDDEN_REASON, SERVICE_TEXT, TIMEOUT_TEXT, redact_reason
+
+    for text in (SERVICE_TEXT, TIMEOUT_TEXT):
+        assert redact_reason(text, ["background computer service"]) == text
+        assert redact_reason(text + " privatepassword", ["privatepassword"]) == HIDDEN_REASON
+
+
+@pytest.mark.parametrize("failure", [OSError("no service manager"), subprocess.TimeoutExpired("systemctl", 120)])
+def test_w01_finish_after_runner_service_failure(tmp, failure):
+    ports = FakePorts()
+
+    def fail(*args):
+        raise failure
+
+    ports.runner_enable = fail
+    f, _, p, _ = run_ok(tmp, AGENT, ports=ports, workspace_url=lambda wid: f"/w/{wid}")
+    assert p["error"]["finishable"] is True
+    wid = p["workspace"]["id"]
+    status, result = f.dispatch("POST", "finish", {}, {})
+    assert status == 200
+    assert result == {"url": f"/w/{wid}", "workspace_id": wid}
+
+
+@pytest.mark.parametrize("reason", ["service.unavailable", "service.timeout", "background.blocked"])
+def test_w01_unavailable_dashboard_after_runner_failure(tmp, reason):
+    ports = FakePorts()
+
+    def fail(*args):
+        raise OSError("no service manager")
+
+    def unavailable(wid):
+        raise SetupError("host.unavailable", "no orch host answers", 503)
+
+    ports.runner_enable = fail
+    f, _, _, _ = run_ok(tmp, AGENT, ports=ports, workspace_url=unavailable)
+    f.run.reason_codes["runner"] = reason
+    notes = []
+    f.on_note = notes.append
+    with pytest.raises(SetupError) as exc:
+        f.dispatch("POST", "finish", {}, {})
+    assert exc.value.code == "setup.dashboard_unavailable"
+    assert not f._closed
+    assert ("start orch in the background later with: orch setup" in notes) == reason.startswith("service.")
+
+
+def test_w01_pre_genesis_failure_refuses_finish(tmp):
+    ports = FakePorts()
+    ports.fail_genesis = SetupError("host.unavailable", "no orch host answers", 500)
+    f, _, p, _ = run_ok(tmp, PROFILE, ports=ports)
+    assert p["error"]["finishable"] is False
+    with pytest.raises(SetupError) as exc:
+        f.dispatch("POST", "finish", {}, {})
+    assert exc.value.code == "setup.phase"

@@ -186,6 +186,34 @@ def test_mode_is_by_registration_and_a_dead_host_is_never_a_direct_write(lab):
     assert (r.code, r.err_code) == (9, "host.unavailable")
 
 
+def _listing(root):
+    return sorted(str(p.relative_to(root)) for p in root.rglob("*")) if root.exists() else []
+
+
+@pytest.mark.parametrize(("name", "value"), [("ORCH_TICKET", "DEMO-0001"), ("ORCH_WORKDIR", "/nowhere/.orch-work/X")])
+def test_w00_a_host_launched_agent_never_falls_back_to_direct_mode(lab, name, value):
+    """W00 (QA J18): an agent the host started, whose CLI finds no host for its workspace, stops with one plain reason;
+    it never opens the store itself (no fresh genesis pin, no empty view of the tickets)."""
+    cli = Cli(lab.ws, **{name: value})
+    before, store_before = _listing(lab.state), _listing(lab.ws.store_dir)
+    for argv in (("status",), ("list",), ("claim", "DEMO-0001")):
+        r = cli.j(*argv)
+        assert (r.code, r.err_code) == (9, "host.unavailable"), r.out
+        message = r.doc["error"]["message"]
+        assert message.startswith("cannot reach the orch host:"), message
+        assert "not registered" in message or "registry is missing" in message, message
+    assert _listing(lab.state) == before  # nothing was created: no pin, no records
+    assert _listing(lab.ws.store_dir) == store_before  # and the store was not opened for a write
+
+
+def test_w00_a_persons_terminal_keeps_direct_mode_and_an_empty_marker_still_refuses(lab):
+    assert Cli(lab.ws).j("status").code == 0  # neither variable: a person's terminal, direct mode as today
+    r = Cli(lab.ws, ORCH_TICKET="").j("status")  # set but empty is still the host's launch marker (Opus W00)
+    assert (r.code, r.err_code) == (9, "host.unavailable")
+    r = Cli(lab.ws, ORCH_TICKET="DEMO-0001").j("import", "v1", str(lab.ws.root))  # import.v1 is no way around it
+    assert r.err_code == "host.unavailable", r.out
+
+
 def _files():
     from orch.ops.caps import Files
 

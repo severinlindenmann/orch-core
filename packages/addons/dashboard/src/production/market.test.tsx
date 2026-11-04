@@ -371,3 +371,9 @@ it('expired update reviews discard the old stage before reviewing again', async 
   expect(state.host.calls.filter(c => c.method === 'POST' && c.path.endsWith('/market/stage'))).toHaveLength(2)
   expect(state.host.clickPrepares()).toHaveLength(0)
 })
+it('W26: a search with no match says so, and points to Installed for add-ons that are already on', async () => {
+  show('/w/DEMO/addons')
+  await screen.findByText('Available', {}, T)
+  await userEvent.type(screen.getByRole('textbox', { name: 'Search add-ons' }), 'zzz-no-such-addon')
+  expect((await screen.findByTestId('market-no-match', {}, T)).textContent).toBe('No add-on matches “zzz-no-such-addon”. Add-ons that are already on are under Installed.')
+})

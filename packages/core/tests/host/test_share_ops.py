@@ -350,6 +350,32 @@ def test_a_question_to_the_owner_is_a_summary_and_with_a_rule_the_full_question(
     assert q["content"]["text"] == "which bank?" and q["content"]["id"] == "Q1"
 
 
+@pytest.mark.parametrize("which", ["question", "summary"])
+def test_w09_revoking_either_half_of_a_question_revokes_both(served, selective, which):
+    """W09 (#1074): the needs-you summary and the question item are one question; withdrawing one by hand withdraws
+    the other too (the summary alone would still show the question's first line)."""
+    _, key = served.ticket("Savings")
+    ok(agent(served, "ask", {"ref": key, "text": "which bank?"}))
+    assert sync_shown(served)["put"] == 2
+    items = {i["kind"]: i["logical"] for i in ok(req(served, "share.preview"))["data"]["items"]}
+    got = ok(req(served, "share.revoke", {"ref": items[which]}))["data"]
+    assert got["revoke"] == 2 and selective.count("share_revoke") == 2
+    assert ok(req(served, "share.sync"))["data"]["put"] == 0  # neither comes back
+
+
+def test_w09_the_preview_line_of_a_question_carries_the_text_that_is_sent(served, selective):
+    _, key = served.ticket("Savings")
+    long = (
+        "Which bank account should the savings go to: the joint one at the old bank,"
+        " or the new one at the other bank in town, please?"
+    )
+    assert 120 < len(long.encode()) <= 140  # longer than the one-line title, within a question's limit
+    ok(agent(served, "ask", {"ref": key, "text": long.strip()}))
+    rows = ok(req(served, "share.preview"))["data"]["items"]
+    (q,) = [r for r in rows if r["kind"] == "question"]
+    assert q["line"].endswith(long.strip())  # the full text the question item carries, not the 120-character title
+
+
 def test_a_rule_survives_an_unreachable_hub_and_the_next_sync_finishes(served, selective, monkeypatch):
     labelled(served, "Public note", "public")
     monkeypatch.setattr("orch.host.shareops._link", lambda service: _Down())

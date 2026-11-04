@@ -563,3 +563,31 @@ def test_company_skills_reach_only_the_rules_file_of_a_claude_code_ticket_agent(
     ok(start(c, ticket=key, harness="codex", mode="work", spec=pre2["spec"]))
     cargv, cenv = read_out(w, "codex")
     assert not any("invoices" in a for a in cargv) and not any(text in v for v in cenv.values())
+
+
+def test_w00_run_list_says_whether_the_agents_session_ever_reached_the_host(ready):
+    """W00: an agent whose orch never reaches the host is told apart on the dashboard ("contacted": false) instead of
+    "Taking longer than usual"; its first host call with its grant and session turns it true. Shells carry nothing."""
+    w = ready
+    c = w.conn()
+    _, key = w.ticket()
+    pre = preview(c, ticket=key, harness="codex", mode="work")
+    run = ok(start(c, ticket=key, harness="codex", mode="work", spec=pre["spec"]))["data"]["run"]
+    _, env = read_out(w, "codex")
+    listed = {r["run"]: r for r in ok(c.call("run.list", {}))["data"]["runs"]}
+    assert listed[run["run"]]["contacted"] is False
+    ok(c.call("whoami", {}, grant=env["ORCH_GRANT"], session=env["ORCH_SESSION"]))
+    listed = {r["run"]: r for r in ok(c.call("run.list", {}))["data"]["runs"]}
+    assert listed[run["run"]]["contacted"] is True
+
+
+def test_w00_a_delegated_child_session_counts_as_contact(ready):
+    w = ready
+    c = w.conn()
+    _, key = w.ticket()
+    pre = preview(c, ticket=key, harness="codex", mode="work")
+    run = ok(start(c, ticket=key, harness="codex", mode="work", spec=pre["spec"]))["data"]["run"]
+    _, env = read_out(w, "codex")
+    ok(c.call("whoami", {}, grant=env["ORCH_GRANT"], session=env["ORCH_SESSION"] + ".1"))
+    listed = {r["run"]: r for r in ok(c.call("run.list", {}))["data"]["runs"]}
+    assert listed[run["run"]]["contacted"] is True

@@ -707,6 +707,17 @@ def _find(st: Any, ref: str, facts: list[Any]) -> str:
     raise HostError("not_found", "nothing is shared under that name: orch hub share rule list")
 
 
+def _pair(logical: str) -> tuple[str, ...]:
+    """W09 (#1074): the other half of a question shared with the hub. ``question:<uid>:<qid>`` and its needs-you summary
+    ``summary:<uid>:question:<qid>`` are one question: withdrawing one by hand withdraws both."""
+    parts = logical.split(":")
+    if len(parts) == 3 and parts[0] == "question":
+        return (f"summary:{parts[1]}:question:{parts[2]}",)
+    if len(parts) == 4 and parts[0] == "summary" and parts[2] == "question" and parts[3]:
+        return (f"question:{parts[1]}:{parts[3]}",)
+    return ()
+
+
 def _widens(service: WorkspaceService, before: list[Any], after: list[Any], facts: list[Any]) -> bool:
     """Would the rules ``after`` select an item the rules ``before`` do not (on the same tickets)?"""
 
@@ -768,8 +779,9 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
             facts = tickets_for(service, call.viewer)
             if op == "share.revoke":
                 lg = _find(st, args["ref"], facts)
-                if lg not in st.withdrawn:
-                    st.withdrawn.append(lg)
+                for one in (lg, *_pair(lg)):
+                    if one not in st.withdrawn:
+                        st.withdrawn.append(one)
                 _save(service, st)
                 note = "withdrawn; what the hub already read cannot be taken back"
             else:

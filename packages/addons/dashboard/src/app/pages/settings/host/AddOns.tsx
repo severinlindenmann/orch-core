@@ -160,7 +160,7 @@ export function BuiltInAddOns({ workspace, rows, tag, actions, empty, label = 'A
                       />
                     )}
                   </div>
-                  {mine && <div data-testid={`addon-${row.id}-accordion`}><AddonReview workspace={workspace} row={row} marketplace={!!rows} onBusy={signing} onDone={() => void refresh()} onClose={() => setBusy(null)} /></div>}
+                  {mine && <div data-testid={`addon-${row.id}-accordion`}><AddonReview workspace={workspace} row={row} marketplace={!!rows} browse={browse} onBusy={signing} onDone={() => void refresh()} onClose={() => setBusy(null)} /></div>}
                   {on && open[row.id] && (
                     <div id={`addon-${row.id}-panel`}>
                       {row.id === 'publish' && <PublishServer workspace={workspace} owner={owner} embedded />}

@@ -32,6 +32,8 @@ export function turnOnSpec(
   return {
     title: 'Turn on Publish',
     confirmLabel: 'Sign and turn on',
+    // B11: the share itself still waits for its own press; the toast must not read as if something was published
+    doneToast: 'Publish is on.',
     action: { action: 'addon_enable', name: 'publish', publish: { server: where.server, share: where.share } },
     prepareOnOpen: true,
     lead: (

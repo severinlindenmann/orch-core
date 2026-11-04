@@ -54,6 +54,21 @@ describe('phaseOf', () => {
     expect(phaseOf(ticket(), { needsYou: false, run, now: NOW })).toEqual({ kind: 'starting', slow: true, live: true })
   })
 
+  it('W00: a live run whose agent never reached the host says so after the slow mark, with the way into it', () => {
+    const run = { state: 'running' as const, started_at: iso(NOW - STARTING_SLOW_MS - 1000), run: 'r_1', contacted: false }
+    expect(phaseOf(ticket(), { needsYou: false, run, now: NOW })).toEqual({ kind: 'unreachable', run: 'r_1' })
+    // past the start window too: still unreachable, never "open" as if the agent were just idle
+    expect(phaseOf(ticket(), { needsYou: false, run: { ...run, started_at: iso(NOW - 4 * 60_000) }, now: NOW })).toEqual({ kind: 'unreachable', run: 'r_1' })
+  })
+
+  it('W00: before the slow mark, a contacted run, or an older host (no contacted) keep today\'s phases', () => {
+    const fresh = { state: 'running' as const, started_at: iso(NOW - 10_000), run: 'r_1', contacted: false }
+    expect(phaseOf(ticket(), { needsYou: false, run: fresh, now: NOW })).toEqual({ kind: 'starting', slow: false, live: true })
+    const slow = { state: 'running' as const, started_at: iso(NOW - STARTING_SLOW_MS - 1000), run: 'r_1' }
+    expect(phaseOf(ticket(), { needsYou: false, run: { ...slow, contacted: true }, now: NOW })).toEqual({ kind: 'starting', slow: true, live: true })
+    expect(phaseOf(ticket(), { needsYou: false, run: slow, now: NOW })).toEqual({ kind: 'starting', slow: true, live: true })
+  })
+
   it('a live run without a claim after the start window is open, never idle (run 16 P01)', () => {
     const run = { state: 'running' as const, started_at: iso(NOW - 4 * 60_000), run: 'r_1' }
     expect(phaseOf(ticket(), { needsYou: false, run, now: NOW })).toEqual({ kind: 'open', run: 'r_1' })

@@ -138,8 +138,8 @@ test("New shared space: selective workspaces get the fix on the page instead of 
   const view = spacesView({ spaces: [], workspaces: [WS[1]] }, { create: () => assert.fail("nothing may be created") }, NOW);
   const reason = find(view, (n) => n.attrs.id === "space-no-start")[0];
   assert.equal(reason.attrs.role, "note");
-  assert.ok(reason.textContent.includes("Legal's workspace needs to share everything before you can start a space."));
-  assert.equal(find(reason, (n) => n.tag === "summary")[0].textContent, "Show me how");
+  assert.ok(reason.textContent.includes("Legal needs to share everything before you can start a space."));
+  assert.equal(find(reason, (n) => n.tag === "summary" && n.textContent === "Show me how")[0].textContent, "Show me how");
   assert.deepEqual(find(reason, (n) => n.tag === "li").map((n) => n.textContent), [
     "Open Legal on its own computer.",
     "Go to Settings > Hub.",
@@ -247,4 +247,20 @@ test("QA P03: with no starter the button is not the main action and the empty te
   assert.notEqual(button.attrs.class, "pri");
   assert.doesNotMatch(view.textContent, /Press “New shared space”/);
   assert.match(view.textContent, /starts from a workspace that shares everything with the hub/);
+});
+
+
+test("P03: the complete workspace label and inline info sit beside the button below the title", () => {
+  const view = spacesView({ spaces: [], workspaces: [{ ...WS[1], name: "Anna Test's workspace" }] });
+  const button = find(view, (n) => n.attrs.id === "new-space")[0];
+  const note = find(view, (n) => n.attrs.id === "space-no-start")[0];
+  const row = find(view, (n) => n.children.includes(button))[0];
+  assert.equal(row.className, "row");
+  assert.ok(row.children.includes(note));
+  assert.equal(view.children[0].tag, "h1");
+  assert.equal(view.children[1], row);
+  assert.equal(find(row, (n) => n.tag === "h1").length, 0);
+  assert.equal(note.children[0].textContent, "Anna Test's workspace needs to share everything before you can start a space.");
+  assert.equal(note.children[1].className, "info");
+  assert.equal(note.children[2].children[0].textContent, "Show me how");
 });

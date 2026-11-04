@@ -254,3 +254,15 @@ test("workspaces without own rows show each shared ticket and retain the origina
   assert.match(workspacesView({ ...data, shared: shared.slice(0, 1) }).map((n) => n.textContent).join(" "), /Shared with you \(1\)/);
   assert.match(workspacesView({ ...data, shared: [] }).map((n) => n.textContent).join(" "), /No workspaces yet/);
 });
+
+test("QA b1856: the owner's own share (a row with shared_with) is not listed under Shared with you", () => {
+  const own = { workspace_id: "a", key: "AT-0001", title: "Invoice CSV export", shared_with: ["Ben Test"] };
+  const ben = { workspace_id: "b", key: "BT-0001", title: "Budget", shared_by: "Ben Test" };
+  const only = homeView({ user: { name: "Anna Test" }, workspaces: [], items: [], channels: [], shared: [own], thisBrowser: { state: "unregistered" }, actions: {} });
+  assert.doesNotMatch(only.map((n) => n.textContent).join(" "), /Shared with you|Invoice CSV export/);
+  const mixed = homeView({ user: { name: "Anna Test" }, workspaces: [], items: [], channels: [], shared: [own, ben], thisBrowser: { state: "unregistered" }, actions: {} });
+  const t = mixed.map((n) => n.textContent).join(" ");
+  assert.match(t, /Shared with you \(1\)/);
+  assert.match(t, /Budget/);
+  assert.doesNotMatch(t, /Invoice CSV export/);
+});

@@ -179,7 +179,7 @@ export function spacesView(data, actions = {}, now = Date.now()) {
       h("ol", {},
         h("li", { text: "Open " + candidates.map(nameOf).join(" or ") + " on its own computer." }),
         h("li", { text: "Go to Settings > Hub." }),
-        h("li", {}, "Choose ", h("b", { text: "Share everything" }), ". Then come back here.")))) : null;
+        h("li", {}, "Choose ", h("b", { text: "Let the hub read everything" }), ". Then come back here.")))) : null;
   if (noStart) newSpace.setAttribute("aria-describedby", "space-no-start");
   const root = h("div", { class: "spaces" },
     h("h1", { text: "Shared spaces" }),

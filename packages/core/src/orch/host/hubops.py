@@ -845,6 +845,16 @@ NET_MESSAGES: dict[str, tuple[str, str]] = {
 }  # fmt: skip
 
 
+def _link_refused(code: str) -> HostError:
+    """``hub.link``: why the card behind a connect link was not taken. W08: a server that answered at the link's address
+    (another program on the port, or a different hub) is named as such, never as "could not be reached"."""
+    if code in ("not_a_hub", "other_hub"):
+        what = "another program" if code == "not_a_hub" else "a different hub"
+        ask = "ask your hub admin for a connect link with an address this computer can reach"
+        return HostError("hub.refused", f"{what} answers at this link's address, not your hub: {ask}", hint=ask)
+    return _refused(code)
+
+
 def _refused(code: str) -> HostError:
     full = code if code.startswith("hub.") else f"hub.{code}"
     if full in NET_MESSAGES:
@@ -1161,7 +1171,7 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
                 connectlink.resolve(plan["link"], now_ms=int(service.clock() * 1000), dev_mode=plan["dev"])
             )
         except HubRefused as exc:
-            raise _refused(exc.code) from None
+            raise _link_refused(exc.code) from None
     if plan["op"] == "hub.address":
         from . import hubaddr
 

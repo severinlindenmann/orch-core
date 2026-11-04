@@ -82,8 +82,9 @@ def fetch_card(link: Link) -> dict[str, Any]:
         with opener.open(req, timeout=TIMEOUT) as r:  # noqa: S310
             raw = r.read(MAX_CARD + 1)
     except urllib.error.HTTPError as exc:
-        # a hub whose address changed answers 503 "unavailable" (its api origin is pinned to the operation certificate)
-        raise HubRefused("hub_address_changed" if exc.code == 503 else "hub_unreachable") from None
+        # a hub whose address changed answers 503 "unavailable" (its api origin is pinned to the operation certificate);
+        # W08: any other HTTP answer means a server is there but it is not this hub (another program on the port)
+        raise HubRefused("hub_address_changed" if exc.code == 503 else "not_a_hub") from None
     except (urllib.error.URLError, OSError, ValueError):
         raise HubRefused("hub_unreachable") from None
     if len(raw) > MAX_CARD:
@@ -91,10 +92,10 @@ def fetch_card(link: Link) -> dict[str, Any]:
     try:
         doc = json.loads(raw)
     except ValueError:
-        raise HubRefused("malformed") from None
+        raise HubRefused("not_a_hub") from None  # W08: something answered, but not with a hub card
     card = doc.get("card") if isinstance(doc, dict) else None
     if not isinstance(card, dict):
-        raise HubRefused("malformed")
+        raise HubRefused("not_a_hub")
     return card
 
 

@@ -387,6 +387,7 @@ RUNNER_SCHEMAS: dict[str, dict[str, Any]] = {
             "signal": {"type": ["string", "null"], "maxLength": 16},
             "at": _TIME,
             "cleanup": _CLEANUP,
+            "claim_released": {"type": "boolean"},
         },
         ("run", "code", "signal", "at", "cleanup"),
     ),
@@ -848,6 +849,8 @@ class RunnerHub:
                                              "reason": reason})  # fmt: skip
         if rec.get("cleanup") != args["cleanup"] and rec.get("cleanup") in (None, "incomplete"):
             new["cleanup"] = args["cleanup"]
+        if args.get("claim_released") is True:  # W31: the runner let go of the run's claim as the agent
+            new["claim_released"] = True
         if new != rec:
             await self._save(new)
         return {}

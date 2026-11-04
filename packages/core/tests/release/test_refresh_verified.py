@@ -60,7 +60,7 @@ def cert(serial=1):
             "public_key": b64(raw_pub(RK)),
             "serial": serial,
             "purpose": "core",
-            "channels": ["main", "develop"],
+            "channels": ["main", "develop", "test-x", "test-y"],
             "not_before": "2026-01-01T00:00:00Z",
             "not_after": "2027-01-01T00:00:00Z",
         }
@@ -295,11 +295,11 @@ def test_a_kept_tag_whose_release_is_retitled_or_deleted_is_refused():
 
 def test_main_skips_test_candidate_tags_that_a_production_verifier_cannot_check():
     env = envelope(manifest(7, channel="main", version="2.0.0"))
-    cand = envelope(manifest(3, channel="test-x"))  # the test cert lists no test-*: unverifiable here, like in prod
+    cand = b"unverifiable test release"  # main must never fetch or verify this namespace
     t = trusted.trusted_current(
         "main", revocations(), ref_verify, NOW,
-        get_pointer=lambda: env, get_release=lambda tag: {"v2.0.0": env, "v2.0.0.dev3": cand}.get(tag),
-        tag_commit=lambda tag: SHA, releases_for_channel=lambda: ["v2.0.0", "v2.0.0.dev3"],
+        get_pointer=lambda: env, get_release=lambda tag: {"v2.0.0": env, "test-v2.0.0.dev3": cand}.get(tag),
+        tag_commit=lambda tag: SHA, releases_for_channel=lambda: ["v2.0.0", "test-v2.0.0.dev3"],
     )  # fmt: skip
     assert t.tag == "v2.0.0"
 
@@ -331,3 +331,98 @@ def test_an_unverifiable_release_still_refuses():
     mine = envelope(manifest(7))
     with pytest.raises(trusted.Refused):
         current(mine, {"v2.0.0.dev7": mine, "v2.0.0.dev9": bad})
+
+
+def test_git_anchor_scan_ignores_test_and_malformed_tags(tmp_path):
+    subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(tmp_path),
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "fixture",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    for tag in (
+        "test-v2.0.0.dev1",
+        "v2.0.0-evil",
+        "v2.0.0.dev1",
+        "v2.0.0",
+        "test-v2.0.0",
+        "test-v2.0.0.dev1-evil",
+        "unrelated",
+    ):
+        subprocess.run(["git", "-C", str(tmp_path), "tag", tag], check=True, capture_output=True)
+    assert trusted.git_release_tags(tmp_path, None, channel="main")() == ["v2.0.0"]
+    assert trusted.git_release_tags(tmp_path, "v2.0.0", channel="main")() == []
+
+    assert trusted.git_release_tags(tmp_path, None, channel="test-x")() == ["test-v2.0.0.dev1"]
+    assert trusted.git_release_tags(tmp_path, "test-v2.0.0.dev1", channel="test-x")() == []
+
+
+@pytest.mark.parametrize(
+    "channel,tag,version", [("main", "v2.0.0", "2.0.0"), ("test-x", "test-v2.0.0.dev7", "2.0.0.dev7")]
+)
+def test_missing_pointer_with_matching_tags_fails_closed(channel, tag, version):
+    raw = envelope(manifest(7, channel=channel, version=version))
+    with pytest.raises(trusted.Refused, match="no channel.json"):
+        trusted.trusted_current(
+            channel,
+            revocations(),
+            ref_verify,
+            NOW,
+            get_pointer=lambda: None,
+            get_release=lambda t: raw,
+            tag_commit=lambda t: SHA,
+            releases_for_channel=lambda: [tag],
+        )
+
+
+@pytest.mark.parametrize("other_channel", ["test-x", "test-y"])
+def test_test_channel_verifies_anchors_and_matches_channel(other_channel):
+    raw = envelope(manifest(7, channel=other_channel))
+
+    def run(raw):
+        return trusted.trusted_current(
+            "test-x",
+            revocations(),
+            ref_verify,
+            NOW,
+            get_pointer=lambda: None,
+            get_release=lambda t: raw,
+            tag_commit=lambda t: SHA,
+            releases_for_channel=lambda: ["test-v2.0.0.dev7"],
+        )
+
+    with pytest.raises(trusted.Refused if other_channel == "test-x" else trusted.NothingToRefresh):
+        run(raw)
+    bad = json.loads(raw)
+    bad["payload"] = b64(jcs(manifest(8, channel=other_channel)))
+    with pytest.raises(trusted.Refused, match="bad_sig"):
+        run(jcs(bad))
+
+
+def test_test_channel_never_fetches_main_tags():
+    def forbidden(tag):
+        pytest.fail(f"test channel fetched main tag: {tag}")
+
+    with pytest.raises(trusted.NothingToRefresh):
+        trusted.trusted_current(
+            "test-x",
+            revocations(),
+            ref_verify,
+            NOW,
+            get_pointer=lambda: None,
+            get_release=forbidden,
+            tag_commit=lambda t: SHA,
+            releases_for_channel=lambda: ["v2.0.0"],
+        )

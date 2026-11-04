@@ -1,3 +1,5 @@
+import { api } from '@/api/client'
+import { toast } from 'sonner'
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, expect, it, vi } from 'vitest'
@@ -51,7 +53,7 @@ it('the ticket Actions menu offers Share files... while Publish is off and opens
   const user = userEvent.setup()
   show('/w/DEMO/ticket/DEMO-0001')
   await user.click(await screen.findByRole('button', { name: /Actions/ }, T))
-  await user.click(await screen.findByRole('menuitem', { name: 'Share files…' }, T))
+  await user.click(await screen.findByRole('menuitem', { name: 'Share…' }, T))
   const dialog = await screen.findByRole('dialog', { name: 'Turn on Publish' }, T)
   expect(dialog).toHaveTextContent('Nothing leaves this computer until you sign')
   expect(within(dialog).getByRole('button', { name: 'Turn on Publish' })).toBeInTheDocument()
@@ -69,7 +71,7 @@ it('with Publish on, Share files... opens the share dialog straight away', async
   const user = userEvent.setup()
   show('/w/DEMO/ticket/DEMO-0001')
   await user.click(await screen.findByRole('button', { name: /Actions/ }, T))
-  await user.click(await screen.findByRole('menuitem', { name: 'Share files…' }, T))
+  await user.click(await screen.findByRole('menuitem', { name: 'Share…' }, T))
   const dialog = await screen.findByRole('dialog', { name: 'Share files' }, T)
   expect(within(dialog).getByRole('button', { name: 'Add a file' })).toBeInTheDocument()
   await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Turn on Publish' })).toBeNull(), T)
@@ -87,7 +89,7 @@ const openShare = async (user: ReturnType<typeof userEvent.setup>) => {
   window.innerWidth = 1400
   show('/w/DEMO/ticket/DEMO-0001')
   await user.click(await screen.findByRole('button', { name: /Actions/ }, T))
-  await user.click(await screen.findByRole('menuitem', { name: 'Share files…' }, T))
+  await user.click(await screen.findByRole('menuitem', { name: 'Share…' }, T))
 }
 
 it('run17 P01b: a suggested address skips the address dialog; the review opens at once, nothing is signed', async () => {
@@ -157,6 +159,7 @@ it('P04: Cancel at the review withdraws the open request and leaves Publish off'
 
 it('P04: when the settings step lands (set_up flips to true) the review stays mounted; Sign runs through and the share dialog follows', async () => {
   notSetUp('http://127.0.0.1:8102')
+  const success = vi.spyOn(toast, 'success')
   const user = userEvent.setup()
   await openShare(user)
   const inner = state.host.override!
@@ -175,10 +178,38 @@ it('P04: when the settings step lands (set_up flips to true) the review stays mo
   trustedPresses() // the armed Sign signs only on a trusted press
   await user.click(sign)
   await waitFor(() => expect(state.host.clickSigned).toHaveLength(1), T)
+  expect(success).not.toHaveBeenCalled()
   // the host now reports Publish on (the onOn path): the share dialog follows, the turn-on review is gone
   ws().features = [...ws().features, 'publish']
   ws().addOns = { available: true, add_ons: [row('on')] } as never
   await queryClient.invalidateQueries({ queryKey: ['add-ons', A] })
   expect(await screen.findByRole('dialog', { name: 'Share files' }, T)).toBeInTheDocument()
   expect(screen.queryByTestId('click-panel')).toBeNull()
+})
+
+it.each([false, true])('destination and risk remain with quiet built-ins: %s', async quiet => {
+  if (!quiet) notSetUp('https://publish.example.test')
+  const original = api.viewClick
+  vi.spyOn(api, 'viewClick').mockImplementation(async (...args) => {
+    const answer = await original(...args)
+    return { ...answer, view: { ...answer.view, content: { headline: 'Turn on Publish', summary: { title: 'Unrelated', lines: quiet ? ['Files go to publish.example.test.'] : ['Runs on this computer.'], risk: 'Anyone with the link can read the files.' } } } }
+  })
+  const success = vi.spyOn(toast, 'success')
+  const user = userEvent.setup()
+  await openShare(user)
+  if (quiet) {
+    await user.click(await screen.findByRole('button', { name: 'Turn on Publish' }, T))
+    const accordion = await screen.findByTestId('addon-publish-accordion', {}, T)
+    await user.click(within(accordion).getByRole('button', { name: 'Turn on Publish' }))
+  }
+  await screen.findByTestId('sign-summary', {}, T)
+  if (quiet) expect(screen.getByTestId('sign-summary')).toHaveTextContent('Files go to publish.example.test.')
+  else expect(screen.getByTestId('where-files-go')).toHaveTextContent('Files go to publish.example.test.')
+  expect(screen.getByTestId('sign-risk')).toHaveTextContent('Anyone with the link can read the files.')
+  const sign = await screen.findByRole('button', { name: /^Sign( |$)/ }, T)
+  await waitFor(() => expect(sign).toBeEnabled(), T)
+  trustedPresses()
+  await user.click(sign)
+  await waitFor(() => expect(state.host.clickSigned).toHaveLength(1), T)
+  expect(success).not.toHaveBeenCalled()
 })

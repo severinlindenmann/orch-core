@@ -660,7 +660,7 @@ test('finish shows the current values read-only and offers only what is missing,
   // r10-P11: whether agents can start now is the top bar's message only, so setup lists no agent-access row
   expect(page(container)).not.toMatch(/Agent access for this|Given before|Not given/)
   // the name and the short name are not inputs, the add-on that is on is not a switch
-  expect(screen.queryByLabelText('Name of the person who will use this workspace')).toBeNull()
+  expect(screen.queryByLabelText('Who will use this workspace?')).toBeNull()
   expect(screen.getAllByRole('switch').map((el) => el.closest('label')?.textContent ?? '')).toEqual([
     expect.stringContaining('Own copy per ticket'),
     expect.stringContaining('Let agents start on this computer now'),
@@ -711,10 +711,10 @@ test('the name is not prefilled and the preview follows the typed prefix', async
   render(<Setup api={new SetupAPI('tok', fetcher)} />)
   await screen.findByRole('heading', { name: 'Set up your workspace' })
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
-  expect(screen.getByLabelText('Name of the person who will use this workspace')).toHaveValue('')
+  expect(screen.getByLabelText('Who will use this workspace?')).toHaveValue('')
   expect(screen.getByRole('button', { name: 'Continue →' })).toBeDisabled()
   expect(screen.getByTestId('name-needed')).toHaveTextContent('Type the name to continue.')
-  fireEvent.click(screen.getByRole('button', { name: 'Change' }))
+  fireEvent.click(screen.getAllByRole('button', { name: /^Change/ })[0])
   fireEvent.change(screen.getByLabelText(/^Ticket prefix/), { target: { value: 'RA' } })
   expect(screen.getByLabelText('Ticket number preview')).toHaveTextContent('RA-0001')
   expect(screen.getByLabelText('Ticket number preview')).toHaveTextContent('RA-0003')
@@ -725,8 +725,8 @@ test('the prefix is suggested from the workspace name until the person edits it'
   render(<Setup api={f.api} />)
   await screen.findByRole('heading', { name: 'Set up your workspace' })
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
-  fireEvent.change(screen.getByLabelText('Name of the person who will use this workspace'), { target: { value: 'Ann' } })
-  fireEvent.click(screen.getByRole('button', { name: 'Change' }))
+  fireEvent.change(screen.getByLabelText('Who will use this workspace?'), { target: { value: 'Ann' } })
+  fireEvent.click(screen.getAllByRole('button', { name: /^Change/ })[0])
   const prefix = screen.getByLabelText(/^Ticket prefix/)
   fireEvent.change(screen.getByLabelText(/^Workspace name/), { target: { value: 'Other' } })
   fireEvent.change(screen.getByLabelText(/^Workspace name/), { target: { value: 'Personal Workspace' } })
@@ -747,9 +747,9 @@ test('a hand-edited workspace name keeps driving the prefix when the person name
   render(<Setup api={f.api} />)
   await screen.findByRole('heading', { name: 'Set up your workspace' })
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
-  fireEvent.click(screen.getByRole('button', { name: 'Change' }))
+  fireEvent.click(screen.getAllByRole('button', { name: /^Change/ })[0])
   fireEvent.change(screen.getByLabelText(/^Workspace name/), { target: { value: 'Marketing' } })
-  fireEvent.change(screen.getByLabelText('Name of the person who will use this workspace'), { target: { value: 'Zed Zebra' } })
+  fireEvent.change(screen.getByLabelText('Who will use this workspace?'), { target: { value: 'Zed Zebra' } })
   expect(screen.getByLabelText(/^Ticket prefix/)).toHaveValue('MARK')
   fireEvent.change(screen.getByLabelText(/^Workspace name/), { target: { value: '!!!' } })
   expect(screen.getByLabelText(/^Ticket prefix/)).toHaveValue('MW')
@@ -1430,7 +1430,7 @@ test('P17: the Welcome page says what Finish setup later does; later pages do no
   expect(screen.getByText('Nothing is set up yet. Come back any time.')).toHaveClass('cancel-hint')
   expect(screen.getByRole('button', { name: 'Finish setup later' })).toBeInTheDocument()
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
-  await screen.findByRole('heading', { name: 'You' })
+  await screen.findByRole('heading', { name: 'Let’s make this workspace yours' })
   expect(screen.queryByText(/Come back any time/)).toBeNull()
   expect(screen.getByRole('button', { name: 'Finish setup later' })).toBeInTheDocument()
 })
@@ -1461,18 +1461,18 @@ test('r10-P13: the workspace name is a stated suggestion, never a field that cha
   expect(screen.queryByLabelText(/^Workspace name/)).toBeNull()
   expect(screen.queryByText(/My workspace/)).toBeNull()
   expect(screen.getByText('The workspace is named after that person.')).toBeInTheDocument()
-  fireEvent.change(screen.getByLabelText('Name of the person who will use this workspace'), { target: { value: 'Anna Test' } })
+  fireEvent.change(screen.getByLabelText('Who will use this workspace?'), { target: { value: 'Anna Test' } })
   const summary = screen.getByTestId('ws-summary')
   expect(summary).toHaveAttribute('aria-live', 'polite')
-  expect(summary).toHaveTextContent("Your workspace: Anna Test's workspace")
+  expect(summary).toHaveTextContent("Workspace name: Anna Test's workspace")
   expect(summary).toHaveTextContent('AT-0001')
   expect(screen.queryByLabelText(/^Workspace name/)).toBeNull()
-  fireEvent.click(screen.getByRole('button', { name: 'Change' }))
+  fireEvent.click(screen.getAllByRole('button', { name: /^Change/ })[0])
   expect(screen.getByLabelText(/^Workspace name/)).toHaveValue("Anna Test's workspace")
   expect(screen.getByLabelText(/^Ticket prefix/)).toHaveValue('AT')
   expect(screen.getByLabelText('Ticket number preview')).toHaveTextContent('AT-0001')
   fireEvent.change(screen.getByLabelText(/^Workspace name/), { target: { value: 'Sales' } })
-  fireEvent.change(screen.getByLabelText('Name of the person who will use this workspace'), { target: { value: 'Ben Test' } })
+  fireEvent.change(screen.getByLabelText('Who will use this workspace?'), { target: { value: 'Ben Test' } })
   expect(screen.getByLabelText(/^Workspace name/)).toHaveValue('Sales')
 })
 
@@ -1481,7 +1481,7 @@ test('the recovery page uses one name, recovery words, and names no terminal com
   render(<Setup api={f.api} />)
   await screen.findByRole('heading', { name: 'Set up your workspace' })
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
-  fireEvent.change(screen.getByLabelText('Name of the person who will use this workspace'), { target: { value: 'Ann' } })
+  fireEvent.change(screen.getByLabelText('Who will use this workspace?'), { target: { value: 'Ann' } })
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
@@ -2174,4 +2174,72 @@ test('W35: a remote setup without a friendly name names the host name', async ()
   render(<Setup api={fake({ hostname: 'web', remote: true, suggested: { method: 'click' } }).api} />)
   await approval()
   expect(screen.getByRole('radio', { name: /One click on web/ })).toBeInTheDocument()
+})
+
+// ---- setup polish (4 Nov): P13, P43, P68, P69, P75 (draft words) ----
+test('P13: Review names the project folder, keeps the full path behind Details, and says existing files stay untouched', async () => {
+  const { api } = withReview({ items: [{ id: 'addon:worktrees', title: 'Own copy per ticket', lines: ['x'], details: [], volatile: [], type: 'addon.granted', fields: {}, placeholders: [], placeholder_details: [] }] })
+  await toReview(api)
+  const folder = screen.getByTestId('review-folder')
+  expect(folder).toHaveTextContent('Project folder: orch-run2-a')
+  expect(folder).toHaveTextContent('Existing files stay untouched.')
+  expect(folder).toHaveTextContent('Agents work in separate work copies.')
+  expect(folder).toHaveTextContent('Setup also creates orch’s settings.')
+  expect(folder).not.toHaveTextContent('/demo/')
+  const fold = document.querySelector('.review-technical') as HTMLElement
+  expect(within(fold).getByTestId('review-folder-path')).toHaveTextContent('Full project folder path: /demo/orch-run2-a')
+  expect((document.body.textContent ?? '').replace(fold.textContent ?? '', '')).not.toContain('/demo/orch-run2-a')
+})
+
+test('P43: a remote setup says the AI helpers run on the named computer, not on the computer showing the page', async () => {
+  render(<Setup api={fake({ host: 'office-linux', remote: true }).api} />)
+  const line = await screen.findByTestId('setup-computer')
+  expect(line).toHaveTextContent('Workspace computer: office-linux')
+  expect(line).toHaveTextContent('Your workspace files stay on office-linux. Your AI helpers run there, not on the computer you’re using to view this page.')
+  expect(screen.getByRole('heading', { name: /^Set up on .*office-linux/ })).toBeInTheDocument()
+})
+
+test('P68: the You step asks "Who will use this workspace?", is prefilled from the account name and Continue is enabled', async () => {
+  render(<Setup api={fake({ suggested: { name: 'Anna Test', workspace_name: 'Anna Test’s workspace', prefix: 'AT' } }).api} />)
+  await screen.findByRole('heading', { name: 'Set up your workspace' })
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  expect(screen.getByRole('heading', { name: 'Let’s make this workspace yours' })).toBeInTheDocument()
+  expect(screen.getByLabelText('Who will use this workspace?')).toHaveValue('Anna Test')
+  expect(screen.getByText('Filled in from this computer’s account name. You can change it.')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Continue →' })).toBeEnabled()
+  // workspace name and ticket prefix: one Change each, as the draft shows
+  expect(screen.getByRole('button', { name: 'Change workspace name' })).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Change ticket prefix' }))
+  expect(screen.getByLabelText(/^Ticket prefix/)).toHaveValue('AT')
+  // typing a different name drops the "filled in" note
+  fireEvent.change(screen.getByLabelText('Who will use this workspace?'), { target: { value: 'Ben' } })
+  expect(screen.queryByText('Filled in from this computer’s account name. You can change it.')).toBeNull()
+})
+
+test('P69: every Review row has an Explain link whose words are the earlier toggles, word for word', async () => {
+  const { api } = withReview({
+    flags: [{ id: 'custody', text: 'Approvals on this machine need one click.' }],
+    items: [
+      { id: 'runner_grant', title: 'Agent access', lines: ['Agent access'], details: [], volatile: [], type: 'grant.issued', fields: { hours: 72, scope: 'workable', verbs: 'agent' }, placeholders: [], placeholder_details: [] },
+      { id: 'addon:worktrees', title: 'Own copy per ticket', lines: ['x'], details: [], volatile: [], type: 'addon.granted', fields: {}, placeholders: [], placeholder_details: [] },
+    ],
+  }, { suggested: { method: 'click', agent_hours: 72, agent_grant: true }, defaults: true })
+  await toReview(api)
+  const rows = [...document.querySelectorAll('.review-summary dd')].filter((dd) => /Own copy|Agents may|You approve/.test(dd.textContent ?? ''))
+  expect(rows).toHaveLength(3)
+  rows.forEach((dd) => expect(within(dd as HTMLElement).getByText('Explain')).toBeInTheDocument())
+  const text = document.querySelector('.review-summary')!.textContent ?? ''
+  expect(text).toContain('“Allow agents to work” is on')
+  expect(text).toContain('“How long can agents work on their own?” is set to 3 days')
+  expect(text).toContain('Access begins when setup finishes; it does not start a task.')
+  expect(text).toContain('“Own copy per ticket” is on. Separate working copies')
+  expect(text).toContain('You chose “One click on this computer”.')
+})
+
+test('P75: the finished page shows the workspace name', async () => {
+  const { api } = withReview({ workspace: { prefix: 'RA', name: 'Severin', workspace_name: 'Anna Test’s workspace', dir: '/demo/p', lines: [] } }, { done: true })
+  await toReview(api)
+  fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }))
+  await screen.findByRole('heading', { name: 'Your workspace is ready' })
+  expect(screen.getByTestId('ready-workspace')).toHaveTextContent('Anna Test’s workspace')
 })

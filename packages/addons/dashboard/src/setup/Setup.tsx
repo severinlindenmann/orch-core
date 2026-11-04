@@ -155,7 +155,8 @@ function Row({ line }: { line: string }) {
     </p>
   )
 }
-type Fact = { label: string; value: string }
+/** `explain` is the row's one small Explain link (P69): it quotes the toggle the person used on the earlier step. */
+type Fact = { label: string; value: string; explain?: string }
 const addonSentence = (id: string, fallback: string): string => ({
   'start-agent': 'You can start agents from the dashboard.',
   terminals: 'You can use the Command window, an optional advanced tool.',
@@ -164,7 +165,7 @@ const addonSentence = (id: string, fallback: string): string => ({
 }[id] ?? fallback)
 /** The short card of a review (plain words only): from the review's own items and flags, never the chosen profile. What this
  * mapping cannot describe is added as extra lines by the caller (`summarize().odd`); everything stays in the fold. */
-export function reviewFacts(review: Review, host?: string, newWorkspace = false, here = 'this computer', hostname?: string): Fact[] {
+export function reviewFacts(review: Review, host?: string, newWorkspace = false, here = 'this computer', hostname?: string, addons: SetupState['addons'] = []): Fact[] {
   const facts: Fact[] = []
   const ws = review.workspace
   // P43: the computer is named (over ssh "this computer" is not the one in front of the person)
@@ -183,6 +184,7 @@ export function reviewFacts(review: Review, host?: string, newWorkspace = false,
   const hours = settings.find((set) => typeof set?.grant_hours === 'number')?.grant_hours
   // Only an applied runner grant permits agents to start; a duration setting alone does not.
   let agents = newWorkspace ? 'Agents may not work on their own.' : "Agents' access stays as it is."
+  let agentsExplain = newWorkspace ? '“Allow agents to work” is off. Agents cannot start until you allow it.' : undefined
   const where = here
   if (grant) {
     // any applied runner grant says agents may work; an unexpected shape never reads as "may not"
@@ -190,14 +192,25 @@ export function reviewFacts(review: Review, host?: string, newWorkspace = false,
     agents = grant.scope === 'workable' && grant.verbs === 'agent'
       ? `Agents may work on their own on ${where}${time}.`
       : `Agents get access on ${where}${time}, with rights that setup does not usually give. Check them before you continue.`
+    agentsExplain = `“Allow agents to work” is on${typeof grant.hours === 'number' ? `. “How long can agents work on their own?” is set to ${duration(grant.hours)}` : ''}. Access begins when setup finishes; it does not start a task.`
   } else if (typeof hours === 'number') {
     agents = `Agent access time is set to ${duration(hours)}. This alone lets no agent start.`
   }
   for (const item of review.items.filter((i) => i.type === 'addon.granted' && i.id !== 'addon:dashboard')) {
-    facts.push({ label: item.title, value: addonSentence(item.id.replace(/^addon:/, ''), item.title) })
+    const id = item.id.replace(/^addon:/, '')
+    const toggle = addons.find((a) => a.id === id)
+    facts.push({ label: item.title, value: addonSentence(id, item.title), ...(toggle ? { explain: `“${toggle.title}” is on. ${toggle.desc}` } : {}) })
   }
-  facts.push({ label: 'Agents', value: agents })
-  if (approve) facts.push({ label: 'How you approve', value: approve })
+  facts.push({ label: 'Agents', value: agents, ...(agentsExplain ? { explain: agentsExplain } : {}) })
+  if (approve) {
+    facts.push({
+      label: 'How you approve',
+      value: approve,
+      explain: has('custody')
+        ? `You chose “One click on ${here}”. Anything running as you on ${here} could approve too, so only continue on a computer you trust.`
+        : 'You chose “Password”. Type your password each time.',
+    })
+  }
   return facts
 }
 const prefixOk = (p: string) => /^[A-Z][A-Z0-9]{1,7}$/.test(p)
@@ -734,6 +747,8 @@ export function Setup({ api }: { api: SetupAPI }) {
     'your project folder'
   )
   const host = state?.host || undefined
+  // P68: the name came from the host (the computer's account) and has not been edited
+  const nameFromAccount = !!state?.suggested.name?.trim() && state.mode !== 'finish' && profile.name === state.suggested.name
   // A remote (ssh) setup: "this computer" would read as the person's own laptop, so the One-click sentences name the machine
   const here = state?.remote ? state.host || state.hostname || 'the other computer' : 'this computer'
   const hereNode = state?.remote ? <Inline>{here}</Inline> : here // a machine's name passes through Inline
@@ -936,10 +951,10 @@ export function Setup({ api }: { api: SetupAPI }) {
       : step === 0 && state?.complete
         ? 'Setup is complete'
         : step === 0
-        ? state?.mode === 'finish' ? 'Finish setting up your workspace' : 'Set up your workspace'
+        ? state?.mode === 'finish' ? 'Finish setting up your workspace' : state?.remote && state.host ? `Set up on ${plain(state.host)}` : 'Set up your workspace'
         : [
             '',
-            'You',
+            'Let’s make this workspace yours',
             'What may agents do here?',
             'How do you want to approve things?',
             'Your recovery words',
@@ -993,8 +1008,17 @@ export function Setup({ api }: { api: SetupAPI }) {
                 <>
                   <p>orch keeps a to-do list of tickets that you and your AI helpers work on.</p>
                   {state.host && (
+                    // P43: over ssh the page is on one computer and the workspace on another; the draft names the second one
                     <p data-testid="setup-computer">
-                      Setting up on <strong><Inline>{state.host}</Inline></strong>. Your workspace and your agents run on that computer.
+                      {state.remote ? (
+                        <>
+                          Workspace computer: <strong><Inline>{state.host}</Inline></strong>. Your workspace files stay on <Inline>{state.host}</Inline>. Your AI helpers run there, not on the computer you’re using to view this page.
+                        </>
+                      ) : (
+                        <>
+                          Setting up on <strong><Inline>{state.host}</Inline></strong>. Your workspace and your agents run on that computer.
+                        </>
+                      )}
                     </p>
                   )}
                   <p>We will set this up in {folder}.</p>
@@ -1027,8 +1051,8 @@ export function Setup({ api }: { api: SetupAPI }) {
           {step === 1 && (
             <>
               <label>
-                Name of the person who will use this workspace
-                <input autoComplete="name" value={profile.name} onChange={(e) => {
+                Who will use this workspace?
+                <input autoComplete="name" aria-describedby={nameFromAccount ? 'name-from-account' : undefined} value={profile.name} onChange={(e) => {
                     const name = e.target.value
                     // Until the person edits them, the workspace name and prefix follow "Your name" (Anna Test: "Anna Test's workspace", AT).
                     const patch: Partial<Profile> = { name }
@@ -1039,25 +1063,33 @@ export function Setup({ api }: { api: SetupAPI }) {
                   }}
                 />
               </label>
+              {nameFromAccount && <small id="name-from-account" className="name-note">Filled in from this computer’s account name. You can change it.</small>}
               {!showWorkspaceFields && (
-                <div className="ws-summary">
-                  <span data-testid="ws-summary" aria-live="polite">
-                    {profile.name.trim() ? (
-                      <>
-                        Your workspace: <strong><Inline>{profile.workspace_name}</Inline></strong>{' '}
-                        {[1, 2].map((n) => (
-                          <span className="chip" key={n}>
-                            {profile.prefix.trim() || 'MW'}-{String(n).padStart(4, '0')}
-                          </span>
-                        ))}
-                      </>
-                    ) : (
-                      'The workspace is named after that person.'
-                    )}
-                  </span>
-                  <button type="button" className="link" onClick={() => setShowWorkspaceFields(true)}>
-                    Change
-                  </button>
+                <div className="ws-summary" data-testid="ws-summary" aria-live="polite">
+                  {profile.name.trim() ? (
+                    <>
+                      <div className="ws-row">
+                        <span>Workspace name: <strong><Inline>{profile.workspace_name}</Inline></strong></span>
+                        <button type="button" className="link" aria-label="Change workspace name" onClick={() => setShowWorkspaceFields(true)}>Change</button>
+                      </div>
+                      <div className="ws-row">
+                        <span>
+                          Ticket prefix: <strong>{profile.prefix.trim() || 'MW'}</strong>{' '}
+                          {[1, 2].map((n) => (
+                            <span className="chip" key={n}>
+                              {profile.prefix.trim() || 'MW'}-{String(n).padStart(4, '0')}
+                            </span>
+                          ))}
+                        </span>
+                        <button type="button" className="link" aria-label="Change ticket prefix" onClick={() => setShowWorkspaceFields(true)}>Change</button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <span>The workspace is named after that person.</span>
+                      <button type="button" className="link" onClick={() => setShowWorkspaceFields(true)}>Change</button>
+                    </>
+                  )}
                 </div>
               )}
               {showWorkspaceFields && (
@@ -1334,11 +1366,28 @@ export function Setup({ api }: { api: SetupAPI }) {
           )}
           {step === 5 && review && (
             <>
+              {review.workspace && (
+                // P13: the folder by its plain name; the full path is behind Details; orch's own files are "orch's settings"
+                <div className="review-folder" data-testid="review-folder">
+                  <p>Project folder: <strong><Inline>{review.workspace.dir.split('/').filter(Boolean).pop() || state.dir_name || 'your project folder'}</Inline></strong></p>
+                  <p>
+                    Existing files stay untouched.{review.items.some((i) => i.id === 'addon:worktrees') ? ' Agents work in separate work copies.' : ''} Setup also creates orch’s settings.
+                  </p>
+                </div>
+              )}
               <dl className="current review-facts review-summary">
-                {reviewFacts(review, host, state.mode !== 'finish', here, state.hostname).map((f, i) => (
+                {reviewFacts(review, host, state.mode !== 'finish', here, state.hostname, state.addons).map((f, i) => (
                   <Fragment key={i}>
                     <dt>{f.label}</dt>
-                    <dd><Inline>{f.value}</Inline></dd>
+                    <dd>
+                      <Inline>{f.value}</Inline>
+                      {f.explain && (
+                        <details className="info">
+                          <summary>Explain</summary>
+                          <small><Inline>{f.explain}</Inline></small>
+                        </details>
+                      )}
+                    </dd>
                   </Fragment>
                 ))}
                 {summary.odd.length > 0 && (
@@ -1386,7 +1435,8 @@ export function Setup({ api }: { api: SetupAPI }) {
                   {review.workspace && (
                     <section className="review-item">
                       <h3>New workspace</h3>
-                      {review.workspace.lines.map((line, i) => (
+                      <p data-testid="review-folder-path">Full project folder path: <Raw>{review.workspace.dir}</Raw></p>
+                      {review.workspace.lines.filter((line) => line !== `Folder: ${review.workspace?.dir}`).map((line, i) => (
                         <p key={i}>
                           <Name>{line}</Name>
                         </p>
@@ -1641,6 +1691,10 @@ export function Setup({ api }: { api: SetupAPI }) {
                 </p>
               </details>
             </div>
+          )}
+          {progress?.done && !progress.error && (review?.workspace?.workspace_name || profile.workspace_name) && (
+            // P75: which workspace is ready, in the normal interface font
+            <p className="ws-ready" data-testid="ready-workspace"><Inline>{review?.workspace?.workspace_name ?? profile.workspace_name}</Inline></p>
           )}
           {progress?.done && !progress.error && !unreachable && (
             <button className="primary open-workspace" disabled={busy} onClick={() => void act(finish)}>

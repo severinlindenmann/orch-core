@@ -290,11 +290,34 @@
 }
 .setup .ws-summary {
   display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 8px 0 16px;
+  color: var(--text-muted);
+}
+.setup .ws-summary .ws-row {
+  display: flex;
   justify-content: space-between;
   align-items: baseline;
   gap: 12px;
-  margin: 8px 0 16px;
+}
+.setup .name-note {
+  display: block;
+  margin: -4px 0 8px;
   color: var(--text-muted);
+}
+.setup .review-folder {
+  margin: 0 0 12px;
+}
+.setup .review-folder p {
+  margin: 4px 0;
+}
+.setup .ws-ready {
+  font-weight: 600;
+  margin: 0 0 8px;
+}
+.setup .review-facts dd details.info {
+  margin-top: 2px;
 }
 .setup .ws-summary strong {
   color: var(--text);
@@ -677,4 +700,7 @@ body:has(> #root > .setup) {
 .setup .review-plain bdi {
   word-break: normal;
   overflow-wrap: anywhere;
+}
+.setup .ws-summary .chip + .chip {
+  margin-left: 6px;
 }

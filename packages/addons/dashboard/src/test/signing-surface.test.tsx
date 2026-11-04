@@ -777,9 +777,11 @@ it('setup Create posts the review digest shown with core rows and terminal finge
   fireEvent.click(screen.getByLabelText(/Work copies/))
   fireEvent.click(screen.getByRole('button',{name:'Continue →'}))
   await screen.findByRole('heading',{name:'Review your setup'})
-  expect(screen.getByText('Agents: 8 hours')).not.toBeVisible() // collapsed, but in the page
+  for (const el of screen.getAllByText('Agents: 8 hours')) expect(el).not.toBeVisible() // collapsed, but in the page
   fireEvent.click(screen.getByText('Details', { selector: '.review-technical > summary' })) // r9-P10: the fold is 'Details', no count
-  expect(screen.getByText('Agents: 8 hours')).toBeVisible()
+  // W36: the plain part shows the host's sentence; the same line is also under Technical details (still folded)
+  expect(screen.getAllByText('Agents: 8 hours').some(el => el.closest('.review-plain') !== null && !el.closest('.review-raw'))).toBe(true)
+  expect(screen.getAllByText('Agents: 8 hours')[0]).toBeVisible()
   expect(screen.getByText((_, el) => !!el?.classList.contains('words') && el.textContent === 'demo not real')).toBeVisible()
   fireEvent.click(screen.getByRole('button',{name:'Finish setup'}))
   await waitFor(() => expect(posted).toEqual([{review_id:'demo-review',digest:'demo-bound-digest'}]))

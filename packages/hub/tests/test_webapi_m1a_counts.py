@@ -54,7 +54,8 @@ def test_last_seen_read_and_offline_are_scoped(tmp_path):
     try:
         w.api.d.switch = SwitchService(hub_origin=lambda: ORIGIN)
         original = w.reg.binding_state
-        w.reg.binding_state = lambda ws: {**original(ws), "status": "unbound", "last_seen": 1700000000}
+        w.reg.binding_state = lambda ws: {**original(ws), "last_seen": 1700000000}
+        w.api.d.router.is_online = lambda ws: False
         token = w.login(w.ann)
         for path in ("/rail", "/me/workspaces"):
             status, body, _ = w.call("GET", path, token=token)

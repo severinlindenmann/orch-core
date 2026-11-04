@@ -23,7 +23,7 @@ def test_no_delivery_dependency_is_an_empty_queue(w):
 @pytest.mark.parametrize("online", [True, False])
 def test_only_own_pending_events_in_accessible_workspaces(w, online):
     if not online:
-        w.reg.add(WS, "full", status="unbound")
+        w.api.d.router.is_online = lambda ws: False
     queue = DeliveryQueue(":memory:", now_ms=lambda: 1234)
     w.api.d.delivery = queue
     try:

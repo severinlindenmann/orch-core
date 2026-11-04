@@ -4,6 +4,7 @@ reader and the workspace view are small fakes (their owners are other tasks)."""
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 from typing import Any
 
 from channels_helpers import Env as ChEnv
@@ -170,6 +171,7 @@ class Web:
                 access=e.acc,
                 channels=e.svc,
                 registry=self.reg,
+                router=SimpleNamespace(is_online=lambda ws: self.reg.mode(ws) is not None),
                 audit=e.audit,
                 changes=self.changes,
                 connections=self.connections,

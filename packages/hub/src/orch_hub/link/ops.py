@@ -883,7 +883,7 @@ def rail_get(c: OpContext) -> dict[str, Any]:
         # `network_origin`: the address other devices use, named only when this answer is the same-computer form
         "hub": {"name": sw.hub_name, "origin": origin, "network_origin": other if other and other != origin else None},
         "user_id": user,
-        "workspaces": sw.rail_rows(c.registry, c.access, user, current=c.workspace_id),
+        "workspaces": sw.rail_rows(c.registry, c.access, user, current=c.workspace_id, router=c.router),
     }
 
 

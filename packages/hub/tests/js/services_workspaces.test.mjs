@@ -596,7 +596,7 @@ test("P05: a hub admin also sees a connected workspace private to someone else, 
 test("P05: the Home count includes private workspaces for a hub admin and nobody else", async () => {
   const { homeView } = await import("../../src/orch_hub/web/home.js");
   const ws = [{ workspace_id: "a", name: "Anna", online: true, mode: "selective" }];
-  const ben = { workspace_id: "ben", name: "Ben", owner_name: "Ben", mode: "selective", status: "bound" };
+  const ben = { workspace_id: "ben", name: "Ben", owner_name: "Ben", mode: "selective", status: "bound", online: true };
   const line = (d) => homeView({ workspaces: ws, items: [], shared: [], actions: {}, ...d }).flat().map((n) => n.textContent).join("\n").match(/\d+ workspaces? online, \d+ offline/)[0];
   assert.equal(line({ adminWorkspaces: [ben] }), "2 workspaces online, 0 offline");
   assert.equal(line({ adminWorkspaces: null }), "1 workspace online, 0 offline");
@@ -694,4 +694,17 @@ test("run-15 J02: my own selective workspace has no Open button; it says to open
   assert.match(text(out), /Open it on its own computer/);
   const details = workspaceDetailsView(workspace({ workspace_id: "b".repeat(32), name: "Ben", mode: "selective" }), {}, NOW);
   assert.match(text(details), /shares only chosen items with the hub\. Open it on its own computer\./i);
+});
+
+test("P27: left membership overrides stale online rows and joined messages", () => {
+  const stale = { ...workspace(), online: true };
+  const left = { ...stale, status: "unbound", left_ms: NOW };
+  const out = workspacesView({ workspaces: [stale], handoffs: [], admin: [left], joined: [stale] }, NOW);
+  assert.equal(find(out, (n) => n.getAttribute("data-workspace")).length, 0);
+  assert.doesNotMatch(text(out), /Online|joined/);
+  assert.match(text(out), /Show left workspaces \(1\)/);
+});
+
+test("P27: bound membership alone does not make a private workspace online", () => {
+  assert.equal(privateRows([], [{ workspace_id: "private", status: "bound" }])[0].online, false);
 });

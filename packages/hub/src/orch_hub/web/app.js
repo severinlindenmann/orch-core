@@ -391,7 +391,7 @@ async function landFromTicket(t) {
   const name = renderText(p.body.name ?? "you");
   const plan = landingPlan(p.body);
   if (plan === "redeem") return redeemTicket(t, false);
-  if (plan === "confirm") return plain(h("h1", { text: "Continue as " + name + "?" }), h("p", { class: "muted", text: "You opened the company hub from " + (p.body.workspace?.name ? renderText(p.body.workspace.name) + "'s workspace." : "your workspace.") }),
+  if (plan === "confirm") return plain(h("h1", { text: "Continue as " + name + "?" }), h("p", { class: "muted", text: "You opened the company hub from " + (p.body.workspace?.name ? renderText(p.body.workspace.name) + "." : "your workspace.") }),
     h("div", { class: "row" }, h("button", { class: "pri", text: "Continue", onclick: () => redeemTicket(t, false) }), h("button", { "data-back": "", text: "Back to my workspace", onclick: () => backToWorkspace(p.body.workspace, { assign: (u) => location.assign(u), back: () => history.back(), canBack: () => history.length > 1, login: () => loginView() }) })));
   const cur = renderText(p.body.signed_in_as?.name ?? "someone else");
   return plain(h("h1", { text: "Different person" }), h("p", { text: "You are signed in as " + cur + " here. This link is for " + name + "." }),

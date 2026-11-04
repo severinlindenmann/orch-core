@@ -128,7 +128,7 @@ export function ActivityPage() {
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="activity-ticket">Ticket</Label>
-          <Input id="activity-ticket" className="w-36" placeholder={`${workspace.prefix}-0001`} value={ticketText} aria-invalid={badTicket || undefined} onChange={(e) => setTicketText(e.target.value)} />
+          <Input id="activity-ticket" className="w-36" placeholder="Any ticket" title={`Type a ticket key, for example ${workspace.prefix}-0001`} value={ticketText} aria-invalid={badTicket || undefined} onChange={(e) => setTicketText(e.target.value)} />
         </div>
         {filtered && (
           <Button

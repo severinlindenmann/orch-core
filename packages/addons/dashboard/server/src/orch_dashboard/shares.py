@@ -309,12 +309,12 @@ def register(app: FastAPI, gateway: Gateway) -> None:
     def send(body: StagedBody, ws: str = Depends(reads.workspace)):
         # The host checks that a person's signature over exactly this staged copy is in the ticket's log. This
         # process adds nothing to that and keeps nothing of the answer.
-        data = gateway.enabled(ws).call("publish.send", {"staged_id": body.staged_id}, write=True, idem=body.idem)
+        data = gateway.call_own(ws, "publish.send", {"staged_id": body.staged_id}, write=True, idem=body.idem)
         return sent(data)
 
     @app.post("/api/w/{ws}/shares/revoke")
     def revoke(body: RevokeBody, ws: str = Depends(reads.workspace)):
-        data = gateway.enabled(ws).call("publish.revoke", {"share_id": body.share_id}, write=True, idem=body.idem)
+        data = gateway.call_own(ws, "publish.revoke", {"share_id": body.share_id}, write=True, idem=body.idem)
         ok = isinstance(data, dict) and data.get("state") == "revoked"
         return {"revoked": ok}
 
@@ -330,6 +330,6 @@ def register(app: FastAPI, gateway: Gateway) -> None:
         token = request.state.token
         if not (full_session(app.state.auth, token) and app.state.auth.login_kind(token) == "local"):
             raise refused("Sign in on this computer to connect this workspace to the publish server.")
-        data = gateway.enabled(ws).call("publish.register", {}, write=True, idem=body.idem)
+        data = gateway.call_own(ws, "publish.register", {}, write=True, idem=body.idem)
         result = data.get("result") if isinstance(data, dict) else None
         return {"registered": True, "result": result if result in ("registered", "unchanged") else "registered"}

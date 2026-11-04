@@ -29,6 +29,15 @@ describe('ticket header while the agent waits (P01)', () => {
     expect(screen.getByTestId('progress-pill')).toHaveTextContent('Taking longer than usual')
     expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
   })
+  it('W00: an agent that has not reached orch says so, opens its terminal, and offers no second start', () => {
+    render(<ProgressPill phase={{ kind: 'unreachable', run: 'r_9' }} start={start} ticket={noClaim} viewer={viewer} />)
+    const pill = screen.getByTestId('progress-pill')
+    expect(pill).toHaveTextContent('The agent has not reached orch')
+    expect(pill).not.toHaveTextContent('Taking longer than usual')
+    expect(screen.queryByRole('button', { name: /Try again|Start agent/ })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Open agent' }))
+    expect(openDockOn).toHaveBeenCalledWith('r_9')
+  })
   it('a slow start with no live run still offers Try again', () => {
     render(<ProgressPill phase={{ kind: 'starting', slow: true }} start={start} ticket={noClaim} viewer={viewer} />)
     expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy()

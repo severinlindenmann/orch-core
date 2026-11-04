@@ -7,6 +7,7 @@ from orch.ops._dsl import REF, STR, err, obj, operation
 from orch.ops.base import Context, Result
 from orch.ops.errors import OrchError
 from orch.ops.runtime import Call, Projection, flat
+from orch.ops.workdir import result_hint
 from orch.store import StoreError
 
 
@@ -35,7 +36,7 @@ def build(c: Call, p: Projection, args: dict[str, Any]) -> plans.Out:
         elif section:
             hint = f"orch section set {section} -m TEXT"
         raise OrchError(code, f"submit: {flat(e.detail)[:180]}", hint=hint) from None
-    return plans.Out({"status": p.last_view.status}, ["orch wait"])
+    return plans.Out({"status": p.last_view.status}, ["orch wait"], result_hint(c.store, p.last_view))
 
 
 OP = operation(

@@ -7,6 +7,7 @@ from orch.ops._dsl import FILE, INT, MSG, REF, err, obj, operation
 from orch.ops.base import Context, Result
 from orch.ops.errors import OrchError
 from orch.ops.runtime import Call, Projection
+from orch.ops.workdir import result_hint
 
 
 def handle(ctx: Context, args: dict[str, Any]) -> Result:
@@ -22,7 +23,7 @@ def build(c: Call, p: Projection, args: dict[str, Any]) -> plans.Out:
     p.add({"type": "handoff.written", "text": text})
     p.add({"type": "claim.released", "session": p.view.claim.session, "reason": "handoff"})
     # An unfinished gate cannot be approved and raises no need for the person: say so while the agent can still fix it.
-    lines: list[str] = []
+    lines = result_hint(c.store, p.last_view)
     gate = views.open_gate(p.view)
     fix = views.fill_hint(p.view, gate) if gate is not None else None
     missing = p.view.gates[gate].missing if gate is not None else []

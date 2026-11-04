@@ -33,6 +33,10 @@ def test_the_placeholder_is_replaced_by_a_private_file_with_both_rule_files_as_p
     text = open(path).read()
     assert "CODEWORD-7" in text and "PROJECT RULES" in text and "@/etc/passwd" in text  # an import stays text
     assert text.index("CODEWORD-7") < text.index("PROJECT RULES")
+    assert (
+        "A ticket without a codebase: every file the ticket asks for is a result. "
+        "Add it with `orch artifact add <file>` before you hand off."
+    ) in text
     rules.remove(base, RUN)
     assert not os.path.exists(path)
 

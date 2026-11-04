@@ -256,6 +256,14 @@ def build():
         "scope": "All unchanged retry conditions hold except route workspace binding; "
                  "byte-identical meta still refuses app_exists.",
     })
+    cross_workspace_retry = copy.deepcopy(retry)
+    cross_workspace_retry.update({
+        "name": "creation_meta_put_retry_other_workspace_app_exists",
+        "initial_state": copy.deepcopy(cross_workspace["initial_state"]),
+        "expect": {"error": "app_exists", "http_status": 409, "state_unchanged": True},
+        "scope": cross_workspace["scope"],
+    })
+    result["create_cases"].append(cross_workspace_retry)
     cross_signer = copy.deepcopy(next(c for c in result["state_cases"]
                                       if c["name"] == "release_new_app_start_ok"))
     cross_signer.update({

@@ -567,6 +567,53 @@
    "stored_meta_utf8": "{\"access\":\"group\",\"app_id\":\"33333333333333333333333333333333\",\"audience\":\"group:44444444444444444444444444444444\",\"files\":[{\"path\":\"index.html\",\"sha256\":\"9fcdcedf3a80f4b815f29dcf3b972eb9598e0ce71eae8e7b799ef01a5d6ea441\",\"size\":20}],\"kind\":\"page\",\"label\":\"First release\",\"name\":\"Team report\",\"new\":true,\"pw\":null,\"reach\":[\"https://api.example.com\"],\"slug\":\"team-report\",\"ticket\":\"01J9ZP00000000000000000001\"}",
    "target": "/v1/ws/11111111111111111111111111111111/apps/33333333333333333333333333333333/versions/7",
    "version": 7
+  },
+  {
+   "expect": {
+    "error": "app_exists",
+    "http_status": 409,
+    "state_unchanged": true
+   },
+   "initial_state": {
+    "app_id": "33333333333333333333333333333333",
+    "creation_version": 7,
+    "current_version": null,
+    "ever_current": false,
+    "ever_started_or_stopped": false,
+    "exists": true,
+    "running": false,
+    "workspace_id": "99999999999999999999999999999999"
+   },
+   "meta": {
+    "access": "group",
+    "app_id": "33333333333333333333333333333333",
+    "audience": "group:44444444444444444444444444444444",
+    "files": [
+     {
+      "path": "index.html",
+      "sha256": "9fcdcedf3a80f4b815f29dcf3b972eb9598e0ce71eae8e7b799ef01a5d6ea441",
+      "size": 20
+     }
+    ],
+    "kind": "page",
+    "label": "First release",
+    "name": "Team report",
+    "new": true,
+    "pw": null,
+    "reach": [
+     "https://api.example.com"
+    ],
+    "slug": "team-report",
+    "ticket": "01J9ZP00000000000000000001"
+   },
+   "method": "PUT",
+   "name": "creation_meta_put_retry_other_workspace_app_exists",
+   "request_meta_utf8": "{\"access\":\"group\",\"app_id\":\"33333333333333333333333333333333\",\"audience\":\"group:44444444444444444444444444444444\",\"files\":[{\"path\":\"index.html\",\"sha256\":\"9fcdcedf3a80f4b815f29dcf3b972eb9598e0ce71eae8e7b799ef01a5d6ea441\",\"size\":20}],\"kind\":\"page\",\"label\":\"First release\",\"name\":\"Team report\",\"new\":true,\"pw\":null,\"reach\":[\"https://api.example.com\"],\"slug\":\"team-report\",\"ticket\":\"01J9ZP00000000000000000001\"}",
+   "scope": "All unchanged retry conditions hold except route workspace binding; byte-identical meta still refuses app_exists.",
+   "status": "pending",
+   "stored_meta_utf8": "{\"access\":\"group\",\"app_id\":\"33333333333333333333333333333333\",\"audience\":\"group:44444444444444444444444444444444\",\"files\":[{\"path\":\"index.html\",\"sha256\":\"9fcdcedf3a80f4b815f29dcf3b972eb9598e0ce71eae8e7b799ef01a5d6ea441\",\"size\":20}],\"kind\":\"page\",\"label\":\"First release\",\"name\":\"Team report\",\"new\":true,\"pw\":null,\"reach\":[\"https://api.example.com\"],\"slug\":\"team-report\",\"ticket\":\"01J9ZP00000000000000000001\"}",
+   "target": "/v1/ws/11111111111111111111111111111111/apps/33333333333333333333333333333333/versions/7",
+   "version": 7
   }
  ],
  "doc": "Protocol 11.3 RG-1 to RG-9, 4 Nov 2026. Synthetic ids; no real keys. Commit cases assume valid request approval and exercise stored-meta verification only.",
@@ -1004,7 +1051,8 @@
    "new_app_id_exists_other_workspace_refused",
    "new_app_slug_taken_refused",
    "existing_app_unknown_refused",
-   "creation_meta_put_retry_unchanged"
+   "creation_meta_put_retry_unchanged",
+   "creation_meta_put_retry_other_workspace_app_exists"
   ],
   "meta_hash": [
    "meta_hash_amended",
